@@ -93,10 +93,23 @@
   const skip = () => (cursor = Math.min(cursor + 1, items.length));
   const back = () => (cursor = Math.max(cursor - 1, 0));
 
+  let rawOpen = $state(false);
+  let policyOpen = $state(false);
+  // Every overlay that can sit above the verdict UI. The keydown handler below refuses to record
+  // a verdict while any of them is open. Declared here, before the handler that closes over it.
+  const overlayOpen = $derived(rawOpen || policyOpen);
+
   $effect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (done) return;
+      // 🔴 This listener is on `window` and ArrowLeft/ArrowRight RECORD A VERDICT. Nothing in the
+      // Sheet primitive or in bits-ui's dialog stops keydown propagation -- that dialog handles
+      // only SPACE and ENTER -- so without this guard, scrolling an open overlay with the arrow
+      // keys silently submits a verdict on the item behind it. Any new overlay on this page MUST
+      // join `overlayOpen`; `__tests__/keydown-overlay-guard.test.ts` pins every `Sheet
+      // bind:open` against that expression and fails if the set grows OR shrinks.
+      if (overlayOpen) return;
       if (e.key === 'ArrowLeft') (e.preventDefault(), submitAnswer(false));
       else if (e.key === 'ArrowRight') (e.preventDefault(), submitAnswer(true));
       else if (e.key === 'ArrowDown') (e.preventDefault(), skip());
@@ -106,7 +119,6 @@
     return () => window.removeEventListener('keydown', handler);
   });
 
-  let rawOpen = $state(false);
   let rawJson = $state<unknown>(undefined);
   let rawLoading = $state(false);
   async function openRaw(workflowId: string) {
@@ -180,6 +192,36 @@
           >{t}</Badge
         >
       {/each}
+    </div>
+  {/if}
+{/snippet}
+
+<!-- Declared at top level, beside the other snippets, so BOTH the `lg` aside and the below-`lg`
+     drawer can render it. A snippet declared inside the layout div would not be in scope for the
+     Sheet, which is its sibling -- and the whole point is that these two never drift apart. -->
+{#snippet policyBody()}
+  {#if !policy}
+    <h2 class="font-mono text-lg">{data.label}</h2>
+    <p class="mt-2 rounded-md border p-3 text-sm text-muted-foreground">
+      No moderator policy summary on file for this label yet.
+    </p>
+  {:else}
+    <div class="flex flex-col gap-4">
+      <div>
+        <div class="text-xs font-medium uppercase text-muted-foreground">Policy</div>
+        <h2 class="font-mono text-xl font-semibold">{policy.title}</h2>
+      </div>
+      <div>
+        <span class="mb-1 inline-block rounded bg-blue-500/15 px-1.5 py-0.5 text-xs font-medium text-blue-300">Catch</span>
+        <p class="text-sm">{policy.catch}</p>
+      </div>
+      {@render policySection('Should fire on', 'text-green-400', policy.shouldFire)}
+      {@render policySection('Should NOT fire on', 'text-red-400', policy.shouldNotFire)}
+      {@render policySection('Gotchas', 'text-yellow-400', policy.gotchas ?? [])}
+      <p class="text-xs text-muted-foreground">
+        Only the <strong>positive prompt</strong> decides the verdict — terms appearing only in the
+        negative prompt are avoidance signals.
+      </p>
     </div>
   {/if}
 {/snippet}
@@ -339,11 +381,19 @@
 
   {#if current && !done}
     <div class="shrink-0 border-t bg-background px-6 py-3">
-      <div class="mx-auto flex max-w-3xl items-center justify-center gap-2">
-        <Button variant="destructive" class="w-48" onclick={() => submitAnswer(false)}>← No</Button>
+      <!-- flex-wrap is required: these four buttons need ~570px and the box is 342px at 390px
+           wide. `justify-center` overflows SYMMETRICALLY, so without wrapping the leading button
+           sits at NEGATIVE x and cannot be scrolled into view at all. -->
+      <div class="mx-auto flex max-w-3xl flex-wrap items-center justify-center gap-2">
+        <Button variant="destructive" class="w-full sm:w-48" onclick={() => submitAnswer(false)}>← No</Button>
         <Button variant="outline" onclick={back} disabled={cursor === 0}>↑ Back</Button>
         <Button variant="outline" onclick={skip}>↓ Skip</Button>
-        <Button class="w-48 bg-teal-600 hover:bg-teal-600" onclick={() => submitAnswer(true)}>Yes →</Button>
+        <Button class="w-full bg-teal-600 hover:bg-teal-600 sm:w-48" onclick={() => submitAnswer(true)}>Yes →</Button>
+        <!-- Below `lg` the policy aside is display:none, so this is the ONLY way to reach the
+             definition of the correct answer. Hidden at `lg` and up, where the aside is visible. -->
+        <Button variant="outline" class="w-full lg:hidden" onclick={() => (policyOpen = true)}>
+          Policy
+        </Button>
       </div>
       <p class="mx-auto mt-1 max-w-3xl text-center text-xs text-muted-foreground">
         {cursor + 1} of {items.length} · ← No · → Yes · ↓ Skip · ↑ Back — Yes/No map to TP/FP/TN/FN
@@ -352,35 +402,25 @@
     {/if}
   </div>
 
+  <!-- The policy is the definition of the correct answer. Below `lg` this aside is hidden, so the
+       same body is rendered into a drawer reachable from the button in the footer -- one snippet,
+       so the two can never drift. Recording a verdict with the policy off-screen is the defect
+       this exists to prevent. -->
   {#if current && !done}
     <aside class="hidden w-[26rem] shrink-0 overflow-y-auto border-l bg-muted/20 px-4 py-4 lg:block">
-      {#if !policy}
-        <h2 class="font-mono text-lg">{data.label}</h2>
-        <p class="mt-2 rounded-md border p-3 text-sm text-muted-foreground">
-          No moderator policy summary on file for this label yet.
-        </p>
-      {:else}
-        <div class="flex flex-col gap-4">
-          <div>
-            <div class="text-xs font-medium uppercase text-muted-foreground">Policy</div>
-            <h2 class="font-mono text-xl font-semibold">{policy.title}</h2>
-          </div>
-          <div>
-            <span class="mb-1 inline-block rounded bg-blue-500/15 px-1.5 py-0.5 text-xs font-medium text-blue-300">Catch</span>
-            <p class="text-sm">{policy.catch}</p>
-          </div>
-          {@render policySection('Should fire on', 'text-green-400', policy.shouldFire)}
-          {@render policySection('Should NOT fire on', 'text-red-400', policy.shouldNotFire)}
-          {@render policySection('Gotchas', 'text-yellow-400', policy.gotchas ?? [])}
-          <p class="text-xs text-muted-foreground">
-            Only the <strong>positive prompt</strong> decides the verdict — terms appearing only in the
-            negative prompt are avoidance signals.
-          </p>
-        </div>
-      {/if}
+      {@render policyBody()}
     </aside>
   {/if}
 </div>
+
+<Sheet bind:open={policyOpen}>
+  <SheetContent side="right" class="w-[92vw] overflow-y-auto sm:max-w-md">
+    <SheetHeader><SheetTitle>Policy — {data.label}</SheetTitle></SheetHeader>
+    <div class="px-4 pb-4">
+      {@render policyBody()}
+    </div>
+  </SheetContent>
+</Sheet>
 
 <Sheet bind:open={rawOpen}>
   <SheetContent side="right" class="w-[92vw] overflow-y-auto sm:max-w-[84rem]">
