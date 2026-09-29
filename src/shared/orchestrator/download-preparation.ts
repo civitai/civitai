@@ -42,11 +42,16 @@ const maxKnown = (values: (number | null | undefined)[]) => {
 /**
  * How much of a transfer must have moved before its own ETA is believed: a stream still ramping up
  * projects from a throughput it will not hold, which reads as hours on a ten-minute download.
- * Whichever comes first — the fraction alone would stay quiet for minutes on a rate-capped lane,
- * which is the lane the boost is sold against.
+ *
+ * The sample must be large in ABSOLUTE terms, which a fraction alone cannot express — on a small file
+ * it resolves to a size still inside the ramp-up, so the smaller the file the weaker the guard.
+ * `MIN_BYTES` sets that floor; `MAX_FRACTION` keeps it reachable on a file smaller than the floor, so
+ * every transfer still settles.
  */
 export const ETA_WARMUP_PROGRESS = 0.02;
 export const ETA_WARMUP_BYTES = 64 * 1024 * 1024;
+export const ETA_WARMUP_MIN_BYTES = 8 * 1024 * 1024;
+export const ETA_WARMUP_MAX_FRACTION = 0.5;
 
 type WarmupSource = {
   progress?: number | null;
@@ -54,14 +59,27 @@ type WarmupSource = {
   etaSeconds?: number | null;
 };
 
+/** Bytes that must have moved before this resource's own ETA means anything. */
+function warmupBytes(sizeBytes: number) {
+  return Math.min(
+    ETA_WARMUP_BYTES,
+    sizeBytes * ETA_WARMUP_MAX_FRACTION,
+    Math.max(ETA_WARMUP_MIN_BYTES, sizeBytes * ETA_WARMUP_PROGRESS)
+  );
+}
+
 /**
  * A resource that has not started downloading is settled: it is waiting behind other downloads, and
  * nothing has distorted the projection it was given. Only a transfer in progress can be too young to
  * believe.
+ *
+ * An unknown size leaves only the fraction to go on.
  */
 export function isEtaSettled(resource: WarmupSource) {
-  if (resource.progress == null || resource.progress >= ETA_WARMUP_PROGRESS) return true;
-  return (resource.sizeBytes ?? 0) * resource.progress >= ETA_WARMUP_BYTES;
+  if (resource.progress == null) return true;
+  const sizeBytes = resource.sizeBytes ?? 0;
+  if (sizeBytes <= 0) return resource.progress >= ETA_WARMUP_PROGRESS;
+  return sizeBytes * resource.progress >= warmupBytes(sizeBytes);
 }
 
 /** A resource's ETA once it is worth showing; null while its transfer is still ramping up. */
@@ -102,13 +120,60 @@ export function summarizePreparation(
   };
 }
 
+/**
+ * An AIR's segments, or undefined for anything that is not one.
+ *
+ * Read here rather than through `~/shared/utils/air`: that module reaches `@civitai/client` and the
+ * ecosystem constants, and this one runs for every step of every workflow in a queue listing.
+ */
+function airSegments(resource: string) {
+  const parts = resource.split(':');
+  if (parts[0] !== 'urn' || parts[1] !== 'air') return undefined;
+  return { ecosystem: parts[2], type: parts[3], source: parts[4], id: parts[5] };
+}
+
+/**
+ * An orchestrator blob the user supplied rather than a model the generator must fetch — the source
+ * image of an i2v request arrives in `preparation` exactly like a checkpoint does.
+ *
+ * A training epoch's weights are also a blob (`…:lora:orchestrator:blob@<key>`, see
+ * `parseRawAirResourceUrn`) but are a real download worth showing, so only non-`lora` blobs are
+ * dropped.
+ */
+function isSuppliedBlob(resource: string) {
+  const air = airSegments(resource);
+  if (!air) return false;
+  if (air.source !== 'orchestrator' || !air.id?.startsWith('blob@')) return false;
+  return air.type !== 'lora';
+}
+
+/**
+ * `ModelType.Checkpoint`, compared as a literal so this module stays free of the enums package — it
+ * runs for every step of every workflow in a queue listing.
+ */
+const BASE_WEIGHTS_MODEL_TYPE = 'Checkpoint';
+
+/**
+ * Whether a resource's model type is base-model weights, which is what a boost's flat per-workflow
+ * fee is sized against.
+ *
+ * Takes the REAL type rather than reading the AIR. An AIR cannot answer this: a Checkpoint whose
+ * primary file is a standalone denoiser advertises `diffusionmodel` or `unet` instead
+ * (`stringifyAIR`'s `fileTypeUrnMap`), which is every Flux / Wan / ZImage / Anima / Boogu base
+ * model, and `unet` is separately reachable from `ModelType.UNet`.
+ */
+export const isBaseWeightsType = (modelType?: string | null) =>
+  modelType === BASE_WEIGHTS_MODEL_TYPE;
+
 /** For `preparation` straight off the orchestrator; anything that is not the resource list reads as nothing to download. */
 export function normalizePreparation(raw: unknown): DownloadPreparation | undefined {
   // Every step of every workflow in a queue listing comes through here, and almost none carries a
   // preparation — zod builds a whole error for each of those, which is ~7µs a step.
   if (!Array.isArray(raw) || !raw.length) return undefined;
   const parsed = preparationSchema.safeParse(raw);
-  return parsed.success ? summarizePreparation(parsed.data) : undefined;
+  if (!parsed.success) return undefined;
+  const downloads = parsed.data.filter((resource) => !isSuppliedBlob(resource.resource));
+  return downloads.length ? summarizePreparation(downloads) : undefined;
 }
 
 function asHighLane(preparation: DownloadPreparation): DownloadPreparation {

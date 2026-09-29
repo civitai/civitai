@@ -229,7 +229,10 @@ export const useCFImageUpload: UseCFImageUpload = () => {
 
 export type DataFromFile = AsyncReturnType<typeof getDataFromFile>;
 export const getDataFromFile = async (file: File, options?: { allowAnimatedWebP?: boolean }) => {
-  const processed = await preprocessFile(file, options);
+  const preprocessed = await preprocessFile(file, options);
+  // Video generation meta is only taken through useMediaUpload.
+  const processed =
+    preprocessed.type === 'video' ? { ...preprocessed, meta: undefined } : preprocessed;
   const { blockedFor } = await auditImageMeta(
     processed.type === MediaType.image ? processed.meta : undefined,
     false

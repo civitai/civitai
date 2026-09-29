@@ -129,7 +129,10 @@ from `external`, so the picker marks both **Ready** and only the live read says 
 `no-divergent-generator-readiness` keeps the derivation single-sourced.
 
 The rest is live, from `resourceLoad.getResidency`: signed-in, ≤50 ids (`RESIDENCY_MAX_IDS`),
-rate-limited, cached 30s per version. That is the generator's marks, whose resources do not come from
+rate-limited, cached 30s per version (`resource-residency.service.ts`) and marked stale for any version
+whose `generatorLoaded` the webhook or the backstop job flips — otherwise the **Generation** rows name
+the pre-change state while the column-driven **Create** badge already shows the new one. That is the
+generator's marks, whose resources do not come from
 page data — the added-resource list batches into one request (`ResidencyBatchProvider`), while the
 checkpoint input, the two **Generation** rows (version details, picker card's back) and every
 `ResourceItemContent` outside that provider — the compatibility confirm, the image-metadata modal and
@@ -139,10 +142,11 @@ also holds: an `ExternalGeneration` version is answered `{ status: 'external' }`
 and the orchestrator is never called — its availability union has no state for "a third party serves
 this", so asking would return `unavailable`, which the UI reads as a download the user must wait for.
 
-Nothing pushes residency, so those live marks refresh two ways: they poll every 60s while anything on
-screen is cold and stop once everything is loaded or external, and the queue card's uncached download-status poll
-invalidates every residency query the moment a model reports `available`, so an open generator flips
-to **Loaded** as the download lands rather than waiting out the backstop.
+Nothing pushes residency to the client and the marks do not poll. Opening the generation panel
+invalidates every residency query once; otherwise a mount or a window focus re-reads only past the
+30s stale window, so remounts inside the panel do not refetch. The queue card's uncached
+download-status poll invalidates every residency query the moment a model reports `available`, so an
+open generator flips to **Loaded** as the download lands rather than waiting out the backstop.
 
 **A "Loaded only" filter** in the generation resource picker, beside the type and base-model chips. It
 filters on `versions.generatorLoaded`, which carries **readiness** (see **Load indicators**) — so a

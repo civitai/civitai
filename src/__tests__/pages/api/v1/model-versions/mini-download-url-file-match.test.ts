@@ -69,6 +69,7 @@ import { Air } from '@civitai/client';
 import handler from '~/pages/api/v1/model-versions/mini/[id]';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
+import { modelVersionToAir } from '~/server/utils/resource-air';
 
 const VERSION_ID = 555;
 const OWNER_ID = 4242;
@@ -750,5 +751,37 @@ describe('GET /api/v1/model-versions/mini/[id] — the training-results/epoch pa
     const { body } = await run([TRAINING_FILE, SAFETENSOR]);
     expect(body.fileName).toBe(SAFETENSOR.name);
     expect(urlFileId(body)).toBe(String(SAFETENSOR.id));
+  });
+});
+
+describe('GET /api/v1/model-versions/mini/[id] — the generation file', () => {
+  it('never advertises a replaced file, even the best-scoring one', async () => {
+    const replaced = {
+      ...PRIVATE_MODEL,
+      id: 707,
+      visibility: 'Public',
+      name: 'replaced-pruned.safetensors',
+      replacedAt: new Date('2026-01-01T00:00:00Z'),
+    };
+    const { body } = await run([replaced, SAFETENSOR]);
+    expect(body.fileName).toBe(SAFETENSOR.name);
+    expect(urlFileId(body)).toBe(String(SAFETENSOR.id));
+  });
+
+  it('hands the orchestrator the AIR type the cache bust invalidates', async () => {
+    const files = [PRIVATE_MODEL, PUBLIC_DIFFUSION];
+    const { status } = await run(files);
+    expect(status).toBe(200);
+    const miniType = lastAirArgs()?.type;
+
+    modelVersionToAir({
+      id: VERSION_ID,
+      baseModel: versionRow.baseModel,
+      model: { id: versionRow.modelId, type: 'Checkpoint' },
+      files,
+    });
+
+    expect(miniType).toBe('diffusionmodel');
+    expect(lastAirArgs()?.type).toBe(miniType);
   });
 });

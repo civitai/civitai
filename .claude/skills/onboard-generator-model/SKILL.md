@@ -85,6 +85,12 @@ Show the user the case, the kind, the phases and where the run will stop, for de
 
 8. **Hand off.** Run `generator-launch launch` and give the user its output: publish, then remove the gate. Don't do those steps yourself.
 
+**If community models already host the same weights, that needs no action** — the attribution
+tie-break prefers the official version, and archiving those models would not move credit anyway. See
+`official-model-admin` → "Community copies of the same weights". The question worth raising at hand-off
+is the repo's shared components (text encoders, a VAE): whether to publish them as their own models so
+community finetunes can cite them.
+
 ## Rules for the whole run
 
 - **Ask before every `--writable` call.** Each one writes to production.

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  isBaseWeightsType,
   attachEstimatedPreparation,
+  ETA_WARMUP_PROGRESS,
   isEtaSettled,
   normalizePreparation,
   settledBoostedEtaSeconds,
@@ -158,7 +160,13 @@ describe('attachEstimatedPreparation', () => {
 describe('warm-up suppression', () => {
   it('drops the ETA of a transfer that has barely started', () => {
     const result = normalizePreparation([
-      { resource: checkpoint, sizeBytes: 1, lane: 'low', progress: 0.001, etaSeconds: 7_200 },
+      {
+        resource: checkpoint,
+        sizeBytes: 4_000_000_000,
+        lane: 'low',
+        progress: 0.001,
+        etaSeconds: 7_200,
+      },
     ]);
 
     expect(result).toMatchObject({ progress: 0.001, etaSeconds: null });
@@ -166,7 +174,13 @@ describe('warm-up suppression', () => {
 
   it('believes it again once the transfer is under way', () => {
     const result = normalizePreparation([
-      { resource: checkpoint, sizeBytes: 1, lane: 'low', progress: 0.2, etaSeconds: 600 },
+      {
+        resource: checkpoint,
+        sizeBytes: 4_000_000_000,
+        lane: 'low',
+        progress: 0.2,
+        etaSeconds: 600,
+      },
     ]);
 
     expect(result?.etaSeconds).toBe(600);
@@ -174,8 +188,14 @@ describe('warm-up suppression', () => {
 
   it('leaves a queued resource’s ETA alone while another warms up', () => {
     const result = normalizePreparation([
-      { resource: checkpoint, sizeBytes: 1, lane: 'low', progress: 0.001, etaSeconds: 7_200 },
-      { resource: vae, sizeBytes: 1, lane: 'low', queuePosition: 2, etaSeconds: 600 },
+      {
+        resource: checkpoint,
+        sizeBytes: 4_000_000_000,
+        lane: 'low',
+        progress: 0.001,
+        etaSeconds: 7_200,
+      },
+      { resource: vae, sizeBytes: 4_000_000_000, lane: 'low', queuePosition: 2, etaSeconds: 600 },
     ]);
 
     expect(result?.etaSeconds).toBe(600);
@@ -203,6 +223,28 @@ describe('isEtaSettled', () => {
   it('believes one that has moved enough bytes to sample, whatever the fraction', () => {
     expect(isEtaSettled({ progress: 0.005, sizeBytes: 20_000_000_000 })).toBe(true);
   });
+
+  // The fraction alone is met almost immediately on a small file, which is where an ETA was being
+  // projected from a still-ramping stream and quoting hours on a download of minutes.
+  it('does not believe a small transfer that has only met the fraction', () => {
+    expect(isEtaSettled({ progress: ETA_WARMUP_PROGRESS, sizeBytes: 30_000_000 })).toBe(false);
+    expect(isEtaSettled({ progress: 0.1, sizeBytes: 30_000_000 })).toBe(false);
+  });
+
+  it('still settles a file smaller than the byte floor', () => {
+    expect(isEtaSettled({ progress: 0.6, sizeBytes: 4_000_000 })).toBe(true);
+  });
+
+  // The sizes the boost is actually sold against keep the thresholds they had.
+  it('leaves large transfers where they were', () => {
+    expect(isEtaSettled({ progress: 0.019, sizeBytes: 1_000_000_000 })).toBe(false);
+    expect(isEtaSettled({ progress: 0.021, sizeBytes: 1_000_000_000 })).toBe(true);
+  });
+
+  it('falls back to the fraction when the size is unknown', () => {
+    expect(isEtaSettled({ progress: 0.01 })).toBe(false);
+    expect(isEtaSettled({ progress: 0.05 })).toBe(true);
+  });
 });
 
 describe('settledBoostedEtaSeconds', () => {
@@ -216,5 +258,69 @@ describe('settledBoostedEtaSeconds', () => {
 
   it('keeps it for a model that has not started downloading', () => {
     expect(settledBoostedEtaSeconds({ etaSeconds: 600, boostedEtaSeconds: 60 })).toBe(60);
+  });
+});
+
+describe('supplied blobs', () => {
+  const uploadedImage = 'urn:air:other:other:orchestrator:blob@JR4C6NP1ZH61KK6WFJSDKQEJC0.png';
+  const trainingEpoch = 'urn:air:sdxl:lora:orchestrator:blob@ABC123';
+
+  // An i2v source image arrives in `preparation` like a checkpoint does, so the queue card offered a
+  // paid boost on the user's own upload.
+  it('reports nothing to download when the only entry is a supplied blob', () => {
+    expect(
+      normalizePreparation([
+        {
+          resource: uploadedImage,
+          sizeBytes: 1_987_610,
+          lane: 'low',
+          queuePosition: 7,
+          etaSeconds: 100,
+          boostedEtaSeconds: 18,
+        },
+      ])
+    ).toBeUndefined();
+  });
+
+  it('keeps the model downloads beside one', () => {
+    const result = normalizePreparation([
+      { resource: uploadedImage, sizeBytes: 1_987_610, lane: 'low', etaSeconds: 100 },
+      { resource: checkpoint, sizeBytes: 4_000_000_000, lane: 'low', etaSeconds: 600 },
+    ]);
+
+    expect(result?.resources).toHaveLength(1);
+    expect(result?.resource).toBe(checkpoint);
+  });
+
+  // A training epoch's weights are a blob too, and a real fetch worth boosting.
+  it('keeps a training epoch blob', () => {
+    const result = normalizePreparation([
+      { resource: trainingEpoch, sizeBytes: 200_000_000, lane: 'low', etaSeconds: 120 },
+    ]);
+
+    expect(result?.resource).toBe(trainingEpoch);
+  });
+});
+
+describe('isBaseWeightsType', () => {
+  // Takes the REAL model type, because an AIR cannot answer this: a Checkpoint whose primary file is
+  // a standalone denoiser advertises `diffusionmodel` or `unet` instead, which is every
+  // Flux / Wan / ZImage / Anima / Boogu base model. Reading the AIR would refuse a boost on the
+  // largest downloads there are.
+  it('accepts a checkpoint whatever its AIR would have said', () => {
+    expect(isBaseWeightsType('Checkpoint')).toBe(true);
+  });
+
+  it.each(['LORA', 'LoCon', 'DoRA', 'TextualInversion', 'VAE', 'Upscaler'])(
+    'rejects %s',
+    (modelType) => {
+      expect(isBaseWeightsType(modelType)).toBe(false);
+    }
+  );
+
+  it('rejects an unresolved type rather than guessing', () => {
+    expect(isBaseWeightsType(undefined)).toBe(false);
+    expect(isBaseWeightsType(null)).toBe(false);
+    expect(isBaseWeightsType('')).toBe(false);
   });
 });

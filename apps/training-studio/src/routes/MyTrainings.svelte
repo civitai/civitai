@@ -153,7 +153,7 @@
                 <span class="font-mono text-xs text-dark-2">{r.base}</span>
               </TableCell>
               <TableCell class="px-4 py-2.5"><RunStateBadge state={r.state} /></TableCell>
-              <TableCell class="max-w-[32ch] truncate px-4 py-2.5 font-mono text-xs text-dark-2">
+              <TableCell class="max-w-[32ch] whitespace-normal px-4 py-2.5 font-mono text-xs text-dark-2">
                 {#if r.state === 'training'}
                   {r.progressPct > 0 ? `${r.progressPct}% · ` : ''}{r.progress}
                 {:else}
@@ -196,7 +196,7 @@
               </div>
               <RunStateBadge state={r.state} />
             </div>
-            <div class="mt-0.5 truncate font-mono text-xs text-dark-2">
+            <div class="mt-0.5 break-words font-mono text-xs text-dark-2">
               <span class="font-bold text-dark-0">{r.base}</span>{r.sub ? ` · ${r.sub}` : ''}
             </div>
           </div>

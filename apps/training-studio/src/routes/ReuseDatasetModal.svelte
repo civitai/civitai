@@ -22,6 +22,15 @@
   // Derive the fetch from `open` so the list re-loads each time it's opened; never rejects the panel.
   const trainings = $derived(browser && open ? backend().listTrainings() : null);
 
+  // Time as well as date: same-day re-runs of one dataset are exactly the duplicates this tells apart.
+  const createdLabel = (iso: string) =>
+    new Date(iso).toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+
   let loadingId = $state<string | null>(null);
   let error = $state('');
 
@@ -88,6 +97,9 @@
                   <div class="truncate font-mono text-xs text-dark-2">
                     {row.base}{row.sub ? ` · ${row.sub}` : ''}
                   </div>
+                  {#if row.createdAt}
+                    <div class="font-mono text-xs text-dark-2">{createdLabel(row.createdAt)}</div>
+                  {/if}
                 </div>
                 <span class="ml-auto font-mono text-xs text-dark-2">
                   {loadingId === row.workflowId ? 'Loading…' : 'Use'}

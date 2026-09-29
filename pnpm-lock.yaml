@@ -17,6 +17,9 @@ overrides:
   ws@7: ^7.5.11
 
 patchedDependencies:
+  '@civitai/generation-metadata@0.3.0':
+    hash: b56e151a4a0d52a7972115e0b8ecc7c490c3d4da80392f21ab65df662d1c5ce2
+    path: patches/@civitai__generation-metadata@0.3.0.patch
   '@mantine/hooks':
     hash: b45a85bd4d007c796b93eb90a75d3234b81cce13964921b25721734c7ed79f64
     path: patches/@mantine__hooks.patch
@@ -63,7 +66,10 @@ importers:
         version: link:packages/civitai-flipt
       '@civitai/generation-metadata':
         specifier: ^0.3.0
-        version: 0.3.0
+        version: 0.3.0(patch_hash=b56e151a4a0d52a7972115e0b8ecc7c490c3d4da80392f21ab65df662d1c5ce2)
+      '@civitai/mod-utils':
+        specifier: workspace:*
+        version: link:packages/civitai-mod-utils
       '@civitai/moderation':
         specifier: workspace:*
         version: link:packages/civitai-moderation
@@ -71,8 +77,8 @@ importers:
         specifier: ^0.17.0
         version: 0.17.0(next@16.3.1(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0))
       '@civitai/orchestration-client':
-        specifier: 0.2.0-beta.110
-        version: 0.2.0-beta.110
+        specifier: 0.2.0-beta.112
+        version: 0.2.0-beta.112
       '@civitai/shared':
         specifier: workspace:*
         version: link:packages/civitai-shared
@@ -1437,6 +1443,9 @@ importers:
       '@civitai/flipt':
         specifier: workspace:*
         version: link:../../packages/civitai-flipt
+      '@civitai/orchestration-client':
+        specifier: 0.2.0-beta.112
+        version: 0.2.0-beta.112
       '@civitai/redis':
         specifier: workspace:*
         version: link:../../packages/civitai-redis
@@ -2231,8 +2240,8 @@ packages:
     peerDependencies:
       next: ^12.1.4 || ^13 || ^14
 
-  '@civitai/orchestration-client@0.2.0-beta.110':
-    resolution: {integrity: sha512-YoKHDHVUAiXeeY6bFSZs3I6TYoDi3CH3JuG9c+xsy206zbXnfVT9yRPczJF2/KaaVwg4G7ZveY7e3CudpV3y4Q==}
+  '@civitai/orchestration-client@0.2.0-beta.112':
+    resolution: {integrity: sha512-xjwMHtkW9JosuA6Fq28Lfn+bOodgxN3ILRhtdFRm0GvDeGPF+wBSECcowSfgpdzF2TlWyiOAHH4KHZc8WH8keA==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
 
   '@clavata/sdk@0.2.3':
@@ -13460,7 +13469,7 @@ snapshots:
     dependencies:
       fast-xml-parser: 5.10.1
 
-  '@civitai/generation-metadata@0.3.0':
+  '@civitai/generation-metadata@0.3.0(patch_hash=b56e151a4a0d52a7972115e0b8ecc7c490c3d4da80392f21ab65df662d1c5ce2)':
     dependencies:
       exifreader: 4.41.3
       zod: 4.4.3
@@ -13470,7 +13479,7 @@ snapshots:
       next: 16.3.1(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0)
       whatwg-fetch: 3.6.20
 
-  '@civitai/orchestration-client@0.2.0-beta.110':
+  '@civitai/orchestration-client@0.2.0-beta.112':
     dependencies:
       '@hey-api/client-fetch': 0.1.14
       rfc6902: 5.2.0
@@ -17668,9 +17677,9 @@ snapshots:
       obug: 2.1.1
       std-env: 4.2.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))
+      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.2))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))
     optionalDependencies:
-      '@vitest/browser': 4.1.11(bufferutil@4.0.9)(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.1.11)
+      '@vitest/browser': 4.1.11(bufferutil@4.0.9)(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.2))(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.1.11)
 
   '@vitest/expect@4.1.11':
     dependencies:

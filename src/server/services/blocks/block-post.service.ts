@@ -27,6 +27,7 @@ import {
   TagType,
 } from '~/shared/utils/prisma/enums';
 import { Availability } from '~/shared/utils/prisma/enums';
+import { canViewModelVersionStatus } from '~/server/common/model-version-visibility';
 
 /**
  * App Blocks → a REAL Civitai Post (`blocks.createPostFromApp` /
@@ -339,6 +340,8 @@ export async function resolveGalleryTarget(input: {
       id: true,
       name: true,
       status: true,
+      publishedAt: true,
+      availability: true,
       modelId: true,
       model: {
         select: {
@@ -359,11 +362,22 @@ export async function resolveGalleryTarget(input: {
   // distinguish "gone" from "not allowed".
   if (!version || !version.model) badRequest('gallery target is not available');
   if (version.model.deletedAt) badRequest('gallery target is not available');
-  if (version.status !== ModelStatus.Published) badRequest('gallery target is not available');
-  if (version.model.status !== ModelStatus.Published) badRequest('gallery target is not available');
+  // Judged for no viewer, not the poster: a gallery post is public, so the version must be
+  // publicly visible even when the poster owns it.
+  if (
+    !canViewModelVersionStatus({
+      viewer: null,
+      ownerId: version.model.userId,
+      modelStatus: version.model.status,
+      versionStatus: version.status,
+      publishedAt: version.publishedAt,
+    })
+  )
+    badRequest('gallery target is not available');
   if (version.model.availability !== Availability.Public) {
     badRequest('gallery target is not available');
   }
+  if (version.availability === Availability.Private) badRequest('gallery target is not available');
 
   // SELF-DEALING. Resolved from the token's OWN appId → OauthClient.userId; the
   // block supplies neither side of this comparison.

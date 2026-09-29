@@ -1,7 +1,7 @@
 import { Badge, Group, Text, Tooltip } from '@mantine/core';
 import clsx from 'clsx';
 import { chunk } from 'lodash-es';
-import { createContext, useContext, useMemo, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, type ReactNode } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { ResourceLoadAvailability } from '~/server/schema/resource-load.schema';
 import { isQueuedAvailability, RESIDENCY_MAX_IDS } from '~/server/schema/resource-load.schema';
@@ -10,17 +10,22 @@ import { settledEtaSeconds } from '~/shared/orchestrator/download-preparation';
 import { trpc } from '~/utils/trpc';
 import type { GeneratorReadiness } from '~/shared/generation/generator-readiness';
 
-/** The answer is server-cached for 30s (`RESIDENCY_CACHE_SECONDS`), so a faster poll re-reads it. */
-const RESIDENCY_POLL_MS = 60_000;
+/**
+ * Not shorter: every remount inside the generation panel would refetch. A panel open refreshes
+ * through `useRefreshResidencyOnOpen` instead. Focus refetch overrides the app default.
+ */
+const RESIDENCY_QUERY_OPTIONS = { staleTime: 30_000, refetchOnWindowFocus: true } as const;
 
-const pollWhileAnyIsCold = (query: {
-  state: { data?: { availability: ResourceLoadAvailability }[] };
-}) =>
-  query.state.data?.every(
-    (x) => x.availability.status === 'available' || x.availability.status === 'external'
-  )
-    ? false
-    : RESIDENCY_POLL_MS;
+/**
+ * One refresh per open, whatever the stale window. Invalidation also covers the queries that mount
+ * after this runs, since the panel loads its contents lazily.
+ */
+export function useRefreshResidencyOnOpen(opened: boolean) {
+  const utils = trpc.useUtils();
+  useEffect(() => {
+    if (opened) void utils.resourceLoad.getResidency.invalidate();
+  }, [opened, utils]);
+}
 
 export function useResourceResidency(modelVersionId: number | undefined) {
   const currentUser = useCurrentUser();
@@ -28,8 +33,7 @@ export function useResourceResidency(modelVersionId: number | undefined) {
     { modelVersionIds: [modelVersionId ?? 0] },
     {
       enabled: !!currentUser && modelVersionId != null && modelVersionId > 0,
-      staleTime: 30_000,
-      refetchInterval: pollWhileAnyIsCold,
+      ...RESIDENCY_QUERY_OPTIONS,
     }
   );
   return data?.find((x) => x.modelVersionId === modelVersionId)?.availability;
@@ -123,8 +127,7 @@ export function ResidencyBatchProvider({
         { modelVersionIds },
         {
           enabled: !!currentUser && modelVersionIds.length > 0,
-          staleTime: 30_000,
-          refetchInterval: pollWhileAnyIsCold,
+          ...RESIDENCY_QUERY_OPTIONS,
         }
       )
     )

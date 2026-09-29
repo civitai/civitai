@@ -203,10 +203,13 @@ export const processScheduledPublishing = createJob(
         ];
 
         if (modelsToUpdate.length) {
+          // DB clock, truncated: sync_model_to_metric drops a lastVersionAt later than NOW(), and the
+          // timestamp(3) column rounds a bare NOW() UP about half the time. Either leaves
+          // ModelMetric.lastVersionAt NULL and the model off feeds.
           await tx.$executeRaw`
             -- Update last version of models with versions transitioned to published
             UPDATE "Model"
-            SET "lastVersionAt" = ${now}
+            SET "lastVersionAt" = date_trunc('milliseconds', NOW())
             WHERE id IN (${Prisma.join(modelsToUpdate)})
               AND (meta IS NULL OR (meta->>'cannotPublish')::boolean IS NOT TRUE);
           `;

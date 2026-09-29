@@ -8,9 +8,9 @@ import type * as NotificationsUtils from '~/components/Notifications/notificatio
 import '~/styles/globals.css';
 import '@mantine/core/styles.layer.css';
 
-// A count wide enough to matter. `all` is the tab the drawer opens on, so it is
-// the one a reader sees selected.
-const counts = { all: 1330, comments: 2200, milestones: 0, updates: 0, bounties: 0, buzz: 0 };
+// The widest badge a tab can render (`999+`, a floor below the 1k+ cap). `all` is the tab the drawer
+// opens on, so it is the one a reader sees selected.
+const counts = { all: 999, unreadCountsAreFloors: 1, comment: 2200, update: 0, bounty: 0, buzz: 0 };
 
 vi.mock('~/components/Notifications/notifications.utils', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationsUtils>()),

@@ -1,4 +1,3 @@
-import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -11,7 +10,6 @@ import {
   type BlockAttributionScope,
 } from '~/server/schema/blocks/attribution.schema';
 import {
-  newBlockAttributionPayoutId,
   newBlockBuzzAttributionId,
   newBlockSpendAttributionId,
   newBlockSubscriptionAttributionId,
@@ -378,6 +376,69 @@ export type RecordSpendAttributionInput = {
    * final. Never persisted.
    */
   generationPriceIsCap?: boolean | null;
+  /**
+   * PRIVATE RUN of a delisted / suspended app — from the verified token's
+   * `privateRun` claim. When true the row is written `voided` instead of
+   * `tracked`.
+   *
+   * 🔴 THE ROW IS STILL WRITTEN, AND THAT IS DELIBERATE. The alternative —
+   * a non-resolving synthetic `appId`, which is how the mod review sandbox
+   * excludes both money rails — would also break per-app storage namespacing,
+   * the `page_<appBlockId>` ban-revocation instance id, and every runtime
+   * metric label. So the real ids are kept and the rail is closed explicitly
+   * here. A voided row preserves the audit trail at zero money cost:
+   * `spendSharePct` and `appOwnerShareCents` are already hardcoded 0 below, so
+   * void-vs-tracked moves no Buzz either way — what it protects is the RUN
+   * COUNT and BUZZ SUM a suspended app's owner can see.
+   *
+   * 🔴 THE VOID ALONE DOES NOT YET DELIVER THE PROTECTION, AND THIS IS THE ONE
+   * PLACE THAT SAYS SO. Both owner-visible reads of this table --
+   * `app-analytics.service.ts`'s `aggregate` and its raw per-bucket series --
+   * carry NO `status` predicate, so a voided row is still counted as a run and
+   * its Buzz still sums into the owner's dashboard. The two PRE-EXISTING voids
+   * (`self_spend`, `internal_owner`) are already counted that way, which is the
+   * evidence that this marker currently has no reader.
+   *
+   * The `status <> 'voided'` filter is therefore HELD, not forgotten: it would
+   * drop the large majority of existing rows and Buzz from every owner's
+   * analytics at once, and a second consumer of this table lives outside this
+   * repo, so it is a product decision rather than a detail of this arm. Do not
+   * read the void as coverage until that filter is in.
+   *
+   * 🔴 THE SENTENCE THAT USED TO FOLLOW IS NOW FALSE, AND CORRECTING IT IS WHY
+   * THIS PARAGRAPH EXISTS. It read: "It must land before the private-run surface
+   * is ENABLED -- which is safe, because until a mint exists no private-run row
+   * can be written." THE MINT NOW EXISTS. It shipped with the private-run surface
+   * (`tryPrivateRunMint`, PHASE 3 of the page-token mint), so the clause that made
+   * the deferral safe has been consumed, and what remains is the requirement alone:
+   * the filter MUST land before the `app-blocks-private-run-enabled` flag is set
+   * to anything other than `false`. Nothing in the code enforces that ordering —
+   * it is a precondition on a flag flip in a DIFFERENT repo, which is exactly the
+   * kind of dependency that gets lost. It is restated at
+   * `isAppBlocksPrivateRunEnabled` in `app-blocks-flag.ts`, which is the file
+   * somebody flipping that flag will actually open.
+   *
+   * 🔴 AND THE LEAK IS WIDER THAN THIS TABLE — a finding from the private-run
+   * review, recorded here because this is where the "invisible to the owner"
+   * decision is documented. `block_scope_invocations` rows are written by
+   * `withBlockScope` for EVERY scoped call, carrying the real `app_block_id` and
+   * the VIEWER's `user_id`, and `app-analytics.service.ts` reads them into the
+   * owner-visible panel through FIVE unfiltered queries: the engagement count, a
+   * raw `count(DISTINCT user_id)`, the error count, and the top-scopes and
+   * top-endpoints groupings. None is status-aware, and unlike this table there is
+   * no marker on those rows to filter ON — a private run is indistinguishable
+   * from a real user's call at the row level. So a moderator's private run
+   * surfaces in the publisher's dashboard as calls AND as a distinct user even
+   * once the `status <> 'voided'` filter lands here.
+   *
+   * Closing that half needs a discriminator on `block_scope_invocations`, i.e. a
+   * migration — which in this repo is hand-applied per environment and therefore
+   * a separate, sequenced change. It is NOT closed by this arm and must not be
+   * read as such.
+   *
+   * Absent/false → byte-identical to the pre-feature behaviour.
+   */
+  privateRun?: boolean | null;
 };
 
 export type RecordSpendAttributionResult = {
@@ -516,6 +577,7 @@ export async function recordSpendAttribution(
     blockInstanceId,
     modelId = null,
     sharedContentKey = null,
+    privateRun = false,
   } = input;
 
   // APP-FACING generation type (`textToImage:txt2img`, `customComfy:inline`, a
@@ -597,13 +659,38 @@ export async function recordSpendAttribution(
   const spendSharePct = 0;
   const appOwnerShareCents = 0;
 
-  // Void rows that are zero because of WHO spent/owns. Otherwise the row is
-  // 'tracked'. ⚠️ NOT "share-pending awaiting a payout-time backpay" — that was
-  // the removed spend bounty. No backpay reads this table; 'tracked' is where a
-  // spend row stays. The void/track distinction is kept because it is the
-  // self-spend / internal-owner marker the analytics reader and any future rail
-  // would both need, and voiding costs nothing.
-  const voidedReason = isSelfSpend ? 'self_spend' : isInternal ? 'internal_owner' : null;
+  // Void rows that are zero because of WHO spent/owns, or because the run was not
+  // a USE of the app at all. Otherwise the row is 'tracked'. ⚠️ NOT
+  // "share-pending awaiting a payout-time backpay" — that was the removed spend
+  // bounty. No backpay reads this table; 'tracked' is where a spend row stays. The
+  // void/track distinction is kept because it is the self-spend / internal-owner /
+  // private-run marker the analytics reader and any future rail would both need,
+  // and voiding costs nothing.
+  //
+  // 🔴 PRIVATE RUN IS TESTED FIRST, AND THE ORDER IS A DISCRIMINABILITY CHOICE, NOT
+  // A MONEY ONE. Every arm here produces the same money outcome (the row is voided;
+  // the share columns are already 0), so ordering cannot change what anyone is paid.
+  // What it changes is the LABEL on an owner's own private run, where both this arm
+  // and `isSelfSpend` are true: testing private-run first records WHY the row exists
+  // (a diagnostic run) rather than merely who spent. The audience — owner, editor or
+  // moderator — is deliberately NOT on this row; it rides the mint's audit line
+  // instead, so a money/audit table gains no new column and no new enum value.
+  //
+  // 🔴 `'manual_review'` IS REUSED RATHER THAN ADDING A `'private_run'` VALUE
+  // (operator decision, 2026-09-27). It is already legal under
+  // `block_spend_attribution_voided_reason_check`, so this ships with NO migration
+  // and no per-environment hand-apply. The cost is that a private run is not
+  // distinguishable from an operator-voided row *in this column* — accepted,
+  // because nothing pays out of this table and the mint audit line carries the
+  // discriminating fields anyway.
+  const voidedReason =
+    privateRun === true
+      ? 'manual_review'
+      : isSelfSpend
+      ? 'self_spend'
+      : isInternal
+      ? 'internal_owner'
+      : null;
   const status = voidedReason ? 'voided' : 'tracked';
   const voidedAt = voidedReason ? new Date() : null;
 
@@ -651,13 +738,15 @@ export async function recordSpendAttribution(
       },
     });
 
-    // PER-GENERATION AUTHOR FEE — DARK OBSERVATION ONLY (slice 1). Computes
-    // what the additive, author-set, viewer-paid fee WOULD be for this
-    // generation and reports it to the counters + the log line below. It moves
-    // no money, writes no column, and is unreachable unless
-    // `app-blocks-author-fee-enabled` is on. Settlement onto the licensing-fee
-    // rail is a later slice; this exists so that slice can be sized from real
-    // traffic before anyone is charged.
+    // PER-GENERATION AUTHOR FEE — OBSERVATION ONLY, BUT NOT OF A DARK RAIL.
+    // Computes what the additive, author-set, viewer-paid fee WOULD be for this
+    // generation and reports it to the counters + the log line below. THIS CALL
+    // moves no money, writes no column, and is unreachable unless
+    // `app-blocks-author-fee-enabled` is on. ⚠️ An earlier revision added
+    // "settlement onto the licensing-fee rail is a later slice; this exists so
+    // that slice can be sized from real traffic before anyone is charged".
+    // Settlement has shipped and viewers ARE charged, on the submit path via
+    // `quoteBlockAuthorFee`; what this call buys now is sizing of a LIVE fee.
     //
     // 🔴 OBSERVED AFTER THE SUCCESSFUL WRITE, NOT BEFORE IT. This row is
     // idempotent on (workflowId, appBlockId); a re-poll / retry lands in the
@@ -668,13 +757,12 @@ export async function recordSpendAttribution(
     // this is a DIVERGENCE from how attribution behaves two lines up, where
     // `isSelfSpend` voids the row. The author fee is the VIEWER paying the
     // author, and an author using their own app is a viewer like any other.
-    // ⚠️ FLAGGED FOR SLICE 2: at settlement that becomes a Buzz
-    // transaction from an account to ITSELF, which is at best a no-op and may be
-    // rejected outright. Slice 1's shape does not make that harder — the
-    // observation carries no recipient, and `isSelfSpend` is already on this
-    // log line beside the fee — but the settlement writer has to decide
-    // explicitly whether a self-transfer is skipped or netted, rather than
-    // discovering it from a rejected transaction.
+    // ⚠️ AT SETTLEMENT a self-spend would be a Buzz transaction from an account
+    // to ITSELF, at best a no-op and possibly rejected. That is no longer a
+    // flag-for-later: the charge path handles it, and
+    // `resolveBlockAuthorFeePayee` is where a self-dealing author is excluded.
+    // This observation is unaffected — it carries no recipient, and `isSelfSpend`
+    // is already on the log line beside the fee.
     //
     // 🔴 NO `.catch` HERE, DELIBERATELY. `observeBlockAuthorFee` is TOTAL by
     // contract — every throwing surface inside it (the flag read, each counter
@@ -710,6 +798,26 @@ export async function recordSpendAttribution(
     // `flag-disabled` and never `base-unavailable`", and went stale the moment
     // `price-is-cap` was added — it would now be the FOURTH, and the "never"
     // list had a hole in it exactly where the newest reason sat.
+    // 🔴 `privateRun` IS DELIBERATELY *NOT* THREADED INTO THE OBSERVATION, AND THIS
+    // IS THE ONLY REMAINING ASYMMETRY IN THE FEE FAMILY. A review lane raised it;
+    // the decision is to leave it and record why, because both the size and the
+    // shape of the right fix depend on something that cannot exist yet.
+    //
+    // WHAT THE ASYMMETRY IS: the CHARGE and QUOTE counters exclude a private run
+    // (their payee resolve refuses with `private-run`), so this observation would
+    // count private-run volume that they do not — biasing the observed-vs-quoted
+    // ratio a later pricing decision reads.
+    //
+    // WHY NOT NOW: the bias is EXACTLY ZERO today, not merely small. No mint can
+    // produce the claim, so no private run can reach this line. And the fix is not
+    // free to do correctly — the note above is explicit that a new case here needs a
+    // NEW skip reason of its own and must never be folded into an existing member of
+    // `BlockAuthorFeeSkipReason`, because every reason in that union is a live
+    // population the sizing read divides by. Adding a reason for a population of
+    // zero is how a denominator acquires an empty category nobody can interpret.
+    //
+    // WHEN: with the mint, in the PR that makes a private run possible — at which
+    // point the volume is measurable and the new reason has something to count.
     const authorFee = await observeBlockAuthorFee({
       // 🔴 NOT `buzzAmount` — see the field docs on RecordSpendAttributionInput.
       baseGenerationBuzz: input.baseGenerationBuzz ?? null,
@@ -1351,110 +1459,6 @@ export async function voidAttributionsForPayment({
   }
 
   return result.count;
-}
-
-export type MintPayoutResult =
-  | { minted: true; payoutId: string; totalCents: number; rowCount: number }
-  | { minted: false; alreadyPaid: true }
-  | { minted: false; carriedForwardCents: number; rowCount: number };
-
-/**
- * Idempotently MINT a payout ledger entry for one publisher for one
- * period, and flip the contributing confirmed rows to paid_out — all in
- * a single transaction.
- *
- * IMPORTANT: this function moves NO money. It only writes the
- * block_attribution_payout ledger row and updates row state. Actual
- * disbursement (creator-program cash bank / Tipalti) is a separate,
- * leadership-gated step that reads these ledger rows. The bulk-payout
- * cron deliberately does NOT call this yet — see
- * bulk-payout-block-attributions.ts. Do not add withdrawCash / Tipalti
- * calls here.
- *
- * Idempotency: the (app_owner_user_id, period_key) UNIQUE on
- * block_attribution_payout means a racing or retried mint hits P2002 and
- * no-ops without re-flipping any rows.
- *
- * Carry-forward debt: clawback rows (entry_type='clawback',
- * status='confirmed') carry a NEGATIVE app_owner_share_cents, so the
- * aggregate net naturally subtracts them. If the net is <= 0 we mint
- * nothing and flip nothing — the (negative) debt stays as confirmed rows
- * and carries forward into the next period's aggregate.
- */
-export async function mintPayoutForOwner({
-  appOwnerUserId,
-  periodKey,
-}: {
-  appOwnerUserId: number;
-  periodKey: string;
-}): Promise<MintPayoutResult> {
-  return dbWrite.$transaction(async (tx: Prisma.TransactionClient): Promise<MintPayoutResult> => {
-    // 1. Aggregate this owner's payable rows. status='confirmed'
-    // naturally includes negative entry_type='clawback' rows, so the net
-    // already accounts for carry-forward debt.
-    const agg = await tx.blockBuzzAttribution.aggregate({
-      where: { appOwnerUserId, status: 'confirmed' },
-      _sum: { appOwnerShareCents: true },
-      _count: true,
-    });
-    const netCents = agg._sum.appOwnerShareCents ?? 0;
-    const rowCount = agg._count ?? 0;
-
-    // 2. Non-positive net → don't mint, don't flip. Debt carries forward.
-    if (netCents <= 0) {
-      return { minted: false, carriedForwardCents: netCents, rowCount };
-    }
-
-    // 3. Mint the ledger row. The (owner, period) UNIQUE guards against
-    // a double-pay; P2002 → idempotent no-op (do NOT flip rows again).
-    const payoutId = newBlockAttributionPayoutId();
-    try {
-      await tx.blockAttributionPayout.create({
-        data: {
-          id: payoutId,
-          appOwnerUserId,
-          periodKey,
-          totalCents: netCents,
-          rowCount,
-        },
-      });
-    } catch (err) {
-      const code = (err as { code?: unknown })?.code;
-      if (code === 'P2002') {
-        return { minted: false, alreadyPaid: true };
-      }
-      throw err;
-    }
-
-    // 4. Flip the contributing confirmed rows → paid_out, stamping the
-    // minted payout id. This also flips the negative clawback rows; their
-    // debt is now realized in this period's total and won't re-net next
-    // period.
-    const flipped = await tx.blockBuzzAttribution.updateMany({
-      where: { appOwnerUserId, status: 'confirmed' },
-      data: {
-        status: 'paid_out',
-        paidOutAt: new Date(),
-        payoutId,
-      },
-    });
-
-    logToAxiom(
-      {
-        name: ATTRIBUTION_LOG_NAME,
-        type: 'info',
-        message: `minted payout ${payoutId} for owner ${appOwnerUserId} (${periodKey})`,
-        payoutId,
-        appOwnerUserId,
-        periodKey,
-        totalCents: netCents,
-        rowCount: flipped.count,
-      },
-      'webhooks'
-    ).catch(() => null);
-
-    return { minted: true, payoutId, totalCents: netCents, rowCount: flipped.count };
-  });
 }
 
 /**

@@ -37,14 +37,7 @@ const { mockDbRead, mockDbWrite, mockLog } = vi.hoisted(() => ({
       create: vi.fn(),
       updateMany: vi.fn(),
       findMany: vi.fn(),
-      aggregate: vi.fn(),
     },
-    blockAttributionPayout: {
-      create: vi.fn(),
-    },
-    // Interactive transaction: run the callback against the same mock
-    // (no real isolation needed in these unit tests).
-    $transaction: vi.fn((fn: (tx: unknown) => unknown) => fn(mockDbWrite)),
   },
   mockLog: vi.fn(),
 }));
@@ -64,7 +57,6 @@ import {
   AttributionAppMissingError,
   emptyRevenue,
   getRevenueForOwner,
-  mintPayoutForOwner,
   recordAttribution,
   REFUND_WINDOWS_DAYS,
   voidAttributionsForPayment,
@@ -93,8 +85,6 @@ beforeEach(() => {
   mockDbWrite.blockBuzzAttribution.create.mockReset();
   mockDbWrite.blockBuzzAttribution.updateMany.mockReset();
   mockDbWrite.blockBuzzAttribution.findMany.mockReset();
-  mockDbWrite.blockBuzzAttribution.aggregate.mockReset();
-  mockDbWrite.blockAttributionPayout.create.mockReset();
   // findMany defaults to "no paid_out rows" so existing void tests that
   // don't set it up exercise the no-clawback path.
   mockDbWrite.blockBuzzAttribution.findMany.mockResolvedValue([]);
@@ -106,16 +96,14 @@ beforeEach(() => {
   });
   // Default create echoes back what the caller supplied (the service
   // selects a subset of columns; we return the same subset).
-  mockDbWrite.blockBuzzAttribution.create.mockImplementation(
-    async ({ data, select }: any) => {
-      // Clawback writes (voidAttributionsForPayment) pass no `select` —
-      // just echo the row back. recordAttribution passes a select subset.
-      if (!select) return { ...data };
-      const result: any = {};
-      for (const k of Object.keys(select)) result[k] = data[k] ?? null;
-      return result;
-    }
-  );
+  mockDbWrite.blockBuzzAttribution.create.mockImplementation(async ({ data, select }: any) => {
+    // Clawback writes (voidAttributionsForPayment) pass no `select` —
+    // just echo the row back. recordAttribution passes a select subset.
+    if (!select) return { ...data };
+    const result: any = {};
+    for (const k of Object.keys(select)) result[k] = data[k] ?? null;
+    return result;
+  });
 });
 
 describe('recordAttribution', () => {
@@ -146,9 +134,9 @@ describe('recordAttribution', () => {
     // is version-stable; only the stamped version label tracks ACTIVE.
     expect(dataArg.appOwnerShareCents).toBe(142);
     expect(dataArg.platformShareCents).toBe(808);
-    expect(
-      dataArg.providerFeeCents + dataArg.platformShareCents + dataArg.appOwnerShareCents
-    ).toBe(1000);
+    expect(dataArg.providerFeeCents + dataArg.platformShareCents + dataArg.appOwnerShareCents).toBe(
+      1000
+    );
     // Pin to the active card's version rather than a literal so this doesn't
     // go stale every time ACTIVE_RATE_CARD advances (it was stale at 'v2'
     // through the V3 bump).
@@ -466,118 +454,6 @@ describe('voidAttributionsForPayment', () => {
     const clawback = mockDbWrite.blockBuzzAttribution.create.mock.calls[0][0].data;
     expect(clawback.appBlockId).toBe('apb_paid');
     expect(clawback.appOwnerShareCents).toBe(-50);
-  });
-});
-
-describe('mintPayoutForOwner', () => {
-  const PERIOD = '2026-W22';
-
-  it('mints, writes the ledger, and flips rows when net is positive', async () => {
-    mockDbWrite.blockBuzzAttribution.aggregate.mockResolvedValueOnce({
-      _sum: { appOwnerShareCents: 1500 },
-      _count: 7,
-    });
-    mockDbWrite.blockAttributionPayout.create.mockResolvedValueOnce({});
-    mockDbWrite.blockBuzzAttribution.updateMany.mockResolvedValueOnce({ count: 7 });
-
-    const result = await mintPayoutForOwner({
-      appOwnerUserId: APP_OWNER_USER_ID,
-      periodKey: PERIOD,
-    });
-
-    expect(result).toMatchObject({
-      minted: true,
-      totalCents: 1500,
-      rowCount: 7,
-    });
-    if (result.minted) expect(result.payoutId).toMatch(/^bba_payout_/);
-
-    // Ledger row written with the right shape.
-    const ledger = mockDbWrite.blockAttributionPayout.create.mock.calls[0][0].data;
-    expect(ledger.appOwnerUserId).toBe(APP_OWNER_USER_ID);
-    expect(ledger.periodKey).toBe(PERIOD);
-    expect(ledger.totalCents).toBe(1500);
-    expect(ledger.rowCount).toBe(7);
-    expect(ledger.id).toMatch(/^bba_payout_/);
-
-    // Contributing confirmed rows flipped to paid_out with the payout id.
-    const flip = mockDbWrite.blockBuzzAttribution.updateMany.mock.calls[0][0];
-    expect(flip.where).toEqual({ appOwnerUserId: APP_OWNER_USER_ID, status: 'confirmed' });
-    expect(flip.data.status).toBe('paid_out');
-    expect(flip.data.payoutId).toBe(ledger.id);
-    expect(flip.data.paidOutAt).toBeInstanceOf(Date);
-  });
-
-  it('is idempotent on P2002 — no second flip, no throw', async () => {
-    mockDbWrite.blockBuzzAttribution.aggregate.mockResolvedValueOnce({
-      _sum: { appOwnerShareCents: 1500 },
-      _count: 7,
-    });
-    mockDbWrite.blockAttributionPayout.create.mockRejectedValueOnce(
-      new FakePrismaKnownError('Unique constraint failed', 'P2002')
-    );
-
-    const result = await mintPayoutForOwner({
-      appOwnerUserId: APP_OWNER_USER_ID,
-      periodKey: PERIOD,
-    });
-
-    expect(result).toEqual({ minted: false, alreadyPaid: true });
-    // The contributing rows were NOT flipped a second time.
-    expect(mockDbWrite.blockBuzzAttribution.updateMany).not.toHaveBeenCalled();
-  });
-
-  it('carries forward (no mint, no flip) when net <= 0', async () => {
-    mockDbWrite.blockBuzzAttribution.aggregate.mockResolvedValueOnce({
-      _sum: { appOwnerShareCents: -200 },
-      _count: 3,
-    });
-
-    const result = await mintPayoutForOwner({
-      appOwnerUserId: APP_OWNER_USER_ID,
-      periodKey: PERIOD,
-    });
-
-    expect(result).toEqual({ minted: false, carriedForwardCents: -200, rowCount: 3 });
-    expect(mockDbWrite.blockAttributionPayout.create).not.toHaveBeenCalled();
-    expect(mockDbWrite.blockBuzzAttribution.updateMany).not.toHaveBeenCalled();
-  });
-
-  it('carries forward when net is exactly zero', async () => {
-    mockDbWrite.blockBuzzAttribution.aggregate.mockResolvedValueOnce({
-      _sum: { appOwnerShareCents: 0 },
-      _count: 4,
-    });
-    const result = await mintPayoutForOwner({
-      appOwnerUserId: APP_OWNER_USER_ID,
-      periodKey: PERIOD,
-    });
-    expect(result).toEqual({ minted: false, carriedForwardCents: 0, rowCount: 4 });
-    expect(mockDbWrite.blockAttributionPayout.create).not.toHaveBeenCalled();
-  });
-
-  it('nets negative clawbacks against positives in the aggregate net', async () => {
-    // The aggregate sums confirmed rows; the service trusts the DB sum
-    // (positives + negative clawbacks). Here the net comes back at 800
-    // (e.g. 1000 positive - 200 clawback) and is minted as such.
-    mockDbWrite.blockBuzzAttribution.aggregate.mockResolvedValueOnce({
-      _sum: { appOwnerShareCents: 800 },
-      _count: 5,
-    });
-    mockDbWrite.blockAttributionPayout.create.mockResolvedValueOnce({});
-    mockDbWrite.blockBuzzAttribution.updateMany.mockResolvedValueOnce({ count: 5 });
-
-    const result = await mintPayoutForOwner({
-      appOwnerUserId: APP_OWNER_USER_ID,
-      periodKey: PERIOD,
-    });
-
-    expect(result).toMatchObject({ minted: true, totalCents: 800, rowCount: 5 });
-    const ledger = mockDbWrite.blockAttributionPayout.create.mock.calls[0][0].data;
-    expect(ledger.totalCents).toBe(800);
-    // The aggregate query only ever reads confirmed rows.
-    const aggWhere = mockDbWrite.blockBuzzAttribution.aggregate.mock.calls[0][0].where;
-    expect(aggWhere).toEqual({ appOwnerUserId: APP_OWNER_USER_ID, status: 'confirmed' });
   });
 });
 

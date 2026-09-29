@@ -39,7 +39,8 @@ import {
   throwBadRequestError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { getPrimaryFile, getTrainingFileEpochNumberDetails } from '~/server/utils/model-helpers';
+import { getTrainingFileEpochNumberDetails } from '~/server/utils/model-helpers';
+import { getGenerationFile } from '~/server/utils/resource-air';
 import { withSpan } from '~/server/utils/otel-helpers';
 import {
   fluxKreaAir,
@@ -1373,8 +1374,8 @@ export async function getResourceData(
     resource: ReturnType<typeof transformGenerationData>,
     modelFiles: ModelFileCached[]
   ) {
-    const primaryFile = getPrimaryFile(modelFiles);
-    const fileSizeKB = primaryFile?.sizeKB;
+    const generationFile = getGenerationFile(modelFiles);
+    const fileSizeKB = generationFile?.sizeKB;
     const featured = !!featuredModels.find((x) => x.modelId === resource.model.id);
     let additionalResourceCost = true;
     if (
@@ -1391,7 +1392,7 @@ export async function getResourceData(
       fileSizeKB: fileSizeKB ? Math.round(fileSizeKB) : undefined,
       additionalResourceCost,
       epochDetails,
-      primaryFileType: primaryFile?.type,
+      generationFileType: generationFile?.type,
     };
   }
 
@@ -1399,18 +1400,15 @@ export async function getResourceData(
     resource: ReturnType<typeof transformGenerationData>,
     modelFiles: ModelFileCached[]
   ) {
-    const { fileSizeKB, additionalResourceCost, epochDetails, primaryFileType } = getModelFileProps(
-      resource,
-      modelFiles
-    );
+    const { fileSizeKB, additionalResourceCost, epochDetails, generationFileType } =
+      getModelFileProps(resource, modelFiles);
     const air = stringifyAIR({
       baseModel: resource.baseModel,
       type: resource.model.type,
       modelId: epochDetails ? epochDetails.jobId : resource.model.id,
       id: epochDetails ? epochDetails.fileName : resource.id,
-      // epoch resources resolve to an orchestrator-hosted file, not the version's
-      // primary model file, so only forward the file type for civitai sources.
-      fileType: epochDetails ? undefined : primaryFileType,
+      // Epoch resources are orchestrator-hosted; only a civitai source carries a file type.
+      fileType: epochDetails ? undefined : generationFileType,
       source: epochDetails ? 'orchestrator' : 'civitai',
     });
 
@@ -1674,16 +1672,26 @@ export function extractHashCandidates(
  *
  * Returns { resources, params } where params are ready for the generation graph.
  */
-type HashMatch = { versionPublished: boolean; versionDate: Date; fileId: number };
+type HashMatch = {
+  versionPublished: boolean;
+  isOfficial: boolean;
+  versionDate: Date;
+  fileId: number;
+};
 
 /**
  * Which of several files sharing one hash gets the credit. Mirrors
- * get_image_resources.sql's `ORDER BY IIF(version_published,0,1), version_date, file_id`:
- * published first, then OLDEST, then lowest file id.
+ * get_image_resources.sql's
+ * `ORDER BY IIF(version_published,0,1), IIF(is_official,0,1), version_date, file_id`:
+ * published first, then OFFICIAL, then OLDEST, then lowest file id.
  *
- * Oldest, not newest. A hash shared across owners is in practice a re-upload of someone
- * else's weights, so the earliest published copy is the closest thing to the original
- * uploader; preferring the most recent hands every duplicated model to whoever posted it
+ * Official outranks date because a hash is a statement about bytes: when the same bytes sit on an
+ * official version and on a community re-host, the official page is the true answer whoever
+ * uploaded first.
+ *
+ * Oldest, not newest, for everything below that. A hash shared across owners is in practice a
+ * re-upload of someone else's weights, so the earliest published copy is the closest thing to the
+ * original uploader; preferring the most recent hands every duplicated model to whoever posted it
  * last. This read `>` until 2026-09-15, which meant the image page credited the original
  * and the generator credited the re-uploader for the same file — the two are the same
  * rule in two languages, and nothing compares them.
@@ -1691,6 +1699,7 @@ type HashMatch = { versionPublished: boolean; versionDate: Date; fileId: number 
 export function prefersHashMatch(candidate: HashMatch, existing: HashMatch | undefined): boolean {
   if (!existing) return true;
   if (existing.versionPublished !== candidate.versionPublished) return candidate.versionPublished;
+  if (existing.isOfficial !== candidate.isOfficial) return candidate.isOfficial;
   const existingDate = existing.versionDate.valueOf();
   const candidateDate = candidate.versionDate.valueOf();
   if (existingDate !== candidateDate) return candidateDate < existingDate;
@@ -1723,6 +1732,7 @@ export async function resolveImageMeta({
         modelVersionId: number;
         fileId: number;
         versionPublished: boolean;
+        isOfficial: boolean;
         versionDate: Date;
         excludeFromAutoDetection: boolean;
       }>
@@ -1732,6 +1742,7 @@ export async function resolveImageMeta({
         mf."modelVersionId",
         mf.id AS "fileId",
         mv.status = 'Published' AS "versionPublished",
+        COALESCE(m."isOfficial", false) AS "isOfficial",
         COALESCE(mv."publishedAt", mv."createdAt") AS "versionDate",
         COALESCE(mv.meta->>'excludeFromAutoDetection', '') != '' AS "excludeFromAutoDetection"
       FROM "ModelFileHash" mfh

@@ -1089,6 +1089,7 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // Qwen 2.1 - hosted checkpoint and release-specific LoRAs
   { ecosystemId: ECO.Qwen21, supportType: 'generation', modelTypes: checkpointAndLora },
+  { ecosystemId: ECO.Qwen21, supportType: 'training', modelTypes: loraOnly },
 
   // Qwen 3 - checkpoint only
   { ecosystemId: ECO.Qwen3, supportType: 'generation', modelTypes: [ModelType.Checkpoint] },
@@ -1244,6 +1245,7 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // Ming - checkpoint and LORA; the Layer checkpoint has no backend route yet
   { ecosystemId: ECO.Ming, supportType: 'generation', modelTypes: checkpointAndLora },
+  { ecosystemId: ECO.Ming, supportType: 'training', modelTypes: loraOnly },
 
   // Boogu - checkpoint and LORA (training upcoming per orchestrator)
   { ecosystemId: ECO.Boogu, supportType: 'generation', modelTypes: checkpointAndLora },
@@ -1268,6 +1270,7 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // resources the form cannot send.
   { ecosystemId: ECO.MiniMaxMusic3, supportType: 'generation', modelTypes: checkpointOnly },
   { ecosystemId: ECO.YuE2, supportType: 'generation', modelTypes: checkpointOnly },
+  { ecosystemId: ECO.YuE2, supportType: 'training', modelTypes: loraOnly },
 
   // PolyGen - remote 3D generator (Meshy via Fal). No Civitai checkpoint/LoRA;
   // entry exists so the unified generator picker can route 3D-Models workflows

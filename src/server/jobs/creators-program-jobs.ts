@@ -18,7 +18,6 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { withRetries } from '~/server/utils/errorHandling';
 import {
   CAPPED_BUZZ_VALUE,
-  EXTRACTION_PHASE_DURATION,
   FIRST_CREATOR_PROGRAM_MONTH,
   MIN_WITHDRAWAL_AMOUNT,
 } from '~/shared/constants/creator-program.constants';
@@ -30,7 +29,11 @@ import {
   SignalTopic,
 } from '~/server/common/enums';
 import { signalClient } from '~/utils/signal-client';
-import { getCreatorProgramAvailability } from '~/server/utils/creator-program.utils';
+import type { CreatorProgramStageNotification } from '~/server/utils/creator-program.utils';
+import {
+  getCreatorProgramAvailability,
+  isStageNotificationDay,
+} from '~/server/utils/creator-program.utils';
 import { createNotification } from '~/server/services/notification.service';
 import { logToAxiom } from '~/server/logging/client';
 import { Prisma } from '@prisma/client';
@@ -295,59 +298,45 @@ const getCreatorProgramUsers = async ({
   return users.map((u) => u.userId);
 };
 
-export const bankingPhaseEndingNotification = createJob(
-  'creator-program-banking-phase-ending',
-  // Banking ends at the end of day L-EXTRACTION_PHASE_DURATION (see getPhases), so L-3
-  // is the last day people can still bank — fire the "last day" nudge that morning.
-  `0 0 L-${EXTRACTION_PHASE_DURATION} * *`,
-  async () => {
-    const month = dayjs().format('YYYY-MM');
-    // Banking nudge — only people who can actually still bank.
-    const users = await getCreatorProgramUsers({ activeMembershipOnly: true });
+function createStageNotificationJob(
+  stage: CreatorProgramStageNotification,
+  getUserIds: () => Promise<number[]>
+) {
+  // Runs daily and gates on getPhases rather than encoding the day in an `L-n` cron: after
+  // these jobs' `L-n` crons changed, the scheduler still fired them on the old days. New names
+  // make the scheduler register new triggers. 00:05, not 00:00, so a pod clock a little behind
+  // the scheduler's cannot read yesterday's date and skip the month's only send.
+  return createJob(`creator-program-notify-${stage}`, '5 0 * * *', async () => {
+    const now = new Date();
+    if (!isStageNotificationDay(stage, now)) return;
+
+    const month = dayjs.utc(now).format('YYYY-MM');
+    const userIds = await getUserIds();
 
     await createNotification({
-      type: 'creator-program-banking-phase-ending',
+      type: `creator-program-${stage}`,
       category: NotificationCategory.Creator,
-      key: `creator-program-banking-phase-ending:${month}`,
-      userIds: users,
+      key: `creator-program-${stage}:${month}`,
+      userIds,
       details: {},
     });
-  }
+  });
+}
+
+// Banking nudge: only people who can actually still bank.
+export const bankingPhaseEndingNotification = createStageNotificationJob(
+  'banking-phase-ending',
+  () => getCreatorProgramUsers({ activeMembershipOnly: true })
 );
 
-export const extractionPhaseStartedNotification = createJob(
-  'creator-program-extraction-phase-started',
-  // Extraction begins on day L-(EXTRACTION_PHASE_DURATION-1) (= L-2), the first of the
-  // last EXTRACTION_PHASE_DURATION days — fire "has begun" that morning, not a day early.
-  `0 0 L-${EXTRACTION_PHASE_DURATION - 1} * *`,
-  async () => {
-    const month = dayjs().format('YYYY-MM');
-    const users = await getCreatorProgramUsers();
-
-    await createNotification({
-      type: 'creator-program-extraction-phase-started',
-      category: NotificationCategory.Creator,
-      key: `creator-program-extraction-phase-started:${month}`,
-      userIds: users,
-      details: {},
-    });
-  }
+export const extractionPhaseStartedNotification = createStageNotificationJob(
+  'extraction-phase-started',
+  () => getCreatorProgramUsers()
 );
-export const extractionPhaseEndingNotification = createJob(
-  'creator-program-extraction-phase-ending',
-  `0 0 L * *`,
-  async () => {
-    const month = dayjs().format('YYYY-MM');
-    const users = await getCreatorProgramUsers();
 
-    await createNotification({
-      type: 'creator-program-extraction-phase-ending',
-      category: NotificationCategory.Creator,
-      key: `creator-program-extraction-phase-ending:${month}`,
-      userIds: users,
-      details: {},
-    });
-  }
+export const extractionPhaseEndingNotification = createStageNotificationJob(
+  'extraction-phase-ending',
+  () => getCreatorProgramUsers()
 );
 
 export const creatorProgramJobs = [

@@ -91,6 +91,7 @@ describe('summarizeDownloads', () => {
       rateLimitBytesPerSecond: 2,
       totalBytes: 30,
       count: 2,
+      hasBaseWeights: false,
     });
   });
 
@@ -242,7 +243,33 @@ describe('summarizeDownloads — warm-up', () => {
 describe('isWorthBoosting', () => {
   it('offers a boost that reads as faster', () => {
     expect(
+      isWorthBoosting(
+        summarizeDownloads([{ etaSeconds: 3_900, boostedEtaSeconds: 300, isBaseWeights: true }])
+      )
+    ).toBe(true);
+  });
+
+  // The fee is flat per workflow and sized against checkpoint weights, so the saving on a LoRA-only
+  // download is not something to charge for, however large the ratio looks.
+  it('withholds one when nothing waiting is a checkpoint', () => {
+    expect(
       isWorthBoosting(summarizeDownloads([{ etaSeconds: 3_900, boostedEtaSeconds: 300 }]))
+    ).toBe(false);
+    expect(
+      isWorthBoosting(
+        summarizeDownloads([{ etaSeconds: 3_900, boostedEtaSeconds: 300, isBaseWeights: false }])
+      )
+    ).toBe(false);
+  });
+
+  it('offers one when a checkpoint waits alongside smaller resources', () => {
+    expect(
+      isWorthBoosting(
+        summarizeDownloads([
+          { etaSeconds: 30, boostedEtaSeconds: 10, isBaseWeights: false },
+          { etaSeconds: 3_900, boostedEtaSeconds: 300, isBaseWeights: true },
+        ])
+      )
     ).toBe(true);
   });
 
@@ -277,7 +304,11 @@ describe('isWorthBoosting', () => {
   it('still offers one in the lanes a boost moves you out of', () => {
     for (const lane of ['low', 'normal']) {
       expect(
-        isWorthBoosting(summarizeDownloads([{ etaSeconds: 3_900, boostedEtaSeconds: 300, lane }])),
+        isWorthBoosting(
+          summarizeDownloads([
+            { etaSeconds: 3_900, boostedEtaSeconds: 300, lane, isBaseWeights: true },
+          ])
+        ),
         `lane ${lane} should still be boostable`
       ).toBe(true);
     }

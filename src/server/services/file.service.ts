@@ -312,8 +312,9 @@ export const getFileForModelVersion = async ({
     versionFiles = found as FileResult[];
     file = versionFiles.find((candidate) => candidate.id === fileId) ?? null;
   } else {
-    // Try local files on this model version first
-    const fileWhere: Prisma.ModelFileWhereInput = { modelVersionId };
+    // Try local files on this model version first. A replaced file is a quarantined component whose
+    // linked replacement is the fallback below, so it must not win here.
+    const fileWhere: Prisma.ModelFileWhereInput = { modelVersionId, replacedAt: null };
     if (type) fileWhere.type = type;
     if (!isOwner && !isMod) fileWhere.visibility = ModelFileVisibility.Public;
     const files = await dbRead.modelFile.findMany({ where: fileWhere, select: fileSelect });

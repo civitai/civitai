@@ -295,7 +295,6 @@ const KNOWN_UNFIXED_SAME_CLASS: string[] = [
   'download/vault/[vaultItemId].ts',
   // ── TIER 2 — session-authed ─────────────────────────────────────────────────
   'download/user-transactions.ts',
-  'image/ingest.ts',
   'media/ingest/[mediaId].ts',
   'orchestrator/refreshBlobs.ts', // OrchestratorEndpoint = AuthedEndpoint + token, NO mod check
   'upload/abort.ts',

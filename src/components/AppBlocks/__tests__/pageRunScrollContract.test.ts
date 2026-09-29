@@ -274,8 +274,26 @@ describe('the run page and its host agree on who owns the height', () => {
     // that is a page-layout declaration and one of its two mounters is a modal,
     // which has no page layout at all. The equivalence asserted above is
     // therefore scoped to the run page on purpose.
+    //
+    // The PRIVATE-RUN page joined on the third entry, and its case IS the run page's
+    // rather than the review host's — which is why it needs no new reasoning here, only
+    // this row. It is a `Page(...)` route declaring `scrollable: false`, it mounts the
+    // host inside the same bounded `display:flex / flexDirection:column / flex:1 /
+    // minHeight:0 / overflowY:auto` wrapper, and it therefore satisfies the same
+    // co-requisite the equivalence above asserts for the run page. Deliberately so: a
+    // divergence between the two run surfaces' layout contracts would be a bug, not a
+    // feature, and only the public one is pinned by the equivalence test.
+    //
+    // ⚠️ THE ONE STRUCTURAL DIFFERENCE, RECORDED BECAUSE IT IS THE THING THAT COULD
+    // BREAK IT: the private-run page renders an UNCONDITIONAL banner as a preceding
+    // sibling of that wrapper, where the run page's beta notice is conditional. A
+    // sibling above the wrapper takes its own height out of the non-scrolling `<main>`
+    // and the host's `flex: 1` resolves against the remainder, so it introduces no new
+    // scroll container — but a future edit that moves it INSIDE the wrapper would put a
+    // second child in a container `PageBlockHost` is documented to own alone.
     expect(offenders.sort()).toEqual([
       'src/components/Apps/ReviewBlockPreviewHost.tsx',
+      'src/pages/apps/private-run/[slug]/[[...path]].tsx',
       'src/pages/apps/run/[slug]/[[...path]].tsx',
     ]);
   });

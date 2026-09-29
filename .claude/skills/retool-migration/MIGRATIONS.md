@@ -57,7 +57,9 @@ Every other app is either fully ported or blocked. These two are genuinely unbui
       Contents are not enumerated by the layout section, so **it cannot be scoped from the committed
       inventory** — needs the raw export or a screenshot first. Blocked on information, not on effort.
 - [ ] **Model-side surfaces** — `ModelReview`, `TrainingCount`, `UnpublishingReasons` (Moderation Status).
-      There is no models route in the spoke at all, so this is a new page, not an addition to one.
+      All three are dashboard COUNTS, so they want a queue surface, not a lookup. The spoke now has a
+      `Models` nav group (`/models/minor-hash-matches`) and a `/retool/model-lookup` page for one model
+      at a time — neither is where a count belongs, so this is still a new page.
       `/moderator/models` is also an open item on the *main-app* migration checklist — **check whether
       these belong on that page before building a Retool-namespace one.**
 
@@ -264,7 +266,8 @@ A queue/stat board rather than a lookup tool.
 - [ ] **The `Who is who?` tab** — contents not enumerated by the layout; needs the raw export or a
       screenshot before it can be scoped.
 - [ ] **Model-side surfaces with no page at all** — `ModelReview`, `TrainingCount`,
-      `UnpublishingReasons`. There is no models route in the app.
+      `UnpublishingReasons`. Counts, so neither the `Models` nav group's queue nor
+      `/retool/model-lookup` (one model at a time) is where they go. See section A.
 - [x] **`ActionAllPostReports`** — sweeps pending post-reports where every image is already blocked.
       `/reports/[slug]` actions one at a time; the batch *selector* is what is missing, not the verb.
 - [x] **`GetSplitQueue`/`SplitCurrent`/`SplitCatchup`** — built on `/retool/queue-stats`; both tables written in one transaction, and button69`s tooltip rule is on the page. This also recovers the FrontPageTimers column list the Front Page Audit slice recorded as unknown. Original note: forks the front-page sweep into current and

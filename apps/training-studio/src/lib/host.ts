@@ -58,6 +58,17 @@ export interface HostContext {
     imageLocation: string | null;
     /** SignalR endpoint; null => the app runs on polling alone (PUBLIC_SIGNALS_ENDPOINT in the shell). */
     signalsEndpoint: string | null;
+    /** Whether this user may generate with UNPUBLISHED training results (the main app gates that
+     *  on membership). Explicit `false` disables the per-epoch Generate affordance with an
+     *  explanation; absent = unknown (a host with no membership knowledge, e.g. the standalone
+     *  shell) and the affordance behaves as before. */
+    canGenerateUnpublished?: boolean;
+    /** Whether this user holds a paid membership — without one, Blue Buzz can't pay for a mature
+     *  dataset and the run is charged in full from the chosen account. Absent = unknown. */
+    isPaidMember?: boolean;
+    /** The host's membership-plans page, linked from the explanation above (`hostLink` URL
+     *  semantics). Absent => the explanation renders without a link. */
+    pricingUrl?: string;
   };
   /** The host's URL for a location — for real `<a href>`s (middle-click / open-in-new-tab). */
   hrefFor: (loc: StudioLocation) => string;

@@ -502,6 +502,8 @@ export const constants = {
   },
   modelGallery: {
     maxPinnedPosts: 20,
+    maxCreatorHiddenUsers: 1000,
+    maxCreatorHiddenUserNoteLength: 500,
   },
   chat: {
     airRegex: /^civitai:(?<mId>\d+)@(?<mvId>\d+)$/i,

@@ -103,6 +103,26 @@ describe('deriveTrainingWorkflowState', () => {
 });
 
 describe('applyTrainingWorkflowOverlay', () => {
+  it("numbers a continuation's live epochs past its source run, as the stored copy does", () => {
+    const row = version(TrainingStatus.Processing, {
+      version: 2,
+      workflowId: 'wf-1',
+      epochOffset: 10,
+    });
+    const wf = workflow({
+      epochs: [
+        { epochNumber: 1, blobUrl: 'https://blob/e1.safetensors', blobSize: 10 },
+        { epochNumber: -1, blobUrl: 'https://blob/unnumbered.safetensors', blobSize: 10 },
+      ],
+    });
+
+    const results = applyTrainingWorkflowOverlay(row, overlayOf(wf)).files[0].metadata
+      .trainingResults as TrainingResultsV2;
+
+    expect(results.epochs.map((e) => e.epochNumber)).toEqual([11, -1]);
+    expect(results.epochOffset).toBe(10);
+  });
+
   it('replaces a stale stored status with the live one', () => {
     const row = version(TrainingStatus.Processing, {
       version: 2,

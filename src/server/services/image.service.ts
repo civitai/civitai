@@ -10,6 +10,10 @@ import { randomUUID } from 'crypto';
 import type { ManipulateType } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';
 import { chunk, isEqual, truncate, uniq, uniqBy } from 'lodash-es';
+import {
+  filterViewableModelVersions,
+  modelVersionVisibilitySelect,
+} from '~/server/services/model-version-visibility.service';
 import { MeiliSearch, type SearchParams } from 'meilisearch';
 import type { SessionUser } from '~/types/session';
 import { v4 as uuid } from 'uuid';
@@ -266,6 +270,10 @@ import {
   createImageIngestionRequest,
   imageIngestionLogName,
 } from '~/server/services/orchestrator/orchestrator.service';
+import {
+  ImageIngestionUrlBlockedError,
+  isAllowedImageScanUrl,
+} from '~/server/utils/image-scan-url';
 import { getGenerationDisplayKeys } from '~/server/services/orchestrator/legacy-metadata-mapper';
 import {
   sanitizeProvenance,
@@ -1261,6 +1269,36 @@ export const ingestImage = async ({
   if (!parsedImage.success) throw new Error('Failed to parse image data');
 
   const { url, id, type } = parsedImage.data;
+
+  if (!isAllowedImageScanUrl(url)) {
+    // Same guard createImageIngestionRequest applies (which would throw here); checking
+    // first routes the rejection through the submit-failure machinery — status 400
+    // classifies PERMANENT, so the row terminalizes to Error on this attempt (retry
+    // ceiling 1) instead of churning orchestrator submits for media we will never fetch.
+    const blocked = new ImageIngestionUrlBlockedError(url);
+    const failureClass = await markImageScanSubmitFailure({
+      dbClient,
+      imageId: id,
+      status: 400,
+      error: blocked,
+    });
+    // `lane` is unknown here by construction: it comes from a Flipt read inside
+    // `createImageIngestionRequest`, which this rejection returns before. Attributing it to
+    // a concrete lane would make a per-lane rejection rate wrong, so it is reported as
+    // `unknown` rather than guessed.
+    imageScanSubmittedCounter.inc({ lane: 'unknown', result: 'rejected' });
+    logToAxiom({
+      name: imageIngestionLogName(false),
+      type: 'error',
+      reason: 'url-not-allowed',
+      failureType: 'send-fail',
+      failureClass,
+      imageId: id,
+      mediaType: type,
+      url,
+    }).catch(() => null);
+    return false;
+  }
 
   const callbackUrl =
     env.IMAGE_SCANNING_CALLBACK ??
@@ -7834,6 +7872,41 @@ export async function getImageResourcesFromImageId({
   return computed;
 }
 
+type ImageResourceRow = Awaited<ReturnType<typeof getImageResourcesFromImageId>>[number];
+
+// A version id taken as-is from meta.civitaiResources: the only branch of get_image_resources that
+// yields a detected version with no hash to have matched it through.
+const isMetaAssertedResource = (r: ImageResourceRow) => r.detected && !r.hash && !!r.modelversionid;
+
+async function withoutUnviewableMetaVersions({
+  imageId,
+  resources,
+  dbClient,
+  inTransaction,
+}: {
+  imageId: number;
+  resources: ImageResourceRow[];
+  dbClient: Prisma.TransactionClient;
+  inTransaction: boolean;
+}) {
+  const assertedIds = uniq(resources.filter(isMetaAssertedResource).map((r) => r.modelversionid!));
+  if (!assertedIds.length) return resources;
+
+  const image = await dbClient.image.findUnique({
+    where: { id: imageId },
+    select: { user: { select: { id: true, isModerator: true } } },
+  });
+  const versions = await dbClient.modelVersion.findMany({
+    where: { id: { in: assertedIds } },
+    select: modelVersionVisibilitySelect,
+  });
+  const viewable = image?.user
+    ? await filterViewableModelVersions(versions, image.user, { checkGrants: !inTransaction })
+    : [];
+  const allowed = new Set(viewable.map((v) => v.id));
+  return resources.filter((r) => !isMetaAssertedResource(r) || allowed.has(r.modelversionid!));
+}
+
 export async function createImageResources({
   imageId,
   tx,
@@ -7842,8 +7915,12 @@ export async function createImageResources({
   tx?: Prisma.TransactionClient;
 }) {
   const dbClient = tx ?? dbWrite;
-  // Read the resources based on complex metadata and hash matches
-  const resources = await getImageResourcesFromImageId({ imageId, tx });
+  const resources = await withoutUnviewableMetaVersions({
+    imageId,
+    resources: await getImageResourcesFromImageId({ imageId, tx }),
+    dbClient,
+    inTransaction: !!tx,
+  });
   if (!resources.length) return null;
 
   const withModelVersionId = resources

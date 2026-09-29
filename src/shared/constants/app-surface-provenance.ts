@@ -34,7 +34,10 @@
  * install counts.
  *
  *   · `install`  — the viewer has a `block_user_subscriptions` row (blanket or model-pinned).
- *   · `consent`  — no subscription, but a live (non-revoked) `app_user_scope_grants` row.
+ *   · `consent`  — no subscription, but an `app_user_scope_grants` row. ⚠️ "a LIVE (non-revoked)"
+ *                  is RETRACTED: since 4990 the grant leg no longer skips a row carrying
+ *                  `revoked_at`, so a `consent` row can be one whose grant is wholly withheld.
+ *                  This is the DEFINITION of the field, so it is the line a reader checks.
  *   · `activity` — NEITHER. The app used the viewer's account anyway: a
  *                  `block_scope_invocations` row.
  *
@@ -81,8 +84,24 @@ export function buildScopeGrantSurfaceLine(surfaces: {
     // because read:self covers public data — "nothing sensitive to consent to". Concretely: a
     // viewer opens the first-party `playable-collections`, plays with their OWN collections, it
     // reads them 37 times, and the old line told them an app had acted on their account that
-    // they never consented to — with no remedy available, since nothing in the repo writes a
-    // non-null `revoked_at`.
+    // they never consented to — with no remedy available.
+    //
+    // ⚠️ THE REASON FOR "NO REMEDY" USED TO READ *"since nothing in the repo writes a non-null
+    // `revoked_at`"* AND THAT IS RETRACTED — `revokeScopes` (`scope-grant.service.ts`) writes
+    // one whenever a viewer's revoke empties their granted set, and phase 3 puts a per-scope
+    // revoke control on both permissions surfaces. THE CONCLUSION IS UNCHANGED and now rests on
+    // the load-bearing reason: every scope in this population is CONSENT-EXEMPT, and
+    // `blocks.revokeScopes` REFUSES those by design, because `partitionByConsent` signs an exempt
+    // scope on the exempt test alone and a suppression entry for one would enforce nothing. An
+    // activity-only row also carries `scopes: []`, so `revokableScopes` — which is intersected
+    // with the displayed set — is empty and there is nothing for the new control to offer. So the
+    // sentence still must not allege a consent failure it cannot point at a fix for; only the
+    // stated mechanism was wrong.
+    //
+    // 🔴 THIS CLAUSE WAS ALREADY RETRACTED IN `__tests__/app-surface-provenance.test.ts` BY
+    // PHASE 2 AND MISSED HERE, which is the whole hazard in one example: the guard was corrected
+    // and the thing it guards was not, so a reader of this file got the false reason with a green
+    // test suite over it. Found by the intent-review lane during phase 3.
     //
     // 🔴 NO SCOPE LIST AND NO SCOPE COUNT — see `scopeGrantEmptyScopeLabel` for the measurement
     // that rules both candidate sets out. And deliberately NOT "it only read data that needs no

@@ -190,7 +190,7 @@ export type ToolType = "Image" | "Video" | "MotionCapture" | "Upscalers" | "Audi
 
 export type TechniqueType = "Image" | "Video";
 
-export type AppealStatus = "Pending" | "Approved" | "Rejected";
+export type AppealStatus = "Pending" | "Approved" | "Rejected" | "Void";
 
 export type AuctionType = "Model" | "Image" | "Collection" | "Article";
 
@@ -669,6 +669,9 @@ export interface User {
   blockAuthorFeeAccrualsAsViewer?: BlockAuthorFeeAccrual[];
   blockSubscriptionAttributionsAsPurchaser?: BlockSubscriptionAttribution[];
   blockSubscriptionAttributionsAsAppOwner?: BlockSubscriptionAttribution[];
+  blockGoodPurchasesAsBuyer?: BlockGoodPurchase[];
+  blockGoodPurchasesAsAppOwner?: BlockGoodPurchase[];
+  blockGoodEntitlements?: BlockGoodEntitlement[];
   publishRequestsSubmitted?: AppBlockPublishRequest[];
   publishRequestsReviewed?: AppBlockPublishRequest[];
   blockScopeInvocations?: BlockScopeInvocation[];
@@ -782,6 +785,13 @@ export interface Purchase {
   priceId: string | null;
   price?: Price | null;
   status: string | null;
+  createdAt: Date;
+}
+
+export interface CreatorGalleryHiddenUser {
+  creatorId: number;
+  userId: number;
+  note: string | null;
   createdAt: Date;
 }
 
@@ -1914,6 +1924,7 @@ export interface OauthClient {
   spendAttributions?: BlockSpendAttribution[];
   authorFeeAccruals?: BlockAuthorFeeAccrual[];
   subscriptionAttributions?: BlockSubscriptionAttribution[];
+  goodPurchases?: BlockGoodPurchase[];
   connectListings?: AppListing[];
 }
 
@@ -1982,6 +1993,8 @@ export interface AppBlock {
   spendAttributions?: BlockSpendAttribution[];
   authorFeeAccruals?: BlockAuthorFeeAccrual[];
   subscriptionAttributions?: BlockSubscriptionAttribution[];
+  goodPurchases?: BlockGoodPurchase[];
+  goodEntitlements?: BlockGoodEntitlement[];
   publishRequests?: AppBlockPublishRequest[];
   scopeInvocations?: BlockScopeInvocation[];
   userScopeGrants?: AppUserScopeGrant[];
@@ -2374,6 +2387,48 @@ export interface BlockAuthorFeeAccrual {
   settledAt: Date | null;
 }
 
+export interface BlockGoodPurchase {
+  id: string;
+  userId: number;
+  user?: User;
+  appId: string;
+  app?: OauthClient;
+  appBlockId: string;
+  appBlock?: AppBlock;
+  blockInstanceId: string | null;
+  goodId: string;
+  manifestVersion: string;
+  priceBuzz: number;
+  bluePaidBuzz: number;
+  appOwnerUserId: number;
+  appOwner?: User;
+  appOwnerShareBuzz: number;
+  platformShareBuzz: number;
+  buzzTransactionId: string;
+  payouts: JsonValue;
+  status: string;
+  refundReason: string | null;
+  refundedAt: Date | null;
+  createdAt: Date;
+  entitlement?: BlockGoodEntitlement | null;
+}
+
+export interface BlockGoodEntitlement {
+  id: string;
+  userId: number;
+  user?: User;
+  appBlockId: string;
+  appBlock?: AppBlock;
+  goodId: string;
+  kind: string;
+  payload: JsonValue;
+  purchaseId: string;
+  purchase?: BlockGoodPurchase;
+  grantedAt: Date;
+  revokedAt: Date | null;
+  revokeReason: string | null;
+}
+
 export interface BlockSubscriptionAttribution {
   id: string;
   userId: number;
@@ -2439,6 +2494,8 @@ export interface AppUserScopeGrant {
   grantedScopes: string[];
   grantedAt: Date;
   revokedAt: Date | null;
+  revokedScopes: string[];
+  revokedScopesAt: Date | null;
   buzzBudgetPerDay: number | null;
 }
 

@@ -13,10 +13,12 @@ import {
   estimateResourceLoad,
   getResourceLoadQueue,
   getResourceLoadState,
-  getLiveResourceResidency,
-  getResourceResidency,
   submitResourceLoad,
 } from '~/server/services/resource-load.service';
+import {
+  getLiveResourceResidency,
+  getResourceResidency,
+} from '~/server/services/resource-residency.service';
 import {
   guardedProcedure,
   isFlagProtected,

@@ -11,7 +11,7 @@
  * environments". With `AXIOM_TOKEN` + `AXIOM_DATASET` set, as in production, that
  * branch is dead: the batch is POSTed to Axiom's HTTP ingest and nothing is written to
  * stdout. Confirmed empirically over the full retained log-store window — sibling
- * events emitted via `console.log(JSON.stringify(...))` returned rows, while all five
+ * events emitted via `console.log(JSON.stringify(...))` returned rows, while all seven
  * `req.log` mint-audit events returned zero, including one that provably fired at
  * least 15 times.
  *
@@ -48,7 +48,7 @@
  * ordinary stdout stream. Giving them 720h would require relabeling from line content
  * across the log pipeline — new streams, cardinality risk. Unproven follow-up at best.)
  *
- * 🔴 NOT EVERY EVENT IS GATE-BEARING — a reader counting all five against the #3715 gate
+ * 🔴 NOT EVERY EVENT IS GATE-BEARING — a reader counting all seven against the #3715 gate
  * gets the wrong denominator:
  *
  *   - GATE-BEARING (carry `requestBudgetedSpend` + `spendGrantBasis`): the three BEARER

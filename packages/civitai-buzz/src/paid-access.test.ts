@@ -8,6 +8,7 @@ import {
   generationPrice,
   generationTrialLimit,
   grantsGeneration,
+  requiresGenerationPurchase,
   isFreeGeneration,
   isPaidAccessActive,
   isTimedGateActive,
@@ -181,6 +182,26 @@ describe('grantsGeneration — the full access decision', () => {
   });
   it('free generation is open to everyone', () => {
     expect(grantsGeneration(free, { isOwnerOrMod: false, hasBought: false })).toBe(true);
+  });
+});
+
+describe('requiresGenerationPurchase — distinct from being allowed to generate', () => {
+  const trial: ModelVersionTerms = { generation: { price: 200, trialLimit: 5 } };
+  const free: ModelVersionTerms = { generation: { free: true } };
+
+  it('a trial user is GRANTED generation and still has to buy', () => {
+    const viewer = { isOwnerOrMod: false, hasBought: false };
+    expect(grantsGeneration(trial, viewer)).toBe(true);
+    expect(requiresGenerationPurchase(trial, viewer)).toBe(true);
+  });
+  it('a buyer does not', () => {
+    expect(requiresGenerationPurchase(trial, { isOwnerOrMod: false, hasBought: true })).toBe(false);
+  });
+  it('an owner or moderator does not', () => {
+    expect(requiresGenerationPurchase(trial, { isOwnerOrMod: true, hasBought: false })).toBe(false);
+  });
+  it('free generation is never sold', () => {
+    expect(requiresGenerationPurchase(free, { isOwnerOrMod: false, hasBought: false })).toBe(false);
   });
 });
 

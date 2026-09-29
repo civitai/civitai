@@ -89,6 +89,14 @@ function printDiff(current, proposed) {
 async function transferToOfficial(modelId, targetUserId) {
   await trpcCall('moderator.models.transferOwnership', { modelIds: [modelId], targetUserId });
   console.log(`Transferred model ${modelId} to user ${targetUserId}.`);
+
+  // The transfer sets `isOfficial` server-side, but only on builds carrying that change. Asserted
+  // rather than assumed: the flag gates the official-models cache and resource attribution, and its
+  // absence is invisible on the model page — which is how 14 releases shipped without it.
+  const after = await trpcCall('model.getById', { id: modelId }, 'GET');
+  if (after.isOfficial) return;
+  await trpcCall('model.setOfficial', { id: modelId, isOfficial: true });
+  console.log(`Marked model ${modelId} official (the transfer did not).`);
 }
 
 async function createModel() {

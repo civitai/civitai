@@ -3,6 +3,7 @@ import path from 'path';
 import { describe, expect, it } from 'vitest';
 import {
   blankComments,
+  callSites,
   declRegions,
   enclosingDecl,
   MONEY_MARKERS,
@@ -10,6 +11,7 @@ import {
   moneyMarkersIn,
   sourceDecls,
   structuralQuoteRole,
+  topLevelPropertyText,
 } from '~/test-utils/routerSourceRegions';
 
 /**
@@ -104,6 +106,38 @@ const pathRegions = declRegions;
 function containsExpression(haystack: string, needle: string): boolean {
   const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`${escaped}(?![\\w.])`).test(haystack);
+}
+
+/**
+ * The argument object's OWN properties, with every nested object/call blanked.
+ *
+ * 🔴 EVERY POSITIVE FIELD ASSERTION IN THIS FILE GOES THROUGH IT, AND THAT IS A FIX,
+ * NOT A TIDY-UP.
+ *
+ * The history is the argument for routing them. Round one left FIVE assertions on the
+ * raw slice — `suppressQuoteLogs`, the reversal's `workflowId`, and the three
+ * ledgered `baseExpr`/`capExpr`/`typeExpr` — three with surviving nested mutants,
+ * including `typeExpr`, the fee's own lookup key, which this file records as having
+ * once survived 821/821. Round two claimed to have fixed "every" one and still left
+ * TWO: the charge CEILING (`reservedAuthorFeeBuzz`) and the reversal's
+ * `terminalStatus`, both again proven by surviving mutants rather than by reading.
+ *
+ * A `callSites` slice contains the nested objects and nested calls too, so a
+ * bare `slice.toContain('baseGenerationBuzz: realizedBaseCost')` is satisfied by
+ * `recordSpendAttribution({ …, opts: build({ baseGenerationBuzz: realizedBaseCost }) })`
+ * — with NO top-level field, i.e. the author fee priced off `undefined`, and this
+ * ledger green. The sibling ledger `no-unthreaded-private-run-claim.test.ts` had the
+ * identical hole; when it was closed, `callSites` moved into the shared module and its
+ * docblock now states that a caller asserting a field on the argument object itself
+ * MUST filter by depth. This file is that module's other caller, and was the half where
+ * the contract was still false.
+ *
+ * ⚠️ NEGATIVE assertions (`not.toContain` / `not.toMatch`) are deliberately left on the
+ * RAW slice: nesting makes a negative STRICTER, so filtering there could only weaken
+ * them.
+ */
+function ownProps(site: string): string {
+  return topLevelPropertyText(site);
 }
 
 /**
@@ -245,28 +279,14 @@ const QUOTE_SITE_LEDGER: Record<
 };
 
 /** Every `<fn>({ … })` argument object in the router source, braces balanced. */
-function callSites(source: string, opener: string): string[] {
-  const sites: string[] = [];
-  let from = 0;
-  for (;;) {
-    const start = source.indexOf(opener, from);
-    if (start === -1) break;
-    // Walk braces from the argument object's `{` to its match so a nested object
-    // literal (every call site has several) cannot end the slice early.
-    let depth = 0;
-    let i = start + opener.length - 1;
-    for (; i < source.length; i++) {
-      if (source[i] === '{') depth++;
-      else if (source[i] === '}') {
-        depth--;
-        if (depth === 0) break;
-      }
-    }
-    sites.push(source.slice(start, i + 1));
-    from = i + 1;
-  }
-  return sites;
-}
+// `callSites` now lives in `~/test-utils/routerSourceRegions` — imported above.
+// 🔴 IT MOVED BECAUSE A SECOND MONEY LEDGER STARTED USING IT.
+// `no-unthreaded-private-run-claim.test.ts` decides what counts as a
+// `recordSpendAttribution` call site with the SAME walk, so while each file kept
+// its own copy a fix to one left the other silently mis-counting the same
+// population, with both green — the identical failure that module's header
+// records for `enclosingDecl`. Behaviour is unchanged: the moved function is this
+// one verbatim.
 
 describe('author fee — the spend-attribution seam', () => {
   const source = blankComments(readFileSync(ROUTER, 'utf8'));
@@ -276,7 +296,9 @@ describe('author fee — the spend-attribution seam', () => {
     // Without this, an extractor that silently matched nothing would make every
     // assertion below vacuously true over an empty array.
     expect(sites.length).toBeGreaterThan(0);
-    expect(sites[0]).toContain('workflowId');
+    // EVERY slice, not just the first — an extractor that matched one real site plus
+    // garbage would pass a `sites[0]` check while polluting the count.
+    expect(sites.filter((s) => !s.includes('workflowId'))).toEqual([]);
   });
 
   it('there are exactly FOUR spend-attribution call sites', () => {
@@ -287,12 +309,12 @@ describe('author fee — the spend-attribution seam', () => {
   });
 
   it('every call site passes a base generation cost', () => {
-    for (const site of sites) expect(site).toContain('baseGenerationBuzz:');
+    for (const site of sites) expect(ownProps(site)).toContain('baseGenerationBuzz:');
   });
 
   it('every call site passes the hoisted `realizedBaseCost`, not a cost total', () => {
     for (const site of sites) {
-      expect(site).toContain('baseGenerationBuzz: realizedBaseCost');
+      expect(ownProps(site)).toContain('baseGenerationBuzz: realizedBaseCost');
       expect(site).not.toMatch(
         /baseGenerationBuzz:\s*(buzzAmount|cost\b|snapshot\.cost\?\.total|ceiling|reserveBuzz)/
       );
@@ -308,7 +330,7 @@ describe('author fee — the spend-attribution seam', () => {
     // class of silently-wrong number as feeding `buzzAmount`, and equally
     // invisible downstream, because both are plain Buzz integers.
     for (const site of sites) {
-      expect(site).toContain('generationPriceIsCap: realizedPriceIsCap');
+      expect(ownProps(site)).toContain('generationPriceIsCap: realizedPriceIsCap');
       expect(site).not.toMatch(/generationPriceIsCap:\s*(false|true|null|undefined)\b/);
     }
   });
@@ -472,7 +494,7 @@ describe('author fee — the viewer-charge seam', () => {
     // assertion below vacuously true over two empty arrays.
     expect(charges.length).toBeGreaterThan(0);
     expect(quotes.length).toBeGreaterThan(0);
-    expect(charges[0]).toContain('workflowId');
+    expect(charges.filter((c) => !c.includes('workflowId'))).toEqual([]);
   });
 
   it('the submit-path locator names all four paths (positive control)', () => {
@@ -533,7 +555,7 @@ describe('author fee — the viewer-charge seam', () => {
     // The ceiling is what makes "priced into the reservation" structural rather
     // than conventional: the charge is clamped to `min(reserved, realized)`, so a
     // path can never bill past the number its own gates were measured against.
-    for (const site of charges) expect(site).toMatch(/reservedAuthorFeeBuzz,/);
+    for (const site of charges) expect(ownProps(site)).toMatch(/reservedAuthorFeeBuzz,/);
   });
 
   it('🔴 every charge site is AWAITED, never fire-and-forget', () => {
@@ -566,7 +588,7 @@ describe('author fee — the viewer-charge seam', () => {
     // one coercion D6 forbids in both directions. Pinned as the derived name, and
     // as the ABSENCE of any literal.
     for (const site of charges) {
-      expect(site).toContain('buzzType: spendBasis.buzzType');
+      expect(ownProps(site)).toContain('buzzType: spendBasis.buzzType');
       expect(site).not.toMatch(/buzzType:\s*['"]/);
     }
   });
@@ -577,8 +599,8 @@ describe('author fee — the viewer-charge seam', () => {
     // and `undefined` maps to a `base-unavailable` skip, i.e. the fee quietly
     // stops charging on every generation with nothing to say so.
     for (const site of charges) {
-      expect(site).toContain('baseGenerationBuzz: realizedBaseCost');
-      expect(site).toContain('priceIsCap: realizedPriceIsCap');
+      expect(ownProps(site)).toContain('baseGenerationBuzz: realizedBaseCost');
+      expect(ownProps(site)).toContain('priceIsCap: realizedPriceIsCap');
       expect(site).not.toMatch(/baseGenerationBuzz:\s*(snapshot|buzzAmount|cost\b|\d)/);
     }
   });
@@ -768,7 +790,7 @@ describe('author fee — the viewer-charge seam', () => {
     expect(quoteOwners.length).toBeGreaterThan(0);
     for (const { path: owner, site } of quoteOwners) {
       expect(owner).not.toBe('<module scope>');
-      expect(site).toContain('appId: claims.appId');
+      expect(ownProps(site)).toContain('appId: claims.appId');
     }
   });
 
@@ -795,11 +817,11 @@ describe('author fee — the viewer-charge seam', () => {
     for (const { path: owner, site } of quoteOwners) {
       const ledgered = QUOTE_SITE_LEDGER[owner];
       expect(
-        containsExpression(site, ledgered.baseExpr),
+        containsExpression(ownProps(site), ledgered.baseExpr),
         `${owner}: baseExpr is not the ledgered '${ledgered.baseExpr}' (as a complete expression)`
       ).toBe(true);
       expect(
-        containsExpression(site, ledgered.capExpr),
+        containsExpression(ownProps(site), ledgered.capExpr),
         `${owner}: capExpr is not the ledgered '${ledgered.capExpr}' (as a complete expression)`
       ).toBe(true);
       expect(site).not.toContain('snapshot');
@@ -824,7 +846,7 @@ describe('author fee — the viewer-charge seam', () => {
     for (const { path: owner, site } of quoteOwners) {
       const ledgered = QUOTE_SITE_LEDGER[owner];
       expect(
-        containsExpression(site, ledgered.typeExpr),
+        containsExpression(ownProps(site), ledgered.typeExpr),
         `${owner}: generationType is not the ledgered '${ledgered.typeExpr}' — this is the fee's ` +
           'lookup key, so a changed spelling prices a different override than the ledger claims. ' +
           'Matched as a COMPLETE expression: a bare substring test passes for ' +
@@ -1098,7 +1120,7 @@ describe('author fee — the viewer-charge seam', () => {
     // has to cover for the sentence above to be true.
     for (const { path: owner, site } of quoteOwners) {
       expect(
-        containsExpression(site, 'suppressQuoteLogs: true'),
+        containsExpression(ownProps(site), 'suppressQuoteLogs: true'),
         `${owner} is ledgered '${QUOTE_SITE_LEDGER[owner].role}' — its suppressQuoteLogs is wrong`
       ).toBe(QUOTE_SITE_LEDGER[owner].role === 'disclosing');
     }
@@ -1261,8 +1283,8 @@ describe('author fee — the viewer-charge seam', () => {
     // and `cancelWorkflow` read `snapshot.status`, `cancelAppWorkflow` reads its
     // projection's.)
     for (const site of callSites(source, 'reverseBlockAuthorFee({')) {
-      expect(site).toContain('workflowId: input.workflowId');
-      expect(site).toMatch(/terminalStatus: \w+\.status,/);
+      expect(ownProps(site)).toContain('workflowId: input.workflowId');
+      expect(ownProps(site)).toMatch(/terminalStatus: \w+\.status,/);
     }
   });
 

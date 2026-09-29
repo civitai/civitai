@@ -161,6 +161,27 @@ of minting another. Create the row directly with `modelFile.create`, passing the
 controller derives backend and s3Path from it). Two `ModelFile` rows over one object is supported:
 `deleteModelFileObject` skips the S3 delete while any live row still references that URL.
 
+#### Community copies of the same weights: do nothing
+
+A mirrored model's weights are usually already on the site, uploaded by creators who mirrored the
+same upstream release — often before us. Attribution sorts itself out: `get_image_resources` and
+`prefersHashMatch` rank an **official** version above any other holding the same hash, so an image
+whose metadata carries those bytes credits our page whoever uploaded first. That depends on
+`isOfficial`, which `create-model` guarantees.
+
+Three things not to reach for:
+
+- **Archiving the community model does nothing.** `Archived` is `Model.mode`; the attribution
+  function only ever filters on `Model.status` being `Deleted`, `Unpublished` or
+  `UnpublishedViolation`. This looks like the obvious lever and moves no credit at all.
+- **`excludeFromAutoDetection` is the wrong tool now.** It is version-scoped, so on a finetune that
+  merely bundles one of our component files it strips credit for the creator's own weights too.
+- **Nothing needs doing per model.** Before the tie-break carried `isOfficial`, each mirror took hand
+  written SQL plus a reconcile pass; two rounds of that removed 331 attributions and reassigned none,
+  because the flag suppressed the slot instead of passing it on.
+
+What DOES need a decision is whether to publish the repo's shared components separately — see above.
+
 #### Uploaded by hand
 
 `create-version` prints the upload link, `/models/<modelId>/model-versions/<versionId>/wizard?step=2`.
@@ -190,6 +211,7 @@ A new version can't be generated until it has coverage. Add that with the `gener
 
 - **`create-model --name <n> --description-file <html> [--type Checkpoint]`** creates a `Draft` model owned by you, because `model.upsert` always makes the caller the owner. It then transfers it to CivitaiOfficial (`--owner-id` overrides the target). If the transfer fails, the model still exists under your account, and the script prints a `transfer` command to retry with.
   - It sets the **`base model` category tag** and, for a `Checkpoint`, **checkpoint type `Trained`**, which is what every CivitaiOfficial mirror carries. A mirror is someone else's trained weights, never a merge, so there is no flag to pick `Merge` here.
+  - It then checks **`isOfficial`** and sets it if the transfer didn't. The transfer sets it server-side (`transferModelOwnership`), but the flag gates the official-models cache, the picker's official ordering and the resource-attribution tie-break, and none of that is visible on the model page — so it is asserted rather than assumed. It was a manual `model.setOfficial` call until 2026-09-28 and was missed on 14 consecutive releases.
 - **`update-description --model-id <id> --description-file <html>`** sends the model's current `name`, `type`, `uploadType` and `status` together with the new description.
   - On an update, `model.upsert` ignores `status` and leaves every optional field it isn't sent untouched, so tags, licensing and NSFW settings survive.
   - It reads the description back afterwards, and warns if the server's sanitizing or blurb expansion changed it.

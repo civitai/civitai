@@ -78,6 +78,10 @@ export const MONEY_MARKERS = [
   'reserveConsentBudgetSpend(',
   'reserveCumulativeBuzzKey(',
   'reserveDevSessionBuzz(',
+  // The PRIVATE-RUN cumulative ceiling, per-(viewer, appBlockId). A money primitive by
+  // the same test as its run-for-real sibling below: it COMMITS the viewer's Buzz
+  // against a cap, so a disclosing estimate region that reached it would be reserving.
+  'reservePrivateRunBuzzSpend(',
   'reserveReviewRunForRealBuzzSpend(',
   'settleCustomComfySpend(',
 ] as const;
@@ -100,6 +104,84 @@ export const MONEY_MARKERS = [
  * added to the router is red until someone says which it is.
  */
 export const MONEY_IDENTIFIER = /\b((?:reserve|charge|refund|settle|debit|credit)[A-Z]\w*)\(/g;
+
+/**
+ * 🔴 THE THREE WAYS THE VERIFIED PRIVATE-RUN CLAIM REACHES A CONSUMER, each named once so
+ * two ledgers can compose DIFFERENT accepted sets from ONE definition of each string.
+ *
+ * ── PINNED AS WHOLE STRINGS, NOT AS THE FIELD NAME ──────────────────────────
+ * `toContain('privateRun')` would be satisfied by `privateRun: false`, `privateRun: true`,
+ * or a local that has drifted from the claim — three spellings that each disable the arm
+ * (or wrongly enable it) while reading as correctly wired. The claim is the only value an
+ * RS256 signature has vouched for.
+ *
+ * ── AND A SINGLE SHARED *SET* WAS THE WRONG FIX, WHICH IS WHY THERE ARE TWO ─
+ * ⚠️ These were first unified into one three-member list, on the reasoning that two ledgers
+ * reading the same router text must agree. They must agree on what each STRING MEANS; they
+ * must NOT agree on which strings are ADMISSIBLE, because their populations differ. The
+ * router ledger governs sites where the claims object is always in scope, so admitting the
+ * bare-local spelling there LOOSENED the stricter of the two guards: an arbitrary local
+ * named `privateRun`, with no provenance requirement, would have satisfied its per-site
+ * check. Zero instances existed, so this was the hazard the next router arm turns into a
+ * bug rather than a live defect — found by a round-2 delta audit of the de-duplication
+ * itself.
+ *
+ * ── WHY THEY CANNOT DOUBLE-COUNT ────────────────────────────────────────────
+ * No member is a substring of another, which is what lets a caller SUM occurrences across a
+ * set and still get an exact total. Pinned in this module's own test.
+ */
+export const THREADED_FROM_CLAIMS = 'privateRun: claims.privateRun === true';
+
+/** The same, where the verified claims arrive on an options bag rather than a local. */
+export const THREADED_FROM_OPTS_CLAIMS = 'privateRun: opts.claims.privateRun === true';
+
+/**
+ * 🔴 THE LOOSEST SPELLING, ADMISSIBLE IN EXACTLY ONE PLACE. The two storage writers never
+ * see the claims object — the token is verified once, by the resolver that hands them their
+ * context — so they can only thread a local. That local's PROVENANCE is therefore ledgered
+ * separately (the resolver must derive it from `claims.privateRun` on every return branch),
+ * because this string alone says nothing about where the value came from.
+ */
+export const THREADED_FROM_VERIFIED_LOCAL = 'privateRun: privateRun === true';
+
+/**
+ * What the ROUTER ledger accepts. Deliberately EXCLUDES the bare-local spelling: every
+ * governed router site has the claims object in scope, so a local there would be a
+ * provenance-free value nothing constrains.
+ *
+ * ⚠️ THE COST IS NAMED WHERE THE TRADE IS MADE. Splitting the sets re-admits one narrow
+ * failure the single-list version had removed: a router writer using the storage-only
+ * spelling reddens the sibling ledger's exact TOTAL with "add it to LEDGER", which is the
+ * wrong fix. It also reddens that file's per-site check, which names the accepted router
+ * spellings — so the right answer is one line away. Taken deliberately, because the single
+ * list made the stricter ledger the more permissive one, and a permissive guard is worse
+ * than an imprecise message.
+ */
+export const ROUTER_THREADED_SPELLINGS = [THREADED_FROM_CLAIMS, THREADED_FROM_OPTS_CLAIMS] as const;
+
+/**
+ * What the CROSS-FILE ledger accepts — the router's two, plus the storage path's local.
+ * Strictly a superset, so the router ledger can never be the more permissive of the two.
+ */
+export const ALL_THREADED_SPELLINGS = [
+  ...ROUTER_THREADED_SPELLINGS,
+  THREADED_FROM_VERIFIED_LOCAL,
+] as const;
+
+/**
+ * Count occurrences of the given accepted spellings across a whole source text.
+ *
+ * 🔴 THE SET IS A PARAMETER, NOT A DEFAULT, so a caller cannot silently get the wider one.
+ * A ledger asserting an EXACT total against its own population must count exactly the
+ * spellings that population is allowed to use; counting a wider set would make the total
+ * pass for a site the per-site check rejects.
+ *
+ * 🔴 EXACT ONLY BECAUSE THE SPELLINGS ARE PAIRWISE NON-OVERLAPPING — proven in this
+ * module's test, not assumed at each call site.
+ */
+export function countPrivateRunThreading(source: string, spellings: readonly string[]): number {
+  return spellings.reduce((n, t) => n + (source.split(t).length - 1), 0);
+}
 
 /** Every money-primitive identifier `source` calls, bare (no paren), sorted. */
 export function moneyIdentifiersIn(source: string): string[] {
@@ -283,6 +365,114 @@ export function blankComments(source: string): string {
       continue;
     }
     i += 1;
+  }
+  return out.join('');
+}
+
+/**
+ * Every `<opener>` … `}` argument object in a router source, brace-matched from the
+ * argument object's `{` to its match so a nested object literal — and every call
+ * site here has several — cannot end the slice early. `opener` is the call text up
+ * to and including that `{`, e.g. `'recordSpendAttribution({'`.
+ *
+ * 🔴 IT LIVES HERE BECAUSE TWO MONEY LEDGERS DEPEND ON IT, WHICH IS THIS MODULE'S
+ * WHOLE THESIS. `no-divergent-author-fee-base.test.ts` and
+ * `no-unthreaded-private-run-claim.test.ts` both decide *what counts as a call
+ * site* on the `recordSpendAttribution` population with this walk. While each kept
+ * its own copy, a fix to one — handling `await fn(\n  {`, or a template literal
+ * containing `{` — left the other silently mis-counting, and BOTH stayed green.
+ * That is the identical failure the header above records for `enclosingDecl`.
+ *
+ * The second guard was authored with a local copy and the stated reason that "a
+ * shared helper whose semantics one of the two needed to change would silently
+ * weaken the other". That is backwards, and the header above is the refutation: a
+ * divergent need is a SECOND EXPORTED FUNCTION, not a pre-emptive fork. This walk
+ * carries no ledger-specific semantics at all — no money list, no role
+ * discriminator — so it is the most reusable thing in either file.
+ *
+ * 🔴 IT IS A LEXER, NOT A PARSER, AND CALLERS MUST NOT READ ITS SLICES AS
+ * STRUCTURE. A returned slice contains the argument object's nested objects and
+ * nested calls too, so a bare `slice.includes('field: value')` is satisfied by a
+ * match at ANY depth — including inside a nested call's own argument object, which
+ * is a real way to walk past a wiring guard. A caller asserting that a field is
+ * present *on the argument object itself* must filter by depth; see
+ * `topLevelPropertyText`.
+ *
+ * 🔴 CALLERS MUST ASSERT A POSITIVE CONTROL. A misspelled `opener` returns `[]`,
+ * and every `every(...)` over an empty array is vacuously true — a fully green
+ * guard covering nothing.
+ */
+export function callSites(source: string, opener: string): string[] {
+  const sites: string[] = [];
+  let from = 0;
+  for (;;) {
+    const start = source.indexOf(opener, from);
+    if (start === -1) break;
+    let depth = 0;
+    let i = start + opener.length - 1;
+    for (; i < source.length; i += 1) {
+      if (source[i] === '{') depth += 1;
+      else if (source[i] === '}') {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+    }
+    sites.push(source.slice(start, i + 1));
+    from = i + 1;
+  }
+  return sites;
+}
+
+/**
+ * The text of a `callSites` slice that sits at the argument object's OWN depth,
+ * with every nested object and nested call's contents blanked out.
+ *
+ * 🔴 THIS IS THE DIFFERENCE BETWEEN "THE FIELD IS WIRED" AND "THE FIELD APPEARS
+ * SOMEWHERE IN THIS CALL". Without it, a wiring guard that greps a slice for
+ * `foo: claims.foo === true` is satisfied by
+ * `recordSpendAttribution({ …, opts: build({ foo: claims.foo === true }), … })`
+ * — the top-level field absent, the guard green. That is the
+ * field-exists-but-nothing-branches-on-it failure these guards exist to prevent,
+ * one nesting level down.
+ *
+ * Nested spans are replaced with spaces rather than removed so that offsets into
+ * the returned string still line up with the input slice.
+ *
+ * Pass a slice from `callSites`, i.e. starting at the call text and containing the
+ * matching `}`. Feed it comment-blanked source (`blankComments`) first, or a brace
+ * inside a comment will desync the depth count.
+ *
+ * ⚠️ IT IS A DEPTH COUNTER, NOT A LEXER, AND STRINGS ARE THE UNCOVERED CASE.
+ * `blankComments` blanks comments but deliberately does NOT blank string CONTENTS, so
+ * an unbalanced bracket inside a string literal, template literal or regex character
+ * class shifts the count. The two directions are not equally safe: an unbalanced
+ * OPENER inflates depth and blanks live code, which fails RED (loud, safe); an
+ * unbalanced CLOSER deflates it and could let a nested field read as top-level, which
+ * fails GREEN. No governed call site contains either today — checked — but a consumer
+ * adding a population whose arguments carry such a string must not assume this holds.
+ */
+export function topLevelPropertyText(site: string): string {
+  const open = site.indexOf('{');
+  if (open === -1) return '';
+  const out = site.split('');
+  let depth = 0;
+  for (let i = open; i < site.length; i += 1) {
+    const c = site[i];
+    if (c === '{' || c === '(' || c === '[') {
+      depth += 1;
+      // The argument object's own braces stay; everything deeper is blanked. No
+      // `!== '\n'` guard on these two branches — a bracket character cannot be a
+      // newline, and `tsc` rejects the comparison as provably false. (`src/test-utils`
+      // is NOT under `__tests__`, so it IS typechecked; that is what caught it.)
+      if (depth > 1) out[i] = ' ';
+      continue;
+    }
+    if (c === '}' || c === ')' || c === ']') {
+      if (depth > 1) out[i] = ' ';
+      depth -= 1;
+      continue;
+    }
+    if (depth > 1 && out[i] !== '\n') out[i] = ' ';
   }
   return out.join('');
 }

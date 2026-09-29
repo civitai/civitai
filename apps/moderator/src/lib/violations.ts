@@ -51,6 +51,21 @@ export const VIOLATION_LABELS: Record<(typeof VIOLATION_TYPES)[number], string> 
   other: 'Other',
 };
 
+// Mirrors the main app's `tosReasonUserMessage`: labels that would misstate the removal if shown to its
+// owner. No trailing period — the notification template appends one.
+const USER_FACING_REASONS: Partial<Record<(typeof VIOLATION_TYPES)[number], string>> = {
+  schoolNsfw:
+    'School settings are moderated more strictly, and this was removed under that stricter standard',
+};
+
+export function violationUserMessage(violationType: string): string {
+  return (
+    USER_FACING_REASONS[violationType as keyof typeof USER_FACING_REASONS] ??
+    VIOLATION_LABELS[violationType as keyof typeof VIOLATION_LABELS] ??
+    violationType
+  );
+}
+
 /**
  * The pair every removal action posts. `violationType` is a ClickHouse enum on the other side, so an
  * unrecognised value is refused rather than forwarded as free text — a removal filed under nothing is

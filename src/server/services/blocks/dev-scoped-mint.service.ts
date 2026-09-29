@@ -1,10 +1,12 @@
 import {
+  BLOCK_SPEND_SCOPE,
   isKnownBlockScope,
   validateBlockScopesAgainstOauthClient,
 } from '~/shared/constants/block-scope.constants';
 import { domainBrowsingCeiling } from '~/shared/constants/browsingLevel.constants';
 import { isPageSlot, PAGE_FORBIDDEN_SCOPES, PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
 import { BlockTokenService } from '~/server/services/block-token.service';
+import type { PrivateRunAudience } from '~/shared/constants/block-scope.constants';
 
 /**
  * SHARED dev-scoped block-token mint belt (App Dev Tunnel).
@@ -32,12 +34,29 @@ import { BlockTokenService } from '~/server/services/block-token.service';
  *                                            `spendRequested: true` because there is
  *                                            no bearer ceiling and no request body
  *                                            (the declaring manifest IS the
- *                                            request); SPEND is
- *                                            instead gated at RUNTIME by
- *                                            `assertViewerIsAppDeveloper(sub)` on
- *                                            the token subject (blocks.router
- *                                            submitWorkflow) plus the per-call /
- *                                            per-session / per-day Buzz caps.
+ *                                            request); SPEND is instead bounded at
+ *                                            RUNTIME by the SELF-BOUND `sub`, the
+ *                                            per-call `buzzBudget` claim and the
+ *                                            aggregate per-user / per-app caps in
+ *                                            `reserveBlockBuzzSpendForClaims`.
+ *
+ * 🔴 CORRECTION (2026-09-27): the four lines above used to name
+ * `assertViewerIsAppDeveloper(sub)` as the runtime spend gate. THAT CALL DOES NOT
+ * HAPPEN, and it has not for some time. There are two independent, module-PRIVATE
+ * helpers of that name — `blocks/user-settings.service.ts` and
+ * `apps/app-storage.service.ts` — with two call sites between them: a viewer
+ * SETTINGS write, and the mod review "run for real" STORAGE branch. Neither is on
+ * the workflow-submit or spend path, and `blocks.router.ts`'s own header records
+ * that the settings write "was its LAST call site in this router" — the gate was
+ * deliberately removed from the runtime procedures because an AUTHORING capability
+ * blocked the entire non-author cohort from USING an app.
+ *
+ * 🔴 WHY THE STALE SENTENCE WAS DANGEROUS RATHER THAN MERELY WRONG. It reads as
+ * "a non-author cannot spend here", so a reviewer asked to widen a mint to a
+ * non-author would reasonably ask for that gate to be widened too — widening a
+ * gate that does not exist, on a path where the real bound is the self-bound
+ * `sub`. Anyone reasoning about who may spend on this path must read
+ * `reserveBlockBuzzSpendForClaims`, not this comment's former claim.
  *
  * Every hard cap is IDENTICAL across both callers: forced-SFW ceiling, self-bound
  * `sub`, `dev:true` short (4h) TTL, DEV_BUZZ_BUDGET_CAP per-call budget, page ctx.
@@ -120,6 +139,16 @@ export const DEV_TOKEN_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>([
   // ownership, the host confirm, the dedicated Flipt flag) still applies to
   // every dev-token call.
   'posts:write:self',
+  // goods:read:self — INCLUDED in BOTH dev allowlists (this bearer path and the
+  // tunnel path below). A pure self-bound read of what the DEV owns from THIS
+  // app; a pre-approval app has no rows, so it simply answers empty rather than
+  // 403-ing a UI the developer is trying to build.
+  //
+  // 🔴 `goods:purchase:self` is DELIBERATELY EXCLUDED FROM ALL FOUR allowlists,
+  // like `social:tip:self` — no real money OUT in dev. It would also be inert:
+  // the purchase path refuses a buyer who owns the app, and a pre-approval app
+  // has no AppBlock row to resolve a catalog from at all.
+  'goods:read:self',
 ]);
 
 /**
@@ -155,6 +184,10 @@ export const TUNNEL_HOST_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<str
   // WITHHELD from BOTH mod-review allowlists below — a mod previewing another
   // author's unapproved app must never publish under the MOD'S name.
   'posts:write:self',
+  // goods:read:self — INCLUDED here too (see DEV_TOKEN_SCOPE_ALLOWLIST
+  // rationale): self-bound, read-only, and empty for a pre-approval app.
+  // `goods:purchase:self` stays excluded everywhere.
+  'goods:read:self',
 ]);
 
 /**
@@ -176,6 +209,8 @@ export const TUNNEL_HOST_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<str
  *   - `collections:read:private`  the caller's OWN private collections (consent-gated)
  *   - `collections:write:self`    a write surface
  *   - `social:tip:self`           real money OUT
+ *   - `goods:purchase:self`       real money OUT (an app's own paid catalog)
+ *   - `goods:read:self`           not needed to RENDER; answers empty pre-approval
  *   - `buzz:read:self`            private financial (balance / ledger / earnings)
  *   - `posts:write:self`          PUBLIC content published under the MOD'S name
  *
@@ -213,6 +248,15 @@ export const REVIEW_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<string>(
  * declares — the clamp keeps only scopes IN this set, so a malicious manifest
  * declaring extra scopes gets NONE of these):
  *   - `social:tip:self`               real money OUT — NEVER granted (invariant #4)
+ *   - `goods:purchase:self`           real money OUT — same invariant. A mod
+ *                                     evaluating an app must never be charged for
+ *                                     that app's catalog, and the purchase path
+ *                                     has no pre-approval AppBlock row to price
+ *                                     against anyway.
+ *   - `goods:read:self`               nothing to read pre-approval (no entitlement
+ *                                     rows exist for a synthetic appBlockId), so
+ *                                     granting it would widen the token for no
+ *                                     evaluable behaviour.
  *   - `apps:storage:shared:read|write` cross-user shared datastore — NEVER (invariant #2)
  *   - `collections:read:private`      third-party-reachable private data
  *   - `collections:write:self`        write surface not needed to evaluate a page app
@@ -324,7 +368,9 @@ export function clampDevScopes(opts: {
   // every non-skip scope).
   if (oauthAllowed !== null) {
     const ceiling = oauthAllowed;
-    granted = granted.filter((s: string) => validateBlockScopesAgainstOauthClient([s], ceiling).valid);
+    granted = granted.filter(
+      (s: string) => validateBlockScopesAgainstOauthClient([s], ceiling).valid
+    );
   }
 
   // Body narrowing — the caller may request a subset of the above.
@@ -370,9 +416,15 @@ export function clampTunnelDeclaredScopes(scopeSource: string[]): string[] {
     oauthAllowed: null,
     // 🔴 PERMANENTLY true/true — do NOT wire either of these to a request field.
     //
-    // `spendEntitled: true` — the tunnel has no bearer ceiling; spend is gated at
-    // RUNTIME by `assertViewerIsAppDeveloper(sub)` (the author-flag re-check) plus
-    // the per-call / per-session / per-day Buzz caps.
+    // `spendEntitled: true` — the tunnel has no bearer ceiling; spend is bounded at
+    // RUNTIME by the SELF-BOUND `sub` (a tunnel token can only ever spend its own
+    // author's Buzz), the per-call `buzzBudget` claim, and the aggregate per-user /
+    // per-app caps in `reserveBlockBuzzSpendForClaims`.
+    //
+    // 🔴 CORRECTED 2026-09-27 — this line used to name `assertViewerIsAppDeveloper(sub)`
+    // as "the author-flag re-check" bounding spend here. No such call is on the
+    // submit path; see the module header for the full correction. Do not restore it,
+    // and do not treat it as an existing gate that a new mint path could widen.
     //
     // `spendRequested: true` — this path has NO request body to carry a per-mint
     // request. Starting a dev tunnel with a manifest that DECLARES
@@ -388,6 +440,229 @@ export function clampTunnelDeclaredScopes(scopeSource: string[]): string[] {
     spendRequested: true,
     allowlist: TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
   });
+}
+
+/**
+ * Scopes never granted on the PRIVATE-RUN surface, whatever the audience.
+ *
+ * 🔴 `social:tip:self` IS THE THIRD BUZZ RAIL, AND IT IS THE REASON THIS SET EXISTS.
+ * The private-run feature closes two money rails with signed-claim arms — the
+ * `block_spend_attribution` void and the author-fee refusal. `social:tip:self` is
+ * neither: `pages/api/v1/blocks/tip.ts` moves IRREVERSIBLE Buzz from the viewer to
+ * any `toUserId` the block's OWN code names, performs no status check of its own, and
+ * is not in `PAGE_FORBIDDEN_SCOPES` (which is empty). On a delisted app it is refused
+ * today by exactly one thing: `resolveAppBlockApprovalVerdict` returning
+ * `not_approved`. A private run has to widen that verdict to render at all — and that
+ * widening admits this route in the same move. So the scope is stripped here, at the
+ * mint, which is the belt the widening requires.
+ *
+ * ⚠️ IT IS ALREADY ABSENT FROM `REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST`, AND THAT IS
+ * NOT A REASON TO DROP THIS STRIP. The private-run clamp draws its ceiling from the
+ * REVIEW set, so today the strip is a no-op — and a no-op guard that would be the ONLY
+ * thing standing between a delisted app and irreversible Buzz is the one to keep,
+ * because the property it protects is not stated anywhere in that allowlist. Adding
+ * `social:tip:self` to the REVIEW set for a review-sandbox reason is what would
+ * otherwise silently hand tipping to every private run, on apps the platform has taken
+ * down. That is the file to be careful in.
+ *
+ * 🔴 TWO CORRECTIONS HERE, BOTH CAUGHT IN REVIEW, AND THE FIRST ONE POINTED AT THE WRONG
+ * FILE. This paragraph named `TUNNEL_HOST_MINT_SCOPE_ALLOWLIST` — true of the FIRST cut,
+ * when the clamp composed the tunnel belt, and false since round 1 moved it onto the
+ * reviewed non-owner ceiling. Adding the tip scope to the tunnel allowlist now reaches
+ * private-run by nothing at all, so the warning was directing a future editor's caution
+ * at the one file where it no longer matters.
+ *
+ * 🔴 AND IT CLAIMED A TEST THAT CANNOT EXIST: "pinned by a test that asserts the strip
+ * survives even when the inner clamp is mutated to pass the scope through". No test mocks
+ * or mutates `clampDevScopes`, and `private-run-scope-clamp.test.ts` says so in its own
+ * words — deleting this filter leaves that whole file green, because the allowlist step
+ * already drops the scope. What pins the strip is a SOURCE-TEXT ledger in that file, not a
+ * behavioural assertion. That is the honest claim, and it is the dangerous direction to get
+ * wrong: a reader told the strip is behaviourally covered has no reason to look.
+ *
+ * 🔴 `goods:purchase:self` is deliberately NOT listed: the sibling owner-crediting
+ * rail is already closed on its own terms (it requires an approved block), so listing
+ * it here would imply a protection this set is not providing.
+ */
+export const PRIVATE_RUN_FORBIDDEN_SCOPES: ReadonlySet<string> = new Set(['social:tip:self']);
+
+/**
+ * The scope ceiling for a PRIVATE RUN of a delisted / suspended app.
+ *
+ * 🔴 THIS EXISTS BECAUSE COMPOSING `clampTunnelDeclaredScopes` WAS WRONG, AND THE BUG
+ * IT FIXES IS THE SHARPEST ONE THIS FEATURE HAD. That clamp's ceiling is
+ * `TUNNEL_HOST_MINT_SCOPE_ALLOWLIST`, which is the AUTHOR-FACING set: the dev tunnel is
+ * owner-only, so it can safely grant an author scopes over the author's OWN account and
+ * content. A private run admits a MODERATOR and an accepted COLLABORATOR — neither is
+ * the author — and the tunnel ceiling handed them `posts:write:self`,
+ * `collections:write:self`, `collections:read:private` and `goods:read:self` on an app
+ * the platform has TAKEN DOWN. The worst reachable consequence was a taken-down app
+ * publishing a real, feed-visible, reward-earning Post under the REVIEWING MODERATOR'S
+ * byline.
+ *
+ * 🔴 THE CEILING IS DERIVED FROM `REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST`, NOT
+ * INVENTED — that set is the repo's already-reviewed answer to the structurally
+ * identical question, a non-owner running someone else's non-approved app against their
+ * own session. Its reasoning is what excludes the scope this feature most needed gone:
+ *
+ *   `posts:write:self` — "PUBLIC, feed-visible, reward-earning content published under
+ *   the REVIEWING MOD'S name. The run-for-real gate consents the mod to SPEND their own
+ *   Buzz; it does not consent them to become the author of an unapproved app's output
+ *   on their public profile."
+ *
+ * A private run is that case on an app already taken down, i.e. strictly stronger
+ * grounds. Deriving rather than copying means a future tightening of the review set
+ * tightens this one too; the containment is pinned by a runtime assertion in
+ * `__tests__/private-run-scope-clamp.test.ts` (there is no `satisfies` check — an
+ * earlier version of this paragraph claimed one, which would have sent a reader looking
+ * for a compile-time guard that does not exist and away from the test that IS the guard).
+ *
+ * ⚠️ AND THE REASONING DOES **NOT** TRANSFER WHOLESALE — this paragraph used to say
+ * "transfers verbatim", which was the wrong claim and the one a future reader would have
+ * relied on. `REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST` is selected ONLY when a
+ * moderator explicitly OPTS IN per preview (`runForReal === true`), behind a loud
+ * consent dialog; its default sibling `REVIEW_MINT_SCOPE_ALLOWLIST` is narrower. This
+ * surface has NO opt-in — the banner is a notice, not a gate, and the mint replies
+ * `needsConsent: false`. So each member has to be justified on ITS OWN terms, and two
+ * of them are not justified by the review set at all:
+ *
+ *   - `ai:write:budgeted` is kept because an OPERATOR DECISION grants moderators "full
+ *     parity including capped spend" so they can reproduce generation-path abuse on a
+ *     takedown. That is a ratified decision, not an inherited one, and it is bounded by
+ *     a self-bound `sub`, the per-call `DEV_BUZZ_BUDGET_CAP` and the per-(viewer, app)
+ *     `PRIVATE_RUN_BUZZ_CAP`. Editors are stripped of it at step 3.
+ *   - `buzz:read:self` is NOT kept — see the subtractions below.
+ *
+ * ── THE THREE DELIBERATE SUBTRACTIONS ───────────────────────────────────────────
+ * `apps:storage:read` / `apps:storage:write` function under run-for-real ONLY because
+ * `resolveStorageContext` resolves a disposable, per-publish-request `apprev_<pubreq>`
+ * schema for a token carrying the signed `reviewRunForReal` claim. It grants no such
+ * exemption for `privateRun`, so here a storage call would resolve against the REAL app
+ * schema or refuse outright — and granting a scope whose proc then refuses it is worse
+ * than not granting it, because the block's UI offers a control that cannot work. (Net
+ * effect unchanged from the tunnel ceiling, which also excludes both.)
+ *
+ * 🔴 `buzz:read:self` IS SUBTRACTED TOO, AND THIS ONE IS A REVIEW FINDING RATHER THAN A
+ * MECHANICAL CARRY-OVER. It is a consent-gated SENSITIVE scope on the public path, and
+ * the DEFAULT review allowlist withholds it in this repo's own words: "Deliberately
+ * WITHHELD from the mod-review sandbox (a mod previewing another author's app must not
+ * leak the mod's own balance)." That sentence describes this surface exactly. The
+ * run-for-real set re-adds it only alongside the opt-in that makes spending explicit,
+ * and there is no opt-in here — so a taken-down app would read the reviewer's own
+ * balance and ledger for the price of a page load.
+ *
+ * The cost of subtracting it is a block whose generation UI cannot display a balance.
+ * That failure is VISIBLE and reportable ("it can't show my Buzz"), which is the same
+ * reason the editor read-only decision was judged safe to take first — and re-adding a
+ * read scope later is one line, while un-granting one after it has shipped is not.
+ *
+ * ── ONE AUDIENCE-BLIND SET, NOT THREE ───────────────────────────────────────────
+ * The OWNER gets this same narrow ceiling, even though the dev-tunnel precedent would
+ * grant them more. Two reasons: the owner already HAS the dev tunnel for author-facing
+ * work on their own app (and PHASE 2 routes them there whenever a tunnel exists), and a
+ * takedown is precisely the state in which the app's output should not be published.
+ * One set for three audiences also removes a per-audience allowlist matrix — the thing
+ * most likely to be got wrong later. The only audience-conditional rule on this surface
+ * is the single `ai:write:budgeted` strip for an editor, in `clampPrivateRunScopes`.
+ */
+const PRIVATE_RUN_SUBTRACTED_SCOPES: ReadonlySet<string> = new Set([
+  // Only usable under the review sandbox's disposable preview schema.
+  'apps:storage:read',
+  'apps:storage:write',
+  // Consent-gated, and withheld by the DEFAULT review allowlist for a reason that
+  // describes this surface verbatim. See the docblock above.
+  'buzz:read:self',
+]);
+
+export const PRIVATE_RUN_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set(
+  [...REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST].filter((s) => !PRIVATE_RUN_SUBTRACTED_SCOPES.has(s))
+);
+
+/**
+ * PRIVATE RUN — the SINGLE clamp for a private run of a delisted / suspended app.
+ *
+ * Three steps, in this order, and each is a STRIP rather than an error (a refusal
+ * would be an existence oracle; a narrower token is not):
+ *
+ *   1. `clampDevScopes` against `PRIVATE_RUN_MINT_SCOPE_ALLOWLIST`, sourced from the
+ *      `approved_scopes` COLUMN and never the re-published manifest. 🔴 THE
+ *      LOAD-BEARING INVARIANT IS THE SAME ONE THE DEV-TUNNEL BRANCH RESTS ON:
+ *      `approvedScopes` is written ONLY by the mod-approval flow, so a non-empty value
+ *      means a moderator signed those scopes off at some point, and an app with
+ *      `approvedScopes: []` mints a VALID token that can spend NOTHING — the clamp
+ *      cannot invent `ai:write:budgeted`. A suspended publisher editing their manifest
+ *      therefore cannot widen their own private-run token. Zero-scope is a legitimate
+ *      state, not an error: such an app renders read-only rather than 403ing.
+ *
+ *      ⚠️ THIS STEP USED TO BE `clampTunnelDeclaredScopes`, AND THAT WAS THE BUG. The
+ *      tunnel ceiling is author-facing and owner-only; composing it handed a MODERATOR
+ *      and an accepted COLLABORATOR `posts:write:self`, `collections:write:self`,
+ *      `collections:read:private` and `goods:read:self` on a taken-down app. See
+ *      `PRIVATE_RUN_MINT_SCOPE_ALLOWLIST` for the full finding and why the ceiling is
+ *      now derived from the reviewed NON-OWNER allowlist instead.
+ *   2. `PRIVATE_RUN_FORBIDDEN_SCOPES` — the third-rail strip. See that set.
+ *   3. The EDITOR read-only strip — see below.
+ *
+ * 🔴 STEP 3 IS AN OPERATOR DECISION TAKEN AGAINST THE ORIGINAL RECOMMENDATION, ON
+ * REVERSIBILITY GROUNDS, AND IT IS THE ONE THING IN THIS FUNCTION MOST LIKELY TO BE
+ * "TIDIED" BY SOMEONE WHO THINKS IT IS AN OVERSIGHT. An accepted collaborator
+ * (`audience: 'editor'`) is READ-ONLY: `ai:write:budgeted` is stripped for them.
+ * Moderators were granted full parity including capped spend with a stated reason —
+ * reproduce generation-path abuse on a takedown. No equivalent reason was found for
+ * collaborators, and the written product intent for the owner-iterating case is about
+ * the OWNER. Parity is cheap to add later and expensive to remove later, so the narrow
+ * option is the correct default until a concrete need appears. Widening is this one
+ * branch plus one row in the access matrix.
+ *
+ * The failure mode is visible and reportable ("I can't run the generation"), never
+ * silent — which is the other half of why the narrow option is safe to pick first.
+ *
+ * ⚠️ IF THIS STRIP IS EVER FORGOTTEN, AN EDITOR IS STILL REFUSED — but by the
+ * author-fee arm, downstream, and only for that rail. Do not read the existence of
+ * that backstop as making this strip optional: it does not bound the editor's OWN
+ * Buzz spend, which is what `ai:write:budgeted` authorises.
+ */
+export function clampPrivateRunScopes(
+  approvedScopes: string[],
+  audience: PrivateRunAudience
+): string[] {
+  // (1) The SAME audited `clampDevScopes` belt every other mint path runs through —
+  //     known-vocabulary filter, allowlist, PAGE_FORBIDDEN_SCOPES, the spend gate and
+  //     the forced `user:read:self` — but against the PRIVATE-RUN ceiling rather than
+  //     the author-facing tunnel one. See `PRIVATE_RUN_MINT_SCOPE_ALLOWLIST`.
+  //
+  //     `oauthAllowed: null` — there is no bearer credential on this path, so there is
+  //     no OAuth bitmask ceiling to intersect (identical to the tunnel clamp).
+  //     `spendEntitled/spendRequested: true` — the app's approved snapshot DECLARING
+  //     `ai:write:budgeted` is the request; spend is bounded at runtime by the
+  //     self-bound `sub`, the per-call `buzzBudget` and the per-(viewer, app) aggregate
+  //     ceiling. The editor strip at step 3 is what makes that audience read-only.
+  let granted = clampDevScopes({
+    scopeSource: approvedScopes,
+    oauthAllowed: null,
+    spendEntitled: true,
+    spendRequested: true,
+    allowlist: PRIVATE_RUN_MINT_SCOPE_ALLOWLIST,
+  });
+  // (2) Third-rail strip — every audience, including the owner and moderators.
+  granted = granted.filter((s) => !PRIVATE_RUN_FORBIDDEN_SCOPES.has(s));
+  // (3) Editor read-only.
+  //
+  // 🔴 `BLOCK_SPEND_SCOPE`, NOT THE LITERAL — and the mixed spelling in this file is
+  // deliberate, not an oversight. That constant landed on `main` while this branch was
+  // open (the viewer-scope-withdrawal work), created precisely because the literal was
+  // declared privately at three client surfaces; its docblock then measured ~30 further
+  // live production uses across ~20 files and states in words that the server-side
+  // collapse is a separate, derivation-driven effort — `git grep "'ai:write:budgeted'"`
+  // is the authority — and that the `scope:` arguments handed to `recordScopeInvocation`
+  // are TELEMETRY LABELS which must NOT be swept. So the pre-existing strip inside
+  // `clampDevScopes` keeps the literal; this NEW site takes the constant, because the
+  // one thing worth not adding is a 31st copy in the same breath as the constant's
+  // arrival.
+  if (audience === 'editor') {
+    granted = granted.filter((s) => s !== BLOCK_SPEND_SCOPE);
+  }
+  return granted;
 }
 
 /**
@@ -487,5 +762,75 @@ export async function signDevScopedPageToken(opts: {
     maxBrowsingLevel: FORCED_SFW_CEILING,
     dev: true,
     ...(opts.reviewRunForReal === true ? { reviewRunForReal: true } : {}),
+  });
+}
+
+/**
+ * SIGN a PRIVATE-RUN page token — a delisted / suspended app's already-deployed
+ * bundle, for its owner, an accepted collaborator, or a moderator.
+ *
+ * Structurally the dev signer above with the same PAGE ctx, the same forced-SFW
+ * ceiling and the same self-bound `sub`. Three deliberate divergences, each of which
+ * is a safety property rather than a preference:
+ *
+ * 🔴 1. `dev` IS NOT SET, AND IT MUST NEVER BE — THIS IS THE SHARPEST HAZARD ON THE
+ * WHOLE FEATURE. `reserveBlockBuzzSpendForClaims` takes an EARLY RETURN on
+ * `claims.dev === true` and skips the per-app velocity reservation (`reserveAppSpend`,
+ * the G8 cap). A `dev` private-run token would therefore hand EVERY admitted viewer
+ * an UNCAPPED per-app spend surface on an app the platform has taken down — the exact
+ * inverse of what a takedown is for. The combination is refused in two more places
+ * (`BlockTokenService.sign` throws on it, and the verifier rejects the pair), so this
+ * is the third of three independent layers; none of them is load-bearing alone.
+ *
+ * 🔴 2. `privateRun: true` IS STAMPED, and it is a MONEY-SAFETY claim, not a UX one.
+ * It is the only input the two money arms have: `recordSpendAttribution` voids the
+ * `block_spend_attribution` row it would otherwise write as `tracked`, and
+ * `resolveBlockAuthorFeePayee` refuses so the viewer-paid author fee is never quoted,
+ * reserved or debited — which is what stops a moderator's wallet paying a suspended
+ * publisher for the privilege of reviewing their own takedown.
+ *
+ * 🔴 3. `privateRunAudience` IS STAMPED, AND IT HAS A REAL CONSUMER — do not read it
+ * as decoration. `resolveAppBlockApprovalVerdict` keys the private-run status
+ * exemption on the PAIR (`privateRun === true` AND a recognised audience), exactly as
+ * it keys the review-sandbox exemption on the `dev && reviewRunForReal` pair, and the
+ * runtime editor read-only belt branches on the `'editor'` value. A signed field that
+ * nothing branches on is not a guard; this one is branched on in both places.
+ *
+ * The budget is the dev-capped value: the per-call ceiling is the same
+ * `DEV_BUZZ_BUDGET_CAP`, because a private run is no more entitled to a large single
+ * submit than an author dogfooding their own app. The AGGREGATE ceiling is separate
+ * and lives in `blocks.router.ts` (`PRIVATE_RUN_BUZZ_CAP`).
+ */
+export async function signPrivateRunPageToken(opts: {
+  userId: number;
+  signBlockId: string;
+  signAppId: string;
+  signAppBlockId: string;
+  blockInstanceId: string;
+  granted: string[];
+  buzzBudget: number | undefined;
+  audience: PrivateRunAudience;
+}): Promise<Awaited<ReturnType<typeof BlockTokenService.sign>>> {
+  const ctx: Record<string, unknown> = {
+    slotId: PAGE_SLOT_ID,
+    entityType: 'none',
+  };
+  if (!isPageSlot(PAGE_SLOT_ID)) {
+    throw new Error('page slot misconfigured');
+  }
+  return BlockTokenService.sign({
+    userId: opts.userId,
+    blockId: opts.signBlockId,
+    appId: opts.signAppId,
+    appBlockId: opts.signAppBlockId,
+    blockInstanceId: opts.blockInstanceId,
+    scopes: opts.granted,
+    ctx,
+    buzzBudget: opts.buzzBudget,
+    domain: null,
+    maxBrowsingLevel: FORCED_SFW_CEILING,
+    // 🔴 NO `dev: true`. See divergence 1 above. This is not an omission.
+    privateRun: true,
+    privateRunAudience: opts.audience,
   });
 }

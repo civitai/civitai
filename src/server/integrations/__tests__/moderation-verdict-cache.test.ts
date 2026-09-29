@@ -230,15 +230,15 @@ describe('a hit skips the classifier', () => {
   });
 
   it('keys on the PREPARED prompt, so a false-positive rewrite collapses to one call', async () => {
-    // `removeFalsePositiveTriggers` maps 'girl' -> 'woman', so these two produce an IDENTICAL
+    // `removeFalsePositiveTriggers` maps 'girls' -> 'women', so these two produce an IDENTICAL
     // classifier request. Keying the raw prompt would issue two calls and silently halve the
     // benefit, with a plausible-looking hit rate and nothing to contradict it.
     const store = installRedisStore();
     const fetchSpy = stubFetchOk();
 
-    await extModeration.moderatePrompt('a girl in a field', 'generate');
+    await extModeration.moderatePrompt('a girls in a field', 'generate');
     await untilStored(store, 1);
-    await extModeration.moderatePrompt('a woman in a field', 'generate');
+    await extModeration.moderatePrompt('a women in a field', 'generate');
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(await cacheCount('hit')).toBe(1);

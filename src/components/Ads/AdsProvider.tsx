@@ -11,6 +11,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { isBraveBrowser } from '~/utils/device-helpers';
 
 declare global {
   interface Window {
@@ -161,12 +162,12 @@ export function AdsProvider({
   }, [useDirectAds, adsEnabled]);
 
   useEffect(() => {
-    const nav = navigator as Navigator & { brave?: { isBrave?: () => Promise<boolean> } };
-    if (typeof nav.brave?.isBrave === 'function') {
-      nav.brave.isBrave().then((isBrave) => {
-        if (isBrave) useAdProviderStore.setState({ browserBlocked: true });
-      });
-    }
+    // Shared with the web-push failure message — see `isBraveBrowser`. This used to open-code the
+    // same detection with no rejection handling, which left an unhandled rejection on any Brave
+    // build whose `isBrave()` rejects.
+    isBraveBrowser().then((isBrave) => {
+      if (isBrave) useAdProviderStore.setState({ browserBlocked: true });
+    });
   }, []);
 
   useEffect(() => {

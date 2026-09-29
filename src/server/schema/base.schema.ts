@@ -137,10 +137,17 @@ export const INT4_MAX = 2147483647;
  * in `src/server/utils/pagination-helpers.test.ts`; do not read this schema, or
  * `parseCursor`'s guards, as covering it.
  *
- * A string cursor is therefore left unbounded on purpose: the composite form
- * carries timestamps and `|` separators. `parseCursor` validates a string
- * cursor's token COUNT and each token's PARSEABILITY — never that a token's
- * type is coherent with the column it will be compared against.
+ * A string cursor is left unbounded HERE on purpose: the composite form carries
+ * timestamps and `|` separators, so this union cannot bound it. The int4 bound on
+ * a string token is enforced instead in `parseCursor`
+ * (`src/server/utils/pagination-helpers.ts`), which is where per-token type and
+ * field arity are known — see PR #5146. 🔴 The two are NOT redundant: this union
+ * covers the number/bigint spellings, `parseCursor` covers the string spelling,
+ * and a REST query param is ALWAYS a string. Do not delete either as duplicative.
+ *
+ * What is still unvalidated anywhere: whether a token's TYPE is coherent with the
+ * column it will be compared against. `parseCursor` checks token COUNT, each
+ * token's PARSEABILITY and now its MAGNITUDE — not its type.
  */
 export const keysetCursorSchema = z
   .union([

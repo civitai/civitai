@@ -113,6 +113,17 @@ describe('read wrappers', () => {
     const counts = await client({ fetch: fetchMock }).countNotifications({ userId: 1, unread: true });
     expect(counts).toEqual([{ category: 'Comment', count: 3 }]);
   });
+
+  it('countNotifications keeps the floor flag on a capped count', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify([{ category: 'Update', count: '10001', floor: true }]), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    );
+    const counts = await client({ fetch: fetchMock }).countNotifications({ userId: 1, unread: true });
+    expect(counts).toEqual([{ category: 'Update', count: 10001, floor: true }]);
+  });
 });
 
 describe('onFailure sink', () => {

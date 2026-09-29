@@ -322,6 +322,33 @@ A longer-term fix would remove the divergence rather than compose around it: der
 type support into the database so the view's coarse type branch disappears. Bigger than this
 feature needs; worth filing.
 
+## Coverage changes have to reach the orchestrator
+
+The orchestrator keeps its own copy of the answer, read from `/api/v1/model-versions/mini/<id>` with
+no user, and caches it **per AIR string**. So a Checkpoint whose weight file is a `Diffusion Model`
+or `UNet` is cached twice over — under `…:diffusionmodel:…` and `…:checkpoint:…` — and only the key
+the generator submits decides a generation. A stale entry does not degrade to *covered*: it answers
+`"<resource> is not enabled for generation"` until it expires on its own.
+
+The scheduled inputs bust in code. `handle-auctions` invalidates the versions that join
+`CoveredCheckpoint` **and the ones that leave** — the set is rebuilt daily from auction winners plus
+the top 20 weekly earners, so a version drops out with no auction event of its own. `applyScanOutcome`
+invalidates on the scan that first sets `scannedAt`, which is what makes any file arm of the view
+answer at all.
+
+🔴 **A backfill that can move coverage must bust the versions it touched.** A raw `UPDATE` has no hook
+that will do it, and every column the view reads is reachable that way: `ModelFile.metadata`
+(`format`), `scannedAt`, `Model.allowCommercialUse`, `ModelVersion.baseModelType`. Run the SQL, then
+`bustOrchestratorModelCache(versionIds)` over what it changed.
+
+Measured 2026-09-28. Relabelling ~580 `.safetensors` files `Other` → `SafeTensor` turned `coveredNext`
+true for the checkpoint versions behind them with no bust behind it; three days later two of those
+were still refused by the orchestrator while `/mini` had answered `canGenerate: true` throughout. A
+third version *did* get a bust, on re-entry to `CoveredCheckpoint` — aimed at its `checkpoint` AIR,
+which is not the entry the generator reads. 554 published checkpoint versions have only a
+`Diffusion Model`/`UNet` public file, so that mismatch applied to every one of them until
+`getGenerationFile` made the bust invalidate both AIR forms.
+
 ## The `covered` readers audit
 
 Readers of `GenerationCoverage` / `generationCoverage.covered`, classified by what changes
