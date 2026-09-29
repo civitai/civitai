@@ -3975,16 +3975,17 @@ export async function updateModelLastVersionAt({
     select: { publishedAt: true },
     orderBy: { publishedAt: 'desc' },
   });
-  if (!modelVersion) return;
+  const publishedAt = modelVersion?.publishedAt;
+  if (!publishedAt) return;
 
   try {
     if (onlyForward) {
       const { count } = await dbClient.model.updateMany({
         where: {
           id,
-          OR: [{ lastVersionAt: null }, { lastVersionAt: { lt: modelVersion.publishedAt } }],
+          OR: [{ lastVersionAt: null }, { lastVersionAt: { lt: publishedAt } }],
         },
-        data: { lastVersionAt: modelVersion.publishedAt },
+        data: { lastVersionAt: publishedAt },
       });
       if (!count) return;
 
@@ -3998,7 +3999,7 @@ export async function updateModelLastVersionAt({
 
     const model = await dbClient.model.update({
       where: { id },
-      data: { lastVersionAt: modelVersion.publishedAt },
+      data: { lastVersionAt: publishedAt },
     });
 
     await userModelCountCache.refresh(model.userId);
