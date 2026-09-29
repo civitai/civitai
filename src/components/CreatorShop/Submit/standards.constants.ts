@@ -3,6 +3,9 @@ import {
   cosmeticImageRequirements,
 } from '~/server/schema/creator-shop.schema';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
+import { STICKER_SIZE } from '~/shared/utils/sticker-token';
+
+const stickerRequirement = cosmeticImageRequirements(CosmeticType.Sticker);
 
 // Public, mod- and creator-facing quality standards, mirrored from the shared
 // standards doc: https://hackmd.io/@civitai/rJFF6LaEfx
@@ -58,14 +61,13 @@ export const COSMETIC_STANDARDS: Partial<Record<CosmeticType, CosmeticStandard>>
     requirements: [
       {
         key: 'reads-small',
-        label:
-          'Must read at 22px. Sticker are usually rendered inline with text — fine detail disappears at that size.',
+        label: `Must read at ${STICKER_SIZE.inline}px. Stickers are usually rendered inline with text — fine detail disappears at that size.`,
       },
       {
         key: 'size-transparent',
-        label: `${cosmeticDimensionsLabel(
-          cosmeticImageRequirements(CosmeticType.Sticker)
-        )}, with a transparent background.`,
+        label: `${cosmeticDimensionsLabel(stickerRequirement)}${
+          stickerRequirement.requireTransparency ? ', with a transparent background' : ''
+        }.`,
       },
       {
         key: 'no-text',

@@ -17,6 +17,7 @@ describe('sticker design standards', () => {
   });
 
   it('states no other pixel size', () => {
-    expect(labels.filter((l) => /\d+\s*[x×]\s*\d+/.test(l))).toEqual([]);
+    const enforced = cosmeticDimensionsLabel(cosmeticImageRequirements(CosmeticType.Sticker));
+    expect(labels.filter((l) => /\d+\s*[x×]\s*\d+/.test(l.replace(enforced, '')))).toEqual([]);
   });
 });
