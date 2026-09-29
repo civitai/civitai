@@ -130,9 +130,8 @@ function call(query: Record<string, string>, token = 'test-webhook-token') {
 const writtenImageIds = () =>
   insertTagsOnImageNew.mock.calls.flatMap(([rows]) => rows.map((r) => r.imageId));
 
-// Both default slots, with the mediarank one carrying the lag under test.
-const lags = (...mbs: number[]): SlotRead[] =>
-  mbs.map((mb) => ({ mediarank_sub: mb * MB, debezium_slot: 0 }));
+// The default slot, carrying the lag under test.
+const lags = (...mbs: number[]): SlotRead[] => mbs.map((mb) => ({ mediarank_sub: mb * MB }));
 
 // Collection 20's item ids sit BELOW collection 10's, as they do when two challenges' submission
 // windows overlap, so a cursor carried from one collection into the next skips entries.
@@ -219,7 +218,7 @@ describe('backfill-daily-challenge-tag', () => {
   });
 
   it('stops before its first write when a slot has no row', async () => {
-    state.lags = [{ mediarank_sub: 10 * MB }];
+    state.lags = [{}];
 
     const { payload } = await call({ dryRun: 'false' });
 
@@ -228,7 +227,7 @@ describe('backfill-daily-challenge-tag', () => {
   });
 
   it('stops before its first write when a slot has a row but no retained WAL (invalidated)', async () => {
-    state.lags = [{ mediarank_sub: null, debezium_slot: 0 }];
+    state.lags = [{ mediarank_sub: null }];
 
     const { payload } = await call({ dryRun: 'false' });
 
@@ -236,19 +235,44 @@ describe('backfill-daily-challenge-tag', () => {
     expect(payload).toMatchObject({ stopReason: 'slot-not-found' });
   });
 
-  it('guards on the worst of several slots, and stops if any one of them is missing', async () => {
-    // The worst slot is listed first, so taking the last slot's lag would miss it.
-    state.lags = [{ debezium: 2048 * MB, mediarank_sub: 10 * MB }];
-    const worst = await call({ dryRun: 'false', slots: 'debezium,mediarank_sub' });
+  it('checks every listed slot, and stops if any one of them is over the cap or missing', async () => {
+    // The offending slot is listed first, so checking only the last slot would miss it.
+    state.lags = [{ other: 2048 * MB, mediarank_sub: 10 * MB }];
+    const worst = await call({ dryRun: 'false', slots: 'other,mediarank_sub' });
 
-    expect(worst.payload).toMatchObject({ stopReason: 'lag-over-max', lagMb: 2048 });
+    expect(worst.payload).toMatchObject({
+      stopReason: 'lag-over-max',
+      stopSlot: 'other',
+      lagMb: { other: 2048, mediarank_sub: 10 },
+    });
 
     state.lags = [{ mediarank_sub: 10 * MB }];
     state.lagReads = 0;
-    const missing = await call({ dryRun: 'false', slots: 'debezium,mediarank_sub' });
+    const missing = await call({ dryRun: 'false', slots: 'other,mediarank_sub' });
 
     expect(missing.payload).toMatchObject({ stopReason: 'slot-not-found' });
     expect(insertTagsOnImageNew).not.toHaveBeenCalled();
+  });
+
+  it('measures growth per slot, so a slot already holding a lot of WAL cannot hide growth on another', async () => {
+    // Across both slots the maximum stays at 600 MB throughout, so growth on the maximum is zero.
+    state.lags = [
+      { other: 600 * MB, mediarank_sub: 10 * MB },
+      { other: 600 * MB, mediarank_sub: 100 * MB },
+    ];
+
+    const { payload } = await call({
+      dryRun: 'false',
+      batchSize: '2',
+      slots: 'other,mediarank_sub',
+      maxLagGrowthMb: '64',
+    });
+
+    expect(payload).toMatchObject({
+      stopReason: 'lag-grew',
+      stopSlot: 'mediarank_sub',
+      written: 1,
+    });
   });
 
   it('stops when lag crosses maxLagMb mid-run, after the writes before it', async () => {
@@ -271,15 +295,39 @@ describe('backfill-daily-challenge-tag', () => {
 
     const { payload } = await call({ dryRun: 'false', batchSize: '2', maxLagGrowthMb: '64' });
 
-    expect(payload).toMatchObject({ stopReason: 'lag-grew', written: 2, baselineMb: 100 });
+    expect(payload).toMatchObject({
+      stopReason: 'lag-grew',
+      written: 2,
+      baselines: 'mediarank_sub:100',
+    });
   });
 
-  it('measures growth from a passed baselineMb, so resumed calls cannot creep past it', async () => {
+  it('keeps lowering the baseline mid-run, so growth is measured from the lowest lag seen', async () => {
+    state.lags = lags(100, 30, 100);
+
+    const { payload } = await call({ dryRun: 'false', batchSize: '2', maxLagGrowthMb: '64' });
+
+    expect(payload).toMatchObject({
+      stopReason: 'lag-grew',
+      written: 2,
+      baselines: 'mediarank_sub:30',
+    });
+  });
+
+  it('measures growth from passed baselines, so resumed calls cannot creep past them', async () => {
     state.lags = lags(150);
 
-    const { payload } = await call({ dryRun: 'false', baselineMb: '80', maxLagGrowthMb: '64' });
+    const { payload } = await call({
+      dryRun: 'false',
+      baselines: 'mediarank_sub:80',
+      maxLagGrowthMb: '64',
+    });
 
-    expect(payload).toMatchObject({ stopReason: 'lag-grew', baselineMb: 80, written: 0 });
+    expect(payload).toMatchObject({
+      stopReason: 'lag-grew',
+      baselines: 'mediarank_sub:80',
+      written: 0,
+    });
     expect(insertTagsOnImageNew).not.toHaveBeenCalled();
   });
 
@@ -319,6 +367,7 @@ describe('backfill-daily-challenge-tag', () => {
     expect(payload).toMatchObject({
       stopReason: 'error',
       error: 'boom',
+      requeueFailed: false,
       written: 0,
       next: { collectionId: 10, itemId: 0 },
     });
@@ -346,11 +395,19 @@ describe('backfill-daily-challenge-tag', () => {
     const { statusCode, payload } = await call({ dryRun: 'false', batchSize: '2' });
 
     expect(statusCode).toBe(200);
-    expect(payload).toMatchObject({ done: true, written: 4, walMb: null });
+    expect(payload).toMatchObject({
+      done: true,
+      written: 4,
+      walMb: null,
+      next: { collectionId: 20, itemId: 5 },
+    });
   });
 
-  it('refuses an empty slot list before reading or writing anything', async () => {
-    await call({ dryRun: 'false', slots: ',' }).catch(() => undefined);
+  it.each([
+    ['a slot list with an empty entry', { slots: 'mediarank_sub,' }],
+    ['a baseline without a number', { baselines: 'mediarank_sub' }],
+  ])('refuses %s before reading or writing anything', async (_, params) => {
+    await call({ dryRun: 'false', ...params }).catch(() => undefined);
 
     expect(query).not.toHaveBeenCalled();
     expect(insertTagsOnImageNew).not.toHaveBeenCalled();
@@ -358,7 +415,11 @@ describe('backfill-daily-challenge-tag', () => {
 
   it('treats a baseline of 0 as a baseline, passed or measured', async () => {
     state.lags = lags(70);
-    const passed = await call({ dryRun: 'false', baselineMb: '0', maxLagGrowthMb: '64' });
+    const passed = await call({
+      dryRun: 'false',
+      baselines: 'mediarank_sub:0',
+      maxLagGrowthMb: '64',
+    });
 
     expect(passed.payload).toMatchObject({ stopReason: 'lag-grew', written: 0 });
 
@@ -366,27 +427,43 @@ describe('backfill-daily-challenge-tag', () => {
     state.lagReads = 0;
     const measured = await call({ dryRun: 'false', batchSize: '2', maxLagGrowthMb: '64' });
 
-    expect(measured.payload).toMatchObject({ stopReason: 'lag-grew', baselineMb: 0, written: 1 });
+    expect(measured.payload).toMatchObject({
+      stopReason: 'lag-grew',
+      baselines: 'mediarank_sub:0',
+      written: 1,
+    });
   });
 
-  it('lowers a passed baselineMb to the lag actually seen, so an inflated one cannot loosen the guard', async () => {
+  it('lowers passed baselines to the lag actually seen, so an inflated one cannot loosen the guard', async () => {
     state.lags = lags(100, 180);
 
     const { payload } = await call({
       dryRun: 'false',
       batchSize: '2',
-      baselineMb: '500',
+      baselines: 'mediarank_sub:500',
       maxLagGrowthMb: '64',
     });
 
-    expect(payload).toMatchObject({ stopReason: 'lag-grew', baselineMb: 100, written: 1 });
+    expect(payload).toMatchObject({
+      stopReason: 'lag-grew',
+      baselines: 'mediarank_sub:100',
+      written: 1,
+    });
   });
 
-  it('carries the returned baselineMb into the next call, so growth across calls still stops it', async () => {
+  it('carries the returned baselines into the next call, so growth across calls still stops it', async () => {
     state.lags = lags(100, 140);
-    const first = await call({ dryRun: 'false', batchSize: '2', maxBatches: '2' });
+    const first = await call({
+      dryRun: 'false',
+      batchSize: '2',
+      maxBatches: '2',
+      maxLagGrowthMb: '64',
+    });
 
-    expect(first.payload).toMatchObject({ stopReason: 'max-batches', baselineMb: 100 });
+    expect(first.payload).toMatchObject({
+      stopReason: 'max-batches',
+      baselines: 'mediarank_sub:100',
+    });
 
     state.lags = lags(180);
     state.lagReads = 0;
@@ -396,7 +473,8 @@ describe('backfill-daily-challenge-tag', () => {
       batchSize: '2',
       collectionId: String(next.collectionId),
       itemId: String(next.itemId),
-      baselineMb: String(first.payload.baselineMb),
+      baselines: String(first.payload.baselines),
+      maxLagGrowthMb: '64',
     });
 
     expect(second.payload).toMatchObject({ stopReason: 'lag-grew', written: 0 });

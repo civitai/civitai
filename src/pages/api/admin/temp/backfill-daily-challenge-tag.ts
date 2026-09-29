@@ -14,12 +14,13 @@ import { booleanString, commaDelimitedStringArray } from '~/utils/zod-helpers';
  *
  * Sequential committed batches, resumable from the returned `next` cursor. Before every batch it
  * reads the retained WAL of each logical replication slot in `slots` and stops if one is missing,
- * over `maxLagMb`, or grown more than `maxLagGrowthMb` past the lowest lag seen. Pass the returned
- * `baselineMb` back with `next`, or growth is measured from each call's own start. Both slots that
- * carry TagsOnImageNew are watched by default; name them explicitly if either is spelled otherwise.
+ * over `maxLagMb`, or grown more than `maxLagGrowthMb` past the lowest lag that slot has shown.
+ * Pass the returned `baselines` back with `next`, or growth is measured from each call's own start.
  *
  *   /api/admin/temp/backfill-daily-challenge-tag?token=$WEBHOOK_TOKEN&dryRun=false&collectionId=0&itemId=0
  */
+const MB = 1024 ** 2;
+
 const schema = z.object({
   dryRun: booleanString().default(true),
   collectionId: z.coerce.number().int().min(0).default(0),
@@ -27,13 +28,25 @@ const schema = z.object({
   batchSize: z.coerce.number().int().min(1).max(2000).default(1000),
   pauseMs: z.coerce.number().int().min(0).max(60_000).default(2000),
   maxBatches: z.coerce.number().int().min(1).max(1000).default(30),
-  slots: commaDelimitedStringArray(z.string().min(1).array().min(1)).default([
-    'mediarank_sub',
-    'debezium_slot',
-  ]),
+  slots: commaDelimitedStringArray(z.string().min(1).array().min(1)).default(['mediarank_sub']),
   maxLagMb: z.coerce.number().positive().max(4096).default(1024),
-  maxLagGrowthMb: z.coerce.number().positive().max(1024).default(64),
-  baselineMb: z.coerce.number().min(0).max(4096).optional(),
+  // Above the sawtooth a healthy slot shows between restart_lsn steps; a stalled one passes it in minutes.
+  maxLagGrowthMb: z.coerce.number().positive().max(1024).default(256),
+  // "slot:mb,slot:mb", as returned in `baselines`.
+  baselines: commaDelimitedStringArray(
+    z
+      .string()
+      .regex(/^[\w.-]+:\d+$/)
+      .array()
+  ).transform(
+    (entries) =>
+      Object.fromEntries(
+        entries.map((entry) => {
+          const [slot, mb] = entry.split(':');
+          return [slot, Number(mb) * MB];
+        })
+      ) as Record<string, number>
+  ),
 });
 
 type StopReason =
@@ -44,19 +57,20 @@ type StopReason =
   | 'client-closed'
   | 'error';
 
-const MB = 1024 ** 2;
-
-/** The largest retained WAL across `slots`, or null if any slot is absent or holds no WAL. */
-async function getMaxRetainedWalBytes(slots: string[]) {
-  if (!slots.length) return null;
+/** Retained WAL per slot, or null if any slot is absent or holds no WAL. */
+async function getRetainedWalBytes(slots: string[]) {
   const { rows } = await pgDbWrite.query<{ slot: string; lag: string | null }>(
     `SELECT slot_name AS slot, pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)::bigint AS lag
      FROM pg_replication_slots WHERE slot_name = ANY($1)`,
     [slots]
   );
-  const lags = slots.map((slot) => rows.find((row) => row.slot === slot)?.lag ?? null);
-  if (lags.some((lag) => lag === null)) return null;
-  return Math.max(...lags.map(Number));
+  const lags: Record<string, number> = {};
+  for (const slot of slots) {
+    const lag = rows.find((row) => row.slot === slot)?.lag ?? null;
+    if (lag === null) return null;
+    lags[slot] = Number(lag);
+  }
+  return lags;
 }
 
 export default WebhookEndpoint(async (req, res) => {
@@ -87,9 +101,10 @@ export default WebhookEndpoint(async (req, res) => {
   let untaggedFound = 0;
   let written = 0;
   let wroteLastBatch = false;
-  let baselineLag = params.baselineMb === undefined ? undefined : params.baselineMb * MB;
-  let lagBytes: number | null = null;
+  const baselines = { ...params.baselines };
+  let lags: Record<string, number> | null = null;
   let stopReason: StopReason | undefined;
+  let stopSlot: string | undefined;
   let error: string | undefined;
   let requeueFailed = false;
 
@@ -110,19 +125,20 @@ export default WebhookEndpoint(async (req, res) => {
       if (wroteLastBatch && params.pauseMs) await sleep(params.pauseMs);
       wroteLastBatch = false;
 
-      lagBytes = await getMaxRetainedWalBytes(params.slots);
-      if (lagBytes === null) {
+      lags = await getRetainedWalBytes(params.slots);
+      if (!lags) {
         stopReason = 'slot-not-found';
         break outer;
       }
-      baselineLag = Math.min(baselineLag ?? lagBytes, lagBytes);
-      if (lagBytes > params.maxLagMb * MB) {
-        stopReason = 'lag-over-max';
-        break outer;
-      }
-      if (lagBytes - baselineLag > params.maxLagGrowthMb * MB) {
-        stopReason = 'lag-grew';
-        break outer;
+      // Per slot: one slot already holding a lot of WAL must not hide growth on another.
+      for (const [slot, lag] of Object.entries(lags)) {
+        baselines[slot] = Math.min(baselines[slot] ?? lag, lag);
+        if (lag > params.maxLagMb * MB) stopReason = 'lag-over-max';
+        else if (lag - baselines[slot] > params.maxLagGrowthMb * MB) stopReason = 'lag-grew';
+        if (stopReason) {
+          stopSlot = slot;
+          break outer;
+        }
       }
 
       const { rows } = await pgDbWrite.query<{ id: number; imageId: number; tagged: boolean }>(
@@ -187,22 +203,25 @@ export default WebhookEndpoint(async (req, res) => {
     .then(({ rows }) => Number(rows[0].bytes))
     .catch(() => null);
 
-  const toMb = (bytes: number | null | undefined) =>
-    bytes === null || bytes === undefined ? null : Math.round(bytes / MB);
+  const toMb = (bytes: number | null) => (bytes === null ? null : Math.round(bytes / MB));
 
   return res.status(200).json({
     dryRun: params.dryRun,
     done: !stopReason,
     stopReason,
+    stopSlot,
     error,
     requeueFailed,
     next,
-    baselineMb: toMb(baselineLag),
+    // Floored, so passing it back can only tighten the guard.
+    baselines: Object.entries(baselines)
+      .map(([slot, bytes]) => `${slot}:${Math.floor(bytes / MB)}`)
+      .join(','),
     batches,
     scanned,
     untaggedFound,
     written,
-    lagMb: toMb(lagBytes),
+    lagMb: lags && Object.fromEntries(Object.entries(lags).map(([slot, b]) => [slot, toMb(b)])),
     walMb: toMb(walBytes),
   });
 });
