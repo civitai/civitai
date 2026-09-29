@@ -196,6 +196,9 @@ export function filterPreferences<
   }
 
   const isModerator = !!currentUser?.isModerator;
+  // Unlike the `isOwner` locals, never true for a signed-out viewer and an unowned row.
+  const ownedByViewer = (userId: number | null | undefined) =>
+    !!currentUser?.id && userId === currentUser.id;
   const { key, value } = paired<BaseDataTypeMap>(type, data);
   const {
     hiddenModels,
@@ -242,7 +245,7 @@ export function filterPreferences<
             }
           }
 
-          if (model.minor && minorDisabled) {
+          if (model.minor && minorDisabled && !ownedByViewer(userId)) {
             hidden.minor++;
             return false;
           }
@@ -271,7 +274,7 @@ export function filterPreferences<
                 return false;
               }
 
-              if (i.minor && minorDisabled) {
+              if (i.minor && minorDisabled && !ownedByViewer(userId)) {
                 hidden.minor++;
                 return false;
               }
@@ -334,7 +337,7 @@ export function filterPreferences<
           return false;
         }
 
-        if (image.minor && minorDisabled) {
+        if (image.minor && minorDisabled && !ownedByViewer(userId)) {
           hidden.minor++;
           return false;
         }
@@ -491,7 +494,11 @@ export function filterPreferences<
               return false;
             }
 
-            if (collection.image.minor && minorDisabled) {
+            if (
+              collection.image.minor &&
+              minorDisabled &&
+              !ownedByViewer(collection.image.userId)
+            ) {
               hidden.minor++;
               return false;
             }
@@ -517,7 +524,7 @@ export function filterPreferences<
                 hidden.poi++;
                 return false;
               }
-              if (i.minor && minorDisabled) {
+              if (i.minor && minorDisabled && !ownedByViewer(userId)) {
                 hidden.minor++;
                 return false;
               }
@@ -588,7 +595,7 @@ export function filterPreferences<
               hidden.poi++;
               return false;
             }
-            if (i.minor && minorDisabled) {
+            if (i.minor && minorDisabled && !ownedByViewer(userId)) {
               hidden.minor++;
               return false;
             }
@@ -645,7 +652,7 @@ export function filterPreferences<
               hidden.poi++;
               return false;
             }
-            if (image.minor && minorDisabled) {
+            if (image.minor && minorDisabled && !ownedByViewer(userId)) {
               hidden.minor++;
               return false;
             }
@@ -768,7 +775,7 @@ export function filterPreferences<
             return false;
           }
         }
-        if (m.minor && minorDisabled) {
+        if (m.minor && minorDisabled && !ownedByViewer(userId)) {
           hidden.minor++;
           return false;
         }

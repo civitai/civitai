@@ -26,6 +26,7 @@ import { MediaType } from '~/shared/utils/prisma/enums';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { isDefined } from '~/utils/type-guards';
+import { buildMinorExclusionFilter } from '~/components/AutocompleteSearch/autocomplete-filters';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { nsfwRestrictedBaseModels } from '~/server/common/constants';
 import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
@@ -69,7 +70,11 @@ function RenderFilters() {
             : ''
         }`
       : null,
-    browsingSettingsAddons.settings.disableMinor ? 'minor != true' : null,
+    buildMinorExclusionFilter({
+      targetIndex: 'images',
+      addons: browsingSettingsAddons.settings,
+      currentUser,
+    }),
     // Filter out images from NSFW models with restricted base models
     `NOT (nsfwLevel IN [${nsfwBrowsingLevelsArray.join(
       ', '

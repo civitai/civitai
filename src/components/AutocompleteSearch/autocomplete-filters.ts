@@ -5,6 +5,24 @@ import { isDefined } from '~/utils/type-guards';
 
 type Viewer = { id?: number; username?: string | null; isModerator?: boolean | null } | null;
 
+const MINOR_FILTERABLE_INDEXES: SearchIndexKey[] = ['models', 'images'];
+
+export function buildMinorExclusionFilter({
+  targetIndex,
+  addons,
+  currentUser,
+}: {
+  targetIndex: SearchIndexKey;
+  addons: { disableMinor?: boolean };
+  currentUser?: Viewer;
+}) {
+  if (!MINOR_FILTERABLE_INDEXES.includes(targetIndex) || !addons.disableMinor) return null;
+  // The owner is matched by id only, and the images index has no filterable user id.
+  return targetIndex === 'models' && currentUser?.id
+    ? `minor != true OR user.id = ${currentUser.id}`
+    : 'minor != true';
+}
+
 export function buildAutocompleteBaseFilters({
   targetIndex,
   addons,
@@ -17,7 +35,6 @@ export function buildAutocompleteBaseFilters({
   const isModels = targetIndex === 'models';
   const isImages = targetIndex === 'images';
   const supportsPoi = ['models', 'images'].includes(targetIndex);
-  const supportsMinor = ['models', 'images'].includes(targetIndex);
 
   return [
     isModels && supportsPoi && addons.disablePoi
@@ -30,7 +47,7 @@ export function buildAutocompleteBaseFilters({
             : ''
         }`
       : null,
-    supportsMinor && addons.disableMinor ? 'minor != true' : null,
+    buildMinorExclusionFilter({ targetIndex, addons, currentUser }),
     isModels && !currentUser?.isModerator
       ? `availability != ${Availability.Private}${
           currentUser?.id ? ` OR user.id = ${currentUser?.id}` : ''

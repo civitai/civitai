@@ -30,6 +30,7 @@ import { paidModelsSearchFilterClause } from '~/components/Search/paid-model-sea
 import { Availability } from '~/shared/utils/prisma/enums';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { isDefined } from '~/utils/type-guards';
+import { buildMinorExclusionFilter } from '~/components/AutocompleteSearch/autocomplete-filters';
 import { nsfwRestrictedBaseModels } from '~/server/common/constants';
 import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
 
@@ -54,9 +55,11 @@ const RenderFilters = () => {
     browsingSettingsAddons.settings.disablePoi
       ? `poi != true${currentUser?.id ? ` OR user.id = ${currentUser.id}` : ''}`
       : null,
-    browsingSettingsAddons.settings.disableMinor
-      ? `minor != true${currentUser?.id ? ` OR user.id = ${currentUser.id}` : ''}`
-      : null,
+    buildMinorExclusionFilter({
+      targetIndex: 'models',
+      addons: browsingSettingsAddons.settings,
+      currentUser,
+    }),
     `availability != ${Availability.Private}${
       currentUser?.id ? ` OR user.id = ${currentUser.id}` : ''
     }`,

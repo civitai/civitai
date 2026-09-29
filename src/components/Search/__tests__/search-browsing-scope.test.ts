@@ -1,8 +1,11 @@
 // @vitest-environment happy-dom
-import { act, createElement } from 'react';
+import { MantineProvider } from '@mantine/core';
+import type { ReactNode } from 'react';
+import { act, createElement, Fragment } from 'react';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { createRoot } from 'react-dom/client';
+import type * as InstantMeilisearch from '@meilisearch/instant-meilisearch';
 import type * as ReactInstantsearch from 'react-instantsearch';
 import { describe, expect, it, vi } from 'vitest';
 import type * as HiddenPreferencesModule from '~/components/HiddenPreferences/HiddenPreferencesProvider';
@@ -15,6 +18,7 @@ import {
 } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { BrowsingLevelFilter } from '~/components/Search/CustomSearchComponents';
+import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
 import { withSearchBrowsingScope } from '~/components/Search/SearchBrowsingScope';
 import {
   BrowsingSettingsAddonsProvider,
@@ -69,6 +73,12 @@ vi.mock('~/components/HiddenPreferences/HiddenPreferencesProvider', async (impor
   }),
 }));
 
+// The search host is unset under test, and the dropdown builds its client from it at import time.
+vi.mock('@meilisearch/instant-meilisearch', async (importOriginal) => ({
+  ...(await importOriginal<typeof InstantMeilisearch>()),
+  instantMeiliSearch: () => ({ search: async () => ({ results: [] }) }),
+}));
+
 const configured: { filters?: string }[] = [];
 vi.mock('react-instantsearch', async (importOriginal) => ({
   ...(await importOriginal<typeof ReactInstantsearch>()),
@@ -76,6 +86,9 @@ vi.mock('react-instantsearch', async (importOriginal) => ({
     configured.push(props);
     return {};
   },
+  InstantSearch: ({ children }: { children: ReactNode }) => createElement(Fragment, null, children),
+  useSearchBox: () => ({ query: '', refine: () => undefined, isSearchStalled: false }),
+  useHits: () => ({ hits: [], results: undefined }),
 }));
 
 const modelHit = (id: number, minor: boolean) => ({
@@ -156,7 +169,7 @@ describe('withSearchBrowsingScope', () => {
 
     expect(seen.level).toBe(allBrowsingLevelsFlag);
     expect(seen.sentFilter).toBe(
-      '(poi != true OR user.id = 1) AND (minor != true) AND (availability != Private OR user.id = 1)' +
+      '(poi != true OR user.id = 1) AND (minor != true OR user.id = 1) AND (availability != Private OR user.id = 1)' +
         ' AND (nsfwLevel=1 OR nsfwLevel=2 OR nsfwLevel=4 OR nsfwLevel=8 OR nsfwLevel=16)'
     );
     expect(seen.keptModelIds, 'hidden prefs: R model kept, minor-flagged R model dropped').toEqual([
@@ -168,8 +181,9 @@ describe('withSearchBrowsingScope', () => {
    * The fixture's positive control: unscoped, the page override reaches search. Only the minor
    * exclusion discriminates here; the default POI rule applies at PG as well.
    *
-   * 🔴 BrowsingLevelFilter reads the PAGE level on purpose; switching it to the viewer hook widens
-   * the level filter while the addons stay at PG. Widen a search with withSearchBrowsingScope instead.
+   * 🔴 BrowsingLevelFilter reads the level of its nearest addons provider on purpose; switching it
+   * to the viewer hook widens the level filter while the addons stay at PG. Widen a search with
+   * withSearchBrowsingScope instead.
    */
   it('keeps the level filter and the addons on one level when unscoped', () => {
     canViewNsfw.value = true;
@@ -205,5 +219,94 @@ describe.each([
     expect(source.match(new RegExp(String.raw`^export const ${name} = .*$`, 'gm'))).toEqual([
       `export const ${name} = withSearchBrowsingScope(${name}Inner);`,
     ]);
+  });
+});
+
+const NSFW_LEVEL_TERM = /\bnsfwLevel=(?:4|8|16|32)\b/;
+const MINOR_CLAUSE = '(minor != true OR user.id = 1)';
+const ALL_LEVELS_WITH_MINOR_EXCLUSION = `${MINOR_CLAUSE} AND (nsfwLevel=1 OR nsfwLevel=2 OR nsfwLevel=4 OR nsfwLevel=8 OR nsfwLevel=16)`;
+
+function quickSearchTree() {
+  return createElement(
+    MantineProvider,
+    null,
+    createElement(
+      BrowsingLevelProvider,
+      null,
+      createElement(
+        BrowsingSettingsAddonsProvider,
+        null,
+        createElement(QuickSearchDropdown, {
+          supportedIndexes: ['models'],
+          onItemSelected: () => undefined,
+        })
+      )
+    )
+  );
+}
+
+describe('QuickSearchDropdown', () => {
+  it('sends the minor exclusion to Meilisearch, not only to the client-side filter', () => {
+    canViewNsfw.value = true;
+    configured.length = 0;
+    const root = createRoot(document.createElement('div'));
+    act(() => root.render(quickSearchTree()));
+    act(() => root.unmount());
+
+    expect(configured.at(-1)?.filters).toBe(ALL_LEVELS_WITH_MINOR_EXCLUSION);
+  });
+
+  /**
+   * 🔴 The level filter must read the level the addons provider resolved, not debounce the level a
+   * second time. Two debounces are two timers, and the render between them sends NSFW levels with
+   * the PG addons, which carry no minor exclusion.
+   *
+   * The timers are queued by hand and each fires in its own act(), so that render is observable.
+   * vi's fake timers cannot do this: timers due at the same instant all fire in one advance, and
+   * one act() batches their updates into a single render, which passes with the race still there.
+   */
+  it('never sends an NSFW level without the minor exclusion while the level rises', () => {
+    canViewNsfw.value = true;
+    const timers = new Map<number, () => void>();
+    let nextTimerId = 0;
+    const setTimeoutSpy = vi.spyOn(window, 'setTimeout').mockImplementation(((cb: () => void) => {
+      timers.set(++nextTimerId, cb);
+      return nextTimerId;
+    }) as never);
+    const clearTimeoutSpy = vi
+      .spyOn(window, 'clearTimeout')
+      .mockImplementation(((id: number) => timers.delete(id)) as never);
+    const root = createRoot(document.createElement('div'));
+    try {
+      settings.browsingLevel = publicBrowsingLevelsFlag;
+      configured.length = 0;
+      act(() => root.render(quickSearchTree()));
+      expect(configured.at(-1)?.filters, 'starts at PG, where no minor exclusion applies').toBe(
+        '(nsfwLevel=1)'
+      );
+
+      settings.browsingLevel = allBrowsingLevelsFlag;
+      act(() => root.render(quickSearchTree()));
+      let fired = 0;
+      for (const [id, cb] of timers) {
+        timers.delete(id);
+        act(() => cb());
+        expect(++fired, 'the timers must drain').toBeLessThan(20);
+      }
+      expect(fired, 'each debounce timer fired in its own render').toBeGreaterThan(1);
+
+      const sent = configured.map((c) => c.filters ?? '');
+      expect(NSFW_LEVEL_TERM.test(ALL_LEVELS_WITH_MINOR_EXCLUSION), 'the probe matches').toBe(true);
+      const unsafe = sent.filter((f) => NSFW_LEVEL_TERM.test(f) && !f.includes('(minor != true'));
+      expect(unsafe.join('\n'), 'NSFW levels sent without the minor exclusion').toBe('');
+      expect(sent.at(-1), 'the level change must have reached the filter').toBe(
+        ALL_LEVELS_WITH_MINOR_EXCLUSION
+      );
+    } finally {
+      act(() => root.unmount());
+      setTimeoutSpy.mockRestore();
+      clearTimeoutSpy.mockRestore();
+      settings.browsingLevel = allBrowsingLevelsFlag;
+    }
   });
 });
