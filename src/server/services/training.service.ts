@@ -35,6 +35,7 @@ import { internalOrchestratorClient } from '~/server/services/orchestrator/clien
 import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
 import {
   deriveTrainingWorkflowState,
+  offsetEpochNumbers,
   TrainingRecordNotFoundError,
 } from '~/server/services/orchestrator/training/workflow-state';
 import {
@@ -544,12 +545,7 @@ export async function updateTrainingWorkflowRecords(
   // than an error, so those bindings would silently move to other weights. Not enforced, though:
   // `modelFileMetadataSchema` takes `trainingResults` from the client, so an owner can seed any
   // offset on their own run.
-  const epochOffset = trainingResults.epochOffset ?? 0;
-
-  const epochData: TrainingResultsV2['epochs'] = derivedEpochs.map((e) => ({
-    ...e,
-    epochNumber: e.epochNumber >= 0 ? e.epochNumber + epochOffset : -1,
-  }));
+  const epochData = offsetEpochNumbers(derivedEpochs, trainingResults.epochOffset);
 
   const resolvedStartedAt = trainingResults.startedAt ?? derived.startedAt;
 

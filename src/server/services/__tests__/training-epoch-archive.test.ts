@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as BlobArchiveModule from '~/server/services/orchestrator/blobArchive';
+import type * as OrchestratorToken from '~/server/orchestrator/get-orchestrator-token';
+import type * as Workflows from '~/server/services/orchestrator/workflows';
 
 /**
  * "Download All" on the training epoch view now asks the orchestrator to bundle every
@@ -9,7 +11,18 @@ import type * as BlobArchiveModule from '~/server/services/orchestrator/blobArch
  * and what happens to the ones we cannot resolve.
  */
 
-const findUnique = dbMock.dbRead.modelVersion.findUnique;
+const findFirst = dbMock.dbWrite.modelVersion.findFirst;
+const ctx = { req: {}, res: {} } as never;
+
+const getWorkflow = vi.fn();
+vi.mock('~/server/services/orchestrator/workflows', async (importOriginal) => ({
+  ...(await importOriginal<typeof Workflows>()),
+  getWorkflow: (...args: unknown[]) => getWorkflow(...args),
+}));
+vi.mock('~/server/orchestrator/get-orchestrator-token', async (importOriginal) => ({
+  ...(await importOriginal<typeof OrchestratorToken>()),
+  getOrchestratorToken: async () => 'token',
+}));
 vi.mock('~/server/services/orchestrator/client', () => ({ internalOrchestratorClient: {} }));
 
 const createBlobArchive = vi.fn();
@@ -141,6 +154,8 @@ describe('buildEpochArchiveEntries', () => {
 describe('getTrainingEpochArchive', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Past retention by default, so the stored copy is what gets archived.
+    getWorkflow.mockRejectedValue(new Error('not found'));
     createBlobArchive.mockResolvedValue({
       url: 'https://orchestration.civitai.com/v2/consumer/blobs/archive/token',
       entryCount: 5,
@@ -151,17 +166,19 @@ describe('getTrainingEpochArchive', () => {
 
   const modelVersion = {
     id: 1,
+    trainingStatus: 'InReview',
     trainingDetails: { baseModel: 'pony' },
+    meta: null,
     model: { userId: 10, name: 'My Cool Model!' },
-    files: [{ metadata: { trainingResults: v2Results } }],
+    files: [{ id: 5, type: 'Training Data', metadata: { trainingResults: v2Results } }],
   };
 
   // The architecture segment reaches the filename only through `trainingDetails` in this select;
   // dropping it from the select is the regression this pins.
   it('archives every blob for the owner, named by architecture', async () => {
-    findUnique.mockResolvedValue(modelVersion);
+    findFirst.mockResolvedValue(modelVersion);
 
-    const result = await getTrainingEpochArchive({ modelVersionId: 1, userId: 10 });
+    const result = await getTrainingEpochArchive({ modelVersionId: 1, userId: 10, ctx });
 
     expect(createBlobArchive).toHaveBeenCalledWith({
       entries: expect.arrayContaining([
@@ -182,28 +199,62 @@ describe('getTrainingEpochArchive', () => {
     expect(result.cappedCount).toBe(0);
   });
 
-  it('refuses a user who does not own the model', async () => {
-    findUnique.mockResolvedValue(modelVersion);
+  // The epoch screen lists the live workflow's epochs; a stored copy that lags it must not shrink
+  // the archive to what had been written back so far.
+  it('archives the epochs the live workflow has, not a stored copy that is behind it', async () => {
+    findFirst.mockResolvedValue(modelVersion);
+    getWorkflow.mockResolvedValue({
+      id: 'wf-1',
+      status: 'succeeded',
+      steps: [
+        {
+          $type: 'imageResourceTraining',
+          metadata: { modelFileId: 5 },
+          output: {
+            epochs: [1, 2, 3].map((n) => ({
+              epochNumber: n,
+              blobUrl: blobUrl(`MODEL${n}.safetensors`),
+              sampleImages: [],
+            })),
+          },
+        },
+      ],
+    });
 
-    await expect(getTrainingEpochArchive({ modelVersionId: 1, userId: 99 })).rejects.toMatchObject({
+    await getTrainingEpochArchive({ modelVersionId: 1, userId: 10, ctx });
+
+    expect(createBlobArchive.mock.calls[0][0].entries).toContainEqual({
+      blobId: 'MODEL3.safetensors',
+      fileName: 'My_Cool_Model__pony_1_epoch_3.safetensors',
+    });
+  });
+
+  it('refuses a user who does not own the model', async () => {
+    findFirst.mockResolvedValue(modelVersion);
+
+    await expect(
+      getTrainingEpochArchive({ modelVersionId: 1, userId: 99, ctx })
+    ).rejects.toMatchObject({
       code: 'UNAUTHORIZED',
     });
     expect(createBlobArchive).not.toHaveBeenCalled();
   });
 
   it('allows a moderator', async () => {
-    findUnique.mockResolvedValue(modelVersion);
+    findFirst.mockResolvedValue(modelVersion);
 
     await expect(
-      getTrainingEpochArchive({ modelVersionId: 1, userId: 99, isModerator: true })
+      getTrainingEpochArchive({ modelVersionId: 1, userId: 99, isModerator: true, ctx })
     ).resolves.toMatchObject({ entryCount: 5 });
   });
 
   it('fails loudly rather than requesting an empty archive when no blob survives', async () => {
-    findUnique.mockResolvedValue({
+    findFirst.mockResolvedValue({
       ...modelVersion,
       files: [
         {
+          id: 5,
+          type: 'Training Data',
           metadata: {
             trainingResults: {
               ...v2Results,
@@ -221,7 +272,9 @@ describe('getTrainingEpochArchive', () => {
       ],
     });
 
-    await expect(getTrainingEpochArchive({ modelVersionId: 1, userId: 10 })).rejects.toMatchObject({
+    await expect(
+      getTrainingEpochArchive({ modelVersionId: 1, userId: 10, ctx })
+    ).rejects.toMatchObject({
       code: 'NOT_FOUND',
     });
     expect(createBlobArchive).not.toHaveBeenCalled();
