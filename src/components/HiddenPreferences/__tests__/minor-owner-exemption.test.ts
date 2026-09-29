@@ -17,7 +17,7 @@ const emptyPrefs = (): HiddenPreferencesState => ({
   systemHiddenTags: new Map(),
 });
 
-function run<T extends 'models' | 'images' | 'collections' | 'posts'>(
+function run<T extends 'models' | 'images' | 'collections' | 'posts' | 'bounties' | 'model3d'>(
   type: T,
   data: unknown[],
   viewer: { id: number } | null,
@@ -63,6 +63,44 @@ describe('minor exclusion owner exemption', () => {
     expect(ids(run(type, [make()], null).items)).toEqual([]);
   });
 
+  const ownersMinorImage = () => [
+    { id: 90, userId: OWNER.id, nsfwLevel: NsfwLevel.R, minor: true },
+  ];
+  const keptImageIds = (items: unknown[]) =>
+    (items as { images?: { id: number }[] }[]).flatMap((x) => ids(x.images ?? []));
+  it.each([
+    [
+      'models',
+      () => ({
+        id: 11,
+        user: { id: OWNER.id },
+        nsfwLevel: NsfwLevel.R,
+        nsfw: false,
+        name: 'm',
+        images: ownersMinorImage(),
+      }),
+    ],
+    ['posts', () => ({ userId: OWNER.id, nsfwLevel: NsfwLevel.R, images: ownersMinorImage() })],
+    [
+      'bounties',
+      () => ({
+        id: 51,
+        user: { id: OWNER.id },
+        nsfwLevel: NsfwLevel.R,
+        images: ownersMinorImage(),
+      }),
+    ],
+  ] as const)('%s: only the owner keeps their own minor-flagged child image', (type, make) => {
+    expect(keptImageIds(run(type, [make()], OWNER).items)).toEqual([90]);
+    expect(keptImageIds(run(type, [make()], STRANGER).items)).toEqual([]);
+  });
+
+  it('model3d: only the owner keeps their own minor-flagged row', () => {
+    const row = () => ({ id: 70, user: { id: OWNER.id }, nsfwLevel: NsfwLevel.R, minor: true });
+    expect(ids(run('model3d', [row()], OWNER).items)).toEqual([70]);
+    expect(ids(run('model3d', [row()], STRANGER).items)).toEqual([]);
+  });
+
   it('keeps the exclusion off entirely when the addon is off', () => {
     expect(ids(run('images', [minorImage()], STRANGER, false).items)).toEqual([20]);
   });
@@ -80,19 +118,32 @@ describe('minor exclusion owner exemption', () => {
   });
 
   /**
-   * 🔴 The posts branch's `isOwner` is `image.userId === currentUser?.id`, which is
-   * `undefined === undefined` for a signed-out viewer and an image without a user id. Reusing it
+   * 🔴 These branches' `isOwner` locals are `image.userId === currentUser?.id`, which is
+   * `undefined === undefined` for a signed-out viewer and an image without a user id. Reusing one
    * for the minor check would exempt every such image for every signed-out viewer.
    */
-  it('does not treat a signed-out viewer as the owner of an image with no user id', () => {
-    const post = {
-      nsfwLevel: NsfwLevel.R,
-      images: [
-        { id: 40, nsfwLevel: NsfwLevel.R, minor: true },
-        { id: 41, nsfwLevel: NsfwLevel.R },
-      ],
-    };
-    const [kept] = run('posts', [post], null).items as { images: { id: number }[] }[];
+  const unownedImages = () => [
+    { id: 40, nsfwLevel: NsfwLevel.R, minor: true },
+    { id: 41, nsfwLevel: NsfwLevel.R },
+  ];
+  it.each([
+    ['posts', () => ({ nsfwLevel: NsfwLevel.R, images: unownedImages() })],
+    [
+      'bounties',
+      () => ({ id: 50, user: { id: OWNER.id }, nsfwLevel: NsfwLevel.R, images: unownedImages() }),
+    ],
+    [
+      'collections',
+      () => ({
+        id: 60,
+        userId: OWNER.id,
+        nsfwLevel: NsfwLevel.R,
+        image: null,
+        images: unownedImages(),
+      }),
+    ],
+  ] as const)('%s: a signed-out viewer does not own an image with no user id', (type, make) => {
+    const [kept] = run(type, [make()], null).items as { images: { id: number }[] }[];
     expect(ids(kept.images)).toEqual([41]);
   });
 });

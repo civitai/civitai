@@ -34,7 +34,7 @@ import {
 } from '~/components/Search/useCarriedSearchText';
 import { BrowsingLevelFilter } from './CustomSearchComponents';
 import { withSearchBrowsingScope } from '~/components/Search/SearchBrowsingScope';
-import { buildMinorExclusionFilter } from '~/components/AutocompleteSearch/autocomplete-filters';
+import { buildMinorExclusionFilter } from '~/components/Search/search-filters';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { isDefined } from '~/utils/type-guards';
 import { useCurrentUser } from '~/hooks/useCurrentUser';

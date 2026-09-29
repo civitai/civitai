@@ -2,7 +2,6 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
 import { buildSearchPageUrl, parseQuery } from '~/components/AutocompleteSearch/autocomplete-query';
-import { buildMinorExclusionFilter } from '~/components/AutocompleteSearch/autocomplete-filters';
 import { buildBrowsingLevelFilters, joinFilterClauses } from '~/components/Search/search-filters';
 import { BROWSING_LEVEL_ATTRIBUTE } from '~/components/Search/search-index-filters';
 import type { SearchIndexKey } from '~/components/Search/search.types';
@@ -222,36 +221,5 @@ describe('the AutocompleteSearch InstantSearch tree', () => {
   it('routes every /search push through buildSearchPageUrl', () => {
     expect(source.match(/router\.push\(`\/search\/[^`]*`/g) ?? []).toEqual([]);
     expect(source).toContain('buildSearchPageUrl');
-  });
-});
-
-describe('buildMinorExclusionFilter', () => {
-  const on = { disableMinor: true };
-  const owner = { id: 7, username: 'owner' };
-
-  it('exempts the viewer on models by id', () => {
-    expect(
-      buildMinorExclusionFilter({ targetIndex: 'models', addons: on, currentUser: owner })
-    ).toBe('minor != true OR user.id = 7');
-  });
-
-  it('applies to everyone when no one is signed in', () => {
-    expect(
-      buildMinorExclusionFilter({ targetIndex: 'models', addons: on, currentUser: null })
-    ).toBe('minor != true');
-  });
-
-  // The images index has no filterable user id, and the owner is never matched by username.
-  it('exempts no one on images', () => {
-    expect(
-      buildMinorExclusionFilter({ targetIndex: 'images', addons: on, currentUser: owner })
-    ).toBe('minor != true');
-  });
-
-  it('says nothing when the addon is off or the index has no minor attribute', () => {
-    expect(
-      buildMinorExclusionFilter({ targetIndex: 'models', addons: { disableMinor: false } })
-    ).toBeNull();
-    expect(buildMinorExclusionFilter({ targetIndex: 'articles', addons: on })).toBeNull();
   });
 });

@@ -26,7 +26,7 @@ import { MediaType } from '~/shared/utils/prisma/enums';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { isDefined } from '~/utils/type-guards';
-import { buildMinorExclusionFilter } from '~/components/AutocompleteSearch/autocomplete-filters';
+import { buildMinorExclusionFilter } from '~/components/Search/search-filters';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { nsfwRestrictedBaseModels } from '~/server/common/constants';
 import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';

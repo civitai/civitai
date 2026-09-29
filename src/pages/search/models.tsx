@@ -30,7 +30,7 @@ import { paidModelsSearchFilterClause } from '~/components/Search/paid-model-sea
 import { Availability } from '~/shared/utils/prisma/enums';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { isDefined } from '~/utils/type-guards';
-import { buildMinorExclusionFilter } from '~/components/AutocompleteSearch/autocomplete-filters';
+import { buildMinorExclusionFilter } from '~/components/Search/search-filters';
 import { nsfwRestrictedBaseModels } from '~/server/common/constants';
 import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
 
