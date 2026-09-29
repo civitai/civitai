@@ -225,6 +225,8 @@ type CosmeticLookup = {
   type: CosmeticType;
   data: Prisma.JsonValue;
   source: CosmeticSource;
+  /** Absent on entries written before the column existed; read as no flags. */
+  flags?: number;
 };
 export const cosmeticCache = createCachedObject<CosmeticLookup>({
   key: REDIS_KEYS.CACHES.COSMETICS,
@@ -235,7 +237,7 @@ export const cosmeticCache = createCachedObject<CosmeticLookup>({
     const db = fromWrite ? dbWrite : dbRead;
     const cosmetics = await db.cosmetic.findMany({
       where: { id: { in: goodIds } },
-      select: { id: true, name: true, type: true, data: true, source: true },
+      select: { id: true, name: true, type: true, data: true, source: true, flags: true },
     });
     return Object.fromEntries(cosmetics.map((x) => [x.id, x]));
   },

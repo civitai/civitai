@@ -4827,6 +4827,8 @@ model Cosmetic {
   pHashHex            String?
   pHashVersion        String?
   pHashFailedAt      DateTime?
+  /// Bitwise `CosmeticFlag` (src/shared/constants/cosmetic-flags.constants.ts). Moderator-owned; creator edits never write it.
+  flags               Int                         @default(0)
   creator             User?                       @relation("CosmeticCreator", fields: [createdById], references: [id], onDelete: SetNull)
   UserCosmetic        UserCosmetic[]
   purchases           UserCosmeticShopPurchases[]

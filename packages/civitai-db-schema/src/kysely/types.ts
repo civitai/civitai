@@ -2374,6 +2374,10 @@ export type Cosmetic = {
   pHashHex: string | null;
   pHashVersion: string | null;
   pHashFailedAt: Timestamp | null;
+  /**
+   * Bitwise `CosmeticFlag` (src/shared/constants/cosmetic-flags.constants.ts). Moderator-owned; creator edits never write it.
+   */
+  flags: Generated<number>;
 };
 export type CosmeticShopItem = {
   id: Generated<number>;

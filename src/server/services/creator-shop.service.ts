@@ -60,27 +60,15 @@ import type {
 import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
 import { getSoldCounts } from '~/server/services/cosmetic-shop-sold-count';
 import { delistPacksContaining } from '~/server/services/creator-shop-pack.service';
-import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 
-// Storefront items carry the cosmetic's creator so cards can attribute the owner
-// (esp. resold items from other creators). The full avatar selector (profile
-// picture + equipped cosmetics) lets the card render the creator's real avatar
-// and badge. Only used by the creator storefront.
+// The shop-item shape, which already carries the creator and lister for
+// attribution. Only used by the creator storefront.
 const creatorStorefrontItemSelect = Prisma.validator<Prisma.CosmeticShopItemSelect>()({
   ...cosmeticShopItemSelect,
   // Approval time, so a storefront's "Newest" means the same thing the
   // community hub's does rather than falling back to submission order.
   reviewedAt: true,
-  // A pack has no cosmetic creator; its author is whoever listed it.
-  addedBy: { select: userWithCosmeticsSelect },
-  cosmetic: {
-    select: {
-      ...simpleCosmeticSelect,
-      videoUrl: true,
-      creator: { select: userWithCosmeticsSelect },
-    },
-  },
 });
 
 import type { UserSettingsSchema } from '~/server/schema/user.schema';
@@ -1713,6 +1701,7 @@ export const getCreatorShopReviewQueue = async ({
             createdById: true,
             source: true,
             description: true,
+            flags: true,
             creator: { select: { id: true, username: true, image: true } },
           },
         },

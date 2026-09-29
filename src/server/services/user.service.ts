@@ -1635,7 +1635,7 @@ export const getUserCosmetics = ({
             // `createdById` is extra: a scalar on the row already being selected,
             // so no join and no extra round trip, and it is what lets the sticker
             // tray filter to your own without asking a second procedure.
-            select: { ...simpleCosmeticSelect, createdById: true },
+            select: { ...simpleCosmeticSelect, createdById: true, flags: true },
           },
         },
       },
