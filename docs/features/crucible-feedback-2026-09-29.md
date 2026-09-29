@@ -88,4 +88,4 @@ Second walkthrough:
 
 - [x] **B28. The prize-customization fee is now derived from the split** rather than trusted from the client.
 - [ ] **B29. Unfilled prize places pay nobody** when a crucible has fewer entries than paid places. Decided: split the leftover among the winners, pro rata to their shares.
-- [ ] **B32. The crucible jobs never run: their Flipt flag `crucible-jobs-enabled` does not exist.** `finalize-crucibles` (which also activates scheduled crucibles) and `sync-crucible-scores` both return early on `isFlipt(CRUCIBLE_JOBS_ENABLED)`; a missing key evaluates false, and `FLIPT_LOCAL_OVERRIDES` is ignored in production builds. Launch blocker: prod would never activate, finalize or pay out.
+- [x] **B32. The crucible jobs never ran: the code asked Flipt for `crucible-jobs-enabled`, but the flag is `crucible-jobs`.** `finalize-crucibles` (which also activates scheduled crucibles) and `sync-crucible-scores` both return early on `isFlipt(CRUCIBLE_JOBS_ENABLED)`, and an unknown key evaluates false, so nothing would have activated, finalized or paid out, in preview or prod. → Fixed: `FLIPT_FEATURE_FLAGS.CRUCIBLE_JOBS_ENABLED` is now `crucible-jobs`.

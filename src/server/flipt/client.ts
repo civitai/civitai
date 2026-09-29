@@ -13,7 +13,7 @@ export enum FLIPT_FEATURE_FLAGS {
   // `challenge-platform-enabled` shape instead (base `true`, no rollouts), where the base IS
   // the switch. Separate from `crucible` on purpose: hiding the feature must not strand the
   // entry fees of crucibles already in flight, so stopping payouts is its own decision.
-  CRUCIBLE_JOBS_ENABLED = 'crucible-jobs-enabled',
+  CRUCIBLE_JOBS_ENABLED = 'crucible-jobs',
   FEED_IMAGE_EXISTENCE = 'feed-image-existence',
   FEED_POST_FILTER = 'feed-fetch-filter-in-post',
   // Serves the image feed from the PostgreSQL feed service (page from the feed, rows from
