@@ -1,6 +1,9 @@
 import { dbRead } from '~/server/db/client';
 import type { BlockTokenClaims } from '~/server/middleware/block-scope.middleware';
 import { subjectForUserId } from '~/server/services/block-token-subject';
+// A leaf, client-safe constants module (no runtime imports of its own), so this adds no
+// load-time edge to the graph the docblock below measures.
+import { isPrivateRunAudience } from '~/shared/constants/block-scope.constants';
 
 /**
  * WHY THIS IS ITS OWN MODULE rather than a private function inside
@@ -247,7 +250,37 @@ export type AppBlockApprovalVerdict =
    * `onApprovalLookupFailure: 'serve'`. Both would be wrong here — a cache fault blamed
    * on the database, and a non-approved app served on some routes.
    */
-  | 'tunnel_lookup_failed';
+  | 'tunnel_lookup_failed'
+  /**
+   * 🔴 A PRIVATE RUN OF A DELISTED / SUSPENDED APP IS EXEMPT FROM THE APPROVED-STATUS
+   * DECISION. Granted only on the `privateRun` + `privateRunAudience` PAIR.
+   *
+   * WHY THIS IS A NEW VERDICT RATHER THAN REUSING `dev_exempt`. Both callers treat the
+   * two identically today, so reusing `dev_exempt` would have worked and would have
+   * been wrong for one reason that matters: this verdict is the ONLY thing that admits
+   * a NON-OWNER to a non-approved app's runtime. `dev_exempt` is reachable only by an
+   * owner with an active tunnel, or by a moderator inside the review sandbox against a
+   * pending submission. Folding a third, structurally different population into it
+   * would make the one series anybody watches
+   * (`recordBlockRestApprovalVerdict`) unable to distinguish "authors dogfooding" from
+   * "somebody is running taken-down apps" — and the second is the one an operator
+   * would want to see move.
+   *
+   * 🔴 WHY THE PAIR, AND NOT `privateRun` ALONE. Same argument the run-for-real
+   * exemption above makes for requiring `dev` next to `reviewRunForReal`: keying an
+   * authorization decision on ONE signed boolean is a dimension nobody closed. Here it
+   * is not merely symmetry — the audience is what the editor read-only belt branches
+   * on, so a token that is exempt from the status gate while carrying NO audience is a
+   * token that no audience-keyed rule can constrain. The verifier already rejects a
+   * lone audience and a lone-audience mint; this is the third layer.
+   *
+   * ⚠️ IT IS NOT PAIRED WITH `dev`, AND MUST NOT BE. The signer THROWS on
+   * `privateRun && dev` (a `dev` token skips the per-app velocity reservation), so
+   * copying the `dev &&` shape from the line above would make this exemption
+   * unreachable for every token our own signer can produce — a guard that can only
+   * ever be observed returning false.
+   */
+  | 'private_run_exempt';
 
 /**
  * THE PREDICATE. The only place in the App Blocks runtime that resolves the backing
@@ -289,6 +322,35 @@ export async function resolveAppBlockApprovalVerdict(
   // than the one it replaced. `BlockTokenService.sign` accepts the field independently,
   // so the pairing is the only thing that closes that dimension, and it costs nothing.
   if (claims.dev === true && claims.reviewRunForReal === true) return 'dev_exempt';
+
+  // POPULATION G — the PRIVATE RUN of a delisted / suspended app, by its owner, an
+  // accepted listing collaborator, or a moderator. The second population that must run
+  // a non-approved app, and the FIRST that admits a non-owner to one.
+  //
+  // Answered before the read for the same reason F′ is: the answer cannot depend on the
+  // row's status, because the whole point of the population is that the status is NOT
+  // approved. Unlike F′, this token signs the app's REAL `appId`/`blockId` — so the read
+  // below WOULD find a row and WOULD return `not_approved`. That is precisely the refusal
+  // being exempted, and it is why this line has to come first rather than being folded
+  // into the status branch further down.
+  //
+  // 🔴 THE PAIR IS THE GUARD. See the verdict's own docblock: `privateRun` alone would be
+  // a one-bit status bypass, and the audience is what every audience-keyed rule
+  // downstream branches on. `isPrivateRunAudience` is the closed-set test — a
+  // signature-valid token with a garbage audience is NOT exempt here, and the verifier
+  // has already refused to produce verified claims for one.
+  //
+  // 🔴 WHAT THIS ADMITS, STATED PLAINLY BECAUSE IT IS THE COST OF THE FEATURE: every
+  // block REST route and tRPC bridge proc becomes reachable for this token on a
+  // taken-down app. That includes `social:tip:self` (`api/v1/blocks/tip.ts`), which moves
+  // IRREVERSIBLE Buzz and has no status check of its own — it was refused ONLY by the
+  // `not_approved` this line now bypasses. The belt is
+  // `PRIVATE_RUN_FORBIDDEN_SCOPES` in `clampPrivateRunScopes`, which strips that scope at
+  // the mint so the token cannot satisfy the route's `requiredScope`. If you are widening
+  // this exemption to a new claim shape, re-check that strip: the two are one mechanism.
+  if (claims.privateRun === true && isPrivateRunAudience(claims.privateRunAudience)) {
+    return 'private_run_exempt';
+  }
 
   const block = await dbRead.appBlock.findUnique({
     where: { appId_blockId: { appId: claims.appId, blockId: claims.blockId } },

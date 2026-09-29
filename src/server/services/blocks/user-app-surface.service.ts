@@ -879,14 +879,18 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
     // 🔴 DO NOT DESCRIBE THIS AS "WHAT THE MINT WILL ISSUE A TOKEN FOR" — an earlier revision
     // of this comment did, citing `block-registry.service.ts`, and the citation was being
     // misapplied rather than misquoted. That sentence ("The mint sources scopes from
-    // `approvedScopes` … NEVER the raw manifest") is TRUE of exactly ONE of the THREE
+    // `approvedScopes` … NEVER the raw manifest") is TRUE of exactly TWO of the FOUR
     // scope-sourcing sites: the OWNED-NON-APPROVED dev-tunnel mint, resolved by
-    // `resolveOwnedNonApprovedPageBlock`, whose docblock it lives in — `block-tokens/index.ts:650`
-    // really does `clampTunnelDeclaredScopes(app.approvedScopes)` there. ⚠️ "The dev-tunnel author
-    // mint" does NOT identify it: the OTHER dev-tunnel author mint
-    // (`resolveDevPageBlockForAuthor`, `:469`) sources `clampTunnelDeclaredScopes(app.scopes)` —
-    // the author's own declared manifest, not the column. The PRODUCTION run-token mint that
-    // the apps on this page actually use is the THIRD path, and it sources from the MANIFEST
+    // `resolveOwnedNonApprovedPageBlock`, whose docblock it lives in — it really does
+    // `clampTunnelDeclaredScopes(app.approvedScopes)` there — and, since the private-run
+    // surface landed, the PHASE 3 private-run mint's `clampPrivateRunScopes(app.approvedScopes,
+    // …)`. ⚠️ "The dev-tunnel author mint" does NOT identify either: the OTHER dev-tunnel author
+    // mint (`resolveDevPageBlockForAuthor`) sources `clampTunnelDeclaredScopes(app.scopes)` —
+    // the author's own declared manifest, not the column. ⚠️ The anchors here are IDENTIFIERS
+    // rather than line numbers on purpose: this comment used to cite `:650` and `:469`, and both
+    // had drifted by ~90 and ~70 lines respectively. The canonical ledger is
+    // `src/shared/constants/block-effective-scopes.ts`. The PRODUCTION run-token mint that
+    // the apps on this page actually use sources from the MANIFEST
     // (`requestedScopes = knownManifestScopes`) with `approved_scopes` as an all-or-nothing 403
     // veto. It also refuses unless `status === 'approved'`, and this query has no status filter,
     // so this list renders apps no production token can be minted for at all. See

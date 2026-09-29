@@ -363,3 +363,102 @@ describe('SEAM: through the REAL primitive', () => {
     expect(out.scopes).toEqual([POSTS, EXEMPT]);
   });
 });
+
+/**
+ * 🔴 PER-SCOPE CONSENT REVOCATION **MEETS THE PRIVATE-RUN SURFACE** — a seam neither feature
+ * knew about, because they were developed on branches that were open at the same time.
+ *
+ * Per-scope revocation landed on `main` while the private-run branch was open. Neither side's
+ * review could have looked at the other, and the interaction is NOT obvious from either:
+ *
+ *   - `shouldConsultMarker` keys on `{ userId, scopes }` ALONE. It does not know, and cannot
+ *     ask, whether the token is an ordinary install token or a private-run review token. A
+ *     private-run token has a self-bound `sub` (so `userId` is non-null) and carries
+ *     non-exempt scopes, so it returns **true** and the marker IS consulted.
+ *   - The marker is keyed `<userId>:<appBlockId>`, and the `userId` is the REVIEWER'S. So the
+ *     rows it reads are whatever that person expressed **as an ordinary consumer of that app**,
+ *     at some point in the past, on a surface that has nothing to do with review.
+ *
+ * ## The judgement, stated rather than left to be inferred
+ *
+ * This is ALLOWED TO STAND, and these rows pin it so it is a decision instead of an accident.
+ * The reasoning: every arm of the interaction moves in the NARROWING direction — it can strip a
+ * scope or refuse a request, never grant one — so it cannot widen what a reviewer's token can
+ * do. The failure it can produce is visible and reportable ("I can't run the generation on this
+ * app"), which is the same property the editor read-only strip was chosen for.
+ *
+ * ⚠️ IT IS STILL A SURPRISE, AND THE AUDIENCE IS THE ONE THAT FILES BUGS. A moderator who once
+ * revoked `ai:write:budgeted` on this app as a consumer gets a silently read-only private run,
+ * and nothing on screen says why. That is a product decision for whoever flips the flag, NOT a
+ * defect to fix here — the alternative (exempting private-run tokens from the marker) means a
+ * review surface deliberately ignoring a withdrawal the viewer expressed, which is strictly
+ * worse than an unexplained narrowing. Recorded as a flip precondition in
+ * `src/server/services/app-blocks-flag.ts`, which is where it belongs — a reader deciding
+ * whether to widen the flag does not open this file.
+ *
+ * ## Why these are [INV], not [REG]
+ *
+ * Neither feature existed at the other's base, so there is no commit at which these rows can be
+ * watched to fail for the right reason. They are invariant pins on a merge seam and are NOT
+ * counted as regression coverage.
+ */
+describe('🔴 SEAM: consent revocation × the private-run surface [INV]', () => {
+  const PRIVATE_RUN_CLAIMS = { privateRun: true, privateRunAudience: 'moderator' } as const;
+
+  it('CONSULTS the marker for a private-run token — it is not exempted by the claim', async () => {
+    // The load-bearing assertion is the CALL, not the result: if a future change adds a
+    // `privateRun` bypass to `shouldConsultMarker`, this goes red and the exemption has to be
+    // argued for rather than acquired.
+    mockVerifyBlockToken.mockResolvedValue(claims(PRIVATE_RUN_CLAIMS));
+    lookupMock.mockResolvedValue({ kind: 'none' });
+    await authorizeBlockBridgeToken('tok');
+    expect(lookupMock).toHaveBeenCalledTimes(1);
+    expect(lookupMock).toHaveBeenCalledWith({ userId: USER_ID, appBlockId: APP_BLOCK_ID });
+  });
+
+  it('strips a scope the REVIEWER revoked as an ordinary consumer of that app', async () => {
+    mockVerifyBlockToken.mockResolvedValue(claims(PRIVATE_RUN_CLAIMS));
+    lookupMock.mockResolvedValue({ kind: 'revoked', scopes: new Set([POSTS]) });
+    const out = await authorizeBlockBridgeToken('tok');
+    expect(out.scopes).toEqual([BUZZ, EXEMPT]);
+    // 🔴 AND THE PRIVATE-RUN CLAIMS SURVIVE THE STRIP. `applyRevocations` rebuilds the claims
+    // object; a rebuild that dropped unknown keys would silently demote the token to an
+    // ordinary one, and the NEXT thing downstream of here is the approval exemption that keeps
+    // a delisted app's bridge calls alive. That failure would present as "the app loads and
+    // then everything 403s", i.e. indistinguishable from the bridge-admission defect this
+    // PR's round-2 review found — so it is worth its own assertion rather than being implied.
+    expect(out.privateRun).toBe(true);
+    expect(out.privateRunAudience).toBe('moderator');
+  });
+
+  it('🔴 CONTROL: nothing revoked ⇒ the full private-run set survives untouched', async () => {
+    // Without this, a seam that returned an empty scope set for every private-run token would
+    // pass the row above.
+    mockVerifyBlockToken.mockResolvedValue(claims(PRIVATE_RUN_CLAIMS));
+    lookupMock.mockResolvedValue({ kind: 'none' });
+    const out = await authorizeBlockBridgeToken('tok');
+    expect(out.scopes).toEqual([POSTS, BUZZ, EXEMPT]);
+    expect(out.privateRun).toBe(true);
+  });
+
+  it('fails CLOSED and RETRYABLE on an unreadable marker, private-run included', async () => {
+    // The private-run surface does NOT get a weaker posture than the ordinary one. Asserted
+    // because "it is only a review surface" is exactly the argument someone would make for
+    // letting it through on a cache fault.
+    mockVerifyBlockToken.mockResolvedValue(claims(PRIVATE_RUN_CLAIMS));
+    lookupMock.mockResolvedValue({ kind: 'unavailable' });
+    await expect(authorizeBlockBridgeToken('tok')).rejects.toMatchObject({
+      code: 'SERVICE_UNAVAILABLE',
+    });
+  });
+
+  it('a private-run token carrying ONLY exempt scopes skips the marker entirely', async () => {
+    // Not a private-run property — `shouldConsultMarker`'s existing exempt rule — but pinned on
+    // THIS token shape so the reachability of the arms above is not merely assumed: it shows the
+    // consult decision is made from the SCOPES, which is why the arms above are reached at all.
+    mockVerifyBlockToken.mockResolvedValue(claims({ ...PRIVATE_RUN_CLAIMS, scopes: [EXEMPT] }));
+    const out = await authorizeBlockBridgeToken('tok');
+    expect(lookupMock).not.toHaveBeenCalled();
+    expect(out.scopes).toEqual([EXEMPT]);
+  });
+});
