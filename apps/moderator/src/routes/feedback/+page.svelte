@@ -170,8 +170,10 @@
    * test tier and a guard written inline here is a guard nothing can assert. What stays here is the
    * single DOM read it cannot do: which control, if any, the click landed on.
    *
-   * 🔴 `feedbackOpenHref(…, id)`, NOT `rowHref(id)` — this handler OPENS, it never toggles. See
-   * `feedbackRowExpands` for why closing must stay on the labelled anchor.
+   * 🔴 `feedbackOpenHref(…, id)`, NOT `rowHref(id)` — this handler OPENS, it never toggles, and it
+   * declines entirely while any panel is open. `?open=` is single-valued, so switching rows unmounts
+   * the live panel exactly as closing does, and that panel holds the operator's unsaved issue draft.
+   * `feedbackRowExpands` carries the reasoning and the cost.
    *
    * 🔴 `noScroll`/`keepFocus` MIRROR THE ANCHOR'S OWN `data-sveltekit-*` ATTRIBUTES, and the two
    * have to be changed together — `rowHref` only makes the URLs agree, the navigation options are
@@ -189,7 +191,7 @@
         defaultPrevented: event.defaultPrevented,
         interactive: target instanceof Element && !!target.closest(FEEDBACK_ROW_INTERACTIVE),
         selection: window.getSelection()?.toString() ?? '',
-        expanded: data.open === id,
+        anyPanelOpen: data.open !== null,
       })
     )
       return;

@@ -36,7 +36,8 @@
 <p class="mb-4"><a class={LINK_CLASS} href="/feedback">← Feedback queue</a></p>
 
 <!-- The status the queue shows in its own column. Repeated here because this page has no row above
-     it, and the footer's buttons render "Save (<status>)" rather than announcing the current one. -->
+     it: the footer marks the current status only by disabling its button, which is a state to infer
+     rather than a value to read. -->
 <p class="mb-4">
   <Badge class={feedbackStatusBadgeClass(data.row.status)}>{data.row.status}</Badge>
 </p>

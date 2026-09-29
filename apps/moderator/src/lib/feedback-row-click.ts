@@ -35,8 +35,11 @@ export type FeedbackRowClick = {
   interactive: boolean;
   /** `window.getSelection()?.toString() ?? ''`. */
   selection: string;
-  /** Whether this row's panel is already open. */
-  expanded: boolean;
+  /**
+   * Whether ANY report's panel is currently open — `data.open !== null`, not `data.open === id`.
+   * The wider question is the one that matters; see the guard.
+   */
+  anyPanelOpen: boolean;
 };
 
 /**
@@ -48,16 +51,23 @@ export type FeedbackRowClick = {
  *     operators copy out of — and a click event fires at the end of it;
  *   - `defaultPrevented` is how a nested control says it has already handled this click.
  *
- * 🔴 IT ONLY EVER OPENS, NEVER CLOSES, AND THAT ASYMMETRY IS THE WHOLE SAFETY ARGUMENT. Collapsing
- * the panel destroys it, and with it the issue title, summary and ClickUp URL the operator may be
- * part-way through typing — the text `FeedbackDetail` hoists a draft to protect. Making the entire
- * nine-cell row strip the close target puts that one stray click away, and the gesture that reaches
- * it is ordinary: a DOUBLE-CLICK to select a word fires `click` twice, and the FIRST one lands
- * before the selection exists, so the `selection` guard below cannot see it. Closing stays on the
- * labelled `Close` anchor, where it is deliberate.
+ * 🔴 IT OPENS FROM A QUEUE WITH NOTHING OPEN, AND DOES NOTHING OTHERWISE. Both other transitions
+ * UNMOUNT a live panel: `?open=` is single-valued, so switching rows destroys the old one exactly as
+ * closing does, and the panel is where the operator's issue title, summary and ClickUp URL live
+ * (`FeedbackDetail` hoists that draft precisely because it is held in memory and nowhere else).
+ *
+ * 🔴 THE NARROWER TEST — "is THIS row open" — WAS WRONG, AND IT READ AS SAFE. It suppresses the
+ * self-close and leaves every OTHER row a click away from discarding the draft: on a 50-row queue
+ * that is 49 of the 50 strips, not 0. The gesture is ordinary, which is the point — a DOUBLE-CLICK
+ * to select a word in another row's Message cell fires `click` twice, and the FIRST lands before the
+ * selection exists, so the `selection` guard below cannot see it.
+ *
+ * ⚠️ THE COST, STATED: with a panel already open, clicking a row does nothing, and moving to another
+ * report means its `Open` link — one deliberate click, which is what it took before this handler
+ * existed. Expanding from a cold queue is the affordance this buys, and it is the common one.
  */
 export function feedbackRowExpands(click: FeedbackRowClick): boolean {
-  if (click.expanded) return false;
+  if (click.anyPanelOpen) return false;
   if (click.defaultPrevented) return false;
   if (click.button !== 0) return false;
   if (click.ctrlKey || click.metaKey || click.shiftKey || click.altKey) return false;

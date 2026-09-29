@@ -11,7 +11,7 @@ const plain = {
   defaultPrevented: false,
   interactive: false,
   selection: '',
-  expanded: false,
+  anyPanelOpen: false,
 };
 
 describe('feedbackRowExpands', () => {
@@ -77,21 +77,27 @@ describe('feedbackRowExpands', () => {
   });
 
   /**
-   * 🔴 IT OPENS, IT NEVER CLOSES — the finding that made `expanded` a field. Collapsing the panel
-   * destroys it and every unsaved character of the issue title, summary and ClickUp URL inside, and
-   * making the whole nine-cell row the close target puts that one stray click away.
+   * 🔴 IT OPENS FROM A COLD QUEUE AND DOES NOTHING WHILE A PANEL IS OPEN — and the narrower rule,
+   * "do not collapse THIS row", was the first fix and it was wrong in a way that read as safe. It
+   * suppresses the self-close and leaves every OTHER row a click away from discarding the draft,
+   * because `?open=` is single-valued: opening row B unmounts row A's panel exactly as closing it
+   * does, and the issue title, summary and ClickUp URL live in that panel and nowhere else. On a
+   * 50-row queue the narrow rule covered 1 of the 50 strips.
    *
    * The gesture that reaches it is ordinary, which is why the `selection` guard is not enough: a
-   * DOUBLE-CLICK to select a word fires `click` twice, and the FIRST fires before the selection
-   * exists, so that arm returns `true`. Asserted as a pair — the same click on a CLOSED row still
-   * opens it, so this pins the asymmetry rather than a predicate that stopped working.
+   * DOUBLE-CLICK to select a word in another row's Message cell fires `click` twice, and the FIRST
+   * fires before the selection exists, so that arm returns `true`.
+   *
+   * ⚠️ THE FIXTURE CARRIES NO ROW ID, DELIBERATELY. The predicate must not be able to ask "is this
+   * the open one" — that question is what made the first fix narrow, and leaving the id out is what
+   * makes the narrow rule unexpressible rather than merely unwritten.
    */
-  it('never collapses an already-open row, including on the first click of a double-click', () => {
-    expect(feedbackRowExpands({ ...plain, expanded: true })).toBe(false);
+  it('does nothing while any panel is open, including on the first click of a double-click', () => {
+    expect(feedbackRowExpands({ ...plain, anyPanelOpen: true })).toBe(false);
     // The first click of a double-click: no selection yet, nothing else to stop it.
-    expect(feedbackRowExpands({ ...plain, expanded: true, selection: '' })).toBe(false);
-    // The control: the identical click on a closed row opens it.
-    expect(feedbackRowExpands({ ...plain, expanded: false, selection: '' })).toBe(true);
+    expect(feedbackRowExpands({ ...plain, anyPanelOpen: true, selection: '' })).toBe(false);
+    // The control: the identical click with nothing open expands the row.
+    expect(feedbackRowExpands({ ...plain, anyPanelOpen: false, selection: '' })).toBe(true);
   });
 });
 

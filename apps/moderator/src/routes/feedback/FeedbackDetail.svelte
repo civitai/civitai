@@ -44,8 +44,14 @@
      * 🔴 IT IS THE LAST RESORT IN ONE BANNER, NOT A SECOND BANNER. `use:enhance` sets the page-level
      * `form` as well as `FormState.error`, so an unconditional page-level `ErrorAlert` renders the
      * same refusal twice — this queue has double-rendered a refusal three times, and no instance was
-     * visible to any test, because this app has no browser tier. Reached only when neither form
-     * holds an error, which with JS cannot happen for a refusal the client saw.
+     * visible to any test, because this app has no browser tier.
+     *
+     * 🔴 IT IS ALSO GATED ON `lastSubmitted === null`, AND THAT GATE IS NOT BELT-AND-BRACES. The
+     * page-level `form` is not replaced until a response lands, so between an enhanced submit
+     * clearing the other form's error and that response arriving, a bare `?? formError` re-renders
+     * the refusal the submit just cleared — for the whole in-flight window. `lastSubmitted` is
+     * written only by `use:enhance`'s `onSubmit`, so it is null exactly while this instance has
+     * never run an enhanced submit: the server-rendered case this prop exists for, and no other.
      *
      * The QUEUE passes nothing and keeps its own `pageError` instead: there the panel is mounted
      * only while a row is open, so a no-JS POST lands on a page with no panel at all and the message
@@ -148,7 +154,7 @@
    */
   const refusal = $derived(
     feedbackRefusal({ triage: triageForm.error, promote: promoteForm.error }, lastSubmitted) ??
-      formError
+      (lastSubmitted === null ? formError : null)
   );
 </script>
 

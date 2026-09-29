@@ -315,10 +315,17 @@ describe('the refusal banner sees which form the operator used last', () => {
    * success indicator on this panel to contradict it, so the red banner is the only thing on screen
    * and the operator's likeliest next move is to click the status button again.
    */
+  /**
+   * ⚠️ THE PAIRING IS PINNED INSIDE EACH HANDLER, AND THE SHORT FORM WAS WALKABLE. Asserting that
+   * both strings appear ANYWHERE in the file is satisfied by each handler clearing its OWN error —
+   * a plausible "simplification", the exact defect this guard names, and green. The title claimed a
+   * RELATIONSHIP while the body inspected one side of it. Found by a delta audit of the fix that
+   * restored this wiring, after a mutation sweep that only ever DELETED the two lines.
+   */
   it('clears each form error when the other form starts submitting', () => {
     const detail = source('FeedbackDetail.svelte');
-    expect(detail).toContain('promoteForm.error = null;');
-    expect(detail).toContain('triageForm.error = null;');
+    expect(detail).toContain("lastSubmitted = 'triage'; promoteForm.error = null;");
+    expect(detail).toContain("lastSubmitted = 'promote'; triageForm.error = null;");
   });
 
   /**
@@ -329,7 +336,10 @@ describe('the refusal banner sees which form the operator used last', () => {
    */
   it('renders the no-JS refusal only when neither form holds one', () => {
     const detail = source('FeedbackDetail.svelte');
-    expect(detail).toContain('lastSubmitted) ?? formError');
+    // 🔴 THE `lastSubmitted === null` GATE IS PART OF THE PIN. The page-level `form` is not replaced
+    // until a response lands, so a bare `?? formError` re-renders the refusal an enhanced submit
+    // just cleared, for the whole in-flight window.
+    expect(detail).toContain('lastSubmitted) ?? (lastSubmitted === null ? formError : null)');
     expect(detail.match(/<ErrorAlert/g) ?? []).toHaveLength(1);
 
     const report = reportPageSource();
@@ -345,7 +355,9 @@ describe('the refusal banner sees which form the operator used last', () => {
    * issue draft submitting against B's id.
    */
   it('keys the panel on the report id on the per-report route', () => {
-    expect(reportPageSource()).toContain('{#key data.row.id}');
+    // The panel must be INSIDE the key block — `{#key}` around anything else is a no-op that reads
+    // as the guard.
+    expect(reportPageSource()).toContain('{#key data.row.id} <FeedbackDetail');
   });
 
   /**
@@ -524,7 +536,10 @@ describe('the row click is an enhancement over a real link', () => {
     expect(page).toContain(
       'goto(feedbackOpenHref(page.url, id), { noScroll: true, keepFocus: true })'
     );
-    expect(page).toContain('expanded: data.open === id,');
+    // 🔴 `data.open !== null`, NOT `data.open === id`. The narrow test suppresses only the
+    // self-close and leaves every OTHER row a click away from unmounting the open panel — `?open=`
+    // is single-valued, so switching rows discards the draft exactly as closing does.
+    expect(page).toContain('anyPanelOpen: data.open !== null,');
   });
 
   /**
