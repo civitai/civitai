@@ -3364,7 +3364,7 @@ export const publishModelById = async ({
             AND (p."publishedAt" IS NULL OR p."publishedAt" > NOW())
         `;
       }
-      if (!republishing && !meta?.unpublishedBy) await updateModelLastVersionAt({ id, tx });
+      await updateModelLastVersionAt({ id, tx, onlyForward: republishing });
 
       return model;
     },
@@ -3949,12 +3949,18 @@ export async function bumpModel({ id }: { id: number }) {
   return updated;
 }
 
+/**
+ * `onlyForward` never lowers the stored value, so a republish can restore the date a version
+ * already had without undoing a moderator bump (`bumpModel`) that sits above every version's date.
+ */
 export async function updateModelLastVersionAt({
   id,
   tx,
+  onlyForward = false,
 }: {
   id: number;
   tx?: Prisma.TransactionClient;
+  onlyForward?: boolean;
 }) {
   const dbClient = tx ?? dbWrite;
 
@@ -3972,6 +3978,24 @@ export async function updateModelLastVersionAt({
   if (!modelVersion) return;
 
   try {
+    if (onlyForward) {
+      const { count } = await dbClient.model.updateMany({
+        where: {
+          id,
+          OR: [{ lastVersionAt: null }, { lastVersionAt: { lt: modelVersion.publishedAt } }],
+        },
+        data: { lastVersionAt: modelVersion.publishedAt },
+      });
+      if (!count) return;
+
+      const model = await dbClient.model.findUniqueOrThrow({
+        where: { id },
+        select: { userId: true },
+      });
+      await userModelCountCache.refresh(model.userId);
+      return;
+    }
+
     const model = await dbClient.model.update({
       where: { id },
       data: { lastVersionAt: modelVersion.publishedAt },

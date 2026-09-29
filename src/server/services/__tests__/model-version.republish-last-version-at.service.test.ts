@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
-// Only a version's FIRST publish moves Model.lastVersionAt. Unpublish and republish leave it alone:
-// unpublish used to recompute it downward, and republish never restored it, so a new version that
-// went through an unpublish/republish cycle left its model buried in the Newest feed.
+// Model.lastVersionAt follows the newest published version: a first publish and an unpublish do a
+// full recompute, and a republish only ever moves it forward. Republish used to skip it entirely,
+// so a version that was unpublished (recomputed down) and republished left its model buried.
 
 const { mockUpdateModelLastVersionAt } = vi.hoisted(() => ({
   mockUpdateModelLastVersionAt: vi.fn(),
@@ -111,13 +111,16 @@ beforeEach(() => {
 });
 
 describe('Model.lastVersionAt across a version publish lifecycle', () => {
-  it('recomputes on a first publish', async () => {
+  it('fully recomputes on a first publish', async () => {
     await publishModelVersionById({ id: VERSION_ID, republishing: false });
 
-    expect(mockUpdateModelLastVersionAt).toHaveBeenCalledWith({ id: MODEL_ID });
+    expect(mockUpdateModelLastVersionAt).toHaveBeenCalledWith({
+      id: MODEL_ID,
+      onlyForward: false,
+    });
   });
 
-  it('leaves it alone when the version is unpublished', async () => {
+  it('fully recomputes on unpublish, so unpublishing the latest version drops the model back', async () => {
     dbMock.dbWrite.modelVersion.update.mockResolvedValue({
       id: VERSION_ID,
       model: { id: MODEL_ID, userId: OWNER_ID, nsfw: false },
@@ -127,13 +130,16 @@ describe('Model.lastVersionAt across a version publish lifecycle', () => {
 
     await unpublishModelVersionById({ id: VERSION_ID, user: { id: OWNER_ID } as never });
 
-    expect(mockUpdateModelLastVersionAt).not.toHaveBeenCalled();
+    expect(mockUpdateModelLastVersionAt).toHaveBeenCalledWith({ id: MODEL_ID });
   });
 
-  it('leaves it alone when the version is republished', async () => {
+  it('only moves it forward on a republish', async () => {
     await publishModelVersionById({ id: VERSION_ID, republishing: true });
 
-    expect(mockUpdateModelLastVersionAt).not.toHaveBeenCalled();
+    expect(mockUpdateModelLastVersionAt).toHaveBeenCalledWith({
+      id: MODEL_ID,
+      onlyForward: true,
+    });
   });
 
   it('keeps the anti-bump guard on the version publishedAt a republish writes', async () => {

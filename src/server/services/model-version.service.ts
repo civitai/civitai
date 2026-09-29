@@ -1791,8 +1791,7 @@ export const publishModelVersionById = async ({
     select: { id: true },
   });
 
-  if (!republishing && !meta?.unpublishedBy)
-    await updateModelLastVersionAt({ id: version.modelId });
+  await updateModelLastVersionAt({ id: version.modelId, onlyForward: republishing });
   await bustMvCache(version.id, version.modelId);
 
   // Best-effort: evict any cached by-hash 404 for this version's hashes so a
@@ -1991,8 +1990,7 @@ export const unpublishModelVersionById = async ({
     images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
 
-  // No lastVersionAt recompute: republish never restores it, so lowering it here strands the
-  // model below its newest version in the Newest feed.
+  await updateModelLastVersionAt({ id: version.model.id });
   await bustMvCache(version.id, version.model.id);
 
   // Best-effort: evict the by-hash single-lookup endpoint so an unpublished
