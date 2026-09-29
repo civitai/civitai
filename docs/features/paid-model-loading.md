@@ -142,9 +142,9 @@ also holds: an `ExternalGeneration` version is answered `{ status: 'external' }`
 and the orchestrator is never called — its availability union has no state for "a third party serves
 this", so asking would return `unavailable`, which the UI reads as a download the user must wait for.
 
-Nothing pushes residency to the client and the marks do not poll. They re-read when a surface mounts — the
-generation panel unmounts when closed, so every open reads afresh — and when the window regains focus,
-both subject to the 30s stale window the server cache already imposes. The queue card's uncached
+Nothing pushes residency to the client and the marks do not poll. Opening the generation panel
+invalidates every residency query once; otherwise a mount or a window focus re-reads only past the
+30s stale window, so remounts inside the panel do not refetch. The queue card's uncached
 download-status poll invalidates every residency query the moment a model reports `available`, so an
 open generator flips to **Loaded** as the download lands rather than waiting out the backstop.
 

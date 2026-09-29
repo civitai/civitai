@@ -1,7 +1,7 @@
 import { Badge, Group, Text, Tooltip } from '@mantine/core';
 import clsx from 'clsx';
 import { chunk } from 'lodash-es';
-import { createContext, useContext, useMemo, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, type ReactNode } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { ResourceLoadAvailability } from '~/server/schema/resource-load.schema';
 import { isQueuedAvailability, RESIDENCY_MAX_IDS } from '~/server/schema/resource-load.schema';
@@ -11,11 +11,21 @@ import { trpc } from '~/utils/trpc';
 import type { GeneratorReadiness } from '~/shared/generation/generator-readiness';
 
 /**
- * Matches the server's 30s cache (`RESIDENCY_CACHE_SECONDS`): a shorter window re-reads the same
- * answer, and a scrolled picker nears the endpoint's rate limit. Focus refetch overrides the app
- * default.
+ * Not shorter: every remount inside the generation panel would refetch. A panel open refreshes
+ * through `useRefreshResidencyOnOpen` instead. Focus refetch overrides the app default.
  */
 const RESIDENCY_QUERY_OPTIONS = { staleTime: 30_000, refetchOnWindowFocus: true } as const;
+
+/**
+ * One refresh per open, whatever the stale window. Invalidation also covers the queries that mount
+ * after this runs, since the panel loads its contents lazily.
+ */
+export function useRefreshResidencyOnOpen(opened: boolean) {
+  const utils = trpc.useUtils();
+  useEffect(() => {
+    if (opened) void utils.resourceLoad.getResidency.invalidate();
+  }, [opened, utils]);
+}
 
 export function useResourceResidency(modelVersionId: number | undefined) {
   const currentUser = useCurrentUser();
