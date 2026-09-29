@@ -181,16 +181,30 @@ function matches(row: Row, where: Record<string, any>): boolean {
         if (row.attributedAt < cond.gte || row.attributedAt > cond.lte) return false;
         break;
       case 'status':
-        // The only shape the exclusion uses. A different shape must fail loudly rather than
-        // be treated as "no constraint".
-        if (!('not' in cond))
+        // 🔴 EVERY PLAUSIBLE SPELLING IS EVALUATED, NOT JUST THE ONE THE SERVICE USES — and
+        // that is a CORRECTION, made because the first version threw on anything but
+        // `{ not: X }`. The allowlist mutant (`status: 'tracked'`) then died with
+        // `TypeError: Cannot use 'in' operator to search for 'not' in tracked` raised by
+        // THIS function, rather than on the assertion in the case written to catch it. The
+        // mutant was being killed by the harness refusing a shape, so that case measured the
+        // predicate's SHAPE and not its CONSEQUENCE — and would have passed just as happily
+        // against an allowlist spelled in a shape the evaluator did happen to understand.
+        // Evaluating them for real is what makes the denylist case a measurement.
+        if (typeof cond === 'string') {
+          // Bare equality — an allowlist of exactly one status.
+          if (row.status !== cond) return false;
+        } else if (cond && typeof cond === 'object' && 'not' in cond) {
+          if (row.status === cond.not) return false;
+        } else if (cond && typeof cond === 'object' && Array.isArray(cond.in)) {
+          if (!cond.in.includes(row.status)) return false;
+        } else {
           throw new Error(`unhandled status condition: ${JSON.stringify(cond)}`);
-        if (row.status === cond.not) return false;
+        }
         break;
       case 'NOT':
         // The alternative top-level spelling. Supported so that switching to it is a
         // refactor rather than a silent test failure — but only for `status`.
-        if (!('status' in cond))
+        if (!(cond && typeof cond === 'object' && 'status' in cond))
           throw new Error(`unhandled NOT condition: ${JSON.stringify(cond)}`);
         if (row.status === cond.status) return false;
         break;
@@ -378,9 +392,15 @@ describe('owner-visible run analytics exclude voided attribution rows', () => {
     // would be claiming regression coverage this case does not provide. Before the filter
     // existed nothing was excluded, so these rows survived trivially — the invariant it pins
     // is a FUTURE one: it can only ever go red if someone narrows the predicate to an
-    // allowlist. That is not a hypothetical spelling; `status: 'tracked'` is the obvious
-    // simplification a reader reaches for, it passes every other case in this file, and it
-    // dies only here — verified by mutation, not assumed.
+    // allowlist. `status: 'tracked'` is the obvious simplification a reader reaches for, and
+    // it IS caught (measured, not assumed).
+    //
+    // ⚠️ IT IS NOT CAUGHT *ONLY* HERE, and an earlier revision of this comment claimed it
+    // was. Measured: the allowlist mutant fails this case AND every other case whose fixture
+    // contains a payout-rail status — which is most of them, because `SURVIVING` deliberately
+    // holds `confirmed` and `paid_out` rows. The broad kill is better for safety and worse
+    // for diagnosis; what this case adds is a NAME for the property, so the failure says
+    // "denylist" instead of an unexplained off-by-two in five other cases.
     rows = [CONFIRMED_C, PAID_OUT_D];
     const a = await analytics();
     expect(a.runs.count).toBe(2);
