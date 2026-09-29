@@ -627,9 +627,10 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  *      measurement — the drop is entirely owners' own self-testing (every voided row is
  *      `self_spend` with `app_owner_user_id = user_id`, and no real third-party usage row
  *      is voided at all), and the unnamed "second consumer outside this repo" turned out to
- *      be the OPERATOR-facing platform digest CronJob in the infra repo, which is not
- *      owner-facing and was fixed in the same sweep. No money moved: `spendSharePct` and
- *      `appOwnerShareCents` are hardcoded 0.
+ *      be an OPERATOR-facing analytics digest job outside this repo, which is not
+ *      owner-facing and was fixed in the same sweep, as an independent change in that
+ *      repo. No money moved: `spendSharePct` and `appOwnerShareCents` are hardcoded 0.
+ *      (Kept unspecific on purpose — this repo is public.)
  *      🔴 STILL OWED, AND NOT CLOSED BY THE CODE: the acceptance check. One private run
  *      against a delisted app, then read that app's own analytics panel and confirm `runs`
  *      / `runs.buzzSpent` did not move. A unit test is not that claim.

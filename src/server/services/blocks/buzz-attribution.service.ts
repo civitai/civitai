@@ -408,12 +408,14 @@ export type RecordSpendAttributionInput = {
    *     on their own app, and no row of real third-party usage is voided at all.
    *     The filter removes self-testing, not usage.
    *   · "A second consumer of this table lives outside this repo." REAL and still
-   *     live, and it was never named here, which is most of why it blocked
-   *     anything. It is the App Blocks platform digest CronJob in the infra repo,
-   *     which queries this table directly for an OPERATOR-facing Discord summary
-   *     and Prometheus gauges. Its Buzz sums already excluded voided rows while
-   *     its run counts did not; that half was fixed in the same sweep. It is not
-   *     owner-facing, so it never gated the disclosure this arm is about.
+   *     live, and it was never IDENTIFIED, which is most of why it blocked
+   *     anything. It is an OPERATOR-facing analytics digest job outside this repo,
+   *     which queries this table directly for a periodic internal summary. Its
+   *     Buzz sums already excluded voided rows while its run counts did not; that
+   *     half was fixed in the same sweep, as an independent change in that repo.
+   *     It is not owner-facing, so it never gated the disclosure this arm is
+   *     about. (Kept deliberately unspecific — this repo is public, so the
+   *     infrastructure detail belongs in that repo's own commit, not here.)
    *
    * The ordering requirement that used to live here is DISCHARGED: the filter had
    * to land before `app-blocks-private-run-enabled` became anything other than
