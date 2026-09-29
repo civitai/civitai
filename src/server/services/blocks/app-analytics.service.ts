@@ -36,6 +36,48 @@ export const DEFAULT_RANGE_DAYS = 30;
 export const MAX_RANGE_DAYS = 366; // ~1y cap so no unbounded scans
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * 🔴 THE ONE SPELLING of the `block_spend_attribution.status` value that takes a row OUT of
+ * the owner's view. Bound as a PARAMETER in the raw series read and compared via Prisma's
+ * `not` in the aggregate — the two reads must never disagree, so neither re-spells it.
+ *
+ * ── WHY A DENYLIST AND NOT AN ALLOWLIST ─────────────────────────────────────────
+ * `block_spend_attribution_status_check` permits SIX values — `tracked, pending, confirmed,
+ * voided, paid_out, held` (read off the live constraint, not inferred from a migration).
+ * `status: 'tracked'` would therefore silently drop a row the moment the payout rail starts
+ * writing `confirmed` / `paid_out`, which is the same silent-deletion failure as the
+ * nullability trap below, only arriving later and with nobody looking. Excluding the one
+ * value that MEANS "not owner-visible" is the narrowest predicate that works.
+ *
+ * ── AND WHY IT IS `status`, NOT `voidedReason` ──────────────────────────────────
+ * 🔴 `status` is `TEXT NOT NULL DEFAULT 'tracked'`, so Prisma's `not` and a bare SQL `<>`
+ * agree on it. `voided_reason` is NULLABLE and NULL *is* the ordinary `tracked` population,
+ * so the narrow spelling `voidedReason: { not: 'manual_review' }` drops every real row and
+ * zeroes the owner's run count. Do not move this predicate onto that column; if a future
+ * change needs the reason, spell it as a top-level `NOT` or an explicit `OR` with `null`.
+ */
+const VOIDED_ATTRIBUTION_STATUS = 'voided';
+
+/**
+ * 🔴 THE ONE DEFINITION of "exclude voided attribution rows", for every OWNER-VISIBLE read
+ * of `block_spend_attribution`. Spread into the `where` of the aggregate below.
+ *
+ * A private run of a delisted app writes its generation row `voided` /
+ * `voidedReason: 'manual_review'`, and the row carries the app's REAL id by design — so it
+ * lands squarely in the owner's own `appBlockId IN (ownedIds)` aggregate. Nothing else
+ * removes it. The pre-existing `self_spend` / `internal_owner` voids are excluded by the
+ * same predicate, which is a deliberate behaviour change to existing numbers rather than a
+ * side effect: measured on the live table before shipping, every voided row is the app
+ * owner spending on their own app, and no row of real third-party usage is voided at all.
+ *
+ * ⚠️ Spread it FIRST and let the explicit keys win — `appBlockId: idIn` is the only thing
+ * scoping this read to the caller's own apps, and a spread placed LAST wins any key
+ * collision. `satisfies` constrains the constant's SHAPE, not which keys it may hold.
+ */
+const OWNER_VISIBLE_SPEND_FILTER = {
+  status: { not: VOIDED_ATTRIBUTION_STATUS },
+} satisfies Prisma.BlockSpendAttributionWhereInput;
+
 export type AnalyticsTimePoint = { bucket: string; value: number };
 
 export type AppAnalytics = {
@@ -410,7 +452,7 @@ export async function getMyAppAnalytics({
     // app + Buzz burned, within the range. Hits bsa_app_block_dashboard_idx
     // (app_block_id, attributed_at).
     dbRead.blockSpendAttribution.aggregate({
-      where: { appBlockId: idIn, attributedAt: rangeFilter },
+      where: { ...OWNER_VISIBLE_SPEND_FILTER, appBlockId: idIn, attributedAt: rangeFilter },
       _count: true,
       _sum: { buzzAmount: true },
     }),
@@ -420,6 +462,7 @@ export async function getMyAppAnalytics({
       WHERE "app_block_id" IN (${Prisma.join(ownedIds)})
         AND "attributed_at" >= ${range.from}
         AND "attributed_at" <= ${range.to}
+        AND "status" <> ${VOIDED_ATTRIBUTION_STATUS}
       GROUP BY 1
       ORDER BY 1 ASC
     `),
