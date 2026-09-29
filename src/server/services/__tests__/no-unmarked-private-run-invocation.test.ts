@@ -306,42 +306,93 @@ function hasExactThreading(source: string): boolean {
 }
 
 /**
- * 🔴 THE ONE DEFINITION of "a file that could hold a production writer", used by the walk AND
- * by its coverage check — so the two sets differ ONLY by what the walk chooses to skip, and
- * any NEW skip is visible. Declared separately because the check comparing the glob to the
- * scanned set is otherwise red on `src/__tests__`, a subtree that is legitimately all tests:
- * a shared predicate removes that false positive without weakening the comparison, whereas
- * special-casing the directory name would have to be maintained.
+ * "A file that could hold a production writer" — used by the WALK only.
+ *
+ * 🔴 THE COVERAGE CHECK MUST NOT CALL THIS, AND AN EARLIER REVISION SAID THE OPPOSITE. It
+ * read "used by the walk AND by its coverage check — so the two sets differ ONLY by what the
+ * walk chooses to skip", which made the check's expectation flow through the very predicate
+ * it was meant to audit. Measured: appending `&& !file.startsWith('src/pages/')` to this one
+ * line narrowed BOTH sides together and the full 854-test gate stayed green with an unmarked
+ * writer live in `src/pages/api` and the whole 616-file subtree never read.
+ *
+ * That is round 3→4's lesson one level up: A CONTROL BUILT OUT OF THE STEP YOU DOUBT IS A
+ * SECOND SAMPLE OF THAT STEP, NOT A CONTROL. The check now spells its exclusions inline, so
+ * narrowing this predicate moves one side only.
+ *
+ * ⚠️ `src/tests/` is excluded here too. It is a ~130-file test tree whose non-suffixed
+ * helpers would otherwise be admitted as production candidates — no instance calls the
+ * writer today, but if one ever did the ledger would go red with "add each to LEDGER and
+ * thread the verified claim", which is a red test naming the wrong fix.
  */
 const couldHoldAWriter = (file: string) =>
-  !file.includes('/__tests__/') && !/\.(test|spec)\.tsx?$/.test(file);
+  !file.includes('/__tests__/') &&
+  !file.startsWith('src/tests/') &&
+  !/\.(test|spec)\.tsx?$/.test(file);
+
+/**
+ * 🔴 THE SAME EXCLUSIONS, SPELLED INLINE, for the coverage check's expectation. Deliberately
+ * NOT a call to `couldHoldAWriter` — see its docblock. Duplication is the point here: these
+ * two must be able to DISAGREE, because the check's whole job is to notice when the walk's
+ * predicate narrows.
+ */
+const looksLikeProductionSource = (file: string) =>
+  !file.includes('/__tests__/') &&
+  !file.startsWith('src/tests/') &&
+  !/\.(test|spec)\.tsx?$/.test(file);
 
 function discoverWriterFiles(): {
-  files: string[];
+  globbed: string[];
   candidates: string[];
   scannedFiles: string[];
   found: string[];
 } {
-  const files = globSync('src/**/*.{ts,tsx}', { cwd: process.cwd() }).map((f) =>
-    f.replace(/\\/g, '/')
-  );
-  // 🔴 `candidates` IS THE SET THAT MUST BE READ, so it carries every LEGITIMATE exclusion:
-  // test files, and paths that are not regular files. The second one is not hypothetical —
-  // `src/components/ActionIconInput.tsx` is a DIRECTORY whose name ends in `.tsx`, so the
-  // glob matches it and `readFileSync` would raise EISDIR. Folding both into `candidates`
-  // means the coverage check below compares two sets that differ ONLY by a skip somebody
-  // ADDS, which is the thing it exists to catch.
-  const candidates = files.filter(
+  // 🔴 ENUMERATED WITH `readdirSync`, NOT `globSync`, AND THE SWAP CLOSED A REAL BLIND SPOT
+  // THAT THIS FILE'S OWN VOLUME ASSERTION FOUND. `globSync` skips DOT-DIRECTORIES: measured,
+  // it missed `src/pages/api/.well-known/openid-configuration.ts` — one file, but the hole is
+  // a whole naming convention, and a writer added under any dot-directory would have been
+  // invisible to this ledger. `readdirSync` sees them. The instrument that decides what MUST
+  // be read has to be the complete one.
+  const onDisk = readdirSync(path.join(process.cwd(), 'src'), {
+    recursive: true,
+    encoding: 'utf8',
+  }).map((f) => `src/${String(f).replace(/\\/g, '/')}`);
+
+  // `candidates` IS THE SET THAT MUST BE READ, so it carries every LEGITIMATE exclusion: test
+  // files, non-TypeScript, and paths that are not regular files. The last is not hypothetical
+  // — `src/components/ActionIconInput.tsx` is a DIRECTORY whose name ends in `.tsx`, so it is
+  // enumerated and `readFileSync` would raise EISDIR.
+  const candidates = onDisk.filter(
     (f) =>
+      /\.tsx?$/.test(f) &&
       couldHoldAWriter(f) &&
       statSync(path.join(process.cwd(), f), { throwIfNoEntry: false })?.isFile() === true
   );
+
+  // 🔴 THE SECOND, INDEPENDENT ENUMERATION, kept ONLY as a lower bound on what the walk read.
+  // It is a different mechanism with different blind spots, which is the point: narrowing the
+  // `readdirSync` walk above leaves these files behind, and the subset assertion in the
+  // coverage case then names them. Because it is only a lower bound, its own dot-directory
+  // blindness is harmless here — it can never cause a file to go UNCHECKED, only to go
+  // uncross-checked.
+  const globbed = globSync('src/**/*.{ts,tsx}', { cwd: process.cwd() })
+    .map((f) => f.replace(/\\/g, '/'))
+    .filter(
+      (f) =>
+        looksLikeProductionSource(f) &&
+        statSync(path.join(process.cwd(), f), { throwIfNoEntry: false })?.isFile() === true
+    );
   const found: string[] = [];
   const scannedFiles: string[] = [];
   for (const file of candidates) {
     const abs = path.join(process.cwd(), file);
-    scannedFiles.push(file);
     if (callCount(blankComments(readFileSync(abs, 'utf8'))) > 0) found.push(file);
+    // 🔴 PUSHED LAST, AFTER THE READ — AND THAT ORDER IS THE WHOLE ASSERTION. Pushing it
+    // first made `scannedFiles` identical to `candidates` BY CONSTRUCTION, so both coverage
+    // comparisons were tautologies for any skip inserted below the push — which is exactly
+    // where someone adding a filter would put it, next to the read it filters. Measured: a
+    // `continue` one line lower than the push skipped the whole `src/pages` subtree with the
+    // full 854-test gate green. Recorded last, this list is what was actually OPENED.
+    scannedFiles.push(file);
   }
   // 🔴 RETURNS THE SCANNED FILE LIST, NOT A COUNT, AND THAT IS A CORRECTION. The set equality
   // below compares MATCHES and so cannot tell a whole-tree walk from a subtree that happens
@@ -350,7 +401,7 @@ function discoverWriterFiles(): {
   // actually READ: adding one `continue` inside this loop skipped a whole subtree and the
   // check stayed green, measured, with an unmarked writer planted in it. Coverage has to be
   // derived from the files this loop actually opened.
-  return { files, candidates, scannedFiles, found: found.sort() };
+  return { globbed, candidates, scannedFiles, found: found.sort() };
 }
 
 describe('every block_scope_invocations writer carries the private-run marker', () => {
@@ -378,63 +429,63 @@ describe('every block_scope_invocations writer carries the private-run marker', 
     // 🔴 THE DIRECTORY LIST IS DERIVED, NOT HAND-PICKED. Naming four directories left 427
     // non-test production files unguarded — `src/utils` (229) and `src/libs` (46) among them,
     // which is exactly where a shared "record this call" helper would live. Requiring every
-    // subtree the GLOB can see to also be SCANNED needs no list and cannot go stale.
-    const { files, candidates, scannedFiles, found } = discoverWriterFiles();
+    // subtree an independent enumeration can see to also be SCANNED needs no list and cannot
+    // go stale.
+    const { globbed, candidates, scannedFiles, found } = discoverWriterFiles();
     const topLevel = (f: string) => f.split('/')[1];
-    const couldHold = new Set(candidates.map(topLevel));
-    const scanned = new Set(scannedFiles.map(topLevel));
-    // 🔴 EVERY SUBTREE THAT COULD HOLD A WRITER MUST HAVE BEEN READ. `candidates` and
-    // `scannedFiles` differ only by the walk's own `statSync` guard and by any skip somebody
-    // adds, so a new `continue` for a path prefix shows up here by name.
-    const skipped = [...couldHold].filter((d) => !scanned.has(d)).sort();
-    expect(
-      skipped,
-      'these src/ subtrees hold non-test files that were never READ, so an unmarked writer ' +
-        'in any of them is invisible to the ledger below. Coverage must come from the walk, ' +
-        'not from the glob pattern.'
-    ).toEqual([]);
-    // 🔴 AND FILE-LEVEL, not just directory-level: a skip narrower than a whole subtree —
-    // one file, one nested path — would leave the directory sets equal.
+
+    // 🔴 (a) EVERY CANDIDATE WAS READ, FILE BY FILE. `scannedFiles` is pushed as the LAST
+    // statement of the walk's loop, after the read — pushing it first made this a tautology,
+    // and a `continue` one line lower skipped a whole subtree with the full gate green.
     expect(
       candidates.filter((f) => !scannedFiles.includes(f)),
-      'these non-test files were enumerated but never READ'
+      'these production source files were enumerated but never READ — an unmarked writer in ' +
+        'any of them is invisible to the ledger below'
     ).toEqual([]);
-    // 🔴 AND THE GLOB MUST REACH EVERY SUBTREE THAT EXISTS, ENUMERATED BY A DIFFERENT
-    // INSTRUMENT. Without this, a narrowed PATTERN satisfies the equalities above by shrinking
-    // BOTH sides together — measured surviving.
-    //
-    // ⚠️ A HAND-PICKED LIST CANNOT CLOSE THIS, AND TWO ROUNDS PROVED IT. Naming four
-    // directories left 427 non-test production files unguarded; naming seven was walked by a
-    // glob narrowed to exactly those seven. Any list is satisfied by a pattern that matches
-    // the list. So the expectation comes from `readdirSync` — a read of the filesystem that
-    // the glob PATTERN cannot influence — and the list maintains itself.
-    // A RECURSIVE `readdirSync`, then the same "could hold a writer" predicate the walk uses —
-    // so the expectation is every top-level subtree that genuinely contains a non-test
-    // `.ts`/`.tsx` file. Directories that hold only tests, or no TypeScript at all, drop out of
-    // both sides for the same reason rather than by being named here.
-    const onDisk = readdirSync(path.join(process.cwd(), 'src'), {
-      recursive: true,
-      encoding: 'utf8',
-    })
-      .map((f) => `src/${String(f).replace(/\\/g, '/')}`)
-      .filter((f) => /\.tsx?$/.test(f) && couldHoldAWriter(f));
-    // Positive control for the independent instrument: it must see a tree, not nothing.
-    expect(onDisk.length, 'readdirSync must enumerate the src tree').toBeGreaterThan(3_000);
-    const srcDirs = [...new Set(onDisk.map(topLevel))].sort();
-    expect(srcDirs.length, 'readdirSync must see many subtrees').toBeGreaterThan(10);
-    const unreached = srcDirs.filter((d) => !couldHold.has(d)).sort();
+
+    // 🔴 (b) AND THE SECOND ENUMERATION AGREES, which is the only check that can see the
+    // WALK'S OWN PREDICATE narrow. (a) compares the walk against itself, so appending one
+    // conjunct to `couldHoldAWriter` shrinks both of its sides together — measured, that left
+    // the 854-test gate green with an unmarked writer live and `src/pages` never read. The
+    // glob is a different mechanism filtered by `looksLikeProductionSource`, the deliberately
+    // SEPARATE inline twin, so a narrowed walk leaves these files behind by name.
     expect(
-      unreached,
-      'these src/ subdirectories EXIST but the glob never reached them, so a writer in any ' +
-        'of them is invisible. The expectation is read from the filesystem, not from a list ' +
-        'in this file — a list is always satisfied by a pattern that matches the list.'
+      globbed.filter((f) => !scannedFiles.includes(f)),
+      'these files were found by an independent enumeration but the walk never READ them. ' +
+        'Check `couldHoldAWriter` for an exclusion `looksLikeProductionSource` does not have ' +
+        '— those two are deliberately separate so they CAN disagree.'
     ).toEqual([]);
-    // Belt: still enumerating at tree scale, so a pattern matching one file per directory
-    // could not satisfy either check above.
-    expect(files.length, 'the glob must enumerate the whole src tree').toBeGreaterThan(5_000);
-    expect(scannedFiles.length, 'the walk must READ thousands of non-test files').toBeGreaterThan(
+
+    // 🔴 (c) AND BY SUBTREE, so a skip narrower than a file still surfaces as a directory.
+    const scannedDirs = new Set(scannedFiles.map(topLevel));
+    const expectedDirs = [...new Set(candidates.map(topLevel))].sort();
+    expect(
+      expectedDirs.filter((d) => !scannedDirs.has(d)),
+      'these src/ subtrees hold production source that was never READ'
+    ).toEqual([]);
+
+    // 🔴 (d) AND THE CROSS-CHECK MUST ITSELF STILL COVER THE TREE. (b) only asserts the glob
+    // is a SUBSET of what was read, so NARROWING THE GLOB survives on a clean tree — it
+    // removes defence-in-depth silently, and the next narrowing of the walk then goes unseen.
+    // Measured: reducing the glob to three directories was green until this assertion existed.
+    // Compared by SUBTREE rather than by file, because the glob structurally cannot see
+    // dot-directories (`src/pages/api/.well-known/`) and that is the documented reason the
+    // walk no longer uses it.
+    const globbedDirs = new Set(globbed.map(topLevel));
+    expect(
+      [...scannedDirs].filter((d) => !globbedDirs.has(d)).sort(),
+      'the independent cross-check no longer reaches these subtrees, so it cannot notice the ' +
+        'walk narrowing into them. Widen the glob rather than accepting the loss.'
+    ).toEqual([]);
+
+    // Instrument controls. Both enumerations must be seeing a tree, or every assertion above
+    // is vacuous over an empty list — and the counts are floors well under the real values so
+    // ordinary growth never trips them.
+    expect(candidates.length, 'the walk must enumerate thousands of files').toBeGreaterThan(3_000);
+    expect(globbed.length, 'the cross-check must enumerate thousands of files').toBeGreaterThan(
       3_000
     );
+    expect(scannedDirs.size, 'the walk must span many subtrees').toBeGreaterThan(10);
     // The discovery half still has to find something, or the comparison below is about "[]".
     expect(found.length).toBeGreaterThanOrEqual(LEDGER.length);
   });
@@ -898,6 +949,18 @@ describe('the marker has ONE spelling and every owner-visible read excludes it',
     const analytics = read(ANALYTICS_MODULE);
     const at = analytics.indexOf('count(DISTINCT "user_id")');
     expect(at, 'the distinct-user read must still exist under this shape').toBeGreaterThan(0);
+    // 🔴 AND IT MUST BE THE ONLY ONE. `indexOf` takes the FIRST occurrence, so a second
+    // distinct-user read added ABOVE this one silently becomes this guard's subject while the
+    // live read goes unguarded — and the first failure would land on the DECOY, inviting
+    // whoever sees it to update the pin to the decoy. This is the mirror of the bound-slice
+    // fix below: that closed "a neighbour BELOW satisfies my needles", this closes "a
+    // neighbour ABOVE becomes my subject". A per-scope or last-24h distinct-user read is the
+    // realistic trigger.
+    expect(
+      analytics.split('count(DISTINCT "user_id")').length - 1,
+      'more than one distinct-user read exists in this file, so the pin below is about ' +
+        'whichever comes FIRST. Give this guard an unambiguous anchor before adding another.'
+    ).toBe(1);
 
     // 🔴 BOUNDED AT THE TEMPLATE'S CLOSING BACKTICK, NOT A 600-CHAR WINDOW. The round-3 fix
     // widened the corpus to `slice(at, at + 600)` while adding the `i` flag, and the
@@ -942,21 +1005,36 @@ describe('the marker has ONE spelling and every owner-visible read excludes it',
      * mutations are cross-tenant.
      */
     const normalised = stmt.replace(/\s+/g, ' ').trim();
+
+    // 🔴 THE WHOLE `WHERE` CLAUSE, WITH INTERPOLATIONS COLLAPSED. Every disjunction,
+    // negation, `IS NOT TRUE` wrapper, dropped bound and reordered term fails this, because
+    // it is an exact match on the clause's shape.
+    //
+    // ⚠️ COLLAPSED RATHER THAN VERBATIM, AND THAT IS A CORRECTION OF THE COST, NOT OF THE
+    // GUARANTEE. The previous revision pinned the whole statement verbatim and its docblock
+    // said "the cost is that a cosmetic reformat of this statement fails this test" — which
+    // is FALSE for the commonest reformat there is: `replace(/\s+/g, ' ')` erases a reindent.
+    // The cost it actually charged was renaming an interpolated expression (`ownedIds` →
+    // `ownedAppIds`), which is a refactor with nothing to do with the boolean shape. So the
+    // paragraph justified the trade by naming a cost the guard did not charge and omitting
+    // the one it did. Collapsing `${…}` to `?` keeps every shape guarantee and drops that
+    // churn; the two claims are separated so a failure names WHICH one broke.
+    const shape = normalised.slice(normalised.indexOf('WHERE ')).replace(/\$\{[^}]*\}/g, '?');
     expect(
-      normalised,
-      'the distinct-user statement must match its pinned shape EXACTLY. Every term is a ' +
-        'restriction AND-ed to the next: the ownership bound over the joined owned ids, both ' +
-        'range bounds, and the private-run exclusion. If you are here because you reformatted ' +
-        'it, update this string. If you are here because you changed its BOOLEAN SHAPE, do ' +
-        'not — a disjunction or a negation anywhere in this WHERE clause reads one owner ' +
-        'every distinct user of every app in the table.'
+      shape,
+      'the WHERE clause must match this shape EXACTLY. Every term is a restriction AND-ed to ' +
+        'the next: the ownership bound over the joined owned ids, both range bounds, and the ' +
+        'private-run exclusion. A disjunction or a negation ANYWHERE in it reads one owner ' +
+        'every distinct user of every app in the table — worse than the leak this PR closes.'
     ).toBe(
-      'count(DISTINCT "user_id")::bigint AS value ' +
-        'FROM "block_scope_invocations" ' +
-        'WHERE "app_block_id" IN (${Prisma.join(ownedIds)}) ' +
-        'AND "invoked_at" >= ${range.from} ' +
-        'AND "invoked_at" <= ${range.to} ' +
-        'AND "source" <> ${PRIVATE_RUN_INVOCATION_SOURCE}'
+      'WHERE "app_block_id" IN (?) AND "invoked_at" >= ? AND "invoked_at" <= ? ' +
+        'AND "source" <> ?'
+    );
+
+    // And the ownership placeholder must still be the JOINED OWNED IDS rather than some other
+    // expression — the shape check above cannot see inside a `?`.
+    expect(normalised, 'the ownership bound must interpolate the joined owned-app ids').toContain(
+      'IN (${Prisma.join(ownedIds)})'
     );
   });
 

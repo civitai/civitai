@@ -246,12 +246,23 @@ function wireMocks() {
     // A shim that reimplements a statement measures the shim.
     const gte = paramAt('"invoked_at" >= ') as Date | undefined;
     const lte = paramAt('"invoked_at" <= ') as Date | undefined;
-    // 🔴 THE OWNERSHIP OPERATOR IS READ, NOT ASSUMED. `IN` → `NOT IN` inverts the whole
-    // read — one owner's `activeUsers` becomes the users of every app they do NOT own — and
-    // a shim hardcoding `ownedIds.includes(...)` cannot see it, because it only ever
-    // recovered the id SET. Measured surviving.
-    const negated = /NOT\s+IN\s*\(/i.test(sql);
-    const inSet = (id: string) => (negated ? !ownedIds.includes(id) : ownedIds.includes(id));
+    // 🔴 NO NEGATION HANDLING HERE, DELIBERATELY, AND THE DELETION IS THE POINT.
+    //
+    // A previous revision detected `/NOT\s+IN\s*\(/i` and inverted this membership test, so
+    // that an inverted ownership bound would show up behaviourally. Two measurements retired
+    // it. First, the branch was UNREACHED: deleting it failed exactly one test — the one
+    // written to exercise it — and that test drove this shim DIRECTLY with a hand-built SQL
+    // string, so zero lines of `app-analytics.service.ts` ran. It was a test of the test, and
+    // its `[INV]` label was honest only because it could never go red on any production
+    // revert. Second, it keyed off the SAME regex the structural guard used, so it was never
+    // a second opinion: a structural guard and a behavioural guard testing one predicate are
+    // ONE guard, which is exactly how `WHERE NOT "app_block_id" IN (…)` walked both at once.
+    //
+    // The ownership bound's shape is now pinned where it can actually be enforced — as an
+    // exact match on the whole normalised statement, in
+    // `services/__tests__/no-unmarked-private-run-invocation.test.ts`. That fails on ANY
+    // negation spelling, so no real statement can reach this shim negated.
+    const inSet = (id: string) => ownedIds.includes(id);
     const visible = rows.filter(
       (r) =>
         inSet(r.appBlockId) &&
@@ -452,40 +463,6 @@ describe('owner-visible engagement analytics exclude private-run activity', () =
     const a = await getMyAppAnalytics({ userId: OWNER_ID, from: RANGE_FROM, to: RANGE_TO });
     // Both owned apps' viewers, and not the foreign one.
     expect(a.engagement.activeUsers).toBe(3);
-  });
-
-  it('[INV] the shim HONOURS a negated ownership bound rather than ignoring it', async () => {
-    // 🔴 THE SHIM'S NEGATION BRANCH WAS DEAD CODE, AND ITS COMMENT SAID OTHERWISE. Deleting
-    // `negated`/`inSet` outright survived the whole suite, because no case in this file ever
-    // produced a statement containing a negated bound — so "THE OWNERSHIP OPERATOR IS READ,
-    // NOT ASSUMED" described a capability nothing had watched work. A guard proven breakable
-    // but never proven REACHABLE passes a mutation sweep without executing.
-    //
-    // This drives the shim directly with a negated statement. It is the BEHAVIOURAL half of
-    // the structural whole-statement pin in `no-unmarked-private-run-invocation.test.ts`, and
-    // the reason both exist is that the previous versions keyed off the SAME regex — a
-    // structural guard and a behavioural guard testing one predicate are one guard.
-    rows = [
-      ...ORDINARY_ROWS,
-      { ...ORDINARY_ROWS[0], appBlockId: FOREIGN_ID, userId: FOREIGN_VIEWER },
-    ];
-    const negatedSql =
-      'count(DISTINCT "user_id") FROM "block_scope_invocations" ' +
-      'WHERE "app_block_id" NOT IN (?) AND "invoked_at" >= ? AND "invoked_at" <= ?';
-    const [row] = (await mockDbRead.$queryRaw({
-      __sql: negatedSql,
-      __values: [{ __join: [OWNED_ID] }, RANGE_FROM, RANGE_TO],
-    })) as Array<{ value: bigint }>;
-    // Inverted: the only in-range viewer on an app OUTSIDE the owned set is the foreign one.
-    expect(Number(row.value)).toBe(1);
-
-    // The control, same shim, same fixture, non-negated — so the 1 above is the inversion
-    // rather than a shim that always returns 1.
-    const [plain] = (await mockDbRead.$queryRaw({
-      __sql: negatedSql.replace('NOT IN', 'IN'),
-      __values: [{ __join: [OWNED_ID] }, RANGE_FROM, RANGE_TO],
-    })) as Array<{ value: bigint }>;
-    expect(Number(plain.value)).toBe(2);
   });
 
   it('[REG] the distinct-user exclusion is bound to the MARKER, not to some other value', async () => {
