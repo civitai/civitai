@@ -364,7 +364,7 @@ export const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: 
     });
 
     // Busted below, outside the try: a Redis fault must not report the coverage write as failed.
-    let coverageDropouts: number[] = [];
+    let coverageDropouts: { model_id: number; version_id: number }[] = [];
 
     if (!auctionRow.auctionBase.ecosystem) {
       // update checkpoint coverage
@@ -411,17 +411,17 @@ export const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: 
               SELECT * FROM UNNEST(${modelIds}::int[], ${versionIds}::int[]) AS t(model_id, version_id)
               ON CONFLICT DO NOTHING
             `,
-            dbWrite.$queryRaw<{ version_id: number }[]>`
+            dbWrite.$queryRaw<{ model_id: number; version_id: number }[]>`
               DELETE FROM "CoveredCheckpoint" cc
               WHERE NOT EXISTS (
                 SELECT 1 FROM UNNEST(${modelIds}::int[], ${versionIds}::int[]) AS t(model_id, version_id)
                 WHERE t.model_id = cc.model_id AND t.version_id = cc.version_id
               )
-              RETURNING cc.version_id
+              RETURNING cc.model_id, cc.version_id
             `,
           ]);
 
-          coverageDropouts = removed.map((r) => r.version_id);
+          coverageDropouts = removed;
         }
       } catch (error) {
         const err = error as Error;
@@ -440,22 +440,25 @@ export const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: 
     }
 
     // Clear related caches
+    // Dropouts as well as winners: a version that left the set keeps a stale `canGenerate` in the
+    // index, which renders a generate button the submit then refuses.
+    const coverageModelIds = [
+      ...new Set([
+        ...winners
+          .map((w) => modelVersionData.find((mv) => mv.id === w.entityId)?.modelId)
+          .filter(isDefined),
+        ...coverageDropouts.map((d) => d.model_id),
+      ]),
+    ];
     await modelsSearchIndex.updateSync(
-      winners
-        .map((w) => {
-          const winMatch = modelVersionData.find((mv) => mv.id === w.entityId);
-          return winMatch
-            ? { id: winMatch.modelId, action: SearchIndexUpdateQueueAction.Update }
-            : undefined;
-        })
-        .filter(isDefined)
+      coverageModelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
     );
     await bustFeaturedModelsCache();
     await homeBlockCacheBust(HomeBlockType.FeaturedModelVersion, 'default');
     // Dropouts need the winners' invalidation: the set also takes top weekly earners, so a version
     // leaves with no auction event of its own, and unbusted the orchestrator keeps serving it as
     // covered until its entry expires.
-    const coverageChanged = [...winnerIds, ...coverageDropouts];
+    const coverageChanged = [...winnerIds, ...coverageDropouts.map((d) => d.version_id)];
     await resourceDataCache.bust(coverageChanged);
     await bustOrchestratorModelCache(coverageChanged);
 

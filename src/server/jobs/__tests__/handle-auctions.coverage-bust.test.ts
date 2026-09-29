@@ -4,11 +4,14 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ResourceData from '~/server/redis/resource-data.redis';
 import type * as OrchestratorModels from '~/server/services/orchestrator/models';
 
-const { bustResourceData, bustOrchestrator, getTopWeeklyEarners } = vi.hoisted(() => ({
-  bustResourceData: vi.fn(async () => undefined),
-  bustOrchestrator: vi.fn(async () => undefined),
-  getTopWeeklyEarners: vi.fn(async () => [] as { modelId: number; modelVersionId: number }[]),
-}));
+const { bustResourceData, bustOrchestrator, getTopWeeklyEarners, searchIndexUpdate } = vi.hoisted(
+  () => ({
+    bustResourceData: vi.fn(async () => undefined),
+    bustOrchestrator: vi.fn(async () => undefined),
+    getTopWeeklyEarners: vi.fn(async () => [] as { modelId: number; modelVersionId: number }[]),
+    searchIndexUpdate: vi.fn(async () => undefined),
+  })
+);
 
 vi.mock('~/server/jobs/job', () => ({
   createJob: (name: string, cron: string, fn: unknown) => ({ name, cron, run: fn }),
@@ -27,12 +30,13 @@ vi.mock('~/server/services/model.service', () => ({
   bustFeaturedModelsCache: vi.fn(async () => undefined),
   getTopWeeklyEarners,
 }));
-vi.mock('~/server/search-index', () => ({ modelsSearchIndex: { updateSync: vi.fn() } }));
+vi.mock('~/server/search-index', () => ({ modelsSearchIndex: { updateSync: searchIndexUpdate } }));
 vi.mock('~/server/services/home-block-cache.service', () => ({ homeBlockCacheBust: vi.fn() }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/services/auction.service', () => ({}));
 vi.mock('~/server/services/buzz.service', () => ({}));
 
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { _handleWinnersForAuction } from '~/server/jobs/handle-auctions';
 
 type AuctionRow = Parameters<typeof _handleWinnersForAuction>[0];
@@ -58,7 +62,7 @@ beforeEach(() => {
 
 describe('_handleWinnersForAuction — checkpoint coverage', () => {
   it('invalidates the versions that left the covered set along with the winners', async () => {
-    dbMock.dbWrite.$transaction.mockResolvedValue([1, [{ version_id: 7 }]]);
+    dbMock.dbWrite.$transaction.mockResolvedValue([1, [{ model_id: 70, version_id: 7 }]]);
 
     await expect(_handleWinnersForAuction(checkpointAuction, winners)).resolves.toBe(true);
 
@@ -66,6 +70,18 @@ describe('_handleWinnersForAuction — checkpoint coverage', () => {
     expect(bustResourceData).toHaveBeenCalledWith([11, 12, 7]);
     expect(bustOrchestrator).toHaveBeenCalledTimes(1);
     expect(bustOrchestrator).toHaveBeenCalledWith([11, 12, 7]);
+  });
+
+  it('reindexes the models whose versions left the covered set', async () => {
+    dbMock.dbWrite.$transaction.mockResolvedValue([1, [{ model_id: 70, version_id: 7 }]]);
+
+    await _handleWinnersForAuction(checkpointAuction, winners);
+
+    // The winners contribute none: `modelVersion.findMany` is stubbed empty, so their model ids
+    // are unknown to this run and the dropout is the whole set.
+    expect(searchIndexUpdate).toHaveBeenCalledWith([
+      { id: 70, action: SearchIndexUpdateQueueAction.Update },
+    ]);
   });
 
   it('reports failure and invalidates nothing when the coverage write fails', async () => {
