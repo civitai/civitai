@@ -41,21 +41,6 @@ vi.mock('../../../../event-engine-common/services/metrics', () => ({
 }));
 vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }));
 vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
-vi.mock('~/env/server', () => ({
-  env: new Proxy({ LOGGING: [] as string[] } as Record<string, unknown>, {
-    get: (target, prop) => {
-      if (prop in target) return target[prop as string];
-      if (typeof prop === 'string' && (prop.endsWith('_URL') || prop.endsWith('_ENDPOINT')))
-        return 'https://test:test@localhost:5432/test';
-      if (
-        typeof prop === 'string' &&
-        /(_CONCURRENCY|_LIMIT|_MS|_PORT|_TIMEOUT|_MAX|_SIZE|_COUNT)$/.test(prop)
-      )
-        return 1;
-      return undefined;
-    },
-  }),
-}));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
   enforceBlockedBrowsingTags: vi.fn().mockResolvedValue({ emptyResult: false }),
@@ -77,12 +62,24 @@ type Viewer = { id: number } | undefined;
 /** The minor clause and the id bound into it, or `null` when the clause has no owner arm. */
 type MinorClause = { clause: string; exemptedId: unknown };
 
+/**
+ * Exactly one, because the clauses are ANDed: a leftover bare clause beside the owner arm hides
+ * the viewer's rows again while a first-match read still finds the owner arm.
+ */
+function onlyMinorClause(text: string, pattern: RegExp) {
+  const matches = [...text.matchAll(new RegExp(pattern.source, 'g'))];
+  expect(
+    matches.map((m) => m[0]),
+    `expected exactly one minor clause in: ${text}`
+  ).toHaveLength(1);
+  return matches[0];
+}
+
 function minorClauseIn(text: string, values: unknown[], pattern: RegExp): MinorClause {
-  const match = text.match(pattern);
-  expect(match, `no minor clause in: ${text}`).not.toBeNull();
-  const placeholder = match![1];
+  const match = onlyMinorClause(text, pattern);
+  const placeholder = match[1];
   return {
-    clause: match![0],
+    clause: match[0],
     exemptedId: placeholder ? values[Number(placeholder) - 1] : null,
   };
 }
@@ -141,9 +138,8 @@ async function meiliMinor(
   ).rejects.toThrow('stop here');
   const [, request] = fetchDocumentsAbortableMock.mock.calls[0];
   const filter = String((request as { filter: string }).filter);
-  const match = filter.match(/\(NOT minor = true(?: OR "userId" = (\d+))?\)/);
-  expect(match, `no minor clause in: ${filter}`).not.toBeNull();
-  return { clause: match![0], exemptedId: match![1] ? Number(match![1]) : null };
+  const match = onlyMinorClause(filter, /\(NOT minor = true(?: OR "userId" = (\d+))?\)/);
+  return { clause: match[0], exemptedId: match[1] ? Number(match[1]) : null };
 }
 
 beforeEach(() => {

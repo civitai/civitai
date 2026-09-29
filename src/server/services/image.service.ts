@@ -4303,7 +4303,8 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     filters.push(`(NOT poi = true)`);
   }
   if (disableMinor) {
-    filters.push(`(NOT minor = true${currentUserId ? ` OR "userId" = ${currentUserId}` : ''})`);
+    const ownCarveOut = currentUserId ? ` OR "userId" = ${currentUserId}` : '';
+    filters.push(`(NOT minor = true${ownCarveOut})`);
   }
 
   if (isModerator) {

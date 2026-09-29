@@ -34,7 +34,7 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
 const OWNER = 3300;
 const STRANGER = 4400;
 
-const MINOR = /\w+\."minor" = false(?: OR mm\."userId" = \$(\d+)\))?/;
+const MINOR = /\(\w+\."minor" = false OR mm\."userId" = \$(\d+)\)|\w+\."minor" = false/g;
 
 /**
  * The minor clause's owner arm, as the id bound into it, or `null` when there is none. `username`
@@ -49,9 +49,13 @@ async function exemptedIdFor(viewer: { id: number } | undefined, profile?: strin
   });
   expect(capturedQueries).toHaveLength(1);
   const { text, values } = capturedQueries[0];
-  const match = text.match(MINOR);
-  expect(match, `no minor clause in: ${text}`).not.toBeNull();
-  return match![1] ? values[Number(match![1]) - 1] : null;
+  // Exactly one: the clauses are ANDed, so a leftover bare clause hides the viewer's rows again.
+  const matches = [...text.matchAll(MINOR)];
+  expect(
+    matches.map((m) => m[0]),
+    `expected exactly one minor clause in: ${text}`
+  ).toHaveLength(1);
+  return matches[0][1] ? values[Number(matches[0][1]) - 1] : null;
 }
 
 describe('getModelsRaw minor exclusion', () => {
