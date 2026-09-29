@@ -144,6 +144,14 @@ export const THREADED_FROM_VERIFIED_LOCAL = 'privateRun: privateRun === true';
  * What the ROUTER ledger accepts. Deliberately EXCLUDES the bare-local spelling: every
  * governed router site has the claims object in scope, so a local there would be a
  * provenance-free value nothing constrains.
+ *
+ * ⚠️ THE COST IS NAMED WHERE THE TRADE IS MADE. Splitting the sets re-admits one narrow
+ * failure the single-list version had removed: a router writer using the storage-only
+ * spelling reddens the sibling ledger's exact TOTAL with "add it to LEDGER", which is the
+ * wrong fix. It also reddens that file's per-site check, which names the accepted router
+ * spellings — so the right answer is one line away. Taken deliberately, because the single
+ * list made the stricter ledger the more permissive one, and a permissive guard is worse
+ * than an imprecise message.
  */
 export const ROUTER_THREADED_SPELLINGS = [THREADED_FROM_CLAIMS, THREADED_FROM_OPTS_CLAIMS] as const;
 

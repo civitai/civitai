@@ -229,21 +229,34 @@ function wireMocks() {
     // Mirror the real statement: always range-bounded and app-bounded; exclude a `source`
     // value ONLY when the statement actually names one, and only the value it binds.
     // 🔴 BOUND BY POSITION, NOT "the first string in the list". The shim's `__sql` joins
-    // the template's static parts with `?`, so the parameter index of the `source` value is
-    // the number of `?` that precede it — and reading "the first string" happened to be
-    // right only because no other string interpolation precedes it TODAY. One added ahead
-    // of it and the shim would silently exclude the wrong value while still looking correct.
-    const marker = '"source" <> ';
-    const at = sql.indexOf(marker);
-    const excluded =
-      at === -1
-        ? undefined
-        : (arg.__values as unknown[])[sql.slice(0, at + marker.length).split('?').length - 1];
+    // the template's static parts with `?`, so the parameter index of any interpolated value
+    // is the number of `?` that precede it — and reading "the first string" happened to be
+    // right only because no other string interpolation preceded it. One added ahead of it and
+    // the shim would silently use the wrong value while still looking correct.
+    const paramAt = (needle: string): unknown => {
+      const at = sql.indexOf(needle);
+      if (at === -1) return undefined;
+      return (arg.__values as unknown[])[sql.slice(0, at + needle.length).split('?').length - 1];
+    };
+    const excluded = paramAt('"source" <> ');
+    // 🔴 AND THE RANGE BOUNDS COME OFF THE STATEMENT TOO, not from module constants. The
+    // previous shim asserted `r.invokedAt >= RANGE_FROM && <= RANGE_TO` using the values the
+    // TEST chose — so DELETING both `AND "invoked_at"` lines from the real statement left the
+    // suite green, under a case whose own comment said "the range bound must still apply".
+    // A shim that reimplements a statement measures the shim.
+    const gte = paramAt('"invoked_at" >= ') as Date | undefined;
+    const lte = paramAt('"invoked_at" <= ') as Date | undefined;
+    // 🔴 THE OWNERSHIP OPERATOR IS READ, NOT ASSUMED. `IN` → `NOT IN` inverts the whole
+    // read — one owner's `activeUsers` becomes the users of every app they do NOT own — and
+    // a shim hardcoding `ownedIds.includes(...)` cannot see it, because it only ever
+    // recovered the id SET. Measured surviving.
+    const negated = /NOT\s+IN\s*\(/i.test(sql);
+    const inSet = (id: string) => (negated ? !ownedIds.includes(id) : ownedIds.includes(id));
     const visible = rows.filter(
       (r) =>
-        ownedIds.includes(r.appBlockId) &&
-        r.invokedAt >= RANGE_FROM &&
-        r.invokedAt <= RANGE_TO &&
+        inSet(r.appBlockId) &&
+        (gte === undefined || r.invokedAt >= gte) &&
+        (lte === undefined || r.invokedAt <= lte) &&
         (excluded === undefined || r.source !== excluded)
     );
     return [{ value: BigInt(new Set(visible.map((r) => r.userId)).size) }];
@@ -385,7 +398,14 @@ describe('owner-visible engagement analytics exclude private-run activity', () =
     expect(a.notOwned).toBe(false);
   });
 
-  it("[REG] the distinct-user read counts only the OWNER'S apps, in range", async () => {
+  it("[INV] the distinct-user read counts only the OWNER'S apps, in range", async () => {
+    // ⚠️ [INV], MEASURED — green with `app-analytics.service.ts` reverted to the base ref,
+    // because the ownership and range bounds PREDATE this change. It was labelled [REG] on
+    // the strength of "it is a new case", which is the laundering error this file corrected
+    // in four other places; a label belongs to the PROPERTY, not to when the case was added.
+    // What IS new is that anything measures those bounds at all: three cross-tenant mutants
+    // survived the whole suite while the test shim reimplemented the statement instead of
+    // reading it.
     // 🔴 THE CONTROL FOR THE WORST MUTANT IN THIS SEGMENT. Swapping the raw statement's
     // leading `AND` for an `OR` leaves the source predicate's TEXT intact, and Postgres
     // precedence then makes the ownership and range restriction OPTIONAL — one owner's
@@ -403,9 +423,20 @@ describe('owner-visible engagement analytics exclude private-run activity', () =
     const a = await analytics();
     // The two distinct viewers on the requested app, and nothing else.
     expect(a.engagement.activeUsers).toBe(2);
+    // 🔴 AND THE FOUR PRISMA READS TOO, WHICH HAD NO OWNERSHIP ASSERTION AT ALL. Removing
+    // `appBlockId: idIn` from all four of them turns `apiCalls`, the error rate and both
+    // top-5 rollups into totals over the WHOLE table, and that survived the entire suite —
+    // this fixture already contained the foreign-app row that catches it, and only
+    // `activeUsers` was ever read off it. Three ordinary rows on the requested app; the
+    // foreign row and the out-of-range row must contribute to none of these.
+    expect(a.engagement.apiCalls).toBe(3);
+    expect(a.engagement.topScopes.map((s) => s.count).reduce((x, y) => x + y, 0)).toBe(3);
+    expect(a.engagement.topEndpoints.map((s) => s.count).reduce((x, y) => x + y, 0)).toBe(3);
   });
 
-  it('[REG] the distinct-user read spans EVERY app the caller owns, not just one', async () => {
+  it('[INV] the distinct-user read spans EVERY app the caller owns, not just one', async () => {
+    // ⚠️ [INV] for the same reason as the case above: the `IN (ownedIds)` set is pre-existing
+    // behaviour. Measured green with `app-analytics.service.ts` reverted to the base ref.
     // The other half of the same bound, and the reason `OWNED_ID_2` exists: the statement
     // restricts to `IN (ownedIds)`, so a shim comparing against a single id would pass a
     // mutant that narrowed the join. Called with no `appBlockId`, so the owned SET is used.

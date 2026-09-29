@@ -82,12 +82,23 @@ import { OWNER_VISIBLE_INVOCATION_FILTER } from '~/server/services/blocks/scope-
 const OPENER = 'recordScopeInvocation({';
 
 /**
- * 🔴 IMPORTED, NOT RE-DECLARED. This list was declared here with three members while the
- * sibling router ledger declared two, over the same router text — so a writer using the
- * third spelling passed here, went uncounted there, and reddened that file with a message
- * naming the wrong fix. One list lives in `routerSourceRegions`, and the property both
- * ledgers' exact totals rest on (no member is a substring of another) is proven in that
- * module's own test rather than restated in each consumer.
+ * 🔴 IMPORTED, NOT RE-DECLARED — but the SET is per-consumer, and the history is worth
+ * carrying because the two fixes point opposite ways.
+ *
+ * These were first declared twice with DIFFERENT members over the same router text, so a
+ * writer using the third spelling passed here, went uncounted there, and reddened the
+ * sibling file with a message naming the wrong fix. The fix was one shared list — which then
+ * LOOSENED the sibling, the stricter of the two, from two accepted spellings to three.
+ *
+ * ⚠️ SO THE WRONG-FIX-MESSAGE HAZARD IS MITIGATED, NOT REMOVED, AND SAYING SO IS THE POINT.
+ * A router writer using the storage-only spelling still reddens the sibling's exact total
+ * with "add it to LEDGER" — but it ALSO reddens that file's per-site check, which names the
+ * two accepted router spellings, so the reader is told the right thing somewhere. Zero
+ * instances today. The trade was taken deliberately: a guard that is too permissive is worse
+ * than one whose failure message needs a second line read.
+ *
+ * Each ledger composes its own set from ONE definition of each string; the non-overlap
+ * property both exact totals rest on is proven in `routerSourceRegions`' own test.
  */
 // The WIDER set: the router's two plus the storage path's verified local, whose provenance
 // is ledgered separately below because the string alone says nothing about where the value
@@ -247,12 +258,44 @@ function callCount(source: string): number {
  * would stage that. Neither the count nor the `not.toContain('privateRun: false')` negative
  * fires on it. Matching the whole RHS is what closes the class rather than one instance.
  *
- * The RHS ends at the first `,` `}` or newline, which is the shape every site is written in
- * (Prettier guarantees the trailing comma). A value that somehow spans further is reported
- * as not-an-accepted-spelling, i.e. it fails closed.
+ * ⚠️ AND IT MUST NOT STOP AT A NEWLINE, WHICH IS A CORRECTION — the first version did, and
+ * its docblock claimed the opposite ("a value that spans further fails closed"). It does
+ * not: a continuation like
+ *
+ *     privateRun: claims.privateRun === true
+ *       && SOME_ROLLOUT_FLAG,
+ *
+ * is valid TypeScript, is exactly the ANDed staging gate this guard exists to catch, and
+ * truncated to precisely an accepted spelling — so it FAILED OPEN and the round-1 storage
+ * mutant was walkable a third time. Prettier would normally put the `&&` at end-of-line,
+ * which does fail closed; resting the guarantee on a formatter the docblock never named is
+ * the actual defect.
+ *
+ * So the value is scanned to the first `,` or `}` at DEPTH ZERO, across newlines, tracking
+ * bracket depth. A value with unbalanced brackets runs to the end of the chunk and is
+ * reported as not-an-accepted-spelling, i.e. it fails closed.
  */
 function privateRunValues(source: string): string[] {
-  return [...source.matchAll(/privateRun:\s*([^,}\n]+)/g)].map((m) => m[1].trim());
+  const values: string[] = [];
+  const re = /privateRun:\s*/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(source)) !== null) {
+    let depth = 0;
+    let i = m.index + m[0].length;
+    const start = i;
+    for (; i < source.length; i += 1) {
+      const c = source[i];
+      if (c === '(' || c === '[' || c === '{') depth += 1;
+      else if (c === ')' || c === ']') depth -= 1;
+      else if (c === '}') {
+        if (depth === 0) break;
+        depth -= 1;
+      } else if (c === ',' && depth === 0) break;
+    }
+    values.push(source.slice(start, i).trim());
+    re.lastIndex = i;
+  }
+  return values;
 }
 
 /** Does this chunk carry a `privateRun` property whose WHOLE value is an accepted spelling? */
@@ -300,6 +343,18 @@ describe('every block_scope_invocations writer carries the private-run marker', 
     // twice over: it asserted `>= LEDGER.length`, and `LEDGER.length` IS the real match
     // count — zero slack, while its own comment claimed "a floor well under the real count".
     const { files, scanned, found } = discoverWriterFiles();
+    // 🔴 PER-TOP-LEVEL-DIRECTORY COVERAGE, NOT A THRESHOLD. A bare `scanned > 3_000` had
+    // ~1,500 files of slack, so dropping `src/pages` — the exact subtree an unmarked writer
+    // was measured escaping into — still cleared it. A count cannot express "no subtree was
+    // dropped"; naming the subtrees can, and a dropped one fails immediately.
+    const dirs = new Set(files.map((f) => f.split('/')[1]));
+    for (const dir of ['pages', 'server', 'components', 'shared']) {
+      expect(dirs.has(dir), `the walk must cover src/${dir} — a writer there must be seen`).toBe(
+        true
+      );
+    }
+    // Belt: the glob must still be enumerating at tree scale, so a pattern that matched only
+    // one file per directory could not satisfy the coverage check above.
     expect(files.length, 'the glob must enumerate the whole src tree').toBeGreaterThan(5_000);
     expect(scanned, 'the walk must read thousands of non-test files').toBeGreaterThan(3_000);
     // The discovery half still has to find something, or the comparison below is about "[]".
@@ -414,6 +469,23 @@ describe('every block_scope_invocations writer carries the private-run marker', 
         ).toEqual([]);
       });
     }
+  });
+
+  it('[INV] the EXACT-value filter is real — a prefix does not satisfy the check', () => {
+    // 🔴 "I ADDED AN EXACT-VALUE CHECK" AND "THE EXACT-VALUE CHECK WORKS" ARE DIFFERENT
+    // CLAIMS. Reverting `hasExactThreading` to the prefix semantics it replaced survived the
+    // whole suite, which means nothing was pinning the tightening itself. The sibling
+    // depth-filter control below exists for exactly this reason and this one was missing.
+    // Built from literals, so it is a property of the function at any ref.
+    const good = `privateRun: ${THREADED_SPELLINGS[0].replace('privateRun: ', '')},`;
+    expect(hasExactThreading(good)).toBe(true);
+    // The ANDed staging gate, inline and across a newline — both are prefixes of nothing
+    // accepted, and both must be refused.
+    expect(hasExactThreading(`${THREADED_SPELLINGS[0]} && ROLLOUT_ENABLED,`)).toBe(false);
+    expect(hasExactThreading(`${THREADED_SPELLINGS[0]}\n  && ROLLOUT_ENABLED,`)).toBe(false);
+    // And a literal, which is the other way to disable the marker while reading as wired.
+    expect(hasExactThreading('privateRun: false,')).toBe(false);
+    expect(hasExactThreading('privateRun: true,')).toBe(false);
   });
 
   it('[INV] the depth filter is real — a NESTED match does not satisfy the check', () => {
@@ -565,6 +637,29 @@ describe('the storage path carries the VERIFIED claim, not just a local', () => 
       // `= await` across lines depending on the binding list's width, and the first version
       // of this check was pinned to one of those shapes. Collapse whitespace instead.
       const flat = body.replace(/\s+/g, ' ');
+
+      // 🔴 THE NEGATIVE CONTROL FOR THE REGION, ASSERTED ON THE VERY STRING THE CHECKS READ.
+      // Reverting `body` to the whole `source` survived the entire suite — every check below
+      // still found its string SOMEWHERE in the file, which is precisely the file-wide scope
+      // this case replaced and precisely what let the three READ paths stand in for the two
+      // writers. A first attempt at this control asserted on `body` and did NOT fire, because
+      // the mutation re-points only the variable the assertion uses: a control has to be
+      // bound to the same value it is controlling for, or it is testing a different string.
+      //
+      // A correctly-bounded region contains this writer and nothing else.
+      for (const foreign of [STORAGE_CARRIER.resolver, ...STORAGE_CARRIER.writers].filter(
+        (n) => n !== writer
+      )) {
+        expect(
+          flat,
+          `${writer}'s region is not bounded — it reaches ${foreign}, so every check below ` +
+            'is reading the whole file rather than this writer'
+        ).not.toContain(foreign);
+        expect(body, `${writer}'s region is not bounded — it reaches ${foreign}`).not.toContain(
+          foreign
+        );
+      }
+
       expect(
         flat,
         `${writer} must destructure \`privateRun\` from \`resolveStorageContext\` — that is ` +
@@ -748,11 +843,34 @@ describe('the marker has ONE spelling and every owner-visible read excludes it',
         'ownership and range restriction optional, which reads one owner every user of ' +
         'every app'
     ).toContain('AND "source" <> ');
-    // The whole statement must contain no disjunction at all: every term is a restriction.
+    // 🔴 CASE-INSENSITIVE, AND OVER THE WHOLE STATEMENT. The previous form was
+    // `not.toMatch(/\bOR\b/)` over a PREFIX — so lowercase `or` respelled round 2's
+    // headline cross-tenant mutant in ONE CHARACTER and survived the entire suite, under a
+    // message that read "must contain no OR". SQL keywords are case-insensitive; a guard on
+    // a keyword must be too.
     expect(
-      stmt.slice(0, stmt.indexOf('`')),
-      'the distinct-user statement must contain no OR — all of its terms are restrictions'
-    ).not.toMatch(/\bOR\b/);
+      stmt,
+      'the distinct-user statement must contain no OR, in any case — every term is a ' +
+        'restriction, and a disjunction makes the ownership and range bounds optional'
+    ).not.toMatch(/\bor\b/i);
+    // 🔴 AND THE OWNERSHIP BOUND MUST BE `IN`, NOT `NOT IN`. Inverting it reads the caller
+    // every app they do NOT own — also cross-tenant, also invisible to a shim that recovers
+    // only the id set.
+    expect(stmt, 'the ownership bound must still be an IN over the joined ids').toContain(
+      '"app_block_id" IN ('
+    );
+    expect(
+      stmt,
+      'the ownership bound must not be NEGATED — that reads every app the caller does not own'
+    ).not.toMatch(/NOT\s+IN\s*\(/i);
+    // And the range bounds must still be present, since the shim now honours whatever the
+    // statement carries rather than what the fixture assumes.
+    expect(stmt, 'the range lower bound must still be in the statement').toContain(
+      '"invoked_at" >= '
+    );
+    expect(stmt, 'the range upper bound must still be in the statement').toContain(
+      '"invoked_at" <= '
+    );
   });
 
   /**

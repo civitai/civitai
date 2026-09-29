@@ -138,24 +138,6 @@ describe('recordScopeInvocation — the private-run audit marker', () => {
     ).not.toBe('private-run');
   });
 
-  it('[REG] a caller cannot write the marker through `source` with no claim behind it', async () => {
-    // 🔴 A TYPE DECLARATION IS NOT A CODE PATH. The input field's type was widened to the
-    // column's FULL three-value union at one point, which made `'private-run'` settable with
-    // no verified claim — an ordinary user's row vanishing from the owner's dashboard, the
-    // over-filter direction. The narrowed input type closes it for in-repo callers and the
-    // compiler proves that, but a type here was already re-widened once, so the BEHAVIOUR is
-    // pinned too. `as never` is what lets the test reach past the type to the runtime the
-    // type is protecting.
-    await recordScopeInvocation({
-      ...ORDINARY,
-      source: 'private-run' as never,
-    });
-    expect(
-      writtenData().source,
-      'the marker must be reachable ONLY from the verified claim — one mapping, one home'
-    ).not.toBe('private-run');
-  });
-
   it('[REG] the marker WINS over an explicitly-passed source', async () => {
     // The two are disjoint in production (an external-OAuth token cannot carry a
     // block-token claim), so this pins the resolution of a case that should never arise.

@@ -102,13 +102,19 @@ const ROUTER = path.join(process.cwd(), 'src/server/routers/blocks.router.ts');
 const THREADED = THREADED_FROM_CLAIMS;
 
 /**
- * 🔴 THE ACCEPTED SPELLINGS ARE IMPORTED, NOT RE-DECLARED HERE, and that is a correction.
- * This file listed two and its cross-file sibling listed three, over the SAME router text.
- * A future router writer using the third (destructured) spelling would have passed the
- * sibling's per-site check, gone UNCOUNTED by the total below, and produced a red test here
- * reading "add it to LEDGER" — a failure pointing at the wrong fix. One list, in
- * `routerSourceRegions`, where the shared ledger vocabulary already lives; the non-overlap
- * property the exact total depends on is proven in that module's own test.
+ * 🔴 THE ACCEPTED SPELLINGS ARE IMPORTED, NOT RE-DECLARED HERE — and this file takes the
+ * ROUTER set, which is deliberately NARROWER than its cross-file sibling's.
+ *
+ * ⚠️ THE FIRST FIX HERE WAS ONE SHARED LIST, AND IT WAS WRONG IN THE OTHER DIRECTION. The
+ * two files had declared different members over the same router text, so a writer using the
+ * storage-only spelling passed the sibling's per-site check, went uncounted by the total
+ * below, and reddened this file with "add it to LEDGER" — a failure naming the wrong fix.
+ * Unifying the sets removed that, and LOOSENED this ledger, the stricter of the two, to
+ * accept a provenance-free local at sites where the claims object is always in scope.
+ *
+ * Per-consumer sets restore the strictness and re-admit the wrong-fix message in one narrow
+ * case — mitigated because the per-site check fires too and names the accepted spellings.
+ * Stated rather than left implied: a permissive guard is worse than an imprecise message.
  */
 // 🔴 THE *ROUTER* SET, NOT THE UNION OF BOTH LEDGERS'. Every governed site here has the
 // claims object in scope, so the bare-local spelling the storage path needs is deliberately
