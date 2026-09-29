@@ -7,7 +7,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * and everything it derives from the response — a sha256 of the body, width, height, format,
  * frame count — is returned to the submitter. Ungated that is a RESPONSE ORACLE over any URL
  * the web pod can reach, on `creatorShopProcedure` (protectedProcedure + the `creatorShop`
- * flag): an ordinary signed-in user, not a moderator.
+ * flag).
+ *
+ * ⚠ CORRECTED: this said "an ordinary signed-in user, not a moderator", which OVERSTATES the
+ * rung. Measured: `feature-flags.service.ts` declares `creatorShop: { availability: ['mod'],
+ * fliptKey: 'creator-shop' }`, and live Flipt enables it for `testers` ∪ `CreatorProgram` ∪
+ * `moderators` — a gated cohort of real users, not every signed-in account. The hazard is
+ * unchanged (Creator Program members are not moderators) but do not re-derive the wider claim
+ * from here. Swept in the same commit as the copy in `creator-shop.service.ts`, because a
+ * retraction fixed at one site and left at the other is how the wrong number survives.
  *
  * 🔴 The assertion that matters is NOT merely "it throws". The pre-existing try/catch around
  * the fetch converts every failure into 'Could not read the uploaded artwork for validation',
@@ -151,13 +159,22 @@ describe('validateArtwork URL allowlist (web-pod fetch + response oracle)', () =
     expect(String(mockFetch.mock.calls[0][0]).startsWith('https://image.test/')).toBe(true);
   });
 
-  it('refuses to FOLLOW a redirect — the only way left to reach a host we did not choose', async () => {
+  it('does NOT set redirect:error — the edge answers 301 and that would break every submit', async () => {
     await submit('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/art.png').catch(() => undefined);
 
-    // The host is ours by construction now, so a 3xx off it is the residual hazard. `error`
-    // rather than `follow`: node resolves a redirect itself, so `follow` would re-open one
-    // hop later exactly what the narrowing closed.
-    expect(mockFetch.mock.calls[0][1]).toMatchObject({ redirect: 'error' });
+    // 🔴 THIS ROW REPLACES ONE THAT ASSERTED THE OPPOSITE, and the reversal is measured, not
+    // reasoned. An earlier draft set `redirect: 'error'` on the theory that the host being
+    // ours made a 3xx the only remaining way out. Probed against the live edge, an
+    // `original=true` delivery URL answers **HTTP 301** to
+    // `https://blobs-b2.civitai.com/file/blobs-managed-public/<id>` — 3 of 3 sampled images.
+    // Redirecting to our own blob host is the normal path, so `redirect: 'error'` would have
+    // rejected every legitimate artwork fetch in production.
+    //
+    // Following is safe BECAUSE of the narrowing: the caller supplies a key, never a host, so
+    // the chain is chosen by our infrastructure and is not attacker-influenced. This row
+    // exists so nobody re-adds the option from the same plausible-but-false reasoning.
+    const init = mockFetch.mock.calls[0][1] ?? {};
+    expect(init.redirect).toBeUndefined();
   });
 
   it('bounds the fetch with a timeout — an unbounded one pins a web-pod request', async () => {
@@ -198,12 +215,30 @@ describe('validateArtwork URL allowlist (web-pod fetch + response oracle)', () =
 
   it('refuses an oversized body that declared NO Content-Length (the chunked case)', async () => {
     // 🔴 The row that makes the Content-Length check non-sufficient: a chunked response
-    // carries no length to pre-check, so the streamed total must be checked too. Without the
-    // second check this passes and sharp is handed 64 MiB.
+    // carries no length to pre-check, so the total must be bounded while READING.
+    //
+    // The fixture streams 1 MiB chunks and counts how many are pulled. That count is the
+    // assertion that the bound is enforced DURING the read rather than after it: a guard that
+    // buffered first would drain all 80 chunks before deciding. It also means this row cannot
+    // pass by accident on an `arrayBuffer` fallback.
+    const CHUNK = 1024 * 1024;
+    let pulled = 0;
     mockFetch.mockResolvedValue({
       ok: true,
       headers: { get: () => null },
-      arrayBuffer: async () => new ArrayBuffer(64 * 1024 * 1024),
+      body: {
+        getReader: () => ({
+          read: async () => {
+            pulled += 1;
+            if (pulled > 80) return { done: true, value: undefined };
+            return { done: false, value: new Uint8Array(CHUNK) };
+          },
+          cancel: async () => undefined,
+        }),
+      },
+      arrayBuffer: async () => {
+        throw new Error('MUST NOT reach arrayBuffer — the stream path should have bounded it');
+      },
     });
 
     const err = await submit('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/art.png').then(
@@ -214,5 +249,9 @@ describe('validateArtwork URL allowlist (web-pod fetch + response oracle)', () =
       'Could not read the uploaded artwork'
     );
     expect(mockSharp).not.toHaveBeenCalled();
+    // 🔴 The bound was enforced DURING the read: it stopped well short of the 80 chunks the
+    // fixture would happily supply. A guard that materialised the body first would have
+    // pulled every one of them.
+    expect(pulled).toBeLessThan(80);
   });
 });

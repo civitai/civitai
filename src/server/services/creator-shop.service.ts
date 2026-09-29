@@ -13,6 +13,7 @@ import {
 import { removePlacementsByCosmetic } from '~/server/services/placement-moderation.service';
 import { isAllowedImageScanUrl, normalizeImageScanUrl } from '~/server/utils/image-scan-url';
 import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
+import { constants } from '~/server/common/constants';
 import {
   REJECTED_IS_FINAL,
   appendItemHistory,
@@ -184,19 +185,64 @@ const withRemaining = (item: Omit<CreatorShopItemRow, '_count'>, purchases: numb
 // and inspects it with sharp against the per-type requirements.
 /**
  * Bounds on the artwork fetch below. These cap what the WEB POD will spend on one
- * `submitCreatorShopItem` call; they are not a product limit on artwork size, and the
- * upload itself is bounded separately by Cloudflare.
+ * `submitCreatorShopItem` call.
  *
- * Sized off the existing precedent for a server-side image fetch in this repo —
- * `META_IMAGE_TIMEOUT_MS` 2500 / `META_IMAGE_MAX_BYTES` 6 MiB in
- * `src/server/services/blocks/listing-meta.service.ts` — and loosened, because that one
- * fetches a remote og:image while this fetches an `original=true` asset off our own edge,
- * which for an animated multi-frame cosmetic is legitimately larger and slower. Generous on
- * purpose: a wrong rejection here blocks a submission, so the bound exists to stop the
- * pathological case, not to police ordinary artwork.
+ * 🔴 THE SIZE BOUND IS THE PRODUCT'S OWN LIMIT, DELIBERATELY — not a second, tighter number.
+ * An earlier draft minted `20 MiB`, sized by analogy to `META_IMAGE_MAX_BYTES` (6 MiB) in
+ * `listing-meta.service.ts`. That was wrong in a way no test would have caught: the creator
+ * is told **"Under 50 MB"** (`creator-shop.validation.ts`), the dropzone enforces
+ * `constants.mediaUpload.maxImageFileSize` (`useSubmitCreatorShopForm.ts`), and no cosmetic
+ * type except `Sticker` has an upper DIMENSION bound at all — so a 30 MB `ProfileBackground`
+ * is ordinary, not pathological. At 20 MiB it would pass every client check, upload fine, and
+ * then be refused server-side with the generic "Could not read the uploaded artwork". Reading
+ * the same constant closes that dead window by construction and cannot drift from it.
  */
 const ARTWORK_FETCH_TIMEOUT_MS = 15_000;
-const ARTWORK_MAX_BYTES = 20 * 1024 * 1024;
+const ARTWORK_MAX_BYTES = constants.mediaUpload.maxImageFileSize;
+
+/**
+ * Read a response body into a Buffer, aborting as soon as the running total exceeds
+ * `maxBytes` — so an oversize body is never fully materialised in the web pod's heap.
+ *
+ * This is what makes the cap a real memory bound rather than a late assertion about one that
+ * already happened: `res.arrayBuffer()` would materialise the whole body first, and a check
+ * after it can only decide what to hand onward, not what was allocated.
+ *
+ * `cancel()` on the reader releases the connection rather than leaving the rest of the body
+ * to stream into a socket nobody is draining.
+ *
+ * ⚠ A body with NO readable stream falls back to `arrayBuffer()`. That path is unbounded by
+ * construction and exists only for fetch implementations (and test mocks) that expose no
+ * `body`; the Content-Length pre-check is the only bound there. Real undici always gives a
+ * stream, so production never takes it.
+ */
+async function readBounded(
+  res: { body?: unknown; arrayBuffer(): Promise<ArrayBuffer> },
+  maxBytes: number
+) {
+  const body = res.body as ReadableStream<Uint8Array> | null | undefined;
+  if (!body || typeof body.getReader !== 'function') {
+    return Buffer.from(await res.arrayBuffer());
+  }
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        throw new Error(`artwork too large: exceeded ${maxBytes} bytes`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  return Buffer.concat(chunks, total);
+}
 
 const validateArtwork = async (imageUrl: string, type: CosmeticType) => {
   // 🔴 SSRF + RESPONSE ORACLE. This is the sharpest of the caller-supplied-URL funnels and
@@ -205,7 +251,16 @@ const validateArtwork = async (imageUrl: string, type: CosmeticType) => {
   // the response below — `imageHash` (a sha256 of the body), width, height, format, frame
   // count — is returned to the submitter. Ungated that is a read primitive over any URL the
   // web pod can reach, on `creatorShopProcedure` (protectedProcedure + the `creatorShop`
-  // flag), i.e. an ordinary signed-in user rather than a moderator.
+  // flag).
+  //
+  // ⚠ CORRECTED: this used to read "i.e. an ordinary signed-in user rather than a moderator",
+  // which OVERSTATES the rung — and the rung is what the controls here are priced against.
+  // Measured: `feature-flags.service.ts` declares `creatorShop: { availability: ['mod'],
+  // fliptKey: 'creator-shop' }`, and live Flipt enables it for the segments
+  // `testers` ∪ `CreatorProgram` ∪ `moderators`. So the reachable population is a GATED
+  // COHORT OF REAL USERS, not every signed-in account. The hazard stands — Creator Program
+  // members are not moderators, and the response returns derived bytes to the submitter — but
+  // do not re-derive "any signed-in user" from this comment.
   //
   // 🔴 The check MUST stay OUTSIDE the try/catch below. That catch converts every failure
   // into 'Could not read the uploaded artwork for validation', so a refusal raised inside it
@@ -263,17 +318,36 @@ const validateArtwork = async (imageUrl: string, type: CosmeticType) => {
     // dev environment while adding nothing in production that the narrowing above has not
     // already achieved. The controls that DO apply regardless of scheme are applied instead:
     //
-    //   redirect 'error' — the host is ours by construction now, so a redirect is the only
-    //     remaining way this fetch reaches a host we did not choose. Following one would
-    //     re-open, one hop later, exactly what the narrowing closed.
     //   AbortSignal.timeout — an unbounded fetch on the WEB POD is a request-pinning DoS
     //     independent of where it points.
-    //   a size cap — `arrayBuffer()` buffers the whole body in the web pod's heap before
-    //     sharp ever sees it, so a large object is a memory amplifier on an authenticated
-    //     rung. Checked on Content-Length AND on the streamed total, because a chunked
-    //     response carries no Content-Length to check.
+    //   a size cap — enforced on the Content-Length AND, because a chunked response carries
+    //     none to pre-check, by READING THE BODY AS A STREAM and aborting the moment the
+    //     running total exceeds the cap.
+    //
+    // 🔴 The stream is the point, and an earlier draft got this wrong while claiming
+    // otherwise. It called `await res.arrayBuffer()` and THEN checked `buffer.byteLength`,
+    // under a comment asserting the check kept a large object out of the pod's heap. It could
+    // not: by the time that guard runs the body is already fully materialised, and
+    // `Buffer.from` has copied it, so peak heap is ~2x the body BEFORE the check executes.
+    // The guard delivered only "sharp is not handed more than the cap" — a weaker property
+    // than the sentence above it claimed. Its own fixture gave it away, allocating the exact
+    // 64 MiB it was supposed to prevent.
+    // 🔴 REDIRECTS ARE FOLLOWED, and an earlier draft of this change got that wrong in a way
+    // that would have broken EVERY submission. It set `redirect: 'error'`, reasoning that
+    // since the host is ours by construction a 3xx is the only way left to reach a host we
+    // did not choose. MEASURED against the real edge, that reasoning is built on a false
+    // premise: an `original=true` delivery URL answers **HTTP 301** to
+    // `https://blobs-b2.civitai.com/file/blobs-managed-public/<id>` — three of three sampled
+    // live images. Redirecting to our own blob host is the NORMAL path, not an anomaly, so
+    // `redirect: 'error'` rejects every legitimate artwork fetch.
+    //
+    // Following them is also SAFE here, and specifically because of the narrowing above: the
+    // caller supplies a storage KEY, never a host, so the redirect chain is chosen by our own
+    // infrastructure and is not an attacker-influenced primitive. That is the property the
+    // narrowing bought — before it, an allowlisted attacker-controlled host could redirect
+    // anywhere, and THAT is the hazard `redirect: 'error'` was reaching for. It was the right
+    // instinct aimed at a hazard the line above had already closed.
     const res = await fetch(getEdgeUrl(normalizeImageScanUrl(imageUrl), { original: true }), {
-      redirect: 'error',
       signal: AbortSignal.timeout(ARTWORK_FETCH_TIMEOUT_MS),
     });
     if (!res.ok) throw new Error(`fetch ${res.status}`);
@@ -281,10 +355,7 @@ const validateArtwork = async (imageUrl: string, type: CosmeticType) => {
     if (Number.isFinite(declaredLength) && declaredLength > ARTWORK_MAX_BYTES) {
       throw new Error(`artwork too large: ${declaredLength} bytes`);
     }
-    const buffer = Buffer.from(await res.arrayBuffer());
-    if (buffer.byteLength > ARTWORK_MAX_BYTES) {
-      throw new Error(`artwork too large: ${buffer.byteLength} bytes`);
-    }
+    const buffer = await readBounded(res, ARTWORK_MAX_BYTES);
     imageHash = createHash('sha256').update(buffer).digest('hex');
     const meta = await sharp(buffer).metadata();
     width = meta.width ?? 0;
