@@ -957,13 +957,18 @@ describe('classifyException — a malformed frames value reaches both guards', (
   });
 });
 
-// 🔴 TAG-ONLY scope. Browser extensions and page-injected scripts reference globals that only
-// exist when the injection actually ran, so touching them throws in every OTHER browser —
-// measured live on civitai-dp-prod (24h): `Can't find variable: __firefox__` 1,380×,
-// `undefined is not an object (evaluating 'window.__firefox__.<prop>')` ~2,100×,
-// `undefined is not an object (evaluating 'window.ethereum.selectedAddress = …')` ~2,300/day,
-// `Can't find variable: DarkReader` 132×. Today they land in `real` and pollute the
-// real-app-bug signal. They are TAGGED `extension` and KEPT — no drop, no threshold change.
+// 🔴 DROP scope (was TAG-ONLY until 2026-09-29). Browser extensions and page-injected scripts
+// reference globals that only exist when the injection actually ran, so touching them throws in
+// every OTHER browser — measured live on civitai-dp-prod (24h): `Can't find variable:
+// __firefox__` 1,380×, `undefined is not an object (evaluating 'window.__firefox__.<prop>')`
+// ~2,100×, `undefined is not an object (evaluating 'window.ethereum.selectedAddress = …')`
+// ~2,300/day, `Can't find variable: DarkReader` 132×.
+//
+// The tag-only build (#5215) shipped in 5.1.149 and soaked in prod from 18:29Z. On the converged
+// cohort the COMPLETE matched set over 2h was five messages, 291 beacons, zero app-shaped
+// matches, and `extension` was 0 on every older bundle — so the patterns are now promoted to a
+// DROP. These beacons no longer reach Loki. No alert changes: every Faro alert already filtered
+// `context_error_category="real"`, which the tag had removed them from.
 //
 // Two engine phrasing families name these errors, and BOTH must be matched — a one-phrasing
 // matcher returned a confident zero for a whole error class. For the bare-global shapes that is
@@ -971,7 +976,7 @@ describe('classifyException — a malformed frames value reaches both guards', (
 // `undefined is not an object (evaluating '…')` clause (which carries the object PATH) vs V8's
 // `Cannot read properties of … (reading '…')` (which omits the base object entirely, so only a
 // read of a denylisted NAME is attributable from the message).
-describe('classifyException — TAG extension: browser-injected globals (kept, not dropped)', () => {
+describe('classifyException — DROP extension: browser-injected globals (dropped, not sent)', () => {
   it.each([
     ['ReferenceError', "Can't find variable: __firefox__"],
     ['ReferenceError', '__firefox__ is not defined'],
@@ -979,9 +984,9 @@ describe('classifyException — TAG extension: browser-injected globals (kept, n
     ['ReferenceError', 'DarkReader is not defined'],
     ['ReferenceError', "Can't find variable: __alhWeb"],
     ['ReferenceError', '__alhWeb is not defined'],
-  ])('tags the bare-global %s / %s as extension', (type, value) => {
+  ])('drops the bare-global %s / %s as extension', (type, value) => {
     const r = classifyException(exc(type, value, APP_FRAME));
-    expect(r.drop).toBe(false);
+    expect(r.drop).toBe(true);
     expect(r.category).toBe('extension');
   });
 
@@ -992,41 +997,43 @@ describe('classifyException — TAG extension: browser-injected globals (kept, n
     // what the matcher may key on, never the segment after it.
     "undefined is not an object (evaluating 'window.__firefox__.[redacted-token]')",
     "undefined is not an object (evaluating 'window.ethereum.selectedAddress = undefined')",
-  ])('tags the injected-object property access %s as extension', (value) => {
+  ])('drops the injected-object property access %s as extension', (value) => {
     const r = classifyException(exc('TypeError', value, APP_FRAME));
-    expect(r.drop).toBe(false);
+    expect(r.drop).toBe(true);
     expect(r.category).toBe('extension');
   });
 
-  it('tags a V8 property read whose READ name is a denylisted injected global', () => {
+  it('drops a V8 property read whose READ name is a denylisted injected global', () => {
     const r = classifyException(
       exc('TypeError', "Cannot read properties of undefined (reading '__firefox__')", APP_FRAME)
     );
-    expect(r.drop).toBe(false);
+    expect(r.drop).toBe(true);
     expect(r.category).toBe('extension');
   });
 
-  it('tags the message-only form (type folded into the message)', () => {
+  it('drops the message-only form (type folded into the message)', () => {
     const r = classifyException({ value: "ReferenceError: Can't find variable: __firefox__" });
-    expect(r.drop).toBe(false);
+    expect(r.drop).toBe(true);
     expect(r.category).toBe('extension');
   });
 
-  it('tags an injected-global error that carries no stack at all', () => {
+  it('drops an injected-global error that carries no stack at all', () => {
     const r = classifyException(
       exc(
         'TypeError',
         "undefined is not an object (evaluating 'window.ethereum.selectedAddress = undefined')"
       )
     );
-    expect(r.drop).toBe(false);
+    expect(r.drop).toBe(true);
     expect(r.category).toBe('extension');
   });
 
-  // INVARIANT GUARD, not a regression test (it is green on the pre-extension classifier too):
-  // the tag-only change must not UN-drop anything. A denylisted global behind an all-`undefined:`
-  // stack matched the `injected` DROP before this category existed and must keep matching it —
-  // otherwise the stream would gain every stack-only extension error on top of the re-tag.
+  // INVARIANT GUARD, not a regression test (green on every classifier revision so far). It pins
+  // RULE ORDER, which survived the tag→drop promotion: a denylisted global behind an
+  // all-`undefined:` stack must still be attributed to the `injected` DROP, not to `extension`.
+  // Both now drop, so the observable outcome is identical and only the reported category
+  // differs — that is exactly why this needs a test: nothing else would notice the two rules
+  // swapping places.
   it('does NOT un-drop a denylisted global whose stack is all-injected — the injected DROP still wins', () => {
     const r = classifyException(
       exc('ReferenceError', "Can't find variable: __firefox__", {
@@ -1038,10 +1045,17 @@ describe('classifyException — TAG extension: browser-injected globals (kept, n
   });
 });
 
+// 🔴 THIS BLOCK IS THE SAFETY GUARD, AND THE TAG→DROP PROMOTION RAISED ITS STAKES. While
+// `extension` was tag-only, a false match merely MISLABELLED a real app error and it stayed
+// queryable in Loki. Now a false match DESTROYS it — the beacon is never sent, so the bug it
+// represents becomes invisible with nothing to indicate a loss. These negatives are what stands
+// between a widened pattern and silently deleting real app errors; treat a failure here as a
+// release blocker, never as a test to update.
+//
 // Names measured live that must NOT become `extension`: unlike `__firefox__`/`DarkReader`/
 // `__alhWeb` they can be app code (or third-party libraries the app embeds), so a bare-global
-// error only tags when the referenced name is EXACTLY on the denylist.
-describe('classifyException — extension tag: deliberate negatives (may be app code)', () => {
+// error only matches when the referenced name is EXACTLY on the denylist.
+describe('classifyException — extension drop: deliberate negatives (may be app code)', () => {
   it.each([
     ['ReferenceError', "Can't find variable: downProgCallback"],
     ['ReferenceError', 'syncDownloadState is not defined'],

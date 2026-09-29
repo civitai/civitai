@@ -9,7 +9,7 @@
  * exception-rate alerting flap. This module classifies each exception at INGEST (`beforeSend`) so:
  *   - KNOWN-benign noise is DROPPED (never sent), and
  *   - the rest is TAGGED (`error_category`) so the dashboard/alerts can split
- *     bizlogic / chunkload / meili / extension from the real-app-bug stream (`real`).
+ *     bizlogic / chunkload / meili from the real-app-bug stream (`real`).
  *
  * This is PURE and unit-tested (`__tests__/classifyException.test.ts`) and is composed INTO the
  * Faro `beforeSend` pipeline AFTER `deepRedact` (redaction still runs on every beacon).
@@ -52,9 +52,10 @@ export interface ClassifiableException {
  *
  * `category` values:
  *   - noise subtypes (only present WITH `drop:true`): `abort`, `adblock`, `autoplay`,
- *     `script_error`, `injected`, `network` — the reason it was dropped (useful if you ever want
- *     to TAG-instead-of-DROP by flipping the caller; not sent to Loki while dropped).
- *   - keep-and-tag: `bizlogic`, `chunkload`, `meili`, `extension`.
+ *     `script_error`, `injected`, `network`, `extension` — the reason it was dropped (useful if
+ *     you ever want to TAG-instead-of-DROP by flipping the caller; not sent to Loki while
+ *     dropped).
+ *   - keep-and-tag: `bizlogic`, `chunkload`, `meili`.
  *   - default keep: `real`.
  */
 export type ErrorCategory =
@@ -133,11 +134,11 @@ const BIZLOGIC_VALUE_RES = [
 // when the injection ran, so touching them throws in every OTHER browser — measured live on
 // civitai-dp-prod (24h): `Can't find variable: __firefox__` 1,380×, `undefined is not an object
 // (evaluating 'window.__firefox__.<prop>')` ~2,100×, `window.ethereum.selectedAddress = …`
-// ~2,300/day, `Can't find variable: DarkReader` 132×. Not app bugs — but TAGGED (`extension`)
-// and KEPT rather than dropped: the alerts/dashboards count `context_error_category=real`, so
-// re-tagging cleans the real-bug signal while the raw stream stays queryable. Unlike the
-// `injected` DROP above, this is message-evidence based: these land in `real` precisely because
-// their stacks carry app frames or no stack at all.
+// ~2,300/day, `Can't find variable: DarkReader` 132×. Not app bugs — DROPPED (see rule 7 for
+// the soak evidence that promoted this from tag-only to drop, and for the live counts, which
+// are no longer re-derivable once this ships). Unlike the `injected` DROP above, this is
+// message-evidence based: these reached `real` precisely because their stacks carry app frames
+// or no stack at all, so a stack-shape rule cannot catch them.
 //
 // 🔴 Two engine phrasing families name these errors and BOTH must be matched — a one-phrasing
 // matcher returned a confident zero for a whole error class. Bare globals: `Can't find variable:
@@ -377,11 +378,29 @@ export function classifyException(exc: ClassifiableException | null | undefined)
     return DROP('network');
   }
 
-  // 7) KEEP+TAG — browser-extension / injected-global errors (patterns above). AFTER every DROP
-  //    rule on purpose: a denylisted global behind an all-`undefined:` stack still drops as
-  //    `injected` (tag-only must not un-drop anything), and everything that used to reach `real`
-  //    is re-tagged here. Disjoint from bizlogic/chunkload/meili by pattern.
-  if (isExtensionInjectedError(value, typed)) return KEEP('extension');
+  // 7) DROP — browser-extension / injected-global errors (patterns above). Promoted from
+  //    KEEP+TAG to DROP on 2026-09-29 after a live soak of the tag-only build (civitai #5215,
+  //    shipped in 5.1.149, prod 18:29Z). Measured on the converged 5.1.149 cohort over 2h:
+  //    291 tagged `extension` against 2,621 `real`, and the COMPLETE matched set was five
+  //    messages — `window.ethereum.selectedAddress` (195), `Can't find variable: __firefox__`
+  //    (32), `window.__firefox__.reader` (30), `window.__firefox__.[redacted-token]` (14),
+  //    `Can't find variable: DarkReader` (2). Zero app-shaped messages matched, and `extension`
+  //    was 0 on every pre-5.1.149 bundle (negative control: the value appears only where this
+  //    code runs).
+  //
+  //    🔴 DROPPING MAKES THIS CLASS PERMANENTLY UNQUERYABLE — like the six DROP rules above, it
+  //    never reaches Loki, so the numbers in this comment cannot be re-derived from the shipped
+  //    stream afterwards. They are recorded here for that reason. Note this changes NO alert:
+  //    every Faro alert filters `context_error_category="real"`, which the tag-only build had
+  //    already excluded these from. The gain is ingest (~3.5k beacons/day) and ~9% cleaner
+  //    UNFILTERED dashboard panels, not signal. To re-measure, flip this back to
+  //    `KEEP('extension')` and soak a few hours — the cohort converges fast (91.4% of exception
+  //    volume was on the new bundle 2.4h after rollout).
+  //
+  //    Stays AFTER every other DROP rule on purpose: a denylisted global behind an
+  //    all-`undefined:` stack drops as `injected` first, which is the more specific attribution.
+  //    Disjoint from bizlogic/chunkload/meili by pattern.
+  if (isExtensionInjectedError(value, typed)) return DROP('extension');
 
   // 8) KEEP+TAG — expected business-logic (TRPCClientError user states).
   if (anyMatch(BIZLOGIC_VALUE_RES, value) || anyMatch(BIZLOGIC_VALUE_RES, typed)) {

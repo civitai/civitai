@@ -69,8 +69,8 @@ import { SampledTracingInstrumentation } from './SampledTracingInstrumentation';
  * FAILS CLOSED (drops the beacon on any scrub error). EXCEPTION beacons are additionally
  * classified (`~/utils/faro/classifyException`): a conservative allowlist of known-benign noise
  * (request aborts, ad-blocker/3p script blocks, autoplay, opaque `Script error.`,
- * extension-injected, bare transient network) is DROPPED, and the rest is tagged
- * `context.error_category` (bizlogic|chunkload|meili|extension|real → Loki
+ * extension-injected globals, bare transient network) is DROPPED, and the rest is tagged
+ * `context.error_category` (bizlogic|chunkload|meili|real → Loki
  * `context_error_category`) so the dashboard/alerts can isolate the real-app-bug stream from
  * ~75% non-actionable noise.
  *
@@ -129,8 +129,8 @@ function scrubBeacon(item: TransportItem): TransportItem | null {
 /**
  * `beforeSend` for a single beacon: redact (fail-closed), and for EXCEPTION beacons additionally
  * classify — DROP a conservative allowlist of known-benign noise (aborts, ad-blocker/3p script
- * blocks, autoplay, opaque `Script error.`, extension-injected, bare transient network) and TAG
- * the rest with `context.error_category` (= bizlogic|chunkload|meili|extension|real), and
+ * blocks, autoplay, opaque `Script error.`, extension-injected globals, bare transient network)
+ * and TAG the rest with `context.error_category` (= bizlogic|chunkload|meili|real), and
  * anything unmatched → `real`, kept. See `~/utils/faro/classifyException`.
  *
  * WHY THE TAG REACHES LOKI (verified against the Alloy faro.receiver source): the tag is written
