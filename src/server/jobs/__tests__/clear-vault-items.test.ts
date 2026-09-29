@@ -15,6 +15,7 @@ import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import {
   CLEAR_VAULT_ITEMS_MAX_ITEMS_PER_RUN,
   CLEAR_VAULT_ITEMS_TIME_BUDGET_MS,
+  clearVaultItems,
   runClearVaultItems,
 } from '~/server/jobs/clear-vault-items';
 import {
@@ -88,7 +89,9 @@ beforeEach(() => {
 
   dbMock.dbWrite.vaultItem.findMany.mockImplementation((async ({ where, orderBy, take }: any) => {
     const order = orderBy as Record<string, 'asc' | 'desc'>[];
+    // Reversed first, so a tie the query leaves unbroken comes back newest-first, as Postgres may.
     return remaining(where.vaultId)
+      .reverse()
       .sort((a: any, b: any) => {
         for (const clause of order) {
           const [field, dir] = Object.entries(clause)[0];
@@ -159,6 +162,7 @@ describe('clear-vault-items', () => {
     overCap([1, 0]);
 
     await expect(run()).rejects.toThrow('S3_VAULT_BUCKET is not defined');
+    await expect(clearVaultItems.run({}).result).rejects.toThrow('S3_VAULT_BUCKET is not defined');
 
     expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
     expect(remaining(1)).toHaveLength(1);
@@ -286,12 +290,17 @@ describe('deleteVaultItems', () => {
     const timeout = vi.spyOn(AbortSignal, 'timeout');
     addVault(1, 1);
 
-    await deleteAll(1);
+    try {
+      await deleteAll(1);
 
-    expect(timeout).toHaveBeenCalledWith(VAULT_OBJECT_DELETE_TIMEOUT_MS);
-    expect(mockDeleteManyObjects.mock.calls[0][3]?.abortSignal).toBe(timeout.mock.results[0].value);
-    expect(VAULT_OBJECT_DELETE_TIMEOUT_MS).toBeLessThan(CLEAR_VAULT_ITEMS_TIME_BUDGET_MS);
-    timeout.mockRestore();
+      expect(timeout).toHaveBeenCalledWith(VAULT_OBJECT_DELETE_TIMEOUT_MS);
+      expect(mockDeleteManyObjects.mock.calls[0][3]?.abortSignal).toBe(
+        timeout.mock.results[0].value
+      );
+      expect(VAULT_OBJECT_DELETE_TIMEOUT_MS).toBeLessThan(CLEAR_VAULT_ITEMS_TIME_BUDGET_MS);
+    } finally {
+      timeout.mockRestore();
+    }
   });
 
   it('keeps every row in a request when an error names no key', async () => {
