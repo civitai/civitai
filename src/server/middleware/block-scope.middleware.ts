@@ -42,7 +42,11 @@ import {
   USER_SUB_RE,
 } from '~/server/services/block-token-subject';
 import { effectiveBlockScopes } from '~/shared/constants/block-effective-scopes';
-import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
+import {
+  isKnownBlockScope,
+  isPrivateRunAudience,
+  type PrivateRunAudience,
+} from '~/shared/constants/block-scope.constants';
 import {
   allBrowsingLevelsFlag,
   domainBrowsingCeiling,
@@ -173,21 +177,62 @@ export interface BlockTokenClaims {
    * the approval verdict above. Widening that verdict for a private run admits
    * this route in the same move. The sibling owner-crediting rail
    * `goods:purchase:self` is already closed (it requires an approved block).
-   * Whoever adds the mint MUST either strip `social:tip:self` in the private-run
-   * scope clamp or add a third arm; neither is done here, and this PR's "two
-   * money arms" is a statement about the author-fee and attribution rails only.
+   * ✅ BOTH ITEMS ABOVE ARE NOW CLOSED, and each is recorded where it landed so this
+   * docblock cannot go stale in the direction that matters (claiming an open hazard
+   * that is shut, which is how a guard gets "fixed" twice or deleted once):
+   *   - the approval-verdict arm is `resolveAppBlockApprovalVerdict`'s
+   *     `private_run_exempt` branch, keyed on the `privateRun` + `privateRunAudience`
+   *     PAIR exactly as this docblock asked;
+   *   - `social:tip:self` is stripped in `clampPrivateRunScopes` via
+   *     `PRIVATE_RUN_FORBIDDEN_SCOPES`, so the third rail is closed by scope rather
+   *     than by a third arm.
+   * The "two money arms" wording remains correct as a statement about the author-fee
+   * and attribution rails; the tip rail is closed by the clamp, not by an arm.
    */
   privateRun?: boolean;
+  /**
+   * WHICH audience a private run was admitted as: `owner`, `editor` or `moderator`.
+   *
+   * Present ONLY alongside `privateRun: true` (the signer refuses the lone form, and
+   * the shape guard below refuses it again on the consume side). Two readers, both of
+   * which BRANCH on it rather than merely carrying it:
+   *   - `resolveAppBlockApprovalVerdict` requires the PAIR to grant
+   *     `private_run_exempt`, so a status exemption is never one flipped bit wide;
+   *   - the runtime editor read-only belt in `blocks.router.ts` refuses a spend for
+   *     `'editor'`, behind the mint-time `ai:write:budgeted` strip.
+   *
+   * Validated against the closed `PRIVATE_RUN_AUDIENCES` set, not merely typeof-string:
+   * an unrecognised value would otherwise fail an `=== 'editor'` test and be treated as
+   * an owner, which is the wrong direction for a guard to fail in.
+   */
+  privateRunAudience?: PrivateRunAudience;
 }
 
 /**
  * THE per-call Buzz ceiling a submit gate compares against.
  *
- * ── WHAT IT DOES TODAY: NOTHING A CALLER COULD NOT DO INLINE ────────────────
- * It returns `claims.buzzBudget`, or 0 when no budget was minted. BOTH values of
- * `pricesAuthorFee` return that same number. Routing the four submit gates
- * through it is a no-op on behaviour, and that is the entire intent: it
- * consolidates four copies of one comparison without altering any of them.
+ * ── 🔴 IT IS A MONEY GATE. DO NOT INLINE `claims.buzzBudget` IN ITS PLACE. ───
+ * This section used to say "NOTHING A CALLER COULD NOT DO INLINE … a no-op on
+ * behaviour", and that was TRUE UNTIL THE PRIVATE-RUN SURFACE LANDED and is now
+ * FALSE. The body returns **0 for `privateRunAudience === 'editor'` even when a
+ * budget WAS minted** — that is the one place an accepted collaborator's
+ * read-only private run is enforced on the spend path. So it no longer returns
+ * `claims.buzzBudget`, and routing a gate through it is no longer behaviour-
+ * neutral.
+ *
+ * ⚠️ WHY THE STALE WORDING WAS WORSE THAN A MISSING COMMENT, AND HOW IT SURVIVED:
+ * it is the FIRST thing a reader meets, and it told them the helper was a pure
+ * consolidation. A fifth submit gate written on that understanding open-codes
+ * `claims.buzzBudget`, inherits no editor clamp, and silently gives an editor
+ * spend on a taken-down app — the exact failure the "IT IS ONE PLACE BECAUSE
+ * FOUR WOULD BE FOUR BUGS" argument below exists to prevent. It survived because
+ * the belt was added inside a file that ALSO moved on `main`: the paragraph is
+ * still verbatim upstream, where it is correct, so a clean `git merge` could not
+ * see the contradiction. Semantic conflict, zero textual conflict.
+ *
+ * Still true, and still the reason the helper exists: `pricesAuthorFee` does not
+ * change the number for a non-editor, and the four gates were four copies of one
+ * comparison.
  *
  * ── WHY IT EXISTS AT ALL ────────────────────────────────────────────────────
  * The four gates spell the same comparison and are NOT interchangeable. Two of
@@ -229,7 +274,7 @@ export interface BlockTokenClaims {
  * `typeof claims.buzzBudget !== 'number'` pre-check still fails CLOSED.
  */
 export function blockPerCallBudget(
-  claims: Pick<BlockTokenClaims, 'buzzBudget'>,
+  claims: Pick<BlockTokenClaims, 'buzzBudget' | 'privateRunAudience'>,
   // Classification only, read by no branch today — see the note above. Kept in
   // the signature so each gate declares its population and the ledger can pin
   // that declaration against the fee call sites. The directive must stay on the
@@ -238,6 +283,35 @@ export function blockPerCallBudget(
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   opts: { pricesAuthorFee: boolean }
 ): number {
+  // 🔴 THE EDITOR READ-ONLY BELT — the SECOND layer behind the mint-time scope strip,
+  // and the reason it is HERE rather than at the four submit gates.
+  //
+  // An accepted listing collaborator on a private run of a delisted app is READ-ONLY by
+  // operator decision. That is delivered primarily by `clampPrivateRunScopes`, which
+  // strips `ai:write:budgeted` for `audience: 'editor'` so the token cannot satisfy a
+  // submit's scope requirement at all. This is the belt behind that brace, and the two
+  // are NOT redundant in the way they look: the clamp is a decision taken ONCE at issue
+  // time, while this is re-taken on every submit, so it also covers a token minted
+  // before a clamp regression and still inside its lifetime.
+  //
+  // 🔴 IT IS ONE PLACE BECAUSE FOUR WOULD BE FOUR BUGS. Four submit gates compare a cost
+  // against this ceiling, and `no-direct-block-budget-claim-read` already forces every
+  // one of them through this function rather than reading `claims.buzzBudget` directly
+  // — which is exactly the property that lets a ceiling decision be made once here and
+  // apply to all four. Open-coding an audience check at each gate would regenerate the
+  // same omission at every site, and the fifth gate would inherit nothing.
+  //
+  // Returning 0 rather than throwing: every caller already treats 0 as "no budget was
+  // minted" and fails CLOSED on it, so this reuses a refusal path that is proven rather
+  // than introducing a new error shape into four money gates. A refusal also must not
+  // be distinguishable from an unbudgeted token — an editor learning that their token
+  // was deliberately zeroed, versus merely unbudgeted, is a detail the app does not
+  // need.
+  //
+  // Keyed on the SIGNED audience claim, validated by the verifier against the closed
+  // `PRIVATE_RUN_AUDIENCES` set — so this equality test runs over three known values and
+  // an unrecognised audience can never slip past it as an owner.
+  if (claims.privateRunAudience === 'editor') return 0;
   if (typeof claims.buzzBudget !== 'number') return 0;
   return claims.buzzBudget;
 }
@@ -785,6 +859,25 @@ export async function verifyBlockToken(token: string): Promise<BlockTokenClaims 
       // indistinguishable from any other invalid token, so it leaks no oracle.
       if (claims.privateRun === true && claims.dev === true) {
         return null;
+      }
+      // PRIVATE-RUN AUDIENCE shape guard, in TWO parts — and the CLOSED-SET test is
+      // the one that matters. (This said "three parts" and listed two; the count was
+      // wrong, not the guard.)
+      //
+      // 🔴 `typeof === 'string'` WOULD NOT BE ENOUGH, AND THE FAILURE DIRECTION IS WHY.
+      // Two consumers branch on this value: the approval verdict requires a RECOGNISED
+      // audience to grant its status exemption, and the runtime belt refuses spend when
+      // the audience `=== 'editor'`. An unrecognised string ("Editor", "admin", "") is
+      // not `'editor'`, so it would sail past the read-only belt and be treated with
+      // owner/moderator power. Validating against the closed set at the verifier means
+      // every downstream `=== 'editor'` test is a test over three known values.
+      if (claims.privateRunAudience !== undefined) {
+        // (a) Never present without the marker. The signer refuses to produce this
+        //     shape; re-checked here because the signer is a produce-time guard for a
+        //     consume-time hazard, exactly as the `dev` pair above is.
+        if (claims.privateRun !== true) return null;
+        // (b) Must be a member of the closed set.
+        if (!isPrivateRunAudience(claims.privateRunAudience)) return null;
       }
       // Per-token-type max-age belt (replaces the global maxTokenAge). `exp`
       // already enforced the real lifetime in jwtVerify; this re-checks the age
@@ -1623,7 +1716,15 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     // replica `findUnique` before its cheaper Redis GET, and a reader trusting "mirrors" would
     // draw the wrong conclusion about either side.
     const approval = await resolveRestApprovalVerdict(claims);
-    if (approval !== 'ok' && approval !== 'dev_exempt') {
+    // 🔴 `private_run_exempt` IS ADMITTED, AND IT HAD TO BE NAMED HERE EXPLICITLY. This
+    // chain's tail treats an unrecognised verdict as `not_found` and SERVES it (see the
+    // `satisfies 'not_found'` below) — the opposite default from the bridge, which fails
+    // closed. So adding a verdict to the shared union without touching this condition
+    // would have admitted it anyway, silently, and via the branch that logs an
+    // observe-only warning about a MISSING row for a token whose row plainly exists.
+    // Naming it in the allow-condition is what makes the admission deliberate and keeps
+    // it out of the counter's refusal series, where it would read as a failure.
+    if (approval !== 'ok' && approval !== 'dev_exempt' && approval !== 'private_run_exempt') {
       recordBlockRestApprovalVerdict(approval);
       if (approval === 'not_approved' || approval === 'tunnel_lookup_failed') {
         // 🔴 BOTH REFUSE 403, WITH THE SAME BODY — the split is for the COUNTER, which
@@ -1821,6 +1922,12 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
               // the nullable-appBlockId path instead of FK-failing + swallowing; a
               // real id persists normally.
               dev: claims.dev === true,
+              // 🔴 THE BROADEST OF THE NINE MARKER SITES — this write fires for EVERY
+              // scope-gated REST call a private-run token makes, so an omission here leaks
+              // the whole REST surface into the delisted app owner's analytics rather than
+              // one path. Threaded from the VERIFIED claim (the boolean-or-reject guard
+              // above is what makes `=== true` sufficient).
+              privateRun: claims.privateRun === true,
             })
           )
           .catch(() => {

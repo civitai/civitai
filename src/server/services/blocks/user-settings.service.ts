@@ -286,6 +286,9 @@ export async function updateBlockUserSettingsFromClaims(opts: {
       endpoint: 'user-settings:write',
       statusCode: 200,
       detail: { action: 'settings.update', outcome: 'ok' },
+      // Marked so a private run's settings write stays out of the delisted app owner's
+      // engagement aggregates. Threaded from the verified claim, like every other site.
+      privateRun: claims.privateRun === true,
     });
     // Swallowed on purpose: the audit row is best-effort and must never fail the write the
     // viewer actually asked for. Spelled `=> undefined` rather than the `=> {}` this code

@@ -434,14 +434,15 @@ export const APPS_FULL_MEASURE_PAGES = [
 
 /**
  * Routes that deliberately have NO `AppsPageLayout` container: they host a
- * full-viewport iframe (the block runtime / the moderator's live preview) or a
- * full-bleed dev shell. Wrapping these in the apps container would letterbox the
- * app being run/reviewed AND put a second chrome band over a third-party app.
+ * full-viewport iframe (the public block runtime, the PRIVATE run of a delisted app, or
+ * the moderator's live preview) or a full-bleed dev shell. Wrapping these in the apps
+ * container would letterbox the app being run/reviewed AND put a second chrome band over
+ * a third-party app.
  *
  * 🔴 "NO CONTAINER" IS ALSO "NO WIDTH BOUND" AGAIN — AND THE INTERVENING CLAIM IS
  * RETRACTED RATHER THAN DELETED, BECAUSE IT WAS TRUE WHILE IT STOOD. This comment
  * first asserted no width bound; it was then corrected to say the opposite, because
- * all three of these routes mount `PageBlockHost` and the host capped ITSELF at
+ * all four of these routes mount `PageBlockHost` and the host capped ITSELF at
  * `--app-page-max-width` (then `1600px`) and centred the app past that. That whole
  * mechanism is GONE — the constant, the custom property, the `var()` read, the auto
  * margins and the per-app CSS ledger that could re-cap one app — so a run page really
@@ -460,6 +461,19 @@ export const APPS_FULL_MEASURE_PAGES = [
  */
 export const APPS_FULL_BLEED_PAGES = [
   '/apps/run/[slug]/[[...path]]',
+  /**
+   * The PRIVATE RUN of a delisted / suspended app. Full-bleed for exactly the reasons
+   * the public run route is: it mounts `PageBlockHost` with `fit="fill"` inside a
+   * `scrollable: false` page and passes no `measure`, so the two run surfaces share one
+   * layout contract deliberately — a divergence between them would be a bug.
+   *
+   * It renders one thing the others do not: an unconditional banner, as a preceding
+   * SIBLING of the host wrapper rather than inside it. That takes its own height out of
+   * the non-scrolling `<main>` and leaves the host's `flex: 1` resolving against the
+   * remainder, so it introduces no container and no second scroll surface — which is
+   * why this route belongs here and not in `APPS_FULL_MEASURE_PAGES`.
+   */
+  '/apps/private-run/[slug]/[[...path]]',
   '/apps/review/preview/[publishRequestId]',
   '/apps/dev/[blockId]',
 ] as const;

@@ -402,10 +402,39 @@ export type RecordSpendAttributionInput = {
    * The `status <> 'voided'` filter is therefore HELD, not forgotten: it would
    * drop the large majority of existing rows and Buzz from every owner's
    * analytics at once, and a second consumer of this table lives outside this
-   * repo, so it is a product decision rather than a detail of this arm. It must
-   * land before the private-run surface is ENABLED -- which is safe, because
-   * until a mint exists no private-run row can be written. Do not read the void
-   * as coverage until that filter is in.
+   * repo, so it is a product decision rather than a detail of this arm. Do not
+   * read the void as coverage until that filter is in.
+   *
+   * 🔴 THE SENTENCE THAT USED TO FOLLOW IS NOW FALSE, AND CORRECTING IT IS WHY
+   * THIS PARAGRAPH EXISTS. It read: "It must land before the private-run surface
+   * is ENABLED -- which is safe, because until a mint exists no private-run row
+   * can be written." THE MINT NOW EXISTS. It shipped with the private-run surface
+   * (`tryPrivateRunMint`, PHASE 3 of the page-token mint), so the clause that made
+   * the deferral safe has been consumed, and what remains is the requirement alone:
+   * the filter MUST land before the `app-blocks-private-run-enabled` flag is set
+   * to anything other than `false`. Nothing in the code enforces that ordering —
+   * it is a precondition on a flag flip in a DIFFERENT repo, which is exactly the
+   * kind of dependency that gets lost. It is restated at
+   * `isAppBlocksPrivateRunEnabled` in `app-blocks-flag.ts`, which is the file
+   * somebody flipping that flag will actually open.
+   *
+   * 🔴 AND THE LEAK IS WIDER THAN THIS TABLE — a finding from the private-run
+   * review, recorded here because this is where the "invisible to the owner"
+   * decision is documented. `block_scope_invocations` rows are written by
+   * `withBlockScope` for EVERY scoped call, carrying the real `app_block_id` and
+   * the VIEWER's `user_id`, and `app-analytics.service.ts` reads them into the
+   * owner-visible panel through FIVE unfiltered queries: the engagement count, a
+   * raw `count(DISTINCT user_id)`, the error count, and the top-scopes and
+   * top-endpoints groupings. None is status-aware, and unlike this table there is
+   * no marker on those rows to filter ON — a private run is indistinguishable
+   * from a real user's call at the row level. So a moderator's private run
+   * surfaces in the publisher's dashboard as calls AND as a distinct user even
+   * once the `status <> 'voided'` filter lands here.
+   *
+   * Closing that half needs a discriminator on `block_scope_invocations`, i.e. a
+   * migration — which in this repo is hand-applied per environment and therefore
+   * a separate, sequenced change. It is NOT closed by this arm and must not be
+   * read as such.
    *
    * Absent/false → byte-identical to the pre-feature behaviour.
    */

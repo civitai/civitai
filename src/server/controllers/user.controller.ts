@@ -3,6 +3,7 @@ import { orderBy } from 'lodash-es';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { purgeCache } from '~/server/cloudflare/client';
+import { isAllowedAvatarUrl } from '~/server/utils/image-scan-url';
 import { constants } from '~/server/common/constants';
 import {
   OnboardingComplete,
@@ -344,16 +345,14 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
   }
 };
 
-const validAvatarUrlPrefixes = [
-  'https://cdn.discordapp.com/avatars/',
-  'https://cdn.discordapp.com/embed/avatars/',
-  'https://avatars.githubusercontent.com/u/',
-  'https://lh3.googleusercontent.com/a/',
-];
+// 🔴 Shares the PREDICATE with the image-scan ingestion allowlist
+// (`isAllowedAvatarUrl` in ~/server/utils/image-scan-url), not just the host list. Sharing
+// only the list left each side open-coding the test that applies it, and they diverged:
+// the ingestion side checks the normalized href while this one checked the raw string, so
+// `…/avatars/../attachments/x` was refused there and accepted here.
 const verifyAvatar = (avatar: string) => {
-  if (avatar.startsWith('http')) {
-    return validAvatarUrlPrefixes.some((prefix) => avatar.startsWith(prefix));
-  } else if (isUUID(avatar)) return true; // Is a CF Images UUID
+  if (avatar.startsWith('http')) return isAllowedAvatarUrl(avatar);
+  else if (isUUID(avatar)) return true; // Is a CF Images UUID
   return false;
 };
 

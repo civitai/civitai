@@ -252,6 +252,9 @@ const featureFlags = createFeatureFlags({
   wan22Training: { availability: ['mod'], fliptKey: 'wan22-training' },
   ernieTraining: { availability: ['mod'], fliptKey: 'ernie-training' },
   hidreamO1Training: { availability: ['mod'], fliptKey: 'hidream-o1-training' },
+  qwen21Training: { availability: ['mod'], fliptKey: 'qwen21-training' },
+  mingTraining: { availability: ['mod'], fliptKey: 'ming-training' },
+  yue2Training: { availability: ['mod'], fliptKey: 'yue2-training' },
   animaTraining: { availability: ['mod'], fliptKey: 'anima-training' },
   booguTraining: { availability: ['public'], fliptKey: 'boogu-training' },
   krea2Training: { availability: ['public'], fliptKey: 'krea2-training' },
@@ -655,6 +658,22 @@ const featureFlags = createFeatureFlags({
   // only on-switch + kill-switch. (Mirrors the `hiddenPrefsCompact` /
   // `genTabDeferView` `availability: []` precedent.)
   appBlocksAgenticReview: { availability: [], fliptKey: 'app-blocks-agentic-review' },
+  // 🔴 THE PRIVATE-RUN SURFACE HAS NO ENTRY HERE, DELIBERATELY — do not "complete the
+  // set" by adding one. Its gate is the server accessor `isAppBlocksPrivateRunEnabled`
+  // (`app-blocks-flag.ts`), which reads the `app-blocks-private-run-enabled` Flipt key
+  // directly and REQUIRES a `SessionUser`, so it denies an anonymous caller by type
+  // rather than falling back to the flag's base value the way a registry entry's global
+  // evaluation would. It is therefore strictly stronger than an `availability: []` entry
+  // for the one property such an entry would buy.
+  //
+  // An entry was written here first, mirroring `appBlocksAgenticReview` above, and
+  // REMOVED after review found it had zero readers: nothing consumes
+  // `features.appBlocksPrivateRun`, while every `fliptKey`'d entry is eagerly evaluated
+  // by `computeFeatureFlags` on every SSR render sitewide. So it cost one wasm
+  // evaluation per unique (user, host, region) per cache window, on requests that have
+  // nothing to do with App Blocks, and bought nothing — the unbranched-field shape this
+  // repo's own guards forbid. Add an entry if and when a CLIENT component needs to
+  // branch on it.
   // App Blocks — dedicated per-submission REVIEW PAGE (`/apps/review/<id>`). A
   // flag-gated, deep-linkable full page that re-hosts the existing on-site review
   // body (today a modal on `/apps/review`) so mods can open, share, and refresh a

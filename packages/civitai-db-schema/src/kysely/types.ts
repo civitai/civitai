@@ -1135,10 +1135,22 @@ export type BlockScopeInvocation = {
    */
   oauth_client_id: string | null;
   /**
-   * Discriminates the token population that made the call: `'app-block'` (an App
-   * Block block-token, the historical default) vs `'external-oauth'` (a standard
-   * external OAuth access token verified at `enforceTokenScope`). Additive:
-   * existing rows backfill to `'app-block'`.
+   * Discriminates the token population that made the call. THREE values, and this
+   * comment is the single source for the generated type docs, so keep it complete:
+   * * `'app-block'`      — an App Block block-token, the historical default.
+   * * `'external-oauth'` — a standard external OAuth access token verified at
+   * `enforceTokenScope`; carries no `app_block_id`.
+   * * `'private-run'`    — a block-token minted for a PRIVATE RUN: a moderator, the
+   * owner, or an accepted listing collaborator running a
+   * delisted/suspended app's deployed bundle. It carries the
+   * app's REAL id, and this value is the ONLY thing keeping the
+   * row out of that app owner's analytics, so it is a
+   * load-bearing discriminator rather than a label. Written
+   * only from the verified `privateRun` token claim; see
+   * `scope-activity-predicate.ts`.
+   * Free-text with NO CHECK constraint — the value space is enforced in TypeScript
+   * (`BlockScopeInvocationSource`), not by the database. Additive: existing rows
+   * backfill to `'app-block'` via the column DEFAULT.
    */
   source: Generated<string>;
   scope: string;

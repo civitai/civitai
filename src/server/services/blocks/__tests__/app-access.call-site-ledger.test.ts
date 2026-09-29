@@ -164,6 +164,28 @@ const GATE_LEDGER: Record<string, string> = {
     'listing re-key an OFF-SITE seat contributes no block id to that set (it has no ' +
     'block), so this read is unchanged for offsite: analytics for an offsite listing is ' +
     'AppListingMetric, a different surface, not this block-scoped one.',
+  'src/server/services/blocks/private-run-access.service.ts':
+    'THE PRIVATE-RUN ACCESS PREDICATE, and the FIRST production caller resolveAppAccess ' +
+    'has ever had — until this landed, that consolidated block-keyed resolver was ' +
+    'reachable only from its own tests. COLLABORATORS ARE DELIBERATELY WIDENED HERE, and ' +
+    'this is the one entry in this ledger where an ACCEPTED seat gains access to a ' +
+    'NON-approved app: an accepted editor may privately run a DELISTED app, because a ' +
+    'collaborator diagnosing a takedown needs to see the thing that was taken down. It is ' +
+    'widened by INVOKING resolveAppAccess rather than by re-implementing a role check — ' +
+    'the SSR route and the PHASE 3 token mint both call this ONE predicate, which is what ' +
+    'stops them drifting into the SSR-allows/mint-refuses asymmetry that produced ' +
+    'tryDevTunnelOwnedNonApprovedMint. Three further decisions about collaborators, none ' +
+    'obvious: (1) editors are READ-ONLY — ai:write:budgeted is stripped in ' +
+    'clampPrivateRunScopes and re-refused per submit in blockPerCallBudget, an operator ' +
+    'decision taken against the original recommendation on reversibility grounds; (2) a ' +
+    'PENDING or REJECTED seat gets NOTHING, because the status: ACCEPTED filter inside ' +
+    'hasAcceptedSeat is the consent gate and is NOT widened here; (3) an already-accepted ' +
+    'seat SURVIVES the delist while no NEW seat can be granted on a removed listing — ' +
+    'that asymmetry is AUTHORABLE_LISTING_STATUSES gating the grant while ' +
+    'resolveAppAccess applies no listing-status filter to the READ, and it is inherited ' +
+    'deliberately rather than re-decided. The OWNER-BANNED refusal applies to owner and ' +
+    'editor only; moderators keep access to a banned publisher app by design, because ' +
+    'reviewing what a banned publisher shipped is the job.',
   'src/server/services/blocks/offsite-moderation.service.ts':
     'loadOwnedListingInTx (unpublish/republish own listing) and ' +
     'listMyListingModerationEvents are NOT widened: unpublishing a live listing and ' +

@@ -43,6 +43,18 @@ export const trackRouter = router({
     // `blockRenderTrackerPayload` is the shared ALLOWLIST that makes this
     // impossible to get wrong in one place and not the other.
     //
+    // 🔴 NEITHER WRITER EXCLUDES PRIVATE RUNS, AND THAT IS AN OPEN FLAG-FLIP
+    // PRECONDITION — and the two-writer symmetry above is exactly why it is called
+    // out here as well as in the beacon route. A private run of a delisted app mounts
+    // the host and so lands a `blockRenders` row, surfacing in the owner's
+    // impressions and unique viewers; the `block_scope_invocations` `source` marker
+    // cannot be reused, because neither of these writers ever sees a block token.
+    // Whatever closure is chosen MUST be applied to BOTH writers or a bearer/API-key
+    // caller reintroduces the leak — the same failure shape the allowlist above
+    // exists to prevent. Canonical note, both closure shapes, the over-filtering
+    // hazard and the closing condition:
+    // `src/server/services/blocks/app-views.service.ts`.
+    //
     // 🔴 `secondary` additionally SUPPRESSES the insert, matching the beacon route
     // exactly. `blockRenders` counts IMPRESSIONS (one row per host mount) and its
     // rows carry no status, so a follow-up beacon for an already-reported mount

@@ -28,14 +28,48 @@ export type BlockGoodRateLimitResult =
   | { allowed: false; retryAfterSeconds: number };
 
 /**
- * Records one purchase attempt against `blockInstanceId`'s window and reports
- * whether it is within the per-instance ceiling. FAIL-CLOSED on any redis error
- * — a money-moving endpoint must not become unbounded when its limiter is down.
+ * Records one purchase attempt against this VIEWER's window on this block
+ * instance and reports whether it is within the ceiling. FAIL-CLOSED on any
+ * redis error — a money-moving endpoint must not become unbounded when its
+ * limiter is down.
+ *
+ * 🔴 THE BUYER IS PART OF THE KEY, AND THAT IS THE WHOLE POINT. Keyed on
+ * `blockInstanceId` ALONE this limiter is not per-viewer at all for a PAGE app:
+ * a page block has no per-viewer instance row, so its `blockInstanceId` is the
+ * SYNTHETIC, SHARED `page_<appBlockId>` (see the page-token mint). Every viewer
+ * of a page app therefore incremented ONE bucket, making the ceiling
+ * `BLOCK_GOOD_RATE_LIMIT_MAX` purchases per minute for the ENTIRE PLATFORM on
+ * that app — and because the limiter fails CLOSED, the seventh buyer in a
+ * minute is refused rather than merely slowed. An iframe block, which does get
+ * a real per-viewer instance id, was unaffected, which is exactly why this
+ * reads as correct until a page app tries to sell something.
+ *
+ * Keeping `blockInstanceId` in the key as well as the buyer is deliberate: it
+ * preserves the per-app granularity the ceiling was chosen for, so one app
+ * misbehaving cannot spend another app's budget for the same viewer.
+ *
+ * ⚠ THE HAZARD ABOVE WAS NOT DISCOVERED HERE. `block-catalog-rate-limit.ts`
+ * records it for the catalog bucket, attributed to clawgate #569, and that
+ * round DEFERRED the fix on purpose — "the number is live and moving it is a
+ * separate decision with its own blast radius". This module departs from that
+ * decision for ONE reason: goods has provably never sold (`block_good_purchase`
+ * is empty), so changing its bucket alters no live behaviour. The deferral
+ * still stands for the catalog, tip and generation buckets.
+ *
+ * Positional, `(blockInstanceId, buyerUserId)`, to match
+ * `checkBlockGoodReadRateLimit` below — its ONLY sibling, in this same file.
+ * An earlier draft took an object and justified it as stopping a transposed
+ * call; that rationale was false (the two parameters are `string` and `number`,
+ * so a swap was already a compile error) and it put two calling conventions in
+ * one module 290 lines apart. Consolidating the two functions would be better
+ * still and is deliberately not attempted here; see the PR.
  */
 export async function checkBlockGoodRateLimit(
-  blockInstanceId: string
+  blockInstanceId: string,
+  buyerUserId: number
 ): Promise<BlockGoodRateLimitResult> {
-  const key = `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:goods:${blockInstanceId}` as const;
+  const key =
+    `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:goods:${blockInstanceId}:${buyerUserId}` as const;
   try {
     const count = await redis.incrBy(key as never, 1);
     if (count === 1) {

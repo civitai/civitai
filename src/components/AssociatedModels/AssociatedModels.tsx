@@ -12,6 +12,8 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createDialogTrigger } from '~/components/Dialog/dialogStore';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { trpc } from '~/utils/trpc';
 
 const AssociateModelsModal = dynamic(() => import('~/components/Modals/AssociateModelsModal'), {
   ssr: false,
@@ -37,6 +39,15 @@ export function AssociatedModels({
     type,
   });
 
+  // The card query is filtered by the viewer's settings, so an empty result can't tell
+  // "none set" from "all hidden". Same key as the manage modal, so this shares its cache.
+  const { data: savedResources, isLoading: loadingSaved } =
+    trpc.model.getAssociatedResourcesSimple.useQuery(
+      { fromId, type, browsingLevel: allBrowsingLevelsFlag },
+      { enabled: isOwnerOrModerator && !isLoading && !recommendedResources.length }
+    );
+  const allHiddenByFilters = !!savedResources?.length;
+
   const handleManageClick = () => {
     openAssociateModelsModal({ props: { fromId, type, ownerId } });
   };
@@ -55,7 +66,7 @@ export function AssociatedModels({
               </Button>
             )}
           </Group>
-          {isLoading ? (
+          {isLoading || loadingSaved ? (
             <div style={{ position: 'relative', height: 310 }}>
               <LoadingOverlay visible />
             </div>
@@ -83,7 +94,9 @@ export function AssociatedModels({
                 <IconRocketOff />
               </ThemeIcon>
               <Text size="lg" c="dimmed">
-                {`You aren't suggesting any other resources yet...`}
+                {allHiddenByFilters
+                  ? 'All suggested resources are hidden by your current content filters.'
+                  : `You aren't suggesting any other resources yet...`}
               </Text>
             </Group>
           )}

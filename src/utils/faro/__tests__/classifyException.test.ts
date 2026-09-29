@@ -956,3 +956,137 @@ describe('classifyException — a malformed frames value reaches both guards', (
     expect(r.category).toBe('abort');
   });
 });
+
+// 🔴 TAG-ONLY scope. Browser extensions and page-injected scripts reference globals that only
+// exist when the injection actually ran, so touching them throws in every OTHER browser —
+// measured live on civitai-dp-prod (24h): `Can't find variable: __firefox__` 1,380×,
+// `undefined is not an object (evaluating 'window.__firefox__.<prop>')` ~2,100×,
+// `undefined is not an object (evaluating 'window.ethereum.selectedAddress = …')` ~2,300/day,
+// `Can't find variable: DarkReader` 132×. Today they land in `real` and pollute the
+// real-app-bug signal. They are TAGGED `extension` and KEPT — no drop, no threshold change.
+//
+// Two engine phrasing families name these errors, and BOTH must be matched — a one-phrasing
+// matcher returned a confident zero for a whole error class. For the bare-global shapes that is
+// `Can't find variable: X` vs `X is not defined`; for property access it is the
+// `undefined is not an object (evaluating '…')` clause (which carries the object PATH) vs V8's
+// `Cannot read properties of … (reading '…')` (which omits the base object entirely, so only a
+// read of a denylisted NAME is attributable from the message).
+describe('classifyException — TAG extension: browser-injected globals (kept, not dropped)', () => {
+  it.each([
+    ['ReferenceError', "Can't find variable: __firefox__"],
+    ['ReferenceError', '__firefox__ is not defined'],
+    ['ReferenceError', "Can't find variable: DarkReader"],
+    ['ReferenceError', 'DarkReader is not defined'],
+    ['ReferenceError', "Can't find variable: __alhWeb"],
+    ['ReferenceError', '__alhWeb is not defined'],
+  ])('tags the bare-global %s / %s as extension', (type, value) => {
+    const r = classifyException(exc(type, value, APP_FRAME));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('extension');
+  });
+
+  it.each([
+    "undefined is not an object (evaluating 'window.__firefox__.reader')",
+    // The shipped (post-redact) spelling: the injected property segment is ≥32 opaque chars, so
+    // redact.ts's long-token pass rewrote it to `[redacted-token]` — the stable PATH prefix is
+    // what the matcher may key on, never the segment after it.
+    "undefined is not an object (evaluating 'window.__firefox__.[redacted-token]')",
+    "undefined is not an object (evaluating 'window.ethereum.selectedAddress = undefined')",
+  ])('tags the injected-object property access %s as extension', (value) => {
+    const r = classifyException(exc('TypeError', value, APP_FRAME));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('extension');
+  });
+
+  it('tags a V8 property read whose READ name is a denylisted injected global', () => {
+    const r = classifyException(
+      exc('TypeError', "Cannot read properties of undefined (reading '__firefox__')", APP_FRAME)
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('extension');
+  });
+
+  it('tags the message-only form (type folded into the message)', () => {
+    const r = classifyException({ value: "ReferenceError: Can't find variable: __firefox__" });
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('extension');
+  });
+
+  it('tags an injected-global error that carries no stack at all', () => {
+    const r = classifyException(
+      exc(
+        'TypeError',
+        "undefined is not an object (evaluating 'window.ethereum.selectedAddress = undefined')"
+      )
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('extension');
+  });
+
+  // INVARIANT GUARD, not a regression test (it is green on the pre-extension classifier too):
+  // the tag-only change must not UN-drop anything. A denylisted global behind an all-`undefined:`
+  // stack matched the `injected` DROP before this category existed and must keep matching it —
+  // otherwise the stream would gain every stack-only extension error on top of the re-tag.
+  it('does NOT un-drop a denylisted global whose stack is all-injected — the injected DROP still wins', () => {
+    const r = classifyException(
+      exc('ReferenceError', "Can't find variable: __firefox__", {
+        frames: [{ filename: 'undefined', lineno: 1705, colno: 541 }],
+      })
+    );
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('injected');
+  });
+});
+
+// Names measured live that must NOT become `extension`: unlike `__firefox__`/`DarkReader`/
+// `__alhWeb` they can be app code (or third-party libraries the app embeds), so a bare-global
+// error only tags when the referenced name is EXACTLY on the denylist.
+describe('classifyException — extension tag: deliberate negatives (may be app code)', () => {
+  it.each([
+    ['ReferenceError', "Can't find variable: downProgCallback"],
+    ['ReferenceError', 'syncDownloadState is not defined'],
+    ['ReferenceError', "Can't find variable: jQuery"],
+    ['ReferenceError', 'goog is not defined'],
+    ['ReferenceError', "Can't find variable: require"],
+    ['ReferenceError', 'selector is not defined'],
+  ])('does NOT tag %s / %s as extension', (type, value) => {
+    const r = classifyException(exc(type, value, APP_FRAME));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  it('does NOT tag the generic V8 property-read shape with a non-denylisted name', () => {
+    const r = classifyException(
+      exc('TypeError', "Cannot read properties of undefined (reading 'M_ID')", APP_FRAME)
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  it('does NOT tag an app error that merely MENTIONS an injected global in prose', () => {
+    const r = classifyException(
+      exc('Error', 'Loader failed: window.__firefox__ handshake did not complete', APP_FRAME)
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // No-regression pin: the four existing keep-and-tag/default categories still classify
+  // exactly as before the extension rule was inserted.
+  it('existing categories still classify unchanged', () => {
+    expect(classifyException(exc('TRPCClientError', 'insufficientBuzz')).category).toBe('bizlogic');
+    expect(classifyException(exc('ChunkLoadError', 'Loading chunk 4823 failed.')).category).toBe(
+      'chunkload'
+    );
+    expect(
+      classifyException(
+        exc(
+          'MeiliSearchCommunicationError',
+          'request to https://search.civitai.com failed',
+          APP_FRAME
+        )
+      ).category
+    ).toBe('meili');
+    expect(classifyException(exc('TypeError', 'Novel app bug', APP_FRAME)).category).toBe('real');
+  });
+});

@@ -1,12 +1,12 @@
 import type { BlobArchiveEntry } from '@civitai/client';
-import { dbRead } from '~/server/db/client';
-import type { ModelFileMetadata, TrainingResults } from '~/server/schema/model-file.schema';
-import { pickBestTrainingFile } from '~/server/schema/model-file.schema';
+import type { NextApiRequest, NextApiResponse } from 'next';
+import type { TrainingResults } from '~/server/schema/model-file.schema';
 import {
   createBlobArchive,
   MAX_BLOB_ARCHIVE_ENTRIES,
 } from '~/server/services/orchestrator/blobArchive';
-import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { resolveTrainingRun } from '~/server/services/orchestrator/training/training-state';
+import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { getConsumerBlobId } from '~/shared/orchestrator/blob-url';
 import type { TrainingRunNameParts } from '~/shared/utils/training-file-names';
 import {
@@ -14,12 +14,10 @@ import {
   trainingEpochSampleFileName,
   trainingRunArchiveName,
 } from '~/shared/utils/training-file-names';
-import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
-import { trainingArchitectureKey } from '~/utils/training/run-summary';
 
 type NormalizedEpoch = { epochNumber: number; modelUrl: string; sampleImages: string[] };
 
-function normalizeEpochs(trainingResults: TrainingResults): NormalizedEpoch[] {
+export function normalizeEpochs(trainingResults: TrainingResults): NormalizedEpoch[] {
   return (trainingResults.epochs ?? []).map((epoch) =>
     'epoch_number' in epoch
       ? {
@@ -118,36 +116,22 @@ export async function getTrainingEpochArchive({
   modelVersionId,
   userId,
   isModerator,
+  ctx,
 }: {
   modelVersionId: number;
   userId: number;
   isModerator?: boolean;
+  ctx: { req: NextApiRequest; res: NextApiResponse };
 }) {
-  const modelVersion = await dbRead.modelVersion.findUnique({
-    where: { id: modelVersionId },
-    select: {
-      id: true,
-      trainingDetails: true,
-      model: { select: { userId: true, name: true } },
-      files: { select: { metadata: true }, where: { type: 'Training Data' } },
-    },
+  const { state, run } = await resolveTrainingRun({
+    modelVersionId,
+    userId,
+    isModerator: !!isModerator,
+    ctx,
   });
-
-  if (!modelVersion) throw throwNotFoundError('Model version not found');
-  if (modelVersion.model.userId !== userId && !isModerator)
-    throw throwAuthorizationError('You do not have permission to download this training run');
-
-  const trainingFile = pickBestTrainingFile(modelVersion.files);
-  const trainingResults = (trainingFile?.metadata as ModelFileMetadata | null)?.trainingResults;
+  const trainingResults = state.trainingResults as TrainingResults | null;
   if (!trainingResults?.epochs?.length) throw throwNotFoundError('No training epochs found');
 
-  const run = {
-    modelName: modelVersion.model.name,
-    versionId: modelVersion.id,
-    architecture: trainingArchitectureKey(
-      modelVersion.trainingDetails as TrainingDetailsObj | null
-    ),
-  };
   const { entries, unresolvedCount, cappedCount } = buildEpochArchiveEntries({
     trainingResults,
     ...run,

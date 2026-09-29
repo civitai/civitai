@@ -576,6 +576,116 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
 }
 
 /**
+ * Dedicated kill-switch for the PRIVATE RUN of a DELISTED / SUSPENDED app — the
+ * `/apps/private-run/<slug>` SSR route plus the PHASE 3 page-token mint branch, which
+ * together serve a taken-down app's ALREADY-DEPLOYED bundle to its owner, an accepted
+ * listing collaborator, or a moderator. Never publicly: the public run route and the
+ * public page mint keep their `status: 'approved'` requirement untouched.
+ *
+ * Ship BASE-OFF (`enabled: false`, no rules, no rollouts) and add a moderators-segment
+ * rule at enable time. The flag row lives in `civitai/flipt-state`, NOT here, so the
+ * code merging changes nothing until that row exists — which is the intended state.
+ *
+ * 🔴 `user` IS REQUIRED, AND THAT IS THE FAIL-CLOSED MECHANISM — not a convenience.
+ * The sibling accessors spell `if (!opts?.user) return isFlipt(FLAG)`, and a no-user
+ * global eval returns the flag's **BASE** value rather than denying (measured; see
+ * GLOBAL-EVAL SEMANTICS at the top of this file). That is harmless for a flag whose
+ * base is off today, but it makes the deny conditional on a value in another repo. A
+ * private run is a status bypass on an app the platform has taken down, so the subject
+ * is not optional: this mirrors `isAppBlocksAuthorEnabled`'s required-`user` shape,
+ * which is the only one in this file that denies a missing subject BY TYPE.
+ *
+ * 🔴 NO MODERATOR STATIC FLOOR, unlike `isAppBlocksAuthorEnabled`. There is no
+ * existing mod access to this surface to preserve (it does not exist yet), so an
+ * absent or unreachable Flipt must deny EVERYONE, mods included — the same posture
+ * and the same reasoning as `isAppBlocksDevTunnelEnabled`.
+ *
+ * 🔴 DO NOT COMPOSE THIS WITH `isAppBlocksAuthorEnabled`. That flag asks "is this
+ * caller an app AUTHOR", which would refuse a moderator who has never published an
+ * app — i.e. exactly the audience this surface exists for.
+ *
+ * ────────────────────────────────────────────────────────────────────────────────
+ * 🔴 PRECONDITION BEFORE THIS FLAG IS SET TO ANYTHING OTHER THAN `false`.
+ *
+ * An operator decision on this feature is that a moderator's private run is FULLY
+ * INVISIBLE TO THE APP'S OWNER — no moderation event, no play count, and nothing in
+ * the owner's analytics. The first two are delivered (the private route deliberately
+ * calls neither `recordAppListingOpen` nor any moderation-event writer). THE THIRD IS
+ * NOT, in two places, and both are visible in the publisher's own dashboard:
+ *
+ *   1. `block_spend_attribution` — a private run's row is correctly VOIDED, but the
+ *      two owner-visible reads in `app-analytics.service.ts` carry no `status`
+ *      predicate, so a voided row still counts as a run and its Buzz still sums.
+ *      The `status <> 'voided'` filter was deliberately HELD (it drops the large
+ *      majority of existing rows at once, and a second consumer of that table lives
+ *      outside this repo) — a product decision, not an oversight.
+ *   2. `block_scope_invocations` — written by `withBlockScope` for every scoped call
+ *      with the real `app_block_id` and the VIEWER's `user_id`, and read into the
+ *      owner's panel by five unfiltered queries including a `count(DISTINCT
+ *      user_id)`. There is no marker on those rows to filter on, so closing this
+ *      half needs a migration.
+ *
+ * 🔴 WHY THIS PARAGRAPH IS IN THIS FILE. The dependency was previously recorded only
+ * in a docblock on the attribution arm and in a merged PR body — neither of which is
+ * read by the person who opens Flipt, in a different repository, to widen a flag. The
+ * condition is inert while the base value is `false`: with the flag off both surfaces
+ * refuse before resolving anything, so no private-run row of either kind can exist.
+ * It becomes live the moment this value is anything else.
+ *
+ * So, before widening on THIS count: either land both filters, or record the operator
+ * decision that owner-visible analytics should keep counting private runs. Do not widen on
+ * the assumption that the void alone delivers the invisibility — it does not.
+ *
+ * ────────────────────────────────────────────────────────────────────────────────
+ * 🔴 SECOND PRECONDITION, AND IT IS A PRODUCT QUESTION RATHER THAN A DELIVERY GAP:
+ * A REVIEWER'S OWN CONSUMER-SIDE SCOPE REVOCATION SILENTLY NARROWS THEIR PRIVATE RUN.
+ *
+ * 🔴 A NEW PRECONDITION GOES BELOW THIS ONE, NEVER BETWEEN THE FIRST ONE'S NUMBERED ITEMS
+ * AND ITS CLOSING PARAGRAPHS — inserting a section inside another silently re-points that
+ * one's ending at the new content.
+ *
+ * Per-scope consent revocation landed while this surface was being built. Its
+ * `shouldConsultMarker` keys on `{ userId, scopes }` alone — it cannot tell a private-run
+ * review token from an ordinary install token — and a private-run token has a self-bound
+ * subject and always carries a non-exempt scope — `user:read:self` is force-granted by the
+ * clamp and is not consent-exempt, which alone is what makes this unconditional — so the
+ * marker IS consulted for EVERY audience, editors included, keyed on the REVIEWER's id and
+ * the app's real id. (Not `ai:write:budgeted`: that one the clamp can only ever STRIP —
+ * `user:read:self` is its single force-grant — so a non-editor keeps the spend scope only
+ * when the approved snapshot declares it, and an app with `approvedScopes: []` renders
+ * read-only for everyone.) The rows it reads are therefore whatever that person expressed
+ * as an ordinary CONSUMER of that app, at some earlier point, on a surface unrelated to
+ * review.
+ *
+ * It cannot WIDEN — all three `revokedScopesForToken` arms produce a set to STRIP and none
+ * can grant — which is why it was allowed to stand rather than exempted. ⚠️ But "narrows"
+ * is not the worst case: an UNREADABLE marker fails CLOSED, as a retryable 503 on the
+ * bridge and at REST for a non-exempt `requiredScope`, so a cache incident makes a private
+ * run refuse outright rather than run read-only. Do not read the heading as bounding the
+ * harm at read-only.
+ *
+ * What is NOT settled is what the reviewer sees: a moderator who once withdrew the spend
+ * scope on this app gets a read-only private run and nothing on screen says why, and the
+ * audience for this surface is exactly the population that files bugs about that. Deciding
+ * whether the chrome should say so is a call for whoever widens this flag. Exempting
+ * private-run tokens from the marker is the WRONG fix — it makes a review surface ignore a
+ * withdrawal the viewer expressed.
+ *
+ * Pinned behaviourally in
+ * `src/server/services/blocks/__tests__/block-bridge-auth.consent-revocation.test.ts`
+ * (five rows, mutation-verified). ⚠️ Do not let this move back into a test docblock: that is
+ * further from the person opening Flipt than either of the two places already ruled out for
+ * the first precondition — a docblock on the attribution arm, and a merged PR body.
+ * ────────────────────────────────────────────────────────────────────────────────
+ */
+export const APP_BLOCKS_PRIVATE_RUN_FLAG = 'app-blocks-private-run-enabled';
+
+export async function isAppBlocksPrivateRunEnabled(opts: { user: SessionUser }): Promise<boolean> {
+  const user = opts.user;
+  return isFlipt(APP_BLOCKS_PRIVATE_RUN_FLAG, String(user.id), buildFliptContext(user));
+}
+
+/**
  * Dedicated GLOBAL fail-closed flag for the attribution BACKPAY reader
  * (W3 attribution back-half — Slice 4 read leg, see backpay.service.ts).
  *

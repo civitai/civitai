@@ -515,6 +515,20 @@ describe('the blockInstanceId MINT-SITE ledger', () => {
     'src/pages/apps/run/[slug]/[[...path]].tsx':
       'CLIENT-SIDE construction of `page_<appBlockId>` for the run surface. Same two ' +
       'shapes and the same coverage as the dev harness above.',
+    'src/pages/apps/private-run/[slug]/[[...path]].tsx':
+      'CLIENT-SIDE construction of `page_<appBlockId>` for the PRIVATE-RUN surface (a ' +
+      'delisted/suspended app served to its owner, an accepted collaborator, or a ' +
+      'moderator). ONE shape only, and always a real `apb_…` — the private path resolves ' +
+      'exclusively through `resolvePrivateRunPageBlock`, which reads the AppBlock table, ' +
+      'so the `ephemeral-<slug>` variant the run surface and dev harness can produce is ' +
+      'unreachable here. COVERED, and reusing this namespace is the REASON it was chosen ' +
+      'rather than a new one: `revokeBlockInstancesForPublisher` synthesises ' +
+      '`page_<appBlockId>` from the banned publisher’s canonically-owned blocks, so a ' +
+      'private-run token inherits publisher-ban revocation with no new code. ⚠️ That ' +
+      'coverage is TIME-BOXED — the markers expire after ' +
+      'MAX_BLOCK_TOKEN_LIFETIME_SECONDS (14400s) — which is precisely why ' +
+      'resolvePrivateRunAccess ALSO refuses on a banned owner at MINT time for the owner ' +
+      'and editor audiences; moderators keep access by design.',
     'src/pages/api/v1/blocks/dev-token.ts':
       'The dev mint — and, unlike `block-tokens/index.ts`, it really does CONSTRUCT. ' +
       'Builds `page_pubreq_<pubreq_ULID>` for a caller-owned PENDING ' +
