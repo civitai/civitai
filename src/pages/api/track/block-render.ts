@@ -14,6 +14,15 @@ import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 
 // App Blocks Analytics Phase 2 — block render/impression beacon.
 //
+// 🔴 THIS WRITER DOES NOT EXCLUDE PRIVATE RUNS, AND THAT IS AN OPEN FLAG-FLIP
+// PRECONDITION. A private run of a delisted app mounts the host, so it lands a
+// `blockRenders` row here and surfaces in the app owner's impressions and unique
+// viewers. The sibling `block_scope_invocations` rail solves the same problem with a
+// `source` marker, and that marker CANNOT be reused here — this route sees a session,
+// never a block token. The canonical note (mechanism, both closure shapes, the
+// over-filtering hazard, the closing condition) lives once at the read site:
+// `src/server/services/blocks/app-views.service.ts`. Read it before changing this.
+//
 // Lightweight beacon endpoint for the block render/impression event, mirroring
 // the sibling /api/track/view beacon (#2680). This event fires once per host
 // mount at BLOCK_READY for EVERY model-page-with-a-block view and every
