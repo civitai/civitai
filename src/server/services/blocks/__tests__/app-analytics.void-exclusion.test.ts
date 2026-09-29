@@ -66,7 +66,9 @@ const VOIDED = 'voided';
 
 /**
  * 🔴 EVERY BUZZ VALUE IS DISTINCT, AND NO FIXTURE BUZZ VALUE EQUALS ANY BUZZ TOTAL AN
- * ASSERTION NAMES (fixtures 7/11/13/17/19/23/29/31/37/41/43/47 vs totals 179/250/71/120). A
+ * ASSERTION NAMES (fixtures 7/11/13/17/19/23/29/31/37/41/43/47 vs the asserted totals 179,
+ * 120 and 0 — 250 and 71 appear only in comments, so they are named here as context rather
+ * than as part of the claim). A
  * fixture that can only ever produce the asserted constant's own value cannot see a mutant
  * that hardcodes the literal, so it would SURVIVE a fully green suite.
  *
@@ -271,7 +273,20 @@ function matches(row: Row, where: Record<string, any>): boolean {
         // matching, so it excluded nothing and produced a failure set byte-identical to
         // DELETING the filter. Same misleading-diagnosis defect as the `not` branch above,
         // one level out, and it survived the fix to that branch.
-        if (!(cond && typeof cond === 'object' && 'status' in cond))
+        //
+        // ⚠️ SIBLING KEYS ARE REJECTED, NOT DROPPED. The first version tested only
+        // `'status' in cond` and then evaluated `cond.status` alone, silently discarding
+        // any other key — narrower than this comment's own "but only for `status`". It
+        // could not hide a voided-row leak (Prisma's multi-key `NOT` is NOR, so a dropped
+        // clause models a WEAKER exclusion than production applies) but it made an
+        // unrelated clause invisible, which is a wrong-diagnosis defect of the same family
+        // as the two above. Throwing is right: this evaluator's contract is that anything
+        // it does not fully understand fails loudly.
+        if (
+          !(cond && typeof cond === 'object') ||
+          !('status' in cond) ||
+          Object.keys(cond).length !== 1
+        )
           throw new Error(`unhandled NOT condition: ${JSON.stringify(cond)}`);
         if (matches(row, { status: cond.status })) return false;
         break;
@@ -408,6 +423,64 @@ const analytics = () =>
 
 const seriesValues = (a: Awaited<ReturnType<typeof analytics>>) =>
   a.runs.series.map((p) => p.value);
+
+/**
+ * 🔴 THE EVALUATOR'S OWN BRANCHES, TESTED DIRECTLY — because otherwise most of them run
+ * ONLY under mutation and nothing in CI would catch a re-break.
+ *
+ * That is not hypothetical: round 1 widened the `not` branch and left the top-level `NOT`
+ * branch comparing a nested operand as a string, and it stayed broken for a whole round
+ * precisely because no service read uses the `NOT:` spelling, so no case exercised it. The
+ * service currently emits `status: { not: X }` and nothing else; every other spelling here
+ * exists so a future refactor to an equivalent form does not silently turn this file's
+ * exclusion assertions vacuous.
+ *
+ * These are [INV] by construction — they pin the harness, not the change. They assert
+ * BEHAVIOUR (does this row survive this predicate), never the evaluator's source text.
+ */
+describe('[INV] the where-evaluator handles every equivalent spelling of the exclusion', () => {
+  const voided = { ...VOIDED_SELF_E };
+  const tracked = { ...TRACKED_A };
+  const scoped = (cond: unknown) => ({
+    appBlockId: { in: [OWNED_ID, OWNED_ID_2] },
+    attributedAt: { gte: RANGE_FROM, lte: RANGE_TO },
+    ...(cond as Record<string, unknown>),
+  });
+
+  const EXCLUDES_VOIDED_KEEPS_TRACKED: Array<[string, unknown]> = [
+    ['not (the form the service emits)', { status: { not: VOIDED } }],
+    ['nested not/equals', { status: { not: { equals: VOIDED } } }],
+    ['notIn', { status: { notIn: [VOIDED] } }],
+    ['top-level NOT with a bare value', { NOT: { status: VOIDED } }],
+    ['top-level NOT with nested equals', { NOT: { status: { equals: VOIDED } } }],
+    ['top-level NOT with nested in', { NOT: { status: { in: [VOIDED] } } }],
+  ];
+
+  for (const [name, cond] of EXCLUDES_VOIDED_KEEPS_TRACKED) {
+    it(`excludes the voided row and keeps the tracked row: ${name}`, () => {
+      expect(matches(voided, scoped(cond))).toBe(false);
+      // 🔴 THE SECOND HALF IS THE POINT. A branch that excluded EVERYTHING would satisfy
+      // the first assertion, which is the over-filtering failure this file is built around.
+      expect(matches(tracked, scoped(cond))).toBe(true);
+    });
+  }
+
+  it('an allowlist spelling is evaluated, not thrown on — so a mutant dies on an assertion', () => {
+    // Regression guard for the defect that made the denylist case measure SHAPE, not
+    // consequence: the evaluator used to throw here, killing the mutant via a TypeError.
+    expect(matches(tracked, scoped({ status: 'tracked' }))).toBe(true);
+    expect(matches({ ...TRACKED_A, status: 'held' }, scoped({ status: 'tracked' }))).toBe(false);
+  });
+
+  it('a shape it does not fully understand throws rather than silently passing', () => {
+    // The contract that keeps every case above non-vacuous. `startsWith` is a real Prisma
+    // operator this evaluator deliberately does not model; a dropped sibling key likewise.
+    expect(() => matches(tracked, scoped({ status: { startsWith: 'void' } }))).toThrow();
+    expect(() =>
+      matches(tracked, scoped({ NOT: { status: VOIDED, appBlockId: { in: [OWNED_ID] } } }))
+    ).toThrow();
+  });
+});
 
 describe('owner-visible run analytics exclude voided attribution rows', () => {
   it('[INV] the evaluator sees the fixture at all (instrument control)', async () => {

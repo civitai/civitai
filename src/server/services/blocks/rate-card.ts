@@ -169,9 +169,13 @@ export const RATE_CARD_V2: RateCard = {
   internalAppOwnerUserIds: [
     // Populate with civitai team userIds before going live. Empty for
     // now. ⚠️ "none of the load-bearing paths read this list yet" was true
-    // when written and is NOT any more — an owner-visible READ depends on it
-    // since 2026-09-29; see this field's docblock on the `RateCard` type.
-    // The service plumbing checks it. Belt-and-suspenders: platform_default
+    // when written, and is still true OF THIS CARD — V2 is referenced only by
+    // `rate-card.test.ts`; every production read goes through
+    // `ACTIVE_RATE_CARD`. An earlier revision of this annotation claimed an
+    // owner-visible read depends on THIS list, which is false: the hazard is
+    // on the ACTIVE card, and the warning lives on the `RateCard` type's own
+    // `internalAppOwnerUserIds` docblock. Read it there before populating any
+    // card. The service plumbing checks it. Belt-and-suspenders: platform_default
     // is already 0% so the dominant team-app path doesn't need this
     // list, but per_model_install / publisher_all_my_models for a
     // team-owned app would.
@@ -326,6 +330,16 @@ export const RATE_CARD_V5: RateCard = {
   subscriptionSharePct: 15,
   internalAppOwnerUserIds: [
     // Same as V4 — populate with civitai team userIds before going live.
+    //
+    // 🔴 THIS IS THE ACTIVE CARD (`ACTIVE_RATE_CARD` below), SO THIS IS THE LIST
+    // THAT BITES. Populating it does TWO things, and only one of them is the one
+    // you want: it zeroes the publisher share (intended), and it also blanks the
+    // owner-visible RUN COUNT for every app listed, because `recordSpendAttribution`
+    // writes `voided`/`internal_owner` keyed on the APP OWNER and the owner-visible
+    // reads exclude `voided`. Read the `internalAppOwnerUserIds` docblock on the
+    // `RateCard` type above before adding an id here — it has the mechanism and the
+    // NULL-safe narrowing form. The identical "same as …" comment on V2/V3/V4 is
+    // harmless because nothing in production reads those cards.
   ],
   effectiveFrom: '2026-06-18',
 };

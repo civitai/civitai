@@ -60,10 +60,21 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * 2026-09-29: `WHERE NOT (voided_reason IN ('manual_review','self_spend'))` retains
  * **0 of 639 rows**, because `NULL IN (…)` is NULL and `NOT NULL` is NULL, so every one of
  * the 57 real `tracked` rows is filtered out. That is the exact zero the paragraph above
- * warns about, produced by the remedy it offered. The forms that DO work, both measured:
- * `voided_reason IS NULL OR voided_reason NOT IN (…)` → 57, and
- * `voided_reason IS DISTINCT FROM …` → 639. Whether Prisma's `NOT` emits the naive SQL or a
- * NULL-aware rewrite is exactly the thing not to bet a dashboard on — spell the `OR`.
+ * warns about, produced by the remedy it offered.
+ *
+ * 🔴 THERE IS EXACTLY ONE FORM THAT BOTH KEEPS NULLs AND ACTUALLY NARROWS:
+ *   `voided_reason IS NULL OR voided_reason NOT IN (…)`  → 57 ✅
+ * ⚠️ `voided_reason IS DISTINCT FROM 'manual_review'` → **639**, and an earlier version of
+ * this note listed that as a second "form that works". It is null-aware but SINGLE-VALUED,
+ * so against a two-value exclusion it narrows NOTHING — 639 is the whole population. Printing
+ * 57 and 639 side by side as two working options invites picking the one that excludes
+ * nothing, which is the same silent-no-op this paragraph exists to prevent.
+ *
+ * And this is NOT a Prisma-versus-SQL uncertainty, which is how it was hedged before: the
+ * engine renders a one-filter `NOT` as a bare `(NOT <expr>)` with no `IS NULL` disjunct
+ * added, and Prisma's own `in` reference documents this exact combination — *"if you combine
+ * `in` and `NOT` … users with `null` value names are not returned"*. Only `equals: null` /
+ * `not: null` are null-aware. So spell the `OR`.
  */
 const VOIDED_ATTRIBUTION_STATUS = 'voided';
 
