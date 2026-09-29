@@ -51,10 +51,16 @@ const STORAGE_KEY = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/badge.png';
  * (`product-badge.service.ts`), never `output.images[0].id`, so that string is never read by
  * anything and a deleted guard dies on `'Badge resize did not return an output blob'`
  * instead. The comment asserted a mechanism it did not have. **What actually discriminates**
- * is the pair every test below asserts: the guard's own message
- * (`'not on the ingestion allowlist'`), which no downstream failure produces, AND
+ * on the FOUR REFUSAL rows — and only those four — is the pair they assert: the guard's own
+ * message (`'not on the ingestion allowlist'`), which no downstream failure produces, AND
  * `mockSubmitWorkflow` never having been called. The id is left in place only as inert
  * fixture shape; do not reintroduce a claim about it.
+ *
+ * ⚠ "every test below" is what this said, and that was its own smaller version of the same
+ * overclaim: the three NON-refusal rows do not assert that pair and must not — two assert
+ * `toHaveBeenCalledTimes(1)`, the opposite, and the short-circuit row asserts a resolved
+ * value. Read as a convention, "every test" would invite an eighth row without the pair,
+ * which would pass on a deleted guard.
  */
 const allowSubmitByDefault = () =>
   mockSubmitWorkflow.mockReset().mockResolvedValue({

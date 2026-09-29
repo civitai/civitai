@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * array that had drifted weaker than it.
  *
  * 🔴 WHAT THIS PINS, and what it deliberately does NOT claim. The drift was MEASURED against
- * the old array, not assumed: exactly FOUR shapes it admitted are refused now (the four in
+ * the old array, not assumed: NINE shapes it admitted are refused now (the nine in
  * `admittedByTheOldArray` below). The three shapes it is tempting to also claim — integer,
  * hex and octal IPv4 literals — were ALREADY refused by the old array, because WHATWG
  * `new URL()` normalizes all three to hostname `127.0.0.1` before any denylist sees them.
@@ -14,7 +14,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * re-discovers them as "new coverage" — a test that counted them would be claiming credit for
  * behaviour that never changed.
  *
- * Watched RED against the old array: the four `admittedByTheOldArray` rows fail on
+ * Watched RED against the old array: ALL NINE `admittedByTheOldArray` rows fail on
  * pre-change code (the old patterns match none of those hostnames); the
  * `alreadyRefusedBeforeThisChange` rows pass on BOTH sides and are invariant guards, labelled
  * as such rather than counted as regression coverage.

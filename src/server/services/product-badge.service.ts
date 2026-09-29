@@ -129,6 +129,12 @@ export const getBadgeHistory = async ({ productId }: GetBadgeHistoryInput) => {
  * resize transform preserves aspect ratio. Returns the new Cloudflare image id.
  * If width/height are already 200x200 (or unknown and equal to the target),
  * the original id is returned unchanged.
+ *
+ * 🔴 THROWS `ImageIngestionUrlBlockedError` for a `url` off the image-scan allowlist — on
+ * EVERY path, including the already-target-size one that returns the id unchanged. Callers
+ * relying on "returned unchanged" must handle a rejection: the allowlist check deliberately
+ * precedes that short-circuit, because `width`/`height` are caller input and a guard a
+ * request field can step around is not a guard (see the note on the check itself).
  */
 export const resizeBadgeImage = async ({
   url,

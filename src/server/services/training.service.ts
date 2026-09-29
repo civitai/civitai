@@ -688,8 +688,9 @@ type AutoLabelStepMetadata = {
 // WHATWG `new URL()` normalizes all three to hostname `127.0.0.1` BEFORE any denylist runs,
 // so `/^127\./` matched them. A `%`-zone id (`https://[fe80::1%eth0]/x`) never parses at all.
 // This is a reconciliation onto the existing source of truth, not a new guard — see
-// `training-assert-safe-media-urls.test.ts`, which pins each of the four and was watched red
-// against the old array.
+// `training-assert-safe-media-urls.test.ts`, which pins each of the NINE and was watched red
+// against the old array — all nine rows plus the count row, re-measured after the correction
+// rather than inherited from the first, wrong, four-row run.
 //
 // ⚠ Deliberate NARROWING that comes with it: `isPublicHttpsUrl` also refuses *public* bare
 // IPv4/IPv6 literals and dot-less hostnames. A legitimate media URL is a DNS name, and the
