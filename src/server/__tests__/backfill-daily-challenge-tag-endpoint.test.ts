@@ -457,7 +457,8 @@ describe('backfill-daily-challenge-tag', () => {
     state.lagReads = 0;
     const second = await call({ dryRun: 'false', baselines: '' });
 
-    expect(second.payload).toMatchObject({ done: true, written: 4 });
+    // An empty entry must not survive as ":NaN", which the next resume would refuse.
+    expect(second.payload).toMatchObject({ done: true, written: 4, baselines: 'mediarank_sub:10' });
   });
 
   it('returns the last committed cursor when a write fails, and queues that batch for the index', async () => {
