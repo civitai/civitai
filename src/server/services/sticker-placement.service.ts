@@ -979,7 +979,7 @@ export async function actOnStickerPlacement({
   const keptOff = await isPendingStickerKeptOff(placement);
   if (action === 'approve' && keptOff)
     throw throwBadRequestError(
-      'This sticker can no longer go on this image. Decline it and the placer is refunded in full.'
+      "This sticker can no longer go on this image, so it can't be approved. Declining it costs the placer no fee."
     );
 
   // Before the settle, so a refused note is never live for the window between

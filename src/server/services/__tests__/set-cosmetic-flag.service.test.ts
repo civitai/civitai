@@ -28,16 +28,18 @@ beforeEach(() => {
 });
 
 describe('setCosmeticFlag', () => {
-  it('writes one row, setting the bit on and clearing only that bit off', async () => {
-    queryRaw.mockResolvedValue([{ flags: CosmeticFlag.SfwPlacementsOnly }]);
+  // Both directions: the switch's own value is what picks the branch, so a
+  // condition that ignored or inverted it would pass a one-direction check.
+  it.each([true, false])('writes one row with the switch set to %s', async (enabled) => {
+    queryRaw.mockResolvedValue([{ flags: CosmeticFlag.None }]);
 
-    await setCosmeticFlag({ id: COSMETIC, flag: CosmeticFlag.SfwPlacementsOnly, enabled: true });
+    await setCosmeticFlag({ id: COSMETIC, flag: CosmeticFlag.SfwPlacementsOnly, enabled });
 
     const { sql, values } = issuedSql();
-    expect(sql).toMatch(/THEN flags \| \? ELSE flags & ~\?::int END/);
+    expect(sql).toMatch(/SET flags = CASE WHEN \? THEN flags \| \? ELSE flags & ~\?::int END/);
     expect(sql).toMatch(/WHERE id = \?/);
     expect(values).toEqual([
-      true,
+      enabled,
       CosmeticFlag.SfwPlacementsOnly,
       CosmeticFlag.SfwPlacementsOnly,
       COSMETIC,

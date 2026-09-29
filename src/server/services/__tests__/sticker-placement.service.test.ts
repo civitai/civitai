@@ -1988,12 +1988,13 @@ describe('a sticker flagged SFW placements only', () => {
    * guard reads what it thinks it reads. An unquoted alias comes back lowercased
    * and a dropped column comes back undefined; both would switch the guard off.
    */
-  const expectEligibilityRead = (call: number, ids: number[]) => {
-    const { sql, values } = issuedSql(call);
-    expect(sql).toContain('c.flags');
-    expect(sql).toContain('AS "imageNsfwLevel"');
-    expect(sql).toMatch(/FROM "Image" i WHERE i\.id = \?/);
-    expect(values).toEqual(expect.arrayContaining(ids));
+  const expectEligibilityRead = (call: number, values: number[]) => {
+    const issued = issuedSql(call);
+    expect(issued.sql).toContain('c.flags');
+    expect(issued.sql).toContain('AS "imageNsfwLevel"');
+    expect(issued.sql).toMatch(/FROM "Image" i WHERE i\.id = \?/);
+    // In order, so the image id cannot trade places with the cosmetic id.
+    expect(issued.values).toEqual(values);
   };
 
   describe('placing it', () => {
@@ -2003,7 +2004,7 @@ describe('a sticker flagged SFW placements only', () => {
       await expect(createStickerPlacement(placeInput)).rejects.toThrow(STICKER_SFW_ONLY_REFUSAL);
       expect(placementCreate).not.toHaveBeenCalled();
       expect(holdPlacementEscrow).not.toHaveBeenCalled();
-      expectEligibilityRead(0, [IMAGE, COSMETIC]);
+      expectEligibilityRead(0, [PLACER, IMAGE, COSMETIC]);
     });
 
     it('is refused when the rating did not come back as a number', async () => {
