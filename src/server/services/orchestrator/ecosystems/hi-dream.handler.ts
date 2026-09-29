@@ -58,9 +58,7 @@ export const createHiDreamInput = defineHandler<HiDreamCtx, [ImageGenStepTemplat
 
   const { params } = hiDreamResult;
 
-  // Pre-cutover these went in via getHiDreamInput's echoed resource list, which carries no AIR,
-  // so the map was always empty and HiDream LoRAs were never sent. Sending them changes outputs
-  // and starts charging licensing fees.
+  // getHiDreamInput's echoed resource list carries no AIR — build the loras from `data`.
   const resourceLoras: Record<string, number> = {};
   for (const r of 'resources' in data && data.resources ? data.resources : []) {
     resourceLoras[ctx.airs.getOrThrow(r.id)] = r.strength ?? 1;

@@ -4,7 +4,6 @@
  * Handles Stable Diffusion family workflows:
  * - SD1, SDXL, Pony, Illustrious, NoobAI
  *
- * imageGen for plain txt2img; comfy when images are present, or for face-fix/hires-fix.
  */
 
 import type {
@@ -50,14 +49,6 @@ const IMAGE_GEN_ECOSYSTEM: Record<SDFamilyCtx['ecosystem'], 'sd1' | 'sdxl'> = {
   NoobAI: 'sdxl',
 };
 
-/** Workflows that always use comfy (regardless of images) */
-const COMFY_ALWAYS = [
-  'txt2img:face-fix',
-  'img2img:face-fix',
-  'txt2img:hires-fix',
-  'img2img:hires-fix',
-] as const;
-
 /**
  * Get the external comfy workflow key from the internal workflow key + images presence.
  * Returns undefined if this workflow/images combination should NOT use comfy.
@@ -96,10 +87,6 @@ function getComfyKey(workflow: string, hasImages: boolean): string | undefined {
 
 /**
  * Creates step input for SD family workflows.
- *
- * Routes on workflow + images:
- * - txt2img (text only) → imageGen
- * - img2img, face-fix, hires-fix → comfy
  */
 export const createStableDiffusionInput = defineHandler<
   SDFamilyCtx,
@@ -111,8 +98,6 @@ export const createStableDiffusionInput = defineHandler<
 
   const hasImages = Array.isArray(data.images) && data.images.length > 0;
   const comfyKey = getComfyKey(data.workflow, hasImages);
-  const useComfy =
-    comfyKey !== undefined || COMFY_ALWAYS.includes(data.workflow as (typeof COMFY_ALWAYS)[number]);
 
   const userResources = data.resources ?? [];
   const sampler = data.sampler ?? 'Euler';
@@ -120,11 +105,9 @@ export const createStableDiffusionInput = defineHandler<
   const cfgScale = data.cfgScale ?? 7;
   const quantity = data.quantity ?? 1;
 
-  // Auto-generate seed if not provided
   const seed = data.seed ?? getRandomInt(quantity, maxRandomSeed) - quantity;
 
-  // Use comfy for face-fix, hires-fix, or when images are present (img2img mode)
-  if (useComfy && comfyKey) {
+  if (comfyKey) {
     const isHires = data.workflow.includes('hires');
 
     const workflowData: Record<string, unknown> = {
@@ -181,7 +164,6 @@ export const createStableDiffusionInput = defineHandler<
     controlNets.length > 0 ||
     usesComfyEngine({
       ecosystem: data.ecosystem,
-      modelId: data.model.id,
       enhancedCompatibility:
         'enhancedCompatibility' in data ? (data.enhancedCompatibility as boolean) : undefined,
     });

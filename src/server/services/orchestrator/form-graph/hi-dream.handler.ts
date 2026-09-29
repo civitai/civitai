@@ -41,9 +41,7 @@ export const createHiDreamInput = defineHandler<EcosystemData<'HiDream'>, [Image
 
     const { params } = hiDreamResult;
 
-    // Pre-cutover these went in via getHiDreamInput's echoed resource list, which carries no AIR,
-    // so the map was always empty and HiDream LoRAs were never sent. Sending them changes outputs
-    // and starts charging licensing fees.
+    // getHiDreamInput's echoed resource list carries no AIR — build the loras from `full`.
     const resourceLoras: Record<string, number> = {};
     for (const r of full?.resources ?? []) {
       resourceLoras[ctx.airs.getOrThrow(r.id)] = r.strength ?? 1;

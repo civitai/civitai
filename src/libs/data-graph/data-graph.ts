@@ -1650,7 +1650,6 @@ export class DataGraph<
    * generationGraph.findKeyInBranches(['workflow', 'ecosystem'], 'images')
    *
    * // Context-aware: check if txt2img has an 'images' node
-   * // Resolves ecosystem to its default (SD1) and evaluates `when`
    * generationGraph.findKeyInBranches(['workflow', 'ecosystem'], 'images',
    *   { workflow: 'txt2img' })
    * ```

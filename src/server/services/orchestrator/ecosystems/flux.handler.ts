@@ -3,14 +3,9 @@
  *
  * Handles Flux family workflows:
  * - Flux1, FluxKrea
- *
  */
 
-import type {
-  ImageGenStepTemplate,
-  ImageJobNetworkParams,
-  PreprocessImageStepTemplate,
-} from '@civitai/client';
+import type { ImageGenStepTemplate, PreprocessImageStepTemplate } from '@civitai/client';
 import type {
   ComfyFlux1CreateImageGenInput,
   Flux1ProImageGenInput,
@@ -72,7 +67,7 @@ function getFluxMode(modelId?: number): FluxMode {
  * Creates step input for Flux family workflows.
  *
  * Different modes have different requirements:
- * - draft: Fast generation, no resources, fixed steps/cfg
+ * - draft: fixed steps=4 / cfg=1
  * - standard: Normal generation with resources
  * - krea: Similar to standard
  * - pro: No user resources, uses pro model
@@ -87,33 +82,26 @@ export const createFluxInput = defineHandler<
   const modelId = data.model?.id;
   const fluxMode = data.fluxMode ?? getFluxMode(modelId);
 
-  // Auto-generate seed if not provided
   const quantity = data.quantity ?? 1;
   const seed = data.seed ?? getRandomInt(quantity, maxRandomSeed) - quantity;
 
-  // Get steps and cfg based on mode
   let steps = ('steps' in data ? data.steps : undefined) ?? 28;
   let cfgScale = ('cfgScale' in data ? data.cfgScale : undefined) ?? 3.5;
 
-  // Handle draft mode overrides
   if (fluxMode === 'draft') {
     steps = 4;
     cfgScale = 1;
   }
 
-  // Handle ultra mode - uses different step input structure
   if (fluxMode === 'ultra') {
     return [createFluxUltraImageGen(data, seed)];
   }
 
-  // Build additionalNetworks from resources (not for pro mode)
   const resources = 'resources' in data ? data.resources : undefined;
-  const additionalNetworks: Record<string, ImageJobNetworkParams> = {};
+  const loras: Record<string, number> = {};
   if (fluxMode !== 'pro' && resources?.length) {
     for (const resource of resources) {
-      additionalNetworks[ctx.airs.getOrThrow(resource.id)] = {
-        strength: resource.strength,
-      };
+      loras[ctx.airs.getOrThrow(resource.id)] = resource.strength ?? 1;
     }
   }
 
@@ -157,11 +145,7 @@ export const createFluxInput = defineHandler<
     seed,
     quantity,
     outputFormat: data.outputFormat,
-    loras: Object.keys(additionalNetworks).length
-      ? Object.fromEntries(
-          Object.entries(additionalNetworks).map(([air, v]) => [air, v.strength ?? 1])
-        )
-      : undefined,
+    loras: Object.keys(loras).length ? loras : undefined,
     ...(controlNets.length ? { controlNets } : {}),
   };
 

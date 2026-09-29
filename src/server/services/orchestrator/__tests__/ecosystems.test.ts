@@ -157,8 +157,8 @@ describe.each([
 });
 
 /**
- * Pins both lanes to `usesComfyEngine` directly — the differential suite only compares the lanes
- * to each other.
+ * Pins the engine literal each lane emits — the differential suite only compares the lanes to
+ * each other, so an engine both lanes get wrong passes it.
  */
 describe.each([
   ['data-graph', createEcosystemStepInput],

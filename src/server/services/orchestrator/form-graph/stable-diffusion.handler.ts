@@ -36,14 +36,6 @@ const IMAGE_GEN_ECOSYSTEM: Record<string, 'sd1' | 'sdxl' | undefined> = {
   NoobAI: 'sdxl',
 };
 
-/** Workflows that always use comfy (regardless of images) */
-const COMFY_ALWAYS = [
-  'txt2img:face-fix',
-  'img2img:face-fix',
-  'txt2img:hires-fix',
-  'img2img:hires-fix',
-] as const;
-
 /**
  * Get the external comfy workflow key from the internal workflow key + images
  * presence. Returns undefined if this combination should NOT use comfy.
@@ -87,8 +79,6 @@ export const createStableDiffusionInput = defineHandler<
   const hasImages = Array.isArray(data.images) && data.images.length > 0;
   const workflow = data.workflow ?? 'txt2img';
   const comfyKey = getComfyKey(workflow, hasImages);
-  const useComfy =
-    comfyKey !== undefined || COMFY_ALWAYS.includes(workflow as (typeof COMFY_ALWAYS)[number]);
 
   const userResources = data.resources ?? [];
   const sampler = data.sampler ?? 'Euler';
@@ -98,7 +88,7 @@ export const createStableDiffusionInput = defineHandler<
 
   const seed = data.seed ?? getRandomInt(quantity, maxRandomSeed) - quantity;
 
-  if (useComfy && comfyKey) {
+  if (comfyKey) {
     const isHires = workflow.includes('hires');
 
     const workflowData: Record<string, unknown> = {
@@ -155,7 +145,6 @@ export const createStableDiffusionInput = defineHandler<
     controlNets.length > 0 ||
     usesComfyEngine({
       ecosystem: data.ecosystem,
-      modelId: data.model.id,
       enhancedCompatibility: data.enhancedCompatibility,
     });
   const embeddings = userResources.filter((r) => r.model?.type === 'TextualInversion');

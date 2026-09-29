@@ -961,10 +961,10 @@ export const MODEL3D_ECOSYSTEM_KEYS = new Set<string>(
  *
  * NOTE: lookalikes that are EXTERNAL and must NOT be listed — `Flux2` (≠ Klein),
  * `Qwen2` (≠ Qwen, FAL), `Qwen3` (≠ Qwen, Alibaba DashScope), and all `Wan*`
- * (currently FAL). Keep this in sync when an
- * ecosystem's routing changes.
+ * (currently FAL). Keep this in sync when an ecosystem's routing changes.
  */
 export const SELF_HOSTED_ECOSYSTEM_KEYS = [
+  // Comfy*/Sd*CreateImageGenInput — one pair or input per family
   'SD1',
   'SDXL',
   'Pony',

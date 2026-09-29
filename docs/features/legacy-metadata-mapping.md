@@ -65,14 +65,15 @@ The historic format uses `params.process` and `params.workflow` instead of a sin
 #### Resolution Priority
 
 1. **Comfy steps** (`$type === 'comfy'`): `params.workflow` mapped through `COMFY_KEY_TO_WORKFLOW`
-2. **Already new format**: `params.workflow` contains `:` → used directly
+2. **New-format key**: `params.workflow` starting `image:` / `video:` → mapped back through `NEW_TO_OLD`
 3. **Process-based** (`params.process` or `params.workflow`): refined by ecosystem context (see below)
 4. **Source image detection**: presence of `params.sourceImage` or `params.images` → `img2img` refined by ecosystem
-5. **Fallback**: `txt2img`
+5. **Engine detection**: `params.engine` in `ENGINE_TO_BASE_MODEL` → `txt2vid`, or `img2vid` refined by image count
+6. **Fallback**: the first non-enhancement, non-utility workflow matching the baseModel's media type that the ecosystem supports (`txt2img` for images)
 
 #### Ecosystem-Aware Refinement
 
-When the base process is determined (step 3/4), it is refined based on the inferred `baseModel`. The mapper derives which ecosystems support which workflow variants from `workflowConfigs` (in `config/workflows.ts`) rather than maintaining hardcoded sets. This means adding a new ecosystem to a workflow config automatically updates the legacy mapping.
+When the base process is determined (step 3/4/5), it is refined based on the inferred `baseModel`. The mapper derives which ecosystems support which workflow variants from `workflowConfigs` (in `config/workflows.ts`) rather than maintaining hardcoded sets. This means adding a new ecosystem to a workflow config automatically updates the legacy mapping.
 
 The helper `ecosystemSupportsWorkflow(baseModel, workflowKey)` converts a baseModel key to its ecosystem ID via `ecosystemByKey`, then checks if that ID appears in the workflow config's `ecosystemIds`.
 

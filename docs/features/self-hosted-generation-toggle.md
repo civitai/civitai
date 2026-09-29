@@ -72,7 +72,7 @@ Mapping each input type to the ecosystem(s) whose handler produces it (router: `
 | `ComfyLtx23VideoGenInput` | `LTXV23`                                                                                                                   | `ltx.handler.ts`                                                                                                   |
 | `AceStepAudioInput`       | `Ace`                                                                                                                      | `ace-audio.handler.ts`                                                                                             |
 
-> **Note on `ComfyVideoGenInput`:** the literal type is **not produced by any handler today** — a grep finds only `Wan22ComfyVideoGenInput` (a Wan-specific subtype) in `wan.handler.ts`. **Wan currently routes entirely through FAL (external) and is out of scope.** So `ComfyVideoGenInput` maps to **no active self-hosted ecosystem** right now; it's reserved. The only self-hosted video ecosystems are `LTXV2` / `LTXV23`. If a generic comfy-video ecosystem is wired up later, mark it `selfHosted: true` then.
+> **Note on `ComfyVideoGenInput`:** the literal type is **not produced by any handler today** — a grep finds only `Wan22ComfyVideoGenInput` (a Wan-specific subtype) in `wan.handler.ts`. **Wan currently routes entirely through FAL (external) and is out of scope.** So `ComfyVideoGenInput` maps to **no active self-hosted ecosystem** right now; it's reserved. The only self-hosted video ecosystems are `LTXV2` / `LTXV23` / `LTXV25`. If a generic comfy-video ecosystem is wired up later, mark it `selfHosted: true` then.
 
 ### Traps — lookalike ecosystems that are EXTERNAL (must NOT be gated)
 
@@ -97,7 +97,7 @@ Add a declarative marker for self-hosted ecosystems in `src/shared/constants/bas
 - **(a)** A `selfHosted: true` flag on each ecosystem record, with a derived `SELF_HOSTED_ECOSYSTEMS: string[]` helper.
 - **(b)** A standalone `SELF_HOSTED_ECOSYSTEMS` constant set, maintained next to the handlers.
 
-Either way, also define `SELF_HOSTED_INPUT_TYPES` (the 8 names) used for **server-side enforcement** (see §5). The static ecosystem list is for **client UX only**; the server enforcement on the produced input type is the real security boundary (belt + suspenders, since the static list can drift).
+Either way, also define `SELF_HOSTED_INPUT_TYPES` (the types in the table above, plus each image family's own `Comfy*CreateImageGenInput`) used for **server-side enforcement** (see §5). The static ecosystem list is for **client UX only**; the server enforcement on the produced input type is the real security boundary (belt + suspenders, since the static list can drift).
 
 > **Decision 2 — RESOLVED: (a).** Per-ecosystem `selfHosted: true` flag on the ecosystem record, with a derived `SELF_HOSTED_ECOSYSTEMS` helper. No conditional markers needed.
 > @dev - we can go with (a)
@@ -106,7 +106,7 @@ Either way, also define `SELF_HOSTED_INPUT_TYPES` (the 8 names) used for **serve
 
 Mirror the existing `generationStatusSchema` (`src/server/schema/generation.schema.ts:227`). Reuse `generationStatusModeSchema` (`'enabled' | 'memberOnly' | 'disabled'`).
 
-> **Decision 3 — RESOLVED: new field on the existing `generationStatus` object.** Add `selfHostedMode` (+ `selfHostedMessage`, `selfHostedUpdatedBy`) to `generationStatusSchema`. Same Redis field (`generation:status`), write path mirrors `setGenerationStatus` (`generation.service.ts:250`).
+> **Decision 3 — RESOLVED: new field on the existing `generationStatus` object.** Add `selfHostedMode` (+ `selfHostedUpdatedBy`) to `generationStatusSchema`. (`selfHostedMessage` was planned here and not built — see As-built.) Same Redis field (`generation:status`), write path mirrors `setGenerationStatus` (`generation.service.ts:250`).
 > @dev - new field on the existing status object
 
 ### 3. Server: extend `getGenerationConfig`

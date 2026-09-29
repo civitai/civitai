@@ -23,6 +23,7 @@ Also check the `FLIPT_FEATURE_FLAGS` enum in [src/server/flipt/client.ts](../src
 | Flag         | Status                                                                                 |
 | ------------ | -------------------------------------------------------------------------------------- |
 | `imageIndex` | ✅ Removed — zero consumers                                                            |
+| `draftMode`  | ✅ Removed — image draft mode retired with `txt2img:draft`; zero consumers              |
 | `apiKeys`    | ❌ Restored — gates `ApiKeysCard` in [AccountPanes.tsx:92](../src/components/Account/AccountPanes.tsx#L92) and [LegacyAccountPage.tsx:62](../src/components/Account/LegacyAccountPage.tsx#L62) |
 | `oauthApps`  | ❌ Restored — gates `OAuthAppsCard` + `ConnectedAppsCard` in [AccountPanes.tsx:93-94](../src/components/Account/AccountPanes.tsx#L93) and [LegacyAccountPage.tsx:63-64](../src/components/Account/LegacyAccountPage.tsx#L63) |
 

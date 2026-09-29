@@ -21,8 +21,7 @@ export const createChromaInput = defineHandler<EcosystemData<'Chroma'>, [ImageGe
 
     if (!data.model) throw new Error('Model is required for Chroma imageGen workflows');
 
-    // The endpoint has no `embeddings` field and the picker still offers textual inversions, so
-    // they would have to ride in as loras — drop them instead.
+    // The endpoint has no `embeddings` field, so a textual inversion would ride in as a lora.
     const loras = resourcesToLoras(
       (data.resources ?? []).filter((r) => r.model?.type !== 'TextualInversion'),
       ctx.airs

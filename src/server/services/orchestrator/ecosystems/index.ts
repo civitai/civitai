@@ -350,6 +350,7 @@ async function createEcosystemStep(
 
   switch (ecosystem) {
     // =========================================================================
+    // Image Ecosystems
     // =========================================================================
 
     // SD Family
@@ -393,10 +394,6 @@ async function createEcosystemStep(
     // PonyV7
     case 'PonyV7':
       return createPonyV7Input(normalizedData, handlerCtx);
-
-    // =========================================================================
-    // Image Ecosystems - imageGen step type
-    // =========================================================================
 
     // Flux2
     case 'Flux2':
@@ -549,7 +546,7 @@ async function createEcosystemStep(
     }
 
     // =========================================================================
-    // Audio Ecosystems - aceStepAudio / miniMaxMusic3 step types
+    // Audio Ecosystems
     // =========================================================================
 
     case 'Ace':

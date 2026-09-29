@@ -1,10 +1,6 @@
 /** Flux family handler for the form-graph lane (Flux1 + FluxKrea). */
 
-import type {
-  ImageGenStepTemplate,
-  ImageJobNetworkParams,
-  PreprocessImageStepTemplate,
-} from '@civitai/client';
+import type { ImageGenStepTemplate, PreprocessImageStepTemplate } from '@civitai/client';
 import type {
   ComfyFlux1CreateImageGenInput,
   Flux1ProImageGenInput,
@@ -44,10 +40,10 @@ export const createFluxInput = defineHandler<
     cfgScale = 1;
   }
 
-  const additionalNetworks: Record<string, ImageJobNetworkParams> = {};
+  const loras: Record<string, number> = {};
   if (data.fluxMode !== 'pro' && 'resources' in data && data.resources?.length) {
     for (const resource of data.resources) {
-      additionalNetworks[ctx.airs.getOrThrow(resource.id)] = { strength: resource.strength };
+      loras[ctx.airs.getOrThrow(resource.id)] = resource.strength ?? 1;
     }
   }
 
@@ -91,11 +87,7 @@ export const createFluxInput = defineHandler<
     seed,
     quantity,
     outputFormat: data.outputFormat,
-    loras: Object.keys(additionalNetworks).length
-      ? Object.fromEntries(
-          Object.entries(additionalNetworks).map(([air, v]) => [air, v.strength ?? 1])
-        )
-      : undefined,
+    loras: Object.keys(loras).length ? loras : undefined,
     ...(controlNets.length ? { controlNets } : {}),
   };
 

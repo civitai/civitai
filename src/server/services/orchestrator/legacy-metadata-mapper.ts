@@ -619,8 +619,7 @@ export function mapDataToGraphInput(
     _transformations as Array<Record<string, unknown>>
   );
 
-  // For video workflows, pass draft through (image workflows consume it via resolveWorkflow).
-  // Also map legacy 'turbo' → 'draft' for old stored Wan data.
+  // Legacy Wan data stored this node as 'turbo'.
   const isVideoWorkflow =
     typeof workflow === 'string' &&
     ['txt2vid', 'img2vid', 'vid2vid'].some((prefix) => workflow.startsWith(prefix));
@@ -628,9 +627,14 @@ export function mapDataToGraphInput(
 
   // Draft pinned steps/cfgScale/sampler to values that only cohere with the draft LoRA, which
   // a remix strips (allInjectableResourceIds) — carried over, they bill the ordinary rate for
-  // an image that cannot come out right.
+  // an image that cannot come out right. An image draft is named by its WORKFLOW KEY and stores
+  // no `draft` field; only video stores the flag.
+  const incomingWorkflow =
+    typeof _wf === 'string' ? _wf : typeof _process === 'string' ? _process : '';
+  const wasImageDraft = !isVideoWorkflow && (incomingWorkflow.endsWith(':draft') || !!_draft);
+
   const passthrough: Record<string, unknown> = { ...rest };
-  if (!isVideoWorkflow && _draft) {
+  if (wasImageDraft) {
     delete passthrough.steps;
     delete passthrough.cfgScale;
     delete passthrough.sampler;
@@ -643,7 +647,6 @@ export function mapDataToGraphInput(
     aspectRatio,
     images,
     transformations: mappedTransformations,
-    // For video workflows, preserve draft (not consumed by resolveWorkflow)
     ...(videoDraft != null && { draft: !!videoDraft }),
     // Map legacy field names to graph node keys
     ...(openAITransparentBackground != null && { transparent: openAITransparentBackground }),

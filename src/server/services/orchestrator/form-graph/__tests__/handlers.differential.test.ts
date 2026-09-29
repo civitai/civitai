@@ -187,7 +187,7 @@ const CASES: Record<string, unknown>[] = [
     seed: 42,
     resources: [{ id: 555, baseModel: 'Flux.1 D', model: { type: 'LORA' }, strength: 0.7 }],
   },
-  // Enhanced compatibility rewrites textToImage engines in both lanes
+  // Enhanced compatibility: comfy engine instead of sdcpp
   {
     workflow: 'txt2img',
     ecosystem: 'SDXL',
@@ -820,8 +820,8 @@ async function bothLanes({
       )} — redirected, not testing the named handler`
     );
   }
-  // a retired or renamed workflow key migrates to txt2img, which turns a named case into a
-  // silent duplicate of another row — the ecosystem check above cannot see that.
+  // the ecosystem check above cannot see a MIGRATED key: a retired workflow parses to txt2img,
+  // silently duplicating another row.
   const parsedWorkflow = (parsed.data as { workflow?: string }).workflow;
   if (parsedWorkflow !== (expectWorkflow ?? input.workflow)) {
     throw new Error(
@@ -1156,8 +1156,6 @@ describe('the former textToImage families emit their specialised endpoints', () 
     expect(v2[0].input).not.toHaveProperty('embeddings');
   });
 
-  // Pre-cutover these reached the payload through getHiDreamInput's echoed list, which carries
-  // no AIR — so HiDream LoRAs were never sent at all.
   it('hidream sends its loras', async () => {
     const { v2 } = await bothLanes({
       workflow: 'txt2img',
@@ -1208,7 +1206,6 @@ describe('the former textToImage families emit their specialised endpoints', () 
     expect(v2[0].input).toMatchObject({ engine: 'comfy', embeddings: ['urn:air:test:222'] });
   });
 
-  // sdcpp has no controlNets field, so the engine choice here is forced rather than preferred.
   it('a controlnet forces the comfy engine even with enhancedCompatibility off', async () => {
     const { v1, v2 } = await bothLanes({
       workflow: 'txt2img',

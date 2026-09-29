@@ -42,7 +42,7 @@ export function deriveSelectorsFromModel(
   // replaces it with the locked default before its effect could see it, so no
   // switch happens there. Version SIBLINGS (LTXV23 on LTXV2, wan on wan) are
   // valid entries in the locked picker's own version list, so they re-pick the
-  // version branch — the lock does not apply. modelLocked comes from ecosystem defaults.
+  // version branch — the lock does not apply.
   if (
     current.ecosystem &&
     familyOf(modelEco) !== familyOf(current.ecosystem) &&

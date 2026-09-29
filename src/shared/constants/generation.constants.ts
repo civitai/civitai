@@ -25,7 +25,7 @@ import {
   getBaseModelMediaType,
   getResourceGenerationSupport,
 } from '~/shared/constants/basemodel.constants';
-import { ModelType } from '~/shared/utils/prisma/enums';
+import type { ModelType } from '~/shared/utils/prisma/enums';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 import { findClosest, getRatio } from '~/utils/number-helpers';
 
@@ -187,20 +187,6 @@ export const draftInjectableResources = [
     }),
   } as InjectableResource,
 ];
-
-const SD1DraftResource = {
-  id: 424706,
-  baseModel: 'SD 1.5',
-  strength: 1,
-  model: { id: 195519, type: ModelType.LORA },
-};
-
-const SDXLDraftResource = {
-  id: 391999,
-  baseModel: 'SDXL 1.0',
-  strength: 1,
-  model: { id: 350450, type: ModelType.LORA },
-};
 
 export const allInjectableResourceIds = [...draftInjectableResources].map((x) => x.id);
 
@@ -557,7 +543,7 @@ export const fluxProAirId = 922358;
 export const ponyV7Air = 'urn:air:auraflow:checkpoint:civitai:1901521@2152373';
 
 // Ecosystems that expose the `enhancedCompatibility` toggle — txt2img only.
-// Off (the default) runs sdcpp; on runs comfyui. Pony/Illustrious/NoobAI are SDXL derivatives and
+// Off (the default) runs sdcpp; on runs comfy. Pony/Illustrious/NoobAI are SDXL derivatives and
 // stay on sdcpp with SDXL.
 export const EXPERIMENTAL_MODE_SUPPORTED_MODELS: string[] = [
   'SD1',
@@ -566,10 +552,6 @@ export const EXPERIMENTAL_MODE_SUPPORTED_MODELS: string[] = [
   'Illustrious',
   'NoobAI',
 ];
-
-// Always comfyui, no toggle. Not workflow-scoped: these have no sdcpp support left, so every
-// textToImage step they emit belongs on comfyui.
-export const COMFY_ONLY_ECOSYSTEMS: string[] = ['Flux1', 'FluxKrea'];
 
 // Ecosystems that qualify for the 2-for-1 quantity bonus + footer alert. Historical name: membership
 // is a pricing decision, not "runs on sdcpp" (Flux2Klein submits 'flux2').
@@ -581,22 +563,16 @@ export const SDCPP_SUPPORTED_ECOSYSTEMS: string[] = [
   'Flux2Klein_4B_base',
 ];
 
-// Flux Pro 1.1 / Ultra: versions inside comfy-only Flux1 that keep their handler's engine rather
-// than being forced onto comfyui.
+// Flux Pro 1.1 / Ultra: excluded from the sdcpp 2-for-1 bonus and its footer alert.
 export const SDCPP_EXCLUDED_MODEL_IDS: number[] = [fluxProAirId, fluxUltraAirId];
 
-/** Flux Ultra and Flux Pro keep the engine their handler chose, despite Flux1 being comfy-only. */
 export function usesComfyEngine({
   ecosystem,
-  modelId,
   enhancedCompatibility,
 }: {
   ecosystem: string;
-  modelId?: number;
   enhancedCompatibility?: boolean;
 }): boolean {
-  if (modelId !== undefined && SDCPP_EXCLUDED_MODEL_IDS.includes(modelId)) return false;
-  if (COMFY_ONLY_ECOSYSTEMS.includes(ecosystem)) return true;
   return EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(ecosystem) && enhancedCompatibility === true;
 }
 
