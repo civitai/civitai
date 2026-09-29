@@ -364,6 +364,18 @@ export interface DatasetItem {
   caption: string;
 }
 
+/** One epoch's trace stream. `done` once that epoch's weights have landed, i.e. its trace is complete. */
+export interface EpochTrace {
+  epoch: number;
+  url: string;
+  done: boolean;
+}
+
+/** The epoch training now, or -1 once every epoch is done. The orchestrator pre-creates ALL epoch entries
+ *  up front, each with a traceUrl, and marks them done as weights land — so it's the LOWEST-numbered one
+ *  without finished weights. Later epochs' traces aren't written until their turn. */
+export const liveTraceIndex = (traces: EpochTrace[]) => traces.findIndex((t) => !t.done);
+
 /** A single training run's detail, for the Open screen. */
 export interface TrainingDetail {
   workflowId: string;
@@ -395,6 +407,8 @@ export interface TrainingDetail {
   /** The currently-training epoch's tail-able trace stream (step progress + logs), when tracing is on.
    *  Absent unless a run is mid-epoch. */
   liveTraceUrl?: string;
+  /** Every epoch's trace, in epoch order. Empty when the run didn't request tracing. */
+  traces: EpochTrace[];
   /** Only epochs that have actually produced content (a sample or downloadable weights). A still-training
    *  run's not-yet-produced epochs are excluded, so the page shows a processing state rather than empty cards. */
   epochs: TrainingDetailEpoch[];
@@ -444,13 +458,14 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
       };
     });
 
-  // The live trace is the currently-training epoch's stream. The orchestrator pre-creates ALL epoch entries
-  // up front, each with a traceUrl, and marks them done as weights land — so the epoch training *now* is the
-  // LOWEST-numbered one without finished weights. (Picking the highest tailed the final epoch's stream, which
-  // stays empty until the run is nearly over — the "blank until ~80%" bug.) Absent once every epoch is done.
-  const liveTraceUrl = [...(output.epochs ?? [])]
-    .filter((e) => typeof e.traceUrl === 'string' && !epochModel(e)?.available)
-    .sort((a, b) => (a.epochNumber ?? Infinity) - (b.epochNumber ?? Infinity))[0]?.traceUrl;
+  const traces: EpochTrace[] = [...(output.epochs ?? [])]
+    .sort((a, b) => (a.epochNumber ?? Infinity) - (b.epochNumber ?? Infinity))
+    .flatMap((e) =>
+      typeof e.traceUrl === 'string' && e.traceUrl
+        ? [{ epoch: e.epochNumber ?? -1, url: e.traceUrl, done: !!epochModel(e)?.available }]
+        : []
+    );
+  const liveTraceUrl = traces[liveTraceIndex(traces)]?.url;
 
   const dataset: DatasetItem[] = (input.trainingData?.items ?? [])
     .filter(
@@ -473,7 +488,8 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
     prompts,
     plannedEpochs: input.epochs,
     progress,
-    liveTraceUrl: liveTraceUrl ?? undefined,
+    liveTraceUrl,
+    traces,
     epochs,
     dataset,
     sourceWorkflowId:
@@ -567,6 +583,7 @@ export const SAMPLE_DETAIL: TrainingDetail = {
     modelKey: `preview-epoch-${n}`,
     sizeBytes: 36_000_000 + n * 1024,
   })),
+  traces: [],
   // Preview dataset: picsum stand-ins keyed to bogus airs (the proxy is never hit in dev preview).
   dataset: [0, 1, 2, 3, 4, 5].map((i) => ({
     air: `https://picsum.photos/seed/ts-ds-${i}/300`,

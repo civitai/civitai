@@ -11,6 +11,7 @@
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "typecheck": "svelte-check --tsconfig ./tsconfig.json",
     "lint": "eslint . --ext .js,.ts,.svelte --cache --cache-strategy metadata",
+    "test": "vitest run",
     "build:element": "vite build --config vite.element.config.ts"
   },
   "dependencies": {
