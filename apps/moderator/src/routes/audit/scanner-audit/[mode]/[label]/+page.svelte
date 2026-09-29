@@ -110,8 +110,10 @@
       // Sheet primitive or in bits-ui's dialog stops keydown propagation -- that dialog handles
       // only SPACE and ENTER -- so without this guard, scrolling an open overlay with the arrow
       // keys silently submits a verdict on the item behind it. Any new overlay on this page MUST
-      // join `overlayOpen`; `__tests__/keydown-overlay-guard.test.ts` pins every `Sheet
-      // bind:open` against that expression and fails if the set grows OR shrinks.
+      // join `overlayOpen`. `__tests__/keydown-overlay-guard.test.ts` enforces that only for a
+      // `bind:open={ident}` binding; an uncontrolled overlay, or one bound to a member
+      // expression, is invisible to it and leaves this handler unguarded. Do not rely on the test
+      // to notice.
       if (overlayOpen) return;
       if (e.key === 'ArrowLeft') (e.preventDefault(), submitAnswer(false));
       else if (e.key === 'ArrowRight') (e.preventDefault(), submitAnswer(true));
