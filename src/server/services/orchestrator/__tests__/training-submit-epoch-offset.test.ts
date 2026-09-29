@@ -7,7 +7,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * every future continuation silently unshifted.
  */
 
-vi.mock('@civitai/client', () => ({ handleError: vi.fn() }));
 vi.mock('~/server/services/orchestrator/workflows', () => ({ submitWorkflow: vi.fn() }));
 vi.mock('~/server/services/training.service', () => ({
   getTrainingServiceStatus: vi.fn(async () => ({ available: true, blockedModels: [] })),
