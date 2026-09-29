@@ -102,16 +102,8 @@ export const MONEY_MARKERS = [
 export const MONEY_IDENTIFIER = /\b((?:reserve|charge|refund|settle|debit|credit)[A-Z]\w*)\(/g;
 
 /**
- * 🔴 EVERY SPELLING THAT COUNTS AS "THE VERIFIED PRIVATE-RUN CLAIM WAS THREADED", in ONE
- * place because TWO ledgers read it and they must agree.
- *
- * ── WHY IT LIVES HERE ───────────────────────────────────────────────────────
- * It was declared twice — in `no-unthreaded-private-run-claim.test.ts` with two members and
- * in `no-unmarked-private-run-invocation.test.ts` with three — over the SAME router file.
- * That is the exact drift this module exists to prevent, and it had a concrete failure: a
- * future router writer using the destructured spelling passes the second ledger's per-site
- * check, is NOT counted by the first ledger's exact total, and the first ledger then fails
- * with "add it to LEDGER" — a red test pointing at the wrong fix. One list, one meaning.
+ * 🔴 THE THREE WAYS THE VERIFIED PRIVATE-RUN CLAIM REACHES A CONSUMER, each named once so
+ * two ledgers can compose DIFFERENT accepted sets from ONE definition of each string.
  *
  * ── PINNED AS WHOLE STRINGS, NOT AS THE FIELD NAME ──────────────────────────
  * `toContain('privateRun')` would be satisfied by `privateRun: false`, `privateRun: true`,
@@ -119,29 +111,64 @@ export const MONEY_IDENTIFIER = /\b((?:reserve|charge|refund|settle|debit|credit
  * (or wrongly enable it) while reading as correctly wired. The claim is the only value an
  * RS256 signature has vouched for.
  *
- * ── WHY THREE, AND WHY THEY CANNOT DOUBLE-COUNT ─────────────────────────────
- * The verified claim reaches its consumers three ways: as a local `claims`, on an options
- * bag (`opts.claims`), and — on the storage path only — destructured off the resolver that
- * performed the verification, because those two writers never see the claims object at all.
- * No member is a substring of another, which is what lets a caller SUM occurrences of all
- * three and still get an exact total; that property is pinned in this module's own test
- * rather than restated in each ledger.
+ * ── AND A SINGLE SHARED *SET* WAS THE WRONG FIX, WHICH IS WHY THERE ARE TWO ─
+ * ⚠️ These were first unified into one three-member list, on the reasoning that two ledgers
+ * reading the same router text must agree. They must agree on what each STRING MEANS; they
+ * must NOT agree on which strings are ADMISSIBLE, because their populations differ. The
+ * router ledger governs sites where the claims object is always in scope, so admitting the
+ * bare-local spelling there LOOSENED the stricter of the two guards: an arbitrary local
+ * named `privateRun`, with no provenance requirement, would have satisfied its per-site
+ * check. Zero instances existed, so this was the hazard the next router arm turns into a
+ * bug rather than a live defect — found by a round-2 delta audit of the de-duplication
+ * itself.
+ *
+ * ── WHY THEY CANNOT DOUBLE-COUNT ────────────────────────────────────────────
+ * No member is a substring of another, which is what lets a caller SUM occurrences across a
+ * set and still get an exact total. Pinned in this module's own test.
  */
-export const PRIVATE_RUN_THREADED_SPELLINGS = [
-  'privateRun: claims.privateRun === true',
-  'privateRun: opts.claims.privateRun === true',
-  'privateRun: privateRun === true',
+export const THREADED_FROM_CLAIMS = 'privateRun: claims.privateRun === true';
+
+/** The same, where the verified claims arrive on an options bag rather than a local. */
+export const THREADED_FROM_OPTS_CLAIMS = 'privateRun: opts.claims.privateRun === true';
+
+/**
+ * 🔴 THE LOOSEST SPELLING, ADMISSIBLE IN EXACTLY ONE PLACE. The two storage writers never
+ * see the claims object — the token is verified once, by the resolver that hands them their
+ * context — so they can only thread a local. That local's PROVENANCE is therefore ledgered
+ * separately (the resolver must derive it from `claims.privateRun` on every return branch),
+ * because this string alone says nothing about where the value came from.
+ */
+export const THREADED_FROM_VERIFIED_LOCAL = 'privateRun: privateRun === true';
+
+/**
+ * What the ROUTER ledger accepts. Deliberately EXCLUDES the bare-local spelling: every
+ * governed router site has the claims object in scope, so a local there would be a
+ * provenance-free value nothing constrains.
+ */
+export const ROUTER_THREADED_SPELLINGS = [THREADED_FROM_CLAIMS, THREADED_FROM_OPTS_CLAIMS] as const;
+
+/**
+ * What the CROSS-FILE ledger accepts — the router's two, plus the storage path's local.
+ * Strictly a superset, so the router ledger can never be the more permissive of the two.
+ */
+export const ALL_THREADED_SPELLINGS = [
+  ...ROUTER_THREADED_SPELLINGS,
+  THREADED_FROM_VERIFIED_LOCAL,
 ] as const;
 
 /**
- * Count occurrences of every accepted threading spelling across a whole source text.
+ * Count occurrences of the given accepted spellings across a whole source text.
  *
- * 🔴 EXACT ONLY BECAUSE THE SPELLINGS ARE PAIRWISE NON-OVERLAPPING — see the constant's
- * docblock. A caller asserting an exact total against a ledger depends on that, so it is
- * proven in this module's test, not assumed at each call site.
+ * 🔴 THE SET IS A PARAMETER, NOT A DEFAULT, so a caller cannot silently get the wider one.
+ * A ledger asserting an EXACT total against its own population must count exactly the
+ * spellings that population is allowed to use; counting a wider set would make the total
+ * pass for a site the per-site check rejects.
+ *
+ * 🔴 EXACT ONLY BECAUSE THE SPELLINGS ARE PAIRWISE NON-OVERLAPPING — proven in this
+ * module's test, not assumed at each call site.
  */
-export function countPrivateRunThreading(source: string): number {
-  return PRIVATE_RUN_THREADED_SPELLINGS.reduce((n, t) => n + (source.split(t).length - 1), 0);
+export function countPrivateRunThreading(source: string, spellings: readonly string[]): number {
+  return spellings.reduce((n, t) => n + (source.split(t).length - 1), 0);
 }
 
 /** Every money-primitive identifier `source` calls, bare (no paren), sorted. */

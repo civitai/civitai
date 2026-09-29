@@ -2,7 +2,8 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
 import {
-  PRIVATE_RUN_THREADED_SPELLINGS,
+  ROUTER_THREADED_SPELLINGS,
+  THREADED_FROM_CLAIMS,
   blankComments,
   callSites,
   countPrivateRunThreading,
@@ -98,7 +99,7 @@ const ROUTER = path.join(process.cwd(), 'src/server/routers/blocks.router.ts');
  * correctly wired. The claim is the ONLY legitimate source: it is the only value
  * an RS256 signature has vouched for.
  */
-const THREADED = 'privateRun: claims.privateRun === true';
+const THREADED = THREADED_FROM_CLAIMS;
 
 /**
  * 🔴 THE ACCEPTED SPELLINGS ARE IMPORTED, NOT RE-DECLARED HERE, and that is a correction.
@@ -109,8 +110,12 @@ const THREADED = 'privateRun: claims.privateRun === true';
  * `routerSourceRegions`, where the shared ledger vocabulary already lives; the non-overlap
  * property the exact total depends on is proven in that module's own test.
  */
-const THREADED_SPELLINGS = PRIVATE_RUN_THREADED_SPELLINGS;
-const countThreaded = countPrivateRunThreading;
+// 🔴 THE *ROUTER* SET, NOT THE UNION OF BOTH LEDGERS'. Every governed site here has the
+// claims object in scope, so the bare-local spelling the storage path needs is deliberately
+// NOT admissible — admitting it would make this, the stricter of the two ledgers, the more
+// permissive one. A round-2 audit of the de-duplication itself caught that.
+const THREADED_SPELLINGS = ROUTER_THREADED_SPELLINGS;
+const countThreaded = (src: string) => countPrivateRunThreading(src, THREADED_SPELLINGS);
 
 /**
  * The money call sites this ledger governs, with why each one is in the set.

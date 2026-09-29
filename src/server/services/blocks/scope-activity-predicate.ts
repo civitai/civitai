@@ -79,9 +79,31 @@ export const PRIVATE_RUN_INVOCATION_SOURCE = 'private-run';
  * type docs every future reader of the column sees.
  */
 export type BlockScopeInvocationSource =
-  | 'app-block'
-  | 'external-oauth'
+  | BlockScopeInvocationInputSource
   | typeof PRIVATE_RUN_INVOCATION_SOURCE;
+
+/**
+ * 🔴 THE SUBSET A CALLER MAY *PASS* — the two token populations that identify themselves,
+ * and deliberately NOT the private-run marker.
+ *
+ * ⚠️ THIS SPLIT IS A CORRECTION, AND WHAT IT FIXES WAS INTRODUCED BY THE FIX FOR SOMETHING
+ * ELSE. The writer's input field was widened from the two live values to the full
+ * three-value union so that nothing had to annotate a local `string`. That made
+ * `'private-run'` SETTABLE through the input field — a caller could write the marker with no
+ * claim behind it — while the docblock on that field asserted the opposite. Before the
+ * widening it was a compile error; the widening created the hole, and the comment described
+ * the pre-widening world. Found by a round-2 delta audit of the fix itself.
+ *
+ * The consequence runs in the OVER-FILTERING direction this file calls the more expensive
+ * failure: a row hidden from its owner's analytics with no private run behind it. It also
+ * dissolves the "one mapping, one home" invariant the writer rests on, because the marker
+ * would have two producers.
+ *
+ * So: INPUTS take this, the ROW takes the full union, and the only route to the marker stays
+ * the verified claim — enforced at runtime as well, because a type declaration is not a code
+ * path.
+ */
+export type BlockScopeInvocationInputSource = 'app-block' | 'external-oauth';
 
 /**
  * 🔴 THE ONE DEFINITION of "exclude private-run activity", for every OWNER-VISIBLE read of

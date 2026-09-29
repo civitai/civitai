@@ -38,10 +38,23 @@ type Row = {
 
 const OWNER_ID = 4242;
 const OWNED_ID = 'apb_analytics_fixture';
+/** A SECOND owned app, so the raw read's `IN (ownedIds)` is exercised rather than assumed. */
+const OWNED_ID_2 = 'apb_analytics_fixture_2';
+/**
+ * 🔴 AN APP THE CALLER DOES NOT OWN, with a row in range. The raw `count(DISTINCT user_id)`
+ * statement's ownership bound was HARDCODED in the shim as `r.appBlockId === OWNED_ID`, so
+ * nothing measured it — and swapping that statement's leading `AND` for an `OR` survived the
+ * whole suite while making one owner's `activeUsers` every distinct user of every app in the
+ * table. This row is what turns that from a substring claim into a measurement.
+ */
+const FOREIGN_ID = 'apb_someone_elses_app';
+const FOREIGN_VIEWER = 51001;
 const MODERATOR_ID = 77001;
 const VIEWER_A = 31337;
 const VIEWER_B = 31338;
 const IN_RANGE = new Date('2026-06-10T12:00:00Z');
+const RANGE_FROM = new Date('2026-06-01T00:00:00Z');
+const RANGE_TO = new Date('2026-06-20T00:00:00Z');
 
 /** The marker value, re-declared here ONLY so a wrong constant in the service is visible. */
 const MARKER = 'private-run';
@@ -204,6 +217,15 @@ function wireMocks() {
   mockDbRead.$queryRaw.mockImplementation(async (arg: any) => {
     const sql: string = arg?.__sql ?? '';
     if (!sql.includes('block_scope_invocations')) return [];
+    // 🔴 THE OWNERSHIP BOUND IS READ FROM THE STATEMENT'S OWN JOINED IDS, not hardcoded.
+    // The `Prisma.join(ownedIds)` shim yields `{ __join: [...] }`, so the ids the service
+    // actually restricted to are recoverable — which is what lets the foreign-app row below
+    // be a real control on the scope rather than a row nobody ever counted.
+    const joined = (arg.__values as unknown[]).find(
+      (v): v is { __join: unknown[] } =>
+        typeof v === 'object' && v !== null && Array.isArray((v as { __join?: unknown }).__join)
+    );
+    const ownedIds = (joined?.__join ?? []) as string[];
     // Mirror the real statement: always range-bounded and app-bounded; exclude a `source`
     // value ONLY when the statement actually names one, and only the value it binds.
     // 🔴 BOUND BY POSITION, NOT "the first string in the list". The shim's `__sql` joins
@@ -218,7 +240,11 @@ function wireMocks() {
         ? undefined
         : (arg.__values as unknown[])[sql.slice(0, at + marker.length).split('?').length - 1];
     const visible = rows.filter(
-      (r) => r.appBlockId === OWNED_ID && (excluded === undefined || r.source !== excluded)
+      (r) =>
+        ownedIds.includes(r.appBlockId) &&
+        r.invokedAt >= RANGE_FROM &&
+        r.invokedAt <= RANGE_TO &&
+        (excluded === undefined || r.source !== excluded)
     );
     return [{ value: BigInt(new Set(visible.map((r) => r.userId)).size) }];
   });
@@ -240,8 +266,8 @@ const analytics = () =>
   getMyAppAnalytics({
     appBlockId: OWNED_ID,
     userId: OWNER_ID,
-    from: new Date('2026-06-01T00:00:00Z'),
-    to: new Date('2026-06-20T00:00:00Z'),
+    from: RANGE_FROM,
+    to: RANGE_TO,
   });
 
 describe('owner-visible engagement analytics exclude private-run activity', () => {
@@ -357,6 +383,44 @@ describe('owner-visible engagement analytics exclude private-run activity', () =
     // the day of a review is itself a disclosure. A filtered-to-empty app must be
     // indistinguishable from an app with genuinely no activity.
     expect(a.notOwned).toBe(false);
+  });
+
+  it("[REG] the distinct-user read counts only the OWNER'S apps, in range", async () => {
+    // 🔴 THE CONTROL FOR THE WORST MUTANT IN THIS SEGMENT. Swapping the raw statement's
+    // leading `AND` for an `OR` leaves the source predicate's TEXT intact, and Postgres
+    // precedence then makes the ownership and range restriction OPTIONAL — one owner's
+    // `activeUsers` becomes every distinct user of every app in the table. Cross-tenant, i.e.
+    // strictly worse than the leak this PR closes. It survived the whole suite while the
+    // shim HARDCODED the ownership bound as `appBlockId === OWNED_ID`; the shim now reads
+    // the ids the statement actually joined, so these rows are a real control on the scope.
+    rows = [
+      ...ORDINARY_ROWS,
+      // An app the caller does not own at all.
+      { ...ORDINARY_ROWS[0], appBlockId: FOREIGN_ID, userId: FOREIGN_VIEWER },
+      // Out of range on the requested app: the range bound must still apply.
+      { ...ORDINARY_ROWS[0], userId: 51002, invokedAt: new Date('2026-05-01T00:00:00Z') },
+    ];
+    const a = await analytics();
+    // The two distinct viewers on the requested app, and nothing else.
+    expect(a.engagement.activeUsers).toBe(2);
+  });
+
+  it('[REG] the distinct-user read spans EVERY app the caller owns, not just one', async () => {
+    // The other half of the same bound, and the reason `OWNED_ID_2` exists: the statement
+    // restricts to `IN (ownedIds)`, so a shim comparing against a single id would pass a
+    // mutant that narrowed the join. Called with no `appBlockId`, so the owned SET is used.
+    mockDbRead.appBlock.findMany.mockResolvedValue([
+      { id: OWNED_ID, manifest: { page: { path: '/' } } },
+      { id: OWNED_ID_2, manifest: { page: { path: '/' } } },
+    ]);
+    rows = [
+      ...ORDINARY_ROWS,
+      { ...ORDINARY_ROWS[0], appBlockId: OWNED_ID_2, userId: 51003 },
+      { ...ORDINARY_ROWS[0], appBlockId: FOREIGN_ID, userId: FOREIGN_VIEWER },
+    ];
+    const a = await getMyAppAnalytics({ userId: OWNER_ID, from: RANGE_FROM, to: RANGE_TO });
+    // Both owned apps' viewers, and not the foreign one.
+    expect(a.engagement.activeUsers).toBe(3);
   });
 
   it('[REG] the distinct-user exclusion is bound to the MARKER, not to some other value', async () => {

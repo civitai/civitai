@@ -17,6 +17,7 @@ import { Prisma } from '@prisma/client';
 import {
   GLOBAL_SCOPE_ACTIVITY_OR,
   PRIVATE_RUN_INVOCATION_SOURCE,
+  type BlockScopeInvocationInputSource,
   type BlockScopeInvocationSource,
 } from '~/server/services/blocks/scope-activity-predicate';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -1332,12 +1333,14 @@ export async function recordScopeInvocation(opts: {
    * on this. Omitting it lets the DB column DEFAULT ('app-block') apply, so the
    * existing block-token call sites write a byte-identical row.
    *
-   * ⚠️ The third value, `'private-run'`, is NOT settable through this field — it is
-   * derived from the `privateRun` claim below, so the mapping has one home. It is in the
-   * union only so `BlockScopeInvocationSource` is the whole value space of the column and
-   * nothing has to widen to `string` to express it.
+   * 🔴 THE MARKER IS NOT IN THIS TYPE, AND THAT IS THE POINT. `'private-run'` is derived
+   * from the verified `privateRun` claim below, so the claim→value mapping has exactly one
+   * home. An earlier revision typed this field with the column's FULL three-value union —
+   * which made the marker settable here, with no claim behind it, while this very paragraph
+   * asserted it was not. The column's whole value space is `BlockScopeInvocationSource`;
+   * what a CALLER may pass is this narrower half.
    */
-  source?: BlockScopeInvocationSource;
+  source?: BlockScopeInvocationInputSource;
   scope: string;
   endpoint: string;
   statusCode: number;
@@ -1407,8 +1410,28 @@ export async function recordScopeInvocation(opts: {
   // column's value space — and this module's sibling leaf records that exact lesson
   // (a looser annotation let an `appBlokId` typo typecheck at zero errors). The `data`
   // object below is bridge-cast, so this annotation is the last place a typo can be caught.
+  //
+  // 🔴 AND THE VERIFIED CLAIM IS THE *ONLY* ROUTE TO THE MARKER, ENFORCED AT RUNTIME AND NOT
+  // ONLY BY THE TYPE. Narrowing the input type to exclude `'private-run'` makes the compiler
+  // refuse an in-repo caller — proven, `TS2322` — but A TYPE DECLARATION IS NOT A CODE PATH:
+  // a cast, a value crossing a `JSON.parse`, or the next widening of that type all reach the
+  // runtime, and this field's type had ALREADY been widened once. A behavioural case caught
+  // exactly this and was RED until the line below existed.
+  //
+  // The fallback is `undefined`, i.e. an ORDINARY row — the safe direction, because the cost
+  // of a wrongly-MARKED row is the owner's real usage silently vanishing from their own
+  // dashboard, which this module calls the more expensive failure.
+  //
+  // ⚠️ THE `as string` IS THE LOAD-BEARING PART, NOT NOISE. Without it TypeScript refuses the
+  // comparison outright — `TS2367: … have no overlap` — because the narrowed input type
+  // already excludes the marker. That error is the compiler being RIGHT about the type and
+  // WRONG about the runtime: the only values that can reach here carrying the marker are
+  // precisely the ones that got past the type, which is what this line exists for. Widening
+  // for the comparison is how the check survives its own type guarantee.
+  const passedSource: BlockScopeInvocationInputSource | undefined =
+    (opts.source as string | undefined) === PRIVATE_RUN_INVOCATION_SOURCE ? undefined : opts.source;
   const sourceForRow: BlockScopeInvocationSource | undefined =
-    opts.privateRun === true ? PRIVATE_RUN_INVOCATION_SOURCE : opts.source;
+    opts.privateRun === true ? PRIVATE_RUN_INVOCATION_SOURCE : passedSource;
   try {
     // Build the row conditionally so an `'app-block'` call site writes a
     // BYTE-IDENTICAL row to the pre-unification shape (no `oauthClientId` /

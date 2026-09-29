@@ -2,7 +2,7 @@ import { readFileSync, statSync, globSync } from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
 import {
-  PRIVATE_RUN_THREADED_SPELLINGS,
+  ALL_THREADED_SPELLINGS,
   blankComments,
   callSites,
   topLevelPropertyText,
@@ -89,7 +89,11 @@ const OPENER = 'recordScopeInvocation({';
  * ledgers' exact totals rest on (no member is a substring of another) is proven in that
  * module's own test rather than restated in each consumer.
  */
-const THREADED_SPELLINGS = PRIVATE_RUN_THREADED_SPELLINGS;
+// The WIDER set: the router's two plus the storage path's verified local, whose provenance
+// is ledgered separately below because the string alone says nothing about where the value
+// came from. A strict superset of the router ledger's set, so that ledger can never be the
+// more permissive of the two.
+const THREADED_SPELLINGS = ALL_THREADED_SPELLINGS;
 
 /**
  * Every file that writes a `block_scope_invocations` row, with the site count and why the
@@ -158,10 +162,16 @@ const PREDICATE_MODULE = 'src/server/services/blocks/scope-activity-predicate.ts
  * path with nothing red. A review lane found it by mutation; no assertion could have.
  *
  * So the local's PROVENANCE is ledgered here: the resolver must derive it from the verified
- * claim on every return path, and the two writers must take it from that resolver rather
- * than from anything else. Behavioural coverage of the same seam lives in
- * `apps/__tests__/app-storage.private-run-marker.test.ts`; this half is what fails when a
- * return path is added or re-pointed.
+ * claim on every return path, and each writer must take it from that resolver rather than
+ * from anything else.
+ *
+ * ⚠️ AN EARLIER REVISION OF THIS PARAGRAPH CITED A BEHAVIOURAL SUITE AT
+ * `apps/__tests__/app-storage.private-run-marker.test.ts` THAT DOES NOT EXIST, which is the
+ * worst kind of sentence to leave in a guard: it reads as a reassurance that the other half
+ * is covered and stops the next person looking. It is not covered behaviourally — both
+ * writers sit behind a real Postgres client and a provisioner, so reaching them needs a
+ * fixture this segment does not have. This structural ledger is the WHOLE coverage of the
+ * storage seam, and that is stated rather than implied.
  */
 const STORAGE_CARRIER = {
   file: 'src/server/services/apps/app-storage.service.ts',
@@ -169,6 +179,19 @@ const STORAGE_CARRIER = {
   resolver: 'async function resolveStorageContext',
   /** How many of its return statements must carry the claim — one per resolve branch. */
   returns: 2,
+  /**
+   * The two writers, BY NAME. 🔴 Naming them is the correction: the first version of the
+   * consumer-side assertion counted `'} = await resolveStorageContext('` file-wide and
+   * required at least 2 — which the three READ paths (`get`, `list`, `getQuota`) satisfy on
+   * their own, because both WRITERS wrap their destructure differently. So the assertion's
+   * stated relationship was asserted about nothing, and would have stayed green with both
+   * writers re-pointed at a local. It also moved with a pure Prettier reformat, hidden
+   * behind a `>=`. Per-writer regions cannot do either.
+   */
+  writers: [
+    'export async function setAppStorageValue',
+    'export async function deleteAppStorageValue',
+  ],
 } as const;
 
 /** The owner-visible reads that must carry the exclusion, and how many of them there are. */
@@ -211,17 +234,50 @@ function callCount(source: string): number {
   return total - decls;
 }
 
-function discoverWriterFiles(): string[] {
+/**
+ * 🔴 THE COMPLETE `privateRun` PROPERTY VALUES in a chunk of source, so a check can require
+ * one to be EXACTLY an accepted spelling rather than merely to START with one.
+ *
+ * ⚠️ THIS EXISTS BECAUSE A SUBSTRING TEST LEFT THE ROUND-1 LEAK WALKABLE. Every threading
+ * assertion used `includes(spelling)`, so
+ * `privateRun: claims.privateRun === true && claims.reviewRunForReal === true` counted and
+ * passed at every site — including the storage resolver whose two mutants round 1 closed
+ * "by name". `&& someFlag` is not contrived: these docblocks repeatedly say the remaining
+ * rails must close "before the flag is enabled", and an ANDed gate is exactly how someone
+ * would stage that. Neither the count nor the `not.toContain('privateRun: false')` negative
+ * fires on it. Matching the whole RHS is what closes the class rather than one instance.
+ *
+ * The RHS ends at the first `,` `}` or newline, which is the shape every site is written in
+ * (Prettier guarantees the trailing comma). A value that somehow spans further is reported
+ * as not-an-accepted-spelling, i.e. it fails closed.
+ */
+function privateRunValues(source: string): string[] {
+  return [...source.matchAll(/privateRun:\s*([^,}\n]+)/g)].map((m) => m[1].trim());
+}
+
+/** Does this chunk carry a `privateRun` property whose WHOLE value is an accepted spelling? */
+function hasExactThreading(source: string): boolean {
+  return privateRunValues(source).some((v) =>
+    THREADED_SPELLINGS.some((t) => t === `privateRun: ${v}`)
+  );
+}
+
+function discoverWriterFiles(): { files: string[]; scanned: number; found: string[] } {
   const files = globSync('src/**/*.{ts,tsx}', { cwd: process.cwd() });
   const found: string[] = [];
+  let scanned = 0;
   for (const rel of files) {
     const file = rel.replace(/\\/g, '/');
     if (file.includes('/__tests__/') || /\.(test|spec)\.tsx?$/.test(file)) continue;
     const abs = path.join(process.cwd(), file);
     if (!statSync(abs, { throwIfNoEntry: false })?.isFile()) continue;
+    scanned += 1;
     if (callCount(blankComments(readFileSync(abs, 'utf8'))) > 0) found.push(file);
   }
-  return found.sort();
+  // 🔴 RETURNS ITS OWN INSTRUMENTATION, not just the answer. The set equality below compares
+  // MATCHES and therefore cannot tell a whole-tree walk from a subtree that happens to
+  // contain the ledgered five; the scanned count can.
+  return { files, scanned, found: found.sort() };
 }
 
 describe('every block_scope_invocations writer carries the private-run marker', () => {
@@ -233,16 +289,42 @@ describe('every block_scope_invocations writer carries the private-run marker', 
     }
   });
 
-  it('[INV] the walk finds writer files at all (positive control for the discovery)', () => {
-    // 🔴 THE CONTROL THAT MUST COME BEFORE THE SET COMPARISON. If `globSync` matched nothing
-    // — a wrong cwd, a wrong pattern, an `fs.globSync` that is not available — the discovered
-    // set would be EMPTY, the comparison below would then be "[] vs LEDGER" and would fail
-    // for the wrong reason, or worse, a future refactor comparing only one direction would
-    // pass vacuously. A floor well under the real count, so ordinary growth never trips it.
-    expect(discoverWriterFiles().length).toBeGreaterThanOrEqual(LEDGER.length);
+  it('[INV] the walk SCANNED the tree, not a subtree that happens to contain the ledger', () => {
+    // 🔴 THE CONTROL THE SET EQUALITY CANNOT BE. Set equality compares MATCHES, so narrowing
+    // the glob from `src/**` to `src/server/**` still equals `LEDGER` in both directions —
+    // measured surviving, with an unmarked writer planted under `src/pages/api` invisible to
+    // the whole suite. The number of files the walk SCANNED is the only thing that separates
+    // "the walk works" from "the walk is a subtree containing the five".
+    //
+    // ⚠️ AND A MATCH COUNT IS NOT A SUBSTITUTE, which is why the previous form was wrong
+    // twice over: it asserted `>= LEDGER.length`, and `LEDGER.length` IS the real match
+    // count — zero slack, while its own comment claimed "a floor well under the real count".
+    const { files, scanned, found } = discoverWriterFiles();
+    expect(files.length, 'the glob must enumerate the whole src tree').toBeGreaterThan(5_000);
+    expect(scanned, 'the walk must read thousands of non-test files').toBeGreaterThan(3_000);
+    // The discovery half still has to find something, or the comparison below is about "[]".
+    expect(found.length).toBeGreaterThanOrEqual(LEDGER.length);
   });
 
-  it('[REG] the LEDGER names EVERY file in src/ that calls the writer — discovered, not listed', () => {
+  it('[INV] the walk blanks comments — a prose-only mention is not a writer', () => {
+    // 🔴 THE POSITIVE CONTROL FOR THE BLANKING LEG, which had none — and measured, the
+    // blanking is currently a NO-OP over this tree, because no non-test production file
+    // mentions the call only in prose. So if it ever regressed, the first failure would read
+    // "a new unledgered writer" and point at a COMMENT: a red test naming the wrong fix, the
+    // class this ladder already fixed once in a failure message.
+    //
+    // Built from literals, so it is a property of the pipeline at any ref.
+    expect(callCount(blankComments('// await recordScopeInvocation({ statusCode: 200 })'))).toBe(0);
+    expect(callCount(blankComments('/* recordScopeInvocation({}) */'))).toBe(0);
+    // The discriminating half: real code still counts once blanking has run.
+    expect(callCount(blankComments('await recordScopeInvocation({ statusCode: 200 });'))).toBe(1);
+  });
+
+  it('[INV] the LEDGER names EVERY file in src/ that calls the writer — discovered, not listed', () => {
+    // ⚠️ [INV], MEASURED. The writer-file population predates this change, so the set
+    // equality is green at the base ref — ledger completeness, the identical class the
+    // sibling file's count assertions were demoted to [INV] for. What is NEW is the
+    // DISCOVERY mechanism; what is ASSERTED is an invariant.
     // 🔴 THIS IS THE ASSERTION THAT CLOSES THE POPULATION, and the guard had none until a
     // review lane pointed out that the docblock claimed a tree walk while the code read five
     // hardcoded paths. Without it, a `recordScopeInvocation` call in a NEW file is invisible
@@ -253,7 +335,7 @@ describe('every block_scope_invocations writer carries the private-run marker', 
     // (and therefore threaded, or explicitly exempted with a reason); a file that LOST its
     // last writer must leave, so the ledger cannot keep asserting a count over a population
     // that no longer exists and read as coverage.
-    const discovered = discoverWriterFiles();
+    const discovered = discoverWriterFiles().found;
     const ledgered = LEDGER.map((e) => e.file).sort();
     expect(
       discovered.filter((f) => !ledgered.includes(f)),
@@ -321,9 +403,9 @@ describe('every block_scope_invocations writer carries the private-run marker', 
         // objects and nested calls, so a slice-wide `includes` is satisfied by a match at
         // ANY depth — e.g. inside the `detail: { … }` object — which is the
         // field-exists-but-nothing-branches-on-it failure one nesting level down.
-        const unthreaded = sites.filter(
-          (site) => !THREADED_SPELLINGS.some((t) => topLevelPropertyText(site).includes(t))
-        );
+        // 🔴 `hasExactThreading`, NOT `includes` — see its docblock. A prefix match accepted
+        // `… === true && someFlag`, which disables the marker while reading as wired.
+        const unthreaded = sites.filter((site) => !hasExactThreading(topLevelPropertyText(site)));
         expect(
           unthreaded,
           `${unthreaded.length} \`${OPENER}\` call site(s) in ${file} do not pass the ` +
@@ -367,7 +449,11 @@ describe('every block_scope_invocations writer carries the private-run marker', 
     expect(callCount('await recordScopeInvocation(\n  { statusCode: 200 }\n)')).toBe(1);
   });
 
-  it('[INV] every accepted spelling is actually USED by production code', () => {
+  it('[REG] every accepted spelling is actually USED by production code', () => {
+    // 🔴 [REG], MEASURED: two of the three spellings are introduced by this PR, so this is
+    // red at the base ref. It was labelled [INV] on the strength of "it reads production
+    // text, so it must be an invariant" — the same laundering error in the other direction,
+    // settled by a base-ref run.
     // 🔴 A PRODUCT CLAIM, NOT A CLAIM ABOUT THIS FILE'S OWN VOCABULARY — which is what the
     // first version of this case was, and a meta-guard of exactly the shape PR 1 added and
     // then deleted after five review rounds. It also doubles as the instrument control the
@@ -378,13 +464,23 @@ describe('every block_scope_invocations writer carries the private-run marker', 
     // spelling nobody uses is dead vocabulary that only widens what the per-site check
     // accepts — and the destructured one is the loosest of the three, so it must earn its
     // place rather than sit there admitting an untraceable local.
-    const all = LEDGER.map((e) => read(e.file)).join('\n');
+    // 🔴 SCOPED TO THE WRITER CALL SITES AND THE CARRIER, not to whole files. "Appears
+    // somewhere in one of five files" is much weaker than "a writer uses it": the
+    // claims-local spelling also appears at the router's `recordSpendAttribution` money arms,
+    // so every `recordScopeInvocation` site could drop it and this case would stay green. The
+    // resolver is included because that is where the storage path's local is DERIVED, which
+    // is the only legitimate producer of the bare-local spelling.
+    const siteText = LEDGER.flatMap((e) => callSites(read(e.file), OPENER))
+      .map((site) => topLevelPropertyText(site))
+      .join('\n');
+    const carrier = read(STORAGE_CARRIER.file);
     for (const spelling of THREADED_SPELLINGS) {
       expect(
-        all.split(spelling).length - 1,
-        `no production writer uses \`${spelling}\` — remove it from the shared list rather ` +
-          'than leaving a spelling the per-site check accepts and nothing produces'
-      ).toBeGreaterThan(0);
+        siteText.includes(spelling) || carrier.includes(spelling),
+        `no production writer call site — and not the storage carrier either — uses ` +
+          `\`${spelling}\`. Remove it from the shared list rather than leaving a spelling ` +
+          'the per-site check accepts and nothing produces.'
+      ).toBe(true);
     }
   });
 });
@@ -403,47 +499,101 @@ describe('the storage path carries the VERIFIED claim, not just a local', () => 
     // Bound the region at the next top-level declaration so this reads the resolver only.
     const after = source.slice(at + STORAGE_CARRIER.resolver.length);
     const nextDecl = after.search(/\n(?:export )?(?:async )?function |\ntype |\nconst /);
-    const body = nextDecl === -1 ? after : after.slice(0, nextDecl);
+    let body = nextDecl === -1 ? after : after.slice(0, nextDecl);
 
-    // Positive control: the region really is the resolver, not an empty or wrong slice.
-    expect(body, 'the resolver region must contain its own verification').toContain(
-      'verifyBlockToken(blockToken)'
-    );
-
-    const derived = body.split('privateRun: claims.privateRun === true').length - 1;
+    // 🔴 THE BODY, NOT THE SIGNATURE. The region above starts at the function NAME, so it
+    // includes the declared return type — which contains `privateRun: boolean;`. The
+    // whole-value matcher correctly refused that as a threading expression, which is the
+    // matcher working: a TYPE DECLARATION IS NOT A CODE PATH, and a check that counted it
+    // would have been reading the promise rather than the delivery. Slice from the first
+    // body statement so only real expressions are in scope.
+    const VERIFY = 'const claims = await verifyBlockToken(blockToken);';
+    const bodyAt = body.indexOf(VERIFY);
+    // Positive control: the region really is the resolver's body, not an empty or wrong
+    // slice — without this every assertion below is vacuous over a truncated string.
+    expect(bodyAt, 'the resolver must still verify the token as its first act').toBeGreaterThan(0);
+    body = body.slice(bodyAt);
+    // And the body really does contain the resolve branches the count below is about.
     expect(
-      derived,
-      `${STORAGE_CARRIER.returns} resolve branches must each carry ` +
-        '`privateRun: claims.privateRun === true`. A branch that returns a literal, or omits ' +
-        'the field, silently unmarks BOTH storage audit rows for every private run while the ' +
-        'writers below still look correctly threaded.'
+      body.split('return {').length - 1,
+      'the resolver must still have its resolve branches'
     ).toBe(STORAGE_CARRIER.returns);
 
-    // 🔴 AND NO BRANCH MAY RETURN A LITERAL. The count above would still pass if someone
-    // ADDED a third branch carrying a literal, so the negative half is asserted separately.
-    expect(body, 'no resolve branch may hardcode the marker').not.toContain('privateRun: false');
-    expect(body, 'no resolve branch may hardcode the marker').not.toContain('privateRun: true');
+    // 🔴 EVERY `privateRun` VALUE IN THE REGION, MATCHED WHOLE. A substring check counted
+    // `… === true && claims.reviewRunForReal === true` as threaded, so the round-1 mutant
+    // was still walkable at the very site round 1 closed. This asserts the SET of values,
+    // which makes both halves one claim: the right number of branches, and nothing else.
+    const values = privateRunValues(body);
+    expect(
+      values,
+      `each of the ${STORAGE_CARRIER.returns} resolve branches must carry EXACTLY ` +
+        '`privateRun: claims.privateRun === true`. A branch returning a literal, an ANDed ' +
+        'expression, or omitting the field silently unmarks BOTH storage audit rows for ' +
+        'every private run while the writers still look correctly threaded.'
+    ).toEqual(Array(STORAGE_CARRIER.returns).fill('claims.privateRun === true'));
   });
 
-  it('[REG] both storage writers take the value from that resolver, not from elsewhere', () => {
-    // The other end of the seam: a writer that computed `privateRun` itself — from a second
-    // `verifyBlockToken`, or from a field it happened to have — would pass the spelling check
-    // while bypassing the one verification this path performs.
-    const destructures = source.split('} = await resolveStorageContext(').length - 1;
-    expect(
-      destructures,
-      'both storage writers must destructure their context from `resolveStorageContext`'
-    ).toBeGreaterThanOrEqual(STORAGE_CARRIER.returns);
+  it.each(STORAGE_CARRIER.writers)(
+    '[INV] %s takes privateRun from the resolver, not from anywhere else',
+    (writer) => {
+      // ⚠️ [INV], MEASURED — the base ref already destructures from the resolver in both
+      // writers and verifies once, so this is green there. A ledger invariant over a
+      // pre-existing shape, NOT regression coverage; it was [REG] until a base-ref run said
+      // otherwise.
+      // 🔴 THE OTHER END OF THE SEAM, ASSERTED PER WRITER. A writer that computed
+      // `privateRun` itself — from a second `verifyBlockToken`, or from a field it happened
+      // to have — would satisfy the spelling check above while bypassing the one
+      // verification this path performs. Scoped to each writer's own region so the three
+      // READ paths cannot stand in for them, which is exactly what the file-wide count this
+      // replaces allowed.
+      const at = source.indexOf(writer);
+      expect(at, `${writer} must still exist under this name`).toBeGreaterThan(0);
+      const after = source.slice(at + writer.length);
+      const nextDecl = after.search(
+        /\n(?:export )?(?:async )?function |\n(?:export )?type |\n(?:export )?const /
+      );
+      const body = nextDecl === -1 ? after : after.slice(0, nextDecl);
+
+      // Positive control: the region really is this writer's body, not an empty slice — it
+      // must contain the audit write the marker rides on.
+      expect(body, `${writer}'s region must contain its audit write`).toContain(OPENER);
+
+      // 🔴 THE DESTRUCTURE, MATCHED WITHOUT DEPENDING ON LINE BREAKS. Prettier moves the
+      // `= await` across lines depending on the binding list's width, and the first version
+      // of this check was pinned to one of those shapes. Collapse whitespace instead.
+      const flat = body.replace(/\s+/g, ' ');
+      expect(
+        flat,
+        `${writer} must destructure \`privateRun\` from \`resolveStorageContext\` — that is ` +
+          'the only place on this path that holds the verified claim'
+      ).toContain('privateRun } = await resolveStorageContext(');
+      // And it must not perform its own verification: a second one is a second place the
+      // claim can be read differently.
+      expect(
+        body,
+        `${writer} must not verify the token itself — the resolver already did`
+      ).not.toContain('verifyBlockToken(');
+    }
+  );
+
+  it('[INV] the resolver is the ONLY place this module verifies a token', () => {
+    // ⚠️ SCOPED TO THIS MODULE, and the earlier wording was wrong about the PATH. A REST
+    // storage call verifies twice — once in `withBlockScope` and once here — which is
+    // precisely why the ledger's entry for this file notes that one REST write produces two
+    // audit rows. What is asserted is narrower and true: within this module there is one
+    // verification, so there is one place the claim is read.
     expect(
       source.split('verifyBlockToken(').length - 1,
-      'the storage path must verify the token EXACTLY once, in the resolver — a second ' +
-        'verification is a second place the claim can be read differently'
+      'this module must verify the token exactly once, in resolveStorageContext'
     ).toBe(1);
   });
 });
 
 describe('the marker has ONE spelling and every owner-visible read excludes it', () => {
-  it('[REG] the marker value and the exclusion predicate are defined exactly once', () => {
+  it('[INV] the marker value and the exclusion predicate are defined exactly once', () => {
+    // ⚠️ [INV]: a property of constants THIS PR introduces. Reverting the predicate module
+    // makes three of these files fail to IMPORT, so no per-case red/green is measurable at
+    // the base ref — which means it must not be reported as regression coverage.
     // 🔴 ONE RULE, ONE PLACE. A second literal `'private-run'` anywhere in the writer or the
     // readers is the drift that makes a filter and a writer disagree while both look right.
     const predicate = read(PREDICATE_MODULE);
@@ -463,7 +613,7 @@ describe('the marker has ONE spelling and every owner-visible read excludes it',
     ).toBe(0);
   });
 
-  it('[REG] the shared filter constrains ONLY `source` — nothing that could scope a read', () => {
+  it('[INV] the shared filter constrains ONLY `source` — nothing that could scope a read', () => {
     // 🔴 THE ASSERTION THAT MAKES THE SPREAD ORDER SAFE RATHER THAN MERELY CORRECT TODAY.
     // `appBlockId: idIn` is the only thing scoping those four reads to the caller's own
     // apps, and `satisfies Prisma.BlockScopeInvocationWhereInput` constrains the constant's
@@ -472,7 +622,13 @@ describe('the marker has ONE spelling and every owner-visible read excludes it',
     // served to app developers. The reads now spread it FIRST so explicit keys win, and
     // this pins the key set so the hazard cannot reappear from the other direction either.
     // Order-independent, and loud on any widening.
-    expect(Object.keys(OWNER_VISIBLE_INVOCATION_FILTER)).toEqual(['source']);
+    // 🔴 DEEP EQUALITY, NOT `Object.keys`. The key-set pin checked only the TOP level, so
+    // `source: { not: MARKER, notIn: ['app-block'] }` passed it — and that widening excludes
+    // every ORDINARY row from all four owner aggregates, which is the over-filter direction
+    // the whole suite is built around. Measured surviving by a round-2 audit. The literal is
+    // spelled out rather than built from the constant so this cannot agree with a wrong
+    // constant.
+    expect(OWNER_VISIBLE_INVOCATION_FILTER).toEqual({ source: { not: 'private-run' } });
   });
 
   it(`[REG] all ${OWNER_VISIBLE_PRISMA_READS} Prisma engagement reads spread OWNER_VISIBLE_INVOCATION_FILTER`, () => {
@@ -506,12 +662,58 @@ describe('the marker has ONE spelling and every owner-visible read excludes it',
     );
     const at = schema.indexOf('model BlockScopeInvocation {');
     expect(at, 'the model must still exist under this name').toBeGreaterThan(0);
-    const body = schema.slice(at, schema.indexOf('\n}', at));
+    const model = schema.slice(at, schema.indexOf('\n}', at));
     // Positive control: the region really is the model, not an empty slice.
-    expect(body).toContain('@@map("block_scope_invocations")');
-    for (const value of ["'app-block'", "'external-oauth'", "'private-run'"]) {
-      expect(body, `the source column's doc comment must name ${value}`).toContain(value);
+    expect(model).toContain('@@map("block_scope_invocations")');
+
+    // 🔴 THE `source` COLUMN'S OWN CONTIGUOUS `///` BLOCK, NOT THE WHOLE MODEL. Two OTHER
+    // columns' comments mention `'external-oauth'` (the nullable-`oauth_client_id` notes), so
+    // a model-wide search was green even after the `source` enumeration itself stopped naming
+    // it — measured surviving by a round-2 audit. That is the exact defect this guard exists
+    // for, passing off a neighbour's prose.
+    const decl = model.indexOf('  source           String');
+    expect(decl, 'the source column must still be declared under this shape').toBeGreaterThan(0);
+    // ⚠️ `decl` sits at the START of its line, so splitting there leaves a trailing EMPTY
+    // element — walking up from it stopped immediately and found zero doc lines, which the
+    // slice's own positive control caught. Drop the empty partial before walking.
+    const before = model.slice(0, decl).split('\n');
+    if (before[before.length - 1].trim() === '') before.pop();
+    const docLines: string[] = [];
+    for (let i = before.length - 1; i >= 0 && before[i].trim().startsWith('///'); i -= 1) {
+      docLines.unshift(before[i]);
     }
+    const doc = docLines.join('\n');
+    // Positive control for the slice itself: a contiguous comment block was actually found.
+    expect(docLines.length, 'the source column must carry its own /// doc block').toBeGreaterThan(
+      3
+    );
+    for (const value of ["'app-block'", "'external-oauth'", "'private-run'"]) {
+      expect(doc, `the source column's OWN doc comment must name ${value}`).toContain(value);
+    }
+    // ⚠️ This pins the AUTHORED comment. The load-bearing surface is the GENERATED
+    // `packages/civitai-db-schema/src/kysely/types.ts`, which only `db:check-generated`
+    // reconciles — so an edit here without a regen is green in this file and red in CI.
+  });
+
+  it('[REG] analytics names `source` ONLY through the shared filter and the raw statement', () => {
+    // 🔴 THE MIRROR OF THE SPREAD-ORDER HAZARD, AND THE REASON "spread first" IS NOT ITSELF
+    // A FIX. Spreading the filter LAST let the constant win a collision on `appBlockId` —
+    // the only thing scoping these reads to the caller's own apps. Spreading it FIRST closes
+    // that and opens the inverse: a read that spells `source:` among its own explicit keys
+    // now silently REPLACES the exclusion, while the spread count stays 4 and the key pin
+    // stays `['source']`. Both guards would be green over an unfiltered read.
+    //
+    // So the column may be named in exactly two places in this file: the import of the
+    // shared constant, and the raw statement that cannot use a spread. Any third mention is
+    // a read constraining `source` on its own terms.
+    const analytics = read(ANALYTICS_MODULE);
+    // Positive control: the raw statement's mention is findable, so a zero is a measurement.
+    expect(analytics).toContain('"source" <> ');
+    expect(
+      analytics.split('source: {').length - 1,
+      'no read in this file may constrain `source` with its own object literal — spread ' +
+        'OWNER_VISIBLE_INVOCATION_FILTER, which is spread FIRST so explicit keys win'
+    ).toBe(0);
   });
 
   it('[REG] the raw count(DISTINCT user_id) read excludes private-run rows too', () => {
@@ -529,45 +731,107 @@ describe('the marker has ONE spelling and every owner-visible read excludes it',
       'the distinct-user read must exclude private-run rows, parameterised from the ' +
         'shared constant rather than a second literal'
     ).toContain('"source" <> ${PRIVATE_RUN_INVOCATION_SOURCE}');
+
+    // 🔴 AND IT MUST BE `AND`-ED, WHICH IS THE WORST MUTANT IN THIS SEGMENT. Swapping the
+    // leading `AND` for `OR` keeps the substring above intact, and Postgres precedence then
+    // reads the clause as `(app_block_id IN (…) AND invoked_at …) OR source <> 'private-run'`
+    // — so one owner's `activeUsers` becomes every distinct user of every app in the table.
+    // That is CROSS-TENANT, i.e. strictly worse than the leak this PR exists to close, and
+    // it survived the whole suite: the raw read has no `where` object for the evaluator to
+    // apply, so only this statement's own text can see its boolean shape.
+    expect(
+      stmt,
+      'the source exclusion must be AND-ed into the statement — an OR makes the whole ' +
+        'ownership and range restriction optional, which reads one owner every user of ' +
+        'every app'
+    ).toContain('AND "source" <> ');
+    // The whole statement must contain no disjunction at all: every term is a restriction.
+    expect(
+      stmt.slice(0, stmt.indexOf('`')),
+      'the distinct-user statement must contain no OR — all of its terms are restrictions'
+    ).not.toMatch(/\bOR\b/);
   });
 
-  it('[INV] the viewer-own reads are deliberately NOT filtered — by IDENTIFIER or by LITERAL', () => {
-    // 🔴 THE OVER-FILTERING HAZARD, PINNED. Three reads are keyed on `userId` — the viewer
-    // looking at their OWN rows: the Activity feed, the "which apps acted on me" grouping
-    // and the nav `hasActivity` probe. A moderator must keep seeing what they themselves
-    // did; filtering there would delete the reviewer's own audit trail to solve an
-    // owner-visibility problem. This fails if someone "completes" the filter by adding it,
-    // which is the change that looks like a fix and is not.
-    //
-    // 🔴 A SPELLED GUARD IS WALKABLE BY RESPELLING, AND THIS ONE WAS. The first version
-    // counted only the identifier `OWNER_VISIBLE_INVOCATION_FILTER`, so a mutant adding the
-    // literal `source: { not: 'private-run' }` to the nav probe SURVIVED the whole suite —
-    // measured by a review lane. The marker's NAME is what must be absent from these reads,
-    // in any spelling, not one import of it.
-    const surface = read('src/server/services/blocks/user-app-surface.service.ts');
-    const router = read('src/server/routers/blocks.router.ts');
-    for (const [label, src] of [
-      ['user-app-surface.service.ts', surface],
-      ['blocks.router.ts', router],
-    ] as const) {
-      expect(
-        src.split('OWNER_VISIBLE_INVOCATION_FILTER').length - 1,
-        `${label} serves the VIEWER their own rows and must not spread the owner filter`
-      ).toBe(0);
-      // The respelled forms: the marker as a literal, and the column named in a `where`.
-      expect(
-        src,
-        `${label} must not exclude the marker by a literal either — a private run is the ` +
-          "reviewer's OWN activity on these reads, and hiding it deletes their audit trail"
-      ).not.toContain("'private-run'");
-      expect(
-        src.split('source: {').length - 1,
-        `${label} must not constrain the \`source\` column at all on a self-scoped read`
-      ).toBe(0);
+  /**
+   * 🔴 THE THREE SELF-SCOPED READS, BY THE FUNCTION THAT OWNS EACH. Keyed on `userId` — a
+   * viewer looking at their OWN rows.
+   *
+   * ⚠️ REGIONS, NOT WHOLE FILES, AND THAT IS A CORRECTION MY OWN ASSERTION CAUGHT. A
+   * file-wide grep for the marker constant reddens immediately on
+   * `user-app-surface.service.ts`, because that file also contains the WRITER — the one
+   * legitimate use of the constant in the codebase. Scoping to each read's own body is what
+   * makes the claim checkable instead of self-contradictory; it is the same
+   * region-not-file lesson as the storage-writer ledger above.
+   */
+  const VIEWER_OWN_READS = [
+    {
+      file: 'src/server/services/blocks/user-app-surface.service.ts',
+      fn: 'async function listAppBlocksThatActedOnUser',
+      why: "the viewer's permissions tab — which apps acted on ME",
+    },
+    {
+      file: 'src/server/services/blocks/user-app-surface.service.ts',
+      fn: 'export async function listMyScopeInvocations',
+      why: "the viewer's own Activity feed",
+    },
+    {
+      file: 'src/server/routers/blocks.router.ts',
+      fn: 'getNavSummary: protectedProcedure',
+      why: "the nav `hasActivity` probe over the viewer's own rows",
+    },
+  ] as const;
+
+  it.each(VIEWER_OWN_READS)(
+    '[INV] $fn is deliberately NOT filtered — in any spelling that exists today',
+    ({ file, fn, why }) => {
+      // 🔴 THE OVER-FILTERING HAZARD, PINNED. A moderator must keep seeing what they
+      // themselves did; filtering here would delete the reviewer's own audit trail to solve
+      // an owner-visibility problem. This fails if someone "completes" the filter by adding
+      // it, which is the change that looks like a fix and is not.
+      //
+      // 🔴 A SPELLED GUARD IS WALKABLE BY RESPELLING, AND THIS ONE WAS — TWICE, WHICH IS WHY
+      // THE LIST BELOW IS ENUMERATED RATHER THAN DESCRIBED. Round 1 counted only the
+      // identifier `OWNER_VISIBLE_INVOCATION_FILTER`, so a mutant adding the literal
+      // `source: { not: 'private-run' }` to the nav probe survived the whole suite. The
+      // round-1 fix then claimed to catch the marker "in any spelling" over three text
+      // checks, and a round-2 audit walked THAT: a top-level Prisma `NOT:` naming the
+      // imported constant contains none of those three strings.
+      //
+      // ⚠️ SO THIS IS AN ENUMERATION, NOT A UNIVERSAL. It forbids every form that exists in
+      // this codebase today and CANNOT see a form nobody has written. Saying which is the
+      // point; a guard claiming universality over a grep list is what stops the next reader
+      // checking.
+      const source = read(file);
+      const at = source.indexOf(fn);
+      expect(at, `${fn} must still exist under this name`).toBeGreaterThan(0);
+      const after = source.slice(at + fn.length);
+      const nextDecl = after.search(
+        /\n(?:export )?(?:async )?function |\n(?:export )?type |\n(?:export )?const |\n  \w+: (?:protected|moderator|public)/
+      );
+      const body = nextDecl === -1 ? after : after.slice(0, nextDecl);
+
+      // Positive control: the region really is a read of THIS table, not an empty or wrong
+      // slice — without it every `not.toContain` below is vacuously true.
+      expect(body, `${fn} must still read the invocations table`).toContain(
+        'blockScopeInvocation.'
+      );
+      // And it really is self-scoped, which is the premise of the whole case.
+      expect(body, `${fn} must still be keyed on the viewer's own userId`).toContain('userId');
+
+      for (const [form, needle] of [
+        ['the shared owner filter', 'OWNER_VISIBLE_INVOCATION_FILTER'],
+        ['the marker constant by name', 'PRIVATE_RUN_INVOCATION_SOURCE'],
+        ['the marker as a literal', "'private-run'"],
+        ['a `source:` object literal', 'source: {'],
+        ['a top-level Prisma NOT on the column', 'NOT: { source'],
+        ['a raw SQL predicate on the column', '"source"'],
+      ] as const) {
+        expect(
+          body,
+          `${fn} (${why}) must not exclude the marker via ${form} — a private run is the ` +
+            "reviewer's OWN activity here, and hiding it deletes their audit trail"
+        ).not.toContain(needle);
+      }
     }
-    // Positive control: these files really do read the table, so the zeros above are about
-    // the filter and not about a file that stopped querying.
-    expect(surface).toContain('dbRead.blockScopeInvocation.');
-    expect(router).toContain('dbRead.blockScopeInvocation.');
-  });
+  );
 });
