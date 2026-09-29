@@ -28,12 +28,13 @@ import { stripCommentsAndStrings } from './strip-comments';
  * Each caller still carries its OWN positive/negative controls. Sharing the walk does not
  * share the obligation to prove it enumerated something.
  *
- * 🔴 THE WALK IS SHARED; THE STRIPPER IS NOT, AND THAT IS DELIBERATE RATHER THAN UNFINISHED.
- * These ledgers genuinely disagree about string literals: the private-run pair strips them
- * (a call is never inside a string), while `mint-audit-stdout` MATCHES QUOTED EVENT NAMES
- * and would detect nothing if they were stripped. So `scanSource` is for callers that want
- * `stripCommentsAndStrings`; callers with their own `code()` import `sourceFiles` alone and
- * keep it. Do not "finish the job" by pushing every ledger through `scanSource`.
+ * 🔴 THE WALK IS SHARED; THE STRIPPER IS A SEPARATE CHOICE. These ledgers disagree about
+ * string literals, and both answers are right: a call site is never inside a string, but
+ * `mint-audit-stdout` MATCHES QUOTED EVENT NAMES and would detect nothing if they were
+ * stripped. So `scanSource` bundles the walk with `stripCommentsAndStrings`; a caller that
+ * needs comments-only imports `sourceFiles` here and `stripComments` from
+ * `./strip-comments` — which exists for exactly that case. Do not push every ledger
+ * through `scanSource`, and do not read that as "each must hand-roll its own".
  *
  * ⚠️ NOT ADOPTED BY `block-token-access.call-site-ledger.test.ts`, which carries a walk that
  * omits the `.test.tsx?$` and `src/tests/` exclusions entirely — so its population already

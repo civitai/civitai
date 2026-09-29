@@ -448,15 +448,9 @@ export async function getMyAppAnalytics({
     // per read, so the five cannot drift apart; the population is ledgered by
     // `src/server/services/__tests__/no-unmarked-private-run-invocation.test.ts`.
     //
-    // 🔴 READ THAT AS A CLAIM ABOUT ONE TABLE, NOT ABOUT THIS FUNCTION. An earlier revision
-    // of this paragraph opened "ALL FIVE ENGAGEMENT READS EXCLUDE PRIVATE-RUN ROWS" with no
-    // such qualifier, sitting a dozen lines above two OTHER rails of the same
-    // owner-visible payload that still disclose a private run — which is the shape that
-    // stops the next person looking. Three review lanes found it independently.
-    //
-    // ⚠️ ONE OF THE TWO IS NOW CLOSED. Read the ✅/open marks below rather than the
-    // count — a stale claim HERE is the dangerous direction, because this file is the
-    // natural entry point for anyone arriving from the analytics payload:
+    // 🔴 READ THAT AS A CLAIM ABOUT ONE TABLE, NOT ABOUT THIS FUNCTION. Two OTHER rails of
+    // the same owner-visible payload are covered separately — read the ✅/open marks, not
+    // the count:
     //
     //   · `runs` / `runs.buzzSpent` / `runs.series` — the `block_spend_attribution` reads
     //     above carry NO `status` predicate, so a private run's generation writes a

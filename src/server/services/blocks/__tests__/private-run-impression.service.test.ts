@@ -109,6 +109,9 @@ describe('isPrivateRunImpression — a private run is not an impression [REG]', 
     armed();
   });
 
+  // ⚠️ A SWEEP, NOT COMPLETENESS — same caveat as the refusal-reason loop below. The gate
+  // reads `access.allowed === true` and never looks at `audience`, so these are three
+  // copies of one assertion and no "add an audience" mutation can turn them red.
   for (const audience of ['owner', 'editor', 'moderator'] as const) {
     it(`suppresses the impression for the ${audience} audience`, async () => {
       mockAccess.resolvePrivateRunAccess.mockResolvedValue(grant(audience));
@@ -274,6 +277,35 @@ describe('isPrivateRunImpression — failures fail TOWARD recording [INV]', () =
       expect(serialised).not.toContain(DELISTED_APP);
       expect(serialised).not.toContain(String(MODERATOR.id));
     }
+  });
+
+  it('🔴 records the impression when the LOG ITSELF throws', async () => {
+    // The one line inside the catch that can defeat the whole design, and the only leaf
+    // no other case drives. `block-render.ts` awaits this gate with NO try/catch of its
+    // own, resting entirely on "it swallows everything internally" — so if the
+    // observability call is ever made to propagate (by dropping its `.catch`, or by
+    // `await`ing it), a rejecting log transport turns a telemetry failure into a 500 on a
+    // public beacon AND a silently lost impression: both failure directions at once.
+    // These two cases turn that premise from prose into a measurement.
+    loggingMock.logToAxiom.mockImplementationOnce(() => {
+      throw new Error('axiom client exploded');
+    });
+    mockAccess.resolvePrivateRunAccess.mockRejectedValue(new Error('replica unreachable'));
+
+    expect(await isPrivateRunImpression({ appBlockId: DELISTED_APP, viewer: MODERATOR })).toBe(
+      false
+    );
+  });
+
+  it('🔴 records the impression when the LOG REJECTS', async () => {
+    loggingMock.logToAxiom.mockRejectedValueOnce(new Error('axiom down'));
+    mockAccess.resolvePrivateRunAccess.mockRejectedValue(new Error('replica unreachable'));
+
+    // `await`ing the gate must not reject — an unhandled rejection here is a 500 on a
+    // public endpoint. Asserted by resolving, not by `.rejects.toThrow()`.
+    await expect(
+      isPrivateRunImpression({ appBlockId: DELISTED_APP, viewer: MODERATOR })
+    ).resolves.toBe(false);
   });
 
   it('a NON-Error throw is classified by `typeof`, and still leaks nothing', async () => {

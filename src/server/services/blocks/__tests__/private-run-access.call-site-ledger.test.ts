@@ -60,10 +60,6 @@ const DEFINED_IN: Record<string, string> = {
   resolvePageBlock: 'src/server/services/block-registry.service.ts',
 };
 
-// The walk, the comment/string strip and the caller scan are SHARED with the sibling
-// ledgers — see `test/source-scan.ts`. The population filter in particular is the
-// DEFINITION of what this file's enumerated-equality assertions range over, so a copy of
-// it here is a copy of the thing that must not drift.
 const { files: FILES, code: CODE, raw, callersOf } = scanSource(ROOT, DEFINED_IN);
 
 describe('the private-run seam — instrument validation', () => {
@@ -110,22 +106,10 @@ describe('the private-run seam — the call-site ledger [INV]', () => {
   const PREDICATE_CALLERS = [
     'src/pages/api/v1/block-tokens/index.ts',
     'src/pages/apps/private-run/[slug]/[[...path]].tsx',
-    // 🔴 THE THIRD CONSUMER, AND IT WAS ADMITTED ON THE TEST THIS COMMENT DEMANDS —
-    // "should the new surface SHARE this predicate?" — not by bumping a count.
-    //
-    // It is the analytics-impression gate (`isPrivateRunImpression`), which decides
-    // whether a `blockRenders` row is an owner-visible impression or a private review
-    // run. It must agree with the surface that SERVED the run, or it over- or
-    // under-filters the owner's numbers; the cheap lookalike it could have been ("owner
-    // of a non-approved app") drifts the moment the predicate gains a refusal the copy
-    // lacks — `not-deployed`, `owner-banned` and `no-iframe-src` each describe a mount
-    // that is NOT a private run, and admitting them would delete real impressions.
-    //
-    // Note what admitting it does NOT weaken: this consumer takes no access decision of
-    // its own and grants nothing. It reads `allowed` and drops a telemetry row. The
-    // SSR↔MINT asymmetry this file exists to prevent is about two surfaces that both
-    // ADMIT a viewer; a third caller that only observes cannot reproduce it, and sharing
-    // the predicate is what keeps it from having to guess.
+    // The analytics-impression gate. It takes no access decision and grants nothing — it
+    // reads `allowed` and drops a telemetry row — so it cannot reproduce the SSR↔MINT
+    // asymmetry this ledger exists to prevent, and sharing the predicate is what keeps it
+    // from having to guess.
     'src/server/services/blocks/private-run-impression.service.ts',
   ];
 

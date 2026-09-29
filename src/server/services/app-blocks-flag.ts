@@ -622,11 +622,11 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  *      outside this repo) — a product decision, not an oversight.
  *   2. ✅ `block_scope_invocations` — CLOSED. Written by `withBlockScope` for every
  *      scoped call with the real `app_block_id` and the VIEWER's `user_id`. The rows
- *      now carry a `source` marker taken from the verified token claim, and all five
- *      owner-visible reads — including the `count(DISTINCT user_id)` — exclude it via
- *      `OWNER_VISIBLE_INVOCATION_FILTER`. ⚠️ No migration was needed; an existing
- *      column carried it. This item said "there is no marker on those rows, so closing
- *      this half needs a migration" for a while after that stopped being true.
+ *      now carry a `source` marker on an EXISTING column — no migration was needed — and
+ *      all five owner-visible reads exclude it: four Prisma reads spread
+ *      `OWNER_VISIBLE_INVOCATION_FILTER`, and the raw `count(DISTINCT user_id)` spells the
+ *      same constant as `"source" <> $n`. ⚠️ Editing that filter moves FOUR of the five;
+ *      the distinct-user count is the one that does not follow.
  *   3. ✅ `blockRenders` (owner-visible IMPRESSIONS: `views.count` /
  *      `views.uniqueViewers`) — CLOSED AT THE WRITERS. A private run mounts the host, so
  *      it emitted a row like any other view and the reviewer landed as an identifiable

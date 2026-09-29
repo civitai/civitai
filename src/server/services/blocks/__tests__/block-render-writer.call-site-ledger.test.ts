@@ -57,8 +57,6 @@ const DEFINED_IN: Record<string, string> = {
   isPrivateRunImpression: 'src/server/services/blocks/private-run-impression.service.ts',
 };
 
-// The walk, the comment/string strip and the caller scan are SHARED — see
-// `test/source-scan.ts` for why the population filter in particular must not be copied.
 const { files: FILES, code: CODE, raw, callersOf } = scanSource(ROOT, DEFINED_IN);
 
 /**
@@ -154,13 +152,8 @@ describe('the blockRenders writer set — the ledger [INV]', () => {
   });
 
   it('🔴 the three populations are THE SAME SET', () => {
-    // The relationship, stated directly: whoever writes the table must also strip through
-    // the allowlist AND consult the gate.
-    //
-    // ⚠️ REDUNDANT WHILE THE THREE ABOVE ARE EQUALITIES — it can never be the only red
-    // test today. It is kept because it is the one that stays load-bearing if any of them
-    // is ever relaxed to `toContain`, which is a change that would otherwise silently
-    // remove the property. Do not read four independent checks here; there are three.
+    // Redundant while the three above are equalities; load-bearing the moment any is
+    // relaxed to `toContain`.
     expect(callersOf('blockRenderTrackerPayload')).toEqual(trackerWriteSites());
     expect(callersOf('isPrivateRunImpression')).toEqual(trackerWriteSites());
   });
@@ -189,8 +182,8 @@ describe('the blockRenders writer set — the ledger [INV]', () => {
     for (const f of WRITERS) {
       const used = CODE.get(f)!.match(/viewer\s*:\s*[^,}\n]+/g) ?? [];
       expect(used.length, `${f} must thread a viewer into the gate`).toBeGreaterThan(0);
-      for (const raw of used) {
-        const spelling = raw.replace(/\s+/g, ' ').trim();
+      for (const match of used) {
+        const spelling = match.replace(/\s+/g, ' ').trim();
         expect(
           ALLOWED_VIEWER_SOURCES,
           `${f} threads \`${spelling}\` — only a SERVER-RESOLVED session may reach the gate`

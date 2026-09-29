@@ -46,26 +46,26 @@ import { logToAxiom } from '~/server/logging/client';
  *
  * ── THE TWO SHAPES, AND WHY THIS ONE ─────────────────────────────────────────
  * (a) SUPPRESS THE INSERT on a private-run mount. (b) Carry a marker through the beacon
- * schema, both writers and a NEW ClickHouse column, then exclude it at the read. (a) shipped,
- * for three reasons, in order of weight:
+ * schema, both writers and a NEW ClickHouse column, then exclude it at the read. (a) shipped:
  *
- *  1. 🔴 (b) IS NOT DELIVERABLE FROM THIS REPO. There is no DDL for `blockRenders` here —
- *     the table is provisioned out-of-repo by the tracker service — so the column, the
- *     writer-side field and the read filter could not land together. A marker written into a
- *     column that does not exist is a silent no-op, which is the worst version of this fix.
- *  2. THE ROW WAS NOT THE RECORD. The concern with (a) is losing the evidence that a review
- *     happened; it is not lost. A private run cannot boot without a token, and the mint
- *     writes `app-blocks.private-run.mint` (userId, appBlockId, slug, audience, status,
- *     listingStatus, scopes, spendGranted) to Axiom AND stdout, plus
- *     `app-blocks.private-run.mint-refused` for every refusal EXCEPT `flag-off`, which is
- *     deliberately unlogged for volume. The operator decision is that the trail is
- *     INTERNAL-AUDIT-ONLY, which is precisely what those lines are and what a ClickHouse
- *     row the owner can read is not. ⚠️ Reconciling a suppressed impression by grepping
- *     `private-run.mint` alone will MISS the dev-tunnel case below — that mount audits
- *     under `app-blocks.dev-tunnel.*`, a different event name.
- *  3. (a) MIRRORS AN EXISTING, REVIEWED SUPPRESSION on this exact pair of writers:
+ *  1. THE ROW WAS NOT THE RECORD, which is the decisive one. The concern with (a) is losing
+ *     the evidence that a review happened; it is not lost. A private run cannot boot without
+ *     a token, and the mint writes `app-blocks.private-run.mint` to Axiom AND stdout, plus
+ *     `app-blocks.private-run.mint-refused` for every refusal EXCEPT `flag-off`. The
+ *     operator decision is that the trail is INTERNAL-AUDIT-ONLY, which is what those lines
+ *     are and what a ClickHouse row the owner can read is not. ⚠️ Reconciling a suppressed
+ *     impression by grepping `private-run.mint` alone MISSES the dev-tunnel case below —
+ *     that mount audits under `app-blocks.dev-tunnel.*`.
+ *  2. (a) MIRRORS AN EXISTING, REVIEWED SUPPRESSION on this exact pair of writers:
  *     `secondary` already skips the insert in both, symmetrically, for the same reason
  *     (a row with no status column that must not be written twice).
+ *  3. (b) COSTS A HAND-APPLIED MIGRATION AND BUYS A HAZARD. ⚠️ It is DELIVERABLE — an
+ *     earlier revision of this note claimed otherwise and was wrong: `server/clickhouse/
+ *     migrations/` is exactly this channel, and `2026-08-17-comic-views.sql` widens a
+ *     tracker-written table. But the DDL is applied by hand per environment, so the column
+ *     has to land and be verified in every environment BEFORE either writer ships, or the
+ *     marker is a silent no-op; and preserving the row then puts the exclusion at the READ,
+ *     where over-filtering deletes the owner's own numbers. Suppression has neither cost.
  *
  * The gate is ONE predicate — `blocks/private-run-impression.service.ts` — called by BOTH
  * writers; its docblock carries the derivation, the ordering and the cost. 🔴 The signal is
@@ -104,18 +104,11 @@ import { logToAxiom } from '~/server/logging/client';
  * merely expensive: there is no single question for it to answer. Recorded, not guarded,
  * and 🔴 do not accept a later proposal to unify them.
  *
- * 🔴 A LOAD PRECONDITION THIS CLOSURE CREATES, WHICH MUST BE SETTLED BEFORE THE FLAG IS
- * WIDENED. The gate can reach `resolvePrivateRunAccess` — ~7 statements, one of them on
- * the WRITE PRIMARY — and the branch is selected by a client-chosen `appBlockId` on a
- * route with NO RATE LIMIT. (`known-app-blocks.service.ts` records the same unbounded-id
- * property for the prom-label hazard it was written to bound.) Before this change the
- * common beacon path did ZERO Postgres queries. The DB branch is unreachable while the
- * flag is off, so this is a precondition and not an incident — but the moment the flag
- * admits anyone, the two decisions are the same decision.
- * CLOSING CONDITION: either `/api/track/block-render` carries a rate limit (this repo has
- * several to copy under `server/utils/`), or the flag's rollout is confirmed to admit only
- * the moderators segment. Whoever widens the flag checks one of those two; the item is
- * restated in that flag's own precondition block, which is where they will be looking.
+ * 🔴 A LOAD PRECONDITION THIS CLOSURE CREATES. Recorded as a gate on widening in
+ * `app-blocks-flag.ts`'s own PRECONDITION block — the file an operator opens — so only
+ * the shape is here: the gate can reach `resolvePrivateRunAccess` (4–9 statements by
+ * audience, one on the WRITE PRIMARY) on a route with no rate limit, and before this
+ * change the common beacon path did ZERO Postgres queries.
  *
  * ACCEPTANCE (the condition this arc closes on): one private run against a delisted app,
  * then the operator reads that app's analytics panel and confirms `views.count` and

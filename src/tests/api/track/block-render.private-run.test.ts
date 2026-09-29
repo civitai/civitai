@@ -392,12 +392,8 @@ describe('🔴 the private-run signal cannot be SPOOFED from the request body', 
       sessionStore.session = { user: STRANGER };
 
       expect(await viaBeacon({ ...identifiers(), ...spoof })).toBe(1);
-      // 🔴 REACHABILITY, ASSERTED RATHER THAN CLAIMED. The sentence above used to be the
-      // only thing saying the predicate was reached — and "1 row" is also what an earlier
-      // short-circuit, a broken leaf mock, or a gate that threw would produce. Then the
-      // comment would still be there telling the reader this was a reachability case while
-      // nothing measured it. A guard whose description claims more than it checks is worse
-      // than none, because it stops the next person looking.
+      // "1 row" is also what an earlier short-circuit, a broken leaf mock, or a gate that
+      // threw would produce — so reachability is asserted here, not claimed above.
       expect(
         mockAccess.resolvePrivateRunAccess,
         'the spoof must REACH the predicate'

@@ -66,12 +66,8 @@ export const trackRouter = router({
     // prevents.
     .mutation(async ({ input, ctx }) => {
       if (input.secondary) return;
-      // 🔴 SAME GATE, SAME POLARITY AS THE BEACON ROUTE. Derived from `ctx.user` — the
-      // server-resolved session — never from `input`, which this caller chooses. Note
-      // this resolver is now `async`: the predicate reads the approved-app cache and, on
-      // the rare non-approved path, the database. That is accepted here because this is
-      // the legacy bearer/API-key path; the browser hosts use the beacon route, where the
-      // ordering inside the predicate keeps the common path free of both.
+      // Same gate, same polarity as the beacon route. Derived from `ctx.user` — the
+      // server-resolved session — never from `input`, which this caller chooses.
       if (await isPrivateRunImpression({ appBlockId: input.appBlockId, viewer: ctx.user })) return;
       return ctx.track.blockRender({ ...blockRenderTrackerPayload(input), isAnon: !ctx.user });
     }),

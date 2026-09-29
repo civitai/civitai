@@ -108,12 +108,6 @@ const MIRROR_RE = /emitMintAuditToStdout\(\s*'([^']+)'/g;
 /** `…log?.info('<event>'` / `…log.info('<event>'` — the Axiom sink. */
 const AXIOM_RE = /\blog\??\.info\(\s*'([^']+)'/g;
 
-// 🔴 THE WALK IS SHARED (`test/source-scan.ts`); THE STRIPPER IS NOT. `EXCLUDE_TEST_FILES`
-// is the DEFINITION of the population every enumerated-equality assertion below ranges
-// over, so a copy of it is the thing that must not drift. This file's own `code()` is
-// deliberately left alone — the strippers genuinely differ across these ledgers (this one
-// keeps string literals; the private-run pair strips them), and swapping one in would
-// change what the scan can see rather than where it looks.
 const FILES = sourceFiles(ROOT);
 
 /**
