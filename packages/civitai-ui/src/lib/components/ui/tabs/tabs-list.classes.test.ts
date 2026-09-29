@@ -24,10 +24,25 @@ function baseClassString(): string {
   return match[2];
 }
 
-/** A class present as its own whitespace-delimited token, or under a variant prefix (`sm:`). */
+/**
+ * A class present as its own whitespace-delimited token, under any variant prefix.
+ * `\S+:` rather than `([a-z0-9-]+:)*` because Tailwind v4 variants are not alphanumeric --
+ * `data-[state=active]:`, `@md:`, `[&>*]:`, `max-[600px]:` all appear in this component set.
+ * The token is escaped: an unescaped `p-[3px]` becomes a character class and silently matches
+ * `p-3` while NOT matching the real token.
+ */
 function hasClass(token: string): RegExp {
-  return new RegExp(`(^|\\s)([a-z0-9-]+:)*${token}(\\s|$)`);
+  const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|\\s)(\\S+:)?${escaped}(\\s|$)`);
 }
+
+/**
+ * Any height that PINS the box while wrapped rows keep growing: numeric or arbitrary, bare or
+ * under any variant prefix, `max-` or not -- and `size-*`, which sets height AND width at once.
+ * Deliberately does NOT match `h-auto`, `h-full`, `max-h-none` or `min-h-*` (a minimum does not
+ * pin growth).
+ */
+const PINS_HEIGHT = /(^|\s)(\S+:)?(max-)?(h|size)-(\d|\[)/;
 
 describe('TabsList base classes', () => {
   // Positive control: if the read or the extraction silently returned nothing, every
@@ -52,14 +67,16 @@ describe('TabsList base classes', () => {
   it('keeps w-fit, the width rule the clamp actually depends on', () => {
     // Swapping w-fit for w-max restores the defect exactly: max-content does not clamp, so the
     // list returns to its full intrinsic width no matter how the height behaves.
+    // A `size-*` token also drops w-fit under tailwind-merge; PINS_HEIGHT below is what catches
+    // that, since this assertion reads the source token and `w-fit` is still spelled there.
     expect(baseClassString()).toMatch(hasClass('w-fit'));
   });
 
   it('carries no fixed or capped height, which a wrapped row would overflow', () => {
-    // Structural, not spelled: ANY numeric or arbitrary height -- `h-9`, `h-[36px]`, `max-h-9`,
-    // bare or variant-prefixed -- pins the box while the rows keep growing. `h-auto` must also
-    // still be present, because tailwind-merge resolves a later height against it.
+    // Both assertions are load-bearing and neither implies the other. `h-auto` being present is
+    // NOT protective -- tailwind-merge resolving a later height against it is exactly what
+    // REMOVES it -- so the negative assertion below is required, not redundant with this one.
     expect(baseClassString()).toMatch(hasClass('h-auto'));
-    expect(baseClassString()).not.toMatch(/(^|\s)([a-z0-9-]+:)*(max-)?h-(\d|\[)/);
+    expect(baseClassString()).not.toMatch(PINS_HEIGHT);
   });
 });
