@@ -1,16 +1,17 @@
-import { Avatar, Badge, Text, Title } from '@mantine/core';
+import { Badge, Text, Title } from '@mantine/core';
 import { IconUsers } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CrucibleTimer } from '~/components/Crucible/CrucibleTimer';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { Currency, CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { CrucibleUserLink } from '~/components/Crucible/CrucibleUserLink';
 import { getCrucibleRatingLabel, getCrucibleTotalPrizePool } from '~/utils/crucible-helpers';
 import { NsfwLevel } from '~/server/common/enums';
-import { getInitials } from '~/utils/string-helpers';
+import type { SimpleUser } from '~/server/selectors/user.selector';
 
 export type CrucibleHeaderData = {
   id: number;
@@ -21,12 +22,7 @@ export type CrucibleHeaderData = {
   entryFee: number;
   seededPrizePool: number;
   endAt: Date | null;
-  user: {
-    id: number;
-    username: string | null;
-    deletedAt: Date | null;
-    image: string | null;
-  };
+  user: SimpleUser;
   image: {
     id: number;
     url: string;
@@ -149,38 +145,21 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
           <div className="mb-3">{getStatusBadge()}</div>
 
           {/* Title */}
-          <Title order={1} className="mb-3 text-white" fw={700} size="h2">
+          <Title order={1} className="mb-3 text-white [overflow-wrap:anywhere]" fw={700} size="h2">
             {name}
           </Title>
 
           {/* Description */}
           {description && (
             <ContentClamp maxHeight={72} className="mb-4">
-              <Text size="sm" c="dimmed" lh={1.6}>
+              <Text size="sm" c="dimmed" lh={1.6} className="[overflow-wrap:anywhere]">
                 {description}
               </Text>
             </ContentClamp>
           )}
 
           <CrucibleUserLink user={user}>
-            <Avatar
-              src={user.image}
-              radius="xl"
-              size={40}
-              styles={{
-                root: {
-                  flexShrink: 0,
-                },
-                placeholder: {
-                  background: 'linear-gradient(135deg, #7950f2 0%, #228be6 100%)',
-                  color: 'white',
-                  fontWeight: 600,
-                  fontSize: 14,
-                },
-              }}
-            >
-              {user.username ? getInitials(user.username) : null}
-            </Avatar>
+            <UserAvatar user={user} avatarSize={40} size="lg" withHoverCard={false} />
             <div className="flex flex-col">
               <Text size="sm" fw={600} c="white" lh={1.3}>
                 {user.deletedAt ? '[deleted]' : user.username}

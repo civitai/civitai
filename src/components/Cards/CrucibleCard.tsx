@@ -11,11 +11,11 @@ import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { Currency, CrucibleStatus } from '~/shared/utils/prisma/enums';
 import {
   getCrucibleTotalPrizePool,
+  getCrucibleUrl,
   getStatusDotColor,
   getStatusText,
 } from '~/utils/crucible-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { slugit } from '~/utils/string-helpers';
 
 type CrucibleCardData = {
   id: number;
@@ -120,7 +120,7 @@ export function CrucibleCard({ data }: { data: CrucibleCardData }) {
 
   return (
     <AspectRatioImageCard
-      href={`/crucibles/${id}/${slugit(name)}`}
+      href={getCrucibleUrl(id, name)}
       aspectRatio="portrait"
       contentType="crucible"
       contentId={id}

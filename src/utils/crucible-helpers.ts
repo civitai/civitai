@@ -3,6 +3,19 @@ import {
   browsingLevelLabels,
   parseBitwiseBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
+import { slugit } from '~/utils/string-helpers';
+
+// Static routes beside `/crucibles/[id]/[[...slug]]` win over the slug, so a crucible whose name
+// slugs to one of these would link to that page instead of its own.
+const RESERVED_CRUCIBLE_SLUGS = new Set(['judge']);
+
+export function getCrucibleSlug(name: string) {
+  const slug = slugit(name);
+  return RESERVED_CRUCIBLE_SLUGS.has(slug) ? `${slug}-crucible` : slug;
+}
+
+export const getCrucibleUrl = (id: number, name: string) =>
+  `/crucibles/${id}/${getCrucibleSlug(name)}`;
 
 /**
  * Check if a crucible is ending soon (within 3 days)

@@ -5,6 +5,8 @@ import {
   CRUCIBLE_RESOURCE_REQUIREMENTS_COST,
 } from '~/shared/constants/crucible.constants';
 import type * as BuzzService from '~/server/services/buzz.service';
+import type * as BlocklistService from '~/server/services/blocklist.service';
+import type * as CrucibleEligibilityService from '~/server/services/crucible-eligibility.service';
 import { dbMock } from '~/__tests__/mocks';
 import { CrucibleSort } from '~/server/common/enums';
 
@@ -16,6 +18,8 @@ const crucibleUpdateMany = dbMock.dbWrite.crucible.updateMany;
 const getUserBuzzAccount = vi.fn();
 const createMultiAccountBuzzTransaction = vi.fn();
 const refundMultiAccountTransaction = vi.fn();
+const assertCanCreateCrucible = vi.fn();
+const throwOnBlockedUserContent = vi.fn();
 
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzService>()),
@@ -24,11 +28,21 @@ vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   refundMultiAccountTransaction,
 }));
 
+vi.mock('~/server/services/crucible-eligibility.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof CrucibleEligibilityService>()),
+  assertCanCreateCrucible,
+}));
+
+vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof BlocklistService>()),
+  throwOnBlockedUserContent,
+}));
+
 const { activateScheduledCrucibles, createCrucible, getCrucibles } = await import(
   '~/server/services/crucible.service'
 );
 
-// duration 8 is free, so the customization fee is the whole setup cost.
+// 24 hours is free and the split below is custom, so the customization fee is the whole setup cost.
 const SETUP_FEE = CRUCIBLE_PRIZE_CUSTOMIZATION_COST;
 
 const input = (overrides: Record<string, unknown> = {}) => ({
@@ -40,9 +54,8 @@ const input = (overrides: Record<string, unknown> = {}) => ({
   entryFee: 100,
   entryLimit: 1,
   maxTotalEntries: undefined,
-  prizePositions: { '1': 50, '2': 30, '3': 20 },
-  prizeCustomized: true,
-  duration: 8,
+  prizePositions: { '1': 70, '2': 30 },
+  duration: 24,
   seededPrizePool: 0,
   ...overrides,
 });
@@ -61,6 +74,8 @@ beforeEach(() => {
   balance(1_000_000);
   createMultiAccountBuzzTransaction.mockResolvedValue({ transactions: [] });
   refundMultiAccountTransaction.mockResolvedValue(undefined);
+  assertCanCreateCrucible.mockResolvedValue(undefined);
+  throwOnBlockedUserContent.mockResolvedValue(undefined);
   imageCreate.mockResolvedValue({ id: 99 });
   crucibleCreate.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
     id: 1,
@@ -277,7 +292,93 @@ describe('getCrucibles — status for an unfiltered feed', () => {
     ).toEqual({ status: CrucibleStatus.Completed });
   });
 
-  it('leaves the other sorts unfiltered', async () => {
-    expect(await whereFor({ sort: CrucibleSort.Newest })).toEqual({});
+  it('leaves cancelled crucibles out of the other sorts', async () => {
+    expect(await whereFor({ sort: CrucibleSort.Newest })).toEqual({
+      status: { not: CrucibleStatus.Cancelled },
+    });
+  });
+
+  it('returns nothing for an explicit Cancelled filter unless the caller moderates', async () => {
+    findMany.mockResolvedValue([{ id: 11 }]);
+    const cancelled = { limit: 10, sort: CrucibleSort.Newest, status: CrucibleStatus.Cancelled };
+
+    await expect(getCrucibles({ input: cancelled, select: { id: true } })).resolves.toEqual({
+      items: [],
+      nextCursor: undefined,
+    });
+    await expect(
+      getCrucibles({ input: cancelled, select: { id: true }, isModerator: true })
+    ).resolves.toMatchObject({ items: [{ id: 11 }] });
+  });
+
+  it('leaves out crucibles by users the viewer is blocked by', async () => {
+    findMany.mockResolvedValue([]);
+    await getCrucibles({
+      input: { limit: 10, sort: CrucibleSort.Newest },
+      select: { id: true },
+      excludedUserIds: [7, 8],
+    });
+
+    expect(findMany.mock.calls.at(-1)![0].where.userId).toEqual({ notIn: [7, 8] });
+  });
+});
+
+describe('createCrucible — prize customization fee', () => {
+  it('charges nothing for the default split', async () => {
+    await createCrucible(input({ prizePositions: { '1': 50, '2': 30, '3': 20 } }));
+
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('charges the fee for a custom split whatever the client claims about it', async () => {
+    // The client used to send `prizeCustomized`, so a custom split sent with it false was free.
+    await createCrucible(input({ prizeCustomized: false }));
+
+    expect(chargedAmounts()).toEqual([CRUCIBLE_PRIZE_CUSTOMIZATION_COST]);
+  });
+});
+
+describe('createCrucible — who may create one', () => {
+  it('checks the creation limits before any money moves', async () => {
+    assertCanCreateCrucible.mockRejectedValue(new Error('limit reached'));
+
+    await expect(createCrucible(input())).rejects.toThrow('limit reached');
+
+    expect(assertCanCreateCrucible).toHaveBeenCalledWith(4);
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    expect(crucibleCreate).not.toHaveBeenCalled();
+  });
+
+  it('lets a moderator past the creation limits', async () => {
+    assertCanCreateCrucible.mockRejectedValue(new Error('limit reached'));
+
+    await expect(createCrucible(input({ isModerator: true }))).resolves.toMatchObject({ id: 1 });
+    expect(assertCanCreateCrucible).not.toHaveBeenCalled();
+  });
+});
+
+describe('createCrucible — name and description', () => {
+  it('runs both through the shared blocked-content guard', async () => {
+    await createCrucible(input({ name: 'Neon Arena', description: 'Bright colours' }));
+
+    expect(throwOnBlockedUserContent).toHaveBeenCalledWith(['Neon Arena', 'Bright colours'], {
+      isModerator: false,
+      surface: 'crucible',
+    });
+  });
+
+  it('refuses profanity on an SFW-only crucible, before any money moves', async () => {
+    await expect(createCrucible(input({ name: 'fuck this', nsfwLevel: 1 }))).rejects.toThrow(
+      /isn't allowed on a PG or PG-13 crucible/
+    );
+
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    expect(crucibleCreate).not.toHaveBeenCalled();
+  });
+
+  it('allows the same language on a crucible that accepts mature content', async () => {
+    await expect(
+      createCrucible(input({ name: 'fuck this', nsfwLevel: 1 | 4 }))
+    ).resolves.toMatchObject({ id: 1 });
   });
 });

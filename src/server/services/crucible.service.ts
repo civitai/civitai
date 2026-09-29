@@ -19,6 +19,7 @@ import {
 } from '~/server/services/buzz.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import type {
+  CheckCrucibleEntryEligibilitySchema,
   CreateEntryPostSchema,
   GetCrucibleEntriesSchema,
   GetCruciblesInfiniteSchema,
@@ -34,6 +35,7 @@ import {
   clipLengthAllowed,
   crucibleRankingsAreFinal,
   crucibleSupportsVideoSettings,
+  isCustomPrizeDistribution,
 } from '~/shared/constants/crucible.constants';
 import type { VideoMetadata } from '~/server/schema/media.schema';
 import { formatDuration } from '~/utils/number-helpers';
@@ -63,6 +65,10 @@ import { NotificationCategory } from '~/server/common/enums';
 import { imageResourcesCache } from '~/server/redis/caches';
 import { getCrucibleTotalPrizePool, parsePrizePositions } from '~/utils/crucible-helpers';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { assertCanCreateCrucible } from '~/server/services/crucible-eligibility.service';
+import { getProfanityFilter } from '~/libs/profanity-simple';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 const log = createLogger('crucible-service', 'cyan');
 
@@ -96,26 +102,35 @@ export const createCrucible = async ({
   entryLimit,
   maxTotalEntries,
   prizePositions,
-  prizeCustomized,
   allowedResources,
   duration,
   seededPrizePool,
   minViewSeconds,
   maxClipSeconds,
   startAt: requestedStartAt,
-}: CreateCrucibleInputSchema & { userId: number }) => {
+  isModerator = false,
+}: CreateCrucibleInputSchema & { userId: number; isModerator?: boolean }) => {
+  if (!isModerator) await assertCanCreateCrucible(userId);
+
+  await throwOnBlockedUserContent([name, description], { isModerator, surface: 'crucible' });
+  // Crucible names and descriptions show in the shared feed; on an SFW-only crucible they should
+  // read as SFW too.
+  const isSfwOnly = (nsfwLevel & ~sfwBrowsingLevelsFlag) === 0;
+  if (!isModerator && isSfwOnly && getProfanityFilter().isProfane(`${name} ${description}`)) {
+    throw throwBadRequestError(
+      "The name or description contains language that isn't allowed on a PG or PG-13 crucible."
+    );
+  }
+
   const now = new Date();
   const isScheduled = !!requestedStartAt && requestedStartAt > now;
   const startAt = isScheduled ? requestedStartAt : now;
   const endAt = dayjs(startAt).add(duration, 'hours').toDate();
   const isVideoCrucible = crucibleSupportsVideoSettings(contentType);
   const requiresResources = (allowedResources?.length ?? 0) > 0;
+  const prizeCustomized = isCustomPrizeDistribution(prizePositions);
 
-  const setupCost = calculateCrucibleSetupCost(
-    duration,
-    prizeCustomized ?? false,
-    requiresResources
-  );
+  const setupCost = calculateCrucibleSetupCost(duration, prizeCustomized, requiresResources);
   const seedAmount = seededPrizePool ?? 0;
   const totalDebit = setupCost + seedAmount;
 
@@ -132,7 +147,7 @@ export const createCrucible = async ({
           details: {
             entityType: 'Crucible',
             duration,
-            prizeCustomized: prizeCustomized ?? false,
+            prizeCustomized,
           },
         });
         log(`Refunded ${prefix} for user ${userId} (${reason})`);
@@ -176,7 +191,7 @@ export const createCrucible = async ({
       details: {
         entityType: 'Crucible',
         duration,
-        prizeCustomized: prizeCustomized ?? false,
+        prizeCustomized,
       },
     });
 
@@ -345,9 +360,13 @@ export const getCrucibleEntries = async ({
 export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
   input: { cursor, limit: take, status, sort },
   select,
+  excludedUserIds = [],
+  isModerator = false,
 }: {
   input: GetCruciblesInfiniteSchema;
   select: TSelect;
+  excludedUserIds?: number[];
+  isModerator?: boolean;
 }) => {
   const where: Prisma.CrucibleWhereInput = {};
 
@@ -355,8 +374,13 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
   // feed would lead with the ones that ended longest ago.
   const effectiveStatus =
     status ?? (sort === CrucibleSort.EndingSoon ? CrucibleStatus.Active : undefined);
-  if (effectiveStatus) {
-    where.status = effectiveStatus;
+  if (effectiveStatus === CrucibleStatus.Cancelled && !isModerator) {
+    return { items: [], nextCursor: undefined };
+  }
+  where.status = effectiveStatus ?? { not: CrucibleStatus.Cancelled };
+
+  if (excludedUserIds.length > 0) {
+    where.userId = { notIn: excludedUserIds };
   }
 
   // Apply sorting
@@ -413,14 +437,98 @@ export const createCrucibleEntryPost = async ({
 }: CreateEntryPostSchema & { userId: number }) => {
   const crucible = await dbRead.crucible.findUnique({
     where: { id: crucibleId },
-    select: { name: true, status: true, endAt: true },
+    select: { name: true, status: true, endAt: true, userId: true },
   });
   if (!crucible) throw throwNotFoundError('Crucible not found');
   if (crucible.status !== CrucibleStatus.Active || (crucible.endAt && new Date() > crucible.endAt))
     throw throwBadRequestError('This crucible is not accepting entries');
+  if (crucible.userId === userId) throw throwBadRequestError(CANNOT_ENTER_OWN_CRUCIBLE);
 
   const post = await createPost({ userId, title: crucible.name, publishedAt: new Date() });
   return { id: post.id };
+};
+
+const CANNOT_ENTER_OWN_CRUCIBLE = "You can't enter a crucible you created";
+
+export type CrucibleEntryIneligibleReason =
+  | 'created-before-start'
+  | 'no-resources'
+  | 'missing-required-resource'
+  | 'not-found';
+
+const entryIneligibleMessages: Record<CrucibleEntryIneligibleReason, string> = {
+  'created-before-start': 'Only media created after this crucible started can be entered.',
+  'no-resources':
+    'This image has no detected resources. Images submitted to this crucible must use specific resources.',
+  'missing-required-resource':
+    'This image does not use any of the required resources for this crucible. Please check the crucible requirements and submit an image that uses an allowed resource.',
+  'not-found': 'Image not found',
+};
+
+type EntryEligibilityCrucible = {
+  startAt: Date | null;
+  createdAt: Date;
+  allowedResources: Prisma.JsonValue;
+};
+
+const getAllowedResources = (crucible: EntryEligibilityCrucible) =>
+  Array.isArray(crucible.allowedResources) ? (crucible.allowedResources as number[]) : [];
+
+/**
+ * The one statement of the entry rules that need the image's history rather than its own fields,
+ * shared by submission and by the submit modal's per-image check so the two cannot disagree.
+ */
+const getEntryIneligibleReasons = async (
+  crucible: EntryEligibilityCrucible,
+  images: { id: number; createdAt: Date }[]
+) => {
+  const startedAt = crucible.startAt ?? crucible.createdAt;
+  const allowedResources = getAllowedResources(crucible);
+  const resourcesByImage =
+    allowedResources.length > 0 && images.length > 0
+      ? await imageResourcesCache.fetch(images.map((image) => image.id))
+      : {};
+
+  return new Map(
+    images.map((image) => {
+      const reasons: CrucibleEntryIneligibleReason[] = [];
+      if (image.createdAt < startedAt) reasons.push('created-before-start');
+
+      if (allowedResources.length > 0) {
+        const versionIds = (resourcesByImage[image.id]?.resources ?? []).map(
+          (resource) => resource.modelVersionId
+        );
+        if (versionIds.length === 0) reasons.push('no-resources');
+        else if (!versionIds.some((versionId) => allowedResources.includes(versionId)))
+          reasons.push('missing-required-resource');
+      }
+
+      return [image.id, reasons];
+    })
+  );
+};
+
+export const checkCrucibleEntryEligibility = async ({
+  crucibleId,
+  imageIds,
+  userId,
+}: CheckCrucibleEntryEligibilitySchema & { userId: number }) => {
+  const crucible = await dbRead.crucible.findUnique({
+    where: { id: crucibleId },
+    select: { startAt: true, createdAt: true, allowedResources: true },
+  });
+  if (!crucible) throw throwNotFoundError('Crucible not found');
+
+  const images = await dbRead.image.findMany({
+    where: { id: { in: imageIds }, userId },
+    select: { id: true, createdAt: true },
+  });
+  const reasonsByImage = await getEntryIneligibleReasons(crucible, images);
+
+  return imageIds.map((imageId) => {
+    const reasons = reasonsByImage.get(imageId) ?? ['not-found' as const];
+    return { imageId, eligible: reasons.length === 0, reasons };
+  });
 };
 
 /**
@@ -525,6 +633,8 @@ export const submitEntry = async ({
         maxTotalEntries: true,
         maxClipSeconds: true,
         allowedResources: true,
+        startAt: true,
+        createdAt: true,
         endAt: true,
         _count: {
           select: { entries: true },
@@ -534,6 +644,10 @@ export const submitEntry = async ({
 
     if (!crucible) {
       return throwNotFoundError('Crucible not found');
+    }
+
+    if (crucible.userId === userId) {
+      return throwBadRequestError(CANNOT_ENTER_OWN_CRUCIBLE);
     }
 
     // Validate crucible is active
@@ -576,6 +690,7 @@ export const submitEntry = async ({
         type: true,
         nsfwLevel: true,
         metadata: true,
+        createdAt: true,
       },
     });
 
@@ -633,31 +748,10 @@ export const submitEntry = async ({
       return throwBadRequestError('This image has already been submitted to this crucible');
     }
 
-    // Validate allowed resources if specified
-    // allowedResources is an array of model version IDs that the crucible restricts entries to
-    const allowedResources = crucible.allowedResources as number[] | null;
-    if (allowedResources && allowedResources.length > 0) {
-      // Fetch the image's resources from cache
-      const resourcesData = await imageResourcesCache.fetch([imageId]);
-      const imageResources = resourcesData[imageId]?.resources ?? [];
-
-      if (imageResources.length === 0) {
-        return throwBadRequestError(
-          'This image has no detected resources. Images submitted to this crucible must use specific resources.'
-        );
-      }
-
-      // Check if any of the image's resources are in the allowed list
-      const imageVersionIds = imageResources.map((r) => r.modelVersionId);
-      const hasAllowedResource = imageVersionIds.some((versionId) =>
-        allowedResources.includes(versionId)
-      );
-
-      if (!hasAllowedResource) {
-        return throwBadRequestError(
-          'This image does not use any of the required resources for this crucible. Please check the crucible requirements and submit an image that uses an allowed resource.'
-        );
-      }
+    const [ineligibleReason] =
+      (await getEntryIneligibleReasons(crucible, [image])).get(image.id) ?? [];
+    if (ineligibleReason) {
+      return throwBadRequestError(entryIneligibleMessages[ineligibleReason]);
     }
 
     // Handle entry fee collection (if entryFee > 0)
@@ -2542,7 +2636,9 @@ export const getUserActiveCrucibles = async ({
  *
  * Returns null if no active crucibles exist.
  */
-export const getFeaturedCrucible = async (): Promise<{
+export const getFeaturedCrucible = async ({
+  excludedUserIds = [],
+}: { excludedUserIds?: number[] } = {}): Promise<{
   id: number;
   name: string;
   description: string;
@@ -2581,6 +2677,11 @@ export const getFeaturedCrucible = async (): Promise<{
     WHERE c.status = ${CrucibleStatus.Active}::"CrucibleStatus"
       -- Status lags the clock until finalize-crucibles runs; don't feature one that already ended.
       AND (c."endAt" IS NULL OR c."endAt" > now())
+      ${
+        excludedUserIds.length > 0
+          ? Prisma.sql`AND c."userId" NOT IN (${Prisma.join(excludedUserIds)})`
+          : Prisma.empty
+      }
     GROUP BY c.id, c.name, c.description, c."entryFee", c."seededPrizePool", c."endAt", i.url
     ORDER BY "prizePool" DESC, "entriesCount" DESC
     LIMIT 1

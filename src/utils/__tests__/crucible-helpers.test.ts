@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { getCrucibleRatingLabel, parsePrizePositions } from '~/utils/crucible-helpers';
+import {
+  getCrucibleRatingLabel,
+  getCrucibleUrl,
+  parsePrizePositions,
+} from '~/utils/crucible-helpers';
 
 describe('parsePrizePositions', () => {
   it('parses the object map the database actually stores', () => {
@@ -60,4 +64,17 @@ describe('getCrucibleRatingLabel', () => {
     expect(getCrucibleRatingLabel(1)).toBe('PG');
     expect(getCrucibleRatingLabel(4)).toBe('R');
   });
+});
+
+describe('getCrucibleUrl', () => {
+  it('slugs the name after the id', () => {
+    expect(getCrucibleUrl(21, 'Neon Arena!')).toBe('/crucibles/21/neon-arena');
+  });
+
+  it.each(['judge', 'Judge', 'JUDGE!!'])(
+    'never produces the judging route for a crucible named %s',
+    (name) => {
+      expect(getCrucibleUrl(21, name)).toBe('/crucibles/21/judge-crucible');
+    }
+  );
 });

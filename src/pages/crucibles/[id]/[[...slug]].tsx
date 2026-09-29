@@ -20,12 +20,13 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import {
   getCrucibleRatings,
   getCrucibleTotalPrizePool,
+  getCrucibleUrl,
   parsePrizePositions,
 } from '~/utils/crucible-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { env } from '~/env/client';
-import { getModelUrl, slugit } from '~/utils/string-helpers';
+import { getModelUrl } from '~/utils/string-helpers';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { CrucibleHeader } from '~/components/Crucible/CrucibleHeader';
@@ -104,6 +105,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
     const canSubmit =
       crucible.status === CrucibleStatus.Active &&
       !!currentUser &&
+      currentUser.id !== crucible.userId &&
       crucible.viewerEntries.length < getMaxUserEntries(crucible);
     if (canSubmit) openCrucibleSubmitEntryModal(getSubmitEntryProps(crucible));
   }, [crucible, router, currentUser]);
@@ -163,6 +165,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
   });
   const isActive = crucible.status === CrucibleStatus.Active;
   const isPending = crucible.status === CrucibleStatus.Pending;
+  const isCreator = !!currentUser && currentUser.id === crucible.userId;
   const canSubmitEntries = isActive;
   const canJudge = isActive;
   const rankingsVisible = crucibleRankingsAreFinal(crucible.status);
@@ -258,9 +261,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
         meta={{
           title: `${crucible.name} | Civitai Crucible`,
           description: crucible.description ?? undefined,
-          canonical: `${env.NEXT_PUBLIC_BASE_URL}/crucibles/${crucible.id}/${slugit(
-            crucible.name
-          )}`,
+          canonical: `${env.NEXT_PUBLIC_BASE_URL}${getCrucibleUrl(crucible.id, crucible.name)}`,
         }}
       >
         {/* Hero Section */}
@@ -354,16 +355,22 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                     Your Entries
                   </Title>
 
-                  <Button
-                    variant="light"
-                    fullWidth
-                    leftSection={<IconUpload size={16} />}
-                    className="mb-4"
-                    onClick={() => openCrucibleSubmitEntryModal(getSubmitEntryProps(crucible))}
-                    disabled={!currentUser || userEntryCount >= maxUserEntries}
-                  >
-                    {userEntryCount >= maxUserEntries ? 'All entries submitted' : 'Submit Entry'}
-                  </Button>
+                  {isCreator ? (
+                    <Text size="sm" c="dimmed" className="mb-4">
+                      You created this crucible, so you can&apos;t enter it. You can still judge it.
+                    </Text>
+                  ) : (
+                    <Button
+                      variant="light"
+                      fullWidth
+                      leftSection={<IconUpload size={16} />}
+                      className="mb-4"
+                      onClick={() => openCrucibleSubmitEntryModal(getSubmitEntryProps(crucible))}
+                      disabled={!currentUser || userEntryCount >= maxUserEntries}
+                    >
+                      {userEntryCount >= maxUserEntries ? 'All entries submitted' : 'Submit Entry'}
+                    </Button>
+                  )}
 
                   <div className="mb-4 border-b border-[#373a40] pb-4">
                     <Text size="xs" c="dimmed" tt="uppercase" mb={4}>
@@ -541,6 +548,8 @@ const getSubmitEntryProps = (crucible: CrucibleDetail) => ({
   contentType: crucible.contentType,
   currentEntryCount: crucible.viewerEntries.length,
   maxClipSeconds: crucible.maxClipSeconds,
+  requiresResources:
+    Array.isArray(crucible.allowedResources) && crucible.allowedResources.length > 0,
 });
 
 const toGridEntry = (entry: CrucibleEntry) => ({

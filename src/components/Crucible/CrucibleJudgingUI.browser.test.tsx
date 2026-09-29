@@ -182,6 +182,42 @@ describe('CrucibleJudgingUI — minimum view time', () => {
   });
 });
 
+describe('CrucibleJudgingUI — hotkeys', () => {
+  const press = (key: string, code: string, repeat: boolean) =>
+    document.documentElement.dispatchEvent(
+      new KeyboardEvent('keydown', { key, code, repeat, bubbles: true })
+    );
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 400));
+
+  test('a held vote key votes once, not once per auto-repeat', async () => {
+    const onVote = vi.fn();
+    renderWithProviders(<CrucibleJudgingUI pair={pairOf(1, 2)} onVote={onVote} onSkip={vi.fn()} />);
+    await expectBothCardsRendered();
+
+    // What holding "2" sends: one press, then a stream of repeats.
+    press('2', 'Digit2', false);
+    for (let i = 0; i < 5; i++) press('2', 'Digit2', true);
+
+    await vi.waitFor(() => expect(onVote).toHaveBeenCalledTimes(1));
+    await settle();
+    expect(onVote).toHaveBeenCalledTimes(1);
+    expect(onVote.mock.calls[0][0]).toBe(2);
+  });
+
+  test('a held skip key skips once', async () => {
+    const onSkip = vi.fn();
+    renderWithProviders(<CrucibleJudgingUI pair={pairOf(1, 2)} onVote={vi.fn()} onSkip={onSkip} />);
+    await expectBothCardsRendered();
+
+    press(' ', 'Space', false);
+    for (let i = 0; i < 5; i++) press(' ', 'Space', true);
+
+    await vi.waitFor(() => expect(onSkip).toHaveBeenCalledTimes(1));
+    await settle();
+    expect(onSkip).toHaveBeenCalledTimes(1);
+  });
+});
+
 type OnVote = ComponentProps<typeof CrucibleJudgingUI>['onVote'];
 
 function PairSwitchingHarness({ onVote }: { onVote: OnVote }) {

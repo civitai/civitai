@@ -1,5 +1,7 @@
 import {
   cancelCrucibleHandler,
+  checkEntryEligibilityHandler,
+  getCreateEligibilityHandler,
   createCrucibleHandler,
   createEntryPostHandler,
   getCrucibleByIdHandler,
@@ -16,6 +18,7 @@ import {
 } from '~/server/controllers/crucible.controller';
 import { isModerator } from '~/server/routers/base.router';
 import {
+  checkCrucibleEntryEligibilitySchema,
   createEntryPostSchema,
   getCrucibleEntriesSchema,
   cancelCrucibleSchema,
@@ -31,7 +34,13 @@ import {
   submitEntrySchema,
   submitVoteSchema,
 } from '~/server/schema/crucible.schema';
-import { guardedProcedure, isFlagProtected, publicProcedure, router } from '~/server/trpc';
+import {
+  guardedProcedure,
+  isFlagProtected,
+  protectedProcedure,
+  publicProcedure,
+  router,
+} from '~/server/trpc';
 
 export const crucibleRouter = router({
   getInfinite: publicProcedure
@@ -49,6 +58,10 @@ export const crucibleRouter = router({
     .input(getCrucibleEntriesSchema)
     .query(getCrucibleEntriesHandler),
 
+  getCreateEligibility: protectedProcedure
+    .use(isFlagProtected('crucible'))
+    .query(getCreateEligibilityHandler),
+
   create: guardedProcedure
     .use(isFlagProtected('crucible'))
     .input(createCrucibleInputSchema)
@@ -58,6 +71,11 @@ export const crucibleRouter = router({
     .use(isFlagProtected('crucible'))
     .input(createEntryPostSchema)
     .mutation(createEntryPostHandler),
+
+  checkEntryEligibility: protectedProcedure
+    .use(isFlagProtected('crucible'))
+    .input(checkCrucibleEntryEligibilitySchema)
+    .query(checkEntryEligibilityHandler),
 
   submitEntry: guardedProcedure
     .use(isFlagProtected('crucible'))

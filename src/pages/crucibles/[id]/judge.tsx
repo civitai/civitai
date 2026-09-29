@@ -35,7 +35,6 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { env } from '~/env/client';
-import { slugit } from '~/utils/string-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   CrucibleJudgingUI,
@@ -43,7 +42,7 @@ import {
 } from '~/components/Crucible/CrucibleJudgingUI';
 import type { JudgingPairData, WatchedMs } from '~/components/Crucible/CrucibleJudgingUI';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
-import { getCrucibleTotalPrizePool } from '~/utils/crucible-helpers';
+import { getCrucibleTotalPrizePool, getCrucibleUrl } from '~/utils/crucible-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -282,7 +281,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
         <Text c="dimmed" mb="xl">
           This crucible is not currently accepting votes.
         </Text>
-        <Button component={Link} href={`/crucibles/${id}/${slugit(crucible.name)}`}>
+        <Button component={Link} href={getCrucibleUrl(id, crucible.name)}>
           Back to Crucible
         </Button>
       </Container>
@@ -306,7 +305,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
             : ' Check back soon or submit your own entry!'}
         </Text>
         <Group justify="center">
-          <Button component={Link} href={`/crucibles/${id}/${slugit(crucible.name)}`}>
+          <Button component={Link} href={getCrucibleUrl(id, crucible.name)}>
             Back to Crucible
           </Button>
         </Group>
@@ -328,7 +327,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
               <div className="flex min-w-0 items-center gap-2">
                 <ActionIcon
                   component={Link}
-                  href={`/crucibles/${id}/${slugit(crucible.name)}`}
+                  href={getCrucibleUrl(id, crucible.name)}
                   variant="subtle"
                   color="gray"
                   size="lg"
@@ -512,8 +511,10 @@ function EndCrucibleState({ crucibleId, crucibleName, sessionVotes }: EndCrucibl
         variant="light"
         size="lg"
         component={Link}
-        href={`/crucibles/${crucibleId}/${slugit(crucibleName)}`}
+        href={getCrucibleUrl(crucibleId, crucibleName)}
         mb="xl"
+        maw="100%"
+        classNames={{ inner: 'min-w-0', label: 'truncate' }}
       >
         Back to {crucibleName}
       </Button>

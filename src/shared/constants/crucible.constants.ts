@@ -6,10 +6,11 @@ import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
  */
 
 /**
- * Maximum entry fee in Buzz that can be charged for joining a crucible.
- * Set to 1M Buzz to prevent integer overflow in prize pool calculations.
+ * Every crucible charges an entry fee: entry fees are what fund the prize pool, so a free crucible
+ * has nothing to pay out unless the creator seeds it.
  */
-export const CRUCIBLE_MAX_ENTRY_FEE = 1_000_000;
+export const CRUCIBLE_MIN_ENTRY_FEE = 10;
+export const CRUCIBLE_MAX_ENTRY_FEE = 1_000;
 
 /**
  * Maximum number of entries per user per crucible.
@@ -18,21 +19,58 @@ export const CRUCIBLE_MAX_ENTRY_FEE = 1_000_000;
 export const CRUCIBLE_MAX_ENTRIES = 10_000;
 
 /**
+ * Bounds on the optional cap across all users. Judging needs a pair, so a cap of one could never be
+ * judged; the ceiling keeps the value inside the int4 column, which a larger one overflowed at
+ * insert time with a generic error.
+ */
+export const CRUCIBLE_MIN_TOTAL_ENTRIES = 2;
+export const CRUCIBLE_MAX_TOTAL_ENTRIES = 100_000;
+
+export const CRUCIBLE_NAME_MAX_LENGTH = 100;
+export const CRUCIBLE_DESCRIPTION_MAX_LENGTH = 500;
+
+/**
  * Cost in Buzz for each crucible duration option.
  * Keys are duration in hours.
  */
 export const CRUCIBLE_DURATION_COSTS: Record<number, number> = {
-  8: 0, // 8 hours - free
-  24: 500, // 24 hours
-  72: 1000, // 3 days
-  168: 2000, // 7 days
+  24: 0,
+  72: 0,
+  168: 1000,
 };
+
+export const CRUCIBLE_DEFAULT_DURATION = 24;
 
 /**
  * Cost in Buzz for customizing the prize distribution.
  * This fee is charged when the crucible creator changes the default prize percentages.
  */
 export const CRUCIBLE_PRIZE_CUSTOMIZATION_COST = 500;
+
+export const CRUCIBLE_DEFAULT_PRIZE_POSITIONS: Readonly<Record<string, number>> = {
+  '1': 50,
+  '2': 30,
+  '3': 20,
+};
+
+export const CRUCIBLE_MAX_PRIZE_POSITIONS = 100;
+
+/**
+ * Whether a distribution differs from the default, which is what the customization fee is charged
+ * for. Derived from the positions rather than taken from the client, so the fee cannot be skipped by
+ * sending a custom split with the flag off.
+ */
+export const isCustomPrizeDistribution = (prizePositions: Record<string, number>) => {
+  const keys = Object.keys(prizePositions);
+  const defaultKeys = Object.keys(CRUCIBLE_DEFAULT_PRIZE_POSITIONS);
+  return (
+    keys.length !== defaultKeys.length ||
+    defaultKeys.some((key) => prizePositions[key] !== CRUCIBLE_DEFAULT_PRIZE_POSITIONS[key])
+  );
+};
+
+export const getPrizeDistributionTotal = (prizePositions: Record<string, number>) =>
+  Object.values(prizePositions).reduce((sum, value) => sum + value, 0);
 
 /**
  * Cost in Buzz for restricting entries to specific model versions (`allowedResources`).

@@ -6,6 +6,9 @@ import { dbMock } from '~/__tests__/mocks';
 // and reset per test file — see docs/testing/shared-module-mocks.md.
 const { getInfiniteCruciblesHandler } = await import('~/server/controllers/crucible.controller');
 
+// Signed out, so no block list is looked up.
+const anonymous = {} as never;
+
 /**
  * A fake table of `total` crucibles, served through Prisma's cursor semantics — which are
  * INCLUSIVE: `cursor: { id: n }` returns the row with id n as the first result, and `skip: 1`
@@ -37,6 +40,7 @@ const drain = async (sort = CrucibleSort.Newest) => {
   while (pages < PAGE_CAP) {
     const result = await getInfiniteCruciblesHandler({
       input: { limit: 2, sort, cursor } as never,
+      ctx: anonymous,
     });
     pages++;
     seen.push(...result.items.map((x: { id: number }) => x.id));
@@ -74,7 +78,10 @@ describe('crucible feed paging', () => {
   it('returns no cursor at all when there is a single page', async () => {
     fakeTable(2);
 
-    const result = await getInfiniteCruciblesHandler({ input: { limit: 2 } as never });
+    const result = await getInfiniteCruciblesHandler({
+      input: { limit: 2 } as never,
+      ctx: anonymous,
+    });
 
     expect(result.items.map((x: { id: number }) => x.id)).toEqual([2, 1]);
     expect(result.nextCursor).toBeUndefined();
@@ -83,7 +90,10 @@ describe('crucible feed paging', () => {
   it('returns no cursor on an empty feed', async () => {
     fakeTable(0);
 
-    const result = await getInfiniteCruciblesHandler({ input: { limit: 2 } as never });
+    const result = await getInfiniteCruciblesHandler({
+      input: { limit: 2 } as never,
+      ctx: anonymous,
+    });
 
     expect(result.items).toEqual([]);
     expect(result.nextCursor).toBeUndefined();
@@ -103,7 +113,10 @@ describe('crucible feed paging', () => {
     // guess it made was "a full page always has more".
     fakeTable(5);
 
-    const result = await getInfiniteCruciblesHandler({ input: { limit: 2 } as never });
+    const result = await getInfiniteCruciblesHandler({
+      input: { limit: 2 } as never,
+      ctx: anonymous,
+    });
 
     const [{ take }] = dbMock.dbRead.crucible.findMany.mock.calls[0];
     expect(take).toBe(3);
@@ -119,7 +132,7 @@ describe('crucible feed paging', () => {
     // have no defined order, and a cursor into that ordering can skip or repeat rows.
     fakeTable(3);
 
-    await getInfiniteCruciblesHandler({ input: { limit: 2, sort } as never });
+    await getInfiniteCruciblesHandler({ input: { limit: 2, sort } as never, ctx: anonymous });
 
     const [{ orderBy }] = dbMock.dbRead.crucible.findMany.mock.calls[0];
     expect(orderBy[orderBy.length - 1]).toEqual({ id: 'desc' });

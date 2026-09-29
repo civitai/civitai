@@ -1,5 +1,6 @@
 import type { Context, ProtectedContext } from '~/server/createContext';
 import type {
+  CheckCrucibleEntryEligibilitySchema,
   CreateEntryPostSchema,
   GetCrucibleEntriesSchema,
   CancelCrucibleSchema,
@@ -13,7 +14,12 @@ import type {
   SubmitVoteSchema,
 } from '~/server/schema/crucible.schema';
 import { crucibleListSelect } from '~/server/selectors/crucible.selector';
+import { getCrucibleCreateEligibility } from '~/server/services/crucible-eligibility.service';
+import { BlockedByUsers } from '~/server/services/user-preferences.service';
+import { amIBlockedByUser } from '~/server/services/user.service';
+import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import {
+  checkCrucibleEntryEligibility,
   createCrucibleEntryPost,
   cancelCrucible,
   createCrucible,
@@ -31,12 +37,26 @@ import {
   withoutEntryScores,
 } from '~/server/services/crucible.service';
 
+const getBlockedByUserIds = async (user: Context['user']) => {
+  if (!user || user.isModerator) return [];
+  const blockedByUsers = (await BlockedByUsers.getCached({ userId: user.id })).map((u) => u.id);
+  return boundExcludedUserIds([], blockedByUsers, []);
+};
+
 export const getInfiniteCruciblesHandler = async ({
   input,
+  ctx,
 }: {
   input: GetCruciblesInfiniteSchema;
+  ctx: Context;
 }) => {
-  return getCrucibles({ input, select: crucibleListSelect });
+  const excludedUserIds = await getBlockedByUserIds(ctx.user);
+  return getCrucibles({
+    input,
+    select: crucibleListSelect,
+    excludedUserIds,
+    isModerator: ctx.user?.isModerator ?? false,
+  });
 };
 
 export const getCrucibleByIdHandler = async ({
@@ -46,7 +66,15 @@ export const getCrucibleByIdHandler = async ({
   input: GetCrucibleByIdSchema;
   ctx: Context;
 }) => {
-  return getCrucibleDetail({ id: input.id, userId: ctx.user?.id });
+  const crucible = await getCrucibleDetail({ id: input.id, userId: ctx.user?.id });
+  if (crucible && ctx.user && !ctx.user.isModerator) {
+    const blocked = await amIBlockedByUser({
+      userId: ctx.user.id,
+      targetUserId: crucible.userId,
+    });
+    if (blocked) return null;
+  }
+  return crucible;
 };
 
 export const createCrucibleHandler = async ({
@@ -56,7 +84,7 @@ export const createCrucibleHandler = async ({
   input: CreateCrucibleInputSchema;
   ctx: ProtectedContext;
 }) => {
-  return createCrucible({ ...input, userId: ctx.user.id });
+  return createCrucible({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator });
 };
 
 export const getCrucibleEntriesHandler = async ({
@@ -77,6 +105,16 @@ export const createEntryPostHandler = async ({
   ctx: ProtectedContext;
 }) => {
   return createCrucibleEntryPost({ ...input, userId: ctx.user.id });
+};
+
+export const checkEntryEligibilityHandler = async ({
+  input,
+  ctx,
+}: {
+  input: CheckCrucibleEntryEligibilitySchema;
+  ctx: ProtectedContext;
+}) => {
+  return checkCrucibleEntryEligibility({ ...input, userId: ctx.user.id });
 };
 
 export const submitEntryHandler = async ({
@@ -122,6 +160,10 @@ export const cancelCrucibleHandler = async ({
   return cancelCrucible({ ...input, userId: ctx.user.id, isModerator: true });
 };
 
+export const getCreateEligibilityHandler = async ({ ctx }: { ctx: ProtectedContext }) => {
+  return getCrucibleCreateEligibility(ctx.user.id);
+};
+
 export const getUserCrucibleStatsHandler = async ({ ctx }: { ctx: ProtectedContext }) => {
   return getUserCrucibleStats({ userId: ctx.user.id });
 };
@@ -130,8 +172,9 @@ export const getUserActiveCruciblesHandler = async ({ ctx }: { ctx: ProtectedCon
   return getUserActiveCrucibles({ userId: ctx.user.id });
 };
 
-export const getFeaturedCrucibleHandler = async () => {
-  return getFeaturedCrucible();
+export const getFeaturedCrucibleHandler = async ({ ctx }: { ctx: Context }) => {
+  const excludedUserIds = await getBlockedByUserIds(ctx.user);
+  return getFeaturedCrucible({ excludedUserIds });
 };
 
 export const getJudgesCountHandler = async ({ input }: { input: GetJudgesCountSchema }) => {

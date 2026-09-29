@@ -1,14 +1,15 @@
-import { Paper, Stack, Text, Title, Box, Group, Skeleton, Button, Avatar } from '@mantine/core';
+import { Paper, Stack, Text, Title, Box, Group, Skeleton, Button } from '@mantine/core';
 import { IconChevronLeft, IconChevronRight, IconCrown, IconTrophy } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { PrizePosition } from '~/utils/crucible-helpers';
 import { useState } from 'react';
-import { getInitials } from '~/utils/string-helpers';
 import { CrucibleUserLink } from '~/components/Crucible/CrucibleUserLink';
+import type { SimpleUser } from '~/server/selectors/user.selector';
 
 export type LeaderboardEntry = {
   id: number;
@@ -17,11 +18,7 @@ export type LeaderboardEntry = {
   score: number;
   position: number | null;
   createdAt: Date;
-  user: {
-    id: number;
-    username: string | null;
-    image: string | null;
-  };
+  user: SimpleUser;
   image: {
     id: number;
     name: string | null;
@@ -318,24 +315,7 @@ function LeaderboardEntryItem({
         </div>
 
         <CrucibleUserLink user={entry.user} className="flex-1">
-          <Avatar
-            src={entry.user.image}
-            size={40}
-            radius="xl"
-            styles={{
-              root: {
-                flexShrink: 0,
-              },
-              placeholder: {
-                background: 'linear-gradient(135deg, #7950f2 0%, #228be6 100%)',
-                color: 'white',
-                fontWeight: 600,
-                fontSize: '14px',
-              },
-            }}
-          >
-            {getInitials(entry.user.username || 'A')}
-          </Avatar>
+          <UserAvatar user={entry.user} avatarSize={40} size="lg" withHoverCard={false} />
 
           {/* User info */}
           <div className="min-w-0 flex-1">

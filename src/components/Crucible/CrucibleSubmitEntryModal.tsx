@@ -67,6 +67,8 @@ export interface CrucibleSubmitEntryModalProps {
   currentEntryCount: number;
   /** Longest clip this crucible accepts, in seconds. Null or absent means no limit. */
   maxClipSeconds?: number | null;
+  /** Whether entries must be made with one of the crucible's required models. */
+  requiresResources?: boolean;
   /** Optional array of allowed resource names to display in requirements */
   allowedResourceNames?: string[];
   onSuccess?: () => void;
@@ -219,7 +221,7 @@ function ImageCard({
             {isScanning ? (
               <>
                 <IconAlertCircle size={14} />
-                Scanning…
+                Checking…
               </>
             ) : isAlreadySubmitted ? (
               <>
@@ -317,6 +319,7 @@ export default function CrucibleSubmitEntryModal({
   contentType,
   currentEntryCount,
   maxClipSeconds,
+  requiresResources = false,
   allowedResourceNames,
   onSuccess,
 }: CrucibleSubmitEntryModalProps) {
@@ -483,6 +486,18 @@ export default function CrucibleSubmitEntryModal({
     return imagesData?.pages.flatMap((page) => page.items) ?? [];
   }, [imagesData]);
 
+  // Recency and required models depend on the image's history, which the library listing does not
+  // carry, so the server answers them with the same rule submission enforces.
+  const imageIds = useMemo(() => images.map((image) => image.id), [images]);
+  const { data: eligibility } = trpc.crucible.checkEntryEligibility.useQuery(
+    { crucibleId, imageIds },
+    { enabled: !!currentUser && imageIds.length > 0, placeholderData: (previous) => previous }
+  );
+  const ineligibleReasonsById = useMemo(
+    () => new Map(eligibility?.map(({ imageId, reasons }) => [imageId, reasons])),
+    [eligibility]
+  );
+
   // Calculate how many more entries the user can submit
   const remainingEntries = entryLimit - currentEntryCount;
   const canSubmitMore = remainingEntries > 0;
@@ -515,22 +530,39 @@ export default function CrucibleSubmitEntryModal({
     const imageNsfwLabel = getCrucibleRatingLabel(image.nsfwLevel ?? 1);
     const requiredNsfwLabel = getCrucibleRatingLabel(nsfwLevel);
 
-    // Build detailed validation criteria
-    // Only include model requirement if there are restrictions (allowedResourceNames specified)
-    const hasModelRestrictions = allowedResourceNames && allowedResourceNames.length > 0;
+    const ineligibleReasons = ineligibleReasonsById.get(image.id);
+    const eligibilityPending = ineligibleReasons === undefined;
+    const isRecentEnough = !ineligibleReasons?.includes('created-before-start');
+    const hasNoResources = !!ineligibleReasons?.includes('no-resources');
+    const usesRequiredModel =
+      !hasNoResources && !ineligibleReasons?.includes('missing-required-resource');
+    const requiredModelLabel = allowedResourceNames?.length
+      ? `Uses ${allowedResourceNames.join(' or ')}`
+      : 'Uses a required model';
+
     const criteria: ValidationCriterion[] = [
-      // Only show model criterion when there are restrictions
-      // Since we can't validate client-side, mark as pending validation
-      ...(hasModelRestrictions
+      ...(requiresResources
         ? [
             {
-              label: `Uses ${allowedResourceNames[0] ?? 'required model'}`,
-              passes: true, // Treat as passing for selection, server validates on submit
-              pending: true, // Show as pending to indicate server-side validation
-              failReason: 'Validated on submit',
+              label: requiredModelLabel,
+              passes: usesRequiredModel,
+              pending: eligibilityPending,
+              failReason: eligibilityPending
+                ? 'Checking the models used…'
+                : hasNoResources
+                ? 'No models detected on this image'
+                : 'Does not use a required model',
             },
           ]
         : []),
+      {
+        label: 'Created after the crucible started',
+        passes: isRecentEnough,
+        pending: eligibilityPending,
+        failReason: eligibilityPending
+          ? 'Checking when it was created…'
+          : 'Created before it started',
+      },
       {
         label: 'Media type',
         passes: matchesContentType,
@@ -558,9 +590,23 @@ export default function CrucibleSubmitEntryModal({
     ];
 
     return {
-      isValid: isCompatibleNsfw && matchesContentType && isShortEnough && !isAlreadySubmitted,
+      isValid:
+        isCompatibleNsfw &&
+        matchesContentType &&
+        isShortEnough &&
+        !isAlreadySubmitted &&
+        !eligibilityPending &&
+        ineligibleReasons.length === 0 &&
+        isRecentEnough &&
+        (!requiresResources || usesRequiredModel),
       isAlreadySubmitted,
-      isScanning: false,
+      // Still waiting on the server's half of the check, for an entry that passes the rest.
+      isScanning:
+        eligibilityPending &&
+        !isAlreadySubmitted &&
+        isCompatibleNsfw &&
+        matchesContentType &&
+        isShortEnough,
       criteria,
       message: isAlreadySubmitted
         ? 'Already submitted'
@@ -573,6 +619,10 @@ export default function CrucibleSubmitEntryModal({
           `Too long (${formatDuration(Math.ceil(clipSeconds ?? 0))}, max ${formatDuration(
             maxClipSeconds as number
           )})`
+        : !isRecentEnough
+        ? 'Created before this crucible started'
+        : requiresResources && !usesRequiredModel
+        ? 'Does not use a required model'
         : undefined,
     };
   };
@@ -614,7 +664,10 @@ export default function CrucibleSubmitEntryModal({
   useEffect(() => {
     if (!awaitingScan.length) return;
     const settled = images.filter(
-      (image) => awaitingScan.includes(image.id) && !validateImage(image).isScanning
+      (image) =>
+        awaitingScan.includes(image.id) &&
+        !validateImage(image).isScanning &&
+        ineligibleReasonsById.has(image.id)
     );
     if (!settled.length) return;
     setAwaitingScan((prev) => prev.filter((id) => !settled.some((image) => image.id === id)));
@@ -628,7 +681,7 @@ export default function CrucibleSubmitEntryModal({
     });
     // validateImage is recreated each render; images/awaitingScan are what change the outcome.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [images, awaitingScan, remainingEntries]);
+  }, [images, awaitingScan, remainingEntries, ineligibleReasonsById]);
 
   // Submit entries mutation
   const submitEntryMutation = trpc.crucible.submitEntry.useMutation({
@@ -746,6 +799,8 @@ export default function CrucibleSubmitEntryModal({
                   ? allowedResourceNames.length === 1
                     ? allowedResourceNames[0]
                     : `${allowedResourceNames.length} models`
+                  : requiresResources
+                  ? 'Required models only'
                   : 'Any model'}
               </Badge>
               <Badge

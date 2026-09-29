@@ -35,6 +35,7 @@ import * as z from 'zod';
 
 import { BackButton } from '~/components/BackButton/BackButton';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { ChallengeCreateRequirements } from '~/components/Challenge/ChallengeCreateRequirements';
 import { ContentRatingSelect } from '~/components/Challenge/ContentRatingSelect';
 import { ModelVersionMultiSelect } from '~/components/Challenge/ModelVersionMultiSelect';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -43,6 +44,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useStepper } from '~/hooks/useStepper';
 import {
   Form,
@@ -57,14 +59,24 @@ import { withController } from '~/libs/form/hoc/withController';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import {
   CRUCIBLE_CONTENT_TYPES,
+  CRUCIBLE_DEFAULT_DURATION,
+  CRUCIBLE_DEFAULT_PRIZE_POSITIONS,
+  CRUCIBLE_DESCRIPTION_MAX_LENGTH,
   CRUCIBLE_DURATION_COSTS,
   CRUCIBLE_MAX_CLIP_SECONDS_OPTIONS,
   CRUCIBLE_MAX_ENTRY_FEE,
+  CRUCIBLE_MAX_PRIZE_POSITIONS,
+  CRUCIBLE_MAX_TOTAL_ENTRIES,
+  CRUCIBLE_MIN_ENTRY_FEE,
+  CRUCIBLE_MIN_TOTAL_ENTRIES,
   CRUCIBLE_MIN_VIEW_SECONDS_OPTIONS,
   CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
+  CRUCIBLE_NAME_MAX_LENGTH,
   CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
   CRUCIBLE_RESOURCE_REQUIREMENTS_COST,
   getMaxCrucibleStartAt,
+  getPrizeDistributionTotal,
+  isCustomPrizeDistribution,
   type CrucibleContentType,
 } from '~/shared/constants/crucible.constants';
 import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
@@ -77,7 +89,6 @@ const InputContentRatingSelect = withController(ContentRatingSelect);
 const InputModelVersionMultiSelect = withController(ModelVersionMultiSelect);
 
 const durationOptions = [
-  { value: 8, label: '8 hours' },
   { value: 24, label: '24 hours' },
   { value: 72, label: '3 days' },
   { value: 168, label: '7 days' },
@@ -105,22 +116,37 @@ const formatSeconds = (seconds: number) =>
 const NO_RULE = 0;
 const toVideoRule = (seconds: number | undefined) => seconds || undefined;
 
-const defaultPrizePositions: Record<string, number> = {
-  '1': 50,
-  '2': 30,
-  '3': 20,
-};
+const entryFeeRangeLabel = `${CRUCIBLE_MIN_ENTRY_FEE.toLocaleString()}–${CRUCIBLE_MAX_ENTRY_FEE.toLocaleString()} Buzz`;
 
+// The form's resolver rebuilds the schema from `.shape`, so object-level refines would be dropped:
+// the cross-field rules live in the step checks below instead.
 const formSchema = z.object({
-  name: z.string().trim().min(1, 'Name is required').max(100),
-  description: z.string().trim().max(500).optional(),
+  name: z.string().trim().min(1, 'Name is required').max(CRUCIBLE_NAME_MAX_LENGTH),
+  description: z.string().trim().max(CRUCIBLE_DESCRIPTION_MAX_LENGTH).optional(),
   duration: z.number(),
   startAt: z.date().nullish(),
   nsfwLevel: z.number(),
   contentType: z.enum(CRUCIBLE_CONTENT_TYPES),
-  entryFee: z.number({ error: 'Entry fee is required' }).int().min(0).max(CRUCIBLE_MAX_ENTRY_FEE),
+  entryFee: z
+    .number({ error: 'Entry fee is required' })
+    .int()
+    .min(CRUCIBLE_MIN_ENTRY_FEE, `Entry fee must be ${entryFeeRangeLabel}`)
+    .max(CRUCIBLE_MAX_ENTRY_FEE, `Entry fee must be ${entryFeeRangeLabel}`),
   entryLimit: z.number().int().min(1).max(10),
-  maxTotalEntries: z.number().int().min(1).optional(),
+  // 0 is accepted as "no limit", which is what people type when they mean it.
+  maxTotalEntries: z
+    .number()
+    .int()
+    .min(0)
+    .max(
+      CRUCIBLE_MAX_TOTAL_ENTRIES,
+      `At most ${CRUCIBLE_MAX_TOTAL_ENTRIES.toLocaleString()} entries`
+    )
+    .refine(
+      (value) => value === 0 || value >= CRUCIBLE_MIN_TOTAL_ENTRIES,
+      `At least ${CRUCIBLE_MIN_TOTAL_ENTRIES} entries are needed for judging`
+    )
+    .optional(),
   allowedResources: z.array(z.number()).optional(),
   minViewSeconds: z.number().optional(),
   maxClipSeconds: z.number().optional(),
@@ -136,15 +162,17 @@ type FormValues = z.infer<typeof formSchema>;
 const defaultValues: FormValues = {
   name: '',
   description: '',
-  duration: 8,
+  duration: CRUCIBLE_DEFAULT_DURATION,
   nsfwLevel: 1,
   contentType: MediaType.image,
   entryFee: 100,
   entryLimit: 1,
   allowedResources: [],
   seededPrizePool: 0,
-  prizePositions: { ...defaultPrizePositions },
+  prizePositions: { ...CRUCIBLE_DEFAULT_PRIZE_POSITIONS },
 };
+
+const toTotalEntriesCap = (maxTotalEntries: number | undefined) => maxTotalEntries || undefined;
 
 const stepFields: Record<number, (keyof FormValues)[]> = {
   1: ['name', 'description', 'duration', 'startAt', 'nsfwLevel'],
@@ -177,8 +205,14 @@ export const getServerSideProps = createServerSideProps({
 
 export default function CrucibleCreate() {
   const router = useRouter();
+  const currentUser = useCurrentUser();
   const [currentStep, { goToNextStep, goToPrevStep, setStep }] = useStepper(4);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // On a query error no gate renders; the create mutation still enforces the same limits.
+  const { data: createEligibility } = trpc.crucible.getCreateEligibility.useQuery(undefined, {
+    enabled: !!currentUser && !currentUser.isModerator,
+  });
 
   // The wizard unmounts each step's inputs, so they must keep their values when unregistered.
   const form = useForm({ schema: formSchema, defaultValues, shouldUnregister: false });
@@ -202,7 +236,7 @@ export default function CrucibleCreate() {
   });
 
   const [prizeEditMode, setPrizeEditMode] = useState(false);
-  const [prizeCustomized, setPrizeCustomized] = useState(false);
+  const prizeCustomized = isCustomPrizeDistribution(values.prizePositions);
 
   const { files: imageFiles, uploadToCF, removeImage, resetFiles } = useCFImageUpload();
   const imageFile = imageFiles[0];
@@ -228,17 +262,31 @@ export default function CrucibleCreate() {
       ? 'Minimum view time cannot exceed the maximum clip length'
       : null;
 
+  const totalEntriesCap = toTotalEntriesCap(values.maxTotalEntries);
+  const entryLimitError =
+    totalEntriesCap != null && values.entryLimit > totalEntriesCap
+      ? 'Entries per user cannot exceed the maximum total entries'
+      : null;
+
   const isStep2Valid = () =>
     values.entryFee != null &&
+    values.entryFee >= CRUCIBLE_MIN_ENTRY_FEE &&
+    values.entryFee <= CRUCIBLE_MAX_ENTRY_FEE &&
     values.entryLimit >= 1 &&
     values.entryLimit <= 10 &&
+    !entryLimitError &&
     !videoSettingsError;
 
-  const totalPrizePercentage = Object.values(values.prizePositions).reduce(
-    (sum, val) => sum + val,
-    0
-  );
-  const isStep3Valid = () => values.seededPrizePool != null && totalPrizePercentage <= 100;
+  const totalPrizePercentage = getPrizeDistributionTotal(values.prizePositions);
+  const prizeDistributionError =
+    totalPrizePercentage === 100
+      ? null
+      : totalPrizePercentage > 100
+      ? `Prize percentages add up to ${totalPrizePercentage}%. Lower them to exactly 100%.`
+      : `Prize percentages add up to ${totalPrizePercentage}%. Assign the remaining ${
+          100 - totalPrizePercentage
+        }% so they total exactly 100%.`;
+  const isStep3Valid = () => values.seededPrizePool != null && !prizeDistributionError;
 
   const durationCost = CRUCIBLE_DURATION_COSTS[values.duration] ?? 0;
   const prizeCustomizationCost = prizeCustomized ? CRUCIBLE_PRIZE_CUSTOMIZATION_COST : 0;
@@ -251,7 +299,10 @@ export default function CrucibleCreate() {
     resourceRequirementsCost +
     (values.seededPrizePool ?? 0);
 
+  const canAddPrizePosition =
+    Object.keys(values.prizePositions).length < CRUCIBLE_MAX_PRIZE_POSITIONS;
   const addPrizePosition = () => {
+    if (!canAddPrizePosition) return;
     const nextPosition = Object.keys(values.prizePositions).length + 1;
     setPrizePositions({ ...values.prizePositions, [nextPosition.toString()]: 0 });
   };
@@ -269,15 +320,11 @@ export default function CrucibleCreate() {
   };
 
   const resetPrizeDistribution = () => {
-    setPrizePositions({ ...defaultPrizePositions });
-    setPrizeCustomized(false);
+    setPrizePositions({ ...CRUCIBLE_DEFAULT_PRIZE_POSITIONS });
     setPrizeEditMode(false);
   };
 
-  const enterPrizeEditMode = () => {
-    setPrizeEditMode(true);
-    setPrizeCustomized(true);
-  };
+  const enterPrizeEditMode = () => setPrizeEditMode(true);
 
   const handleNext = async () => {
     const fields = stepFields[currentStep];
@@ -315,11 +362,10 @@ export default function CrucibleCreate() {
       contentType: data.contentType,
       entryFee: data.entryFee,
       entryLimit: data.entryLimit,
-      maxTotalEntries: data.maxTotalEntries,
+      maxTotalEntries: toTotalEntriesCap(data.maxTotalEntries),
       allowedResources: data.allowedResources?.length ? data.allowedResources : undefined,
       prizePositions: data.prizePositions,
       seededPrizePool: data.seededPrizePool,
-      prizeCustomized,
       duration: data.duration,
       startAt: data.startAt ?? undefined,
       minViewSeconds: isVideo ? toVideoRule(data.minViewSeconds) : undefined,
@@ -389,18 +435,18 @@ export default function CrucibleCreate() {
       <InputText
         name="name"
         label="Crucible Name"
-        description="Maximum 100 characters"
+        description={`Maximum ${CRUCIBLE_NAME_MAX_LENGTH} characters`}
         placeholder="e.g., Anime Character Design Challenge"
-        maxLength={100}
+        maxLength={CRUCIBLE_NAME_MAX_LENGTH}
         withAsterisk
       />
 
       <InputTextArea
         name="description"
         label="Description"
-        description="Describe the theme, rules, or inspiration. Maximum 500 characters. (Optional)"
+        description={`Describe the theme, rules, or inspiration. Maximum ${CRUCIBLE_DESCRIPTION_MAX_LENGTH} characters. (Optional)`}
         placeholder="e.g., Design an original anime character set in a neon-lit cyberpunk city. Show the full outfit, and keep it an original character — no fan art of existing ones."
-        maxLength={500}
+        maxLength={CRUCIBLE_DESCRIPTION_MAX_LENGTH}
         autosize
         minRows={3}
       />
@@ -502,14 +548,15 @@ export default function CrucibleCreate() {
         label="Entry Fee per User"
         description={`How much Buzz users pay to enter their ${
           values.contentType === MediaType.video ? 'video' : 'image'
-        }`}
+        } (${entryFeeRangeLabel}). Entry fees fund the prize pool.`}
         leftSection={<CurrencyIcon currency={Currency.BUZZ} size={16} />}
-        min={0}
+        min={CRUCIBLE_MIN_ENTRY_FEE}
         max={CRUCIBLE_MAX_ENTRY_FEE}
         step={10}
         allowNegative={false}
         allowDecimal={false}
         clampBehavior="blur"
+        withAsterisk
       />
 
       <InputSelect
@@ -518,19 +565,22 @@ export default function CrucibleCreate() {
         description="How many times can one user enter?"
         data={entryLimitOptions}
         allowDeselect={false}
+        error={entryLimitError}
         withAsterisk
       />
 
       <InputNumber
         name="maxTotalEntries"
         label="Maximum Total Entries"
-        description="Optional limit on total entries across all users"
+        description={`Optional cap on entries across all users (${CRUCIBLE_MIN_TOTAL_ENTRIES}–${CRUCIBLE_MAX_TOTAL_ENTRIES.toLocaleString()}). Leave empty or enter 0 for no limit.`}
         placeholder="No limit"
-        min={1}
+        min={0}
+        max={CRUCIBLE_MAX_TOTAL_ENTRIES}
         allowNegative={false}
         allowDecimal={false}
-        clampBehavior="blur"
         clearable
+        // Step errors are only re-checked on Next, so a corrected value would keep the old one.
+        onChange={() => form.clearErrors('maxTotalEntries')}
       />
 
       {values.contentType === MediaType.video && (
@@ -625,6 +675,12 @@ export default function CrucibleCreate() {
             <PrizeDistributionChart prizePositions={values.prizePositions} />
           </div>
 
+          {prizeDistributionError && (
+            <Text size="sm" c="red">
+              {prizeDistributionError}
+            </Text>
+          )}
+
           <Button
             variant="filled"
             color="blue"
@@ -697,6 +753,7 @@ export default function CrucibleCreate() {
           variant="light"
           color="blue"
           onClick={addPrizePosition}
+          disabled={!canAddPrizePosition}
           leftSection={<IconPlus size={16} />}
         >
           Add Prize Position
@@ -705,13 +762,13 @@ export default function CrucibleCreate() {
         <Paper p="md" className="border border-dark-4" bg="dark.7">
           <Group justify="space-between">
             <Text c="dimmed">Total Distribution</Text>
-            <Text size="lg" fw={700} c={totalPrizePercentage <= 100 ? 'green' : 'red'}>
+            <Text size="lg" fw={700} c={prizeDistributionError ? 'red' : 'green'}>
               {totalPrizePercentage}%
             </Text>
           </Group>
-          {totalPrizePercentage > 100 && (
+          {prizeDistributionError && (
             <Text size="xs" c="red" mt={4}>
-              Prize percentages cannot exceed 100%
+              {prizeDistributionError}
             </Text>
           )}
         </Paper>
@@ -857,6 +914,13 @@ export default function CrucibleCreate() {
 
   return (
     <Container size="lg" py="xl">
+      {createEligibility && !createEligibility.canCreate && (
+        <ChallengeCreateRequirements
+          eligibility={createEligibility}
+          noun="crucible"
+          backUrl="/crucibles"
+        />
+      )}
       <Form form={form}>
         <Grid gutter="xl">
           <Grid.Col span={{ base: 12, lg: 8 }}>

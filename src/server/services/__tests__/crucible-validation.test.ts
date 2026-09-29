@@ -15,14 +15,21 @@ import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks';
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as PostService from '~/server/services/post.service';
+import type * as Caches from '~/server/redis/caches';
 import {
+  CRUCIBLE_DESCRIPTION_MAX_LENGTH,
   CRUCIBLE_DURATION_COSTS,
   CRUCIBLE_MAX_CLIP_SECONDS_OPTIONS,
   CRUCIBLE_MAX_ENTRIES,
   CRUCIBLE_MAX_ENTRY_FEE,
+  CRUCIBLE_MAX_PRIZE_POSITIONS,
+  CRUCIBLE_MAX_TOTAL_ENTRIES,
+  CRUCIBLE_MIN_ENTRY_FEE,
+  CRUCIBLE_MIN_TOTAL_ENTRIES,
   CRUCIBLE_MIN_VIEW_SECONDS_OPTIONS,
   CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
   CRUCIBLE_MAX_ALLOWED_RESOURCES,
+  CRUCIBLE_NAME_MAX_LENGTH,
   CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
   CRUCIBLE_RESOURCE_REQUIREMENTS_COST,
   getMaxCrucibleStartAt,
@@ -30,6 +37,7 @@ import {
 
 const createNotification = vi.fn();
 const createPost = vi.fn();
+const fetchImageResources = vi.fn();
 
 vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationService>()),
@@ -41,9 +49,16 @@ vi.mock('~/server/services/post.service', async (importOriginal) => ({
   createPost,
 }));
 
+vi.mock('~/server/redis/caches', async (importOriginal) => ({
+  ...(await importOriginal<typeof Caches>()),
+  imageResourcesCache: { fetch: fetchImageResources },
+}));
+
 // `~/server/db/client` and `~/server/redis/client` are registered globally by the setup file
 // and reset per test file — see docs/testing/shared-module-mocks.md.
-const { createCrucibleEntryPost, submitEntry } = await import('~/server/services/crucible.service');
+const { checkCrucibleEntryEligibility, createCrucibleEntryPost, submitEntry } = await import(
+  '~/server/services/crucible.service'
+);
 
 const validCoverImage = {
   url: '6a1c3f3d-29e5-49c1-816f-bfc0f7c5c900',
@@ -59,7 +74,7 @@ const validCreateInput = {
   entryFee: 100,
   entryLimit: 1,
   prizePositions: { '1': 50, '2': 30, '3': 20 },
-  duration: 8,
+  duration: 24,
 };
 
 describe('crucibleImageSchema', () => {
@@ -117,6 +132,22 @@ describe('createCrucibleInputSchema', () => {
     );
   });
 
+  it('rejects a free crucible, and any fee below the minimum — entry fees fund the prize pool', () => {
+    for (const entryFee of [0, CRUCIBLE_MIN_ENTRY_FEE - 1]) {
+      expect(createCrucibleInputSchema.safeParse({ ...validCreateInput, entryFee }).success).toBe(
+        false
+      );
+    }
+    expect(
+      createCrucibleInputSchema.safeParse({ ...validCreateInput, entryFee: CRUCIBLE_MIN_ENTRY_FEE })
+        .success
+    ).toBe(true);
+  });
+
+  it('caps the entry fee at 1,000 Buzz', () => {
+    expect(CRUCIBLE_MAX_ENTRY_FEE).toBe(1_000);
+  });
+
   it('accepts an entry fee at the cap and rejects one above it', () => {
     expect(
       createCrucibleInputSchema.safeParse({ ...validCreateInput, entryFee: CRUCIBLE_MAX_ENTRY_FEE })
@@ -157,19 +188,107 @@ describe('createCrucibleInputSchema', () => {
     ).toBe(false);
   });
 
-  it('accepts prize percentages summing to exactly 100, and below it', () => {
+  it('accepts prize percentages summing to exactly 100', () => {
     expect(
       createCrucibleInputSchema.safeParse({
         ...validCreateInput,
         prizePositions: { '1': 100 },
       }).success
     ).toBe(true);
+  });
+
+  it('rejects prize percentages summing below 100, whose remainder no place would be paid', () => {
+    const result = createCrucibleInputSchema.safeParse({
+      ...validCreateInput,
+      prizePositions: { '1': 40, '2': 20 },
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.message).toMatch(/exactly 100%/);
+  });
+
+  it.each([
+    ['a gap in the places', { '1': 50, '3': 50 }],
+    ['a place numbered from zero', { '0': 50, '1': 50 }],
+    ['a non-numeric place', { first: 100 }],
+    ['a fractional percentage', { '1': 50.5, '2': 49.5 }],
+    ['no places at all', {}],
+  ])('rejects %s', (_label, prizePositions) => {
+    expect(
+      createCrucibleInputSchema.safeParse({ ...validCreateInput, prizePositions }).success
+    ).toBe(false);
+  });
+
+  it('caps how many prize places a crucible can have', () => {
+    const places = (n: number) =>
+      Object.fromEntries(Array.from({ length: n }, (_, i) => [String(i + 1), i === 0 ? 100 : 0]));
     expect(
       createCrucibleInputSchema.safeParse({
         ...validCreateInput,
-        prizePositions: { '1': 40, '2': 20 },
+        prizePositions: places(CRUCIBLE_MAX_PRIZE_POSITIONS),
       }).success
     ).toBe(true);
+    expect(
+      createCrucibleInputSchema.safeParse({
+        ...validCreateInput,
+        prizePositions: places(CRUCIBLE_MAX_PRIZE_POSITIONS + 1),
+      }).success
+    ).toBe(false);
+  });
+
+  it('keeps max total entries inside the int4 column, which a huge value overflowed at insert', () => {
+    expect(
+      createCrucibleInputSchema.safeParse({ ...validCreateInput, maxTotalEntries: 9999999999999 })
+        .success
+    ).toBe(false);
+    expect(
+      createCrucibleInputSchema.safeParse({
+        ...validCreateInput,
+        maxTotalEntries: CRUCIBLE_MAX_TOTAL_ENTRIES,
+      }).success
+    ).toBe(true);
+    expect(CRUCIBLE_MAX_TOTAL_ENTRIES).toBeLessThan(2 ** 31);
+  });
+
+  it('rejects a total cap too small to form a single judging pair', () => {
+    expect(
+      createCrucibleInputSchema.safeParse({
+        ...validCreateInput,
+        maxTotalEntries: CRUCIBLE_MIN_TOTAL_ENTRIES - 1,
+      }).success
+    ).toBe(false);
+    expect(
+      createCrucibleInputSchema.safeParse({
+        ...validCreateInput,
+        maxTotalEntries: CRUCIBLE_MIN_TOTAL_ENTRIES,
+      }).success
+    ).toBe(true);
+  });
+
+  it('rejects more entries per user than the whole crucible allows', () => {
+    const result = createCrucibleInputSchema.safeParse({
+      ...validCreateInput,
+      entryLimit: 5,
+      maxTotalEntries: 3,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.path).toEqual(['entryLimit']);
+  });
+
+  it('caps the name and description lengths the form already enforces', () => {
+    expect(
+      createCrucibleInputSchema.safeParse({
+        ...validCreateInput,
+        name: 'x'.repeat(CRUCIBLE_NAME_MAX_LENGTH + 1),
+      }).success
+    ).toBe(false);
+    expect(
+      createCrucibleInputSchema.safeParse({
+        ...validCreateInput,
+        description: 'x'.repeat(CRUCIBLE_DESCRIPTION_MAX_LENGTH + 1),
+      }).success
+    ).toBe(false);
   });
 
   it('defaults seededPrizePool to 0, so an omitted seed is not undefined downstream', () => {
@@ -203,9 +322,8 @@ describe('createCrucibleInputSchema', () => {
     ).toBe(false);
   });
 
-  it('defaults prizeCustomized to false', () => {
-    const parsed = createCrucibleInputSchema.parse(validCreateInput);
-    expect(parsed.prizeCustomized).toBe(false);
+  it('offers 24 hours and 3 days free, and 7 days for 1,000 Buzz', () => {
+    expect(CRUCIBLE_DURATION_COSTS).toEqual({ 24: 0, 72: 0, 168: 1_000 });
   });
 
   it('rejects a duration below one hour', () => {
@@ -276,20 +394,20 @@ describe('calculateCrucibleSetupCost', () => {
   );
 
   it('adds the customization fee on top of the duration cost', () => {
-    expect(calculateCrucibleSetupCost(24, true)).toBe(
-      CRUCIBLE_DURATION_COSTS[24] + CRUCIBLE_PRIZE_CUSTOMIZATION_COST
+    expect(calculateCrucibleSetupCost(168, true)).toBe(
+      CRUCIBLE_DURATION_COSTS[168] + CRUCIBLE_PRIZE_CUSTOMIZATION_COST
     );
   });
 
   it('charges only the customization fee when the duration itself is free', () => {
-    expect(CRUCIBLE_DURATION_COSTS[8]).toBe(0);
-    expect(calculateCrucibleSetupCost(8, true)).toBe(CRUCIBLE_PRIZE_CUSTOMIZATION_COST);
+    expect(CRUCIBLE_DURATION_COSTS[24]).toBe(0);
+    expect(calculateCrucibleSetupCost(24, true)).toBe(CRUCIBLE_PRIZE_CUSTOMIZATION_COST);
   });
 
   it('adds the resource requirements fee when entries are restricted', () => {
-    expect(calculateCrucibleSetupCost(8, false, true)).toBe(CRUCIBLE_RESOURCE_REQUIREMENTS_COST);
-    expect(calculateCrucibleSetupCost(24, true, true)).toBe(
-      CRUCIBLE_DURATION_COSTS[24] +
+    expect(calculateCrucibleSetupCost(24, false, true)).toBe(CRUCIBLE_RESOURCE_REQUIREMENTS_COST);
+    expect(calculateCrucibleSetupCost(168, true, true)).toBe(
+      CRUCIBLE_DURATION_COSTS[168] +
         CRUCIBLE_PRIZE_CUSTOMIZATION_COST +
         CRUCIBLE_RESOURCE_REQUIREMENTS_COST
     );
@@ -360,6 +478,8 @@ describe('getCruciblesInfiniteSchema', () => {
   });
 });
 
+const CRUCIBLE_STARTED_AT = new Date(Date.now() - 60 * 60_000);
+
 const crucibleRow = (contentType: MediaType, maxClipSeconds: number | null = null) => ({
   id: 1,
   name: 'Test Crucible',
@@ -372,7 +492,9 @@ const crucibleRow = (contentType: MediaType, maxClipSeconds: number | null = nul
   maxTotalEntries: null,
   minViewSeconds: null,
   maxClipSeconds,
-  allowedResources: null,
+  allowedResources: null as number[] | null,
+  startAt: CRUCIBLE_STARTED_AT,
+  createdAt: CRUCIBLE_STARTED_AT,
   endAt: new Date(Date.now() + 60_000),
   _count: { entries: 0 },
 });
@@ -383,6 +505,7 @@ const imageRow = (type: MediaType, metadata: Record<string, unknown> | null = nu
   type,
   nsfwLevel: 1,
   metadata,
+  createdAt: new Date(CRUCIBLE_STARTED_AT.getTime() + 60_000),
 });
 
 const submit = () => submitEntry({ crucibleId: 1, imageId: 7, userId: 42 });
@@ -649,5 +772,145 @@ describe('createCrucibleEntryPost', () => {
 
     await expect(create()).rejects.toThrow(/not accepting entries/);
     expect(createPost).not.toHaveBeenCalled();
+  });
+
+  it("refuses the crucible's own creator", async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      name: 'Open Arena',
+      status: CrucibleStatus.Active,
+      endAt: new Date(Date.now() + 60_000),
+      userId: 42,
+    });
+
+    await expect(create()).rejects.toThrow(/can't enter a crucible you created/);
+    expect(createPost).not.toHaveBeenCalled();
+  });
+});
+
+describe('submitEntry — who and what may enter', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    createNotification.mockResolvedValue(undefined);
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucibleRow(MediaType.image));
+    dbMock.dbRead.crucibleEntry.count.mockResolvedValue(0);
+    dbMock.dbRead.crucibleEntry.findFirst.mockResolvedValue(null);
+    dbMock.dbRead.image.findUnique.mockResolvedValue(imageRow(MediaType.image));
+    dbMock.dbRead.image.count.mockResolvedValue(1);
+    dbMock.dbWrite.crucibleEntry.create.mockResolvedValue({ id: 5, user: { username: 'tester' } });
+  });
+
+  it("refuses the crucible's own creator", async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.image),
+      userId: 42,
+    });
+
+    await expect(submit()).rejects.toThrow(/can't enter a crucible you created/);
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses media created before the crucible started', async () => {
+    dbMock.dbRead.image.findUnique.mockResolvedValue({
+      ...imageRow(MediaType.image),
+      createdAt: new Date(CRUCIBLE_STARTED_AT.getTime() - 1),
+    });
+
+    await expect(submit()).rejects.toThrow(/created after this crucible started/);
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the creation time for a crucible with no recorded start', async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.image),
+      startAt: null,
+    });
+    dbMock.dbRead.image.findUnique.mockResolvedValue({
+      ...imageRow(MediaType.image),
+      createdAt: new Date(CRUCIBLE_STARTED_AT.getTime() - 1),
+    });
+
+    await expect(submit()).rejects.toThrow(/created after this crucible started/);
+  });
+
+  it('refuses an image that does not use a required model', async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.image),
+      allowedResources: [500],
+    });
+    fetchImageResources.mockResolvedValue({ 7: { resources: [{ modelVersionId: 600 }] } });
+
+    await expect(submit()).rejects.toThrow(/does not use any of the required resources/);
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+  });
+
+  it('accepts an image that uses a required model', async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.image),
+      allowedResources: [500],
+    });
+    fetchImageResources.mockResolvedValue({ 7: { resources: [{ modelVersionId: 500 }] } });
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+  });
+});
+
+describe('checkCrucibleEntryEligibility', () => {
+  const check = (imageIds: number[]) =>
+    checkCrucibleEntryEligibility({ crucibleId: 1, imageIds, userId: 42 });
+  const after = new Date(CRUCIBLE_STARTED_AT.getTime() + 60_000);
+  const before = new Date(CRUCIBLE_STARTED_AT.getTime() - 60_000);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      startAt: CRUCIBLE_STARTED_AT,
+      createdAt: CRUCIBLE_STARTED_AT,
+      allowedResources: [500],
+    });
+    dbMock.dbRead.image.findMany.mockResolvedValue([
+      { id: 1, createdAt: after },
+      { id: 2, createdAt: before },
+      { id: 3, createdAt: after },
+      { id: 4, createdAt: after },
+    ]);
+    fetchImageResources.mockResolvedValue({
+      1: { resources: [{ modelVersionId: 500 }] },
+      2: { resources: [{ modelVersionId: 500 }] },
+      3: { resources: [{ modelVersionId: 600 }] },
+    });
+  });
+
+  it('answers each image with the reasons submission would refuse it for', async () => {
+    await expect(check([1, 2, 3, 4])).resolves.toEqual([
+      { imageId: 1, eligible: true, reasons: [] },
+      { imageId: 2, eligible: false, reasons: ['created-before-start'] },
+      { imageId: 3, eligible: false, reasons: ['missing-required-resource'] },
+      { imageId: 4, eligible: false, reasons: ['no-resources'] },
+    ]);
+  });
+
+  it("only looks at the caller's own images", async () => {
+    await check([1]);
+
+    expect(dbMock.dbRead.image.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: [1] }, userId: 42 } })
+    );
+  });
+
+  it('marks an image it could not find as ineligible rather than eligible', async () => {
+    await expect(check([99])).resolves.toEqual([
+      { imageId: 99, eligible: false, reasons: ['not-found'] },
+    ]);
+  });
+
+  it('skips the resource lookup when the crucible requires no model', async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      startAt: CRUCIBLE_STARTED_AT,
+      createdAt: CRUCIBLE_STARTED_AT,
+      allowedResources: null,
+    });
+
+    await expect(check([3])).resolves.toEqual([{ imageId: 3, eligible: true, reasons: [] }]);
+    expect(fetchImageResources).not.toHaveBeenCalled();
   });
 });

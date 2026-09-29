@@ -20,6 +20,12 @@ export type JudgingEntry = NonNullable<JudgingPairData>['left'];
 
 export type WatchedMs = { winnerWatchedMs: number; loserWatchedMs: number };
 
+// A held key auto-repeats, which cast a vote on every pair that loaded under it — and a long enough
+// run of those earns streak influence.
+const ignoreKeyRepeat = (action: () => void) => (event: KeyboardEvent) => {
+  if (!event.repeat) action();
+};
+
 export type CrucibleJudgingUIProps = {
   pair: JudgingPairData;
   isLoading?: boolean;
@@ -102,14 +108,14 @@ export function CrucibleJudgingUI({
       ? [
           // Skip stays live while the gate is closed: a judge who does not want to watch either
           // clip through needs a way past the pair.
-          ['Space', handleSkip],
+          ['Space', ignoreKeyRepeat(handleSkip)],
         ]
       : [
-          ['1', () => handleVote('left')],
-          ['ArrowLeft', () => handleVote('left')],
-          ['2', () => handleVote('right')],
-          ['ArrowRight', () => handleVote('right')],
-          ['Space', handleSkip],
+          ['1', ignoreKeyRepeat(() => handleVote('left'))],
+          ['ArrowLeft', ignoreKeyRepeat(() => handleVote('left'))],
+          ['2', ignoreKeyRepeat(() => handleVote('right'))],
+          ['ArrowRight', ignoreKeyRepeat(() => handleVote('right'))],
+          ['Space', ignoreKeyRepeat(handleSkip)],
         ],
     // VIDEO on top of Mantine's defaults: a focused video player answers Space with play/pause and
     // the arrows with seek, and every one of those is also bound here — so without it, pausing a
@@ -237,7 +243,7 @@ function ImageCard({
   hotkeyLabel,
 }: ImageCardProps) {
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (disabled) return;
+    if (disabled || e.repeat) return;
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
       onVote();

@@ -5,17 +5,24 @@ import { infiniteQuerySchema } from './base.schema';
 import { isUUID } from '~/utils/string-helpers';
 import {
   CRUCIBLE_CONTENT_TYPES,
+  CRUCIBLE_DESCRIPTION_MAX_LENGTH,
   CRUCIBLE_DURATION_COSTS,
   CRUCIBLE_MAX_ENTRIES,
   CRUCIBLE_MAX_ENTRY_FEE,
   CRUCIBLE_MAX_CLIP_SECONDS_OPTIONS,
+  CRUCIBLE_MAX_PRIZE_POSITIONS,
+  CRUCIBLE_MAX_TOTAL_ENTRIES,
+  CRUCIBLE_MIN_ENTRY_FEE,
+  CRUCIBLE_MIN_TOTAL_ENTRIES,
   CRUCIBLE_MIN_VIEW_SECONDS_OPTIONS,
   CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
   CRUCIBLE_MAX_ALLOWED_RESOURCES,
   CRUCIBLE_MAX_START_LEAD_DAYS,
+  CRUCIBLE_NAME_MAX_LENGTH,
   CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
   CRUCIBLE_RESOURCE_REQUIREMENTS_COST,
   getMaxCrucibleStartAt,
+  getPrizeDistributionTotal,
 } from '~/shared/constants/crucible.constants';
 
 // Re-export CrucibleSort for convenience
@@ -77,24 +84,41 @@ export function calculateCrucibleSetupCost(
 
 // Schema for creating a new crucible
 export type CreateCrucibleInputSchema = z.infer<typeof createCrucibleInputSchema>;
+const prizePositionsSchema = z
+  .record(z.string().regex(/^[1-9]\d*$/), z.number().int().min(0).max(100))
+  .refine((positions) => {
+    const count = Object.keys(positions).length;
+    return count >= 1 && count <= CRUCIBLE_MAX_PRIZE_POSITIONS;
+  }, `Between 1 and ${CRUCIBLE_MAX_PRIZE_POSITIONS} prize positions are allowed`)
+  .refine(
+    (positions) =>
+      Object.keys(positions)
+        .map(Number)
+        .sort((a, b) => a - b)
+        .every((position, index) => position === index + 1),
+    'Prize positions must run from 1st place without gaps'
+  )
+  .refine(
+    (positions) => getPrizeDistributionTotal(positions) === 100,
+    'Prize percentages must add up to exactly 100%'
+  );
+
 const createCrucibleInputBaseSchema = z.object({
-  name: z.string().trim().nonempty(),
-  description: z.string().nonempty(),
+  name: z.string().trim().nonempty().max(CRUCIBLE_NAME_MAX_LENGTH),
+  description: z.string().nonempty().max(CRUCIBLE_DESCRIPTION_MAX_LENGTH),
   coverImage: crucibleImageSchema,
   nsfwLevel: z.number(),
   contentType: z.enum(CRUCIBLE_CONTENT_TYPES).default(MediaType.image),
-  entryFee: z.number().min(0).max(CRUCIBLE_MAX_ENTRY_FEE),
+  entryFee: z.number().int().min(CRUCIBLE_MIN_ENTRY_FEE).max(CRUCIBLE_MAX_ENTRY_FEE),
   seededPrizePool: z.number().int().min(0).max(CRUCIBLE_MAX_SEEDED_PRIZE_POOL).default(0),
-  entryLimit: z.number().min(1).max(CRUCIBLE_MAX_ENTRIES),
-  maxTotalEntries: z.number().min(1).optional(),
-  prizePositions: z.record(z.string(), z.number()).refine(
-    (positions) => {
-      const total = Object.values(positions).reduce((sum, val) => sum + val, 0);
-      return total <= 100;
-    },
-    { message: 'Prize percentages must sum to 100% or less' }
-  ),
-  prizeCustomized: z.boolean().default(false), // Whether prize distribution was customized from default
+  entryLimit: z.number().int().min(1).max(CRUCIBLE_MAX_ENTRIES),
+  maxTotalEntries: z
+    .number()
+    .int()
+    .min(CRUCIBLE_MIN_TOTAL_ENTRIES)
+    .max(CRUCIBLE_MAX_TOTAL_ENTRIES)
+    .optional(),
+  prizePositions: prizePositionsSchema,
   allowedResources: z.array(z.number().int()).max(CRUCIBLE_MAX_ALLOWED_RESOURCES).optional(),
   duration: z.number().refine((hours) => hours in CRUCIBLE_DURATION_COSTS, {
     message: 'Unsupported crucible duration',
@@ -138,6 +162,13 @@ export const createCrucibleInputSchema = createCrucibleInputBaseSchema
       message: 'Minimum view time cannot exceed the maximum clip length',
       path: ['minViewSeconds'],
     }
+  )
+  .refine(
+    ({ entryLimit, maxTotalEntries }) => maxTotalEntries == null || entryLimit <= maxTotalEntries,
+    {
+      message: 'Entries per user cannot exceed the maximum total entries',
+      path: ['entryLimit'],
+    }
   );
 
 // Schema for submitting an entry to a crucible
@@ -157,6 +188,14 @@ export type SubmitEntrySchema = z.infer<typeof submitEntrySchema>;
 export const submitEntrySchema = z.object({
   crucibleId: z.number(),
   imageId: z.number(),
+});
+
+export type CheckCrucibleEntryEligibilitySchema = z.infer<
+  typeof checkCrucibleEntryEligibilitySchema
+>;
+export const checkCrucibleEntryEligibilitySchema = z.object({
+  crucibleId: z.number(),
+  imageIds: z.array(z.number()).max(1000),
 });
 
 // Schema for submitting a vote
