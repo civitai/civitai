@@ -75,6 +75,11 @@ import {
   useGenerateFromGraph,
   useInvalidateWhatIf,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import {
+  TrialAccessWarning,
+  TrialBlockedAlert,
+} from '~/components/Generate/GenerationPaidAccessAlerts';
+import { parseTrialMessage } from '~/components/Generate/paid-access-gate';
 import { useResourceDataContext } from './inputs/ResourceDataProvider';
 import { useWhatIfContext } from './WhatIfProvider';
 import { filterSnapshotForSubmit } from './utils';
@@ -510,7 +515,16 @@ function PriorityAlertSpace({
   forceInsufficientBuzz,
   onClearInsufficientBuzz,
 }: PriorityAlertSpaceProps) {
-  const { error: whatIfError, isError: hasWhatIfError, data: whatIfData } = useWhatIfContext();
+  const {
+    error: whatIfError,
+    isError: hasWhatIfError,
+    isSuccess: whatIfSucceeded,
+    data: whatIfData,
+  } = useWhatIfContext();
+  // The advisory alert is derived from entity access, which resolves well before the estimate. Drawing it
+  // then swapping in the blocking alert when the whatIf comes back reads as a yellow-to-red flash, so it
+  // waits for the estimate to settle — there is nothing to advise until we know whether it is blocked.
+  const whatIfSettled = whatIfSucceeded || hasWhatIfError;
   const { selectedType, availableTypes, setBuzzType } = useSelectedBuzzType();
   const {
     data: { accounts },
@@ -535,8 +549,28 @@ function PriorityAlertSpace({
       })
     : undefined;
 
+  // The orchestrator announces the remaining trial count as an ordinary step warning, so it arrives here
+  // rather than on submit. Split out so the generic warnings notification does not render it a second
+  // time beside the offer.
+  const trialWarning = whatIfData?.warnings?.find((w) => parseTrialMessage(w.message));
+  const otherWarnings = whatIfData?.warnings?.filter((w) => w !== trialWarning) ?? [];
+  // Only these two channels BLOCK: the whatIf rejects the estimate when the allowance is short of the
+  // requested quantity, and a submit is refused once it is spent. The step warning is advisory, so it
+  // informs the copy without claiming the user is stuck.
+  const blockingTrialMessage = [
+    submitError,
+    hasWhatIfError ? whatIfError?.message : undefined,
+  ].find((message) => parseTrialMessage(message));
+  const trialRemaining = parseTrialMessage(
+    blockingTrialMessage ?? trialWarning?.message
+  )?.remaining;
+
   // Determine which priority alert to show
   let priorityAlert: ReactNode;
+  // Set by the branch that actually draws, not derived from the conditions again: a higher-priority
+  // alert can win while `submitError` is still set, and restating the precedence here is how the
+  // proactive warning would end up suppressed with nothing shown in its place.
+  let showingTrialAlert = false;
   if (missingFieldMessage) {
     // Show helper message for missing required fields (not an error, just guidance)
     priorityAlert = (
@@ -548,6 +582,15 @@ function PriorityAlertSpace({
       >
         {missingFieldMessage}
       </Notification>
+    );
+  } else if (blockingTrialMessage) {
+    showingTrialAlert = true;
+    priorityAlert = (
+      <TrialBlockedAlert
+        message={blockingTrialMessage}
+        remaining={trialRemaining}
+        onClose={blockingTrialMessage === submitError ? onClearSubmitError : undefined}
+      />
     );
   } else if (hasWhatIfError && whatIfError) {
     priorityAlert = (
@@ -615,8 +658,8 @@ function PriorityAlertSpace({
     );
     // Above the sdcpp branch because that one always assigns (its MultiController decides
     // internally whether to draw), so anything after it never renders.
-  } else if (whatIfData?.warnings?.length) {
-    priorityAlert = <StepWarningsNotification warnings={whatIfData.warnings} />;
+  } else if (otherWarnings.length) {
+    priorityAlert = <StepWarningsNotification warnings={otherWarnings} />;
   } else if (featureFlags.enhancedCompatibilitySdcpp) {
     // Dismissal is keyed per-ecosystem via DismissibleAlert's localStorage id.
     // When enhancedCompatibility is on, the bonus doesn't apply — swap in a
@@ -670,6 +713,7 @@ function PriorityAlertSpace({
       <GeneratorMessageWarnings />
       <BaseModelWarnings />
       <DownloadWarning />
+      {whatIfSettled && !showingTrialAlert && <TrialAccessWarning remaining={trialRemaining} />}
       {priorityAlert}
     </>
   );
