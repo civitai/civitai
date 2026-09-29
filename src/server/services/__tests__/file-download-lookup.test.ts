@@ -224,6 +224,47 @@ describe('getFileForModelVersion — orphan model relation + unresolvable URL', 
     if (result.status === 'success') expect(result.url).toBe('https://cdn.example.com/signed');
   });
 
+  it('never picks a replaced file when resolving the primary file', async () => {
+    modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
+    resolveDownloadUrlMock.mockResolvedValue({ url: 'https://cdn/ok', urlExpiryDate: new Date() });
+
+    await getFileForModelVersion({
+      modelVersionId: 1,
+      noAuth: true,
+      user: { id: 1, isModerator: true },
+    });
+
+    expect(modelFileFindMany.mock.calls[0][0].where).toMatchObject({ replacedAt: null });
+  });
+
+  it('never picks a replaced file when resolving by type', async () => {
+    modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
+    resolveDownloadUrlMock.mockResolvedValue({ url: 'https://cdn/ok', urlExpiryDate: new Date() });
+
+    await getFileForModelVersion({
+      modelVersionId: 1,
+      type: 'VAE',
+      noAuth: true,
+      user: { id: 1, isModerator: true },
+    });
+
+    expect(modelFileFindMany.mock.calls[0][0].where).toMatchObject({ replacedAt: null });
+  });
+
+  it('still serves a replaced file asked for by its id', async () => {
+    modelVersionFindFirst.mockResolvedValue(publishedModelVersion());
+    resolveDownloadUrlMock.mockResolvedValue({ url: 'https://cdn/ok', urlExpiryDate: new Date() });
+
+    await getFileForModelVersion({
+      modelVersionId: 1,
+      fileId: aFile.id,
+      noAuth: true,
+      user: { id: 1, isModerator: true },
+    });
+
+    expect(modelFileFindMany.mock.calls[0][0].where).not.toHaveProperty('replacedAt');
+  });
+
   // --- Access denial must not masquerade as "you need to log in" ----------
   // A signed-in user who lacks a grant used to get `unauthorized`, which the download endpoint
   // answers with a redirect to /login. Already having a session, they were bounced straight back to

@@ -10,17 +10,12 @@ import { settledEtaSeconds } from '~/shared/orchestrator/download-preparation';
 import { trpc } from '~/utils/trpc';
 import type { GeneratorReadiness } from '~/shared/generation/generator-readiness';
 
-/** The answer is server-cached for 30s (`RESIDENCY_CACHE_SECONDS`), so a faster poll re-reads it. */
-const RESIDENCY_POLL_MS = 60_000;
-
-const pollWhileAnyIsCold = (query: {
-  state: { data?: { availability: ResourceLoadAvailability }[] };
-}) =>
-  query.state.data?.every(
-    (x) => x.availability.status === 'available' || x.availability.status === 'external'
-  )
-    ? false
-    : RESIDENCY_POLL_MS;
+/**
+ * Matches the server's 30s cache (`RESIDENCY_CACHE_SECONDS`): a shorter window re-reads the same
+ * answer, and a scrolled picker nears the endpoint's rate limit. Focus refetch overrides the app
+ * default.
+ */
+const RESIDENCY_QUERY_OPTIONS = { staleTime: 30_000, refetchOnWindowFocus: true } as const;
 
 export function useResourceResidency(modelVersionId: number | undefined) {
   const currentUser = useCurrentUser();
@@ -28,8 +23,7 @@ export function useResourceResidency(modelVersionId: number | undefined) {
     { modelVersionIds: [modelVersionId ?? 0] },
     {
       enabled: !!currentUser && modelVersionId != null && modelVersionId > 0,
-      staleTime: 30_000,
-      refetchInterval: pollWhileAnyIsCold,
+      ...RESIDENCY_QUERY_OPTIONS,
     }
   );
   return data?.find((x) => x.modelVersionId === modelVersionId)?.availability;
@@ -123,8 +117,7 @@ export function ResidencyBatchProvider({
         { modelVersionIds },
         {
           enabled: !!currentUser && modelVersionIds.length > 0,
-          staleTime: 30_000,
-          refetchInterval: pollWhileAnyIsCold,
+          ...RESIDENCY_QUERY_OPTIONS,
         }
       )
     )

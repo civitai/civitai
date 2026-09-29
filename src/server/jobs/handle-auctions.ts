@@ -306,7 +306,7 @@ const _fetchAuctionsWithBids = async (now: Dayjs) => {
 };
 
 const TOP_EARNER_LIMIT = 20;
-const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerType[]) => {
+export const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerType[]) => {
   const winnerIds = winners.map((w) => w.entityId);
   const entityNames = Object.fromEntries(winnerIds.map((w) => [w, null as string | null]));
 
@@ -363,6 +363,9 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
       entityNames[md.id] = md.model.name;
     });
 
+    // Busted below, outside the try: a Redis fault must not report the coverage write as failed.
+    let coverageDropouts: number[] = [];
+
     if (!auctionRow.auctionBase.ecosystem) {
       // update checkpoint coverage
       const checkpoints = winners
@@ -402,20 +405,23 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
           // Delta sync instead of TRUNCATE + INSERT: TRUNCATE isn't propagated
           // by every replication setup, which left stale "covered" rows on the
           // DataPacket replica.
-          await dbWrite.$transaction([
+          const [, removed] = await dbWrite.$transaction([
             dbWrite.$executeRaw`
               INSERT INTO "CoveredCheckpoint" ("model_id", "version_id")
               SELECT * FROM UNNEST(${modelIds}::int[], ${versionIds}::int[]) AS t(model_id, version_id)
               ON CONFLICT DO NOTHING
             `,
-            dbWrite.$executeRaw`
+            dbWrite.$queryRaw<{ version_id: number }[]>`
               DELETE FROM "CoveredCheckpoint" cc
               WHERE NOT EXISTS (
                 SELECT 1 FROM UNNEST(${modelIds}::int[], ${versionIds}::int[]) AS t(model_id, version_id)
                 WHERE t.model_id = cc.model_id AND t.version_id = cc.version_id
               )
+              RETURNING cc.version_id
             `,
           ]);
+
+          coverageDropouts = removed.map((r) => r.version_id);
         }
       } catch (error) {
         const err = error as Error;
@@ -446,10 +452,14 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
     );
     await bustFeaturedModelsCache();
     await homeBlockCacheBust(HomeBlockType.FeaturedModelVersion, 'default');
-    await resourceDataCache.bust(winnerIds);
-    await bustOrchestratorModelCache(winnerIds);
+    // Dropouts need the winners' invalidation: the set also takes top weekly earners, so a version
+    // leaves with no auction event of its own, and unbusted the orchestrator keeps serving it as
+    // covered until its entry expires.
+    const coverageChanged = [...winnerIds, ...coverageDropouts];
+    await resourceDataCache.bust(coverageChanged);
+    await bustOrchestratorModelCache(coverageChanged);
 
-    log('busted cache', winnerIds.length);
+    log('busted cache', coverageChanged.length);
   }
 
   // Send notifications to each auction's contributing winners

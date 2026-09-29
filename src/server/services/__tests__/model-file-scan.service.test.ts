@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import type * as OrchestratorModels from '~/server/services/orchestrator/models';
+import type * as ResourceData from '~/server/redis/resource-data.redis';
 
 // One local served both clients. Everything this file drives is dbWrite —
 // modelFile.findUnique/update (model-file-scan.service:132, :161, :203), modelFileHash.*
@@ -24,6 +26,8 @@ const {
   mockUnpublishModelById,
   mockCheckMinorHashOnScan,
   mockIsFlipt,
+  mockBustOrchestratorModelCache,
+  mockResourceDataBust,
 } = vi.hoisted(() => {
   // Test-local copy of the real error class so rescanModel's instanceof
   // check resolves without importing the real orchestrator module.
@@ -53,6 +57,8 @@ const {
     mockUnpublishModelById: vi.fn().mockResolvedValue({}),
     mockCheckMinorHashOnScan: vi.fn().mockResolvedValue('skipped'),
     mockIsFlipt: vi.fn().mockResolvedValue(true),
+    mockBustOrchestratorModelCache: vi.fn().mockResolvedValue(undefined),
+    mockResourceDataBust: vi.fn().mockResolvedValue(undefined),
   };
 });
 
@@ -83,6 +89,16 @@ vi.mock('~/server/services/model-file.service', () => ({
 
 vi.mock('~/server/services/notification.service', () => ({
   createNotification: mockCreateNotification,
+}));
+
+vi.mock('~/server/services/orchestrator/models', async (importOriginal) => ({
+  ...(await importOriginal<typeof OrchestratorModels>()),
+  bustOrchestratorModelCache: mockBustOrchestratorModelCache,
+}));
+
+vi.mock('~/server/redis/resource-data.redis', async (importOriginal) => ({
+  ...(await importOriginal<typeof ResourceData>()),
+  resourceDataCache: { bust: mockResourceDataBust },
 }));
 
 vi.mock('~/server/services/orchestrator/orchestrator.service', () => ({
@@ -263,6 +279,7 @@ describe('model-file-scan.service', () => {
   describe('applyScanOutcome', () => {
     const baseFile = {
       id: 1,
+      type: 'Model',
       modelVersionId: 100,
       modelVersion: { modelId: 200 },
     };
@@ -333,6 +350,74 @@ describe('model-file-scan.service', () => {
       const updateCall = mockDbWrite.modelFile.update.mock.calls[0][0];
       expect(updateCall.data.scannedAt).toBeUndefined();
       expect(updateCall.data.headerData).toEqual({ foo: 'bar' });
+    });
+
+    it('invalidates the orchestrator cache entry when a scan ran', async () => {
+      setupFileFound();
+
+      await applyScanOutcome({
+        fileId: 1,
+        virusScan: { result: ScanResultCode.Success, message: null },
+      });
+
+      expect(mockBustOrchestratorModelCache).toHaveBeenCalledWith(100);
+      expect(mockResourceDataBust).toHaveBeenCalledWith([100]);
+    });
+
+    it('does NOT invalidate for a file that cannot move coverage', async () => {
+      setupFileFound({ ...baseFile, type: 'Training Data' });
+
+      await applyScanOutcome({
+        fileId: 1,
+        virusScan: { result: ScanResultCode.Success, message: null },
+      });
+
+      expect(mockBustOrchestratorModelCache).not.toHaveBeenCalled();
+      expect(mockResourceDataBust).not.toHaveBeenCalled();
+    });
+
+    it('invalidates for a pickle-only scan too', async () => {
+      setupFileFound();
+
+      await applyScanOutcome({
+        fileId: 1,
+        pickleScan: { result: ScanResultCode.Success, message: null },
+      });
+
+      expect(mockBustOrchestratorModelCache).toHaveBeenCalledWith(100);
+    });
+
+    it('logs a failed invalidation instead of failing the outcome, after the index update', async () => {
+      setupFileFound();
+      mockBustOrchestratorModelCache.mockRejectedValueOnce(new Error('db timeout'));
+
+      await expect(
+        applyScanOutcome({
+          fileId: 1,
+          virusScan: { result: ScanResultCode.Success, message: null },
+        })
+      ).resolves.toBeUndefined();
+
+      expect(mockModelsSearchIndexQueueUpdate).toHaveBeenCalled();
+      expect(mockModelsSearchIndexQueueUpdate.mock.invocationCallOrder[0]).toBeLessThan(
+        mockBustOrchestratorModelCache.mock.invocationCallOrder[0]
+      );
+      expect(mockLogToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'error', name: 'model-file-scan' }),
+        'webhooks'
+      );
+    });
+
+    it('does NOT invalidate the orchestrator for a hash-only rescan', async () => {
+      setupFileFound();
+
+      await applyScanOutcome({
+        fileId: 1,
+        hashes: { [ModelHashType.SHA256]: 'abc' },
+      });
+
+      expect(mockBustOrchestratorModelCache).not.toHaveBeenCalled();
+      expect(mockResourceDataBust).not.toHaveBeenCalled();
     });
 
     it('writes pickleScan result and message when present', async () => {

@@ -41,6 +41,7 @@ const AIR_CALLS_PER_FILE: Record<string, number> = {
   [
     'src/server/services/generation/generation.service.ts',
     'src/server/services/resource-load.service.ts',
+    'src/server/services/resource-residency.service.ts',
     'src/server/services/orchestrator/models.ts',
   ] as const;
 
