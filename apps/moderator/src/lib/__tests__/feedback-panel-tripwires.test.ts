@@ -528,7 +528,7 @@ describe('the row click is an enhancement over a real link', () => {
   /**
    * 🔴 THE HANDLER OPENS; ONLY THE ANCHOR TOGGLES. `rowHref` is a toggle, so routing the row click
    * through it makes the whole nine-cell strip a close target — and closing destroys the panel and
-   * every unsaved character of the issue draft inside it. `feedbackRowExpands`' `expanded` guard is
+   * every unsaved character of the issue draft inside it. `feedbackRowExpands`' `anyPanelOpen` guard is
    * the other half; this pins that the navigation itself cannot close a row.
    */
   it('navigates the row click through the open-only href', () => {
@@ -536,10 +536,13 @@ describe('the row click is an enhancement over a real link', () => {
     expect(page).toContain(
       'goto(feedbackOpenHref(page.url, id), { noScroll: true, keepFocus: true })'
     );
-    // 🔴 `data.open !== null`, NOT `data.open === id`. The narrow test suppresses only the
-    // self-close and leaves every OTHER row a click away from unmounting the open panel — `?open=`
-    // is single-valued, so switching rows discards the draft exactly as closing does.
-    expect(page).toContain('anyPanelOpen: data.open !== null,');
+    // 🔴 `data.openVisible` — the fact that a panel is MOUNTED, and neither of the two expressions
+    // that look like it. `data.open === id` suppresses only the self-close and leaves every other
+    // row a click away from unmounting the panel (`?open=` is single-valued, so switching rows
+    // discards the draft exactly as closing does); `data.open !== null` is true on a shared `?open=`
+    // the current view cannot show, where there is no panel at all, and kills the row click across
+    // the whole queue for nothing.
+    expect(page).toContain('anyPanelOpen: data.openVisible,');
   });
 
   /**

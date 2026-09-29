@@ -36,8 +36,14 @@ export type FeedbackRowClick = {
   /** `window.getSelection()?.toString() ?? ''`. */
   selection: string;
   /**
-   * Whether ANY report's panel is currently open — `data.open !== null`, not `data.open === id`.
-   * The wider question is the one that matters; see the guard.
+   * Whether a panel is MOUNTED — the queue's `data.openVisible`.
+   *
+   * 🔴 NOT `data.open === id`, WHICH IS TOO NARROW, AND NOT `data.open !== null`, WHICH IS TOO WIDE.
+   * The queue keeps `?open=` when the id names a report the current view cannot show and says so in
+   * a hint, so `open !== null` is true in a state where there is no panel and no draft — and the
+   * guard would then kill the row click across the whole queue for nothing, on exactly the shared
+   * link that lands an operator there. `openVisible` is `!!openRow`, computed off the same list the
+   * rows render from, so it is true iff a panel exists to protect.
    */
   anyPanelOpen: boolean;
 };

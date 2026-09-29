@@ -36,8 +36,9 @@
 <p class="mb-4"><a class={LINK_CLASS} href="/feedback">← Feedback queue</a></p>
 
 <!-- The status the queue shows in its own column. Repeated here because this page has no row above
-     it: the footer marks the current status only by disabling its button, which is a state to infer
-     rather than a value to read. -->
+     it, and the footer marks the current status only by how its button LOOKS — disabled, and the
+     one `default` variant among outlines. Both are states to infer rather than a value to read, and
+     the disabled half is ambiguous mid-submit, when every button is disabled. -->
 <p class="mb-4">
   <Badge class={feedbackStatusBadgeClass(data.row.status)}>{data.row.status}</Badge>
 </p>

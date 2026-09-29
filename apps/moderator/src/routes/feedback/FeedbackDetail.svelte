@@ -56,6 +56,11 @@
      * The QUEUE passes nothing and keeps its own `pageError` instead: there the panel is mounted
      * only while a row is open, so a no-JS POST lands on a page with no panel at all and the message
      * has to live above the table. The two surfaces stay disjoint.
+     *
+     * ⚠️ THE GATE RESTS ON EVERY FORM IN THIS PANEL OWNING A `FormState`. `lastSubmitted` never
+     * returns to null once written, so a third form added with a bare `use:enhance` would land its
+     * refusal in the page-level `form` alone — where this gate then suppresses it for the life of the
+     * component. Give any new form a `FormState`, or this prop stops covering it.
      */
     formError?: string | null;
   } = $props();

@@ -171,9 +171,10 @@
    * single DOM read it cannot do: which control, if any, the click landed on.
    *
    * 🔴 `feedbackOpenHref(…, id)`, NOT `rowHref(id)` — this handler OPENS, it never toggles, and it
-   * declines entirely while any panel is open. `?open=` is single-valued, so switching rows unmounts
-   * the live panel exactly as closing does, and that panel holds the operator's unsaved issue draft.
-   * `feedbackRowExpands` carries the reasoning and the cost.
+   * declines entirely while a panel is MOUNTED (`data.openVisible`, not `data.open !== null`; the
+   * two differ on a shared `?open=` the current view cannot show). `?open=` is single-valued, so
+   * switching rows unmounts the live panel exactly as closing does, and that panel holds the
+   * operator's unsaved issue draft. `feedbackRowExpands` carries the reasoning and the cost.
    *
    * 🔴 `noScroll`/`keepFocus` MIRROR THE ANCHOR'S OWN `data-sveltekit-*` ATTRIBUTES, and the two
    * have to be changed together — `rowHref` only makes the URLs agree, the navigation options are
@@ -191,7 +192,7 @@
         defaultPrevented: event.defaultPrevented,
         interactive: target instanceof Element && !!target.closest(FEEDBACK_ROW_INTERACTIVE),
         selection: window.getSelection()?.toString() ?? '',
-        anyPanelOpen: data.open !== null,
+        anyPanelOpen: data.openVisible,
       })
     )
       return;
