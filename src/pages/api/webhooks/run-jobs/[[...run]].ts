@@ -13,7 +13,6 @@ import { reactionWithdrawalDetection } from '~/server/jobs/reaction-withdrawal-d
 import { dedupeOfficialUploadsJob } from '~/server/jobs/dedupe-official-uploads';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
 import { applyDiscordRoles } from '~/server/jobs/apply-discord-roles';
-import { applyNsfwBaseline } from '~/server/jobs/apply-nsfw-baseline';
 import { applyTagRules } from '~/server/jobs/apply-tag-rules';
 import { applyVotedTags } from '~/server/jobs/apply-voted-tags';
 import { cacheCleanup } from '~/server/jobs/cache-cleanup';
@@ -34,7 +33,6 @@ import { confirmPendingBlockAttributions } from '~/server/jobs/confirm-pending-b
 import { purgeReviewSnapshotsJob } from '~/server/jobs/purge-review-snapshots';
 import { reapDevTunnelsJob } from '~/server/jobs/reap-dev-tunnels';
 import { sweepStaleAgentReviewsJob } from '~/server/jobs/sweep-stale-agent-reviews';
-import { custodySweepJob } from '~/server/jobs/custody-sweep';
 import { reconcileNowpaymentsJob } from '~/server/jobs/reconcile-nowpayments';
 import { notifyStuckCryptoDepositsJob } from '~/server/jobs/notify-stuck-crypto-deposits';
 import { cosmeticPerceptualHashSweepJob } from '~/server/jobs/cosmetic-phash-sweep';
@@ -65,7 +63,6 @@ import {
   eventEngineDailyReset,
   eventEngineLeaderboardUpdate,
 } from '~/server/jobs/event-engine-work';
-import { fullImageExistence } from '~/server/jobs/full-image-existence';
 import { handleAuctions } from '~/server/jobs/handle-auctions';
 // import { refreshImageGenerationCoverage } from '~/server/jobs/refresh-image-generation-coverage';
 import { ingestImages, removeBlockedImages } from '~/server/jobs/image-ingestion';
@@ -87,7 +84,6 @@ import { processHuggingFaceImportsJob } from '~/server/jobs/process-huggingface-
 import { storageUsageMediaJob, storageUsageNightlyJob } from '~/server/jobs/storage-usage';
 import { processRewards, rewardsDailyReset } from '~/server/jobs/process-rewards';
 import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
-import { processSubscriptionsRequiringRenewal } from '~/server/jobs/process-subscriptions-requiring-renewal';
 import { processVaultItems } from '~/server/jobs/process-vault-items';
 import { auditWildcardSetCategoriesJob } from '~/server/jobs/audit-wildcard-set-categories';
 import { clickhouseRefreshJobs } from '~/server/jobs/clickhouse-refresh-monitor';
@@ -153,7 +149,6 @@ export const jobs: Job[] = [
   resetToDraftWithoutRequirements,
   applyContestTags,
   ...applyDiscordRoles,
-  applyNsfwBaseline,
   userDeletedCleanup,
   removeDeletedUserImages,
   restoreUserImages,
@@ -216,11 +211,9 @@ export const jobs: Job[] = [
   cosmeticPerceptualHashSweepJob,
   purgeReviewSnapshotsJob,
   checkImageExistence,
-  fullImageExistence,
   rewardsAdImpressions,
   collectionAiReview,
   collectionGameProcessing,
-  processSubscriptionsRequiringRenewal,
   sendCollectionNotifications,
   checkProcessingResourceTrainingV2,
   ...dailyChallengeJobs,
@@ -249,7 +242,6 @@ export const jobs: Job[] = [
   articleIngestionReconcile,
   expireStrikesJob,
   processTimedUnmutesJob,
-  custodySweepJob,
   reconcileNowpaymentsJob,
   notifyStuckCryptoDepositsJob,
   processEnqueuedComicPanelsJob,
