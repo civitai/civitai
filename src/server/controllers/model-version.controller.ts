@@ -852,13 +852,9 @@ export const publishModelVersionHandler = async ({
 
     const republishing =
       version.status !== ModelStatus.Draft && version.status !== ModelStatus.Scheduled;
-    const { needsReview, unpublishedReason, unpublishedAt, customMessage, ...meta } =
+    const { needsReview, unpublishedReason, unpublishedAt, unpublishedBy, customMessage, ...meta } =
       versionMeta || {};
-    const updatedVersion = await publishModelVersionById({
-      ...input,
-      meta,
-      republishing,
-    });
+    const updatedVersion = await publishModelVersionById({ ...input, meta, republishing });
 
     await queueModelEarlyAccessReindex({ id: updatedVersion.modelId }).catch((e) => {
       console.error('Unable to update model early access deadline');
