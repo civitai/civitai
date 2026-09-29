@@ -63,6 +63,7 @@ describe('TrialBlockedAlert', () => {
 
     renderWithProviders(
       <TrialBlockedAlert
+        selectedIds={[]}
         message="You have 0 trial generations remaining with HappyHorse"
         onClose={() => undefined}
       />
@@ -85,6 +86,7 @@ describe('TrialBlockedAlert', () => {
 
     renderWithProviders(
       <TrialBlockedAlert
+        selectedIds={[]}
         message="You have 1 trial generations remaining with Luicelia Superdia - v1.0"
         remaining={1}
       />
@@ -103,6 +105,7 @@ describe('TrialBlockedAlert', () => {
 
     renderWithProviders(
       <TrialBlockedAlert
+        selectedIds={[]}
         message="You have 0 trial generations remaining with Sulphur"
         remaining={0}
       />
@@ -117,6 +120,7 @@ describe('TrialBlockedAlert', () => {
 
     renderWithProviders(
       <TrialBlockedAlert
+        selectedIds={[]}
         message="You have 0 trial generations remaining"
         onClose={() => undefined}
       />
@@ -134,7 +138,7 @@ describe('TrialAccessWarning', () => {
   const renderWarning = () =>
     renderWithProviders(
       <IsClientProvider>
-        <TrialAccessWarning />
+        <TrialAccessWarning selectedIds={[]} />
         <ClientProbe />
       </IsClientProvider>
     );
@@ -154,7 +158,7 @@ describe('TrialAccessWarning', () => {
 
     renderWithProviders(
       <IsClientProvider>
-        <TrialAccessWarning remaining={1} />
+        <TrialAccessWarning selectedIds={[]} remaining={1} />
         <ClientProbe />
       </IsClientProvider>
     );

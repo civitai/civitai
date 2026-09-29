@@ -21,6 +21,18 @@ type GateResource = {
 
 type AccessRow = { entityId: number; hasAccess: boolean; permissions: number };
 
+export type SelectedResources = {
+  model?: { id: number } | null;
+  resources?: { id: number }[] | null;
+  vae?: { id: number } | null;
+};
+
+export function selectedResourceIds({ model, resources, vae }: SelectedResources): number[] {
+  return [model?.id, ...(resources ?? []).map((resource) => resource.id), vae?.id].filter(
+    (id): id is number => id != null
+  );
+}
+
 /**
  * The resources worth an access lookup. Owners and moderators are dropped BEFORE the query, not after:
  * `hasEntityAccess` grants an owner only when every id in the batch is theirs, so one stranger's gated
