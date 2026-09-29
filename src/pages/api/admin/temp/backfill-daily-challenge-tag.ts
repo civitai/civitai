@@ -2,6 +2,7 @@ import * as z from 'zod';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { dailyChallengeConfig } from '~/server/games/daily-challenge/daily-challenge.utils';
+import { logToAxiom } from '~/server/logging/client';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { insertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import { sleep } from '~/server/utils/concurrency-helpers';
@@ -20,6 +21,7 @@ import { booleanString, commaDelimitedStringArray } from '~/utils/zod-helpers';
  *   /api/admin/temp/backfill-daily-challenge-tag?token=$WEBHOOK_TOKEN&dryRun=false&collectionId=0&itemId=0
  */
 const MB = 1024 ** 2;
+const LOG_NAME = 'backfill-daily-challenge-tag';
 
 const schema = z.object({
   dryRun: booleanString().default(true),
@@ -105,7 +107,6 @@ export default WebhookEndpoint(async (req, res) => {
   let lags: Record<string, number> | null = null;
   let stopReason: StopReason | undefined;
   let stopSlot: string | undefined;
-  let error: string | undefined;
   let requeueFailed = false;
 
   outer: for (const { id: collectionId } of collections) {
@@ -169,7 +170,12 @@ export default WebhookEndpoint(async (req, res) => {
           );
         } catch (e) {
           stopReason = 'error';
-          error = (e as Error).message;
+          await logToAxiom({
+            type: 'error',
+            name: LOG_NAME,
+            message: (e as Error).message,
+            next,
+          }).catch(() => null);
           // Some chunks may have committed; a rerun skips those as tagged and would never
           // queue them, so they have to reach the index now.
           await queueImageSearchIndexUpdate({
@@ -205,12 +211,11 @@ export default WebhookEndpoint(async (req, res) => {
 
   const toMb = (bytes: number | null) => (bytes === null ? null : Math.round(bytes / MB));
 
-  return res.status(200).json({
+  const summary = {
     dryRun: params.dryRun,
     done: !stopReason,
     stopReason,
     stopSlot,
-    error,
     requeueFailed,
     next,
     // Floored, so passing it back can only tighten the guard.
@@ -223,5 +228,12 @@ export default WebhookEndpoint(async (req, res) => {
     written,
     lagMb: lags && Object.fromEntries(Object.entries(lags).map(([slot, b]) => [slot, toMb(b)])),
     walMb: toMb(walBytes),
-  });
+  };
+
+  // Before responding: a proxy timeout on a long call must not lose the cursor for committed writes.
+  await logToAxiom({ type: 'info', name: LOG_NAME, message: 'call complete', ...summary }).catch(
+    () => null
+  );
+
+  return res.status(200).json(summary);
 });

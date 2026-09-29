@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ConcurrencyHelpers from '~/server/utils/concurrency-helpers';
-import '~/__tests__/mocks/logging.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import '~/__tests__/mocks/db.mock';
 
 /**
@@ -88,10 +88,7 @@ const { state, events, tagRows, query, insertTagsOnImageNew, queueImageSearchInd
     };
   });
 
-vi.mock('~/server/db/pgDb', async () => {
-  const { createPgDbMock } = await import('~/test-utils/pgDbMock');
-  return createPgDbMock({ pgDbWrite: { query } });
-});
+vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbReadLong: {}, pgDbWrite: { query } }));
 vi.mock('~/server/services/tagsOnImageNew.service', () => ({ insertTagsOnImageNew }));
 vi.mock('~/server/services/image.service', () => ({ queueImageSearchIndexUpdate }));
 vi.mock('~/server/utils/concurrency-helpers', async (importOriginal) => ({
@@ -203,6 +200,10 @@ describe('backfill-daily-challenge-tag', () => {
       next: { collectionId: 20, itemId: 5 },
     });
     expect(queueImageSearchIndexUpdate).not.toHaveBeenCalled();
+    // Logged as well as returned, so a proxy timeout on a long call cannot lose the cursor.
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ written: 4, next: { collectionId: 20, itemId: 5 } })
+    );
   });
 
   it('pauses, then re-reads the slots, before every write after the first', async () => {
@@ -366,11 +367,15 @@ describe('backfill-daily-challenge-tag', () => {
 
     expect(payload).toMatchObject({
       stopReason: 'error',
-      error: 'boom',
       requeueFailed: false,
       written: 0,
       next: { collectionId: 10, itemId: 0 },
     });
+    // Driver text can carry row values, so it goes to the log and never into the body.
+    expect(JSON.stringify(payload)).not.toContain('boom');
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', message: 'boom' })
+    );
     expect(queueImageSearchIndexUpdate).toHaveBeenCalledTimes(1);
     expect(queueImageSearchIndexUpdate).toHaveBeenCalledWith({ ids: [101], action: 'Update' });
   });
