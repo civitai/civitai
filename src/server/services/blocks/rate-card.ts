@@ -53,13 +53,22 @@ export type RateCard = {
    *
    * That is almost certainly not what you want when you populate this to make
    * the publisher share 0%. Those are two unrelated intentions riding one
-   * list. Before adding an id here, either narrow that read's predicate to
-   * exclude by `voidedReason` (`manual_review` + `self_spend`) instead of all
-   * of `voided`, or confirm that blanking the run count is intended.
+   * list. Before adding an id here, either confirm that blanking the run count
+   * is intended, or narrow that read's predicate to exclude by `voidedReason`
+   * (`manual_review` + `self_spend`) instead of all of `voided`.
    *
-   * ⚠️ The older comment on the V4/V5 lists — "none of the load-bearing paths
-   * read this list yet" — is out of date in exactly this way: a READ now
-   * depends on it.
+   * 🔴 IF YOU NARROW IT, DO NOT USE THE OBVIOUS SPELLING. `voided_reason` is
+   * NULLABLE and NULL *is* the ordinary `tracked` population, so
+   * `voidedReason: { notIn: [...] }` / `{ not: ... }` drops EVERY real row and
+   * zeroes the dashboard — the same silent-deletion failure, in the other
+   * direction. Use a top-level `NOT` or an explicit `OR` with `null`. The full
+   * reasoning is on `OWNER_VISIBLE_SPEND_FILTER` in
+   * `blocks/app-analytics.service.ts`; read it there before editing the read.
+   *
+   * ⚠️ The stale "none of the load-bearing paths read this list yet" comment is
+   * on the **V2** list below, not V4/V5 — corrected here because an earlier
+   * revision of this warning sent the reader to the wrong card. It is out of
+   * date in exactly this way: a READ now depends on this list.
    */
   internalAppOwnerUserIds: number[];
   effectiveFrom: string; // ISO date — informational, not enforced
@@ -157,8 +166,10 @@ export const RATE_CARD_V2: RateCard = {
   subscriptionSharePct: 0,
   internalAppOwnerUserIds: [
     // Populate with civitai team userIds before going live. Empty for
-    // now — none of the load-bearing paths read this list yet, but the
-    // service plumbing checks it. Belt-and-suspenders: platform_default
+    // now. ⚠️ "none of the load-bearing paths read this list yet" was true
+    // when written and is NOT any more — an owner-visible READ depends on it
+    // since 2026-09-29; see this field's docblock on the `RateCard` type.
+    // The service plumbing checks it. Belt-and-suspenders: platform_default
     // is already 0% so the dominant team-app path doesn't need this
     // list, but per_model_install / publisher_all_my_models for a
     // team-owned app would.

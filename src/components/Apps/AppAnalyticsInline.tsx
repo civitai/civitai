@@ -84,7 +84,7 @@ export function AppAnalyticsInline({
         </Tooltip>
       ) : data ? (
         <Tooltip
-          label="Generations run through your app, and unique users making scoped API calls, in the last 30 days. Both count signed-in activity only, so both undercount anonymous visitors. Open Analytics for App loads, which counts every load."
+          label="Generations run through your app by other people, and unique users making scoped API calls, in the last 30 days. Your own test runs on your own app are not counted. Both count signed-in activity only, so both undercount anonymous visitors. Open Analytics for App loads, which counts every load."
           multiline
           maw={260}
           withinPortal

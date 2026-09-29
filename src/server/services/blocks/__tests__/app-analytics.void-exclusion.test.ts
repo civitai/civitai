@@ -65,10 +65,15 @@ const RANGE_TO = new Date('2026-06-20T00:00:00Z');
 const VOIDED = 'voided';
 
 /**
- * 🔴 EVERY BUZZ VALUE IS DISTINCT, AND NO FIXTURE VALUE EQUALS ANY TOTAL AN ASSERTION NAMES
- * (fixtures 7/11/13/17/19/23/29/31/37/41/43/47 vs totals 179/250/71/120). A fixture that can
- * only ever produce the asserted constant's own value cannot see a mutant that hardcodes the
- * literal, so it would SURVIVE a fully green suite.
+ * 🔴 EVERY BUZZ VALUE IS DISTINCT, AND NO FIXTURE BUZZ VALUE EQUALS ANY BUZZ TOTAL AN
+ * ASSERTION NAMES (fixtures 7/11/13/17/19/23/29/31/37/41/43/47 vs totals 179/250/71/120). A
+ * fixture that can only ever produce the asserted constant's own value cannot see a mutant
+ * that hardcodes the literal, so it would SURVIVE a fully green suite.
+ *
+ * ⚠️ SCOPED TO THE BUZZ AXIS DELIBERATELY, because the unscoped claim is FALSE and used to be
+ * written here: `TRACKED_A.buzzAmount` is 7 and `runs.count` is asserted as 7. It is not
+ * exploitable — no case runs `TRACKED_A` alone, and `SURVIVING` sums to 179 — but the
+ * sentence's whole job is to be checkable, so it states what actually holds.
  *
  * Bucket days deliberately COLLIDE across the void boundary — the `self_spend` row shares
  * 06-02 with a tracked row and the `manual_review` row shares 06-04 — so the series is
@@ -259,9 +264,16 @@ function matches(row: Row, where: Record<string, any>): boolean {
       case 'NOT':
         // The alternative top-level spelling. Supported so that switching to it is a
         // refactor rather than a silent test failure — but only for `status`.
+        //
+        // 🔴 IT DELEGATES RATHER THAN COMPARING. An earlier version did
+        // `row.status === cond.status`, which handles `NOT: { status: X }` but treats
+        // `NOT: { status: { equals: X } }` — a semantically CORRECT rewrite — as never
+        // matching, so it excluded nothing and produced a failure set byte-identical to
+        // DELETING the filter. Same misleading-diagnosis defect as the `not` branch above,
+        // one level out, and it survived the fix to that branch.
         if (!(cond && typeof cond === 'object' && 'status' in cond))
           throw new Error(`unhandled NOT condition: ${JSON.stringify(cond)}`);
-        if (row.status === cond.status) return false;
+        if (matches(row, { status: cond.status })) return false;
         break;
       default:
         throw new Error(`the where-evaluator does not understand key \`${key}\``);

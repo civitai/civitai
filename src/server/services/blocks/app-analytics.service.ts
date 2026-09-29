@@ -83,9 +83,14 @@ const VOIDED_ATTRIBUTION_STATUS = 'voided';
  * with civitai team userIds "before going live" — EVERY spend row on a team-owned app is
  * written `voided` regardless of who spent it, and this filter then reports 0 runs / 0 Buzz
  * for a first-party app's GENUINE third-party usage. It is inert today only because the
- * array is empty. The warning for whoever populates it lives on that field's own docblock;
- * the narrower fix at that point is to exclude by `voidedReason` (`manual_review` +
- * `self_spend`) rather than excluding all of `voided`.
+ * array is empty. The warning for whoever populates it lives on that field's own docblock.
+ *
+ * 🔴 AND IF YOU TAKE THE NARROWER FIX, READ THE PARAGRAPH ABOVE FIRST. Excluding by
+ * `voidedReason` (`manual_review` + `self_spend`) is the right SHAPE, but the obvious Prisma
+ * spelling of it — `voidedReason: { notIn: [...] }` or `{ not: ... }` — walks straight into
+ * the nullability trap this docblock already warns about: NULL is the ordinary `tracked`
+ * population, so it drops every real row. Spell it as a top-level `NOT` or an explicit `OR`
+ * with `null`, and keep the `status` guard alongside it rather than replacing it.
  *
  * ⚠️ Spread it FIRST and let the explicit keys win — `appBlockId: idIn` is the only thing
  * scoping this read to the caller's own apps, and a spread placed LAST wins any key
