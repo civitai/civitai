@@ -11,6 +11,7 @@ import { clavataCounter } from '~/server/prom/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { createReport } from '~/server/services/report.service';
+import { hashContent } from '~/server/services/entity-moderation.service';
 import { autoMuteScamAccount } from '~/server/services/scam-auto-mute.service';
 import type { ScamCleanup } from '~/server/services/scam-cleanup.service';
 import { getBlocklists, type ModWordBlocklist } from '~/server/utils/moderation-utils';
@@ -48,34 +49,67 @@ const autoMuteCleanup: Partial<Record<AllModKeys, ScamCleanup>> = {
   CommentV2: 'commentsV2',
 };
 
-async function autoMuteIfScamAccount({
+/** The newest flagged message a sender wrote in one flagged chat group. */
+type ChatSender = { messageId: number; at: Date };
+
+export function clavataScamEvidence({
+  type,
+  entityId,
+  matches,
+  value,
+  sender,
+}: {
+  type: AllModKeys;
+  entityId: number;
+  matches: string[];
+  value: string;
+  sender?: ChatSender;
+}) {
+  const tags = [...matches].sort().join('|');
+  const textHash = hashContent(value);
+  // A chat group is keyed by the chat, so the sender's newest flagged message is what makes a later
+  // offence in the same chat a new verdict. Other entities are keyed by their text, so an edit is too.
+  const contentKey = sender ? `m${sender.messageId}` : textHash.slice(0, 16);
+  return {
+    source: `clavata:${type}`,
+    dedupeKey: `clavata:${type}:${entityId}:${contentKey}:${tags}`,
+    reason: `tags: ${matches.join(', ')}`,
+    entityType: type,
+    entityId,
+    textHash,
+    contentAt: sender?.at ?? null,
+  };
+}
+
+export async function autoMuteIfScamAccount({
   type,
   entityId,
   userId,
   matches,
+  value,
+  sender,
 }: {
   type: AllModKeys;
   entityId: number;
   userId: number;
   matches: string[];
+  value: string;
+  sender?: ChatSender;
 }) {
   const cleanup = autoMuteCleanup[type];
   if (!cleanup) return;
   if (!matches.some((m) => autoMuteTags.includes(m))) return;
 
-  const result = await autoMuteScamAccount({
-    userId,
-    cleanup,
-    evidence: {
-      source: `clavata:${type}`,
-      dedupeKey: `clavata:${type}:${entityId}:${[...matches].sort().join('|')}`,
-      reason: `tags: ${matches.join(', ')}`,
-      entityType: type,
-      entityId,
-      contentAt: null,
-    },
-  });
-  log(`Auto-mute userId=${userId} type=${type}: ${JSON.stringify(result)}`);
+  try {
+    const result = await autoMuteScamAccount({
+      userId,
+      cleanup,
+      evidence: clavataScamEvidence({ type, entityId, matches, value, sender }),
+    });
+    log(`Auto-mute userId=${userId} type=${type}: ${JSON.stringify(result)}`);
+  } catch (error) {
+    logAx({ message: 'Error auto-muting user', data: { error, userId, type, entityId } });
+  }
 }
 
 // type PrismaSelectForModel<T extends Uncapitalize<Prisma.ModelName>> =
@@ -248,6 +282,7 @@ interface ContentItem {
   id: number;
   userId: number;
   userIds?: number[]; // For chat: all real userIds in a grouped entity
+  senders?: Record<number, ChatSender>;
   value: string;
 }
 
@@ -394,6 +429,8 @@ const runClavata = async ({
             entityId: Number(metadata.id),
             userId: uid,
             matches,
+            value: originalItem?.value ?? metadata.value ?? '',
+            sender: originalItem?.senders?.[uid],
           });
         }
 
@@ -446,6 +483,7 @@ async function runModChat(lastRun: Date) {
       userId: true,
       chatId: true,
       content: true,
+      createdAt: true,
     },
     where: {
       createdAt: { gt: lastRun },
@@ -475,6 +513,7 @@ async function runModChat(lastRun: Date) {
 
   if (badMessages.length > 0) {
     const chatUserIds: Record<string, Set<number>> = {};
+    const chatSenders: Record<string, Record<number, ChatSender>> = {};
     const badMessagesByChat = badMessages.reduce((acc, cur) => {
       const key = `${cur.chatId}`;
       if (!acc[key]) {
@@ -484,6 +523,10 @@ async function runModChat(lastRun: Date) {
       }
       if (!chatUserIds[key]) chatUserIds[key] = new Set();
       chatUserIds[key].add(cur.userId);
+      const senders = (chatSenders[key] ??= {});
+      const latest = senders[cur.userId];
+      if (!latest || cur.id > latest.messageId)
+        senders[cur.userId] = { messageId: cur.id, at: cur.createdAt };
       return acc;
     }, {} as Record<string, string>);
 
@@ -494,6 +537,7 @@ async function runModChat(lastRun: Date) {
         id: Number(key),
         userId: -1, // we are parsing multiple chats at once, so we can't know who is responsible
         userIds: Array.from(chatUserIds[key] ?? []),
+        senders: chatSenders[key],
         value,
       })),
       deleteJob: false,
