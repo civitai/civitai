@@ -126,7 +126,11 @@ export async function isPrivateRunImpression(args: {
  * awaits this promise, so a rejection would not reach the gate at all — it would be an
  * UNHANDLED REJECTION. `packages/civitai-axiom` records what that costs: its own client
  * is called without awaiting by the background jobs pods, and an unhandled rejection
- * there exited the process — all three pods died at once.
+ * there exited the process — all three pods died at once. ⚠️ THAT INCIDENT PREDATES THE
+ * CONTAINMENT THAT SHIPPED IN THAT CLIENT, so today's `logToAxiom` cannot realistically
+ * reject either: this half is an invariant guard too, exactly like the `try` above. Do
+ * not cite it as a live hazard — that package's own docblock records having retracted
+ * the same theory once already.
  *
  * 🔴 BUT NOT SILENT. A gate that fails open without a trace means the leak is reopened
  * and nothing says so — the reassuring-zero shape. Bounded: reachable only on the rare

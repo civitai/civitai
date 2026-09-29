@@ -58,7 +58,7 @@ import { logToAxiom } from '~/server/logging/client';
  *     that mount audits under `app-blocks.dev-tunnel.*`.
  *  2. (a) MIRRORS AN EXISTING, REVIEWED SUPPRESSION on this exact pair of writers:
  *     `secondary` already skips the insert in both, symmetrically.
- *  3. 🔴 (b) IS STRICTLY DOMINATED, not merely costlier. Neither writer sees a block
+ *  3. 🔴 (b) COSTS (a)'s WHOLE MECHANISM PLUS TWO MORE PARTS. Neither writer sees a block
  *     token (above), so (b) cannot derive its marker the way the sibling rail does — it
  *     would have to call THIS SAME PREDICATE, then write the answer to a new column, then
  *     filter at the read. That is (a)'s whole mechanism PLUS a hand-applied DDL in every

@@ -177,6 +177,12 @@ describe('the blockRenders writer set — the ledger [INV]', () => {
     //
     // The allowlisted spellings are exactly the fields each writer already uses to BUILD
     // the row, so the gate and the insert can never disagree about which app they mean.
+    //
+    // ⚠️ OBJECT SHORTHAND (`{ appBlockId, viewer }`) yields NO match and is caught only by
+    // the `> 0` floor below — which holds because the gate call is currently the SOLE
+    // `appBlockId:` site in each writer. Add a second one (a log field, a metric label)
+    // and a shorthand gate call goes invisible. The sibling viewer guard has the same
+    // property.
     const ALLOWED_APP_ID_SOURCES = [
       'appBlockId: result.data.appBlockId',
       'appBlockId: input.appBlockId',
@@ -225,6 +231,39 @@ describe('the blockRenders writer set — the ledger [INV]', () => {
     // resting on something that no longer holds.
     expect(CODE.get('src/pages/api/track/block-render.ts')!).toContain('isAnon: !session?.user');
     expect(CODE.get('src/server/routers/track.router.ts')!).toContain('isAnon: !ctx.user');
+  });
+
+  it('🔴 the gate DEFERS the flag and the predicate — static imports would sink the beacon', () => {
+    // The one property the gate's docblock calls load-bearing that nothing else observes.
+    // Converting either `await import(...)` to a top-level import type-checks, keeps every
+    // suite green, and silently drags Flipt, Prisma and the app-blocks service graph into
+    // the eager import path of a route whose entire reason for existing is to avoid that.
+    // Same technique as the `tracker.ts` control below, pointed at the gate's own imports.
+    const gate = CODE.get('src/server/services/blocks/private-run-impression.service.ts')!;
+    for (const deferred of [
+      '~/server/services/app-blocks-flag',
+      '~/server/services/blocks/private-run-access.service',
+    ]) {
+      // `CODE` has string literals stripped, so the specifier is matched against RAW text;
+      // the `import(` shape is matched against CODE so prose cannot satisfy it.
+      expect(
+        raw('src/server/services/blocks/private-run-impression.service.ts'),
+        `${deferred} must still be referenced`
+      ).toContain(deferred);
+    }
+    // Two dynamic imports, and no static `import … from` beyond the two cheap ones the
+    // beacon route already pulls in.
+    expect((gate.match(/await import\(/g) ?? []).length).toBe(2);
+    // Specifiers live in string literals, which `CODE` strips — assert those on RAW.
+    const gateRaw = raw('src/server/services/blocks/private-run-impression.service.ts');
+    expect(gateRaw).toContain("import { logToAxiom } from '~/server/logging/client'");
+    expect(gateRaw).toContain("from '~/server/services/blocks/known-app-blocks.service'");
+    expect(gate, 'the flag must not be a static import').not.toMatch(
+      /import\s*\{[^}]*isAppBlocksPrivateRunEnabled[^}]*\}\s*from/
+    );
+    expect(gate, 'the predicate must not be a static import').not.toMatch(
+      /import\s*\{[^}]*resolvePrivateRunAccess[^}]*\}\s*from/
+    );
   });
 
   it('🔴 the private-run gate is NOT reachable from the generic ClickHouse client', () => {
