@@ -1,12 +1,12 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import { constants } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { dbReadFallbackCounter, userUpdateCounter } from '~/server/prom/client';
 import { invalidateSession, refreshSession } from '~/server/auth/session-invalidation';
 import { createNotification } from '~/server/services/notification.service';
-import { updateUserById } from '~/server/services/user.service';
-import { clearedMuteFields } from '~/server/services/mute-provenance';
+import { releaseMuteInTransaction, releaseUserMute } from '~/server/services/mute-release.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { strikeIssuedEmail } from '~/server/email/templates';
 import type {
@@ -473,18 +473,14 @@ export async function evaluateStrikeEscalation(
         !moderatorMuted &&
         (user.muteExpiresAt !== null || currentMeta.strikeFlaggedForReview || strikeMuted)
       ) {
-        // `clearedMuteFields` owns the whole "why was this muted" set — see its docstring. The review
-        // flag is this file's own, so it is layered on top of the meta the helper returns.
-        const cleared = clearedMuteFields(currentMeta);
-        await tx.user.update({
-          where: { id: userId },
-          data: {
-            ...cleared,
-            ...(currentMeta.strikeFlaggedForReview && {
-              meta: { ...(cleared.meta as object), strikeFlaggedForReview: false },
-            }),
-          },
+        const release = await releaseMuteInTransaction(tx, {
+          userId,
+          actorId: constants.system.user.id,
+          ...(currentMeta.strikeFlaggedForReview
+            ? { metaPatch: { strikeFlaggedForReview: false } }
+            : {}),
         });
+        if (!release.released) return { totalPoints, action: 'none', notify: false };
 
         return { totalPoints, action: 'unmuted', notify: true };
       }
@@ -587,7 +583,11 @@ export async function acceptTosAfterMute({
         return { unmuted: false, reason: 'not-eligible' };
       }
 
-      await tx.user.update({ where: { id: userId }, data: clearedMuteFields(currentMeta) });
+      const release = await releaseMuteInTransaction(tx, {
+        userId,
+        actorId: constants.system.user.id,
+      });
+      if (!release.released) return { unmuted: false, reason: 'pending-review' };
       return { unmuted: true };
     }
   );
@@ -925,14 +925,12 @@ export async function processTimedUnmutes(): Promise<{ unmutedCount: number }> {
 
   for (const { id } of expiredModeratorMutes) {
     try {
-      const existing = await dbRead.user.findUnique({ where: { id }, select: { meta: true } });
-      await updateUserById({
-        id,
-        data: clearedMuteFields(existing?.meta as UserMeta | null),
+      const { released } = await releaseUserMute({
+        userId: id,
+        actorId: constants.system.user.id,
         updateSource: 'timed-unmute',
       });
-      await refreshSession(id, { caller: 'strike' });
-      unmutedCount++;
+      if (released) unmutedCount++;
     } catch (error) {
       const err = error as Error;
       logToAxiom({

@@ -141,7 +141,9 @@ const {
       findUnique: vi.fn(async () => ({ value: store.jobDate.getTime() })),
       upsert: vi.fn(async () => undefined),
     },
-    $transaction: vi.fn(async (ops: Promise<unknown>[]) => Promise.all(ops)),
+    $transaction: vi.fn(async (ops: Promise<unknown>[] | ((tx: unknown) => unknown)) =>
+      typeof ops === 'function' ? ops(dbWrite) : Promise.all(ops)
+    ),
     // confirm-mutes' only query. Mirrors `WHERE "muted" AND "mutedAt" > $lastRan`;
     // the equality assertion below is what keeps this in step with the real SQL.
     $queryRaw: vi.fn(async (strings: TemplateStringsArray, lastRan: Date) => {
@@ -212,6 +214,7 @@ import overturnHandler from '~/pages/api/mod/overturn-user-mute';
 import { confirmMutes } from '~/server/jobs/confirm-mutes';
 import { constants } from '~/server/common/constants';
 import { env } from '~/env/server';
+import { moderationActionEmail } from '~/server/email/templates';
 import { setUserMuted } from '~/server/services/user.service';
 import {
   applyPendingReviewMute,
@@ -307,6 +310,27 @@ async function call(
 
 const triggers = buildManualMuteTriggers({ reason: REASON, source: 'test' });
 
+/** Runs the next transaction against a client that records which writes went through it. */
+function recordTransactionWrites() {
+  const inside: string[] = [];
+  dbWrite.$transaction.mockImplementationOnce(async (fn: unknown) =>
+    (fn as (tx: unknown) => unknown)({
+      ...dbWrite,
+      user: {
+        ...dbWrite.user,
+        update: (args: never) => (inside.push('user.update'), dbWrite.user.update(args)),
+      },
+      userRestriction: {
+        ...dbWrite.userRestriction,
+        create: (args: never) => (
+          inside.push('userRestriction.create'), dbWrite.userRestriction.create(args)
+        ),
+      },
+    })
+  );
+  return inside;
+}
+
 describe('pending-review mute', () => {
   beforeEach(seed);
 
@@ -331,10 +355,11 @@ describe('pending-review mute', () => {
   });
 
   it('writes the mute and the restriction in one transaction', async () => {
+    const inside = recordTransactionWrites();
     await applyPendingReviewMute({ userId: USER_ID, triggers, updateSource: 'test' });
 
     expect(dbWrite.$transaction).toHaveBeenCalledOnce();
-    expect(dbWrite.$transaction.mock.calls[0][0]).toHaveLength(2);
+    expect(inside).toEqual(['user.update', 'userRestriction.create']);
   });
 
   it('is not picked up by confirm-mutes, so no subscription is cancelled', async () => {
@@ -557,6 +582,7 @@ describe('pending-review mute — restriction type', () => {
   });
 
   it('writes the mute and a typed restriction in one transaction', async () => {
+    const inside = recordTransactionWrites();
     await applyPendingReviewMute({
       userId: USER_ID,
       triggers,
@@ -565,7 +591,7 @@ describe('pending-review mute — restriction type', () => {
     });
 
     expect(dbWrite.$transaction).toHaveBeenCalledOnce();
-    expect(dbWrite.$transaction.mock.calls[0][0]).toHaveLength(2);
+    expect(inside).toEqual(['user.update', 'userRestriction.create']);
   });
 
   it.each(['generation', 'bot-account'] as const)(
@@ -978,6 +1004,19 @@ describe('resolveUserRestriction — ruling scope', () => {
     it('defines verdict effects for exactly the wired-for types', () => {
       expect(Object.keys(RULING_EFFECTS).sort()).toEqual([...RULINGS_WIRED_FOR].sort());
     });
+
+    it('sends only notification types a processor can render', async () => {
+      const { notificationProcessors } = await import('~/server/notifications/utils.notifications');
+      const sent = [
+        ...Object.values(RULING_EFFECTS).flatMap((e) => [
+          e!.upheldNotification,
+          e!.overturnedNotification,
+        ]),
+        ...Object.values(PENDING_REVIEW_MUTE_NOTIFICATION).filter((t): t is string => !!t),
+      ];
+      expect(sent.length).toBeGreaterThan(0);
+      for (const type of sent) expect(Object.keys(notificationProcessors)).toContain(type);
+    });
   });
 });
 
@@ -1096,6 +1135,64 @@ describe('resolveUserRestriction — scam rulings', () => {
       expect(store.users.get(USER_ID)?.muted).toBe(true);
       expect(reinstateSubscription).not.toHaveBeenCalled();
       expect(restoreScamCase).toHaveBeenCalledWith(id);
+    });
+
+    it('tells the user nothing when the account stays muted', async () => {
+      const id = fileScam();
+      fileCase(2, 'generation');
+
+      await resolveUserRestriction({
+        userRestrictionId: id,
+        status: UserRestrictionStatus.Overturned,
+        moderatorId: MOD_ID,
+      });
+
+      expect(createNotification).not.toHaveBeenCalled();
+      expect(moderationActionEmail.send).not.toHaveBeenCalled();
+    });
+
+    it('still tells the user when the overturn does lift the mute', async () => {
+      const id = fileScam();
+
+      await resolveUserRestriction({
+        userRestrictionId: id,
+        status: UserRestrictionStatus.Overturned,
+        moderatorId: MOD_ID,
+      });
+
+      expect(createNotification).toHaveBeenCalledOnce();
+      expect(moderationActionEmail.send).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'restriction-overturned' })
+      );
+    });
+
+    it('checks for another open case under the account row lock, in one transaction', async () => {
+      const id = fileScam();
+      fileCase(2, 'generation');
+      const order: string[] = [];
+      dbWrite.$transaction.mockImplementationOnce(async (fn: unknown) =>
+        (fn as (tx: unknown) => unknown)({
+          ...dbWrite,
+          $queryRaw: async (strings: TemplateStringsArray) => {
+            order.push(strings.join('?').includes('FOR UPDATE') ? 'lock' : 'query');
+            return [];
+          },
+          userRestriction: {
+            ...dbWrite.userRestriction,
+            findFirst: async (args: never) => (
+              order.push('open-case'), dbWrite.userRestriction.findFirst(args)
+            ),
+          },
+        })
+      );
+
+      await resolveUserRestriction({
+        userRestrictionId: id,
+        status: UserRestrictionStatus.Overturned,
+        moderatorId: MOD_ID,
+      });
+
+      expect(order).toEqual(['lock', 'open-case']);
     });
 
     it('overturning a generation case leaves the mute while a scam case is open', async () => {

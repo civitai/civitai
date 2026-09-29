@@ -11,15 +11,17 @@ import { constants } from '~/server/common/constants';
 const m = vi.hoisted(() => ({
   userActivity: vi.fn(async () => undefined),
   trackModActivity: vi.fn(async () => undefined),
-  applyPendingReviewMute: vi.fn(),
+  claimPendingReviewMute: vi.fn(),
+  announcePendingReviewMute: vi.fn(async () => undefined),
   runScamCleanup: vi.fn(),
   scamVerdictActioned: vi.fn(),
   lastModeratorUnmuteAt: vi.fn(),
   scamTextSeenBefore: vi.fn(),
-  closeScamCasesOpenedBefore: vi.fn(async () => 0),
+  closeScamCasesOpenedBefore: vi.fn(async (): Promise<number[]> => []),
   appendScamTrigger: vi.fn(),
   recordScamCleanup: vi.fn(async () => undefined),
   fileScamCleanupRecord: vi.fn(),
+  restoreScamCases: vi.fn(async () => undefined),
 }));
 
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
@@ -34,7 +36,8 @@ vi.mock('~/server/services/moderator.service', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/user-restriction.service', async (importOriginal) => ({
   ...(await importOriginal<typeof Restriction>()),
-  applyPendingReviewMute: m.applyPendingReviewMute,
+  claimPendingReviewMute: m.claimPendingReviewMute,
+  announcePendingReviewMute: m.announcePendingReviewMute,
 }));
 vi.mock('~/server/services/scam-cleanup.service', async (importOriginal) => ({
   ...(await importOriginal<typeof Cleanup>()),
@@ -49,6 +52,7 @@ vi.mock('~/server/services/scam-case-ledger', async (importOriginal) => ({
   appendScamTrigger: m.appendScamTrigger,
   recordScamCleanup: m.recordScamCleanup,
   fileScamCleanupRecord: m.fileScamCleanupRecord,
+  restoreScamCases: m.restoreScamCases,
 }));
 
 const { autoMuteScamAccount } = await import('~/server/services/scam-auto-mute.service');
@@ -63,6 +67,7 @@ const RECORD = {
   truncated: false,
 };
 const user = (over: Record<string, unknown> = {}) => ({
+  id: 42,
   createdAt: new Date(Date.now() - 2 * DAY),
   isModerator: false,
   muted: false,
@@ -85,7 +90,7 @@ const evidence = (over: Record<string, unknown> = {}) => ({
 const base = { userId: 42, cleanup: 'comments' as const, evidence: evidence() };
 
 const nothingActed = () => {
-  expect(m.applyPendingReviewMute).not.toHaveBeenCalled();
+  expect(m.claimPendingReviewMute).not.toHaveBeenCalled();
   expect(m.fileScamCleanupRecord).not.toHaveBeenCalled();
   expect(m.runScamCleanup).not.toHaveBeenCalled();
   expect(m.trackModActivity).not.toHaveBeenCalled();
@@ -98,7 +103,12 @@ beforeEach(() => {
   m.scamVerdictActioned.mockResolvedValue(false);
   m.lastModeratorUnmuteAt.mockResolvedValue(null);
   m.scamTextSeenBefore.mockResolvedValue(false);
-  m.applyPendingReviewMute.mockResolvedValue({ muted: true, userRestrictionId: 5, deduped: false });
+  m.claimPendingReviewMute.mockResolvedValue({
+    muted: true,
+    userRestrictionId: 5,
+    deduped: false,
+    wasMuted: false,
+  });
   m.appendScamTrigger.mockResolvedValue(1);
   m.runScamCleanup.mockResolvedValue(RECORD);
   m.fileScamCleanupRecord.mockResolvedValue({ userRestrictionId: 9, index: 0, created: true });
@@ -114,8 +124,11 @@ describe('autoMuteScamAccount', () => {
       cleanup: RECORD,
     });
 
-    const call = m.applyPendingReviewMute.mock.calls[0][0];
-    expect(call).toMatchObject({ userId: 42, type: 'scam', updateSource: 'scamAutoMute' });
+    const call = m.claimPendingReviewMute.mock.calls[0][1];
+    expect(call).toMatchObject({ userId: 42, type: 'scam' });
+    expect(m.announcePendingReviewMute).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ userId: 42, type: 'scam', updateSource: 'scamAutoMute' })
+    );
     expect(call.triggers).toEqual([
       expect.objectContaining({
         category: 'scam',
@@ -128,14 +141,14 @@ describe('autoMuteScamAccount', () => {
         textHash: 'h1',
       }),
     ]);
-    expect(m.trackModActivity).toHaveBeenCalledWith(-1, {
+    expect(m.trackModActivity).toHaveBeenCalledExactlyOnceWith(-1, {
       entityType: 'user',
       entityId: 42,
       activity: 'autoMuteScam',
     });
     expect(m.runScamCleanup).toHaveBeenCalledWith('comments', 42);
     expect(m.recordScamCleanup).toHaveBeenCalledWith(5, 0, 'wf-1', RECORD);
-    expect(m.userActivity).toHaveBeenCalledWith(
+    expect(m.userActivity).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({
         type: 'Muted',
         targetUserId: 42,
@@ -206,7 +219,7 @@ describe('autoMuteScamAccount', () => {
   it('does nothing at all for a verdict already on the ledger (redelivery or retry)', async () => {
     m.scamVerdictActioned.mockResolvedValue(true);
     expect(await autoMuteScamAccount(base)).toEqual({ muted: false, skipped: 'duplicate' });
-    expect(m.scamVerdictActioned).toHaveBeenCalledWith(42, 'wf-1');
+    expect(m.scamVerdictActioned).toHaveBeenCalledWith(42, 'wf-1', expect.anything());
     nothingActed();
   });
 
@@ -225,9 +238,9 @@ describe('autoMuteScamAccount', () => {
 
     it('mutes for content written after it, closing the case the unmute left open', async () => {
       expect(await autoMuteScamAccount(base)).toMatchObject({ muted: true });
-      expect(m.closeScamCasesOpenedBefore).toHaveBeenCalledWith(42, UNMUTED_AT);
+      expect(m.closeScamCasesOpenedBefore).toHaveBeenCalledWith(42, UNMUTED_AT, expect.anything());
       expect(m.closeScamCasesOpenedBefore.mock.invocationCallOrder[0]).toBeLessThan(
-        m.applyPendingReviewMute.mock.invocationCallOrder[0]
+        m.claimPendingReviewMute.mock.invocationCallOrder[0]
       );
     });
 
@@ -241,7 +254,8 @@ describe('autoMuteScamAccount', () => {
       expect(m.scamTextSeenBefore).toHaveBeenCalledWith(
         42,
         { entityType: 'User', entityId: 42, textHash: 'h1' },
-        UNMUTED_AT
+        UNMUTED_AT,
+        expect.anything()
       );
       nothingActed();
     });
@@ -265,10 +279,11 @@ describe('autoMuteScamAccount', () => {
         skipped: 'moderator-muted',
         cleanup: RECORD,
       });
-      expect(m.applyPendingReviewMute).not.toHaveBeenCalled();
+      expect(m.claimPendingReviewMute).not.toHaveBeenCalled();
       expect(m.fileScamCleanupRecord).toHaveBeenCalledWith(
         42,
-        expect.objectContaining({ category: 'scam', dedupeKey: 'wf-1', reason: 'Fake support' })
+        expect.objectContaining({ category: 'scam', dedupeKey: 'wf-1', reason: 'Fake support' }),
+        expect.anything()
       );
       expect(m.runScamCleanup).toHaveBeenCalledWith('comments', 42);
       expect(m.recordScamCleanup).toHaveBeenCalledWith(9, 0, 'wf-1', RECORD);
@@ -303,15 +318,17 @@ describe('autoMuteScamAccount', () => {
   });
 
   it('appends to an open case without a second audit row or ClickHouse event', async () => {
-    m.applyPendingReviewMute.mockResolvedValue({
+    m.claimPendingReviewMute.mockResolvedValue({
       muted: true,
       userRestrictionId: 5,
       deduped: true,
+      wasMuted: true,
     });
     expect(await autoMuteScamAccount(base)).toMatchObject({ muted: true, deduped: true });
     expect(m.appendScamTrigger).toHaveBeenCalledWith(
       5,
-      expect.objectContaining({ dedupeKey: 'wf-1' })
+      expect.objectContaining({ dedupeKey: 'wf-1' }),
+      expect.anything()
     );
     expect(m.recordScamCleanup).toHaveBeenCalledWith(5, 1, 'wf-1', RECORD);
     expect(m.trackModActivity).not.toHaveBeenCalled();
@@ -319,10 +336,11 @@ describe('autoMuteScamAccount', () => {
   });
 
   it('stops when a concurrent redelivery appended the same verdict first', async () => {
-    m.applyPendingReviewMute.mockResolvedValue({
+    m.claimPendingReviewMute.mockResolvedValue({
       muted: true,
       userRestrictionId: 5,
       deduped: true,
+      wasMuted: true,
     });
     m.appendScamTrigger.mockResolvedValue(null);
     expect(await autoMuteScamAccount(base)).toEqual({ muted: false, skipped: 'duplicate' });
@@ -330,13 +348,13 @@ describe('autoMuteScamAccount', () => {
   });
 
   it('retries once into the dedupe path when a concurrent verdict opened the case first', async () => {
-    m.applyPendingReviewMute
+    m.claimPendingReviewMute
       .mockRejectedValueOnce(
         Object.assign(new Error('Unique constraint failed'), { code: 'P2002' })
       )
-      .mockResolvedValueOnce({ muted: true, userRestrictionId: 5, deduped: true });
+      .mockResolvedValueOnce({ muted: true, userRestrictionId: 5, deduped: true, wasMuted: true });
     expect(await autoMuteScamAccount(base)).toMatchObject({ muted: true, deduped: true });
-    expect(m.applyPendingReviewMute).toHaveBeenCalledTimes(2);
+    expect(m.claimPendingReviewMute).toHaveBeenCalledTimes(2);
     expect(m.trackModActivity).not.toHaveBeenCalled();
   });
 
@@ -355,14 +373,47 @@ describe('autoMuteScamAccount', () => {
       muted: true,
       cleanup: null,
     });
+    expect(m.runScamCleanup).toHaveBeenCalledExactlyOnceWith('none', 42);
     expect(m.recordScamCleanup).not.toHaveBeenCalled();
   });
 
-  it('logs and returns instead of throwing', async () => {
+  it('passes the chat cleanup through', async () => {
+    await autoMuteScamAccount({ ...base, cleanup: 'chatMessages' });
+    expect(m.runScamCleanup).toHaveBeenCalledExactlyOnceWith('chatMessages', 42);
+  });
+
+  it('throws when it fails before filing, so the delivery is retried', async () => {
     dbMock.dbWrite.user.findUnique.mockRejectedValue(new Error('db down'));
-    expect(await autoMuteScamAccount(base)).toEqual({ muted: false, skipped: 'error' });
+    await expect(autoMuteScamAccount(base)).rejects.toThrow('db down');
+    expect(m.claimPendingReviewMute).not.toHaveBeenCalled();
+  });
+
+  it('does not throw after filing; later failures are logged with the case id', async () => {
+    m.trackModActivity.mockRejectedValueOnce(new Error('insert failed'));
+    m.recordScamCleanup.mockRejectedValueOnce(new Error('update failed'));
+    await expect(autoMuteScamAccount(base)).resolves.toMatchObject({ muted: true });
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'scam-auto-mute', type: 'error', userId: 42 })
+      expect.objectContaining({ message: 'audit failed', userRestrictionId: 5 })
     );
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'cleanup record failed', userRestrictionId: 5 })
+    );
+  });
+
+  it('decides under a lock on the account row, inside one transaction', async () => {
+    await autoMuteScamAccount(base);
+    expect(dbMock.dbWrite.$transaction).toHaveBeenCalledOnce();
+    const lock = (dbMock.dbWrite.$queryRaw.mock.calls[0][0] as TemplateStringsArray).join('?');
+    expect(lock).toContain('FOR UPDATE');
+    expect(dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      m.claimPendingReviewMute.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('restores what a lazily closed case hid, after the transaction', async () => {
+    m.lastModeratorUnmuteAt.mockResolvedValue(UNMUTED_AT);
+    m.closeScamCasesOpenedBefore.mockResolvedValueOnce([3]);
+    await autoMuteScamAccount(base);
+    expect(m.restoreScamCases).toHaveBeenCalledWith(42, [3]);
   });
 });

@@ -3,18 +3,16 @@
 // suites fail to collect. Verdict handling lives in
 // `user-restriction-resolve.service.ts` for that reason.
 import { refreshSession } from '~/server/auth/session-invalidation';
-import { constants } from '~/server/common/constants';
+import { PROTECTED_USER_IDS } from '~/server/utils/protected-user-ids';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { userUpdateCounter } from '~/server/prom/client';
 import { createNotification } from '~/server/services/notification.service';
 import { UserRestrictionStatus } from '~/shared/utils/prisma/enums';
+import type { Prisma } from '@prisma/client';
 
-export const PROTECTED_USER_IDS = new Set<number>([
-  constants.system.user.id,
-  constants.system.officialUserId,
-]);
+export { PROTECTED_USER_IDS };
 
 /**
  * The kinds of review that file into the moderator mute queue.
@@ -146,11 +144,34 @@ export async function applyPendingReviewMute({
       `Unknown user restriction type "${type}". Known types: ${USER_RESTRICTION_TYPES.join(', ')}.`
     );
 
+  const claim = await dbWrite.$transaction((tx) =>
+    claimPendingReviewMute(tx, { userId, triggers, type })
+  );
+  if (claim.muted) await announcePendingReviewMute({ userId, type, updateSource, claim });
+  return claim.muted
+    ? { muted: true, userRestrictionId: claim.userRestrictionId, deduped: claim.deduped }
+    : claim;
+}
+
+type RestrictionClient = Pick<Prisma.TransactionClient, 'user' | 'userRestriction'>;
+
+export type PendingReviewMuteClaim =
+  | { muted: true; userRestrictionId: number; deduped: boolean; wasMuted: boolean }
+  | Extract<PendingReviewMuteResult, { muted: false }>;
+
+/**
+ * The database half of `applyPendingReviewMute`, for a caller that must file the case inside its own
+ * transaction. Pair it with `announcePendingReviewMute` after that transaction commits.
+ */
+export async function claimPendingReviewMute(
+  client: RestrictionClient,
+  { userId, triggers, type }: { userId: number; triggers: unknown[]; type: UserRestrictionType }
+): Promise<PendingReviewMuteClaim> {
   if (PROTECTED_USER_IDS.has(userId)) return { muted: false, skipped: 'protected' };
 
   // Primary, not the replica: this is a security gate, and replica lag would let
   // a just-promoted moderator or a just-banned account through the wrong branch.
-  const user = await dbWrite.user.findUnique({
+  const user = await client.user.findUnique({
     where: { id: userId },
     select: { isModerator: true, muted: true, bannedAt: true, deletedAt: true },
   });
@@ -159,42 +180,47 @@ export async function applyPendingReviewMute({
   if (user.deletedAt) return { muted: false, skipped: 'deleted' };
   if (user.bannedAt) return { muted: false, skipped: 'banned' };
 
-  const existing = await dbWrite.userRestriction.findFirst({
+  const existing = await client.userRestriction.findFirst({
     where: { userId, type, status: UserRestrictionStatus.Pending },
     orderBy: { createdAt: 'desc' },
     select: { id: true },
   });
 
-  let userRestrictionId: number;
-  const deduped = !!existing;
+  // Repairs the one state a Pending row must never be left in: queued against
+  // an unmuted account, where an uphold sets `mutedAt` without `muted` and the
+  // user keeps generating while confirm-mutes acts on them.
+  if (!user.muted) await client.user.update({ where: { id: userId }, data: { muted: true } });
+  if (existing)
+    return { muted: true, userRestrictionId: existing.id, deduped: true, wasMuted: user.muted };
 
-  if (existing) {
-    userRestrictionId = existing.id;
-    // Repairs the one state a Pending row must never be left in: queued against
-    // an unmuted account, where an uphold sets `mutedAt` without `muted` and the
-    // user keeps generating while confirm-mutes acts on them.
-    if (!user.muted) await dbWrite.user.update({ where: { id: userId }, data: { muted: true } });
-  } else {
-    const [, restriction] = await dbWrite.$transaction([
-      dbWrite.user.update({ where: { id: userId }, data: { muted: true } }),
-      dbWrite.userRestriction.create({
-        data: {
-          userId,
-          type,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          triggers: triggers as any,
-        },
-        select: { id: true },
-      }),
-    ]);
-    userRestrictionId = restriction.id;
-  }
+  const restriction = await client.userRestriction.create({
+    data: {
+      userId,
+      type,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      triggers: triggers as any,
+    },
+    select: { id: true },
+  });
+  return { muted: true, userRestrictionId: restriction.id, deduped: false, wasMuted: user.muted };
+}
 
+export async function announcePendingReviewMute({
+  userId,
+  type,
+  updateSource,
+  claim,
+}: {
+  userId: number;
+  type: UserRestrictionType;
+  updateSource: string;
+  claim: Extract<PendingReviewMuteClaim, { muted: true }>;
+}) {
   userUpdateCounter?.inc({ location: `user-restriction.service:${updateSource}` });
 
   // Another finding against an open case on a muted account changes nothing the session or the user
   // needs to hear about; the case's notice already went out when it was filed.
-  if (deduped && user.muted) return { muted: true, userRestrictionId, deduped };
+  if (claim.deduped && claim.wasMuted) return;
 
   await bestEffort('pending-review-mute-refresh-session-failed', userId, () =>
     refreshSession(userId, { caller: 'moderation' })
@@ -204,15 +230,33 @@ export async function applyPendingReviewMute({
     await bestEffort('pending-review-mute-notify-failed', userId, () =>
       createNotification({
         type: notificationType,
-        key: `${notificationType}:${userId}:${userRestrictionId}`,
+        key: `${notificationType}:${userId}:${claim.userRestrictionId}`,
         category: NotificationCategory.System,
         userId,
         details: {},
       })
     );
   }
+}
 
-  return { muted: true, userRestrictionId, deduped };
+/**
+ * Whether the account has an open case other than `exceptId`. Every path that lifts a mute asks this
+ * first: releasing the account while another case holds it would end that review before its ruling.
+ */
+export async function hasOtherPendingRestriction(
+  client: Pick<Prisma.TransactionClient, 'userRestriction'>,
+  userId: number,
+  exceptId?: number
+) {
+  const other = await client.userRestriction.findFirst({
+    where: {
+      userId,
+      status: UserRestrictionStatus.Pending,
+      ...(exceptId !== undefined ? { id: { not: exceptId } } : {}),
+    },
+    select: { id: true },
+  });
+  return !!other;
 }
 
 /**

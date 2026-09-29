@@ -110,25 +110,42 @@ import { StrikeReason, StrikeStatus } from '~/shared/utils/prisma/enums';
  *   NOT accepted the Terms after, which is the state that holds the 2-point mute — pass an older date
  *   (or set a `tos*LastSeenDate` on `user.settings`) to model a user who has accepted since.
  */
+/**
+ * A transaction client. The release helper's lock on the account row is answered from `user`; every
+ * other raw read takes the next of `rawAnswers`. `openCase` puts a Pending restriction on the account.
+ */
+function txClient(user: any, rawAnswers: unknown[][], { openCase = false } = {}) {
+  const answers = [...rawAnswers];
+  const queryRaw = vi.fn(async (strings: string[]) => {
+    const text = strings.join(' ');
+    if (text.includes('FOR UPDATE') && text.includes('FROM "User"'))
+      return [{ meta: user.meta, muteExpiresAt: user.muteExpiresAt ?? null }];
+    return answers.shift() ?? [];
+  });
+  const userUpdate = vi.fn().mockResolvedValue(user);
+  const tx = {
+    $queryRaw: queryRaw,
+    $executeRaw: vi.fn().mockResolvedValue(1),
+    user: { findUnique: vi.fn().mockResolvedValue(user), update: userUpdate },
+    userRestriction: { findFirst: vi.fn().mockResolvedValue(openCase ? { id: 9 } : null) },
+  };
+  return { tx, queryRaw, userUpdate };
+}
+
 function mockTransactionForEscalation(
   pointsSum: number | null,
   user: any,
-  opts: { lastStrikeAt?: Date | null } = {}
+  opts: { lastStrikeAt?: Date | null; openCase?: boolean } = {}
 ) {
-  const { lastStrikeAt = new Date('2026-06-01') } = opts;
+  const { lastStrikeAt = new Date('2026-06-01'), openCase } = opts;
   // Two reads in the transaction now: the locked point sum, then the last strike date the acceptance
-  // check compares against. `mockResolvedValue` for both would answer the second with the first.
-  const queryRaw = vi
-    .fn()
-    .mockResolvedValueOnce([{ sum: pointsSum }])
-    .mockResolvedValueOnce([{ last: lastStrikeAt }]);
-  const userUpdate = vi.fn().mockResolvedValue(user);
-  mockDbWrite.$transaction.mockImplementation(async (fn: any) =>
-    fn({
-      $queryRaw: queryRaw,
-      user: { findUnique: vi.fn().mockResolvedValue(user), update: userUpdate },
-    })
+  // check compares against.
+  const { tx, queryRaw, userUpdate } = txClient(
+    user,
+    [[{ sum: pointsSum }], [{ last: lastStrikeAt }]],
+    { openCase }
   );
+  mockDbWrite.$transaction.mockImplementation(async (fn: any) => fn(tx));
   return { queryRaw, userUpdate };
 }
 
@@ -666,6 +683,24 @@ describe('strike.service', () => {
       expect(mockRefreshSession).toHaveBeenCalledWith(1, { caller: 'strike' });
     });
 
+    it('<2 points, strike-muted, but a review case is open: keeps the mute', async () => {
+      const { userUpdate } = mockTransactionForEscalation(
+        1,
+        {
+          muted: true,
+          muteExpiresAt: new Date('2099-01-01'),
+          meta: { muteReason: 'strike-escalation' },
+        },
+        { openCase: true }
+      );
+
+      const result = await evaluateStrikeEscalation(1, { allowMute: true });
+
+      expect(result).toEqual({ totalPoints: 1, action: 'none' });
+      expect(userUpdate).not.toHaveBeenCalled();
+      expect(mockCreateNotification).not.toHaveBeenCalled();
+    });
+
     it('<2 points, flagged AND accepted since: unmutes and clears flag', async () => {
       const { userUpdate } = mockTransactionForEscalation(0, {
         muted: true,
@@ -1162,14 +1197,9 @@ describe('strike.service', () => {
       meta: { muteReason: 'strike-escalation' },
     };
 
-    function mockAcceptTransaction(user: any, pointsSum: number) {
-      const userUpdate = vi.fn().mockResolvedValue(user);
-      mockDbWrite.$transaction.mockImplementation(async (fn: any) =>
-        fn({
-          $queryRaw: vi.fn().mockResolvedValue([{ sum: pointsSum }]),
-          user: { findUnique: vi.fn().mockResolvedValue(user), update: userUpdate },
-        })
-      );
+    function mockAcceptTransaction(user: any, pointsSum: number, { openCase = false } = {}) {
+      const { tx, userUpdate } = txClient(user, [[{ sum: pointsSum }]], { openCase });
+      mockDbWrite.$transaction.mockImplementation(async (fn: any) => fn(tx));
       return { userUpdate };
     }
 
@@ -1188,6 +1218,16 @@ describe('strike.service', () => {
         expect.objectContaining({ data: expect.objectContaining({ muted: false }) })
       );
       expect(mockRefreshSession).toHaveBeenCalledWith(1, { caller: 'strike' });
+    });
+
+    it('refuses while a review case is open, even for a strike mute', async () => {
+      const { userUpdate } = mockAcceptTransaction(strikeMuted, 2, { openCase: true });
+
+      const result = await acceptTosAfterMute({ userId: 1 });
+
+      expect(result).toEqual({ unmuted: false, reason: 'pending-review' });
+      expect(userUpdate).not.toHaveBeenCalled();
+      expect(mockRefreshSession).not.toHaveBeenCalled();
     });
 
     it('records against the domain the user accepted on', async () => {
@@ -1264,19 +1304,35 @@ describe('strike.service', () => {
       // mutes entirely, and escalation refuses to lift one — so a 24h Mod Studio mute became
       // permanent. Nothing else in the system ends it.
       mockDbRead.$queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: 100 }]);
-      mockDbRead.user.findUnique.mockResolvedValue({ meta: {} });
+      const { tx, userUpdate } = txClient(
+        { muted: true, mutedAt: new Date(), muteExpiresAt: new Date(0), meta: {} },
+        []
+      );
+      mockDbWrite.$transaction.mockImplementation(async (fn: any) => fn(tx));
 
       const result = await processTimedUnmutes();
 
       expect(result).toEqual({ unmutedCount: 1 });
-      expect(mockUpdateUserById).toHaveBeenCalledWith(
+      expect(userUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
-          id: 100,
+          where: { id: 100 },
           data: expect.objectContaining({ muted: false, mutedAt: null }),
-          updateSource: 'timed-unmute',
         })
       );
-      expect(mockRefreshSession).toHaveBeenCalledWith(100, { caller: 'strike' });
+      expect(mockInvalidateSession).toHaveBeenCalledWith(100, 'moderation');
+    });
+
+    it("keeps a moderator's lapsed timed mute while a review case is open", async () => {
+      mockDbRead.$queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: 100 }]);
+      const { tx, userUpdate } = txClient(
+        { muted: true, mutedAt: new Date(), muteExpiresAt: new Date(0), meta: {} },
+        [],
+        { openCase: true }
+      );
+      mockDbWrite.$transaction.mockImplementation(async (fn: any) => fn(tx));
+
+      expect(await processTimedUnmutes()).toEqual({ unmutedCount: 0 });
+      expect(userUpdate).not.toHaveBeenCalled();
     });
 
     it('asks for both kinds of mute, by the predicate each needs', async () => {
@@ -1354,20 +1410,12 @@ describe('strike.service', () => {
       mockDbWrite.$transaction
         .mockRejectedValueOnce(new Error('boom'))
         .mockImplementationOnce(async (fn: any) =>
-          fn({
-            $queryRaw: vi
-              .fn()
-              .mockResolvedValueOnce([{ sum: 0 }])
-              .mockResolvedValueOnce([{ last: null }]),
-            user: {
-              findUnique: vi.fn().mockResolvedValue({
-                muted: true,
-                muteExpiresAt: null,
-                meta: { muteReason: 'strike-escalation' },
-              }),
-              update: vi.fn().mockResolvedValue({}),
-            },
-          })
+          fn(
+            txClient(
+              { muted: true, muteExpiresAt: null, meta: { muteReason: 'strike-escalation' } },
+              [[{ sum: 0 }], [{ last: null }]]
+            ).tx
+          )
         );
 
       const result = await processTimedUnmutes();

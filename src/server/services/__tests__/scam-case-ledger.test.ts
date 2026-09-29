@@ -14,6 +14,7 @@ vi.mock('~/server/services/scam-cleanup.service', async (importOriginal) => ({
 const {
   appendScamTrigger,
   closeScamCasesOpenedBefore,
+  restoreScamCases,
   fileScamCleanupRecord,
   lastModeratorUnmuteAt,
   recordScamCleanup,
@@ -86,38 +87,43 @@ describe('scam case ledger', () => {
   });
 
   describe('closeScamCasesOpenedBefore', () => {
-    it('closes only Pending scam cases opened before the unmute, as a system overturn', async () => {
-      dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 5 }]);
-      expect(await closeScamCasesOpenedBefore(42, AT)).toBe(1);
+    it('closes Pending cases and system cleanup records opened before the unmute, returning their ids', async () => {
+      dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 5 }, { id: 8 }]);
+      expect(await closeScamCasesOpenedBefore(42, AT)).toEqual([5, 8]);
       const call = dbMock.dbWrite.$queryRaw.mock.calls[0];
       const sql = sqlOf(call);
-      expect(sql).toContain(`SET status = 'Overturned', "resolvedAt" = ?, "resolvedBy" = ?`);
-      expect(sql).toContain(
-        `WHERE "userId" = ? AND type = 'scam' AND status = 'Pending' AND "createdAt" < ?`
-      );
+      expect(sql).toContain(`status = 'Overturned', "resolvedAt" = ?, "resolvedBy" = ?`);
+      expect(sql).toContain(`WHERE "userId" = ? AND type = 'scam' AND "createdAt" < ?`);
+      expect(sql).toContain(`AND (status = 'Pending' OR (status = 'Upheld' AND "resolvedBy" = ?))`);
       expect(sql).toContain('RETURNING id');
-      expect(values(call)).toEqual([AT, -1, 42, AT]);
-    });
-
-    it('restores the content of exactly the cases it closed', async () => {
-      dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 5 }, { id: 8 }]);
-      await closeScamCasesOpenedBefore(42, AT);
-      expect(restoreScamCase.mock.calls).toEqual([[5], [8]]);
-    });
-
-    it('restores nothing when nothing was open', async () => {
-      dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
-      expect(await closeScamCasesOpenedBefore(42, AT)).toBe(0);
+      expect(values(call)).toEqual([AT, -1, 42, AT, -1]);
       expect(restoreScamCase).not.toHaveBeenCalled();
     });
 
-    it('logs a failed restore and still closes the rest', async () => {
-      dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 5 }, { id: 8 }]);
+    it('runs on the transaction it is given', async () => {
+      const tx = { $queryRaw: vi.fn(async () => []) };
+      await closeScamCasesOpenedBefore(42, AT, tx as never);
+      expect(tx.$queryRaw).toHaveBeenCalledOnce();
+      expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('restoreScamCases', () => {
+    it('restores each closed case once', async () => {
+      await restoreScamCases(42, [5, 8]);
+      expect(restoreScamCase.mock.calls).toEqual([[5], [8]]);
+    });
+
+    it('logs a failed restore with its case id and still restores the rest', async () => {
       restoreScamCase.mockRejectedValueOnce(new Error('lock timeout'));
-      expect(await closeScamCasesOpenedBefore(42, AT)).toBe(2);
+      await restoreScamCases(42, [5, 8]);
       expect(restoreScamCase).toHaveBeenCalledTimes(2);
       expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({ name: 'scam-restore-failed', type: 'error' })
+        expect.objectContaining({
+          name: 'scam-restore-failed',
+          type: 'error',
+          details: { userRestrictionId: 5, userId: 42 },
+        })
       );
     });
   });

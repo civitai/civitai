@@ -4,14 +4,15 @@ import { dbWrite } from '~/server/db/client';
 import { moderationActionEmail } from '~/server/email/templates';
 import { logToAxiom } from '~/server/logging/client';
 import { createNotification } from '~/server/services/notification.service';
+import { userUpdateCounter } from '~/server/prom/client';
 import { resetProhibitedRequestCount } from '~/server/services/orchestrator/promptAuditing';
 import { cancelSubscription, reinstateSubscription } from '~/server/services/stripe.service';
 import { updateUserById } from '~/server/services/user.service';
 import { clearedMuteFields } from '~/server/services/mute-provenance';
 import { restoreScamCase } from '~/server/services/scam-cleanup.service';
-import { dbRead } from '~/server/db/client';
 import type { UserMeta } from '~/server/schema/user.schema';
 import {
+  hasOtherPendingRestriction,
   PROTECTED_USER_IDS,
   unwiredRulingReason,
   type UserRestrictionType,
@@ -111,6 +112,7 @@ export async function resolveUserRestriction({
     data: { status, resolvedAt: new Date(), resolvedBy: moderatorId, resolvedMessage },
   });
 
+  let stillHeld = false;
   if (status === UserRestrictionStatus.Upheld) {
     await updateUserById({
       id: restriction.userId,
@@ -128,28 +130,27 @@ export async function resolveUserRestriction({
     );
     await refreshSession(restriction.userId, { caller: 'moderation' });
   } else if (status === UserRestrictionStatus.Overturned) {
-    // Another open case (of any type) still holds the account; lifting the mute here would release
-    // it before that case is ruled on.
-    const otherOpenCase = await dbWrite.userRestriction.findFirst({
-      where: {
-        userId: restriction.userId,
-        status: UserRestrictionStatus.Pending,
-        id: { not: restriction.id },
-      },
-      select: { id: true },
-    });
-    if (!otherOpenCase) {
+    // Under the account row lock a scam verdict also takes, so a case filed concurrently is either
+    // seen here or files after the unmute and mutes again on its own.
+    stillHeld = await dbWrite.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT 1 FROM "User" WHERE id = ${restriction.userId} FOR UPDATE`;
+      if (await hasOtherPendingRestriction(tx, restriction.userId, restriction.id)) return true;
       // Overturning clears the whole mute, not just the flag: an uphold sets `mutedAt`, and leaving
       // it behind on an overturn keeps the account off every leaderboard and makes the next
       // automatic mute read as a moderator's.
-      const existing = await dbRead.user.findUnique({
+      const current = await tx.user.findUnique({
         where: { id: restriction.userId },
         select: { meta: true },
       });
-      await updateUserById({
-        id: restriction.userId,
-        data: clearedMuteFields(existing?.meta as UserMeta | null),
-        updateSource: effects.overturnedSource,
+      await tx.user.update({
+        where: { id: restriction.userId },
+        data: clearedMuteFields(current?.meta as UserMeta | null),
+      });
+      return false;
+    });
+    if (!stillHeld) {
+      userUpdateCounter?.inc({
+        location: `user.service:updateUserById:${effects.overturnedSource}`,
       });
       await reinstateSubscription({ userId: restriction.userId }).catch((error) =>
         logToAxiom({
@@ -161,6 +162,16 @@ export async function resolveUserRestriction({
     }
     await effects.afterOverturn?.(restriction);
     await refreshSession(restriction.userId, { caller: 'moderation' });
+  }
+
+  // The account is still muted by another open case, so telling the user it was lifted would be false.
+  if (stillHeld) {
+    logToAxiom({
+      name: 'user-restriction-resolved',
+      type: 'info',
+      details: { userRestrictionId, status, moderatorId, userId: restriction.userId, stillHeld },
+    });
+    return { userId: restriction.userId };
   }
 
   const notifType =
@@ -257,11 +268,8 @@ export async function overturnPendingReviewMute({
   if (!restriction) return { unmuted: false, skipped: 'no-pending-restriction' };
 
   // Overturning this one would leave the account muted by the other case, which is not "unmuted".
-  const otherOpenCase = await dbWrite.userRestriction.findFirst({
-    where: { userId, type: { not: 'generation' }, status: UserRestrictionStatus.Pending },
-    select: { id: true },
-  });
-  if (otherOpenCase) return { unmuted: false, skipped: 'other-pending-restriction' };
+  if (await hasOtherPendingRestriction(dbWrite, userId, restriction.id))
+    return { unmuted: false, skipped: 'other-pending-restriction' };
 
   await resolveUserRestriction({
     userRestrictionId: restriction.id,

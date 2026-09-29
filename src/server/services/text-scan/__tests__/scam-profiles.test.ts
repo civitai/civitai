@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { constants } from '~/server/common/constants';
 import '~/server/services/text-scan/profiles/comment.profile';
@@ -13,9 +13,17 @@ import {
 } from '~/server/services/text-scan/profiles/scam-text';
 
 const load = (entityType: string, ids: number[]) => getTextScanProfile(entityType)!.load(ids);
-const CREATED = new Date('2026-09-24T10:00:00Z');
+const EDITED = new Date('2026-09-24T10:00:00Z');
 const eligible = (...ids: number[]) =>
-  dbMock.dbWrite.user.findMany.mockResolvedValueOnce(ids.map((id) => ({ id, isModerator: false })));
+  dbMock.dbWrite.user.findMany.mockResolvedValueOnce(
+    ids.map((id) => ({
+      id,
+      createdAt: new Date(),
+      isModerator: false,
+      deletedAt: null,
+      bannedAt: null,
+    }))
+  );
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -38,27 +46,66 @@ describe('scamTextFromHtml', () => {
 });
 
 describe('scamEligibleAuthors', () => {
+  const NOW = new Date('2026-09-24T12:00:00Z');
+  const DAY = 86_400_000;
+  const account = (id: number, over: Record<string, unknown> = {}) => ({
+    id,
+    createdAt: new Date(NOW.getTime() - DAY),
+    isModerator: false,
+    deletedAt: null,
+    bannedAt: null,
+    ...over,
+  });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+  });
+  afterEach(() => vi.useRealTimers());
+
   it('keeps new, live, non-moderator, non-judge accounts, from the primary', async () => {
     dbMock.dbWrite.user.findMany.mockResolvedValue([
-      { id: 5, isModerator: false },
-      { id: 6, isModerator: true },
-      { id: 7, isModerator: null },
-      { id: 8, isModerator: false },
+      account(5),
+      account(6, { isModerator: true }),
+      account(7, { isModerator: null }),
+      account(8),
+      account(9, { deletedAt: new Date() }),
+      account(10, { bannedAt: new Date() }),
     ]);
     dbMock.dbWrite.challengeJudge.findMany.mockResolvedValue([{ userId: 8 }]);
-    const ids = await scamEligibleAuthors([5, 6, 7, 8, 5, -1, 0, constants.system.officialUserId]);
-    expect([...ids].sort()).toEqual([5, 7]);
+    const ids = await scamEligibleAuthors([
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      5,
+      -1,
+      0,
+      constants.system.officialUserId,
+    ]);
+    expect([...ids].sort((a, b) => a - b)).toEqual([5, 7]);
 
     const { where } = dbMock.dbWrite.user.findMany.mock.calls[0][0];
-    expect(where.id).toEqual({ in: [5, 6, 7, 8] });
-    expect(where).toMatchObject({ deletedAt: null, bannedAt: null });
-    expect(where.createdAt.gt).toBeInstanceOf(Date);
+    expect(where.id).toEqual({ in: [5, 6, 7, 8, 9, 10] });
+    expect(where.createdAt).toEqual({ gt: new Date(NOW.getTime() - 8 * DAY) });
     expect(dbMock.dbRead.user.findMany).not.toHaveBeenCalled();
   });
 
+  it('keeps an account one minute short of eight days, and not one a minute past', async () => {
+    dbMock.dbWrite.user.findMany.mockResolvedValue([
+      account(5, { createdAt: new Date(NOW.getTime() - 7 * DAY - 60_000) }),
+      account(6, { createdAt: new Date(NOW.getTime() - 8 * DAY - 60_000) }),
+    ]);
+    expect([...(await scamEligibleAuthors([5, 6]))]).toEqual([5]);
+  });
+
   it('drops the age filter when asked', async () => {
-    dbMock.dbWrite.user.findMany.mockResolvedValue([{ id: 5, isModerator: false }]);
-    await scamEligibleAuthors([5], { ignoreAccountAge: true });
+    dbMock.dbWrite.user.findMany.mockResolvedValue([
+      account(5, { createdAt: new Date(NOW.getTime() - 900 * DAY) }),
+    ]);
+    expect([...(await scamEligibleAuthors([5], { ignoreAccountAge: true }))]).toEqual([5]);
     expect(dbMock.dbWrite.user.findMany.mock.calls[0][0].where.createdAt).toBeUndefined();
   });
 
@@ -78,13 +125,13 @@ describe('scam profiles', () => {
     ['Comment', 'comment'],
     ['CommentV2', 'commentV2'],
   ] as const)(
-    '%s reads the primary, names the author and dates the content',
+    '%s reads the primary, names the author and dates the content by its last edit',
     async (entityType, model) => {
       dbMock.dbWrite[model].findMany.mockResolvedValue([
         {
           id: 1,
           userId: 9,
-          createdAt: CREATED,
+          updatedAt: EDITED,
           content: '<p>hello <a href="https://x.example">there</a></p>',
         },
       ]);
@@ -94,7 +141,7 @@ describe('scam profiles', () => {
         fields: [{ heading: 'Comment', text: 'hello [link: https://x.example] there' }],
         declared: {},
         userId: 9,
-        meta: { subjectUserId: 9, contentAt: CREATED.toISOString() },
+        meta: { subjectUserId: 9, contentAt: EDITED.toISOString() },
       });
       expect(dbMock.dbRead[model].findMany).not.toHaveBeenCalled();
     }
@@ -105,7 +152,7 @@ describe('scam profiles', () => {
     ['CommentV2', 'commentV2'],
   ] as const)('%s drops an author outside the scam window', async (entityType, model) => {
     dbMock.dbWrite[model].findMany.mockResolvedValue([
-      { id: 1, userId: 9, createdAt: CREATED, content: 'x' },
+      { id: 1, userId: 9, updatedAt: EDITED, content: 'x' },
     ]);
     eligible();
     expect((await load(entityType, [1])).size).toBe(0);
@@ -113,7 +160,7 @@ describe('scam profiles', () => {
 
   it('ResourceReview scans details and skips short ones', async () => {
     dbMock.dbWrite.resourceReview.findMany.mockResolvedValue([
-      { id: 3, userId: 4, createdAt: CREATED, details: '<p>Great model</p>' },
+      { id: 3, userId: 4, updatedAt: EDITED, details: '<p>Great model</p>' },
     ]);
     eligible(4);
     const subject = (await load('ResourceReview', [3])).get(3);

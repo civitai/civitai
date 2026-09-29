@@ -13,7 +13,7 @@ registerTextScanProfile({
   load: async (ids) => {
     const rows = await dbWrite.resourceReview.findMany({
       where: { id: { in: ids } },
-      select: { id: true, userId: true, details: true, createdAt: true },
+      select: { id: true, userId: true, details: true, updatedAt: true },
     });
     const eligible = await scamEligibleAuthors(rows.map((row) => row.userId));
     return new Map(
@@ -22,7 +22,7 @@ registerTextScanProfile({
         .map((row) => [
           row.id,
           scamSubject(row.userId, [{ heading: 'Review', text: scamTextFromHtml(row.details) }], {
-            contentAt: row.createdAt.toISOString(),
+            contentAt: row.updatedAt.toISOString(),
           }),
         ])
     );

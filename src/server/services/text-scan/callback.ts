@@ -136,11 +136,27 @@ export async function handleTextScanCallback(event: { workflowId: string; status
   });
   if (!recorded) return log('warning', 'stale callback ignored', ctx);
 
-  await adapter?.applyTextScan?.({
-    entityId,
-    workflowId,
-    outcome,
-    subject,
-    textHash: metadata.textHash ?? textScanTextHash(subject),
-  });
+  try {
+    await adapter?.applyTextScan?.({
+      entityId,
+      workflowId,
+      outcome,
+      subject,
+      textHash: metadata.textHash ?? textScanTextHash(subject),
+    });
+  } catch (error) {
+    // Left Succeeded, the row would never be retried and the verdict would be lost; Failed puts it
+    // back in front of the retry cron, whose rescan acts on a fresh workflow.
+    await recordTextScanFailure({
+      entityType: emEntityType,
+      entityId,
+      workflowId,
+      status: EntityModerationStatus.Failed,
+    });
+    await log('error', 'applying the verdict failed', {
+      ...ctx,
+      error: (error as Error).message,
+    });
+    throw error;
+  }
 }

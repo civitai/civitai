@@ -112,6 +112,24 @@ describe('handleTextScanCallback', () => {
     );
   });
 
+  it('puts the row back up for retry, and rethrows, when applying the verdict fails', async () => {
+    vi.mocked(getWorkflow).mockResolvedValue(
+      workflow({ nsfw: { level: 'x', reason: 'Explicit.' } }) as any
+    );
+    adapter.applyTextScan.mockRejectedValueOnce(new Error('db down'));
+
+    await expect(
+      handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' })
+    ).rejects.toThrow('db down');
+
+    const calls = vi.mocked(updateMany).mock.calls.map(([args]) => args);
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toEqual({
+      where: { entityType: 'Post', entityId: 7, workflowId: 'wf-1' },
+      data: { workflowId: 'wf-1', status: 'Failed', retryCount: { increment: 1 } },
+    });
+  });
+
   // An edit between submit and callback must not move the hash a flag and its appeal grant compare.
   it('hands the action the text hash of the subject as submitted', async () => {
     vi.mocked(getWorkflow).mockResolvedValue(
@@ -222,7 +240,9 @@ describe('handleTextScanCallback', () => {
       workflow({ nsfw: { level: 'x', reason: 'r' } }, undefined, noKey) as any
     );
     await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
-    expect(vi.mocked(updateMany).mock.calls[0][0].where).toMatchObject({ entityType: 'Post:shadow' });
+    expect(vi.mocked(updateMany).mock.calls[0][0].where).toMatchObject({
+      entityType: 'Post:shadow',
+    });
     expect(adapter.applyTextScan).not.toHaveBeenCalled();
   });
 

@@ -99,6 +99,7 @@ import {
   isUsernamePermitted,
   restoreUser,
   setLeaderboardEligibility,
+  setUserMuted,
   setUserSetting,
   setEmailVerificationRequired,
   patchUserSettings,
@@ -130,10 +131,9 @@ import {
 } from '~/server/utils/errorHandling';
 import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
-import { invalidateSession, refreshSession } from '~/server/auth/session-invalidation';
+import { refreshSession } from '~/server/auth/session-invalidation';
 import { trackModActivity } from '~/server/services/moderator.service';
-import { clearedMuteFields } from '~/server/services/mute-provenance';
-import { closeScamCasesOpenedBefore } from '~/server/services/scam-case-ledger';
+import { logToAxiom } from '~/server/logging/client';
 import { Flags } from '~/shared/utils/flags';
 import type { ModelVersionEngagementType } from '~/shared/utils/prisma/enums';
 import { CosmeticType, ModelEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
@@ -1222,26 +1222,25 @@ export const toggleMuteHandler = async ({
   if (!ctx.user.isModerator) throw throwAuthorizationError();
 
   const { id } = input;
-  const user = await getUserById({ id, select: { muted: true, meta: true } });
+  const user = await getUserById({ id, select: { muted: true } });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
-  const updatedUser = await updateUserById({
-    id,
-    data: user.muted ? clearedMuteFields(user.meta) : { muted: true, mutedAt: new Date() },
-    updateSource: 'toggleMute',
-  });
-  await invalidateSession(id, 'moderation');
-  await trackModActivity(ctx.user.id, {
-    entityType: 'user',
-    entityId: id,
-    activity: user.muted ? 'unmute' : 'mute',
-  });
-  if (user.muted) await closeScamCasesOpenedBefore(id, new Date());
-
-  await ctx.track.userActivity({
-    type: user.muted ? 'Unmuted' : 'Muted',
-    targetUserId: id,
-  });
+  const updatedUser = user.muted
+    ? await setUserMuted({ userId: id, muted: false, actorId: ctx.user.id })
+    : await setUserMuted({ userId: id, muted: true });
+  // The toggle has committed. A failure below must not surface, or a retried click flips it back.
+  try {
+    if (!user.muted)
+      await trackModActivity(ctx.user.id, { entityType: 'user', entityId: id, activity: 'mute' });
+    await ctx.track.userActivity({ type: user.muted ? 'Unmuted' : 'Muted', targetUserId: id });
+  } catch (error) {
+    logToAxiom({
+      name: 'toggle-mute-audit-failed',
+      type: 'error',
+      message: (error as Error).message,
+      details: { userId: id },
+    }).catch(() => undefined);
+  }
 
   return updatedUser;
 };

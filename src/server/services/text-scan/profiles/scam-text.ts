@@ -1,8 +1,11 @@
 import { decode } from 'he';
-import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
-import { scamAccountAgeCutoff } from '~/server/services/scam-auto-mute.constants';
+import {
+  scamAccountAgeCutoff,
+  scamMuteIneligibility,
+} from '~/server/services/scam-auto-mute.constants';
 import type { TextScanField, TextScanSubject } from '~/server/services/text-scan/types';
+import { PROTECTED_USER_IDS } from '~/server/utils/protected-user-ids';
 import { removeTags } from '~/utils/string-helpers';
 
 const ANCHOR_HREF = /<a\b[^<>]*?\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>]+))[^<>]*>/gi;
@@ -36,30 +39,31 @@ export function scamSubjectText(subject: TextScanSubject) {
 
 /**
  * The authors a scam verdict could act on. Everyone else is dropped before submit, so their text
- * costs nothing and leaves no row.
+ * costs nothing and leaves no row. Challenge judges are dropped here only: their comments are
+ * automated, and a verdict can reach an account only through text that was submitted.
  */
 export async function scamEligibleAuthors(
   userIds: number[],
   { ignoreAccountAge = false }: { ignoreAccountAge?: boolean } = {}
 ) {
-  const ids = [...new Set(userIds)].filter(
-    (id) => id > 0 && id !== constants.system.officialUserId
-  );
+  const ids = [...new Set(userIds)].filter((id) => id > 0 && !PROTECTED_USER_IDS.has(id));
   if (!ids.length) return new Set<number>();
 
+  const now = new Date();
   const [users, judges] = await Promise.all([
     dbWrite.user.findMany({
       where: {
         id: { in: ids },
-        deletedAt: null,
-        bannedAt: null,
-        ...(ignoreAccountAge ? {} : { createdAt: { gt: scamAccountAgeCutoff() } }),
+        ...(ignoreAccountAge ? {} : { createdAt: { gt: scamAccountAgeCutoff(now) } }),
       },
-      select: { id: true, isModerator: true },
+      select: { id: true, createdAt: true, isModerator: true, deletedAt: true, bannedAt: true },
     }),
     dbWrite.challengeJudge.findMany({ where: { userId: { in: ids } }, select: { userId: true } }),
   ]);
   const judgeIds = new Set(judges.map((judge) => judge.userId));
-  // `isModerator` is nullable; a Prisma `not: true` would also drop the NULL rows.
-  return new Set(users.filter((u) => !u.isModerator && !judgeIds.has(u.id)).map((u) => u.id));
+  return new Set(
+    users
+      .filter((u) => !judgeIds.has(u.id) && !scamMuteIneligibility(u, { ignoreAccountAge, now }))
+      .map((u) => u.id)
+  );
 }
