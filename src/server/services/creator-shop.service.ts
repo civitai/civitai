@@ -12,6 +12,7 @@ import {
 } from '~/server/services/cosmetic.service';
 import { removePlacementsByCosmetic } from '~/server/services/placement-moderation.service';
 import { isAllowedImageScanUrl, normalizeImageScanUrl } from '~/server/utils/image-scan-url';
+import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
 import {
   REJECTED_IS_FINAL,
   appendItemHistory,
@@ -181,6 +182,22 @@ const withRemaining = (item: Omit<CreatorShopItemRow, '_count'>, purchases: numb
 // The cosmetic `data` blob is built server-side (never trust client-shaped data).
 // Server-side artwork validation (source of truth). Fetches the original upload
 // and inspects it with sharp against the per-type requirements.
+/**
+ * Bounds on the artwork fetch below. These cap what the WEB POD will spend on one
+ * `submitCreatorShopItem` call; they are not a product limit on artwork size, and the
+ * upload itself is bounded separately by Cloudflare.
+ *
+ * Sized off the existing precedent for a server-side image fetch in this repo —
+ * `META_IMAGE_TIMEOUT_MS` 2500 / `META_IMAGE_MAX_BYTES` 6 MiB in
+ * `src/server/services/blocks/listing-meta.service.ts` — and loosened, because that one
+ * fetches a remote og:image while this fetches an `original=true` asset off our own edge,
+ * which for an animated multi-frame cosmetic is legitimately larger and slower. Generous on
+ * purpose: a wrong rejection here blocks a submission, so the bound exists to stop the
+ * pathological case, not to police ordinary artwork.
+ */
+const ARTWORK_FETCH_TIMEOUT_MS = 15_000;
+const ARTWORK_MAX_BYTES = 20 * 1024 * 1024;
+
 const validateArtwork = async (imageUrl: string, type: CosmeticType) => {
   // 🔴 SSRF + RESPONSE ORACLE. This is the sharpest of the caller-supplied-URL funnels and
   // the only one that fetches from the NEXT.JS WEB POD rather than via the orchestrator:
@@ -194,6 +211,30 @@ const validateArtwork = async (imageUrl: string, type: CosmeticType) => {
   // into 'Could not read the uploaded artwork for validation', so a refusal raised inside it
   // would be reported as an unreadable image — and a test asserting the refusal would pass
   // on the generic message while proving nothing about the allowlist.
+  //
+  // 🔴 NARROWED from `isAllowedImageScanUrl` to "must be a RELATIVE storage key", which is
+  // strictly tighter and is what makes the host below OURS BY CONSTRUCTION rather than
+  // merely allowlisted. The ingestion allowlist admits absolute URLs on hosts an attacker
+  // can put bytes on — `<any-bucket>.s3.wasabisys.com` is a self-service global namespace,
+  // and `*.civitai.com` is admitted on any port with any path (both documented in
+  // `image-scan-url.ts`). That breadth is correct for INGESTION, which has a legacy
+  // `Image.url` population to keep working; it is wrong here, where there is none:
+  //   * every client call site sends a Cloudflare upload id — `useSubmitCreatorShopForm.ts`
+  //     and `CreatorShopPackModal.tsx` all pass `imageId`;
+  //   * `submitCreatorShopItemSchema` types it as a bare `z.string().min(1)`, so the schema
+  //     never constrained it and nothing else does;
+  //   * the error string this throws has ALWAYS claimed the narrower rule.
+  // 🔴 `isEdgeUrlPassthrough` is the single predicate `getEdgeUrl` itself branches on, so
+  // "not passthrough" means exactly "getEdgeUrl will prefix this onto our own storage edge".
+  // Reusing it rather than spelling a fourth test is the whole point of that module.
+  if (!imageUrl || isEdgeUrlPassthrough(imageUrl)) {
+    throw throwBadRequestError('Artwork must be an image uploaded to Civitai');
+  }
+  // Belt and braces: a relative key must also be free of the parser-ambiguous bytes the
+  // ingestion guard refuses. `\\evil.com/x` and `/\evil.com/x` carry no scheme and no leading
+  // `//`, so they read as relative keys here, and a WHATWG parser given a base resolves all
+  // of them to host `evil.com`. `isAllowedImageScanUrl` applies this to BOTH branches before
+  // it splits, so narrowing to the relative branch must not drop it.
   if (!isAllowedImageScanUrl(imageUrl)) {
     throw throwBadRequestError('Artwork must be an image uploaded to Civitai');
   }
@@ -208,13 +249,42 @@ const validateArtwork = async (imageUrl: string, type: CosmeticType) => {
   let frames = 1;
   let minFrameDelay = Infinity;
   try {
-    // Fetch the NORMALIZED form, for the same reason the orchestrator funnels submit it:
-    // the guard above judged the host with WHATWG parsing, so handing the raw bytes to a
-    // fetcher that resolves them differently is the validate-then-forward-the-raw-string
-    // bug. `normalizeImageScanUrl` leaves a relative storage key untouched for getEdgeUrl.
-    const res = await fetch(getEdgeUrl(normalizeImageScanUrl(imageUrl), { original: true }));
+    // `normalizeImageScanUrl` is a no-op on a relative key (it only re-emits the parsed href
+    // of a passthrough url, and the guard above rejected every one of those). It is kept so
+    // the call reads the same as the orchestrator funnels and does not become the one site
+    // that forwards a raw string if the predicate above is ever widened again.
+    //
+    // 🔴 NOT `safeFetch`, and that is a measured decision rather than an oversight.
+    // `src/server/utils/safe-fetch.ts` is this repo's guarded outbound primitive and is the
+    // right tool for an ARBITRARY url — but it gates on `isPublicHttpsUrl`, i.e. https-only
+    // and a public dotted hostname. The url here is OUR OWN edge, and `.env-example` sets
+    // `NEXT_PUBLIC_IMAGE_LOCATION=http://localhost:3000`, which that gate rejects on both
+    // counts — so routing this call through it would break artwork validation in every local
+    // dev environment while adding nothing in production that the narrowing above has not
+    // already achieved. The controls that DO apply regardless of scheme are applied instead:
+    //
+    //   redirect 'error' — the host is ours by construction now, so a redirect is the only
+    //     remaining way this fetch reaches a host we did not choose. Following one would
+    //     re-open, one hop later, exactly what the narrowing closed.
+    //   AbortSignal.timeout — an unbounded fetch on the WEB POD is a request-pinning DoS
+    //     independent of where it points.
+    //   a size cap — `arrayBuffer()` buffers the whole body in the web pod's heap before
+    //     sharp ever sees it, so a large object is a memory amplifier on an authenticated
+    //     rung. Checked on Content-Length AND on the streamed total, because a chunked
+    //     response carries no Content-Length to check.
+    const res = await fetch(getEdgeUrl(normalizeImageScanUrl(imageUrl), { original: true }), {
+      redirect: 'error',
+      signal: AbortSignal.timeout(ARTWORK_FETCH_TIMEOUT_MS),
+    });
     if (!res.ok) throw new Error(`fetch ${res.status}`);
+    const declaredLength = Number(res.headers.get('content-length') ?? NaN);
+    if (Number.isFinite(declaredLength) && declaredLength > ARTWORK_MAX_BYTES) {
+      throw new Error(`artwork too large: ${declaredLength} bytes`);
+    }
     const buffer = Buffer.from(await res.arrayBuffer());
+    if (buffer.byteLength > ARTWORK_MAX_BYTES) {
+      throw new Error(`artwork too large: ${buffer.byteLength} bytes`);
+    }
     imageHash = createHash('sha256').update(buffer).digest('hex');
     const meta = await sharp(buffer).metadata();
     width = meta.width ?? 0;

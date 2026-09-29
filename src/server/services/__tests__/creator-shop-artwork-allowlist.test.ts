@@ -51,6 +51,10 @@ beforeEach(() => {
   // build gets past the fetch and fails a LATER, differently-worded assertion.
   mockFetch.mockResolvedValue({
     ok: true,
+    // `headers.get` is read for the Content-Length pre-check. A mock without it throws a
+    // TypeError INSIDE the try/catch, which surfaces as the generic read failure — i.e. the
+    // suite would go green for the wrong reason on a deleted size cap.
+    headers: { get: () => null },
     arrayBuffer: async () => new ArrayBuffer(8),
   });
   mockSharp.mockReturnValue({
@@ -111,13 +115,33 @@ describe('validateArtwork URL allowlist (web-pod fetch + response oracle)', () =
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
-  it('fetches the NORMALIZED form for an allowed absolute url', async () => {
-    await submit('http:/image.civitai.com/a/b.png').catch(() => undefined);
-
-    expect(mockFetch).toHaveBeenCalledTimes(1);
-    // getEdgeUrl forwards a passthrough src unmodified, so the fetched url IS the parsed
-    // href — not the caller's slash-light spelling.
-    expect(mockFetch.mock.calls[0][0]).toBe('http://image.civitai.com/a/b.png');
+  /**
+   * 🔴 DELIBERATE BEHAVIOUR CHANGE — this row previously asserted the OPPOSITE.
+   *
+   * Until now `validateArtwork` shared the INGESTION allowlist, so an absolute url on an
+   * allowlisted host was fetched. That allowlist admits hosts an attacker can put bytes on
+   * (`<any-bucket>.s3.wasabisys.com` is a self-service global namespace; `*.civitai.com` is
+   * admitted on any port and path), which is tolerable for ingestion — it has a legacy
+   * `Image.url` population — and wrong here, where every client call site sends a Cloudflare
+   * upload id and the error string always claimed the narrower rule.
+   */
+  it.each([
+    ['http:/image.civitai.com/a/b.png', 'an allowlisted civitai host, slash-light'],
+    ['https://image.civitai.com/a/b.png', 'an allowlisted civitai host'],
+    ['https://attacker-bucket.s3.wasabisys.com/evil.png', 'an attacker-registrable wasabi bucket'],
+    [
+      'https://lh3.googleusercontent.com/a/AAcHTtf=s96-c',
+      'an avatar host the ingestion list allows',
+    ],
+  ])('now REFUSES %s (%s) — absolute urls are no longer artwork', async (url) => {
+    const err = await submit(url).then(
+      () => null,
+      (e: unknown) => e
+    );
+    expect(err instanceof Error ? err.message : String(err)).toContain(
+      'Artwork must be an image uploaded to Civitai'
+    );
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it('fetches an allowed relative storage key, resolved onto the edge', async () => {
@@ -125,5 +149,70 @@ describe('validateArtwork URL allowlist (web-pod fetch + response oracle)', () =
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(String(mockFetch.mock.calls[0][0]).startsWith('https://image.test/')).toBe(true);
+  });
+
+  it('refuses to FOLLOW a redirect — the only way left to reach a host we did not choose', async () => {
+    await submit('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/art.png').catch(() => undefined);
+
+    // The host is ours by construction now, so a 3xx off it is the residual hazard. `error`
+    // rather than `follow`: node resolves a redirect itself, so `follow` would re-open one
+    // hop later exactly what the narrowing closed.
+    expect(mockFetch.mock.calls[0][1]).toMatchObject({ redirect: 'error' });
+  });
+
+  it('bounds the fetch with a timeout — an unbounded one pins a web-pod request', async () => {
+    await submit('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/art.png').catch(() => undefined);
+
+    const init = mockFetch.mock.calls[0][1];
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('refuses an oversized body declared by Content-Length, before buffering it', async () => {
+    // 🔴 THE FIXTURE IS THE ASSERTION HERE, and the obvious version does not work. A first
+    // draft made `arrayBuffer` THROW ("must not buffer"), reasoning that reaching it was the
+    // failure. It is not detectable that way: with the pre-check deleted the code calls
+    // `arrayBuffer`, the throw is caught by the same try/catch, and the SAME generic message
+    // comes back — so the row passed with the guard removed. MEASURED: that mutant survived a
+    // 14/14 green run.
+    //
+    // The isolating fixture declares a huge Content-Length while returning a TINY body. Now
+    // the pre-check is the only thing that can refuse: delete it and the fetch succeeds,
+    // sharp runs, and `not.toHaveBeenCalled()` below goes red.
+    mockFetch.mockResolvedValue({
+      ok: true,
+      headers: { get: (h: string) => (h === 'content-length' ? String(64 * 1024 * 1024) : null) },
+      arrayBuffer: async () => new ArrayBuffer(8),
+    });
+
+    const err = await submit('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/art.png').then(
+      () => null,
+      (e: unknown) => e
+    );
+    // Surfaces as the generic read failure (the cap throws INSIDE the existing try/catch, by
+    // design — it is a fetch failure, not a validation verdict about the url).
+    expect(err instanceof Error ? err.message : String(err)).toContain(
+      'Could not read the uploaded artwork'
+    );
+    expect(mockSharp).not.toHaveBeenCalled();
+  });
+
+  it('refuses an oversized body that declared NO Content-Length (the chunked case)', async () => {
+    // 🔴 The row that makes the Content-Length check non-sufficient: a chunked response
+    // carries no length to pre-check, so the streamed total must be checked too. Without the
+    // second check this passes and sharp is handed 64 MiB.
+    mockFetch.mockResolvedValue({
+      ok: true,
+      headers: { get: () => null },
+      arrayBuffer: async () => new ArrayBuffer(64 * 1024 * 1024),
+    });
+
+    const err = await submit('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/art.png').then(
+      () => null,
+      (e: unknown) => e
+    );
+    expect(err instanceof Error ? err.message : String(err)).toContain(
+      'Could not read the uploaded artwork'
+    );
+    expect(mockSharp).not.toHaveBeenCalled();
   });
 });
