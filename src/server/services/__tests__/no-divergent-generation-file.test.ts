@@ -113,11 +113,11 @@ describe('the generation file is chosen in one place', () => {
 });
 
 describe('getGenerationFile', () => {
-  it('ignores query row order — ties go to the oldest file', () => {
-    const bf16 = file(10);
-    const fp8 = file(20, { metadata: { ...bf16.metadata, fp: 'fp8' } });
-    expect(getGenerationFile([fp8, bf16])?.id).toBe(10);
-    expect(getGenerationFile([bf16, fp8])?.id).toBe(10);
+  it('ignores query row order — a full tie goes to the oldest file', () => {
+    const older = file(10);
+    const newer = file(20, { type: 'Diffusion Model' });
+    expect(getGenerationFile([newer, older])?.id).toBe(10);
+    expect(getGenerationFile([older, newer])?.id).toBe(10);
   });
 
   it('never picks a replaced file', () => {

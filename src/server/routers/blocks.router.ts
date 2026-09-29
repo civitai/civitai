@@ -893,6 +893,12 @@ function buildGateVersion(gate: {
   usageControl: string;
   baseModel: string;
   covered: boolean | null | undefined;
+  // The cast below erases every absence, so each field `ResolveCanGenerateVersion` gains has to be
+  // added here by hand or it arrives `undefined` at runtime and typechecks. `coveredLive` reaching
+  // `isGenerationEligible` unset refuses a locked ecosystem's own checkpoints; `flags` unset reads
+  // as no GenerationDisabled bit.
+  coveredLive: boolean | null | undefined;
+  flags: number;
   modelUserId: number;
   modelType: string;
   modelVersionAlias: unknown;

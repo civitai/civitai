@@ -323,9 +323,57 @@ type. File-less API models are covered and never loadable — "file-less" means 
 that from `usageControl = 'ExternalGeneration'`, not from files, so an API model's label is what makes
 it read as ready — which is why the 51 relabelled versions were worth relabelling. A model a moderator has taken down or archived (`Model.mode`) is **not covered for any
 type**, which is how moderation blocks generation server-side rather than only greying out a button.
-Zero covered versions lack `RentCivit`, so refusing anything outside coverage inherits the licence
-rule instead of restating it. The numbers, the audit and the readers list are in
+A community checkpoint on a `modelLocked` ecosystem is held to the **live**
+rule — not in the view, which does not know about `modelLocked`, but in `isGenerationEligible`,
+because the generation graph rewrites any foreign version id to the workflow default. Zero covered versions lack `RentCivit`, so refusing anything outside coverage inherits
+the licence rule instead of restating it. The numbers, the audit and the readers list are in
 [paid-model-loading-coverage.md](paid-model-loading-coverage.md).
+
+---
+
+## Which FILE loads, for a multi-precision version
+
+The AIR names a version, not a file; the orchestrator resolves the bytes through
+`GET /api/v1/model-versions/mini/<id>`, which serves `getGenerationFile`'s pick — current public
+files, oldest id first, scored by `getPrimaryFile`. That scores each file on format (weight 100),
+size (10), fp (1) and quantType (0.5) against the caller's preferences, defaulting to
+`SafeTensor / pruned / fp16 / Q4_K_M`.
+
+A version published at several precisions — bf16, fp8, int8, int4 — **ties on every one of those**:
+same format, same type, no `size`, and no `fp` matches `fp16`, so each file scores identically and
+the winner fell to whichever row Postgres returned first. Two versions of the same model therefore
+went out on different precisions with nothing choosing: 3171380 served int8, 3248918 served fp8.
+520 versions site-wide were decided this way (measured 2026-09-29).
+
+An exact tie is now settled by an explicit serving order, **fp8 first**
+(`fpServingPreference` in `model-helpers.ts`): fp8 → fp8_scaled → fp8_mixed → bf16 → fp16 → fp32 →
+int8 → mxfp8 → nvfp4 → nf4 → int4. fp8 leads because it is roughly half the bytes of the 16-bit
+build, so the load is cheaper and quicker.
+
+A file carrying no `fp` at all never reaches the tie-break: with the default `fp16` preference an
+untagged file takes no penalty while every tagged build that is not fp16 takes −1, so the untagged
+one outscores them and is served. The tie-break only orders files that already score equally, and
+among those an unranked precision sorts last. When neither file states an `fp` the order is the input
+order — which is why `/api/v1/model-versions/mini/[id]` now `ORDER BY mf.id`: its `requestedFile`
+runs the bare `getPrimaryFile` over the unfiltered files and that pick decides the epoch branch.
+`getGenerationFile` sorts its pool by id itself, so every other reader is already deterministic.
+
+Two properties worth keeping:
+
+* It applies **only to a tie**, so an explicit `format`/`size`/`fp` preference still decides —
+  a user whose `filePreferences.fp` is `bf16` gets bf16.
+* It is **not** `fpQualityRank`, the fidelity order the model sidebar sorts variants by — and not
+  its reverse either: fp8 leads on serving cost while fp32 leads on fidelity, but int4/nf4/nvfp4
+  sort last in both. Two different questions over the same vocabulary.
+* It **never crosses `ModelFile.type`**. `Model`, `Pruned Model`, `Diffusion Model` and `UNet` all
+  score +1000, so a tie can span them, and `fileTypeUrnMap` gives them different AIR type segments —
+  choosing across them would move the AIR string the orchestrator caches by. 10 prod versions have
+  such a spread (measured 2026-09-29), so the tie-break is scoped to one type and needs no cache bust.
+
+Not addressed: neither the creator nor the user can **choose** which precision is served. The AIR
+already carries `+<fileId>` and the mini endpoint already accepts `modelFileId`, so the plumbing
+exists; only the surface is missing. No owner and no closing condition, so it is recorded here rather
+than filed.
 
 ---
 
@@ -426,6 +474,17 @@ Everything here is the deploying engineer's, before this branch merges.
 
 ## Post-deploy checklist
 
+- [ ] **Re-queue the models a locked ecosystem's community checkpoints belong to — after this
+      deploys, not before.** A re-index on the previous build writes the old answer back, because the
+      index writer computes `canGenerateNext` through the deployed `isGenerationEligible`. That helper
+      now holds those checkpoints to the live rule, so 738 of them (measured on the replica
+      2026-09-29; 8 already loaded) stop reading generatable. No migration and no cache purge — the
+      rule is in code and the view is unchanged — but the index **stores** the answer, so search keeps
+      offering them until those models are rebuilt. The full re-queue below covers it if that runs
+      first. Why, and the per-base-model table:
+      [paid-model-loading-coverage.md](paid-model-loading-coverage.md), "Model-locked ecosystems".
+      *Closes when:* a search filtered to generatable returns no community checkpoint on a locked base
+      model.
 - [ ] **Re-queue EVERY model before turning `generation-coverage-next` on** — not only the ~12,900
       that change answer. `canGenerateNext` exists only on documents written since `db635a3a45`, and a
       Meilisearch filter matches nothing on a document missing the attribute, so once the picker gates

@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import { coveredBy, nextCoverageEnabled } from '~/server/services/generation/coverage-source';
+import { coveragePair, nextCoverageEnabled } from '~/server/services/generation/coverage-source';
 import type { CustomComfyStepTemplate, Workflow, WorkflowStatus } from '@civitai/client';
 import type { AnyBlockRecipe, CustomComfyStepInput, ResolvedRecipeResources } from './recipes';
 import {
@@ -545,7 +545,7 @@ export async function resolveBlockVersionContext(modelVersionId: number, expecte
       availability: version.availability,
       usageControl: version.usageControl,
       baseModel: version.baseModel,
-      covered: coveredBy(version, await nextCoverageEnabled()) ?? false,
+      ...coveragePair(version.generationCoverage, await nextCoverageEnabled()),
       modelUserId: version.model.userId,
       modelType: version.model.type,
       flags: version.flags,
@@ -618,7 +618,7 @@ export async function resolvePageResourceContext(modelVersionId: number) {
       availability: version.availability,
       usageControl: version.usageControl,
       baseModel: version.baseModel,
-      covered: coveredBy(version, await nextCoverageEnabled()) ?? false,
+      ...coveragePair(version.generationCoverage, await nextCoverageEnabled()),
       modelUserId: version.model.userId,
       modelType: version.model.type,
       flags: version.flags,
