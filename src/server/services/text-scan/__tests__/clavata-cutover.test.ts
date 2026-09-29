@@ -59,19 +59,29 @@ describe('CLAVATA_TARGETS', () => {
     expect(CLAVATA_TARGETS.Collection.recentIds).toBeNull();
   });
 
-  it('ships exactly one trigger-drop migration per trigger', () => {
-    const dirs = readdirSync(MIGRATIONS).filter((d) => /_text_scan_drop_clavata_trigger_/.test(d));
-    const triggers = Object.values(CLAVATA_TARGETS).flatMap((t) => (t.trigger ? [t.trigger] : []));
-    expect(dirs).toHaveLength(triggers.length);
-    for (const { name, table } of triggers) {
-      const matches = dirs.filter((d) =>
-        d.endsWith(`_text_scan_drop_clavata_trigger_${table.toLowerCase()}`)
+  // The drops run by hand at each entity's cutover. As migrations, an "apply every pending
+  // migration" pass before release would remove Clavata while text scan is still off.
+  it('no migration drops a Clavata trigger', () => {
+    const triggers = Object.values(CLAVATA_TARGETS).flatMap((t) =>
+      t.trigger ? [t.trigger.name] : []
+    );
+    expect(triggers).toHaveLength(11);
+    const offenders = readdirSync(MIGRATIONS).filter((dir) => {
+      let sql: string;
+      try {
+        sql = readFileSync(join(MIGRATIONS, dir, 'migration.sql'), 'utf8');
+      } catch {
+        return false;
+      }
+      const live = sql
+        .split('\n')
+        .filter((line) => !line.trimStart().startsWith('--'))
+        .join('\n');
+      return triggers.some((name) =>
+        new RegExp(`DROP\\s+TRIGGER[^;]*\\b${name}\\b`, 'i').test(live)
       );
-      expect(matches, name).toHaveLength(1);
-      const sql = readFileSync(join(MIGRATIONS, matches[0], 'migration.sql'), 'utf8');
-      expect(sql).toContain(`DROP TRIGGER IF EXISTS ${name} ON "${table}";`);
-      expect(sql).toContain(`-- CREATE OR REPLACE TRIGGER ${name}`);
-    }
+    });
+    expect(offenders).toEqual([]);
   });
 });
 
