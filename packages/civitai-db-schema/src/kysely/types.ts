@@ -3946,6 +3946,18 @@ export type ReportAutomated = {
   metadata: Generated<unknown>;
   createdAt: Generated<Timestamp>;
 };
+export type ResourceInsight = {
+  modelVersionId: number;
+  role: string;
+  styleFamily: string;
+  contentTypes: string[];
+  qualityScore: number;
+  confidence: number;
+  specHash: string;
+  model: string;
+  createdAt: Generated<Timestamp>;
+  stale: Generated<boolean>;
+};
 export type ResourceOverride = {
   hash: string;
   modelVersionId: number;
@@ -4960,6 +4972,7 @@ export type DB = {
   ReferralReward: ReferralReward;
   Report: Report;
   ReportAutomated: ReportAutomated;
+  ResourceInsight: ResourceInsight;
   ResourceOverride: ResourceOverride;
   ResourceReview: ResourceReview;
   ResourceReviewHelper: ResourceReviewHelper;

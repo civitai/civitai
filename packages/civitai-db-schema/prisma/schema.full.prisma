@@ -1234,6 +1234,7 @@ model ModelVersion {
   imageResources          ImageResource[]
   posts                   Post[]
   resourceReviews         ResourceReview[]
+  resourceInsight         ResourceInsight?
   hashes                  ModelHash[]
   metricsDaily            ModelMetricDaily[]
   modelVersionExploration ModelVersionExploration[]
@@ -1765,6 +1766,28 @@ model ResourceReviewReaction {
   updatedAt DateTime        @updatedAt
 
   @@unique([reviewId, userId, reaction])
+}
+
+// Jev-assigned meaning labels for a published model version (what a resource is
+// FOR: role / style family / content types). One row per version; rows carry the
+// question-spec hash that produced them, so a spec bump marks old rows `stale`
+// for re-labeling instead of silently blending two taxonomies. Written only by
+// the labeling pass (scripts/label-resource-insights.ts) — never by user traffic.
+// The migration is applied manually per environment (no prisma migrate deploy).
+model ResourceInsight {
+  modelVersionId Int          @id
+  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  role           String
+  styleFamily    String
+  contentTypes   String[]
+  qualityScore   Float
+  confidence     Float
+  specHash       String
+  model          String
+  createdAt      DateTime     @default(now())
+  stale          Boolean      @default(false)
+
+  @@index([stale])
 }
 
 enum ReviewReactions {
