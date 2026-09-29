@@ -1,6 +1,7 @@
-import { readdirSync, readFileSync, statSync } from 'fs';
-import { join, relative, sep } from 'path';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { describe, expect, it } from 'vitest';
+import { sourceFiles } from '../../../../../test/source-scan';
 
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { stripCommentsAndStrings } from '../../../../../test/strip-comments';
@@ -541,24 +542,13 @@ const DENORM_OWNER_HOLDOUTS: Record<string, string> = {
     'anti-abuse rule is a product decision.',
 };
 
-function walk(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    if (entry === 'node_modules' || entry === '.next' || entry === '.git') continue;
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) walk(full, out);
-    else if (/\.tsx?$/.test(entry)) out.push(full);
-  }
-  return out;
-}
-
-/** Every non-test .ts/.tsx under src/, as repo-relative POSIX-ish paths. */
-function sourceFiles(): string[] {
-  return walk(join(ROOT, 'src'))
-    .map((f) => relative(ROOT, f).split(sep).join('/'))
-    .filter((f) => !/__tests__|\.test\.tsx?$|(^|\/)src\/tests\//.test(f));
-}
-
-const FILES = sourceFiles();
+// 🔴 THE WALK IS SHARED (`test/source-scan.ts`); THE STRIPPER IS NOT. `EXCLUDE_TEST_FILES`
+// is the DEFINITION of the population every enumerated-equality assertion below ranges
+// over, so a copy of it is the thing that must not drift. This file's own `code()` is
+// deliberately left alone — the strippers genuinely differ across these ledgers (this one
+// keeps string literals; the private-run pair strips them), and swapping one in would
+// change what the scan can see rather than where it looks.
+const FILES = sourceFiles(ROOT);
 
 /**
  * Source with comments AND string literals removed — there is a LOT of prose about

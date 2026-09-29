@@ -209,14 +209,13 @@ export default PublicEndpoint(
     // reintroduce the leak, and `block-render-writer.call-site-ledger.test.ts` for the
     // guard that keeps the writer set and this call in step.
     //
-    // 🔴 THIS IS THE ONLY `await` DOWN HERE WITH NO try/catch OF ITS OWN, and that is
-    // safe ONLY because `isPrivateRunImpression` swallows everything internally and
-    // answers `false`. The prom/histogram block above is wrapped precisely so
-    // observability can never affect the response; this line inherits the same property
-    // from the callee instead of from a wrapper. If that predicate is ever allowed to
-    // rethrow — or if work is moved out of it and up to here — a telemetry failure
-    // becomes a 500 AND a silently lost impression, which is both failure directions at
-    // once. Wrap it here before you do either.
+    // 🔴 NEITHER THIS `await` NOR THE SESSION RESOLVE ABOVE HAS A try/catch OF ITS OWN.
+    // This one is safe only because `isPrivateRunImpression` swallows everything
+    // internally and answers `false`; the prom/histogram block further up is wrapped
+    // instead, so observability can never affect the response. If that predicate is ever
+    // allowed to rethrow — or if work is moved out of it and up to here — a telemetry
+    // failure becomes a 500 AND a silently lost impression, which is both failure
+    // directions at once. Wrap it here before you do either.
     if (await isPrivateRunImpression({ appBlockId: result.data.appBlockId, viewer: session?.user }))
       return res.status(200).end();
 

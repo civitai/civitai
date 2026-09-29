@@ -78,44 +78,39 @@ import { isConfirmedNonApprovedAppBlockId } from '~/server/services/blocks/known
  *   2. THE APP IS APPROVED → `false`. A `Set.has` against the TTL-cached approved-id
  *      set that `boundAppBlockIdLabel` has ALREADY warmed earlier in the same request,
  *      so on the beacon path this is a cached read, not a query. Every impression on a
- *      live, publicly listed app stops here.
+ *      live, publicly listed app stops here — modulo the 5-minute approved-set TTL, so a
+ *      JUST-APPROVED app falls through for up to that long, which is precisely its
+ *      hottest window.
  *   3. THE FLAG IS OFF FOR THIS VIEWER → `false`. An in-process (wasm) Flipt eval — no
- *      network on the request path. The flag ships BASE-OFF, so today this is where the
- *      remaining traffic stops. ⚠️ SEE THE ABSENT-KEY NOTE BELOW: it is not the cached
- *      eval it looks like, and that is a fact about `flipt-state`, not about this file.
+ *      network on the request path. 🔴 AN ABSENT FLAG KEY THROWS: it bypasses the eval
+ *      cache (only successful evaluations are cached) and logs a `console.error` on every
+ *      reaching call. The answer is still `false`, so behaviour is right and the cost is
+ *      not — so the key must EXIST, base-off, before this path takes traffic. Read its
+ *      live state from Flipt, never from a comment; `app-blocks-flag.ts` records why a
+ *      docblock must not hold it.
  *   4. Only then the predicate.
  *
  * Net added cost on the common beacon path: for a signed-out viewer, nothing; for a
  * signed-in viewer of an approved app, one already-warm cache read and one set lookup.
  *
- * 🔴 WHICH BRANCH RUNS IS CHOSEN BY THE CALLER, NOT BY A MOUNT — an earlier version of
- * this paragraph said the database is touched only on "the private-run surface plus the
- * dev tunnel", and that is FALSE as a reachability claim. `appBlockId` comes out of the
- * request body (validated for length only); nothing ties it to a mount that happened. So
- * a signed-in caller with the flag on selects the DB branch by choosing the id, and a
- * real non-approved page-app id reaches ~7 statements, one of them on the WRITE PRIMARY
- * (the predicate re-reads the viewer row there, deliberately, ignoring the pool argument).
- * A garbage id costs one replica read — the predicate resolves the block before the
- * viewer re-read, which is what keeps the enumerable case cheap.
+ * 🔴 WHICH BRANCH RUNS IS CHOSEN BY THE CALLER, NOT BY A MOUNT. `appBlockId` comes out of
+ * the request body (validated for length only); nothing ties it to a mount that happened.
+ * So a signed-in caller with the flag on selects the DB branch by choosing the id — and
+ * "an app confirmed not approved" is therefore not a small organic population, it is any
+ * string such a caller cares to send. A real non-approved page-app id reaches 4–9
+ * statements depending on audience (counted per-audience at `resolvePrivateRunAccess`),
+ * one of them on the WRITE PRIMARY, where the predicate re-reads the viewer row
+ * deliberately, ignoring the pool argument. A garbage id costs one replica read — the
+ * predicate resolves the block before the viewer re-read, which is what keeps the
+ * enumerable case cheap.
  *
  * That is a COST property, not an authorization one: the row a caller can suppress is
  * always the row they were asking to write (both come from the same field), and
  * suppression still needs the predicate to grant. But before this change the common
  * beacon path did ZERO Postgres queries, and this route has no rate limit — so
  * "does this endpoint need a bucket?" is an input to the FLAG-WIDENING decision. Recorded
- * as a named precondition at the read site's canonical note.
- *
- * 🔴 ABSENT-KEY NOTE — STEP 3 IS NOT CACHED TODAY. `app-blocks-private-run-enabled` does
- * not exist in `civitai/flipt-state` yet (measured by complete enumeration of that file's
- * 173 keys, against 13 sibling `app-blocks-*` keys that ARE present, so the zero is real).
- * On an unknown key the wasm engine THROWS; `isFlipt` catches and answers `false` — the
- * right answer — but only successful evaluations are cached, so the eval cache is never
- * populated for this key and the default `onEvalError` writes a `console.error` on every
- * reaching call, indefinitely. This repo already carries the same condition on
- * `APP_BLOCKS_AUTHOR_FEE_FLAG` and says so at its accessor. Creating the key BASE-OFF in
- * `flipt-state` converts step 3 into the silent cached eval it is meant to be, and that
- * is required before any rollout anyway. Until then, the reaching population is
- * (signed-in) × (confirmed non-approved id), which is small but not zero.
+ * as a named precondition at the read site's canonical note, and in the flag's own
+ * precondition block, which is the file an operator actually opens.
  *
  * 🔴 STEP 2 MUST FAIL TOWARD RECORDING, AND THAT IS WHY IT IS
  * `isConfirmedNonApprovedAppBlockId` RATHER THAN `!isKnownAppBlockId`. The approved-id
@@ -203,13 +198,11 @@ export async function isPrivateRunImpression(args: {
     // flood. This is a health signal, not a second audit trail — the identifiers live in
     // the mint's audit line.
     //
-    // 🔴 THE ERROR CLASS, NOT THE MESSAGE, AND THAT IS NOT FASTIDIOUSNESS. This used to
-    // log `err.message`, under a comment promising "no user id" — and a
-    // `PrismaClientValidationError` renders the failing invocation INCLUDING ITS
-    // ARGUMENTS. The invocation inside this try is `user.findUnique({ where: { id:
-    // <viewer.id> } })`, so the viewer's id could reach the log through the very field
-    // the comment said carried none. A class name cannot carry an argument, and for a
-    // health signal "which kind of thing broke" is the part that has a use.
+    // 🔴 THE ERROR CLASS, NEVER THE MESSAGE. A `PrismaClientValidationError` renders the
+    // failing invocation INCLUDING ITS ARGUMENTS, and the invocation inside this try is
+    // `user.findUnique({ where: { id: <viewer.id> } })` — so a message would carry the
+    // viewer's id onto a public write path's log. A class name cannot carry an argument,
+    // and for a health signal "which kind of thing broke" is the part that has a use.
     logToAxiom(
       {
         name: 'private-run-impression-gate-failed',

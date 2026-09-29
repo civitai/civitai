@@ -27,6 +27,19 @@ import { stripCommentsAndStrings } from './strip-comments';
  *
  * Each caller still carries its OWN positive/negative controls. Sharing the walk does not
  * share the obligation to prove it enumerated something.
+ *
+ * 🔴 THE WALK IS SHARED; THE STRIPPER IS NOT, AND THAT IS DELIBERATE RATHER THAN UNFINISHED.
+ * These ledgers genuinely disagree about string literals: the private-run pair strips them
+ * (a call is never inside a string), while `mint-audit-stdout` MATCHES QUOTED EVENT NAMES
+ * and would detect nothing if they were stripped. So `scanSource` is for callers that want
+ * `stripCommentsAndStrings`; callers with their own `code()` import `sourceFiles` alone and
+ * keep it. Do not "finish the job" by pushing every ledger through `scanSource`.
+ *
+ * ⚠️ NOT ADOPTED BY `block-token-access.call-site-ledger.test.ts`, which carries a walk that
+ * omits the `.test.tsx?$` and `src/tests/` exclusions entirely — so its population already
+ * differs from every file here. Converting it would CHANGE its ledger rather than preserve
+ * it (it discriminates by import, and test files are currently inside its corpus), so that
+ * is a decision with a result to re-check, not a mechanical move.
  */
 
 /** Directories never worth walking. */
@@ -41,7 +54,14 @@ const SKIP_DIRS = new Set(['node_modules', '.next', '.git']);
  */
 export const EXCLUDE_TEST_FILES = /__tests__|\.test\.tsx?$|(^|\/)src\/tests\//;
 
-/** Every `.ts`/`.tsx` file under `dir`, recursively, as absolute paths. */
+/**
+ * Every `.ts`/`.tsx` file under `dir`, recursively, as absolute paths.
+ *
+ * 🔴 `statSync`, NOT `readdirSync(..., { withFileTypes: true })`. `withFileTypes` reports a
+ * SYMLINK as neither a file nor a directory, so a symlinked source dir is silently skipped —
+ * exactly the narrowing a population definition must never do. `statSync` follows the link.
+ * A sibling guard has already had to fix this once in its own copy.
+ */
 export function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
     if (SKIP_DIRS.has(entry)) continue;
@@ -76,7 +96,14 @@ export type SourceScan = {
   callersOf(name: string): string[];
 };
 
-/** Build a scan of `<root>/src`, with `definedIn` mapping symbol → its defining file. */
+/**
+ * Build a scan of `<root>/src`, with `definedIn` mapping symbol → its defining file.
+ *
+ * ⚠️ `definedIn` is OPTIONAL because callers that only need `files`/`code` should not have
+ * to invent one — but a caller that uses `callersOf` and omits it gets the DEFINING file
+ * counted as a caller, silently and with no type error. If you call `callersOf`, pass the
+ * map.
+ */
 export function scanSource(root: string, definedIn: Record<string, string> = {}): SourceScan {
   const files = sourceFiles(root);
   const code = new Map(

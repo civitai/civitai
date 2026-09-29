@@ -24,8 +24,12 @@ import { logToAxiom } from '~/server/logging/client';
  * `ip` instead or they collapse into a single phantom viewer. Hence the
  * `uniqExactIf(userId, …) + uniqExactIf(ip, …)` split below.
  *
- * 🔴 THIS RAIL EXCLUDES PRIVATE RUNS — CLOSED AT THE WRITERS, NOT HERE. It used to be
- * the last open flag-flip precondition, so the mechanism is recorded rather than deleted.
+ * 🔴 THIS RAIL EXCLUDES PRIVATE RUNS — CLOSED AT THE WRITERS, NOT HERE. It was ONE OF TWO
+ * open flag-flip preconditions; 🔴 THE ATTRIBUTION RAIL IS STILL OPEN — a private run's
+ * generation writes a voided `block_spend_attribution` row that the owner-visible reads
+ * still count into `runs` / `runs.buzzSpent`. See `blocks/buzz-attribution.service.ts`,
+ * and the flag's own precondition block in `app-blocks-flag.ts`, which is the file an
+ * operator opens before widening. Do not read this heading as "nothing blocks the flag".
  *
  * THE LEAK: a private run of a delisted app — a moderator, the owner, or an accepted
  * listing collaborator running its already-deployed bundle — MOUNTS THE HOST, so it emitted
@@ -84,26 +88,34 @@ import { logToAxiom } from '~/server/logging/client';
  * one is `src/tests/api/track/block-render.private-run.test.ts`. A future reader looking
  * here for a `source <> …` filter will not find one and should not add one.
  *
- * ⚠️ TWO RAILS, TWO INDEPENDENT DERIVATIONS OF "THIS IS A PRIVATE RUN", AND NOTHING
- * ASSERTS THEY AGREE. `block_scope_invocations` derives it from the VERIFIED TOKEN CLAIM
- * at call time; this rail derives it from the SESSION + database at beacon time. Those
- * inputs can disagree at the margin — a mount served under a token minted before the flag
- * was turned off for that viewer would land an owner-visible impression while its
- * invocation rows stay hidden. Blast radius is one telemetry row per mount, not access,
- * so it is recorded rather than guarded; the alternative (a third derivation to reconcile
- * them) is worse than the seam.
+ * ⚠️ TWO RAILS, TWO DIFFERENT QUESTIONS, AND NOTHING ASSERTS THEY AGREE.
+ * `block_scope_invocations` marks a row from the VERIFIED TOKEN CLAIM — a fact about the
+ * REQUEST. This rail asks `resolvePrivateRunAccess` — a fact about the VIEWER AND THE APP,
+ * NOW. They are not two implementations of one predicate, so they can disagree in both
+ * directions:
+ *   · a mount served under a token minted before the flag was turned off for that viewer
+ *     records an owner-visible impression while its invocation rows stay hidden;
+ *   · a DEV-TUNNEL mount by an app's owner is the standing inverse — the impression is
+ *     suppressed (the owner satisfies the predicate) while its invocation rows are
+ *     visible, because a dev-tunnel token carries no private-run claim.
+ * The leaked row in the first case is exactly the owner-visible impression this feature
+ * exists to suppress, so it is not incidental — but it needs a mid-token-lifetime flag
+ * flip, and a third derivation to reconcile the two would be ill-defined rather than
+ * merely expensive: there is no single question for it to answer. Recorded, not guarded,
+ * and 🔴 do not accept a later proposal to unify them.
  *
  * 🔴 A LOAD PRECONDITION THIS CLOSURE CREATES, WHICH MUST BE SETTLED BEFORE THE FLAG IS
  * WIDENED. The gate can reach `resolvePrivateRunAccess` — ~7 statements, one of them on
  * the WRITE PRIMARY — and the branch is selected by a client-chosen `appBlockId` on a
- * route with NO RATE LIMIT, whose own header records that "a scripted client could post
- * unlimited DISTINCT ids". Before this change the common beacon path did ZERO Postgres
- * queries. Unreachable in production today (the flag is base-off AND its key does not
- * exist in `flipt-state`), so this is a precondition and not an incident — but the moment
- * that key is created with any rollout, the two decisions are the same decision.
+ * route with NO RATE LIMIT. (`known-app-blocks.service.ts` records the same unbounded-id
+ * property for the prom-label hazard it was written to bound.) Before this change the
+ * common beacon path did ZERO Postgres queries. The DB branch is unreachable while the
+ * flag is off, so this is a precondition and not an incident — but the moment the flag
+ * admits anyone, the two decisions are the same decision.
  * CLOSING CONDITION: either `/api/track/block-render` carries a rate limit (this repo has
  * several to copy under `server/utils/`), or the flag's rollout is confirmed to admit only
- * the moderators segment. Whoever creates the flag row checks one of those two.
+ * the moderators segment. Whoever widens the flag checks one of those two; the item is
+ * restated in that flag's own precondition block, which is where they will be looking.
  *
  * ACCEPTANCE (the condition this arc closes on): one private run against a delisted app,
  * then the operator reads that app's analytics panel and confirms `views.count` and

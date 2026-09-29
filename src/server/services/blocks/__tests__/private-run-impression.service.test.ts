@@ -38,8 +38,7 @@ const { mockKnown, mockFlag, mockAccess } = vi.hoisted(() => ({
 vi.mock('~/server/services/blocks/known-app-blocks.service', () => mockKnown);
 vi.mock('~/server/services/app-blocks-flag', () => mockFlag);
 // `importOriginal` so the REAL `PRIVATE_RUN_REFUSAL_REASONS` tuple is still exported —
-// the completeness case below derives its rows from it, and a hand-copied list would
-// stay green when a ninth reason is added with no coverage.
+// the sweep below derives its rows from it rather than from a hand-copied list.
 vi.mock('~/server/services/blocks/private-run-access.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PrivateRunAccessModule>()),
   resolvePrivateRunAccess: mockAccess.resolvePrivateRunAccess,
@@ -146,14 +145,11 @@ describe('isPrivateRunImpression — an ordinary impression survives [INV]', () 
   it('EVERY refusal reason records the impression, swept over the real tuple', async () => {
     // A refusal means "this mount is not a private run", so the row is real.
     //
-    // ⚠️ THIS USED TO CLAIM "a ninth reason added without considering this gate fails
-    // HERE". IT CANNOT, and the correction matters more than the sweep does. The gate
-    // reads `access.allowed === true` — ONE branch for every reason — so adding a tenth
-    // member adds one more PASSING iteration and no mutation of "add a reason" can turn
-    // this red. The loop is nine copies of one assertion; it is kept because sweeping the
-    // real tuple costs nothing and documents the polarity, not because it is a
-    // completeness guard. A guard whose description claims coverage it does not provide
-    // is worse than none.
+    // ⚠️ THIS IS A SWEEP, NOT A COMPLETENESS GUARD, AND THE DIFFERENCE IS WORTH THE LINE.
+    // The gate reads `access.allowed === true` — ONE branch for every reason — so adding a
+    // tenth member to the tuple adds one more PASSING iteration and NO mutation of "add a
+    // reason" can turn this red. Kept because sweeping the real tuple costs nothing and
+    // documents the polarity; do not describe it as completeness coverage.
     //
     // The line below IS a working control, and it is the reason the tuple is imported at
     // all: if the `importOriginal` spread ever produced a mocked or empty module, `.length`
@@ -210,10 +206,9 @@ describe('isPrivateRunImpression — an ordinary impression survives [INV]', () 
       false
     );
     expect(mockAccess.resolvePrivateRunAccess).not.toHaveBeenCalled();
-    // 🔴 AND THE CHEAP GATE RAN FIRST. Without this the case pins "4 unreached" but says
-    // nothing about 2 PRECEDING 3 — a reordering that put the flag eval ahead of the
-    // cached set lookup would keep this green while making every signed-in beacon pay the
-    // more expensive of the two. The ordering IS the cost claim, so it is asserted.
+    // AND THE CHEAP GATE RAN FIRST — the ordering from this side. (The approved-app case
+    // above pins the same order from the other: step 2 returning false means the flag must
+    // not have been consulted. Either alone would do; both make the direction obvious.)
     expect(mockKnown.isConfirmedNonApprovedAppBlockId).toHaveBeenCalled();
   });
 });
@@ -231,6 +226,9 @@ describe('isPrivateRunImpression — failures fail TOWARD recording [INV]', () =
     );
     // 🔴 A gate that fails open without a trace means the leak is reopened and nothing
     // says so. The log is what makes the fail-open observable rather than reassuring.
+    // The COUNT is asserted beside it so `toHaveBeenCalledWith` — which matches ANY call —
+    // cannot be satisfied while a second, unreviewed log line rides along.
+    expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'private-run-impression-gate-failed', type: 'error' }),
       'clickhouse'
@@ -252,24 +250,45 @@ describe('isPrivateRunImpression — failures fail TOWARD recording [INV]', () =
     // per-impression health signal that carries identifiers is a second, unreviewed audit
     // trail on a public write path.
     //
-    // 🔴 THE MESSAGE IS THE LEAK VECTOR, AND A "no user id" SWEEP DOES NOT CATCH IT. The
-    // gate logged `err.message` under a comment promising no user id, and a
-    // `PrismaClientValidationError` renders the failing invocation INCLUDING ITS
-    // ARGUMENTS — the call inside the try being `user.findUnique({ where: { id:
-    // <viewer.id> } })`. A fixture whose error text happens to be clean (`'boom'`) sweeps
-    // green over exactly that defect, which is why this pins the SHAPE — class in, message
-    // out — instead of grepping the output for today's ids.
+    // 🔴 THE MESSAGE IS THE LEAK VECTOR, AND A "no user id" SWEEP DOES NOT CATCH IT. A
+    // `PrismaClientValidationError` renders the failing invocation INCLUDING ITS ARGUMENTS
+    // — the call inside the try being `user.findUnique({ where: { id: <viewer.id> } })`.
+    // A fixture whose error text happens to be clean (`'boom'`) sweeps green over exactly
+    // that defect, so this plants an identifier IN THE MESSAGE and asserts the shape.
+    //
+    // 🔴 AND IT ASSERTS OVER *EVERY* CALL, WITH A COUNT — "no bad one exists", not "a good
+    // one exists". Reading `calls[0]` alone is walked by a SECOND `logToAxiom` appended in
+    // the same catch: the first payload still looks right, `gateFailedOpen()` is still
+    // true, and the message ships anyway. That is the same class this file's viewer-
+    // threading sibling was rewritten to close.
     const secret = `prisma-arg-${MODERATOR.id}-${DELISTED_APP}`;
-    const err = new TypeError(secret);
-    mockAccess.resolvePrivateRunAccess.mockRejectedValue(err);
+    mockAccess.resolvePrivateRunAccess.mockRejectedValue(new TypeError(secret));
     await isPrivateRunImpression({ appBlockId: DELISTED_APP, viewer: MODERATOR });
 
+    expect(loggingMock.logToAxiom, 'the catch logs exactly once').toHaveBeenCalledTimes(1);
+    const calls = loggingMock.logToAxiom.mock.calls as Array<[Record<string, unknown>]>;
+    expect(calls[0][0].errorClass, 'the class is what a health signal needs').toBe('TypeError');
+    for (const [payload] of calls) {
+      const serialised = JSON.stringify(payload);
+      expect(serialised, 'no message text may reach the log').not.toContain(secret);
+      expect(serialised).not.toContain(DELISTED_APP);
+      expect(serialised).not.toContain(String(MODERATOR.id));
+    }
+  });
+
+  it('a NON-Error throw is classified by `typeof`, and still leaks nothing', async () => {
+    // Covers the `typeof err` branch, which every other case leaves unexercised — and a
+    // thrown string is the shape most likely to carry text straight into a payload.
+    const secret = `raw-throw-${MODERATOR.id}`;
+    mockAccess.resolvePrivateRunAccess.mockRejectedValue(secret);
+    expect(await isPrivateRunImpression({ appBlockId: DELISTED_APP, viewer: MODERATOR })).toBe(
+      false
+    );
+
+    expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
     const [payload] = loggingMock.logToAxiom.mock.calls[0] as [Record<string, unknown>];
-    expect(payload.errorClass, 'the class is what a health signal needs').toBe('TypeError');
-    const serialised = JSON.stringify(payload);
-    expect(serialised, 'no message text may reach the log').not.toContain(secret);
-    expect(serialised).not.toContain(DELISTED_APP);
-    expect(serialised).not.toContain(String(MODERATOR.id));
+    expect(payload.errorClass).toBe('string');
+    expect(JSON.stringify(payload)).not.toContain(secret);
   });
 
   it('records the impression when the FLAG CLIENT throws', async () => {

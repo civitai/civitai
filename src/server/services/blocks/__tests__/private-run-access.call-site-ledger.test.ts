@@ -1,5 +1,3 @@
-import { readFileSync } from 'fs';
-import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import { scanSource } from '../../../../../test/source-scan';
 
@@ -89,9 +87,10 @@ describe('the private-run seam — instrument validation', () => {
     // `resolvePrivateRunAccess` in prose — the registry resolver's docblock and the
     // middleware's claim docblock among them — and none of them may count.
     const mentionsInProse = FILES.filter((f) => {
-      const raw = readFileSync(join(ROOT, f), 'utf8');
+      const text = raw(f);
       return (
-        raw.includes('resolvePrivateRunAccess') && !CODE.get(f)!.includes('resolvePrivateRunAccess')
+        text.includes('resolvePrivateRunAccess') &&
+        !CODE.get(f)!.includes('resolvePrivateRunAccess')
       );
     });
     // At least one such file must exist, or this control is proving nothing.
@@ -186,6 +185,11 @@ describe('the private-run seam — the call-site ledger [INV]', () => {
     // 🔴 The private route must NOT record a play. A private review run is not a play,
     // and recording it would move a suspended app's owner-visible analytics — telling a
     // bad actor exactly when review is happening.
+    //
+    // PAIRED POSITIVE CONTROL: `stripCommentsAndStrings` is biased toward over-stripping,
+    // so a `not.toContain` against a CODE entry stripped to whitespace would pass having
+    // measured nothing. This proves the same entry can still match.
+    expect(priv).toContain('resolvePrivateRunAccess');
     expect(priv).not.toContain('recordAppListingOpen');
     // Nor plant a dead link in the viewer's own recents (both its link shapes 404 for a
     // suspended app).

@@ -56,12 +56,15 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 // The sibling suite spells it `!devStore.isDev`, which with `isDev = false` makes `isProd`
 // TRUE — and `src/env/client-schema.ts` reads
 // `NEXT_PUBLIC_CIVITAI_LINK: isProd ? z.url() : z.url().optional()`. So any module graph
-// this file pulls in that reaches `~/env/client` (which validates UNCONDITIONALLY at
-// module scope) throws `Invalid environment variables`. That is exactly what happened
-// here, and because the gate catches every throw and fails toward RECORDING, it surfaced
-// as four suppression cases reading "1 row" with no hint the env, not the gate, was the
-// broken thing. Under `NODE_ENV=test` both flags really are false, so this mock is also
-// the more faithful one.
+// this file pulls in that reaches `~/env/client` — which validates UNCONDITIONALLY at
+// module scope — throws `Invalid environment variables`, the gate's catch swallows it,
+// and the suppression cases read "1 row" with nothing pointing at the env. Under
+// `NODE_ENV=test` both flags really are false, so this mock is also the faithful one.
+//
+// The sibling suite is NOT wrong to keep `!devStore.isDev`: it mocks the gate wholesale,
+// so the predicate's graph — and `~/env/client` — is never evaluated there, and some of
+// its cases flip `devStore.isDev = true` expecting `isProd` to follow. Left alone
+// deliberately, not overlooked.
 vi.mock('~/env/other', () => ({
   get isDev() {
     return devStore.isDev;
@@ -90,12 +93,9 @@ vi.mock('~/server/services/blocks/known-app-blocks.service', () => mockKnown);
 vi.mock('~/server/services/app-blocks-flag', () => mockFlag);
 // A plain factory rather than `importOriginal`: this file needs only the predicate's TYPE
 // (erased at runtime), so evaluating the real module — which statically pulls `dbRead`,
-// `dbWrite` and `BlockRegistry` — would buy nothing. The sibling gate suite DOES use
-// `importOriginal` on this same module, because it needs the real
-// `PRIVATE_RUN_REFUSAL_REASONS` tuple, and it works there; an earlier version of this
-// comment claimed `importOriginal` was impossible here, which review correctly flagged as
-// a contradiction between two files. Re-derived: the blocker was this file's own
-// `~/env/other` mock, fixed above — not a property of the predicate module.
+// `dbWrite` and `BlockRegistry` — would buy nothing. The sibling gate suite uses
+// `importOriginal` on this same module because it needs the real
+// `PRIVATE_RUN_REFUSAL_REASONS` tuple; nothing about the module prevents it here.
 vi.mock('~/server/services/blocks/private-run-access.service', () => mockAccess);
 
 // The CANONICAL logging mock — `~/server/logging/client` has one, so a per-file
@@ -235,12 +235,14 @@ type Scenario = {
  * case would otherwise pass just as happily with the gate broken. The fail-open path is
  * the one that logs, so the log IS the discriminator.
  *
- * 🔴 FILTERED BY EVENT NAME, AND THE FIRST VERSION WAS NOT — it asked whether
- * `logToAxiom` had been called AT ALL, and went red on nine passing cases. The beacon
- * route writes its OWN `block-render-unknown-app` line for any id outside the approved
- * set, which is EVERY fixture in this file by construction. So the unfiltered form was a
- * discriminator for "did anything log", not "did the gate fail", and it would equally
- * have gone GREEN-for-the-wrong-reason had the polarity been the other way round.
+ * 🔴 FILTERED BY EVENT NAME. An unfiltered "did `logToAxiom` fire" is not this question:
+ * the beacon route writes its OWN `block-render-unknown-app` line for any id outside the
+ * approved set, which is EVERY fixture in this file by construction.
+ *
+ * ⚠️ IT MEASURES "THE GATE'S OWN `catch` DID NOT FIRE", WHICH IS NARROWER THAN ITS NAME.
+ * In production the flag accessor and the approved-set lookup swallow their own failures
+ * and answer `false` — real fail-opens that log nothing and that this would score as
+ * DECIDED. Sound here only because both are mocks that reject outright.
  */
 function gateFailedOpen(): boolean {
   const calls = (
@@ -314,10 +316,14 @@ const SCENARIOS: Scenario[] = [
  * ⚠️ AND `[REG]` IS NOT ESTABLISHABLE HERE THE USUAL WAY: `private-run-impression.service`
  * does not exist at `origin/main`, so at base this file is a COLLECTION FAILURE — "no
  * tests" — not a red assertion. The substitute measurement is gate-removal at BOTH
- * writers on this tree, which reproduces base behaviour at both: **4 of 16 red** —
- * scenario 1, both SERVER-WINS cases, and the counter case. That is a real measurement
- * and it is not the claim `[REG]` normally makes; recorded here so it is never quoted as
- * "watched red at the base ref".
+ * writers on this tree, which reproduces base behaviour at both: **10 of 16 red**. That
+ * is a real measurement and it is not the claim `[REG]` normally makes; recorded here so
+ * it is never quoted as "watched red at the base ref".
+ *
+ * 🔴 THAT NUMBER MOVES WHEN THIS FILE GAINS ASSERTIONS, so re-run the experiment rather
+ * than editing the digit: strip the `isPrivateRunImpression` call from both writers and
+ * count. (It read 4 while only the insert counts were asserted; adding the reachability
+ * and decided-vs-fail-open assertions took it to 10.)
  */
 describe('the two blockRenders writers agree about a private run', () => {
   for (const s of SCENARIOS) {

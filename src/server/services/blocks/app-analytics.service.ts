@@ -454,11 +454,9 @@ export async function getMyAppAnalytics({
     // owner-visible payload that still disclose a private run — which is the shape that
     // stops the next person looking. Three review lanes found it independently.
     //
-    // ⚠️ ONE OF THOSE TWO IS NOW CLOSED, AND THIS BLOCK STAYED STALE FOR A WHILE AFTER IT
-    // WAS — which is the same defect one level up, so it is recorded rather than quietly
-    // edited: the `views` half below was fixed at the WRITERS, and this paragraph went on
-    // calling it open while the canonical note called it closed. A reader arriving from
-    // the analytics payload — the natural entry point — read the stale one. The two:
+    // ⚠️ ONE OF THE TWO IS NOW CLOSED. Read the ✅/open marks below rather than the
+    // count — a stale claim HERE is the dangerous direction, because this file is the
+    // natural entry point for anyone arriving from the analytics payload:
     //
     //   · `runs` / `runs.buzzSpent` / `runs.series` — the `block_spend_attribution` reads
     //     above carry NO `status` predicate, so a private run's generation writes a

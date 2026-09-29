@@ -37,9 +37,9 @@ import { scanSource } from '../../../../../test/source-scan';
  *
  * ⚠️ `stripCommentsAndStrings` removes STRING LITERALS as well as comments, which is what
  * makes the scan immune to a name written in prose — and there IS prose to be immune to:
- * three files name `isPrivateRunImpression` in comments without calling it. A control
- * below requires that population to be non-empty, so the immunity is measured rather
- * than assumed.
+ * exactly one file names `isPrivateRunImpression` in a comment without calling it. A
+ * control below pins that population BY NAME, so the immunity is measured rather than
+ * assumed and a deleted paragraph is a red test rather than a silently-inert control.
  */
 
 const ROOT = process.cwd();
@@ -95,13 +95,13 @@ describe('the blockRenders writer set — instrument validation', () => {
     // green the moment somebody writes the gate's name in a doc comment, with the file
     // calling nothing.
     //
-    // ⚠️ THE POPULATION IS EXACTLY ONE FILE, AND THIS USED TO SAY "several" — measured, it
-    // is the client beacon emitter alone. (`app-views.service.ts` names the module PATH,
-    // not the identifier; the two writers name it in prose AND call it, so they are in
-    // CODE and correctly excluded.) That matters: with `toBeGreaterThan(0)` the whole
-    // control rests on ONE prose paragraph, and this repo's comment policy actively
-    // encourages deleting paragraphs — so it is pinned BY NAME, and a deletion is then a
-    // red test with an obvious fix rather than a control that silently stops controlling.
+    // ⚠️ THE POPULATION IS EXACTLY ONE FILE — the client beacon emitter.
+    // (`app-views.service.ts` names the module PATH, not the identifier; the two writers
+    // name it in prose AND call it, so they are in CODE and correctly excluded.) With a
+    // mere non-emptiness check the whole control would rest on ONE prose paragraph, and
+    // this repo's comment policy actively encourages deleting paragraphs — so it is
+    // pinned BY NAME. A deletion is then a red test with an obvious fix rather than a
+    // control that silently stops controlling.
     const mentionsInProse = FILES.filter((f) => {
       const text = raw(f);
       return (
@@ -154,53 +154,47 @@ describe('the blockRenders writer set — the ledger [INV]', () => {
   });
 
   it('🔴 the three populations are THE SAME SET', () => {
-    // The relationship, stated directly rather than inferred from three separate equalities
-    // against a constant: whoever writes the table must also strip through the allowlist
-    // AND consult the gate. Stated this way the assertion survives a future edit to
-    // `WRITERS` — the sets must agree with each other even if the ledger is wrong.
+    // The relationship, stated directly: whoever writes the table must also strip through
+    // the allowlist AND consult the gate.
+    //
+    // ⚠️ REDUNDANT WHILE THE THREE ABOVE ARE EQUALITIES — it can never be the only red
+    // test today. It is kept because it is the one that stays load-bearing if any of them
+    // is ever relaxed to `toContain`, which is a change that would otherwise silently
+    // remove the property. Do not read four independent checks here; there are three.
     expect(callersOf('blockRenderTrackerPayload')).toEqual(trackerWriteSites());
     expect(callersOf('isPrivateRunImpression')).toEqual(trackerWriteSites());
   });
 
   /**
-   * 🔴 DELETED, NOT TIGHTENED: an assertion that each writer "SUPPRESSES on the gate
-   * rather than merely calling it", matched as
-   * `if\s*\(await isPrivateRunImpression\(\{…\}\)\)[\s\S]{0,80}?return`.
-   *
-   * It was a guard on a SPELLING, and review demonstrated the walk rather than arguing
-   * it. In `track.router.ts` the statement AFTER the gate is `return ctx.track.blockRender
-   * (…)` — the RECORDING path's own `return`. So the mutant
-   * `if (await isPrivateRunImpression({…}));` — compute the answer, discard it, insert
-   * anyway — matched and went GREEN: the guard's evidence came from the code path it
-   * existed to exclude. It was also pinned to a source line sitting exactly at prettier's
-   * `printWidth: 100`, so a one-character rename anywhere on that line reformats the `if`
-   * across lines and fires a guard whose message names a deleted gate.
-   *
-   * Tightening the regex was the obvious fix and is how the first weakness got there.
-   * The property is already carried, behaviourally and per writer, by
-   * `src/tests/api/track/block-render.private-run.test.ts` — which kills that exact
-   * mutant on the tRPC leg (1 row where 0 is expected). A structural scan cannot see
-   * whether an answer was USED; that is not a gap to patch, it is the boundary between
-   * the two halves of this guard.
+   * 🔴 THERE IS DELIBERATELY NO STRUCTURAL ASSERTION THAT A WRITER *ACTS* ON THE GATE'S
+   * ANSWER. A text scan cannot see whether a value was used: in `track.router.ts` the
+   * statement after the gate is the RECORDING path's own `return`, so any proximity
+   * match is satisfied by `if (await isPrivateRunImpression({…}));` — compute, discard,
+   * insert anyway. That is not a gap to patch; it is the boundary between this guard and
+   * the behavioural one, which kills that mutant on the tRPC leg.
    */
 
   it('the gate is reached with a SERVER-RESOLVED viewer, never a parsed body field', () => {
-    // 🔴 ENUMERATE, DO NOT SAMPLE AN ALLOWLIST. This used to be
-    // `ALLOWED.filter(s => code.includes(s))` → `toHaveLength(1)`, which asserts that one
-    // of two permitted spellings is PRESENT and says nothing about any other. Review ran
-    // the mutant: a SECOND gate call with `viewer: input.viewer` alongside the correct one
-    // left the count at 1 and passed. Matching every `viewer:` in the file and requiring
-    // each to be allowlisted is the difference between "a good one exists" and "no bad one
-    // exists", and only the second is the claim.
+    // 🔴 ENUMERATE, DO NOT SAMPLE AN ALLOWLIST — the difference between "a good spelling
+    // exists" and "no bad one exists", and only the second is the claim. Whitespace is
+    // normalised rather than trimmed so a prettier reflow (`viewer:\n  ctx.user`) is not
+    // a false red, and `viewer\s*:` so an extra space is not a hole.
+    //
+    // Sibling home: `src/test-utils/routerSourceRegions.ts` owns the repo's other
+    // private-run spelling sets and their pairwise-disjointness test. This pair is NOT
+    // moved there on purpose — that module's sets are all about the `privateRun:` TOKEN
+    // CLAIM rail, and a `viewer:` SESSION-rail constant filed alongside them invites
+    // exactly the wrong coupling. Keep them separate; look there before editing either.
     const ALLOWED_VIEWER_SOURCES = ['viewer: session?.user', 'viewer: ctx.user'];
     for (const f of WRITERS) {
-      const used = CODE.get(f)!.match(/viewer:\s*[^,}\n]+/g) ?? [];
+      const used = CODE.get(f)!.match(/viewer\s*:\s*[^,}\n]+/g) ?? [];
       expect(used.length, `${f} must thread a viewer into the gate`).toBeGreaterThan(0);
-      for (const spelling of used) {
+      for (const raw of used) {
+        const spelling = raw.replace(/\s+/g, ' ').trim();
         expect(
           ALLOWED_VIEWER_SOURCES,
-          `${f} threads \`${spelling.trim()}\` — only a SERVER-RESOLVED session may reach the gate`
-        ).toContain(spelling.trim());
+          `${f} threads \`${spelling}\` — only a SERVER-RESOLVED session may reach the gate`
+        ).toContain(spelling);
       }
     }
   });
