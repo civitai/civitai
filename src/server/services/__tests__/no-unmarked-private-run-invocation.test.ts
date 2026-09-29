@@ -368,16 +368,33 @@ function discoverWriterFiles(): {
       statSync(path.join(process.cwd(), f), { throwIfNoEntry: false })?.isFile() === true
   );
 
-  // 🔴 THE SECOND, INDEPENDENT ENUMERATION, kept ONLY as a lower bound on what the walk read.
-  // It is a different mechanism with different blind spots, which is the point: narrowing the
-  // `readdirSync` walk above leaves these files behind, and the subset assertion in the
-  // coverage case then names them. Because it is only a lower bound, its own dot-directory
-  // blindness is harmless here — it can never cause a file to go UNCHECKED, only to go
-  // uncross-checked.
-  const globbed = globSync('src/**/*.{ts,tsx}', { cwd: process.cwd() })
+  // 🔴 THE SECOND, INDEPENDENT ENUMERATION, kept as a lower bound on what the walk read.
+  // Narrowing the `readdirSync` walk above leaves these files behind, and the subset assertion
+  // in the coverage case then names them.
+  //
+  // ⚠️ TWO PATTERNS, AND THE SECOND ONE IS THE WHOLE POINT. An earlier revision used
+  // `src/**/*.{ts,tsx}` alone and claimed in this very comment that the glob's dot-directory
+  // blindness "can never cause a file to go UNCHECKED, only to go uncross-checked." That was
+  // FALSE, and it was false about the one file whose discovery motivated rebuilding this walk:
+  // uncross-checked IS how it goes unchecked, because no other assertion covers it. Measured —
+  // appending `&& !file.includes('/.')` to the walk's predicate left the whole 864-test gate
+  // green with an unmarked writer live in `src/pages/api/.well-known/`.
+  //
+  // So the dot region is globbed explicitly. `src/**/*` does not match a leading dot at any
+  // segment, which is why the second pattern is needed rather than a flag.
+  const globbed = [
+    ...globSync('src/**/*.{ts,tsx}', { cwd: process.cwd() }),
+    ...globSync('src/**/.*/**/*.{ts,tsx}', { cwd: process.cwd() }),
+  ]
     .map((f) => f.replace(/\\/g, '/'))
     .filter(
-      (f) =>
+      (f, i, all) =>
+        all.indexOf(f) === i &&
+        // 🔴 THE EXCLUSIONS ARE SPELLED HERE, AT THE CROSS-CHECK'S OWN SITE, and NOT via the
+        // walk's `couldHoldAWriter`. That is the round-5 finding: an expectation filtered by
+        // the predicate it audits narrows together with it. `looksLikeProductionSource` is
+        // the deliberately separate twin — see its docblock for why the duplication is the
+        // feature.
         looksLikeProductionSource(f) &&
         statSync(path.join(process.cwd(), f), { throwIfNoEntry: false })?.isFile() === true
     );
@@ -478,6 +495,20 @@ describe('every block_scope_invocations writer carries the private-run marker', 
         'walk narrowing into them. Widen the glob rather than accepting the loss.'
     ).toEqual([]);
 
+    // 🔴 (e) THE TWO PREDICATES MUST STAY DISTINCT OBJECTS. Their independence is the only
+    // thing that lets (b) notice the walk's predicate narrowing, and until now it was asserted
+    // in PROSE alone. Measured: the one-line refactor `const looksLikeProductionSource =
+    // couldHoldAWriter;` — which reads as obvious tidying — passes everything, and with it
+    // applied the round-5 defect is fully restored: appending `!startsWith('src/pages/')` to
+    // the shared predicate then leaves the gate green with a live unmarked writer. A guard
+    // whose premise is a comment is a guard one cleanup away from gone.
+    expect(
+      couldHoldAWriter === looksLikeProductionSource,
+      'the walk predicate and the cross-check predicate must not be the SAME function. They ' +
+        'are deliberately duplicated so they can DISAGREE — merging them makes the ' +
+        "cross-check an echo of the thing it audits. See couldHoldAWriter's docblock."
+    ).toBe(false);
+
     // Instrument controls. Both enumerations must be seeing a tree, or every assertion above
     // is vacuous over an empty list — and the counts are floors well under the real values so
     // ordinary growth never trips them.
@@ -486,6 +517,26 @@ describe('every block_scope_invocations writer carries the private-run marker', 
       3_000
     );
     expect(scannedDirs.size, 'the walk must span many subtrees').toBeGreaterThan(10);
+
+    // 🔴 AND THE DOT REGION SPECIFICALLY, pinned directly rather than via a subset. This is
+    // the capability the walk was rebuilt to gain — `readdirSync` sees dot-directories and
+    // `globSync('src/**/*')` does not — so it is asserted rather than inferred. Without it,
+    // the one assertion that could notice the walk losing that capability is the cross-check,
+    // and the cross-check was blind to exactly this region.
+    const dotFiles = scannedFiles.filter((f) => f.includes('/.'));
+    expect(
+      dotFiles.length,
+      'the walk must READ files inside dot-directories — that is why it enumerates with ' +
+        'readdirSync rather than a glob. If this is 0, either the tree genuinely has none ' +
+        '(check `src/pages/api/.well-known/`) or an exclusion has re-introduced the blind ' +
+        'spot the walk exists to close.'
+    ).toBeGreaterThan(0);
+    // And the cross-check must reach them too, or (b) cannot audit that region.
+    expect(
+      dotFiles.filter((f) => !globbed.includes(f)),
+      'these dot-directory files were read but the independent cross-check cannot see them, ' +
+        'so nothing would notice the walk losing them'
+    ).toEqual([]);
     // The discovery half still has to find something, or the comparison below is about "[]".
     expect(found.length).toBeGreaterThanOrEqual(LEDGER.length);
   });
@@ -1031,11 +1082,39 @@ describe('the marker has ONE spelling and every owner-visible read excludes it',
         'AND "source" <> ?'
     );
 
-    // And the ownership placeholder must still be the JOINED OWNED IDS rather than some other
-    // expression — the shape check above cannot see inside a `?`.
-    expect(normalised, 'the ownership bound must interpolate the joined owned-app ids').toContain(
-      'IN (${Prisma.join(ownedIds)})'
-    );
+    // 🔴 AND WHICH VALUE LANDS IN WHICH SLOT, IN ORDER — because the collapse above cannot see
+    // inside a `?`, AND THAT COST A GATED REGRESSION. The previous revision asserted only the
+    // ownership placeholder, which left the two RANGE placeholders interchangeable: swapping
+    // them to `>= ${range.to}` / `<= ${range.from}` keeps the collapsed shape byte-identical,
+    // typechecks (both are `Date`), and inverts the window so the read returns nothing.
+    //
+    // ⚠️ THE TIER MATTERS AS MUCH AS THE ASSERTION. That swap WAS caught before the collapse,
+    // by this very guard, which runs in `test:lint-rules`. Afterwards it was caught only by
+    // `blocks/__tests__/app-analytics.private-run-exclusion.test.ts` — a behavioural suite
+    // that is NOT in that selector. So the collapse moved a real statement defect from the
+    // gated tier into the ungated one, and the commit that made the trade cited a
+    // `test:lint-rules` count as its evidence: a green claim about a tier that had stopped
+    // looking.
+    //
+    // Pinning the ORDERED list of interpolated expressions restores it. This is the one claim
+    // that does charge a rename of `range` or `ownedIds` — stated plainly, unlike the
+    // reformat cost the previous revision invented for itself.
+    expect(
+      [...normalised.matchAll(/\$\{([^}]*)\}/g)].map((m) => m[1]),
+      'the statement must interpolate exactly these expressions, in this order. The shape ' +
+        'check above collapses every `${…}` to `?`, so it cannot tell `>= from AND <= to` ' +
+        'from `>= to AND <= from` — same shape, inverted window, empty result. If you renamed ' +
+        'one of these, update this list; if you REORDERED them, do not.'
+    ).toEqual(['Prisma.join(ownedIds)', 'range.from', 'range.to', 'PRIVATE_RUN_INVOCATION_SOURCE']);
+
+    // 🔴 AND THE PROJECTION AND TABLE, which the `WHERE`-onward slice stopped covering. Not a
+    // hole today — the table name is asserted above and the anchor pins the projection — but
+    // the previous revision narrowed the pin's scope without saying so, and an aliased table
+    // (`FROM "block_scope_invocations" AS i`) went from red to green in that change.
+    expect(
+      normalised.slice(0, normalised.indexOf('WHERE ')).replace(/\s+$/, ''),
+      "the projection and FROM clause are part of this read's shape too"
+    ).toBe('count(DISTINCT "user_id")::bigint AS value FROM "block_scope_invocations"');
   });
 
   /**
