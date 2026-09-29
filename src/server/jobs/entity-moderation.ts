@@ -32,7 +32,7 @@ const chunkSize = 100; // keep an eye on this
 const minDate = '2025-06-13';
 const reportRetention = 14;
 
-const clavataScamAutoMuteTags = ['Impersonating Civitai Staff'];
+const autoMuteTags = ['Impersonating Civitai Staff'];
 
 const log = createLogger(jobName, 'blue');
 const logAx = (data: MixedObject) => {
@@ -42,7 +42,7 @@ const logAx = (data: MixedObject) => {
 
 const tracker = new Tracker();
 
-const clavataScamCleanup: Partial<Record<AllModKeys, ScamCleanup>> = {
+const autoMuteCleanup: Partial<Record<AllModKeys, ScamCleanup>> = {
   Chat: 'chatMessages',
   Comment: 'comments',
   CommentV2: 'commentsV2',
@@ -59,9 +59,9 @@ async function autoMuteIfScamAccount({
   userId: number;
   matches: string[];
 }) {
-  const cleanup = clavataScamCleanup[type];
+  const cleanup = autoMuteCleanup[type];
   if (!cleanup) return;
-  if (!matches.some((m) => clavataScamAutoMuteTags.includes(m))) return;
+  if (!matches.some((m) => autoMuteTags.includes(m))) return;
 
   const result = await autoMuteScamAccount({
     userId,
