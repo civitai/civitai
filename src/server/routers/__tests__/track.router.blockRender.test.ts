@@ -26,6 +26,16 @@ vi.mock('~/server/redis/client', () => ({
 }));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 
+// Private-run gate: pinned to "not a private run" so every case in THIS file stays a
+// statement about `isAnon` derivation and the schema contract. Mocked rather than left
+// real because the real gate would reach the approved-app cache and the flag client from
+// a suite that mocks neither — and its fail-open catch would then make these tests pass
+// for a reason unrelated to what they claim. The real gate is driven through BOTH writers
+// in `src/tests/api/track/block-render.private-run.test.ts`.
+vi.mock('~/server/services/blocks/private-run-impression.service', () => ({
+  isPrivateRunImpression: vi.fn(async () => false),
+}));
+
 import { trackRouter } from '../track.router';
 import { blockRenderSchema } from '~/server/schema/track.schema';
 import { TokenScope } from '~/shared/constants/token-scope.constants';

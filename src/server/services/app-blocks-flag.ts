@@ -610,8 +610,9 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  * An operator decision on this feature is that a moderator's private run is FULLY
  * INVISIBLE TO THE APP'S OWNER — no moderation event, no play count, and nothing in
  * the owner's analytics. The first two are delivered (the private route deliberately
- * calls neither `recordAppListingOpen` nor any moderation-event writer). THE THIRD IS
- * NOT, in two places, and both are visible in the publisher's own dashboard:
+ * calls neither `recordAppListingOpen` nor any moderation-event writer). THE THIRD is
+ * delivered on two of three rails; ONE IS STILL OPEN, and all three are visible in the
+ * publisher's own dashboard. Read the ✅/open marks, not the count:
  *
  *   1. `block_spend_attribution` — a private run's row is correctly VOIDED, but the
  *      two owner-visible reads in `app-analytics.service.ts` carry no `status`
@@ -619,11 +620,32 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  *      The `status <> 'voided'` filter was deliberately HELD (it drops the large
  *      majority of existing rows at once, and a second consumer of that table lives
  *      outside this repo) — a product decision, not an oversight.
- *   2. `block_scope_invocations` — written by `withBlockScope` for every scoped call
- *      with the real `app_block_id` and the VIEWER's `user_id`, and read into the
- *      owner's panel by five unfiltered queries including a `count(DISTINCT
- *      user_id)`. There is no marker on those rows to filter on, so closing this
- *      half needs a migration.
+ *   2. ✅ `block_scope_invocations` — CLOSED. Written by `withBlockScope` for every
+ *      scoped call with the real `app_block_id` and the VIEWER's `user_id`. The rows
+ *      now carry a `source` marker on an EXISTING column — no migration was needed — and
+ *      all five owner-visible reads exclude it: four Prisma reads spread
+ *      `OWNER_VISIBLE_INVOCATION_FILTER`, and the raw `count(DISTINCT user_id)` spells the
+ *      same constant as `"source" <> $n`. ⚠️ Editing that filter moves FOUR of the five;
+ *      the distinct-user count is the one that does not follow.
+ *   3. ✅ `blockRenders` (owner-visible IMPRESSIONS: `views.count` /
+ *      `views.uniqueViewers`) — CLOSED AT THE WRITERS. A private run mounts the host, so
+ *      it emitted a row like any other view and the reviewer landed as an identifiable
+ *      unique viewer. Both writers now consult `blocks/private-run-impression.service`
+ *      and skip the insert; the canonical reasoning is at `blocks/app-views.service.ts`.
+ *      🔴 BUT IT LEAVES TWO THINGS FOR WHOEVER WIDENS THIS FLAG, and this is the reason
+ *      the item stays here rather than only at the read site:
+ *        (a) THE FLAG KEY MUST EXIST IN `flipt-state`, BASE-OFF. An ABSENT key makes the
+ *            evaluation throw — it bypasses the eval cache and logs on every reaching
+ *            call — and that gate now sits on the `/api/track/block-render` beacon.
+ *        (b) 🔴 NEITHER OF THE TWO WRITERS IS RATE-LIMITED, and once this flag admits
+ *            anyone, each one's gate can reach the private-run access predicate — which
+ *            touches the write primary — on a caller-chosen app id. Before that change
+ *            the common beacon path did zero Postgres queries. Settle it for BOTH
+ *            writers, not one: a rate limit on each, or confirm this flag's rollout
+ *            admits only the moderators segment. Both writers are enumerated in
+ *            `blocks/__tests__/block-render-writer.call-site-ledger.test.ts`, so "both"
+ *            is followable. (Keep this at the level of the missing control — this repo
+ *            is public.)
  *
  * 🔴 WHY THIS PARAGRAPH IS IN THIS FILE. The dependency was previously recorded only
  * in a docblock on the attribution arm and in a merged PR body — neither of which is
@@ -632,9 +654,10 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  * refuse before resolving anything, so no private-run row of either kind can exist.
  * It becomes live the moment this value is anything else.
  *
- * So, before widening on THIS count: either land both filters, or record the operator
- * decision that owner-visible analytics should keep counting private runs. Do not widen on
- * the assumption that the void alone delivers the invisibility — it does not.
+ * So, before widening on THIS count: land item 1's filter (or record the operator decision
+ * that owner-visible analytics should keep counting private runs), and settle item 3's two
+ * carry-overs. Do not widen on the assumption that the void alone delivers the invisibility
+ * — it does not.
  *
  * ────────────────────────────────────────────────────────────────────────────────
  * 🔴 SECOND PRECONDITION, AND IT IS A PRODUCT QUESTION RATHER THAN A DELIVERY GAP:

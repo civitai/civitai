@@ -448,11 +448,9 @@ export async function getMyAppAnalytics({
     // per read, so the five cannot drift apart; the population is ledgered by
     // `src/server/services/__tests__/no-unmarked-private-run-invocation.test.ts`.
     //
-    // 🔴 READ THAT AS A CLAIM ABOUT ONE TABLE, NOT ABOUT THIS FUNCTION. An earlier revision
-    // of this paragraph opened "ALL FIVE ENGAGEMENT READS EXCLUDE PRIVATE-RUN ROWS" with no
-    // such qualifier, sitting a dozen lines above two OTHER rails of the same
-    // owner-visible payload that still disclose a private run — which is the shape that
-    // stops the next person looking. Three review lanes found it independently. The two:
+    // 🔴 READ THAT AS A CLAIM ABOUT ONE TABLE, NOT ABOUT THIS FUNCTION. Two OTHER rails of
+    // the same owner-visible payload are covered separately — read the ✅/open marks, not
+    // the count:
     //
     //   · `runs` / `runs.buzzSpent` / `runs.series` — the `block_spend_attribution` reads
     //     above carry NO `status` predicate, so a private run's generation writes a
@@ -464,37 +462,34 @@ export async function getMyAppAnalytics({
     //     NULL is the ordinary `tracked` population, so Prisma's `not` drops every real row
     //     and zeroes the owner's run count. Use a top-level `NOT: { voidedReason: … }` or
     //     an explicit `OR` with `null`.
-    //   · 🔴 `views.count` / `views.uniqueViewers` — the ClickHouse `blockRenders` read at
-    //     the bottom of this `Promise.all`, and the SHARPER of the two, because impressions
-    //     are the number an app owner looks at most. A private run MOUNTS THE HOST, so it
-    //     emits a render row like any other view, and `app-views.service.ts` computes
+    //   · ✅ `views.count` / `views.uniqueViewers` — CLOSED, and closed at the WRITERS
+    //     rather than here, so do not go looking for a filter on the ClickHouse read at the
+    //     bottom of this `Promise.all`. It was the sharper of the two, because impressions
+    //     are the number an app owner looks at most: a private run MOUNTS THE HOST, so it
+    //     emitted a render row like any other view, and `app-views.service.ts` computes
     //     uniques as `uniqExactIf(userId, isAnon = 0) + uniqExactIf(ip, isAnon = 1)` — so the
-    //     reviewer does not merely inflate a total, they land as an IDENTIFIABLE unique
-    //     viewer on the exact day review happened. That is the operator decision broken on
-    //     the surface with the most owner attention.
+    //     reviewer did not merely inflate a total, they landed as an IDENTIFIABLE unique
+    //     viewer on the exact day review happened.
     //
-    //     🔴 THE `source` MARKER STRUCTURALLY CANNOT REACH IT: different store, different
+    //     🔴 THE `source` MARKER STRUCTURALLY COULD NOT REACH IT: different store, different
     //     writer, and — measured — NEITHER writer sees a block token at all. The row is
     //     written from a CLIENT beacon (`components/AppBlocks/sendBlockRender.ts` →
-    //     `pages/api/track/block-render.ts`) and from `track.router.ts`; grepping both for
-    //     the claim returns nothing, against a positive control on the same command shape
-    //     that returns matches elsewhere, so that zero is a real absence.
+    //     `pages/api/track/block-render.ts`) and from `track.router.ts`. So the closure is a
+    //     predicate over the SESSION — `blocks/private-run-impression.service.ts` — applied
+    //     at the insert in BOTH writers, which suppresses the row instead of marking it.
+    //     Reasoning, the shape that was rejected and why, and the over-filtering bound:
+    //     the canonical note in `blocks/app-views.service.ts`.
     //
-    //     Two shapes could close it, and BOTH land outside this change: suppress the beacon
-    //     on the private-run host, which is the host wiring the mint PR owns; or carry a
-    //     private-run flag through the beacon schema, both writers and a new ClickHouse
-    //     column. ⚠️ The over-filtering hazard applies here too — excluding too much
-    //     silently deletes the owner's real impression counts.
+    // 🔴 THE ATTRIBUTION RAIL ABOVE IS STILL A FLAG-FLIP PRECONDITION, NOT A FOLLOW-UP. It
+    // is not in scope here and it is not optional: enabling the private-run flag with it
+    // open re-opens the disclosure this whole feature exists to prevent, on a rail nobody
+    // is filtering.
     //
-    // 🔴 BOTH ARE FLAG-FLIP PRECONDITIONS, NOT FOLLOW-UPS. Neither is in scope here and
-    // neither is optional: enabling the private-run flag with either open re-opens the
-    // disclosure this whole feature exists to prevent, on a rail nobody is filtering.
-    //
-    // CLOSING CONDITION for each, so they are work items rather than notes: one private run
-    // against a delisted app, then the operator reads that app's own analytics panel and
-    // confirms the number did not move — `runs` / `runs.buzzSpent` for the attribution rail,
-    // `views.count` / `views.uniqueViewers` for this one. That is a named human judgement
-    // over named evidence, and it is the same check either closure shape has to pass.
+    // CLOSING CONDITION, so it is a work item rather than a note: one private run against a
+    // delisted app, then the operator reads that app's own analytics panel and confirms
+    // `runs` / `runs.buzzSpent` did not move. That is a named human judgement over named
+    // evidence. (The same check, against `views.count` / `views.uniqueViewers`, is the
+    // acceptance step for the closure that already shipped.)
     //
     // ⚠️ The predicate names ONE exact value and excludes nothing else. It is deliberately
     // NOT an allowlist (`source: 'app-block'`): over-filtering here silently deletes the

@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import {
   boundAppBlockIdLabel,
+  isConfirmedNonApprovedAppBlockId,
   isKnownAppBlockId,
   _internalsForTests,
 } from '../known-app-blocks.service';
@@ -40,5 +41,46 @@ describe('known-app-blocks.service', () => {
   it('fails SAFE on a DB error — unknown set, everything buckets to "other"', async () => {
     mockFindMany.mockRejectedValueOnce(new Error('engine down'));
     expect(await boundAppBlockIdLabel('apb_known_1')).toBe('other');
+  });
+});
+
+/**
+ * 🔴 `isConfirmedNonApprovedAppBlockId` IS NOT THE NEGATION OF `isKnownAppBlockId`, and
+ * the difference only shows up in the failure case — which is exactly where a consumer
+ * using the negation as a cheap pre-filter would escalate every request into expensive
+ * work against a database that has just stopped answering. These two cases are the whole
+ * reason the export exists; without them, deleting `trusted &&` from its body is a
+ * change no test can see.
+ */
+describe('isConfirmedNonApprovedAppBlockId [INV]', () => {
+  it('answers TRUE for an id outside a successfully-read approved set', async () => {
+    expect(await isConfirmedNonApprovedAppBlockId('apb_nope')).toBe(true);
+  });
+
+  it('answers FALSE for an approved id — and agrees with isKnownAppBlockId when trusted', async () => {
+    expect(await isConfirmedNonApprovedAppBlockId('apb_known_1')).toBe(false);
+    // The two forms coincide on the happy path. That coincidence is what makes the
+    // failure case below the only discriminating measurement.
+    expect(await isKnownAppBlockId('apb_known_1')).toBe(true);
+  });
+
+  it('🔴 answers FALSE FOR EVERYTHING while the set is UNTRUSTED, where the negation says TRUE', async () => {
+    mockFindMany.mockRejectedValue(new Error('engine down'));
+    // The negation's answer, measured rather than asserted from the docblock: with the
+    // load failed, an approved app looks unknown.
+    expect(await isKnownAppBlockId('apb_known_1')).toBe(false);
+    // The confirmed form refuses to turn that into a claim about the app.
+    expect(await isConfirmedNonApprovedAppBlockId('apb_known_1')).toBe(false);
+    expect(await isConfirmedNonApprovedAppBlockId('apb_nope')).toBe(false);
+  });
+
+  it('stays FALSE for the whole cached failure window, not just the first call', async () => {
+    // A failed load is cached for the TTL. If `trusted` were recomputed per call rather
+    // than stored on the entry, the second call inside the window would read a stale
+    // `true` off the cache and the amplification would return after one request.
+    mockFindMany.mockRejectedValue(new Error('engine down'));
+    expect(await isConfirmedNonApprovedAppBlockId('apb_nope')).toBe(false);
+    expect(await isConfirmedNonApprovedAppBlockId('apb_nope')).toBe(false);
+    expect(mockFindMany).toHaveBeenCalledTimes(1);
   });
 });

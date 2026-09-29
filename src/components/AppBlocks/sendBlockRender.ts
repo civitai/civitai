@@ -17,17 +17,21 @@ import type { LaunchTimingsPayload } from './launchTimings';
 // The client supplies ONLY these three identifiers — `isAnon` and `userId` are
 // derived/stamped SERVER-SIDE in the beacon route. Never pass them from here.
 //
-// 🔴 THIS BEACON FIRES ON A PRIVATE RUN TOO, AND THAT IS AN OPEN FLAG-FLIP
-// PRECONDITION — not a settled design. A private run of a delisted app mounts the
-// host, so it reaches BLOCK_READY and emits a `blockRenders` row indistinguishable
-// from a real viewer's, which contradicts that feature's operator decision that such
-// a run is invisible to the app's owner including in analytics. Do not "fix" it here
-// without reading the canonical note first: the full mechanism, BOTH candidate
-// closure shapes, the over-filtering hazard and the closing condition are recorded
-// once, at the read site, in `src/server/services/blocks/app-views.service.ts`.
-// Suppressing the beacon on the private-run host is one of those two shapes, so this
-// file is a likely place to land the fix — which is exactly why the reasoning must
-// not be duplicated into it.
+// 🔴 THIS BEACON STILL FIRES ON A PRIVATE RUN, AND THAT IS NOW DELIBERATE — the
+// suppression lives on the SERVER, not here. A private run of a delisted app mounts the
+// host, so it reaches BLOCK_READY and emits a beacon indistinguishable from a real
+// viewer's; the `blockRenders` row it would have produced is dropped by
+// `isPrivateRunImpression` inside BOTH server writers, which derive that fact from the
+// session rather than from anything this file could send.
+//
+// 🔴 SO DO NOT "FIX" IT HERE BY NOT SENDING. Two independent reasons. (1) A client-side
+// skip is not a gate: the sibling `track.blockRender` tRPC procedure is reachable by a
+// bearer/API-key caller who never runs this code, so the leak would stay open on the
+// path nobody is looking at. (2) The beacon still drives the prom render counter and the
+// launch histograms, which are internal-only and are the sole signal that a review
+// session's host actually mounted — a client skip would delete that too. The reasoning,
+// and the acceptance step, are recorded once at the read site:
+// `src/server/services/blocks/app-views.service.ts`.
 export type BlockRenderBeaconInput = {
   appBlockId: string;
   blockInstanceId: string;

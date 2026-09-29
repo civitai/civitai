@@ -1,7 +1,5 @@
-import { readdirSync, readFileSync, statSync } from 'fs';
-import { join, relative, sep } from 'path';
 import { describe, expect, it } from 'vitest';
-import { stripCommentsAndStrings } from '../../../../../test/strip-comments';
+import { scanSource } from '../../../../../test/source-scan';
 
 /**
  * THE SSR⇄MINT SEAM, LEDGERED — and it is the guard this whole feature is shaped
@@ -15,7 +13,9 @@ import { stripCommentsAndStrings } from '../../../../../test/strip-comments';
  * surfaces with two independently-written gates regrow it. So this file pins a
  * RELATIONSHIP over a population rather than any one component:
  *
- *   1. the complete set of `resolvePrivateRunAccess` call sites is EXACTLY two;
+ *   1. the complete set of `resolvePrivateRunAccess` call sites is EXACTLY the three
+ *      ledgered below — the two SERVING surfaces (SSR + mint) plus the analytics
+ *      impression gate, which decides nothing and only has to AGREE with them;
  *   2. the complete set of `resolvePageBlockBySlug` call sites and of `resolvePageBlock`
  *      call sites are each EXACTLY one, and both of those resolvers stay
  *      `approved`-only — so a future path cannot quietly adopt an approved-only
@@ -42,33 +42,6 @@ import { stripCommentsAndStrings } from '../../../../../test/strip-comments';
 
 const ROOT = process.cwd();
 
-function walk(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    if (entry === 'node_modules' || entry === '.next' || entry === '.git') continue;
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) walk(full, out);
-    else if (/\.tsx?$/.test(entry)) out.push(full);
-  }
-  return out;
-}
-
-/** Every non-test .ts/.tsx under src/, as repo-relative POSIX-ish paths. */
-function sourceFiles(): string[] {
-  return walk(join(ROOT, 'src'))
-    .map((f) => relative(ROOT, f).split(sep).join('/'))
-    .filter((f) => !/__tests__|\.test\.tsx?$|(^|\/)src\/tests\//.test(f));
-}
-
-const FILES = sourceFiles();
-const CODE = new Map(
-  FILES.map((f) => [f, stripCommentsAndStrings(readFileSync(join(ROOT, f), 'utf8'))] as const)
-);
-
-/** Raw file text, for assertions about literals (which `CODE` has stripped). */
-function raw(file: string): string {
-  return readFileSync(join(ROOT, file), 'utf8');
-}
-
 /**
  * Where each scanned symbol is DEFINED, excluded from its own caller set.
  *
@@ -87,12 +60,7 @@ const DEFINED_IN: Record<string, string> = {
   resolvePageBlock: 'src/server/services/block-registry.service.ts',
 };
 
-/** Files whose CODE (comments and string literals stripped) calls `name(`. */
-function callersOf(name: string): string[] {
-  const re = new RegExp(`\\b${name}\\s*\\(`);
-  const home = DEFINED_IN[name];
-  return FILES.filter((f) => re.test(CODE.get(f)!) && f !== home).sort();
-}
+const { files: FILES, code: CODE, raw, callersOf } = scanSource(ROOT, DEFINED_IN);
 
 describe('the private-run seam — instrument validation', () => {
   it('POSITIVE CONTROL: the scan enumerates a real population and can match', () => {
@@ -115,9 +83,10 @@ describe('the private-run seam — instrument validation', () => {
     // `resolvePrivateRunAccess` in prose — the registry resolver's docblock and the
     // middleware's claim docblock among them — and none of them may count.
     const mentionsInProse = FILES.filter((f) => {
-      const raw = readFileSync(join(ROOT, f), 'utf8');
+      const text = raw(f);
       return (
-        raw.includes('resolvePrivateRunAccess') && !CODE.get(f)!.includes('resolvePrivateRunAccess')
+        text.includes('resolvePrivateRunAccess') &&
+        !CODE.get(f)!.includes('resolvePrivateRunAccess')
       );
     });
     // At least one such file must exist, or this control is proving nothing.
@@ -137,9 +106,14 @@ describe('the private-run seam — the call-site ledger [INV]', () => {
   const PREDICATE_CALLERS = [
     'src/pages/api/v1/block-tokens/index.ts',
     'src/pages/apps/private-run/[slug]/[[...path]].tsx',
+    // The analytics-impression gate. It takes no access decision and grants nothing — it
+    // reads `allowed` and drops a telemetry row — so it cannot reproduce the SSR↔MINT
+    // asymmetry this ledger exists to prevent, and sharing the predicate is what keeps it
+    // from having to guess.
+    'src/server/services/blocks/private-run-impression.service.ts',
   ];
 
-  it('resolvePrivateRunAccess has EXACTLY the two ledgered callers (SSR + mint)', () => {
+  it('resolvePrivateRunAccess has EXACTLY the three ledgered callers (SSR + mint + impression gate)', () => {
     expect(callersOf('resolvePrivateRunAccess')).toEqual(PREDICATE_CALLERS.sort());
   });
 
@@ -195,13 +169,18 @@ describe('the private-run seam — the call-site ledger [INV]', () => {
     // 🔴 The private route must NOT record a play. A private review run is not a play,
     // and recording it would move a suspended app's owner-visible analytics — telling a
     // bad actor exactly when review is happening.
+    //
+    // PAIRED POSITIVE CONTROL: `stripCommentsAndStrings` is biased toward over-stripping,
+    // so a `not.toContain` against a CODE entry stripped to whitespace would pass having
+    // measured nothing. This proves the same entry can still match.
+    expect(priv).toContain('resolvePrivateRunAccess');
     expect(priv).not.toContain('recordAppListingOpen');
     // Nor plant a dead link in the viewer's own recents (both its link shapes 404 for a
     // suspended app).
     expect(priv).not.toContain('recordRecentlyOpenedApp');
   });
 
-  it('BOTH consumers evaluate the flag for the caller and pass it in', () => {
+  it('EVERY consumer evaluates the flag for the caller and passes it in', () => {
     // The structural half of "fail-closed on both surfaces". The behavioural half is
     // below. Neither consumer may call the predicate without a `privateRunEnabled`
     // argument — the parameter is required, so this is really a check that neither one

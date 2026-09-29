@@ -9,18 +9,22 @@ import {
 } from '~/server/metrics/app-block-runtime.metrics';
 import { logToAxiom } from '~/server/logging/client';
 import { boundAppBlockIdLabel } from '~/server/services/blocks/known-app-blocks.service';
+import { isPrivateRunImpression } from '~/server/services/blocks/private-run-impression.service';
 import { blockRenderSchema, blockRenderTrackerPayload } from '~/server/schema/track.schema';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 
 // App Blocks Analytics Phase 2 — block render/impression beacon.
 //
-// 🔴 THIS WRITER DOES NOT EXCLUDE PRIVATE RUNS, AND THAT IS AN OPEN FLAG-FLIP
-// PRECONDITION. A private run of a delisted app mounts the host, so it lands a
-// `blockRenders` row here and surfaces in the app owner's impressions and unique
-// viewers. The sibling `block_scope_invocations` rail solves the same problem with a
-// `source` marker, and that marker CANNOT be reused here — this route sees a session,
-// never a block token. The canonical note (mechanism, both closure shapes, the
-// over-filtering hazard, the closing condition) lives once at the read site:
+// 🔴 THIS WRITER EXCLUDES PRIVATE RUNS, AND THE EXCLUSION IS SERVER-DERIVED. A private
+// run of a delisted app mounts the host, so without a gate it would land a `blockRenders`
+// row here and surface in the app owner's impressions and unique viewers. The gate is
+// `isPrivateRunImpression` at the insert below — not a field on the beacon body, which
+// would let any viewer suppress their own impressions. The sibling
+// `block_scope_invocations` rail marks its rows with a `source` value taken from the
+// verified token claim; that marker cannot be reused here, because this route sees a
+// session and never a block token — hence a predicate over the session instead.
+// The canonical note (mechanism, why suppression rather than a new column, the
+// over-filtering bound, the acceptance step) lives once at the read site:
 // `src/server/services/blocks/app-views.service.ts`. Read it before changing this.
 //
 // Lightweight beacon endpoint for the block render/impression event, mirroring
@@ -184,6 +188,33 @@ export default PublicEndpoint(
     // Tracker (3rd ctor arg) so it isn't re-resolved. `isAnon` is SERVER-derived
     // (`!session?.user`) — never from the client body.
     const session = await getServerAuthSession({ req, res });
+
+    // 🔴 PRIVATE-RUN MOUNT → NO ClickHouse row, exactly like `secondary` above and for
+    // the same reason: this is the OWNER-VISIBLE impression rail, and a private run of a
+    // delisted app is invisible to that app's owner by operator decision — including in
+    // analytics. Placed AFTER the prom counter and the launch histogram on purpose: those
+    // are internal, clamp a non-approved app's id to 'other', and are the only signal
+    // that a review session's host actually mounted. The decision is to hide the row from
+    // the owner, not to stop measuring.
+    //
+    // 🔴 THE SIGNAL IS DERIVED FROM THE SESSION, NEVER FROM THE BODY — the same rule the
+    // SECURITY note above states for `isAnon`, and here the stakes are higher: a
+    // client-settable `privateRun` field would let ANY viewer suppress their own
+    // impressions and quietly corrupt every app owner's numbers. `isPrivateRunImpression`
+    // takes the resolved session and the app id, and suppresses only when the DATABASE
+    // independently says this session may privately run that (non-approved) app.
+    //
+    // Both `blockRenders` writers call this ONE predicate — see the docblock on
+    // `track.router.ts`'s `blockRender` for why a one-sided fix would let a bearer caller
+    // reintroduce the leak, and `block-render-writer.call-site-ledger.test.ts` for the
+    // guard that keeps the writer set and this call in step.
+    //
+    // 🔴 UNWRAPPED ON PURPOSE: `isPrivateRunImpression` swallows everything internally,
+    // including a synchronously-throwing logger. Do not move work out of it to here — a
+    // telemetry failure would become a 500 AND a silently lost impression.
+    if (await isPrivateRunImpression({ appBlockId: result.data.appBlockId, viewer: session?.user }))
+      return res.status(200).end();
+
     const tracker = new Tracker(req, res, session);
     // Fire-and-forget: blockRender() dispatches the ClickHouse insert without
     // awaiting the network round-trip (same as the tRPC resolver did).
