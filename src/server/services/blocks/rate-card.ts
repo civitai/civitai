@@ -59,11 +59,13 @@ export type RateCard = {
    *
    * 🔴 IF YOU NARROW IT, DO NOT USE THE OBVIOUS SPELLING. `voided_reason` is
    * NULLABLE and NULL *is* the ordinary `tracked` population, so
-   * `voidedReason: { notIn: [...] }` / `{ not: ... }` drops EVERY real row and
-   * zeroes the dashboard — the same silent-deletion failure, in the other
-   * direction. Use a top-level `NOT` or an explicit `OR` with `null`. The full
-   * reasoning is on `OWNER_VISIBLE_SPEND_FILTER` in
-   * `blocks/app-analytics.service.ts`; read it there before editing the read.
+   * `voidedReason: { notIn: [...] }`, `{ not: ... }` AND a top-level `NOT` all
+   * drop EVERY real row and zero the dashboard — the same silent-deletion
+   * failure, in the other direction. Measured 2026-09-29:
+   * `NOT (voided_reason IN (…))` retains 0 of 639 rows. Use the explicit
+   * `OR`-with-`null` form. The full reasoning and the measurements are on
+   * `VOIDED_ATTRIBUTION_STATUS` in `blocks/app-analytics.service.ts`; read it
+   * there before editing the read.
    *
    * ⚠️ The stale "none of the load-bearing paths read this list yet" comment is
    * on the **V2** list below, not V4/V5 — corrected here because an earlier

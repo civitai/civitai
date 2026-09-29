@@ -53,8 +53,17 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * 🔴 `status` is `TEXT NOT NULL DEFAULT 'tracked'`, so Prisma's `not` and a bare SQL `<>`
  * agree on it. `voided_reason` is NULLABLE and NULL *is* the ordinary `tracked` population,
  * so the narrow spelling `voidedReason: { not: 'manual_review' }` drops every real row and
- * zeroes the owner's run count. Do not move this predicate onto that column; if a future
- * change needs the reason, spell it as a top-level `NOT` or an explicit `OR` with `null`.
+ * zeroes the owner's run count. Do not move this predicate onto that column.
+ *
+ * 🔴 AND IF YOU MUST, USE THE `OR`-WITH-`null` FORM — NOT a top-level `NOT`. This file used
+ * to recommend either, and the `NOT` half is WRONG, measured against the live table
+ * 2026-09-29: `WHERE NOT (voided_reason IN ('manual_review','self_spend'))` retains
+ * **0 of 639 rows**, because `NULL IN (…)` is NULL and `NOT NULL` is NULL, so every one of
+ * the 57 real `tracked` rows is filtered out. That is the exact zero the paragraph above
+ * warns about, produced by the remedy it offered. The forms that DO work, both measured:
+ * `voided_reason IS NULL OR voided_reason NOT IN (…)` → 57, and
+ * `voided_reason IS DISTINCT FROM …` → 639. Whether Prisma's `NOT` emits the naive SQL or a
+ * NULL-aware rewrite is exactly the thing not to bet a dashboard on — spell the `OR`.
  */
 const VOIDED_ATTRIBUTION_STATUS = 'voided';
 
@@ -85,12 +94,12 @@ const VOIDED_ATTRIBUTION_STATUS = 'voided';
  * for a first-party app's GENUINE third-party usage. It is inert today only because the
  * array is empty. The warning for whoever populates it lives on that field's own docblock.
  *
- * 🔴 AND IF YOU TAKE THE NARROWER FIX, READ THE PARAGRAPH ABOVE FIRST. Excluding by
- * `voidedReason` (`manual_review` + `self_spend`) is the right SHAPE, but the obvious Prisma
- * spelling of it — `voidedReason: { notIn: [...] }` or `{ not: ... }` — walks straight into
- * the nullability trap this docblock already warns about: NULL is the ordinary `tracked`
- * population, so it drops every real row. Spell it as a top-level `NOT` or an explicit `OR`
- * with `null`, and keep the `status` guard alongside it rather than replacing it.
+ * 🔴 AND IF YOU TAKE THE NARROWER FIX, READ THE TRAP PARAGRAPH ABOVE FIRST. Excluding by
+ * `voidedReason` (`manual_review` + `self_spend`) is the right SHAPE, but every obvious
+ * spelling of it is NULL-unsafe: `{ notIn: [...] }`, `{ not: ... }` AND a top-level `NOT`
+ * all drop the 57 real `tracked` rows, whose `voided_reason` is NULL. Use the explicit
+ * `OR`-with-`null` form, keep the `status` guard alongside it rather than replacing it, and
+ * verify the row count moves the way you expect before believing it.
  *
  * ⚠️ Spread it FIRST and let the explicit keys win — `appBlockId: idIn` is the only thing
  * scoping this read to the caller's own apps, and a spread placed LAST wins any key
@@ -529,8 +538,10 @@ export async function getMyAppAnalytics({
     //     column is nullable and NULL is the ordinary `tracked` population, so Prisma's
     //     `not` drops every real row and zeroes the owner's run count. The predicate above
     //     avoids it by keying on `status`, which is `TEXT NOT NULL`. If a future change does
-    //     need the reason, use a top-level `NOT: { voidedReason: … }` or an explicit `OR`
-    //     with `null`.
+    //     need the reason, use the explicit `OR`-with-`null` form.
+    //     🔴 NOT a top-level `NOT` — this line used to say either would do, and the `NOT`
+    //     half is wrong: measured 2026-09-29, `NOT (voided_reason IN (…))` retains 0 of 639
+    //     rows because `NOT NULL` is NULL. See `VOIDED_ATTRIBUTION_STATUS` above.
     //   · ✅ `views.count` / `views.uniqueViewers` — CLOSED, and closed at the WRITERS
     //     rather than here, so do not go looking for a filter on the ClickHouse read at the
     //     bottom of this `Promise.all`. It was the sharper of the two, because impressions
