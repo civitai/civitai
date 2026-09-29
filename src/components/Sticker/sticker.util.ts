@@ -50,6 +50,8 @@ export type ResolvedSticker = {
    * `useStickerCosmetics`, which every other sticker surface uses, never does.
    */
   createdById?: number | null;
+  /** `CosmeticFlag` bits. Like `createdById`, only `useOwnedSticker` populates it. */
+  flags?: number;
 };
 
 const STICKER_FETCH_CHUNK = STICKER_OFFER_LIMIT;
@@ -70,7 +72,7 @@ export function useOwnedSticker() {
   const sticker = useMemo(() => {
     const owned = data?.sticker ?? [];
     const resolved = owned
-      .map(({ id, name, data: stickerData, obtainedAt, createdById }) => ({
+      .map(({ id, name, data: stickerData, obtainedAt, createdById, flags }) => ({
         id,
         name,
         slug: stickerData?.slug,
@@ -78,6 +80,7 @@ export function useOwnedSticker() {
         animated: stickerData?.animated,
         pricePerUse: stickerData?.pricePerUse,
         createdById,
+        flags,
         obtainedAt,
       }))
       .filter((x) => !!x.slug && !!x.url)

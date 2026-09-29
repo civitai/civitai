@@ -1713,6 +1713,7 @@ export const getCreatorShopReviewQueue = async ({
             createdById: true,
             source: true,
             description: true,
+            flags: true,
             creator: { select: { id: true, username: true, image: true } },
           },
         },

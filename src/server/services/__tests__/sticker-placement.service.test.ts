@@ -7,6 +7,11 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import type * as MetricHelpers from '~/server/utils/metric-helpers';
+import type * as Caches from '~/server/redis/caches';
+import {
+  CosmeticFlag,
+  STICKER_SFW_ONLY_REFUSAL,
+} from '~/shared/constants/cosmetic-flags.constants';
 import {
   STICKER_AUTO_SPACE_KEY,
   STICKER_PLACEMENT_QUEUE_LIMIT,
@@ -137,6 +142,14 @@ imageFindMany.mockImplementation(async () => []);
 transactionFindMany.mockImplementation(async () => []);
 cosmeticFindUnique.mockImplementation(async () => null);
 
+const cosmeticCacheFetch = vi.fn<(ids: number[]) => Promise<Record<number, { flags?: number }>>>(
+  async () => ({})
+);
+vi.mock('~/server/redis/caches', async (importOriginal) => ({
+  ...(await importOriginal<typeof Caches>()),
+  cosmeticCache: { fetch: cosmeticCacheFetch },
+}));
+
 const updateEntityMetricDetached = vi.fn(async () => undefined);
 vi.mock('~/server/utils/metric-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof MetricHelpers>()),
@@ -152,6 +165,7 @@ const {
   getStickerPlacementDetail,
   getPendingStickerPlacements,
   getMyStickerPlacements,
+  getStickerPlacementCounts,
 } = await import('~/server/services/sticker-placement.service');
 
 const OPEN_SPACE = { ownerId: OWNER, mode: 'review', setPrice: ASKED, price: PRICE, cap: CAP };
@@ -1945,5 +1959,194 @@ describe('getMyStickerPlacements', () => {
     // sticker, so a row that reached it unparsed would render nothing.
     expect(rows.map((row) => row.id)).toEqual([2]);
     expect(rows[0].data).toMatchObject({ cosmeticId: COSMETIC });
+  });
+});
+
+describe('a sticker flagged SFW placements only', () => {
+  const OTHER_COSMETIC = 181;
+  const SFW_IMAGE = 192;
+  const FLAGGED_ROW = 203;
+  const PLAIN_ROW = 214;
+
+  const givenSticker = (flags: number, imageNsfwLevel: number) => {
+    queryRaw
+      .mockResolvedValueOnce([
+        { id: COSMETIC, createdById: SELLER, owned: true, flags, imageNsfwLevel },
+      ])
+      .mockResolvedValueOnce([{ spendable: 3, unlimited: false }]);
+  };
+
+  const rawValues = (call: number) => queryRaw.mock.calls[call].slice(1) as unknown[];
+
+  describe('placing it', () => {
+    it('is refused on an R image, before any row or money', async () => {
+      givenSticker(CosmeticFlag.SfwPlacementsOnly, NsfwLevel.R);
+
+      await expect(createStickerPlacement(placeInput)).rejects.toThrow(STICKER_SFW_ONLY_REFUSAL);
+      expect(placementCreate).not.toHaveBeenCalled();
+      expect(holdPlacementEscrow).not.toHaveBeenCalled();
+      // The rating read is of the image being placed on, not some other id.
+      expect(rawValues(0)).toContain(IMAGE);
+    });
+
+    it('is refused on the free path too', async () => {
+      givenSticker(CosmeticFlag.SfwPlacementsOnly, NsfwLevel.XXX);
+
+      await expect(createStickerPlacement({ ...placeInput, free: true })).rejects.toThrow(
+        STICKER_SFW_ONLY_REFUSAL
+      );
+      expect(createFreePlacement).not.toHaveBeenCalled();
+      expect(spendStickerUsesFor).not.toHaveBeenCalled();
+    });
+
+    it('is refused on an image not rated yet', async () => {
+      givenSticker(CosmeticFlag.SfwPlacementsOnly, 0);
+
+      await expect(createStickerPlacement(placeInput)).rejects.toThrow(STICKER_SFW_ONLY_REFUSAL);
+    });
+
+    it('goes through on a PG-13 image', async () => {
+      givenSticker(CosmeticFlag.SfwPlacementsOnly, NsfwLevel.PG13);
+
+      await expect(createStickerPlacement(placeInput)).resolves.toMatchObject({
+        placementId: PLACEMENT,
+      });
+    });
+
+    it('does not touch an unflagged sticker on an XXX image', async () => {
+      givenSticker(CosmeticFlag.None, NsfwLevel.XXX);
+
+      await expect(createStickerPlacement(placeInput)).resolves.toMatchObject({
+        placementId: PLACEMENT,
+      });
+    });
+  });
+
+  describe('approving a pending placement of it', () => {
+    beforeEach(() => {
+      placementFindUnique.mockResolvedValue({
+        id: PLACEMENT,
+        ownerId: OWNER,
+        placerId: PLACER,
+        targetId: IMAGE,
+        amount: PRICE,
+        status: 'pending',
+        surface: 'sticker',
+        free: false,
+        data: { cosmeticId: COSMETIC, x: 0.5, y: 0.5, scale: 0.2, rotation: 0 },
+        createdAt: new Date(0),
+        resolvedAt: null,
+      });
+    });
+
+    it('is refused once the image is rated X, and nothing settles', async () => {
+      queryRaw.mockResolvedValueOnce([
+        { flags: CosmeticFlag.SfwPlacementsOnly, imageNsfwLevel: NsfwLevel.X },
+      ]);
+
+      await expect(
+        actOnStickerPlacement({ placementId: PLACEMENT, action: 'approve', userId: OWNER })
+      ).rejects.toThrow(STICKER_SFW_ONLY_REFUSAL);
+      expect(settlePlacement).not.toHaveBeenCalled();
+      expect(rawValues(0)).toEqual(expect.arrayContaining([IMAGE, COSMETIC]));
+    });
+
+    it('still lets the owner decline it, which refunds', async () => {
+      queryRaw.mockResolvedValue([
+        { flags: CosmeticFlag.SfwPlacementsOnly, imageNsfwLevel: NsfwLevel.X },
+      ]);
+
+      await actOnStickerPlacement({ placementId: PLACEMENT, action: 'decline', userId: OWNER });
+
+      expect(calls).toEqual(['settle:decline']);
+    });
+  });
+
+  describe('placements already live', () => {
+    const row = (id: number, cosmeticId: number, targetId = IMAGE) => ({
+      id,
+      targetId,
+      placerId: PLACER,
+      ownerId: OWNER,
+      status: 'approved',
+      amount: PRICE,
+      free: false,
+      createdAt: new Date(0),
+      data: { cosmeticId, x: 0.5, y: 0.5, scale: 0.2, rotation: 0 },
+    });
+
+    beforeEach(() => {
+      cosmeticCacheFetch.mockResolvedValue({
+        [COSMETIC]: { flags: CosmeticFlag.SfwPlacementsOnly },
+        [OTHER_COSMETIC]: { flags: CosmeticFlag.None },
+      });
+      placementFindMany.mockResolvedValue([
+        row(FLAGGED_ROW, COSMETIC),
+        row(PLAIN_ROW, OTHER_COSMETIC),
+      ]);
+      imageFindMany.mockResolvedValue([{ id: IMAGE, nsfwLevel: NsfwLevel.XXX }]);
+    });
+
+    it('are left out of the listing on an XXX image', async () => {
+      const rows = await getStickerPlacements({ imageIds: [IMAGE], viewerId: STRANGER });
+
+      expect(rows.map((placement) => placement.id)).toEqual([PLAIN_ROW]);
+    });
+
+    it('are still shown to a moderator, who may need to act on them', async () => {
+      const rows = await getStickerPlacements({
+        imageIds: [IMAGE],
+        viewerId: STRANGER,
+        isModerator: true,
+      });
+
+      expect(rows.map((placement) => placement.id)).toEqual([FLAGGED_ROW, PLAIN_ROW]);
+    });
+
+    it('come back on a PG-13 image', async () => {
+      placementFindMany.mockResolvedValue([
+        row(FLAGGED_ROW, COSMETIC, SFW_IMAGE),
+        row(PLAIN_ROW, OTHER_COSMETIC, SFW_IMAGE),
+      ]);
+      imageFindMany.mockResolvedValue([{ id: SFW_IMAGE, nsfwLevel: NsfwLevel.PG13 }]);
+
+      const rows = await getStickerPlacements({ imageIds: [SFW_IMAGE] });
+
+      expect(rows.map((placement) => placement.id)).toEqual([FLAGGED_ROW, PLAIN_ROW]);
+    });
+
+    it('cost no image read when no sticker on the page is flagged', async () => {
+      cosmeticCacheFetch.mockResolvedValue({
+        [COSMETIC]: { flags: CosmeticFlag.None },
+        [OTHER_COSMETIC]: {},
+      });
+
+      const rows = await getStickerPlacements({ imageIds: [IMAGE] });
+
+      expect(rows).toHaveLength(2);
+      expect(imageFindMany).not.toHaveBeenCalled();
+    });
+
+    it('are left out of the count, so it agrees with the listing', async () => {
+      await expect(getStickerPlacementCounts([IMAGE])).resolves.toEqual({ [IMAGE]: 1 });
+    });
+
+    it('are not available on the hover card, except to a moderator', async () => {
+      placementFindFirst.mockResolvedValue({
+        ...row(FLAGGED_ROW, COSMETIC),
+        placer: { id: PLACER, username: 'placer' },
+      });
+
+      await expect(
+        getStickerPlacementDetail({ placementId: FLAGGED_ROW, viewerId: STRANGER })
+      ).rejects.toThrow(/not available/);
+      await expect(
+        getStickerPlacementDetail({
+          placementId: FLAGGED_ROW,
+          viewerId: STRANGER,
+          isModerator: true,
+        })
+      ).resolves.toMatchObject({ id: FLAGGED_ROW });
+    });
   });
 });

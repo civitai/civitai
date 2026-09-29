@@ -17,6 +17,7 @@ Feature flags are **not** bitwise — those are string-keyed and Flipt-backed, s
 | `src/shared/utils/flags.ts` | `Flags` utility class |
 | `src/server/common/enums.ts` | `NsfwLevel` enum (the bit values) |
 | `src/shared/constants/browsingLevel.constants.ts` | Derived browsing-level flags + predicates |
+| `src/shared/constants/cosmetic-flags.constants.ts` | `CosmeticFlag` bits on `Cosmetic.flags` (moderator-set, e.g. `SfwPlacementsOnly`) |
 
 ## The Flags Class
 

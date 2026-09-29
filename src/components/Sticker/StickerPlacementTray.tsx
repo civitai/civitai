@@ -19,6 +19,7 @@ import {
   useFreePlacementStanding,
   useImagePlacementSpace,
 } from '~/components/Sticker/placement.util';
+import { isStickerKeptOffImage } from '~/shared/constants/cosmetic-flags.constants';
 import { stickerMaxScale } from '~/shared/utils/sticker-placement';
 import { remainingStickerUses, useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -59,9 +60,22 @@ const STICKER_SEARCH_THRESHOLD = 12;
 const trayRowsHeight = (rows: number) =>
   rows * STICKER_TILE_HEIGHT + (rows - 1) * STICKER_TILE_GAP + 2 * STICKER_TILE_GAP;
 
-export function StickerPlacementTray({ imageId }: { imageId: number }) {
+export function StickerPlacementTray({
+  imageId,
+  imageNsfwLevel,
+}: {
+  imageId: number;
+  imageNsfwLevel: number;
+}) {
   const currentUser = useCurrentUser();
-  const { sticker, isLoading } = useOwnedSticker();
+  const { sticker: owned, isLoading } = useOwnedSticker();
+  const sticker = useMemo(
+    () =>
+      owned.filter(
+        (option) => !isStickerKeptOffImage({ cosmeticFlags: option.flags ?? 0, imageNsfwLevel })
+      ),
+    [owned, imageNsfwLevel]
+  );
   const [shopping, setShopping] = useState(false);
   const [search, setSearch] = useState('');
   const [mineOnlyRequested, setMineOnlyRequested] = useState(false);
