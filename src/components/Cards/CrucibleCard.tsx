@@ -1,6 +1,5 @@
-import { Badge, Box, Skeleton, Text } from '@mantine/core';
+import { Badge, Skeleton, Text } from '@mantine/core';
 import { IconClockHour4, IconFlame } from '@tabler/icons-react';
-import clsx from 'clsx';
 import React, { useMemo } from 'react';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import cardClasses from '~/components/Cards/Cards.module.css';
@@ -10,10 +9,9 @@ import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { Currency, CrucibleStatus } from '~/shared/utils/prisma/enums';
 import {
+  getCrucibleStatusBadge,
   getCrucibleTotalPrizePool,
   getCrucibleUrl,
-  getStatusDotColor,
-  getStatusText,
 } from '~/utils/crucible-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
@@ -54,69 +52,7 @@ export function CrucibleCard({ data }: { data: CrucibleCardData }) {
   // This is stable for the render cycle and avoids unnecessary recalculations
   const now = useMemo(() => new Date(), []);
 
-  // Determine status badge
-  const getStatusBadge = () => {
-    switch (status) {
-      case CrucibleStatus.Active:
-        return (
-          <Badge
-            className={cardClasses.chip}
-            color="green"
-            variant="filled"
-            radius="xl"
-            px={8}
-            h={26}
-            fw="bold"
-          >
-            Active
-          </Badge>
-        );
-      case CrucibleStatus.Pending:
-        return (
-          <Badge
-            className={cardClasses.chip}
-            color="blue"
-            variant="filled"
-            radius="xl"
-            px={8}
-            h={26}
-            fw="bold"
-          >
-            Upcoming
-          </Badge>
-        );
-      case CrucibleStatus.Completed:
-        return (
-          <Badge
-            className={cardClasses.chip}
-            color="gray"
-            variant="filled"
-            radius="xl"
-            px={8}
-            h={26}
-            fw="bold"
-          >
-            Completed
-          </Badge>
-        );
-      case CrucibleStatus.Cancelled:
-        return (
-          <Badge
-            className={cardClasses.chip}
-            color="red"
-            variant="filled"
-            radius="xl"
-            px={8}
-            h={26}
-            fw="bold"
-          >
-            Cancelled
-          </Badge>
-        );
-      default:
-        return null;
-    }
-  };
+  const statusBadge = getCrucibleStatusBadge(status, endAt, now);
 
   return (
     <AspectRatioImageCard
@@ -138,7 +74,21 @@ export function CrucibleCard({ data }: { data: CrucibleCardData }) {
             }
           : undefined
       }
-      header={<div className="flex w-full justify-end">{getStatusBadge()}</div>}
+      header={
+        <div className="flex w-full justify-end">
+          <Badge
+            className={cardClasses.chip}
+            color={statusBadge.color}
+            variant="filled"
+            radius="xl"
+            px={8}
+            h={26}
+            fw="bold"
+          >
+            {statusBadge.label}
+          </Badge>
+        </div>
+      }
       footerGradient
       footer={
         <div className="flex w-full flex-col gap-2">
@@ -195,13 +145,6 @@ export function CrucibleCard({ data }: { data: CrucibleCardData }) {
               {abbreviateNumber(entryCount)} {entryCount === 1 ? 'entry' : 'entries'}
             </Text>
           </IconBadge>
-          {/* Status indicator with colored dot */}
-          <div className="flex items-center gap-1.5">
-            <Box className={clsx('size-2 rounded-full', getStatusDotColor(status, endAt, now))} />
-            <Text size="xs" c="dimmed">
-              {getStatusText(status, endAt, now)}
-            </Text>
-          </div>
         </div>
       }
     />
@@ -248,12 +191,6 @@ export function CrucibleCardSkeleton() {
 
           {/* Entries */}
           <Skeleton height={26} width={80} radius="xl" />
-
-          {/* Status indicator */}
-          <div className="flex items-center gap-1.5">
-            <Skeleton height={8} width={8} circle />
-            <Skeleton height={12} width={100} />
-          </div>
         </div>
       </div>
     </div>

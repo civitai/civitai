@@ -39,7 +39,7 @@ Second walkthrough (confirmed; nothing is cut):
 - [x] **B15. Cancelled crucibles remain in the public list.** → Fixed: default feed excludes Cancelled; an explicit Cancelled filter returns nothing unless the caller moderates.
 - [ ] **B17. The submit modal's generator tab was empty; uploads showed no progress.**
 - [ ] **B18. Video judging autoplays both clips with sound**; mute controls are small.
-- [ ] **B19. Entries per user can exceed max total entries**; it's a fixed select, not a number. Decided: an open number input, max 20 for now.
+- [x] **B19. Entries per user can exceed max total entries**; it's a fixed select, not a number. Decided: an open number input, max 20 for now. → Fixed: number input, 1–20 (`CRUCIBLE_MAX_ENTRIES`); the server already rejects a per-user limit above max total entries.
 - [x] **B20. Max entry fee silently clamps.** → Superseded by D2 (1,000 max).
 - [ ] **B22. Past its end time a crucible still reads as active** (badge, "Ending soon", judging entry point) until the finalize job runs.
 - [ ] **B23. Reloading the create wizard loses all progress.**
@@ -48,8 +48,8 @@ Second walkthrough (confirmed; nothing is cut):
 - [ ] **B26. Investigate:** the video submit modal marks nearly every video ineligible on a PG crucible.
 
 Second walkthrough:
-- [ ] **B30. On the detail page, the card under the cover hero is misaligned** with the rest of the content.
-- [ ] **B31. The status label at the bottom of a crucible card is barely visible.** Remove it, since the top badge already shows status, and give that badge an "Ending soon" state.
+- [x] **B30. On the detail page, the card under the cover hero is misaligned** with the rest of the content. → Fixed: the hero uses the same `Container size="xl"` as the page body (it was `max-w-7xl`).
+- [x] **B31. The status label at the bottom of a crucible card is barely visible.** Remove it, since the top badge already shows status, and give that badge an "Ending soon" state. → Fixed: the bottom label is gone; the top badge comes from `getCrucibleStatusBadge`, which reads `endAt` too — "Ending soon" inside the last 24h, "Ended" once past `endAt` before the finalize job runs.
 
 ## Decisions / requests
 
@@ -72,20 +72,20 @@ Second walkthrough:
 - [ ] **D18. First-visit explainer.** For a first-time visitor, replace the "Welcome back" block with one that explains what Crucible is and how you earn: a new way to play and earn Buzz, with entries judged head-to-head by people rather than by AI as in challenges.
 - [ ] **D19. Show rules and requirements in the details table** used on model versions and challenges.
 - [ ] **D20. Give the prize-pool panel the challenges' growing-prize-pool treatment** rather than a bare number.
-- [ ] **D21. Once a user has used all their entries,** show an alert saying so in place of the disabled button, and hide the entry fee.
+- [x] **D21. Once a user has used all their entries,** show an alert saying so in place of the disabled button, and hide the entry fee. → Done: an alert replaces the button and the entry fee is hidden.
 - [ ] **D22. Audit the pairing and ELO logic:** how opponents are chosen, why pairs repeat, and how many judgments N entries need. Code: `getJudgingPair` in `crucible.service.ts`, `processVoteAtomic` in `crucible-elo.redis.ts`.
 - [ ] **D23. "Continue judging" suggestions use the landing-page crucible card**, with the cover.
 - [ ] **D24. Completed crucibles get the challenges winners podium** at the top.
 - [ ] **D25. Entry card redesign:** cleaner numbers, username without "by", rank top-right; the same layout without score or rank before completion. Design options first.
-- [ ] **D26. Show all entries in random order** rather than newest first.
-- [ ] **D27. Add a back button to the crucible detail page**, top-left and aligned with the content.
+- [x] **D26. Show all entries in random order** rather than newest first. → Done: while running, entries come back in a per-viewer seeded shuffle (`md5(id || seed)`, keyset-paged, cursor still the entry id); score order once final.
+- [x] **D27. Add a back button to the crucible detail page**, top-left and aligned with the content. → Done: a Back button top-left in the hero, aligned with the content (`NavigateBack`, falls back to `/crucibles`).
 - [ ] **D28. A crucible that allows X/XXX should still appear in the PG feed**, since it may hold entries the viewer can see; entries are filtered per viewer. The feed query has no rating filter; the likely cause is the cover image being stored with the crucible's allowed-levels mask rather than its own rating. Decided: it applies on the SFW domain too, as it does for models — an NSFW model still shows there because not all its content is NSFW.
 - [ ] **D29. Push notifications:** ending soon, new entries, and "N more for you to judge" for people who have judged in a crucible. Needs a per-user remaining-judgments count (see D14).
 - [ ] **D30. Creator-defined eligibility prompt**, run by an LLM on each entry, to reject off-theme submissions. Later.
-- [ ] **D31. Put the discover feed's sort options on the same line as the title.**
+- [x] **D31. Put the discover feed's sort options on the same line as the title.** → Done.
 
 ## Found while fixing
 
 - [x] **B28. The prize-customization fee is now derived from the split** rather than trusted from the client.
 - [ ] **B29. Unfilled prize places pay nobody** when a crucible has fewer entries than paid places. Decided: split the leftover among the winners, pro rata to their shares.
-- [x] **B32. The crucible jobs never ran: the code asked Flipt for `crucible-jobs-enabled`, but the flag is `crucible-jobs`.** `finalize-crucibles` (which also activates scheduled crucibles) and `sync-crucible-scores` both return early on `isFlipt(CRUCIBLE_JOBS_ENABLED)`, and an unknown key evaluates false, so nothing would have activated, finalized or paid out, in preview or prod. → Fixed: `FLIPT_FEATURE_FLAGS.CRUCIBLE_JOBS_ENABLED` is now `crucible-jobs`.
+- [x] **B32. The crucible jobs never ran: the code asked Flipt for `crucible-jobs-enabled`, but the flag is `crucible-jobs`.** `finalize-crucibles` (which also activates scheduled crucibles) and `sync-crucible-scores` both return early on `isFlipt(CRUCIBLE_JOBS_ENABLED)`, and an unknown key evaluates false, so nothing would have activated, finalized or paid out, in preview or prod. → Fixed, then removed (Manuel): the crons no longer read any flag and always run once deployed; a guard test pins that. The `crucible-jobs` flag in flipt-state is now unused.

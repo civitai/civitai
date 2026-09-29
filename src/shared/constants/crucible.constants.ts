@@ -9,11 +9,8 @@ import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 export const CRUCIBLE_MIN_ENTRY_FEE = 10;
 export const CRUCIBLE_MAX_ENTRY_FEE = 1_000;
 
-/**
- * Maximum number of entries per user per crucible.
- * Set to 10K to prevent abuse and ensure fair competition.
- */
-export const CRUCIBLE_MAX_ENTRIES = 10_000;
+/** Per-user entry cap. A viewer's own entries render unpaged on the detail page. */
+export const CRUCIBLE_MAX_ENTRIES = 20;
 
 /** Judging needs a pair, so the cap is at least 2; `maxTotalEntries` is int4, so the ceiling must stay under 2^31. */
 export const CRUCIBLE_MIN_TOTAL_ENTRIES = 2;

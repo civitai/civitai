@@ -70,6 +70,7 @@ import {
   CRUCIBLE_MIN_ENTRY_FEE,
   CRUCIBLE_MIN_TOTAL_ENTRIES,
   CRUCIBLE_MIN_VIEW_SECONDS_OPTIONS,
+  CRUCIBLE_MAX_ENTRIES,
   CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
   CRUCIBLE_NAME_MAX_LENGTH,
   CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
@@ -104,11 +105,6 @@ const contentTypeOptions: ContentTypeOption[] = [
   { value: MediaType.video, label: 'Videos', Icon: IconVideo },
 ];
 
-const entryLimitOptions = [1, 2, 3, 5, 10].map((value) => ({
-  value,
-  label: `${value} ${value === 1 ? 'entry' : 'entries'}`,
-}));
-
 const formatSeconds = (seconds: number) =>
   seconds < 60 ? `${seconds} seconds` : `${seconds / 60} minute${seconds === 60 ? '' : 's'}`;
 
@@ -132,7 +128,7 @@ const formSchema = z.object({
     .int()
     .min(CRUCIBLE_MIN_ENTRY_FEE, `Entry fee must be ${entryFeeRangeLabel}`)
     .max(CRUCIBLE_MAX_ENTRY_FEE, `Entry fee must be ${entryFeeRangeLabel}`),
-  entryLimit: z.number().int().min(1).max(10),
+  entryLimit: z.number().int().min(1).max(CRUCIBLE_MAX_ENTRIES),
   maxTotalEntries: z
     .number()
     .int()
@@ -271,7 +267,7 @@ export default function CrucibleCreate() {
     values.entryFee >= CRUCIBLE_MIN_ENTRY_FEE &&
     values.entryFee <= CRUCIBLE_MAX_ENTRY_FEE &&
     values.entryLimit >= 1 &&
-    values.entryLimit <= 10 &&
+    values.entryLimit <= CRUCIBLE_MAX_ENTRIES &&
     !entryLimitError &&
     !videoSettingsError;
 
@@ -557,12 +553,15 @@ export default function CrucibleCreate() {
         withAsterisk
       />
 
-      <InputSelect
+      <InputNumber
         name="entryLimit"
         label="Entry Limit per User"
-        description="How many times can one user enter?"
-        data={entryLimitOptions}
-        allowDeselect={false}
+        description={`How many times can one user enter? (1–${CRUCIBLE_MAX_ENTRIES})`}
+        min={1}
+        max={CRUCIBLE_MAX_ENTRIES}
+        allowNegative={false}
+        allowDecimal={false}
+        clampBehavior="blur"
         error={entryLimitError}
         withAsterisk
       />
@@ -843,7 +842,7 @@ export default function CrucibleCreate() {
           <Group justify="space-between">
             <Text c="dimmed">Entry Limit per User</Text>
             <Text fw={500}>
-              {entryLimitOptions.find((o) => o.value === values.entryLimit)?.label}
+              {values.entryLimit} {values.entryLimit === 1 ? 'entry' : 'entries'}
             </Text>
           </Group>
           <Group justify="space-between">

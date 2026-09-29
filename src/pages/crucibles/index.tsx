@@ -49,12 +49,10 @@ function CruciblesPage() {
           {/* Featured crucible hero card */}
           <FeaturedCrucibleHero />
 
-          {/* Section header for discovery grid */}
-          <Text fz="xl" fw={600} mt="md">
-            Discover Crucibles
-          </Text>
-
-          <Group justify="flex-end">
+          <Group justify="space-between" align="center" mt="md">
+            <Text fz="xl" fw={600}>
+              Discover Crucibles
+            </Text>
             <SortFilter type="crucibles" />
           </Group>
 

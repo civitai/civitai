@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import {
   getCrucibleRatingLabel,
+  getCrucibleStatusBadge,
   getCrucibleUrl,
   parsePrizePositions,
 } from '~/utils/crucible-helpers';
@@ -77,4 +79,25 @@ describe('getCrucibleUrl', () => {
       expect(getCrucibleUrl(21, name)).toBe('/crucibles/21/judge-crucible');
     }
   );
+});
+
+describe('getCrucibleStatusBadge', () => {
+  const now = new Date('2026-09-29T12:00:00Z');
+  const hoursFromNow = (h: number) => new Date(now.getTime() + h * 60 * 60 * 1000);
+
+  it.each([
+    [48, 'Active'],
+    [23, 'Ending soon'],
+    [-1, 'Ended'],
+  ])('labels an Active crucible ending in %ih as %s', (hours, label) => {
+    expect(getCrucibleStatusBadge(CrucibleStatus.Active, hoursFromNow(hours), now).label).toBe(
+      label
+    );
+  });
+
+  it('ignores endAt once the crucible has left Active', () => {
+    expect(getCrucibleStatusBadge(CrucibleStatus.Completed, hoursFromNow(-1), now).label).toBe(
+      'Completed'
+    );
+  });
 });

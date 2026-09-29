@@ -104,16 +104,30 @@ const ownedAndFirst = entry({ id: 2, userId: OWNER_ID, score: 1800, position: 1,
 const latestAndSecond = entry({ id: 3, userId: 103, score: 1500, position: 2, minutes: 10 });
 
 const findEntries = dbMock.dbRead.crucibleEntry.findMany;
+const queryRaw = dbMock.dbRead.$queryRaw;
 const rows = [latestAndSecond, earliestAndLast, ownedAndFirst];
 
 const ids = (entries: { id: number }[]) => entries.map((e) => e.id);
 const lastFindManyArgs = () =>
   findEntries.mock.calls.at(-1)![0] as { orderBy: unknown; take: number; cursor?: unknown };
+/** The raw query's text, nested `Prisma.sql` fragments included, with its bound values. */
+const lastRawQuery = () => {
+  const [strings, ...values] = queryRaw.mock.calls.at(-1) as [TemplateStringsArray, ...unknown[]];
+  const fragments = values.filter(
+    (value): value is { strings: string[] } =>
+      !!value && typeof value === 'object' && 'strings' in value
+  );
+  return {
+    text: [...strings, ...fragments.flatMap((fragment) => fragment.strings)].join(' '),
+    values,
+  };
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
   findUnique.mockResolvedValue({ status: CrucibleStatus.Active });
   findEntries.mockResolvedValue(rows);
+  queryRaw.mockResolvedValue(ids(rows).map((id) => ({ id })));
 });
 
 describe('crucible.getEntries — while the crucible is still running', () => {
@@ -151,11 +165,21 @@ describe('crucible.getEntries — while the crucible is still running', () => {
     expect(others.map((e) => e.position)).toEqual([null, null]);
   });
 
-  it('asks postgres for entry-time order, never a score ordering', async () => {
-    await caller(signedIn(STRANGER_ID)).getEntries({ crucibleId: CRUCIBLE_ID });
+  it('asks postgres for a seeded shuffle, never a score ordering', async () => {
+    await caller(signedIn(STRANGER_ID)).getEntries({ crucibleId: CRUCIBLE_ID, seed: 42 });
 
-    expect(lastFindManyArgs().orderBy).toEqual([{ createdAt: 'asc' }, { id: 'asc' }]);
-    expect(JSON.stringify(lastFindManyArgs().orderBy)).not.toContain('score');
+    const { text, values } = lastRawQuery();
+    expect(text).toMatch(/ORDER BY md5\(/);
+    expect(text).not.toMatch(/score/i);
+    expect(values).toContain(':42');
+  });
+
+  it('returns entries in the order postgres shuffled them, not the order they were loaded', async () => {
+    findEntries.mockResolvedValue([ownedAndFirst, earliestAndLast, latestAndSecond]);
+
+    const { items } = await caller(undefined).getEntries({ crucibleId: CRUCIBLE_ID });
+
+    expect(ids(items)).toEqual(ids(rows));
   });
 
   it('rejects a crucible that does not exist', async () => {
@@ -201,13 +225,14 @@ describe('crucible.getEntries — paging', () => {
       limit: 2,
     });
 
-    expect(lastFindManyArgs().take).toBe(3);
+    expect(lastRawQuery().values).toContain(3);
+    expect(lastRawQuery().text).not.toContain('> (md5(');
     expect(ids(items)).toEqual([3, 1]);
     expect(nextCursor).toBe(2);
   });
 
-  it('continues from the cursor it is given, and reports no more on a short page', async () => {
-    findEntries.mockResolvedValue([ownedAndFirst]);
+  it('continues after the cursor in shuffled order, and reports no more on a short page', async () => {
+    queryRaw.mockResolvedValue([{ id: 2 }]);
 
     const { items, nextCursor } = await caller(undefined).getEntries({
       crucibleId: CRUCIBLE_ID,
@@ -215,8 +240,22 @@ describe('crucible.getEntries — paging', () => {
       cursor: 2,
     });
 
-    expect(lastFindManyArgs().cursor).toEqual({ id: 2 });
+    expect(lastRawQuery().text).toContain('> (md5(');
     expect(ids(items)).toEqual([2]);
+    expect(nextCursor).toBeUndefined();
+  });
+
+  it('continues from the cursor by id once the ranking is final', async () => {
+    findUnique.mockResolvedValue({ status: CrucibleStatus.Completed });
+    findEntries.mockResolvedValue([ownedAndFirst]);
+
+    const { nextCursor } = await caller(undefined).getEntries({
+      crucibleId: CRUCIBLE_ID,
+      limit: 2,
+      cursor: 2,
+    });
+
+    expect(lastFindManyArgs().cursor).toEqual({ id: 2 });
     expect(nextCursor).toBeUndefined();
   });
 });

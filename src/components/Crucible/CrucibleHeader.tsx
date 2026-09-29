@@ -1,6 +1,7 @@
-import { Badge, Text, Title } from '@mantine/core';
-import { IconUsers } from '@tabler/icons-react';
+import { Badge, Button, Container, Text, Title } from '@mantine/core';
+import { IconArrowLeft, IconUsers } from '@tabler/icons-react';
 import clsx from 'clsx';
+import { NavigateBack } from '~/components/BackButton/BackButton';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CrucibleTimer } from '~/components/Crucible/CrucibleTimer';
@@ -131,9 +132,25 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
         }}
       />
 
-      {/* Content wrapper */}
-      <div className="relative z-10 mx-auto flex w-full max-w-7xl items-end px-4 pt-8">
-        {/* Overlay card */}
+      <Container
+        size="xl"
+        className="relative z-10 flex w-full flex-col justify-between gap-6 pt-4"
+      >
+        <NavigateBack url="/crucibles">
+          {({ onClick }) => (
+            <Button
+              variant="light"
+              color="gray"
+              size="compact-sm"
+              leftSection={<IconArrowLeft size={16} />}
+              onClick={onClick}
+              className="self-start"
+            >
+              Back
+            </Button>
+          )}
+        </NavigateBack>
+
         <div
           className="mb-8 max-w-xl rounded-xl border border-white/10 p-5 sm:p-8"
           style={{
@@ -204,7 +221,7 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
             )}
           </div>
         </div>
-      </div>
+      </Container>
     </div>
   );
 }

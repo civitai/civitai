@@ -17,62 +17,27 @@ export function getCrucibleSlug(name: string) {
 export const getCrucibleUrl = (id: number, name: string) =>
   `/crucibles/${id}/${getCrucibleSlug(name)}`;
 
-/**
- * Check if a crucible is ending soon (within 3 days)
- * @param endAt - The crucible end date
- * @param now - Optional current date for testing/memoization (defaults to new Date())
- */
-export function isEndingSoon(endAt: Date, now: Date = new Date()): boolean {
-  const threeDaysFromNow = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
-  return new Date(endAt) <= threeDaysFromNow;
-}
+const ENDING_SOON_MS = 24 * 60 * 60 * 1000;
 
-/**
- * Get the status dot color class based on crucible status
- * @param status - The crucible status
- * @param endAt - The crucible end date (optional)
- * @param now - Optional current date for testing/memoization (defaults to new Date())
- */
-export function getStatusDotColor(status: CrucibleStatus, endAt: Date | null, now?: Date): string {
-  if (status === CrucibleStatus.Active && endAt && isEndingSoon(endAt, now)) {
-    return 'bg-yellow-5';
-  }
-  switch (status) {
-    case CrucibleStatus.Active:
-      return 'bg-green-5';
-    case CrucibleStatus.Pending:
-      return 'bg-blue-5';
-    case CrucibleStatus.Completed:
-      return 'bg-gray-5';
-    case CrucibleStatus.Cancelled:
-      return 'bg-red-5';
-    default:
-      return 'bg-gray-5';
-  }
-}
+const STATUS_BADGES: Record<CrucibleStatus, { label: string; color: string }> = {
+  [CrucibleStatus.Pending]: { label: 'Upcoming', color: 'blue' },
+  [CrucibleStatus.Active]: { label: 'Active', color: 'green' },
+  [CrucibleStatus.Completed]: { label: 'Completed', color: 'gray' },
+  [CrucibleStatus.Cancelled]: { label: 'Cancelled', color: 'red' },
+};
 
-/**
- * Get status text for display
- * @param status - The crucible status
- * @param endAt - The crucible end date (optional)
- * @param now - Optional current date for testing/memoization (defaults to new Date())
- */
-export function getStatusText(status: CrucibleStatus, endAt: Date | null, now?: Date): string {
-  switch (status) {
-    case CrucibleStatus.Active:
-      if (endAt && isEndingSoon(endAt, now)) {
-        return 'Ending Soon';
-      }
-      return 'Active - Accepting entries';
-    case CrucibleStatus.Pending:
-      return 'Upcoming';
-    case CrucibleStatus.Completed:
-      return 'Completed';
-    case CrucibleStatus.Cancelled:
-      return 'Cancelled';
-    default:
-      return '';
+/** `status` stays Active until the finalize job runs, so an Active crucible is read against `endAt`. */
+export function getCrucibleStatusBadge(
+  status: CrucibleStatus,
+  endAt: Date | null,
+  now: Date = new Date()
+) {
+  if (status === CrucibleStatus.Active && endAt) {
+    const msLeft = new Date(endAt).getTime() - now.getTime();
+    if (msLeft <= 0) return { label: 'Ended', color: 'gray' };
+    if (msLeft <= ENDING_SOON_MS) return { label: 'Ending soon', color: 'orange' };
   }
+  return STATUS_BADGES[status];
 }
 
 /**

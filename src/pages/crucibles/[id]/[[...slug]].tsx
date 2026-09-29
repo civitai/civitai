@@ -1,8 +1,8 @@
-import { Button, Container, Paper, Progress, Stack, Text, Title } from '@mantine/core';
+import { Alert, Button, Container, Paper, Progress, Stack, Text, Title } from '@mantine/core';
 import { openConfirmModal, closeAllModals } from '@mantine/modals';
 import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as z from 'zod';
 import {
   IconGavel,
@@ -76,13 +76,14 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
   const browsingLevel = useBrowsingLevelDebounced();
 
   const { data: crucible, isLoading } = trpc.crucible.getById.useQuery({ id });
+  const [entriesSeed] = useState(() => Math.floor(Math.random() * 2 ** 31));
   const {
     data: entriesData,
     hasNextPage: hasMoreEntries,
     isFetchingNextPage: isLoadingMoreEntries,
     fetchNextPage: loadMoreEntries,
   } = trpc.crucible.getEntries.useInfiniteQuery(
-    { crucibleId: id },
+    { crucibleId: id, seed: entriesSeed },
     { getNextPageParam: (lastPage) => lastPage.nextCursor }
   );
   const { data: judgesData } = trpc.crucible.getJudgesCount.useQuery(
@@ -206,6 +207,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
   const userEntryCount = userEntries.length;
   const maxUserEntries = getMaxUserEntries(crucible);
   const userEntryProgress = (userEntryCount / maxUserEntries) * 100;
+  const allEntriesUsed = !!currentUser && userEntryCount >= maxUserEntries;
 
   const allowedResources = Array.isArray(crucible.allowedResources)
     ? (crucible.allowedResources as number[])
@@ -359,6 +361,10 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                     <Text size="sm" c="dimmed" className="mb-4">
                       You created this crucible, so you can&apos;t enter it. You can still judge it.
                     </Text>
+                  ) : allEntriesUsed ? (
+                    <Alert color="green" radius="md" className="mb-4">
+                      You&apos;ve submitted all your entries. Good luck!
+                    </Alert>
                   ) : (
                     <Button
                       variant="light"
@@ -366,23 +372,25 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                       leftSection={<IconUpload size={16} />}
                       className="mb-4"
                       onClick={() => openCrucibleSubmitEntryModal(getSubmitEntryProps(crucible))}
-                      disabled={!currentUser || userEntryCount >= maxUserEntries}
+                      disabled={!currentUser}
                     >
-                      {userEntryCount >= maxUserEntries ? 'All entries submitted' : 'Submit Entry'}
+                      Submit Entry
                     </Button>
                   )}
 
-                  <div className="mb-4 border-b border-[#373a40] pb-4">
-                    <Text size="xs" c="dimmed" tt="uppercase" mb={4}>
-                      Entry Fee
-                    </Text>
-                    <CurrencyBadge
-                      currency={Currency.BUZZ}
-                      unitAmount={crucible.entryFee}
-                      size="md"
-                      fw={600}
-                    />
-                  </div>
+                  {!allEntriesUsed && (
+                    <div className="mb-4 border-b border-[#373a40] pb-4">
+                      <Text size="xs" c="dimmed" tt="uppercase" mb={4}>
+                        Entry Fee
+                      </Text>
+                      <CurrencyBadge
+                        currency={Currency.BUZZ}
+                        unitAmount={crucible.entryFee}
+                        size="md"
+                        fw={600}
+                      />
+                    </div>
+                  )}
 
                   {currentUser && (
                     <div>

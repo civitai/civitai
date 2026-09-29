@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { isDefined } from '~/utils/type-guards';
 import dayjs from '~/shared/utils/dayjs';
 import plimit from 'p-limit';
 import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
@@ -322,6 +323,7 @@ export const getCrucibleEntries = async ({
   crucibleId,
   limit,
   cursor,
+  seed = 0,
   userId,
 }: GetCrucibleEntriesSchema & { userId?: number }) => {
   const crucible = await dbRead.crucible.findUnique({
@@ -331,17 +333,15 @@ export const getCrucibleEntries = async ({
   if (!crucible) throw throwNotFoundError('Crucible not found');
 
   const rankingsFinal = crucibleRankingsAreFinal(crucible.status);
-  const rows = await dbRead.crucibleEntry.findMany({
-    where: { crucibleId },
-    select: crucibleEntrySelect,
-    // Entry time, never score, while running: a rank-ordered page leaks the live ranking even
-    // with the scores redacted.
-    orderBy: rankingsFinal
-      ? [{ score: 'desc' }, { createdAt: 'asc' }, { id: 'asc' }]
-      : [{ createdAt: 'asc' }, { id: 'asc' }],
-    take: limit + 1,
-    cursor: cursor ? { id: cursor } : undefined,
-  });
+  const rows = rankingsFinal
+    ? await dbRead.crucibleEntry.findMany({
+        where: { crucibleId },
+        select: crucibleEntrySelect,
+        orderBy: [{ score: 'desc' }, { createdAt: 'asc' }, { id: 'asc' }],
+        take: limit + 1,
+        cursor: cursor ? { id: cursor } : undefined,
+      })
+    : await getShuffledEntries({ crucibleId, limit: limit + 1, cursor, seed });
 
   const nextCursor = rows.length > limit ? rows.pop()?.id : undefined;
   const items: CrucibleDetailEntry[] = rankingsFinal
@@ -351,6 +351,47 @@ export const getCrucibleEntries = async ({
       );
 
   return { items, nextCursor };
+};
+
+/**
+ * Never score order while running: a rank-ordered page leaks the live ranking even with the
+ * scores redacted. The seed keeps one viewer's pages in a single order.
+ */
+const getShuffledEntries = async ({
+  crucibleId,
+  limit,
+  cursor,
+  seed,
+}: {
+  crucibleId: number;
+  limit: number;
+  cursor?: number;
+  seed: number;
+}) => {
+  const salt = `:${seed}`;
+  const ids = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT id
+    FROM "CrucibleEntry"
+    WHERE "crucibleId" = ${crucibleId}
+      ${
+        cursor
+          ? Prisma.sql`AND (md5(id::text || ${salt}), id) > (md5(${cursor}::int::text || ${salt}), ${cursor}::int)`
+          : Prisma.empty
+      }
+    ORDER BY md5(id::text || ${salt}), id
+    LIMIT ${limit}
+  `;
+  if (!ids.length) return [];
+
+  const byId = new Map(
+    (
+      await dbRead.crucibleEntry.findMany({
+        where: { id: { in: ids.map(({ id }) => id) } },
+        select: crucibleEntrySelect,
+      })
+    ).map((entry) => [entry.id, entry])
+  );
+  return ids.map(({ id }) => byId.get(id)).filter(isDefined);
 };
 
 /**
