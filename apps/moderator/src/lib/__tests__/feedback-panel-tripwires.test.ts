@@ -537,6 +537,17 @@ describe('the row click is an enhancement over a real link', () => {
    * through it makes the whole nine-cell strip a close target — and closing destroys the panel and
    * every unsaved character of the issue draft inside it. `feedbackRowExpands`' dirtiness guard is
    * the other half; this pins that the navigation itself cannot close a row.
+   *
+   * 🔴 EVERY FIELD OF THAT ARGUMENT OBJECT IS PINNED BY EXACT STRING, AND A NEW ONE MUST BE TOO.
+   * This is the seam between a page that computes booleans and a predicate that only receives them:
+   * ANY boolean expression typechecks in either slot, so a mis-wiring is invisible to `svelte-check`
+   * — and this app has no Svelte tier, so it is invisible to the suite as well. Measured on
+   * `alreadyOpen` before it was pinned: swapping it to `data.openVisible` left the full suite at
+   * 1229 passed / 0 failed and `svelte-check` at 0 errors, while the identical mis-wiring of
+   * `openPanelDirty` reddened this test. An exact-string pin is the only guard available here.
+   *
+   * Only the two fields the PAGE computes are pinned; the rest of the object is read straight off
+   * the `MouseEvent` and a mis-spelling there does not typecheck.
    */
   it('navigates the row click through the open-only href', () => {
     const page = source('+page.svelte');
@@ -548,6 +559,11 @@ describe('the row click is an enhancement over a real link', () => {
     // CLOSED would go on refusing every row click in the queue; `data.openVisible` alone is the
     // too-wide rule this replaced, which made every row inert as soon as anything was open.
     expect(page).toContain('openPanelDirty: data.openVisible && panelDirty,');
+    // 🔴 `data.open === id` — the row the CLICK is on against the row that is OPEN. `data.openVisible`
+    // or a bare `false` re-wedges the queue exactly as the promote defect did, because the handler
+    // then navigates to the URL the page is already on and `goto` pushes every time; `data.open !== id`
+    // inverts it into a control that only ever fires on the wrong row.
+    expect(page).toContain('alreadyOpen: data.open === id,');
   });
 
   /**

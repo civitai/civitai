@@ -59,27 +59,30 @@ export type FeedbackRowClick = {
 };
 
 /**
- * 🔴 EVERY GUARD HERE PROTECTS A GESTURE THE ROW WOULD OTHERWISE SWALLOW, and each one is a
- * behaviour an operator already has:
- *   - a modified click is how the two links in the row are opened in a tab or a window, and a
- *     `goto` fired alongside it moves the page out from under them;
- *   - a drag that ENDS inside the row is a text selection — the message column is the one cell
- *     operators copy out of — and a click event fires at the end of it;
- *   - `defaultPrevented` is how a nested control says it has already handled this click.
+ * 🔴 IT DECLINES FOR THREE DIFFERENT KINDS OF REASON, AND CONFLATING THEM IS HOW ONE GETS DELETED.
+ * Read in the order the code checks them:
  *
- * 🔴 IT DECLINES ON ONE THING ONLY: AN OPEN PANEL WHOSE DRAFT HAS UNSAVED TEXT IN IT. Expanding a
- * row unmounts whatever panel is open — `?open=` is single-valued, so switching rows destroys the
- * old one exactly as closing it would — and the promote draft lives in that panel's memory and
- * nowhere else. When it holds nothing, the unmount costs nothing and the click goes through.
+ *   1. NOTHING TO DO — `alreadyOpen`. This row's panel is already showing, and the handler never
+ *      toggles, so the only thing left to navigate to is the URL the page is on. It protects no
+ *      gesture; it protects the HISTORY STACK, because `goto` pushes unconditionally. Its own field
+ *      docstring carries the SvelteKit citation.
+ *   2. SOMETHING TO LOSE — `openPanelDirty`. Expanding a row unmounts whatever panel is open
+ *      (`?open=` is single-valued, so switching rows destroys it exactly as closing would), and the
+ *      promote draft lives in that panel's memory and nowhere else. When it holds nothing the
+ *      unmount costs nothing and the click goes through.
+ *   3. THE CLICK WAS NEVER THE ROW'S — the four below it. A modified click is how the row's two
+ *      links are opened in a tab or a window; a drag that ENDS inside the row is a text selection,
+ *      and the message column is the one cell operators copy out of; `defaultPrevented` is how a
+ *      nested control says it has already handled this; `interactive` is the control itself.
  *
- * ⚠️ THIS REPLACES A RULE THAT DECLINED WHENEVER ANY PANEL WAS OPEN, which protected the same text
- * and took the gesture with it: after the first expand, no row in the queue responded to a click
- * again. Dirtiness is the fact that rule was reaching for.
+ * ⚠️ REASON 2 REPLACED A RULE THAT DECLINED WHENEVER ANY PANEL WAS OPEN, which protected the same
+ * text and took the gesture with it: after the first expand, no row in the queue responded to a
+ * click again. Dirtiness is the fact that rule was reaching for.
  *
- * 🔴 WHY THE `selection` GUARD BELOW CANNOT COVER THIS, so nobody deletes one for the other: the
- * gesture that reaches an unmount is a DOUBLE-CLICK to select a word in another row's Message cell.
- * It fires `click` twice, and the FIRST lands before the selection exists — invisible to
- * `selection`, and now harmless on a clean panel and refused on a dirty one.
+ * 🔴 WHY `selection` CANNOT COVER REASON 2, so nobody deletes one for the other: the gesture that
+ * reaches an unmount is a DOUBLE-CLICK to select a word in another row's Message cell. It fires
+ * `click` twice, and the FIRST lands before the selection exists — invisible to `selection`, and
+ * now harmless on a clean panel and refused on a dirty one.
  *
  * ⚠️ THE COST, STATED: with unsaved text in the open panel, clicking another row does nothing and
  * gives no reason on screen. Reaching that report means its `Open` link, which still works and still

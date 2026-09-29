@@ -183,11 +183,15 @@
    * 🔴 `feedbackOpenHref(…, id)`, NOT `rowHref(id)` — this handler OPENS, it never toggles. Closing
    * stays on the labelled anchor.
    *
-   * 🔴 IT DECLINES ONLY OVER UNSAVED TEXT. Expanding a row unmounts whatever panel is open, because
-   * `?open=` is single-valued — so the question is not whether a panel is open but whether losing it
-   * costs anything. `panelDirty` is the answer, lifted out of `FeedbackDetail`; `data.openVisible`
-   * is what makes it meaningful, since the flag keeps its last value after that component is gone.
-   * `feedbackRowExpands` carries the reasoning and the cost.
+   * 🔴 THE TWO FACTS THIS PAGE COMPUTES FOR THE PREDICATE, and they answer different questions.
+   * `openPanelDirty` is whether expanding would LOSE anything: a row expands by unmounting whatever
+   * panel is open (`?open=` is single-valued), so what matters is not that a panel is open but that
+   * it holds unsaved text. `panelDirty` is that answer lifted out of `FeedbackDetail`, and
+   * `data.openVisible` is what makes it meaningful, since the flag keeps its last value after that
+   * component is gone. `alreadyOpen` is whether there is anything to DO — this row's panel is
+   * already showing, and the handler never toggles, so the navigation would only push a duplicate
+   * history entry. Everything else the predicate declines on is read straight off the event.
+   * `feedbackRowExpands` carries the full ordering and the cost.
    *
    * 🔴 `noScroll`/`keepFocus` MIRROR THE ANCHOR'S OWN `data-sveltekit-*` ATTRIBUTES, and the two
    * have to be changed together — `rowHref` only makes the URLs agree, the navigation options are

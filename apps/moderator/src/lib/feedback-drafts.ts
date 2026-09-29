@@ -54,10 +54,15 @@ export function makeFeedbackPromoteDraft(): FeedbackPromoteDraft {
 /**
  * Whether this draft holds operator-typed text that unmounting the panel would discard.
  *
- * 🔴 IT IS THE ONLY THING STANDING BETWEEN A STRAY CLICK AND SOMEONE'S UNSAVED ISSUE. The queue
+ * 🔴 IT IS THE INNER HALF OF WHAT PROTECTS SOMEONE'S UNSAVED ISSUE, NOT THE WHOLE RULE. The queue
  * expands a row on a click anywhere in it, and `?open=` is single-valued — so opening report B
- * destroys report A's panel, and this draft lives in that panel's memory and nowhere else. The click
- * handler declines on exactly this predicate; everywhere else the gesture works.
+ * destroys report A's panel, and this draft lives in that panel's memory and nowhere else.
+ *
+ * ⚠️ THE CLICK HANDLER DOES NOT CALL THIS. It calls `feedbackPanelHasUnsavedDraft` below, which
+ * wraps it with the row: a LINKED report renders no promote form, so its draft is text nothing can
+ * still reach. Reading this predicate alone is the defect that wedged the queue — see that
+ * function. Anything deciding whether an unmount costs something wants the wrapper; this one
+ * answers only "has anything been typed".
  *
  * 🔴 IT IS DRIVEN BY `FEEDBACK_PROMOTE_DRAFT_FIELDS`, NOT BY A HAND-WRITTEN LIST OF FOUR BOXES, and
  * that is what makes it survive the form growing. That ledger is already asserted against the
