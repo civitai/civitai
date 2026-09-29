@@ -254,10 +254,18 @@ export async function readBounded(
       // `done` is false and undici only ever enqueues a Uint8Array, so this is unreachable
       // today — but `continue` turns "unreachable" into an UNRECOVERABLE wedge if it ever
       // happens: an await-loop whose promise resolves immediately starves the macrotask
-      // queue, so the AbortSignal timer CANNOT fire and rescue it. MEASURED: 6,000,000
-      // iterations of exactly that shape and a 300 ms `AbortSignal.timeout` had still not
-      // fired. That is the event-loop-freeze class, and it would take out the whole web pod
-      // rather than one request. The branch bought nothing; failing loudly costs nothing.
+      // queue, so the AbortSignal timer CANNOT fire and rescue it.
+      //
+      // MEASURED (node v24.20.0): 60,000,000 iterations of exactly that shape against a 300 ms
+      // `AbortSignal.timeout` ran 2,053 ms and 2,105 ms over two runs — 6.8x and 7.0x the
+      // budget — with `signal.aborted === false` at the end of both. ⚠ An earlier figure here
+      // said 6,000,000 iterations, and that one does NOT demonstrate the mechanism: the same
+      // shape completes in 227–270 ms on this host, i.e. INSIDE the 300 ms budget, so the timer
+      // not having fired proves only that the loop finished first. Do not reinstate it — a
+      // starvation claim needs an elapsed time that EXCEEDS the timeout.
+      //
+      // That is the event-loop-freeze class, and it would take out the whole web pod rather
+      // than one request. The branch bought nothing; failing loudly costs nothing.
       if (!value) throw new Error('artwork stream produced an empty chunk');
       total += value.byteLength;
       if (total > maxBytes) {

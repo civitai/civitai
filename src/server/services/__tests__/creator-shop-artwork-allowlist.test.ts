@@ -199,6 +199,13 @@ describe('validateArtwork URL allowlist (web-pod fetch + response oracle)', () =
       expect(ms).toBe(Math.ceil((constants.mediaUpload.maxImageFileSize / 2_000_000) * 1000));
       // And sanity-bound it, so a derivation that collapses to ~0 cannot pass.
       expect(ms).toBeGreaterThan(5_000);
+      // 🔴 IDENTITY, because the two assertions above pin only the CALL. MEASURED: a mutant
+      // that keeps `AbortSignal.timeout(ARTWORK_FETCH_TIMEOUT_MS)` as a bare statement and
+      // hands `new AbortController().signal` to `fetch` scored 15/15 GREEN — the factory was
+      // called with the right budget and its result was thrown away. Tying the signal `fetch`
+      // received back to the one the spy returned is what closes that; it fails with an
+      // `Object.is equality` mismatch naming the two AbortSignals.
+      expect(mockFetch.mock.calls[0][1].signal).toBe(spy.mock.results[0].value);
     } finally {
       spy.mockRestore();
     }
@@ -207,9 +214,12 @@ describe('validateArtwork URL allowlist (web-pod fetch + response oracle)', () =
   it('still refuses parser-ambiguous bytes in a RELATIVE key (the second guard)', async () => {
     // 🔴 THE SECOND GUARD WAS UNREACHABLE BY EVERY TEST IN THE REPO until this row. An audit
     // measured it: deleting the `isAllowedImageScanUrl` call while keeping the import left
-    // this suite at 14/14 AND the three image-scan-url suites at 23/23 — because the ledger
+    // this suite at 14/14 AND the three image-scan-url suites at 69/69 — because the ledger
     // matches on the identifier in the file TEXT, and both rows that used to reach the second
-    // guard are now caught by the narrowing at the first.
+    // guard are now caught by the narrowing at the first. (That second figure was written as
+    // "23/23"; re-measured, `image-scan-url-seam-composed`, `image-scan-url-submit-rejection`
+    // and `image-scan-url-allowlist` hold 69 tests between them. The 14/14 is the count this
+    // suite had before this row was added and is correct as written.)
     //
     // `\evil.com/x` carries no scheme and no leading `//`, so `isEdgeUrlPassthrough` says
     // "relative key" and waves it past the first guard. Only the ambiguous-bytes half refuses

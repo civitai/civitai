@@ -7,15 +7,24 @@ import { describe, expect, it, vi } from 'vitest';
  * `fetch` responses, and every one of those either supplied no `body` (taking the
  * `arrayBuffer` FALLBACK) or was an oversize case that threw before the return. So the
  * STREAMING SUCCESS PATH — the only path the docblock says production ever takes — was
- * untested. MEASURED: replacing `return Buffer.concat(chunks, total)` with
- * `return Buffer.alloc(0)` left all five creator-shop suites GREEN (40/40).
+ * untested. MEASURED (re-measured for this commit): replacing `return Buffer.concat(chunks,
+ * total)` with `return Buffer.alloc(0)` leaves every OTHER `creator-shop-*.test.ts` suite in
+ * `src/server/services/__tests__/` fully GREEN — 13 files, 151 tests, the population enumerated
+ * by that glob minus this file — while two rows in THIS file go red (`expected +0 to be 9`,
+ * `expected +0 to be 100`). An earlier draft of this docblock put that surviving population at
+ * "all five creator-shop suites GREEN (40/40)"; the glob holds 13 suites and 151 tests. (The
+ * four `creator-shop-*` suites under `src/server/__tests__/` were not in the measured set.)
  *
  * That gap matters beyond "a test is missing": the bytes this returns are sha256'd into
  * `CosmeticShopItem.meta` and read back by `findDuplicateArtwork`, so a silent truncation or
  * mis-offset would corrupt duplicate detection rather than fail loudly.
  *
- * These use REAL `Response` objects, so the assertions are against actual web-stream
- * semantics rather than against a mock's idea of them.
+ * FIXTURES. Four rows pass `{ body: <real ReadableStream> }` object literals, so those
+ * assertions are against genuine web-stream semantics rather than a mock's idea of them. The
+ * other three pass hand-rolled `getReader()` mocks with no stream at all — deliberately, because
+ * they pin reader-level behaviour (`cancel()` being called, a `{done:false, value:undefined}`
+ * yield) that a real stream cannot be made to produce. No `Response` object appears in this
+ * file; an earlier draft of this docblock claimed one did.
  */
 
 vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedUserContent: vi.fn() }));
@@ -62,8 +71,19 @@ describe('readBounded — streaming success path', () => {
   });
 
   it('accepts a body exactly AT the cap — the bound is > not >=', async () => {
-    // Boundary, chosen to overshoot rather than sit on a power-of-two multiple of the chunk
-    // size: an off-by-one in either direction changes this row's verdict.
+    // ⚠ TWO RETRACTIONS. An earlier comment here said the value was "chosen to overshoot rather
+    // than sit on a power-of-two multiple of the chunk size" — that rationale was borrowed and
+    // is about nothing at this row: the fixture is a SINGLE 100-byte chunk against a cap of 100,
+    // so no chunk-size/step relationship exists to overshoot. And it said "an off-by-one in
+    // either direction changes this row's verdict", which is false in the loose direction.
+    //
+    // MEASURED, both directions, on `if (total > maxBytes)` in `readBounded`:
+    //   * `total >= maxBytes` (tight) — THIS row goes red, 1 failed | 8 passed.
+    //   * `total > maxBytes + 1` (loose) — this row stays GREEN; the red one is the sibling
+    //     `throws once the running total EXCEEDS the cap` row, 1 failed | 8 passed.
+    // So the boundary IS pinned in both directions, by the PAIR of rows, not by this row alone.
+    // Deleting either row reopens one side. Beyond equalling the cap, the number 100 carries no
+    // further justification — none is claimed here.
     const out = await readBounded({ body: streamOf([new Uint8Array(100)]) } as never, 100);
     expect(out.byteLength).toBe(100);
   });
@@ -95,10 +115,22 @@ describe('readBounded — the bound', () => {
   });
 
   it('cancels the reader, releasing the connection', async () => {
+    // 🔴 THE MOCK IS BOUNDED DELIBERATELY, for the same reason as the empty-chunk row below.
+    // An unbounded reader — always `{done:false, value:<chunk>}` — terminates only because the
+    // IN-LOOP size check throws, so when that check is moved OUT of the loop (exactly the
+    // regression this file exists to catch) the loop accumulates forever. MEASURED: with the
+    // unbounded fixture and the bound moved after the read loop, a whole-file run died with
+    // `FATAL ERROR: Ineffective mark-compacts near heap limit` / `Worker exited unexpectedly`
+    // and reported ZERO of 9 results — the OOM suppresses every other row's verdict, including
+    // the one that catches the regression. Bounding the pulls keeps the failure attributable.
+    let reads = 0;
     const cancel = vi.fn(async () => undefined);
     const body = {
       getReader: () => ({
-        read: async () => ({ done: false, value: new Uint8Array(10) }),
+        read: async () =>
+          ++reads > 2
+            ? { done: true, value: undefined }
+            : { done: false, value: new Uint8Array(10) },
         cancel,
       }),
     };
