@@ -31,26 +31,31 @@ beforeEach(() => {
 });
 
 describe('applyBountyNsfwTextScan', () => {
-  it('marks a bounty the scan raised to R nsfw, then applies the floor', async () => {
+  it('marks and locks nsfw on a bounty whose text scans R or above, then applies the floor', async () => {
     await applyBountyNsfwTextScan(args(NsfwLevel.R));
     const sql = flipSql();
+    expect(sql).toContain(`"lockedProperties" = array_append(b."lockedProperties", 'nsfw')`);
     expect(sql).toContain('b.nsfw = FALSE');
     expect(sql).toContain(`NOT ('nsfw' = ANY(b."lockedProperties"))`);
     expect(sql).toContain(`b."moderatorNsfwLevel" IS NULL`);
     expect(sql).toContain(`'textScanNsfw'`);
     // details can hold JSON null, and `null || object` is null.
     expect(sql).toContain(`jsonb_typeof(b.details) = 'object'`);
-    expect(sql).not.toContain('lockedProperties" =');
     expect(applyRatingFloor).toHaveBeenCalledWith('Bounty', args(NsfwLevel.R));
     expect(dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(applyRatingFloor).mock.invocationCallOrder[0]
     );
   });
 
-  it.each([
-    ['below R', args(NsfwLevel.PG13)],
-    ['not raised', args(NsfwLevel.X, false)],
-  ])('leaves nsfw alone when the verdict is %s, but still applies the floor', async (_, a) => {
+  // The owner may have declared nsfw, then unticked it: the declared level the scan compared
+  // against can still hold every NSFW bit, so the verdict reads as "not raised".
+  it('marks and locks nsfw on an R+ verdict that did not count as a raise', async () => {
+    await applyBountyNsfwTextScan(args(NsfwLevel.X, false));
+    expect(flipSql()).toContain(`array_append(b."lockedProperties", 'nsfw')`);
+  });
+
+  it('leaves nsfw alone below R, but still applies the floor', async () => {
+    const a = args(NsfwLevel.PG13);
     await applyBountyNsfwTextScan(a);
     expect(flipSql()).toBeUndefined();
     expect(applyRatingFloor).toHaveBeenCalledWith('Bounty', a);

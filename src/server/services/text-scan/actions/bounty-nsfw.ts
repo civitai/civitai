@@ -17,6 +17,7 @@ async function markBountyNsfw({
   await dbWrite.$executeRaw`
     UPDATE "Bounty" b
     SET nsfw = TRUE,
+        "lockedProperties" = array_append(b."lockedProperties", 'nsfw'),
         details = (CASE WHEN jsonb_typeof(b.details) = 'object' THEN b.details ELSE '{}'::jsonb END) || jsonb_build_object(
           'textScanNsfw',
           jsonb_build_object('workflowId', ${workflowId}::text, 'level', ${level}::int, 'at', now())
@@ -30,7 +31,7 @@ async function markBountyNsfw({
 
 export async function applyBountyNsfwTextScan(args: ApplyTextScanArgs) {
   const { entityId, workflowId, outcome } = args;
-  if (outcome.nsfw?.raised && outcome.nsfw.detectedLevel >= NsfwLevel.R)
+  if (outcome.nsfw && outcome.nsfw.detectedLevel >= NsfwLevel.R)
     await markBountyNsfw({ entityId, workflowId, level: outcome.nsfw.detectedLevel });
   return applyRatingFloor('Bounty', args);
 }
