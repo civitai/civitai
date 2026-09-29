@@ -292,8 +292,9 @@ export function deleteManyObjects(
  *
  * NOTE: `env.S3_VAULT_BUCKET` is intentionally excluded. Vault objects share
  * keys with `VaultItem` rows and are deleted only by `deleteVaultItems`
- * (vault-item-deletion.ts), before the row that records them. The ModelFile cleanup path has no business
- * touching the vault bucket: `urlsSafeToDelete` only checks ModelFile refcounts,
+ * (vault-item-deletion.ts), before the row that records them. The ModelFile
+ * cleanup path has no business touching the vault bucket: `urlsSafeToDelete`
+ * only checks ModelFile refcounts,
  * so a user-planted ModelFile.url pointing at a victim's vault object would
  * pass the refcount check and orphan-delete the victim's bytes.
  */

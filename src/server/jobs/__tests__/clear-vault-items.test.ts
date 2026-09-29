@@ -76,6 +76,7 @@ beforeEach(() => {
   onObjectDelete = undefined;
   clock = 0;
   setEnv({ S3_VAULT_BUCKET: 'vault-bucket' });
+  dbMock.dbWrite.$queryRaw.mockReset();
   loggingMock.logToAxiom.mockImplementation(() => Promise.resolve());
 
   mockDeleteManyObjects.mockReset().mockImplementation(async (_bucket: string, keys: string[]) => {
@@ -85,15 +86,18 @@ beforeEach(() => {
     return { Errors: keys.filter((k) => failKeys.has(k)).map((Key) => ({ Key, Code: 'Err' })) };
   });
 
-  dbMock.dbWrite.vaultItem.findMany.mockImplementation((async ({ where, orderBy }: any) => {
+  dbMock.dbWrite.vaultItem.findMany.mockImplementation((async ({ where, orderBy, take }: any) => {
     const order = orderBy as Record<string, 'asc' | 'desc'>[];
-    return remaining(where.vaultId).sort((a: any, b: any) => {
-      for (const clause of order) {
-        const [field, dir] = Object.entries(clause)[0];
-        if (a[field] !== b[field]) return (a[field] < b[field] ? -1 : 1) * (dir === 'asc' ? 1 : -1);
-      }
-      return 0;
-    });
+    return remaining(where.vaultId)
+      .sort((a: any, b: any) => {
+        for (const clause of order) {
+          const [field, dir] = Object.entries(clause)[0];
+          if (a[field] !== b[field])
+            return (a[field] < b[field] ? -1 : 1) * (dir === 'asc' ? 1 : -1);
+        }
+        return 0;
+      })
+      .slice(0, take);
   }) as any);
   dbMock.dbWrite.vaultItem.deleteMany.mockImplementation((async ({ where }: any) => {
     const ids = new Set<number>(where.modelVersionId.in);
@@ -123,9 +127,41 @@ describe('clear-vault-items', () => {
     expect(remaining(1).map((i) => i.id)).toEqual([newest.id]);
     expect(summary).toMatchObject({
       itemsDeleted: 2,
+      vaultsTrimmed: 1,
       vaultsLeftOverCap: 0,
       stoppedBy: 'done',
     });
+  });
+
+  it('measures usage over the whole vault, not only the batch it deletes from', async () => {
+    addVault(1, 100);
+    // The 50 oldest items alone fit under this cap; the vault as a whole does not.
+    overCap([1, 60]);
+
+    await run();
+
+    expect(remaining(1)).toHaveLength(60);
+  });
+
+  it('breaks a createdAt tie by id, oldest first', async () => {
+    addItem(1, 100, [0, 0, 1]);
+    const second = addItem(1, 100, [0, 0, 1]);
+    overCap([1, 1]);
+
+    await run();
+
+    expect(remaining(1).map((i) => i.id)).toEqual([second.id]);
+  });
+
+  it('refuses to run without a vault bucket, before selecting or deleting anything', async () => {
+    setEnv({ S3_VAULT_BUCKET: undefined });
+    addVault(1, 1);
+    overCap([1, 0]);
+
+    await expect(run()).rejects.toThrow('S3_VAULT_BUCKET is not defined');
+
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+    expect(remaining(1)).toHaveLength(1);
   });
 
   it('deletes stored objects before the rows that record their keys', async () => {
@@ -246,14 +282,16 @@ describe('deleteVaultItems', () => {
     expect(remaining(1)).toHaveLength(400 - 333);
   });
 
-  it('bounds each object delete with a timeout', async () => {
+  it('bounds each object delete with a timeout shorter than the run budget', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
     addVault(1, 1);
 
     await deleteAll(1);
 
-    const signal = mockDeleteManyObjects.mock.calls[0][3]?.abortSignal as AbortSignal | undefined;
-    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(timeout).toHaveBeenCalledWith(VAULT_OBJECT_DELETE_TIMEOUT_MS);
+    expect(mockDeleteManyObjects.mock.calls[0][3]?.abortSignal).toBe(timeout.mock.results[0].value);
     expect(VAULT_OBJECT_DELETE_TIMEOUT_MS).toBeLessThan(CLEAR_VAULT_ITEMS_TIME_BUDGET_MS);
+    timeout.mockRestore();
   });
 
   it('keeps every row in a request when an error names no key', async () => {
@@ -277,7 +315,7 @@ describe('deleteVaultItems', () => {
     expect(remaining(1)).toHaveLength(0);
   });
 
-  // Local environments run without a vault bucket; there is nothing stored to orphan there.
+  // No vault bucket locally (.env-example sets none), so there is nothing stored to orphan.
   it('removes rows without touching storage when no vault bucket is configured', async () => {
     setEnv({ S3_VAULT_BUCKET: undefined });
     addVault(1, 2);

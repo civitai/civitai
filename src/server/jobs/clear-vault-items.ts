@@ -106,12 +106,12 @@ async function trimVault({
   return { deleted, batches, batchMs, underCap, failedModelVersionIds };
 }
 
-export async function runClearVaultItems({
+async function clearOverCapVaults({
   jobContext,
-  now = Date.now,
+  now,
 }: {
   jobContext: Pick<JobContext, 'status' | 'checkIfCanceled'>;
-  now?: () => number;
+  now: () => number;
 }) {
   const startedAt = now();
   const deadline = startedAt + CLEAR_VAULT_ITEMS_TIME_BUDGET_MS;
@@ -121,6 +121,7 @@ export async function runClearVaultItems({
   const vaults = await getOverCapVaults();
   const summary = {
     vaultsOverCap: vaults.length,
+    vaultsTrimmed: 0,
     vaultsUnderCap: 0,
     vaultsFailed: 0,
     itemsDeleted: 0,
@@ -142,6 +143,7 @@ export async function runClearVaultItems({
       summary.itemsDeleted += result.deleted;
       summary.batches += result.batches;
       batchMs += result.batchMs;
+      if (result.deleted) summary.vaultsTrimmed++;
       if (result.underCap) summary.vaultsUnderCap++;
       if (result.failedModelVersionIds.length) {
         summary.vaultsFailed++;
@@ -175,10 +177,19 @@ export async function runClearVaultItems({
   return result;
 }
 
-export const clearVaultItems = createJob('clear-vault-items', '0 0 * * *', async (jobContext) => {
-  if (!env.S3_VAULT_BUCKET) {
-    throw new Error('S3_VAULT_BUCKET is not defined');
-  }
+export async function runClearVaultItems({
+  jobContext,
+  now = Date.now,
+}: {
+  jobContext: Pick<JobContext, 'status' | 'checkIfCanceled'>;
+  now?: () => number;
+}) {
+  // Without a bucket, deleteVaultItems removes rows and no objects: every object would be orphaned.
+  if (!env.S3_VAULT_BUCKET) throw new Error('S3_VAULT_BUCKET is not defined');
 
-  return runClearVaultItems({ jobContext });
-});
+  return clearOverCapVaults({ jobContext, now });
+}
+
+export const clearVaultItems = createJob('clear-vault-items', '0 0 * * *', (jobContext) =>
+  runClearVaultItems({ jobContext })
+);
