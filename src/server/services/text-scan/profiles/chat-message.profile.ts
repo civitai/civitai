@@ -32,10 +32,10 @@ async function loadChatWindow(newestId: number): Promise<TextScanSubject | undef
     return undefined;
   if (!(await scamEligibleAuthors([newest.userId])).has(newest.userId)) return undefined;
 
-  // The only index is (chatId, id), so the sender and time filters below are applied row by row.
-  // The floor stops that walk in a busy chat where this sender said little.
+  // Bounds the backward walk in a busy chat where this sender said little. `deletedAt: null` is what
+  // lets the partial (chatId, id) index serve it.
   const floor = await dbWrite.chatMessage.findFirst({
-    where: { chatId: newest.chatId, id: { lte: newest.id } },
+    where: { chatId: newest.chatId, id: { lte: newest.id }, deletedAt: null },
     orderBy: { id: 'desc' },
     skip: CHAT_WINDOW_SCAN_ROWS - 1,
     select: { id: true },

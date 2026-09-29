@@ -17,7 +17,7 @@ type IdRow = { id: number };
 function affectedRows(kind: Exclude<ScamCleanup, 'none'>, userId: number, at: Date) {
   switch (kind) {
     case 'chatMessages':
-      // ChatMessage is indexed on (chatId, id) only; the membership subquery keeps this off a full scan.
+      // ChatMessage has no index on userId alone; the sender's chats let (chatId, userId) serve it.
       return dbWrite.$queryRaw<IdRow[]>`
         UPDATE "ChatMessage" SET "deletedAt" = ${at}
         WHERE "chatId" IN (SELECT "chatId" FROM "ChatMember" WHERE "userId" = ${userId})
@@ -25,6 +25,8 @@ function affectedRows(kind: Exclude<ScamCleanup, 'none'>, userId: number, at: Da
         RETURNING id
       `;
     case 'comments':
+      // `hidden`, not the ToS removal: that is the ban path, which notifies and settles rewards per
+      // comment. This one has to be undone by id when a moderator overturns the mute.
       return dbWrite.$queryRaw<IdRow[]>`
         UPDATE "Comment" SET hidden = true, "updatedAt" = ${at}
         WHERE "userId" = ${userId} AND hidden IS NOT TRUE
@@ -66,12 +68,12 @@ function restore(userId: number, record: ScamCleanupRecord) {
       `;
     case 'comments':
       return dbWrite.$executeRaw`
-        UPDATE "Comment" SET hidden = false, "updatedAt" = now()
+        UPDATE "Comment" SET hidden = false
         WHERE id = ANY(${record.ids}::int[]) AND "userId" = ${userId} AND hidden
       `;
     case 'commentsV2':
       return dbWrite.$executeRaw`
-        UPDATE "CommentV2" SET hidden = false, "updatedAt" = now()
+        UPDATE "CommentV2" SET hidden = false
         WHERE id = ANY(${record.ids}::int[]) AND "userId" = ${userId} AND hidden
       `;
   }

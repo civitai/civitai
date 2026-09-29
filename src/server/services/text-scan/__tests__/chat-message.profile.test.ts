@@ -67,7 +67,7 @@ describe('loadChatWindows', () => {
     await loadChatWindows([30]);
 
     expect(findFirst).toHaveBeenCalledWith({
-      where: { chatId: 4, id: { lte: 30 } },
+      where: { chatId: 4, id: { lte: 30 }, deletedAt: null },
       orderBy: { id: 'desc' },
       skip: CHAT_WINDOW_SCAN_ROWS - 1,
       select: { id: true },

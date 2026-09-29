@@ -106,6 +106,7 @@ describe('restoreScamCase', () => {
     const call = dbMock.dbWrite.$executeRaw.mock.calls[0];
     expect(sqlOf(call)).toContain(head);
     expect(sqlOf(call)).toContain('id = ANY(?::int[]) AND "userId" = ? AND hidden');
+    expect(sqlOf(call)).not.toContain('updatedAt');
     expect(values(call)).toEqual([[3, 4], 42]);
   });
 
@@ -123,7 +124,7 @@ describe('restoreScamCase', () => {
     dbMock.dbWrite.userRestriction.findUnique.mockResolvedValue({
       userId: 42,
       type: 'generation',
-      triggers: [],
+      triggers: [{ cleanup: { kind: 'comments', at, count: 2, ids: [3, 4], truncated: false } }],
     });
     expect(await restoreScamCase(6)).toEqual({ restored: 0 });
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
