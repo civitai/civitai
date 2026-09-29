@@ -5,8 +5,9 @@ import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
 
 /**
- * The minimum-view-time gate. EdgeMedia is stubbed to a button that reports playback: headless
- * Chromium cannot decode most clips, and a codec is not what is under test.
+ * EdgeMedia is stubbed: headless Chromium cannot decode most clips, and a codec is not what is
+ * under test. The stub is a bare <video> that reports the outcome `mediaOutcome` names for its src
+ * when it mounts (loaded by default), plus a button that reports playback.
  *
  * Clicks go through the DOM node rather than a Playwright locator — the card carries
  * `transition-all` and a hover transform, and the actionability check never settles on anything
@@ -17,34 +18,51 @@ import { renderWithProviders } from '../../../test/component-setup';
 // causes, and a local `let` would rewind to zero each time, which reads as a backwards seek and
 // stalls accumulation after one second.
 const playheads = vi.hoisted(() => new Map<string, number>());
+const mediaOutcome = vi.hoisted(() => new Map<string, 'loadedmetadata' | 'error' | 'pending'>());
 
-vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
-  EdgeMedia: ({
-    src,
-    videoProps,
-  }: {
-    src: string;
-    videoProps?: { onTimeUpdate?: (e: { currentTarget: { currentTime: number } }) => void };
-  }) => (
-    <button
-      type="button"
-      data-testid="advance-playback"
-      onClick={() => {
-        // Four ordinary 250ms samples per click. The first sample of a clip only establishes the
-        // baseline, so N clicks are worth (4N - 1) × 250ms of counted playback.
-        for (let i = 0; i < 4; i++) {
-          const currentTime = (playheads.get(src) ?? 0) + 0.25;
-          playheads.set(src, currentTime);
-          videoProps?.onTimeUpdate?.({ currentTarget: { currentTime } });
-        }
-      }}
-    >
-      play
-    </button>
-  ),
-}));
+vi.mock('~/components/EdgeMedia/EdgeMedia', async () => {
+  const { useEffect, useRef } = await import('react');
+  return {
+    EdgeMedia: function EdgeMediaStub({
+      src,
+      videoProps,
+    }: {
+      src: string;
+      videoProps?: { onTimeUpdate?: (e: { currentTarget: { currentTime: number } }) => void };
+    }) {
+      const videoRef = useRef<HTMLVideoElement>(null);
+      useEffect(() => {
+        const outcome = mediaOutcome.get(src) ?? 'loadedmetadata';
+        if (outcome !== 'pending') videoRef.current?.dispatchEvent(new Event(outcome));
+      }, [src]);
+
+      return (
+        <>
+          <video ref={videoRef} />
+          <button
+            type="button"
+            data-testid="advance-playback"
+            onClick={() => {
+              // Four ordinary 250ms samples per click. The first sample of a clip only establishes
+              // the baseline, so N clicks are worth (4N - 1) × 250ms of counted playback.
+              for (let i = 0; i < 4; i++) {
+                const currentTime = (playheads.get(src) ?? 0) + 0.25;
+                playheads.set(src, currentTime);
+                videoProps?.onTimeUpdate?.({ currentTarget: { currentTime } });
+              }
+            }}
+          >
+            play
+          </button>
+        </>
+      );
+    },
+  };
+});
 
 const { CrucibleJudgingUI } = await import('~/components/Crucible/CrucibleJudgingUI');
+
+const srcOf = (id: number) => `0000000${id}-0000-4000-8000-000000000000`;
 
 const entry = (id: number) => ({
   id,
@@ -53,7 +71,7 @@ const entry = (id: number) => ({
   image: {
     id: id * 10,
     name: `clip-${id}.webm`,
-    url: `0000000${id}-0000-4000-8000-000000000000`,
+    url: srcOf(id),
     type: 'video' as const,
     metadata: { duration: 30 },
     nsfwLevel: 1,
@@ -74,26 +92,39 @@ const advance = async (side: 0 | 1, clicks: number) => {
   for (let i = 0; i < clicks; i++) players()[side].click();
 };
 
+const card = (side: 'left' | 'right') =>
+  document.querySelector<HTMLElement>(`[aria-label="Vote for ${side} video"]`);
+
 // Anchored on the CARD's aria-label, not on the button's text. The text is "Vote" or
 // "Watch Ns more" depending on the very gate under test, so a text matcher made the button vanish
 // exactly when an assertion needed it — and every `toBeUndefined` then passed vacuously.
-// `:not([data-testid])` excludes the media stub, the only other button inside a card.
 const voteButton = (side: 'left' | 'right') =>
-  document.querySelector<HTMLButtonElement>(
-    `[aria-label="Vote for ${side} video"] button:not([data-testid])`
-  );
+  card(side)?.querySelector<HTMLButtonElement>('[data-testid="judge-vote"]') ?? null;
+
+const mediaStatus = (side: 'left' | 'right') =>
+  card(side)?.querySelector<HTMLElement>('[data-media-status]')?.dataset.mediaStatus;
+
+const video = (side: 'left' | 'right') => card(side)!.querySelector('video')!;
 
 const label = (side: 'left' | 'right') =>
   voteButton(side)?.textContent?.replace(/\s+/g, ' ').trim() ?? '';
 
-/** Guards every assertion below: if the selector breaks, this fails rather than they pass. */
+/**
+ * Guards every assertion below: if the selector breaks, this fails rather than they pass. Also
+ * waits out media loading, so a locked vote below is the gate under test and not a pending load.
+ */
 const expectBothCardsRendered = async () =>
   vi.waitFor(() => {
     expect(voteButton('left')).toBeTruthy();
     expect(voteButton('right')).toBeTruthy();
+    expect(mediaStatus('left')).toBe('loaded');
+    expect(mediaStatus('right')).toBe('loaded');
   });
 
-beforeEach(() => playheads.clear());
+beforeEach(() => {
+  playheads.clear();
+  mediaOutcome.clear();
+});
 
 describe('CrucibleJudgingUI — minimum view time', () => {
   test('unlocks voting once BOTH clips have had enough playback', async () => {
@@ -179,6 +210,76 @@ describe('CrucibleJudgingUI — minimum view time', () => {
     await advance(1, 4);
     await vi.waitFor(() => expect(voteButton('left')!.disabled).toBe(false));
     expect(onVote).not.toHaveBeenCalled();
+  });
+});
+
+describe('CrucibleJudgingUI — media loading', () => {
+  test('keeps voting locked while one side has not loaded', async () => {
+    // "votes immediately when the crucible sets no minimum" is the control: same props, both load.
+    mediaOutcome.set(srcOf(2), 'pending');
+    const onVote = vi.fn();
+    renderWithProviders(<CrucibleJudgingUI pair={pairOf(1, 2)} onVote={onVote} onSkip={vi.fn()} />);
+
+    await vi.waitFor(() => expect(mediaStatus('left')).toBe('loaded'));
+    expect(mediaStatus('right')).toBe('loading');
+    expect(voteButton('left')!.disabled).toBe(true);
+    voteButton('left')!.click();
+    expect(onVote).not.toHaveBeenCalled();
+  });
+
+  test('a side that fails to load offers Skip, and Retry reloads it', async () => {
+    mediaOutcome.set(srcOf(2), 'error');
+    const onVote = vi.fn();
+    const onSkip = vi.fn();
+    renderWithProviders(<CrucibleJudgingUI pair={pairOf(1, 2)} onVote={onVote} onSkip={onSkip} />);
+
+    await vi.waitFor(() => expect(mediaStatus('right')).toBe('error'));
+    expect(voteButton('left')!.disabled).toBe(true);
+
+    const overlayButton = (text: string) =>
+      [...card('right')!.querySelectorAll<HTMLButtonElement>('[role="alert"] button')].find((b) =>
+        b.textContent?.includes(text)
+      );
+    overlayButton('Skip pair')!.click();
+    expect(onSkip).toHaveBeenCalledTimes(1);
+
+    mediaOutcome.set(srcOf(2), 'loadedmetadata');
+    overlayButton('Retry')!.click();
+    await vi.waitFor(() => expect(voteButton('left')!.disabled).toBe(false));
+    expect(mediaStatus('right')).toBe('loaded');
+    expect(onVote).not.toHaveBeenCalled();
+  });
+});
+
+describe('CrucibleJudgingUI — video playback', () => {
+  test('clips start muted, and the sound toggle unmutes them', async () => {
+    renderWithProviders(
+      <CrucibleJudgingUI pair={pairOf(1, 2)} onVote={vi.fn()} onSkip={vi.fn()} />
+    );
+    await expectBothCardsRendered();
+
+    expect(video('left').muted).toBe(true);
+    expect(video('right').muted).toBe(true);
+
+    card('left')!.querySelector<HTMLButtonElement>('[aria-label="Unmute clips"]')!.click();
+    await vi.waitFor(() => {
+      expect(video('left').muted).toBe(false);
+      expect(video('right').muted).toBe(false);
+    });
+  });
+
+  test('a clip that starts playing pauses the other one', async () => {
+    renderWithProviders(
+      <CrucibleJudgingUI pair={pairOf(1, 2)} onVote={vi.fn()} onSkip={vi.fn()} />
+    );
+    await expectBothCardsRendered();
+
+    const pauseLeft = vi.spyOn(video('left'), 'pause');
+    const pauseRight = vi.spyOn(video('right'), 'pause');
+    video('left').dispatchEvent(new Event('play'));
+
+    await vi.waitFor(() => expect(pauseRight).toHaveBeenCalled());
+    expect(pauseLeft).not.toHaveBeenCalled();
   });
 });
 

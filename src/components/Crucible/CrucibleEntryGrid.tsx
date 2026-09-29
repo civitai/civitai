@@ -9,13 +9,15 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import { IconChartLine, IconCrown, IconPhoto, IconPlus, IconUsers } from '@tabler/icons-react';
+import { IconCrown, IconPhoto, IconPlus, IconUsers } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { CrucibleUserLink } from '~/components/Crucible/CrucibleUserLink';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import type { ProfileImage } from '~/server/selectors/image.selector';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 
 export type CrucibleEntryData = {
@@ -30,6 +32,7 @@ export type CrucibleEntryData = {
     username: string | null;
     deletedAt: Date | null;
     image: string | null;
+    profilePicture?: ProfileImage | null;
   };
   image: {
     id: number;
@@ -220,35 +223,34 @@ function EntryCard({ entry, rank, isUserEntry, onClick }: EntryCardProps) {
           />
         </div>
 
-        {/* Position badge */}
+        {rank !== null && (
+          <div
+            className="absolute right-2 top-2 flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-bold tabular-nums"
+            style={
+              rank <= 3
+                ? { background: medalColors[rank - 1], color: '#1a1b1e' }
+                : { background: 'rgba(0, 0, 0, 0.55)', color: 'white' }
+            }
+          >
+            {rank <= 3 && <IconCrown size={12} />}#{rank}
+          </div>
+        )}
 
-        {/* Gradient overlay */}
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent from-50% to-black/80" />
 
-        {/* Entry info overlay */}
-        <div className="absolute inset-x-0 bottom-0 flex flex-col p-3 text-white">
-          {/* Author */}
-          <Text size="xs" c="gray.4">
-            by{' '}
-            <CrucibleUserLink user={entry.user}>
-              @{entry.user.username || 'anonymous'}
-            </CrucibleUserLink>
-          </Text>
-
-          {/* Stats */}
+        <div className="absolute inset-x-0 bottom-0 flex flex-col gap-1 p-3 text-white">
+          <CrucibleUserLink user={entry.user}>
+            <span className="flex min-w-0 items-center gap-1.5">
+              <UserAvatar user={entry.user} size="xs" />
+              <Text size="xs" fw={600} c="white" truncate>
+                {entry.user.deletedAt ? '[deleted]' : entry.user.username || 'anonymous'}
+              </Text>
+            </span>
+          </CrucibleUserLink>
           {rank !== null && entry.score !== null && (
-            <div className="mt-2 flex gap-3 border-t border-white/10 pt-2 text-xs text-gray-400">
-              <div className="flex items-center gap-1">
-                <IconChartLine size={12} />
-                <span>{Math.round(entry.score)} pts</span>
-              </div>
-              <div
-                className="flex items-center gap-1"
-                style={rank <= 3 ? { color: medalColors[rank - 1], fontWeight: 600 } : undefined}
-              >
-                {rank <= 3 && <IconCrown size={12} />}#{rank}
-              </div>
-            </div>
+            <Text size="xs" c="gray.4" className="tabular-nums">
+              {Math.round(entry.score).toLocaleString()} pts
+            </Text>
           )}
         </div>
       </div>
@@ -257,7 +259,7 @@ function EntryCard({ entry, rank, isUserEntry, onClick }: EntryCardProps) {
 }
 
 // Gold, silver, bronze.
-const medalColors = ['#ffe066', '#adb5bd', '#ffa94d'];
+const medalColors = ['#fab005', '#adb5bd', '#e8590c'];
 
 type CrucibleEntryGridEmptyProps = {
   message?: string;

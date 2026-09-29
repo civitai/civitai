@@ -57,17 +57,30 @@ beforeEach(() => {
 });
 
 describe('cancelCrucible — authorization', () => {
-  it('refuses a non-moderator', async () => {
-    await expect(cancelCrucible({ id: 1, userId: 4, isModerator: false })).rejects.toThrow();
+  it('refuses someone who neither moderates nor owns it', async () => {
+    await expect(cancelCrucible({ id: 1, userId: 99, isModerator: false })).rejects.toThrow(
+      /Only moderators/
+    );
   });
 
-  it('refuses a non-moderator before reading anything, so it cannot leak the crucible', async () => {
-    await cancelCrucible({ id: 1, userId: 4, isModerator: false }).catch(() => undefined);
-    expect(findUnique).not.toHaveBeenCalled();
+  it('refuses the owner once the crucible has started', async () => {
+    await expect(cancelCrucible({ id: 1, userId: 4, isModerator: false })).rejects.toThrow(
+      /Only moderators/
+    );
+  });
+
+  it('lets the owner cancel before it starts, and returns their setup fee', async () => {
+    findUnique.mockResolvedValue(crucible({ status: CrucibleStatus.Pending, entries: [] }));
+
+    await cancelCrucible({ id: 1, userId: 4, isModerator: false });
+
+    expect(refundMultiAccountTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ externalTransactionIdPrefix: 'crucible-setup-4-abc' })
+    );
   });
 
   it('refunds nothing when authorization fails', async () => {
-    await cancelCrucible({ id: 1, userId: 4, isModerator: false }).catch(() => undefined);
+    await cancelCrucible({ id: 1, userId: 99, isModerator: false }).catch(() => undefined);
     expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
     expect(update).not.toHaveBeenCalled();
   });

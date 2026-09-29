@@ -199,3 +199,35 @@ describe('challenge model picker shows generator-eligible models only', () => {
     ]);
   });
 });
+
+describe('model picker adds several versions from one open', () => {
+  const resource = (id: number) =>
+    ({ id, name: `Version ${id}`, model: { id: 100 + id, name: `Model ${id}` } } as never);
+
+  it('commits a whole batch, capped at the slots left', () => {
+    const onChange = vi.fn();
+    const container = document.createElement('div');
+    const root = createRoot(container);
+    act(() =>
+      root.render(
+        createElement(
+          MantineProvider,
+          null,
+          createElement(ModelVersionMultiSelect, { value: [1], onChange, maxSelections: 3 })
+        )
+      )
+    );
+    const button = [...container.querySelectorAll('button')].find((b) =>
+      b.textContent?.includes('Add Resource')
+    );
+    if (!button) throw new Error('Add Resource button not rendered');
+    act(() => button.click());
+
+    const props = state.opened[0] as ResourceSelectModalProps;
+    expect(props.limit).toBe(2);
+    act(() => props.onSelectMultiple?.([resource(1), resource(2), resource(3), resource(4)]));
+    expect(onChange).toHaveBeenCalledWith([1, 2, 3]);
+
+    act(() => root.unmount());
+  });
+});

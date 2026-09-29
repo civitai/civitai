@@ -23,11 +23,13 @@ import type {
   CheckCrucibleEntryEligibilitySchema,
   CreateEntryPostSchema,
   GetCrucibleEntriesSchema,
+  UpdateCrucibleSchema,
   GetCruciblesInfiniteSchema,
   GetCrucibleByIdSchema,
   CreateCrucibleInputSchema,
   SubmitEntrySchema,
   GetJudgingPairSchema,
+  GetJudgingSuggestionsSchema,
   SubmitVoteSchema,
   CancelCrucibleSchema,
 } from '../schema/crucible.schema';
@@ -45,6 +47,7 @@ import {
   type CrucibleDetailRow,
   crucibleEntrySelect,
   type CrucibleEntryRow,
+  crucibleListSelect,
 } from '~/server/selectors/crucible.selector';
 import { publishedImageWhere } from '~/server/selectors/image.selector';
 import type { RedisKeyTemplateSys, RedisKeyTemplateCache } from '~/server/redis/client';
@@ -61,6 +64,7 @@ import { crucibleEloRedis } from '~/server/redis/crucible-elo.redis';
 import { Tracker } from '~/server/clickhouse/client';
 import { createLogger } from '~/utils/logging';
 import { createNotification } from '~/server/services/notification.service';
+import { resolveCoverImageId } from '~/server/services/cover-image.service';
 import { createPost } from '~/server/services/post.service';
 import { NotificationCategory } from '~/server/common/enums';
 import { imageResourcesCache } from '~/server/redis/caches';
@@ -118,13 +122,7 @@ export const createCrucible = async ({
   if (!isModerator) await assertCanCreateCrucible(userId);
 
   await throwOnBlockedUserContent([name, description], { isModerator, surface: 'crucible' });
-  // throwOnBlockedUserContent doesn't catch profanity, so SFW-only crucibles check it here.
-  const isSfwOnly = (nsfwLevel & ~sfwBrowsingLevelsFlag) === 0;
-  if (!isModerator && isSfwOnly && getProfanityFilter().isProfane(`${name} ${description}`)) {
-    throw throwBadRequestError(
-      "The name or description contains language that isn't allowed on a PG or PG-13 crucible."
-    );
-  }
+  if (!isModerator) assertSfwCrucibleText([name, description], nsfwLevel);
 
   const now = new Date();
   const isScheduled = !!requestedStartAt && requestedStartAt > now;
@@ -133,6 +131,13 @@ export const createCrucible = async ({
   const isVideoCrucible = crucibleSupportsVideoSettings(contentType);
   const requiresResources = (allowedResources?.length ?? 0) > 0;
   const prizeCustomized = isCustomPrizeDistribution(prizePositions);
+
+  // The shared cover path queues the scan, so the cover gets its own rating instead of inheriting
+  // the crucible's allowed levels.
+  const imageId = await resolveCoverImageId({
+    coverImage: { ...coverImage, type: MediaType.image },
+    userId,
+  });
 
   const setupCost = calculateCrucibleSetupCost(duration, prizeCustomized, requiresResources);
   const seedAmount = seededPrizePool ?? 0;
@@ -236,59 +241,132 @@ export const createCrucible = async ({
   }
 
   try {
-    const crucible = await dbWrite.$transaction(async (tx) => {
-      // First, create the Image record from the CF upload data
-      const image = await tx.image.create({
-        data: {
-          userId,
-          url: coverImage.url,
-          width: coverImage.width,
-          height: coverImage.height,
-          hash: coverImage.hash ?? null,
-          nsfwLevel,
-          type: MediaType.image,
-        },
-      });
-
-      // Then create the crucible with the image reference
-      const newCrucible = await tx.crucible.create({
-        data: {
-          userId,
-          name,
-          description: description ?? null,
-          imageId: image.id,
-          nsfwLevel,
-          contentType,
-          entryFee,
-          seededPrizePool: seedAmount,
-          entryLimit,
-          maxTotalEntries: maxTotalEntries ?? null,
-          // Coerced to null rather than passed through: the schema lets these be undefined, and
-          // Crucible_video_settings_require_video rejects anything but NULL on an image crucible.
-          minViewSeconds: isVideoCrucible ? minViewSeconds ?? null : null,
-          maxClipSeconds: isVideoCrucible ? maxClipSeconds ?? null : null,
-          prizePositions: prizePositions as Prisma.JsonObject,
-          allowedResources: requiresResources
-            ? (allowedResources as Prisma.JsonArray)
-            : Prisma.JsonNull,
-          duration: duration * 60, // Convert hours to minutes for storage
-          startAt,
-          endAt,
-          status: isScheduled ? CrucibleStatus.Pending : CrucibleStatus.Active,
-          buzzTransactionId, // Store the setup fee transaction ID for potential refunds
-          seedTransactionId,
-        },
-      });
-
-      return newCrucible;
+    return await dbWrite.crucible.create({
+      data: {
+        userId,
+        name,
+        description: description ?? null,
+        imageId,
+        nsfwLevel,
+        contentType,
+        entryFee,
+        seededPrizePool: seedAmount,
+        entryLimit,
+        maxTotalEntries: maxTotalEntries ?? null,
+        // Coerced to null rather than passed through: the schema lets these be undefined, and
+        // Crucible_video_settings_require_video rejects anything but NULL on an image crucible.
+        minViewSeconds: isVideoCrucible ? minViewSeconds ?? null : null,
+        maxClipSeconds: isVideoCrucible ? maxClipSeconds ?? null : null,
+        prizePositions: prizePositions as Prisma.JsonObject,
+        allowedResources: requiresResources
+          ? (allowedResources as Prisma.JsonArray)
+          : Prisma.JsonNull,
+        duration: duration * 60, // Convert hours to minutes for storage
+        startAt,
+        endAt,
+        status: isScheduled ? CrucibleStatus.Pending : CrucibleStatus.Active,
+        buzzTransactionId, // Store the setup fee transaction ID for potential refunds
+        seedTransactionId,
+      },
     });
-
-    return crucible;
   } catch (error) {
     await refundCreatorCharges('database write failed');
     // Rethrown even when the refund failed, so the caller still sees the real failure.
     throw error;
   }
+};
+
+// throwOnBlockedUserContent doesn't catch profanity, so SFW-only crucibles check it here.
+function assertSfwCrucibleText(texts: string[], nsfwLevel: number) {
+  const isSfwOnly = (nsfwLevel & ~sfwBrowsingLevelsFlag) === 0;
+  if (isSfwOnly && getProfanityFilter().isProfane(texts.join(' '))) {
+    throw throwBadRequestError(
+      "The name or description contains language that isn't allowed on a PG or PG-13 crucible."
+    );
+  }
+}
+
+/**
+ * Owners edit freely before start and only the presentation once running; moderators edit the
+ * presentation and the rating at any time. A resource requirement can be changed but not added or
+ * removed, because it is charged for at creation.
+ */
+export const updateCrucible = async ({
+  id,
+  name,
+  description,
+  coverImage,
+  allowedResources,
+  nsfwLevel,
+  userId,
+  isModerator = false,
+}: UpdateCrucibleSchema & { userId: number; isModerator?: boolean }) => {
+  const crucible = await dbRead.crucible.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      userId: true,
+      status: true,
+      endAt: true,
+      imageId: true,
+      nsfwLevel: true,
+      name: true,
+      description: true,
+      allowedResources: true,
+    },
+  });
+  if (!crucible) throw throwNotFoundError('Crucible not found');
+
+  const isOwner = crucible.userId === userId;
+  if (!isOwner && !isModerator)
+    throw throwAuthorizationError('You can only edit your own crucible');
+
+  const hasEnded =
+    crucible.status === CrucibleStatus.Completed ||
+    crucible.status === CrucibleStatus.Cancelled ||
+    (!!crucible.endAt && crucible.endAt <= new Date());
+  if (hasEnded && !isModerator)
+    throw throwBadRequestError('This crucible has ended and can no longer be edited');
+
+  const beforeStart = crucible.status === CrucibleStatus.Pending;
+  if (allowedResources !== undefined) {
+    if (!beforeStart && !isModerator)
+      throw throwBadRequestError('Required resources can only change before the crucible starts');
+    const hadRequirement =
+      Array.isArray(crucible.allowedResources) && crucible.allowedResources.length > 0;
+    if (hadRequirement !== allowedResources.length > 0)
+      throw throwBadRequestError('A resource requirement can be changed, but not added or removed');
+  }
+  if (nsfwLevel !== undefined && !isModerator)
+    throw throwAuthorizationError("Only moderators can change a crucible's content levels");
+
+  const nextName = name ?? crucible.name;
+  const nextDescription = description ?? crucible.description ?? '';
+  await throwOnBlockedUserContent([nextName, nextDescription], {
+    isModerator,
+    surface: 'crucible',
+  });
+  if (!isModerator)
+    assertSfwCrucibleText([nextName, nextDescription], nsfwLevel ?? crucible.nsfwLevel);
+
+  const imageId = coverImage
+    ? await resolveCoverImageId({
+        coverImage: { ...coverImage, type: MediaType.image },
+        userId,
+        currentCoverId: crucible.imageId,
+      })
+    : undefined;
+
+  return dbWrite.crucible.update({
+    where: { id },
+    data: {
+      name,
+      description,
+      imageId,
+      nsfwLevel,
+      allowedResources: allowedResources as Prisma.JsonArray | undefined,
+    },
+  });
 };
 
 export type CrucibleDetailEntry = Omit<CrucibleEntryRow, 'score' | 'position'> & {
@@ -935,6 +1013,19 @@ function getVotedPairsKey(crucibleId: number, userId: number): RedisKeyTemplateS
   return `${REDIS_SYS_KEYS.CRUCIBLE.VOTED_PAIRS}:${crucibleId}:${userId}` as RedisKeyTemplateSys;
 }
 
+function getServedPairsKey(crucibleId: number, userId: number): RedisKeyTemplateSys {
+  return `${REDIS_SYS_KEYS.CRUCIBLE.SERVED_PAIRS}:${crucibleId}:${userId}` as RedisKeyTemplateSys;
+}
+
+function getJudgeEntryVotesKey(crucibleId: number, userId: number): RedisKeyTemplateSys {
+  return `${REDIS_SYS_KEYS.CRUCIBLE.JUDGE_ENTRY_VOTES}:${crucibleId}:${userId}` as RedisKeyTemplateSys;
+}
+
+const JUDGE_KEY_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+/** Bounds how far one judge can move a single entry, however the pairs are steered. */
+export const CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY = 5;
+
 /**
  * Create a canonical pair key (always sorted so a:b == b:a)
  */
@@ -1309,7 +1400,12 @@ export const getJudgingPair = async ({
 
   // Get all ELO scores from Redis for this crucible
   // This is efficient as it's a single Redis HGETALL operation
-  const redisElos = await getAllEntryElos(crucibleId);
+  const [redisElos, judgeEntryVotes] = await Promise.all([
+    getAllEntryElos(crucibleId),
+    sysRedis.hGetAll(getJudgeEntryVotesKey(crucibleId, userId)),
+  ]);
+  const underJudgeCap = (entryId: number) =>
+    Number(judgeEntryVotes?.[entryId] ?? 0) < CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY;
 
   let imageA: EntryForJudging | null = null;
   let imageB: EntryForJudging | null = null;
@@ -1325,10 +1421,13 @@ export const getJudgingPair = async ({
     }
 
     // Merge Redis ELO scores into entries (fallback to database score if Redis entry is missing)
-    const entries: EntryForJudging[] = sampleEntries.map((entry) => ({
-      ...entry,
-      score: redisElos[entry.id] ?? entry.score, // Use Redis ELO if available, else DB fallback (1500)
-    }));
+    const entries: EntryForJudging[] = sampleEntries
+      .filter((entry) => underJudgeCap(entry.id))
+      .map((entry) => ({
+        ...entry,
+        score: redisElos[entry.id] ?? entry.score, // Use Redis ELO if available, else DB fallback (1500)
+      }));
+    if (entries.length < 2) continue;
 
     // Step 1: Select Image A - weighted by lowest ELO deviation (closest to 1500)
     // Sort by ELO deviation ascending, then add some randomness among entries with similar deviation
@@ -1407,6 +1506,10 @@ export const getJudgingPair = async ({
   if (!imageA || !imageB) {
     return null;
   }
+
+  const servedKey = getServedPairsKey(crucibleId, userId);
+  await sysRedis.sAdd(servedKey, createPairKey(imageA.id, imageB.id));
+  await sysRedis.expire(servedKey, JUDGE_KEY_TTL_SECONDS);
 
   // Step 4: Randomize left/right position
   const swapPositions = Math.random() < 0.5;
@@ -1528,6 +1631,10 @@ export const submitVote = async ({
     `Vote submission started: user ${userId}, crucible ${crucibleId}, winner ${winnerEntryId}, loser ${loserEntryId}`
   );
 
+  if (winnerEntryId === loserEntryId) {
+    throw throwBadRequestError('A vote needs two different entries');
+  }
+
   // Fetch the crucible to validate it's active
   const crucible = await dbRead.crucible.findUnique({
     where: { id: crucibleId },
@@ -1600,11 +1707,33 @@ export const submitVote = async ({
     throw throwBadRequestError('You cannot vote on your own entries');
   }
 
+  const judgeEntryVotesKey = getJudgeEntryVotesKey(crucibleId, userId);
+  const [winnerJudgeVotes, loserJudgeVotes] = await Promise.all([
+    sysRedis.hGet(judgeEntryVotesKey, winnerEntryId.toString()),
+    sysRedis.hGet(judgeEntryVotesKey, loserEntryId.toString()),
+  ]);
+  if (
+    Number(winnerJudgeVotes ?? 0) >= CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY ||
+    Number(loserJudgeVotes ?? 0) >= CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY
+  ) {
+    throw throwBadRequestError(
+      "You've judged one of these entries as many times as allowed. Please wait for the next pair to load."
+    );
+  }
+
+  const pairKey = createPairKey(winnerEntryId, loserEntryId);
+  // SREM is the atomic claim: only a pair this judge was actually served can be voted, once.
+  const served = await sysRedis.sRem(getServedPairsKey(crucibleId, userId), pairKey);
+  if (!served) {
+    throw throwBadRequestError(
+      'This pair is no longer available. Please wait for the next pair to load.'
+    );
+  }
+
   // Race condition protection: Atomically mark the pair as voted before processing
   // Use SADD to add to the set - if it returns 0, the pair was already added (duplicate vote)
   // Note: sysRedis.sAdd accepts either a single value or array (see CustomRedisClient interface)
   const key = getVotedPairsKey(crucibleId, userId);
-  const pairKey = createPairKey(winnerEntryId, loserEntryId);
   const addResult = await sysRedis.sAdd(key, pairKey);
   await sysRedis.expire(key, 30 * 24 * 60 * 60); // 30 days TTL
 
@@ -1636,6 +1765,9 @@ export const submitVote = async ({
   await Promise.all([
     crucibleEloRedis.incrementVoteCount(crucibleId, winnerEntryId),
     crucibleEloRedis.incrementVoteCount(crucibleId, loserEntryId),
+    sysRedis.hIncrBy(judgeEntryVotesKey, winnerEntryId.toString(), 1),
+    sysRedis.hIncrBy(judgeEntryVotesKey, loserEntryId.toString(), 1),
+    sysRedis.expire(judgeEntryVotesKey, JUDGE_KEY_TTL_SECONDS),
     addJudge(crucibleId, userId),
     incrementUserVoteCount(userId),
   ]);
@@ -2234,11 +2366,6 @@ export const cancelCrucible = async ({
   userId: number;
   isModerator: boolean;
 }): Promise<CancelCrucibleResult> => {
-  // Only moderators can cancel crucibles
-  if (!isModerator) {
-    throw throwAuthorizationError('Only moderators can cancel crucibles');
-  }
-
   // Fetch the crucible with all entries that have transaction IDs
   const crucible = await dbRead.crucible.findUnique({
     where: { id },
@@ -2262,6 +2389,12 @@ export const cancelCrucible = async ({
 
   if (!crucible) {
     throw throwNotFoundError('Crucible not found');
+  }
+
+  // Before start nobody can have entered, so an owner's cancel only returns their own Buzz.
+  const ownerBeforeStart = crucible.userId === userId && crucible.status === CrucibleStatus.Pending;
+  if (!isModerator && !ownerBeforeStart) {
+    throw throwAuthorizationError('Only moderators can cancel a crucible once it has started');
   }
 
   // Prizes have already been paid out, so there is nothing to give back.
@@ -2794,4 +2927,50 @@ export const getJudgeStats = async ({
     percentileRank,
     influenceScore,
   };
+};
+
+/**
+ * Crucibles to offer on the judge page's done screen: still judgeable by this viewer, and inside
+ * their browsing level on both the crucible's rating and its cover (the landing feed's rule).
+ */
+export const getJudgingSuggestions = async ({
+  userId,
+  browsingLevel,
+  excludeCrucibleId,
+  limit,
+  excludedUserIds = [],
+}: GetJudgingSuggestionsSchema & { userId: number; excludedUserIds?: number[] }) => {
+  const rows = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT c.id
+    FROM "Crucible" c
+    LEFT JOIN "Image" i ON i.id = c."imageId"
+    WHERE c.status = ${CrucibleStatus.Active}::"CrucibleStatus"
+      -- Status lags the clock until finalize-crucibles runs.
+      AND (c."endAt" IS NULL OR c."endAt" > now())
+      AND (c."nsfwLevel" & ${browsingLevel}) <> 0
+      AND (i.id IS NULL OR (i."nsfwLevel" & ${browsingLevel}) <> 0)
+      ${excludeCrucibleId ? Prisma.sql`AND c.id <> ${excludeCrucibleId}` : Prisma.empty}
+      ${
+        excludedUserIds.length > 0
+          ? Prisma.sql`AND c."userId" NOT IN (${Prisma.join(excludedUserIds)})`
+          : Prisma.empty
+      }
+      -- A judge is never shown their own entries, so a pair needs two of someone else's.
+      AND (
+        SELECT count(*) FROM (
+          SELECT 1 FROM "CrucibleEntry" ce
+          WHERE ce."crucibleId" = c.id AND ce."userId" <> ${userId}
+          LIMIT 2
+        ) judgeable
+      ) = 2
+    ORDER BY c."createdAt" DESC, c.id DESC
+    LIMIT ${limit}
+  `;
+  if (!rows.length) return [];
+
+  return dbRead.crucible.findMany({
+    where: { id: { in: rows.map(({ id }) => id) } },
+    select: crucibleListSelect,
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+  });
 };

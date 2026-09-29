@@ -4,12 +4,14 @@ import type {
   CreateEntryPostSchema,
   GetCrucibleEntriesSchema,
   CancelCrucibleSchema,
+  UpdateCrucibleSchema,
   CreateCrucibleInputSchema,
   GetCrucibleByIdSchema,
   GetCruciblesInfiniteSchema,
   GetJudgesCountSchema,
   GetJudgeStatsSchema,
   GetJudgingPairSchema,
+  GetJudgingSuggestionsSchema,
   SubmitEntrySchema,
   SubmitVoteSchema,
 } from '~/server/schema/crucible.schema';
@@ -22,6 +24,7 @@ import {
   checkCrucibleEntryEligibility,
   createCrucibleEntryPost,
   cancelCrucible,
+  updateCrucible,
   createCrucible,
   getCrucibleDetail,
   getCrucibleEntries,
@@ -30,6 +33,7 @@ import {
   getJudgesCount,
   getJudgeStats,
   getJudgingPair,
+  getJudgingSuggestions,
   getUserActiveCrucibles,
   getUserCrucibleStats,
   submitEntry,
@@ -156,8 +160,17 @@ export const cancelCrucibleHandler = async ({
   input: CancelCrucibleSchema;
   ctx: ProtectedContext;
 }) => {
-  // isModerator runs as router middleware, so reaching here means the caller is one.
-  return cancelCrucible({ ...input, userId: ctx.user.id, isModerator: true });
+  return cancelCrucible({ ...input, userId: ctx.user.id, isModerator: !!ctx.user.isModerator });
+};
+
+export const updateCrucibleHandler = async ({
+  input,
+  ctx,
+}: {
+  input: UpdateCrucibleSchema;
+  ctx: ProtectedContext;
+}) => {
+  return updateCrucible({ ...input, userId: ctx.user.id, isModerator: !!ctx.user.isModerator });
 };
 
 export const getCreateEligibilityHandler = async ({ ctx }: { ctx: ProtectedContext }) => {
@@ -191,4 +204,15 @@ export const getJudgeStatsHandler = async ({
   ctx: ProtectedContext;
 }) => {
   return getJudgeStats({ userId: ctx.user.id, crucibleId: input.crucibleId });
+};
+
+export const getJudgingSuggestionsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetJudgingSuggestionsSchema;
+  ctx: ProtectedContext;
+}) => {
+  const excludedUserIds = await getBlockedByUserIds(ctx.user);
+  return getJudgingSuggestions({ ...input, userId: ctx.user.id, excludedUserIds });
 };

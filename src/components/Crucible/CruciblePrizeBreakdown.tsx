@@ -1,14 +1,17 @@
-import { Paper, Stack, Text, Title, Box, Group } from '@mantine/core';
-import { IconCrown, IconTrophy } from '@tabler/icons-react';
+import { Badge, Paper, Stack, Text, ThemeIcon, Box, Group } from '@mantine/core';
+import { IconCrown, IconTrendingUp } from '@tabler/icons-react';
 import clsx from 'clsx';
+import { getBackground, getBorder } from '~/components/Challenge/DynamicPrizeCard/constants';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { Currency } from '~/shared/utils/prisma/enums';
-import { abbreviateNumber } from '~/utils/number-helpers';
 import type { PrizePosition } from '~/utils/crucible-helpers';
+import classes from './CruciblePrizeBreakdown.module.scss';
 
 export type CruciblePrizeBreakdownProps = {
   prizePositions: PrizePosition[];
   totalPrizePool: number;
+  entryFee: number;
   className?: string;
 };
 
@@ -24,33 +27,51 @@ export type CruciblePrizeBreakdownProps = {
 export function CruciblePrizeBreakdown({
   prizePositions,
   totalPrizePool,
+  entryFee,
   className,
 }: CruciblePrizeBreakdownProps) {
   // Sort positions by position number to ensure correct order
   const sortedPositions = [...prizePositions].sort((a, b) => a.position - b.position);
 
   return (
-    <Paper className={clsx('rounded-lg p-6', className)} bg="dark.6">
-      {/* Section header */}
-      <div className="mb-4 border-b border-[#373a40] pb-4">
-        <Title order={4} className="mb-4 flex items-center gap-2 text-white">
-          <IconTrophy size={20} className="text-yellow-500" />
-          Prize Pool
-        </Title>
-
-        {/* Total prize pool box */}
-        <Box className="rounded-lg bg-[#1a1b1e] p-3 text-center">
-          <Text className="text-2xl font-bold text-yellow-500">
-            {abbreviateNumber(totalPrizePool)} Buzz
+    <Paper className={clsx('overflow-hidden rounded-lg', className)} bg="dark.6">
+      <Stack
+        gap="sm"
+        align="center"
+        p="md"
+        style={{
+          borderBottom: getBorder('dark', 'teal'),
+          background: getBackground('dark', 'teal'),
+        }}
+      >
+        <Group gap={6} justify="center">
+          <ThemeIcon variant="light" color="teal" size="sm" radius="xl">
+            <IconTrendingUp size={14} />
+          </ThemeIcon>
+          <Text size="sm" fw={700} tt="uppercase" lts={0.5} c="white">
+            Growing Prize Pool
           </Text>
-          <Text size="xs" c="dimmed" mt={4}>
-            Total Prize Pool
+        </Group>
+        <Group gap={6} justify="center" align="baseline">
+          <CurrencyIcon currency={Currency.BUZZ} size={28} />
+          <Text fw={900} className={classes.amount}>
+            {totalPrizePool.toLocaleString()}
           </Text>
-        </Box>
-      </div>
+        </Group>
+        {entryFee > 0 && (
+          <Badge
+            size="lg"
+            variant="light"
+            color="teal"
+            leftSection={<IconTrendingUp size={14} />}
+            className={classes.pulse}
+          >
+            +{entryFee.toLocaleString()} Buzz per entry
+          </Badge>
+        )}
+      </Stack>
 
-      {/* Prize positions */}
-      <Stack gap="sm">
+      <Stack gap="sm" p="md">
         {sortedPositions.map((prize) => (
           <PrizePositionItem
             key={prize.position}

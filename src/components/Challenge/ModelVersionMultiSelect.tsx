@@ -76,15 +76,21 @@ export function ModelVersionMultiSelect({
 
   const canAdd = value.length < maxSelections;
 
+  const addResources = (resources: GenerationResource[]) => {
+    const added = resources
+      .filter((resource) => !value.includes(resource.id))
+      .slice(0, maxSelections - value.length);
+    if (!added.length) return;
+    setSelectedResources((prev) => [...prev, ...added]);
+    onChange?.([...value, ...added.map((resource) => resource.id)]);
+  };
+
   const handleOpenResourceSelect = () => {
     openResourceSelectModal({
-      title: 'Select Model Version',
-      onSelect: (resource) => {
-        if (resource && !value.includes(resource.id)) {
-          setSelectedResources((prev) => [...prev, resource]);
-          onChange?.([...value, resource.id]);
-        }
-      },
+      title: 'Select Model Versions',
+      onSelect: (resource) => addResources([resource]),
+      onSelectMultiple: addResources,
+      limit: maxSelections - value.length,
       options: {
         canGenerate: true,
         resources: [

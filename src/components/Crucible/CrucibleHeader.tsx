@@ -10,7 +10,11 @@ import { Currency, CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { CrucibleUserLink } from '~/components/Crucible/CrucibleUserLink';
-import { getCrucibleRatingLabel, getCrucibleTotalPrizePool } from '~/utils/crucible-helpers';
+import {
+  getCrucibleRatingLabel,
+  getCrucibleStatusBadge,
+  getCrucibleTotalPrizePool,
+} from '~/utils/crucible-helpers';
 import { NsfwLevel } from '~/server/common/enums';
 import type { SimpleUser } from '~/server/selectors/user.selector';
 
@@ -70,37 +74,7 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
   const entryCount = _count.entries ?? 0;
   const prizePool = getCrucibleTotalPrizePool({ entryFee, entryCount, seededPrizePool });
 
-  // Status badge styling
-  const getStatusBadge = () => {
-    switch (status) {
-      case CrucibleStatus.Active:
-        return (
-          <Badge color="blue" variant="filled" radius="xl" size="md" fw={600}>
-            ACTIVE NOW
-          </Badge>
-        );
-      case CrucibleStatus.Pending:
-        return (
-          <Badge color="blue" variant="filled" radius="xl" size="md" fw={600}>
-            UPCOMING
-          </Badge>
-        );
-      case CrucibleStatus.Completed:
-        return (
-          <Badge color="gray" variant="filled" radius="xl" size="md" fw={600}>
-            COMPLETED
-          </Badge>
-        );
-      case CrucibleStatus.Cancelled:
-        return (
-          <Badge color="red" variant="filled" radius="xl" size="md" fw={600}>
-            CANCELLED
-          </Badge>
-        );
-      default:
-        return null;
-    }
-  };
+  const statusBadge = getCrucibleStatusBadge(status, endAt);
 
   return (
     <div
@@ -111,15 +85,23 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
     >
       {/* Background image (uses crucible cover image) */}
       {image && (
-        <div className="absolute inset-0">
+        <div className="absolute inset-0 overflow-hidden">
+          <EdgeMedia
+            src={image.url}
+            name={image.name}
+            type="image"
+            width={450}
+            className="size-full scale-110 object-cover opacity-40 blur-2xl"
+            // EdgeImage caps maxWidth at the requested width, which left a bare strip on wide screens.
+            style={{ maxWidth: 'none' }}
+          />
           <EdgeMedia
             src={image.url}
             name={image.name}
             type="image"
             width={1600}
-            className="size-full object-cover opacity-50"
-            // EdgeImage caps maxWidth at the requested width, which left a bare strip on wide screens.
-            style={{ objectPosition: 'center', maxWidth: 'none' }}
+            className="absolute inset-0 size-full object-contain opacity-70"
+            style={{ maxWidth: 'none' }}
           />
         </div>
       )}
@@ -159,7 +141,18 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
           }}
         >
           {/* Status badge */}
-          <div className="mb-3">{getStatusBadge()}</div>
+          <div className="mb-3">
+            <Badge
+              color={statusBadge.color}
+              variant="filled"
+              radius="xl"
+              size="md"
+              fw={600}
+              tt="uppercase"
+            >
+              {statusBadge.label}
+            </Badge>
+          </div>
 
           {/* Title */}
           <Title order={1} className="mb-3 text-white [overflow-wrap:anywhere]" fw={700} size="h2">

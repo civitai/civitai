@@ -175,3 +175,32 @@ describe('getJudgingPair — excludeEntryIds', () => {
     expect(interpolatedValues(queryRaw.mock.calls[0])).toEqual(expect.arrayContaining([42, 7]));
   });
 });
+
+describe('getJudgingPair — vote integrity', () => {
+  it('records the pair it serves, so only a served pair can be voted', async () => {
+    queryRaw.mockResolvedValue([rawEntry(1, 11), rawEntry(2, 12)]);
+
+    const pair = await getJudgingPair({ crucibleId: 1, userId: 7 });
+
+    expect(pair).not.toBeNull();
+    expect(redisMock.sysRedis.sAdd).toHaveBeenCalledWith(
+      expect.stringMatching(/served:1:7$/),
+      '1:2'
+    );
+  });
+
+  it('never serves an entry the judge has already voted on as often as allowed', async () => {
+    const { CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY } = await import(
+      '~/server/services/crucible.service'
+    );
+    queryRaw.mockResolvedValue([rawEntry(1, 11), rawEntry(2, 12), rawEntry(3, 13)]);
+    redisMock.sysRedis.hGetAll.mockResolvedValue({
+      '1': String(CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY),
+    });
+
+    for (let i = 0; i < 20; i++) {
+      const pair = await getJudgingPair({ crucibleId: 1, userId: 7 });
+      expect([pair?.left.id, pair?.right.id].sort()).toEqual([2, 3]);
+    }
+  });
+});

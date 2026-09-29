@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
-import { dbMock } from '~/__tests__/mocks';
+import { dbMock, redisMock } from '~/__tests__/mocks';
 import type * as CrucibleEloRedis from '~/server/redis/crucible-elo.redis';
 import type * as CrucibleEloService from '~/server/services/crucible-elo.service';
 
@@ -43,6 +43,7 @@ beforeEach(() => {
     userId: where.id === 10 ? 101 : 102,
   }));
   processVote.mockResolvedValue({ winnerElo: 1532, loserElo: 1468 });
+  redisMock.sysRedis.sRem.mockResolvedValue(1);
 });
 
 describe('submitVote — minimum view time', () => {
@@ -82,6 +83,7 @@ describe('submitVote — minimum view time', () => {
 
     const { sysRedis } = await import('~/server/redis/client');
     expect(sysRedis.sAdd).not.toHaveBeenCalled();
+    expect(sysRedis.sRem).not.toHaveBeenCalled();
   });
 });
 

@@ -1,33 +1,62 @@
 import { Card, Skeleton, Stack, Text, ThemeIcon } from '@mantine/core';
+import { useEffect, useState } from 'react';
 import { IconTrophy, IconCoin, IconMedal, IconChartBar } from '@tabler/icons-react';
 import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import type { RouterOutput } from '~/types/router';
 import { ActiveCruciblesCarousel } from './ActiveCruciblesCarousel';
+import { CrucibleIntro } from './CrucibleIntro';
 
-/**
- * UserCrucibleWelcome - Welcome section with user crucible stats
- *
- * Shows personalized greeting and stats for logged-in users:
- * - Total Crucibles entered
- * - Buzz Won from prizes
- * - Best Placement (position number)
- * - Win Rate percentage
- *
- * Only renders for authenticated users.
- */
+const INTRO_DISMISSED_KEY = 'crucible-intro-dismissed';
+
+/** First-timers get the intro until they dismiss it; everyone else gets their stats. */
 export function UserCrucibleWelcome() {
   const currentUser = useCurrentUser();
+  const { data: stats, isLoading } = trpc.crucible.getUserStats.useQuery(
+    {},
+    { enabled: !!currentUser }
+  );
+  const [introDismissed, setIntroDismissed] = useState(true);
 
-  // Only show for logged-in users
+  useEffect(() => {
+    try {
+      setIntroDismissed(localStorage.getItem(INTRO_DISMISSED_KEY) === '1');
+    } catch {
+      setIntroDismissed(false);
+    }
+  }, []);
+
+  const dismissIntro = () => {
+    setIntroDismissed(true);
+    try {
+      localStorage.setItem(INTRO_DISMISSED_KEY, '1');
+    } catch {}
+  };
+
+  const isFirstTimer = !currentUser || (!isLoading && (stats?.totalCrucibles ?? 0) === 0);
+  if (isFirstTimer && !introDismissed)
+    return <CrucibleIntro canCreate={!!currentUser} onDismiss={dismissIntro} />;
   if (!currentUser) return null;
 
-  return <UserCrucibleWelcomeContent username={currentUser.username ?? 'there'} />;
+  return (
+    <UserCrucibleWelcomeContent
+      username={currentUser.username ?? 'there'}
+      stats={stats}
+      isLoading={isLoading}
+    />
+  );
 }
 
-function UserCrucibleWelcomeContent({ username }: { username: string }) {
-  const { data: stats, isLoading } = trpc.crucible.getUserStats.useQuery({});
-
+function UserCrucibleWelcomeContent({
+  username,
+  stats,
+  isLoading,
+}: {
+  username: string;
+  stats: RouterOutput['crucible']['getUserStats'] | undefined;
+  isLoading: boolean;
+}) {
   return (
     <Card
       radius="md"

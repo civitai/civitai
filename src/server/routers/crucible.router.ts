@@ -1,5 +1,6 @@
 import {
   cancelCrucibleHandler,
+  updateCrucibleHandler,
   checkEntryEligibilityHandler,
   getCreateEligibilityHandler,
   createCrucibleHandler,
@@ -11,17 +12,19 @@ import {
   getJudgesCountHandler,
   getJudgeStatsHandler,
   getJudgingPairHandler,
+  getJudgingSuggestionsHandler,
   getUserActiveCruciblesHandler,
   getUserCrucibleStatsHandler,
   submitEntryHandler,
   submitVoteHandler,
 } from '~/server/controllers/crucible.controller';
-import { isModerator } from '~/server/routers/base.router';
+import { rateLimit } from '~/server/middleware.trpc';
 import {
   checkCrucibleEntryEligibilitySchema,
   createEntryPostSchema,
   getCrucibleEntriesSchema,
   cancelCrucibleSchema,
+  updateCrucibleSchema,
   createCrucibleInputSchema,
   getCrucibleByIdSchema,
   getCruciblesInfiniteSchema,
@@ -29,6 +32,7 @@ import {
   getJudgesCountSchema,
   getJudgeStatsSchema,
   getJudgingPairSchema,
+  getJudgingSuggestionsSchema,
   getUserActiveCruciblesSchema,
   getUserCrucibleStatsSchema,
   submitEntrySchema,
@@ -84,19 +88,25 @@ export const crucibleRouter = router({
 
   getJudgingPair: guardedProcedure
     .use(isFlagProtected('crucible'))
+    .use(rateLimit({ limit: 120, period: 60 }))
     .input(getJudgingPairSchema)
     .query(getJudgingPairHandler),
 
   submitVote: guardedProcedure
     .use(isFlagProtected('crucible'))
+    .use(rateLimit({ limit: 60, period: 60 }))
     .input(submitVoteSchema)
     .mutation(submitVoteHandler),
 
   cancel: guardedProcedure
     .use(isFlagProtected('crucible'))
-    .use(isModerator)
     .input(cancelCrucibleSchema)
     .mutation(cancelCrucibleHandler),
+
+  update: guardedProcedure
+    .use(isFlagProtected('crucible'))
+    .input(updateCrucibleSchema)
+    .mutation(updateCrucibleHandler),
 
   getUserStats: guardedProcedure
     .use(isFlagProtected('crucible'))
@@ -122,4 +132,9 @@ export const crucibleRouter = router({
     .use(isFlagProtected('crucible'))
     .input(getJudgeStatsSchema)
     .query(getJudgeStatsHandler),
+
+  getJudgingSuggestions: guardedProcedure
+    .use(isFlagProtected('crucible'))
+    .input(getJudgingSuggestionsSchema)
+    .query(getJudgingSuggestionsHandler),
 });

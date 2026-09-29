@@ -1,0 +1,93 @@
+import { Container, Group, Stack, Title } from '@mantine/core';
+import { IconTrophy } from '@tabler/icons-react';
+import { WinnerPodiumCard, type WinnerPodiumData } from '~/components/Challenge/WinnerPodiumCard';
+import type { RouterOutput } from '~/types/router';
+import { getCruciblePrizeAmount, type PrizePosition } from '~/utils/crucible-helpers';
+import { isDefined } from '~/utils/type-guards';
+
+export function CruciblePodium({
+  entries,
+  prizePositions,
+  entryCount,
+  totalPrizePool,
+}: {
+  entries: RouterOutput['crucible']['getEntries']['items'];
+  prizePositions: PrizePosition[];
+  entryCount: number;
+  totalPrizePool: number;
+}) {
+  const winners: WinnerPodiumData[] = entries
+    .filter((entry) => entry.position !== null && entry.position <= 3)
+    .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+    .map((entry) => {
+      const place = entry.position ?? 0;
+      return {
+        place,
+        userId: entry.userId,
+        username: entry.user.username ?? '',
+        imageId: entry.imageId,
+        imageUrl: entry.image.url,
+        imageNsfwLevel: entry.image.nsfwLevel,
+        buzzAwarded: getCruciblePrizeAmount({
+          position: place,
+          prizePositions,
+          entryCount,
+          totalPrizePool,
+        }),
+        profilePicture: entry.user.profilePicture,
+      };
+    });
+
+  if (!winners.length) return null;
+
+  const podiumOrder = [winners[1], winners[0], winners[2]].filter(isDefined);
+
+  return (
+    <section
+      className="relative overflow-hidden py-12"
+      style={{
+        background:
+          'linear-gradient(180deg, rgba(250, 176, 5, 0.15) 0%, rgba(250, 176, 5, 0.05) 100%)',
+      }}
+    >
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div className="absolute -left-20 -top-20 size-40 rounded-full bg-yellow-500/10 blur-3xl" />
+        <div className="absolute -right-20 top-1/2 size-60 rounded-full bg-orange-500/10 blur-3xl" />
+      </div>
+
+      <Container size="xl" className="relative">
+        <Stack gap="xl">
+          <Group justify="center" gap="sm">
+            <IconTrophy size={32} className="text-yellow-500" />
+            <Title order={2}>Crucible Winners</Title>
+            <IconTrophy size={32} className="text-yellow-500" />
+          </Group>
+
+          <div className="hidden items-end justify-center gap-4 md:flex">
+            {podiumOrder.map((winner) => (
+              <WinnerPodiumCard
+                key={winner.place}
+                winner={winner}
+                isFirst={winner.place === 1}
+                className={winner.place === 1 ? 'z-10' : ''}
+                buzzType="yellow"
+              />
+            ))}
+          </div>
+
+          <Stack gap="md" className="md:hidden">
+            {winners.map((winner) => (
+              <WinnerPodiumCard
+                key={winner.place}
+                winner={winner}
+                isFirst={winner.place === 1}
+                isMobile
+                buzzType="yellow"
+              />
+            ))}
+          </Stack>
+        </Stack>
+      </Container>
+    </section>
+  );
+}

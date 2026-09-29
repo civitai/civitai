@@ -1,7 +1,7 @@
 import * as z from 'zod';
 import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { CrucibleSort } from '~/server/common/enums';
-import { infiniteQuerySchema } from './base.schema';
+import { baseQuerySchema, infiniteQuerySchema } from './base.schema';
 import { isUUID } from '~/utils/string-helpers';
 import {
   CRUCIBLE_CONTENT_TYPES,
@@ -201,20 +201,25 @@ export const checkCrucibleEntryEligibilitySchema = z.object({
 
 // Schema for submitting a vote
 export type SubmitVoteSchema = z.infer<typeof submitVoteSchema>;
-export const submitVoteSchema = z.object({
-  crucibleId: z.number(),
-  winnerEntryId: z.number(),
-  loserEntryId: z.number(),
-  // Playback actually watched on each side. Optional because only a crucible that sets
-  // `minViewSeconds` needs them — an image crucible has nothing to watch, and the server
-  // requires them only where the rule applies.
-  //
-  // NOT `.int()`. These are accumulated from `video.currentTime` deltas, so the real client sends
-  // fractions (10894.686999999998); an int-only schema rejected every genuine vote while every
-  // test that passed a round number passed.
-  winnerWatchedMs: z.number().min(0).finite().optional(),
-  loserWatchedMs: z.number().min(0).finite().optional(),
-});
+export const submitVoteSchema = z
+  .object({
+    crucibleId: z.number(),
+    winnerEntryId: z.number(),
+    loserEntryId: z.number(),
+    // Playback actually watched on each side. Optional because only a crucible that sets
+    // `minViewSeconds` needs them — an image crucible has nothing to watch, and the server
+    // requires them only where the rule applies.
+    //
+    // NOT `.int()`. These are accumulated from `video.currentTime` deltas, so the real client sends
+    // fractions (10894.686999999998); an int-only schema rejected every genuine vote while every
+    // test that passed a round number passed.
+    winnerWatchedMs: z.number().min(0).finite().optional(),
+    loserWatchedMs: z.number().min(0).finite().optional(),
+  })
+  .refine(({ winnerEntryId, loserEntryId }) => winnerEntryId !== loserEntryId, {
+    message: 'A vote needs two different entries',
+    path: ['loserEntryId'],
+  });
 
 // Schema for getting a judging pair
 export type GetJudgingPairSchema = z.infer<typeof getJudgingPairSchema>;
@@ -226,6 +231,16 @@ export const getJudgingPairSchema = z.object({
 });
 
 // Schema for cancelling a crucible
+export type UpdateCrucibleSchema = z.infer<typeof updateCrucibleSchema>;
+export const updateCrucibleSchema = z.object({
+  id: z.number(),
+  name: z.string().trim().nonempty().max(CRUCIBLE_NAME_MAX_LENGTH).optional(),
+  description: z.string().nonempty().max(CRUCIBLE_DESCRIPTION_MAX_LENGTH).optional(),
+  coverImage: crucibleImageSchema.optional(),
+  allowedResources: z.array(z.number().int()).max(CRUCIBLE_MAX_ALLOWED_RESOURCES).optional(),
+  nsfwLevel: z.number().int().positive().optional(),
+});
+
 export type CancelCrucibleSchema = z.infer<typeof cancelCrucibleSchema>;
 export const cancelCrucibleSchema = z.object({
   id: z.number(),
@@ -285,12 +300,18 @@ export const getJudgeStatsSchema = z.object({
   crucibleId: z.number(),
 });
 
+export type GetJudgingSuggestionsSchema = z.infer<typeof getJudgingSuggestionsSchema>;
+export const getJudgingSuggestionsSchema = baseQuerySchema.extend({
+  excludeCrucibleId: z.number().optional(),
+  limit: z.number().int().min(1).max(12).default(4),
+});
+
 // Judge stats response type
 export type JudgeStats = {
   // Total pairs this user has rated across all crucibles
   totalPairsRated: number;
   // Percentile rank among all judges (e.g., "Top 8%" means they're in top 8%)
   percentileRank: number | null;
-  // User's influence score based on voting consistency with final rankings
+  // 10 × √totalPairsRated. Display only: it does not weight the user's votes.
   influenceScore: number;
 };

@@ -5,6 +5,7 @@ import {
   Grid,
   Group,
   Input,
+  NumberInput,
   Paper,
   Progress,
   SimpleGrid,
@@ -30,13 +31,23 @@ import {
   IconVideo,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { useEffect, useState } from 'react';
-import * as z from 'zod';
+import { useEffect, useRef, useState } from 'react';
 
 import { BackButton } from '~/components/BackButton/BackButton';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { ChallengeCreateRequirements } from '~/components/Challenge/ChallengeCreateRequirements';
 import { ContentRatingSelect } from '~/components/Challenge/ContentRatingSelect';
+import {
+  CRUCIBLE_CREATE_DRAFT_KEY,
+  CRUCIBLE_CREATE_STEP_COUNT,
+  crucibleCreateDefaultValues,
+  crucibleCreateDraftSchema,
+  crucibleCreateFormSchema,
+  entryFeeRangeLabel,
+  getPlaceBuzz,
+  type CrucibleCreateFormValues,
+  type PlaceBuzz,
+} from '~/components/Crucible/crucible-create-form';
 import { ModelVersionMultiSelect } from '~/components/Challenge/ModelVersionMultiSelect';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
@@ -45,7 +56,7 @@ import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useStepper } from '~/hooks/useStepper';
+import { useFormStorage } from '~/hooks/useFormStorage';
 import {
   Form,
   InputDateTimePicker,
@@ -56,10 +67,9 @@ import {
   useForm,
 } from '~/libs/form';
 import { withController } from '~/libs/form/hoc/withController';
+import { useIsClient } from '~/providers/IsClientProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import {
-  CRUCIBLE_CONTENT_TYPES,
-  CRUCIBLE_DEFAULT_DURATION,
   CRUCIBLE_DEFAULT_PRIZE_POSITIONS,
   CRUCIBLE_DESCRIPTION_MAX_LENGTH,
   CRUCIBLE_DURATION_COSTS,
@@ -112,64 +122,15 @@ const formatSeconds = (seconds: number) =>
 const NO_RULE = 0;
 const toVideoRule = (seconds: number | undefined) => seconds || undefined;
 
-const entryFeeRangeLabel = `${CRUCIBLE_MIN_ENTRY_FEE.toLocaleString()}–${CRUCIBLE_MAX_ENTRY_FEE.toLocaleString()} Buzz`;
-
-// The form's resolver rebuilds the schema from `.shape`, so object-level refines would be dropped:
-// the cross-field rules live in the step checks below instead.
-const formSchema = z.object({
-  name: z.string().trim().min(1, 'Name is required').max(CRUCIBLE_NAME_MAX_LENGTH),
-  description: z.string().trim().max(CRUCIBLE_DESCRIPTION_MAX_LENGTH).optional(),
-  duration: z.number(),
-  startAt: z.date().nullish(),
-  nsfwLevel: z.number(),
-  contentType: z.enum(CRUCIBLE_CONTENT_TYPES),
-  entryFee: z
-    .number({ error: 'Entry fee is required' })
-    .int()
-    .min(CRUCIBLE_MIN_ENTRY_FEE, `Entry fee must be ${entryFeeRangeLabel}`)
-    .max(CRUCIBLE_MAX_ENTRY_FEE, `Entry fee must be ${entryFeeRangeLabel}`),
-  entryLimit: z.number().int().min(1).max(CRUCIBLE_MAX_ENTRIES),
-  maxTotalEntries: z
-    .number()
-    .int()
-    .min(0)
-    .max(
-      CRUCIBLE_MAX_TOTAL_ENTRIES,
-      `At most ${CRUCIBLE_MAX_TOTAL_ENTRIES.toLocaleString()} entries`
-    )
-    .refine(
-      (value) => value === 0 || value >= CRUCIBLE_MIN_TOTAL_ENTRIES,
-      `At least ${CRUCIBLE_MIN_TOTAL_ENTRIES} entries are needed for judging`
-    )
-    .optional(),
-  allowedResources: z.array(z.number()).optional(),
-  minViewSeconds: z.number().optional(),
-  maxClipSeconds: z.number().optional(),
-  seededPrizePool: z
-    .number({ error: 'Enter 0 for no seed' })
-    .int()
-    .min(0)
-    .max(CRUCIBLE_MAX_SEEDED_PRIZE_POOL),
-  prizePositions: z.record(z.string(), z.number()),
-});
-type FormValues = z.infer<typeof formSchema>;
-
-const defaultValues: FormValues = {
-  name: '',
-  description: '',
-  duration: CRUCIBLE_DEFAULT_DURATION,
-  nsfwLevel: 1,
-  contentType: MediaType.image,
-  entryFee: 100,
-  entryLimit: 1,
-  allowedResources: [],
-  seededPrizePool: 0,
-  prizePositions: { ...CRUCIBLE_DEFAULT_PRIZE_POSITIONS },
-};
+// The abbreviation follows DST (PDT vs PST), so read it at the date being shown.
+const getLocalTimeZoneName = (at: Date) =>
+  new Intl.DateTimeFormat(undefined, { timeZoneName: 'short' })
+    .formatToParts(at)
+    .find((part) => part.type === 'timeZoneName')?.value;
 
 const toTotalEntriesCap = (maxTotalEntries: number | undefined) => maxTotalEntries || undefined;
 
-const stepFields: Record<number, (keyof FormValues)[]> = {
+const stepFields: Record<number, (keyof CrucibleCreateFormValues)[]> = {
   1: ['name', 'description', 'duration', 'startAt', 'nsfwLevel'],
   2: [
     'contentType',
@@ -201,19 +162,37 @@ export const getServerSideProps = createServerSideProps({
 export default function CrucibleCreate() {
   const router = useRouter();
   const currentUser = useCurrentUser();
-  const [currentStep, { goToNextStep, goToPrevStep, setStep }] = useStepper(4);
+  const isClient = useIsClient();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const wizardTopRef = useRef<HTMLDivElement>(null);
 
   const { data: createEligibility } = trpc.crucible.getCreateEligibility.useQuery(undefined, {
     enabled: !!currentUser && !currentUser.isModerator,
   });
 
   // The wizard unmounts each step's inputs, so they must keep their values when unregistered.
-  const form = useForm({ schema: formSchema, defaultValues, shouldUnregister: false });
+  const form = useForm({
+    schema: crucibleCreateFormSchema,
+    defaultValues: crucibleCreateDefaultValues,
+    shouldUnregister: false,
+  });
   const values = form.watch();
+
+  // The server's zone isn't the viewer's, so the name is only read on the client.
+  const timeZoneName = isClient ? getLocalTimeZoneName(values.startAt ?? new Date()) : undefined;
+  const localTimeNote = `Times are in your local time${timeZoneName ? ` (${timeZoneName})` : ''}.`;
+
+  const clearDraft = useFormStorage({
+    schema: crucibleCreateDraftSchema,
+    form,
+    timeout: 1000,
+    key: CRUCIBLE_CREATE_DRAFT_KEY,
+    watch: (value) => value,
+  });
 
   const createCrucibleMutation = trpc.crucible.create.useMutation({
     onSuccess: (data) => {
+      clearDraft();
       showSuccessNotification({
         title: 'Crucible Created!',
         message: 'Your crucible has been created successfully. Redirecting...',
@@ -232,8 +211,21 @@ export default function CrucibleCreate() {
   const [prizeEditMode, setPrizeEditMode] = useState(false);
   const prizeCustomized = isCustomPrizeDistribution(values.prizePositions);
 
-  const { files: imageFiles, uploadToCF, removeImage, resetFiles } = useCFImageUpload();
+  const { files: imageFiles, uploadToCF, resetFiles } = useCFImageUpload();
   const imageFile = imageFiles[0];
+  const uploadingCover =
+    imageFile?.status === 'pending' || imageFile?.status === 'uploading' ? imageFile : undefined;
+  const coverImage = values.coverImage;
+  const coverSrc = coverImage
+    ? (imageFile?.url === coverImage.url && imageFile.objectUrl) || coverImage.url
+    : undefined;
+
+  // The cover lives in the form, not the upload hook, so the saved draft carries it across reloads.
+  useEffect(() => {
+    if (imageFile?.status !== 'success') return;
+    const { url, width, height, hash } = imageFile;
+    form.setValue('coverImage', { url, width, height, hash });
+  }, [imageFile?.status, imageFile?.url]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDropImages = async (droppedFiles: File[]) => {
     resetFiles();
@@ -242,10 +234,15 @@ export default function CrucibleCreate() {
     }
   };
 
+  const removeCoverImage = () => {
+    resetFiles();
+    form.setValue('coverImage', null);
+  };
+
   const setPrizePositions = (prizePositions: Record<string, number>) =>
     form.setValue('prizePositions', prizePositions);
 
-  const isStep1Valid = () => values.name.trim().length > 0 && imageFile?.status === 'success';
+  const isStep1Valid = () => values.name.trim().length > 0 && !!coverImage;
 
   // Mirrors the server's cross-field refine. Both set and inverted means nothing can clear the
   // bar, so the crucible would have nothing votable in it.
@@ -282,6 +279,16 @@ export default function CrucibleCreate() {
         }% so they total exactly 100%.`;
   const isStep3Valid = () => values.seededPrizePool != null && !prizeDistributionError;
 
+  // Clamped so a restored draft can't open past a step it no longer passes.
+  const currentStep = Math.min(
+    values.step,
+    !isStep1Valid() ? 1 : !isStep2Valid() ? 2 : !isStep3Valid() ? 3 : CRUCIBLE_CREATE_STEP_COUNT
+  );
+  const setStep = (step: number) => {
+    form.setValue('step', step);
+    wizardTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  };
+
   const durationCost = CRUCIBLE_DURATION_COSTS[values.duration] ?? 0;
   const prizeCustomizationCost = prizeCustomized ? CRUCIBLE_PRIZE_CUSTOMIZATION_COST : 0;
   const resourceRequirementsCost = values.allowedResources?.length
@@ -292,6 +299,19 @@ export default function CrucibleCreate() {
     prizeCustomizationCost +
     resourceRequirementsCost +
     (values.seededPrizePool ?? 0);
+
+  const placeBuzz = getPlaceBuzz({
+    prizePositions: values.prizePositions,
+    seededPrizePool: values.seededPrizePool ?? 0,
+    entryFee: values.entryFee ?? 0,
+    maxTotalEntries: totalEntriesCap,
+  });
+  const prizePoolNote = (
+    <Text size="xs" c="dimmed" mt="xs">
+      The prize pool is your seed plus every entry fee, so what each place wins grows with the
+      number of entries.
+    </Text>
+  );
 
   const canAddPrizePosition =
     Object.keys(values.prizePositions).length < CRUCIBLE_MAX_PRIZE_POSITIONS;
@@ -326,13 +346,13 @@ export default function CrucibleCreate() {
     if (currentStep === 1 && !isStep1Valid()) return;
     if (currentStep === 2 && !isStep2Valid()) return;
     if (currentStep === 3 && !isStep3Valid()) return;
-    goToNextStep();
+    setStep(currentStep + 1);
   };
 
-  const handleSubmit = (data: FormValues) => {
+  const handleSubmit = (data: CrucibleCreateFormValues) => {
     if (isSubmitting) return;
 
-    if (!imageFile || imageFile.status !== 'success') {
+    if (!data.coverImage) {
       showErrorNotification({
         title: 'Missing Cover Image',
         error: { message: 'Please upload a cover image for your crucible.' },
@@ -346,12 +366,7 @@ export default function CrucibleCreate() {
     createCrucibleMutation.mutate({
       name: data.name,
       description: data.description || 'No description provided',
-      coverImage: {
-        url: imageFile.url,
-        width: imageFile.width,
-        height: imageFile.height,
-        hash: imageFile.hash,
-      },
+      coverImage: data.coverImage,
       nsfwLevel: data.nsfwLevel,
       contentType: data.contentType,
       entryFee: data.entryFee,
@@ -375,7 +390,7 @@ export default function CrucibleCreate() {
           description="This image appears on discovery cards (16:9 aspect ratio recommended)"
           withAsterisk
         >
-          {imageFile && imageFile.progress < 100 ? (
+          {uploadingCover ? (
             <Paper
               style={{ position: 'relative', marginTop: 5, width: '100%', height: 200 }}
               withBorder
@@ -385,22 +400,22 @@ export default function CrucibleCreate() {
                   <Progress.Section
                     striped
                     animated
-                    value={imageFile.progress}
-                    color={imageFile.progress < 100 ? 'blue' : 'green'}
+                    value={uploadingCover.progress}
+                    color={uploadingCover.progress < 100 ? 'blue' : 'green'}
                   >
-                    <Progress.Label>{Math.floor(imageFile.progress)}%</Progress.Label>
+                    <Progress.Label>{Math.floor(uploadingCover.progress)}%</Progress.Label>
                   </Progress.Section>
                 </Progress.Root>
               </div>
             </Paper>
-          ) : imageFile?.status === 'success' ? (
+          ) : coverSrc ? (
             <div style={{ position: 'relative', width: '100%', marginTop: 8 }}>
               <Tooltip label="Remove image">
                 <LegacyActionIcon
                   size="sm"
                   variant="filled"
                   color="red"
-                  onClick={() => removeImage(imageFile.url)}
+                  onClick={removeCoverImage}
                   className="absolute right-2 top-2 z-10"
                 >
                   <IconTrash size={14} />
@@ -408,7 +423,7 @@ export default function CrucibleCreate() {
               </Tooltip>
               <div className="overflow-hidden rounded-lg" style={{ aspectRatio: '16 / 9' }}>
                 <EdgeMedia
-                  src={imageFile.objectUrl ?? imageFile.url}
+                  src={coverSrc}
                   width={800}
                   style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                 />
@@ -486,7 +501,7 @@ export default function CrucibleCreate() {
       <InputDateTimePicker
         name="startAt"
         label="Start Date"
-        description="Leave empty to start the crucible as soon as you create it"
+        description={`Leave empty to start the crucible as soon as you create it. ${localTimeNote}`}
         placeholder="Start immediately"
         valueFormat="lll"
         minDate={new Date()}
@@ -566,19 +581,29 @@ export default function CrucibleCreate() {
         withAsterisk
       />
 
-      <InputNumber
-        name="maxTotalEntries"
-        label="Maximum Total Entries"
-        description={`Optional cap on entries across all users (${CRUCIBLE_MIN_TOTAL_ENTRIES}–${CRUCIBLE_MAX_TOTAL_ENTRIES.toLocaleString()}). Leave empty or enter 0 for no limit.`}
-        placeholder="No limit"
-        min={0}
-        max={CRUCIBLE_MAX_TOTAL_ENTRIES}
-        allowNegative={false}
-        allowDecimal={false}
-        clearable
-        // Step errors are only re-checked on Next, so a corrected value would keep the old one.
-        onChange={() => form.clearErrors('maxTotalEntries')}
-      />
+      <div>
+        <InputNumber
+          name="maxTotalEntries"
+          label="Maximum Total Entries"
+          description={`Optional cap on entries across all users (${CRUCIBLE_MIN_TOTAL_ENTRIES}–${CRUCIBLE_MAX_TOTAL_ENTRIES.toLocaleString()}). Leave empty or enter 0 for no limit.`}
+          placeholder="No limit"
+          min={0}
+          max={CRUCIBLE_MAX_TOTAL_ENTRIES}
+          allowNegative={false}
+          allowDecimal={false}
+          clearable
+          // Step errors are only re-checked on Next, so a corrected value would keep the old one.
+          onChange={() => form.clearErrors('maxTotalEntries')}
+        />
+        <Group gap={6} mt={8} align="flex-start" wrap="nowrap">
+          <IconInfoCircle size={14} className="mt-0.5 shrink-0 text-blue-5" />
+          <Text size="xs" c="dimmed">
+            If nobody enters, your seed is refunded. If there are fewer entries than paid places,
+            the unfilled places&apos; share is split among the winners in proportion to their
+            shares, so a single entry takes the whole pool.
+          </Text>
+        </Group>
+      </div>
 
       {values.contentType === MediaType.video && (
         <Input.Wrapper
@@ -669,7 +694,8 @@ export default function CrucibleCreate() {
             <Text size="xs" c="dimmed" fw={600} mb={8}>
               {prizeCustomized ? 'Custom Distribution' : 'Default Distribution'}
             </Text>
-            <PrizeDistributionChart prizePositions={values.prizePositions} />
+            <PrizeDistributionChart prizePositions={values.prizePositions} placeBuzz={placeBuzz} />
+            {prizePoolNote}
           </div>
 
           {prizeDistributionError && (
@@ -710,41 +736,63 @@ export default function CrucibleCreate() {
 
         {sortedPositions.map(([position, percentage], index) => (
           <Paper key={position} p="md" className="border border-dark-4">
-            <Group justify="space-between" align="center" gap="md">
-              <Text size="sm" fw={600} style={{ width: 90 }}>
-                {formatPlace(position)}
-              </Text>
-              <Slider
-                value={percentage}
-                onChange={(value) =>
-                  setPrizePositions({ ...values.prizePositions, [position]: value })
-                }
-                min={0}
-                max={100}
-                step={1}
-                style={{ flex: 1 }}
-                color={positionColors[index]?.slider ?? 'gray'}
-                styles={{
-                  track: { height: 6 },
-                  thumb: { borderWidth: 2 },
-                }}
-              />
-              <Text size="sm" fw={700} style={{ width: 50, textAlign: 'right' }}>
-                {percentage}%
-              </Text>
-              {parseInt(position) > 3 && (
-                <ActionIcon
-                  variant="subtle"
-                  color="red"
-                  size="sm"
-                  onClick={() => removePrizePosition(position)}
-                >
-                  <IconTrash size={14} />
-                </ActionIcon>
-              )}
+            <Group justify="space-between" wrap="nowrap" gap="sm">
+              <div className="min-w-0">
+                <Text size="sm" fw={600}>
+                  {formatPlace(position)}
+                </Text>
+                <PlaceBuzzText amount={placeBuzz[position]} />
+              </div>
+              <Group gap="xs" wrap="nowrap">
+                <NumberInput
+                  aria-label={`${formatPlace(position)} share`}
+                  value={percentage}
+                  onChange={(value) =>
+                    setPrizePositions({
+                      ...values.prizePositions,
+                      [position]: typeof value === 'number' ? value : 0,
+                    })
+                  }
+                  min={0}
+                  max={100}
+                  allowNegative={false}
+                  allowDecimal={false}
+                  clampBehavior="strict"
+                  suffix="%"
+                  hideControls
+                  w={80}
+                />
+                {parseInt(position) > 3 && (
+                  <ActionIcon
+                    variant="subtle"
+                    color="red"
+                    size="sm"
+                    onClick={() => removePrizePosition(position)}
+                  >
+                    <IconTrash size={14} />
+                  </ActionIcon>
+                )}
+              </Group>
             </Group>
+            <Slider
+              mt="md"
+              value={percentage}
+              onChange={(value) =>
+                setPrizePositions({ ...values.prizePositions, [position]: value })
+              }
+              min={0}
+              max={100}
+              step={1}
+              color={positionColors[index]?.slider ?? 'gray'}
+              styles={{
+                track: { height: 6 },
+                thumb: { borderWidth: 2 },
+              }}
+            />
           </Paper>
         ))}
+
+        {prizePoolNote}
 
         <Button
           variant="light"
@@ -798,7 +846,11 @@ export default function CrucibleCreate() {
     <Stack gap="xl">
       <Title order={3}>Review Your Crucible</Title>
 
-      <EstimatedSchedule durationHours={values.duration} startAt={values.startAt} />
+      <EstimatedSchedule
+        durationHours={values.duration}
+        startAt={values.startAt}
+        localTimeNote={localTimeNote}
+      />
 
       <Paper p="lg" className="border border-dark-4">
         <Group gap="xs" mb="md">
@@ -888,7 +940,7 @@ export default function CrucibleCreate() {
               <Text fw={500}>None</Text>
             )}
           </Group>
-          <PrizeDistributionChart prizePositions={values.prizePositions} />
+          <PrizeDistributionChart prizePositions={values.prizePositions} placeBuzz={placeBuzz} />
         </Stack>
       </Paper>
     </Stack>
@@ -931,7 +983,7 @@ export default function CrucibleCreate() {
               </div>
             </Group>
 
-            <Group gap="xs" mb="xl">
+            <Group ref={wizardTopRef} gap="xs" mb="xl" className="scroll-mt-20">
               {stepLabels.map((label, index) => (
                 <Paper
                   key={label}
@@ -977,13 +1029,13 @@ export default function CrucibleCreate() {
               <Button
                 variant="light"
                 color="gray"
-                onClick={goToPrevStep}
+                onClick={() => setStep(currentStep - 1)}
                 disabled={currentStep === 1}
                 leftSection={<IconArrowLeft size={16} />}
               >
                 Previous
               </Button>
-              {currentStep < 4 && (
+              {currentStep < CRUCIBLE_CREATE_STEP_COUNT && (
                 <Button
                   onClick={handleNext}
                   disabled={
@@ -1008,9 +1060,9 @@ export default function CrucibleCreate() {
                   className="flex items-center justify-center bg-gradient-to-br from-dark-6 to-dark-8"
                   style={{ aspectRatio: '16 / 9' }}
                 >
-                  {imageFile?.status === 'success' ? (
+                  {coverSrc ? (
                     <EdgeMedia
-                      src={imageFile.objectUrl ?? imageFile.url}
+                      src={coverSrc}
                       width={400}
                       style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                     />
@@ -1049,7 +1101,7 @@ export default function CrucibleCreate() {
                 </div>
               </Paper>
 
-              {currentStep === 4 && (
+              {currentStep === CRUCIBLE_CREATE_STEP_COUNT && (
                 <BuzzTransactionButton
                   fullWidth
                   size="lg"
@@ -1103,7 +1155,27 @@ const positionColors = [
   { bar: 'from-yellow-500 to-yellow-600', slider: 'yellow' },
 ];
 
-function PrizeDistributionChart({ prizePositions }: { prizePositions: Record<string, number> }) {
+function PlaceBuzzText({ amount }: { amount?: PlaceBuzz }) {
+  const parts = [
+    amount?.fromSeed != null && `${amount.fromSeed.toLocaleString()} Buzz from your seed`,
+    amount?.whenFull != null && `${amount.whenFull.toLocaleString()} Buzz if full`,
+  ].filter(Boolean);
+  if (!parts.length) return null;
+
+  return (
+    <Text size="xs" c="dimmed">
+      {parts.join(' · ')}
+    </Text>
+  );
+}
+
+function PrizeDistributionChart({
+  prizePositions,
+  placeBuzz,
+}: {
+  prizePositions: Record<string, number>;
+  placeBuzz: Record<string, PlaceBuzz>;
+}) {
   const sortedPositions = Object.entries(prizePositions).sort(
     ([a], [b]) => parseInt(a) - parseInt(b)
   );
@@ -1133,6 +1205,7 @@ function PrizeDistributionChart({ prizePositions }: { prizePositions: Record<str
             <Text size="xl" fw={700}>
               {percentage}%
             </Text>
+            <PlaceBuzzText amount={placeBuzz[position]} />
           </Paper>
         ))}
       </SimpleGrid>
@@ -1141,10 +1214,13 @@ function PrizeDistributionChart({ prizePositions }: { prizePositions: Record<str
         <Paper p="md" className="border border-dark-4">
           <Stack gap="xs">
             {sortedPositions.slice(3).map(([position, percentage]) => (
-              <Group key={position} justify="space-between">
-                <Text size="sm" c="dimmed">
-                  {formatPlace(position)}
-                </Text>
+              <Group key={position} justify="space-between" wrap="nowrap">
+                <div>
+                  <Text size="sm" c="dimmed">
+                    {formatPlace(position)}
+                  </Text>
+                  <PlaceBuzzText amount={placeBuzz[position]} />
+                </div>
                 <Text size="sm" fw={600}>
                   {percentage}%
                 </Text>
@@ -1170,9 +1246,11 @@ const formatDateTime = (date: Date) =>
 function EstimatedSchedule({
   durationHours,
   startAt,
+  localTimeNote,
 }: {
   durationHours: number;
   startAt?: Date | null;
+  localTimeNote: string;
 }) {
   // An immediate start is "now" at submit time, so both estimates have to follow the clock while
   // the creator sits on this step.
@@ -1213,6 +1291,9 @@ function EstimatedSchedule({
             {formatDateTime(estimatedEndAt)}
           </Text>
         </Group>
+        <Text size="xs" c="dimmed">
+          {localTimeNote}
+        </Text>
       </Stack>
     </Paper>
   );

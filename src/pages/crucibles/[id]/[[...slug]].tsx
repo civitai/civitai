@@ -1,4 +1,14 @@
-import { Alert, Button, Container, Paper, Progress, Stack, Text, Title } from '@mantine/core';
+import {
+  Alert,
+  Button,
+  Container,
+  Group,
+  Paper,
+  Progress,
+  Stack,
+  Text,
+  Title,
+} from '@mantine/core';
 import { openConfirmModal, closeAllModals } from '@mantine/modals';
 import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
@@ -11,10 +21,10 @@ import {
   IconPencil,
   IconX,
   IconTrophy,
+  IconSettings,
 } from '@tabler/icons-react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
-import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import {
@@ -32,7 +42,10 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { CrucibleHeader } from '~/components/Crucible/CrucibleHeader';
 import { CrucibleLeaderboard } from '~/components/Crucible/CrucibleLeaderboard';
 import { CrucibleEntryGrid } from '~/components/Crucible/CrucibleEntryGrid';
+import { CrucibleEditModal } from '~/components/Crucible/CrucibleEditModal';
+import { CruciblePodium } from '~/components/Crucible/CruciblePodium';
 import { CruciblePrizeBreakdown } from '~/components/Crucible/CruciblePrizeBreakdown';
+import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { crucibleRankingsAreFinal } from '~/shared/constants/crucible.constants';
 import { CrucibleStatus, Currency, MediaType } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -77,6 +90,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
 
   const { data: crucible, isLoading } = trpc.crucible.getById.useQuery({ id });
   const [entriesSeed] = useState(() => Math.floor(Math.random() * 2 ** 31));
+  const [editOpened, setEditOpened] = useState(false);
   const {
     data: entriesData,
     hasNextPage: hasMoreEntries,
@@ -167,8 +181,9 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
   const isActive = crucible.status === CrucibleStatus.Active;
   const isPending = crucible.status === CrucibleStatus.Pending;
   const isCreator = !!currentUser && currentUser.id === crucible.userId;
-  const canSubmitEntries = isActive;
-  const canJudge = isActive;
+  const isOpen = isActive && (!crucible.endAt || new Date(crucible.endAt) > new Date());
+  const canSubmitEntries = isOpen;
+  const canJudge = isOpen;
   const rankingsVisible = crucibleRankingsAreFinal(crucible.status);
 
   const loadedEntries = entriesData?.pages.flatMap((page) => page.items) ?? [];
@@ -215,10 +230,12 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
 
   // Moderator-only: check if crucible can be cancelled
   const isModerator = currentUser?.isModerator ?? false;
-  const canCancel =
-    isModerator &&
-    crucible.status !== CrucibleStatus.Completed &&
-    crucible.status !== CrucibleStatus.Cancelled;
+  const isFinished =
+    crucible.status === CrucibleStatus.Completed || crucible.status === CrucibleStatus.Cancelled;
+  const canCancel = (isModerator && !isFinished) || (isCreator && isPending);
+  const canEdit =
+    (isModerator && crucible.status !== CrucibleStatus.Cancelled) ||
+    (isCreator && (isPending || isOpen));
 
   // Handle cancel action with confirmation dialog
   const handleCancelCrucible = () => {
@@ -283,6 +300,15 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
             _count: crucible._count,
           }}
         />
+
+        {crucible.status === CrucibleStatus.Completed && (
+          <CruciblePodium
+            entries={loadedEntries}
+            prizePositions={prizePositions}
+            entryCount={entryCount}
+            totalPrizePool={totalPrizePool}
+          />
+        )}
 
         {/* Main Content */}
         <Container size="xl" className="py-8">
@@ -434,106 +460,110 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                   <CruciblePrizeBreakdown
                     prizePositions={prizePositions}
                     totalPrizePool={totalPrizePool}
+                    entryFee={crucible.entryFee}
                   />
                   <YourStandingPanel entries={userEntries} hasAccount={!!currentUser} />
                 </>
               )}
 
-              {/* Rules & Requirements */}
-              <Paper className="rounded-lg p-6" bg="dark.6">
-                <Title
-                  order={5}
-                  className="mb-4 flex items-center gap-2 uppercase tracking-wider text-white"
-                >
-                  <IconBook size={16} />
-                  Rules & Requirements
-                </Title>
+              <DescriptionTable
+                title={
+                  <Group gap="xs" p="xs">
+                    <IconBook size={16} />
+                    <Text size="md" fw={500}>
+                      Rules & Requirements
+                    </Text>
+                  </Group>
+                }
+                labelWidth="40%"
+                items={[
+                  {
+                    label: 'Accepted Entries',
+                    value: crucible.contentType === MediaType.video ? 'Videos only' : 'Images only',
+                  },
+                  {
+                    label: 'Content Levels',
+                    value: <ContentLevelBadges nsfwLevel={crucible.nsfwLevel} />,
+                  },
+                  {
+                    label: 'Starts',
+                    value: crucible.startAt ? formatDate(crucible.startAt, undefined, true) : null,
+                    visible: isPending && !!crucible.startAt,
+                  },
+                  {
+                    label: 'Required Resources',
+                    value: <RequiredResources versionIds={allowedResources} />,
+                    visible: allowedResources.length > 0,
+                  },
+                  {
+                    label: 'Deadline',
+                    value: crucible.endAt ? formatDate(crucible.endAt, undefined, true) : null,
+                    visible: !!crucible.endAt,
+                  },
+                  {
+                    label: 'Max Entries Per User',
+                    value: `${maxUserEntries} ${maxUserEntries === 1 ? 'entry' : 'entries'}`,
+                  },
+                  {
+                    label: 'Total Entry Cap',
+                    value: `${crucible.maxTotalEntries} max`,
+                    visible: !!crucible.maxTotalEntries,
+                  },
+                  { label: 'Judging', value: 'Continuous & Live' },
+                  { label: 'Tie-Breaking', value: 'Earlier entries rank higher' },
+                ]}
+              />
 
-                <div className="flex flex-col gap-3">
-                  <RuleItem
-                    label="Accepted Entries"
-                    content={
-                      crucible.contentType === MediaType.video ? 'Videos only' : 'Images only'
-                    }
-                  />
-
-                  {/* NSFW Level */}
-                  <RuleItem
-                    label="Content Levels"
-                    content={<ContentLevelBadges nsfwLevel={crucible.nsfwLevel} />}
-                  />
-
-                  {isPending && crucible.startAt && (
-                    <RuleItem
-                      label="Starts"
-                      content={formatDate(crucible.startAt, undefined, true)}
-                    />
-                  )}
-
-                  {allowedResources.length > 0 && (
-                    <RuleItem
-                      label="Required Resources"
-                      content={<RequiredResources versionIds={allowedResources} />}
-                    />
-                  )}
-
-                  {/* Deadline */}
-                  {crucible.endAt && (
-                    <RuleItem
-                      label="Deadline"
-                      content={formatDate(crucible.endAt, undefined, true)}
-                    />
-                  )}
-
-                  {/* Entry Limit */}
-                  <RuleItem
-                    label="Max Entries Per User"
-                    content={`${maxUserEntries} ${maxUserEntries === 1 ? 'entry' : 'entries'}`}
-                  />
-
-                  {/* Total Entry Cap */}
-                  {crucible.maxTotalEntries && (
-                    <RuleItem label="Total Entry Cap" content={`${crucible.maxTotalEntries} max`} />
-                  )}
-
-                  {/* Judging */}
-                  <RuleItem label="Judging" content="Continuous & Live" />
-
-                  {/* Tie-Breaking */}
-                  <RuleItem
-                    label="Tie-Breaking"
-                    content="Earlier entries rank higher in case of tied scores"
-                  />
-                </div>
-              </Paper>
-
-              {/* Moderator Actions - Cancel Button */}
-              {canCancel && (
-                <Paper className="rounded-lg border border-red-500/30 p-6" bg="dark.6">
+              {(canEdit || canCancel) && (
+                <Paper className="rounded-lg p-6" bg="dark.6">
                   <Title
                     order={5}
-                    className="mb-4 flex items-center gap-2 uppercase tracking-wider text-red-400"
+                    className="mb-4 flex items-center gap-2 uppercase tracking-wider text-white"
                   >
-                    <IconX size={16} />
-                    Moderator Actions
+                    <IconSettings size={16} />
+                    Manage Crucible
                   </Title>
 
-                  <Button
-                    variant="outline"
-                    color="red"
-                    fullWidth
-                    leftSection={<IconX size={16} />}
-                    onClick={handleCancelCrucible}
-                    loading={cancelMutation.isPending}
-                  >
-                    Cancel Crucible
-                  </Button>
+                  <Stack gap="sm">
+                    {canEdit && (
+                      <Button
+                        variant="light"
+                        fullWidth
+                        leftSection={<IconPencil size={16} />}
+                        onClick={() => setEditOpened(true)}
+                      >
+                        Edit name & description
+                      </Button>
+                    )}
+                    {canCancel && (
+                      <Button
+                        variant="outline"
+                        color="red"
+                        fullWidth
+                        leftSection={<IconX size={16} />}
+                        onClick={handleCancelCrucible}
+                        loading={cancelMutation.isPending}
+                      >
+                        Cancel Crucible
+                      </Button>
+                    )}
+                  </Stack>
 
-                  <Text size="xs" c="dimmed" mt="sm">
-                    Cancelling will refund all entry fees to participants.
-                  </Text>
+                  {canCancel && (
+                    <Text size="xs" c="dimmed" mt="sm">
+                      {isPending
+                        ? 'Cancelling before it starts returns your setup fee and seeded prize pool.'
+                        : 'Cancelling will refund all entry fees to participants.'}
+                    </Text>
+                  )}
                 </Paper>
               )}
+
+              <CrucibleEditModal
+                crucible={crucible}
+                opened={editOpened}
+                onClose={() => setEditOpened(false)}
+              />
             </div>
           </div>
         </Container>
@@ -634,18 +664,6 @@ function StatBox({ value, label }: { value: string; label: string }) {
   );
 }
 
-function RuleItem({ label, content }: { label: string; content: React.ReactNode }) {
-  return (
-    <div className="text-xs text-gray-400">
-      <span className="mr-2 text-blue-500">•</span>
-      <Text component="span" fw={600} c="white">
-        {label}:
-      </Text>{' '}
-      {typeof content === 'string' ? content : content}
-    </div>
-  );
-}
-
 function RequiredResources({ versionIds }: { versionIds: number[] }) {
   const { data: versions, isLoading } = trpc.modelVersion.getVersionsByIds.useQuery({
     ids: versionIds,
@@ -655,9 +673,9 @@ function RequiredResources({ versionIds }: { versionIds: number[] }) {
   if (!versions?.length) return <>{`${versionIds.length} specific models`}</>;
 
   return (
-    <div className="mt-2 flex flex-col gap-1">
+    <div className="flex flex-col gap-1">
       <Text size="xs" c="dimmed">
-        Entries must use at least one of:
+        At least one of:
       </Text>
       {versions.map((version) => (
         <Link
@@ -681,7 +699,7 @@ function ContentLevelBadges({ nsfwLevel }: { nsfwLevel: number }) {
   const levels = getCrucibleRatings(nsfwLevel);
 
   return (
-    <div className="mt-2 flex flex-wrap gap-2">
+    <div className="flex flex-wrap gap-2">
       {levels.map((level) => (
         <span
           key={level}

@@ -7,12 +7,12 @@ import {
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as BlocklistService from '~/server/services/blocklist.service';
 import type * as CrucibleEligibilityService from '~/server/services/crucible-eligibility.service';
+import type * as CoverImageService from '~/server/services/cover-image.service';
 import { dbMock } from '~/__tests__/mocks';
 import { CrucibleSort } from '~/server/common/enums';
 
 // `~/server/db/client` and `~/server/redis/client` are registered globally by the setup file
 // and reset per test file — see docs/testing/shared-module-mocks.md.
-const imageCreate = dbMock.dbWrite.image.create;
 const crucibleCreate = dbMock.dbWrite.crucible.create;
 const crucibleUpdateMany = dbMock.dbWrite.crucible.updateMany;
 const getUserBuzzAccount = vi.fn();
@@ -20,6 +20,7 @@ const createMultiAccountBuzzTransaction = vi.fn();
 const refundMultiAccountTransaction = vi.fn();
 const assertCanCreateCrucible = vi.fn();
 const throwOnBlockedUserContent = vi.fn();
+const resolveCoverImageId = vi.fn();
 
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzService>()),
@@ -31,6 +32,11 @@ vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
 vi.mock('~/server/services/crucible-eligibility.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CrucibleEligibilityService>()),
   assertCanCreateCrucible,
+}));
+
+vi.mock('~/server/services/cover-image.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof CoverImageService>()),
+  resolveCoverImageId,
 }));
 
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
@@ -76,11 +82,34 @@ beforeEach(() => {
   refundMultiAccountTransaction.mockResolvedValue(undefined);
   assertCanCreateCrucible.mockResolvedValue(undefined);
   throwOnBlockedUserContent.mockResolvedValue(undefined);
-  imageCreate.mockResolvedValue({ id: 99 });
+  resolveCoverImageId.mockResolvedValue(99);
   crucibleCreate.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
     id: 1,
     ...data,
   }));
+});
+
+describe('createCrucible — cover image', () => {
+  it('stores the cover from the scanned upload path, not a row rated by the allowed levels', async () => {
+    await createCrucible(input({ nsfwLevel: 31 }));
+
+    expect(resolveCoverImageId).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 4,
+        coverImage: expect.not.objectContaining({ nsfwLevel: expect.anything() }),
+      })
+    );
+    expect(dbMock.dbWrite.image.create).not.toHaveBeenCalled();
+    const [{ data }] = crucibleCreate.mock.calls[0];
+    expect(data).toMatchObject({ imageId: 99, nsfwLevel: 31 });
+  });
+
+  it('resolves the cover before any Buzz moves', async () => {
+    resolveCoverImageId.mockRejectedValue(new Error('This cover image is no longer available.'));
+
+    await expect(createCrucible(input())).rejects.toThrow('no longer available');
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
 });
 
 describe('createCrucible — seeded prize pool', () => {
