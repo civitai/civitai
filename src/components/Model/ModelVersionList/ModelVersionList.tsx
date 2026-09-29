@@ -15,6 +15,7 @@ import {
   IconClock,
 } from '@tabler/icons-react';
 import { acceptsBlueBuzz } from '@civitai/buzz';
+import { paidAccessBuzzBackground } from '~/components/Model/ModelVersions/PaidAccessPriceBadge';
 import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -136,18 +137,17 @@ export function ModelVersionList({
           const isEarlyAccess =
             version.paidAccess?.endsAt && new Date(version.paidAccess.endsAt) > new Date();
           const hasProblem = missingFiles || missingPosts || (!published && !scheduled);
-          // Coloured by the Buzz the gate takes: the domain's own, blended with Blue when accepted.
-          const buzzColor = features.isGreen ? 'green.7' : 'yellow.7';
-          const takesBlue = acceptsBlueBuzz(version.paidAccess?.terms);
           const earlyAccessButton = (
             <ThemeIcon
               key={`early-access-${version.id}`}
               radius="sm"
               size="sm"
-              variant={takesBlue ? 'gradient' : 'filled'}
-              gradient={{ from: 'blue.5', to: buzzColor, deg: 135 }}
-              color={buzzColor}
               style={{
+                // Coloured by the Buzz the gate takes, like the price chips on the buttons.
+                background: paidAccessBuzzBackground({
+                  isGreen: features.isGreen,
+                  acceptsBlueBuzz: acceptsBlueBuzz(version.paidAccess?.terms),
+                }),
                 width: 20,
                 height: 26,
                 borderTopLeftRadius: 0,
@@ -160,7 +160,7 @@ export function ModelVersionList({
                   : {}),
               }}
             >
-              <IconBolt style={{ fill: theme.colors.dark[9] }} color="dark.9" size={16} />
+              <IconBolt style={{ fill: theme.white }} color="white" size={16} />
             </ThemeIcon>
           );
 

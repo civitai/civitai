@@ -4,11 +4,41 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
 /**
+ * The background for anything that advertises a paid-access price: the domain's own Buzz colour
+ * (Yellow on .com, Green on .green), cut hard on the diagonal with Blue when the terms accept Blue.
+ * A hard cut rather than a gradient so it reads as "two currencies", not as one new colour.
+ */
+export function paidAccessBuzzBackground({
+  isGreen,
+  acceptsBlueBuzz,
+}: {
+  isGreen: boolean;
+  acceptsBlueBuzz?: boolean;
+}) {
+  const domain = isGreen ? 'var(--mantine-color-green-7)' : 'var(--mantine-color-yellow-7)';
+  if (!acceptsBlueBuzz) return domain;
+  const blue = 'var(--mantine-color-blue-6)';
+  return `linear-gradient(135deg, ${blue} 0%, ${blue} 50%, ${domain} 50%, ${domain} 100%)`;
+}
+
+/** "Yellow Buzz", "Blue or Green Buzz" — what a paid-access price is payable in. */
+export function paidAccessBuzzLabel({
+  isGreen,
+  acceptsBlueBuzz,
+}: {
+  isGreen: boolean;
+  acceptsBlueBuzz?: boolean;
+}) {
+  const domain = isGreen ? 'Green' : 'Yellow';
+  return acceptsBlueBuzz ? `Blue or ${domain} Buzz` : `${domain} Buzz`;
+}
+
+/**
  * The price chip pinned to the corner of a paid-access Download / Create button.
  *
- * Its colour says WHICH Buzz the sale takes: the domain's own (Yellow on .com, Green on .green),
- * split with Blue when the creator's terms accept Blue. It used to be a flat yellow everywhere, which
- * told buyers holding only Blue Buzz they couldn't pay — and told .green buyers the wrong colour.
+ * Its colour says WHICH Buzz the sale takes (see `paidAccessBuzzBackground`). It used to be a flat
+ * yellow everywhere, which told buyers holding only Blue Buzz they couldn't pay — and told .green
+ * buyers the wrong colour. White text, because dark text disappeared on the Blue half.
  */
 export function PaidAccessPriceBadge({
   price,
@@ -23,12 +53,10 @@ export function PaidAccessPriceBadge({
   decimals?: number;
 }) {
   const theme = useMantineTheme();
-  const features = useFeatureFlags();
-  const domainColor = features.isGreen ? 'green.7' : 'yellow.7';
-  const domainLabel = features.isGreen ? 'Green' : 'Yellow';
+  const { isGreen } = useFeatureFlags();
   const amount = abbreviateNumber(price, decimals != null ? { decimals } : undefined);
 
-  const currencyLabel = acceptsBlueBuzz ? `Blue or ${domainLabel} Buzz` : `${domainLabel} Buzz`;
+  const currencyLabel = paidAccessBuzzLabel({ isGreen, acceptsBlueBuzz });
   const tooltip = listedOnly
     ? `Buyers pay ${amount} ${currencyLabel}`
     : `${amount} ${currencyLabel}`;
@@ -38,9 +66,7 @@ export function PaidAccessPriceBadge({
       <Badge
         radius="sm"
         size="sm"
-        variant={acceptsBlueBuzz ? 'gradient' : 'filled'}
-        gradient={{ from: 'blue.5', to: domainColor, deg: 135 }}
-        color={domainColor}
+        variant="filled"
         style={{
           position: 'absolute',
           top: '-8px',
@@ -48,11 +74,14 @@ export function PaidAccessPriceBadge({
           boxShadow: theme.shadows.sm,
           padding: '4px 2px',
           paddingRight: '6px',
+          background: paidAccessBuzzBackground({ isGreen, acceptsBlueBuzz }),
+          // Keeps white legible over the light end of Yellow.
+          textShadow: '0 1px 1px rgba(0, 0, 0, 0.35)',
         }}
       >
         <Group gap={0} wrap="nowrap">
-          <IconBolt style={{ fill: theme.colors.dark[9] }} color="dark.9" size={14} />{' '}
-          <Text size="xs" fz={11} c="dark.9">
+          <IconBolt style={{ fill: theme.white }} color="white" size={14} />{' '}
+          <Text size="xs" fz={11} c="white">
             {amount}
           </Text>
         </Group>

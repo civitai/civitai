@@ -37,6 +37,10 @@ import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { abbreviateNumber, formatKBytes } from '~/utils/number-helpers';
 import { getModelUrl } from '~/utils/string-helpers';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import {
+  paidAccessBuzzBackground,
+  paidAccessBuzzLabel,
+} from '~/components/Model/ModelVersions/PaidAccessPriceBadge';
 
 type FileType = ModelById['modelVersions'][number]['files'][number];
 
@@ -74,13 +78,11 @@ export function RequiredComponentsSection({
 }: RequiredComponentsSectionProps) {
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
-  const features = useFeatureFlags();
-  // The purchase button's colour is the currency it takes: the domain's own Buzz, blended with Blue
+  const { isGreen } = useFeatureFlags();
+  // The purchase button's colour is the currency it takes: the domain's own Buzz, split with Blue
   // when the terms accept it — never a flat yellow, which read as "paid Buzz only".
-  const buzzColor = features.isGreen ? 'green' : 'yellow';
-  const buzzLabel = acceptsBlueBuzz
-    ? `Blue or ${features.isGreen ? 'Green' : 'Yellow'} Buzz`
-    : `${features.isGreen ? 'Green' : 'Yellow'} Buzz`;
+  const buzzBackground = paidAccessBuzzBackground({ isGreen, acceptsBlueBuzz });
+  const buzzLabel = paidAccessBuzzLabel({ isGreen, acceptsBlueBuzz });
 
   // Get only required component types that have files (now data-driven)
   const requiredComponents = useMemo(() => {
@@ -337,9 +339,8 @@ export function RequiredComponentsSection({
               fullWidth
               pos="relative"
               className="overflow-visible"
-              variant={needsPurchase && acceptsBlueBuzz ? 'gradient' : isPrimary ? 'filled' : 'light'}
-              gradient={{ from: 'blue', to: buzzColor, deg: 135 }}
-              color={needsPurchase ? buzzColor : 'blue'}
+              variant={needsPurchase || isPrimary ? 'filled' : 'light'}
+              color="blue"
               size={isPrimary ? 'md' : 'sm'}
               leftSection={
                 needsPurchase ? (
@@ -352,7 +353,13 @@ export function RequiredComponentsSection({
               loading={downloading}
               disabled={archived || isLoadingAccess || downloading}
               style={
-                isPrimary || needsPurchase
+                needsPurchase
+                  ? {
+                      background: buzzBackground,
+                      color: 'white',
+                      textShadow: '0 1px 1px rgba(0, 0, 0, 0.35)',
+                    }
+                  : isPrimary
                   ? undefined
                   : {
                       backgroundColor: 'rgba(34, 139, 230, 0.15)',
