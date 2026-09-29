@@ -24,26 +24,42 @@ function baseClassString(): string {
   return match[2];
 }
 
+/** A class present as its own whitespace-delimited token, or under a variant prefix (`sm:`). */
+function hasClass(token: string): RegExp {
+  return new RegExp(`(^|\\s)([a-z0-9-]+:)*${token}(\\s|$)`);
+}
+
 describe('TabsList base classes', () => {
   // Positive control: if the read or the extraction silently returned nothing, every
   // `not.toMatch` below would pass vacuously and this guard would be wired to nothing.
+  // Pins `inline-flex` rather than a palette token, so a theme change does not fail a test
+  // named "reads a non-empty base class string" and read as a broken test.
   it('reads a non-empty base class string out of the real component', () => {
     expect(source).toContain('data-slot="tabs-list"');
     expect(baseClassString().length).toBeGreaterThan(40);
-    expect(baseClassString()).toContain('bg-muted');
+    expect(baseClassString()).toMatch(hasClass('inline-flex'));
   });
 
   it('allows the row to wrap, so w-fit can clamp to the container', () => {
     // Without this the nowrap triggers make min-content == max-content, w-fit cannot clamp, and
     // the list spills out of every overflow:visible ancestor as page-level horizontal scroll.
-    expect(baseClassString()).toMatch(/(^|\s)flex-wrap(\s|$)/);
+    expect(baseClassString()).toMatch(hasClass('flex-wrap'));
+    // `flex-wrap flex-nowrap` keeps both tokens, and tailwind-merge lets the LATER one win --
+    // so asserting flex-wrap's presence alone is satisfied while wrapping is off.
+    expect(baseClassString()).not.toMatch(hasClass('flex-nowrap'));
   });
 
-  it('carries no fixed height, which would clip a wrapped row', () => {
-    // Structural, not spelled: any `h-<number>` reintroduces the clip, not just upstream's `h-9`.
-    // Checked against the whole class string so a fixed height cannot return under a variant
-    // prefix either.
-    expect(baseClassString()).toMatch(/(^|\s)h-auto(\s|$)/);
-    expect(baseClassString()).not.toMatch(/(^|:)h-\d/);
+  it('keeps w-fit, the width rule the clamp actually depends on', () => {
+    // Swapping w-fit for w-max restores the defect exactly: max-content does not clamp, so the
+    // list returns to its full intrinsic width no matter how the height behaves.
+    expect(baseClassString()).toMatch(hasClass('w-fit'));
+  });
+
+  it('carries no fixed or capped height, which a wrapped row would overflow', () => {
+    // Structural, not spelled: ANY numeric or arbitrary height -- `h-9`, `h-[36px]`, `max-h-9`,
+    // bare or variant-prefixed -- pins the box while the rows keep growing. `h-auto` must also
+    // still be present, because tailwind-merge resolves a later height against it.
+    expect(baseClassString()).toMatch(hasClass('h-auto'));
+    expect(baseClassString()).not.toMatch(/(^|\s)([a-z0-9-]+:)*(max-)?h-(\d|\[)/);
   });
 });
