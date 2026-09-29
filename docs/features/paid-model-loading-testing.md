@@ -55,9 +55,9 @@ tester brief listed it as expected.
 it a design problem rather than a reporting one: the page states a stale answer confidently, and
 nothing on screen indicates it trails.
 
-The sharpest report locates it *inside a single page*: the version-details **Generation** row is a
-live residency read and updates quickly, while the version strip beside it is fed by the
-`generatorLoaded` column and waits for the cron. Two indicators on one screen, disagreeing, for
+The sharpest report locates it *inside a single page*: the version-details **Generation** row reads
+residency from the orchestrator through a 30s cache, while the version strip beside it is fed by the
+`generatorLoaded` column and waited for the cron. Two indicators on one screen, disagreeing, for
 minutes.
 
 **Fixed at the source, shipped.** The orchestrator now posts every residency change to

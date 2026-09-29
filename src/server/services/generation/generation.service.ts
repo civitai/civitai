@@ -39,7 +39,8 @@ import {
   throwBadRequestError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { getPrimaryFile, getTrainingFileEpochNumberDetails } from '~/server/utils/model-helpers';
+import { getTrainingFileEpochNumberDetails } from '~/server/utils/model-helpers';
+import { getGenerationFile } from '~/server/utils/resource-air';
 import { withSpan } from '~/server/utils/otel-helpers';
 import {
   fluxKreaAir,
@@ -1373,8 +1374,8 @@ export async function getResourceData(
     resource: ReturnType<typeof transformGenerationData>,
     modelFiles: ModelFileCached[]
   ) {
-    const primaryFile = getPrimaryFile(modelFiles);
-    const fileSizeKB = primaryFile?.sizeKB;
+    const generationFile = getGenerationFile(modelFiles);
+    const fileSizeKB = generationFile?.sizeKB;
     const featured = !!featuredModels.find((x) => x.modelId === resource.model.id);
     let additionalResourceCost = true;
     if (
@@ -1391,7 +1392,7 @@ export async function getResourceData(
       fileSizeKB: fileSizeKB ? Math.round(fileSizeKB) : undefined,
       additionalResourceCost,
       epochDetails,
-      primaryFileType: primaryFile?.type,
+      generationFileType: generationFile?.type,
     };
   }
 
@@ -1399,18 +1400,15 @@ export async function getResourceData(
     resource: ReturnType<typeof transformGenerationData>,
     modelFiles: ModelFileCached[]
   ) {
-    const { fileSizeKB, additionalResourceCost, epochDetails, primaryFileType } = getModelFileProps(
-      resource,
-      modelFiles
-    );
+    const { fileSizeKB, additionalResourceCost, epochDetails, generationFileType } =
+      getModelFileProps(resource, modelFiles);
     const air = stringifyAIR({
       baseModel: resource.baseModel,
       type: resource.model.type,
       modelId: epochDetails ? epochDetails.jobId : resource.model.id,
       id: epochDetails ? epochDetails.fileName : resource.id,
-      // epoch resources resolve to an orchestrator-hosted file, not the version's
-      // primary model file, so only forward the file type for civitai sources.
-      fileType: epochDetails ? undefined : primaryFileType,
+      // Epoch resources are orchestrator-hosted; only a civitai source carries a file type.
+      fileType: epochDetails ? undefined : generationFileType,
       source: epochDetails ? 'orchestrator' : 'civitai',
     });
 

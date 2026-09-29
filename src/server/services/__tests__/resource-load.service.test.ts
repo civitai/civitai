@@ -31,9 +31,12 @@ import {
   estimateResourceLoad,
   getResourceLoadQueue,
   getResourceLoadState,
-  getResourceResidency,
   submitResourceLoad,
 } from '~/server/services/resource-load.service';
+import {
+  bustResourceResidency,
+  getResourceResidency,
+} from '~/server/services/resource-residency.service';
 
 const version = {
   id: 501,
@@ -182,6 +185,30 @@ describe('getResourceResidency', () => {
     expect(result).toEqual([
       { modelVersionId: 501, availability: { status: 'available', workers: 2 } },
     ]);
+  });
+});
+
+describe('bustResourceResidency', () => {
+  it('leaves a cached answer stale at once, so the next read refreshes it', async () => {
+    redisMock.redis.packed.mGet.mockResolvedValue([
+      { modelVersionId: 501, availability: { status: 'unavailable' }, cachedAt: new Date() },
+    ]);
+
+    await bustResourceResidency([501]);
+
+    const [key, value] = redisMock.redis.packed.set.mock.calls.at(-1) as [
+      string,
+      { cachedAt: Date }
+    ];
+    expect(key).toMatch(/:501$/);
+    // The default debounce would backdate it only 20s, leaving the old answer fresh for 10 more.
+    expect(new Date(value.cachedAt).getTime()).toBeLessThanOrEqual(Date.now() - 30_000);
+  });
+
+  it('touches nothing for an empty list', async () => {
+    await bustResourceResidency([]);
+
+    expect(redisMock.redis.packed.mGet).not.toHaveBeenCalled();
   });
 });
 

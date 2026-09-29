@@ -1078,7 +1078,7 @@ export default function ModelDetailsV2({
                           <IconDotsVertical size={20} />
                         </LegacyActionIcon>
                       </Menu.Target>
-                      <Menu.Dropdown>
+                      <Menu.Dropdown className="max-h-[70vh] overflow-y-auto">
                         {currentUser && isCreator && published && (
                           <Menu.Item
                             leftSection={<IconBan size={14} stroke={1.5} />}

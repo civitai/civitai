@@ -34,7 +34,6 @@ import {
   getLicensingRootsSchema,
   getModelVersionByModelTypeSchema,
   getModelVersionSchema,
-  getModelVersionsPopularityInput,
   modelVersionEarlyAccessPurchase,
   modelVersionsGeneratedImagesOnTimeframeSchema,
   modelVersionUpsertSchema2,
@@ -52,7 +51,6 @@ import {
   getExplorationPromptsById,
   getLicensingRoots,
   getModelVersionsByModelType,
-  getModelVersionsPopularity,
   getVersionById,
   getVersionsByIds,
   addLinkedComponent,
@@ -157,10 +155,6 @@ export const modelVersionRouter = router({
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getByIdSchema)
     .query(getModelVersionRunStrategiesHandler),
-  getPopularities: publicProcedure
-    .meta({ requiredScope: TokenScope.ModelsRead })
-    .input(getModelVersionsPopularityInput)
-    .query(({ input }) => getModelVersionsPopularity(input)),
   getVersionsByIds: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getModelVersionsByIdsInput)

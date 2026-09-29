@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 import { ResizableSidebar } from '~/components/Resizable/ResizableSidebar';
 import { useResizeStore } from '~/components/Resizable/useResize';
+import { useRefreshResidencyOnOpen } from '~/components/ResourceLoad/ResourceResidency';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
 const GenerationTabs = dynamic(() => import('~/components/ImageGeneration/GenerationTabs'));
 
@@ -40,6 +41,7 @@ export function GenerationSidebar() {
   }, [opened, updateShowDrawer]);
 
   useWindowEvent('resize', updateShowDrawer);
+  useRefreshResidencyOnOpen(opened);
 
   if (!opened) return null;
 

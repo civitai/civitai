@@ -4,8 +4,11 @@ import { dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { getLoadedResourceAirs } from '~/server/http/orchestrator/loaded-resources';
-import { resourceDataCache } from '~/server/redis/resource-data.redis';
 import { modelsSearchIndex } from '~/server/search-index';
+import {
+  bustGeneratorLoadedCaches,
+  setGeneratorLoaded,
+} from '~/server/services/generator-loaded.service';
 import { versionIdFromAir } from '~/shared/utils/air';
 import { createJob } from './job';
 
@@ -23,15 +26,6 @@ async function findVersions(ids: number[]) {
       `)
     );
   return found;
-}
-
-async function setLoaded(ids: number[], loaded: boolean) {
-  // Raw SQL rather than updateMany: Prisma's @updatedAt would bump ModelVersion."updatedAt", which is
-  // on the public v1 payload and is remove-old-drafts' activity fence.
-  for (const batch of chunk(ids, BATCH))
-    await dbWrite.$executeRaw`
-      UPDATE "ModelVersion" SET "generatorLoaded" = ${loaded} WHERE id = ANY(${batch}::int[])
-    `;
 }
 
 export const syncGeneratorLoadedResources = createJob(
@@ -67,11 +61,11 @@ export const syncGeneratorLoadedResources = createJob(
     const toUnload = loaded.filter((v) => !listed.has(v.id));
     const toLoad = await findVersions([...listed].filter((id) => !loadedIds.has(id)));
 
-    await setLoaded(
+    await setGeneratorLoaded(
       toLoad.map((v) => v.id),
       true
     );
-    await setLoaded(
+    await setGeneratorLoaded(
       toUnload.map((v) => v.id),
       false
     );
@@ -86,10 +80,9 @@ export const syncGeneratorLoadedResources = createJob(
         modelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
       );
 
-    // Last, and best-effort. The SUBMIT path reads residency from resourceDataCache, whose hour TTL
-    // would otherwise keep refusing a resource that has loaded. It must not come before the enqueue:
-    // these rows now match the orchestrator's list, so the next run's diff is empty and a throw here
-    // would strand them unindexed with no retry.
+    // Last, and best-effort. It must not come before the enqueue: these rows now match the
+    // orchestrator's list, so the next run's diff is empty and a throw here would strand them
+    // unindexed with no retry.
     // Chunked: `toUnload` is every resident version absent from the orchestrator's list, so a fleet
     // scale-down hands this tens of thousands of ids and the cache layer fans its SETs out unbounded.
     if (flipped.length)
@@ -97,7 +90,7 @@ export const syncGeneratorLoadedResources = createJob(
         chunk(
           flipped.map((v) => v.id),
           1000
-        ).map((ids) => resourceDataCache.bust(ids))
+        ).map(bustGeneratorLoadedCaches)
       ).catch((e) => {
         logToAxiom({
           name: 'sync-generator-loaded-resources',

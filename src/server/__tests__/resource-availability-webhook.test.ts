@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ResourceData from '~/server/redis/resource-data.redis';
+import type * as ResourceResidency from '~/server/services/resource-residency.service';
 const executeRaw = dbMock.dbWrite.$executeRaw;
 const queryRaw = dbMock.dbWrite.$queryRaw;
 dbMock.dbWrite.$executeRaw.mockImplementation(async () => 0);
@@ -14,11 +15,12 @@ dbMock.dbWrite.$queryRaw.mockImplementation(async () => [] as { id: number; mode
  * that it honours the same kill switch as the sync job it supplements.
  */
 
-const { env, isFlipt, queueUpdate, bust } = vi.hoisted(() => ({
+const { env, isFlipt, queueUpdate, bust, bustResidency } = vi.hoisted(() => ({
   env: { WEBHOOK_TOKEN: 'shhh', LOGGING: '' },
   isFlipt: vi.fn(async () => true),
   queueUpdate: vi.fn(async () => undefined),
   bust: vi.fn(async () => undefined),
+  bustResidency: vi.fn(async () => undefined),
 }));
 
 vi.mock('~/env/server', () => ({ env }));
@@ -31,6 +33,10 @@ vi.mock('~/server/search-index', () => ({ modelsSearchIndex: { queueUpdate } }))
 vi.mock('~/server/redis/resource-data.redis', async (importOriginal) => ({
   ...(await importOriginal<typeof ResourceData>()),
   resourceDataCache: { bust },
+}));
+vi.mock('~/server/services/resource-residency.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ResourceResidency>()),
+  bustResourceResidency: bustResidency,
 }));
 
 const handler = (await import('~/pages/api/webhooks/resource-availability')).default;
@@ -147,12 +153,24 @@ describe('resource-availability webhook', () => {
     expect(bust).toHaveBeenCalledWith([1, 2]);
   });
 
+  it('busts the residency the Generation row reads, so it stops naming the pre-change state', async () => {
+    versionsExist(1, 2);
+
+    await call([
+      { air: air(1), workersAvailable: 3 },
+      { air: air(2), workersAvailable: 0 },
+    ]);
+
+    expect(bustResidency).toHaveBeenCalledWith([1, 2]);
+  });
+
   it('busts nothing when no known version was written', async () => {
     versionsExist();
 
     await call([{ air: air(1), workersAvailable: 3 }]);
 
     expect(bust).not.toHaveBeenCalled();
+    expect(bustResidency).not.toHaveBeenCalled();
   });
 
   it('ignores an AIR this site holds no version for', async () => {
@@ -217,6 +235,7 @@ describe('resource-availability webhook — only what moved', () => {
     expect(statusCode).toBe(200);
     expect(executeRaw).not.toHaveBeenCalled();
     expect(bust).not.toHaveBeenCalled();
+    expect(bustResidency).not.toHaveBeenCalled();
     expect(queueUpdate).not.toHaveBeenCalled();
   });
 
@@ -241,5 +260,20 @@ describe('resource-availability webhook — only what moved', () => {
     expect(queueUpdate).toHaveBeenCalledTimes(1);
     expect(bust).toHaveBeenCalledTimes(1);
     expect(queueUpdate.mock.invocationCallOrder[0]).toBeLessThan(bust.mock.invocationCallOrder[0]);
+    expect(bustResidency).toHaveBeenCalledTimes(1);
+    expect(queueUpdate.mock.invocationCallOrder[0]).toBeLessThan(
+      bustResidency.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('still answers 200 when a cache bust fails, since a retry would find nothing to act on', async () => {
+    versionsExist(1);
+    bustResidency.mockRejectedValueOnce(new Error('redis down'));
+
+    const { statusCode } = await call([{ air: air(1), workersAvailable: 3 }]);
+
+    expect(statusCode).toBe(200);
+    expect(writtenWith(true)).toEqual([1]);
+    expect(queueUpdate).toHaveBeenCalledTimes(1);
   });
 });

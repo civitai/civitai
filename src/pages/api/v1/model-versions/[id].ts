@@ -21,7 +21,7 @@ import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { reduceToBasicFileMetadata } from '~/server/services/model-file.service';
 import type { Session } from '~/types/session';
-import { stringifyAIR } from '~/shared/utils/air';
+import { modelVersionToAir } from '~/server/utils/resource-air';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
 import {
   allBrowsingLevelsFlag,
@@ -232,12 +232,11 @@ export async function prepareModelVersionResponse(
     // licensingFee is a Prisma Decimal; coerce so the public API keeps emitting a number, not a JSON string.
     licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
     paidAccess,
-    air: stringifyAIR({
-      baseModel: version.baseModel,
-      type: model.type,
-      modelId: version.modelId,
+    air: modelVersionToAir({
       id: version.id,
-      fileType: primaryFile.type,
+      baseModel: version.baseModel,
+      model: { id: version.modelId, type: model.type },
+      files: castedFiles,
     }),
     stats: {
       downloadCount: hidden.downloads ? null : metrics[0]?.downloadCount ?? 0,

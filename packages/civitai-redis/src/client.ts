@@ -2481,7 +2481,6 @@ const REDIS_KEYS_UNPREFIXED = {
     MODEL_VOTABLE_TAGS: 'packed:caches:model-votable-tags',
     MODEL_VERSION_PUBLIC_DONATION_GOALS: 'packed:caches:model-version-public-donation-goals',
     IMAGE_TAGS: 'packed:caches:image-tags',
-    MODEL_VERSION_RESOURCE_INFO: 'packed:caches:model-version-resource-info',
     TENSOR_METADATA: 'packed:caches:tensor-metadata',
     TENSOR_METADATA_SUMMARY: 'packed:caches:tensor-metadata-summary',
     IMAGE_RESOURCES: 'packed:caches:image-resources',

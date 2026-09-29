@@ -116,7 +116,7 @@ import { getOrchestratorCallbacks } from '~/server/orchestrator/orchestrator.uti
 import { BuzzTypes, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
-import { getResourceResidency } from '~/server/services/resource-load.service';
+import { getResourceResidency } from '~/server/services/resource-residency.service';
 import { WORKFLOW_TAGS, VID_QUANTITY_BY_TIER } from '~/shared/constants/generation.constants';
 import { includesPoi } from '~/utils/metadata/audit';
 import { BlocklistType } from '~/server/common/enums';
