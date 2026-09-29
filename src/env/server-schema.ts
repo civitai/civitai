@@ -830,7 +830,6 @@ export const serverSchema = z
     NOW_PAYMENTS_IPN_KEY: z.string().optional(),
     NOW_PAYMENTS_EMAIL: z.string().optional(),
     NOW_PAYMENTS_PASSWORD: z.string().optional(),
-    NOW_PAYMENTS_PAYOUT_ADDRESS: z.string().optional(),
     NOWPAYMENTS_IPN_URL: z.string().optional(), // Override IPN callback URL (e.g., webhook.site for dev)
     NOWPAYMENTS_SUPPORT_EMAIL: z.string().optional(), // NP support inbox for stuck-deposit tickets; unset disables the notifier
 

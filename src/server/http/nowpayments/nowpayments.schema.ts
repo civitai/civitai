@@ -148,16 +148,6 @@ export namespace NOWPayments {
     ),
   });
 
-  // Balance
-  export type BalanceResponse = z.infer<typeof balanceResponseSchema>;
-  export const balanceResponseSchema = z.record(
-    z.string(),
-    z.object({
-      amount: z.number(),
-      pendingAmount: z.number(),
-    })
-  );
-
   // Payout Currencies
   export type PayoutCurrenciesResponse = z.infer<typeof payoutCurrenciesResponseSchema>;
   export const payoutCurrenciesResponseSchema = z.object({
@@ -203,37 +193,6 @@ export namespace NOWPayments {
     token: z.string(),
     expires_in: z.number().optional(),
   });
-
-  // Payout
-  export type CreatePayoutInput = z.infer<typeof createPayoutInputSchema>;
-  export const createPayoutInputSchema = z.object({
-    withdrawals: z.array(
-      z.object({
-        address: z.string(),
-        currency: z.string(),
-        amount: z.number(),
-        ipn_callback_url: z.string().optional(),
-      })
-    ),
-  });
-
-  export type CreatePayoutResponse = z.infer<typeof createPayoutResponseSchema>;
-  export const createPayoutResponseSchema = z
-    .object({
-      id: z.string(),
-      withdrawals: z.array(
-        z
-          .object({
-            id: z.string(),
-            address: z.string(),
-            currency: z.string(),
-            amount: z.number().optional(),
-            status: z.string().optional(),
-          })
-          .passthrough()
-      ),
-    })
-    .passthrough();
 
   export type WebhookEvent = z.infer<typeof webhookSchema>;
   export const webhookSchema = z.object({

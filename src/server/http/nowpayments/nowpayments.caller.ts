@@ -186,9 +186,7 @@ class NOWPaymentsCaller extends HttpCaller {
   }
 
   /** Fetch all payments associated with an invoice (wallet). Handles pagination. */
-  async getPaymentsByInvoiceId(
-    invoiceId: number
-  ): Promise<NOWPayments.CreatePaymentResponse[]> {
+  async getPaymentsByInvoiceId(invoiceId: number): Promise<NOWPayments.CreatePaymentResponse[]> {
     const PAGE_SIZE = 100;
     let page = 0;
     const all: NOWPayments.CreatePaymentResponse[] = [];
@@ -231,17 +229,6 @@ class NOWPaymentsCaller extends HttpCaller {
     }
     const data = await response.json();
     return NOWPayments.fullCurrenciesResponseSchema.parse(data);
-  }
-
-  async getBalance(): Promise<NOWPayments.BalanceResponse | null> {
-    const response = await this.getRaw(`/balance`);
-    if (response.status === 404) return null;
-    if (!response.ok) {
-      console.error('Failed to get balance', response.statusText);
-      return null;
-    }
-    const data = await response.json();
-    return NOWPayments.balanceResponseSchema.parse(data);
   }
 
   async getPayoutCurrencies(): Promise<NOWPayments.PayoutCurrenciesResponse | null> {
@@ -295,22 +282,6 @@ class NOWPaymentsCaller extends HttpCaller {
       createdAt: Date.now(),
     };
     return parsed.token;
-  }
-
-  async createPayout(
-    input: NOWPayments.CreatePayoutInput,
-    jwtToken: string
-  ): Promise<NOWPayments.CreatePayoutResponse | null> {
-    const response = await this.postRaw('/payout', {
-      body: JSON.stringify(input),
-      headers: { Authorization: `Bearer ${jwtToken}` },
-    });
-    if (!response.ok) {
-      console.error('Failed to create payout', response.statusText);
-      return null;
-    }
-    const data = await response.json();
-    return NOWPayments.createPayoutResponseSchema.parse(data);
   }
 }
 

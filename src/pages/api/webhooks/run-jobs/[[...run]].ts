@@ -33,7 +33,6 @@ import { confirmPendingBlockAttributions } from '~/server/jobs/confirm-pending-b
 import { purgeReviewSnapshotsJob } from '~/server/jobs/purge-review-snapshots';
 import { reapDevTunnelsJob } from '~/server/jobs/reap-dev-tunnels';
 import { sweepStaleAgentReviewsJob } from '~/server/jobs/sweep-stale-agent-reviews';
-import { custodySweepJob } from '~/server/jobs/custody-sweep';
 import { reconcileNowpaymentsJob } from '~/server/jobs/reconcile-nowpayments';
 import { notifyStuckCryptoDepositsJob } from '~/server/jobs/notify-stuck-crypto-deposits';
 import { cosmeticPerceptualHashSweepJob } from '~/server/jobs/cosmetic-phash-sweep';
@@ -243,7 +242,6 @@ export const jobs: Job[] = [
   articleIngestionReconcile,
   expireStrikesJob,
   processTimedUnmutesJob,
-  custodySweepJob,
   reconcileNowpaymentsJob,
   notifyStuckCryptoDepositsJob,
   processEnqueuedComicPanelsJob,
