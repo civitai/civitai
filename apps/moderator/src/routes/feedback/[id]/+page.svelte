@@ -4,9 +4,17 @@
   import { userLookupUrl } from '$lib/entity-url';
   import { feedbackStatusBadgeClass, splitContext } from '$lib/feedback';
   import FeedbackDetail from '../FeedbackDetail.svelte';
-  import type { PageData } from './$types';
+  import type { ActionData, PageData } from './$types';
 
-  let { data }: { data: PageData } = $props();
+  let { data, form }: { data: PageData; form: ActionData } = $props();
+
+  /**
+   * 🔴 THE NO-JS REFUSAL, handed to the panel so it stays ONE banner. Without JS a refused
+   * `?/triage` or `?/promote` re-renders this page with `form` populated and the panel's own
+   * `FormState`s untouched, and nothing else here would say the save was refused. See
+   * `FeedbackDetail`'s `formError` prop for why it is a fallback rather than its own `ErrorAlert`.
+   */
+  const formError = $derived(form && 'error' in form && form.error ? String(form.error) : null);
 
   const context = $derived(splitContext(data.row.context));
 </script>
@@ -43,14 +51,23 @@
   panel's background, and this page has no such cell.
 -->
 <div class="min-w-0 rounded-xl border border-dark-4 bg-dark-6">
-  <FeedbackDetail
-    row={data.row}
-    {context}
-    siblings={data.siblings}
-    knownIssues={data.knownIssues}
-    grafanaUrl={data.grafanaUrl}
-    civitaiUrl={data.civitaiUrl}
-    canTriage={!!data.grants['feedback.status.set']}
-    canPromote={!!data.grants['feedback.bug.promote']}
-  />
+  <!-- 🔴 `{#key}` BECAUSE THIS ROUTE REUSES ITS COMPONENT ACROSS A PARAM CHANGE. SvelteKit keeps the
+       same `FeedbackDetail` instance when `/feedback/12` becomes `/feedback/34` — Back/Forward, a
+       URL edit, or a sibling link, which `FeedbackPromote` now points here — and everything the
+       panel declares would come with it: a refusal raised on report A reading as a refusal of B, and
+       a half-written issue title submitting against B's id. The queue does not have this, because
+       its `{#if open}` sits inside a keyed `{#each}` and rebuilds the panel on every open. -->
+  {#key data.row.id}
+    <FeedbackDetail
+      row={data.row}
+      {context}
+      siblings={data.siblings}
+      knownIssues={data.knownIssues}
+      grafanaUrl={data.grafanaUrl}
+      civitaiUrl={data.civitaiUrl}
+      canTriage={!!data.grants['feedback.status.set']}
+      canPromote={!!data.grants['feedback.bug.promote']}
+      {formError}
+    />
+  {/key}
 </div>

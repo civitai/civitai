@@ -35,6 +35,8 @@ export type FeedbackRowClick = {
   interactive: boolean;
   /** `window.getSelection()?.toString() ?? ''`. */
   selection: string;
+  /** Whether this row's panel is already open. */
+  expanded: boolean;
 };
 
 /**
@@ -45,8 +47,17 @@ export type FeedbackRowClick = {
  *   - a drag that ENDS inside the row is a text selection — the message column is the one cell
  *     operators copy out of — and a click event fires at the end of it;
  *   - `defaultPrevented` is how a nested control says it has already handled this click.
+ *
+ * 🔴 IT ONLY EVER OPENS, NEVER CLOSES, AND THAT ASYMMETRY IS THE WHOLE SAFETY ARGUMENT. Collapsing
+ * the panel destroys it, and with it the issue title, summary and ClickUp URL the operator may be
+ * part-way through typing — the text `FeedbackDetail` hoists a draft to protect. Making the entire
+ * nine-cell row strip the close target puts that one stray click away, and the gesture that reaches
+ * it is ordinary: a DOUBLE-CLICK to select a word fires `click` twice, and the FIRST one lands
+ * before the selection exists, so the `selection` guard below cannot see it. Closing stays on the
+ * labelled `Close` anchor, where it is deliberate.
  */
 export function feedbackRowExpands(click: FeedbackRowClick): boolean {
+  if (click.expanded) return false;
   if (click.defaultPrevented) return false;
   if (click.button !== 0) return false;
   if (click.ctrlKey || click.metaKey || click.shiftKey || click.altKey) return false;

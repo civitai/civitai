@@ -6,13 +6,13 @@ import { parseQuery } from '$lib/server/query';
 import { MAX_INT4 } from '$lib/server/users.service';
 import { DEFAULT_FEEDBACK_STATUSES, feedbackAreaOptions, isFeedbackStatus } from '$lib/feedback';
 import { FEEDBACK_CURSOR_VALUE_PARAM, parseFeedbackSort } from '$lib/feedback-sort';
+import { FEEDBACK_OPEN_PARAM } from '$lib/feedback-open';
 import { bulkTriageAction, promoteAction, triageAction } from '$lib/server/feedback-actions';
 import {
   FEEDBACK_PAGE_SIZE,
+  feedbackPanelExtras,
   getFeedbackAreas,
   getFeedbackList,
-  getKnownIssues,
-  getSiblingFeedback,
   isMissingTriageColumns,
 } from '$lib/server/feedback.service';
 
@@ -23,7 +23,9 @@ const querySchema = z.object({
   status: z.array(z.string()).catch([]),
   area: z.string().trim().catch(''),
   cursor: z.coerce.number().int().positive().max(MAX_INT4).optional().catch(undefined),
-  open: z.coerce.number().int().positive().max(MAX_INT4).optional().catch(undefined),
+  // The CONSTANT as the key, like `cursorValue` below: renaming the param breaks the destructure
+  // at compile time instead of silently reading a field nothing writes.
+  [FEEDBACK_OPEN_PARAM]: z.coerce.number().int().positive().max(MAX_INT4).optional().catch(undefined),
   /**
    * The compound keyset's value half. Bounded in LENGTH only and never coerced here: which type it
    * has to be depends on which column `?sort=` names, and that mapping is the service's — see
@@ -119,26 +121,15 @@ export const load: PageServerLoad = async ({ url, request, locals }) => {
     };
   }
 
-  // Only for the row that is actually open — this is the one read on the page that is not needed to
-  // render the list.
-  const openRow = open ? list.items.find((r) => r.id === open) : undefined;
-  const siblings =
-    openRow?.bugId != null
-      ? await getSiblingFeedback({ bugId: openRow.bugId, excludeId: openRow.id })
-      : [];
-
   /**
-   * The issue picker's options, on exactly the condition that renders the picker.
-   *
-   * Follows `siblings` above rather than loading with the list: an UNLINKED open row is the only
-   * state `FeedbackPromote`'s attach form exists in, so loading these for a queue view with nothing
-   * open is a query per page turn for a control nobody can see. The grant is part of the condition
-   * for the same reason — the form is not rendered without it.
+   * Only for the row that is actually open — the one read on this page that is not needed to render
+   * the list. The conditions inside `feedbackPanelExtras` are shared with `/feedback/<id>`, which
+   * renders the same panel; only "is a row open at all" is the queue's own question.
    */
-  const knownIssues =
-    openRow && openRow.bugId === null && locals.grants['feedback.bug.promote']
-      ? await getKnownIssues()
-      : [];
+  const openRow = open ? list.items.find((r) => r.id === open) : undefined;
+  const { siblings, knownIssues } = openRow
+    ? await feedbackPanelExtras(openRow, locals.grants)
+    : { siblings: [], knownIssues: [] };
 
   return {
     migrationPending: false as const,

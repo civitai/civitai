@@ -248,16 +248,22 @@ const feedbackRowQuery = () =>
       'b.status as bugStatus',
     ]);
 
-/** The driver hands both timestamps back as strings on some paths; the panel formats `Date`s. */
-const toFeedbackRow = (r: {
-  createdAt: Date | string;
-  handledAt: Date | string | null;
-}): FeedbackRow =>
-  ({
-    ...r,
-    createdAt: new Date(r.createdAt),
-    handledAt: r.handledAt ? new Date(r.handledAt) : null,
-  }) as FeedbackRow;
+/**
+ * 🔴 TYPED FROM THE QUERY, AND WITHOUT A CAST, BECAUSE THE RETURN ANNOTATION IS THE ONLY THING THAT
+ * COMPARES THE PROJECTION AGAINST `FeedbackRow`. An `as FeedbackRow` here would make the whole point
+ * of `feedbackRowQuery` — one projection, two routes — unenforced: adding a field to `FeedbackRow`
+ * and forgetting it in the `.select([...])` above would typecheck, and both routes would render
+ * `undefined` with nothing failing.
+ */
+type FeedbackRowQueryResult = Awaited<
+  ReturnType<ReturnType<typeof feedbackRowQuery>['execute']>
+>[number];
+
+const toFeedbackRow = (r: FeedbackRowQueryResult): FeedbackRow => ({
+  ...r,
+  createdAt: new Date(r.createdAt),
+  handledAt: r.handledAt ? new Date(r.handledAt) : null,
+});
 
 /**
  * One report, by id, with no reference to the queue's filters, sort or cursor.
@@ -704,6 +710,31 @@ export async function getKnownIssues(limit = 200): Promise<KnownIssueOption[]> {
   // ("so the operator can see they are attaching to something closed") depend on eyeballing free
   // text. One definition of closed, in one place.
   return rows.map((r) => ({ ...r, closed: isBugClosed(r.status) }));
+}
+
+/**
+ * Everything `FeedbackDetail` needs beyond the row itself, for ONE report.
+ *
+ * 🔴 THE READ HALF OF THE SEAM `feedback-actions.ts` CLOSED FOR WRITES. Both routes render that
+ * panel, so both have to satisfy its prerequisites — and open-coding them twice is a divergence
+ * TYPECHECK CANNOT SEE: a missing prop fails at the call site, a diverged CONDITION does not. Widen
+ * when the picker may be shown (a re-attach flow, an area filter) and whichever copy is missed
+ * renders an empty control on one route with nothing failing anywhere.
+ *
+ * 🔴 BOTH READS ARE CONDITIONAL, AND THE CONDITIONS ARE THE POINT, not an optimisation. The issue
+ * picker exists only for an UNLINKED row held by someone with the promote grant, so loading its
+ * options otherwise is a `Bug` query per page view for a control nobody can see. `siblings` is the
+ * mirror image: only a LINKED row has any.
+ */
+export async function feedbackPanelExtras(
+  row: Pick<FeedbackRow, 'id' | 'bugId'>,
+  grants: Partial<Record<string, boolean>>
+): Promise<{ siblings: FeedbackSibling[]; knownIssues: KnownIssueOption[] }> {
+  const siblings =
+    row.bugId != null ? await getSiblingFeedback({ bugId: row.bugId, excludeId: row.id }) : [];
+  const knownIssues =
+    row.bugId === null && grants['feedback.bug.promote'] ? await getKnownIssues() : [];
+  return { siblings, knownIssues };
 }
 
 /**

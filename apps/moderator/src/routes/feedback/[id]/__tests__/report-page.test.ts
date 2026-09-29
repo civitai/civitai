@@ -12,8 +12,10 @@ import { DEFAULT_FEEDBACK_STATUSES } from '$lib/feedback';
  */
 
 const getFeedbackRow = vi.fn();
-const getSiblingFeedback = vi.fn(async () => []);
-const getKnownIssues = vi.fn(async () => []);
+// The panel's prerequisites arrive through ONE shared function, whose conditions are tested against
+// real rows in `lib/server/__tests__/feedback.service.test.ts`. Both routes call it; what is asserted
+// here is that this one calls it with the row it resolved and the caller's grants.
+const feedbackPanelExtras = vi.fn(async () => ({ siblings: [], knownIssues: [] }));
 const getFeedbackList = vi.fn(async () => ({ items: [], nextCursor: null, nextCursorValue: null }));
 const getFeedbackAreas = vi.fn(async () => [] as string[]);
 const triageFeedback = vi.fn();
@@ -31,8 +33,7 @@ vi.mock('$lib/server/feedback.service', () => ({
   isMissingTriageColumns: (e: unknown) =>
     typeof e === 'object' && e !== null && (e as { code?: unknown }).code === '42703',
   getFeedbackRow,
-  getSiblingFeedback,
-  getKnownIssues,
+  feedbackPanelExtras,
   getFeedbackList,
   getFeedbackAreas,
   triageFeedback,
@@ -165,6 +166,9 @@ describe('load', () => {
     ['whitespace-padded', ' 12 '],
     ['hex', '0x10'],
     ['scientific', '1e3'],
+    // Leading zeros are the same class one step smaller: `/feedback/0000412` is not a second URL
+    // for report 412.
+    ['leading-zero', '0000412'],
   ])('404s on a %s id, without reaching the service', async (_label, id) => {
     expect(await thrownStatus(Promise.resolve(loadReport(id)))).toBe(404);
     expect(getFeedbackRow).not.toHaveBeenCalled();
@@ -200,24 +204,23 @@ describe('load', () => {
   });
 
   /**
-   * The issue picker's options, on exactly the condition that renders the picker — the same
-   * three-way rule the queue applies. Widening it is a `Bug` query on every report view for a
-   * control nobody can see.
+   * 🔴 THE ROW IT RESOLVED, AND THE CALLER'S GRANTS — the seam the queue's loader is on the other
+   * side of. Passing the id instead of the row, or dropping the grants, leaves the picker deciding
+   * differently on the two routes that render the same panel, with nothing failing.
    */
-  it('loads the issue picker’s options only for an unlinked row with the grant', async () => {
-    await loadReport('412');
-    expect(getKnownIssues).toHaveBeenCalled();
+  it('hands the resolved row and the caller’s grants to the shared decision', async () => {
+    const result = await loadedReport('412');
+
+    expect(feedbackPanelExtras).toHaveBeenCalledWith(DISMISSED_ROW, ALL_GRANTS);
+    expect(result.siblings).toEqual([]);
+    expect(result.knownIssues).toEqual([]);
 
     vi.clearAllMocks();
     getFeedbackRow.mockResolvedValue(DISMISSED_ROW);
     await loadReport('412', { 'feedback.status.set': true });
-    expect(getKnownIssues).not.toHaveBeenCalled();
-
-    vi.clearAllMocks();
-    getFeedbackRow.mockResolvedValue({ ...DISMISSED_ROW, bugId: 42 });
-    await loadReport('412');
-    expect(getKnownIssues).not.toHaveBeenCalled();
-    expect(getSiblingFeedback).toHaveBeenCalledWith({ bugId: 42, excludeId: 412 });
+    expect(feedbackPanelExtras).toHaveBeenCalledWith(DISMISSED_ROW, {
+      'feedback.status.set': true,
+    });
   });
 });
 

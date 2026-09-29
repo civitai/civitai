@@ -1,6 +1,11 @@
 import { urlWith } from './url';
 
-/** The param that names the open row. Spelled once here because the queue and its tests both write it. */
+/**
+ * The param that names the open row.
+ *
+ * Spelled once here and read as a COMPUTED key by the queue's `querySchema`, so renaming it breaks
+ * the loader's destructure at compile time rather than leaving it reading a field nothing writes.
+ */
 export const FEEDBACK_OPEN_PARAM = 'open';
 
 /**

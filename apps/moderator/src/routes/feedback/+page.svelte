@@ -169,6 +169,13 @@
    * The decision itself is `feedbackRowExpands`, a pure function, because this app has no Svelte
    * test tier and a guard written inline here is a guard nothing can assert. What stays here is the
    * single DOM read it cannot do: which control, if any, the click landed on.
+   *
+   * 🔴 `feedbackOpenHref(…, id)`, NOT `rowHref(id)` — this handler OPENS, it never toggles. See
+   * `feedbackRowExpands` for why closing must stay on the labelled anchor.
+   *
+   * 🔴 `noScroll`/`keepFocus` MIRROR THE ANCHOR'S OWN `data-sveltekit-*` ATTRIBUTES, and the two
+   * have to be changed together — `rowHref` only makes the URLs agree, the navigation options are
+   * set independently on each side.
    */
   function rowClick(event: MouseEvent, id: number) {
     const target = event.target;
@@ -182,13 +189,12 @@
         defaultPrevented: event.defaultPrevented,
         interactive: target instanceof Element && !!target.closest(FEEDBACK_ROW_INTERACTIVE),
         selection: window.getSelection()?.toString() ?? '',
+        expanded: data.open === id,
       })
     )
       return;
 
-    // The same navigation the anchor performs, so the two cannot diverge in history or scroll
-    // behaviour — `rowHref` is what both read.
-    goto(rowHref(id));
+    goto(feedbackOpenHref(page.url, id), { noScroll: true, keepFocus: true });
   }
 
   /**
@@ -417,7 +423,26 @@
               {/if}
             </TableCell>
             <TableCell>
-              <a href={rowHref(row.id)} class={LINK_CLASS} aria-expanded={open}>
+              <!-- 🔴 `aria-label` NAMES THE REPORT. Fifty links whose accessible name is the bare
+                   word "Open" are fifty identical entries in a screen reader's links list, and
+                   `aria-expanded` announces the state without ever saying of what. The visible word
+                   stays inside the label so voice control still matches what is on screen.
+
+                   🔴 THE THREE NAVIGATION MODIFIERS, matching `FeedbackSortHeader` and `rowClick`'s
+                   `goto` options — without `noscroll` expanding a row scrolls the queue back to the
+                   top, away from the row that just opened; without `keepfocus` a keyboard operator
+                   who pressed Enter here is dropped to the top of the document and has to tab back
+                   past every preceding row to reach the panel they just opened. `replacestate` is
+                   deliberately absent: unlike a sort cycle, closing a row with Back is worth a
+                   history entry. -->
+              <a
+                href={rowHref(row.id)}
+                class={LINK_CLASS}
+                aria-expanded={open}
+                aria-label={`${open ? 'Close' : 'Open'} report #${row.id}`}
+                data-sveltekit-noscroll
+                data-sveltekit-keepfocus
+              >
                 {open ? 'Close' : 'Open'}
               </a>
             </TableCell>

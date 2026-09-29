@@ -1,12 +1,11 @@
 import { error } from '@sveltejs/kit';
 import { env } from '$env/dynamic/public';
 import type { Actions, PageServerLoad } from './$types';
-import { MAX_INT4 } from '$lib/server/users.service';
+import { isInt4Id } from '$lib/server/users.service';
 import { promoteAction, triageAction } from '$lib/server/feedback-actions';
 import {
+  feedbackPanelExtras,
   getFeedbackRow,
-  getKnownIssues,
-  getSiblingFeedback,
   isMissingTriageColumns,
 } from '$lib/server/feedback.service';
 
@@ -21,11 +20,15 @@ import {
  * regex for. `Number('0x10')` is 16, `Number('1e3')` is 1000 and `Number(' 12 ')` is 12, and all
  * three pass `Number.isInteger`: without this, `/feedback/0x10` quietly serves report 16, so one
  * report has unboundedly many URLs and none of them is the one anybody shared.
+ *
+ * `[1-9]` rather than `\d` on the first digit closes the leading-zero case (`/feedback/0000412`)
+ * that the sentence above would otherwise over-claim about. The BOUND is `isInt4Id`, not a
+ * hand-rolled comparison — the column is an int4 and that predicate is where this app says so.
  */
 const parseFeedbackId = (raw: string): number | null => {
-  if (!/^\d+$/.test(raw)) return null;
+  if (!/^[1-9]\d*$/.test(raw)) return null;
   const id = Number(raw);
-  return id > 0 && id <= MAX_INT4 ? id : null;
+  return isInt4Id(id) ? id : null;
 };
 
 /**
@@ -58,13 +61,8 @@ export const load: PageServerLoad = async ({ params, locals }) => {
   }
   if (!row) throw error(404, 'No such report.');
 
-  const siblings =
-    row.bugId != null ? await getSiblingFeedback({ bugId: row.bugId, excludeId: row.id }) : [];
-
-  // The issue picker's options, on exactly the condition that renders the picker — an unlinked row
-  // and the grant that shows the attach form. Same rule as the queue.
-  const knownIssues =
-    row.bugId === null && locals.grants['feedback.bug.promote'] ? await getKnownIssues() : [];
+  // The panel's prerequisites, from the one place that decides them — see `feedbackPanelExtras`.
+  const { siblings, knownIssues } = await feedbackPanelExtras(row, locals.grants);
 
   return {
     row,

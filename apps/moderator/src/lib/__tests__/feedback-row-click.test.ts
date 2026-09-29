@@ -11,6 +11,7 @@ const plain = {
   defaultPrevented: false,
   interactive: false,
   selection: '',
+  expanded: false,
 };
 
 describe('feedbackRowExpands', () => {
@@ -73,6 +74,24 @@ describe('feedbackRowExpands', () => {
   /** How a nested control says it has already handled this click. */
   it('does not expand a click something else already handled', () => {
     expect(feedbackRowExpands({ ...plain, defaultPrevented: true })).toBe(false);
+  });
+
+  /**
+   * 🔴 IT OPENS, IT NEVER CLOSES — the finding that made `expanded` a field. Collapsing the panel
+   * destroys it and every unsaved character of the issue title, summary and ClickUp URL inside, and
+   * making the whole nine-cell row the close target puts that one stray click away.
+   *
+   * The gesture that reaches it is ordinary, which is why the `selection` guard is not enough: a
+   * DOUBLE-CLICK to select a word fires `click` twice, and the FIRST fires before the selection
+   * exists, so that arm returns `true`. Asserted as a pair — the same click on a CLOSED row still
+   * opens it, so this pins the asymmetry rather than a predicate that stopped working.
+   */
+  it('never collapses an already-open row, including on the first click of a double-click', () => {
+    expect(feedbackRowExpands({ ...plain, expanded: true })).toBe(false);
+    // The first click of a double-click: no selection yet, nothing else to stop it.
+    expect(feedbackRowExpands({ ...plain, expanded: true, selection: '' })).toBe(false);
+    // The control: the identical click on a closed row opens it.
+    expect(feedbackRowExpands({ ...plain, expanded: false, selection: '' })).toBe(true);
   });
 });
 

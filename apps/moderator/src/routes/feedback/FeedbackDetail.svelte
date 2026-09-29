@@ -25,6 +25,7 @@
     civitaiUrl,
     canTriage,
     canPromote,
+    formError = null,
   }: {
     row: FeedbackRow;
     context: FeedbackContext;
@@ -35,6 +36,22 @@
     civitaiUrl: string;
     canTriage: boolean;
     canPromote: boolean;
+    /**
+     * 🔴 THE NO-JS SURFACE, and only that: the page-level `form.error`, for a route whose panel is
+     * always mounted. Without JS a refused POST re-renders the page with `form` populated and both
+     * `FormState`s null — nothing else on screen would say the save was refused.
+     *
+     * 🔴 IT IS THE LAST RESORT IN ONE BANNER, NOT A SECOND BANNER. `use:enhance` sets the page-level
+     * `form` as well as `FormState.error`, so an unconditional page-level `ErrorAlert` renders the
+     * same refusal twice — this queue has double-rendered a refusal three times, and no instance was
+     * visible to any test, because this app has no browser tier. Reached only when neither form
+     * holds an error, which with JS cannot happen for a refusal the client saw.
+     *
+     * The QUEUE passes nothing and keeps its own `pageError` instead: there the panel is mounted
+     * only while a row is open, so a no-JS POST lands on a page with no panel at all and the message
+     * has to live above the table. The two surfaces stay disjoint.
+     */
+    formError?: string | null;
   } = $props();
 
   /**
@@ -80,12 +97,30 @@
    * handled-by line, the issue link. Without it a save lands and the panel goes on showing the
    * state it was saved from.
    */
+  /**
+   * 🔴 `onSubmit` CLEARS THE OTHER FORM'S ERROR, AND THAT IS A TRADE, NOT A FREE WIN — kept from
+   * before the tabs went away, because removing it made a worse failure. Without it a promote
+   * refusal outlives a triage save that SUCCEEDED: `feedbackRefusal`'s fallback re-renders the old
+   * red banner over a save that worked, this panel has no success indicator to contradict it, and
+   * the operator's likeliest response is to click the status button again.
+   *
+   * ⚠️ What it costs, stated rather than left to be discovered: the clear happens at submit START
+   * and does not care how this submit ENDS, so a standing promote refusal is discarded by an
+   * unrelated triage save, leaving a pre-filled promote form and nothing explaining why. That
+   * direction is the worse one to lose, and it is the one kept — the alternative above is a banner
+   * that actively contradicts what just happened.
+   *
+   * ⚠️ IT DOES NOT MAKE TWO LIVE REFUSALS IMPOSSIBLE. It narrows the common orderings; each form
+   * disables only its OWN submit control, so two responses can still be in flight together.
+   * `lastSubmitted` is what has to be correct when they are.
+   */
   const triageForm = new FormState({
     onSuccess: null,
     reload: true,
     reset: false,
     onSubmit: () => {
       lastSubmitted = 'triage';
+      promoteForm.error = null;
     },
   });
 
@@ -100,6 +135,7 @@
     reset: false,
     onSubmit: () => {
       lastSubmitted = 'promote';
+      triageForm.error = null;
     },
   });
 
@@ -111,7 +147,8 @@
    * this file's; it is a pure function so it can be tested, because this app has no Svelte tier.
    */
   const refusal = $derived(
-    feedbackRefusal({ triage: triageForm.error, promote: promoteForm.error }, lastSubmitted)
+    feedbackRefusal({ triage: triageForm.error, promote: promoteForm.error }, lastSubmitted) ??
+      formError
   );
 </script>
 
@@ -172,6 +209,13 @@
              removed, and reading an absent field as an empty one would destroy one of them on every
              status click. The distinction is enforced in `$lib/server/feedback-actions.ts` and in
              `triageFeedback`'s signature. -->
+        <!-- 🔴 THE CURRENT STATUS IS DISABLED, AND IT USED TO READ `Save (<status>)`. That button
+             had a job while this form carried the internal-note textarea: it persisted the note
+             without moving the row. With the note gone it submits a status change to the status the
+             row already has — `expectedStatus === status`, so the UPDATE matches, and
+             `triageFeedback` reassigns `handledById`/`handledAt` to whoever clicked and writes a
+             `ModActivity` row. The queue's Handled column then credits a moderator who only clicked
+             through, over the one who actually ruled, with nothing recording that it changed. -->
         <div class="flex flex-wrap gap-2">
           {#each FEEDBACK_STATUSES as status (status)}
             <Button
@@ -180,9 +224,9 @@
               value={status}
               size="sm"
               variant={status === row.status ? 'default' : 'outline'}
-              disabled={triageForm.submitting}
+              disabled={triageForm.submitting || status === row.status}
             >
-              {status === row.status ? `Save (${status})` : status}
+              {status}
             </Button>
           {/each}
         </div>

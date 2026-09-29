@@ -6,6 +6,7 @@ import {
   freshFeedbackDb,
   freshPreMigrationDb,
   readFeedback,
+  seedBug,
   seedFeedback,
   seedUser,
 } from './feedback-pglite.harness';
@@ -688,5 +689,68 @@ describe('reads', () => {
     const [row] = (await service.getFeedbackList({ statuses: [] })).items;
     expect(row.bugTitle).toBe('Sort resets');
     expect(row.bugStatus).toBe('Complete');
+  });
+});
+
+/**
+ * 🔴 THE READ HALF OF THE SEAM BOTH ROUTES SIT ON. `/feedback` and `/feedback/<id>` render the same
+ * panel, so both have to satisfy its prerequisites — and this is the shape of divergence typecheck
+ * cannot see: a missing prop fails at the call site, a diverged CONDITION does not. The conditions
+ * live here, once, and are exercised against real rows here rather than restated against a mock in
+ * either route's suite.
+ */
+describe('feedbackPanelExtras', () => {
+  const withGrant = { 'feedback.bug.promote': true };
+
+  it('loads the picker’s options for an UNLINKED row held by someone who may promote', async () => {
+    const id = await seedFeedback(db, { userId: reporter });
+    await seedBug(db, 'attachments 500 on upload');
+
+    const row = await service.getFeedbackRow(id);
+    const extras = await service.feedbackPanelExtras(row!, withGrant);
+
+    expect(extras.knownIssues.map((i) => i.title)).toEqual(['attachments 500 on upload']);
+    expect(extras.siblings).toEqual([]);
+  });
+
+  /**
+   * The attach form is not rendered without the grant, so its options are a `Bug` query for a
+   * control nobody can see — on every report view, on both routes.
+   */
+  it('loads nothing for a caller who may not promote', async () => {
+    const id = await seedFeedback(db, { userId: reporter });
+    await seedBug(db, 'attachments 500 on upload');
+
+    const row = await service.getFeedbackRow(id);
+
+    expect(await service.feedbackPanelExtras(row!, {})).toEqual({
+      siblings: [],
+      knownIssues: [],
+    });
+    // The control: the same row and the same `Bug` DO produce options once the grant is held, so
+    // the empty result above is the grant and not an empty table.
+    expect((await service.feedbackPanelExtras(row!, withGrant)).knownIssues).toHaveLength(1);
+  });
+
+  /**
+   * 🔴 THE TWO READS ARE MUTUALLY EXCLUSIVE BY CONSTRUCTION, and asserting both directions is what
+   * stops a "simplification" that loads both unconditionally. A LINKED row cannot be attached to a
+   * second issue (`linkInTransaction` requires `bugId IS NULL`), so its picker options are dead; an
+   * UNLINKED row has no siblings, because a sibling is defined by sharing its issue.
+   */
+  it('gives a LINKED row its siblings and no picker options', async () => {
+    const bugId = await seedBug(db, 'attachments 500 on upload');
+    const id = await seedFeedback(db, { userId: reporter, bugId });
+    const siblingId = await seedFeedback(db, {
+      userId: reporter,
+      bugId,
+      message: 'same thing on mobile',
+    });
+
+    const row = await service.getFeedbackRow(id);
+    const extras = await service.feedbackPanelExtras(row!, withGrant);
+
+    expect(extras.knownIssues).toEqual([]);
+    expect(extras.siblings.map((s) => s.id)).toEqual([siblingId]);
   });
 });

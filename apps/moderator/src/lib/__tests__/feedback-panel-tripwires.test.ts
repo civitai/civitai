@@ -75,6 +75,13 @@ const componentSource = (file: string): string =>
     ' '
   );
 
+/** The per-report route's page, which renders the same panel the queue expands. */
+const reportPageSource = (): string =>
+  stripComments(readFileSync(path.resolve(feedbackDir, '[id]/+page.svelte'), 'utf-8')).replace(
+    /\s+/g,
+    ' '
+  );
+
 /** The unprocessed bytes, for the controls that compare against what stripping removed. */
 const rawSource = (file: string): string =>
   readFileSync(path.resolve(feedbackDir, file), 'utf-8').replace(/\s+/g, ' ');
@@ -100,6 +107,7 @@ describe('the instrument itself', () => {
       expect(source(file).length).toBeGreaterThan(500);
     }
     expect(componentSource('Lightbox.svelte').length).toBeGreaterThan(500);
+    expect(reportPageSource().length).toBeGreaterThan(500);
   });
 
   /**
@@ -175,6 +183,24 @@ describe('typed text outlives the reload every write issues', () => {
     const detail = source('FeedbackDetail.svelte');
     expect(detail).not.toContain('name="note"');
     expect(detail).not.toContain('row.triageNote');
+  });
+
+  /**
+   * 🔴 THE CURRENT-STATUS BUTTON IS DISABLED, AND REMOVING THE NOTE BOX IS WHY. While this form
+   * carried the textarea, `Save (<status>)` persisted the note without moving the row. With the note
+   * gone it posts a status change to the status the row already has — `expectedStatus === status`,
+   * so the UPDATE matches one row and `triageFeedback` reassigns `handledById` and `handledAt` to
+   * whoever clicked, plus a `ModActivity` row. The queue's Handled column then credits a moderator
+   * who only clicked through, over the one who actually ruled, and nothing records that it changed.
+   *
+   * Both halves: the guard is present, AND the label no longer says "Save" over a form with nothing
+   * to save. A button that still read `Save (reviewed)` while disabled invites someone to re-enable
+   * it rather than ask what it saves.
+   */
+  it('disables the button for the status the row already has', () => {
+    const detail = source('FeedbackDetail.svelte');
+    expect(detail).toContain('disabled={triageForm.submitting || status === row.status}');
+    expect(detail).not.toContain('Save (');
   });
 
   /**
@@ -279,6 +305,47 @@ describe('the refusal banner sees which form the operator used last', () => {
     expect(detail).toContain(
       'feedbackRefusal({ triage: triageForm.error, promote: promoteForm.error }, lastSubmitted)'
     );
+  });
+
+  /**
+   * 🔴 THE CROSS-CLEARING IS WHAT STOPS A REFUSAL OUTLIVING WHAT IT REFUSED. It was deleted once in
+   * this arc on the argument that `lastSubmitted` subsumed it, and that was wrong in a way no
+   * typecheck sees: refuse a promote, then run a triage that SUCCEEDS, and `feedbackRefusal`'s
+   * `?? raised[0]` fallback re-renders the promote refusal over a save that worked. There is no
+   * success indicator on this panel to contradict it, so the red banner is the only thing on screen
+   * and the operator's likeliest next move is to click the status button again.
+   */
+  it('clears each form error when the other form starts submitting', () => {
+    const detail = source('FeedbackDetail.svelte');
+    expect(detail).toContain('promoteForm.error = null;');
+    expect(detail).toContain('triageForm.error = null;');
+  });
+
+  /**
+   * 🔴 THE PAGE-LEVEL REFUSAL IS A FALLBACK INSIDE THE ONE BANNER, NEVER A SECOND `ErrorAlert`.
+   * `use:enhance` sets the page's `form` as well as `FormState.error`, so an unconditional
+   * page-level alert on `/feedback/<id>` renders the same refusal twice — the defect this queue has
+   * shipped three times, each invisible to every test, because this app has no browser tier.
+   */
+  it('renders the no-JS refusal only when neither form holds one', () => {
+    const detail = source('FeedbackDetail.svelte');
+    expect(detail).toContain('lastSubmitted) ?? formError');
+    expect(detail.match(/<ErrorAlert/g) ?? []).toHaveLength(1);
+
+    const report = reportPageSource();
+    expect(report).toContain('{formError}');
+    expect(report).not.toContain('ErrorAlert');
+  });
+
+  /**
+   * 🔴 THE PANEL MUST BE REBUILT WHEN THE REPORT CHANGES. SvelteKit reuses a route's component
+   * across a param change, so `/feedback/12` → `/feedback/34` — Back/Forward, a URL edit, or one of
+   * the sibling links `FeedbackPromote` now points at this route — would otherwise keep the same
+   * `FeedbackDetail`: a refusal raised on report A reading as a refusal of B, and a half-written
+   * issue draft submitting against B's id.
+   */
+  it('keys the panel on the report id on the per-report route', () => {
+    expect(reportPageSource()).toContain('{#key data.row.id}');
   });
 
   /**
@@ -444,6 +511,35 @@ describe('the row click is an enhancement over a real link', () => {
     expect(page).toContain('target.closest(FEEDBACK_ROW_INTERACTIVE)');
     expect(page).toContain('feedbackRowExpands({');
     expect(page).toContain('onclick={(event) => rowClick(event, row.id)}');
+  });
+
+  /**
+   * 🔴 THE HANDLER OPENS; ONLY THE ANCHOR TOGGLES. `rowHref` is a toggle, so routing the row click
+   * through it makes the whole nine-cell strip a close target — and closing destroys the panel and
+   * every unsaved character of the issue draft inside it. `feedbackRowExpands`' `expanded` guard is
+   * the other half; this pins that the navigation itself cannot close a row.
+   */
+  it('navigates the row click through the open-only href', () => {
+    const page = source('+page.svelte');
+    expect(page).toContain(
+      'goto(feedbackOpenHref(page.url, id), { noScroll: true, keepFocus: true })'
+    );
+    expect(page).toContain('expanded: data.open === id,');
+  });
+
+  /**
+   * The anchor's navigation options have to match the handler's, and nothing makes them: `rowHref`
+   * settles the URL only. Dropping either attribute sends the operator back to the top of the queue,
+   * or a keyboard operator back to the top of the document, on a gesture whose whole point is that
+   * the panel opens in place.
+   */
+  it('keeps the anchor and the handler agreeing on scroll and focus', () => {
+    const page = source('+page.svelte');
+    expect(page).toContain('data-sveltekit-noscroll');
+    expect(page).toContain('data-sveltekit-keepfocus');
+    // `replacestate` is deliberately NOT on this anchor — closing a row with Back is worth a
+    // history entry, unlike a sort cycle. Pinned so re-adding it has to come past this line.
+    expect(page).not.toContain('data-sveltekit-replacestate');
   });
 });
 
