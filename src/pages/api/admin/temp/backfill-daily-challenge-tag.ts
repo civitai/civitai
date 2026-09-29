@@ -35,15 +35,16 @@ const schema = z.object({
   // Above the sawtooth a healthy slot shows between restart_lsn steps; a stalled one passes it in minutes.
   maxLagGrowthMb: z.coerce.number().positive().max(1024).default(256),
   // "slot:mb,slot:mb", as returned in `baselines`.
+  // Empty is accepted because a call that stops before its first slot read returns none.
   baselines: commaDelimitedStringArray(
     z
       .string()
-      .regex(/^[\w.-]+:\d+$/)
+      .regex(/^(?:[\w.-]+:\d+)?$/)
       .array()
   ).transform(
     (entries) =>
       Object.fromEntries(
-        entries.map((entry) => {
+        entries.filter(Boolean).map((entry) => {
           const [slot, mb] = entry.split(':');
           return [slot, Number(mb) * MB];
         })
@@ -109,41 +110,45 @@ export default WebhookEndpoint(async (req, res) => {
   let stopSlot: string | undefined;
   let requeueFailed = false;
 
-  outer: for (const { id: collectionId } of collections) {
-    let itemId = collectionId === params.collectionId ? params.itemId : 0;
-    next.collectionId = collectionId;
-    next.itemId = itemId;
+  try {
+    outer: for (const { id: collectionId } of collections) {
+      let itemId = collectionId === params.collectionId ? params.itemId : 0;
+      next.collectionId = collectionId;
+      next.itemId = itemId;
 
-    while (true) {
-      if (closed) {
-        stopReason = 'client-closed';
-        break outer;
-      }
-      if (batches >= params.maxBatches) {
-        stopReason = 'max-batches';
-        break outer;
-      }
-      if (wroteLastBatch && params.pauseMs) await sleep(params.pauseMs);
-      wroteLastBatch = false;
-
-      lags = await getRetainedWalBytes(params.slots);
-      if (!lags) {
-        stopReason = 'slot-not-found';
-        break outer;
-      }
-      // Per slot: one slot already holding a lot of WAL must not hide growth on another.
-      for (const [slot, lag] of Object.entries(lags)) {
-        baselines[slot] = Math.min(baselines[slot] ?? lag, lag);
-        if (lag > params.maxLagMb * MB) stopReason = 'lag-over-max';
-        else if (lag - baselines[slot] > params.maxLagGrowthMb * MB) stopReason = 'lag-grew';
-        if (stopReason) {
-          stopSlot = slot;
+      while (true) {
+        if (closed) {
+          stopReason = 'client-closed';
           break outer;
         }
-      }
+        if (batches >= params.maxBatches) {
+          stopReason = 'max-batches';
+          break outer;
+        }
+        if (wroteLastBatch && params.pauseMs) await sleep(params.pauseMs);
+        wroteLastBatch = false;
 
-      const { rows } = await pgDbWrite.query<{ id: number; imageId: number; tagged: boolean }>(
-        `SELECT ci.id, ci."imageId",
+        lags = await getRetainedWalBytes(params.slots);
+        if (!lags) {
+          stopReason = 'slot-not-found';
+          break outer;
+        }
+        // Per slot: one slot already holding a lot of WAL must not hide growth on another. Every
+        // baseline is lowered before any check stops the loop, so the echoed set stays complete.
+        for (const [slot, lag] of Object.entries(lags)) {
+          baselines[slot] = Math.min(baselines[slot] ?? lag, lag);
+        }
+        for (const [slot, lag] of Object.entries(lags)) {
+          if (lag > params.maxLagMb * MB) stopReason = 'lag-over-max';
+          else if (lag - baselines[slot] > params.maxLagGrowthMb * MB) stopReason = 'lag-grew';
+          if (stopReason) {
+            stopSlot = slot;
+            break outer;
+          }
+        }
+
+        const { rows } = await pgDbWrite.query<{ id: number; imageId: number; tagged: boolean }>(
+          `SELECT ci.id, ci."imageId",
            EXISTS (
              SELECT 1 FROM "TagsOnImageNew" t WHERE t."imageId" = ci."imageId" AND t."tagId" = $1
            ) AS tagged
@@ -151,53 +156,54 @@ export default WebhookEndpoint(async (req, res) => {
          WHERE ci."collectionId" = $2 AND ci.id > $3 AND ci."imageId" IS NOT NULL
          ORDER BY ci.id
          LIMIT $4`,
-        [tagId, collectionId, itemId, params.batchSize]
-      );
-      if (!rows.length) break;
+          [tagId, collectionId, itemId, params.batchSize]
+        );
+        if (!rows.length) break;
 
-      const untagged = rows.filter((row) => !row.tagged);
-      if (!params.dryRun && untagged.length) {
-        const imageIds = untagged.map(({ imageId }) => imageId);
-        try {
-          await insertTagsOnImageNew(
-            imageIds.map((imageId) => ({
-              imageId,
-              tagId,
-              source: 'User' as const,
-              confidence: 100,
-              automated: true,
-            }))
-          );
-        } catch (e) {
-          stopReason = 'error';
-          await logToAxiom({
-            type: 'error',
-            name: LOG_NAME,
-            message: (e as Error).message,
-            next,
-          }).catch(() => null);
-          // Some chunks may have committed; a rerun skips those as tagged and would never
-          // queue them, so they have to reach the index now.
-          await queueImageSearchIndexUpdate({
-            ids: imageIds,
-            action: SearchIndexUpdateQueueAction.Update,
-          }).catch(() => {
-            requeueFailed = true;
-          });
-          break outer;
+        const untagged = rows.filter((row) => !row.tagged);
+        if (!params.dryRun && untagged.length) {
+          const imageIds = untagged.map(({ imageId }) => imageId);
+          try {
+            await insertTagsOnImageNew(
+              imageIds.map((imageId) => ({
+                imageId,
+                tagId,
+                source: 'User' as const,
+                confidence: 100,
+                automated: true,
+              }))
+            );
+          } catch (e) {
+            // Some chunks may have committed; a rerun skips those as tagged and would never
+            // queue them, so they have to reach the index now.
+            await queueImageSearchIndexUpdate({
+              ids: imageIds,
+              action: SearchIndexUpdateQueueAction.Update,
+            }).catch(() => {
+              requeueFailed = true;
+            });
+            throw e;
+          }
+          written += untagged.length;
+          wroteLastBatch = true;
         }
-        written += untagged.length;
-        wroteLastBatch = true;
+
+        batches++;
+        scanned += rows.length;
+        untaggedFound += untagged.length;
+        itemId = rows[rows.length - 1].id;
+        next.itemId = itemId;
+
+        if (rows.length < params.batchSize) break;
       }
-
-      batches++;
-      scanned += rows.length;
-      untaggedFound += untagged.length;
-      itemId = rows[rows.length - 1].id;
-      next.itemId = itemId;
-
-      if (rows.length < params.batchSize) break;
     }
+  } catch (e) {
+    // Any failure after earlier batches committed must still return the cursor. Driver text can
+    // carry row values, so it goes to the log and never into the response.
+    stopReason = 'error';
+    await logToAxiom({ type: 'error', name: LOG_NAME, message: (e as Error).message, next }).catch(
+      () => null
+    );
   }
 
   // Best-effort: a failure here must not cost the operator the cursor for writes already committed.
@@ -219,9 +225,10 @@ export default WebhookEndpoint(async (req, res) => {
     requeueFailed,
     next,
     // Floored, so passing it back can only tighten the guard.
-    baselines: Object.entries(baselines)
-      .map(([slot, bytes]) => `${slot}:${Math.floor(bytes / MB)}`)
-      .join(','),
+    baselines:
+      Object.entries(baselines)
+        .map(([slot, bytes]) => `${slot}:${Math.floor(bytes / MB)}`)
+        .join(',') || undefined,
     batches,
     scanned,
     untaggedFound,

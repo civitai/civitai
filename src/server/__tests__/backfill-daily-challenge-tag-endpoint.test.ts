@@ -28,10 +28,12 @@ const { state, events, tagRows, query, insertTagsOnImageNew, queueImageSearchInd
       // A fake WAL position that each written row advances by 1 MB; the LSN "text" is its number.
       wal: 0,
       walQueryFails: false,
+      slotReadThrowsAt: -1,
     };
     const query = vi.fn(async (sql: string, params: unknown[] = []) => {
       if (sql.includes('pg_replication_slots')) {
         events.push('slot-read');
+        if (state.slotReadThrowsAt === state.lagReads) throw new Error('slot read failed');
         const read = state.lags[Math.min(state.lagReads++, state.lags.length - 1)];
         const [slots] = params as [string[]];
         return {
@@ -161,6 +163,7 @@ describe('backfill-daily-challenge-tag', () => {
     events.length = 0;
     state.wal = 0;
     state.walQueryFails = false;
+    state.slotReadThrowsAt = -1;
     seed();
     state.lags = lags(10);
     state.lagReads = 0;
@@ -245,6 +248,8 @@ describe('backfill-daily-challenge-tag', () => {
       stopReason: 'lag-over-max',
       stopSlot: 'other',
       lagMb: { other: 2048, mediarank_sub: 10 },
+      // Recorded for every slot, including those after the one that stopped the loop.
+      baselines: 'other:2048,mediarank_sub:10',
     });
 
     state.lags = [{ mediarank_sub: 10 * MB }];
@@ -358,6 +363,101 @@ describe('backfill-daily-challenge-tag', () => {
 
     expect(second.payload).toMatchObject({ done: true, written: 2 });
     expect(writtenImageIds().sort()).toEqual([201, 202]);
+    // The stopped call logged its cursor too, not only the finished one.
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ stopReason: 'lag-grew', next: { collectionId: 20, itemId: 0 } })
+    );
+  });
+
+  it('round-trips baselines for several slots, so each slot resumes from its own floor', async () => {
+    state.lags = [{ other: 600 * MB, mediarank_sub: 10 * MB }];
+    const first = await call({
+      dryRun: 'false',
+      batchSize: '1',
+      maxBatches: '1',
+      slots: 'other,mediarank_sub',
+    });
+
+    expect(first.payload).toMatchObject({ baselines: 'other:600,mediarank_sub:10' });
+
+    state.lags = [{ other: 600 * MB, mediarank_sub: 100 * MB }];
+    state.lagReads = 0;
+    const second = await call({
+      dryRun: 'false',
+      slots: 'other,mediarank_sub',
+      baselines: String(first.payload.baselines),
+      maxLagGrowthMb: '64',
+    });
+
+    expect(second.payload).toMatchObject({ stopReason: 'lag-grew', stopSlot: 'mediarank_sub' });
+  });
+
+  it('floors the returned baselines, so passing them back can only tighten the guard', async () => {
+    state.lags = [{ mediarank_sub: 100 * MB + MB / 2 + 1 }];
+
+    const { payload } = await call({ dryRun: 'false', maxBatches: '1' });
+
+    expect(payload).toMatchObject({ baselines: 'mediarank_sub:100' });
+  });
+
+  it('stops growth at the 256 MB default when no threshold is passed', async () => {
+    state.lags = lags(0, 300);
+    const grew = await call({ dryRun: 'false', batchSize: '2' });
+
+    expect(grew.payload).toMatchObject({ stopReason: 'lag-grew', written: 1 });
+
+    state.lags = lags(0, 200);
+    state.lagReads = 0;
+    seed();
+    const held = await call({ dryRun: 'false', batchSize: '2' });
+
+    expect(held.payload).toMatchObject({ done: true });
+  });
+
+  it('still returns the cursor when a slot read throws after earlier writes committed', async () => {
+    state.slotReadThrowsAt = 1;
+
+    const { statusCode, payload } = await call({ dryRun: 'false', batchSize: '2' });
+
+    expect(statusCode).toBe(200);
+    expect(payload).toMatchObject({
+      stopReason: 'error',
+      written: 1,
+      next: { collectionId: 10, itemId: 7 },
+    });
+    expect(JSON.stringify(payload)).not.toContain('slot read failed');
+  });
+
+  it.each([
+    ['the error log', true],
+    ['the summary log', false],
+  ])('still returns the cursor when %s is rejected', async (_, failWrite) => {
+    loggingMock.logToAxiom.mockImplementation(() => Promise.reject(new Error('axiom down')));
+    if (failWrite) insertTagsOnImageNew.mockRejectedValueOnce(new Error('boom'));
+
+    const { statusCode, payload } = await call({ dryRun: 'false', batchSize: '2' }).finally(() =>
+      // The shared mock outlives this test, and clearAllMocks keeps implementations.
+      loggingMock.logToAxiom.mockImplementation(() => Promise.resolve(undefined))
+    );
+
+    expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(failWrite ? 2 : 1);
+    expect(statusCode).toBe(200);
+    expect(payload).toMatchObject({
+      next: failWrite ? { collectionId: 10, itemId: 0 } : { collectionId: 20, itemId: 5 },
+    });
+  });
+
+  it('omits baselines when none were read, and accepts an empty one passed back', async () => {
+    state.lags = [{}];
+    const first = await call({ dryRun: 'false' });
+
+    expect(first.payload.baselines).toBeUndefined();
+
+    state.lags = lags(10);
+    state.lagReads = 0;
+    const second = await call({ dryRun: 'false', baselines: '' });
+
+    expect(second.payload).toMatchObject({ done: true, written: 4 });
   });
 
   it('returns the last committed cursor when a write fails, and queues that batch for the index', async () => {
@@ -411,6 +511,8 @@ describe('backfill-daily-challenge-tag', () => {
   it.each([
     ['a slot list with an empty entry', { slots: 'mediarank_sub,' }],
     ['a baseline without a number', { baselines: 'mediarank_sub' }],
+    // Unanchored, "80x" would pass and parse to NaN, which switches the growth check off.
+    ['a baseline with trailing junk', { baselines: 'mediarank_sub:80x' }],
   ])('refuses %s before reading or writing anything', async (_, params) => {
     await call({ dryRun: 'false', ...params }).catch(() => undefined);
 
