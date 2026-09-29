@@ -260,7 +260,12 @@ export function deleteObject(bucket: string, key: string, s3: S3Client | null = 
 }
 
 // https://docs.aws.amazon.com/AmazonS3/latest/userguide/example_s3_DeleteObjects_section.html
-export function deleteManyObjects(bucket: string, keys: string[], s3: S3Client | null = null) {
+export function deleteManyObjects(
+  bucket: string,
+  keys: string[],
+  s3: S3Client | null = null,
+  options?: { abortSignal?: AbortSignal }
+) {
   if (!s3) s3 = getS3Client();
   return s3.send(
     new DeleteObjectsCommand({
@@ -268,7 +273,8 @@ export function deleteManyObjects(bucket: string, keys: string[], s3: S3Client |
       Delete: {
         Objects: keys.map((key) => ({ Key: key })),
       },
-    })
+    }),
+    options
   );
 }
 
@@ -285,8 +291,8 @@ export function deleteManyObjects(bucket: string, keys: string[], s3: S3Client |
  *      are no longer referenced by any env var (historical writes).
  *
  * NOTE: `env.S3_VAULT_BUCKET` is intentionally excluded. Vault objects share
- * keys with `VaultItem` rows and are deleted exclusively via `vault.service.ts`
- * after a `VaultItem` row goes away. The ModelFile cleanup path has no business
+ * keys with `VaultItem` rows and are deleted only by `deleteVaultItems`
+ * (vault-item-deletion.ts), before the row that records them. The ModelFile cleanup path has no business
  * touching the vault bucket: `urlsSafeToDelete` only checks ModelFile refcounts,
  * so a user-planted ModelFile.url pointing at a victim's vault object would
  * pass the refcount check and orphan-delete the victim's bytes.

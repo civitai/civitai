@@ -271,7 +271,7 @@ export const removeModelVersionsFromVault = async ({
 }) => {
   const { failedModelVersionIds } = await deleteVaultItems({ userId, modelVersionIds });
   if (failedModelVersionIds.length) {
-    throw throwInternalServerError(
+    throwInternalServerError(
       new Error('Some items could not be removed from your Vault. Please try again.')
     );
   }
