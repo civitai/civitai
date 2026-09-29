@@ -103,6 +103,10 @@
     const handler = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (done) return;
+      // Cmd+Left / Alt+Left is browser-back. Without this, navigating away silently writes a
+      // verdict first. `xguard/+page.svelte` already carries this guard on an identical handler;
+      // this page did not, which is the same defect living on in the sibling.
+      if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
       // 🔴 This listener is on `window` and ArrowLeft/ArrowRight RECORD A VERDICT. Nothing in the
       // Sheet primitive or in bits-ui's dialog stops keydown propagation -- that dialog handles
       // only SPACE and ENTER -- so without this guard, scrolling an open overlay with the arrow
@@ -196,9 +200,8 @@
   {/if}
 {/snippet}
 
-<!-- Declared at top level, beside the other snippets, so BOTH the `lg` aside and the below-`lg`
-     drawer can render it. A snippet declared inside the layout div would not be in scope for the
-     Sheet, which is its sibling -- and the whole point is that these two never drift apart. -->
+<!-- Must stay at top level: a snippet declared inside the layout div is not in scope for the
+     Sheet, which is its sibling. -->
 {#snippet policyBody()}
   {#if !policy}
     <h2 class="font-mono text-lg">{data.label}</h2>
@@ -381,9 +384,8 @@
 
   {#if current && !done}
     <div class="shrink-0 border-t bg-background px-6 py-3">
-      <!-- flex-wrap is required: these four buttons need ~570px and the box is 342px at 390px
-           wide. `justify-center` overflows SYMMETRICALLY, so without wrapping the leading button
-           sits at NEGATIVE x and cannot be scrolled into view at all. -->
+      <!-- flex-wrap: `justify-center` overflows symmetrically, so without it the leading button
+           sits at negative x and cannot be scrolled to. -->
       <div class="mx-auto flex max-w-3xl flex-wrap items-center justify-center gap-2">
         <Button variant="destructive" class="w-full sm:w-48" onclick={() => submitAnswer(false)}>← No</Button>
         <Button variant="outline" onclick={back} disabled={cursor === 0}>↑ Back</Button>
@@ -402,10 +404,8 @@
     {/if}
   </div>
 
-  <!-- The policy is the definition of the correct answer. Below `lg` this aside is hidden, so the
-       same body is rendered into a drawer reachable from the button in the footer -- one snippet,
-       so the two can never drift. Recording a verdict with the policy off-screen is the defect
-       this exists to prevent. -->
+  <!-- Hidden below `lg`; the footer's Policy button renders the same snippet as a drawer there.
+       A verdict recorded with the policy off-screen is the defect this pairing prevents. -->
   {#if current && !done}
     <aside class="hidden w-[26rem] shrink-0 overflow-y-auto border-l bg-muted/20 px-4 py-4 lg:block">
       {@render policyBody()}

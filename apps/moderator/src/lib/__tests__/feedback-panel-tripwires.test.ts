@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { FEEDBACK_PROMOTE_DRAFT_FIELDS } from '$lib/feedback-drafts';
 import { FEEDBACK_SORT_COLUMNS } from '$lib/feedback-sort';
+import { stripComments } from '../../test/strip-comments';
 
 /**
  * ⚠️⚠️ TRIPWIRES, NOT COVERAGE. READ THIS BEFORE TRUSTING ANYTHING BELOW.
@@ -52,12 +53,11 @@ const feedbackDir = path.resolve(dir, '../../routes/feedback');
  * Order matters: a markup comment can contain either script-comment syntax, so markup goes first.
  * Over-stripping is the safe direction — it makes pins fail LOUDLY — which is why the line-comment
  * rule is allowed to be blunt (it spares `https://` and nothing else).
+ *
+ * The implementation moved to `src/test/strip-comments.ts` when a second suite needed it; the two
+ * controls below still exercise it from here, including the real-data one that watches the count
+ * MOVE. Keeping one copy is the point — see that file's own note.
  */
-const stripComments = (text: string): string =>
-  text
-    .replace(/<!--[\s\S]*?-->/g, ' ')
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/(^|[^:/])\/\/[^\n]*/g, '$1');
 
 /**
  * Strip comments, then collapse runs of whitespace so an assertion survives reflowing and
