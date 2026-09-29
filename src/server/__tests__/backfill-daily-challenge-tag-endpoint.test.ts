@@ -25,6 +25,9 @@ const { state, events, tagRows, query, insertTagsOnImageNew, queueImageSearchInd
       collections: new Map<number, Item[]>(),
       lags: [] as SlotRead[],
       lagReads: 0,
+      // A fake WAL position that each written row advances by 1 MB; the LSN "text" is its number.
+      wal: 0,
+      walQueryFails: false,
     };
     const query = vi.fn(async (sql: string, params: unknown[] = []) => {
       if (sql.includes('pg_replication_slots')) {
@@ -37,8 +40,11 @@ const { state, events, tagRows, query, insertTagsOnImageNew, queueImageSearchInd
             .map((slot) => ({ slot, lag: read[slot] === null ? null : String(read[slot]) })),
         };
       }
-      if (sql.includes('pg_current_wal_lsn()::text')) return { rows: [{ lsn: '0/0' }] };
-      if (sql.includes('$1::pg_lsn')) return { rows: [{ bytes: String(5 * MB) }] };
+      if (sql.includes('pg_current_wal_lsn()::text')) return { rows: [{ lsn: String(state.wal) }] };
+      if (sql.includes('$1::pg_lsn')) {
+        if (state.walQueryFails) throw new Error('wal read failed');
+        return { rows: [{ bytes: String(state.wal - Number((params as string[])[0])) }] };
+      }
       if (sql.includes('FROM "Challenge"')) {
         const [, from] = params as number[];
         return {
@@ -62,6 +68,7 @@ const { state, events, tagRows, query, insertTagsOnImageNew, queueImageSearchInd
     });
     const tagRows = async (rows: { imageId: number }[]) => {
       events.push('write');
+      state.wal += rows.length * 1024 ** 2;
       for (const items of state.collections.values())
         for (const item of items)
           if (rows.some((r) => r.imageId === item.imageId)) item.tagged = true;
@@ -123,7 +130,9 @@ function call(query: Record<string, string>, token = 'test-webhook-token') {
 const writtenImageIds = () =>
   insertTagsOnImageNew.mock.calls.flatMap(([rows]) => rows.map((r) => r.imageId));
 
-const lags = (...mbs: number[]): SlotRead[] => mbs.map((mb) => ({ mediarank_sub: mb * MB }));
+// Both default slots, with the mediarank one carrying the lag under test.
+const lags = (...mbs: number[]): SlotRead[] =>
+  mbs.map((mb) => ({ mediarank_sub: mb * MB, debezium_slot: 0 }));
 
 // Collection 20's item ids sit BELOW collection 10's, as they do when two challenges' submission
 // windows overlap, so a cursor carried from one collection into the next skips entries.
@@ -154,6 +163,8 @@ describe('backfill-daily-challenge-tag', () => {
     insertTagsOnImageNew.mockReset();
     insertTagsOnImageNew.mockImplementation(tagRows);
     events.length = 0;
+    state.wal = 0;
+    state.walQueryFails = false;
     seed();
     state.lags = lags(10);
     state.lagReads = 0;
@@ -188,9 +199,11 @@ describe('backfill-daily-challenge-tag', () => {
     expect(payload).toMatchObject({
       done: true,
       written: 4,
-      walMb: 5,
+      walMb: 4,
+      requeueFailed: false,
       next: { collectionId: 20, itemId: 5 },
     });
+    expect(queueImageSearchIndexUpdate).not.toHaveBeenCalled();
   });
 
   it('pauses, then re-reads the slots, before every write after the first', async () => {
@@ -206,7 +219,7 @@ describe('backfill-daily-challenge-tag', () => {
   });
 
   it('stops before its first write when a slot has no row', async () => {
-    state.lags = [{}];
+    state.lags = [{ mediarank_sub: 10 * MB }];
 
     const { payload } = await call({ dryRun: 'false' });
 
@@ -215,7 +228,7 @@ describe('backfill-daily-challenge-tag', () => {
   });
 
   it('stops before its first write when a slot has a row but no retained WAL (invalidated)', async () => {
-    state.lags = [{ mediarank_sub: null }];
+    state.lags = [{ mediarank_sub: null, debezium_slot: 0 }];
 
     const { payload } = await call({ dryRun: 'false' });
 
@@ -224,14 +237,15 @@ describe('backfill-daily-challenge-tag', () => {
   });
 
   it('guards on the worst of several slots, and stops if any one of them is missing', async () => {
-    state.lags = [{ mediarank_sub: 10 * MB, debezium: 2048 * MB }];
-    const worst = await call({ dryRun: 'false', slots: 'mediarank_sub,debezium' });
+    // The worst slot is listed first, so taking the last slot's lag would miss it.
+    state.lags = [{ debezium: 2048 * MB, mediarank_sub: 10 * MB }];
+    const worst = await call({ dryRun: 'false', slots: 'debezium,mediarank_sub' });
 
     expect(worst.payload).toMatchObject({ stopReason: 'lag-over-max', lagMb: 2048 });
 
     state.lags = [{ mediarank_sub: 10 * MB }];
     state.lagReads = 0;
-    const missing = await call({ dryRun: 'false', slots: 'mediarank_sub,debezium' });
+    const missing = await call({ dryRun: 'false', slots: 'debezium,mediarank_sub' });
 
     expect(missing.payload).toMatchObject({ stopReason: 'slot-not-found' });
     expect(insertTagsOnImageNew).not.toHaveBeenCalled();
@@ -308,9 +322,84 @@ describe('backfill-daily-challenge-tag', () => {
       written: 0,
       next: { collectionId: 10, itemId: 0 },
     });
-    expect(queueImageSearchIndexUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ ids: [101] })
-    );
+    expect(queueImageSearchIndexUpdate).toHaveBeenCalledTimes(1);
+    expect(queueImageSearchIndexUpdate).toHaveBeenCalledWith({ ids: [101], action: 'Update' });
+  });
+
+  it('still returns the cursor when the index requeue after a failed write also fails', async () => {
+    insertTagsOnImageNew.mockRejectedValueOnce(new Error('boom'));
+    queueImageSearchIndexUpdate.mockRejectedValueOnce(new Error('queue down'));
+
+    const { statusCode, payload } = await call({ dryRun: 'false', batchSize: '2' });
+
+    expect(statusCode).toBe(200);
+    expect(payload).toMatchObject({
+      stopReason: 'error',
+      requeueFailed: true,
+      next: { collectionId: 10, itemId: 0 },
+    });
+  });
+
+  it('still returns the cursor when the closing WAL read fails after writes committed', async () => {
+    state.walQueryFails = true;
+
+    const { statusCode, payload } = await call({ dryRun: 'false', batchSize: '2' });
+
+    expect(statusCode).toBe(200);
+    expect(payload).toMatchObject({ done: true, written: 4, walMb: null });
+  });
+
+  it('refuses an empty slot list before reading or writing anything', async () => {
+    await call({ dryRun: 'false', slots: ',' }).catch(() => undefined);
+
+    expect(query).not.toHaveBeenCalled();
+    expect(insertTagsOnImageNew).not.toHaveBeenCalled();
+  });
+
+  it('treats a baseline of 0 as a baseline, passed or measured', async () => {
+    state.lags = lags(70);
+    const passed = await call({ dryRun: 'false', baselineMb: '0', maxLagGrowthMb: '64' });
+
+    expect(passed.payload).toMatchObject({ stopReason: 'lag-grew', written: 0 });
+
+    state.lags = lags(0, 70);
+    state.lagReads = 0;
+    const measured = await call({ dryRun: 'false', batchSize: '2', maxLagGrowthMb: '64' });
+
+    expect(measured.payload).toMatchObject({ stopReason: 'lag-grew', baselineMb: 0, written: 1 });
+  });
+
+  it('lowers a passed baselineMb to the lag actually seen, so an inflated one cannot loosen the guard', async () => {
+    state.lags = lags(100, 180);
+
+    const { payload } = await call({
+      dryRun: 'false',
+      batchSize: '2',
+      baselineMb: '500',
+      maxLagGrowthMb: '64',
+    });
+
+    expect(payload).toMatchObject({ stopReason: 'lag-grew', baselineMb: 100, written: 1 });
+  });
+
+  it('carries the returned baselineMb into the next call, so growth across calls still stops it', async () => {
+    state.lags = lags(100, 140);
+    const first = await call({ dryRun: 'false', batchSize: '2', maxBatches: '2' });
+
+    expect(first.payload).toMatchObject({ stopReason: 'max-batches', baselineMb: 100 });
+
+    state.lags = lags(180);
+    state.lagReads = 0;
+    const next = first.payload.next as { collectionId: number; itemId: number };
+    const second = await call({
+      dryRun: 'false',
+      batchSize: '2',
+      collectionId: String(next.collectionId),
+      itemId: String(next.itemId),
+      baselineMb: String(first.payload.baselineMb),
+    });
+
+    expect(second.payload).toMatchObject({ stopReason: 'lag-grew', written: 0 });
   });
 
   it('stops at maxBatches mid-collection, and a resume from there still covers later collections', async () => {
