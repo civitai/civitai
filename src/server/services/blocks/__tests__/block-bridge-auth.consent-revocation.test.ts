@@ -393,8 +393,8 @@ describe('SEAM: through the REAL primitive', () => {
  * defect to fix here — the alternative (exempting private-run tokens from the marker) means a
  * review surface deliberately ignoring a withdrawal the viewer expressed, which is strictly
  * worse than an unexplained narrowing. Recorded as a flip precondition in
- * `src/server/services/app-blocks-flag.ts` — which was NOT true when this sentence was
- * first written (it lived only here, in a test docblock) and is true now.
+ * `src/server/services/app-blocks-flag.ts`, which is where it belongs — a reader deciding
+ * whether to widen the flag does not open this file.
  *
  * ## Why these are [INV], not [REG]
  *

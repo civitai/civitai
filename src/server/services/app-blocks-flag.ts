@@ -664,13 +664,12 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  * run refuse outright rather than run read-only. Do not read the heading as bounding the
  * harm at read-only.
  *
- * What is NOT settled is
- * what the reviewer sees: a moderator who once withdrew the spend scope on this app gets a
- * read-only private run and nothing on screen says why, and the audience for this surface
- * is exactly the population that files bugs about that. Deciding whether the chrome should
- * say so is a call for whoever widens this flag. Exempting private-run tokens from the
- * marker is the WRONG fix — it makes a review surface ignore a withdrawal the viewer
- * expressed.
+ * What is NOT settled is what the reviewer sees: a moderator who once withdrew the spend
+ * scope on this app gets a read-only private run and nothing on screen says why, and the
+ * audience for this surface is exactly the population that files bugs about that. Deciding
+ * whether the chrome should say so is a call for whoever widens this flag. Exempting
+ * private-run tokens from the marker is the WRONG fix — it makes a review surface ignore a
+ * withdrawal the viewer expressed.
  *
  * Pinned behaviourally in
  * `src/server/services/blocks/__tests__/block-bridge-auth.consent-revocation.test.ts`
