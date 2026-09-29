@@ -54,9 +54,8 @@ const feedbackDir = path.resolve(dir, '../../routes/feedback');
  * Over-stripping is the safe direction — it makes pins fail LOUDLY — which is why the line-comment
  * rule is allowed to be blunt (it spares `https://` and nothing else).
  *
- * The implementation moved to `src/test/strip-comments.ts` when a second suite needed it; the two
- * controls below still exercise it from here, including the real-data one that watches the count
- * MOVE. Keeping one copy is the point — see that file's own note.
+ * `stripComments` lives in `src/test/strip-comments.ts`; the two controls below exercise it from
+ * here, including the real-data one that watches the count MOVE.
  */
 
 /**

@@ -104,8 +104,7 @@
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (done) return;
       // Cmd+Left / Alt+Left is browser-back. Without this, navigating away silently writes a
-      // verdict first. `xguard/+page.svelte` already carries this guard on an identical handler;
-      // this page did not, which is the same defect living on in the sibling.
+      // verdict first. `xguard/+page.svelte:123` carries the same guard on an identical handler.
       if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
       // 🔴 This listener is on `window` and ArrowLeft/ArrowRight RECORD A VERDICT. Nothing in the
       // Sheet primitive or in bits-ui's dialog stops keydown propagation -- that dialog handles
