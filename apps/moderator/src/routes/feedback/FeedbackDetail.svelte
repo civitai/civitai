@@ -6,7 +6,7 @@
   import { dateTime } from '$lib/format';
   import { FEEDBACK_STATUSES, handledByLabel, type FeedbackContext } from '$lib/feedback';
   import { feedbackRefusal, type FeedbackFormName } from '$lib/feedback-refusal';
-  import { makeFeedbackPromoteDraft } from '$lib/feedback-drafts';
+  import { isFeedbackPromoteDraftDirty, makeFeedbackPromoteDraft } from '$lib/feedback-drafts';
   import FeedbackContextPanel from './FeedbackContextPanel.svelte';
   import FeedbackAttachments from './FeedbackAttachments.svelte';
   import FeedbackPromote from './FeedbackPromote.svelte';
@@ -26,6 +26,7 @@
     canTriage,
     canPromote,
     formError = null,
+    draftDirty = $bindable(false),
   }: {
     row: FeedbackRow;
     context: FeedbackContext;
@@ -63,6 +64,22 @@
      * component. Give any new form a `FormState`, or this prop stops covering it.
      */
     formError?: string | null;
+    /**
+     * 🔴 REPORTED UPWARD SO THE QUEUE CAN REFUSE TO UNMOUNT THIS PANEL OVER UNSAVED TEXT. The row
+     * click that expands a report destroys whatever panel is open, and `promoteDraft` is held in
+     * this component's memory and nowhere else — but the click handler lives in `+page.svelte`,
+     * outside this component, so the fact has to leave it. The QUEUE passes `bind:`; the per-report
+     * page does not, because it has no rows to click.
+     *
+     * 🔴 IT IS A `$bindable` WRITTEN FROM AN `$effect`, AND THAT IS NOT THE `$effect` THE STANDARD
+     * FORBIDS. The banned shape fetches and assigns to `$state`; this one propagates a value that is
+     * DERIVED here and CONSUMED one level up, and Svelte has no downward-declared-upward-flowing
+     * derived. `$derived` cannot write a prop, and a plain prop the child mutates raises
+     * `ownership_invalid_mutation` — the defect `promoteDraft` already documents at length.
+     *
+     * It only ever writes, never reads, so there is no loop.
+     */
+    draftDirty?: boolean;
   } = $props();
 
   /**
@@ -84,6 +101,12 @@
    * is text the operator cannot get back. This component is the one that outlives the reload.
    */
   let promoteDraft = $state(makeFeedbackPromoteDraft());
+
+  // The one fact the queue needs about this panel, kept in step with the draft it describes. See
+  // the `draftDirty` prop for why this is an effect rather than a `$derived`.
+  $effect(() => {
+    draftDirty = isFeedbackPromoteDraftDirty(promoteDraft);
+  });
 
   /**
    * Which form the operator submitted most recently — the tie-break when both have a live refusal.
@@ -216,10 +239,14 @@
         <input type="hidden" name="expectedStatus" value={row.status} />
 
         <!-- 🔴 THIS FORM POSTS NO `note`, AND THE SERVER MUST KEEP TREATING THAT AS "LEAVE THE
-             COLUMN ALONE". `Feedback.triageNote` still holds notes written before the box was
-             removed, and reading an absent field as an empty one would destroy one of them on every
-             status click. The distinction is enforced in `$lib/server/feedback-actions.ts` and in
-             `triageFeedback`'s signature. -->
+             COLUMN ALONE" rather than as an empty note. Enforced in
+             `$lib/server/feedback-actions.ts` and in `triageFeedback`'s signature.
+
+             ⚠️ IT GUARDS THE CONTRACT, NOT EXISTING DATA — measured, so nobody overstates it later:
+             production holds 47 `Feedback` rows and `triageNote` is non-null on ZERO of them. There
+             is nothing to destroy today and no writer left to create more. What the distinction
+             buys is that a future writer — a backfill, an import, a note box that comes back — does
+             not find a status click quietly blanking its column. -->
         <!-- 🔴 THE CURRENT STATUS IS DISABLED, AND IT USED TO READ `Save (<status>)`. That button
              had a job while this form carried the internal-note textarea: it persisted the note
              without moving the row. With the note gone it submits a status change to the status the

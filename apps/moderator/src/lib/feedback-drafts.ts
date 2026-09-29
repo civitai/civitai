@@ -50,3 +50,36 @@ export const FEEDBACK_PROMOTE_DRAFT_FIELDS = ['bugId', 'title', 'summary', 'clic
 export function makeFeedbackPromoteDraft(): FeedbackPromoteDraft {
   return { attachMode: false, bugId: '', title: '', summary: '', clickupUrl: '' };
 }
+
+/**
+ * Whether this draft holds operator-typed text that unmounting the panel would discard.
+ *
+ * 🔴 IT IS THE ONLY THING STANDING BETWEEN A STRAY CLICK AND SOMEONE'S UNSAVED ISSUE. The queue
+ * expands a row on a click anywhere in it, and `?open=` is single-valued — so opening report B
+ * destroys report A's panel, and this draft lives in that panel's memory and nowhere else. The click
+ * handler declines on exactly this predicate; everywhere else the gesture works.
+ *
+ * 🔴 IT IS DRIVEN BY `FEEDBACK_PROMOTE_DRAFT_FIELDS`, NOT BY A HAND-WRITTEN LIST OF FOUR BOXES, and
+ * that is what makes it survive the form growing. That ledger is already asserted against the
+ * template's own `name=` attributes, so a box added to `FeedbackPromote` without a ledger entry
+ * fails a test — and once it is in the ledger it is dirty-checked here for free. A fifth box added
+ * to a hand-written list here would silently not protect its own text.
+ *
+ * 🔴 `attachMode` IS DELIBERATELY NOT CONSULTED, AND THE MODE-SPLIT VERSION LOSES TEXT. The obvious
+ * reading — "in create mode check title/summary/clickupUrl, in attach mode check bugId" — describes
+ * what is VISIBLE, and the question here is what would be LOST. Flipping the toggle does not clear
+ * the other branch's fields: type a title, flip to attach, click another row, and a mode-aware
+ * predicate reports clean while the title goes with the panel. The whole object is discarded on
+ * unmount, so the whole object is what gets tested.
+ *
+ * ⚠️ THE COST, so it is not discovered later: a non-empty box on the branch that is not showing
+ * still declines the click, and the operator cannot see why the row went inert. That is the safe
+ * direction — declining costs one extra click on the `Open` anchor, and the other error loses work
+ * with no undo.
+ *
+ * Whitespace is not content: a stray space is not worth blocking a click over, and the action trims
+ * every one of these fields before storing anyway.
+ */
+export function isFeedbackPromoteDraftDirty(draft: FeedbackPromoteDraft): boolean {
+  return FEEDBACK_PROMOTE_DRAFT_FIELDS.some((field) => draft[field].trim() !== '');
+}

@@ -113,10 +113,13 @@ describe('triageFeedback', () => {
 
   /**
    * 🔴 AN ABSENT NOTE LEAVES THE COLUMN STANDING; A BLANK ONE CLEARS IT. The panel's note box was
-   * removed and the status buttons now post no `note` field at all, while `Feedback.triageNote`
-   * still holds every note written before that — so a `SET "triageNote" = NULL` on a status click
-   * destroys one, on the first click, with the save reporting success. Nothing in this app can put
-   * it back: no second copy is stored, and `ModActivity` has no column for it.
+   * removed and the status buttons now post no `note` field at all, so a `SET "triageNote" = NULL`
+   * on every status click would blank the column with the save reporting success — and nothing in
+   * this app could put it back: no second copy is stored, and `ModActivity` has no column for it.
+   *
+   * ⚠️ Measured: production holds 47 `Feedback` rows and `triageNote` is non-null on ZERO of them.
+   * The column has no writer left, so this pins the CONTRACT for whatever writes it next rather
+   * than protecting text that exists.
    *
    * Asserted against a ROW rather than against the call, because the defect is what the UPDATE
    * WRITES. A mocked builder can only be asked what it was told, and `undefined` handed to a `.set()`

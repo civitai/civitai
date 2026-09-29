@@ -36,16 +36,16 @@ export type FeedbackRowClick = {
   /** `window.getSelection()?.toString() ?? ''`. */
   selection: string;
   /**
-   * Whether a panel is MOUNTED — the queue's `data.openVisible`.
+   * Whether a panel is mounted AND its promote draft holds unsaved text — the queue's
+   * `data.openVisible && panelDirty`.
    *
-   * 🔴 NOT `data.open === id`, WHICH IS TOO NARROW, AND NOT `data.open !== null`, WHICH IS TOO WIDE.
-   * The queue keeps `?open=` when the id names a report the current view cannot show and says so in
-   * a hint, so `open !== null` is true in a state where there is no panel and no draft — and the
-   * guard would then kill the row click across the whole queue for nothing, on exactly the shared
-   * link that lands an operator there. `openVisible` is `!!openRow`, computed off the same list the
-   * rows render from, so it is true iff a panel exists to protect.
+   * 🔴 BOTH HALVES, AND NEITHER ALONE IS THE RIGHT FACT. `panelDirty` is lifted out of
+   * `FeedbackDetail` and keeps its last value after that component is destroyed, so a dirty panel
+   * that the operator then CLOSED would go on blocking every row in the queue; `openVisible` is what
+   * says a panel exists for the flag to be about. And `openVisible` alone is the too-wide rule this
+   * field replaced — see the guard.
    */
-  anyPanelOpen: boolean;
+  openPanelDirty: boolean;
 };
 
 /**
@@ -57,23 +57,26 @@ export type FeedbackRowClick = {
  *     operators copy out of — and a click event fires at the end of it;
  *   - `defaultPrevented` is how a nested control says it has already handled this click.
  *
- * 🔴 IT OPENS FROM A QUEUE WITH NOTHING OPEN, AND DOES NOTHING OTHERWISE. Both other transitions
- * UNMOUNT a live panel: `?open=` is single-valued, so switching rows destroys the old one exactly as
- * closing does, and the panel is where the operator's issue title, summary and ClickUp URL live
- * (`FeedbackDetail` hoists that draft precisely because it is held in memory and nowhere else).
+ * 🔴 IT DECLINES ON ONE THING ONLY: AN OPEN PANEL WHOSE DRAFT HAS UNSAVED TEXT IN IT. Expanding a
+ * row unmounts whatever panel is open — `?open=` is single-valued, so switching rows destroys the
+ * old one exactly as closing it would — and the promote draft lives in that panel's memory and
+ * nowhere else. When it holds nothing, the unmount costs nothing and the click goes through.
  *
- * 🔴 THE NARROWER TEST — "is THIS row open" — WAS WRONG, AND IT READ AS SAFE. It suppresses the
- * self-close and leaves every OTHER row a click away from discarding the draft: on a 50-row queue
- * that is 49 of the 50 strips, not 0. The gesture is ordinary, which is the point — a DOUBLE-CLICK
- * to select a word in another row's Message cell fires `click` twice, and the FIRST lands before the
- * selection exists, so the `selection` guard below cannot see it.
+ * ⚠️ THIS REPLACES A RULE THAT DECLINED WHENEVER ANY PANEL WAS OPEN, which protected the same text
+ * and took the gesture with it: after the first expand, no row in the queue responded to a click
+ * again. Dirtiness is the fact that rule was reaching for.
  *
- * ⚠️ THE COST, STATED: with a panel already open, clicking a row does nothing, and moving to another
- * report means its `Open` link — one deliberate click, which is what it took before this handler
- * existed. Expanding from a cold queue is the affordance this buys, and it is the common one.
+ * 🔴 WHY THE `selection` GUARD BELOW CANNOT COVER THIS, so nobody deletes one for the other: the
+ * gesture that reaches an unmount is a DOUBLE-CLICK to select a word in another row's Message cell.
+ * It fires `click` twice, and the FIRST lands before the selection exists — invisible to
+ * `selection`, and now harmless on a clean panel and refused on a dirty one.
+ *
+ * ⚠️ THE COST, STATED: with unsaved text in the open panel, clicking another row does nothing and
+ * gives no reason on screen. Reaching that report means its `Open` link, which still works and still
+ * discards the draft — deliberately, because it is a labelled control rather than a stray click.
  */
 export function feedbackRowExpands(click: FeedbackRowClick): boolean {
-  if (click.anyPanelOpen) return false;
+  if (click.openPanelDirty) return false;
   if (click.defaultPrevented) return false;
   if (click.button !== 0) return false;
   if (click.ctrlKey || click.metaKey || click.shiftKey || click.altKey) return false;

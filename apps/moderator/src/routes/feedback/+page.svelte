@@ -46,6 +46,16 @@
    */
   const canSetStatus = $derived(!!data.grants['feedback.status.set']);
 
+  /**
+   * Whether the open panel holds unsaved issue-draft text, reported up by `FeedbackDetail`.
+   *
+   * 🔴 IT SURVIVES THE PANEL THAT SET IT, which is why every read pairs it with `data.openVisible`.
+   * `FeedbackDetail` writes this while mounted and cannot write `false` on the way out — a dirty
+   * panel the operator then closed would otherwise go on refusing every row click in the queue, with
+   * nothing on screen to explain it.
+   */
+  let panelDirty = $state(false);
+
   const selected = new SelectionSet<number>();
 
   /**
@@ -170,11 +180,14 @@
    * test tier and a guard written inline here is a guard nothing can assert. What stays here is the
    * single DOM read it cannot do: which control, if any, the click landed on.
    *
-   * 🔴 `feedbackOpenHref(…, id)`, NOT `rowHref(id)` — this handler OPENS, it never toggles, and it
-   * declines entirely while a panel is MOUNTED (`data.openVisible`, not `data.open !== null`; the
-   * two differ on a shared `?open=` the current view cannot show). `?open=` is single-valued, so
-   * switching rows unmounts the live panel exactly as closing does, and that panel holds the
-   * operator's unsaved issue draft. `feedbackRowExpands` carries the reasoning and the cost.
+   * 🔴 `feedbackOpenHref(…, id)`, NOT `rowHref(id)` — this handler OPENS, it never toggles. Closing
+   * stays on the labelled anchor.
+   *
+   * 🔴 IT DECLINES ONLY OVER UNSAVED TEXT. Expanding a row unmounts whatever panel is open, because
+   * `?open=` is single-valued — so the question is not whether a panel is open but whether losing it
+   * costs anything. `panelDirty` is the answer, lifted out of `FeedbackDetail`; `data.openVisible`
+   * is what makes it meaningful, since the flag keeps its last value after that component is gone.
+   * `feedbackRowExpands` carries the reasoning and the cost.
    *
    * 🔴 `noScroll`/`keepFocus` MIRROR THE ANCHOR'S OWN `data-sveltekit-*` ATTRIBUTES, and the two
    * have to be changed together — `rowHref` only makes the URLs agree, the navigation options are
@@ -192,7 +205,7 @@
         defaultPrevented: event.defaultPrevented,
         interactive: target instanceof Element && !!target.closest(FEEDBACK_ROW_INTERACTIVE),
         selection: window.getSelection()?.toString() ?? '',
-        anyPanelOpen: data.openVisible,
+        openPanelDirty: data.openVisible && panelDirty,
       })
     )
       return;
@@ -465,6 +478,7 @@
                   civitaiUrl={data.civitaiUrl}
                   canTriage={canSetStatus}
                   canPromote={!!data.grants['feedback.bug.promote']}
+                  bind:draftDirty={panelDirty}
                 />
               </TableCell>
             </TableRow>

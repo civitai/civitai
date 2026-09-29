@@ -171,11 +171,13 @@ describe('the instrument itself', () => {
 
 describe('typed text outlives the reload every write issues', () => {
   /**
-   * 🔴 THE TRIAGE NOTE BOX IS GONE, AND ITS COLUMN IS NOT. `Feedback.triageNote` still holds notes
-   * written before the box was removed, and the status form posts no `note` field at all — so a
-   * server that read an absent field as an empty one would destroy one of those notes on every
-   * status click. This pins the CLIENT half: the form must not acquire a note box again without
-   * someone re-reading what the absent field now means. The server half is behavioural and is tested
+   * 🔴 THE TRIAGE NOTE BOX IS GONE, AND ITS COLUMN IS NOT. The status form posts no `note` field at
+   * all, so a server reading an absent field as an empty one would blank `Feedback.triageNote` on
+   * every status click. This pins the CLIENT half: the form must not acquire a note box again
+   * without someone re-reading what the absent field now means.
+   *
+   * ⚠️ Measured: production holds 47 `Feedback` rows with `triageNote` non-null on ZERO of them, so
+   * this guards the contract rather than existing text. The server half is behavioural and is tested
    * for real in `routes/feedback/__tests__/feedback-actions.test.ts` and against rows in
    * `lib/server/__tests__/feedback.service.test.ts`.
    */
@@ -528,7 +530,7 @@ describe('the row click is an enhancement over a real link', () => {
   /**
    * 🔴 THE HANDLER OPENS; ONLY THE ANCHOR TOGGLES. `rowHref` is a toggle, so routing the row click
    * through it makes the whole nine-cell strip a close target — and closing destroys the panel and
-   * every unsaved character of the issue draft inside it. `feedbackRowExpands`' `anyPanelOpen` guard is
+   * every unsaved character of the issue draft inside it. `feedbackRowExpands`' dirtiness guard is
    * the other half; this pins that the navigation itself cannot close a row.
    */
   it('navigates the row click through the open-only href', () => {
@@ -536,13 +538,37 @@ describe('the row click is an enhancement over a real link', () => {
     expect(page).toContain(
       'goto(feedbackOpenHref(page.url, id), { noScroll: true, keepFocus: true })'
     );
-    // 🔴 `data.openVisible` — the fact that a panel is MOUNTED, and neither of the two expressions
-    // that look like it. `data.open === id` suppresses only the self-close and leaves every other
-    // row a click away from unmounting the panel (`?open=` is single-valued, so switching rows
-    // discards the draft exactly as closing does); `data.open !== null` is true on a shared `?open=`
-    // the current view cannot show, where there is no panel at all, and kills the row click across
-    // the whole queue for nothing.
-    expect(page).toContain('anyPanelOpen: data.openVisible,');
+    // 🔴 BOTH HALVES OF THE DIRTY FACT, and each guards a different failure. `panelDirty` alone
+    // keeps its last value after `FeedbackDetail` is destroyed, so a dirty panel the operator then
+    // CLOSED would go on refusing every row click in the queue; `data.openVisible` alone is the
+    // too-wide rule this replaced, which made every row inert as soon as anything was open.
+    expect(page).toContain('openPanelDirty: data.openVisible && panelDirty,');
+  });
+
+  /**
+   * 🔴 THE DIRTY SIGNAL HAS TO ACTUALLY LEAVE THE PANEL, and it crosses a seam no typecheck walks:
+   * `FeedbackDetail` derives it, `+page.svelte` decides with it, and a `bind:` dropped at the call
+   * site leaves the page reading a `panelDirty` that is false forever. The row click would then go
+   * back to discarding unsaved issue drafts — silently, and only for an operator mid-sentence.
+   *
+   * Both ends are pinned, because either alone is satisfiable without the other: `$bindable` in the
+   * child declares the prop bindable, `bind:draftDirty=` in the parent puts the setter there, and
+   * the effect is what keeps the value in step with the draft.
+   */
+  it('reports the draft dirtiness out of the panel and into the queue', () => {
+    const detail = source('FeedbackDetail.svelte');
+    expect(detail).toContain('draftDirty = $bindable(false),');
+    expect(detail).toContain('draftDirty = isFeedbackPromoteDraftDirty(promoteDraft);');
+    expect(source('+page.svelte')).toContain('bind:draftDirty={panelDirty}');
+  });
+
+  /**
+   * ⚠️ THE PER-REPORT PAGE DELIBERATELY DOES NOT BIND IT. That route has no rows to click, so there
+   * is nothing for the flag to protect — and a binding there would be a second writer of a fact
+   * only the queue reads.
+   */
+  it('does not bind the dirty signal on the per-report route', () => {
+    expect(reportPageSource()).not.toContain('draftDirty');
   });
 
   /**

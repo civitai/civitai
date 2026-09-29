@@ -468,11 +468,15 @@ describe('triage action', () => {
   });
 
   /**
-   * 🔴 AN ABSENT `note` IS NOT AN EMPTY ONE, AND COLLAPSING THEM DESTROYS DATA. The panel has no
-   * note box any more — the status buttons post `id`, `expectedStatus` and `status` alone — while
-   * `Feedback.triageNote` still holds every note written before the box was removed. Read as `''`
-   * and stored as `null`, the FIRST status click on any such report wipes it, with a green screen
-   * over it and nothing in this app able to put it back.
+   * 🔴 AN ABSENT `note` IS NOT AN EMPTY ONE. The panel has no note box any more — the status
+   * buttons post `id`, `expectedStatus` and `status` alone — so an action that read the missing
+   * field as `''` and stored `null` would blank `Feedback.triageNote` on the first status click,
+   * with a green screen over it and nothing in this app able to put it back.
+   *
+   * ⚠️ NO ROW IS AT RISK TODAY, and the honest version of this claim is worth the line: production
+   * holds 47 `Feedback` rows and `triageNote` is non-null on ZERO of them. This pins the CONTRACT —
+   * the column has no writer left, and the next one to appear (a backfill, an import, a note box
+   * that returns) must not find status clicks quietly erasing it.
    *
    * `undefined` is what `triageFeedback` reads as "leave the column out of the SET"; the test above
    * is its control, proving a PRESENT blank box still means "clear it". The two cases have to differ

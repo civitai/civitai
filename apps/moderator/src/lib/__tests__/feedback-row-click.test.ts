@@ -11,7 +11,7 @@ const plain = {
   defaultPrevented: false,
   interactive: false,
   selection: '',
-  anyPanelOpen: false,
+  openPanelDirty: false,
 };
 
 describe('feedbackRowExpands', () => {
@@ -77,27 +77,36 @@ describe('feedbackRowExpands', () => {
   });
 
   /**
-   * 🔴 IT OPENS FROM A COLD QUEUE AND DOES NOTHING WHILE A PANEL IS OPEN — and the narrower rule,
-   * "do not collapse THIS row", was the first fix and it was wrong in a way that read as safe. It
-   * suppresses the self-close and leaves every OTHER row a click away from discarding the draft,
-   * because `?open=` is single-valued: opening row B unmounts row A's panel exactly as closing it
-   * does, and the issue title, summary and ClickUp URL live in that panel and nowhere else. On a
-   * 50-row queue the narrow rule covered 1 of the 50 strips.
+   * 🔴 THE RULE THIS ROUND RESTORED, AND THE ARM THAT WAS RED. The predicate used to decline
+   * whenever ANY panel was open, which protected the draft and took the gesture with it: after the
+   * first expand, no row in the queue responded to a click again. Measured at `8933b04022`, this
+   * exact case — a panel open, nothing typed into it — returned `false`.
    *
-   * The gesture that reaches it is ordinary, which is why the `selection` guard is not enough: a
-   * DOUBLE-CLICK to select a word in another row's Message cell fires `click` twice, and the FIRST
-   * fires before the selection exists, so that arm returns `true`.
-   *
-   * ⚠️ THE FIXTURE CARRIES NO ROW ID, DELIBERATELY. The predicate must not be able to ask "is this
-   * the open one" — that question is what made the first fix narrow, and leaving the id out is what
-   * makes the narrow rule unexpressible rather than merely unwritten.
+   * Unmounting a panel that holds nothing discards nothing, so the click goes through.
    */
-  it('does nothing while any panel is open, including on the first click of a double-click', () => {
-    expect(feedbackRowExpands({ ...plain, anyPanelOpen: true })).toBe(false);
+  it('expands when the open panel has a clean draft', () => {
+    expect(feedbackRowExpands({ ...plain, openPanelDirty: false })).toBe(true);
+  });
+
+  /**
+   * 🔴 AND THE ARM THAT MUST NOT MOVE. `?open=` is single-valued, so expanding another row unmounts
+   * the open panel — and the promote draft lives in that panel's memory and nowhere else, with no
+   * undo and no second copy.
+   *
+   * The gesture that reaches it is ordinary, which is why `selection` cannot cover it: a
+   * DOUBLE-CLICK to select a word in another row's Message cell fires `click` twice, and the FIRST
+   * lands before the selection exists. Both are asserted, so the pair pins dirtiness as the
+   * discriminator rather than either value on its own.
+   */
+  it('declines when the open panel holds unsaved text, double-click included', () => {
+    expect(feedbackRowExpands({ ...plain, openPanelDirty: true })).toBe(false);
     // The first click of a double-click: no selection yet, nothing else to stop it.
-    expect(feedbackRowExpands({ ...plain, anyPanelOpen: true, selection: '' })).toBe(false);
-    // The control: the identical click with nothing open expands the row.
-    expect(feedbackRowExpands({ ...plain, anyPanelOpen: false, selection: '' })).toBe(true);
+    expect(feedbackRowExpands({ ...plain, openPanelDirty: true, selection: '' })).toBe(false);
+  });
+
+  /** Nothing open at all — the cold-queue case, unchanged by this round. */
+  it('expands when no panel is open', () => {
+    expect(feedbackRowExpands({ ...plain, openPanelDirty: false })).toBe(true);
   });
 });
 

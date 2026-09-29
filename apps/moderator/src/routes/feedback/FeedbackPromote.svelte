@@ -108,7 +108,7 @@
 </script>
 
 <section class="flex flex-col gap-3">
-  <h3 class="text-xs tracking-wide text-dark-2 uppercase">Known issue</h3>
+  <h3 class="text-xs tracking-wide text-dark-2 uppercase">Task</h3>
 
   {#if row.bugId}
     <p class="text-sm">
