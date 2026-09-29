@@ -341,6 +341,7 @@ const looksLikeProductionSource = (file: string) =>
   !/\.(test|spec)\.tsx?$/.test(file);
 
 function discoverWriterFiles(): {
+  onDisk: string[];
   globbed: string[];
   candidates: string[];
   scannedFiles: string[];
@@ -418,7 +419,7 @@ function discoverWriterFiles(): {
   // actually READ: adding one `continue` inside this loop skipped a whole subtree and the
   // check stayed green, measured, with an unmarked writer planted in it. Coverage has to be
   // derived from the files this loop actually opened.
-  return { globbed, candidates, scannedFiles, found: found.sort() };
+  return { onDisk, globbed, candidates, scannedFiles, found: found.sort() };
 }
 
 describe('every block_scope_invocations writer carries the private-run marker', () => {
@@ -430,7 +431,7 @@ describe('every block_scope_invocations writer carries the private-run marker', 
     }
   });
 
-  it('[INV] the walk SCANNED every subtree that could hold a writer', () => {
+  it('[INV] the walk READ every production source file, and both predicates still admit them', () => {
     // 🔴 THE CONTROL THE SET EQUALITY CANNOT BE. Set equality compares MATCHES, so narrowing
     // the walk still equals `LEDGER` in both directions — measured surviving, with an
     // unmarked writer planted under `src/pages/api` invisible to the whole suite.
@@ -443,12 +444,14 @@ describe('every block_scope_invocations writer carries the private-run marker', 
     //     subtree with this check still green. It now reads the list of files the walk
     //     actually opened.
     //
-    // 🔴 THE DIRECTORY LIST IS DERIVED, NOT HAND-PICKED. Naming four directories left 427
-    // non-test production files unguarded — `src/utils` (229) and `src/libs` (46) among them,
-    // which is exactly where a shared "record this call" helper would live. Requiring every
-    // subtree an independent enumeration can see to also be SCANNED needs no list and cannot
-    // go stale.
-    const { globbed, candidates, scannedFiles, found } = discoverWriterFiles();
+    // 🔴 NOTHING HERE IS HAND-PICKED, AND THAT IS THE ONLY VERSION OF THIS CHECK THAT HAS
+    // HELD. Naming four directories left hundreds of non-test production files unguarded —
+    // `src/utils` and `src/libs` among them, exactly where a shared "record this call" helper
+    // would live — and naming seven was walked by a glob narrowed to those seven. Every
+    // expectation below is derived from the filesystem, so no list can go stale and no list
+    // can be satisfied by a pattern that matches it. (Counts are deliberately not quoted: two
+    // earlier revisions cited figures as evidence and both had drifted by the next audit.)
+    const { onDisk, globbed, candidates, scannedFiles, found } = discoverWriterFiles();
     const topLevel = (f: string) => f.split('/')[1];
 
     // 🔴 (a) EVERY CANDIDATE WAS READ, FILE BY FILE. `scannedFiles` is pushed as the LAST
@@ -460,54 +463,84 @@ describe('every block_scope_invocations writer carries the private-run marker', 
         'any of them is invisible to the ledger below'
     ).toEqual([]);
 
-    // 🔴 (b) AND THE SECOND ENUMERATION AGREES, which is the only check that can see the
-    // WALK'S OWN PREDICATE narrow. (a) compares the walk against itself, so appending one
-    // conjunct to `couldHoldAWriter` shrinks both of its sides together — measured, that left
-    // the 854-test gate green with an unmarked writer live and `src/pages` never read. The
-    // glob is a different mechanism filtered by `looksLikeProductionSource`, the deliberately
-    // SEPARATE inline twin, so a narrowed walk leaves these files behind by name.
+    // 🔴 (b) THE TWO INDEPENDENT ENUMERATIONS AGREE, FILE BY FILE AND IN BOTH DIRECTIONS.
+    // A one-way subset let a narrowed CROSS-CHECK pass silently — measured, excluding
+    // `.service.ts` from it removed 257 files from the audit, including 2 of the 5 ledgered
+    // writers and the file kind new writers land in, with the gate green. Two-way file
+    // equality costs nothing now that the glob is dot-complete: measured, the sets are exactly
+    // equal. It also subsumes the old per-subtree comparisons, which existed only because the
+    // glob could not see dot-directories.
     expect(
       globbed.filter((f) => !scannedFiles.includes(f)),
-      'these files were found by an independent enumeration but the walk never READ them. ' +
-        'Check `couldHoldAWriter` for an exclusion `looksLikeProductionSource` does not have ' +
-        '— those two are deliberately separate so they CAN disagree.'
+      'these files were found by the independent enumeration but the walk never READ them'
+    ).toEqual([]);
+    expect(
+      scannedFiles.filter((f) => !globbed.includes(f)),
+      'the independent cross-check can no longer see these files, so it cannot notice the ' +
+        'walk narrowing away from them. Widen the glob rather than accepting the loss.'
     ).toEqual([]);
 
-    // 🔴 (c) AND BY SUBTREE, so a skip narrower than a file still surfaces as a directory.
-    const scannedDirs = new Set(scannedFiles.map(topLevel));
-    const expectedDirs = [...new Set(candidates.map(topLevel))].sort();
-    expect(
-      expectedDirs.filter((d) => !scannedDirs.has(d)),
-      'these src/ subtrees hold production source that was never READ'
-    ).toEqual([]);
+    /**
+     * 🔴 (c) AND BOTH PREDICATES STILL ADMIT REAL PRODUCTION PATHS. This is the part that
+     * survives a refactor, and it replaces an identity check that did not.
+     *
+     * ⚠️ `expect(couldHoldAWriter === looksLikeProductionSource).toBe(false)` pinned the wrong
+     * property. It separates ALIASING from sharing a body, and only aliasing had been
+     * measured: `const looksLikeProductionSource = (f) => couldHoldAWriter(f)` — a delegating
+     * one-liner — keeps them distinct objects, passes it, and restores the narrowing hole in
+     * full. So does hoisting the three conjuncts into a shared helper both call, which is
+     * exactly what someone told "keep them separate functions" would write.
+     *
+     * 🔴 AND THE SAMPLE COMES FROM `onDisk`, THE RAW ENUMERATION, NOT FROM `candidates` —
+     * getting that wrong is the SIXTH time this case audited the walk with something the walk
+     * produced. A sample taken from `candidates` cannot test a path the predicate just
+     * excluded: narrow by `src/utils/` and that subtree simply stops appearing in the sample,
+     * so the loop never asks about it. Measured surviving, with a live unmarked writer there.
+     *
+     * A positive, spelled expectation is what a DRY refactor cannot narrow: delegation,
+     * extraction and aliasing all still have to return `true` for these paths.
+     */
+    const production = onDisk.filter(
+      (f) =>
+        /\.tsx?$/.test(f) &&
+        !f.includes('/__tests__/') &&
+        !f.startsWith('src/tests/') &&
+        !/\.(test|spec)\.tsx?$/.test(f)
+    );
+    const sample = [...new Set(production.map(topLevel))]
+      .sort()
+      .map((dir) => production.find((f) => topLevel(f) === dir) as string);
+    // Plus the dot region, which is why the walk enumerates with `readdirSync` at all. Derived
+    // from the tree, so it is simply empty if the tree has no dot paths rather than turning
+    // this guard permanently red when an unrelated product route is deleted.
+    const dotSample = production.filter((f) => f.includes('/.'));
+    const PREDICATES = [
+      ['couldHoldAWriter', couldHoldAWriter],
+      ['looksLikeProductionSource', looksLikeProductionSource],
+    ] as const;
 
-    // 🔴 (d) AND THE CROSS-CHECK MUST ITSELF STILL COVER THE TREE. (b) only asserts the glob
-    // is a SUBSET of what was read, so NARROWING THE GLOB survives on a clean tree — it
-    // removes defence-in-depth silently, and the next narrowing of the walk then goes unseen.
-    // Measured: reducing the glob to three directories was green until this assertion existed.
-    // Compared by SUBTREE rather than by file, because the glob structurally cannot see
-    // dot-directories (`src/pages/api/.well-known/`) and that is the documented reason the
-    // walk no longer uses it.
-    const globbedDirs = new Set(globbed.map(topLevel));
-    expect(
-      [...scannedDirs].filter((d) => !globbedDirs.has(d)).sort(),
-      'the independent cross-check no longer reaches these subtrees, so it cannot notice the ' +
-        'walk narrowing into them. Widen the glob rather than accepting the loss.'
-    ).toEqual([]);
+    // Instrument control for the sample itself: it must span the tree, or the loop is vacuous.
+    expect(sample.length, 'the sample must cover every top-level subtree').toBeGreaterThan(10);
 
-    // 🔴 (e) THE TWO PREDICATES MUST STAY DISTINCT OBJECTS. Their independence is the only
-    // thing that lets (b) notice the walk's predicate narrowing, and until now it was asserted
-    // in PROSE alone. Measured: the one-line refactor `const looksLikeProductionSource =
-    // couldHoldAWriter;` — which reads as obvious tidying — passes everything, and with it
-    // applied the round-5 defect is fully restored: appending `!startsWith('src/pages/')` to
-    // the shared predicate then leaves the gate green with a live unmarked writer. A guard
-    // whose premise is a comment is a guard one cleanup away from gone.
-    expect(
-      couldHoldAWriter === looksLikeProductionSource,
-      'the walk predicate and the cross-check predicate must not be the SAME function. They ' +
-        'are deliberately duplicated so they can DISAGREE — merging them makes the ' +
-        "cross-check an echo of the thing it audits. See couldHoldAWriter's docblock."
-    ).toBe(false);
+    for (const file of [...sample, ...dotSample]) {
+      for (const [name, predicate] of PREDICATES) {
+        expect(
+          predicate(file),
+          `${name} no longer admits ${file}. Both predicates must accept every production ` +
+            'source path — narrowing either hides writers from this ledger, and narrowing ' +
+            'them TOGETHER (a delegating one-liner, a shared extracted body, an alias) is ' +
+            'invisible to every set comparison above.'
+        ).toBe(true);
+      }
+    }
+    // And both must still REFUSE a test path, or "admits everything" would satisfy the loop.
+    for (const [name, predicate] of PREDICATES) {
+      expect(
+        predicate('src/server/services/__tests__/x.ts'),
+        `${name} must refuse a test dir`
+      ).toBe(false);
+      expect(predicate('src/server/x.test.ts'), `${name} must refuse a .test file`).toBe(false);
+    }
 
     // Instrument controls. Both enumerations must be seeing a tree, or every assertion above
     // is vacuous over an empty list — and the counts are floors well under the real values so
@@ -516,27 +549,20 @@ describe('every block_scope_invocations writer carries the private-run marker', 
     expect(globbed.length, 'the cross-check must enumerate thousands of files').toBeGreaterThan(
       3_000
     );
-    expect(scannedDirs.size, 'the walk must span many subtrees').toBeGreaterThan(10);
+    expect(
+      new Set(scannedFiles.map(topLevel)).size,
+      'the walk must span many subtrees'
+    ).toBeGreaterThan(10);
 
-    // 🔴 AND THE DOT REGION SPECIFICALLY, pinned directly rather than via a subset. This is
-    // the capability the walk was rebuilt to gain — `readdirSync` sees dot-directories and
-    // `globSync('src/**/*')` does not — so it is asserted rather than inferred. Without it,
-    // the one assertion that could notice the walk losing that capability is the cross-check,
-    // and the cross-check was blind to exactly this region.
-    const dotFiles = scannedFiles.filter((f) => f.includes('/.'));
-    expect(
-      dotFiles.length,
-      'the walk must READ files inside dot-directories — that is why it enumerates with ' +
-        'readdirSync rather than a glob. If this is 0, either the tree genuinely has none ' +
-        '(check `src/pages/api/.well-known/`) or an exclusion has re-introduced the blind ' +
-        'spot the walk exists to close.'
-    ).toBeGreaterThan(0);
-    // And the cross-check must reach them too, or (b) cannot audit that region.
-    expect(
-      dotFiles.filter((f) => !globbed.includes(f)),
-      'these dot-directory files were read but the independent cross-check cannot see them, ' +
-        'so nothing would notice the walk losing them'
-    ).toEqual([]);
+    // ⚠️ NO DOT-REGION SPECIAL CASE ANY MORE, AND ITS REMOVAL IS THE POINT. Two assertions
+    // here required the walk to read dot-directory files and the cross-check to reach them,
+    // both resting on ONE unrelated product route (`src/pages/api/.well-known/`) existing.
+    // Measured: deleting that route turns this guard PERMANENTLY RED inside `test:lint-rules`
+    // with a message offering no remedy for the legitimate cause — and a permanently-red gate
+    // trains people to delete the assertion, which silently restores the hole it was added
+    // for. The property is now carried by (b)'s two-way file equality — the glob globs the
+    // dot region explicitly — and by (c)'s `dotSample`, which is derived from the tree and is
+    // simply empty if the tree has no dot paths rather than red.
     // The discovery half still has to find something, or the comparison below is about "[]".
     expect(found.length).toBeGreaterThanOrEqual(LEDGER.length);
   });
@@ -1020,7 +1046,17 @@ describe('the marker has ONE spelling and every owner-visible read excludes it',
     // reddens a guard whose message names the raw statement, and a future raw statement
     // added just after this one could satisfy `"app_block_id" IN (` or the range needles from
     // a NEIGHBOUR — this file already has two other statements carrying that exact substring.
-    const window = analytics.slice(at, at + 600);
+    // 🔴 ANCHORED AT THE TEMPLATE'S OPENING BACKTICK, NOT AT THE PROJECTION. Slicing from
+    // `count(DISTINCT …)` left the statement's HEAD — everything between the backtick and the
+    // projection — read by nothing, so an interpolation inserted before `count(`, or a whole
+    // `WITH … AS (…)` prepended, passed every pin while two of them claimed to cover "exactly
+    // these expressions, in this order" and "the projection and FROM clause". Neither is a
+    // plausible cross-tenant defect on its own, which is why this is a correction to what the
+    // guard COVERS rather than a hole — but three rounds running found a comment wider than
+    // its code, and anchoring one token earlier costs nothing.
+    const open = analytics.lastIndexOf('`', at);
+    expect(open, 'the statement must still be a tagged template').toBeGreaterThan(0);
+    const window = analytics.slice(open + 1, at + 600);
     const close = window.indexOf('`');
     expect(
       close,
@@ -1113,8 +1149,10 @@ describe('the marker has ONE spelling and every owner-visible read excludes it',
     // (`FROM "block_scope_invocations" AS i`) went from red to green in that change.
     expect(
       normalised.slice(0, normalised.indexOf('WHERE ')).replace(/\s+$/, ''),
-      "the projection and FROM clause are part of this read's shape too"
-    ).toBe('count(DISTINCT "user_id")::bigint AS value FROM "block_scope_invocations"');
+      "everything before the WHERE clause is part of this read's shape too — the projection, " +
+        "the FROM, and the statement HEAD. Anchored at the template's opening backtick so a " +
+        'prepended CTE, or an interpolation inserted before the projection, cannot slip past.'
+    ).toBe('SELECT count(DISTINCT "user_id")::bigint AS value FROM "block_scope_invocations"');
   });
 
   /**
