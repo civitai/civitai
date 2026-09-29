@@ -280,9 +280,6 @@ app's own tokens.
 
 ## Open
 
-- **Sticker asset spec** — emoji are fixed at 128×128 (D6). Stickers render far larger and need
-  their own numbers before any creator uploads one. Belongs in `cosmeticImageRequirements`.
-  Tracked in `868kk3t0t`.
 - **Per-tier chat themes** — all three themes come with any membership. The mockup had Terminal
   as Gold-exclusive; splitting them by tier is a product call, and `resolveChatTheme` takes the
   entitlement as an argument, so it is a one-line change when someone decides. Granting themes as
