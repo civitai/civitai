@@ -1,3 +1,7 @@
+import {
+  cosmeticDimensionsLabel,
+  cosmeticImageRequirements,
+} from '~/server/schema/creator-shop.schema';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 
 // Public, mod- and creator-facing quality standards, mirrored from the shared
@@ -58,9 +62,10 @@ export const COSMETIC_STANDARDS: Partial<Record<CosmeticType, CosmeticStandard>>
           'Must read at 22px. Sticker are usually rendered inline with text — fine detail disappears at that size.',
       },
       {
-        key: 'square-transparent',
-        label:
-          'Exactly 128x128 with a transparent background. Square keeps it aligned with the text line.',
+        key: 'size-transparent',
+        label: `${cosmeticDimensionsLabel(
+          cosmeticImageRequirements(CosmeticType.Sticker)
+        )}, with a transparent background.`,
       },
       {
         key: 'no-text',
