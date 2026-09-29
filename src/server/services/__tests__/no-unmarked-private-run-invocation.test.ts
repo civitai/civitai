@@ -306,39 +306,36 @@ function hasExactThreading(source: string): boolean {
 }
 
 /**
- * "A file that could hold a production writer" — used by the WALK only.
+ * 🔴 THE EXCLUSION VOCABULARY, AS DATA — the one thing that decides what this ledger covers.
  *
- * 🔴 THE COVERAGE CHECK MUST NOT CALL THIS, AND AN EARLIER REVISION SAID THE OPPOSITE. It
- * read "used by the walk AND by its coverage check — so the two sets differ ONLY by what the
- * walk chooses to skip", which made the check's expectation flow through the very predicate
- * it was meant to audit. Measured: appending `&& !file.startsWith('src/pages/')` to this one
- * line narrowed BOTH sides together and the full 854-test gate stayed green with an unmarked
- * writer live in `src/pages/api` and the whole 616-file subtree never read.
+ * ── WHY IT IS A LIST AND NOT A PREDICATE (OR TWO) ───────────────────────────
+ * ⚠️ FOUR CONSECUTIVE REVIEW ROUNDS FOUND A HOLE IN THE PREVIOUS SHAPES, ALL THE SAME ONE:
+ * the coverage check audited the walk with something the walk produced, so NARROWING the
+ * scan narrowed the expectation with it and the gate stayed green with an unmarked writer
+ * live. A threshold had slack; a hand-picked directory list was satisfied by a glob matching
+ * the list; reading the raw glob was a claim about the pattern rather than the scan; filtering
+ * the expectation through the scan's own predicate moved both sides together; two "deliberately
+ * independent" twin predicates were re-merged by a delegating one-liner; and a behavioural
+ * sample drawn from the scan's output could not test a path the predicate had just excluded.
  *
- * That is round 3→4's lesson one level up: A CONTROL BUILT OUT OF THE STEP YOU DOUBT IS A
- * SECOND SAMPLE OF THAT STEP, NOT A CONTROL. The check now spells its exclusions inline, so
- * narrowing this predicate moves one side only.
+ * Every one of those tried to DETECT a narrowing after the fact. The narrowing is an edit to
+ * this list, so the list is pinned instead — as a literal, in the case below. Adding a
+ * conjunct, changing a pattern or dropping one is red immediately and by name, and there is
+ * nothing left to sample, derive or cross-audit. One declaration, one predicate built from it,
+ * used by both enumerations.
  *
- * ⚠️ `src/tests/` is excluded here too. It is a ~130-file test tree whose non-suffixed
- * helpers would otherwise be admitted as production candidates — no instance calls the
- * writer today, but if one ever did the ledger would go red with "add each to LEDGER and
- * thread the verified claim", which is a red test naming the wrong fix.
+ * ── WHAT IS EXCLUDED, AND WHY EACH ──────────────────────────────────────────
+ *   · `/__tests__/` and a `.test`/`.spec` suffix — a test legitimately calls the writer to
+ *     test it; a new test is not a new production writer.
+ *   · `src/tests/` — a test tree whose helpers carry no suffix. No instance calls the writer,
+ *     but one would redden the ledger with "add each to LEDGER and thread the verified claim",
+ *     which is a red test naming the wrong fix.
  */
-const couldHoldAWriter = (file: string) =>
-  !file.includes('/__tests__/') &&
-  !file.startsWith('src/tests/') &&
-  !/\.(test|spec)\.tsx?$/.test(file);
+const WRITER_SCAN_EXCLUSIONS = [/\/__tests__\//, /^src\/tests\//, /\.(test|spec)\.tsx?$/] as const;
 
-/**
- * 🔴 THE SAME EXCLUSIONS, SPELLED INLINE, for the coverage check's expectation. Deliberately
- * NOT a call to `couldHoldAWriter` — see its docblock. Duplication is the point here: these
- * two must be able to DISAGREE, because the check's whole job is to notice when the walk's
- * predicate narrows.
- */
-const looksLikeProductionSource = (file: string) =>
-  !file.includes('/__tests__/') &&
-  !file.startsWith('src/tests/') &&
-  !/\.(test|spec)\.tsx?$/.test(file);
+/** The ONE predicate, built from that list, used by BOTH enumerations. */
+const isProductionSource = (file: string) =>
+  /\.tsx?$/.test(file) && !WRITER_SCAN_EXCLUSIONS.some((rx) => rx.test(file));
 
 function discoverWriterFiles(): {
   onDisk: string[];
@@ -364,8 +361,7 @@ function discoverWriterFiles(): {
   // enumerated and `readFileSync` would raise EISDIR.
   const candidates = onDisk.filter(
     (f) =>
-      /\.tsx?$/.test(f) &&
-      couldHoldAWriter(f) &&
+      isProductionSource(f) &&
       statSync(path.join(process.cwd(), f), { throwIfNoEntry: false })?.isFile() === true
   );
 
@@ -391,12 +387,7 @@ function discoverWriterFiles(): {
     .filter(
       (f, i, all) =>
         all.indexOf(f) === i &&
-        // 🔴 THE EXCLUSIONS ARE SPELLED HERE, AT THE CROSS-CHECK'S OWN SITE, and NOT via the
-        // walk's `couldHoldAWriter`. That is the round-5 finding: an expectation filtered by
-        // the predicate it audits narrows together with it. `looksLikeProductionSource` is
-        // the deliberately separate twin — see its docblock for why the duplication is the
-        // feature.
-        looksLikeProductionSource(f) &&
+        isProductionSource(f) &&
         statSync(path.join(process.cwd(), f), { throwIfNoEntry: false })?.isFile() === true
     );
   const found: string[] = [];
@@ -431,7 +422,7 @@ describe('every block_scope_invocations writer carries the private-run marker', 
     }
   });
 
-  it('[INV] the walk READ every production source file, and both predicates still admit them', () => {
+  it('[INV] the walk READ exactly the files the pinned exclusion list implies', () => {
     // 🔴 THE CONTROL THE SET EQUALITY CANNOT BE. Set equality compares MATCHES, so narrowing
     // the walk still equals `LEDGER` in both directions — measured surviving, with an
     // unmarked writer planted under `src/pages/api` invisible to the whole suite.
@@ -480,67 +471,44 @@ describe('every block_scope_invocations writer carries the private-run marker', 
         'walk narrowing away from them. Widen the glob rather than accepting the loss.'
     ).toEqual([]);
 
-    /**
-     * 🔴 (c) AND BOTH PREDICATES STILL ADMIT REAL PRODUCTION PATHS. This is the part that
-     * survives a refactor, and it replaces an identity check that did not.
-     *
-     * ⚠️ `expect(couldHoldAWriter === looksLikeProductionSource).toBe(false)` pinned the wrong
-     * property. It separates ALIASING from sharing a body, and only aliasing had been
-     * measured: `const looksLikeProductionSource = (f) => couldHoldAWriter(f)` — a delegating
-     * one-liner — keeps them distinct objects, passes it, and restores the narrowing hole in
-     * full. So does hoisting the three conjuncts into a shared helper both call, which is
-     * exactly what someone told "keep them separate functions" would write.
-     *
-     * 🔴 AND THE SAMPLE COMES FROM `onDisk`, THE RAW ENUMERATION, NOT FROM `candidates` —
-     * getting that wrong is the SIXTH time this case audited the walk with something the walk
-     * produced. A sample taken from `candidates` cannot test a path the predicate just
-     * excluded: narrow by `src/utils/` and that subtree simply stops appearing in the sample,
-     * so the loop never asks about it. Measured surviving, with a live unmarked writer there.
-     *
-     * A positive, spelled expectation is what a DRY refactor cannot narrow: delegation,
-     * extraction and aliasing all still have to return `true` for these paths.
-     */
-    const production = onDisk.filter(
+    // 🔴 (c) AND THE EXCLUSION VOCABULARY IS EXACTLY THIS. Every previous shape of this
+    // assertion tried to DETECT a narrowed scan; four rounds found a way past each. Narrowing
+    // IS an edit to `WRITER_SCAN_EXCLUSIONS`, so it is pinned as a literal — adding a conjunct,
+    // changing a pattern or dropping one is red here, by name, with nothing to sample or
+    // derive. There is one predicate now, built from this list and used by both enumerations,
+    // so there are no twins left to re-merge — and (d) below pins that the predicate really is
+    // built from it.
+    //
+    // If you are here because you added a legitimate exclusion: add it BOTH here and to the
+    // list, and say in the docblock why that path cannot hold a production writer.
+    expect(
+      WRITER_SCAN_EXCLUSIONS.map(String),
+      'the set of paths this ledger declines to scan has changed. Every exclusion widens the ' +
+        'blind spot for unmarked writers, so each one is pinned — see the constant docblock.'
+    ).toEqual(['/\\/__tests__\\//', '/^src\\/tests\\//', '/\\.(test|spec)\\.tsx?$/']);
+
+    // 🔴 (d) AND THE SCAN ACTUALLY USES THAT LIST AND NOTHING ELSE. Pinning the list alone
+    // pins the DATA, not the code that reads it: adding `&& !file.startsWith('src/utils/')`
+    // to `isProductionSource` narrows the scan without touching the list, and (c) stays green.
+    // Measured surviving, with an unmarked writer live in `src/utils`.
+    //
+    // So the expectation is REBUILT HERE from the pinned list, over the raw enumeration, and
+    // compared to what the scan produced. Between them the two assertions are closed: narrow
+    // the list and (c) fires; narrow the predicate and this one does. This is the whole of the
+    // coverage claim — there is nothing to sample, nothing derived from the scan, and no
+    // second predicate to drift.
+    const expectedCandidates = onDisk.filter(
       (f) =>
         /\.tsx?$/.test(f) &&
-        !f.includes('/__tests__/') &&
-        !f.startsWith('src/tests/') &&
-        !/\.(test|spec)\.tsx?$/.test(f)
+        !WRITER_SCAN_EXCLUSIONS.some((rx) => rx.test(f)) &&
+        statSync(path.join(process.cwd(), f), { throwIfNoEntry: false })?.isFile() === true
     );
-    const sample = [...new Set(production.map(topLevel))]
-      .sort()
-      .map((dir) => production.find((f) => topLevel(f) === dir) as string);
-    // Plus the dot region, which is why the walk enumerates with `readdirSync` at all. Derived
-    // from the tree, so it is simply empty if the tree has no dot paths rather than turning
-    // this guard permanently red when an unrelated product route is deleted.
-    const dotSample = production.filter((f) => f.includes('/.'));
-    const PREDICATES = [
-      ['couldHoldAWriter', couldHoldAWriter],
-      ['looksLikeProductionSource', looksLikeProductionSource],
-    ] as const;
-
-    // Instrument control for the sample itself: it must span the tree, or the loop is vacuous.
-    expect(sample.length, 'the sample must cover every top-level subtree').toBeGreaterThan(10);
-
-    for (const file of [...sample, ...dotSample]) {
-      for (const [name, predicate] of PREDICATES) {
-        expect(
-          predicate(file),
-          `${name} no longer admits ${file}. Both predicates must accept every production ` +
-            'source path — narrowing either hides writers from this ledger, and narrowing ' +
-            'them TOGETHER (a delegating one-liner, a shared extracted body, an alias) is ' +
-            'invisible to every set comparison above.'
-        ).toBe(true);
-      }
-    }
-    // And both must still REFUSE a test path, or "admits everything" would satisfy the loop.
-    for (const [name, predicate] of PREDICATES) {
-      expect(
-        predicate('src/server/services/__tests__/x.ts'),
-        `${name} must refuse a test dir`
-      ).toBe(false);
-      expect(predicate('src/server/x.test.ts'), `${name} must refuse a .test file`).toBe(false);
-    }
+    expect(
+      candidates,
+      'the scan did not select exactly the files the pinned exclusion list implies. Something ' +
+        'is filtering outside `WRITER_SCAN_EXCLUSIONS` — an unmarked writer in any file ' +
+        'missing here is invisible to the ledger below.'
+    ).toEqual(expectedCandidates);
 
     // Instrument controls. Both enumerations must be seeing a tree, or every assertion above
     // is vacuous over an empty list — and the counts are floors well under the real values so
@@ -554,15 +522,16 @@ describe('every block_scope_invocations writer carries the private-run marker', 
       'the walk must span many subtrees'
     ).toBeGreaterThan(10);
 
-    // ⚠️ NO DOT-REGION SPECIAL CASE ANY MORE, AND ITS REMOVAL IS THE POINT. Two assertions
-    // here required the walk to read dot-directory files and the cross-check to reach them,
-    // both resting on ONE unrelated product route (`src/pages/api/.well-known/`) existing.
-    // Measured: deleting that route turns this guard PERMANENTLY RED inside `test:lint-rules`
-    // with a message offering no remedy for the legitimate cause — and a permanently-red gate
-    // trains people to delete the assertion, which silently restores the hole it was added
-    // for. The property is now carried by (b)'s two-way file equality — the glob globs the
-    // dot region explicitly — and by (c)'s `dotSample`, which is derived from the tree and is
-    // simply empty if the tree has no dot paths rather than red.
+    // ⚠️ NO DOT-REGION SPECIAL CASE, AND ITS ABSENCE IS DELIBERATE. Two assertions here once
+    // required the walk to read dot-directory files and the cross-check to reach them, both
+    // resting on ONE unrelated product route (`src/pages/api/.well-known/`) existing.
+    // Measured: deleting that route turned this guard PERMANENTLY RED inside
+    // `test:lint-rules`, with a message offering no remedy for the legitimate cause — and a
+    // permanently-red gate trains people to delete the assertion, which silently restores the
+    // hole it was added for. The property rides on (b) instead: the walk enumerates with
+    // `readdirSync`, which sees dot-directories, the glob globs that region explicitly, and
+    // (b) compares the two file-by-file in both directions. Nothing depends on a particular
+    // file existing.
     // The discovery half still has to find something, or the comparison below is about "[]".
     expect(found.length).toBeGreaterThanOrEqual(LEDGER.length);
   });
