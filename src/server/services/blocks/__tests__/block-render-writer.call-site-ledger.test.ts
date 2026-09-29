@@ -253,17 +253,33 @@ describe('the blockRenders writer set — the ledger [INV]', () => {
     }
     // Two dynamic imports, and no static `import … from` beyond the two cheap ones the
     // beacon route already pulls in.
-    expect((gate.match(/await import\(/g) ?? []).length).toBe(2);
-    // Specifiers live in string literals, which `CODE` strips — assert those on RAW.
+    expect(
+      (gate.match(/await import\(/g) ?? []).length,
+      'the flag and the predicate must BOTH stay behind `await import`'
+    ).toBe(2);
+
+    // 🔴 ENUMERATED EQUALITY, NOT TWO SAMPLES. Asserting that the two cheap specifiers are
+    // PRESENT says nothing about a third being ADDED — `import { dbRead } from
+    // '~/server/db/client'` would have left the earlier form of this test green, which is
+    // precisely the eager-Prisma edge it exists to prevent. Enumerating also subsumes the
+    // namespace and default import forms, which a named-import regex cannot see.
+    //
+    // Specifiers live in string literals, which `CODE` strips — so this reads RAW, and
+    // `^import` anchored per line skips block-comment continuations (` *`) and `// import`.
+    // It is a claim about THIS FILE's static imports, not about the graph below them: a
+    // barrel re-export through an already-listed specifier is invisible to any text scan.
     const gateRaw = raw('src/server/services/blocks/private-run-impression.service.ts');
-    expect(gateRaw).toContain("import { logToAxiom } from '~/server/logging/client'");
-    expect(gateRaw).toContain("from '~/server/services/blocks/known-app-blocks.service'");
-    expect(gate, 'the flag must not be a static import').not.toMatch(
-      /import\s*\{[^}]*isAppBlocksPrivateRunEnabled[^}]*\}\s*from/
-    );
-    expect(gate, 'the predicate must not be a static import').not.toMatch(
-      /import\s*\{[^}]*resolvePrivateRunAccess[^}]*\}\s*from/
-    );
+    const staticSpecifiers = [...gateRaw.matchAll(/^import\s[\s\S]*?from\s+'([^']+)'/gm)]
+      .map((m) => m[1])
+      .sort();
+    expect(
+      staticSpecifiers,
+      "a new static import here lands Flipt or Prisma in the beacon route's EAGER graph"
+    ).toEqual([
+      '~/server/logging/client',
+      '~/server/services/blocks/known-app-blocks.service',
+      '~/types/session',
+    ]);
   });
 
   it('🔴 the private-run gate is NOT reachable from the generic ClickHouse client', () => {

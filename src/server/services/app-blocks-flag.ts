@@ -642,9 +642,10 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  *            touches the write primary — on a caller-chosen app id. Before that change
  *            the common beacon path did zero Postgres queries. Settle it for BOTH
  *            writers, not one: a rate limit on each, or confirm this flag's rollout
- *            admits only the moderators segment. (Deliberately no further detail here —
- *            this repo is public, and the control that is missing is the point, not the
- *            route to it.)
+ *            admits only the moderators segment. Both writers are enumerated in
+ *            `blocks/__tests__/block-render-writer.call-site-ledger.test.ts`, so "both"
+ *            is followable. (Keep this at the level of the missing control — this repo
+ *            is public.)
  *
  * 🔴 WHY THIS PARAGRAPH IS IN THIS FILE. The dependency was previously recorded only
  * in a docblock on the attribution arm and in a merged PR body — neither of which is

@@ -129,8 +129,9 @@ export async function isPrivateRunImpression(args: {
  * there exited the process — all three pods died at once. ⚠️ THAT INCIDENT PREDATES THE
  * CONTAINMENT THAT SHIPPED IN THAT CLIENT, so today's `logToAxiom` cannot realistically
  * reject either: this half is an invariant guard too, exactly like the `try` above. Do
- * not cite it as a live hazard — that package's own docblock records having retracted
- * the same theory once already.
+ * not cite it as a live hazard — that package's own docblock retracts the adjacent
+ * theory about its own race, and labels the test that appears to cover it an invariant
+ * guard for the same reason.
  *
  * 🔴 BUT NOT SILENT. A gate that fails open without a trace means the leak is reopened
  * and nothing says so — the reassuring-zero shape. Bounded: reachable only on the rare
