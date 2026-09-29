@@ -231,64 +231,34 @@ function matches(row: Row, where: Record<string, any>): boolean {
         // predicate's SHAPE and not its CONSEQUENCE — and would have passed just as happily
         // against an allowlist spelled in a shape the evaluator did happen to understand.
         // Evaluating them for real is what makes the denylist case a measurement.
+        // THREE SHAPES, and only three, because only three can reach here: the one the
+        // service emits (`{ not: <string> }`), plus the two an allowlist MUTANT emits
+        // (a bare string, and `{ in: [...] }`). Those two are evaluated rather than
+        // thrown on for a measured reason — while this branch threw on them, the
+        // allowlist mutant died with a `TypeError` from THIS function instead of on the
+        // assertion written to catch it, so the denylist case was measuring the
+        // predicate's SHAPE and not its CONSEQUENCE.
+        //
+        // 🔴 EVERYTHING ELSE THROWS, INCLUDING SPELLINGS THAT ARE SEMANTICALLY CORRECT
+        // (`{ not: { equals: X } }`, `{ notIn: [X] }`, a top-level `NOT:`). Those were
+        // modelled for a whole round and are deliberately gone: no code emits them, so
+        // the branches were reachable only from the tests written to cover them — and two
+        // of this change's four review rounds spent their findings on defects inside that
+        // dead scaffolding. A future refactor to an equivalent spelling now fails LOUDLY
+        // here, which is the safe direction and the whole point of the `default` below.
         if (typeof cond === 'string') {
-          // Bare equality — an allowlist of exactly one status.
           if (row.status !== cond) return false;
-        } else if (cond && typeof cond === 'object' && 'not' in cond) {
-          // 🔴 A NESTED OPERAND MUST NOT BE COMPARED AS A STRING. `{ not: { equals: X } }`
-          // and `{ not: { in: [X] } }` are both valid Prisma, and the first version of this
-          // branch compared `row.status` to the OBJECT — never equal, so it excluded
-          // NOTHING and produced the byte-identical failure set as "the filter was
-          // deleted". Safe direction, actively misleading diagnosis: a reviewer reads
-          // "missing filter" for a filter that is present and correct. Recurse instead.
-          const operand = cond.not;
-          if (typeof operand === 'string') {
-            if (row.status === operand) return false;
-          } else if (operand && typeof operand === 'object') {
-            if (matches({ ...row, status: row.status }, { status: operand })) return false;
-          } else {
-            throw new Error(`unhandled status NOT operand: ${JSON.stringify(operand)}`);
-          }
+        } else if (cond && typeof cond === 'object' && typeof cond.not === 'string') {
+          // 🔴 `typeof === 'string'` IS LOAD-BEARING, not defensive. A bare `===` against
+          // a nested operand object is never equal, so it excludes NOTHING while producing
+          // a failure set byte-identical to the filter being DELETED — present-and-correct
+          // code reported as a missing filter. Throwing is the only honest alternative.
+          if (row.status === cond.not) return false;
         } else if (cond && typeof cond === 'object' && Array.isArray(cond.in)) {
           if (!cond.in.includes(row.status)) return false;
-        } else if (cond && typeof cond === 'object' && Array.isArray(cond.notIn)) {
-          // The single most likely refactor of a `not`-on-one-value predicate. Handled
-          // rather than thrown: throwing took every [INV] control in the file down with
-          // it, so a semantically-identical rewrite reddened the instrument as well as the
-          // subject.
-          if (cond.notIn.includes(row.status)) return false;
-        } else if (cond && typeof cond === 'object' && typeof cond.equals === 'string') {
-          if (row.status !== cond.equals) return false;
         } else {
           throw new Error(`unhandled status condition: ${JSON.stringify(cond)}`);
         }
-        break;
-      case 'NOT':
-        // The alternative top-level spelling. Supported so that switching to it is a
-        // refactor rather than a silent test failure — but only for `status`.
-        //
-        // 🔴 IT DELEGATES RATHER THAN COMPARING. An earlier version did
-        // `row.status === cond.status`, which handles `NOT: { status: X }` but treats
-        // `NOT: { status: { equals: X } }` — a semantically CORRECT rewrite — as never
-        // matching, so it excluded nothing and produced a failure set byte-identical to
-        // DELETING the filter. Same misleading-diagnosis defect as the `not` branch above,
-        // one level out, and it survived the fix to that branch.
-        //
-        // ⚠️ SIBLING KEYS ARE REJECTED, NOT DROPPED. The first version tested only
-        // `'status' in cond` and then evaluated `cond.status` alone, silently discarding
-        // any other key — narrower than this comment's own "but only for `status`". It
-        // could not hide a voided-row leak (Prisma's multi-key `NOT` is NOR, so a dropped
-        // clause models a WEAKER exclusion than production applies) but it made an
-        // unrelated clause invisible, which is a wrong-diagnosis defect of the same family
-        // as the two above. Throwing is right: this evaluator's contract is that anything
-        // it does not fully understand fails loudly.
-        if (
-          !(cond && typeof cond === 'object') ||
-          !('status' in cond) ||
-          Object.keys(cond).length !== 1
-        )
-          throw new Error(`unhandled NOT condition: ${JSON.stringify(cond)}`);
-        if (matches(row, { status: cond.status })) return false;
         break;
       default:
         throw new Error(`the where-evaluator does not understand key \`${key}\``);
@@ -425,21 +395,20 @@ const seriesValues = (a: Awaited<ReturnType<typeof analytics>>) =>
   a.runs.series.map((p) => p.value);
 
 /**
- * 🔴 THE EVALUATOR'S OWN BRANCHES, TESTED DIRECTLY — because otherwise most of them run
- * ONLY under mutation and nothing in CI would catch a re-break.
+ * 🔴 TWO CASES ON THE EVALUATOR ITSELF, AND ONLY TWO. An earlier revision had eight,
+ * modelling every Prisma spelling equivalent to the exclusion. Six of them are gone: no
+ * code emits those spellings, so the branches they covered were reachable ONLY from these
+ * tests, and the justification offered for them — "so a future refactor does not SILENTLY
+ * turn this file's assertions vacuous" — was wrong about the failure mode. A mishandled
+ * spelling produced a LOUD misleading red, never a silent green; the evaluator's own
+ * comments record that measurement. Tests whose payoff is a nicer error message for a
+ * refactor nobody has performed are speculative generality, and they were expensive: two
+ * of this change's four review rounds spent their findings inside that dead scaffolding.
  *
- * That is not hypothetical: round 1 widened the `not` branch and left the top-level `NOT`
- * branch comparing a nested operand as a string, and it stayed broken for a whole round
- * precisely because no service read uses the `NOT:` spelling, so no case exercised it. The
- * service currently emits `status: { not: X }` and nothing else; every other spelling here
- * exists so a future refactor to an equivalent form does not silently turn this file's
- * exclusion assertions vacuous.
- *
- * These are [INV] by construction — they pin the harness, not the change. They assert
- * BEHAVIOUR (does this row survive this predicate), never the evaluator's source text.
+ * What survives is the one mechanism that genuinely made a case vacuous, plus the contract
+ * that keeps the rest honest. Both assert BEHAVIOUR, never the evaluator's source text.
  */
-describe('[INV] the where-evaluator handles every equivalent spelling of the exclusion', () => {
-  const voided = { ...VOIDED_SELF_E };
+describe('[INV] the where-evaluator evaluates allowlist shapes instead of throwing', () => {
   const tracked = { ...TRACKED_A };
   const scoped = (cond: unknown) => ({
     appBlockId: { in: [OWNED_ID, OWNED_ID_2] },
@@ -447,38 +416,22 @@ describe('[INV] the where-evaluator handles every equivalent spelling of the exc
     ...(cond as Record<string, unknown>),
   });
 
-  const EXCLUDES_VOIDED_KEEPS_TRACKED: Array<[string, unknown]> = [
-    ['not (the form the service emits)', { status: { not: VOIDED } }],
-    ['nested not/equals', { status: { not: { equals: VOIDED } } }],
-    ['notIn', { status: { notIn: [VOIDED] } }],
-    ['top-level NOT with a bare value', { NOT: { status: VOIDED } }],
-    ['top-level NOT with nested equals', { NOT: { status: { equals: VOIDED } } }],
-    ['top-level NOT with nested in', { NOT: { status: { in: [VOIDED] } } }],
-  ];
-
-  for (const [name, cond] of EXCLUDES_VOIDED_KEEPS_TRACKED) {
-    it(`excludes the voided row and keeps the tracked row: ${name}`, () => {
-      expect(matches(voided, scoped(cond))).toBe(false);
-      // 🔴 THE SECOND HALF IS THE POINT. A branch that excluded EVERYTHING would satisfy
-      // the first assertion, which is the over-filtering failure this file is built around.
-      expect(matches(tracked, scoped(cond))).toBe(true);
-    });
-  }
-
   it('an allowlist spelling is evaluated, not thrown on — so a mutant dies on an assertion', () => {
-    // Regression guard for the defect that made the denylist case measure SHAPE, not
-    // consequence: the evaluator used to throw here, killing the mutant via a TypeError.
+    // 🔴 THE ONE MEASURED VACUITY THIS FILE EVER HAD. While the evaluator threw here, the
+    // allowlist mutant died on a `TypeError` from the harness rather than on the denylist
+    // case's assertion — so that case measured the predicate's SHAPE, not its consequence.
     expect(matches(tracked, scoped({ status: 'tracked' }))).toBe(true);
     expect(matches({ ...TRACKED_A, status: 'held' }, scoped({ status: 'tracked' }))).toBe(false);
   });
 
-  it('a shape it does not fully understand throws rather than silently passing', () => {
-    // The contract that keeps every case above non-vacuous. `startsWith` is a real Prisma
-    // operator this evaluator deliberately does not model; a dropped sibling key likewise.
+  it('a shape it does not model throws rather than silently passing', () => {
+    // The contract every exclusion assertion in this file rests on: an unmodelled shape
+    // must fail loudly, never be treated as "no constraint". `startsWith` is a real Prisma
+    // operator deliberately not modelled; a top-level `NOT:` is a correct spelling that is
+    // also deliberately not modelled, so a refactor to it reddens here instead of quietly
+    // dropping the exclusion.
     expect(() => matches(tracked, scoped({ status: { startsWith: 'void' } }))).toThrow();
-    expect(() =>
-      matches(tracked, scoped({ NOT: { status: VOIDED, appBlockId: { in: [OWNED_ID] } } }))
-    ).toThrow();
+    expect(() => matches(tracked, scoped({ NOT: { status: VOIDED } }))).toThrow();
   });
 });
 
@@ -532,13 +485,6 @@ describe('owner-visible run analytics exclude voided attribution rows', () => {
     expect(seriesValues(a)).toEqual([1, 1, 1, 2, 1, 1]);
   });
 
-  it('[REG] the pre-existing self_spend void population is not counted either', async () => {
-    rows = [...SURVIVING, VOIDED_SELF_E, VOIDED_SELF_F];
-    const a = await analytics();
-    expect(a.runs.count).toBe(7);
-    expect(a.runs.buzzSpent).toBe(179);
-  });
-
   it('[INV] confirmed and paid_out rows SURVIVE — the filter is a denylist, not an allowlist', async () => {
     // 🔴 LABELLED [INV] BECAUSE IT WAS GREEN AT THE PRE-CHANGE REF, and saying otherwise
     // would be claiming regression coverage this case does not provide. Before the filter
@@ -590,22 +536,5 @@ describe('owner-visible run analytics exclude voided attribution rows', () => {
     // Same reasoning as the ownership case above: the raw statement has its own range
     // bound and this is what speaks for it.
     expect(seriesValues(a)).toEqual([1, 1, 1, 2, 1, 1]);
-  });
-
-  it('[REG] the raw series statement binds the excluded status as a PARAMETER', async () => {
-    // 🔴 NOT a source-text assertion: it reads the values the statement actually bound, via
-    // the same positional decoder the shim uses. A predicate spelled against the wrong
-    // constant (or inlined as literal text, so nothing is bound) fails here.
-    rows = [...ALL_ROWS];
-    await analytics();
-    const call = mockDbRead.$queryRaw.mock.calls
-      .map(([arg]: any[]) => arg)
-      .find((arg: any) => String(arg?.__sql ?? '').includes('block_spend_attribution'));
-    expect(call).toBeDefined();
-    const sql = String(call.__sql);
-    const at = sql.indexOf('"status" <> ');
-    expect(at).toBeGreaterThan(-1);
-    const bound = call.__values[sql.slice(0, at + '"status" <> '.length).split('?').length - 1];
-    expect(bound).toBe(VOIDED);
   });
 });

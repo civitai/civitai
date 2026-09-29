@@ -70,11 +70,19 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * 57 and 639 side by side as two working options invites picking the one that excludes
  * nothing, which is the same silent-no-op this paragraph exists to prevent.
  *
- * And this is NOT a Prisma-versus-SQL uncertainty, which is how it was hedged before: the
- * engine renders a one-filter `NOT` as a bare `(NOT <expr>)` with no `IS NULL` disjunct
- * added, and Prisma's own `in` reference documents this exact combination — *"if you combine
- * `in` and `NOT` … users with `null` value names are not returned"*. Only `equals: null` /
- * `not: null` are null-aware. So spell the `OR`.
+ * ⚠️ AND THE SCOPE OF THAT CLAIM, because it has been over- and under-stated in turn. What
+ * is MEASURED here is the OUTCOME in Postgres: the SQL above retains 0 rows. A previous
+ * revision of this note went further and asserted the RENDERING — "the engine emits a bare
+ * `(NOT <expr>)` with no `IS NULL` disjunct" — which nothing in this change measured; no
+ * generated SQL was ever captured. Prisma's own `in` reference is reported to document the
+ * same combination ("combine `in` and `NOT` … rows with `null` are not returned"), but that
+ * quote could not be re-confirmed against the live docs at the pinned major, so treat it as
+ * corroboration rather than proof. Among the SCALAR filters, only `equals: null` /
+ * `not: null` are null-aware — that is deliberately not a claim about the whole filter
+ * surface (`isSet`, and the relation filters, interact with null on their own terms).
+ *
+ * None of that changes the instruction, which is why the hedging is worth getting right
+ * rather than dropping: the observed behaviour is enough. Spell the `OR`.
  */
 const VOIDED_ATTRIBUTION_STATUS = 'voided';
 
