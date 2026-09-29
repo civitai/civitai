@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  FEEDBACK_OPEN_PARAM,
-  feedbackOpenHref,
-  feedbackReportHref,
-} from '$lib/feedback-open';
+import { FEEDBACK_OPEN_PARAM, feedbackOpenHref, feedbackReportHref } from '$lib/feedback-open';
 
 const at = (search: string) => new URL(`https://mod.example.test/feedback${search}`);
 
