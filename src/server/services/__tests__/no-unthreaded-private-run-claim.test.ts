@@ -162,7 +162,7 @@ const LEDGER = [
       'THE AUDIT-VISIBILITY ARM, which is NOT a money arm and is in this ledger for the ' +
       'seam, not the spend. Five router paths write a `block_scope_invocations` row: the ' +
       'block-post writer, the txt2img submit, the registry-step submit, the custom-comfy ' +
-      'submit and the pass-through submit. That row carries the app\'s REAL id and the ' +
+      "submit and the pass-through submit. That row carries the app's REAL id and the " +
       "viewer's REAL user id, and `app-analytics.service.ts` aggregates it by " +
       '`appBlockId IN (ownedIds)` — so a path that omits the claim writes an UNMARKED row ' +
       "that appears in a delisted app owner's own analytics, which is exactly the signal " +
@@ -254,9 +254,7 @@ describe('the private-run claim is threaded to every governed router call site',
       // That is the field-exists-but-nothing-branches-on-it failure this guard
       // exists to prevent, one nesting level down. A reuse review found it.
       const unthreaded = sites
-        .filter(
-          (site) => !THREADED_SPELLINGS.some((t) => topLevelPropertyText(site).includes(t))
-        )
+        .filter((site) => !THREADED_SPELLINGS.some((t) => topLevelPropertyText(site).includes(t)))
         .map((site) => enclosingDecl(source, source.indexOf(site)));
 
       expect(

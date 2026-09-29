@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AppViewsService from '../app-views.service';
 
 /**
  * 🔴 DOES A PRIVATE RUN ACTUALLY DISAPPEAR FROM THE OWNER'S ANALYTICS — AND DOES AN
@@ -121,7 +122,8 @@ function matches(row: Row, where: Record<string, any>): boolean {
       case 'source':
         // The only shape the exclusion uses. A different shape must fail loudly rather
         // than be treated as "no constraint", which would make every case below vacuous.
-        if (!('not' in cond)) throw new Error(`unhandled source condition: ${JSON.stringify(cond)}`);
+        if (!('not' in cond))
+          throw new Error(`unhandled source condition: ${JSON.stringify(cond)}`);
         if (row.source === cond.not) return false;
         break;
       default:
@@ -140,9 +142,13 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const mockDbRead = dbMock.dbRead;
 
+// ⚠️ The module type is imported at the top rather than written as a `typeof import(...)`
+// ANNOTATION: `@typescript-eslint/consistent-type-imports` is an ERROR in this repo and
+// forbids the inline form. The sibling analytics suite still uses it only because the lint
+// job runs over CHANGED files, so an unchanged file never trips it.
 const { mockGetAppViews } = vi.hoisted(() => ({ mockGetAppViews: vi.fn() }));
 vi.mock('../app-views.service', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../app-views.service')>();
+  const actual = await importOriginal<typeof AppViewsService>();
   return { ...actual, getAppViews: (...args: unknown[]) => mockGetAppViews(...args) };
 });
 
@@ -180,8 +186,8 @@ function wireMocks() {
   mockDbRead.blockBuzzAttribution.aggregate.mockResolvedValue({ _count: 0, _sum: {} });
   mockGetAppViews.mockResolvedValue({ count: 0, uniqueViewers: 0, anonCount: 0 });
 
-  mockDbRead.blockScopeInvocation.count.mockImplementation(async ({ where }: any) =>
-    rows.filter((r) => matches(r, where)).length
+  mockDbRead.blockScopeInvocation.count.mockImplementation(
+    async ({ where }: any) => rows.filter((r) => matches(r, where)).length
   );
 
   mockDbRead.blockScopeInvocation.groupBy.mockImplementation(async ({ by, where }: any) => {

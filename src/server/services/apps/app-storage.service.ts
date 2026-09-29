@@ -1013,8 +1013,10 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
 export async function deleteAppStorageValue(blockToken: string, key: string) {
   const stopTimer = appStorageLatencyHistogram.startTimer({ op: 'delete' });
   try {
-    const { userId, schema, appBlockId, blockInstanceId, privateRun } =
-      await resolveStorageContext(blockToken, 'delete');
+    const { userId, schema, appBlockId, blockInstanceId, privateRun } = await resolveStorageContext(
+      blockToken,
+      'delete'
+    );
     if (userId == null) {
       appStorageOpsCounter.inc({ op: 'delete', outcome: 'unauthorized' });
       throw new TRPCError({

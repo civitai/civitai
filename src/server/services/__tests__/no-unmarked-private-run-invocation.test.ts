@@ -399,9 +399,7 @@ describe('the storage path carries the VERIFIED claim, not just a local', () => 
     // and every behavioural test still passes — the writers dutifully thread a local that is
     // now a constant.
     const at = source.indexOf(STORAGE_CARRIER.resolver);
-    expect(at, `${STORAGE_CARRIER.resolver} must still exist under this name`).toBeGreaterThan(
-      0
-    );
+    expect(at, `${STORAGE_CARRIER.resolver} must still exist under this name`).toBeGreaterThan(0);
     // Bound the region at the next top-level declaration so this reads the resolver only.
     const after = source.slice(at + STORAGE_CARRIER.resolver.length);
     const nextDecl = after.search(/\n(?:export )?(?:async )?function |\ntype |\nconst /);

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 /**
  * THE BEHAVIOURAL HALF of the private-run audit marker: what `recordScopeInvocation`
@@ -155,9 +155,7 @@ describe('recordScopeInvocation — the private-run audit marker', () => {
     // pair, and this branch is gated on `dev`), and it is covered anyway so the marker's
     // correctness does not DEPEND on that refusal holding in another file.
     const fkError = Object.assign(new Error('fk'), { code: 'P2003' });
-    mockCreate
-      .mockRejectedValueOnce(fkError)
-      .mockResolvedValueOnce({});
+    mockCreate.mockRejectedValueOnce(fkError).mockResolvedValueOnce({});
     await recordScopeInvocation({
       ...ORDINARY,
       appBlockId: 'ephemeral-marker-fixture',
@@ -180,9 +178,7 @@ describe('recordScopeInvocation — the private-run audit marker', () => {
     // use an exact `toHaveBeenCalledWith`. A title claiming more than the body checks is the
     // same defect class as a docblock claiming more than its guard.
     const fkError = Object.assign(new Error('fk'), { code: 'P2003' });
-    mockCreate
-      .mockRejectedValueOnce(fkError)
-      .mockResolvedValueOnce({});
+    mockCreate.mockRejectedValueOnce(fkError).mockResolvedValueOnce({});
     await recordScopeInvocation({
       ...ORDINARY,
       appBlockId: 'ephemeral-marker-fixture',
@@ -195,9 +191,7 @@ describe('recordScopeInvocation — the private-run audit marker', () => {
     // The audit pipeline must never affect a response that has already shipped — the
     // marker must not change that.
     mockCreate.mockRejectedValueOnce(new Error('db down'));
-    await expect(
-      recordScopeInvocation({ ...ORDINARY, privateRun: true })
-    ).resolves.toBeUndefined();
+    await expect(recordScopeInvocation({ ...ORDINARY, privateRun: true })).resolves.toBeUndefined();
     expect(mockLog).toHaveBeenCalledTimes(1);
   });
 
