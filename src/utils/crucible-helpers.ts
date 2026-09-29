@@ -66,14 +66,8 @@ export type PrizePosition = {
 };
 
 /**
- * `createCrucible` stores the `z.record(position, percentage)` its schema validates, so the value
- * is an object (`{"1": 50, "2": 30}`), not an array — an array-only read returns `[]` for every
- * crucible, which zeroes payouts and hides the prize split. Both shapes are accepted because
- * nothing type-checks across the JSON boundary.
- */
-/**
  * A place beyond the entry count has nobody to pay, so its share goes to the filled places in
- * proportion to their own shares. Finalization pays this amount and the leaderboard shows it.
+ * proportion to their own shares — evenly when those shares are all 0%.
  */
 export function getCruciblePrizeAmount({
   position,
@@ -91,10 +85,18 @@ export function getCruciblePrizeAmount({
 
   const sumOf = (positions: PrizePosition[]) => positions.reduce((sum, p) => sum + p.percentage, 0);
   const configured = sumOf(prizePositions);
-  const filled = sumOf(prizePositions.filter((p) => p.position <= entryCount));
+  const filledPositions = prizePositions.filter((p) => p.position <= entryCount);
+  const filled = sumOf(filledPositions);
+  if (!filled) return Math.floor(((configured / 100) * totalPrizePool) / filledPositions.length);
   return Math.floor((prize.percentage / 100) * totalPrizePool * (configured / filled));
 }
 
+/**
+ * `createCrucible` stores the `z.record(position, percentage)` its schema validates, so the value
+ * is an object (`{"1": 50, "2": 30}`), not an array — an array-only read returns `[]` for every
+ * crucible, which zeroes payouts and hides the prize split. Both shapes are accepted because
+ * nothing type-checks across the JSON boundary.
+ */
 export function parsePrizePositions(prizePositionsJson: unknown): PrizePosition[] {
   if (!prizePositionsJson || typeof prizePositionsJson !== 'object') return [];
 

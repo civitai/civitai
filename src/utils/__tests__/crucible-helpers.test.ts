@@ -128,6 +128,15 @@ describe('getCruciblePrizeAmount', () => {
     expect(amounts(1)).toEqual([1000, 0, 0]);
   });
 
+  it('splits evenly when every filled place is 0%, rather than paying NaN', () => {
+    const backLoaded = [
+      { position: 1, percentage: 0 },
+      { position: 2, percentage: 0 },
+      { position: 3, percentage: 100 },
+    ];
+    expect(amounts(2, backLoaded)).toEqual([500, 500, 0]);
+  });
+
   it('leaves a split that never reached 100% short by the same remainder', () => {
     const short = [
       { position: 1, percentage: 60 },

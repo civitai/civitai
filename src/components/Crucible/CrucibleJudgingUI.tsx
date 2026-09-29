@@ -66,16 +66,6 @@ export type CrucibleJudgingUIProps = {
   className?: string;
 };
 
-/**
- * CrucibleJudgingUI - Side-by-side interface for voting on entry pairs
- *
- * Features:
- * - Two entries side by side (stacked on portrait phones)
- * - Vote buttons under each entry, locked until both entries have loaded
- * - Skip button for undecided
- * - Keyboard shortcuts: 1 for left, 2 for right, Space for skip
- * - Video: plays one clip at a time on hover or tap, muted until the judge turns sound on
- */
 export function CrucibleJudgingUI({
   pair,
   isLoading,

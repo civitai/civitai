@@ -286,11 +286,7 @@ function assertSfwCrucibleText(texts: string[], nsfwLevel: number) {
   }
 }
 
-/**
- * Owners edit freely before start and only the presentation once running; moderators edit the
- * presentation and the rating at any time. A resource requirement can be changed but not added or
- * removed, because it is charged for at creation.
- */
+/** A resource requirement is charged for at creation, so it can be swapped but never added or removed. */
 export const updateCrucible = async ({
   id,
   name,
@@ -1023,7 +1019,7 @@ function getJudgeEntryVotesKey(crucibleId: number, userId: number): RedisKeyTemp
 
 const JUDGE_KEY_TTL_SECONDS = 30 * 24 * 60 * 60;
 
-/** Bounds how far one judge can move a single entry, however the pairs are steered. */
+/** Bounds how far one judge can move a single entry. */
 export const CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY = 5;
 
 /**
@@ -1398,8 +1394,6 @@ export const getJudgingPair = async ({
     return null;
   }
 
-  // Get all ELO scores from Redis for this crucible
-  // This is efficient as it's a single Redis HGETALL operation
   const [redisElos, judgeEntryVotes] = await Promise.all([
     getAllEntryElos(crucibleId),
     sysRedis.hGetAll(getJudgeEntryVotesKey(crucibleId, userId)),
@@ -1420,12 +1414,11 @@ export const getJudgingPair = async ({
       return null;
     }
 
-    // Merge Redis ELO scores into entries (fallback to database score if Redis entry is missing)
     const entries: EntryForJudging[] = sampleEntries
       .filter((entry) => underJudgeCap(entry.id))
       .map((entry) => ({
         ...entry,
-        score: redisElos[entry.id] ?? entry.score, // Use Redis ELO if available, else DB fallback (1500)
+        score: redisElos[entry.id] ?? entry.score,
       }));
     if (entries.length < 2) continue;
 
@@ -2930,8 +2923,8 @@ export const getJudgeStats = async ({
 };
 
 /**
- * Crucibles to offer on the judge page's done screen: still judgeable by this viewer, and inside
- * their browsing level on both the crucible's rating and its cover (the landing feed's rule).
+ * Still judgeable by this viewer, and inside their browsing level on both the crucible's rating and
+ * its cover — the rule the landing feed applies client-side in useApplyHiddenPreferences.
  */
 export const getJudgingSuggestions = async ({
   userId,

@@ -230,7 +230,6 @@ export const getJudgingPairSchema = z.object({
   excludeEntryIds: z.array(z.number()).max(50).optional(),
 });
 
-// Schema for cancelling a crucible
 export type UpdateCrucibleSchema = z.infer<typeof updateCrucibleSchema>;
 export const updateCrucibleSchema = z.object({
   id: z.number(),
@@ -241,6 +240,7 @@ export const updateCrucibleSchema = z.object({
   nsfwLevel: z.number().int().positive().optional(),
 });
 
+// Schema for cancelling a crucible
 export type CancelCrucibleSchema = z.infer<typeof cancelCrucibleSchema>;
 export const cancelCrucibleSchema = z.object({
   id: z.number(),
@@ -312,6 +312,6 @@ export type JudgeStats = {
   totalPairsRated: number;
   // Percentile rank among all judges (e.g., "Top 8%" means they're in top 8%)
   percentileRank: number | null;
-  // 10 × √totalPairsRated. Display only: it does not weight the user's votes.
+  // Display only: it does not weight the user's votes.
   influenceScore: number;
 };

@@ -228,7 +228,6 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
     ? (crucible.allowedResources as number[])
     : [];
 
-  // Moderator-only: check if crucible can be cancelled
   const isModerator = currentUser?.isModerator ?? false;
   const isFinished =
     crucible.status === CrucibleStatus.Completed || crucible.status === CrucibleStatus.Cancelled;

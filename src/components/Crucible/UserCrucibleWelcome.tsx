@@ -10,13 +10,14 @@ import { CrucibleIntro } from './CrucibleIntro';
 
 const INTRO_DISMISSED_KEY = 'crucible-intro-dismissed';
 
-/** First-timers get the intro until they dismiss it; everyone else gets their stats. */
 export function UserCrucibleWelcome() {
   const currentUser = useCurrentUser();
   const { data: stats, isLoading } = trpc.crucible.getUserStats.useQuery(
     {},
     { enabled: !!currentUser }
   );
+  // Starts dismissed so the server render and returning visitors never flash the intro before
+  // localStorage is read.
   const [introDismissed, setIntroDismissed] = useState(true);
 
   useEffect(() => {

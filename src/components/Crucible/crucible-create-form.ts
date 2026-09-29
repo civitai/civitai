@@ -122,10 +122,8 @@ export function getPlaceBuzz({
   const positions: PrizePosition[] = Object.entries(prizePositions).map(
     ([position, percentage]) => ({ position: Number(position), percentage })
   );
-  // A split whose filled places are all 0% divides by zero.
   const amountFor = (position: number, entryCount: number, totalPrizePool: number) =>
-    getCruciblePrizeAmount({ position, prizePositions: positions, entryCount, totalPrizePool }) ||
-    0;
+    getCruciblePrizeAmount({ position, prizePositions: positions, entryCount, totalPrizePool });
   const fullPool = maxTotalEntries
     ? getCrucibleTotalPrizePool({ entryFee, entryCount: maxTotalEntries, seededPrizePool })
     : 0;

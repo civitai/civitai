@@ -114,7 +114,7 @@ describe('getPlaceBuzz', () => {
     });
   });
 
-  it('reads 0, not NaN, while every filled place is at 0%', () => {
+  it('splits evenly, never NaN, while every filled place is at 0%', () => {
     const amounts = getPlaceBuzz({
       prizePositions: { '1': 0, '2': 0, '3': 100 },
       seededPrizePool: 1000,
@@ -122,6 +122,6 @@ describe('getPlaceBuzz', () => {
       maxTotalEntries: 2,
     });
 
-    expect(amounts['1']).toEqual({ fromSeed: 0, whenFull: 0 });
+    expect(amounts['1']).toEqual({ fromSeed: 500, whenFull: 600 });
   });
 });

@@ -28,9 +28,9 @@ Second walkthrough (confirmed; nothing is cut):
 - [x] **B3. A crucible whose slug is `judge` routes to the judging page** instead of its detail page. → Fixed: `getCrucibleUrl` never emits the reserved `judge` slug (it becomes `judge-crucible`).
 - [x] **B4. The submit modal's eligibility check ignores required resources** (the server enforces them). → Fixed: new `crucible.checkEntryEligibility` answers recency and required models per image with the same rule submission uses; the modal header no longer says "Any model".
 - [x] **B5. The resource picker resets on every open**, so several versions can't be added in one go. → Fixed: the picker (shared `ModelVersionMultiSelect`) keeps the current picks and adds several versions per open via the modal's multi-select. Challenge creation gets the same control.
-- [ ] **B7. The judge page occasionally stalls mid-session** until refreshed.
+- [x] **B7. The judge page occasionally stalls mid-session** until refreshed. → Fixed (root cause unconfirmed; recovery instead): per-side load state with a 20s timeout, Retry/Skip on a failed side, votes locked until both sides load, and an error state when the pair request fails.
 - [ ] **B8. The vote highlight persists after a click.**
-- [ ] **B9. Mobile judging crops pair images to strips** and sometimes renders none.
+- [x] **B9. Mobile judging crops pair images to strips** and sometimes renders none. → Fixed: stacked on portrait phones, side by side in landscape, `object-contain` throughout.
 - [x] **B10. Mobile create flow:** Next doesn't scroll to the top; sliders are hard to use on touch. → Fixed: Next/Previous/step tabs scroll the wizard top into view; sliders got a % input (D6a).
 - [x] **B11. Wide covers are obscured by the header card**; cards and entries crop to portrait. → Hero fixed: the whole cover shows (`object-contain` over a blurred fill). Entry cards keep the 4:5 crop with the chosen D25 layout.
 - [x] **B12. Names have no length limit** and overflow the header and judge page. → Fixed: server caps name/description at 100/500; hero and judge done-screen wrap/truncate unbroken strings.
@@ -38,13 +38,13 @@ Second walkthrough (confirmed; nothing is cut):
 - [x] **B14. The description edit is lost when navigating back and forth in the wizard.** → Could not reproduce with the wizard's own buttons; likely browser Back/Forward, which B23's saved draft now covers.
 - [x] **B15. Cancelled crucibles remain in the public list.** → Fixed: default feed excludes Cancelled; an explicit Cancelled filter returns nothing unless the caller moderates.
 - [ ] **B17. The submit modal's generator tab was empty; uploads showed no progress.**
-- [ ] **B18. Video judging autoplays both clips with sound**; mute controls are small.
+- [x] **B18. Video judging autoplays both clips with sound**; mute controls are small. → Fixed: no autoplay; hover (mouse) or tap plays one clip and pauses the other; clips start muted with a 44px mute toggle.
 - [x] **B19. Entries per user can exceed max total entries**; it's a fixed select, not a number. Decided: an open number input, max 20 for now. → Fixed: number input, 1–20 (`CRUCIBLE_MAX_ENTRIES`); the server already rejects a per-user limit above max total entries.
 - [x] **B20. Max entry fee silently clamps.** → Superseded by D2 (1,000 max).
-- [ ] **B22. Past its end time a crucible still reads as active** (badge, "Ending soon", judging entry point) until the finalize job runs. → Card, hero badge and detail-page actions read `endAt` (no judging or entering once past it); judge page handled with B7.
+- [x] **B22. Past its end time a crucible still reads as active** (badge, "Ending soon", judging entry point) until the finalize job runs. → Card, hero badge and detail-page actions read `endAt` (no judging or entering once past it); judge page shows an ended state and stops requesting pairs.
 - [x] **B23. Reloading the create wizard loses all progress.** → Fixed: `useFormStorage` draft (`crucible_new`) holds form values, step and uploaded cover; "Restore unsaved changes?" on reload; cleared on create.
-- [ ] **B24. "Continue judging" suggestions include crucibles with nothing to judge,** or that have already ended.
-- [ ] **B25. The done screen says every pair was rated when there were simply too few entries to judge.**
+- [x] **B24. "Continue judging" suggestions include crucibles with nothing to judge,** or that have already ended. → Fixed: `crucible.getJudgingSuggestions` returns only Active crucibles ending in the future, with ≥2 entries the viewer can judge, inside the viewer's browsing level, excluding blockers.
+- [x] **B25. The done screen says every pair was rated when there were simply too few entries to judge.** → Fixed: "Nothing for you to judge yet" when the only entries are the viewer's.
 - [ ] **B26. Investigate:** the video submit modal marks nearly every video ineligible on a PG crucible.
 
 Second walkthrough:
@@ -63,7 +63,7 @@ Second walkthrough:
 - [x] **D9. Restrict entries to media created after the start?** → Done: media created before the crucible started is refused (server + modal).
 - [x] **D10. May creators enter their own crucible?** → Done: creators cannot enter their own crucible (server + detail page).
 - [ ] **D11. Moderator editing of title, description and rating; owner cancel of a scheduled crucible; cancelled crucibles hidden from non-moderators.** → D11b: moderator edit + owner cancel before start done with D16 (rating editing server-only for now). D11a async text moderation still open.
-- [ ] **D12. Explain influence in the UI**, decide snapshot vs live weighting, and reset it at launch.
+- [ ] **D12. Explain influence in the UI**, decide snapshot vs live weighting, and reset it at launch. → UI explanation done: influence is 10 × √(pairs rated), unweighted; the fake streak text and default of 100 are gone. Snapshot-vs-live and the launch reset are still open.
 - [ ] **D14. Remaining-pairs counter; image/video filter on the list.**
 - [ ] **D17. Should required resources be limited to models available in the generator?**
 - [x] **D15. Image and video can't be mixed in one crucible** — decided.
@@ -75,7 +75,7 @@ Second walkthrough:
 - [x] **D20. Give the prize-pool panel the challenges' growing-prize-pool treatment** rather than a bare number. → Done: teal "Growing Prize Pool" header with the shimmering total and "+fee per entry", as on challenges.
 - [x] **D21. Once a user has used all their entries,** show an alert saying so in place of the disabled button, and hide the entry fee. → Done: an alert replaces the button and the entry fee is hidden.
 - [ ] **D22. Audit the pairing and ELO logic:** how opponents are chosen, why pairs repeat, and how many judgments N entries need. Code: `getJudgingPair` in `crucible.service.ts`, `processVoteAtomic` in `crucible-elo.redis.ts`. → Audit done. Vote-integrity hardening shipped; pairing-quality changes (least-voted-first pairing, nearest-rating opponent, fall back to any unjudged pair before showing the end screen) are open.
-- [ ] **D23. "Continue judging" suggestions use the landing-page crucible card**, with the cover.
+- [x] **D23. "Continue judging" suggestions use the landing-page crucible card**, with the cover. → Done: suggestions render as `CrucibleCard` with a Start Judging button.
 - [x] **D24. Completed crucibles get the challenges winners podium** at the top. → Done: `CruciblePodium` reuses `WinnerPodiumCard` above the completed crucible's content.
 - [x] **D25. Entry card redesign:** cleaner numbers, username without "by", rank top-right; the same layout without score or rank before completion. Design options first. → Done: the "corner rank" layout (Manuel's pick) — rank chip top-right in gold/silver/bronze for the podium, avatar + username, score as one number; the top three also get the `WinnerPodiumCard` podium (D24).
 - [x] **D26. Show all entries in random order** rather than newest first. → Done: while running, entries come back in a per-viewer seeded shuffle (`md5(id || seed)`, keyset-paged, cursor still the entry id); score order once final.

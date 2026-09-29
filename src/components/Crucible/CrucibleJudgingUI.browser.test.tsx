@@ -6,8 +6,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 
 /**
  * EdgeMedia is stubbed: headless Chromium cannot decode most clips, and a codec is not what is
- * under test. The stub is a bare <video> that reports the outcome `mediaOutcome` names for its src
- * when it mounts (loaded by default), plus a button that reports playback.
+ * under test.
  *
  * Clicks go through the DOM node rather than a Playwright locator — the card carries
  * `transition-all` and a hover transform, and the actionability check never settles on anything
