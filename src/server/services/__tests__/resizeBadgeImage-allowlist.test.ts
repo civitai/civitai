@@ -57,10 +57,22 @@ const STORAGE_KEY = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/badge.png';
  * fixture shape; do not reintroduce a claim about it.
  *
  * ⚠ "every test below" is what this said, and that was its own smaller version of the same
- * overclaim: the three NON-refusal rows do not assert that pair and must not — two assert
- * `toHaveBeenCalledTimes(1)`, the opposite, and the short-circuit row asserts a resolved
- * value. Read as a convention, "every test" would invite an eighth row without the pair,
- * which would pass on a deleted guard.
+ * overclaim. The three NON-refusal rows do not assert that pair and must not. ENUMERATED,
+ * because the previous attempt at this sentence guessed and was wrong:
+ *   - "submits an allowed relative storage key" asserts `toHaveBeenCalledTimes(1)` — the
+ *     opposite of the pair. This is the ONLY `toHaveBeenCalledTimes(1)` in the file.
+ *   - "submits the NORMALIZED absolute url" asserts NO call count at all; it reads
+ *     `mock.calls[0][0]`, which throws if the submit never happened. That indexing is the
+ *     only thing keeping the row non-vacuous — do not "simplify" it away.
+ *   - "still short-circuits an ALLOWED url" asserts a resolved value AND
+ *     `not.toHaveBeenCalled()` — i.e. half the pair, not neither half.
+ * Read as a convention, "every test" would invite an eighth row without the pair, which
+ * would pass on a deleted guard.
+ *
+ * ⚠ A previous version of this block said "two assert `toHaveBeenCalledTimes(1)`" and that
+ * the short-circuit row asserts only a resolved value. Both were wrong — written while
+ * fixing the overclaim above, which is exactly when a fresh guess gets made. If you edit
+ * this inventory, COUNT the occurrences; do not describe them from memory.
  */
 const allowSubmitByDefault = () =>
   mockSubmitWorkflow.mockReset().mockResolvedValue({
