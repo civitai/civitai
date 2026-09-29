@@ -47,6 +47,7 @@ vi.mock('~/env/client', () => ({
 }));
 
 import { submitCreatorShopItem } from '~/server/services/creator-shop.service';
+import { constants } from '~/server/common/constants';
 
 const EVIL_URL = 'https://evil.com/oracle-target.png';
 
@@ -177,11 +178,50 @@ describe('validateArtwork URL allowlist (web-pod fetch + response oracle)', () =
     expect(init.redirect).toBeUndefined();
   });
 
-  it('bounds the fetch with a timeout — an unbounded one pins a web-pod request', async () => {
-    await submit('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/art.png').catch(() => undefined);
+  it('bounds the fetch with a TIMEOUT signal, derived from the size cap', async () => {
+    // 🔴 THIS ROW WAS SPELLED, NOT STRUCTURAL, and an audit measured it: it asserted only
+    // `expect(init.signal).toBeInstanceOf(AbortSignal)`, which stays GREEN when the signal is
+    // swapped for `new AbortController().signal` — one that can NEVER fire. It proved an
+    // AbortSignal object was passed, never that the fetch is time-bounded. Same class as the
+    // `redirect: 'error'` guard this suite already retracted.
+    //
+    // Spying on the factory pins the thing that matters — that the signal came from
+    // `AbortSignal.timeout` AND with the derived budget — which no assertion on the resulting
+    // object can distinguish (a timeout signal and a controller signal are the same type).
+    const spy = vi.spyOn(AbortSignal, 'timeout');
+    try {
+      await submit('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/art.png').catch(() => undefined);
 
-    const init = mockFetch.mock.calls[0][1];
-    expect(init.signal).toBeInstanceOf(AbortSignal);
+      expect(spy).toHaveBeenCalledTimes(1);
+      const ms = spy.mock.calls[0][0];
+      // The budget is DERIVED from the cap at a stated throughput, so pin the relationship
+      // rather than a literal: a cap change must move this, and a literal would not notice.
+      expect(ms).toBe(Math.ceil((constants.mediaUpload.maxImageFileSize / 2_000_000) * 1000));
+      // And sanity-bound it, so a derivation that collapses to ~0 cannot pass.
+      expect(ms).toBeGreaterThan(5_000);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('still refuses parser-ambiguous bytes in a RELATIVE key (the second guard)', async () => {
+    // 🔴 THE SECOND GUARD WAS UNREACHABLE BY EVERY TEST IN THE REPO until this row. An audit
+    // measured it: deleting the `isAllowedImageScanUrl` call while keeping the import left
+    // this suite at 14/14 AND the three image-scan-url suites at 23/23 — because the ledger
+    // matches on the identifier in the file TEXT, and both rows that used to reach the second
+    // guard are now caught by the narrowing at the first.
+    //
+    // `\evil.com/x` carries no scheme and no leading `//`, so `isEdgeUrlPassthrough` says
+    // "relative key" and waves it past the first guard. Only the ambiguous-bytes half refuses
+    // it. Without this row the second guard could be deleted with the suite fully green.
+    const err = await submit('\\evil.com/x.png').then(
+      () => null,
+      (e: unknown) => e
+    );
+    expect(err instanceof Error ? err.message : String(err)).toContain(
+      'Artwork must be an image uploaded to Civitai'
+    );
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it('refuses an oversized body declared by Content-Length, before buffering it', async () => {

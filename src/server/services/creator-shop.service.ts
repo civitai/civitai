@@ -197,8 +197,27 @@ const withRemaining = (item: Omit<CreatorShopItemRow, '_count'>, purchases: numb
  * then be refused server-side with the generic "Could not read the uploaded artwork". Reading
  * the same constant closes that dead window by construction and cannot drift from it.
  */
-const ARTWORK_FETCH_TIMEOUT_MS = 15_000;
-const ARTWORK_MAX_BYTES = constants.mediaUpload.maxImageFileSize;
+export const ARTWORK_MAX_BYTES = constants.mediaUpload.maxImageFileSize;
+
+/**
+ * 🔴 DERIVED FROM THE CAP, NOT SET BESIDE IT — because setting it beside the cap is exactly
+ * how this went wrong once. An earlier draft paired `15_000` with a 20 MiB cap; the cap then
+ * rose 2.5x to the product's 50 MiB limit and the timeout was left untouched, silently
+ * demanding ~3.5 MB/s sustained to move a legal upload — TIGHTER than both precedents this
+ * change cites (`listing-meta.service.ts` and `og-image-helpers.ts` both budget ~2.4 MB/s).
+ * That reopened, in the TIME axis, the same dead window the docblock above closes in the BYTE
+ * axis: a 38 MB `ProfileBackground` on a cold edge cache passes every client check, then fails
+ * server-side with the generic "Could not read the uploaded artwork".
+ *
+ * So the budget is a THROUGHPUT, and the timeout falls out of it. Raising the cap now moves
+ * the timeout with it and the two cannot drift apart again.
+ *
+ * `ARTWORK_MIN_THROUGHPUT_BPS` is deliberately slacker than either precedent: unlike them this
+ * fetch absorbs a 301 leg to `blobs-b2.civitai.com` plus a possible cold-cache B2 pull, and a
+ * wrong rejection blocks a submission.
+ */
+const ARTWORK_MIN_THROUGHPUT_BPS = 2_000_000;
+const ARTWORK_FETCH_TIMEOUT_MS = Math.ceil((ARTWORK_MAX_BYTES / ARTWORK_MIN_THROUGHPUT_BPS) * 1000);
 
 /**
  * Read a response body into a Buffer, aborting as soon as the running total exceeds
@@ -216,7 +235,7 @@ const ARTWORK_MAX_BYTES = constants.mediaUpload.maxImageFileSize;
  * `body`; the Content-Length pre-check is the only bound there. Real undici always gives a
  * stream, so production never takes it.
  */
-async function readBounded(
+export async function readBounded(
   res: { body?: unknown; arrayBuffer(): Promise<ArrayBuffer> },
   maxBytes: number
 ) {
@@ -231,7 +250,15 @@ async function readBounded(
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
-      if (!value) continue;
+      // 🔴 THROW, never `continue`. A spec-compliant stream always carries a chunk when
+      // `done` is false and undici only ever enqueues a Uint8Array, so this is unreachable
+      // today — but `continue` turns "unreachable" into an UNRECOVERABLE wedge if it ever
+      // happens: an await-loop whose promise resolves immediately starves the macrotask
+      // queue, so the AbortSignal timer CANNOT fire and rescue it. MEASURED: 6,000,000
+      // iterations of exactly that shape and a 300 ms `AbortSignal.timeout` had still not
+      // fired. That is the event-loop-freeze class, and it would take out the whole web pod
+      // rather than one request. The branch bought nothing; failing loudly costs nothing.
+      if (!value) throw new Error('artwork stream produced an empty chunk');
       total += value.byteLength;
       if (total > maxBytes) {
         throw new Error(`artwork too large: exceeded ${maxBytes} bytes`);
