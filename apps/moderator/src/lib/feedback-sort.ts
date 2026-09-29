@@ -12,7 +12,7 @@ import { urlWith } from './url';
  *
  * 🔴 THE STATE IS IN THE URL, NOT IN A COMPONENT AND NOT IN `replaceState`. Every successful write on
  * this page calls `invalidateAll()`, which re-creates component state under the operator — the same
- * reason `?tab=` is a param (`feedback-tabs.ts`). And `replaceState` DOES NOT UPDATE `page.url` in
+ * reason `?open=` is a param (`feedback-open.ts`). And `replaceState` DOES NOT UPDATE `page.url` in
  * `@sveltejs/kit@2.66.0` (`runtime/client/client.js:2524-2555` stores the OLD `page.url.href` under
  * its own key), so a control built on shallow routing reads its own state back unchanged and is inert
  * while looking live.
