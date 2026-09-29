@@ -14,6 +14,7 @@ import {
   IconChevronRight,
   IconClock,
 } from '@tabler/icons-react';
+import { acceptsBlueBuzz } from '@civitai/buzz';
 import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -135,12 +136,17 @@ export function ModelVersionList({
           const isEarlyAccess =
             version.paidAccess?.endsAt && new Date(version.paidAccess.endsAt) > new Date();
           const hasProblem = missingFiles || missingPosts || (!published && !scheduled);
+          // Coloured by the Buzz the gate takes: the domain's own, blended with Blue when accepted.
+          const buzzColor = features.isGreen ? 'green.7' : 'yellow.7';
+          const takesBlue = acceptsBlueBuzz(version.paidAccess?.terms);
           const earlyAccessButton = (
             <ThemeIcon
               key={`early-access-${version.id}`}
               radius="sm"
               size="sm"
-              color="yellow.7"
+              variant={takesBlue ? 'gradient' : 'filled'}
+              gradient={{ from: 'blue.5', to: buzzColor, deg: 135 }}
+              color={buzzColor}
               style={{
                 width: 20,
                 height: 26,

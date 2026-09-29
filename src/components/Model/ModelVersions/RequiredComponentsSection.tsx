@@ -36,6 +36,7 @@ import { componentTypeConfig } from '~/utils/file-display-icons';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { abbreviateNumber, formatKBytes } from '~/utils/number-helpers';
 import { getModelUrl } from '~/utils/string-helpers';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 type FileType = ModelById['modelVersions'][number]['files'][number];
 
@@ -45,6 +46,8 @@ interface RequiredComponentsSectionProps {
   userPreferences?: UserFilePreferences;
   canDownload: boolean;
   downloadPrice?: number;
+  /** The paid-access terms accept Blue Buzz — the purchase button shows both colours. */
+  acceptsBlueBuzz?: boolean;
   isLoadingAccess?: boolean;
   archived?: boolean;
   onPurchase?: () => void;
@@ -62,6 +65,7 @@ export function RequiredComponentsSection({
   userPreferences,
   canDownload,
   downloadPrice,
+  acceptsBlueBuzz,
   isLoadingAccess,
   archived,
   onPurchase,
@@ -70,6 +74,13 @@ export function RequiredComponentsSection({
 }: RequiredComponentsSectionProps) {
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
+  const features = useFeatureFlags();
+  // The purchase button's colour is the currency it takes: the domain's own Buzz, blended with Blue
+  // when the terms accept it — never a flat yellow, which read as "paid Buzz only".
+  const buzzColor = features.isGreen ? 'green' : 'yellow';
+  const buzzLabel = acceptsBlueBuzz
+    ? `Blue or ${features.isGreen ? 'Green' : 'Yellow'} Buzz`
+    : `${features.isGreen ? 'Green' : 'Yellow'} Buzz`;
 
   // Get only required component types that have files (now data-driven)
   const requiredComponents = useMemo(() => {
@@ -326,8 +337,9 @@ export function RequiredComponentsSection({
               fullWidth
               pos="relative"
               className="overflow-visible"
-              variant={isPrimary ? 'filled' : 'light'}
-              color={needsPurchase ? 'yellow' : 'blue'}
+              variant={needsPurchase && acceptsBlueBuzz ? 'gradient' : isPrimary ? 'filled' : 'light'}
+              gradient={{ from: 'blue', to: buzzColor, deg: 135 }}
+              color={needsPurchase ? buzzColor : 'blue'}
               size={isPrimary ? 'md' : 'sm'}
               leftSection={
                 needsPurchase ? (
@@ -351,7 +363,7 @@ export function RequiredComponentsSection({
               <Group gap={8}>
                 <span>
                   {needsPurchase
-                    ? `Purchase (${abbreviateNumber(downloadPrice ?? 0, { decimals: 0 })})`
+                    ? `Purchase (${abbreviateNumber(downloadPrice ?? 0, { decimals: 0 })} ${buzzLabel})`
                     : 'Download All Components'}
                 </span>
                 {!needsPurchase && (
