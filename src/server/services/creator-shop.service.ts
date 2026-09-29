@@ -11,6 +11,7 @@ import {
   validateStickerCosmetic,
 } from '~/server/services/cosmetic.service';
 import { removePlacementsByCosmetic } from '~/server/services/placement-moderation.service';
+import { isAllowedImageScanUrl, normalizeImageScanUrl } from '~/server/utils/image-scan-url';
 import {
   REJECTED_IS_FINAL,
   appendItemHistory,
@@ -181,6 +182,22 @@ const withRemaining = (item: Omit<CreatorShopItemRow, '_count'>, purchases: numb
 // Server-side artwork validation (source of truth). Fetches the original upload
 // and inspects it with sharp against the per-type requirements.
 const validateArtwork = async (imageUrl: string, type: CosmeticType) => {
+  // 🔴 SSRF + RESPONSE ORACLE. This is the sharpest of the caller-supplied-URL funnels and
+  // the only one that fetches from the NEXT.JS WEB POD rather than via the orchestrator:
+  // `getEdgeUrl` forwards an absolute http(s) url unmodified, and everything derived from
+  // the response below — `imageHash` (a sha256 of the body), width, height, format, frame
+  // count — is returned to the submitter. Ungated that is a read primitive over any URL the
+  // web pod can reach, on `creatorShopProcedure` (protectedProcedure + the `creatorShop`
+  // flag), i.e. an ordinary signed-in user rather than a moderator.
+  //
+  // 🔴 The check MUST stay OUTSIDE the try/catch below. That catch converts every failure
+  // into 'Could not read the uploaded artwork for validation', so a refusal raised inside it
+  // would be reported as an unreadable image — and a test asserting the refusal would pass
+  // on the generic message while proving nothing about the allowlist.
+  if (!isAllowedImageScanUrl(imageUrl)) {
+    throw throwBadRequestError('Artwork must be an image uploaded to Civitai');
+  }
+
   const req = cosmeticImageRequirements(type);
 
   let width = 0;
@@ -191,7 +208,11 @@ const validateArtwork = async (imageUrl: string, type: CosmeticType) => {
   let frames = 1;
   let minFrameDelay = Infinity;
   try {
-    const res = await fetch(getEdgeUrl(imageUrl, { original: true }));
+    // Fetch the NORMALIZED form, for the same reason the orchestrator funnels submit it:
+    // the guard above judged the host with WHATWG parsing, so handing the raw bytes to a
+    // fetcher that resolves them differently is the validate-then-forward-the-raw-string
+    // bug. `normalizeImageScanUrl` leaves a relative storage key untouched for getEdgeUrl.
+    const res = await fetch(getEdgeUrl(normalizeImageScanUrl(imageUrl), { original: true }));
     if (!res.ok) throw new Error(`fetch ${res.status}`);
     const buffer = Buffer.from(await res.arrayBuffer());
     imageHash = createHash('sha256').update(buffer).digest('hex');

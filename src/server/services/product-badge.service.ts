@@ -13,6 +13,11 @@ import { internalOrchestratorClient } from '~/server/services/orchestrator/clien
 import { queueCosmeticPerceptualHash } from '~/server/services/cosmetic-phash.service';
 import { registerMediaLocation } from '~/server/services/storage-resolver';
 import { getEdgeUrl } from '~/client-utils/edge-url';
+import {
+  ImageIngestionUrlBlockedError,
+  isAllowedImageScanUrl,
+  normalizeImageScanUrl,
+} from '~/server/utils/image-scan-url';
 import { getImageUploadBackend } from '~/utils/s3-utils';
 import { CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
 
@@ -136,7 +141,22 @@ export const resizeBadgeImage = async ({
 }): Promise<string> => {
   if (width === BADGE_TARGET_SIZE && height === BADGE_TARGET_SIZE) return url;
 
-  const sourceUrl = url.startsWith('http') ? url : getEdgeUrl(url, { type: 'image' });
+  // 🔴 Same SSRF boundary as `createImageIngestionRequest`: this hands the orchestrator a
+  // caller-supplied URL it fetches from inside our network. The rung here is
+  // `moderatorProcedure` (product-badge.router), so this is the narrowest of the funnels —
+  // it is gated anyway, because "only moderators can reach it" is an argument about the
+  // CURRENT router and not a property of this function.
+  //
+  // This THROWS rather than returning the url unchanged: returning it would hand an
+  // un-resized, un-validated url straight into `upsertProductBadge`'s cosmetic `data.url`,
+  // where the phash sweep would then replay it on a schedule.
+  if (!isAllowedImageScanUrl(url)) throw new ImageIngestionUrlBlockedError(url);
+
+  // The `url.startsWith('http') ? url : getEdgeUrl(url, …)` ternary this replaces was a
+  // no-op (getEdgeUrl forwards a passthrough src on exactly that predicate) and a fourth
+  // open-coded spelling of it. Submit the NORMALIZED form so the host validated above is
+  // the host a downstream RFC-3986 client resolves.
+  const sourceUrl = getEdgeUrl(normalizeImageScanUrl(url), { type: 'image' });
 
   const { data, error, response } = await submitWorkflow({
     client: internalOrchestratorClient,

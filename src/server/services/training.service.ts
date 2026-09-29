@@ -45,6 +45,7 @@ import {
   throwServiceUnavailableError,
   withRetries,
 } from '~/server/utils/errorHandling';
+import { isPublicHttpsUrl } from '~/server/utils/ssrf-hostname';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import {
   deleteObject,
@@ -658,20 +659,26 @@ type AutoLabelStepMetadata = {
 // we don't gate on a host allowlist — but we DO want to refuse hostnames that
 // resolve to private/loopback/link-local space, since the orchestrator runs
 // inside our network and would happily fetch internal services if asked.
-const PRIVATE_HOST_PATTERNS = [
-  /^localhost$/i,
-  /^127\./,
-  /^10\./,
-  /^192\.168\./,
-  /^172\.(1[6-9]|2\d|3[01])\./,
-  /^169\.254\./, // link-local (incl. cloud metadata 169.254.169.254)
-  /^0\./,
-  /^::1$/,
-  /^fe80:/i,
-  /^fc/i, // unique local IPv6 (fc00::/7)
-  /^fd/i,
-];
-
+//
+// 🔴 This used to carry its OWN `PRIVATE_HOST_PATTERNS` array, which had DRIFTED from the
+// canonical list in `~/server/utils/ssrf-hostname` and was weaker than it. MEASURED against
+// the old array — exactly four shapes it ADMITTED and `isPublicHttpsUrl` refuses:
+//   `https://[::ffff:127.0.0.1]/x`      IPv4-mapped IPv6 loopback  ← the load-bearing one
+//   `https://foo.internal/x`            internal TLD
+//   `https://foo.local/x`               mDNS TLD
+//   `https://metadata.google.internal/x` cloud metadata (subsumed by `.internal`)
+// ⚠ And the three shapes it is TEMPTING to list here — integer (`https://2130706433/x`),
+// hex (`https://0x7f000001/x`) and octal (`https://0177.0.0.1/x`) IPv4 literals — were
+// ALREADY refused, so do not "re-close" them or cite them as a reason for this change:
+// WHATWG `new URL()` normalizes all three to hostname `127.0.0.1` BEFORE any denylist runs,
+// so `/^127\./` matched them. A `%`-zone id (`https://[fe80::1%eth0]/x`) never parses at all.
+// This is a reconciliation onto the existing source of truth, not a new guard — see
+// `training-assert-safe-media-urls.test.ts`, which pins each of the four and was watched red
+// against the old array.
+//
+// ⚠ Deliberate NARROWING that comes with it: `isPublicHttpsUrl` also refuses *public* bare
+// IPv4/IPv6 literals and dot-less hostnames. A legitimate media URL is a DNS name, and the
+// canonical helper makes the same call for App Blocks manifests, so the two now agree.
 function assertSafeMediaUrls(urls: string[]) {
   for (const raw of urls) {
     let parsed: URL;
@@ -680,11 +687,16 @@ function assertSafeMediaUrls(urls: string[]) {
     } catch {
       throw throwBadRequestError(`Invalid mediaUrl: ${raw.slice(0, 64)}`);
     }
+    // 🔴 Userinfo is checked HERE, not inside `isPublicHttpsUrl`, and that is not an
+    // oversight to "fix" by deleting this line: the canonical helper deliberately judges
+    // host SHAPE only, and `safe-fetch.ts` likewise rejects userinfo as its own separate
+    // control (control 1). `user:pass@` before a host is the openly-spelled version of the
+    // WHATWG-vs-RFC3986 authority differential that `image-scan-url.ts` refuses.
     if (parsed.protocol !== 'https:' || parsed.username || parsed.password) {
       throw throwBadRequestError('mediaUrl must be a plain HTTPS URL');
     }
-    const host = parsed.hostname.replace(/^\[|\]$/g, ''); // strip IPv6 brackets
-    if (PRIVATE_HOST_PATTERNS.some((re) => re.test(host))) {
+    const lexical = isPublicHttpsUrl(raw);
+    if (!lexical.ok) {
       throw throwBadRequestError('mediaUrl host is not reachable');
     }
   }
