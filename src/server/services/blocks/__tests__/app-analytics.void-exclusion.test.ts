@@ -24,9 +24,14 @@ import type * as AppViewsService from '../app-views.service';
  * inferred from a migration). So the predicate must exclude the ONE voided value rather than
  * allowlist the one current healthy value: `status: 'tracked'` would silently drop a row the
  * moment the payout rail starts writing `confirmed` / `paid_out`, which is the same
- * silent-deletion failure as the nullability trap, arriving later. The `confirmed` and
- * `paid_out` fixture rows below are what make that a measurement — an allowlist mutant
- * passes every other case in this file and dies only on them.
+ * silent-deletion failure as the nullability trap, arriving later.
+ *
+ * 🔴 SO THE FIXTURES SPAN ALL FIVE NON-VOIDED STATUSES, AND THAT IS NOT BELT-AND-BRACES —
+ * it is a hole that was measured open. With only four statuses represented, a THREE-value
+ * allowlist (`status: { in: ['tracked','confirmed','paid_out'] }`) passed all ten cases
+ * green while silently dropping `pending` and `held`. An allowlist is caught here only to
+ * the extent the fixtures cover the CONSTRAINT's value space rather than the statuses that
+ * happen to exist in the table today.
  *
  * ── WHY THIS IS NOT A `where`-SHAPE TEST ────────────────────────────────────────
  * 🔴 ASSERTING THE `where` OBJECT WOULD BE DERIVING THE EXPECTATION FROM THE
@@ -61,9 +66,9 @@ const VOIDED = 'voided';
 
 /**
  * 🔴 EVERY BUZZ VALUE IS DISTINCT, AND NO FIXTURE VALUE EQUALS ANY TOTAL AN ASSERTION NAMES
- * (fixtures 7/11/13/17/19/23/29/31/37/41 vs totals 89/160/71). A fixture that can only ever
- * produce the asserted constant's own value cannot see a mutant that hardcodes the literal,
- * so it would SURVIVE a fully green suite.
+ * (fixtures 7/11/13/17/19/23/29/31/37/41/43/47 vs totals 179/250/71/120). A fixture that can
+ * only ever produce the asserted constant's own value cannot see a mutant that hardcodes the
+ * literal, so it would SURVIVE a fully green suite.
  *
  * Bucket days deliberately COLLIDE across the void boundary — the `self_spend` row shares
  * 06-02 with a tracked row and the `manual_review` row shares 06-04 — so the series is
@@ -107,6 +112,35 @@ const TRACKED_J: Row = {
   voidedReason: null,
   buzzAmount: 41,
   attributedAt: new Date('2026-06-05T17:00:00Z'),
+};
+/**
+ * 🔴 `pending` AND `held` EXIST BECAUSE OF A MEASURED HOLE, and without them the denylist
+ * case below is far weaker than its own name. The CHECK constraint permits SIX statuses;
+ * the fixtures originally carried four (`tracked`, `confirmed`, `paid_out`, `voided`), so a
+ * THREE-value allowlist — `status: { in: ['tracked','confirmed','paid_out'] }` — passed all
+ * ten cases GREEN while silently dropping exactly the two statuses nothing covered. That is
+ * the real shape of the failure this file exists to prevent, and it walked the whole suite.
+ *
+ * Worse, under that mutant the aggregate allowlists while the raw series still denylists, so
+ * the two reads DISAGREE for a `pending` row and nothing noticed — which means the service
+ * comment's "one constant, so the two cannot drift" had no test behind it either.
+ *
+ * So the fixtures now cover the constraint's full value space, not the statuses that happen
+ * to exist in the table today.
+ */
+const PENDING_K: Row = {
+  appBlockId: OWNED_ID,
+  status: 'pending',
+  voidedReason: null,
+  buzzAmount: 43,
+  attributedAt: new Date('2026-06-08T09:00:00Z'),
+};
+const HELD_L: Row = {
+  appBlockId: OWNED_ID,
+  status: 'held',
+  voidedReason: null,
+  buzzAmount: 47,
+  attributedAt: new Date('2026-06-09T09:00:00Z'),
 };
 
 /**
@@ -155,8 +189,8 @@ const OUT_OF_RANGE_I: Row = {
   attributedAt: new Date('2026-05-15T09:00:00Z'),
 };
 
-/** Owned, in range, and NOT voided: 5 rows, 89 Buzz. */
-const SURVIVING = [TRACKED_A, TRACKED_B, CONFIRMED_C, PAID_OUT_D, TRACKED_J];
+/** Owned, in range, and NOT voided: 7 rows, 179 Buzz — all five non-voided statuses. */
+const SURVIVING = [TRACKED_A, TRACKED_B, CONFIRMED_C, PAID_OUT_D, TRACKED_J, PENDING_K, HELD_L];
 /** Owned, in range, and voided: 3 rows, 71 Buzz. */
 const VOIDED_ROWS = [VOIDED_SELF_E, VOIDED_SELF_F, VOIDED_REVIEW_G];
 /** The rows no read may ever return, whatever the status predicate does. */
@@ -194,9 +228,30 @@ function matches(row: Row, where: Record<string, any>): boolean {
           // Bare equality — an allowlist of exactly one status.
           if (row.status !== cond) return false;
         } else if (cond && typeof cond === 'object' && 'not' in cond) {
-          if (row.status === cond.not) return false;
+          // 🔴 A NESTED OPERAND MUST NOT BE COMPARED AS A STRING. `{ not: { equals: X } }`
+          // and `{ not: { in: [X] } }` are both valid Prisma, and the first version of this
+          // branch compared `row.status` to the OBJECT — never equal, so it excluded
+          // NOTHING and produced the byte-identical failure set as "the filter was
+          // deleted". Safe direction, actively misleading diagnosis: a reviewer reads
+          // "missing filter" for a filter that is present and correct. Recurse instead.
+          const operand = cond.not;
+          if (typeof operand === 'string') {
+            if (row.status === operand) return false;
+          } else if (operand && typeof operand === 'object') {
+            if (matches({ ...row, status: row.status }, { status: operand })) return false;
+          } else {
+            throw new Error(`unhandled status NOT operand: ${JSON.stringify(operand)}`);
+          }
         } else if (cond && typeof cond === 'object' && Array.isArray(cond.in)) {
           if (!cond.in.includes(row.status)) return false;
+        } else if (cond && typeof cond === 'object' && Array.isArray(cond.notIn)) {
+          // The single most likely refactor of a `not`-on-one-value predicate. Handled
+          // rather than thrown: throwing took every [INV] control in the file down with
+          // it, so a semantically-identical rewrite reddened the instrument as well as the
+          // subject.
+          if (cond.notIn.includes(row.status)) return false;
+        } else if (cond && typeof cond === 'object' && typeof cond.equals === 'string') {
+          if (row.status !== cond.equals) return false;
         } else {
           throw new Error(`unhandled status condition: ${JSON.stringify(cond)}`);
         }
@@ -345,9 +400,9 @@ describe('owner-visible run analytics exclude voided attribution rows', () => {
     // later figure is read against them.
     rows = [...SURVIVING];
     const a = await analytics();
-    expect(a.runs.count).toBe(5);
-    expect(a.runs.buzzSpent).toBe(89);
-    expect(seriesValues(a)).toEqual([1, 1, 1, 2]);
+    expect(a.runs.count).toBe(7);
+    expect(a.runs.buzzSpent).toBe(179);
+    expect(seriesValues(a)).toEqual([1, 1, 1, 2, 1, 1]);
   });
 
   it('[REG] a run with NOTHING but voided rows reports zero, not the void total', async () => {
@@ -367,6 +422,13 @@ describe('owner-visible run analytics exclude voided attribution rows', () => {
     const before = (await analytics()).runs;
     rows = [...SURVIVING, ...VOIDED_ROWS];
     const after = (await analytics()).runs;
+    // Asserted field-by-field BEFORE the whole-object compare: a bare `toEqual` on the
+    // object prints `{count: 5, buzzSpent: 89, …(1)} to deeply equal {count: 5, …(1)}`
+    // when only the elided `series` key differs, which is unreadable precisely in the
+    // series-only-leak case.
+    expect(after.count).toBe(before.count);
+    expect(after.buzzSpent).toBe(before.buzzSpent);
+    expect(after.series).toEqual(before.series);
     expect(after).toEqual(before);
   });
 
@@ -375,16 +437,16 @@ describe('owner-visible run analytics exclude voided attribution rows', () => {
     // with a surviving row's, so a bucket-level leak is visible rather than appended.
     rows = [...SURVIVING, VOIDED_REVIEW_G];
     const a = await analytics();
-    expect(a.runs.count).toBe(5);
-    expect(a.runs.buzzSpent).toBe(89);
-    expect(seriesValues(a)).toEqual([1, 1, 1, 2]);
+    expect(a.runs.count).toBe(7);
+    expect(a.runs.buzzSpent).toBe(179);
+    expect(seriesValues(a)).toEqual([1, 1, 1, 2, 1, 1]);
   });
 
   it('[REG] the pre-existing self_spend void population is not counted either', async () => {
     rows = [...SURVIVING, VOIDED_SELF_E, VOIDED_SELF_F];
     const a = await analytics();
-    expect(a.runs.count).toBe(5);
-    expect(a.runs.buzzSpent).toBe(89);
+    expect(a.runs.count).toBe(7);
+    expect(a.runs.buzzSpent).toBe(179);
   });
 
   it('[INV] confirmed and paid_out rows SURVIVE — the filter is a denylist, not an allowlist', async () => {
@@ -401,34 +463,43 @@ describe('owner-visible run analytics exclude voided attribution rows', () => {
     // holds `confirmed` and `paid_out` rows. The broad kill is better for safety and worse
     // for diagnosis; what this case adds is a NAME for the property, so the failure says
     // "denylist" instead of an unexplained off-by-two in five other cases.
-    rows = [CONFIRMED_C, PAID_OUT_D];
+    rows = [CONFIRMED_C, PAID_OUT_D, PENDING_K, HELD_L];
     const a = await analytics();
-    expect(a.runs.count).toBe(2);
-    expect(a.runs.buzzSpent).toBe(30);
-    expect(seriesValues(a)).toEqual([1, 1]);
+    expect(a.runs.count).toBe(4);
+    expect(a.runs.buzzSpent).toBe(120);
+    expect(seriesValues(a)).toEqual([1, 1, 1, 1]);
   });
 
   it('[REG] every non-voided status survives together, with the full table loaded', async () => {
     // The realistic shape: the whole fixture, including the rows no read may return.
     rows = [...ALL_ROWS];
     const a = await analytics();
-    expect(a.runs.count).toBe(5);
-    expect(a.runs.buzzSpent).toBe(89);
-    expect(seriesValues(a)).toEqual([1, 1, 1, 2]);
+    expect(a.runs.count).toBe(7);
+    expect(a.runs.buzzSpent).toBe(179);
+    expect(seriesValues(a)).toEqual([1, 1, 1, 2, 1, 1]);
   });
 
   it('[INV] the ownership bound still applies — a foreign app\'s non-voided row never appears', async () => {
     rows = [...SURVIVING, FOREIGN_H];
     const a = await analytics();
-    expect(a.runs.count).toBe(5);
-    expect(a.runs.buzzSpent).toBe(89);
+    expect(a.runs.count).toBe(7);
+    expect(a.runs.buzzSpent).toBe(179);
+    // 🔴 THE SERIES ASSERTION IS THE POINT OF THIS LINE. Without it this case speaks only
+    // for the Prisma aggregate's ownership bound and says nothing about the raw
+    // statement's, while its NAME claims the property outright. Measured: deleting both
+    // `AND "attributed_at"` lines from the series statement left this case GREEN and was
+    // caught only incidentally by the full-table case.
+    expect(seriesValues(a)).toEqual([1, 1, 1, 2, 1, 1]);
   });
 
   it('[INV] the range bound still applies — an out-of-range non-voided row never appears', async () => {
     rows = [...SURVIVING, OUT_OF_RANGE_I];
     const a = await analytics();
-    expect(a.runs.count).toBe(5);
-    expect(a.runs.buzzSpent).toBe(89);
+    expect(a.runs.count).toBe(7);
+    expect(a.runs.buzzSpent).toBe(179);
+    // Same reasoning as the ownership case above: the raw statement has its own range
+    // bound and this is what speaks for it.
+    expect(seriesValues(a)).toEqual([1, 1, 1, 2, 1, 1]);
   });
 
   it('[REG] the raw series statement binds the excluded status as a PARAMETER', async () => {

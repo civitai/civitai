@@ -113,6 +113,35 @@ const PRIVATE_RUN_ROW: Row = {
 /** The same row with the marker removed — the over-filtering positive control. */
 const UNMARKED_TWIN: Row = { ...PRIVATE_RUN_ROW, source: 'app-block' };
 
+/**
+ * 🔴 A SOURCE VALUE THE PREDICATE DOES NOT KNOW ABOUT, carrying a REAL `appBlockId` so it
+ * reaches the owner-visible reads. It exists to make one documented design decision
+ * measurable, and it was added because that decision had NO test behind it.
+ *
+ * `scope-activity-predicate.ts` states that the filter is deliberately NOT
+ * `source: 'app-block'` because an allowlist "would silently exclude any future fourth
+ * value the moment it is introduced". Nothing measured that: with only `'app-block'` and
+ * `'private-run'` in the fixtures, an allowlist and the denylist are behaviourally
+ * IDENTICAL, so mutating the predicate to `source: 'app-block'` passed all ten cases.
+ *
+ * ⚠️ IT PREVIOUSLY LOOKED COVERED FOR THE WRONG REASON, AND THAT IS THE LESSON. Before the
+ * evaluator above was widened, that mutant DID redden the file — with a `TypeError` from
+ * the harness refusing the shape, not from any assertion. Fixing the evaluator turned a
+ * misleading red into a silent green, which is strictly worse, and this row is what closes
+ * it properly. Deliberately a hypothetical value rather than `'external-oauth'`: a real
+ * external-OAuth row carries NO `appBlockId` (see `GLOBAL_SCOPE_ACTIVITY_OR`), so it can
+ * never reach an `appBlockId IN (ownedIds)` aggregate and could not express this property.
+ */
+const FUTURE_SOURCE_ROW: Row = {
+  appBlockId: OWNED_ID,
+  userId: VIEWER_B,
+  scope: 'ai:write:budgeted',
+  endpoint: 'workflow:submit',
+  statusCode: 200,
+  source: 'future-token-kind',
+  invokedAt: IN_RANGE,
+};
+
 let rows: Row[] = [];
 
 /**
@@ -133,11 +162,43 @@ function matches(row: Row, where: Record<string, any>): boolean {
         if (!(row.statusCode >= cond.gte)) return false;
         break;
       case 'source':
-        // The only shape the exclusion uses. A different shape must fail loudly rather
-        // than be treated as "no constraint", which would make every case below vacuous.
-        if (!('not' in cond))
+        // 🔴 EVERY PLAUSIBLE SPELLING IS EVALUATED, NOT JUST THE ONE THE SERVICE USES.
+        // This used to throw on anything but `{ not: X }`, and that made the file's
+        // allowlist coverage an illusion: mutating `OWNER_VISIBLE_INVOCATION_FILTER` to
+        // `source: 'app-block'` — the exact shape `scope-activity-predicate.ts` names as
+        // rejected, because it silently excludes any future fourth token population —
+        // died with `TypeError: Cannot use 'in' operator to search for 'not' in
+        // app-block` raised HERE, taking all ten cases including the positive control
+        // down with it. So the mutant was killed by the harness refusing a shape rather
+        // than by any assertion, and this file measured the predicate's SHAPE, not its
+        // CONSEQUENCE. Found by porting the identical fix from the sibling
+        // `app-analytics.void-exclusion.test.ts`, where the same defect was measured
+        // first; this rail is the higher-stakes of the two (five reads, and the leak the
+        // private-run feature exists to prevent).
+        if (typeof cond === 'string') {
+          // Bare equality — an allowlist of exactly one source.
+          if (row.source !== cond) return false;
+        } else if (cond && typeof cond === 'object' && 'not' in cond) {
+          // A nested operand must not be compared as a string: `{ not: { equals: X } }`
+          // is valid Prisma, and comparing a string to the object excludes NOTHING while
+          // producing the same failure set as a deleted filter.
+          const operand = cond.not;
+          if (typeof operand === 'string') {
+            if (row.source === operand) return false;
+          } else if (operand && typeof operand === 'object') {
+            if (matches(row, { source: operand })) return false;
+          } else {
+            throw new Error(`unhandled source NOT operand: ${JSON.stringify(operand)}`);
+          }
+        } else if (cond && typeof cond === 'object' && Array.isArray(cond.in)) {
+          if (!cond.in.includes(row.source)) return false;
+        } else if (cond && typeof cond === 'object' && Array.isArray(cond.notIn)) {
+          if (cond.notIn.includes(row.source)) return false;
+        } else if (cond && typeof cond === 'object' && typeof cond.equals === 'string') {
+          if (row.source !== cond.equals) return false;
+        } else {
           throw new Error(`unhandled source condition: ${JSON.stringify(cond)}`);
-        if (row.source === cond.not) return false;
+        }
         break;
       default:
         throw new Error(`the where-evaluator does not understand key \`${key}\``);
@@ -313,6 +374,25 @@ describe('owner-visible engagement analytics exclude private-run activity', () =
       { endpoint: 'workflow:submit', count: 2 },
       { endpoint: 'storage:get', count: 1 },
     ]);
+  });
+
+  it('[INV] a source value the predicate does not know about still COUNTS as owner activity', async () => {
+    // 🔴 THE ALLOWLIST GUARD, and the only case that can see it. Mutating
+    // `OWNER_VISIBLE_INVOCATION_FILTER` to `source: 'app-block'` — the exact shape
+    // `scope-activity-predicate.ts` documents as rejected — leaves every other case in
+    // this file GREEN, because they contain only the two source values for which an
+    // allowlist and the denylist agree. Here it drops a row that must be counted, so
+    // `apiCalls` reads 3 instead of 4.
+    //
+    // Labelled [INV]: it is green on the pre-change tree and pins a property nothing may
+    // narrow, rather than covering a bug that existed.
+    rows = [...ORDINARY_ROWS, FUTURE_SOURCE_ROW];
+    const a = await analytics();
+    expect(a.engagement.apiCalls).toBe(4);
+    // Asserted alongside, so an over-filtering mutant that happened to preserve the count
+    // could not pass on the count alone. VIEWER_B already appears in ORDINARY_ROWS, so the
+    // distinct-user total is unchanged by construction.
+    expect(a.engagement.activeUsers).toBe(2);
   });
 
   it('[REG] a private-run row changes NONE of the five engagement numbers', async () => {

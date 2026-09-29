@@ -611,7 +611,10 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  * INVISIBLE TO THE APP'S OWNER — no moderation event, no play count, and nothing in
  * the owner's analytics. The first two are delivered (the private route deliberately
  * calls neither `recordAppListingOpen` nor any moderation-event writer). THE THIRD is
- * now delivered on ALL THREE rails. Read the ✅/open marks, not the count:
+ * now delivered on all three rails a private run can WRITE to. Read the ✅/open marks,
+ * not the count — and note item 4, which is a fourth owner-visible read with a stated
+ * decision rather than a filter, so "three rails" is a claim about writers and not about
+ * how many aggregates the owner's panel serves:
  *
  *   1. ✅ `block_spend_attribution` — CLOSED. A private run's row is written VOIDED, and
  *      both owner-visible reads in `app-analytics.service.ts` now exclude
@@ -656,6 +659,17 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  *            `blocks/__tests__/block-render-writer.call-site-ledger.test.ts`, so "both"
  *            is followable. (Keep this at the level of the missing control — this repo
  *            is public.)
+ *   4. ⚖️ `block_buzz_attribution` (owner-visible `buzzPurchased`) — NOT FILTERED, BY
+ *      DECISION, and recorded here so the enumeration is not mistaken for complete at
+ *      three. `getMyAppAnalytics` aggregates this table into `buzzPurchased` with no
+ *      private-run predicate, and its writer has no `privateRun` arm — its only void is
+ *      `isSelfPurchase`. So a reviewer who completed a real CARD PURCHASE inside a
+ *      delisted app during a private run would land in that owner's `buzzPurchased`.
+ *      Left open because it costs the reviewer real money, which makes it a path nobody
+ *      takes by accident rather than a leak a review run produces incidentally — every
+ *      other rail here fires on an ordinary review with no spend at all. Revisit if a
+ *      private run ever gets a test-mode or granted-Buzz purchase path, because that
+ *      removes the only thing keeping it shut.
  *
  * 🔴 WHY THIS PARAGRAPH IS IN THIS FILE. The dependency was previously recorded only
  * in a docblock on the attribution arm and in a merged PR body — neither of which is

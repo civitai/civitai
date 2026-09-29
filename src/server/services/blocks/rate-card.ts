@@ -41,6 +41,25 @@ export type RateCard = {
    * Apps owned by these userIds always pay 0% to publisher — internal
    * civitai apps where the "share" is meaningless because the same
    * legal entity owns both sides of the transaction.
+   *
+   * 🔴 POPULATING THIS NOW HAS A SECOND, NON-MONEY CONSEQUENCE: IT BLANKS THE
+   * OWNER-VISIBLE RUN COUNT FOR EVERY APP LISTED. `recordSpendAttribution`
+   * writes `voided` / `internal_owner` on any spend row whose APP OWNER is in
+   * this list — keyed on `app.userId`, NOT on the spender — and since
+   * 2026-09-29 the two owner-visible reads in
+   * `blocks/app-analytics.service.ts` exclude `status = 'voided'`. So a
+   * team-owned app's analytics panel would report 0 runs / 0 Buzz even for
+   * GENUINE third-party usage, silently.
+   *
+   * That is almost certainly not what you want when you populate this to make
+   * the publisher share 0%. Those are two unrelated intentions riding one
+   * list. Before adding an id here, either narrow that read's predicate to
+   * exclude by `voidedReason` (`manual_review` + `self_spend`) instead of all
+   * of `voided`, or confirm that blanking the run count is intended.
+   *
+   * ⚠️ The older comment on the V4/V5 lists — "none of the load-bearing paths
+   * read this list yet" — is out of date in exactly this way: a READ now
+   * depends on it.
    */
   internalAppOwnerUserIds: number[];
   effectiveFrom: string; // ISO date — informational, not enforced

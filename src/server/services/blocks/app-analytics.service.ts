@@ -65,10 +65,27 @@ const VOIDED_ATTRIBUTION_STATUS = 'voided';
  * A private run of a delisted app writes its generation row `voided` /
  * `voidedReason: 'manual_review'`, and the row carries the app's REAL id by design — so it
  * lands squarely in the owner's own `appBlockId IN (ownedIds)` aggregate. Nothing else
- * removes it. The pre-existing `self_spend` / `internal_owner` voids are excluded by the
- * same predicate, which is a deliberate behaviour change to existing numbers rather than a
- * side effect: measured on the live table before shipping, every voided row is the app
- * owner spending on their own app, and no row of real third-party usage is voided at all.
+ * removes it.
+ *
+ * ⚠️ THE PREDICATE IS WIDER THAN THE LEAK, DELIBERATELY, AND THAT IS AN OPERATOR DECISION
+ * RATHER THAN A DETAIL. `status = 'voided'` covers THREE populations, not one —
+ * `manual_review` (the private run), `self_spend` (the owner running their own app), and
+ * `internal_owner`. Excluding `self_spend` is the accepted behaviour change: measured on
+ * the live table before shipping, it was 582 of 639 rows, every one of them the app owner
+ * spending on their own app, with no row of real third-party usage voided at all.
+ *
+ * 🔴 BUT "IT REMOVES SELF-TESTING, NOT USAGE" IS A CLAIM ABOUT TODAY'S ROWS, NOT ABOUT THE
+ * MECHANISM — an earlier version of this docblock asserted the stronger form and it was
+ * wrong. `internal_owner` is keyed on the APP OWNER, not the spender:
+ * `buzz-attribution.service.ts` computes it as
+ * `ACTIVE_RATE_CARD.internalAppOwnerUserIds.includes(app.userId)`. So the moment that
+ * array is populated — and `blocks/rate-card.ts` instructs whoever launches to populate it
+ * with civitai team userIds "before going live" — EVERY spend row on a team-owned app is
+ * written `voided` regardless of who spent it, and this filter then reports 0 runs / 0 Buzz
+ * for a first-party app's GENUINE third-party usage. It is inert today only because the
+ * array is empty. The warning for whoever populates it lives on that field's own docblock;
+ * the narrower fix at that point is to exclude by `voidedReason` (`manual_review` +
+ * `self_spend`) rather than excluding all of `voided`.
  *
  * ⚠️ Spread it FIRST and let the explicit keys win — `appBlockId: idIn` is the only thing
  * scoping this read to the caller's own apps, and a spread placed LAST wins any key
