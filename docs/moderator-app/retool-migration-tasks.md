@@ -1,4 +1,4 @@
-# Retool → moderator app: task breakdown
+| 2.3 | Model notes | **done** — Model Lookup's "Moderator notes" panel over `ModelNotes`, add + edit-own (`868mb8h0y`) |# Retool → moderator app: task breakdown
 
 Task list derived from ClickUp [868kkxqpn](https://app.clickup.com/t/868kkxqpn) — *Moderation Tooling — Retool
 → Civitai migration (design)*. Each item below is sized to be independently shippable and states what it
@@ -23,7 +23,7 @@ Status column reflects what is in `apps/moderator` today, cross-checked against 
 | 1.12 | Buzz add/subtract | not started — **blocked on an open question** |
 | 2.1 | Bulk Ban | not started |
 | 2.2 | Moderation Rules | not started |
-| 2.3 | Model notes | not started |
+| 2.3 | Model notes | **done** — Model Lookup's "Moderator notes" panel over `ModelNotes`, add + edit-own (`868mb8h0y`) |
 | 2 | Retool Workflows | not started |
 
 Already migrated and not in the ticket's scope: image review queues, article queues, blocklists,
@@ -114,7 +114,10 @@ supports this) and 0.1 for list resolution.
 
 **2.2 Moderation Rules** — ticket marks this low priority, "not used much."
 
-**2.3 Model notes** — free-text mod notes on models; existing change history covers the rest.
+**2.3 Model notes** — free-text mod notes on models. **Shipped 2026-09-29** on `/retool/model-lookup`
+rather than a page of its own: `model-notes.service.ts` + `/api/model-notes/[modelId]`, with the list
+and inline edit shared with User Lookup (`$lib/components/ModeratorNoteList.svelte`). Existing change
+history covers the rest.
 
 ## Phase 4 — workflows
 

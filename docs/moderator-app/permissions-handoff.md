@@ -26,7 +26,9 @@ to ordinary moderators until granted:
 - [ ] `/retool/article-lookup`
 - [ ] `/retool/model-lookup` — **grant it wherever Image Lookup is granted.** The main app's
       "Lookup Model" now opens this page, so an ungranted moderator following that link is bounced to
-      civitai.com, which reads as the button being broken. Read-only.
+      civitai.com, which reads as the button being broken. ⚠️ **Not read-only since 2026-09-29**: the
+      Moderator notes panel adds and edits `ModelNotes` rows, and those writes have no permission of
+      their own — this page grant is the whole gate on them.
 - [ ] `/retool/user-reports`
 - [ ] `/retool/bulk-image-manager` — **grant narrowly.** Reaching it is gated on the page, but its
       actions remove images in bulk across accounts the moderator never looked up. It is an enforcement
