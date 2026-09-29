@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { followTrace, traceLossPoints, tracePath } from './trace';
+import { followTrace, interpretTraceLine, traceLossPoints, tracePath } from './trace';
 
 describe('traceLossPoints', () => {
   it('reads every tqdm redraw on a concatenated log line, skipping ones without a loss', () => {
@@ -39,6 +39,13 @@ describe('traceLossPoints', () => {
     expect(
       traceLossPoints('{"t":1700000000000,"type":"step","step":7,"seq":42,"loss":{"loss":0.31}}')
     ).toEqual([{ step: 7, losses: { loss: 0.31 }, lr: null }]);
+  });
+
+  it('reads the loss events the training worker writes', () => {
+    const line =
+      '{"t":1700000000000,"type":"loss","epoch":2,"step":20,"lr":0.0001,"loss":{"loss":0.3213}}';
+    expect(traceLossPoints(line)).toEqual([{ step: 20, losses: { loss: 0.3213 }, lr: 1e-4 }]);
+    expect(interpretTraceLine(line)).toEqual({ kind: 'loss' });
   });
 
   it('never files a learning rate as a loss', () => {

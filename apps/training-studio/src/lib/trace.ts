@@ -133,7 +133,8 @@ const WORKER_PHASES = new Set<string>([
 ]);
 
 /** The one signal a trace line carries for the friendly status view. `noise` = a line we keep in the raw
- *  log but that drives no status (timer blocks, "Saved optimizer", "Removing old save", unknown JSON). */
+ *  log but that drives no status (timer blocks, "Saved optimizer", "Removing old save", unknown JSON);
+ *  `loss` = a per-step loss reading, which only the loss graph shows. */
 export type TraceSignal =
   | { kind: 'phase'; phase: TrainingPhase; epoch: number | null }
   | {
@@ -145,6 +146,7 @@ export type TraceSignal =
     }
   | { kind: 'epoch-done'; epoch: number }
   | { kind: 'attempt'; epoch: number | null }
+  | { kind: 'loss' }
   | { kind: 'noise' };
 
 const finite = (v: unknown): number | null =>
@@ -213,6 +215,8 @@ export function interpretTraceLine(line: string): TraceSignal {
       return epoch !== null ? { kind: 'epoch-done', epoch } : { kind: 'noise' };
     case 'attempt':
       return { kind: 'attempt', epoch };
+    case 'loss':
+      return { kind: 'loss' };
     default:
       return { kind: 'noise' };
   }

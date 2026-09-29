@@ -38,11 +38,14 @@
 
   function ingest(line: string) {
     started = true;
-    raw.push(line);
-    seq++;
-    if (raw.length > MAX_RAW) raw.splice(0, raw.length - MAX_RAW);
-
     const s = interpretTraceLine(line);
+    // One loss reading per training step would push every other line out of the raw log.
+    if (s.kind !== 'loss') {
+      raw.push(line);
+      seq++;
+      if (raw.length > MAX_RAW) raw.splice(0, raw.length - MAX_RAW);
+    }
+
     switch (s.kind) {
       case 'attempt':
         if (s.epoch !== null) epoch = s.epoch;
@@ -64,6 +67,7 @@
       case 'epoch-done':
         step = maxSteps = stepsRemaining = secondsPerStep = null;
         break;
+      case 'loss':
       case 'noise':
         break;
     }
