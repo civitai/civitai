@@ -520,16 +520,54 @@ describe('the row click is an enhancement over a real link', () => {
   });
 
   /**
-   * The one DOM read `feedbackRowExpands` cannot do for itself — which control, if any, the click
-   * landed on. A handler that stopped asking would expand the row underneath the selection checkbox
-   * and both links, and the decision function would go on returning `true` with nothing to tell it
-   * otherwise. The rest of the guard set is tested for real in `feedback-row-click.test.ts`.
+   * The handler has to be wired to the row at all. Everything it is HANDED is pinned by the
+   * whole-expression assertion below.
    */
-  it('asks the shared selector which control the click landed on', () => {
-    const page = source('+page.svelte');
-    expect(page).toContain('target.closest(FEEDBACK_ROW_INTERACTIVE)');
-    expect(page).toContain('feedbackRowExpands({');
-    expect(page).toContain('onclick={(event) => rowClick(event, row.id)}');
+  it('wires the row click handler to every row', () => {
+    expect(source('+page.svelte')).toContain('onclick={(event) => rowClick(event, row.id)}');
+  });
+
+  /**
+   * 🔴 THE WHOLE CALL, AS ONE NORMALISED STRING, BECAUSE EVERY FIELD OF IT IS A SEAM AND FRAGMENTS
+   * ARE WALKABLE. `+page.svelte` computes ten facts and `feedbackRowExpands` only receives them, so
+   * every slot takes any expression of the right type: a cross-wiring typechecks, and this app has
+   * no Svelte tier, so it is invisible to the suite as well. Two measured examples, both of which
+   * left the full suite at 1229 passed / 0 failed and `svelte-check` at 0 errors:
+   *   - `shiftKey: event.ctrlKey` — a shift-click then navigates the queue out from under the window
+   *     the browser is opening.
+   *   - `interactive: … && !target.closest(…)`, one `!` dropped so the sense inverts — every click
+   *     reports as landing on a control, so NO row in the queue ever expands. This one also walked
+   *     the fragment pin that used to live here: `target.closest(FEEDBACK_ROW_INTERACTIVE)` is a
+   *     SUBSTRING of the inverted expression, so `toContain` went on matching.
+   *
+   * 🔴 SO IT IS `toBe` ON THE EXTRACTED CALL, NOT `toContain` ON THE FILE. A substring pin cannot
+   * distinguish an expression from an expression that contains it; the whole normalised string
+   * cannot be satisfied by an inversion, a cross-wiring, a reorder or an addition. The cost is that
+   * a cosmetic edit — reordering the fields, renaming `target` — reddens this test and has to be
+   * mirrored here. That is the trade: this object is the one place a silent queue-wide wedge can be
+   * introduced with a green suite, and it has now happened twice.
+   *
+   * ⚠️ IT PINS SPELLING, NOT MEANING. It cannot tell you the ten facts are the RIGHT ten, only that
+   * they are the ones reviewed. What each field has to be is argued at its own declaration in
+   * `$lib/feedback-row-click.ts`; what the predicate DOES with them is tested for real in
+   * `feedback-row-click.test.ts`.
+   */
+  it('hands the predicate exactly the reviewed ten facts', () => {
+    const CALL = /feedbackRowExpands\(\{[^}]*\}\)/;
+
+    // Positive control: the extraction must find the call. A regex that stopped matching would make
+    // the comparison below a claim about `undefined`.
+    const call = source('+page.svelte').match(CALL)?.[0];
+    expect(call, 'the feedbackRowExpands call was not found in +page.svelte').toBeDefined();
+
+    expect(call).toBe(
+      'feedbackRowExpands({ button: event.button, ctrlKey: event.ctrlKey, ' +
+        'metaKey: event.metaKey, shiftKey: event.shiftKey, altKey: event.altKey, ' +
+        'defaultPrevented: event.defaultPrevented, interactive: target instanceof Element && ' +
+        '!!target.closest(FEEDBACK_ROW_INTERACTIVE), ' +
+        "selection: window.getSelection()?.toString() ?? '', " +
+        'openPanelDirty: data.openVisible && panelDirty, alreadyOpen: data.open === id, })'
+    );
   });
 
   /**
@@ -538,32 +576,18 @@ describe('the row click is an enhancement over a real link', () => {
    * every unsaved character of the issue draft inside it. `feedbackRowExpands`' dirtiness guard is
    * the other half; this pins that the navigation itself cannot close a row.
    *
-   * 🔴 EVERY FIELD OF THAT ARGUMENT OBJECT IS PINNED BY EXACT STRING, AND A NEW ONE MUST BE TOO.
-   * This is the seam between a page that computes booleans and a predicate that only receives them:
-   * ANY boolean expression typechecks in either slot, so a mis-wiring is invisible to `svelte-check`
-   * — and this app has no Svelte tier, so it is invisible to the suite as well. Measured on
-   * `alreadyOpen` before it was pinned: swapping it to `data.openVisible` left the full suite at
-   * 1229 passed / 0 failed and `svelte-check` at 0 errors, while the identical mis-wiring of
-   * `openPanelDirty` reddened this test. An exact-string pin is the only guard available here.
-   *
-   * Only the two fields the PAGE computes are pinned; the rest of the object is read straight off
-   * the `MouseEvent` and a mis-spelling there does not typecheck.
+   * ⚠️ WHAT THIS PINS IS THE NAVIGATION, AND ONLY THAT. The argument object it used to carry field
+   * pins for is pinned whole, above — including `openPanelDirty` and `alreadyOpen`, which had the
+   * only two field pins this file ever had. The sentence that replaced them claimed every field was
+   * pinned when 2 of 10 were, and carved the other eight out as safe because they "read straight off
+   * the `MouseEvent`", which was wrong twice over: `selection` reads `window.getSelection()` and
+   * `interactive` is a `closest()` DOM read, and a cross-wiring between two same-typed event fields
+   * typechecks regardless.
    */
   it('navigates the row click through the open-only href', () => {
-    const page = source('+page.svelte');
-    expect(page).toContain(
+    expect(source('+page.svelte')).toContain(
       'goto(feedbackOpenHref(page.url, id), { noScroll: true, keepFocus: true })'
     );
-    // 🔴 BOTH HALVES OF THE DIRTY FACT, and each guards a different failure. `panelDirty` alone
-    // keeps its last value after `FeedbackDetail` is destroyed, so a dirty panel the operator then
-    // CLOSED would go on refusing every row click in the queue; `data.openVisible` alone is the
-    // too-wide rule this replaced, which made every row inert as soon as anything was open.
-    expect(page).toContain('openPanelDirty: data.openVisible && panelDirty,');
-    // 🔴 `data.open === id` — the row the CLICK is on against the row that is OPEN. `data.openVisible`
-    // or a bare `false` re-wedges the queue exactly as the promote defect did, because the handler
-    // then navigates to the URL the page is already on and `goto` pushes every time; `data.open !== id`
-    // inverts it into a control that only ever fires on the wrong row.
-    expect(page).toContain('alreadyOpen: data.open === id,');
   });
 
   /**
