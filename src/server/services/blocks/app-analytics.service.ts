@@ -495,16 +495,20 @@ export async function getMyAppAnalytics({
     // the same owner-visible payload are covered separately — read the ✅/open marks, not
     // the count:
     //
-    //   · `runs` / `runs.buzzSpent` / `runs.series` — the `block_spend_attribution` reads
-    //     above carry NO `status` predicate, so a private run's generation writes a
-    //     `voided` / `voidedReason: 'manual_review'` row that is still COUNTED as a run and
-    //     its Buzz still summed here. Deliberately held: see the note in
-    //     `buzz-attribution.service.ts`, which requires that filter to land before the
-    //     private-run surface is ENABLED. ⚠️ And when it does, the naive narrow spelling
-    //     `voidedReason: { not: 'manual_review' }` is a TRAP — that column is nullable and
-    //     NULL is the ordinary `tracked` population, so Prisma's `not` drops every real row
-    //     and zeroes the owner's run count. Use a top-level `NOT: { voidedReason: … }` or
-    //     an explicit `OR` with `null`.
+    //   · ✅ `runs` / `runs.buzzSpent` / `runs.series` — CLOSED, and closed HERE. Both
+    //     `block_spend_attribution` reads above exclude `status = 'voided'`, so a private
+    //     run's generation row (`voided` / `voidedReason: 'manual_review'`) is neither
+    //     counted as a run nor summed. The aggregate spreads `OWNER_VISIBLE_SPEND_FILTER`
+    //     and the raw series binds `VOIDED_ATTRIBUTION_STATUS` as a parameter — one
+    //     constant, so the two cannot drift. Measured consequence, both directions, in
+    //     `__tests__/app-analytics.void-exclusion.test.ts`.
+    //     ⚠️ THE TRAP THAT WAS WAITING HERE IS STILL A TRAP, so it stays written down: the
+    //     naive narrow spelling `voidedReason: { not: 'manual_review' }` is WRONG — that
+    //     column is nullable and NULL is the ordinary `tracked` population, so Prisma's
+    //     `not` drops every real row and zeroes the owner's run count. The predicate above
+    //     avoids it by keying on `status`, which is `TEXT NOT NULL`. If a future change does
+    //     need the reason, use a top-level `NOT: { voidedReason: … }` or an explicit `OR`
+    //     with `null`.
     //   · ✅ `views.count` / `views.uniqueViewers` — CLOSED, and closed at the WRITERS
     //     rather than here, so do not go looking for a filter on the ClickHouse read at the
     //     bottom of this `Promise.all`. It was the sharper of the two, because impressions
@@ -523,24 +527,28 @@ export async function getMyAppAnalytics({
     //     Reasoning, the shape that was rejected and why, and the over-filtering bound:
     //     the canonical note in `blocks/app-views.service.ts`.
     //
-    // 🔴 THE ATTRIBUTION RAIL ABOVE IS STILL A FLAG-FLIP PRECONDITION, NOT A FOLLOW-UP. It
-    // is not in scope here and it is not optional: enabling the private-run flag with it
-    // open re-opens the disclosure this whole feature exists to prevent, on a rail nobody
-    // is filtering.
-    //
-    // CLOSING CONDITION, so it is a work item rather than a note: one private run against a
-    // delisted app, then the operator reads that app's own analytics panel and confirms
-    // `runs` / `runs.buzzSpent` did not move. That is a named human judgement over named
-    // evidence. (The same check, against `views.count` / `views.uniqueViewers`, is the
-    // acceptance step for the closure that already shipped.)
+    // ✅ THE ATTRIBUTION RAIL ABOVE IS NO LONGER A FLAG-FLIP PRECONDITION — it shipped, in
+    // the same change that added this line. Its remaining ACCEPTANCE step is unchanged and
+    // still belongs to whoever widens the flag: one private run against a delisted app, then
+    // the operator reads that app's own analytics panel and confirms `runs` /
+    // `runs.buzzSpent` did not move. That is a named human judgement over named evidence, and
+    // it is the same shape as the `views.count` / `views.uniqueViewers` check for the rail
+    // that closed before it. A filter verified by unit test is not the same claim as a
+    // private run verified on a real dashboard; do not read one as the other.
     //
     // ⚠️ The predicate names ONE exact value and excludes nothing else. It is deliberately
     // NOT an allowlist (`source: 'app-block'`): over-filtering here silently deletes the
     // owner's REAL usage from their own dashboard, which is the worse failure because
     // nobody reports numbers they never saw. Measured against the live table before
     // shipping: zero of the rows this filter can see carry the marker, so it changes no
-    // existing number — unlike the `status <> 'voided'` filter deliberately held back on
-    // the attribution table, which would have moved ~9 in 10 owner-visible rows.
+    // existing number.
+    //
+    // 🔴 THE SIBLING `status <> 'voided'` FILTER IS THE OPPOSITE CASE, AND THE CONTRAST IS
+    // WORTH KEEPING. It moved ~9 in 10 owner-visible rows (639 to 57 rows, 4,738 to 268
+    // Buzz), which is exactly why it was held for months. What unblocked it was measuring
+    // the population rather than the proportion: every voided row is an owner spending on
+    // their own app, so the drop is entirely self-testing and no real third-party usage row
+    // is affected. A big percentage is not the same fact as a big harm — check which rows.
     //
     // 🔴 THE SPREAD COMES FIRST, AND THAT ORDER IS LOAD-BEARING. `appBlockId: idIn` is the
     // ONLY thing scoping these reads to the caller's own apps, and a spread placed LAST

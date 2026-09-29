@@ -611,15 +611,25 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  * INVISIBLE TO THE APP'S OWNER — no moderation event, no play count, and nothing in
  * the owner's analytics. The first two are delivered (the private route deliberately
  * calls neither `recordAppListingOpen` nor any moderation-event writer). THE THIRD is
- * delivered on two of three rails; ONE IS STILL OPEN, and all three are visible in the
- * publisher's own dashboard. Read the ✅/open marks, not the count:
+ * now delivered on ALL THREE rails. Read the ✅/open marks, not the count:
  *
- *   1. `block_spend_attribution` — a private run's row is correctly VOIDED, but the
- *      two owner-visible reads in `app-analytics.service.ts` carry no `status`
- *      predicate, so a voided row still counts as a run and its Buzz still sums.
- *      The `status <> 'voided'` filter was deliberately HELD (it drops the large
- *      majority of existing rows at once, and a second consumer of that table lives
- *      outside this repo) — a product decision, not an oversight.
+ *   1. ✅ `block_spend_attribution` — CLOSED. A private run's row is written VOIDED, and
+ *      both owner-visible reads in `app-analytics.service.ts` now exclude
+ *      `status = 'voided'` (the aggregate spreads `OWNER_VISIBLE_SPEND_FILTER`; the raw
+ *      series binds the same constant as a parameter). Measured both directions in
+ *      `blocks/__tests__/app-analytics.void-exclusion.test.ts`.
+ *      ⚠️ IT SHIPPED AS A DELIBERATE CHANGE TO EXISTING DISPLAYED NUMBERS, which is the
+ *      part an operator should know rather than discover: 639 rows to 57 (91.08%), 4,738
+ *      Buzz to 268 (94.34%). The two reasons it had been HELD were both settled by
+ *      measurement — the drop is entirely owners' own self-testing (every voided row is
+ *      `self_spend` with `app_owner_user_id = user_id`, and no real third-party usage row
+ *      is voided at all), and the unnamed "second consumer outside this repo" turned out to
+ *      be the OPERATOR-facing platform digest CronJob in the infra repo, which is not
+ *      owner-facing and was fixed in the same sweep. No money moved: `spendSharePct` and
+ *      `appOwnerShareCents` are hardcoded 0.
+ *      🔴 STILL OWED, AND NOT CLOSED BY THE CODE: the acceptance check. One private run
+ *      against a delisted app, then read that app's own analytics panel and confirm `runs`
+ *      / `runs.buzzSpent` did not move. A unit test is not that claim.
  *   2. ✅ `block_scope_invocations` — CLOSED. Written by `withBlockScope` for every
  *      scoped call with the real `app_block_id` and the VIEWER's `user_id`. The rows
  *      now carry a `source` marker on an EXISTING column — no migration was needed — and
@@ -654,10 +664,12 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  * refuse before resolving anything, so no private-run row of either kind can exist.
  * It becomes live the moment this value is anything else.
  *
- * So, before widening on THIS count: land item 1's filter (or record the operator decision
- * that owner-visible analytics should keep counting private runs), and settle item 3's two
- * carry-overs. Do not widen on the assumption that the void alone delivers the invisibility
- * — it does not.
+ * So, before widening on THIS count: item 1's filter has LANDED, so what remains is item
+ * 3's two carry-overs (the flag key existing in `flipt-state`, and the two unrate-limited
+ * `blockRenders` writers) plus item 1's acceptance check — one real private run, read on the
+ * owner's own analytics panel. All three analytics rails now filter, so the void DOES deliver
+ * the invisibility at the row level; what it does not deliver on its own is the evidence that
+ * it works end to end, which is what the acceptance check buys.
  *
  * ────────────────────────────────────────────────────────────────────────────────
  * 🔴 SECOND PRECONDITION, AND IT IS A PRODUCT QUESTION RATHER THAN A DELIVERY GAP:

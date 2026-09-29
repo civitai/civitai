@@ -391,50 +391,49 @@ export type RecordSpendAttributionInput = {
    * void-vs-tracked moves no Buzz either way — what it protects is the RUN
    * COUNT and BUZZ SUM a suspended app's owner can see.
    *
-   * 🔴 THE VOID ALONE DOES NOT YET DELIVER THE PROTECTION, AND THIS IS THE ONE
-   * PLACE THAT SAYS SO. Both owner-visible reads of this table --
-   * `app-analytics.service.ts`'s `aggregate` and its raw per-bucket series --
-   * carry NO `status` predicate, so a voided row is still counted as a run and
-   * its Buzz still sums into the owner's dashboard. The two PRE-EXISTING voids
-   * (`self_spend`, `internal_owner`) are already counted that way, which is the
-   * evidence that this marker currently has no reader.
+   * ✅ THE VOID NOW DELIVERS THE PROTECTION. Both owner-visible reads of this
+   * table -- `app-analytics.service.ts`'s `aggregate` and its raw per-bucket
+   * series -- exclude `status = 'voided'`, so a voided row is neither counted as
+   * a run nor summed into the owner's dashboard. Until that landed, the two
+   * PRE-EXISTING voids (`self_spend`, `internal_owner`) were being counted, which
+   * was the evidence that this marker had no reader; it has one now.
    *
-   * The `status <> 'voided'` filter is therefore HELD, not forgotten: it would
-   * drop the large majority of existing rows and Buzz from every owner's
-   * analytics at once, and a second consumer of this table lives outside this
-   * repo, so it is a product decision rather than a detail of this arm. Do not
-   * read the void as coverage until that filter is in.
+   * 🔴 THE FILTER WAS HELD FOR TWO STATED REASONS AND BOTH WERE SETTLED BY
+   * MEASUREMENT, NOT BY DECISION — recorded because the reasons read as permanent
+   * and were not.
+   *   · "It drops the large majority of existing rows and Buzz." TRUE, and it
+   *     shipped anyway: 639 rows to 57 (91.08%), 4,738 Buzz to 268 (94.34%). What
+   *     made that acceptable is a partition nobody had measured — EVERY voided row
+   *     is `self_spend` with `app_owner_user_id = user_id`, i.e. an owner spending
+   *     on their own app, and no row of real third-party usage is voided at all.
+   *     The filter removes self-testing, not usage.
+   *   · "A second consumer of this table lives outside this repo." REAL and still
+   *     live, and it was never named here, which is most of why it blocked
+   *     anything. It is the App Blocks platform digest CronJob in the infra repo,
+   *     which queries this table directly for an OPERATOR-facing Discord summary
+   *     and Prometheus gauges. Its Buzz sums already excluded voided rows while
+   *     its run counts did not; that half was fixed in the same sweep. It is not
+   *     owner-facing, so it never gated the disclosure this arm is about.
    *
-   * 🔴 THE SENTENCE THAT USED TO FOLLOW IS NOW FALSE, AND CORRECTING IT IS WHY
-   * THIS PARAGRAPH EXISTS. It read: "It must land before the private-run surface
-   * is ENABLED -- which is safe, because until a mint exists no private-run row
-   * can be written." THE MINT NOW EXISTS. It shipped with the private-run surface
-   * (`tryPrivateRunMint`, PHASE 3 of the page-token mint), so the clause that made
-   * the deferral safe has been consumed, and what remains is the requirement alone:
-   * the filter MUST land before the `app-blocks-private-run-enabled` flag is set
-   * to anything other than `false`. Nothing in the code enforces that ordering —
-   * it is a precondition on a flag flip in a DIFFERENT repo, which is exactly the
-   * kind of dependency that gets lost. It is restated at
-   * `isAppBlocksPrivateRunEnabled` in `app-blocks-flag.ts`, which is the file
-   * somebody flipping that flag will actually open.
+   * The ordering requirement that used to live here is DISCHARGED: the filter had
+   * to land before `app-blocks-private-run-enabled` became anything other than
+   * `false`, and it has. The flag's own precondition block in `app-blocks-flag.ts`
+   * is the authoritative, kept-current record of what remains — read it there
+   * rather than here, because this docblock cannot be kept current and has twice
+   * been caught asserting a state that had already changed.
    *
-   * 🔴 AND THE LEAK IS WIDER THAN THIS TABLE — a finding from the private-run
-   * review, recorded here because this is where the "invisible to the owner"
-   * decision is documented. `block_scope_invocations` rows are written by
+   * ✅ AND THE WIDER LEAK IS ALSO CLOSED, which is a correction to what this
+   * paragraph used to claim. `block_scope_invocations` rows are written by
    * `withBlockScope` for EVERY scoped call, carrying the real `app_block_id` and
    * the VIEWER's `user_id`, and `app-analytics.service.ts` reads them into the
-   * owner-visible panel through FIVE unfiltered queries: the engagement count, a
-   * raw `count(DISTINCT user_id)`, the error count, and the top-scopes and
-   * top-endpoints groupings. None is status-aware, and unlike this table there is
-   * no marker on those rows to filter ON — a private run is indistinguishable
-   * from a real user's call at the row level. So a moderator's private run
-   * surfaces in the publisher's dashboard as calls AND as a distinct user even
-   * once the `status <> 'voided'` filter lands here.
-   *
-   * Closing that half needs a discriminator on `block_scope_invocations`, i.e. a
-   * migration — which in this repo is hand-applied per environment and therefore
-   * a separate, sequenced change. It is NOT closed by this arm and must not be
-   * read as such.
+   * owner-visible panel through FIVE queries: the engagement count, a raw
+   * `count(DISTINCT user_id)`, the error count, and the two top-5 groupings. This
+   * text used to say there was "no marker on those rows to filter ON" and that
+   * closing it "needs a migration" — BOTH WERE WRONG. The rows carry a `source`
+   * marker on an EXISTING nullable-free column (`TEXT NOT NULL DEFAULT
+   * 'app-block'`, no CHECK constraint), so no DDL and no per-environment
+   * hand-apply was needed, and all five reads exclude it. The canonical reasoning
+   * is at `blocks/scope-activity-predicate.ts`.
    *
    * Absent/false → byte-identical to the pre-feature behaviour.
    */
