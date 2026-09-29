@@ -76,7 +76,7 @@ export const tempSetMissingNsfwLevel = createJob(
           WHEN m.nsfw = TRUE THEN 28
           ELSE level."nsfwLevel"
         END
-      ), "lastVersionAt" = now()
+      ), "lastVersionAt" = date_trunc('milliseconds', now())
       FROM level
       WHERE
         level.id = m.id

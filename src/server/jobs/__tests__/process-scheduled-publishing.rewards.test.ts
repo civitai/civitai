@@ -333,7 +333,8 @@ describe('processScheduledPublishing :: standalone sweep window', () => {
 
 describe('processScheduledPublishing :: lastVersionAt', () => {
   // sync_model_to_metric skips a lastVersionAt later than the DB's NOW(); a JS timestamp from a
-  // pod clock running ahead left ModelMetric.lastVersionAt NULL and the model off the Newest feed.
+  // pod clock running ahead, or a bare NOW() rounded up by the timestamp(3) column, left
+  // ModelMetric.lastVersionAt NULL and the model off the Newest feed.
   it('stamps lastVersionAt from the database clock, not the job clock', async () => {
     const txExecuteRaw = vi.fn();
     mockDbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
@@ -347,7 +348,9 @@ describe('processScheduledPublishing :: lastVersionAt', () => {
       (args[0] as string[]).join(' ').includes('SET "lastVersionAt"')
     );
     expect(call).toBeDefined();
-    expect((call![0] as string[]).join('?')).toContain('SET "lastVersionAt" = NOW()');
+    expect((call![0] as string[]).join('?')).toContain(
+      `SET "lastVersionAt" = date_trunc('milliseconds', NOW())`
+    );
     expect(call!.slice(1).some((v) => v instanceof Date)).toBe(false);
   });
 });
