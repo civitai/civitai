@@ -673,9 +673,9 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  *
  * Pinned behaviourally in
  * `src/server/services/blocks/__tests__/block-bridge-auth.consent-revocation.test.ts`
- * (five rows, mutation-verified). ⚠️ Do not let this move back into a test docblock: that
- * is further from the person opening Flipt than either of the two places the paragraph
- * above already rules out.
+ * (five rows, mutation-verified). ⚠️ Do not let this move back into a test docblock: that is
+ * further from the person opening Flipt than either of the two places already ruled out for
+ * the first precondition — a docblock on the attribution arm, and a merged PR body.
  * ────────────────────────────────────────────────────────────────────────────────
  */
 export const APP_BLOCKS_PRIVATE_RUN_FLAG = 'app-blocks-private-run-enabled';
