@@ -70,6 +70,12 @@ function submitPayloadKeys(source: string): string[] {
       else {
         const spread = /^\s*\.\.\..*\{\s*(\w+)[\s,}]/.exec(line);
         if (spread) keys.push(spread[1]);
+        else {
+          // A bare `...ident,` spread carries keys this parser cannot see, so the identifier itself
+          // is the key: dropping `...boostFields` from one lane is how the paid boost goes missing.
+          const bare = /^\s*\.\.\.(\w+),?\s*$/.exec(line);
+          if (bare) keys.push(bare[1]);
+        }
       }
     }
     for (const ch of line) {
@@ -108,6 +114,18 @@ describe('both generation footers submit the same payload shape', () => {
           `half — losing it while keeping \`remixOfId\` leaves the lane asserting a derivation it ` +
           `can no longer prove.`
       ).toEqual(expect.arrayContaining([...REMIX_KEYS]));
+    }
+  );
+
+  it.each(Object.keys(FOOTERS) as (keyof typeof FOOTERS)[])(
+    'the %s footer still spreads the download-boost fields',
+    (lane) => {
+      expect(
+        payloads[lane],
+        `${FOOTERS[lane]} stopped spreading \`boostFields\`. That lane then never sends ` +
+          `\`downloadPriority\`, so a user who turned the boost on — or chose Boost in the mobile ` +
+          `confirm — is charged nothing and silently gets the free lane.`
+      ).toContain('boostFields');
     }
   );
 

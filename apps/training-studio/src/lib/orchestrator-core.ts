@@ -53,7 +53,7 @@ export function describeSubmitError(error: unknown): string {
  *  is an AIR URN (`urn:air:…:blob@<key>` — the key is after `@`); a generation is a full
  *  `/v2/consumer/blobs/{key}.ext` URL (the key is the last path segment); anything else is already a bare
  *  key. Query/signature is stripped in every case. */
-function blobIdFromAir(air: string): string {
+export function blobIdFromAir(air: string): string {
   const marker = '/v2/consumer/blobs/';
   const idx = air.indexOf(marker);
   if (idx >= 0) return air.slice(idx + marker.length).split('?')[0];
@@ -95,6 +95,7 @@ interface OutputBlob {
   previewUrl?: string | null;
   blockedReason?: string | null;
   type?: string;
+  nsfwLevel?: string | null;
 }
 interface RawStep {
   $type?: string;
@@ -145,7 +146,8 @@ function stepBlobsForMedia(step: RawStep, media: Media): OutputBlob[] {
     }
   }
   // audio: aceStepAudio emits a VideoBlob (audio + cover) or an AudioBlob — only the latter is trainable audio.
-  if (step.$type === 'aceStepAudio' && output.blob?.type === 'audio') return one(output.blob);
+  if ((step.$type === 'aceStepAudio' || step.$type === 'yuE2') && output.blob?.type === 'audio')
+    return one(output.blob);
   return [];
 }
 
@@ -176,7 +178,12 @@ export async function listGenerations(
       for (const blob of stepBlobsForMedia(step, media)) {
         if (blob.available && !blob.blockedReason && blob.url && !seen.has(blob.id)) {
           seen.add(blob.id);
-          items.push({ blobId: blob.id, url: blob.url, previewUrl: blob.previewUrl ?? blob.url });
+          items.push({
+            blobId: blob.id,
+            url: blob.url,
+            previewUrl: blob.previewUrl ?? blob.url,
+            nsfwLevel: blob.nsfwLevel ?? undefined,
+          });
         }
       }
     }

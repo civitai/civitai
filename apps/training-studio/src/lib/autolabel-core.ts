@@ -29,7 +29,9 @@ export interface AutoLabelItem {
 const AUTO_LABEL_TAGS = [CIVITAI_TAG, AUTO_LABEL_TAG];
 // WD-tagger confidence floor — the orchestrator drops tags below it, so the output is already trimmed.
 const WD_THRESHOLD = 0.35;
-const CAPTION_MAX_TOKENS = 128;
+// The main-site trainer's default (autoLabelLimits.caption.maxNewTokens.def). At 128, most JoyCaption
+// captions were cut off mid-sentence.
+const CAPTION_MAX_TOKENS = 300;
 const CAPTION_TEMPERATURE = 0.7;
 
 /** Submit one auto-label workflow for a batch of uploaded blobs; returns its id to poll. Free. */

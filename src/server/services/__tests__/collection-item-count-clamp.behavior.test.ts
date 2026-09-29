@@ -70,6 +70,7 @@ const ARTICLES_ONLY = 7004;
 const POSTS_ONLY = 7005;
 const EMPTY = 7006; // no accepted items at all
 const ORPHAN_IMAGE = 7007; // an item pointing at an Image row that no longer exists
+const MODEL3DS_ONLY = 7008;
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -91,6 +92,7 @@ beforeAll(async () => {
       "modelId"      integer,
       "postId"       integer,
       "articleId"    integer,
+      "model3dId"    integer,
       "status"       "CollectionItemStatus" NOT NULL DEFAULT 'ACCEPTED'
     );
     INSERT INTO "Image" ("id", "nsfwLevel") VALUES
@@ -127,6 +129,9 @@ beforeAll(async () => {
       -- ORPHAN_IMAGE: imageId 99999 has no "Image" row.
       (701, ${ORPHAN_IMAGE}, 99999,NULL, NULL, NULL, 'ACCEPTED'),
       (702, ${ORPHAN_IMAGE}, 1,    NULL, NULL, NULL, 'ACCEPTED');
+    INSERT INTO "CollectionItem" ("id","collectionId","model3dId","status") VALUES
+      (801, ${MODEL3DS_ONLY}, 940, 'ACCEPTED'),
+      (802, ${MODEL3DS_ONLY}, 941, 'ACCEPTED');
   `);
 });
 
@@ -137,7 +142,16 @@ async function counts(args: Parameters<typeof getCollectionItemCount>[0]) {
   return (id: number) => map.get(id) ?? 0;
 }
 
-const ALL = [MIXED, IMAGES_ONLY, MODELS_ONLY, ARTICLES_ONLY, POSTS_ONLY, EMPTY, ORPHAN_IMAGE];
+const ALL = [
+  MIXED,
+  IMAGES_ONLY,
+  MODELS_ONLY,
+  ARTICLES_ONLY,
+  POSTS_ONLY,
+  EMPTY,
+  ORPHAN_IMAGE,
+  MODEL3DS_ONLY,
+];
 
 describe("getCollectionItemCount — UNCLAMPED (today's behaviour, must not move)", () => {
   it('counts every accepted item with a subject, of any type, at any maturity', async () => {
@@ -149,6 +163,7 @@ describe("getCollectionItemCount — UNCLAMPED (today's behaviour, must not move
     expect(at(MODELS_ONLY)).toBe(3);
     expect(at(ARTICLES_ONLY)).toBe(2);
     expect(at(POSTS_ONLY)).toBe(1);
+    expect(at(MODEL3DS_ONLY)).toBe(2);
     // GROUP BY emits no row for a collection with nothing to count.
     expect(at(EMPTY)).toBe(0);
     // An item whose Image is gone is still an item as far as the unclamped count
@@ -185,10 +200,12 @@ describe('getCollectionItemCount — CLAMPED to a browsingLevel', () => {
     expect(at(MODELS_ONLY)).toBe(3);
     expect(at(ARTICLES_ONLY)).toBe(2);
     expect(at(POSTS_ONLY)).toBe(1);
+    expect(at(MODEL3DS_ONLY)).toBe(2);
     // …and their unclamped counts are identical, i.e. a ceiling cannot move a
     // number that no image contributes to.
     const unclamped = await counts({ collectionIds: ALL, status: CollectionItemStatus.ACCEPTED });
-    for (const id of [MODELS_ONLY, ARTICLES_ONLY, POSTS_ONLY]) expect(at(id)).toBe(unclamped(id));
+    for (const id of [MODELS_ONLY, ARTICLES_ONLY, POSTS_ONLY, MODEL3DS_ONLY])
+      expect(at(id)).toBe(unclamped(id));
   });
 
   it('🔴 a MIXED collection keeps permitted images AND every non-image row, and drops only the over-ceiling images', async () => {

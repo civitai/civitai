@@ -172,6 +172,22 @@ export function deriveTrainingWorkflowState(
   };
 }
 
+/**
+ * Shifts a continuation run's epochs past its source run's, so a resumed run's epoch 1 reads as
+ * `offset + 1`. The workflow numbers from 1 every time; anything that shows or resolves epochs by
+ * number must go through this, or the page, the stored copy and the download disagree.
+ */
+export function offsetEpochNumbers(
+  epochs: TrainingResultsV2['epochs'],
+  epochOffset: number | undefined
+): TrainingResultsV2['epochs'] {
+  const offset = epochOffset ?? 0;
+  return epochs.map((e) => ({
+    ...e,
+    epochNumber: e.epochNumber >= 0 ? e.epochNumber + offset : -1,
+  }));
+}
+
 /** Tag `createTrainingWorkflow` puts on every training workflow, and the only handle we have to find them again. */
 export const TRAINING_WORKFLOW_TAG = 'training';
 
@@ -236,7 +252,7 @@ export function applyTrainingWorkflowOverlay<T extends OverlayableVersion>(
       // Sticky: once a run has started, a workflow read that omits the field must not un-start it.
       startedAt: stored.startedAt ?? derived.startedAt,
       completedAt: derived.completedAt,
-      epochs: derived.epochs,
+      epochs: offsetEpochNumbers(derived.epochs, stored.epochOffset),
       history: appendLiveStatus(history, derived),
       sampleImagesPrompts: derived.sampleImagesPrompts,
       transactionData: derived.transactionData ?? stored.transactionData ?? [],

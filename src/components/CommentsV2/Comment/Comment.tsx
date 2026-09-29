@@ -60,6 +60,12 @@ import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { constants } from '../../../server/common/constants';
 import { useMutateComment } from '../commentv2.utils';
+import {
+  HiddenCommentAvatar,
+  HiddenCommentLabel,
+  HideAgainButton,
+  useHiddenCommentReveal,
+} from './HiddenComment';
 import classes from './Comment.module.css';
 import { CommentForm } from './CommentForm';
 import { CommentProvider, useCommentV2Context } from './CommentProvider';
@@ -104,8 +110,7 @@ export function CommentContent({
   const { setExpanded, setRootThread, rootEntityType } = useRootThreadContext();
   const { entityId, entityType, highlighted, level } = useCommentsContext();
   const { canDelete, canEdit, canReply, canHide, canPin, badge, canReport } = useCommentV2Context();
-  const [revealed, setRevealed] = useState(false);
-  const concealed = !!comment.hidden && !revealed;
+  const { concealed, reveal, conceal } = useHiddenCommentReveal(comment.hidden);
 
   const seededThreads = useSeededReplyThreads();
   const seededThread = seededThreads.byCommentId.get(comment.id);
@@ -235,9 +240,7 @@ export function CommentContent({
           </UnstyledButton>
         )} */}
         {concealed ? (
-          <div className="flex size-[26px] items-center justify-center">
-            <IconEyeOff size={16} className="text-dimmed" />
-          </div>
+          <HiddenCommentAvatar size={26} />
         ) : (
           <UserAvatar user={comment.user} size="sm" linkToProfile />
         )}
@@ -246,19 +249,7 @@ export function CommentContent({
       <Stack gap={0} style={{ flex: 1 }}>
         <Group justify="space-between">
           {concealed ? (
-            <Group gap={6} wrap="nowrap">
-              <Text size="sm" c="dimmed" fs="italic">
-                Hidden comment
-              </Text>
-              <Button
-                variant="subtle"
-                size="compact-xs"
-                color="gray"
-                onClick={() => setRevealed(true)}
-              >
-                Show
-              </Button>
-            </Group>
+            <HiddenCommentLabel onShow={reveal} />
           ) : (
             <Group gap={8} align="center">
               <UserAvatar
@@ -434,17 +425,7 @@ export function CommentContent({
               {!concealed && (
                 <Group gap={4}>
                   <CommentReactions comment={comment} />
-                  {comment.hidden && (
-                    <Button
-                      variant="subtle"
-                      radius="xl"
-                      size="compact-xs"
-                      color="gray"
-                      onClick={() => setRevealed(false)}
-                    >
-                      Hide again
-                    </Button>
-                  )}
+                  {comment.hidden && <HideAgainButton onClick={conceal} />}
                   {canReply && !viewOnly && (
                     <Button
                       variant="subtle"

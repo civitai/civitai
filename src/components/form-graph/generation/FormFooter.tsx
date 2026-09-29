@@ -52,10 +52,18 @@ import {
   useInvalidateWhatIf,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { BuzzTypeSelector, useSelectedBuzzType } from '~/components/generation_v2/FormFooter';
+import { DownloadReadyAlert } from '~/components/generation_v2/ResourceAlerts';
+import { resolveBoostSubmitFields } from '~/components/generation_v2/hooks/usePreBoost';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { EcosystemBaseModelWarnings } from '~/components/generation_v2/BaseModelWarnings';
 import { GeneratorMessageWarnings } from './GateRuleWarnings';
 import { StepWarningsNotification } from '~/components/generation_v2/FormFooter';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import {
+  TrialAccessWarning,
+  TrialBlockedAlert,
+} from '~/components/Generate/GenerationPaidAccessAlerts';
+import { parseTrialMessage } from '~/components/Generate/paid-access-gate';
 import { useResourceDataContext } from '~/components/generation_v2/inputs/ResourceDataProvider';
 import { filterSnapshotForSubmit } from '~/components/generation_v2/utils';
 import { resolveRemixOfId, type RemixClaimFormState } from '~/utils/remix-claim';
@@ -155,7 +163,16 @@ function PriorityAlertSpace({
   forceInsufficientBuzz?: boolean;
   onClearInsufficientBuzz?: () => void;
 }) {
-  const { error: whatIfError, isError: hasWhatIfError, data: whatIfData } = useWhatIfContext();
+  const {
+    error: whatIfError,
+    isError: hasWhatIfError,
+    isSuccess: whatIfSucceeded,
+    data: whatIfData,
+  } = useWhatIfContext();
+  // The advisory alert is derived from entity access, which resolves well before the estimate. Drawing it
+  // then swapping in the blocking alert when the whatIf comes back reads as a yellow-to-red flash, so it
+  // waits for the estimate to settle — there is nothing to advise until we know whether it is blocked.
+  const whatIfSettled = whatIfSucceeded || hasWhatIfError;
   const { selectedType, availableTypes, setBuzzType } = useSelectedBuzzType();
   const {
     data: { accounts },
@@ -176,7 +193,27 @@ function PriorityAlertSpace({
       })
     : undefined;
 
+  // The orchestrator announces the remaining trial count as an ordinary step warning, so it arrives here
+  // rather than on submit. Split out so the generic warnings notification does not render it a second
+  // time beside the offer.
+  const trialWarning = whatIfData?.warnings?.find((w) => parseTrialMessage(w.message));
+  const otherWarnings = whatIfData?.warnings?.filter((w) => w !== trialWarning) ?? [];
+  // Only these two channels BLOCK: the whatIf rejects the estimate when the allowance is short of the
+  // requested quantity, and a submit is refused once it is spent. The step warning is advisory, so it
+  // informs the copy without claiming the user is stuck.
+  const blockingTrialMessage = [
+    submitError,
+    hasWhatIfError ? whatIfError?.message : undefined,
+  ].find((message) => parseTrialMessage(message));
+  const trialRemaining = parseTrialMessage(
+    blockingTrialMessage ?? trialWarning?.message
+  )?.remaining;
+
   let priorityAlert: ReactNode;
+  // Set by the branch that actually draws, not derived from the conditions again: a higher-priority
+  // alert can win while `submitError` is still set, and restating the precedence here is how the
+  // proactive warning would end up suppressed with nothing shown in its place.
+  let showingTrialAlert = false;
   if (missingFieldMessage) {
     priorityAlert = (
       <Notification
@@ -187,6 +224,15 @@ function PriorityAlertSpace({
       >
         {missingFieldMessage}
       </Notification>
+    );
+  } else if (blockingTrialMessage) {
+    showingTrialAlert = true;
+    priorityAlert = (
+      <TrialBlockedAlert
+        message={blockingTrialMessage}
+        remaining={trialRemaining}
+        onClose={blockingTrialMessage === submitError ? onClearSubmitError : undefined}
+      />
     );
   } else if (hasWhatIfError && whatIfError) {
     priorityAlert = (
@@ -254,8 +300,8 @@ function PriorityAlertSpace({
     );
     // Above the sdcpp branch because that one always assigns (its MultiController decides
     // internally whether to draw), so anything after it never renders.
-  } else if (whatIfData?.warnings?.length) {
-    priorityAlert = <StepWarningsNotification warnings={whatIfData.warnings} />;
+  } else if (otherWarnings.length) {
+    priorityAlert = <StepWarningsNotification warnings={otherWarnings} />;
   } else if (featureFlags.enhancedCompatibilitySdcpp) {
     priorityAlert = (
       <MultiController
@@ -301,9 +347,15 @@ function PriorityAlertSpace({
       <QueueSnackbar right={snackbarRight} />
       <GeneratorMessageWarnings />
       <BaseModelWarnings />
+      <DownloadWarning />
+      {whatIfSettled && !showingTrialAlert && <TrialAccessWarning remaining={trialRemaining} />}
       {priorityAlert}
     </>
   );
+}
+
+function DownloadWarning() {
+  return <DownloadReadyAlert whatIf={useWhatIfContext()} />;
 }
 
 function BaseModelWarnings() {
@@ -695,7 +747,15 @@ export function FormFooter({
   const { trackAction } = useTrackEvent();
   const generationContextStore = useGenerationContextStore();
 
-  const { canEstimateCost, validationErrors, data: whatIfData } = useWhatIfContext();
+  const {
+    canEstimateCost,
+    validationErrors,
+    data: whatIfData,
+    preBoost,
+    setPreBoost,
+    download,
+  } = useWhatIfContext();
+  const isMobile = useIsMobile({ type: 'media' });
   const missingFieldMessage = !canEstimateCost ? getMissingFieldMessage(validationErrors) : null;
 
   const [submitError, setSubmitError] = useState<string | undefined>();
@@ -737,6 +797,8 @@ export function FormFooter({
   const clearWarning = () => setPromptWarning(null);
 
   const handleSubmit = async (acknowledgedSoftBlock = false) => {
+    setSubmitError(undefined);
+
     // One Generator_Submit event per click; validate FIRST so the invalid +
     // rate-limited overlap collapses to isValid:false, matching the v1 footer
     // (see generation_v2/FormFooter.tsx for the full ordering rationale)
@@ -762,6 +824,16 @@ export function FormFooter({
       } catch {
         // telemetry must never block a submission
       }
+      // The only judgement wired to footer copy was the whatIf PARSE, which re-runs the
+      // lenient input schemas and so disagrees with this one; the branch itself returned
+      // silently, leaving a dead button. Both surfaces now carry the strict verdict.
+      const message =
+        getMissingFieldMessage(result.errors as Record<string, { message?: string }>) ??
+        'Something in the form is incomplete or invalid.';
+      // eslint-disable-next-line no-console -- the field names are the only diagnosis available
+      console.error('[generation] form-graph submit blocked by validation:', result.errors);
+      setSubmitError(message);
+      showWarningNotification({ title: 'Check your settings', message });
       return;
     }
 
@@ -876,6 +948,16 @@ export function FormFooter({
 
     const hasPaidAccess = resourceData.some((x) => x.paidAccess);
 
+    const boostFields = await resolveBoostSubmitFields({
+      preBoost,
+      download,
+      askFirst: !!isMobile,
+    });
+    if (!boostFields) return;
+    // The switch re-prices the whole whatIf, so its fee is already in totalCost; the mobile confirm
+    // is answered after that number was read, so its fee has to be added before the balance check.
+    const boostFee = !preBoost && boostFields.downloadPriority ? download?.boostFee ?? 0 : 0;
+
     const performTransaction = async () => {
       await generateMutation.mutateAsync({
         input: {
@@ -892,8 +974,10 @@ export function FormFooter({
         ...(sourceProvenance.length ? { sourceProvenance } : {}),
         externalId,
         acknowledgedSoftBlock,
+        ...boostFields,
       });
 
+      if (preBoost) setPreBoost(false);
       if (hasPaidAccess) invalidateWhatIf();
 
       // one-shot enhancement workflows clear their media after submit
@@ -917,7 +1001,7 @@ export function FormFooter({
       onSubmitSuccess?.();
     };
 
-    conditionalPerformTransaction(totalCost, performTransaction);
+    conditionalPerformTransaction(totalCost + boostFee, performTransaction);
   };
 
   const handleReset = () => {

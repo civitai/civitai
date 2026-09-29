@@ -23,6 +23,13 @@ export function BlockHost({ blockInstall, slotContext }: BlockHostProps) {
     terminal,
     pending,
     missingScopes,
+    // 🔴 THE MINT ALREADY REPORTED THIS AND NOTHING HERE READ IT. `useBlockToken`
+    // has surfaced `needsConsent` since A6, but this dispatcher destructured every
+    // sibling field and dropped this one — so the model slot's host had no
+    // server-side verdict to key a consent affordance on, and its ONLY route back to
+    // consent was the block choosing to send REQUEST_CONSENT. A field that exists on
+    // a DTO is not a guard; a consumer BRANCHING on it is.
+    needsConsent,
     domain,
     maxBrowsingLevel,
     refresh,
@@ -73,6 +80,12 @@ export function BlockHost({ blockInstall, slotContext }: BlockHostProps) {
   // the block's REQUEST_CONSENT — opening the consent modal on the action click
   // (e.g. Generate), not on load. On grant we re-mint via `refresh` so the new
   // scopes reach the iframe through TOKEN_REFRESH and the block retries.
+  //
+  // (c) — and `needsConsent` so the host can offer consent WITHOUT the block asking.
+  // (a) and (b) both depend on the block doing something: (a) only informs it, and
+  // (b) only fires if it calls `requestGrants`. Neither is a route the viewer has
+  // when the block never asks — an older SDK, or block UI that simply does not make
+  // the call. This is the term that makes the host recoverable on its own.
   return (
     <IframeHost
       install={blockInstall}
@@ -81,6 +94,7 @@ export function BlockHost({ blockInstall, slotContext }: BlockHostProps) {
       expiresAt={expiresAt}
       tokenKind={kind}
       missingScopes={missingScopes}
+      needsConsent={needsConsent}
       domain={domain}
       maxBrowsingLevel={maxBrowsingLevel}
       onConsentGranted={() => {

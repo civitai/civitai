@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
+import type { ResourceLoadAvailability } from '~/server/schema/resource-load.schema';
+import { isQueuedAvailability } from '~/server/schema/resource-load.schema';
 
 /**
  * What this browser is waiting on. A queue that drains, not a history: every item leaves on the
@@ -96,7 +98,7 @@ export function resourceLoadDrainVerdict(
     return { action: 'drop', reason: 'expired' };
 
   if (state.availability.status === 'loading') return { action: 'keep' };
-  if (state.availability.status === 'unavailable' && state.availability.queuePosition != null)
+  if (isQueuedAvailability(state.availability as ResourceLoadAvailability))
     return { action: 'keep' };
 
   return { action: 'drop', reason: 'not-loading' };

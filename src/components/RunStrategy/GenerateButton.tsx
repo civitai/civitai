@@ -130,6 +130,9 @@ export function GenerateButton({
           ? { paddingRight: 0, paddingLeft: 0, width: 36, ...buttonProps.style }
           : {
               flex: 1,
+              // 12px of padding overflows Mantine's fixed height for the size, and only a flex parent
+              // stretching the button hides it. Callers can still override.
+              height: 'auto',
               padding: '12px 20px',
               background:
                 'linear-gradient(135deg, var(--mantine-color-blue-6), var(--mantine-color-blue-7))',

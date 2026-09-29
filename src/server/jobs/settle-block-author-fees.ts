@@ -14,11 +14,14 @@ const log = createLogger('block-author-fee-settlement', 'green');
  * this is the second hop, mirroring `deliver-creator-compensation` for the model
  * licensing fee.
  *
- * 🔴 A NEWLY ADDED CRON IS NOT PICKED UP BY A DEPLOY. Jobs are discovered
- * through `/api/internal/get-jobs` and the external scheduler needs an explicit
- * refresh, so this will not be dispatched at all until someone performs that
- * out-of-band step. Nobody has scheduled it — and that is correct for now, since
- * the flag is off and there is nothing to settle. Do not read "merged" as "running".
+ * ✅ SCHEDULED AND DISPATCHING. Membership of the `jobs` array in
+ * `src/pages/api/webhooks/run-jobs/[[...run]].ts` PLUS the cron string below IS the
+ * registration — see `CLAUDE.md` → "How a scheduled job actually gets scheduled".
+ * ⚠️ An earlier revision of this comment said the opposite ("a newly added cron is
+ * not picked up by a deploy… nobody has scheduled it"), and three separate readers
+ * concluded from it that this job would never run. The hand-written per-job
+ * CronJobs in the infra repo are exceptions, not the mechanism; no out-of-band step
+ * was performed for this job and it has been dispatching daily regardless.
  *
  * Scheduled at 02:30 UTC — thirty minutes after the creator-compensation job at
  * 02:00, deliberately. Both mint Buzz in batches through the same service, and
@@ -26,13 +29,10 @@ const log = createLogger('block-author-fee-settlement', 'green');
  * together for no benefit; nothing about this job is time-sensitive to the
  * minute.
  *
- * 🔴 GATED ON THE FLAG, AND THAT IS NOT BELT-AND-BRACES. The accrual writer is
- * behind `app-blocks-author-fee-enabled` too, so with the flag off there is
- * nothing to settle and this gate is redundant *today*. It exists for the window
- * the flag creates: if the fee is turned ON, accrues rows, and is then turned
- * OFF again because something is wrong, an ungated settlement job would keep
- * paying out of the ledger built during the bad window. Turning the flag off has
- * to stop the money, not just the accrual.
+ * 🔴 GATED ON THE FLAG, AND THE GATE IS LOAD-BEARING. Accrued rows exist, so if the
+ * fee is turned off because something is wrong, an ungated settlement job would
+ * keep paying out of the ledger built during the bad window. Turning the flag off
+ * has to stop the money, not just the accrual.
  *
  * ⚠️ ROWS ARE NOT DROPPED WHEN THE FLAG IS OFF, only left unsettled. They stay
  * `accrued` and settle whenever the flag comes back on. That is the recoverable

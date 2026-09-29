@@ -196,7 +196,7 @@ export interface AuditPromptOptions {
   prompt: string;
   negativePrompt?: string;
   userId: number;
-  isGreen: boolean; // true if on civitai.green (SFW-only domain)
+  isGreen: boolean; // true on the GREEN domain, which is civitai.com — not a separate host
   isModerator?: boolean;
   track?: any; // Tracker
   imageId?: number; // Source image ID when triggered during a remix
@@ -219,8 +219,12 @@ export interface AuditPromptOptions {
  * @throws {TRPCError} If the prompt is flagged for inappropriate content
  *
  * Behavior:
- * - If isGreen is true (civitai.green), uses stricter rules (profanity checking enabled)
- * - If isGreen is false (civitai.com/civitai.red), uses standard NSFW blocking rules
+ * 🔴 GREEN IS `civitai.com` in our deploys — the colour names a domain config
+ * (`SERVER_DOMAIN_GREEN`), not a `civitai.green` host.
+ *
+ * `isGreen` pulls both ways: it applies an ADDITIONAL blocklist on .com, and on a hard
+ * block it redirects to .red INSTEAD of recording the block. So .com refuses more and
+ * punishes less.
  * - Tracks blocked attempts and escalates warnings based on user's violation count
  */
 export async function auditPromptServer(options: AuditPromptOptions): Promise<void> {
@@ -245,8 +249,9 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
   }
 
   try {
-    // If isGreen is true (civitai.green), run profanity checks for SFW content
-    // If isGreen is false (civitai.com/red), run standard NSFW blocking
+    // 🔴 The green blocklist (`blocked-words.json`) is the ONLY list in this audit that
+    // varies by domain, and it is not profanity in the ordinary sense — "breasts" blocks
+    // on .com and passes on .red. Everything else below runs identically everywhere.
     const checkProfanity = isGreen;
 
     // Moderator-managed benign phrases (proper nouns / technical terms that
@@ -366,6 +371,10 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
       // there over a false positive.
       message = `Your prompt was flagged: ${error.blockedFor.join(', ')}`;
     } else if (isGreen) {
+      // 🔴 `prohibitedRequests` and everything downstream of it (auto-mute,
+      // `UserRestriction` reviews) hold NO .com traffic — green takes this branch and
+      // never reaches the recording in the `else`. A false-positive rate computed from
+      // that data is a rate for .red and .blue only.
       message = `Your prompt was flagged: ${error.blockedFor.join(', ')}.\n\n${GREEN_SFW_REDIRECT}`;
     } else {
       const source = error.type === 'external' ? 'External' : 'Regex';

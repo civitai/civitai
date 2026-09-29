@@ -4,6 +4,7 @@ import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { userContentOverviewCache } from '~/server/redis/caches';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
+import { getCreatorGalleryHiddenUserIds } from '~/server/services/creator-gallery-hidden-users.service';
 import {
   getGetUrl,
   getS3Client,
@@ -24,6 +25,10 @@ import {
   publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { canViewModel3d } from '~/server/services/model3d.visibility';
+import {
+  getAvailableCollectionItemsFilterForUser,
+  getUserCollectionPermissionsById,
+} from '~/server/services/collection.service';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
@@ -385,6 +390,7 @@ export const getModel3DsInfinite = async ({
   status,
   statuses,
   tagIds,
+  collectionId,
   includeDrafts,
   sort,
   period,
@@ -438,6 +444,21 @@ export const getModel3DsInfinite = async ({
     if (username) AND.push({ user: { username } });
     if (query) AND.push({ name: { contains: query, mode: 'insensitive' } });
     if (tagIds?.length) AND.push({ tags: { some: { tagId: { in: tagIds } } } });
+
+    if (collectionId) {
+      const permissions = await getUserCollectionPermissionsById({
+        id: collectionId,
+        userId: user?.id,
+        isModerator,
+      });
+      if (!permissions.read) return { items: [], nextCursor: undefined };
+
+      const { AND: collectionItemAND } = getAvailableCollectionItemsFilterForUser({
+        permissions,
+        userId: user?.id,
+      });
+      AND.push({ collectionItems: { some: { collectionId, AND: collectionItemAND } } });
+    }
 
     // PolyGen `enableAnimation` toggle. JSON path equality against the
     // form-input snapshot stored on `Model3D.generationParams`. The
@@ -1287,24 +1308,26 @@ export const getModel3DGallerySettings = async ({ id }: { id: number }) => {
   if (!row) return null;
   const settings = (row.gallerySettings ?? {}) as Model3DGallerySettingsSchema;
   const { tags, users, images } = settings;
-  const hiddenTags =
+  const [hiddenTags, hiddenUsers, creatorHiddenUserIds] = await Promise.all([
     tags && tags.length
-      ? await dbRead.tag.findMany({
+      ? dbRead.tag.findMany({
           where: { id: { in: tags } },
           select: { id: true, name: true },
         })
-      : [];
-  const hiddenUsers =
+      : [],
     users && users.length
-      ? await dbRead.user.findMany({
+      ? dbRead.user.findMany({
           where: { id: { in: users } },
           select: { id: true, username: true },
         })
-      : [];
+      : [],
+    getCreatorGalleryHiddenUserIds(row.userId),
+  ]);
   return {
     hiddenTags,
     hiddenUsers,
     hiddenImages: images ?? [],
+    creatorHiddenUserIds,
   };
 };
 

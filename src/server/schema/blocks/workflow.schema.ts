@@ -378,19 +378,37 @@ export const blockCustomComfyBodySchema = z
 /**
  * Hard per-job Buzz ceiling an inline body may declare.
  *
- * DERIVED, not invented. This surface is developer-only (`assertViewerIsAppDeveloper`
- * gates every customComfy submit), and the developer path's own per-call budget
- * ceiling is `DEV_BUZZ_BUDGET_CAP` (250) in `services/blocks/dev-scoped-mint.service`
- * — a declared `maxBuzz` above that is unreachable through a dev token anyway,
- * because the router's static gate fail-snapshots on `ceiling > claims.buzzBudget`.
- * It also sits comfortably above the largest shipped recipe ceiling (180, the
- * `qwen-image` engine of `seamless-pano-360`) so an inline graph is not more
- * constrained than a recipe.
+ * 🔴 IT IS THE BINDING BOUND, NOT A REDUNDANT ONE — and this docblock asserted
+ * the opposite until this comment replaced it. It read: "DERIVED, not invented.
+ * This surface is developer-only (`assertViewerIsAppDeveloper` gates every
+ * customComfy submit), and the developer path's own per-call budget ceiling is
+ * `DEV_BUZZ_BUDGET_CAP` (250) … — a declared `maxBuzz` above that is unreachable
+ * through a dev token anyway". Both halves are false, and `PASS_THROUGH_MAX_BUZZ`
+ * below has recorded them as false for as long as it has existed — it even names
+ * THIS docblock as still carrying the claim. NEITHER `customComfy` arm runs
+ * `assertViewerIsAppDeveloper`; the gates the two arms share are page-token-only,
+ * the `ai:write:budgeted` scope, a resolvable token subject, the per-user Apps
+ * kill-switch and a positive `claims.buzzBudget`. And an ordinary install token's
+ * per-call budget clamps at `BUZZ_BUDGET_CAP` (1000, see
+ * `shared/constants/block-scope.constants`) — 4× this number. So this constant is
+ * the only thing stopping an inline body declaring a ceiling between 251 and
+ * 1000, and RAISING IT CHANGES WHAT ONE JOB CAN COST AN ORDINARY VIEWER. The
+ * false version read as "raising this changes nothing".
+ *
+ * Its VALUE is still derived rather than invented: it is pinned equal to
+ * `DEV_BUZZ_BUDGET_CAP` (250) in `services/blocks/dev-scoped-mint.service` so the
+ * two cannot diverge silently, and it sits comfortably above the largest shipped
+ * recipe ceiling (180, the `qwen-image` engine of `seamless-pano-360`) so an
+ * inline graph is not more constrained than a recipe. What the pin is NOT is a
+ * restatement of some other gate that already clamps this path.
  *
  * Deliberately a LITERAL here rather than an import: this module is imported by
  * the wire layer and must stay import-light, while `dev-scoped-mint.service`
- * pulls in the block-token service. `inline-comfy-budget.test.ts` imports both
- * and pins them equal, so the derivation cannot drift silently.
+ * pulls in the block-token service.
+ * `src/server/schema/blocks/__tests__/workflow.schema.inline-comfy.test.ts`
+ * imports both and pins them equal, so the derivation cannot drift silently.
+ * (That sentence used to name `inline-comfy-budget.test.ts`, a file that does not
+ * exist anywhere in this repo — the guard is real, the filename was not.)
  */
 export const INLINE_MAX_BUZZ = 250;
 
@@ -558,8 +576,12 @@ export const blockStepBodySchema = makeBlockStepBodySchema(REGISTERED_STEP_IDS);
  * `assertViewerIsAppDeveloper`, and an ordinary install token's per-call budget
  * clamps at `BUZZ_BUDGET_CAP` (1000, see `shared/constants/block-scope.constants`).
  * Recorded because the false version read as "raising this changes nothing".
- * (`INLINE_MAX_BUZZ`'s own docblock above still carries the developer-only
- * claim; it is wrong there too.)
+ * (`INLINE_MAX_BUZZ`'s own docblock above CARRIED THE SAME CLAIM and has now been
+ * corrected in the same terms. The published `@civitai/app-sdk` doc comments and
+ * the `civitai/cli` page-money scaffold carried it too, and are corrected in
+ * their own repos — the generated `/apps/` reference on developer.civitai.com is
+ * built from the published SDK, so it stays wrong until that publishes and the
+ * docs repo bumps its pin.)
  */
 export const PASS_THROUGH_MAX_BUZZ = INLINE_MAX_BUZZ;
 

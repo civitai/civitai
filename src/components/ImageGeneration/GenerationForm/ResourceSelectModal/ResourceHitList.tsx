@@ -22,7 +22,10 @@ import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import type { TransformedModel } from '~/shared/search/models-transform';
 import { trpc } from '~/utils/trpc';
 import { ResourceSelectCard } from './ResourceSelectCard';
-import { skipBaseModelForOwnTabs } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import {
+  selectableVersions,
+  skipBaseModelForOwnTabs,
+} from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { useResourceSelectInfinite } from './useResourceSelectInfinite';
 import { isDefined } from '~/utils/type-guards';
 
@@ -81,7 +84,9 @@ function FillingMasonryGrid({ children }: { children: React.ReactNode }) {
 }
 
 export function ResourceHitList({ query }: { query: string }) {
-  const { canGenerate, resources, selectSource, excludedIds, tab } = useResourceSelectContext();
+  const { canGenerate, resources, selectSource, excludedIds, tab, filters } =
+    useResourceSelectContext();
+  const loadedOnly = filters.loadedOnly;
 
   const { data: featured } = trpc.model.getFeaturedModels.useQuery(undefined, {
     enabled: tab === 'featured',
@@ -89,6 +94,8 @@ export function ResourceHitList({ query }: { query: string }) {
 
   const {
     items,
+    coverageNext,
+    member,
     isLoading,
     isFetching,
     isFetchingNextPage,
@@ -120,17 +127,18 @@ export function ResourceHitList({ query }: { query: string }) {
         .filter((x) => x.type === model.type)
         .flatMap((x) => x.baseModels);
 
-      return model.versions.filter((version) => {
-        return (
-          (canGenerate ? canGenerate === version.canGenerate : true) &&
-          (skipBaseModel ||
-            modelBaseModels.length === 0 ||
-            modelBaseModels.includes(version.baseModel)) &&
-          !excludedIds.includes(version.id)
-        );
+      return selectableVersions(model.versions, {
+        canGenerate,
+        coverageNext,
+        member,
+        isCheckpoint: model.type === 'Checkpoint',
+        loadedOnly,
+        skipBaseModel,
+        modelBaseModels,
+        excludedIds,
       });
     },
-    [canGenerate, resources, excludedIds, tab, selectSource]
+    [canGenerate, coverageNext, member, loadedOnly, resources, excludedIds, tab, selectSource]
   );
 
   const browsingLevel = useBrowsingLevelDebounced();
@@ -209,7 +217,7 @@ export function ResourceHitList({ query }: { query: string }) {
   const topItemIds = useMemo(() => new Set(topItems.map((m) => m.id)), [topItems]);
 
   const filtered = useMemo(() => {
-    if (!canGenerate && !resources.length) return models;
+    if (!canGenerate && !resources.length && !loadedOnly) return models;
 
     const ret = models
       .map((model) => {
@@ -231,13 +239,18 @@ export function ResourceHitList({ query }: { query: string }) {
     }
 
     return ret;
-  }, [canGenerate, featured, models, resources, tab, filterVersions]);
+  }, [canGenerate, loadedOnly, featured, models, resources, tab, filterVersions]);
 
   const renderCard = useCallback(
     ({ data, height }: { data: TransformedModel; height: number }) => (
-      <ResourceSelectCard data={data} height={height} selectSource={selectSource} />
+      <ResourceSelectCard
+        data={data}
+        height={height}
+        selectSource={selectSource}
+        coverageNext={coverageNext}
+      />
     ),
-    [selectSource]
+    [selectSource, coverageNext]
   );
 
   if (loading && !filtered.length)

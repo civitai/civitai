@@ -1,10 +1,12 @@
 import dayjs from '~/shared/utils/dayjs';
-import { useSignalConnection, useSignalTopic } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { EntityAccessPermission, SignalMessages, SignalTopic } from '~/server/common/enums';
-import type { ModelVersionResourceCacheItem } from '~/server/redis/caches';
+import { EntityAccessPermission } from '~/server/common/enums';
 import type { ModelVersionEarlyAccessPurchase } from '~/server/schema/model-version.schema';
-import { type ModelVersionTerms, generationOpenToNonBuyers, isFreeGeneration } from '@civitai/buzz';
+import {
+  type ModelVersionTerms,
+  generationOpenToNonBuyers,
+  requiresGenerationPurchase,
+} from '@civitai/buzz';
 import { ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { handleTRPCError, trpc } from '~/utils/trpc';
 
@@ -89,8 +91,11 @@ export const useModelVersionPermission = ({ modelVersionId }: { modelVersionId?:
       (!!paidAccessTerms && generationOpenToNonBuyers(paidAccessTerms)),
     generationRequiresPurchase:
       isEarlyAccess &&
-      !hasBoughtGeneration &&
-      !(!!paidAccessTerms && isFreeGeneration(paidAccessTerms)),
+      !!paidAccessTerms &&
+      requiresGenerationPurchase(paidAccessTerms, {
+        isOwnerOrMod: false,
+        hasBought: hasBoughtGeneration,
+      }),
     paidAccess: !isEarlyAccess ? undefined : paidAccess,
     modelVersion,
     isEarlyAccess,
@@ -144,25 +149,4 @@ export const useQueryModelVersionDonationGoal = (
     donationGoal: donationGoal ?? null,
     ...other,
   };
-};
-
-export const useModelVersionTopicListener = (modelVersionId?: number) => {
-  const utils = trpc.useUtils();
-
-  useSignalTopic(modelVersionId ? `${SignalTopic.ModelVersion}:${modelVersionId}` : undefined);
-
-  useSignalConnection(
-    SignalMessages.ModelVersionPopularityUpdate,
-    (data: ModelVersionResourceCacheItem) => {
-      // console.log('pop update', data);
-      utils.modelVersion.getPopularity.setData({ id: data.versionId }, () => {
-        return {
-          versionId: data.versionId,
-          popularityRank: data.popularityRank ?? 0,
-          isFeatured: data.isFeatured ?? false,
-          isNew: data.isNew ?? false,
-        };
-      });
-    }
-  );
 };

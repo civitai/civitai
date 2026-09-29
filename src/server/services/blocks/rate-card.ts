@@ -21,23 +21,6 @@ export type RateCard = {
    */
   publisherSharePctByScope: Record<BlockAttributionScope, number>;
   /**
-   * W3 flow A — buzz SPEND attribution (author bounty). RETIRED: nothing
-   * computes a share from this any more. The platform-funded percentage
-   * bounty was superseded by the additive, author-set, viewer-paid
-   * per-generation author fee, and its compute + backpay rails were removed.
-   *
-   * The field stays for SHAPE STABILITY of the published `RateCard` snapshots
-   * (V4 and V5 were published carrying it), NOT because a row depends on it.
-   * ⚠️ AN EARLIER REVISION JUSTIFIED IT WITH "`block_spend_attribution` rows
-   * stamp a card version", which is misleading: the spend write path hardcodes
-   * `UNRATED_RATE_CARD_VERSION`, so those rows stamp 'unrated' and carry
-   * `spend_share_pct = 0`. Measured in production 2026-09-18 — a
-   * `GROUP BY rate_card_version` over that whole table returned a single
-   * 'unrated' group, so no row references a real card version. See the
-   * retirement note at `RATE_CARD_V5`'s declaration for the full accounting.
-   */
-  spendSharePct: number;
-  /**
    * W3 flow C — MEMBERSHIP / subscription attribution.
    *
    * The percentage of a block-initiated membership payment's NET (gross -
@@ -65,16 +48,12 @@ export type RateCard = {
 
 // ---------------------------------------------------------------
 // PLACEHOLDER PERCENTAGES — confirm with monetization leadership
-// before announcing publicly. See the "Numbers worth getting from
-// leadership" section of
-// claudedocs/app-blocks-buzz-attribution-handoff-2026-05-25.md.
+// before announcing publicly.
 //
-// Three cards defined: V1 (the original spec placeholder, 20/20/25/0),
-// V2 (the recommended starting point, 15/15/25/0) and V3 (V2 + the
-// new W10 page scope `viewer_global` at 0%). Rate cards are immutable
-// — past attribution rows stamp their version at write time and pay
-// out under it forever. To change percentages, add a V4, leave
-// V1/V2/V3 in place for the rows that referenced them.
+// Rate cards are immutable: past attribution rows stamp their version
+// at write time and pay out under it forever. To change percentages,
+// add the NEXT card and leave the existing ones alone. See each
+// declaration below for what that card added.
 //
 // `viewer_global` (W10 page purchase, flow B) is a PLACEHOLDER 0% on
 // every card — no historical row ever used it (the scope is net-new
@@ -93,9 +72,10 @@ export type RateCard = {
 //   - Whether to apply different rates by buzz type (yellow vs blue).
 //   - Whether to cap monthly per-app earnings.
 //
-// Until those are signed off, treat any attribution payout as a
-// soft-launch — do NOT enable the bulk payout job in production
-// without explicit approval.
+// Nothing in this repo disburses a purchase-rail share — a payout rail
+// is a thing to BUILD, not a thing to enable. (An earlier revision of
+// this block said "do NOT enable the bulk payout job"; that job was a
+// write-free stub and has been removed.)
 // ---------------------------------------------------------------
 export const RATE_CARD_V1: RateCard = {
   version: 'v1',
@@ -108,10 +88,6 @@ export const RATE_CARD_V1: RateCard = {
     // behavior-preserving for this card's stamped rows.
     viewer_global: 0,
   },
-  // Net-new spend dimension (W3 flow A). 0% on V1 is behavior-preserving:
-  // no spend row was ever stamped under V1 (the spend flow is net-new),
-  // and V1 is not the active card.
-  spendSharePct: 0,
   // Net-new subscription dimension (W3 flow C). 0% — behavior-preserving:
   // no subscription row was ever stamped under V1 (flow C is net-new), and
   // V1 is not the active card.
@@ -157,9 +133,6 @@ export const RATE_CARD_V2: RateCard = {
     // behavior-preserving for this card's stamped rows.
     viewer_global: 0,
   },
-  // Net-new spend dimension (W3 flow A). 0% — behavior-preserving (no V2
-  // spend row ever existed; V2 is not the active card).
-  spendSharePct: 0,
   // Net-new subscription dimension (W3 flow C). 0% — behavior-preserving
   // (no V2 subscription row ever existed; V2 is not the active card).
   subscriptionSharePct: 0,
@@ -190,9 +163,7 @@ export const RATE_CARD_V2: RateCard = {
  * leadership sign-off. When that lands, add a V4 with the agreed % and
  * leave V3 in place for the rows stamped under it (cards are immutable).
  *
- * `spendSharePct` is carried at 0% on V3 — V3 predates the spend flow and
- * stamped only purchase rows. The spend flow (W3 flow A) ships under V4.
- * `subscriptionSharePct` is likewise 0% — flow C ships under V5.
+ * `subscriptionSharePct` is 0% on V3 — flow C ships under V5.
  */
 export const RATE_CARD_V3: RateCard = {
   version: 'v3',
@@ -207,7 +178,6 @@ export const RATE_CARD_V3: RateCard = {
     // monetization sign-off.
     viewer_global: 0,
   },
-  spendSharePct: 0,
   subscriptionSharePct: 0,
   internalAppOwnerUserIds: [
     // Same as V2 — populate with civitai team userIds before going live.
@@ -216,48 +186,24 @@ export const RATE_CARD_V3: RateCard = {
 };
 
 /**
- * V4 — adds the W3 flow A buzz-SPEND author bounty (`spendSharePct`).
+ * V4 — historically the card that added the W3 flow A buzz-SPEND author bounty.
  *
- * 🔴 THE SPEND BOUNTY IS RETIRED. Nothing computes a share from
- * `spendSharePct` any more, so the sign-off this block asks for is moot and
- * the rest of it is a record of what V4 meant when it was published. The rail
- * was superseded by the additive, author-set, viewer-paid per-generation
- * author fee (`author-fee.ts`). The card itself is immutable and stays.
+ * 🔴 THE SPEND BOUNTY IS GONE, FIELD AND ALL. V4's distinguishing feature was a
+ * `spendSharePct: 5` — a PLATFORM-FUNDED percentage bounty paid on top of a
+ * block-initiated generation, never a slice of the viewer's Buzz. It was
+ * superseded by the additive, author-set, viewer-paid per-generation author fee
+ * (`author-fee.ts`); its compute and backpay rails were removed first, and the
+ * card field itself has now been removed from `RateCard` and from every card.
  *
- * Carries V3's purchase percentages UNCHANGED (15/15/25/0/0) and sets
- * `spendSharePct` to the FIRST non-zero spend rate. This is the first
- * card emitted for the spend flow: a block-initiated generation that
- * burns the viewer's own Buzz now accrues an author bounty.
+ * 🔴 DO NOT RE-ADD A SPEND RATE TO A NEW CARD FOR SHAPE STABILITY. Deleting it did
+ * not violate card immutability: a production `GROUP BY rate_card_version` over the
+ * whole spend table returned a single 'unrated' group — self-discriminating, so no row
+ * ever stamped 'v4' or 'v5'. Current source only shows `recordSpendAttribution`
+ * hardcoding `UNRATED_RATE_CARD_VERSION` today, which cannot witness that.
  *
- * ⚠️ PLACEHOLDER RATE — `spendSharePct: 5` is a CONSERVATIVE DEFAULT
- *    chosen pending monetization sign-off (Zach's call: ship a documented
- *    conservative number, not a guessed-final one). Raising is politically
- *    easier than lowering after a public announcement, so this starts low.
- *
- * ACCOUNTING MODEL — PLATFORM-FUNDED BOUNTY, not a cut of the spend:
- *    The viewer burns 100% of their Buzz on the generation (that is
- *    platform revenue — the viewer paid civitai for compute). The author
- *    bounty is a SEPARATE platform expense paid ON TOP, sized as
- *    `spendSharePct` % of the spend's USD value. It is a marketing /
- *    ecosystem cost, NOT a slice carved out of the viewer's money. There
- *    is therefore NO three-way conservation invariant for spend rows (the
- *    block_spend_attribution table omits the purchase table's
- *    fee+platform+author=gross CHECK). The conservation/ledger invariant
- *    that DOES hold: author_share = floor(grossValueCents * spendSharePct
- *    / 100), 0 ≤ author_share ≤ grossValueCents, and author_share = 0 on
- *    self-spend / internal-owner.
- *
- *    LEDGER IMPLICATION FOR SIGN-OFF: every paid spend bounty is net-new
- *    platform spend (it does not reduce platform revenue on the
- *    generation). At spendSharePct=N% and a daily block-spend volume of
- *    $X USD-equivalent, the platform's bounty liability is ~$X·N%/day.
- *    This is the number monetization must sign off on, NOT a revenue
- *    split. Cap exposure with the existing BLOCK_BUZZ_CAP_PER_DAY (bounds
- *    per-user daily spend) and the per-app earnings cap (unimplemented
- *    placeholder) before widening beyond mods.
- *
- * When the signed-off rate lands, add a V5 with the agreed % and leave V4
- * in place for the rows stamped under it (cards are immutable).
+ * V4 itself is immutable and STAYS: it carries V3's purchase percentages
+ * (15/15/25/0/0) and purchase rows DO stamp a real version via
+ * `computeRateCardSplit`.
  */
 export const RATE_CARD_V4: RateCard = {
   version: 'v4',
@@ -269,8 +215,6 @@ export const RATE_CARD_V4: RateCard = {
     platform_default: 0,
     viewer_global: 0,
   },
-  // PLACEHOLDER 5% platform-funded bounty — see the doc block above.
-  spendSharePct: 5,
   // Net-new subscription dimension (W3 flow C). 0% on V4 — behavior-
   // preserving (V4 stamped only spend + purchase rows; flow C ships under
   // V5). A percentage change is a new card, not an edit to V4.
@@ -285,9 +229,9 @@ export const RATE_CARD_V4: RateCard = {
  * V5 — adds the W3 flow C MEMBERSHIP / subscription rev-share
  * (`subscriptionSharePct`).
  *
- * Carries V4's purchase percentages (15/15/25/0/0) AND its spend bounty
- * (5%) UNCHANGED, and DEFINES `subscriptionSharePct: 15` as the PLACEHOLDER
- * subscription rate.
+ * Carries V4's purchase percentages (15/15/25/0/0) UNCHANGED and DEFINES
+ * `subscriptionSharePct: 15` as the PLACEHOLDER subscription rate. (V5 also
+ * carried V4's 5% spend bounty; that field is gone from every card — see V4.)
  *
  * ⚠️ NOT APPLIED AT ATTRIBUTION-WRITE TIME. As of the TRACK-ONLY rework
  *    (PR #2629), `recordSubscriptionAttribution` does NOT call
@@ -346,55 +290,6 @@ export const RATE_CARD_V5: RateCard = {
     platform_default: 0,
     viewer_global: 0,
   },
-  // Carried from V4 verbatim.
-  //
-  // 🔴 RETIRED — DO NOT CARRY THIS FORWARD INTO A V6 WITHOUT READING THIS.
-  // Nothing computes a share from `spendSharePct` any more. The platform-funded
-  // percentage spend bounty was superseded by the additive, author-set,
-  // viewer-paid per-generation author fee (`author-fee.ts`), and its compute +
-  // backpay rails were removed. After that removal the ONLY reads of a card's
-  // `spendSharePct` anywhere in the tree are assertions in
-  // `src/server/services/blocks/__tests__/rate-card.test.ts` and
-  // `src/server/services/blocks/__tests__/spend-attribution.service.test.ts`.
-  // No production file reads it. The `5` is inert.
-  //
-  // ⚠️ WHY IT IS STILL HERE, STATED HONESTLY. The usual defence for keeping a
-  // published card's field is that immutable rows stamped this version must keep
-  // paying out under their own snapshot. THAT DEFENCE DOES NOT BIND HERE, and
-  // this comment is the record of it rather than a restatement of the doctrine:
-  // `recordSpendAttribution` hardcodes `rateCardVersion = UNRATED_RATE_CARD_VERSION`,
-  // so every spend row it writes stamps 'unrated', never 'v4' or 'v5'. The only
-  // code that would have stamped a real version onto a spend row is the backpay
-  // that never ran. (The code-history caveat that made an earlier revision hedge:
-  // the pre-track-only write path shipped in #2627 DID stamp `share.rateCardVersion`,
-  // and #2635 retrofitted it to 'unrated' the SAME DAY — 2026-06-18. That
-  // retrofit's migration records, contemporaneously, that prod held 0 spend rows
-  // at the time.)
-  //
-  // ✅ MEASURED, NOT INFERRED (production, 2026-09-18). An earlier revision said
-  // "no KNOWN referent" precisely because the code history above was never
-  // re-confirmed against the database. It has been now: a
-  // `GROUP BY rate_card_version` over the whole of `block_spend_attribution`
-  // returned exactly ONE group — `'unrated'`. The grouping is
-  // self-discriminating, so any other stamped version would have come back as a
-  // second row; none did. NO spend row references 'v4' or 'v5'. (The row count
-  // is deliberately not published here — this repo is public and that figure is
-  // product usage. Re-run the query to recover it.)
-  //
-  // Read that at its real scope: it is a statement about that table at that
-  // moment, NOT a guarantee about the future. It holds as long as
-  // `recordSpendAttribution` remains the only writer and keeps hardcoding the
-  // sentinel. A future writer that stamps a real version would create the
-  // referent this note says does not exist — re-measure before relying on it.
-  //
-  // So the field is retained with NO historical referent — for shape
-  // stability of the published `RateCard` snapshots and to avoid a type change
-  // rippling through every card, NOT because a row depends on it. Removing it is
-  // a larger act than the rail removal took on; if you are authoring a V6 and
-  // want it gone, delete it from the `RateCard` type and every card together.
-  // The CARDS themselves must stay regardless: purchase rows DO stamp a real
-  // version via `computeRateCardSplit`.
-  spendSharePct: 5,
   // PLACEHOLDER 15% subscription rev-share — see the doc block above.
   subscriptionSharePct: 15,
   internalAppOwnerUserIds: [

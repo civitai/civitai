@@ -559,6 +559,7 @@ type ModelVersionDetails = {
   publishedAt: Date | null;
   status: ModelStatus;
   covered: boolean;
+  coveredNext: boolean;
   flags: number;
   availability: Availability;
   nsfwLevel: NsfwLevel;
@@ -605,12 +606,10 @@ export const dataForModelsCache = createCachedObject<ModelDataCache>({
            AND rr.settings->>'componentType' = 'VAE'
            AND EXISTS (SELECT 1 FROM "ModelFile" mf WHERE mf.id = (rr.settings->>'fileId')::int)
          LIMIT 1) AS "vaeId",
-        COALESCE((
-          SELECT gc.covered
-          FROM "GenerationCoverage" gc
-          WHERE gc."modelVersionId" = mv.id
-        ), false) AS covered
+        COALESCE(gc.covered, false) AS covered,
+        COALESCE(gc."coveredNext", false) AS "coveredNext"
       FROM "ModelVersion" mv
+      LEFT JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv.id
       WHERE mv."modelId" IN (${Prisma.join(ids)})
       ORDER BY mv."modelId", mv.index;
     `;

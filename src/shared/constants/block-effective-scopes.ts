@@ -19,26 +19,37 @@
  * correct in both.
  *
  * 🔴 THIS IS NOT "WHAT THE MINT WILL ISSUE A TOKEN FOR" — do not re-describe it that way, and
- * note that "THE mint" is itself the ambiguity that produced the false claim. There are THREE
+ * note that "THE mint" is itself the ambiguity that produced the false claim. There are FOUR
  * scope-sourcing sites in `src/pages/api/v1/block-tokens/index.ts`, and none of them computes
- * this intersection. The two DEV-TUNNEL sites are each named by their RESOLVER, because both are
- * author mints and "the dev-tunnel mint" does not identify either one. The production site is
- * named by ROLE instead, because it has no single resolver: `BlockRegistry.resolvePageBlock`
- * (`:835`, the page shape) and `BlockRegistry.resolveBlockInstance` (`:908`, the
- * install/subscription shape) both converge on the one scope-sourcing line at `:1054`.
+ * this intersection. Three are named by their RESOLVER or their CLAMP, because they are all
+ * non-public mints and "the dev-tunnel mint" does not identify any one of them. The production
+ * site is named by ROLE instead, because it has no single resolver:
+ * `BlockRegistry.resolvePageBlock` (the page shape) and `BlockRegistry.resolveBlockInstance`
+ * (the install/subscription shape) both converge on ONE scope-sourcing line.
  *
- *   - `:1054` — the PRODUCTION run-token mint (the install/subscription/page path). Sources the
- *     MANIFEST: `requestedScopes = knownManifestScopes`, the manifest filtered to the known
- *     vocabulary. `approved_scopes` is an ALL-OR-NOTHING VETO here
- *     (`outsideApproved.length > 0` → 403), never a source, and the path refuses outright unless
- *     `status === 'approved'`.
- *   - `:469` — the EPHEMERAL dev-tunnel mint, resolved by `resolveDevPageBlockForAuthor`.
- *     Sources the AUTHOR'S OWN declared scopes: `clampTunnelDeclaredScopes(app.scopes)`. NOT
+ * ⚠️ THE ANCHORS BELOW ARE IDENTIFIERS, NOT LINE NUMBERS, AND THAT IS A REPAIR. This list
+ * previously cited `:1054`, `:469` and `:650`; by 2026-09-28 the real lines were 1164, 542 and
+ * 743 — all three had drifted, and the same stale trio had been COPIED into
+ * `src/server/services/blocks/user-app-surface.service.ts` and
+ * `src/components/AppBlocks/AppPermissionsActivityDrawer.tsx`, so one file's rot became three.
+ * A `grep`-able identifier survives every edit above it; a line number survives none of them.
+ *
+ *   - `requestedScopes = knownManifestScopes` — the PRODUCTION run-token mint (the
+ *     install/subscription/page path). Sources the MANIFEST, filtered to the known vocabulary.
+ *     `approved_scopes` is an ALL-OR-NOTHING VETO here (`outsideApproved.length > 0` → 403),
+ *     never a source, and the path refuses outright unless `status === 'approved'`.
+ *   - `clampTunnelDeclaredScopes(app.scopes)` — the EPHEMERAL dev-tunnel mint, resolved by
+ *     `resolveDevPageBlockForAuthor`. Sources the AUTHOR'S OWN declared scopes. NOT
  *     `approvedScopes` — that app was never reviewed, so there is no approval to source.
- *   - `:650` — the OWNED-NON-APPROVED dev-tunnel mint, resolved by
- *     `resolveOwnedNonApprovedPageBlock`. Sources the column:
- *     `clampTunnelDeclaredScopes(app.approvedScopes)`. This is the ONLY one of the three that
- *     reads `approvedScopes` as its scope source.
+ *   - `clampTunnelDeclaredScopes(app.approvedScopes)` — the OWNED-NON-APPROVED dev-tunnel mint,
+ *     resolved by `resolveOwnedNonApprovedPageBlock`. Sources the column.
+ *   - `clampPrivateRunScopes(app.approvedScopes, access.audience)` — the PRIVATE-RUN mint
+ *     (PHASE 3), resolved by `resolvePrivateRunAccess` → `resolvePrivateRunPageBlock`. Also
+ *     sources the column, then applies TWO further strips the dev-tunnel clamp does not: the
+ *     `social:tip:self` third-rail strip (every audience) and the `ai:write:budgeted` editor
+ *     read-only strip. 🔴 Its scope source is the SAME column as the site above it, so the two
+ *     are NOT distinguishable by "does it read `approvedScopes`" — which used to be the
+ *     discriminator naming exactly one site. Distinguish them by the CLAMP.
  *
  * `block-registry.service.ts`'s sentence "The mint sources scopes from `approvedScopes` … NEVER
  * the raw manifest" is TRUE of `:650` ONLY. It sits at
@@ -58,11 +69,19 @@
  * and a restatement of it dropped the "here" — which read as an open question and invited the next
  * reader to answer it in. It IS established, in two places, both read rather than inferred:
  *   - `src/pages/api/v1/block-tokens/index.ts:375-389` — the `resolveDevPageBlockForAuthor` branch's
- *     own docblock. SPEND CONTAINMENT (`:375-382`): the token is self-bound (`sub` = the session
- *     user), so `submitWorkflow` spends the AUTHOR's OWN Buzz, gated by
- *     `assertViewerIsAppDeveloper(sub)` plus the per-call (`DEV_BUZZ_BUDGET_CAP`) / per-session /
- *     per-day caps. SCOPE SOURCE (`:383-389`): real spend on a brand-new, never-reviewed app is
- *     additionally gated by the `app-blocks-dev-tunnel-unsubmitted-spend` flag.
+ *     own docblock. SPEND CONTAINMENT: the token is self-bound (`sub` = the session user), so
+ *     `submitWorkflow` spends the AUTHOR's OWN Buzz, bounded by the per-call `buzzBudget` claim
+ *     (`DEV_BUZZ_BUDGET_CAP`) and the aggregate per-user / per-app caps in
+ *     `reserveBlockBuzzSpendForClaims`. SCOPE SOURCE: real spend on a brand-new, never-reviewed
+ *     app is additionally gated by the `app-blocks-dev-tunnel-unsubmitted-spend` flag.
+ *     🔴 CORRECTED 2026-09-27 — and this one mattered most of the three, because this file is
+ *     the LEDGER a reader consults to find out what bounds spend on each mint. It used to say
+ *     that branch was "gated by `assertViewerIsAppDeveloper(sub)`". That call is not on the
+ *     submit path: two module-private helpers of that name exist, in
+ *     `blocks/user-settings.service.ts` and `apps/app-storage.service.ts`, whose only call
+ *     sites are a viewer SETTINGS write and the mod review STORAGE branch. The line numbers
+ *     that used to be cited here are dropped rather than refreshed — they had already drifted,
+ *     and the named function is the durable reference.
  *   - `src/server/services/block-registry.service.ts:2117-2119` — where that flag gate actually
  *     bites: `if (!opts?.unsubmittedSpendAllowed) ephemeralScopes = ephemeralScopes.filter((s) =>
  *     s !== 'ai:write:budgeted')`. ⚠️ It sits in the `else` (BRAND-NEW) branch only. The PENDING

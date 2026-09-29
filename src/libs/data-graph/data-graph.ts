@@ -490,6 +490,19 @@ interface ActiveBranch {
  */
 export type ValueProvider<Ctx> = (key: keyof Ctx & string, ctx: Ctx) => unknown | undefined;
 
+/**
+ * Watchers are independent subscribers, so one that throws must not decide whether the rest run.
+ * Un-isolated, the first failure also aborted the write that triggered the notification, which
+ * surfaced as unrelated parts of the form silently ceasing to update.
+ */
+function runWatcher(callback: () => void) {
+  try {
+    callback();
+  } catch (error) {
+    console.error('[data-graph] watcher threw', error);
+  }
+}
+
 export class DataGraph<
   Ctx extends Record<string, unknown> = EmptyObject,
   ExternalCtx extends Record<string, unknown> = EmptyObject,
@@ -859,7 +872,7 @@ export class DataGraph<
     const callbacks = this.rootGraph.nodeWatchers.get(key);
     if (callbacks) {
       for (const callback of callbacks) {
-        callback();
+        runWatcher(callback);
       }
     }
   }
@@ -2103,7 +2116,7 @@ export class DataGraph<
       this.notifyNodeWatchers(key);
     }
     for (const callback of this.globalWatchers) {
-      callback();
+      runWatcher(callback);
     }
   }
 }

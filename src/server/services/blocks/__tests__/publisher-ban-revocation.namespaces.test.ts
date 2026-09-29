@@ -515,6 +515,20 @@ describe('the blockInstanceId MINT-SITE ledger', () => {
     'src/pages/apps/run/[slug]/[[...path]].tsx':
       'CLIENT-SIDE construction of `page_<appBlockId>` for the run surface. Same two ' +
       'shapes and the same coverage as the dev harness above.',
+    'src/pages/apps/private-run/[slug]/[[...path]].tsx':
+      'CLIENT-SIDE construction of `page_<appBlockId>` for the PRIVATE-RUN surface (a ' +
+      'delisted/suspended app served to its owner, an accepted collaborator, or a ' +
+      'moderator). ONE shape only, and always a real `apb_…` — the private path resolves ' +
+      'exclusively through `resolvePrivateRunPageBlock`, which reads the AppBlock table, ' +
+      'so the `ephemeral-<slug>` variant the run surface and dev harness can produce is ' +
+      'unreachable here. COVERED, and reusing this namespace is the REASON it was chosen ' +
+      'rather than a new one: `revokeBlockInstancesForPublisher` synthesises ' +
+      '`page_<appBlockId>` from the banned publisher’s canonically-owned blocks, so a ' +
+      'private-run token inherits publisher-ban revocation with no new code. ⚠️ That ' +
+      'coverage is TIME-BOXED — the markers expire after ' +
+      'MAX_BLOCK_TOKEN_LIFETIME_SECONDS (14400s) — which is precisely why ' +
+      'resolvePrivateRunAccess ALSO refuses on a banned owner at MINT time for the owner ' +
+      'and editor audiences; moderators keep access by design.',
     'src/pages/api/v1/blocks/dev-token.ts':
       'The dev mint — and, unlike `block-tokens/index.ts`, it really does CONSTRUCT. ' +
       'Builds `page_pubreq_<pubreq_ULID>` for a caller-owned PENDING ' +
@@ -527,8 +541,10 @@ describe('the blockInstanceId MINT-SITE ledger', () => {
       'pending rows.',
     'src/server/middleware/block-scope.middleware.ts':
       'Claims synthesised for a hub (OAuth) token on the block routes: `page_<appBlockId>` ' +
-      'for an APPROVED AppBlock row only, never an ephemeral app — the same shape and the ' +
-      'same coverage as the run surface above.',
+      'for an APPROVED AppBlock row, and for the author’s OWN dev tunnel `page_<apb_…>` ' +
+      '(owned non-approved row) or `page_ephemeral-<slug>` (the borrowed `appdev-` client), ' +
+      'both bound to an ACTIVE tunnel for that author — the same shapes and the same ' +
+      'coverage as the dev harness and run surface above.',
     'src/server/services/block-registry.service.ts':
       'The SQL synthesis in listForModel: `bus_pub_ || bus.id`, `bus_view_ || bus.id`, ' +
       '`pdb_ || pdb.app_block_id`. COVERED by the subscription and app-block legs.',

@@ -66,15 +66,19 @@ describe('ResourceSelectProvider persistence', () => {
     expect(first.ctx().filters).toEqual({
       types: ['LORA'],
       baseModels: ['SDXL 1.0'],
+      loadedOnly: false,
       hidePaid: false,
     });
     first.unmount();
 
     const second = mount();
     expect(second.ctx().sort).toBe('newest');
+    // Base models, the loaded filter and the pricing filter are deliberately not persisted: each
+    // follows the ecosystem or the moment, not the user's standing preference.
     expect(second.ctx().filters).toEqual({
       types: ['LORA'],
       baseModels: [],
+      loadedOnly: false,
       hidePaid: false,
     });
     second.unmount();

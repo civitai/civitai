@@ -94,11 +94,35 @@ downloads to anyone's machine. Then:
 
 ```bash
 node .claude/skills/official-model-admin/model.mjs hf-imports --repo <owner/name>
-node .claude/skills/official-model-admin/model.mjs attach-import --import <id> --version <id> --type Model --writable
+node .claude/skills/official-model-admin/model.mjs attach-import --import <id> --version <id> --type Model --fp bf16 --writable
 ```
 
 `hf-imports` lists each transferred file with its size, state, group and a suggested type;
 `attach-import` creates the model file on your version, and scanning and hashing follow on their own.
+
+🔴 **Attach only once the version's base model is DEPLOYED, or every scan fails.** The scan AIR's
+ecosystem segment comes from `getAirEcosystem(baseModel)`, which falls back to the raw string
+lowercased when `getRootEcosystem` cannot resolve it — so a base model the running build does not know
+puts its **display name, spaces and all**, into the URN. The orchestrator rejects it with a 400 naming
+a resource nobody recognises, which reads like a scanner or storage fault rather than a missing
+deploy. Classified `transient`, so files are retried rather than tombstoned and everything heals on
+the next attempt after the deploy — but until then nothing scans and nothing can publish.
+
+⚠ **Scanning is not fast, and slow is not stuck.** Observed on a 10-file, 143 GB set: most files
+finished 20-30 minutes after submission, with no clean relationship to size (an 18 GB file beat a
+6 GB one), while several took **14-17 hours**. Read `virusScanResult` and `scannedAt` before
+concluding anything, and note that the fallback job only re-picks a file whose `scanRequestedAt` is
+older than **one day** — so forcing a retry means setting that column to `NULL`, which puts the file
+at the front of the next 5-minute tick. Don't spend a duplicate scan on a large file until it has had
+a day.
+
+**`--fp` names the precision**, one of `constants.modelFileFp`, and `--optional` marks a file the
+version does not need (`metadata.isRequired: false`). The attach itself writes only `format`, so
+without `--fp` a repo that ships several quantizations lists them all as untyped precision and the
+download picker cannot tell them apart. It is **not** inferable from the filename — `w4a8` is
+`int4` — so read the publisher's own naming. A repackaged Comfy-Org repo is the common case; see
+Qwen Image 2.1 (version 3352534) for a worked set: `bf16` / `int8` diffusion models, one `bf16` VAE,
+and text encoders at `bf16` / `int8` / `int4`.
 
 Both filters run on the server. `--repo` is an **exact** match against the repo id Hugging Face
 returned rather than what was pasted, so its casing must be HF's; `--group` is a case-insensitive
@@ -111,6 +135,52 @@ check and produces a version nothing can load. Read the filename:
 `.safetensors` at the repo root is the weight file (`Model`, or `Diffusion Model` / `UNet` when the
 repo splits them). If the repo's layout does not make a file's role obvious, ask the user rather than
 guessing — a mislabelled weight file passes every check here and produces a version nothing can load.
+
+#### Shared components: ALSO publish them as their own model
+
+A repo that ships text encoders or a VAE beside the checkpoint gives you a choice, and the two halves
+are not exclusive — do both.
+
+Attach every component to the checkpoint's version, so it works on its own. Then, when a component is
+one a **community finetune of the same base model would need**, publish it a second time as its own
+`TextEncoder` / `VAE` model. The reason is mechanical: `RecommendedResource.resourceId` is a foreign
+key to `ModelVersion`, so a creator can point their upload at a *version* and never at a file inside
+one. Leave an encoder only inside our checkpoint and the closest thing they can recommend is the
+checkpoint itself — a competing model, not the component. Type also drives search filters, so a
+bundled encoder is invisible to anyone browsing for one.
+
+Precedent for both shapes: Qwen Image 2.1 (2954443) bundles its encoders **and** ships `Qwen3`
+(2742977) standalone. `T5` (2740996) and `Flux.1-AE` (2740928) are the same pattern. Where a
+component's variants differ by checkpoint rather than by precision — e.g. a base and a
+layer-decomposition checkpoint with their own encoders — make them two **versions** of one component
+model.
+
+**The second copy costs no storage, and `attach-import` cannot make it.** `reuseStoredFile` keys on
+`repo` + `revision` + `filename`, so for a path already imported it returns the existing file instead
+of minting another. Create the row directly with `modelFile.create`, passing the **same `url`** (the
+controller derives backend and s3Path from it). Two `ModelFile` rows over one object is supported:
+`deleteModelFileObject` skips the S3 delete while any live row still references that URL.
+
+#### Community copies of the same weights: do nothing
+
+A mirrored model's weights are usually already on the site, uploaded by creators who mirrored the
+same upstream release — often before us. Attribution sorts itself out: `get_image_resources` and
+`prefersHashMatch` rank an **official** version above any other holding the same hash, so an image
+whose metadata carries those bytes credits our page whoever uploaded first. That depends on
+`isOfficial`, which `create-model` guarantees.
+
+Three things not to reach for:
+
+- **Archiving the community model does nothing.** `Archived` is `Model.mode`; the attribution
+  function only ever filters on `Model.status` being `Deleted`, `Unpublished` or
+  `UnpublishedViolation`. This looks like the obvious lever and moves no credit at all.
+- **`excludeFromAutoDetection` is the wrong tool now.** It is version-scoped, so on a finetune that
+  merely bundles one of our component files it strips credit for the creator's own weights too.
+- **Nothing needs doing per model.** Before the tie-break carried `isOfficial`, each mirror took hand
+  written SQL plus a reconcile pass; two rounds of that removed 331 attributions and reassigned none,
+  because the flag suppressed the slot instead of passing it on.
+
+What DOES need a decision is whether to publish the repo's shared components separately — see above.
 
 #### Uploaded by hand
 
@@ -140,6 +210,8 @@ A new version can't be generated until it has coverage. Add that with the `gener
 ## Other commands
 
 - **`create-model --name <n> --description-file <html> [--type Checkpoint]`** creates a `Draft` model owned by you, because `model.upsert` always makes the caller the owner. It then transfers it to CivitaiOfficial (`--owner-id` overrides the target). If the transfer fails, the model still exists under your account, and the script prints a `transfer` command to retry with.
+  - It sets the **`base model` category tag** and, for a `Checkpoint`, **checkpoint type `Trained`**, which is what every CivitaiOfficial mirror carries. A mirror is someone else's trained weights, never a merge, so there is no flag to pick `Merge` here.
+  - It then checks **`isOfficial`** and sets it if the transfer didn't. The transfer sets it server-side (`transferModelOwnership`), but the flag gates the official-models cache, the picker's official ordering and the resource-attribution tie-break, and none of that is visible on the model page — so it is asserted rather than assumed. It was a manual `model.setOfficial` call until 2026-09-28 and was missed on 14 consecutive releases.
 - **`update-description --model-id <id> --description-file <html>`** sends the model's current `name`, `type`, `uploadType` and `status` together with the new description.
   - On an update, `model.upsert` ignores `status` and leaves every optional field it isn't sent untouched, so tags, licensing and NSFW settings survive.
   - It reads the description back afterwards, and warns if the server's sanitizing or blurb expansion changed it.

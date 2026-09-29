@@ -6,6 +6,7 @@ import { DatabaseError } from 'pg';
 import { TRPCError } from '@trpc/server';
 import type { TRPC_ERROR_CODE_KEY } from '@trpc/server/rpc';
 import { isProd } from '~/env/other';
+import { clickhouseFailSoftCounter } from '~/server/prom/client';
 import { logToAxiom } from '../logging/client';
 import type { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { parse as parseStackTrace } from 'stacktrace-parser';
@@ -417,6 +418,52 @@ export function isUpstreamServerOrNetworkError(args: {
   return false;
 }
 
+// Syscall codes for a dropped/refused/reset TCP connection. (Intentionally a
+// SUBSET of isUpstreamNetworkError's set — only true transport faults, no
+// DNS-resolution-style codes.)
+const TRANSPORT_SYSCALL_CODES = new Set([
+  'ECONNRESET',
+  'EPIPE',
+  'ETIMEDOUT',
+  'ECONNREFUSED',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'UND_ERR_SOCKET',
+  'UND_ERR_CONNECT_TIMEOUT',
+]);
+// ClickHouse server error codes that are TRANSIENT INFRA brownouts (never a query
+// or schema fault). 279/210/209 = connection/transport; 202 = momentary capacity
+// overload. Strings, because ClickHouseError.code is a string.
+const TRANSIENT_CH_CODES = new Set(['279', '210', '209', '202']);
+
+// Lowercased, anchored patterns for the same syscall codes, for the message-only match in
+// isClickHouseConnectionError. The boundary class excludes two different kinds of
+// character, and each exclusion rejects a case the other does not:
+//
+// (c) IDENTIFIER characters. A bare `includes` treats these codes as substrings, and
+//     ordinary camelCase identifiers embed them — `epipe` inside `sourcePipeline`,
+//     `etimedout` inside `responseTimedOut` (this repo already spells `deadlineTimedOut`
+//     in `src/pages/api/health.ts`). A `Code: 47` missing-column error naming such a
+//     column would otherwise classify as a transport fault and be swallowed. `a-z0-9_`
+//     also stops `UND_ERR_SOCKET` matching inside `some_und_err_socket_thing`.
+//
+// (d) QUOTE characters — `'`, `"` and a backtick. A token flanked by one of these is a
+//     SQL string literal or a quoted identifier, not a syscall name in a transport
+//     message: ClickHouse renders both that way inside its own exception text (`Cannot
+//     parse string 'EPIPE' as UInt64`, `Syntax error: failed at position 9 ('reason =
+//     'ETIMEDOUT'')`). Exclusion (c) alone does NOT reject these — a quote is already a
+//     non-identifier character, so a whole-word token between quotes matches the same as
+//     one between spaces. Node's syscall spellings are space-flanked — `read ECONNRESET`,
+//     `write EPIPE`, `connect ETIMEDOUT <addr>` — so none of them loses its match.
+const TRANSPORT_SYSCALL_MESSAGE_PATTERNS = [...TRANSPORT_SYSCALL_CODES].map(
+  (code) => new RegExp(`(?:^|[^a-z0-9_'"\`])${code.toLowerCase()}(?:$|[^a-z0-9_'"\`])`)
+);
+
+// Verbatim prefix and SQL separator that packages/civitai-clickhouse/src/client.ts
+// `$query` builds its rethrow from: `ClickHouse query failed: <original>\nQuery: <sql>`.
+const CH_QUERY_WRAPPER_PREFIX = 'clickhouse query failed:';
+const CH_QUERY_SQL_SEPARATOR = '\nquery:';
+
 /**
  * True ONLY for a TRANSIENT ClickHouse CONNECTION / TRANSPORT failure — the kind
  * that flaps when reaching ClickHouse Cloud (a socket reset / broken pipe / all
@@ -445,37 +492,41 @@ export function isUpstreamServerOrNetworkError(args: {
  *     for — a momentary CH Cloud overload, retryable, NOT a code bug). Query/schema
  *     codes (`60`, `349`, …) are NOT in the set.
  *  3. Our own `$query` wrapper flattens both of the above into a plain
- *     `Error('ClickHouse query failed: <original message>')`, losing `.code`, so we
- *     also string-match the transient signatures in the message (`Code: 279`/`210`/
- *     `209`/`202`, `socket hang up`, `broken pipe`, `all connection tries failed`,
- *     `too many simultaneous queries`). The message match is still transient-ONLY —
- *     `Code: 60` / `unknown table` never match.
+ *     `Error('ClickHouse query failed: <original message>\nQuery: <sql>')`, losing
+ *     `.code`, so we also string-match the transient signatures in the message
+ *     (`Code: 279`/`210`/`209`/`202`, `socket hang up`, `broken pipe`, `all connection
+ *     tries failed`, `too many simultaneous queries`, and — under the four narrowing rules
+ *     below — every `TRANSPORT_SYSCALL_CODES` spelling).
+ *
+ * 🔴 THE MESSAGE THAT SHAPE 3 MATCHES CONTAINS QUERY TEXT, FROM TWO SOURCES. `$query`
+ * appends `\nQuery: <sql>`, and ClickHouse re-embeds fragments of the failing query and
+ * its string literals inside its own exception text. An unrestricted substring match
+ * would let either one decide the classification — the exact inversion of what this
+ * predicate is for. Four narrowing rules apply to the syscall-spelling match: (a) drop the
+ * `\nQuery:` tail `$query` appended, (b) require our own wrapper prefix, (c) reject a
+ * token embedded in an identifier, (d) reject a token flanked by a quote character. Each
+ * is documented at the code that applies it, and each has a case only it rejects in
+ * `src/server/utils/__tests__/errorHandling.clickhouse-classify.test.ts`.
+ *
+ * 🔴 WHAT REMAINS UNCOVERED: a syscall token that ClickHouse re-embeds into its exception
+ * text WITHOUT quoting it is rejected by none of the four and is still classified
+ * transient, so a genuine query/schema fault fails soft instead of surfacing as the 500
+ * this predicate exists to preserve. Only reads through `$query` are exposed, because rule
+ * (b) requires that wrapper's prefix — a raw `client.insert` or `SimpleClickhouse.query`
+ * error carries none, so it stays a 500. Rule (a) cannot see the token (it is before the
+ * separator), and rule (d) cannot (it is not quoted). Pinned by two tests in
+ * `src/server/utils/__tests__/errorHandling.clickhouse-classify.test.ts`.
+ * 🔴 Nor can a rule keyed on ClickHouse's own `DB::Exception:` marker — that is inert
+ * here, because `parseError` sets `.message` to the text BETWEEN `Exception: ` and the
+ * `(TYPE)` marker, so a well-formed server error reaches `$query` with the marker already
+ * stripped. The literal-phrase matches above get (a) only: they run on the truncated
+ * message, but carry no prefix, identifier or quote boundary.
  *
  * Walks the `.cause` chain so a wrapped error (tRPC `TRPCError{ cause }`, undici
  * `TypeError{ cause }`) is still classified.
  */
 export function isClickHouseConnectionError(e: unknown): boolean {
-  // Syscall codes for a dropped/refused/reset TCP connection. (Intentionally a
-  // SUBSET of isUpstreamNetworkError's set — only true transport faults, no
-  // DNS-resolution-style codes that wouldn't apply to a pooled CH connection.)
-  const TRANSPORT_SYSCALL_CODES = new Set([
-    'ECONNRESET',
-    'EPIPE',
-    'ETIMEDOUT',
-    'ECONNREFUSED',
-    'EHOSTUNREACH',
-    'ENETUNREACH',
-    'UND_ERR_SOCKET',
-    'UND_ERR_CONNECT_TIMEOUT',
-  ]);
-  // ClickHouse server error codes that are TRANSIENT INFRA brownouts (never a query
-  // or schema fault). 279/210/209 = connection/transport; 202 = momentary capacity
-  // overload. Strings, because ClickHouseError.code is a string.
-  const TRANSIENT_CH_CODES = new Set(['279', '210', '209', '202']);
-
-  let cur = e as
-    | { name?: string; message?: string; code?: unknown; cause?: unknown }
-    | undefined;
+  let cur = e as { name?: string; message?: string; code?: unknown; cause?: unknown } | undefined;
   for (let depth = 0; depth < 5 && cur && typeof cur === 'object'; depth++) {
     const code = cur.code;
     if (typeof code === 'string') {
@@ -483,10 +534,25 @@ export function isClickHouseConnectionError(e: unknown): boolean {
       if (TRANSPORT_SYSCALL_CODES.has(code)) return true;
       if (TRANSIENT_CH_CODES.has(code)) return true;
     }
-    const msg = typeof cur.message === 'string' ? cur.message.toLowerCase() : '';
+    // `$query` APPENDS `\nQuery: <sql>` to the message it throws, so the raw string
+    // carries the query text as well as the failure. Match only the part BEFORE that
+    // separator, so a token that appears ONLY in that appended tail cannot decide the
+    // classification: a `Code: 60` UNKNOWN_TABLE thrown for `… WHERE tag = 'ECONNRESET'`
+    // would otherwise read as a transport blip and get swallowed.
+    //
+    // 🔴 This strips the appended tail and nothing else — ClickHouse re-embeds query
+    // fragments inside its own exception text, which sits before the separator and
+    // survives. See the docblock for what that leaves uncovered.
+    const rawMsg = typeof cur.message === 'string' ? cur.message.toLowerCase() : '';
+    const sqlAt = rawMsg.indexOf(CH_QUERY_SQL_SEPARATOR);
+    const msg = sqlAt === -1 ? rawMsg : rawMsg.slice(0, sqlAt);
     if (msg) {
-      // Shape 3: the $query-wrapped string. Transient-infra signatures ONLY — these
-      // never appear in an UNKNOWN_TABLE / NULL-insert / syntax error message.
+      // Shape 3: the $query-wrapped string. Transient-infra signatures ONLY — multi-word
+      // phrases and `Code: NNN` prefixes that a ClickHouse query/schema error does not
+      // emit. Every one contains a space or a colon, so no identifier can embed them and
+      // they need no anchoring. Unlike the syscall spellings below they are not scoped to
+      // our wrapper prefix, and query text reaches them only where ClickHouse re-embeds
+      // it in its own exception text — an accepted limit, not a covered case.
       if (
         msg.includes('socket hang up') ||
         msg.includes('broken pipe') ||
@@ -494,13 +560,29 @@ export function isClickHouseConnectionError(e: unknown): boolean {
         msg.includes('connection refused') ||
         msg.includes('connection reset') ||
         msg.includes('too many simultaneous queries') ||
-        // The `Code: NNN` prefix our $query wrapper preserves, transient codes only.
+        // A `Code: NNN` prefix survives only when parseError's regex fails and it rethrows
+        // verbatim; a parsed error arrives as inner text (`All connection tries failed. `,
+        // 1.23.1), which the phrases above catch for 279/210/202 but NOT 209 — no phrase
+        // here is a socket-timeout signature. Neither half covers the other.
         msg.includes('code: 279') ||
         msg.includes('code: 210') ||
         msg.includes('code: 209') ||
         msg.includes('code: 202')
       ) {
         return true;
+      }
+      // Reads through $query arrive as a plain Error, so for those the .code branch never
+      // fires and the syscall name survives only as text. Restricted to OUR wrapper's
+      // message: a raw syscall error from any other dependency still carries `.code`, so
+      // nothing is lost — while an unrelated upstream's TEXT (a Redis
+      // `connect ECONNREFUSED` in a bare message) must not be reported as a ClickHouse
+      // brownout, or the fail-soft counter attributes the wrong dependency's outage here.
+      // Scoped to the text route only: an error OBJECT carrying `.code` is matched by
+      // shape 1 above regardless of which dependency raised it.
+      if (msg.includes(CH_QUERY_WRAPPER_PREFIX)) {
+        for (const pattern of TRANSPORT_SYSCALL_MESSAGE_PATTERNS) {
+          if (pattern.test(msg)) return true;
+        }
       }
     }
     cur = cur.cause as typeof cur;
@@ -525,15 +607,49 @@ export function isClickHouseConnectionError(e: unknown): boolean {
  * `clickhouse.$query` client boundary, which also serves inserts + background/cron
  * reads where a tRPC-typed 503 would be semantically wrong; classification stays a
  * narrow, transient-only allowlist (see {@link isClickHouseConnectionError}).
+ *
+ * `path` is a Prometheus label on `clickhouseFailSoftCounter`, so it must be a
+ * per-call-site constant — anything request-derived multiplies the series.
+ *
+ * 🔴 THE `logToAxiom` CALL IS NOT REDUNDANT WITH THE COUNTER, AND NOT OPTIONAL. The
+ * central tRPC error handler (`src/pages/api/trpc/[trpc].ts`) returns EARLY on
+ * `SERVICE_UNAVAILABLE` and skips the Axiom ingest entirely, deliberately — a 503 wave is
+ * exactly when per-reject stringify+ingest costs the most. So re-mapping a transient CH
+ * read to a 503 converts a logged `ClickHouse query failed: …` line into a SILENT
+ * degradation. The counter records THAT it happened and where; only this line carries the
+ * message — which, for a `$query` read, is the one that embeds the failing SQL. The same
+ * counter+log pairing is at `image.service`'s `image-feed` fail-soft.
+ *
+ * Fire-and-forget with an explicit no-op rejection handler: telemetry must never change
+ * what this function throws, and must never delay it. `logToAxiom` already contains its
+ * own failures, so this handler is belt-and-braces — but a bare `.catch()` (no argument)
+ * would NOT contain one, since it passes the rejection straight through. (The
+ * `image-feed` site spells it `.catch()`; that is the shape to avoid, not to copy.)
  */
 export async function runClickHouseRead<T>(
   fn: () => Promise<T>,
-  message = 'This service is temporarily unavailable. Please try again.'
+  options: { path: string; message?: string }
 ): Promise<T> {
   try {
     return await fn();
   } catch (e) {
-    if (isClickHouseConnectionError(e)) throwServiceUnavailableError(message, e);
+    if (isClickHouseConnectionError(e)) {
+      clickhouseFailSoftCounter.inc({ path: options.path });
+      logToAxiom(
+        {
+          type: 'warning',
+          name: 'clickhouse-failsoft',
+          message: 'ClickHouse transport error on an instrumented read — served 503',
+          path: options.path,
+          error: e instanceof Error ? e.message : String(e),
+        },
+        'clickhouse'
+      ).catch(() => undefined);
+      throwServiceUnavailableError(
+        options.message ?? 'This service is temporarily unavailable. Please try again.',
+        e
+      );
+    }
     throw e;
   }
 }

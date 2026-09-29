@@ -50,6 +50,16 @@ interface TrainingStudioHost {
      *  Buzz spend mode to it — the user toggle hides and nothing is persisted to localStorage.
      *  Omit (standalone) to leave the user's own yellow⇄green toggle in charge. */
     buzzMode?: 'yellow' | 'green';
+    /** Whether this user may generate with UNPUBLISHED training results — the main app gates
+     *  that on membership (`isMember || isModerator`). Pass `false` for a non-member: the
+     *  per-epoch Generate affordance disables with a membership explanation (linking
+     *  `pricingUrl`) instead of silently doing nothing. Omit when the host has no membership
+     *  knowledge (e.g. the standalone shell) — the affordance then behaves as before. */
+    canGenerateUnpublished?: boolean;
+    /** The host's membership-plans page, linked from that explanation. Same URL semantics as
+     *  `generateUrl` (relative = same-tab, absolute = new tab). Omit to render the explanation
+     *  without a link. */
+    pricingUrl?: string;
   };
 
   /** The host owns the URL space. Flow code describes destinations in studio terms; the host maps

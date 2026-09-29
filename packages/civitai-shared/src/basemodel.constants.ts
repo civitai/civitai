@@ -242,6 +242,10 @@ export const ECO = {
   // Meta
   MuseImage: 86,
 
+  // inclusionAI: distinct weights; addon compatibility is not established.
+  Ming: 89,
+  MingLayer: 90,
+
   // Child ecosystems of SDXL
   Pony: 100,
   Illustrious: 101,
@@ -853,6 +857,22 @@ export const ecosystems: EcosystemRecord[] = [
     sortOrder: 999,
   },
 
+  // inclusionAI
+  {
+    id: ECO.Ming,
+    key: 'Ming',
+    displayName: 'Ming Image Design',
+    familyId: 27,
+    sortOrder: 270,
+  },
+  {
+    id: ECO.MingLayer,
+    key: 'MingLayer',
+    displayName: 'Ming Image Design Layer',
+    familyId: 27,
+    sortOrder: 271,
+  },
+
   // Audio ecosystems
   {
     id: ECO.AceAudio,
@@ -970,6 +990,7 @@ export const SELF_HOSTED_ECOSYSTEM_KEYS = [
   'Ernie',
   'Lens',
   'HiDream-O1',
+  'Ming',
   // SdCppImageGenInput
   'ZImageTurbo',
   'ZImageBase',
@@ -1079,6 +1100,7 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // Qwen 2.1 - hosted checkpoint and release-specific LoRAs
   { ecosystemId: ECO.Qwen21, supportType: 'generation', modelTypes: checkpointAndLora },
+  { ecosystemId: ECO.Qwen21, supportType: 'training', modelTypes: loraOnly },
 
   // Qwen 3 - checkpoint only
   { ecosystemId: ECO.Qwen3, supportType: 'generation', modelTypes: [ModelType.Checkpoint] },
@@ -1232,6 +1254,10 @@ export const ecosystemSupport: EcosystemSupport[] = [
   { ecosystemId: ECO.ZImageBase, supportType: 'training', modelTypes: loraOnly },
   { ecosystemId: ECO.ZImageBase, supportType: 'auction', modelTypes: checkpointAndLora },
 
+  // Ming - checkpoint and LORA; the Layer checkpoint has no backend route yet
+  { ecosystemId: ECO.Ming, supportType: 'generation', modelTypes: checkpointAndLora },
+  { ecosystemId: ECO.Ming, supportType: 'training', modelTypes: loraOnly },
+
   // Boogu - checkpoint and LORA (training upcoming per orchestrator)
   { ecosystemId: ECO.Boogu, supportType: 'generation', modelTypes: checkpointAndLora },
 
@@ -1255,6 +1281,7 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // resources the form cannot send.
   { ecosystemId: ECO.MiniMaxMusic3, supportType: 'generation', modelTypes: checkpointOnly },
   { ecosystemId: ECO.YuE2, supportType: 'generation', modelTypes: checkpointOnly },
+  { ecosystemId: ECO.YuE2, supportType: 'training', modelTypes: loraOnly },
 
   // PolyGen - remote 3D generator (Meshy via Fal). No Civitai checkpoint/LoRA;
   // entry exists so the unified generator picker can route 3D-Models workflows
@@ -1773,6 +1800,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
       modelLocked: true,
     },
   },
+  {
+    ecosystemId: ECO.Ming,
+    defaults: {
+      model: { id: 3355635 },
+      modelLocked: true,
+    },
+  },
 ];
 
 // =============================================================================
@@ -2263,6 +2297,8 @@ export const BM = {
   MiniMaxMusic3: 104,
   MuseImage: 105,
   YuE2: 106,
+  Ming: 108,
+  MingLayer: 109,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2724,6 +2760,11 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
     id: 26,
     name: 'MiniMax',
     description: "MiniMax's video, image and music generation models",
+  },
+  {
+    id: 27,
+    name: 'inclusionAI',
+    description: "inclusionAI's image generation and design models",
   },
 ];
 
@@ -3622,6 +3663,24 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.ZImageBase,
     licenseId: 13,
+  },
+
+  // Ming Image: separate checkpoints for generation and layer decomposition.
+  {
+    id: BM.Ming,
+    name: 'Ming Image Design 0.1',
+    description: "inclusionAI's image generation and editing model for graphic design",
+    type: 'image',
+    ecosystemId: ECO.Ming,
+    licenseId: 19,
+  },
+  {
+    id: BM.MingLayer,
+    name: 'Ming Image Design Layer 0.1',
+    description: "inclusionAI's model for decomposing designs into transparent RGBA layers",
+    type: 'image',
+    ecosystemId: ECO.MingLayer,
+    licenseId: 19,
   },
 
   // Vidu Q1

@@ -8,6 +8,7 @@ import { dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { instrumentApiResponse } from '~/server/prom/http-errors';
+import { resourceDataCache } from '~/server/redis/resource-data.redis';
 import { modelsSearchIndex } from '~/server/search-index';
 import { versionIdFromAir } from '~/shared/utils/air';
 
@@ -70,14 +71,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     .filter((event): event is { id: number; loaded: boolean } => event.id != null);
 
   const versions = resolved.length
-    ? await dbWrite.$queryRaw<{ id: number; modelId: number }[]>`
-        SELECT id, "modelId" FROM "ModelVersion" WHERE id = ANY(${resolved.map(
+    ? await dbWrite.$queryRaw<{ id: number; modelId: number; generatorLoaded: boolean | null }[]>`
+        SELECT id, "modelId", "generatorLoaded" FROM "ModelVersion" WHERE id = ANY(${resolved.map(
           (event) => event.id
         )}::int[])
       `
     : [];
   const known = new Map(versions.map((version) => [version.id, version.modelId]));
-  const acted = resolved.filter((event) => known.has(event.id));
+  // Only what actually MOVED. The orchestrator re-sends `workersAvailable` for resources whose
+  // residency did not change, and acting on those costs a no-op UPDATE on a 1.2M-row table plus a
+  // cache bust that turns the hour TTL into seconds for exactly the rows people generate with.
+  const residency = new Map(versions.map((version) => [version.id, version.generatorLoaded]));
+  const acted = resolved.filter(
+    (event) => known.has(event.id) && residency.get(event.id) !== event.loaded
+  );
 
   await setLoaded(
     acted.filter((event) => event.loaded).map((event) => event.id),
@@ -96,6 +103,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     await modelsSearchIndex.queueUpdate(
       modelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
     );
+
+  // Last, and after the enqueue for the reason the sync job gives. The SUBMIT path reads residency
+  // from resourceDataCache, whose hour TTL would otherwise keep refusing a resource that has loaded.
+  if (acted.length) await resourceDataCache.bust(acted.map((event) => event.id));
 
   logToAxiom({
     name: 'resource-availability-webhook',

@@ -589,6 +589,33 @@ export type AppUserScopeGrant = {
   granted_at: Generated<Timestamp>;
   revoked_at: Timestamp | null;
   /**
+   * PER-SCOPE REVOCATION — the SUPPRESSION LIST, not the absence of a grant.
+   *
+   * 🔴 A REVOKE CANNOT BE MODELLED AS REMOVAL FROM `granted_scopes`, AND THAT IS
+   * THE WHOLE REASON THIS COLUMN EXISTS. `BlockRegistry.recordInstallConsent`
+   * passes the app's ENTIRE consent-gated effective set into `recordScopeGrant`,
+   * which UNIONS it into `granted_scopes` — so a revoke expressed only as removal
+   * is silently undone by the user's next install or subscribe of that app, with
+   * no consent prompt anywhere. A scope listed here is subtracted at every read
+   * (`getGrantedScopes`), so a union that puts it back grants nothing.
+   *
+   * Cleared ONLY by an explicit prompted re-consent (`blocks.grantScopes` →
+   * `recordScopeGrant({ clearRevocations: true })`), and then only for the scopes
+   * that consent actually covered — never wholesale, or re-consenting to scope A
+   * would resurrect a revoked scope B.
+   */
+  revoked_scopes: Generated<string[]>;
+  /**
+   * When the MOST RECENT per-scope revoke happened for this (user, app).
+   *
+   * ⚠️ NOT A PER-SCOPE TIMESTAMP, and deliberately not: `revoked_scopes` is a
+   * TEXT[] with no room for one, and a per-scope time would need a child table.
+   * Two revokes a week apart leave ONE value here — the later. So it is honest as
+   * an APP-LEVEL "permissions last changed", and a UI must not render it beside an
+   * individual scope as though it dated that scope's revoke.
+   */
+  revoked_scopes_at: Timestamp | null;
+  /**
    * The per-UTC-day Buzz ceiling the VIEWER set for THIS app at consent time.
    * NULL = the user set no budget, and the app spends under the platform's own
    * per-user daily ceiling (`BLOCK_BUZZ_CAP_PER_DAY`, 50,000) alone — which is
@@ -976,6 +1003,99 @@ export type BlockedImage = {
   reason: Generated<BlockImageReason>;
   createdAt: Generated<Timestamp>;
 };
+export type BlockGoodEntitlement = {
+  id: string;
+  user_id: number;
+  app_block_id: string;
+  good_id: string;
+  /**
+   * 'good' | 'app_unlock' — see BLOCK_GOOD_KINDS.
+   */
+  kind: Generated<string>;
+  /**
+   * The opaque app payload, snapshotted from the manifest at purchase.
+   */
+  payload: Generated<unknown>;
+  /**
+   * The purchase that granted it. One-to-one: a purchase grants exactly one
+   * entitlement, and an entitlement always has a purchase behind it.
+   */
+  purchase_id: string;
+  granted_at: Generated<Timestamp>;
+  /**
+   * Set when the purchase is refunded or the good is taken down. A revoked
+   * entitlement is kept, never deleted — the row is the audit trail for a
+   * reversal.
+   */
+  revoked_at: Timestamp | null;
+  revoke_reason: string | null;
+};
+export type BlockGoodPurchase = {
+  id: string;
+  /**
+   * The buyer. Always the verified block-token subject, never a body field.
+   */
+  user_id: number;
+  app_id: string;
+  app_block_id: string;
+  /**
+   * NOT an FK and NULLABLE, for the same reason the attribution tables give:
+   * synthetic instance ids (`bus_pub_*`, `page_*`, `ephemeral-*`) resolve to no
+   * row. NULL means the instance could not be resolved — the purchase still
+   * happened and is still attributed to the app; only the install context is
+   * unknown. A purchase must never fail because attribution could not.
+   */
+  block_instance_id: string | null;
+  /**
+   * The manifest `goods[].id` bought, and the manifest `version` it was bought
+   * under. Together they explain a disputed price without needing the manifest
+   * that was live at the time (a later approved version may have repriced it).
+   */
+  good_id: string;
+  manifest_version: string;
+  /**
+   * What the viewer was charged, in whole Buzz. Always > 0 (CHECK).
+   */
+  price_buzz: number;
+  /**
+   * How much of `price_buzz` came out of the BLUE (granted) account. Drives
+   * the proportional colour split of the payout, so a viewer paying blue does
+   * not turn non-withdrawable Buzz into withdrawable earnings.
+   */
+  blue_paid_buzz: Generated<number>;
+  app_owner_user_id: number;
+  app_owner_share_buzz: number;
+  platform_share_buzz: number;
+  /**
+   * The deterministic `externalTransactionIdPrefix` the buyer's debit was
+   * made under. UNIQUE — this is the LEDGER-backed half of idempotency: a
+   * retry after the Redis sentinel expired collides here instead of charging
+   * twice.
+   */
+  buzz_transaction_id: string;
+  /**
+   * What was actually paid, per recipient and colour, with each payout's own
+   * ledger transaction id: `[{ userId, amount, color, transactionId? }]`.
+   * Empty until the payout leg runs. A refund reads THIS, never a re-derived
+   * split.
+   */
+  payouts: Generated<unknown>;
+  /**
+   * 'pending' | 'paid' | 'refunded'. A row is INSERTED as `pending` BEFORE the
+   * buyer is charged — the UNIQUE `buzzTransactionId` is what serialises
+   * concurrent attempts, so exactly one can reach the charge. A surviving
+   * `pending` row is the reconciliation record for a charge whose outcome is
+   * unknown.
+   *
+   * `refunded` also marks a charge that was reversed before any entitlement
+   * was granted: that row is kept, not deleted, because its `buzzTransactionId`
+   * stays occupied in the Buzz ledger and the next attempt supersedes it.
+   */
+  status: Generated<string>;
+  refund_reason: string | null;
+  refunded_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+};
 export type Blocklist = {
   id: Generated<number>;
   createdAt: Generated<Timestamp>;
@@ -1016,10 +1136,22 @@ export type BlockScopeInvocation = {
    */
   oauth_client_id: string | null;
   /**
-   * Discriminates the token population that made the call: `'app-block'` (an App
-   * Block block-token, the historical default) vs `'external-oauth'` (a standard
-   * external OAuth access token verified at `enforceTokenScope`). Additive:
-   * existing rows backfill to `'app-block'`.
+   * Discriminates the token population that made the call. THREE values, and this
+   * comment is the single source for the generated type docs, so keep it complete:
+   * * `'app-block'`      — an App Block block-token, the historical default.
+   * * `'external-oauth'` — a standard external OAuth access token verified at
+   * `enforceTokenScope`; carries no `app_block_id`.
+   * * `'private-run'`    — a block-token minted for a PRIVATE RUN: a moderator, the
+   * owner, or an accepted listing collaborator running a
+   * delisted/suspended app's deployed bundle. It carries the
+   * app's REAL id, and this value is the ONLY thing keeping the
+   * row out of that app owner's analytics, so it is a
+   * load-bearing discriminator rather than a label. Written
+   * only from the verified `privateRun` token claim; see
+   * `scope-activity-predicate.ts`.
+   * Free-text with NO CHECK constraint — the value space is enforced in TypeScript
+   * (`BlockScopeInvocationSource`), not by the database. Additive: existing rows
+   * backfill to `'app-block'` via the column DEFAULT.
    */
   source: Generated<string>;
   scope: string;
@@ -1135,6 +1267,11 @@ export type BlockSpendAttribution = {
   /**
    * 'self_spend' / 'internal_owner' / 'manual_review'. Spend has no
    * refund path, so this is never 'refund'/'chargeback'.
+   * 'manual_review' carries TWO senses on this table: an operator void, and a
+   * PRIVATE RUN of a delisted app (the value is reused rather than adding a
+   * 'private_run' member, which would need a hand-applied migration). A
+   * cross-table query cannot tell them apart here; the private-run mint's audit
+   * line is what discriminates. Nothing pays out of this table either way.
    */
   voided_reason: string | null;
   attributed_at: Generated<Timestamp>;
@@ -2283,6 +2420,12 @@ export type CosmeticShopSectionItem = {
 export type CoveredCheckpoint = {
   model_id: number;
   version_id: number;
+};
+export type CreatorGalleryHiddenUser = {
+  creatorId: number;
+  userId: number;
+  note: string | null;
+  createdAt: Generated<Timestamp>;
 };
 export type Crucible = {
   id: Generated<number>;
@@ -4472,6 +4615,29 @@ export type UserStat = {
   thumbsDownCountAllTime: number;
   reactionCountAllTime: number;
 };
+export type UserStorageRollup = {
+  userId: number;
+  imagesRequestedAt: Timestamp | null;
+  imagesStartedAt: Timestamp | null;
+  imagesComputedAt: Timestamp | null;
+};
+export type UserStorageSnapshot = {
+  userId: number;
+  date: Timestamp;
+  kind: string;
+  fileCount: number;
+  bytes: string;
+};
+export type UserStorageUsage = {
+  userId: number;
+  kind: string;
+  publicStatus: string;
+  baseModel: Generated<string>;
+  month: Timestamp;
+  fileCount: number;
+  bytes: string;
+  computedAt: Generated<Timestamp>;
+};
 export type UserStrike = {
   id: Generated<number>;
   userId: number;
@@ -4616,6 +4782,8 @@ export type DB = {
   block_attribution_payout: BlockAttributionPayout;
   block_author_fee_accrual: BlockAuthorFeeAccrual;
   block_buzz_attribution: BlockBuzzAttribution;
+  block_good_entitlement: BlockGoodEntitlement;
+  block_good_purchase: BlockGoodPurchase;
   block_scope_invocations: BlockScopeInvocation;
   block_spend_attribution: BlockSpendAttribution;
   block_subscription_attribution: BlockSubscriptionAttribution;
@@ -4703,6 +4871,7 @@ export type DB = {
   CosmeticShopSection: CosmeticShopSection;
   CosmeticShopSectionItem: CosmeticShopSectionItem;
   CoveredCheckpoint: CoveredCheckpoint;
+  CreatorGalleryHiddenUser: CreatorGalleryHiddenUser;
   Crucible: Crucible;
   CrucibleEntry: CrucibleEntry;
   CryptoDeposit: CryptoDeposit;
@@ -4893,6 +5062,9 @@ export type DB = {
   UserRestriction: UserRestriction;
   UserRole: UserRole;
   UserStat: UserStat;
+  UserStorageRollup: UserStorageRollup;
+  UserStorageSnapshot: UserStorageSnapshot;
+  UserStorageUsage: UserStorageUsage;
   UserStrike: UserStrike;
   Vault: Vault;
   VaultItem: VaultItem;

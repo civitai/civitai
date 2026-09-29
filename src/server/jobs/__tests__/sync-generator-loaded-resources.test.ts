@@ -2,11 +2,13 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as FliptClient from '~/server/flipt/client';
+import type * as ResourceData from '~/server/redis/resource-data.redis';
 
-const { mockGetLoadedResourceAirs, mockQueueUpdate, mockIsFlipt } = vi.hoisted(() => ({
+const { mockGetLoadedResourceAirs, mockQueueUpdate, mockIsFlipt, mockBust } = vi.hoisted(() => ({
   mockGetLoadedResourceAirs: vi.fn(),
   mockQueueUpdate: vi.fn(),
   mockIsFlipt: vi.fn(),
+  mockBust: vi.fn(),
 }));
 
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
@@ -18,6 +20,10 @@ vi.mock('~/server/http/orchestrator/loaded-resources', () => ({
   getLoadedResourceAirs: mockGetLoadedResourceAirs,
 }));
 vi.mock('~/server/search-index', () => ({ modelsSearchIndex: { queueUpdate: mockQueueUpdate } }));
+vi.mock('~/server/redis/resource-data.redis', async (importOriginal) => ({
+  ...(await importOriginal<typeof ResourceData>()),
+  resourceDataCache: { bust: mockBust },
+}));
 vi.mock('~/server/jobs/job', () => ({
   createJob: (name: string, cron: string, fn: (e: unknown) => Promise<unknown>) => ({
     name,
@@ -63,6 +69,32 @@ describe('syncGeneratorLoadedResources', () => {
     dbMock.dbWrite.$executeRaw.mockResolvedValue(0 as never);
     mockQueueUpdate.mockResolvedValue(undefined);
     mockIsFlipt.mockResolvedValue(true);
+    mockBust.mockResolvedValue(undefined);
+  });
+
+  it('busts the cached resource rows for both directions, and only for what flipped', async () => {
+    mockGetLoadedResourceAirs.mockResolvedValue([civitai(10), civitai(11)]);
+    database(
+      [
+        { id: 10, modelId: 1 },
+        { id: 99, modelId: 2 },
+      ],
+      (id) => ({ 11: 1 }[id])
+    );
+
+    await syncGeneratorLoadedResources.run();
+
+    // 10 is in both sets and did not flip; 11 loaded, 99 unloaded.
+    expect(mockBust).toHaveBeenCalledWith([11, 99]);
+  });
+
+  it('busts nothing on a cycle where the list is unchanged', async () => {
+    mockGetLoadedResourceAirs.mockResolvedValue([civitai(10)]);
+    database([{ id: 10, modelId: 1 }]);
+
+    await syncGeneratorLoadedResources.run();
+
+    expect(mockBust).not.toHaveBeenCalled();
   });
 
   it('does nothing, not even the orchestrator call, while the flag is off', async () => {

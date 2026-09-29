@@ -3,6 +3,7 @@ import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { addOnDemandRunStrategiesJob } from '~/server/jobs/add-on-demand-run-strategies';
 import { announcementDismissalCleanupJob } from '~/server/jobs/announcement-dismissal-cleanup';
+import { voidOrphanedAppealsJob } from '~/server/jobs/void-orphaned-appeals';
 import { announcementMediaCheckJob } from '~/server/jobs/announcement-media-check';
 import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
 import { blurbFanoutJob } from '~/server/jobs/blurb-fanout';
@@ -30,7 +31,6 @@ import { updateCollectionItemRandomId } from '~/server/jobs/collection-item-rand
 import { checkImageExistence } from '~/server/jobs/confirm-image-existence';
 import { confirmMutes } from '~/server/jobs/confirm-mutes';
 import { confirmPendingBlockAttributions } from '~/server/jobs/confirm-pending-block-attributions';
-import { bulkPayoutBlockAttributions } from '~/server/jobs/bulk-payout-block-attributions';
 import { purgeReviewSnapshotsJob } from '~/server/jobs/purge-review-snapshots';
 import { reapDevTunnelsJob } from '~/server/jobs/reap-dev-tunnels';
 import { sweepStaleAgentReviewsJob } from '~/server/jobs/sweep-stale-agent-reviews';
@@ -84,6 +84,7 @@ import { csamJobs } from '~/server/jobs/process-csam';
 import { processingEngingEarlyAccess } from '~/server/jobs/process-ending-early-access';
 import { syncGeneratorLoadedResources } from '~/server/jobs/sync-generator-loaded-resources';
 import { processHuggingFaceImportsJob } from '~/server/jobs/process-huggingface-imports';
+import { storageUsageMediaJob, storageUsageNightlyJob } from '~/server/jobs/storage-usage';
 import { processRewards, rewardsDailyReset } from '~/server/jobs/process-rewards';
 import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
 import { processSubscriptionsRequiringRenewal } from '~/server/jobs/process-subscriptions-requiring-renewal';
@@ -91,6 +92,7 @@ import { processVaultItems } from '~/server/jobs/process-vault-items';
 import { auditWildcardSetCategoriesJob } from '~/server/jobs/audit-wildcard-set-categories';
 import { clickhouseRefreshJobs } from '~/server/jobs/clickhouse-refresh-monitor';
 import { userActivityRollupJob } from '~/server/jobs/user-activity-rollup';
+import { userPopulationSnapshotJob } from '~/server/jobs/user-population-snapshot';
 import { metricReconciliationJobs } from '~/server/jobs/metric-reconciliation-audit';
 import { reconcileWildcardSetsJob } from '~/server/jobs/reconcile-wildcard-sets';
 import { pushDiscordMetadata } from '~/server/jobs/push-discord-metadata';
@@ -138,6 +140,8 @@ export const jobs: Job[] = [
   gdprStripeScrubJob,
   scanFilesFallbackJob,
   processHuggingFaceImportsJob,
+  storageUsageNightlyJob,
+  storageUsageMediaJob,
   sendNotificationsJob,
   notificationCursorMonitor,
   sendWebhooksJob,
@@ -195,6 +199,7 @@ export const jobs: Job[] = [
   ...metricReconciliationJobs,
   ...clickhouseRefreshJobs,
   userActivityRollupJob,
+  userPopulationSnapshotJob,
   ...jobQueueJobs,
   countReviewImages,
   processingEngingEarlyAccess,
@@ -208,7 +213,6 @@ export const jobs: Job[] = [
   botAccountDetection,
   reactionWithdrawalDetection,
   confirmPendingBlockAttributions,
-  bulkPayoutBlockAttributions,
   reapDevTunnelsJob,
   sweepStaleAgentReviewsJob,
   cosmeticPerceptualHashSweepJob,
@@ -254,6 +258,7 @@ export const jobs: Job[] = [
   auditRemixSourcesJob,
   dedupeOfficialUploadsJob,
   announcementDismissalCleanupJob,
+  voidOrphanedAppealsJob,
   announcementMediaCheckJob,
   blurbFanoutJob,
   ...crucibleJobs,

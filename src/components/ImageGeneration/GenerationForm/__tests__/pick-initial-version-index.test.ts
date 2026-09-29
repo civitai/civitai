@@ -122,11 +122,13 @@ describe('toResourceSelectFilterInput', () => {
     const filters: Required<ResourceFilter> = {
       types: ['LORA' as ModelType],
       baseModels: ['SDXL 1.0'] as ResourceFilter['baseModels'],
+      loadedOnly: true,
       hidePaid: true,
     };
     expect(toResourceSelectFilterInput(filters)).toEqual({
       filterTypes: ['LORA'],
       filterBaseModels: ['SDXL 1.0'],
+      filterLoaded: true,
       hidePaid: true,
     });
     // Every key of the filter is accounted for — a new one added without a wire fails here.
@@ -136,6 +138,8 @@ describe('toResourceSelectFilterInput', () => {
   });
 
   it('passes hidePaid through as undefined when unset, so the clause stays off', () => {
-    expect(toResourceSelectFilterInput({ types: [], baseModels: [] }).hidePaid).toBeUndefined();
+    expect(
+      toResourceSelectFilterInput({ types: [], baseModels: [], loadedOnly: false }).hidePaid
+    ).toBeUndefined();
   });
 });

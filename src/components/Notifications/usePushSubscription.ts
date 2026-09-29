@@ -1,18 +1,24 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect } from 'react';
+import {
+  classifyPushEnableError,
+  describePushEnableFailure,
+} from '~/components/Notifications/pushEnableErrors';
+import type { PushEnableFailure } from '~/components/Notifications/pushEnableErrors';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { usePushSubscriptionStore } from '~/store/push-subscription.store';
+import type { PushSupport } from '~/store/push-subscription.store';
+import { isBraveBrowser } from '~/utils/device-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-
-export type PushSupport =
-  | 'supported'
-  | 'needs-standalone' // iOS Safari tab: PushManager only exists after Add to Home Screen
-  | 'unsupported';
 
 function getPushSupport(): PushSupport {
   if (typeof window === 'undefined') return 'unsupported';
   if (!env.NEXT_PUBLIC_VAPID_PUBLIC_KEY) return 'unsupported';
-  if ('serviceWorker' in navigator && 'PushManager' in window) return 'supported';
+  // 'Notification' can be absent while PushManager exists (Firefox with web notifications
+  // disabled) — reading Notification.permission there is a ReferenceError, not a denial.
+  if ('serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window)
+    return 'supported';
   const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
   const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
   if (isIos && !isStandalone) return 'needs-standalone';
@@ -31,6 +37,16 @@ async function getSubscription() {
   return { registration, subscription: await registration.pushManager.getSubscription() };
 }
 
+/** Single exit point for a failed `enable()`, so no branch can go quiet again. */
+function reportPushEnableFailure(failure: PushEnableFailure) {
+  const { title, message, persist } = describePushEnableFailure(failure);
+  showErrorNotification({
+    title,
+    error: { message },
+    autoClose: persist ? false : 8000,
+  });
+}
+
 /**
  * The single owner of the browser-side push state: permission, SW registration, and the
  * subscribe/unsubscribe round trips. Registration happens only inside `enable()` — never on page
@@ -39,28 +55,34 @@ async function getSubscription() {
 export function usePushSubscription() {
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
+  // One store for the whole browser, not per-hook state: this hook is mounted independently by
+  // PushDeviceToggle and PushDeviceList, and per-instance copies drift apart the moment either one
+  // subscribes or revokes (see the store's own comment).
+  const support = usePushSubscriptionStore((s) => s.support);
+  const permission = usePushSubscriptionStore((s) => s.permission);
+  const subscribed = usePushSubscriptionStore((s) => s.subscribed);
+  const currentEndpoint = usePushSubscriptionStore((s) => s.currentEndpoint);
+  const busy = usePushSubscriptionStore((s) => s.busy);
+  const setState = usePushSubscriptionStore((s) => s.set);
+
   // Effect, not render-time: SSR always computes 'unsupported', so deriving during render would
   // hydrate-mismatch on any browser where push exists.
-  const [support, setSupport] = useState<PushSupport>('unsupported');
-  const [permission, setPermission] = useState<NotificationPermission | null>(null);
-  const [subscribed, setSubscribed] = useState(false);
-  const [currentEndpoint, setCurrentEndpoint] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
   useEffect(() => {
-    setSupport(getPushSupport());
-  }, []);
+    setState({ support: getPushSupport() });
+  }, [setState]);
 
   useEffect(() => {
     if (support !== 'supported' || !currentUser) return;
-    setPermission(Notification.permission);
+    setState({ permission: Notification.permission });
     // Only look for an existing registration — never create one from an effect.
     navigator.serviceWorker.getRegistration('/sw.js').then(async (registration) => {
       const subscription = await registration?.pushManager.getSubscription();
-      setSubscribed(!!subscription);
-      setCurrentEndpoint(subscription?.endpoint ?? null);
+      setState({
+        subscribed: !!subscription,
+        currentEndpoint: subscription?.endpoint ?? null,
+      });
     });
-  }, [support, currentUser]);
+  }, [support, currentUser, setState]);
 
   // The server list is the truth about whether THIS browser's subscription is live. The browser
   // can hold an orphaned subscription (a subscribe call that never reached the server, a device
@@ -88,11 +110,19 @@ export function usePushSubscription() {
   /** Ask for browser permission (native prompt) and register the subscription server-side. */
   const enable = useCallback(async () => {
     if (support !== 'supported' || busy) return false;
-    setBusy(true);
+    setState({ busy: true });
     try {
       const result = await Notification.requestPermission();
-      setPermission(result);
-      if (result !== 'granted') return false;
+      setState({ permission: result });
+      if (result !== 'granted') {
+        // Previously a bare `return false`, which made the button look inert: no toast, no state
+        // change, nothing on screen. A denial and a dismissal need different advice — a denial
+        // cannot be re-asked from the page at all, so it has to send the user to site settings.
+        reportPushEnableFailure(
+          result === 'denied' ? { kind: 'permission-denied' } : { kind: 'permission-dismissed' }
+        );
+        return false;
+      }
 
       const { registration } = await getSubscription();
       await navigator.serviceWorker.ready;
@@ -101,29 +131,31 @@ export function usePushSubscription() {
         applicationServerKey: urlBase64ToUint8Array(env.NEXT_PUBLIC_VAPID_PUBLIC_KEY as string),
       });
       const json = subscription.toJSON();
-      if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) return false;
+      if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) {
+        // Also silent before. We have nothing to send to, so it is a failure, not a no-op.
+        reportPushEnableFailure({ kind: 'subscription-incomplete' });
+        return false;
+      }
       await subscribeMutation.mutateAsync({
         endpoint: json.endpoint,
         keys: { p256dh: json.keys.p256dh, auth: json.keys.auth },
       });
-      setSubscribed(true);
-      setCurrentEndpoint(json.endpoint);
+      setState({ subscribed: true, currentEndpoint: json.endpoint });
       return true;
     } catch (error) {
-      showErrorNotification({
-        title: 'Could not enable push notifications',
-        error: error as Error,
-      });
+      // `Registration failed - push service error` is the common one and is useless on its own;
+      // classify it into something actionable. Brave detection is awaited only on the failure path.
+      reportPushEnableFailure(classifyPushEnableError(error, { isBrave: await isBraveBrowser() }));
       return false;
     } finally {
-      setBusy(false);
+      setState({ busy: false });
     }
-  }, [support, busy, subscribeMutation]);
+  }, [support, busy, subscribeMutation, setState]);
 
   /** Drop this browser's subscription (server row + browser-side subscription). */
   const disable = useCallback(async () => {
     if (busy) return;
-    setBusy(true);
+    setState({ busy: true });
     try {
       const registration = await navigator.serviceWorker.getRegistration('/sw.js');
       const subscription = await registration?.pushManager.getSubscription();
@@ -131,12 +163,11 @@ export function usePushSubscription() {
         await unsubscribeMutation.mutateAsync({ endpoint: subscription.endpoint });
         await subscription.unsubscribe();
       }
-      setSubscribed(false);
-      setCurrentEndpoint(null);
+      setState({ subscribed: false, currentEndpoint: null });
     } finally {
-      setBusy(false);
+      setState({ busy: false });
     }
-  }, [busy, unsubscribeMutation]);
+  }, [busy, unsubscribeMutation, setState]);
 
   return {
     support,

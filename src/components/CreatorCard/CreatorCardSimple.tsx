@@ -143,14 +143,18 @@ const CreatorCardSimpleContent = ({
               },
             }}
             contain
+            // maxWidth overrides the 450px cap both media paths derive from the source width
+            // (EdgeImage's maxWidth, EdgeVideo's `.responsive`), so the background fills a frame
+            // wider than 450 instead of pillarboxing over the default layer.
             style={
               isVideo
-                ? { height: '100%', objectFit: 'cover' }
+                ? { width: '100%', height: '100%', maxWidth: '100%', objectFit: 'cover' }
                 : {
                     position: 'absolute',
                     top: 0,
                     left: 0,
                     width: '100%',
+                    maxWidth: '100%',
                     height: '100%',
                     objectFit: 'cover',
                   }

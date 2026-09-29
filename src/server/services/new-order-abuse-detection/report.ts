@@ -1,4 +1,5 @@
 import { MAX_REASON_LENGTH, type AbuseReportInput } from '@civitai/moderation';
+import { NO_ACTION_TAKEN, plural } from '../abuse-report-prose';
 
 /**
  * Turning the Knights of New Order rating-abuse scan into abuse-board reports.
@@ -73,11 +74,18 @@ type Finding = AbuseReportInput['findings'][number];
  * read. Truncated here; the ellipsis is the record that something was cut.
  *
  * ⚠️ DEFENCE IN DEPTH, NOT LIVE PROTECTION — it has never trimmed anything and cannot with today's
- * template. `renderReason`'s longest possible output is 311 characters, measured by rendering every
- * numeric field at `Number.MAX_SAFE_INTEGER` in both branches (269 smited, 311 open — the open
- * sentence is the longer of the two), against a cap of `MAX_REASON_LENGTH`. A typical finding is
- * ~220. So this guards a FUTURE template that adds a producer-supplied or unbounded string, not any
- * input the query can hand it; do not cite it as the thing keeping today's reasons in bounds.
+ * template. `renderReason`'s longest possible output is 305 characters, measured by rendering every
+ * numeric field at `Number.MAX_SAFE_INTEGER` in both branches (263 smited, 305 open — the open
+ * sentence is the longer of the two), against a cap of `MAX_REASON_LENGTH`. A typical finding — the
+ * default `suspect()` fixture in `__tests__/report.test.ts` — is 210 open, 168 smited. So this
+ * guards a FUTURE template that adds a producer-supplied or unbounded string, not any input the
+ * query can hand it; do not cite it as the thing keeping today's reasons in bounds.
+ *
+ * (The worst-case pair moved by 6 when `rating(s)`/`value(s)` became real plurals — the pluralised
+ * noun is two characters shorter in each of three places. ALL FOUR figures are re-measured rather
+ * than adjusted, and all four are pinned in `__tests__/report.test.ts`, because a number a reader is
+ * told was measured has to have been. The typical pair was the one left unpinned when the others
+ * were, and it was wrong by two within the same comment arguing for pinning.)
  *
  * The bound is IMPORTED from the contract rather than restated. It used to be a local literal beside
  * the contract's own `.max(...)`, which is a copy that can drift silently: the two disagreeing means
@@ -106,18 +114,28 @@ export function renderReason(suspect: AbuseSuspect, smited: boolean): string {
   const share = Math.floor(suspect.dominantPct);
   const pace = (Math.round(suspect.avgPerMinute * 10) / 10).toFixed(1);
   const parts = [
-    `Account ${suspect.userId} cast ${suspect.totalRatings.toLocaleString()} rating(s) in the ` +
-      `last ${ABUSE_SCAN_WINDOW_HOURS}h using ${suspect.uniqueRatings.toLocaleString()} distinct ` +
-      `rating value(s).`,
+    `Account ${suspect.userId} cast ${suspect.totalRatings.toLocaleString()} ` +
+      `${plural(suspect.totalRatings, 'rating')} in the last ${ABUSE_SCAN_WINDOW_HOURS}h using ` +
+      `${suspect.uniqueRatings.toLocaleString()} distinct rating ` +
+      `${plural(suspect.uniqueRatings, 'value')}.`,
     `${share}% of them were the value ${suspect.dominantRating}.`,
-    `Pace ${pace} rating(s) per active minute.`,
+    // Always plural, and that is the correct resolution of `rating(s)` here rather than a dodge of
+    // it: `pace` is a one-decimal RATE, and a decimal quantity takes the plural in English whatever
+    // its value ("1.0 ratings per active minute"). Agreeing the noun with the underlying float would
+    // make the single value 1 — and only that value — read "1.0 rating", which is the one spelling
+    // this sentence should never produce.
+    `Pace ${pace} ratings per active minute.`,
     // 🔴 The sentence says what was DONE, matching the `actioned` flag on the same row. A moderator
     // reading the board sees the "Acted" cell and the prose together, and the two disagreeing is
     // worse than either being absent — an account that was already smited must not read as an open
     // case, and one that was not must not read as handled.
-    smited
-      ? `Auto-smited by this scan.`
-      : `No action was taken by this scan — filed for a moderator to review.`,
+    //
+    // 🔴 THE NON-ACTIONED SENTENCE IS SHARED, NOT SPELLED HERE. It is the wording
+    // `bot-account-detection` was moved ONTO (`../abuse-report-prose`), so the two producers on this
+    // board say the same thing in the same place; a local literal here would let them drift apart
+    // again with both suites green. It stays on the `false` branch only: this producer DOES act, and
+    // putting "no action was taken" beside a live smite is the failure `toFinding` names below.
+    smited ? `Auto-smited by this scan.` : NO_ACTION_TAKEN,
   ];
   return truncateReason(parts.join(' '));
 }
@@ -207,13 +225,17 @@ export function renderSummary(suspects: AbuseSuspect[], smitedCount: number): st
   if (!suspects.length)
     return `No accounts matched the rating-pattern scan over the last ${ABUSE_SCAN_WINDOW_HOURS}h.`;
   const ratings = suspects.reduce((sum, s) => sum + s.totalRatings, 0);
+  const filed = suspects.length - smitedCount;
   return (
-    `${suspects.length.toLocaleString()} account(s) matched the rating-pattern scan over the last ` +
-    `${ABUSE_SCAN_WINDOW_HOURS}h, between them ${ratings.toLocaleString()} rating(s). ` +
-    `${smitedCount.toLocaleString()} were auto-smited by the scan; ` +
-    `${(
-      suspects.length - smitedCount
-    ).toLocaleString()} were filed for review with no action taken.`
+    `${suspects.length.toLocaleString()} ${plural(suspects.length, 'account')} matched the ` +
+    `rating-pattern scan over the last ${ABUSE_SCAN_WINDOW_HOURS}h, between them ` +
+    `${ratings.toLocaleString()} ${plural(ratings, 'rating')}. ` +
+    // 🔴 THE VERB AGREES TOO. `1 were auto-smited` is what this sentence said on every run with a
+    // single smite, which is the commonest non-zero case there is. Pluralisation is not only the
+    // `(s)` suffixes — a count interpolated in front of a verb decides that verb as well.
+    `${smitedCount.toLocaleString()} ${plural(smitedCount, 'was', 'were')} auto-smited by the ` +
+    `scan; ${filed.toLocaleString()} ${plural(filed, 'was', 'were')} filed for review with no ` +
+    `action taken.`
   );
 }
 

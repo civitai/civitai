@@ -84,8 +84,11 @@ export async function chargeInitialPrize({
     // Trailing `-creator` keeps prefix matches unambiguous vs other challenge ids (challenge 5 would
     // otherwise prefix-match 50, 51, ...). The currency suffix scopes the id per wallet: a refunded
     // green charge leaves its id occupied in the ledger, so a later yellow re-charge on a shared id
-    // would be silently dropped (createBuzzTransaction dedups on externalTransactionId) — leaving an
-    // unfunded pool. `-creator` prefix matchers still match both `-creator-green` and `-creator-yellow`.
+    // would be REFUSED — leaving an unfunded pool. (Refused, not silently dropped: the header above
+    // records that a retry gets an idempotency `conflict`, and `CreateTransactionResponse` has no
+    // conflict field to report one in band, so it arrives as a throw. Either way the pool goes
+    // unfunded, which is what the suffix prevents.)
+    // `-creator` prefix matchers still match both `-creator-green` and `-creator-yellow`.
     externalTransactionId: `challenge-initial-prize-${challengeId}-creator-${fromAccountType}`,
     details: { challengeId },
   });

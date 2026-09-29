@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as FliptClient from '~/server/flipt/client';
 import type * as RedisClient from '~/server/redis/client';
 
 /**
@@ -68,7 +69,10 @@ vi.mock('~/server/services/image.service', () => ({
   getImagesForModelVersionCache: vi.fn().mockResolvedValue({}),
   queueImageSearchIndexUpdate: vi.fn(),
 }));
-vi.mock('~/server/flipt/client', () => ({ isFlipt: vi.fn().mockResolvedValue(false) }));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  isFlipt: vi.fn().mockResolvedValue(false),
+}));
 vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
   enforceBlockedBrowsingTagsForModels: vi.fn().mockResolvedValue({ emptyResult: false }),
 }));

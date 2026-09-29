@@ -20,12 +20,27 @@ const q = (value: string | number) => encodeURIComponent(String(value));
 /** `section` is a slug from the app's `user-lookup/sections.ts` (`reports`, `notes`, …). Without one the
  *  bare route redirects to the default section, so a link that means "their reports" has to say so. */
 export const moderatorUserLookupPath = (idOrUsername: string | number, section?: string) =>
-  section ? `/retool/user-lookup/${section}?q=${q(idOrUsername)}` : `/retool/user-lookup?q=${q(idOrUsername)}`;
+  section
+    ? `/retool/user-lookup/${section}?q=${q(idOrUsername)}`
+    : `/retool/user-lookup?q=${q(idOrUsername)}`;
 
 export const moderatorImageLookupPath = (imageId: number) => `/retool/image-lookup?q=${q(imageId)}`;
 
 export const moderatorArticleLookupPath = (articleId: number) =>
   `/retool/article-lookup?q=${q(articleId)}`;
+
+/** Built as a model URL rather than an extra param: the page resolves `q` the same way whether it came
+ *  from here or from a pasted address bar. */
+export const moderatorModelLookupPath = (modelId: number, versionId?: number) =>
+  `/retool/model-lookup?q=${q(
+    versionId ? `/models/${modelId}?modelVersionId=${versionId}` : modelId
+  )}`;
+
+/** A version whose model the caller does not know. `mv`, never `q`: a bare number in `q` is a valid
+ *  model id AND a valid version id across most of the range, so it resolves model-first and would land
+ *  on an unrelated model. The page resolves the version and shows its model with the version pinned. */
+export const moderatorModelVersionLookupPath = (versionId: number) =>
+  `/retool/model-lookup?mv=${q(versionId)}`;
 
 export type BulkImageManagerSource =
   | 'post'

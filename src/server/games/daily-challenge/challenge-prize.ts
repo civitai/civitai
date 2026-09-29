@@ -64,9 +64,18 @@ export async function checkAndAwardEntryPrize({
       return false; // Hasn't reached threshold yet
     }
 
-    // Award the entry prize
-    // Note: externalTransactionId ensures idempotency - duplicate calls are safely ignored
-    // Uses same ID pattern as end-of-challenge distribution to prevent double payments
+    // Award the entry prize.
+    //
+    // The deterministic `externalTransactionId` — the same id the
+    // end-of-challenge distribution uses — is what stops a double payment.
+    // ⚠️ It does NOT make a duplicate call a no-op: `CreateTransactionResponse`
+    // carries no conflict field (unlike the multi and bulk responses), so the
+    // ledger reports a duplicate out of band and the client throws on any
+    // non-2xx. The throw lands in this function's own catch, which logs and
+    // returns `false` — so a second call is safe for the MONEY and reports
+    // failure to its caller. Nobody is double-paid either way; the earlier
+    // wording ("duplicate calls are safely ignored") described a success that
+    // does not happen.
     await createBuzzTransaction({
       fromAccountId: 0, // System account
       toAccountId: userId,

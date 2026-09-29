@@ -2,6 +2,7 @@ import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { ActionIcon, Anchor, Avatar, Box, Group, Text } from '@mantine/core';
+import { showNotification } from '@mantine/notifications';
 import {
   IconApps,
   IconBuildingStore,
@@ -34,7 +35,14 @@ import { failureSnapshot } from './failureSnapshot';
 import { hostRenderDecision } from './hostRenderDecision';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import { resolveRequestSignIn } from './requestSignInGate';
-import { resolveRequestConsent } from './requestConsentGate';
+import {
+  resolveHostConsentNotice,
+  resolveRequestConsent,
+  resolveUngrantableConsentNotice,
+  UNGRANTABLE_CONSENT_TOAST,
+} from './requestConsentGate';
+import { BlockConsentNotice } from './BlockConsentNotice';
+import { openBlockConsentModal } from './openBlockConsentModal';
 import { hideBlock } from './hiddenBlocks';
 import { isPageSlot } from '~/shared/constants/slot-registry';
 import { sanitizeAppChromeName } from './appChromeName';
@@ -79,9 +87,10 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { openLoginPopup } from '~/utils/auth-helpers';
 
 const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
-// Lazy-consent UI (REQUEST_CONSENT). Opened on demand when a logged-in viewer
-// clicks an action whose consent-gated scope the token is missing.
-const BlockConsentModal = dynamic(() => import('./BlockConsentModal'), { ssr: false });
+// The lazy-consent UI's dynamic import USED to live here, duplicated verbatim in
+// PageBlockHost, and this copy carried NO dedupe id. Both surfaces now go through
+// `openBlockConsentModal`, which owns the lazy component reference alongside the id
+// and the props shape.
 
 // Hard cap on the suggested top-up amount a block can pre-fill in the
 // BuyBuzzModal (security audit #10). Without this a malicious block could
@@ -101,6 +110,25 @@ interface IframeHostProps {
    *  we also trim them from the wrapped `token.scopes` we send the iframe so
    *  the block's "do I have this capability?" check is accurate. */
   missingScopes?: string[];
+  /**
+   * 🔴 THE MINT'S OWN VERDICT that the signed-in viewer's grant is short of the
+   * app's approved manifest — and the input the HOST-SIDE consent notice keys on,
+   * so the model slot can recover a missing grant WITHOUT the block asking.
+   *
+   * It exists because the block-driven route is not enough on its own. Every path
+   * back to consent on this surface used to start with the block sending
+   * REQUEST_CONSENT, so an app that never asked — an older SDK, a block that simply
+   * does not call `requestGrants`, a block whose own UI never reaches the call —
+   * left the viewer holding a control that could not succeed, with no host-side
+   * signal at all. `PageBlockHost` grew a backstop for exactly this; this surface
+   * did not, which is the gap this prop closes.
+   *
+   * Read as the server states it rather than re-derived from `missingScopes`: the
+   * mint sets `needsConsent = missing.length > 0`, so the two agree in production,
+   * but the host branches on the SERVER's answer and `undefined` (a legacy mint
+   * response with no such field) reads as "no notice".
+   */
+  needsConsent?: boolean;
   /** Advisory color-domain maturity signal (BLOCK_INIT). Server-authoritative
    *  values mirrored from the token mint — the host forwards, never derives. */
   domain?: 'green' | 'blue' | 'red' | null;
@@ -1125,6 +1153,7 @@ export function IframeHost({
   expiresAt,
   tokenKind,
   missingScopes,
+  needsConsent,
   domain,
   maxBrowsingLevel,
   effectiveBrowsingLevel,
@@ -1225,6 +1254,12 @@ export function IframeHost({
    * listener never needs replacing.
    */
   const readGateStatus = useCallback((): Status => statusRef.current, []);
+  // Which app the viewer dismissed the missing-permissions notice for. Keyed on the
+  // app rather than a bare boolean for the same reason PageBlockHost's is: the slot
+  // can swap installs without unmounting, and a dismissal must not carry over to a
+  // DIFFERENT app's permissions. Per-mount on purpose — nothing persists it, so a
+  // dismissal is "not now", not "never".
+  const [consentNoticeDismissedFor, setConsentNoticeDismissedFor] = useState<string | null>(null);
   const [iframeHeight, setIframeHeight] = useState<number>(
     install.manifest.iframe?.minHeight ?? 200
   );
@@ -1926,6 +1961,30 @@ export function IframeHost({
     // `status` deliberately absent — see the RESIZE_IFRAME deps note.
   }, [onMessage, readGateStatus]);
 
+  /**
+   * Open the host's consent UI for a set of withheld scopes.
+   *
+   * 🔴 ONE OPENER, TWO CALLERS ON THIS SURFACE (and two more on `PageBlockHost`),
+   * ON PURPOSE. The block-initiated REQUEST_CONSENT handler below and the host's own
+   * missing-permissions notice must build IDENTICAL props. This thunk binds only the
+   * per-surface values — the model host names the app from `install.manifest.name`,
+   * the page host from its `appName` prop; the dedupe id, the props shape and the
+   * lazy component reference all live in `openBlockConsentModal`.
+   */
+  const openConsentModal = useCallback(
+    (scopes: string[]) => {
+      openBlockConsentModal({
+        appBlockId: install.appBlockId,
+        blockName: install.manifest.name,
+        missingScopes: scopes,
+        onGranted: () => {
+          onConsentGranted?.();
+        },
+      });
+    },
+    [install.appBlockId, install.manifest.name, onConsentGranted]
+  );
+
   // Lazy consent (A6): the block (rendered in full for a logged-in viewer whose
   // token is missing a consent-gated scope) asks the host to open the consent UI
   // when the user clicks an action that needs that capability (e.g. Generate),
@@ -1937,7 +1996,7 @@ export function IframeHost({
   // useBlockToken.refresh); the new scopes flow to the iframe via TOKEN_REFRESH
   // and the block retries — there is no host→block reply (fire-and-forget).
   useEffect(() => {
-    const off = onMessage<{ scopes?: unknown } | undefined>('REQUEST_CONSENT', () => {
+    const off = onMessage<{ scopes?: unknown } | undefined>('REQUEST_CONSENT', (payload) => {
       // `readGateStatus()` (not a closed-over `status`) — see its definition.
       //
       // NO NACK HERE, deliberately. REQUEST_CONSENT is fire-and-forget in both
@@ -1946,29 +2005,49 @@ export function IframeHost({
       // there is no host→block reply message for it — so there is nothing to
       // reply TO and no promise to fail fast. Dropping it cannot hang the block.
       const scopesToGrant = resolveRequestConsent(readGateStatus(), missingScopes ?? []);
-      if (scopesToGrant == null) return; // not ready, or nothing missing — drop
-      dialogStore.trigger({
-        component: BlockConsentModal,
-        props: {
-          appBlockId: install.appBlockId,
-          blockName: install.manifest.name,
-          missingScopes: scopesToGrant,
-          onGranted: () => {
-            onConsentGranted?.();
-          },
-        },
-      });
+      if (scopesToGrant != null) {
+        openConsentModal(scopesToGrant);
+        return;
+      }
+      // 🔴 THE REFUSAL, WHICH THIS SURFACE USED TO HAVE NO WAY TO SAY. Nothing is
+      // grantable-via-consent here. Distinguish the BENIGN case (the block
+      // re-requested a scope it ALREADY holds → keep the silent no-op) from the
+      // UN-GRANTABLE case (a requested scope was clamped/withheld at mint and can
+      // never be added via consent — e.g. a dev-tunnel preview token that doesn't
+      // carry it). Only the latter, proven from the block's advisory `scopes` hint,
+      // surfaces anything, so an app doesn't silently look dead.
+      //
+      // 🔴 WHY IT MATTERS THAT IT WAS MISSING *HERE*: `CONSENT_UNAVAILABLE` was
+      // emitted by `PageBlockHost` ONLY. On this surface a block that DID ask got
+      // nothing back over the bridge at all, so the SDK's `requestGrants` could
+      // resolve `true` or hang, but never `false` — its own UI went on telling the
+      // user to retry an action that can never succeed. The block-side promise
+      // having no route to a refusal is arguably a sharper defect than the absent
+      // notice above, and it is the same handler, so it is fixed in the same place.
+      // Both hosts now read the SAME predicate and send the SAME payload shape.
+      const ungrantable = resolveUngrantableConsentNotice(
+        payload?.scopes,
+        grantedScopes,
+        missingScopes
+      );
+      if (!ungrantable.notify) return; // already-granted or no hint — drop
+      // Sent BEFORE the toast so the block's signal cannot be lost to a throwing
+      // notification layer — the ordering PageBlockHost pins, kept identical here.
+      //
+      // 🔴 WHAT `scopes` IS. NOT the block's raw hint. `notify` is decided on the
+      // full un-grantable set (requested − granted − missing), but `ungrantable.scopes`
+      // is that set filtered to the known block-scope vocabulary — the hint is
+      // untrusted block input and this payload is rendered by block UI, so nothing
+      // outside the fixed vocabulary is echoed back out of the host. The two are
+      // deliberately different sets: when every requested scope is unrecognised this
+      // still sends, with `scopes: []`. The refusal is the signal; the names are
+      // advisory. Delivered solely to the frame that asked.
+      send('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: ungrantable.scopes });
+      showNotification({ color: 'yellow', ...UNGRANTABLE_CONSENT_TOAST });
     });
     return off;
     // `status` deliberately absent — see the RESIZE_IFRAME deps note.
-  }, [
-    onMessage,
-    readGateStatus,
-    missingScopes,
-    install.appBlockId,
-    install.manifest.name,
-    onConsentGranted,
-  ]);
+  }, [onMessage, send, readGateStatus, missingScopes, grantedScopes, openConsentModal]);
 
   // SDK workflow bridge: receive SUBMIT/ESTIMATE/POLL requests from the block,
   // forward to blocks.* tRPC, echo the response back with matching requestId.
@@ -3062,6 +3141,59 @@ export function IframeHost({
         slotId={slotId}
         canOpenPage={!!(features.appBlocks && features.appBlocksPages)}
       />
+      {/* 🔴 THE MISSING-PERMISSIONS BACKSTOP — the model-slot half, which did not
+          exist until now. Every term of the decision is in `resolveHostConsentNotice`
+          and the markup is in `BlockConsentNotice`, BOTH shared verbatim with
+          `PageBlockHost`: the two surfaces diverged on precisely this rule once
+          already (`needsConsent` appeared 7 times in that file and 0 times in this
+          one), so a second open-coded copy is the one outcome to avoid.
+
+          🔴 INSIDE `framed()`, ABOVE THE IFRAME — the same structural position the
+          page host uses (between the `AppBlockChrome` provenance bar and the app's own
+          box), not inside the iframe. That is what makes the host recoverable
+          regardless of what the block does or which SDK version it runs, and it is
+          host-owned chrome a block cannot restyle or hide.
+
+          ⚠️ IT ADDS FRAME OVERHEAD, AND THAT IS ALREADY HANDLED — do not re-derive
+          it. The viewport clamp budgets `viewport - frameOverheadPx(frame, iframe)`,
+          and that helper MEASURES `frame.offsetHeight - iframe.offsetHeight` live
+          rather than assuming a constant, precisely so the frame can gain another
+          sibling. The known limit it documents applies: a notice appearing with no
+          viewport change does not itself re-trigger the clamp, so the widget can be
+          taller than the budget by this bar's height until the next resize or
+          RESIZE_IFRAME. Stated rather than implied — it is a bounded one-bar
+          overshoot on a bound whose job is "roughly one screen".
+
+          NO `suppressed` TERM: this host has no review-sandbox mode. Review previews
+          mount `ReviewBlockPreviewHost`, which wraps `PageBlockHost` — so the
+          "never grant scopes from the sandbox" gate belongs there, and passing a
+          constant `false` here would only invite someone to wire it to the wrong
+          thing. */}
+      {resolveHostConsentNotice({
+        // `status` DIRECTLY, not `readGateStatus()`. The ref exists so a message
+        // HANDLER can see a status React has not yet flushed an effect for; a render
+        // has the state itself, and a ref read cannot schedule the re-render that
+        // makes this notice appear. Reading the ref here would happen to work today
+        // (the render body writes it before `framed()` runs) for a reason that has
+        // nothing to do with why it is correct.
+        status,
+        needsConsent,
+        missingScopes,
+        dismissedFor: consentNoticeDismissedFor,
+        appBlockId: install.appBlockId,
+      }) != null && (
+        <BlockConsentNotice
+          appName={install.manifest.name}
+          onReview={() => {
+            // Recomputed at CLICK time, not captured at render: a TOKEN_REFRESH
+            // between the two can shrink the missing set, and granting a scope the
+            // viewer already has is a worse prompt than no prompt.
+            const scopes = resolveRequestConsent(readGateStatus(), missingScopes ?? []);
+            if (scopes != null) openConsentModal(scopes);
+          }}
+          onDismiss={() => setConsentNoticeDismissedFor(install.appBlockId)}
+        />
+      )}
       {children}
     </Box>
   );

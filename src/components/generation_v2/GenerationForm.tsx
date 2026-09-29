@@ -74,13 +74,7 @@ import { AccordionLayout } from './AccordionLayout';
 import { openCompatibilityConfirmModal } from './CompatibilityConfirmModal';
 import { FormFooter, MetadataExtractionFooter } from './FormFooter';
 import { GenerationLayout, GenerationFooter } from './GenerationLayout';
-import {
-  ResourceAlerts,
-  GrokEcosystemAlert,
-  SeedanceImg2VidAlert,
-  ReadyAlert,
-} from './ResourceAlerts';
-import { useWhatIfContext } from './WhatIfProvider';
+import { ResourceAlerts, GrokEcosystemAlert, SeedanceImg2VidAlert } from './ResourceAlerts';
 
 // Input components
 import { BaseModelInput } from './inputs/BaseModelInput';
@@ -704,9 +698,6 @@ export function GenerationForm() {
                 );
               }}
             />
-
-            {/* Ready State Alert - Resources need downloading */}
-            <ConnectedReadyAlert />
 
             {/* Generate cover toggle (audio workflows) */}
             <Controller
@@ -2874,9 +2865,4 @@ function VersionGroupSelector({
       )}
     </div>
   );
-}
-
-function ConnectedReadyAlert() {
-  const { data, isLoading } = useWhatIfContext();
-  return <ReadyAlert ready={data?.ready} isLoading={isLoading} />;
 }

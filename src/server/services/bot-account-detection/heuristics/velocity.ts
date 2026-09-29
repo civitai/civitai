@@ -1,3 +1,4 @@
+import { plural } from '../../abuse-report-prose';
 import type { BotAccountHeuristic } from '../scoring';
 import { rampScore } from './ramp';
 
@@ -91,8 +92,8 @@ export const postingVelocityHeuristic: BotAccountHeuristic = {
     const rate = itemsPerHour(member.posts.all.total, member.createdAt, now);
     const age = effectiveAgeHours(member.createdAt, now);
     return (
-      `posted ${member.posts.all.total} item(s) in ${age.toFixed(1)}h — ` +
-      `${rate.toFixed(1)}/hour (scores above ${ZERO_AT_PER_HOUR}/hour)`
+      `posted ${member.posts.all.total} ${plural(member.posts.all.total, 'item')} in ` +
+      `${age.toFixed(1)}h — ${rate.toFixed(1)}/hour (scores above ${ZERO_AT_PER_HOUR}/hour)`
     );
   },
 };

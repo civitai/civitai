@@ -57,7 +57,6 @@ import type {
   DeleteExplorationPromptInput,
   EarlyAccessModelVersionsOnTimeframeSchema,
   GetModelVersionByModelTypeProps,
-  GetModelVersionPopularityInput,
   GetModelVersionsPopularityInput,
   ModelVersionPaidAccessInputSchema,
   ModelVersionMeta,
@@ -2187,7 +2186,8 @@ export const modelVersionGeneratedImagesOnTimeframe = async ({
         AND modelVersionId IN (${modelVersions.map((x) => x.id)})
       GROUP BY modelVersionId, createdDate
       ORDER BY createdAt DESC, generations DESC;
-    `
+    `,
+    { path: 'model-version-generations' }
   );
 
   const versions = modelVersions
@@ -2872,6 +2872,7 @@ export const createModelVersionPostFromTraining = async ({
   // Create post:
   const post = await createPost({
     userId: user.id,
+    isModerator: user.isModerator,
     modelVersionId,
     publishedAt: now,
   });
@@ -2895,11 +2896,6 @@ export const createModelVersionPostFromTraining = async ({
   // Returned so request handlers can emit the post-create ClickHouse event
   // (track.post) — the service-level createPost above doesn't track on its own.
   return post;
-};
-
-export const getModelVersionPopularity = async ({ id }: GetModelVersionPopularityInput) => {
-  const resp = await modelVersionResourceCache.fetch([id]);
-  return resp[id] ?? { versionId: id, popularityRank: 0, isFeatured: false, isNew: false };
 };
 
 export const getModelVersionsPopularity = async ({ ids }: GetModelVersionsPopularityInput) => {

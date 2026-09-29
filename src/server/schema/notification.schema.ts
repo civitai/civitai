@@ -27,6 +27,18 @@ export const upsertPushSubscriptionInput = z.object({
 });
 export type UpsertPushSubscriptionInput = z.infer<typeof upsertPushSubscriptionInput>;
 
+/**
+ * The service worker's `pushsubscriptionchange` payload. Same shape as a subscribe, plus the
+ * endpoint the push service rotated away from so the stale row can be reaped in the same request
+ * — left behind it survives until 10 consecutive delivery failures or the 180-day cleanup job.
+ * Not folded into `upsertPushSubscriptionInput`: tRPC's `subscribePush` has no old endpoint and
+ * must not grow a field it can never populate.
+ */
+export const resubscribePushInput = upsertPushSubscriptionInput.extend({
+  oldEndpoint: z.string().min(1).nullish(),
+});
+export type ResubscribePushInput = z.infer<typeof resubscribePushInput>;
+
 export const deletePushSubscriptionInput = z.object({
   endpoint: z.string().min(1),
 });

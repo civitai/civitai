@@ -8,7 +8,7 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { MasonryGridVirtual } from '~/components/MasonryColumns/MasonryGridVirtual';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
-import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import type { ComicGenre } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 
@@ -22,7 +22,13 @@ type ComicFilters = {
 
 export function ComicsInfinite({ filters: filterOverrides = {}, showEof = false }: Props) {
   const [debouncedFilters, cancel] = useDebouncedValue(filterOverrides, 500);
-  const browsingLevel = useBrowsingSettings((s) => s.browsingLevel);
+  // Fetch at the SAME resolved level the client filter re-applies below
+  // (`useApplyHiddenPreferences` uses `useBrowsingLevelDebounced` internally).
+  // The raw saved `browsingSettings.browsingLevel` skips the domain cap, so on
+  // the green domain the server returned a wider set than the filter would keep,
+  // gutting the feed. Mirrors ModelsInfinite (ImagesInfinite additionally narrows
+  // to PG via `capToPublic`/`includePG13`; comics has no PG-13 opt-in).
+  const browsingLevel = useBrowsingLevelDebounced();
 
   const { data, fetchNextPage, hasNextPage, isRefetching, isFetching } =
     trpc.comics.getPublicProjects.useInfiniteQuery(

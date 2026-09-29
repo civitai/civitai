@@ -68,7 +68,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { EntityType, Model3DStatus } from '~/shared/utils/prisma/enums';
+import { CollectionType, EntityType, Model3DStatus } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { getModel3DUrl } from '~/utils/string-helpers';
@@ -466,6 +466,7 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                 <ShareButton
                   url={getModel3DUrl({ id: model3d.id, name: model3d.name })}
                   title={model3d.name}
+                  collect={{ model3dId: model3d.id, type: CollectionType.Model3D }}
                 >
                   <LegacyActionIcon variant="light" size="lg" aria-label="Share">
                     <IconShare3 size={20} />
@@ -499,11 +500,7 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               <Collection
                 items={model3d.tags ?? []}
                 renderItem={(tag) => (
-                  <Link
-                    legacyBehavior
-                    href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`}
-                    passHref
-                  >
+                  <Link legacyBehavior href={`/3d-models?tags=${tag.id}`} passHref>
                     <Badge
                       component="a"
                       size="sm"
@@ -615,22 +612,19 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                   })}
                 >
                   <Accordion.Item value="details">
-                    <Accordion.Control>
-                      <Group justify="space-between">
-                        Details
-                        <Button
-                          size="compact-xs"
-                          variant="light"
-                          leftSection={<IconWand size={12} />}
-                          onClick={(e: React.MouseEvent) => {
-                            e.stopPropagation();
-                            openReviewModal();
-                          }}
-                        >
-                          Write a review
-                        </Button>
-                      </Group>
-                    </Accordion.Control>
+                    {/* Beside the control, not inside it — the control is a <button>. */}
+                    <div className="flex items-center">
+                      <Accordion.Control className="flex-1">Details</Accordion.Control>
+                      <Button
+                        className="mr-3 shrink-0"
+                        size="compact-xs"
+                        variant="light"
+                        leftSection={<IconWand size={12} />}
+                        onClick={openReviewModal}
+                      >
+                        Write a review
+                      </Button>
+                    </div>
                     <Accordion.Panel p={0}>
                       <Stack
                         gap={0}

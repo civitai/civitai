@@ -50,6 +50,7 @@ import { createLensInput } from './lens.handler';
 import { createKrea2Input } from './krea2.handler';
 import { createMAIInput } from './mai.handler';
 import { createReveInput } from './reve.handler';
+import { createMingInput } from './ming.handler';
 import { createMuseImageInput } from './muse-image.handler';
 import { createMageFlowInput } from './mage-flow.handler';
 import { createZImageInput } from './z-image.handler';
@@ -169,6 +170,9 @@ export type PonyV7Ctx = EcosystemGraphOutput & { ecosystem: 'PonyV7' };
 /** Ernie context */
 export type ErnieCtx = EcosystemGraphOutput & { ecosystem: 'Ernie' };
 
+/** Ming Image Design context */
+export type MingCtx = EcosystemGraphOutput & { ecosystem: 'Ming' };
+
 /** Ideogram context */
 export type IdeogramCtx = EcosystemGraphOutput & { ecosystem: 'Ideogram' };
 
@@ -275,6 +279,7 @@ export { createLensInput } from './lens.handler';
 export { createKrea2Input } from './krea2.handler';
 export { createMAIInput } from './mai.handler';
 export { createReveInput } from './reve.handler';
+export { createMingInput } from './ming.handler';
 export { createMuseImageInput } from './muse-image.handler';
 export { createMageFlowInput } from './mage-flow.handler';
 
@@ -476,6 +481,10 @@ async function createEcosystemStep(
     // Reve (Reve AI, FAL engine)
     case 'Reve':
       return createReveInput(normalizedData, handlerCtx);
+
+    // Ming Image Design (Comfy)
+    case 'Ming':
+      return createMingInput(normalizedData, handlerCtx);
 
     // Muse Image (Meta, FAL engine)
     case 'MuseImage':

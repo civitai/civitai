@@ -65,9 +65,11 @@ describe('BlockManifestValidator', () => {
 
     it('accepts a 40-char blockId (boundary) and a 3-char one', () => {
       const max = 'a' + 'b'.repeat(38) + 'c'; // 40 chars
-      expect(BlockManifestValidator.validate({ ...VALID_MANIFEST, blockId: max }, APP_CTX)).toEqual({
-        valid: true,
-      });
+      expect(BlockManifestValidator.validate({ ...VALID_MANIFEST, blockId: max }, APP_CTX)).toEqual(
+        {
+          valid: true,
+        }
+      );
       expect(
         BlockManifestValidator.validate({ ...VALID_MANIFEST, blockId: 'abc' }, APP_CTX)
       ).toEqual({ valid: true });
@@ -130,9 +132,7 @@ describe('BlockManifestValidator', () => {
     expect(result.valid).toBe(false);
     if (!result.valid) {
       expect(
-        result.errors.some(
-          (e) => e.includes('allow-top-navigation') || e.includes('not allowed')
-        )
+        result.errors.some((e) => e.includes('allow-top-navigation') || e.includes('not allowed'))
       ).toBe(true);
     }
   });
@@ -157,9 +157,7 @@ describe('BlockManifestValidator', () => {
       ...VALID_MANIFEST,
       iframe: { ...VALID_MANIFEST.iframe, sandbox: 'allow-scripts allow-modals' },
     };
-    expect(
-      BlockManifestValidator.validate(unverified, APP_CTX).valid
-    ).toBe(false);
+    expect(BlockManifestValidator.validate(unverified, APP_CTX).valid).toBe(false);
 
     const verified = { ...unverified, trustTier: 'verified' };
     expect(BlockManifestValidator.validate(verified, APP_CTX).valid).toBe(true);
@@ -178,9 +176,7 @@ describe('BlockManifestValidator', () => {
     expect(result.valid).toBe(false);
     if (!result.valid) {
       expect(
-        result.errors.some(
-          (e) => e.includes('allow-popups') || e.includes('not allowed')
-        )
+        result.errors.some((e) => e.includes('allow-popups') || e.includes('not allowed'))
       ).toBe(true);
     }
   });
@@ -260,9 +256,7 @@ describe('BlockManifestValidator', () => {
       expect(result.valid).toBe(false);
       if (!result.valid) {
         expect(
-          result.errors.some(
-            (e) => e.includes('not a known block scope') && e.includes(removed)
-          )
+          result.errors.some((e) => e.includes('not a known block scope') && e.includes(removed))
         ).toBe(true);
       }
     }
@@ -695,6 +689,205 @@ describe('BlockManifestValidator', () => {
     );
   });
 
+  /**
+   * `auth: "oauth"` × `apps:storage:*` — refused at submit, because the runtime cannot
+   * serve it. An `auth: "oauth"` app is minted an OPAQUE OAuth access token when a viewer
+   * is signed in, and every app-storage resolver re-verifies the RAW bearer with
+   * `verifyBlockToken` (JWS + pinned `kid`), so the whole storage surface 401s for signed-in
+   * viewers while still working for anonymous ones (who are minted a block JWT).
+   *
+   * 🔴 Each rejection pins the WHOLE normalised message, not a keyword. The message IS the
+   * product of this guard — a reword that dropped the "what to do" half would leave a
+   * keyword assertion green while recreating the original problem one layer up.
+   */
+  describe('auth "oauth" × apps:storage:* (app storage is block-token-only today)', () => {
+    // 🔴 LITERALS, DELIBERATELY — neither the scope list nor the message is imported from
+    // the code under test. A test that reads `APP_STORAGE_SCOPES` and
+    // `oauthAppStorageConflictError` back out of the implementation asserts only that the
+    // implementation equals itself: it would stay green through a message rewritten to
+    // "invalid manifest", which is the exact failure this guard exists to prevent. The cost
+    // is that a cosmetic reword fails here — pay it; the text IS the contract with the app
+    // author, and a machine-readable claim about it is worth one deliberate edit.
+    //
+    // It also makes this suite compile and fail on its ASSERTION at the pre-change ref,
+    // rather than on a missing export.
+    const STORAGE_SCOPES = [
+      'apps:storage:read',
+      'apps:storage:write',
+      'apps:storage:shared:read',
+      'apps:storage:shared:write',
+    ];
+
+    const expectedRefusal = (named: string) =>
+      `auth "oauth" cannot be combined with app storage: this manifest declares ${named}. ` +
+      `App storage is served to a BLOCK TOKEN only today — an auth "oauth" app is minted an ` +
+      `opaque OAuth access token instead of a block JWT, and the app-storage resolvers ` +
+      `re-verify that bearer as a block JWT, so every storage read and write returns 401 as ` +
+      `soon as a viewer signs in (it appears to work while signed out, because an anonymous ` +
+      `viewer is still minted a block JWT). Fix it either way: set "auth" to "block-token", ` +
+      `or remove ${named} from "scopes". This is a CURRENT limitation, not a permanent one — ` +
+      `teaching the app-storage resolvers to accept the claims the block-scope middleware ` +
+      `has already resolved is the intended fix, and this rule is expected to be lifted then.`;
+
+    it.each(STORAGE_SCOPES)('rejects auth "oauth" with %s declared', (storageScope) => {
+      const result = BlockManifestValidator.validate(
+        {
+          ...VALID_MANIFEST,
+          auth: 'oauth',
+          scopes: ['models:read:self', storageScope],
+          // `apps:storage:shared:write` is a SENSITIVE scope, so it needs a justification
+          // or the sensitive-scope rule reports its own (different) error. Supplied for
+          // every case so this test is only ever red for the reason it names.
+          scopeJustifications: { [storageScope]: 'Persist the user’s saved presets.' },
+        },
+        APP_CTX
+      );
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors).toContain(expectedRefusal(storageScope));
+        // 🔴 REACHABILITY: exactly ONE error, so the guard EXECUTED rather than riding on
+        // some earlier check's refusal. A mutation test can pass because a different guard
+        // killed the case first and this one never ran; the manifest here is otherwise fully
+        // valid (justification supplied, scope known, no OAuth bit required), so the
+        // conflict rule is the only thing that can have produced this.
+        expect(result.errors).toHaveLength(1);
+      }
+    });
+
+    it('names EVERY conflicting scope, in declaration order, in one error', () => {
+      const declared = ['apps:storage:shared:read', 'apps:storage:write'];
+      const result = BlockManifestValidator.validate(
+        { ...VALID_MANIFEST, auth: 'oauth', scopes: ['models:read:self', ...declared] },
+        APP_CTX
+      );
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors).toContain(expectedRefusal(declared.join(', ')));
+      }
+    });
+
+    /**
+     * The whole-string pin above is exact but BRITTLE: the legitimate way past it is to
+     * reword the message and update the literal in the same commit. This is the belt that
+     * survives that edit — it reads the message the validator ACTUALLY produced (never the
+     * local literal, which would only assert that a string contains its own substrings) and
+     * requires the four things that make the refusal actionable rather than merely correct.
+     *
+     * 🔴 A refusal saying only "invalid" recreates the original problem one layer up: a
+     * silent catastrophic runtime failure becomes a submit-time dead end with no way out.
+     */
+    it('the refusal names the scope, the auth mode, both exits, and that the limit is current', () => {
+      const result = BlockManifestValidator.validate(
+        {
+          ...VALID_MANIFEST,
+          auth: 'oauth',
+          scopes: ['models:read:self', 'apps:storage:shared:read'],
+        },
+        APP_CTX
+      );
+      expect(result.valid).toBe(false);
+      const message = result.valid
+        ? ''
+        : result.errors.find((e) => e.includes('apps:storage:shared:read')) ?? '';
+      // The conflicting scope, so the author knows WHICH declaration to change.
+      expect(message).toContain('apps:storage:shared:read');
+      // The auth mode, so they know it is the PAIR that is refused, not the scope alone.
+      expect(message).toContain('auth "oauth"');
+      // Both exits — either one alone leaves an author stuck.
+      expect(message).toContain('block-token');
+      expect(message).toContain('"scopes"');
+      // NOT permanently unsupported: teaching the resolvers to take middleware-resolved
+      // claims is the intended direction, and the message must not foreclose it.
+      expect(message.toLowerCase()).toContain('not a permanent one');
+      expect(message.toLowerCase()).not.toContain('never be supported');
+    });
+
+    /**
+     * 🔴 THE APPROVE PATH IS **NOT** EXEMPT — a deliberate decision, pinned so it is not
+     * discovered by a moderator staring at an un-approvable request.
+     *
+     * `approveRequest` (`publish-request.service.ts`) re-validates the already-submitted
+     * manifest with `{ enforceSensitiveScopeJustification: false }`, the one grandfathering
+     * knob, so a LEGACY pending request with an unjustified sensitive scope stays approvable.
+     * This rule does NOT get the same treatment: unlike a missing justification, the
+     * combination is BROKEN AT RUNTIME. An already-submitted request carrying it describes an
+     * app that 401s for every signed-in viewer, and approving a new version would ship that.
+     * The moderator bounces it back and the message tells the author both ways out.
+     *
+     * If a pending request in the queue turns out to carry this pair, the fix is to have the
+     * author change `auth` or drop the scope — not to add a second knob here.
+     */
+    it('is NOT exempted by the moderator APPROVE relaxation', async () => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        auth: 'oauth',
+        scopes: ['models:read:self', 'apps:storage:shared:read'],
+      };
+      // POSITIVE CONTROL that the knob is real and IS being passed: the sensitive-scope rule
+      // it governs really does stop firing under the same options object.
+      const sensitive = await BlockManifestValidator.validateSubmission(
+        { ...VALID_MANIFEST, scopes: ['models:read:self', 'apps:storage:shared:write'] },
+        APP_CTX,
+        { enforceSensitiveScopeJustification: false }
+      );
+      expect(sensitive).toEqual({ valid: true });
+
+      const result = await BlockManifestValidator.validateSubmission(manifest, APP_CTX, {
+        enforceSensitiveScopeJustification: false,
+      });
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.errors).toContain(expectedRefusal('apps:storage:shared:read'));
+      }
+    });
+
+    // THE JWT PATH IS UNCHANGED — the regression this guard could plausibly cause. Every
+    // storage scope stays declarable on the credential shape that actually serves it, and
+    // an omitted `auth` (the default, and what every shipped app carries) is block-token.
+    it.each(STORAGE_SCOPES)('still ACCEPTS auth "block-token" with %s', (storageScope) => {
+      expect(
+        BlockManifestValidator.validate(
+          {
+            ...VALID_MANIFEST,
+            auth: 'block-token',
+            scopes: ['models:read:self', storageScope],
+            scopeJustifications: { [storageScope]: 'Persist the user’s saved presets.' },
+          },
+          APP_CTX
+        )
+      ).toEqual({ valid: true });
+    });
+
+    it.each(STORAGE_SCOPES)('still ACCEPTS an OMITTED auth with %s', (storageScope) => {
+      const manifest = {
+        ...VALID_MANIFEST,
+        scopes: ['models:read:self', storageScope],
+        scopeJustifications: { [storageScope]: 'Persist the user’s saved presets.' },
+      };
+      expect('auth' in manifest).toBe(false);
+      expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
+    });
+
+    // And `auth: "oauth"` is still a legal mode for an app that does NOT want storage —
+    // the guard is scoped to the conflict, it does not retire the OAuth mode. (The
+    // `accepts auth %j` case above covers this too; restated here so deleting the guard's
+    // own describe block cannot take the "oauth is still allowed" claim with it.)
+    it('still ACCEPTS auth "oauth" with no apps:storage:* scope', () => {
+      // `collections:read:self` is SKIP_OAUTH_CHECK and NOT sensitive, so it needs neither
+      // an OAuth bit nor a justification — it isolates "a second, non-storage scope".
+      expect(
+        BlockManifestValidator.validate(
+          {
+            ...VALID_MANIFEST,
+            auth: 'oauth',
+            scopes: ['models:read:self', 'collections:read:self'],
+          },
+          APP_CTX
+        )
+      ).toEqual({ valid: true });
+    });
+  });
+
   // The OPTIONAL one-line store `tagline`. Absent is fine (the store shows no
   // tagline); present must be a string whose TRIMMED length is 1..140. This is
   // the AUTHORITATIVE gate — the published JSON schema is a shape hint.
@@ -757,9 +950,9 @@ describe('BlockManifestValidator', () => {
       const result = BlockManifestValidator.validate(manifest, APP_CTX);
       expect(result.valid).toBe(false);
       if (!result.valid) {
-        expect(
-          result.errors.some((e) => e === 'tagline must not be blank (omit it instead)')
-        ).toBe(true);
+        expect(result.errors.some((e) => e === 'tagline must not be blank (omit it instead)')).toBe(
+          true
+        );
       }
     });
 
@@ -785,7 +978,9 @@ describe('BlockManifestValidator', () => {
     it('accepts a justification keyed by a declared scope', () => {
       const manifest = {
         ...VALID_MANIFEST,
-        scopeJustifications: { 'models:read:self': 'We render the page model in a comparison widget.' },
+        scopeJustifications: {
+          'models:read:self': 'We render the page model in a comparison widget.',
+        },
       };
       expect(BlockManifestValidator.validate(manifest, APP_CTX)).toEqual({ valid: true });
     });
@@ -813,7 +1008,9 @@ describe('BlockManifestValidator', () => {
       expect(result.valid).toBe(false);
       if (!result.valid) {
         expect(
-          result.errors.some((e) => e.includes('user:read:self') && e.includes('not in the manifest'))
+          result.errors.some(
+            (e) => e.includes('user:read:self') && e.includes('not in the manifest')
+          )
         ).toBe(true);
       }
     });
@@ -883,7 +1080,9 @@ describe('BlockManifestValidator', () => {
       if (!result.valid) {
         expect(
           result.errors.some(
-            (e) => e.includes('sensitive scopes require a justification') && e.includes('ai:write:budgeted')
+            (e) =>
+              e.includes('sensitive scopes require a justification') &&
+              e.includes('ai:write:budgeted')
           )
         ).toBe(true);
       }
@@ -964,7 +1163,9 @@ describe('BlockManifestValidator', () => {
       const manifest = {
         ...VALID_MANIFEST,
         scopes: ['collections:read:private', 'apps:storage:shared:write'],
-        scopeJustifications: { 'collections:read:private': 'We read the viewer’s private collections.' },
+        scopeJustifications: {
+          'collections:read:private': 'We read the viewer’s private collections.',
+        },
       };
       const result = BlockManifestValidator.validate(manifest, APP_CTX);
       expect(result.valid).toBe(false);
@@ -992,7 +1193,9 @@ describe('BlockManifestValidator', () => {
       expect(result.valid).toBe(false);
       if (!result.valid) {
         expect(
-          result.errors.some((e) => e.includes('user:read:self') && e.includes('not in the manifest'))
+          result.errors.some(
+            (e) => e.includes('user:read:self') && e.includes('not in the manifest')
+          )
         ).toBe(true);
       }
     });

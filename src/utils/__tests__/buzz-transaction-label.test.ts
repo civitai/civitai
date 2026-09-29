@@ -95,6 +95,11 @@ describe('buzzTransactionLabel', () => {
     [TransactionType.Refund, 'Refund'],
     [TransactionType.Bounty, 'Bounty'],
     [TransactionType.LicenseFee, 'License Fee'],
+    // The App Blocks author fee moved off `Fee` (25) onto its own member, so this
+    // rail's label went "Fee" → "App Author Fee". `'App author fee'` is not in
+    // DESCRIPTION_ALLOWLIST, so the type name is all a viewer or an app author
+    // ever sees for it.
+    [TransactionType.AppAuthorFee, 'App Author Fee'],
   ])('does not render an allowlisted string carried by type %s', (type, label) => {
     expect(
       buzzTransactionLabel({ type, description: 'Someone placed a sticker on your image' })

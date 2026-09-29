@@ -6,6 +6,7 @@ import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-react';
 import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 import type * as TrpcMod from '~/utils/trpc';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 /**
  * F4 — the App Blocks host chrome's two REVIEW ENTRY POINTS: an item in the ⋮
@@ -68,9 +69,23 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   const invalidate = vi.fn().mockResolvedValue(undefined);
   return {
     ...(await importOriginal<typeof TrpcMod>()),
-    trpc: {
-      appListings: {
-        getAppDetail: {
+    /**
+     * 🔴 A PROXY WITH THE THREE MEASURED PROCEDURES OVERRIDDEN. This file mounts the REAL
+     * `AppBlockChrome` with an `appBlockId`, so `AppPermissionsActivityDrawer` is in the tree, and it
+     * runs an AUTHED viewer — so unlike `AppBlockChromeMobileShell` it has no `!isAuthed` branch to
+     * fall into. It happens not to crash today only because it asserts the "Permissions & activity"
+     * menu item is PRESENT and never clicks it; one `.click()` and `ScopeConsentList`'s
+     * `useScopeRevoke` hits a `trpc` with no `blocks` namespace and no `blocks` under `useUtils()`,
+     * producing `Cannot find element with locator …` that names nothing. Fifth instance of the same
+     * fixture defect, enumerated by the round-2 test lane. See `test/trpcProxyStub.ts`.
+     *
+     * The three `appListings` overrides are preserved verbatim — they are wired to the REAL
+     * `useQuery` with fetch counters, because query-key collision is what this file measures — and
+     * `useUtils` keeps its stable `invalidate` spy for the same reason.
+     */
+    trpc: makeTrpcProxy(
+      {
+        'appListings.getAppDetail': {
           useQuery: (input: unknown, opts?: Record<string, unknown>) =>
             useQuery({
               // The same shape tRPC builds, so React Query's own hashing decides
@@ -83,7 +98,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
               ...opts,
             }),
         },
-        getMyReview: {
+        'appListings.getMyReview': {
           useQuery: (input: unknown, opts?: Record<string, unknown>) =>
             useQuery({
               queryKey: [['appListings', 'getMyReview'], { input, type: 'query' }],
@@ -96,16 +111,23 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         },
         // Only reached once the modal is mounted; the modal's own submit path has its
         // own suite (`ReviewListingButton.browser.test.tsx`).
-        upsertReview: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
-      },
-      useUtils: () => ({
-        appListings: {
-          getMyReview: { invalidate },
-          listReviews: { invalidate },
-          getAppDetail: { invalidate },
+        'appListings.upsertReview': {
+          useMutation: () => ({ mutate: vi.fn(), isPending: false }),
         },
-      }),
-    },
+      },
+      {
+        useUtils: () => ({
+          appListings: {
+            getMyReview: { invalidate },
+            listReviews: { invalidate },
+            getAppDetail: { invalidate },
+          },
+          // The drawer's revoke path invalidates through here; a stable no-op keeps it from
+          // throwing without pretending this file asserts anything about it.
+          blocks: { listMyScopeGrants: { invalidate: vi.fn(async () => undefined) } },
+        }),
+      }
+    ),
   };
 });
 

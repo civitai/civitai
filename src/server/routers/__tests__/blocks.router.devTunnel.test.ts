@@ -180,6 +180,15 @@ describe('startDevTunnel — authz matrix', () => {
     // ownership resolve was scoped to the caller
     expect(mockResolveDev).toHaveBeenCalledWith('my-app', 100, { db: 'write' });
   });
+
+  it('passes the CLI-declared manifest auth through to the session', async () => {
+    const caller = blocksRouter.createCaller(authedCtx(100, true) as never);
+    await caller.startDevTunnel({ ...input, declaredAuth: 'oauth' });
+    expect(mockStart).toHaveBeenCalledWith(expect.objectContaining({ declaredAuth: 'oauth' }));
+    await expect(
+      caller.startDevTunnel({ ...input, declaredAuth: 'basic' as never })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
 });
 
 describe('startDevTunnel — EPHEMERAL pre-submit rate limit (Phase 1)', () => {

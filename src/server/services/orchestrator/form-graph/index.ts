@@ -23,6 +23,7 @@ import { createKrea2Input } from './krea2.handler';
 import { createImagen4Input } from './imagen4.handler';
 import { createPonyV7Input } from './pony-v7.handler';
 import { createReveInput } from './reve.handler';
+import { createMingInput } from './ming.handler';
 import { createMuseImageInput } from './muse-image.handler';
 import { createMAIInput } from './mai.handler';
 import { createErnieInput } from './ernie.handler';
@@ -76,6 +77,7 @@ export { createKrea2Input } from './krea2.handler';
 export { createImagen4Input } from './imagen4.handler';
 export { createPonyV7Input } from './pony-v7.handler';
 export { createReveInput } from './reve.handler';
+export { createMingInput } from './ming.handler';
 export { createMuseImageInput } from './muse-image.handler';
 export { createMAIInput } from './mai.handler';
 export { createErnieInput } from './ernie.handler';
@@ -205,6 +207,8 @@ function createStep(
 
     case 'Reve':
       return createReveInput(data, handlerCtx);
+    case 'Ming':
+      return createMingInput(data, handlerCtx);
     case 'MuseImage':
       return createMuseImageInput(data, handlerCtx);
 

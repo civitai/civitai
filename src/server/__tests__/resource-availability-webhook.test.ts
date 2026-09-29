@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as ResourceData from '~/server/redis/resource-data.redis';
 const executeRaw = dbMock.dbWrite.$executeRaw;
 const queryRaw = dbMock.dbWrite.$queryRaw;
 dbMock.dbWrite.$executeRaw.mockImplementation(async () => 0);
@@ -13,10 +14,11 @@ dbMock.dbWrite.$queryRaw.mockImplementation(async () => [] as { id: number; mode
  * that it honours the same kill switch as the sync job it supplements.
  */
 
-const { env, isFlipt, queueUpdate } = vi.hoisted(() => ({
+const { env, isFlipt, queueUpdate, bust } = vi.hoisted(() => ({
   env: { WEBHOOK_TOKEN: 'shhh', LOGGING: '' },
   isFlipt: vi.fn(async () => true),
   queueUpdate: vi.fn(async () => undefined),
+  bust: vi.fn(async () => undefined),
 }));
 
 vi.mock('~/env/server', () => ({ env }));
@@ -26,6 +28,10 @@ vi.mock('~/server/flipt/client', () => ({
   FLIPT_FEATURE_FLAGS: { SYNC_GENERATOR_LOADED_RESOURCES: 'sync-generator-loaded-resources' },
 }));
 vi.mock('~/server/search-index', () => ({ modelsSearchIndex: { queueUpdate } }));
+vi.mock('~/server/redis/resource-data.redis', async (importOriginal) => ({
+  ...(await importOriginal<typeof ResourceData>()),
+  resourceDataCache: { bust },
+}));
 
 const handler = (await import('~/pages/api/webhooks/resource-availability')).default;
 
@@ -59,7 +65,12 @@ const air = (versionId: number) => `urn:air:sdxl:lora:civitai:328553@${versionId
 
 /** The rows the handler will find for those versions. */
 function versionsExist(...ids: number[]) {
-  queryRaw.mockResolvedValue(ids.map((id) => ({ id, modelId: id * 10 })));
+  queryRaw.mockResolvedValue(ids.map((id) => ({ id, modelId: id * 10, generatorLoaded: null })));
+}
+
+/** Versions whose stored residency is already what the event will report. */
+function versionsAlreadyAt(loaded: boolean, ...ids: number[]) {
+  queryRaw.mockResolvedValue(ids.map((id) => ({ id, modelId: id * 10, generatorLoaded: loaded })));
 }
 
 /**
@@ -125,6 +136,25 @@ describe('resource-availability webhook', () => {
     expect(queueUpdate).toHaveBeenCalledWith([{ id: 10, action: expect.anything() }]);
   });
 
+  it('busts the cached resource rows the submit path reads', async () => {
+    versionsExist(1, 2);
+
+    await call([
+      { air: air(1), workersAvailable: 3 },
+      { air: air(2), workersAvailable: 0 },
+    ]);
+
+    expect(bust).toHaveBeenCalledWith([1, 2]);
+  });
+
+  it('busts nothing when no known version was written', async () => {
+    versionsExist();
+
+    await call([{ air: air(1), workersAvailable: 3 }]);
+
+    expect(bust).not.toHaveBeenCalled();
+  });
+
   it('ignores an AIR this site holds no version for', async () => {
     versionsExist(1);
 
@@ -163,5 +193,53 @@ describe('resource-availability webhook', () => {
     const { statusCode } = await call([], { method: 'GET' });
 
     expect(statusCode).toBe(405);
+  });
+});
+
+describe('resource-availability webhook — only what moved', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    env.WEBHOOK_TOKEN = 'shhh';
+    isFlipt.mockResolvedValue(true);
+    queryRaw.mockResolvedValue([]);
+  });
+
+  /**
+   * The orchestrator re-sends `workersAvailable` for resources whose residency has not changed.
+   * Acting on those costs a no-op UPDATE and a bust that collapses the hour TTL to seconds for
+   * exactly the rows people generate with.
+   */
+  it('writes and busts nothing when the event matches what is stored', async () => {
+    versionsAlreadyAt(true, 1);
+
+    const { statusCode } = await call([{ air: air(1), workersAvailable: 3 }]);
+
+    expect(statusCode).toBe(200);
+    expect(executeRaw).not.toHaveBeenCalled();
+    expect(bust).not.toHaveBeenCalled();
+    expect(queueUpdate).not.toHaveBeenCalled();
+  });
+
+  it('still acts when the event flips it the other way', async () => {
+    versionsAlreadyAt(true, 1);
+
+    await call([{ air: air(1), workersAvailable: 0 }]);
+
+    expect(writtenWith(false)).toEqual([1]);
+    expect(bust).toHaveBeenCalledWith([1]);
+  });
+
+  /**
+   * The bust must not precede the enqueue: once the column is written the next sync's diff is empty,
+   * so a throw between them would strand those versions unindexed with no retry path.
+   */
+  it('enqueues the reindex before busting the cache', async () => {
+    versionsExist(1);
+
+    await call([{ air: air(1), workersAvailable: 3 }]);
+
+    expect(queueUpdate).toHaveBeenCalledTimes(1);
+    expect(bust).toHaveBeenCalledTimes(1);
+    expect(queueUpdate.mock.invocationCallOrder[0]).toBeLessThan(bust.mock.invocationCallOrder[0]);
   });
 });

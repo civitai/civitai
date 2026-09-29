@@ -96,6 +96,28 @@ describe('oauth/app-token +server', () => {
     expect(h.inserts).toHaveLength(0);
   });
 
+  /**
+   * 🔴 SEAM GUARD (civitai#5127). The forced `scope |= TokenScope.UserRead` in this
+   * handler is what turns withholding `UserRead` from the mirrored `OauthConsent` row
+   * into an actual refusal: main-app `syncOauthConsentFromGrant` writes that bit only
+   * when the viewer really granted `user:read:self`, and THIS handler is what then
+   * declines to mint. The relationship spans two codebases, so no main-app test can
+   * observe it — and if the force were ever dropped here, a narrower request would
+   * start minting against a consent row that never authorised `UserRead`, silently
+   * reviving the bypass.
+   *
+   * The request is DELIBERATELY not wider than the consent row (`AIServicesWrite` vs
+   * `AIServicesWrite`), so this case is unreachable through the "wider than the
+   * consent" test above: without the forced OR it would be a 200.
+   */
+  it('403 when the consent row omits UserRead, even for a request that omits it too', async () => {
+    h.rows.OauthConsent = { scope: TokenScope.AIServicesWrite };
+    const res = await call({ ...body, scope: TokenScope.AIServicesWrite });
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: string }).error).toBe('consent_required');
+    expect(h.inserts).toHaveLength(0);
+  });
+
   it('mints one Access row bound to the client with the ttl and UserRead, and no refresh row', async () => {
     const res = await call({ ...body, scope: TokenScope.AIServicesWrite });
     expect(res.status).toBe(200);

@@ -58,11 +58,11 @@
      * paragraph in `FeedbackDetail.svelte` for the case that destroys the panel outright.)
      *
      * 🔴 `$bindable`, AND THE PARENT MUST PASS IT WITH `bind:draft=`. This section MUTATES the
-     * draft — three `bind:value={draft.…}` boxes plus the mode toggle — and Svelte's dev-only
+     * draft — four `bind:value={draft.…}` boxes plus the mode toggle — and Svelte's dev-only
      * ownership validator treats a mutation of a prop the parent did not BIND as a defect:
      * `create_ownership_validator`'s `is_bound_or_unset`
      * (`svelte@5.56.3/src/internal/client/dev/ownership.js:71-80`) looks for a SETTER on the props
-     * descriptor, a plain prop has only a getter, so every keystroke into title/summary/bugId
+     * descriptor, a plain prop has only a getter, so every keystroke into title/summary/bugId/clickupUrl
      * raised `ownership_invalid_mutation`. Measured in a compiled two-component repro of exactly
      * this shape: two keystrokes → 2 warnings as a plain prop, 0 with `$bindable` + `bind:draft`.
      * Production was never affected (`DEV` is false there) — the cost was a dev console nobody
@@ -224,6 +224,63 @@
           </Label>
           <Textarea id={`summary-${row.id}`} name="summary" rows={2} bind:value={draft.summary} />
         </div>
+        <div class="flex flex-col gap-1">
+          <Label for={`clickup-${row.id}`} class="text-xs text-dark-2">
+            ClickUp task URL — optional
+          </Label>
+          <Input id={`clickup-${row.id}`} name="clickupUrl" bind:value={draft.clickupUrl} />
+          <!-- 🔴 WHAT THIS BOX BUYS, stated because an empty optional box otherwise reads as
+               decoration. The ClickUp webhook closes a board entry by looking up the entry whose
+               `clickupUrl` holds the id of the task that completed. An entry created here with the
+               box left blank has no link to match, so it never auto-closes and someone has to
+               notice by hand — which is the state every issue promoted from a report has been in
+               until now.
+
+               🔴 THE COPY NAMES THE SYNCED LIST, AND MUST KEEP NAMING IT. The webhook subscription
+               is scoped to ONE ClickUp list, so a well-formed task URL from any other list stores
+               fine and still never auto-closes. An unconditional "paste it and it closes itself"
+               is FALSE for every task outside that list, and no server-side guard can catch it —
+               checking list membership needs a ClickUp API token this app does not have. For THIS
+               non-closure — the wrong-list one — the sentence is the only protection there is;
+               other shapes are caught by the input gate, so do not read it as a claim about all
+               of them.
+
+               🔴 "NEXT completed" IS LOAD-BEARING, AND THE PRECISE CLAIM IS NARROWER THAN "ALREADY
+               COMPLETE NEVER CLOSES" — an earlier draft of this comment said that, and it is wrong
+               in the direction that costs the operator the link. The subscription is
+               `taskStatusUpdated` and nothing backfills, so the completion that ALREADY HAPPENED
+               cannot close anything. But `clickupDoneStatusFromPayload` has no "was already done"
+               guard: any later status move whose new status is done-typed — Complete → Closed, or a
+               reopen and re-complete — fires and DOES close the entry. So the honest statement is
+               "not retroactively", never "never".
+
+               That distinction matters because of the sentence below: told "it will not auto-close",
+               a moderator leaves the box blank, and 21 of 24 of them can never add the link
+               afterwards. Over-claiming here spends the one chance they get.
+
+               Of the non-closures listed here, the custom-id URL (`DEV-1234`) is the one the input
+               gate catches, because deliveries carry ClickUp's internal id. It is NOT the only
+               thing that gate refuses — it also refuses sub-tab and view-embedded URLs, whose last
+               path segment is not the task id; see `isClickupTaskUrl`. Scoped deliberately: an
+               earlier draft called it "the one non-closure the gate actually catches", which reads
+               as an absolute and would have a maintainer believing those URLs reach storage.
+               Source for the custom-id limit is the integration's own shipping record — ClickUp
+               task `868ktfupv`, not anything in this repo; its documented backstop is
+               `check-known-issues-sync.mjs` in the support-agent repo.
+
+               🔴 AND THE FALLBACK IS NOT UNIVERSAL — MEASURED, DO NOT SOFTEN IT BACK. Editing the
+               link on the issue board afterwards needs `bugsEdit`, which is a per-user grant and
+               NOT conferred by `isModerator`: 3 of 24 moderators hold it. For the other 21 this
+               box is the only chance to link the task, ever, which is why the sentence says "may
+               not be able to" rather than offering the board as a general second chance. -->
+          <p class="text-xs text-dark-2">
+            If the task is on the synced team list, pasting its URL lets the issue close itself the
+            <em>next</em> time the task moves to a done status — a completion that already happened
+            will not close it retroactively, and a task on another list will not close it at all.
+            Paste it anyway if in doubt: leaving it blank means the issue never auto-closes, and
+            unless you have issue-board edit access you may not be able to add the link later.
+          </p>
+        </div>
       {/if}
 
       <div class="flex flex-wrap items-center gap-2">
@@ -242,9 +299,12 @@
           {draft.attachMode ? 'Create a new issue instead' : 'Attach to an existing issue instead'}
         </Button>
       </div>
+      <!-- 🔴 THIS PARAGRAPH RENDERS IN BOTH MODES, so it must read correctly with no ClickUp box on
+           screen — the box is on the create branch only. Hence "nothing here creates one" rather
+           than a sentence pointing at a field that is not always there. -->
       <p class="text-xs text-dark-2">
         The issue lands unpublished, so nothing reaches the public board until someone publishes it
-        there. The ClickUp task is still made by hand.
+        there. The ClickUp task is still made by hand — nothing here creates one.
       </p>
     </form>
   {:else}

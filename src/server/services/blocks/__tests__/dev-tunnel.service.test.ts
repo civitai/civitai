@@ -434,6 +434,24 @@ describe('startDevTunnel', () => {
     expect(s.grantedScopes).toEqual(['ai:write:budgeted', 'user:read:self']);
   });
 
+  it('stores the CLI-declared auth on the session and drops anything but the two known values', async () => {
+    await startDevTunnel({
+      userId: 555,
+      blockId: 'my-app',
+      sshPublicKey: PUBKEY,
+      declaredAuth: 'oauth',
+    });
+    expect(readSession().declaredAuth).toBe('oauth');
+
+    await startDevTunnel({
+      userId: 555,
+      blockId: 'my-app',
+      sshPublicKey: PUBKEY,
+      declaredAuth: 'whatever' as never,
+    });
+    expect(readSession()).not.toHaveProperty('declaredAuth');
+  });
+
   it('#3703 step 1: startDevTunnel STILL PERSISTS ai:write:budgeted into the stored grantedScopes', async () => {
     // The tunnel wrapper hardcodes spendEntitled/spendRequested = true/true, and it
     // MUST stay that way: `startDevTunnel` clamps ONCE at WRITE and the result is

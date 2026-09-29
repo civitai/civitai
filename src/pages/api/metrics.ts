@@ -28,8 +28,8 @@ import '~/server/metrics/flipt-eval-cache.metrics';
 // only consumer is the scrape, and this module is what serves it, so the series
 // are present in every response that could ever observe them.
 import { ensureRegisterGenerationModelSubstitutionMetrics } from '~/server/metrics/generation-model-substitution.metrics';
-// Same reason as the neighbour above, and the case where it matters most: seeds all 11
-// outcome series of civitai_image_upload_relay_total at 0. The image-upload relay is a
+// Same reason as the neighbour above, and the case where it matters most: seeds the full
+// outcome x producer cross product of civitai_image_upload_relay_total at 0. The image-upload relay is a
 // FALLBACK that fires for the handful of clients who cannot reach the storage host at
 // all, so on almost every pod the honest reading of that counter is a row of zeros —
 // and prom-client materialises a child only on its first inc(), so without this the

@@ -1,7 +1,12 @@
+import type {
+  MingAiToolkitTrainingInput,
+  Qwen21AiToolkitTrainingInput,
+  YuE2AiToolkitTrainingInput,
+} from '@civitai/orchestration-client';
 /**
  * Trainable base-model catalog — a VENDORED SNAPSHOT of the in-app trainer's
  * `trainingModelInfo` at `src/utils/training.ts` in this monorepo (mirrored
- * 2026-08-27). That module lives in the main Next.js app's `src/`, which an
+ * 2026-09-25). That module lives in the main Next.js app's `src/`, which an
  * `apps/*` package can't import, so it's mirrored here; when the trainer adds or
  * changes a base model, re-mirror it by hand — keep the same version `key`,
  * `air`, `baseModel`, ecosystem and `modelVariant`. (If `trainingModelInfo` ever
@@ -34,6 +39,18 @@
 
 export type LabelType = 'tag' | 'caption';
 export type Media = 'image' | 'video' | 'audio';
+
+const MEDIA_ITEM_NOUN: Record<Media, [singular: string, plural: string]> = {
+  image: ['image', 'images'],
+  video: ['video', 'videos'],
+  audio: ['audio clip', 'audio clips'],
+};
+
+/** "58 videos", "1 audio clip". */
+export function mediaCount(count: number, media: Media): string {
+  const [one, many] = MEDIA_ITEM_NOUN[media];
+  return `${count.toLocaleString()} ${count === 1 ? one : many}`;
+}
 
 /** One selectable base-model version (a flat `trainingModelInfo` entry). */
 export interface ModelVersionInfo {
@@ -558,6 +575,63 @@ export const MODEL_CARDS: ModelCard[] = [
       },
     ],
   },
+  {
+    type: 'ming',
+    name: 'Ming Image',
+    code: 'MI',
+    media: 'image',
+    label: 'caption',
+    description: 'Image styles and subjects with Ming Image Design.',
+    flagKey: 'ming-training',
+    versions: [
+      {
+        key: 'ming',
+        label: 'Base',
+        air: 'urn:air:ming:checkpoint:civitai:2961930@3355635',
+        baseModel: 'Ming Image Design 0.1',
+        ecosystem: 'ming' satisfies MingAiToolkitTrainingInput['ecosystem'],
+        isNew: true,
+      },
+    ],
+  },
+  {
+    type: 'qwen21',
+    name: 'Qwen Image 2.1',
+    code: 'Q2',
+    media: 'image',
+    label: 'caption',
+    description: 'Image styles and subjects with Qwen Image 2.1.',
+    flagKey: 'qwen21-training',
+    versions: [
+      {
+        key: 'qwen21',
+        label: 'Base',
+        air: 'urn:air:qwen21:checkpoint:civitai:2954443@3352534',
+        baseModel: 'Qwen 2.1',
+        ecosystem: 'qwen21' satisfies Qwen21AiToolkitTrainingInput['ecosystem'],
+        isNew: true,
+      },
+    ],
+  },
+  {
+    type: 'yue2',
+    name: 'YuE2',
+    code: 'YE',
+    media: 'audio',
+    label: 'caption',
+    description: 'Music styles learned from audio captions and lyrics.',
+    flagKey: 'yue2-training',
+    versions: [
+      {
+        key: 'yue2',
+        label: 'Base',
+        air: 'urn:air:yue2:checkpoint:civitai:2944296@3337846',
+        baseModel: 'YuE2',
+        ecosystem: 'yue2' satisfies YuE2AiToolkitTrainingInput['ecosystem'],
+        isNew: true,
+      },
+    ],
+  },
   // ---- Audio · captions ----
   {
     type: 'acestep',
@@ -602,6 +676,9 @@ export const MEDIA_OPTIONS: { id: Media; name: string; icon: string }[] = [
   { id: 'video', name: 'Video', icon: '🎬' },
   { id: 'audio', name: 'Audio', icon: '🎵' },
 ];
+
+export const isMedia = (value: unknown): value is Media =>
+  MEDIA_OPTIONS.some((m) => m.id === value);
 
 /** LoRA "type" (Character/Style/Concept/Effect) → per-media recommended card + step tuning. */
 export interface LoraType {
@@ -750,6 +827,18 @@ export const findByAir = (
 /** First card in an ecosystem (e.g. `sdxl`) — a coarser fallback when the exact `air` isn't in the catalog. */
 export const cardByEcosystem = (ecosystem: string): ModelCard | undefined =>
   MODEL_CARDS.find((c) => c.versions.some((v) => v.ecosystem === ecosystem));
+
+const airEcosystem = (air: string): string | undefined => /^urn:air:([^:]+):/.exec(air)?.[1];
+
+/** First card whose catalog AIRs share this AIR's ecosystem segment (`urn:air:<eco>:…`). For runs whose
+ *  step carries no `ecosystem` field and trained on an AIR outside the catalog — the main app's legacy
+ *  `imageResourceTraining` runs (e.g. a `wanvideo` checkpoint the studio doesn't list). */
+export const cardByAirEcosystem = (air: string): ModelCard | undefined => {
+  const eco = airEcosystem(air);
+  return eco
+    ? MODEL_CARDS.find((c) => c.versions.some((v) => airEcosystem(v.air) === eco))
+    : undefined;
+};
 
 // ---- Advanced training parameters (AI-Toolkit) ----
 // VENDORED from the main app's `trainingSettings` (src/components/Training/Form/TrainingParams.tsx),
@@ -959,6 +1048,39 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     lrScheduler: 'constant',
     optimizer: 'AdamW8Bit',
   },
+  ming: {
+    epochs: 5,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 1,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  qwen21: {
+    epochs: 5,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 1024,
+    batchSize: 1,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
+  yue2: {
+    epochs: 5,
+    unetLr: 1e-4,
+    textEncoderLr: 0,
+    networkDim: 32,
+    networkAlpha: 32,
+    resolution: 512,
+    batchSize: 1,
+    lrScheduler: 'constant',
+    optimizer: 'AdamW8Bit',
+  },
   boogu: {
     epochs: 5,
     unetLr: 1e-4,
@@ -1158,11 +1280,28 @@ export function paramsForVersion(card: ModelCard, versionKey: string): RunParamD
   return PARAM_DEFAULTS[versionKey] ?? PARAM_DEFAULTS[card.versions[0]!.key] ?? PARAM_FALLBACK;
 }
 
+/**
+ * Default step budget per version — VENDORED mirror of the main app's `aiToolkitStepDefault`
+ * (src/utils/training.ts). Fixed per base model, NOT scaled by dataset size (repeats absorb that);
+ * the source keys on the version's `TrainingBaseModelType`, and the catalog's version keys for the
+ * deviating bases coincide with those type names. Re-mirror by hand when the trainer's defaults
+ * change. Callers resolve a "Custom…" run to a catalog version before asking, so the only unknown
+ * keys are future unmirrored ones — those take the source's `otherwise` arm (2000).
+ */
+const STEP_DEFAULT_3000 = new Set(['ltx2', 'ltx23', 'ltx25', 'boogu', 'minimaxh3']);
+export function versionStepDefault(versionKey: string): number {
+  return STEP_DEFAULT_3000.has(versionKey) ? 3000 : versionKey === 'anima' ? 1500 : 2000;
+}
+
 export interface ParamBound {
   min: number;
   max: number;
   step: number;
 }
+
+/** Steps bounds — VENDORED from the main app's `targetSteps` field (`min: 1, max: 10000`) in
+ *  src/components/Training/Form/TrainingParams.tsx. Re-mirror by hand when the trainer's cap changes. */
+export const TARGET_STEPS = { min: 1, max: 10000, step: 1 } as const satisfies ParamBound;
 
 /**
  * Version keys whose backend cannot train the text encoder: AI-Toolkit fails a Krea 2 run with

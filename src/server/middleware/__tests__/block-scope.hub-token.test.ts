@@ -12,11 +12,17 @@ vi.mock('~/server/services/block-revocation.service', () => ({
   BlockRevocation: { isRevoked: isRevokedMock },
 }));
 vi.mock('~/server/auth/bearer-token', () => ({ getSessionFromBearerToken: sessionMock }));
+const { tunnelMock } = vi.hoisted(() => ({ tunnelMock: vi.fn(async () => null as unknown) }));
+vi.mock('~/server/services/blocks/dev-tunnel.service', async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  getActiveDevTunnel: (...a: unknown[]) => tunnelMock(...a),
+}));
 
 import { dbMock } from '~/__tests__/mocks';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { withBlockScope, type BlockScopedNextApiRequest } from '../block-scope.middleware';
 import { BlockTokenService } from '~/server/services/block-token.service';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const USER_ID = 42;
 const CLIENT_ID = 'app_hub';
@@ -138,6 +144,88 @@ describe('withBlockScope with a hub-issued OAuth token', () => {
     expect(handler).toHaveBeenCalledTimes(1);
     expect(claims).toBeUndefined();
     expect(dbMock.dbRead.appBlock.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('binds the borrowed dev client of a never-submitted app to its author’s live tunnel', async () => {
+    sessionMock.mockResolvedValue({
+      user: { id: USER_ID },
+      apiKeyId: 7,
+      subject: { type: 'oauth', id: `appdev-${USER_ID}-my-app` },
+    });
+    dbMock.dbRead.appBlock.findFirst.mockResolvedValue(null);
+    tunnelMock.mockResolvedValue({
+      grantedScopes: ['ai:write:budgeted', SCOPE, 'collections:read:self'],
+    });
+    dbMock.dbRead.oauthConsent.findUnique.mockResolvedValue({ scope: TokenScope.UserRead });
+
+    const { res, claims } = await drive('civ_dev_oauth');
+
+    expect(res.statusCode).toBe(200);
+    expect(claims).toMatchObject({
+      sub: `user:${USER_ID}`,
+      appId: `appdev-${USER_ID}-my-app`,
+      appBlockId: 'ephemeral-my-app',
+      blockId: 'my-app',
+      blockInstanceId: 'page_ephemeral-my-app',
+      dev: true,
+    });
+    expect([...(claims?.scopes ?? [])].sort()).toEqual(['collections:read:self', SCOPE]);
+    expect(tunnelMock).toHaveBeenCalledWith(USER_ID, 'my-app');
+  });
+
+  it('never binds a dev client to anyone but its author, nor without a live tunnel', async () => {
+    sessionMock.mockResolvedValue({
+      user: { id: USER_ID },
+      apiKeyId: 7,
+      subject: { type: 'oauth', id: 'appdev-99-my-app' },
+    });
+    dbMock.dbRead.appBlock.findFirst.mockResolvedValue(null);
+    const foreign = await drive('civ_dev_oauth');
+    expect(foreign.claims).toBeUndefined();
+    expect(tunnelMock).not.toHaveBeenCalled();
+
+    sessionMock.mockResolvedValue({
+      user: { id: USER_ID },
+      apiKeyId: 7,
+      subject: { type: 'oauth', id: `appdev-${USER_ID}-my-app` },
+    });
+    tunnelMock.mockResolvedValue(null);
+    const closed = await drive('civ_dev_oauth');
+    expect(closed.claims).toBeUndefined();
+  });
+
+  it('binds an owned, not-yet-approved app’s real client to its author’s tunnel with real ids', async () => {
+    sessionMock.mockResolvedValue({
+      user: { id: USER_ID },
+      apiKeyId: 7,
+      subject: { type: 'oauth', id: CLIENT_ID },
+    });
+    dbMock.dbRead.appBlock.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      id: APP_BLOCK_ID,
+      blockId: BLOCK_ID,
+      manifest: { page: { buzzBudgetPerGen: 75 } },
+      approvedScopes: ['ai:write:budgeted', SCOPE],
+    });
+    tunnelMock.mockResolvedValue({ grantedScopes: [] });
+    dbMock.dbRead.oauthConsent.findUnique.mockResolvedValue({
+      scope: TokenScope.UserRead | TokenScope.AIServicesWrite,
+    });
+
+    const { claims } = await drive('civ_dev_oauth');
+
+    expect(claims).toMatchObject({
+      appId: CLIENT_ID,
+      appBlockId: APP_BLOCK_ID,
+      blockId: BLOCK_ID,
+      blockInstanceId: `page_${APP_BLOCK_ID}`,
+      dev: true,
+      buzzBudget: 75,
+    });
+    expect([...(claims?.scopes ?? [])].sort()).toEqual(['ai:write:budgeted', SCOPE]);
+    expect(dbMock.dbRead.appBlock.findFirst.mock.calls[1][0].where).toEqual({
+      appId: CLIENT_ID,
+      app: { userId: USER_ID },
+    });
   });
 
   it('still accepts a block JWT on the unchanged path', async () => {

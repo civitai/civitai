@@ -75,7 +75,59 @@ export type BlockHostSurface =
   /** The author's dev tunnel, `/apps/dev/<blockId>`. 🔴 Never eligible. */
   | 'dev-tunnel'
   /** Moderator review surfaces (review modal + full-page preview). */
-  | 'review-preview';
+  | 'review-preview'
+  /**
+   * The PRIVATE RUN of a DELISTED / SUSPENDED app, `/apps/private-run/<slug>`, for its
+   * owner, an accepted listing collaborator, or a moderator. 🔴 Never eligible — see
+   * the unconditional refusal in `blockInitFragmentEnabledWith`.
+   */
+  | 'private-run';
+
+/**
+ * Where a block's own client router may push a sub-path, per surface.
+ *
+ * 🔴 A TOTAL `Record`, NOT A TERNARY, AND THAT IS THE WHOLE VALUE OF IT. `PageBlockHost`
+ * handles a block's `NAVIGATE` request by pushing `<base>/<slug>/<path>`, and the base
+ * was originally derived with `surface === 'private-run' ? … : '/apps/run'`. A default
+ * branch on a surface union silently gives every FUTURE surface the public run route —
+ * which for a non-public surface is a route that 404s, i.e. a block's first in-app
+ * navigation makes the app vanish. As a total record, adding a member to
+ * `BlockHostSurface` is a COMPILE ERROR here until someone decides where that surface's
+ * deep links belong, which is the same guarantee the union's own docblock claims for
+ * `PageBlockHost` call sites.
+ *
+ * ⚠️ `dev-tunnel` MAPS TO THE PUBLIC RUN ROUTE, AND THAT IS PRE-EXISTING RATHER THAN
+ * INTENDED. Only `reviewMode` returns early from that handler, so a dev-tunnel host does
+ * reach it and does push `/apps/run/<slug>` — pushing the author off their tunnel onto
+ * the public route. Recorded as `'/apps/run'` here because that IS today's behaviour and
+ * this change must not alter it; naming it is what makes it fixable. `null` is reserved
+ * for a surface that should drop the navigation instead, which is probably what the dev
+ * tunnel and the review preview both want.
+ *
+ * ⚠️ `model-slot` IS `null` AND THAT IS NOT A BEHAVIOUR CHANGE — verified rather than
+ * assumed, because the ternary this replaced gave every non-private surface
+ * `/apps/run`. `PageBlockHost` is never mounted with `surface: 'model-slot'` in
+ * production: its FOUR production mounts are the public run route (`page-run`), the
+ * private run route (`private-run`), `/apps/dev/<blockId>` (`dev-tunnel`) and
+ * `~/components/Apps/ReviewBlockPreviewHost` (`review-preview`) — the moderator's live
+ * preview, which the paragraph above names and which this enumeration used to omit.
+ * ⚠️ That omission mattered in the direction that weakens the argument: this list IS the
+ * evidence for the no-behaviour-change claim, and `review-preview` is one of the surfaces
+ * whose base is now LOOKED UP rather than defaulted. It maps to `/apps/run`, which is
+ * exactly what the ternary it replaced produced — so the claim holds, but it now rests on
+ * a complete enumeration rather than one missing its only non-obvious member. The model slot is `IframeHost`, a SEPARATE component
+ * with its own message handlers, which uses the string only to call
+ * `blockInitFragmentEnabled` directly. So this entry is unreachable today, and `null` is
+ * the honest value — a model slot has no page route to deep-link into, so inheriting the
+ * public run base would have been meaningless rather than merely unused.
+ */
+export const BLOCK_HOST_DEEP_LINK_BASE: Record<BlockHostSurface, string | null> = {
+  'model-slot': null,
+  'page-run': '/apps/run',
+  'dev-tunnel': '/apps/run',
+  'review-preview': '/apps/run',
+  'private-run': '/apps/private-run',
+};
 
 /**
  * Blocks permitted the fragment fast path, keyed by `blockId` OR `slug`
@@ -274,7 +326,20 @@ export function blockInitFragmentEnabledWith(
   // (1) Unconditional: no allowlist entry can enable a surface that mounts
   //     UNREVIEWED code. See the doc comment above for why identity-keying
   //     cannot express this.
-  if (surface === 'dev-tunnel' || surface === 'review-preview') return false;
+  //
+  //     🔴 `private-run` IS IN THIS SET EVEN THOUGH IT SERVES A *REVIEWED* BUNDLE, and
+  //     the reasoning is worth stating because it does not follow from the heading.
+  //     A private run mounts the app's last APPROVED build — so unlike the two
+  //     surfaces beside it, the code HAS been reviewed. What it has also been is TAKEN
+  //     DOWN. An allowlist here is keyed on blockId/slug, and a block allowlisted for
+  //     production is the SAME id that keeps running privately after a delist, so an
+  //     identity-keyed entry cannot express "not while suspended" any more than it can
+  //     express "not in the tunnel". Given the fast path perturbs `location.hash`
+  //     routing and the reason the app is delisted may be the very behaviour under
+  //     diagnosis, the reviewer should see the app on its ordinary boot path.
+  if (surface === 'dev-tunnel' || surface === 'review-preview' || surface === 'private-run') {
+    return false;
+  }
 
   // (2) Denylist beats everything below it.
   if (blockId && denylist.has(blockId)) return false;

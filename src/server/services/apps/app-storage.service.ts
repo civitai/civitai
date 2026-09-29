@@ -283,6 +283,15 @@ async function resolveStorageContext(
   blockInstanceId: string;
   /** True when this resolved to the run-for-real preview namespace. */
   reviewPreview: boolean;
+  /**
+   * 🔴 The VERIFIED private-run claim, carried out of this resolver because it is the only
+   * place on the storage path that holds the claims — the two `recordScopeInvocation`
+   * writers downstream receive only this context object, so without it the audit row for a
+   * private run would land UNMARKED and leak into the delisted app owner's analytics. Read
+   * here rather than re-verifying the token at the writers, so there is one verification
+   * and one spelling.
+   */
+  privateRun: boolean;
 }> {
   const claims = await verifyBlockToken(blockToken);
   if (!claims) {
@@ -384,6 +393,7 @@ async function resolveStorageContext(
       appBlockId: publishRequestId,
       blockInstanceId: claims.blockInstanceId,
       reviewPreview: true,
+      privateRun: claims.privateRun === true,
     };
   }
 
@@ -451,6 +461,7 @@ async function resolveStorageContext(
     appBlockId: block.id,
     blockInstanceId: claims.blockInstanceId,
     reviewPreview: false,
+    privateRun: claims.privateRun === true,
   };
 }
 
@@ -566,10 +577,8 @@ export async function getAppStorageValue(blockToken: string, key: string) {
 export async function setAppStorageValue(blockToken: string, key: string, value: unknown) {
   const stopTimer = appStorageLatencyHistogram.startTimer({ op: 'set' });
   try {
-    const { userId, slug, schema, appBlockId, blockInstanceId } = await resolveStorageContext(
-      blockToken,
-      'set'
-    );
+    const { userId, slug, schema, appBlockId, blockInstanceId, privateRun } =
+      await resolveStorageContext(blockToken, 'set');
     if (userId == null) {
       appStorageOpsCounter.inc({ op: 'set', outcome: 'unauthorized' });
       throw new TRPCError({
@@ -977,6 +986,10 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
         statusCode: 200,
         // W13 richer detail — structured ref for the render-time sentence.
         detail: { action: 'storage.set', key: key, outcome: 'ok' },
+        // 🔴 A REST storage write produces TWO audit rows — this one and the
+        // `withBlockScope` access row — so BOTH must carry the marker or the unmarked half
+        // still shows up in a delisted app owner's analytics.
+        privateRun: privateRun === true,
       });
     })().catch(() => {
       // swallow — the user-facing audit row is best-effort; it must never break the write
@@ -1000,7 +1013,7 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
 export async function deleteAppStorageValue(blockToken: string, key: string) {
   const stopTimer = appStorageLatencyHistogram.startTimer({ op: 'delete' });
   try {
-    const { userId, schema, appBlockId, blockInstanceId } = await resolveStorageContext(
+    const { userId, schema, appBlockId, blockInstanceId, privateRun } = await resolveStorageContext(
       blockToken,
       'delete'
     );
@@ -1054,6 +1067,9 @@ export async function deleteAppStorageValue(blockToken: string, key: string) {
             statusCode: 200,
             // W13 richer detail — structured ref for the render-time sentence.
             detail: { action: 'storage.delete', key: key, outcome: 'ok' },
+            // See the `set` writer: a REST delete writes this row AND a `withBlockScope`
+            // access row, so both halves need the marker.
+            privateRun: privateRun === true,
           });
         })().catch(() => {
           // swallow — the user-facing audit row is best-effort; it must never break the delete

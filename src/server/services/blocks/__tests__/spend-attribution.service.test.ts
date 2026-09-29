@@ -200,12 +200,12 @@ describe('recordSpendAttribution', () => {
     expect(data.spendSharePct).toBe(0);
   });
 
-  it('MUTATION-CHECK: author share + pct are 0 regardless of the active rate card (no rate applied)', async () => {
-    // The card still carries spendSharePct=5 (a retired placeholder). The write
-    // must NOT apply it — author stays 0 and version stays 'unrated' even
-    // though the card carries a non-zero rate. If the write regressed to
-    // applying that rate, these assertions would fail.
-    expect(ACTIVE_RATE_CARD.spendSharePct).toBe(5);
+  it('MUTATION-CHECK: author share + pct are 0 and no card version is stamped', async () => {
+    // The write must apply NO rate: author 0, pct 0, version = the 'unrated'
+    // sentinel. The line below is the control, and is not incidental — it proves the
+    // active card is a real card with non-zero rates, so the write is ignoring a
+    // live card rather than an empty object.
+    expect(ACTIVE_RATE_CARD.publisherSharePctByScope.viewer_personal).toBeGreaterThan(0);
     await recordSpendAttribution(fakeInput({ buzzAmount: 100000 })); // $100 gross
     const { data } = mockDbWrite.blockSpendAttribution.create.mock.calls[0][0];
     expect(data.grossValueCents).toBe(10000);

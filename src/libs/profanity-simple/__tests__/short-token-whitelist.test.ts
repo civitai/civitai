@@ -4,8 +4,7 @@ import {
   LIBRARY_OVERMATCH_TOKENS,
   type SimpleProfanityFilter,
 } from '~/libs/profanity-simple';
-import blockedWords from '~/utils/metadata/lists/blocked-words.json';
-import whitelistWords from '~/utils/metadata/lists/whitelist-words.json';
+import { blockedWords, whitelistWords } from '@civitai/mod-utils/profanity/lists';
 
 /**
  * obscenity's `fuck` phrase carries `|fu|`, so a bare `fu` token matched and blocked legitimate

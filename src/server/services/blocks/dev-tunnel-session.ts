@@ -1,5 +1,8 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'crypto';
 
+/** Buzz one tunnel session may spend; also the daily consent limit of its OAuth token. */
+export const DEV_TUNNEL_SESSION_BUZZ_CAP = 5000;
+
 /**
  * APP DEV TUNNEL — pure crypto primitives (no DB / Redis / k8s), so they are
  * unit-testable in isolation. This is the direct sibling of `review-session.ts`
@@ -250,7 +253,12 @@ export function sharedSecretMatch(
   presented: string | null | undefined,
   configured: string | null | undefined
 ): boolean {
-  if (!presented || !configured || typeof presented !== 'string' || typeof configured !== 'string') {
+  if (
+    !presented ||
+    !configured ||
+    typeof presented !== 'string' ||
+    typeof configured !== 'string'
+  ) {
     return false;
   }
   const bp = Buffer.from(presented, 'utf8');

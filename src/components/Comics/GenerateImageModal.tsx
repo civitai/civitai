@@ -163,23 +163,7 @@ export function GenerateImageModal({
   useEffect(() => {
     if (!isGenerating) return;
     const pollTimer = setInterval(() => void doPollOnce(), 5_000);
-    // Auto-timeout after 3 min — gives the user a clear failure instead
-    // of an infinite spinner. Some models (gpt-image-2, nano-banana-2)
-    // can take longer than the previous 90s budget.
-    const timeoutTimer = setTimeout(() => {
-      if (activeWorkflowId.current) {
-        activeWorkflowId.current = null;
-        setIsGenerating(false);
-        showErrorNotification({
-          title: 'Generation timed out',
-          error: new Error('The image took too long to generate. Please try again.'),
-        });
-      }
-    }, 180_000);
-    return () => {
-      clearInterval(pollTimer);
-      clearTimeout(timeoutTimer);
-    };
+    return () => clearInterval(pollTimer);
   }, [isGenerating, doPollOnce]);
 
   const handleGenerate = async () => {

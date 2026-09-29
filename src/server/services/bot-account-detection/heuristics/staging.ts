@@ -1,3 +1,4 @@
+import { plural } from '../../abuse-report-prose';
 import type { StagedImageFacts } from '../evidence';
 import type { BotAccountHeuristic } from '../scoring';
 import { rampScore } from './ramp';
@@ -349,12 +350,22 @@ export const assetStagingHeuristic: BotAccountHeuristic = {
     // images or a corner of them. The heuristic deliberately does not require "all" (the per-member
     // cap makes that test unreachable on exactly the busiest accounts, and a moderation outcome
     // would silently flip it), so the ratio is disclosed rather than folded into the score.
+    // 🔴 THE VERBS AGREE WITH `facts.count`, NOT WITH THE TOTAL BESIDE IT. "1 of this account's 12
+    // uploaded images carry no generation metadata" is the shape a naive plural gets wrong: the
+    // subject of the sentence is the STAGED count, and the total is only the denominator it is
+    // measured against. Two staged uploads is the firing point, so `count === 1` is not reachable
+    // through the heuristic today — this is written to agree anyway, because `explain` is a pure
+    // function anyone may call and a boundary that moves must not leave a grammar bug behind it.
     const clauses = [
-      `${facts.count} of this account's ${member.posts.all.images} uploaded image(s) carry no ` +
-        `generation metadata and are attached to no post`,
+      `${facts.count} of this account's ${member.posts.all.images} uploaded ` +
+        `${plural(member.posts.all.images, 'image')} ${plural(facts.count, 'carries', 'carry')} ` +
+        `no generation metadata and ${plural(facts.count, 'is', 'are')} attached to no post`,
     ];
     if (burst > 0)
-      clauses.push(`${facts.largestSameSecondBurst} of them were created within the same second`);
+      clauses.push(
+        `${facts.largestSameSecondBurst} of them ` +
+          `${plural(facts.largestSameSecondBurst, 'was', 'were')} created within the same second`
+      );
     return clauses.join('; ');
   },
 };

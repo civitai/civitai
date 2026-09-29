@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { APP, RUN_PAGE_DIR, pageSurface, read, sveltesIn } from './page-sources';
 
 /**
  * The run page's form action — the board's FIRST write.
@@ -235,24 +235,27 @@ describe('the run page load carries the verdict state', () => {
  * 🔴 SOURCE-LEVEL, AND DELIBERATELY SO. These pin properties no executed test in this app can see,
  * because the pages are unrendered and the framework's own middleware is not in the call graph here.
  */
-const HERE = dirname(fileURLToPath(import.meta.url));
-const APP = join(HERE, '../../..'); // src/
-const read = (p: string) => readFileSync(join(APP, p), 'utf8');
-const RUN_PAGE = 'routes/abuse/[runId]/+page.svelte';
+/**
+ * 🔴 THE WHOLE RUN-PAGE DIRECTORY, not `+page.svelte`. Each assertion below is about what the run
+ * page renders; the verdict form and the button loop now live in a sibling component, and pinning
+ * them to one filename is what would have turned four of these green-over-nothing. `pageSurface`
+ * refuses an empty read rather than returning one — see `page-sources.ts`.
+ */
+const RUN_PAGE = () => pageSurface(RUN_PAGE_DIR);
 
 describe('the page is wired to the rule it is tested on', () => {
   it('renders the grouping from `$lib/abuse-decisions`, not a second copy of it', () => {
     // 🔴 THE SEAM. `abuse-decisions.test.ts` proves the rule; this proves the page uses THAT rule.
     // A `$derived` re-implementing it in the component would leave both files green while the screen
     // grouped findings some other way — and this app has no render harness to catch it.
-    const src = read(RUN_PAGE);
+    const src = RUN_PAGE();
     expect(src).toMatch(/from '\$lib\/abuse-decisions'/);
     expect(src).toMatch(/groupFindings\(data\.findings\)/);
     expect(src).toMatch(/storedVerdict\(/);
   });
 
   it('offers exactly the shared verdict tuple — not a hand-written list of buttons', () => {
-    const src = read(RUN_PAGE);
+    const src = RUN_PAGE();
     expect(src).toMatch(/from '\$lib\/abuse-verdicts'/);
     expect(src).toMatch(/\{#each ABUSE_VERDICTS as/);
   });
@@ -260,12 +263,22 @@ describe('the page is wired to the rule it is tested on', () => {
   it('withholds the controls where a ruling cannot be stored', () => {
     // A button that always errors teaches a moderator the board is broken, when the board is fine
     // and a one-line DDL has not been run.
-    const src = read(RUN_PAGE);
-    expect(src).toMatch(/\{#if data\.verdicts !== null\}/);
+    //
+    // 🔴 BOTH HALVES OF THE SEAM. The page derives the capability from `data.verdicts`, and the
+    // component that owns the buttons gates them on it. Either half on its own is satisfiable while
+    // the buttons render unconditionally — and asserting the gate WITHIN the file that holds the
+    // buttons is what stops the two being matched across a directory that happens to contain both.
+    expect(RUN_PAGE()).toMatch(/canRule=\{data\.verdicts !== null\}/);
+    const withButtons = sveltesIn(RUN_PAGE_DIR).filter((s) => s.src.includes('<button'));
+    expect(
+      withButtons.map((s) => s.name),
+      'exactly one source should render the verdict buttons'
+    ).toHaveLength(1);
+    expect(withButtons[0].src).toMatch(/\{#if canRule\}[\s\S]*<button/);
   });
 
   it('posts to the action this file tests', () => {
-    expect(read(RUN_PAGE)).toMatch(/method="POST" action="\?\/verdict"/);
+    expect(RUN_PAGE()).toMatch(/method="POST" action="\?\/verdict"/);
   });
 });
 
@@ -302,6 +315,10 @@ describe('the board executes nothing', () => {
     'lib/server/abuse-detection.service.ts',
     'lib/abuse-decisions.ts',
     'lib/abuse-verdicts.ts',
+    // The board's text, as plain functions. It renders producer-supplied values into sentences, so
+    // it is exactly the kind of module this ledger is for — added when it was created rather than
+    // left outside the set because it "only formats".
+    'routes/abuse/[runId]/finding-presentation.ts',
   ];
 
   const importsOf = (src: string) =>
@@ -327,7 +344,12 @@ describe('the board executes nothing', () => {
   it('imports nothing that can act on an account', () => {
     const all = new Set(SURFACES.flatMap((s) => importsOf(read(s))));
     expect([...all].sort()).toEqual([
+      // The grouping rule, for the finding type the board's text is written against. A client
+      // module whose only import is the verdict tuple below — it reaches no service.
+      '$lib/abuse-decisions',
       '$lib/abuse-verdicts',
+      // Number formatting, and nothing else: `format.ts` imports nothing at all.
+      '$lib/format',
       '$lib/server/abuse-detection.service',
       '$lib/server/query',
       './$types',

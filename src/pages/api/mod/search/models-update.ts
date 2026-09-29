@@ -1,4 +1,6 @@
 import { ModelStatus } from '~/shared/utils/prisma/enums';
+import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
+import { isGeneratorReady } from '~/shared/generation/generator-readiness';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -32,6 +34,7 @@ const updateGenerationCoverage = (idOffset: number) =>
       take: BATCH_SIZE,
       select: {
         id: true,
+        type: true,
         modelVersions: {
           orderBy: { index: 'asc' },
           select: getModelVersionsForSearchIndex,
@@ -52,10 +55,21 @@ const updateGenerationCoverage = (idOffset: number) =>
     }
 
     const updateIndexReadyRecords = records
-      .map(({ id, modelVersions }) => {
-        const [{ files, ...version }] = modelVersions;
-        const canGenerate = modelVersions.some(
-          (x) => x.generationCoverage?.covered && !isGenerationDisabled(x.flags)
+      .map(({ id, type, modelVersions }) => {
+        const [{ files, generationCoverage: _gc, ...version }] = modelVersions;
+        // This endpoint is the index's second writer — compose these exactly as
+        // models.search-index does, or a moderator re-index rewrites the fields under a different rule.
+        const eligible = (x: { baseModel: string; flags: number }, covered: boolean | undefined) =>
+          isGenerationEligible({
+            covered,
+            baseModel: x.baseModel,
+            modelType: type,
+            flags: x.flags,
+          });
+
+        const canGenerate = modelVersions.some((x) => eligible(x, x.generationCoverage?.covered));
+        const canGenerateNext = modelVersions.some((x) =>
+          eligible(x, x.generationCoverage?.coveredNext)
         );
 
         if (!version) {
@@ -68,12 +82,21 @@ const updateGenerationCoverage = (idOffset: number) =>
             ...version,
             hashes: version.hashes.map((hash) => hash.hash),
           },
-          versions: modelVersions.map(({ generationCoverage, files, hashes, ...x }) => ({
-            ...x,
-            hashes: hashes.map((hash) => hash.hash),
-            canGenerate: generationCoverage?.covered && !isGenerationDisabled(x.flags),
-          })),
+          versions: modelVersions.map(
+            ({ generationCoverage, files, hashes, usageControl, ...x }) => ({
+              ...x,
+              // Keeps the column's name but holds readiness — see models.search-index.
+              generatorLoaded: isGeneratorReady({
+                generatorLoaded: x.generatorLoaded,
+                usageControl,
+              }),
+              hashes: hashes.map((hash) => hash.hash),
+              canGenerate: eligible(x, generationCoverage?.covered),
+              canGenerateNext: eligible(x, generationCoverage?.coveredNext),
+            })
+          ),
           canGenerate,
+          canGenerateNext,
         };
       })
       .filter(isDefined);

@@ -202,7 +202,7 @@ describe('a SUSPENDED app is refused on the REST routes that can spend or write'
     expect(res.statusCode).toBe(403);
     // Whole normalised body, not a substring: `toContain('not approved')` would also be
     // satisfied by a DIFFERENT refusal that happens to share the phrase.
-    expect(res.body).toEqual({ error: 'app block is not approved' });
+    expect(res.body).toEqual({ error: 'app block is not approved', code: 'app_not_approved' });
   });
 
   it('POST /api/v1/blocks/collections/:id/follow — 403, and no contributor row is touched', async () => {
@@ -218,7 +218,7 @@ describe('a SUSPENDED app is refused on the REST routes that can spend or write'
     expect(mockAddContributor).not.toHaveBeenCalled();
     expect(mockRemoveContributor).not.toHaveBeenCalled();
     expect(res.statusCode).toBe(403);
-    expect(res.body).toEqual({ error: 'app block is not approved' });
+    expect(res.body).toEqual({ error: 'app block is not approved', code: 'app_not_approved' });
   });
 
   /**

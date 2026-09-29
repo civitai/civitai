@@ -31,6 +31,8 @@ import {
   BLOCK_BUZZ_CAP_PER_DAY,
   BLOCK_CONSENT_BUDGET_MAX_PER_DAY,
   BLOCK_CONSENT_BUDGET_MIN_PER_DAY,
+  isKnownBlockScope,
+  PRIVATE_RUN_BUZZ_CAP,
   REVIEW_RUN_FOR_REAL_BUZZ_CAP,
 } from '~/shared/constants/block-scope.constants';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -205,6 +207,7 @@ import { resolveBlockGenerationType } from '~/server/services/blocks/generation-
 // here, so a dynamic form would defer nothing. Everything it exports is
 // fail-closed behind `app-blocks-author-fee-enabled`.
 import {
+  BLOCK_AUTHOR_FEE_ESTIMATE_LABEL,
   chargeBlockAuthorFee,
   quoteBlockAuthorFee,
   reverseBlockAuthorFee,
@@ -249,6 +252,22 @@ import type { AppSpendDailyKey } from '~/server/services/blocks/app-spend-cap.se
 // `updateBlockWorkflowStatus` is dynamic-imported in pollWorkflow (mirrors
 // listMyBlockWorkflows), so nothing beyond the dynamic module needs mocking.
 import type { BlockWorkflowStatus } from '~/server/services/blocks/block-workflows.service';
+// The three-state spend posture read by `reserveBlockBuzzSpendForClaims`. Type-only for
+// the same reason as the two above: the module is `await import`ed on the spend path, so a
+// value import here would pull the consent ledger into this router's load graph and give
+// every suite that mocks it a second specifier to know about.
+import type { ConsentSpendPosture } from '~/server/services/blocks/scope-grant.service';
+// The one scope that can spend the viewer's Buzz. A bare constant, so a value import costs
+// nothing the type-only line above was avoiding.
+import { CONSENT_SPEND_SCOPE } from '~/server/services/blocks/scope-grant.service';
+// Two VALUE imports from the consent-revocation module: the marker writer and the message a
+// degraded publish reports. Static rather than dynamic — the module's own graph is Redis +
+// two constants modules, all of which this router already carries, so there is nothing to
+// defer, and a dynamic import for a STRING would be noise.
+import {
+  ConsentRevocation,
+  CONSENT_REVOKE_MARKER_DEGRADED_MESSAGE,
+} from '~/server/services/blocks/consent-revocation.service';
 import { getResourceGenerationSupport } from '~/shared/constants/basemodel.constants';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
@@ -274,6 +293,7 @@ import {
   createWorkflowStepsFromGraphInput,
 } from '~/server/services/orchestrator/orchestration-new.service';
 import { getUserById } from '~/server/services/user.service';
+import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { sessionClient } from '~/server/auth/session-client';
 import {
   appDeveloperProcedure,
@@ -637,6 +657,10 @@ async function recordBlockPostInvocation(opts: {
       // A dev token may carry a SYNTHETIC, non-FK-resolving appBlockId; the
       // helper routes that to the nullable-appBlockId retry so the row persists.
       dev: opts.claims.dev === true,
+      // ⚠️ SPELLED `opts.claims` — this is the ONE marker site whose verified claims arrive
+      // on an options bag rather than a local, so the threading ledger accepts two spellings
+      // and neither is a substring of the other.
+      privateRun: opts.claims.privateRun === true,
     });
   } catch {
     /* best-effort: an audit failure never breaks (or slows) a committed post */
@@ -1192,6 +1216,61 @@ async function reserveReviewRunForRealBuzzSpend(
   return { total, key };
 }
 
+// ---- PRIVATE RUN AGGREGATE Buzz cap -----------------------------------------
+//
+// The private-run analog of the run-for-real ceiling above: when the owner of a
+// DELISTED app, or a moderator, runs its deployed bundle privately against their OWN
+// account, the token's per-call `buzzBudget` bounds ONE submit but not a loop of
+// sub-budget submits. This is the cumulative bound: per-(viewer, appBlockId), swapped
+// IN PLACE OF the ordinary per-user daily cap so there is still exactly ONE
+// reserve/refund path per submit and the whole existing refund choreography (which
+// keys off the returned `key`) works unchanged.
+//
+// 🔴 KEYED ON (viewer, appBlockId) — NOT (viewer) AND NOT (app). Per-viewer alone
+// would let one moderator's ceiling be consumed across every delisted app they touch,
+// so reviewing app N would refuse generations on app N+1 for reasons the reviewer
+// cannot see. Per-app alone would let two collaborators draw down one another's
+// allowance on an app neither of them can publish. The pair is the only shape where
+// the number means what the operator would expect it to mean.
+//
+// 🔴 A DIFFERENT REDIS PREFIX FROM THE REVIEW CEILING, and the reservation ids are not
+// even the same KIND: run-for-real reserves against a `pubreq_<ULID>` publish-request
+// id, this against a real `apb_<…>` AppBlock id. Sharing a prefix would let a
+// moderator's review-sandbox session and their private run of the same app consume one
+// another's ceiling.
+//
+// 🔴 THE CONSENT LEG IS DELIBERATELY SKIPPED, exactly as the run-for-real arm skips it.
+// `app_user_scope_grants.buzz_budget_per_day` is the VIEWER'S OWN grant for an app they
+// chose to install; a majority of live grant rows now carry a non-null `revoked_at`, so
+// requiring a consent budget would make this feature dead for most reviewers for
+// reasons entirely unrelated to it — a moderator has no reason to have ever consented
+// to an app they are reviewing the takedown of. The platform ceiling below is the
+// bound, and it is STRICTLY TIGHTER than the 50k/day cap it replaces.
+const PRIVATE_RUN_BUZZ_CAP_TTL_SECONDS = 25 * 60 * 60;
+
+function privateRunBuzzCapKey(
+  userId: number,
+  appBlockId: string
+): `${typeof REDIS_SYS_KEYS.BLOCKS.PRIVATE_RUN_BUZZ_CAP}:${string}` {
+  return `${REDIS_SYS_KEYS.BLOCKS.PRIVATE_RUN_BUZZ_CAP}:${userId}:${appBlockId}`;
+}
+
+/**
+ * Atomically reserves `cost` against the (viewer, appBlockId) private-run cumulative
+ * counter. Same shared `reserveCumulativeBuzzKey` primitive as every sibling cap
+ * (atomic INCRBY + first-write-EX + ttl<0 re-arm + self-unwind); fails CLOSED on a
+ * Redis error (throws).
+ */
+async function reservePrivateRunBuzzSpend(
+  userId: number,
+  appBlockId: string,
+  cost: number
+): Promise<{ total: number; key: ReturnType<typeof privateRunBuzzCapKey> }> {
+  const key = privateRunBuzzCapKey(userId, appBlockId);
+  const total = await reserveCumulativeBuzzKey(key, cost, PRIVATE_RUN_BUZZ_CAP_TTL_SECONDS);
+  return { total, key };
+}
+
 // ---- CONSENT BUDGET — the per-(USER, APP BLOCK, UTC-day) ceiling the VIEWER set
 //      for THIS app at consent time (`app_user_scope_grants.buzz_budget_per_day`).
 //
@@ -1284,11 +1363,25 @@ type BlockBuzzReservation = {
  *     `pubreq_<ULID>` publish-request id, not an AppBlock id. Layering a consent
  *     budget on top would be reading a grant for an app that is not yet approved.
  *
- * FAIL-CLOSED, IN BOTH DIRECTIONS THAT MATTER. A Redis error on the consent leg
+ * REVOKED CONSENT REFUSES — it does NOT fall through to the platform ceiling.
+ *
+ * 🔴 THIS USED TO BE THE INVERSION, AND IT WAS THE EXACT OPPOSITE OF WHAT A REVOKE
+ * SHOULD DO. The consent leg read `getConsentBuzzBudget`, which returns `null` for a
+ * revoked grant just as it does for "no budget set", and the next line was
+ * `if (budget == null) return { ...platform, consent: null }`. So a viewer who revoked
+ * spend consent had their OWN per-app ceiling REMOVED — the app carried on under the
+ * platform's 50,000/day alone for the rest of an already-minted token's life. The
+ * ordering was: the revoke dropped the user's ceiling BEFORE it dropped the scope.
+ * `resolveConsentSpendPosture` exists so the two states are distinguishable, and this
+ * function now throws on `revoked`. Do not "simplify" it back to reading a nullable
+ * number — the null is what could not say "revoked".
+ *
+ * FAIL-CLOSED, IN EVERY DIRECTION THAT MATTERS. A Redis error on the consent leg
  * refunds the platform leg and rethrows, so a failed reservation never leaves the
  * user's daily allowance burned. A DB error reading the budget likewise throws
  * rather than being treated as "no budget": absent means UNBOUNDED-within-50k, so
- * swallowing the error would silently widen the ceiling the user consented to.
+ * swallowing the error would silently widen the ceiling the user consented to. And a
+ * REVOKED grant refuses — with the same refund.
  */
 async function reserveBlockBuzzSpendForClaims(
   claims: BlockTokenClaims,
@@ -1299,22 +1392,88 @@ async function reserveBlockBuzzSpendForClaims(
     const { total, key } = await reserveReviewRunForRealBuzzSpend(userId, claims.appBlockId, cost);
     return { total, key, cap: REVIEW_RUN_FOR_REAL_BUZZ_CAP, consent: null };
   }
+  // PRIVATE RUN — the THIRD arm, and the one that CANNOT rely on the `dev` skip below.
+  //
+  // 🔴 A PRIVATE-RUN TOKEN NEVER CARRIES `dev: true` (the signer throws on the pair and
+  // the verifier rejects it), precisely so that it does NOT take the `claims.dev` early
+  // return further down — which skips the per-app velocity reservation and would leave a
+  // taken-down app's private surface uncapped per app. So this arm exists to give it a
+  // ceiling of its own rather than letting it fall through to the ordinary per-user
+  // daily cap, which is 20× looser and shared with the viewer's legitimate app usage.
+  //
+  // Placed after `reviewRunForReal` and before the default: the two are mutually
+  // exclusive in practice (a review token is `dev`, which a private-run token cannot
+  // be), and the order is stated rather than relied on so a future third marker does
+  // not silently land between them.
+  //
+  // 🔴 IT MUST STAY *ABOVE* THE `claims.dev` EARLY RETURN, AND THAT ORDERING IS THE
+  // GUARD. Below it, a token that somehow carried both markers would take the `dev`
+  // skip and get NO cumulative ceiling at all. The pair is refused at the signer and
+  // again at the verifier, so this is the third layer — and the cheapest, because it is
+  // just a line number. `no-unthreaded-private-run-claim` asserts this order.
+  //
+  // ⚠️ THE RESIDUAL, STATED RATHER THAN DISCOVERED LATER: replacing the daily cap means
+  // a private run no longer counts against the viewer's 50k/day platform key, so ONE
+  // viewer's spend summed across MANY delisted apps is bounded by
+  // (spend-capable delisted apps × PRIVATE_RUN_BUZZ_CAP) rather than by the flat 50k.
+  //
+  // 🔴 NO FIGURE IS QUOTED FOR THAT PRODUCT, AND THAT IS DELIBERATE TWICE OVER. It is a
+  // count of a population MODERATORS MOVE — every delist, relist and approval changes it
+  // — so a number written here is a snapshot that reads as a bound, which is the exact
+  // shape of stale claim this subsystem keeps being bitten by. And this repo is public: an
+  // inventory count of which taken-down apps can still spend is not something to publish
+  // for the sake of a comment. DERIVE IT instead, at the moment you need it: the apps
+  // whose `status` is not `approved` and whose `approvedScopes` survive
+  // `clampPrivateRunScopes` with the spend scope intact, times PRIVATE_RUN_BUZZ_CAP.
+  //
+  // It was measured once, before this landed, and came out BELOW the ceiling it replaces
+  // — which is why the trade is accepted rather than merely noted. The durable half of
+  // the argument does not depend on that measurement at all: the per-APP dimension is
+  // separately bounded by the G8 velocity cap (`reserveAppSpend`), which a private-run
+  // token does NOT skip precisely because it is never `dev`. Re-derive before widening
+  // the flag past `false`.
+  //
+  // Consent leg skipped — see the note on `reservePrivateRunBuzzSpend`.
+  if (claims.privateRun === true) {
+    const { total, key } = await reservePrivateRunBuzzSpend(userId, claims.appBlockId, cost);
+    return { total, key, cap: PRIVATE_RUN_BUZZ_CAP, consent: null };
+  }
   const { total, key } = await reserveBlockBuzzSpend(userId, cost);
   const platform = { total, key, cap: BLOCK_BUZZ_CAP_PER_DAY };
   if (claims.dev === true) return { ...platform, consent: null };
 
   // From here any throw must undo the platform reservation just taken — otherwise a
   // failed attempt permanently burns the viewer's 50k/day allowance for a spend that
-  // never happened. Same rule the consent-DENY path below obeys.
-  let budget: number | null;
+  // never happened. Same rule the consent-DENY path below obeys, and the REVOKED exit
+  // immediately after this read obeys it too: a refusal is a non-committed exit like any
+  // other, and it is the one most likely to be repeated by a client that keeps retrying.
+  let posture: ConsentSpendPosture;
   try {
-    const { getConsentBuzzBudget } = await import('~/server/services/blocks/scope-grant.service');
-    budget = await getConsentBuzzBudget({ userId, appBlockId: claims.appBlockId });
+    const { resolveConsentSpendPosture } = await import(
+      '~/server/services/blocks/scope-grant.service'
+    );
+    posture = await resolveConsentSpendPosture({ userId, appBlockId: claims.appBlockId });
   } catch (e) {
     await refundBlockBuzzSpend(key, cost);
     throw e;
   }
-  if (budget == null) return { ...platform, consent: null };
+
+  if (posture.kind === 'revoked') {
+    await refundBlockBuzzSpend(key, cost);
+    // FORBIDDEN, not a failed-snapshot return: this is an authorization outcome, not a
+    // ceiling being hit. The message names the remedy because the viewer is the one who
+    // caused it and re-consenting is entirely in their hands.
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message:
+        posture.reason === 'grant_revoked'
+          ? 'you have revoked this app’s permissions — re-authorize it to let it spend Buzz on your behalf'
+          : 'you have revoked this app’s permission to spend your Buzz — re-authorize it to allow this',
+    });
+  }
+
+  if (posture.kind === 'no-budget') return { ...platform, consent: null };
+  const budget = posture.budget;
 
   try {
     const consent = await reserveConsentBudgetSpend(userId, claims.appBlockId, cost);
@@ -1898,6 +2057,7 @@ export const blocksRouter = router({
         // allowlist at write + re-gated (incl. the dedicated unsubmitted-spend flag)
         // at the mint. Bounded to blunt parse pressure; absent → read-only.
         declaredScopes: z.array(z.string().min(1).max(64)).max(32).optional(),
+        declaredAuth: z.enum(['block-token', 'oauth']).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -1955,6 +2115,7 @@ export const blocksRouter = router({
           // tunnel allowlist at write; the mint re-gates spend behind the dedicated
           // unsubmitted-spend flag. An old CLI omits this → read-only session.
           declaredScopes: input.declaredScopes,
+          ...(input.declaredAuth ? { declaredAuth: input.declaredAuth } : {}),
         });
       } catch (err) {
         throw new TRPCError({
@@ -3094,7 +3255,16 @@ export const blocksRouter = router({
       const { recordScopeGrant, getGrantedScopes } = await import(
         '~/server/services/blocks/scope-grant.service'
       );
-      const grantsSpend = toGrant.includes('ai:write:budgeted');
+      // `CONSENT_SPEND_SCOPE`, not the literal — along with the ELEVEN identical
+      // `claims.scopes.includes(...)` spend gates elsewhere in this file.
+      //
+      // ⚠️ THIS COMMENT ONCE SAID "these two were the copies it was written to absorb", and
+      // review counted 15 live literals still in this file against 4 uses of the constant. A
+      // docblock that reads as an enumeration while covering 4 of 19 sites is worse than none,
+      // because it stops the next person looking. The sweep is now done for this file's spend
+      // gates; the remaining literals here are not that predicate (a tag string, a manifest
+      // key, a scope LIST member), which is why they are still spelled.
+      const grantsSpend = toGrant.includes(CONSENT_SPEND_SCOPE);
       const alreadyGrantsSpend =
         !grantsSpend &&
         input.buzzBudgetPerDay !== undefined &&
@@ -3112,13 +3282,23 @@ export const blocksRouter = router({
             appBlockId: input.appBlockId,
             db: 'write',
           })
-        ).has('ai:write:budgeted');
+        ).has(CONSENT_SPEND_SCOPE);
       const budgetIsMeaningful = grantsSpend || alreadyGrantsSpend;
-      await recordScopeGrant({
+      const cleared = await recordScopeGrant({
         userId: ctx.user!.id,
         appBlockId: input.appBlockId,
         version: block.version ?? '',
         scopes: toGrant,
+        // 🔴 THE PROMPTED PATH, AND THE ONLY CALLER THAT MAY PASS THIS. A user who just
+        // accepted a consent dialog naming these scopes is re-consenting to them, so any
+        // prior per-scope revocation of exactly those scopes is lifted — and ONLY those
+        // (the service computes `revoked_scopes ∖ scopes`; re-consenting to A must not
+        // resurrect a revoked B). `BlockRegistry.recordInstallConsent` must NEVER pass it:
+        // its scope set is the app's whole consent-gated ceiling, supplied with no prompt,
+        // so honouring a clear there would let an ordinary install silently undo a revoke.
+        // That asymmetry is the defect the suppression list exists to close — see
+        // `revokeScopes` in scope-grant.service.ts.
+        clearRevocations: true,
         // Spread, NOT `buzzBudgetPerDay: input.buzzBudgetPerDay` — the service
         // distinguishes an omitted key (leave the stored value alone) from an
         // explicit `null` (clear it), and passing `undefined` through would collapse
@@ -3127,6 +3307,48 @@ export const blocksRouter = router({
           ? { buzzBudgetPerDay: input.buzzBudgetPerDay }
           : {}),
       });
+      // ── RE-PUBLISH THE IN-FLIGHT SUPPRESSION MARKER, but only if this consent actually
+      // lifted something.
+      //
+      // 🔴 `null` AND `[]` ARE DIFFERENT AND THE GUARD IS LOAD-BEARING. `null` means this
+      // write did not touch revocations — an ordinary consent with nothing suppressed — and
+      // calling `publish` with an empty list there would DELETE a live marker, reopening in
+      // Redis the resurrection hole `clearRevocations` closes in Postgres. `[]` means the last
+      // suppression really was lifted, and the marker should go so the app stops being refused
+      // before the TTL elapses.
+      //
+      // ⚠️ A PRE-MIGRATION DATABASE HAS **THREE** OUTCOMES, AND BOTH EARLIER VERSIONS OF THIS
+      // COMMENT NAMED ONE. It first grouped "a database without the column" with `null`; round-5
+      // review pointed out the round-4 commit had falsified that, and the correction then listed
+      // only the two new cases — which over-corrected, as round 6 measured. All three:
+      //   * `revoked_at` was never set (the DOMINANT row) → `unrevokeData` takes its
+      //     `!wasWholeGrantRevoked` early return and never touches `clearedTo`, and
+      //     `revocationData` has nothing to subtract, so this line IS reached, with `null`.
+      //     The original sentence was right about this one.
+      //   * `revoked_at` set and the re-consent covers everything granted → `[]`, the honest
+      //     value: nothing is withheld afterwards, so a stale marker must go.
+      //   * `revoked_at` set and it does not → throws `PRECONDITION_FAILED`, so this line is
+      //     never reached refusing.
+      // The `[]` is correct there rather than merely harmless: `revokeScopes` refuses that same
+      // database before storage, so no marker can exist to delete — and in the one shape where
+      // one could (migration applied, revoke taken, migration rolled back) deleting it after a
+      // full re-consent is exactly right.
+      //
+      // 🔴 BEST-EFFORT, UNLIKE THE REVOKE PATH'S PUBLISH, AND THE ASYMMETRY IS THE SAFE
+      // DIRECTION. Failing to WIDEN access on a Redis blip costs the viewer at most one
+      // token lifetime of refusals on a permission they just re-granted — annoying, and it
+      // self-heals when the marker expires. Failing to NARROW it (the revoke path) leaves a
+      // permission the user withdrew in force, which does not self-correct in any sense the
+      // user can see. So a failure here must not 500 a successful consent write.
+      if (cleared.revokedScopesAfterClear !== null) {
+        await ConsentRevocation.publish({
+          userId: ctx.user!.id,
+          appBlockId: input.appBlockId,
+          revokedScopes: cleared.revokedScopesAfterClear,
+        }).catch(() => {
+          /* see above — widening access is the direction that may safely fail */
+        });
+      }
       if (
         env.APP_BLOCK_OAUTH_TOKENS_ENABLED &&
         (block.manifest as { auth?: unknown }).auth === 'oauth'
@@ -3145,6 +3367,340 @@ export const blocksRouter = router({
           input.buzzBudgetPerDay !== undefined && budgetIsMeaningful
             ? input.buzzBudgetPerDay
             : undefined,
+      };
+    }),
+
+  /**
+   * PER-SCOPE REVOKE — the viewer withdraws one permission from one app.
+   *
+   * The mirror image of `grantScopes` above, and deliberately NOT a copy of it: three of
+   * that procedure's gates are absent here, each for a reason that matters.
+   *
+   * 🔴 NO `status === 'approved'` GATE. `grantScopes` has one because granting a scope to
+   * a suspended or deprecated app would be consenting to something that must not run.
+   * REVOKING from one is the opposite action, and `listMyScopeGrants` — the surface this
+   * button lives on — has no status filter, so suspended and deprecated apps are exactly
+   * what a viewer sees listed. Inheriting the gate would have made the apps most worth
+   * withdrawing consent from the only ones you could not withdraw it from. The AppBlock is
+   * still looked up, because the grant row's FK requires it to exist.
+   *
+   * 🔴 NO MANIFEST-CEILING FILTER. `grantScopes` intersects with
+   * `manifest.scopes ∩ approved_scopes` so a host cannot grant itself something the app
+   * never declared. That argument does not transfer: narrowing is always safe, and the
+   * ceiling MOVES — a publisher push replaces `manifest` without re-approval, so a scope
+   * the viewer really granted last month can be outside today's intersection. Filtering
+   * would refuse to revoke exactly those.
+   *
+   * 🔴 REFUSES CONSENT-EXEMPT SCOPES, WITH A SPECIFIC ERROR. `partitionByConsent` signs a
+   * `CONSENT_EXEMPT_SCOPES` member on the exempt test ALONE, before it looks at the grant,
+   * so a suppression entry for one would be stored and enforce NOTHING — the UI would
+   * report success and the app would keep the permission. Accepting-and-no-op'ing is the
+   * worst available outcome on a consent surface, so this refuses instead and names the
+   * scope. (The fix is NOT to make revocation override exemption: those seven have their
+   * own server-side gates and the exemption is the #3090 page-token fix.)
+   *
+   * 🔴 REFUSES A SCOPE THE VIEWER DOES NOT CURRENTLY HOLD. ⚠️ THIS USED TO READ *"A scope the
+   * viewer does not currently hold is ACCEPTED, not refused: recording a suppression for a
+   * permission they have never been asked about is a legitimate pre-emptive 'no', and it is
+   * fail-closed — the next install cannot union it in."* RETRACTED. The requirement was
+   * unattributed — it appears in no ask and no review round's subject — and the pre-emptive-no
+   * story is not what the surface in front of it does. `revokableScopes` is computed from the
+   * APP-SIDE set (`consentGatedScopes(displayedScopes).filter(isKnownBlockScope)`) with no
+   * reference to what the viewer granted, so an app could declare `posts:write:self`, the viewer
+   * never consent, and the row still render a live Remove button whose click wrote a durable
+   * suppression for a permission never given. "Fail-closed" is the wrong frame for that: a
+   * suppression is not a neutral no-op, it survives every later install, so a mis-click
+   * silently makes a future consent prompt's grant inert. Withdrawing is now exactly the
+   * inverse of granting — it needs something to withdraw.
+   *
+   * 🔴 THE ORDER OF THE THREE REFUSALS IS LOAD-BEARING: unknown → exempt → not-held. An exempt
+   * scope is not in the granted set (`partitionByConsent` signs it on the exempt test alone, before
+   * it looks at the grant), so testing not-held first would answer every exempt request with the
+   * generic "you do not currently grant this" instead of the specific sentence naming what governs
+   * it — which is the one place the viewer learns why that row has no control.
+   *
+   * ⚠️ AND THAT PREMISE IS NOT ENFORCED BY ANY WRITER — recorded because it is the sentence a future
+   * reader would cite when reordering these blocks. `BlockRegistry.recordInstallConsent` does filter
+   * (`consentGatedScopes(effective)`), but `blocks.grantScopes` does NOT: its `toGrant` is
+   * `input.scopes ∩ (manifest.scopes ∩ approvedScopes)` with no exempt filter, so a viewer calling
+   * that `protectedProcedure` directly with a declared exempt scope writes it into
+   * `granted_scopes`. Behaviour is still correct in both directions today — `revokableScopes`
+   * excludes exempt so the row stays `fixed`, and the exempt refusal fires before `notHeld`
+   * regardless — so this is a HAZARD, not a defect. The order is what makes it inert; do not read
+   * the premise as a guarantee. Reported by the correctness lane.
+   *
+   * 🔴 AND THE UI HALF IS NOT OPTIONAL — tightening the server alone converts a confusing
+   * button into a broken one. `buildScopeConsentRows` (`src/components/Apps/scopeConsentRows.ts`)
+   * takes the viewer's `grantedScopes` and renders a declared-but-not-granted scope in its own
+   * `not-granted` state, with no control. Deliberately NOT done by narrowing `revokableScopes`
+   * server-side to the granted set: that collapses "not granted" into the client's `fixed` state,
+   * whose note asserts the permission is granted by platform policy and bounded by server-side
+   * checks — false for a scope the viewer simply never agreed to, and the exact
+   * true-control/false-copy combination `ScopeConsentState`'s docblock records as the defect
+   * `unknown` was introduced to avoid.
+   */
+  revokeScopes: protectedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(
+      z.object({
+        appBlockId: z.string().min(1).max(64),
+        // Same bounds as `grantScopes`, deliberately: the two procedures describe the same
+        // vocabulary and a viewer toggling a row off should not hit a different limit from
+        // the one that turned it on.
+        scopes: z.array(z.string().min(1).max(64)).min(1).max(32),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.features.appBlocks) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Apps are not available to this account',
+        });
+      }
+      // NO `status` in the select and no status check — see the docblock. The row is read ONLY
+      // to confirm the app exists, because the grant row's FK requires it.
+      //
+      // ⚠️ IT NO LONGER SELECTS `manifest`, AND THE COMMENT THAT SAID IT DID WAS STALE THE MOMENT
+      // THE TEARDOWN STOPPED BRANCHING ON `manifest.auth`. Selecting a JSONB column nothing reads
+      // is the kind of leftover that later reads as a dependency.
+      // `appId` is selected HERE and reused by the teardown gate below — the OAuth client id for
+      // this app. Three reads of this one row is what the previous shape cost (this one, the
+      // gate's, and the callee's own); selecting it once removes one of them. Replica is correct
+      // for THIS read: an `app_blocks` row is not newly written by anything on this path — unlike
+      // the `OauthConsent` row, which the mint writes on the primary and which the gate therefore
+      // must read there.
+      const block = await dbRead.appBlock.findUnique({
+        where: { id: input.appBlockId },
+        select: { id: true, appId: true },
+      });
+      if (!block) throw throwNotFoundError('App block not found');
+
+      const {
+        revokeScopes: revokeScopesForUser,
+        isConsentExemptScope,
+        getGrantedScopes: getLiveGrantedScopes,
+      } = await import('~/server/services/blocks/scope-grant.service');
+
+      // 🔴 KNOWN SCOPES ONLY, AND THIS IS A HOT-PATH BOUND RATHER THAN TIDINESS. Whatever
+      // lands in `revoked_scopes` is what `ConsentRevocation.publish` writes into the marker,
+      // and `ConsentRevocation.lookup` then GETs and `JSON.parse`s that value on EVERY authed
+      // block request for this (user, app) pair. 32 arbitrary 1–64-char strings per call, with
+      // the array unioned and never pruned, grows both the row and that per-request payload
+      // without bound — self-targeted, but paid on a hot path and parsed under a fail-closed
+      // catch. An unknown string could also never suppress anything: `partitionByConsent`
+      // only ever consults scopes the mint signs.
+      const unknown = input.scopes.filter((s) => !isKnownBlockScope(s));
+      if (unknown.length > 0) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: `unknown scope(s): ${unknown.join(', ')}`,
+        });
+      }
+      const exempt = input.scopes.filter((s) => isConsentExemptScope(s));
+      if (exempt.length > 0) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message:
+            `cannot revoke ${exempt.join(', ')}: ${
+              exempt.length === 1 ? 'that scope is' : 'those scopes are'
+            } granted by platform policy rather than by your consent, and ` +
+            `${exempt.length === 1 ? 'is' : 'are'} governed by server-side checks on every ` +
+            `request instead. Revoking ${
+              exempt.length === 1 ? 'it' : 'them'
+            } would record a preference that nothing enforces.`,
+        });
+      }
+
+      // 🔴 THE VIEWER MUST CURRENTLY HOLD EVERY SCOPE THEY ARE WITHDRAWING — see the docblock for
+      // why accepting a non-held one was retracted, and for why this test comes THIRD.
+      //
+      // 🔴 `db: 'write'` — THE PRIMARY, for the same reason `grantScopes`' `alreadyGrantsSpend`
+      // check reads it: the write below goes to the primary, so deciding off the replica puts a
+      // viewer who consents and then immediately withdraws inside the replication window, where
+      // this check answers "you never granted that" about a scope they granted seconds ago.
+      //
+      // `getGrantedScopes` is the SHARED projection (`granted_scopes ∖ revoked_scopes`, empty for
+      // a non-null `revoked_at`), not a re-spelling of it — the same function the mint, the
+      // permissions surface and the OAuth mirror all read, so this refusal cannot disagree with
+      // what the page showed. A scope already in `revoked_scopes` is therefore not held, and
+      // re-revoking it is refused rather than being a silent no-op write.
+      //
+      // ⚠️ THIS READ IS P2022-TOLERANT AND THE SERVICE'S IS NOT, WHICH CHANGES WHICH REFUSAL A
+      // PRE-MIGRATION DATABASE PRODUCES. `readGrantRow` retries with a narrow select and answers
+      // `revokedScopes: []` where the service's read rethrows as `PRECONDITION_FAILED`
+      // (`CONSENT_REVOKE_UNAVAILABLE_MESSAGE`). So on such a database a HELD scope still gets the
+      // 412 — pinned by an arm in `blocks.router.revokeScopes.test.ts` — while a NOT-HELD one now
+      // gets this `BAD_REQUEST` instead. That is the more accurate answer of the two (the scope
+      // genuinely is not conveyed) and the unknown/exempt refusals already pre-empt the 412 the same
+      // way, so it is not new in kind. Named rather than left to be discovered. The degrade is also
+      // the only thing between a P2022 and an unhandled error here: there is no catch around this
+      // call, deliberately, because a masked failure would refuse a legitimate revoke silently.
+      //
+      // ⚠️ IT IS A SNAPSHOT, AND THE SERVICE RE-READS THE ROW. Another write by the same viewer
+      // between the two reads can make this decision stale — but only by one of their own
+      // actions, and the WRITE is still computed from the service's own fresher read, so the
+      // ledger cannot end up wrong. Not worth a transaction on a user-initiated mutation.
+      const held = await getLiveGrantedScopes({
+        userId: ctx.user!.id,
+        appBlockId: input.appBlockId,
+        db: 'write',
+      });
+      const notHeld = input.scopes.filter((s) => !held.has(s));
+      if (notHeld.length > 0) {
+        // ALL-OR-NOTHING, like the unknown and exempt refusals above: a partial write would
+        // leave the caller unable to say which half landed.
+        // 🔴 "do not CURRENTLY grant", NOT "have not granted" — AND THE DIFFERENCE IS A FALSE
+        // STATEMENT ABOUT THE VIEWER'S OWN HISTORY. This message renders VERBATIM to the viewer
+        // (a 400, so `client-safe-error.ts` does not rewrite it, and `ScopeRevokeFailureNotice`
+        // prints `failure.message`), and `notHeld` deliberately folds in the ALREADY-REVOKED case
+        // — `getGrantedScopes` subtracts `revoked_scopes`, which is what makes a double-submit a
+        // refusal rather than a no-op write that moves `revoked_scopes_at`. For that arm "you have
+        // not granted that permission" is exactly backwards: they granted it and withdrew it. The
+        // present-tense form is true of every arm this refusal covers — never granted, already
+        // revoked, and a whole-grant `revoked_at`. Reported by the intent lane.
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message:
+            `cannot revoke ${notHeld.join(', ')}: you do not currently grant ` +
+            `${notHeld.length === 1 ? 'that permission' : 'those permissions'} to this app, so ` +
+            `there is nothing to withdraw.`,
+        });
+      }
+
+      // POSTGRES FIRST, then the in-flight marker, then the OAuth teardown. The row is the
+      // authority — it governs every FUTURE mint, permanently — while the marker only closes
+      // the window on tokens already in flight and expires by itself within one token
+      // lifetime. So a failure after the row is written leaves the revoke DURABLE but not
+      // immediate, which is recoverable; the reverse order would leave a marker refusing a
+      // permission the ledger still grants, which self-heals into the permission coming back.
+      const result = await revokeScopesForUser({
+        userId: ctx.user!.id,
+        appBlockId: input.appBlockId,
+        scopes: input.scopes,
+      });
+
+      // ── THE IN-FLIGHT MARKER, THEN THE OAUTH MIRROR.
+      //
+      // ⚠️ THE COMMENT ABOVE `revokeScopesForUser` STILL SAID "POSTGRES FIRST, then the durable
+      // OAuth teardown, then Redis" — the round-2 order, which this block then changed. Corrected
+      // there; the real order is Postgres → Redis publish → teardown in a `finally`.
+      //
+      // 🔴 PUBLISH FIRST, TEARDOWN IN A `finally` — and the previous order put an UNTIMED
+      // EXTERNAL CALL IN FRONT OF THE MARKER. Moving the teardown before the publish did fix a
+      // real hole (a Redis failure threw past it, so the mirror was never touched), but
+      // `revokeOauthConsentForBlock` awaits `invalidateCivitaiUser`, an outbound orchestrator
+      // `DELETE` with NO timeout — so a slow orchestrator delayed the "immediate" half of the
+      // revoke for exactly as long as it was slow. That window is the one the 503 below
+      // apologises for. A `finally` gets both: the marker goes out first, and the teardown runs
+      // whether or not it succeeded.
+      //
+      // 🔴 THE ORDER *WITHIN* THE TEARDOWN IS ALSO LOAD-BEARING and lives in the callee: it
+      // deletes the Access/Refresh keys BEFORE the consent row, because a key with no consent row
+      // resolves a null `buzzLimit` — i.e. no cap — in `bearer-token.ts`.
+      let publishFailed = false;
+      try {
+        await ConsentRevocation.publish({
+          userId: ctx.user!.id,
+          appBlockId: input.appBlockId,
+          revokedScopes: result.revokedScopes,
+        });
+      } catch {
+        publishFailed = true;
+      } finally {
+        // 🔴 THE `OauthConsent` ROW IS A SECOND ENFORCEMENT SURFACE. It mirrors the grant into a
+        // bitmask the auth hub mints real OAuth access tokens against, and those tokens outlive
+        // this mutation. Deleting it — and the `Access`/`Refresh` keys alongside it — is what
+        // stops them.
+        //
+        // 🔴 GATED ON A MIRROR ACTUALLY EXISTING, NOT ON `manifest.auth` OR AN ENV FLAG, AND NOT
+        // UNCONDITIONAL EITHER. Three stale gates each let a live mirror row survive a revoke:
+        // today's `manifest.auth`, which a publisher push replaces without re-approval (the very
+        // reason this procedure applies no manifest ceiling); `APP_BLOCK_OAUTH_TOKENS_ENABLED`,
+        // which can be switched off after rows exist; and position after the publish. Dropping
+        // all gates closed those but overcorrected — the callee is NOT a no-op without a row (an
+        // earlier comment here claimed it was, and that was false): it does two primary
+        // `deleteMany`s plus `deleteAuthSubject` plus the awaited `invalidateCivitaiUser`,
+        // regardless. One cheap existence read gates all of it on the only condition that
+        // matters.
+        await (async () => {
+          // 🔴 THE `await import` IS INSIDE THE IIFE, so a chunk-load failure is caught by the
+          // `.catch` below. Outside it, an import rejection turned a SUCCESSFUL revoke into a
+          // generic 500 and — when the publish had failed — discarded the carefully-worded 503.
+          const { revokeOauthConsentForBlock } = await import(
+            '~/server/services/blocks/oauth-consent-sync.service'
+          );
+          // 🔴 `dbWrite` FOR THE GATE READS — AND THE REPLICA VERSION REINTRODUCED THE HOLE THIS
+          // GATE EXISTS TO CLOSE. The mirror is written on the PRIMARY by
+          // `syncOauthConsentFromGrant` at mint time, so a viewer who opens an `auth:"oauth"` app
+          // and withdraws a permission moments later lands inside replication lag: the gate reads
+          // `null`, the teardown is skipped, and the `OauthConsent` bitmask plus the hub's
+          // `Access`/`Refresh` keys SURVIVE the revoke. `grantScopes` makes this exact argument
+          // 230 lines above for the structurally identical decision ("Off the replica this
+          // decision lags the grant it is asking about").
+          //
+          // The app's `appId` comes from the read at the top of the procedure — no second lookup.
+          // 🔴 GATED ON **EITHER** ARTEFACT, NOT ONLY THE CONSENT ROW — because the callee deletes
+          // the api keys FIRST, deliberately (a key with no consent row resolves a null
+          // `buzzLimit`, i.e. NO CAP, in `bearer-token.ts`). So a teardown that dies between its
+          // two writes leaves "keys present, consent gone" = full scope, uncapped — and a gate
+          // that looked only at the consent row would then read `null` on every retry and never
+          // clean them. Checking both makes the teardown idempotent against its own partial
+          // failure.
+          const [mirror, key] = await Promise.all([
+            dbWrite.oauthConsent.findFirst({
+              where: { userId: ctx.user!.id, clientId: block.appId },
+              select: { id: true },
+            }),
+            dbWrite.apiKey.findFirst({
+              where: {
+                userId: ctx.user!.id,
+                clientId: block.appId,
+                type: { in: ['Access', 'Refresh'] },
+              },
+              select: { id: true },
+            }),
+          ]);
+          if (!mirror && !key) return;
+          await revokeOauthConsentForBlock({
+            userId: ctx.user!.id,
+            appBlockId: input.appBlockId,
+          });
+        })().catch(() => {
+          // Best-effort: the durable row is written and the marker has already gone out, so the
+          // block-token surface is closed either way. Failing the mutation here would tell the
+          // viewer nothing was recorded when the half that governs every future mint was.
+        });
+      }
+
+      // 🔴 PUBLISH FAILURES ARE SURFACED, NOT SWALLOWED — the opposite of the re-publish in
+      // `grantScopes`. This is the NARROWING direction: if the marker is not written, an
+      // already-minted token keeps the revoked scope for up to its remaining life (4h for a dev
+      // token), and the viewer has just been told the permission was removed. Telling them
+      // "recorded, but an in-flight session may keep it for a few minutes" is honest; a silent
+      // success is not.
+      //
+      // 🔴 `SERVICE_UNAVAILABLE` (503), NOT `INTERNAL_SERVER_ERROR`. `client-safe-error.ts`
+      // replaces the message of every `status >= 500 && status !== 503`, so under the 500 this
+      // first threw, the careful wording was discarded one layer below the test that asserted it
+      // and the viewer saw a generic "something went wrong (ref: …)". 503 is that formatter's own
+      // carve-out. Thrown AFTER the `finally`, so the teardown has already run.
+      if (publishFailed) {
+        throw new TRPCError({
+          code: 'SERVICE_UNAVAILABLE',
+          message: CONSENT_REVOKE_MARKER_DEGRADED_MESSAGE,
+        });
+      }
+
+      return {
+        ok: true,
+        // `revoked` is what THIS call newly suppressed; `revokedScopes` is the whole list.
+        // A client re-rendering a permissions row wants the second — echoing only the delta
+        // would make it re-fetch to know the row's real state.
+        revoked: result.revoked,
+        revokedScopes: result.revokedScopes,
+        grantedScopes: result.grantedScopes,
+        fullyRevoked: result.fullyRevoked,
+        budgetCleared: result.budgetCleared,
       };
     }),
 
@@ -3821,7 +4377,7 @@ export const blocksRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const claims = await authorizeBlockBridgeToken(input.blockToken);
-      if (!claims.scopes.includes('ai:write:budgeted')) {
+      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
       const userId = parseSubjectUserId(claims.sub);
@@ -4055,7 +4611,7 @@ export const blocksRouter = router({
     )
     .query(async ({ input }) => {
       const claims = await authorizeBlockBridgeToken(input.blockToken);
-      if (!claims.scopes.includes('ai:write:budgeted')) {
+      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
       const userId = parseSubjectUserId(claims.sub);
@@ -4133,7 +4689,7 @@ export const blocksRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const claims = await authorizeBlockBridgeToken(input.blockToken);
-      if (!claims.scopes.includes('ai:write:budgeted')) {
+      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
       const userId = parseSubjectUserId(claims.sub);
@@ -4320,7 +4876,7 @@ export const blocksRouter = router({
       const claims = await authorizeBlockBridgeToken(input.blockToken);
       // Same trust boundary as submit: an app authorized to spend the viewer's
       // Buzz on generation can read the subqueue of gens it produced.
-      if (!claims.scopes.includes('ai:write:budgeted')) {
+      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
       const userId = parseSubjectUserId(claims.sub);
@@ -4420,7 +4976,7 @@ export const blocksRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const claims = await authorizeBlockBridgeToken(input.blockToken);
-      if (!claims.scopes.includes('ai:write:budgeted')) {
+      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
       const userId = parseSubjectUserId(claims.sub);
@@ -4548,7 +5104,7 @@ export const blocksRouter = router({
       const claims = await authorizeBlockBridgeToken(input.blockToken);
       // Same trust boundary as submit/query: an app authorized to spend the
       // viewer's Buzz on generation can publish the outputs it produced.
-      if (!claims.scopes.includes('ai:write:budgeted')) {
+      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
       const userId = parseSubjectUserId(claims.sub);
@@ -5200,7 +5756,7 @@ export const blocksRouter = router({
     .input(z.object({ blockToken: z.string().min(1), body: blockWorkflowBodySchema }))
     .mutation(async ({ ctx, input }) => {
       const claims = await authorizeBlockBridgeToken(input.blockToken);
-      if (!claims.scopes.includes('ai:write:budgeted')) {
+      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
       // RATE LIMIT — the CATALOG bucket, weight 1, per `blockInstanceId`. An
@@ -5399,7 +5955,7 @@ export const blocksRouter = router({
         user,
         whatIf: true,
       });
-      const workflow = await submitWorkflow({
+      const whatIfResult = await submitWorkflow({
         token,
         body: {
           steps: [step],
@@ -5409,10 +5965,105 @@ export const blocksRouter = router({
         },
         query: { whatif: true },
       });
+      // ── 🔴 THE ESTIMATE PRICES THE AUTHOR FEE TOO, AND THIS IS A DISCLOSING
+      //    QUOTE, NOT A RESERVING ONE. Nothing here gates, reserves, debits or
+      //    accrues; the returned number is added to the cost the block is shown
+      //    and then discarded. The submit runs its OWN quote (`:5557`) and that
+      //    one is what money is taken against.
+      //
+      // WHY IT HAS TO EXIST. The submit adds the fee to `cost` BEFORE every
+      // guardrail, so with the fee live a viewer shown `N` is debited `N + fee`
+      // — and where the app's token budget sits near the price, the submit is
+      // refused outright with `insufficient buzz budget`, which reads to the
+      // viewer as a broken app rather than as a price. Correcting the TOTAL is
+      // what makes the shown number true for EVERY existing app with no
+      // app-side change; an itemised field would be inert until each
+      // third-party author wrote a renderer for it.
+      //
+      // 🔴 THE PAYEE LOOKUP IS ACCEPTED, NOT SKIPPED, ON THIS UNBOUNDED PATH.
+      // `quoteBlockAuthorFee` resolves the payee (one `dbRead.oauthClient
+      // .findUnique` by primary key, two columns) and a disclosure-only variant
+      // that skipped it would be cheaper. It is not used, because the skipped
+      // arm is SELF-DEALING: an author running their own app is not charged,
+      // and a variant that cannot see that would quote them a fee they will
+      // never pay — on the surface whose entire job is to predict the charge,
+      // to the population that exercises it most. Re-creating estimate/submit
+      // divergence one layer down is the defect this change removes, not a
+      // saving. The read is also gated behind the flag AND behind a non-zero
+      // computed fee, so it costs nothing while the fee is dark, and when it is
+      // live it is one indexed row against an orchestrator round-trip this
+      // handler has already paid for.
+      //
+      // 🔴 WHAT THIS NUMBER IS AND IS NOT. It is a QUOTE, not a price lock.
+      // Estimate and submit are two independent whatIfs seconds apart, so the
+      // quoted price can differ from the charged one and NOTHING HERE BOUNDS
+      // THAT.
+      //
+      // ⚠️ THE ONE GUARANTEE, STATED AT THE WIDTH IT ACTUALLY HOLDS. An earlier
+      // revision of this comment said the two sites "agree whenever the base
+      // does". That is a SUFFICIENCY claim and it is false: base agreement is
+      // necessary, not sufficient. FIVE inputs can move between the two quotes —
+      // `cost.base`, `cost.variable` (a cap-priced submit charges nothing while
+      // the estimate showed a fee, or the reverse), the PAYEE (an ownership
+      // transfer in between is exactly what `chargeBlockAuthorFee` re-resolves
+      // for), the FLAG itself, which is read separately at each site and is
+      // operator-flippable, and — the one an earlier revision of this comment
+      // left out — the `generationType`.
+      //
+      // ⚠️ `generationType` IS NOT A PASSENGER, IT IS THE FEE'S LOOKUP KEY. It
+      // selects the `byType` override, so a type that differs between the two
+      // quotes prices a DIFFERENT fee, not merely a differently-derived one, and
+      // `chat-completion`'s 0/0 entry makes the gap total rather than marginal.
+      // On THIS arm it genuinely can differ: `resolveBlockGenerationType` is
+      // handed a body the caller supplies plus `generateInput.workflow`, which is
+      // derived through a cache-backed model-version read — two calls seconds
+      // apart are two reads. The step arm's key is the registered `step.id` and
+      // cannot move. Each site's spelling AND its derivation are pinned per site
+      // in `no-divergent-author-fee-base.test.ts`'s ledger, because a mutation of
+      // this argument on this arm survived the whole battery before it was.
+      //
+      // What IS established, and all that is: `chargeBlockAuthorFee` clamps the
+      // debit to `min(reserved, realized)` where `reserved` is the SUBMIT's own
+      // quote — so the viewer is never billed past what the SUBMIT's budget gate
+      // was measured against. THIS estimate is not that bound and must not be
+      // described as one.
+      //
+      // Degradation is CORRELATED, not guaranteed: when the orchestrator cannot
+      // supply a base the fee is not priced HERE, and the submit — which quotes
+      // the same orchestrator — typically cannot price one either, so both show
+      // and charge no fee together. Typically, not always.
+      //
+      // ⚠️ ONE SHAPE WHERE THE SHOWN NUMBER SITS BELOW THE DEBIT, RECORDED
+      // BECAUSE IT IS NOT CLOSED. If the orchestrator returns `cost.base` but no
+      // `cost.total`, `snapshotFromWorkflow` omits `cost` entirely (there is no
+      // total to correct, and inventing one would report a fee AS the price)
+      // while the submit gates and reserves `0 + fee`. The block is then shown no
+      // price at all rather than a low one, which is the recoverable direction —
+      // but it is a divergence, not an absence of one.
+      const blockGenerationType = resolveBlockGenerationType(input.body, {
+        imageWorkflowType: generateInput.workflow,
+      });
+      const authorFeeQuote = await quoteBlockAuthorFee({
+        baseGenerationBuzz: whatIfResult.cost?.base,
+        priceIsCap: whatIfResult.cost?.variable,
+        generationType: blockGenerationType,
+        appId: claims.appId,
+        viewerUserId: userId,
+        workflowLabel: BLOCK_AUTHOR_FEE_ESTIMATE_LABEL,
+        privateRun: claims.privateRun === true,
+        // Unbounded surface — see the flag's own note. The skip lines it silences
+        // are re-derived at the submit, once per real generation.
+        suppressQuoteLogs: true,
+      });
       // #3520: the ESTIMATE reports the substitution too — a block that quotes a
       // cost for model A and is silently priced for model B has the same
       // detectability problem as the submit, one step earlier.
-      return { snapshot: snapshotFromWorkflow(workflow, { modelSubstitutions }) };
+      return {
+        snapshot: snapshotFromWorkflow(whatIfResult, {
+          modelSubstitutions,
+          additionalCostBuzz: authorFeeQuote.charge ? authorFeeQuote.feeBuzz : 0,
+        }),
+      };
     }),
 
   /**
@@ -5548,7 +6199,7 @@ export const blocksRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const claims = await authorizeBlockBridgeToken(input.blockToken);
-      if (!claims.scopes.includes('ai:write:budgeted')) {
+      if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
       if (typeof claims.buzzBudget !== 'number' || claims.buzzBudget <= 0) {
@@ -5843,6 +6494,7 @@ export const blocksRouter = router({
         appId: claims.appId,
         viewerUserId: userId,
         workflowLabel: blockExternalId,
+        privateRun: claims.privateRun === true,
       });
       const reservedAuthorFeeBuzz = authorFeeQuote.charge ? authorFeeQuote.feeBuzz : 0;
       // 🔴 KEPT SEPARATE FROM `cost`, AND THE SEPARATION IS LOAD-BEARING. `cost`
@@ -5853,9 +6505,11 @@ export const blocksRouter = router({
       const quotedGenerationBuzz = whatIfResult.cost?.total ?? 0;
       const cost = quotedGenerationBuzz + reservedAuthorFeeBuzz;
       // `pricesAuthorFee: true` — `cost` carries the author fee (line above).
-      // The helper returns `claims.buzzBudget` either way, so this comparison is
-      // unchanged; the flag classifies the gate, it does not price it. See
-      // `blockPerCallBudget`.
+      // The flag classifies the gate, it does not price it: the helper returns the
+      // SAME number for both of its values, so this comparison is unchanged by it.
+      // 🔴 That is a statement about the FLAG only — the helper is NOT a pass-through
+      // for `claims.buzzBudget`; it returns 0 for an editor's private run whatever was
+      // minted. Do not inline the claim. See `blockPerCallBudget`.
       const perCallBudget = blockPerCallBudget(claims, { pricesAuthorFee: true });
       if (cost > perCallBudget) {
         return {
@@ -5966,11 +6620,22 @@ export const blocksRouter = router({
             workflowId: 'failed',
             status: 'failed' as const,
             cost: { total: cost },
+            // 🔴 ONE ARM PER CEILING, BECAUSE THE SENTENCE NAMES THE WINDOW AND THE
+            // SCOPE. A private run reserves against a per-(viewer, app) counter on a
+            // rolling ~25h key, so the `else` below — "already spent today across your
+            // installed apps… daily cap" — described a cap that was not the one
+            // enforced, on the one surface whose users are moderators who will file a
+            // bug about it. `reviewRunForReal` already had its own arm for exactly this
+            // reason; this adds the third.
             error:
               claims.reviewRunForReal === true
                 ? `review run-for-real Buzz cap reached: ${total - Math.ceil(cost)} already ` +
                   `spent this review session, this generation costs ${cost}, ` +
                   `session cap is ${buzzCap}`
+                : claims.privateRun === true
+                ? `private-run Buzz cap reached: ${total - Math.ceil(cost)} already spent ` +
+                  `on this app's private run, this generation costs ${cost}, ` +
+                  `cap is ${buzzCap} per app`
                 : `daily Buzz cap reached: ${total - Math.ceil(cost)} already spent today ` +
                   `across your installed apps, this generation costs ${cost}, ` +
                   `daily cap is ${buzzCap}`,
@@ -6150,7 +6815,7 @@ export const blocksRouter = router({
       // (which runs AFTER the try/catch) can read the REALIZED per-account
       // debit — `submitted` is a try-block `const` and is out of scope there.
       let realizedTransactions: Awaited<ReturnType<typeof submitWorkflow>>['transactions'];
-      // Hoisted for the same reason as `realizedTransactions` above: the DARK
+      // Hoisted for the same reason as `realizedTransactions` above: the
       // per-generation author-fee observation needs the orchestrator's BASE cost,
       // and it is NOT reachable from `snapshot`. 🔴 `BlockWorkflowSnapshot.cost` is
       // deliberately `{ total }` ONLY — that is the block-facing WIRE shape, and
@@ -6351,6 +7016,7 @@ export const blocksRouter = router({
           // inert for a synthetic appId, by design). `dev` routes it to the
           // nullable-appBlockId path so the row persists instead of FK-failing.
           dev: claims.dev === true,
+          privateRun: claims.privateRun === true,
         });
       })().catch(() => {
         /* swallowed inside helper */
@@ -6471,6 +7137,7 @@ export const blocksRouter = router({
           priceIsCap: realizedPriceIsCap,
           generationType: blockGenerationType,
           reservedAuthorFeeBuzz,
+          privateRun: claims.privateRun === true,
         });
 
         void (async () => {
@@ -6547,6 +7214,7 @@ export const blocksRouter = router({
             appId: claims.appId,
             appBlockId: claims.appBlockId,
             blockInstanceId: claims.blockInstanceId,
+            privateRun: claims.privateRun === true,
             modelId: resolved.modelId,
             // GENERIC published-content-author basis: the opaque shared-storage
             // key the app supplied for the content this generation runs on
@@ -6580,7 +7248,7 @@ export const blocksRouter = router({
             // quote, the fee charge and this row must agree on the key or the fee
             // is priced under one generation type and recorded under another.
             generationType: blockGenerationType,
-            // BASE generation cost, for the DARK per-generation author-fee
+            // BASE generation cost, for the per-generation author-fee
             // observation only (never persisted). 🔴 `.base`, NOT `.total` and
             // NOT `buzzAmount` above: `total` already carries the per-resource
             // model licensing fees, the lineage fee and the viewer's tips, and
@@ -8045,7 +8713,13 @@ async function getBlockSessionUser(userId: number): Promise<SessionUser> {
     select: { id: true, isModerator: true, email: true, username: true },
   });
   if (!row) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'user not found' });
-  return row as unknown as SessionUser;
+  // `tier` is session-derived, not a User column, so the select above cannot carry it and the cast
+  // below would leave it undefined — reading every paying member as free once anything gates on it.
+  //
+  // Skipped for moderators: they outrank every tier on the gates that read this, and the Private
+  // belt's exemption is asserted by the subscription NOT being queried.
+  const tier = row.isModerator ? undefined : (await getHighestTierSubscription(userId))?.tier;
+  return { ...row, tier: tier ?? 'free' } as unknown as SessionUser;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -8143,7 +8817,7 @@ async function estimateCustomComfyWorkflow(opts: { claims: BlockClaims; body: Cu
   if (!isPageToken(claims)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'customComfy recipes are page-only' });
   }
-  if (!claims.scopes.includes('ai:write:budgeted')) {
+  if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
   }
   const userId = parseSubjectUserId(claims.sub);
@@ -8231,7 +8905,7 @@ async function submitCustomComfyWorkflow(opts: {
   // missing and must not be counted as the gate. It replaces the author-capability
   // belt that used to sit in this slot, keeping the helper safe on its own terms
   // if it ever gains a caller that does not pre-check.
-  if (!claims.scopes.includes('ai:write:budgeted')) {
+  if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
   }
   // The outer proc already gated this, but re-narrow here (defense-in-depth) so
@@ -8280,7 +8954,7 @@ async function submitCustomComfyWorkflow(opts: {
     //     subscription + anti-drop + anti-substitute) over the declared AIRs.
     await assertViewerEntitledToInlineResources({
       airs: inlineBody.resources,
-      user: { id: userId, isModerator: !!user.isModerator },
+      user: { id: userId, isModerator: !!user.isModerator, tier: user.tier },
     });
     // (c) The MODERATION SWEEP — collected here, audited in the shared audit call
     //     below. An inline graph carries its prompts inside `CLIPTextEncode`
@@ -8382,9 +9056,10 @@ async function submitCustomComfyWorkflow(opts: {
   // Deterministic, no orchestrator round-trip.
   // 🔴 `pricesAuthorFee: false` — THIS PATH CHARGES NO AUTHOR FEE (no pre-submit
   // `cost.base` to price one from), so `ceiling` is a raw generation price. The
-  // helper returns `claims.buzzBudget` either way, so this comparison is
-  // unchanged; the flag records that a raised ceiling must never reach here. See
-  // `blockPerCallBudget`.
+  // helper returns the SAME number for both values of the flag, so this comparison
+  // is unchanged by it; the flag records that a raised ceiling must never reach
+  // here. 🔴 It is NOT a pass-through for `claims.buzzBudget` — it returns 0 for an
+  // editor's private run whatever was minted. See `blockPerCallBudget`.
   const perCallBudget = blockPerCallBudget(claims, { pricesAuthorFee: false });
   if (ceiling > perCallBudget) {
     return {
@@ -8739,6 +9414,7 @@ async function submitCustomComfyWorkflow(opts: {
         // Dev token → route a synthetic non-FK appBlockId to the nullable-appBlockId
         // + synthetic_app_id path so the pre-approval audit row persists.
         dev: claims.dev === true,
+        privateRun: claims.privateRun === true,
       });
     })().catch(() => {
       /* swallowed inside helper */
@@ -8833,6 +9509,7 @@ async function submitCustomComfyWorkflow(opts: {
         appId: claims.appId,
         appBlockId: claims.appBlockId,
         blockInstanceId: claims.blockInstanceId,
+        privateRun: claims.privateRun === true,
         // customComfy is recipe-based (no single user-picked model to attribute).
         modelId: null,
         // customComfy has no sharedContentKey field (recipe+params only) → omit.
@@ -9050,7 +9727,7 @@ async function assertStepRequestAllowed(claims: BlockClaims): Promise<number> {
   // already rejected a token missing `ai:write:budgeted`, so this line is not
   // reachable with the scope absent — see estimateCustomComfyWorkflow for why it
   // is written anyway, and why it must not be reported as closing a gap.
-  if (!claims.scopes.includes('ai:write:budgeted')) {
+  if (!claims.scopes.includes(CONSENT_SPEND_SCOPE)) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
   }
   const userId = parseSubjectUserId(claims.sub);
@@ -9276,7 +9953,12 @@ async function estimateStepWorkflow(opts: {
   const plan = planStepSpend(step, params, variant);
   const orchestratorStep = buildStepOrchestratorStep(step, params, plan);
 
-  const quotedBuzz = await quoteStepBuzz({ ctx, claims, step, orchestratorStep, userId });
+  const stepQuote = await quoteStepBuzz({ ctx, claims, step, orchestratorStep, userId });
+  const quotedBuzz = stepQuote?.quotedBuzz ?? null;
+  // `undefined` when the orchestrator round-trip degraded. The fee quote below
+  // reads it with `?.`, so an absent quote prices no fee — the same degradation
+  // the shown price already takes (it falls back to `declaredBuzz`).
+  const whatIfResult = stepQuote?.whatIfResult;
 
   // 🔴 NEVER SHOW LESS THAN THE SUBMIT WILL RESERVE. The submit gates and
   // reserves `max(Math.ceil(plan.reserveBuzz), quotedBuzz)`, so an estimate that
@@ -9321,7 +10003,37 @@ async function estimateStepWorkflow(opts: {
   // It stays as the no-quote FALLBACK, where it is the entry's own declared
   // display estimate and is what the block was shown before this change.
   const submitFloorBuzz = Math.ceil(plan.reserveBuzz);
-  const shownBuzz = Math.max(submitFloorBuzz, quotedBuzz ?? declaredBuzz);
+  const shownGenerationBuzz = Math.max(submitFloorBuzz, quotedBuzz ?? declaredBuzz);
+
+  // ── 🔴 DISCLOSING QUOTE — the step arm's half of the same correction made on
+  //    the txt2img estimate. See the long note at that site for why the payee
+  //    lookup is accepted, what this number is (a quote, not a price lock), and
+  //    why the TOTAL is corrected rather than an itemised field added.
+  //
+  // 🔴 `generationType: step.id` — byte-identical to `submitStepWorkflow`'s own
+  // quote. The registered STEP ID is the fee's lookup key on this path, and it
+  // is what makes `chat-completion`'s 0/0 override apply to the disclosure
+  // exactly as it applies to the charge. Resolving it any other way here would
+  // price the disclosure under a different key than the charge.
+  //
+  // ⚠️ THE FLOOR IS A GENERATION-SIDE FLOOR AND THE FEE IS ADDED OUTSIDE IT.
+  // `max(submitFloorBuzz, quoted)` is the submit's own GENERATION reservation
+  // expression; the submit then adds its fee to that same expression
+  // (`reserveBuzz = reserveGenerationBuzz + reservedAuthorFeeBuzz`). Folding the
+  // fee inside the `max` would let a large fee be swallowed by the floor and
+  // under-display.
+  const authorFeeQuote = await quoteBlockAuthorFee({
+    baseGenerationBuzz: whatIfResult?.cost?.base,
+    priceIsCap: whatIfResult?.cost?.variable,
+    generationType: step.id,
+    appId: claims.appId,
+    viewerUserId: userId,
+    workflowLabel: BLOCK_AUTHOR_FEE_ESTIMATE_LABEL,
+    privateRun: claims.privateRun === true,
+    // Unbounded surface — see the flag's own note on `quoteBlockAuthorFee`.
+    suppressQuoteLogs: true,
+  });
+  const shownBuzz = shownGenerationBuzz + (authorFeeQuote.charge ? authorFeeQuote.feeBuzz : 0);
 
   return {
     snapshot: {
@@ -9370,7 +10082,10 @@ async function quoteStepBuzz(opts: {
   step: ReturnType<typeof resolveBlockStep>;
   orchestratorStep: ReturnType<typeof buildStepOrchestratorStep>;
   userId: number;
-}): Promise<number | null> {
+}): Promise<{
+  quotedBuzz: number;
+  whatIfResult: Awaited<ReturnType<typeof submitWorkflow>>;
+} | null> {
   const { ctx, claims, step, orchestratorStep, userId } = opts;
   try {
     const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
@@ -9392,7 +10107,13 @@ async function quoteStepBuzz(opts: {
       return null;
     }
     recordStepPriceCheck(step.id, 'estimate_quoted');
-    return Math.ceil(total);
+    // 🔴 THE WHOLE RESPONSE, NOT JUST THE ROUNDED TOTAL. The caller prices the
+    // AUTHOR FEE off `cost.base` / `cost.variable`, and those are exactly the
+    // two fields a `number` return threw away — which is why this path could not
+    // disclose the fee before. `cost.total` alone is the wrong basis: the fee is
+    // a percentage of BASE, and `total` already carries per-resource licensing
+    // fees, the lineage fee and tips (see `no-divergent-author-fee-base`).
+    return { quotedBuzz: Math.ceil(total), whatIfResult: quote };
   } catch {
     recordStepPriceCheck(step.id, 'estimate_absent');
     return null;
@@ -9605,6 +10326,7 @@ async function submitStepWorkflow(opts: {
     appId: claims.appId,
     viewerUserId: userId,
     workflowLabel: blockExternalId,
+    privateRun: claims.privateRun === true,
   });
   const reservedAuthorFeeBuzz = authorFeeQuote.charge ? authorFeeQuote.feeBuzz : 0;
   // 🔴 TWO NUMBERS, BECAUSE THE OVERAGE CORRECTION BELOW COMPARES AGAINST ONE OF
@@ -9620,7 +10342,9 @@ async function submitStepWorkflow(opts: {
   // (1) Pre-submit gate against the token's per-call budget — now enforced
   // against the ORCHESTRATOR'S OWN NUMBER, not a declared constant.
   // `pricesAuthorFee: true` — `reserveBuzz` carries the author fee (line above).
-  // Classification only; the helper returns `claims.buzzBudget` either way.
+  // Classification only; the helper returns the same number for both values of the
+  // flag. 🔴 It is NOT a pass-through for `claims.buzzBudget` — it returns 0 for an
+  // editor's private run. See `blockPerCallBudget`.
   const perCallBudget = blockPerCallBudget(claims, { pricesAuthorFee: true });
   if (reserveBuzz > perCallBudget) {
     return {
@@ -10108,6 +10832,7 @@ async function submitStepWorkflow(opts: {
           ...(snapshot.workflowId ? { workflowId: snapshot.workflowId } : {}),
         },
         dev: claims.dev === true,
+        privateRun: claims.privateRun === true,
       });
     })().catch(() => {
       /* swallowed inside helper */
@@ -10146,6 +10871,7 @@ async function submitStepWorkflow(opts: {
       priceIsCap: realizedPriceIsCap,
       generationType: step.id,
       reservedAuthorFeeBuzz,
+      privateRun: claims.privateRun === true,
     });
 
     void (async () => {
@@ -10161,6 +10887,7 @@ async function submitStepWorkflow(opts: {
         appId: claims.appId,
         appBlockId: claims.appBlockId,
         blockInstanceId: claims.blockInstanceId,
+        privateRun: claims.privateRun === true,
         // A registry step is not model-based (no user-picked model to attribute).
         modelId: null,
         // A step body is `{ kind, step, params }` `.strict()` — no sharedContentKey.
@@ -10449,7 +11176,9 @@ async function submitPassThroughStepWorkflow(opts: {
   // reserves below and what the terminal settle bills against. That is why the
   // classification matters even though it changes nothing today — a ceiling
   // raised above what the app declared would be BILLED here, not just compared.
-  // The helper returns `claims.buzzBudget` either way. See `blockPerCallBudget`.
+  // The helper returns the same number for both values of the flag. 🔴 It is NOT a
+  // pass-through for `claims.buzzBudget` — it returns 0 for an editor's private run.
+  // See `blockPerCallBudget`.
   const perCallBudget = blockPerCallBudget(claims, { pricesAuthorFee: false });
   if (ceiling > perCallBudget) {
     return {
@@ -10728,6 +11457,7 @@ async function submitPassThroughStepWorkflow(opts: {
           ...(snapshot.workflowId ? { workflowId: snapshot.workflowId } : {}),
         },
         dev: claims.dev === true,
+        privateRun: claims.privateRun === true,
       });
     })().catch(() => {
       /* swallowed inside helper */
@@ -10780,6 +11510,7 @@ async function submitPassThroughStepWorkflow(opts: {
         appId: claims.appId,
         appBlockId: claims.appBlockId,
         blockInstanceId: claims.blockInstanceId,
+        privateRun: claims.privateRun === true,
         // A pass-through step carries no model binding and no sharedContentKey
         // (its `.strict()` wire shape has neither).
         modelId: null,

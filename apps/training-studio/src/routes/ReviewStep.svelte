@@ -9,10 +9,10 @@
     IconX,
     IconArrowLeft,
   } from '@tabler/icons-svelte';
-  import { untrack } from 'svelte';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
-  import { backend, portalProps } from '$lib/host';
+  import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
+  import { backend, hostConfig, hostLink, portalProps } from '$lib/host';
   import { debouncedQuote } from '$lib/debounced-quote.svelte';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
   import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
@@ -21,39 +21,48 @@
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import {
+    mediaCount,
     paramBounds,
-    paramsForVersion,
     seenFor,
+    TARGET_STEPS,
     TE_TRAINING_UNSUPPORTED,
     typesForMedia,
     type ParamBound,
   } from '$lib/data/trainingModels';
   import {
-    defaultStepsFor,
     isCustom,
     runCard,
+    runParamsKey,
     runVersion,
     runVersionLabel,
     type LaunchedRun,
     type Run,
     type RunParams,
+    type SamplePrompt,
     type Selection,
   } from './trainingFlow';
 
+  // name / prompts / params / presetType are owned and seeded by the flow so they survive Back.
   let {
     selection,
+    name = $bindable(),
+    prompts = $bindable(),
+    params = $bindable(),
+    presetType = $bindable(),
     imageCount,
-    labels,
-    trigger,
+    datasetMature,
     onStart,
     onBack,
   }: {
     selection: Selection;
+    name: string;
+    prompts: SamplePrompt[];
+    /** Keyed by `runParamsKey`; the flow guarantees an entry for every run in `selection`. */
+    params: Record<string, RunParams>;
+    presetType: string;
     imageCount: number;
-    /** The dataset's per-image labels (joined tags / captions) — the sample prompts seed from these. */
-    labels: string[];
-    /** The chosen trigger word, if any — pre-fills the name field (the run is named after it by default). */
-    trigger: string;
+    /** A trainable image's upload scan rated it mature (R and up). */
+    datasetMature: boolean;
     onStart: (
       launched: LaunchedRun[],
       prompts: string[],
@@ -63,9 +72,6 @@
     onBack: () => void;
   } = $props();
 
-  // Pre-fill the name with the trigger word (the run defaults to it anyway); the parent remounts this step
-  // via {#if}, so this one-time seed is correct. The user can still overwrite it.
-  let name = $state(untrack(() => trigger.trim()));
   let starting = $state(false);
   let startError = $state('');
 
@@ -76,54 +82,20 @@
     if (!needsAttestation) attestSfw = false;
   });
 
+  // Blue can't pay for mature content without a paid membership: the orchestrator takes Blue, refunds
+  // it seconds after submit, and charges the whole price in Yellow. Users read that silent switch as a
+  // billing bug, so it is warned here and confirmed at Start. Unknown membership warns too, hedged.
+  const membership = hostConfig().isPaidMember;
+  const blueExcluded = $derived(datasetMature && membership !== true);
+
 
   const OPTIMIZERS = ['AdamW8Bit', 'Adafactor', 'Prodigy', 'Automagic'];
   // ai-toolkit's supported set — no `cosine_with_restarts` (the orchestrator rejects it).
   const LR_SCHEDULERS = ['cosine', 'constant', 'constant_with_warmup', 'linear'];
 
   const presetTypes = $derived(typesForMedia(selection.media));
-  const defaultSteps = (id: string) => defaultStepsFor(id, selection.media, imageCount);
 
-  // Seeded once from the (stable) selection; the parent remounts this step via {#if}, so a fresh
-  // selection gets a fresh component. untrack documents the intentional one-time capture.
-  let presetType = $state(untrack(() => selection.loraType));
-  // Seed each run's advanced params from the CHOSEN MODEL's defaults (mirrored per-model from the main app's
-  // trainer), not flat constants — a multi-run sweep can mix models, so seed per run.
-  let params = $state<RunParams[]>(
-    untrack(() =>
-      selection.runs.map((run) => {
-        const d = paramsForVersion(runCard(run), run.versionKey);
-        return {
-          steps: defaultSteps(selection.loraType),
-          epochs: d.epochs,
-          unetLr: String(d.unetLr),
-          textEncoderLr: String(d.textEncoderLr),
-          networkDim: String(d.networkDim),
-          networkAlpha: String(d.networkAlpha),
-          lrScheduler: d.lrScheduler,
-          optimizer: d.optimizer,
-          resolution: String(d.resolution),
-          batchSize: String(d.batchSize),
-        };
-      }),
-    ),
-  );
-  let stepsEdited = $state<boolean[]>(untrack(() => selection.runs.map(() => false)));
-  // Seed the sample prompts from the dataset itself — 3 random image labels (joined tags or the caption) —
-  // so the test images generated during training reflect what the model actually learned. Falls back to a
-  // generic prompt when the dataset carries no usable labels.
-  function seedPrompts(source: string[]): { id: number; text: string }[] {
-    const pool = source.map((l) => l.trim()).filter((l) => l.length > 0);
-    const picks: string[] = [];
-    while (picks.length < 3 && pool.length > 0) {
-      picks.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]!);
-    }
-    const chosen = picks.length > 0 ? picks : ['a photo'];
-    return chosen.map((text, id) => ({ id, text }));
-  }
-  const initialPrompts = untrack(() => seedPrompts(labels));
-  let prompts = $state(initialPrompts);
-  let promptSeq = initialPrompts.length;
+  const paramsAt = (i: number): RunParams => params[runParamsKey(selection.runs[i]!)]!;
   let openAdv = $state(-1);
 
   const presetSeen = $derived(seenFor(presetType, selection.media));
@@ -136,7 +108,7 @@
   const quoteInputAt = (i: number) => {
     const run = selection.runs[i]!;
     const v = runVersion(run);
-    const p = params[i]!;
+    const p = paramsAt(i);
     return {
       ecosystem: v.ecosystem,
       modelVariant: v.modelVariant,
@@ -148,10 +120,13 @@
       imageCount: imageCount > 0 ? imageCount : undefined,
     };
   };
-  // A cleared/zeroed Steps field is UNQUOTABLE, never "quote the default budget": the orchestrator
+  // An out-of-range Steps field is UNQUOTABLE, never "quote the default budget": the orchestrator
   // prices an omitted steps at its default, which would show a confident total for a config that
-  // isn't on screen (submit-side validateRun rejects steps <= 0 anyway).
-  const stepsInvalid = (i: number) => !(params[i]!.steps > 0);
+  // isn't on screen.
+  const stepsInvalid = (i: number) => {
+    const { steps } = paramsAt(i);
+    return !(steps >= TARGET_STEPS.min && steps <= TARGET_STEPS.max);
+  };
   const quoteState = debouncedQuote(
     () =>
       JSON.stringify(
@@ -190,23 +165,30 @@
     return cost == null ? null : cost.toLocaleString();
   };
   const etaMin = $derived(
-    Math.max(...selection.runs.map((_, i) => Math.max(1, Math.round((params[i]!.steps / 2000) * 18)))),
+    Math.max(...selection.runs.map((_, i) => Math.max(1, Math.round((paramsAt(i).steps / 2000) * 18)))),
   );
 
   function seen(i: number) {
-    return imageCount > 0 ? Math.round(params[i]!.steps / imageCount) : 0;
+    return imageCount > 0 ? Math.round(paramsAt(i).steps / imageCount) : 0;
   }
   function low(i: number) {
     return seen(i) < Math.round(presetSeen * 0.6);
   }
 
+  // Only the "seen ~N×" guidance follows the preset now — step defaults are fixed per base model.
   function setPreset(id: string) {
     presetType = id;
-    params = params.map((p, i) => (stepsEdited[i] ? p : { ...p, steps: defaultSteps(id) }));
   }
   function setSteps(i: number, v: string) {
-    params[i]!.steps = parseInt(v) || 0;
-    stepsEdited[i] = true;
+    // Number, not parseInt: parseInt('1e4') is 1, which would quote and start a one-step run.
+    const n = Number(v);
+    paramsAt(i).steps = Number.isInteger(n) ? n : 0;
+  }
+  // A cleared field stays 0 (invalid, blank quote) rather than snapping to 1 — a run the user can see is
+  // unset beats a silently one-step run.
+  function clampSteps(i: number) {
+    const p = paramsAt(i);
+    if (p.steps > 0) p.steps = Math.min(TARGET_STEPS.max, Math.max(TARGET_STEPS.min, p.steps));
   }
 
   // Per-model input bounds and Flux.2 gating (imageResourceTraining takes no hyperparameters).
@@ -216,18 +198,20 @@
   type NumField = 'unetLr' | 'textEncoderLr' | 'networkDim' | 'networkAlpha' | 'resolution' | 'batchSize';
   // Clamp a numeric string field into the model's [min, max] on blur, so a user can't submit out-of-range.
   function clampField(i: number, field: NumField, bound: ParamBound) {
-    const n = Number(params[i]![field]);
+    const p = paramsAt(i);
+    const n = Number(p[field]);
     if (!Number.isFinite(n)) return;
     const clamped = Math.min(bound.max, Math.max(bound.min, n));
-    if (String(clamped) !== params[i]![field]) params[i]![field] = String(clamped);
+    if (String(clamped) !== p[field]) p[field] = String(clamped);
   }
   function setEpochs(i: number, v: string) {
     const b = boundsFor(i).epochs;
     const n = parseInt(v);
-    params[i]!.epochs = Number.isFinite(n) ? Math.min(b.max, Math.max(b.min, n)) : b.min;
+    paramsAt(i).epochs = Number.isFinite(n) ? Math.min(b.max, Math.max(b.min, n)) : b.min;
   }
   function addPrompt() {
-    if (prompts.length < 6) prompts = [...prompts, { id: promptSeq++, text: 'new scene' }];
+    const id = Math.max(-1, ...prompts.map((p) => p.id)) + 1;
+    if (prompts.length < 6) prompts = [...prompts, { id, text: 'new scene' }];
   }
   function removePrompt(i: number) {
     if (prompts.length > 1) prompts = prompts.filter((_, k) => k !== i);
@@ -251,7 +235,7 @@
     // total == null means a quote is in flight or failed — never submit without a shown price
     // (nonBlueSpend(null) is null, so this would otherwise skip the spend confirmation too).
     if (starting || total == null || (needsAttestation && !attestSfw)) return;
-    const spend = nonBlueSpend(total, buzzMode.value);
+    const spend = nonBlueSpend(total, buzzMode.value, !blueExcluded);
     if (spend) {
       confirmSpend = spend;
       spendDialogOpen = true;
@@ -267,7 +251,7 @@
     startError = '';
     try {
       await onStart(
-        selection.runs.map((run, i) => ({ run, params: params[i]! })),
+        selection.runs.map((run, i) => ({ run, params: paramsAt(i) })),
         prompts.map((p) => p.text),
         name,
         buzzMode.currencies
@@ -282,12 +266,19 @@
   const multi = $derived(selection.runs.length > 1);
 </script>
 
+{#snippet membershipLink()}
+  {@const pricing = hostConfig().pricingUrl}
+  {#if pricing}
+    <a {...hostLink(pricing)} class="font-semibold text-primary hover:underline">View plans</a>
+  {/if}
+{/snippet}
+
 <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
   <div class="flex min-w-0 flex-col gap-5">
     <div>
       <h2 class="m-0 text-xl font-semibold text-white">Review &amp; start</h2>
       <p class="mt-1 text-sm text-dark-2">
-        Steps are set for you from your type and image count. Tweak if you like — everything else is
+        Steps are set to your model's recommended budget. Tweak if you like — everything else is
         optional.
       </p>
     </div>
@@ -353,8 +344,13 @@
             <div class="ml-auto flex flex-col">
               <span class="font-mono text-xs uppercase tracking-wider text-dark-2">Steps</span>
               <Input
-                value={String(params[i]!.steps)}
-                oninput={(e) => setSteps(i, e.currentTarget.value)}
+                type="number"
+                min={TARGET_STEPS.min}
+                max={TARGET_STEPS.max}
+                step={TARGET_STEPS.step}
+                bind:value={() => paramsAt(i).steps || '', (v) => setSteps(i, String(v ?? ''))}
+                onblur={() => clampSteps(i)}
+                aria-invalid={stepsInvalid(i)}
                 class="h-7 w-24 font-mono"
               />
             </div>
@@ -383,15 +379,15 @@
               <div class="grid gap-x-6 sm:grid-cols-2">
                 <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
                   <span class="text-dark-2">Checkpoints (epochs)</span>
-                  <Input type="number" min={b.epochs.min} max={b.epochs.max} step={b.epochs.step} value={String(params[i]!.epochs)} oninput={(e) => setEpochs(i, e.currentTarget.value)} class="h-7 font-mono" />
+                  <Input type="number" min={b.epochs.min} max={b.epochs.max} step={b.epochs.step} value={String(paramsAt(i).epochs)} oninput={(e) => setEpochs(i, e.currentTarget.value)} class="h-7 font-mono" />
                 </div>
                 <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
                   <span class="text-dark-2">Batch size</span>
-                  <Input type="number" min={b.batchSize.min} max={b.batchSize.max} step={b.batchSize.step} bind:value={params[i]!.batchSize} onblur={() => clampField(i, 'batchSize', b.batchSize)} class="h-7 font-mono" />
+                  <Input type="number" min={b.batchSize.min} max={b.batchSize.max} step={b.batchSize.step} bind:value={params[runParamsKey(run)]!.batchSize} onblur={() => clampField(i, 'batchSize', b.batchSize)} class="h-7 font-mono" />
                 </div>
                 <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
                   <span class="text-dark-2">UNet LR</span>
-                  <Input type="number" min={b.unetLr.min} max={b.unetLr.max} step={b.unetLr.step} bind:value={params[i]!.unetLr} onblur={() => clampField(i, 'unetLr', b.unetLr)} class="h-7 font-mono" />
+                  <Input type="number" min={b.unetLr.min} max={b.unetLr.max} step={b.unetLr.step} bind:value={params[runParamsKey(run)]!.unetLr} onblur={() => clampField(i, 'unetLr', b.unetLr)} class="h-7 font-mono" />
                 </div>
                 <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
                   <span class="text-dark-2">
@@ -404,24 +400,24 @@
                         </Tooltip.Root>
                       </Tooltip.Provider>{/if}
                   </span>
-                  <Input type="number" min={b.textEncoderLr.min} max={b.textEncoderLr.max} step={b.textEncoderLr.step} bind:value={params[i]!.textEncoderLr} onblur={() => clampField(i, 'textEncoderLr', b.textEncoderLr)} disabled={teLocked} class="h-7 font-mono" />
+                  <Input type="number" min={b.textEncoderLr.min} max={b.textEncoderLr.max} step={b.textEncoderLr.step} bind:value={params[runParamsKey(run)]!.textEncoderLr} onblur={() => clampField(i, 'textEncoderLr', b.textEncoderLr)} disabled={teLocked} class="h-7 font-mono" />
                 </div>
                 <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
                   <span class="text-dark-2">Network dim</span>
-                  <Input type="number" min={b.networkDim.min} max={b.networkDim.max} step={b.networkDim.step} bind:value={params[i]!.networkDim} onblur={() => clampField(i, 'networkDim', b.networkDim)} class="h-7 font-mono" />
+                  <Input type="number" min={b.networkDim.min} max={b.networkDim.max} step={b.networkDim.step} bind:value={params[runParamsKey(run)]!.networkDim} onblur={() => clampField(i, 'networkDim', b.networkDim)} class="h-7 font-mono" />
                 </div>
                 <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
                   <span class="text-dark-2">Network alpha</span>
-                  <Input type="number" min={b.networkAlpha.min} max={b.networkAlpha.max} step={b.networkAlpha.step} bind:value={params[i]!.networkAlpha} onblur={() => clampField(i, 'networkAlpha', b.networkAlpha)} class="h-7 font-mono" />
+                  <Input type="number" min={b.networkAlpha.min} max={b.networkAlpha.max} step={b.networkAlpha.step} bind:value={params[runParamsKey(run)]!.networkAlpha} onblur={() => clampField(i, 'networkAlpha', b.networkAlpha)} class="h-7 font-mono" />
                 </div>
                 <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
                   <span class="text-dark-2">Resolution</span>
-                  <Input type="number" min={b.resolution.min} max={b.resolution.max} step={b.resolution.step} bind:value={params[i]!.resolution} onblur={() => clampField(i, 'resolution', b.resolution)} class="h-7 font-mono" />
+                  <Input type="number" min={b.resolution.min} max={b.resolution.max} step={b.resolution.step} bind:value={params[runParamsKey(run)]!.resolution} onblur={() => clampField(i, 'resolution', b.resolution)} class="h-7 font-mono" />
                 </div>
                 <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
                   <span class="text-dark-2">LR scheduler</span>
-                  <Select.Root type="single" bind:value={params[i]!.lrScheduler}>
-                    <Select.Trigger class="h-7 font-mono">{params[i]!.lrScheduler}</Select.Trigger>
+                  <Select.Root type="single" bind:value={params[runParamsKey(run)]!.lrScheduler}>
+                    <Select.Trigger class="h-7 font-mono">{paramsAt(i).lrScheduler}</Select.Trigger>
                     <Select.Content portalProps={portalProps()}>
                       {#each LR_SCHEDULERS as s (s)}
                         <Select.Item value={s}>{s}</Select.Item>
@@ -431,8 +427,8 @@
                 </div>
                 <div class="grid grid-cols-[1fr_120px] items-center gap-2 py-1.5 text-sm">
                   <span class="text-dark-2">Optimizer</span>
-                  <Select.Root type="single" bind:value={params[i]!.optimizer}>
-                    <Select.Trigger class="h-7 font-mono">{params[i]!.optimizer}</Select.Trigger>
+                  <Select.Root type="single" bind:value={params[runParamsKey(run)]!.optimizer}>
+                    <Select.Trigger class="h-7 font-mono">{paramsAt(i).optimizer}</Select.Trigger>
                     <Select.Content portalProps={portalProps()}>
                       {#each OPTIMIZERS as o (o)}
                         <Select.Item value={o}>{o}</Select.Item>
@@ -498,14 +494,26 @@
       </span>
     </div>
     <div class="mt-1 text-right font-mono text-xs text-dark-2">
-      ~{etaMin} min{multi ? ' · parallel' : ''} · {imageCount} image{imageCount === 1 ? '' : 's'}
+      ~{etaMin} min{multi ? ' · parallel' : ''} · {mediaCount(imageCount, selection.media)}
     </div>
 
-    <p class="mt-3 font-mono text-xs text-dark-2">
-      Paid with <span class="text-blue-400">Blue</span> first, then your
-      <span class="capitalize text-buzz">{buzzMode.value}</span>
-      Buzz{buzzMode.locked ? '.' : ' — switch in the top bar.'}
-    </p>
+    {#if blueExcluded}
+      <div
+        role="note"
+        class="mt-3 flex items-start gap-2 rounded-lg border border-buzz/30 bg-buzz/5 p-3 text-xs leading-snug text-dark-1"
+      >
+        <IconAlertTriangle size={14} stroke={2} class="mt-px shrink-0 text-buzz" />
+        <span>
+          Your dataset was rated <strong>mature</strong>.
+          <span class="text-blue-400">Blue</span> Buzz can't pay for mature content without a
+          membership, so {membership === undefined ? 'unless you have one, ' : ''}this
+          {multi ? 'training' : 'run'} is charged in full in <span class="text-buzz">Yellow</span> Buzz.
+          {@render membershipLink()}
+        </span>
+      </div>
+    {:else}
+      <BlueFirstNote class="mt-3" />
+    {/if}
 
     {#if needsAttestation}
       <div
@@ -555,7 +563,13 @@
         {confirmSpend?.currency === 'green' ? 'Green' : 'Yellow'} Buzz
       </Dialog.Title>
       <Dialog.Description>
-        {#if confirmSpend?.uncertain}
+        {#if blueExcluded}
+          Your dataset was rated mature, and
+          <span class="text-blue-400">Blue</span> Buzz can't pay for mature content without a
+          membership{membership === undefined ? ' — unless you have one, the' : '. The'} full
+          <strong>{confirmSpend?.amount.toLocaleString()}</strong> will come out of your Yellow Buzz.
+          {@render membershipLink()}
+        {:else if confirmSpend?.uncertain}
           Blue Buzz spends first, but your balance couldn't be read — up to
           <strong>{confirmSpend?.amount.toLocaleString()}</strong> of this run may come out of your
           {confirmSpend?.currency === 'green' ? 'Green' : 'Yellow'} Buzz.

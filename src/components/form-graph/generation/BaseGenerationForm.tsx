@@ -25,7 +25,6 @@ import { generationGraphPanel } from '~/store/generation-graph.store';
 import { GenerationLayout, GenerationFooter } from '~/components/generation_v2/GenerationLayout';
 import {
   GrokEcosystemAlert,
-  ReadyAlert,
   SeedanceImg2VidAlert,
 } from '~/components/generation_v2/ResourceAlerts';
 import { useCompatibilityInfo } from '~/components/generation_v2/hooks/useCompatibilityInfo';
@@ -171,6 +170,10 @@ function useResourceHydrationSync(store: GenerationStore) {
     const registered = registeredIdsRef.current;
     return () => {
       for (const id of registered) unregisterResourceId(id);
+      // Without this the sync above skips every id it believes it already registered, so a
+      // teardown-and-remount — every strict-mode mount — leaves them registered by nobody and
+      // stuck on their skeletons.
+      registered.clear();
     };
   }, [unregisterResourceId]);
 }
@@ -292,7 +295,6 @@ function GenerationFormBody({ store, isMember }: { store: GenerationStore; isMem
           />
           <GrokEcosystemAlert ecosystem={ecosystem} />
           <SeedanceImg2VidAlert ecosystem={ecosystem} workflow={workflow} />
-          <ConnectedReadyAlert />
           {output === 'image' ? (
             <ImageGenerationForm store={store} />
           ) : output === 'video' ? (
@@ -348,9 +350,4 @@ function PromptEnhancePanelWrapper({
       }}
     />
   );
-}
-
-function ConnectedReadyAlert() {
-  const { data, isLoading } = useWhatIfContext();
-  return <ReadyAlert ready={data?.ready} isLoading={isLoading} />;
 }

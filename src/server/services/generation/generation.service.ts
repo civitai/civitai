@@ -1,4 +1,11 @@
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
+import {
+  coverageAudience,
+  coverageColumn,
+  coveredBy,
+  coveredForUser,
+  nextCoverageEnabled,
+} from '~/server/services/generation/coverage-source';
 import { Prisma } from '@prisma/client';
 import { type ModelVersionTerms } from '@civitai/buzz';
 import { uniqBy } from 'lodash-es';
@@ -116,13 +123,18 @@ function getMetaResources({
 
 export async function checkResourcesCoverage({ id }: CheckResourcesCoverageSchema) {
   const db = await getDbWithoutLag('modelVersion', id);
+  const next = await nextCoverageEnabled();
   const version = await db.modelVersion.findFirst({
     where: { id },
-    select: { flags: true, generationCoverage: { select: { covered: true } } },
+    select: {
+      flags: true,
+      generationCoverage: { select: { covered: true, coveredNext: true } },
+    },
   });
 
   return (
-    (version?.generationCoverage?.covered ?? false) && !isGenerationDisabled(version?.flags ?? 0)
+    (version ? coveredBy(version, next) ?? false : false) &&
+    !isGenerationDisabled(version?.flags ?? 0)
   );
 }
 
@@ -577,17 +589,18 @@ async function resolveAliasGateVersions(
       usageControl: true,
       baseModel: true,
       flags: true,
-      generationCoverage: { select: { covered: true } },
+      generationCoverage: { select: { covered: true, coveredNext: true } },
       model: { select: { userId: true, type: true } },
     },
   });
+  const next = await nextCoverageEnabled();
   const targetById = new Map<number, ResolveCanGenerateVersion>(
     rows.map(({ generationCoverage, model, usageControl, ...rest }) => [
       rest.id,
       {
         ...rest,
         usageControl: usageControl ?? undefined,
-        covered: generationCoverage?.covered ?? null,
+        covered: coveredBy({ generationCoverage }, next) ?? null,
         modelUserId: model.userId,
         modelType: model.type,
       },
@@ -1221,7 +1234,7 @@ export async function getResourceData(
     withPreview = false,
     browsingLevel,
   }: {
-    user?: { id?: number; isModerator?: boolean };
+    user?: { id?: number; isModerator?: boolean; tier?: string };
     generation?: boolean;
     withPreview?: boolean;
     browsingLevel?: number;
@@ -1231,6 +1244,8 @@ export async function getResourceData(
   const args = (
     typeof versionIds[0] === 'number' ? versionIds.map((id) => ({ id })) : versionIds
   ) as { id: number; epoch?: number }[];
+
+  const { next, member } = await coverageAudience(user);
 
   // Spans localize the gen-path park: getResourceData does these as SEQUENTIAL
   // awaits, so wrapping each shows which prelim lookup dominates.
@@ -1255,7 +1270,10 @@ export async function getResourceData(
         availability: item.availability,
         usageControl: item.usageControl,
         baseModel: item.baseModel,
-        covered: item.covered,
+        covered: coveredForUser(item, next, {
+          member,
+          isCheckpoint: item.model.type === 'Checkpoint',
+        }),
         modelUserId: item.model.userId,
         flags: item.flags,
       },
@@ -1306,7 +1324,7 @@ export async function getResourceData(
       .findMany({
         where: {
           status: 'Published',
-          generationCoverage: { covered: true },
+          generationCoverage: { [coverageColumn(next)]: true },
           modelId: { in: modelIdsThatRequireSubstitutes },
         },
         orderBy: { index: { sort: 'asc', nulls: 'last' } },
@@ -1656,16 +1674,26 @@ export function extractHashCandidates(
  *
  * Returns { resources, params } where params are ready for the generation graph.
  */
-type HashMatch = { versionPublished: boolean; versionDate: Date; fileId: number };
+type HashMatch = {
+  versionPublished: boolean;
+  isOfficial: boolean;
+  versionDate: Date;
+  fileId: number;
+};
 
 /**
  * Which of several files sharing one hash gets the credit. Mirrors
- * get_image_resources.sql's `ORDER BY IIF(version_published,0,1), version_date, file_id`:
- * published first, then OLDEST, then lowest file id.
+ * get_image_resources.sql's
+ * `ORDER BY IIF(version_published,0,1), IIF(is_official,0,1), version_date, file_id`:
+ * published first, then OFFICIAL, then OLDEST, then lowest file id.
  *
- * Oldest, not newest. A hash shared across owners is in practice a re-upload of someone
- * else's weights, so the earliest published copy is the closest thing to the original
- * uploader; preferring the most recent hands every duplicated model to whoever posted it
+ * Official outranks date because a hash is a statement about bytes: when the same bytes sit on an
+ * official version and on a community re-host, the official page is the true answer whoever
+ * uploaded first.
+ *
+ * Oldest, not newest, for everything below that. A hash shared across owners is in practice a
+ * re-upload of someone else's weights, so the earliest published copy is the closest thing to the
+ * original uploader; preferring the most recent hands every duplicated model to whoever posted it
  * last. This read `>` until 2026-09-15, which meant the image page credited the original
  * and the generator credited the re-uploader for the same file — the two are the same
  * rule in two languages, and nothing compares them.
@@ -1673,6 +1701,7 @@ type HashMatch = { versionPublished: boolean; versionDate: Date; fileId: number 
 export function prefersHashMatch(candidate: HashMatch, existing: HashMatch | undefined): boolean {
   if (!existing) return true;
   if (existing.versionPublished !== candidate.versionPublished) return candidate.versionPublished;
+  if (existing.isOfficial !== candidate.isOfficial) return candidate.isOfficial;
   const existingDate = existing.versionDate.valueOf();
   const candidateDate = candidate.versionDate.valueOf();
   if (existingDate !== candidateDate) return candidateDate < existingDate;
@@ -1705,6 +1734,7 @@ export async function resolveImageMeta({
         modelVersionId: number;
         fileId: number;
         versionPublished: boolean;
+        isOfficial: boolean;
         versionDate: Date;
         excludeFromAutoDetection: boolean;
       }>
@@ -1714,6 +1744,7 @@ export async function resolveImageMeta({
         mf."modelVersionId",
         mf.id AS "fileId",
         mv.status = 'Published' AS "versionPublished",
+        COALESCE(m."isOfficial", false) AS "isOfficial",
         COALESCE(mv."publishedAt", mv."createdAt") AS "versionDate",
         COALESCE(mv.meta->>'excludeFromAutoDetection', '') != '' AS "excludeFromAutoDetection"
       FROM "ModelFileHash" mfh

@@ -58,16 +58,63 @@ export function describePartFailure(
  * relay fallback in `useCFImageUpload` follows). The other gates: the relay writes to
  * the image bucket, so only image-type uploads on the image backend qualify; the file
  * must fit the relay's body cap; and a cancelled upload has an owner, not a fallback.
+ *
+ * 🔴 `userAborted` MEANS "THE PERSON PRESSED CANCEL" — never "this upload's abort signal
+ * has been tripped". The two are not the same thing and confusing them made this whole
+ * predicate inert: the multipart worker tears its own upload down (cancelling the signal
+ * and every in-flight part xhr) BEFORE the caller reaches this gate, so a caller passing
+ * its abort signal here reports `true` on every failure, including the network-layer ones
+ * this exists for. Pass a flag the internal teardown does not set.
  */
 export function shouldRelayOnPartFailure(
   err: UploadPartError | null | undefined,
-  opts: { type: string; backend?: string; fileSize: number; signalAborted: boolean }
+  opts: { type: string; backend?: string; fileSize: number; userAborted: boolean }
 ): boolean {
-  if (!err || opts.signalAborted) return false;
+  if (!err || opts.userAborted) return false;
   if (!err.networkError || err.aborted) return false;
   if (opts.type !== 'image') return false;
   if (opts.backend !== 'backblaze') return false;
   return opts.fileSize <= RELAY_FALLBACK_MAX_BYTES;
+}
+
+/**
+ * The terminal row state for an upload that gave up: did the PERSON stop it, or did it
+ * fail?
+ *
+ * 🔴 `userAborted` is the same flag `shouldRelayOnPartFailure` takes and means the same
+ * thing — the person pressed cancel — and passing an upload's abort signal is the same
+ * mistake here, with a different symptom. Both clients tear their own upload down on a
+ * fatal part failure, so a status line reading that signal reports EVERY failed upload as
+ * a cancel: a user whose connection died gets the row they would have got by pressing
+ * cancel themselves, and the failure disappears from anything counting errors.
+ *
+ * 🔴 `fatal.aborted` is checked as well, not instead: it catches the ordinary cancel,
+ * where the cancelled part xhr rejects with `aborted`. `userAborted` catches the cancel
+ * that RACES a failure — a non-retryable part error lands on the fatal slot immediately,
+ * so a cancel in the same tick can never overwrite it.
+ *
+ * 🔴 This says nothing about the `/api/upload/abort` body, which keeps the real reason
+ * via `describePartFailure`. The row answers "what did the person do"; the abort reason
+ * answers "why did the transfer stop". Collapsing the second into the first would delete
+ * the diagnostic signal that field exists to carry.
+ *
+ * 🔴 Lives HERE for the reason `isTerminalCompleteStatus` below gives: this is the second
+ * predicate both upload clients need, it was open-coded in both, and the first one that
+ * was open-coded in both went wrong in one of them. It is NOT called
+ * `resolveTerminal*` — `isTerminalCompleteStatus` further down this file means a
+ * different "terminal" (an HTTP status that must not be re-POSTed), and both clients
+ * import the two of them two lines apart, which is exactly where a reader mis-binds.
+ *
+ * 🔴 The flag is NAMED rather than positional, matching `shouldRelayOnPartFailure`. Every
+ * candidate expression at the call site is some `.signal.aborted` and they all typecheck,
+ * so a bare boolean in argument position makes the documented mistake invisible exactly
+ * where it gets made. `userAborted:` forces the author to say which one they mean.
+ */
+export function resolveUploadRowStatus(
+  fatal: UploadPartError,
+  opts: { userAborted: boolean }
+): 'aborted' | 'error' {
+  return fatal.aborted || opts.userAborted ? 'aborted' : 'error';
 }
 
 /** A presigned part URL that outlived its expiry — retrying the same URL can never succeed. */

@@ -9,7 +9,7 @@
  * exception-rate alerting flap. This module classifies each exception at INGEST (`beforeSend`) so:
  *   - KNOWN-benign noise is DROPPED (never sent), and
  *   - the rest is TAGGED (`error_category`) so the dashboard/alerts can split
- *     bizlogic / chunkload / meili from the real-app-bug stream (`real`).
+ *     bizlogic / chunkload / meili / extension from the real-app-bug stream (`real`).
  *
  * This is PURE and unit-tested (`__tests__/classifyException.test.ts`) and is composed INTO the
  * Faro `beforeSend` pipeline AFTER `deepRedact` (redaction still runs on every beacon).
@@ -54,7 +54,7 @@ export interface ClassifiableException {
  *   - noise subtypes (only present WITH `drop:true`): `abort`, `adblock`, `autoplay`,
  *     `script_error`, `injected`, `network` — the reason it was dropped (useful if you ever want
  *     to TAG-instead-of-DROP by flipping the caller; not sent to Loki while dropped).
- *   - keep-and-tag: `bizlogic`, `chunkload`, `meili`.
+ *   - keep-and-tag: `bizlogic`, `chunkload`, `meili`, `extension`.
  *   - default keep: `real`.
  */
 export type ErrorCategory =
@@ -67,6 +67,7 @@ export type ErrorCategory =
   | 'bizlogic'
   | 'chunkload'
   | 'meili'
+  | 'extension'
   | 'real';
 
 export interface Classification {
@@ -127,6 +128,61 @@ const BIZLOGIC_VALUE_RES = [
   /\bPrompt blocked as it may violate TOS\b/i,
   /\bPrompt requires mature content but workflow does not allow it\b/i,
 ];
+
+// Browser-extension / page-injected-global errors. Extensions reference globals that only exist
+// when the injection ran, so touching them throws in every OTHER browser — measured live on
+// civitai-dp-prod (24h): `Can't find variable: __firefox__` 1,380×, `undefined is not an object
+// (evaluating 'window.__firefox__.<prop>')` ~2,100×, `window.ethereum.selectedAddress = …`
+// ~2,300/day, `Can't find variable: DarkReader` 132×. Not app bugs — but TAGGED (`extension`)
+// and KEPT rather than dropped: the alerts/dashboards count `context_error_category=real`, so
+// re-tagging cleans the real-bug signal while the raw stream stays queryable. Unlike the
+// `injected` DROP above, this is message-evidence based: these land in `real` precisely because
+// their stacks carry app frames or no stack at all.
+//
+// 🔴 Two engine phrasing families name these errors and BOTH must be matched — a one-phrasing
+// matcher returned a confident zero for a whole error class. Bare globals: `Can't find variable:
+// X` vs `X is not defined`. Property access: the `undefined is not an object (evaluating '…')`
+// clause carries the object PATH, while V8's `Cannot read properties of … (reading '…')` omits
+// the base object entirely — so the only V8 property-access case attributable from the message
+// is a READ of a denylisted NAME.
+//
+// 🔴 DELIBERATELY NOT matched: any name outside the denylist (`downProgCallback`,
+// `syncDownloadState`, `jQuery`, `JSZip`, `goog`, `MOBILE`, `require`, `selector` are live
+// examples that may be app code), and the generic `Cannot read properties of undefined
+// (reading 'M_ID')` shape — the dominant real-bug message shape in this stream. A bare global
+// tags only when its name is EXACTLY one of these (case-sensitive, like the identifiers).
+const EXTENSION_INJECTED_GLOBALS: readonly string[] = ['__firefox__', 'DarkReader', '__alhWeb'];
+
+// Bare-global ReferenceError, both engine phrasings. The optional `SomeError: ` prefix covers
+// the message-only form (no separate `type` field). Anchored, so an app error that merely
+// CONTAINS an injected global's name mid-message does not tag.
+const EXTENSION_BARE_GLOBAL_RES = [
+  /^(?:[A-Za-z]+Error:\s*)?Can't find variable: (\w+)\.?$/i,
+  /^(?:[A-Za-z]+Error:\s*)?(\w+) is not defined\.?$/i,
+];
+
+// Property-access on an injected object. The evaluating clause carries the object path as a
+// substring, so match the stable path prefix — never the segment after it: an injected property
+// name can be an opaque ≥32-char token that `redact.ts` rewrites to `[redacted-token]` in the
+// shipped beacon (`window.__firefox__.[redacted-token]` is a real Loki value). Classification
+// runs pre-redact and sees the raw segment; keying on the path prefix matches both spellings.
+const EXTENSION_OBJECT_PATH_RES = [
+  /\(evaluating ['"]window\.__firefox__/i,
+  /\(evaluating ['"]window\.ethereum/i,
+  // V8's property-access phrasing omits the base object, so a denylisted READ name is the only
+  // message evidence V8 property access can carry.
+  /\(reading ['"](?:__firefox__|DarkReader|__alhWeb)['"]\)/i,
+];
+
+function isExtensionInjectedError(value: string, typed: string): boolean {
+  for (const re of EXTENSION_BARE_GLOBAL_RES) {
+    for (const text of [value, typed]) {
+      const m = re.exec(text);
+      if (m && EXTENSION_INJECTED_GLOBALS.includes(m[1])) return true;
+    }
+  }
+  return anyMatch(EXTENSION_OBJECT_PATH_RES, value) || anyMatch(EXTENSION_OBJECT_PATH_RES, typed);
+}
 
 // ── Helpers ─────────────────────────────────────────────────────────────────────────────────
 
@@ -321,20 +377,26 @@ export function classifyException(exc: ClassifiableException | null | undefined)
     return DROP('network');
   }
 
-  // 7) KEEP+TAG — expected business-logic (TRPCClientError user states).
+  // 7) KEEP+TAG — browser-extension / injected-global errors (patterns above). AFTER every DROP
+  //    rule on purpose: a denylisted global behind an all-`undefined:` stack still drops as
+  //    `injected` (tag-only must not un-drop anything), and everything that used to reach `real`
+  //    is re-tagged here. Disjoint from bizlogic/chunkload/meili by pattern.
+  if (isExtensionInjectedError(value, typed)) return KEEP('extension');
+
+  // 8) KEEP+TAG — expected business-logic (TRPCClientError user states).
   if (anyMatch(BIZLOGIC_VALUE_RES, value) || anyMatch(BIZLOGIC_VALUE_RES, typed)) {
     return KEEP('bizlogic');
   }
 
-  // 8) KEEP+TAG — stale-bundle chunk load (deploy-health signal).
+  // 9) KEEP+TAG — stale-bundle chunk load (deploy-health signal).
   if (/ChunkLoadError/i.test(type) || /ChunkLoadError/i.test(typed)) return KEEP('chunkload');
 
-  // 9) KEEP+TAG — MeiliSearch backend blips (search correlation signal).
+  // 10) KEEP+TAG — MeiliSearch backend blips (search correlation signal).
   if (/MeiliSearchCommunicationError/i.test(type) || /MeiliSearchCommunicationError/i.test(typed)) {
     return KEEP('meili');
   }
 
-  // 10) Default — a real app-bug candidate. KEEP and tag `real`.
+  // 11) Default — a real app-bug candidate. KEEP and tag `real`.
   return KEEP('real');
 }
 

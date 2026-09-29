@@ -28,6 +28,10 @@ import { parseAIRSafe } from '~/shared/utils/air';
 import type { GenerationGraphCtx } from '~/shared/data-graph/generation';
 import { generationGraph } from '~/shared/data-graph/generation/generation-graph';
 import type { GenerationCtx } from '~/shared/data-graph/generation/context';
+import { isMediaHost } from '~/shared/utils/media-host';
+import { logToAxiom } from '~/server/logging/client';
+import { logHostOf } from '~/server/services/orchestrator/trusted-blob-url';
+import { env as clientEnv } from '~/env/client';
 import {
   isWorkflowAvailable,
   isEnhancementWorkflow,
@@ -533,25 +537,59 @@ export function mapDataToGraphInput(
   }
 
   // Build images from sourceImage or images array
+  // meta.images / meta.sourceImage are attacker-writable (imageMetaSchema is a looseObject):
+  // a URL that is not a first-party media host must not be handed to the form, whose
+  // inputs auto-fetch sources client-side. Legit stored values are always orchestrator
+  // blobs or the image CDN (the form re-uploads anything else before submit), so dropping
+  // foreign hosts here is behavior-preserving. Drops are logged (host only — stored URLs
+  // may carry signatures) to measure the false-positive rate before this ever hardens
+  // further. ClickUp 868maend5.
+  const imageLocation = clientEnv.NEXT_PUBLIC_IMAGE_LOCATION;
   let images: { url: string; width: number; height: number }[] | undefined;
   if (p?.sourceImage) {
-    images = [
-      {
-        url: p.sourceImage.url,
-        width: p.sourceImage.width,
-        height: p.sourceImage.height,
-      },
-    ];
+    if (isMediaHost(p.sourceImage?.url, imageLocation)) {
+      images = [
+        {
+          url: p.sourceImage.url,
+          width: p.sourceImage.width,
+          height: p.sourceImage.height,
+        },
+      ];
+    } else {
+      logToAxiom({
+        name: 'generation-meta-url-host-dropped',
+        type: 'warning',
+        details: {
+          key: 'sourceImage',
+          host: logHostOf(p.sourceImage?.url as string),
+        },
+      }).catch(() => null);
+    }
   } else if (Array.isArray(p?.images)) {
     // Guard against a non-array `images` (malformed/legacy stored params): a bare
     // `p.images.map(...)` throws "e.images.map is not a function" while shaping
     // generation data → generation.getGenerationData 500s. Only map when it's
     // actually an array; otherwise leave images undefined.
-    images = p.images.map((img) => ({
-      url: img.url,
-      width: img.width,
-      height: img.height,
-    }));
+    const mapped = p.images.map((img) => {
+      if (!isMediaHost(img?.url, imageLocation)) {
+        logToAxiom({
+          name: 'generation-meta-url-host-dropped',
+          type: 'warning',
+          details: {
+            key: 'images',
+            host: logHostOf(img?.url as string),
+          },
+        }).catch(() => null);
+        return null;
+      }
+      return {
+        url: img.url,
+        width: img.width,
+        height: img.height,
+      };
+    });
+    images = mapped.filter((img) => img !== null);
+    if (images.length === 0) images = undefined;
   }
 
   // Destructure consumed/internal fields and legacy-named fields;

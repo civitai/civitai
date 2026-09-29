@@ -6,9 +6,32 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // is covered separately in captcha-dev.test.ts (which keeps the default dev=true).
 vi.mock('$app/environment', () => ({ dev: false }));
 
-import { isCaptchaEnabled, captchaSiteKey, verifyCaptchaToken } from '../captcha';
+// The Axiom sink is the breakdown an operator queries, so the rows it emits are assertable state, not a
+// side effect to ignore. Stubbed rather than left live so a suite never writes to a real datastream.
+const logToAxiom = vi.fn(async () => undefined);
+vi.mock('$lib/server/axiom', () => ({
+  logToAxiom: (...args: unknown[]) => logToAxiom(...(args as [])),
+  logAxiomError: async () => undefined,
+  safeError: (e: unknown) => ({ message: String(e) }),
+}));
+
+import {
+  isCaptchaEnabled,
+  captchaSiteKey,
+  captchaManagedSiteKey,
+  verifyCaptchaToken,
+} from '../captcha';
+import { register, captchaVerificationsTotal } from '$lib/server/metrics';
+
+/** The single `captcha-reject` row a call emitted, or undefined when it emitted none. */
+const rejectRow = () =>
+  logToAxiom.mock.calls.map((c) => (c as unknown as [Record<string, unknown>])[0]).at(-1);
 
 beforeEach(() => {
+  // rejectRow() reads the LAST call, so a stale row from a previous test is indistinguishable from
+  // this test's own. Cleared centrally rather than per-test: the omission is silent, and it is the
+  // reassuring direction — an assertion on a row that was never emitted here still passes.
+  logToAxiom.mockClear();
   delete process.env.CF_INVISIBLE_TURNSTILE_SECRET;
   delete process.env.CF_INVISIBLE_TURNSTILE_SITEKEY;
   delete process.env.CF_MANAGED_TURNSTILE_SECRET;
@@ -52,6 +75,47 @@ describe('captchaSiteKey', () => {
   it('coerces an empty-string key to undefined (no widget rendered)', () => {
     process.env.CF_INVISIBLE_TURNSTILE_SITEKEY = '';
     expect(captchaSiteKey()).toBeUndefined();
+  });
+});
+
+describe('captchaManagedSiteKey', () => {
+  it('returns the key only when its own secret is also configured', () => {
+    process.env.CF_MANAGED_TURNSTILE_SITEKEY = 'managed-site-key';
+    expect(
+      captchaManagedSiteKey(),
+      'the managed sitekey shipped to the page without the secret that verifies its tokens'
+    ).toBeUndefined();
+
+    process.env.CF_MANAGED_TURNSTILE_SECRET = 'managed-secret';
+    expect(captchaManagedSiteKey()).toBe('managed-site-key');
+  });
+
+  it('is undefined with a secret but no sitekey, and with neither', () => {
+    expect(captchaManagedSiteKey()).toBeUndefined();
+    process.env.CF_MANAGED_TURNSTILE_SECRET = 'managed-secret';
+    expect(captchaManagedSiteKey()).toBeUndefined();
+  });
+
+  // The half-provisioned state is what this guard exists for, so the consequence is asserted end to
+  // end rather than left to the reader: with the sitekey alone, the page would have rendered a visible
+  // challenge whose solved token the action then refuses. A refusal is what the user retries forever,
+  // because a managed solve clears captchaUnavailable and so they get the RETRYABLE copy, not the
+  // blocked note. Same env, both halves: the sitekey is withheld AND the token would have been refused.
+  it('withholds the sitekey in exactly the configuration whose solved token would be refused', async () => {
+    process.env.CF_INVISIBLE_TURNSTILE_SECRET = 'inv-secret'; // captcha enabled
+    process.env.CF_MANAGED_TURNSTILE_SITEKEY = 'managed-site-key'; // …but no managed secret
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+
+    expect(captchaManagedSiteKey()).toBeUndefined();
+    expect(await verifyCaptchaToken('a-solved-managed-token', undefined, { mode: 'managed' })).toBe(
+      false
+    );
+    expect(
+      fetchSpy,
+      'a token was sent to Cloudflare with no secret to verify it against'
+    ).not.toHaveBeenCalled();
+    expect(rejectRow()).toMatchObject({ reason: 'no-secret', mode: 'managed' });
   });
 });
 
@@ -155,7 +219,10 @@ describe('verifyCaptchaToken', () => {
   it('returns false on a non-2xx siteverify response', async () => {
     process.env.CF_INVISIBLE_TURNSTILE_SECRET = 's3cret';
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('nope', { status: 500 })));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('nope', { status: 500 }))
+    );
     expect(await verifyCaptchaToken('good-token')).toBe(false);
     expect(errSpy).toHaveBeenCalledWith(
       'captcha verify rejected',
@@ -200,5 +267,189 @@ describe('verifyCaptchaToken — managed (interactive fallback) mode', () => {
     vi.stubGlobal('fetch', fetchSpy);
     expect(await verifyCaptchaToken('tok', undefined, { mode: 'managed' })).toBe(false);
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+// Every sample of hub_captcha_verifications_total with its FULL label set. Asserting the whole set (not a
+// subset) is the point: an inc that omits `mode` still exports — prom-client drops the label instead of
+// throwing — so a subset match would pass over exactly the defect these tests exist to catch.
+async function captchaSamples(): Promise<{ labels: Record<string, string>; value: number }[]> {
+  const metric = (await register.getMetricsAsJSON()).find(
+    (m) => m.name === 'hub_captcha_verifications_total'
+  );
+  return (metric?.values ?? []).map((v) => ({
+    labels: (v.labels ?? {}) as Record<string, string>,
+    value: v.value,
+  }));
+}
+
+// Two properties per case, and the closure in verifyCaptchaToken only makes the second structural:
+// the `result` SPELLING each branch records (the dash→underscore mapping especially), and that the
+// `mode` travelling with it is the one the caller asked for rather than a default.
+describe('captcha verification counter — result x widget mode', () => {
+  beforeEach(() => {
+    captchaVerificationsTotal.reset();
+    process.env.CF_INVISIBLE_TURNSTILE_SECRET = 'inv-secret';
+    process.env.ORIGIN = HUB_ORIGIN;
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  it('counts a SUCCESS from the invisible widget as mode=invisible', async () => {
+    stubSiteverify({ success: true, hostname: HUB_HOST, action: 'login' });
+    expect(await verifyCaptchaToken('tok')).toBe(true);
+    expect(await captchaSamples()).toEqual([
+      { labels: { result: 'success', mode: 'invisible' }, value: 1 },
+    ]);
+  });
+
+  it('counts a SUCCESS from the interactive fallback as mode=managed', async () => {
+    process.env.CF_MANAGED_TURNSTILE_SECRET = 'man-secret';
+    stubSiteverify({ success: true, hostname: HUB_HOST, action: 'login' });
+    expect(await verifyCaptchaToken('tok', undefined, { mode: 'managed' })).toBe(true);
+    expect(await captchaSamples()).toEqual([
+      { labels: { result: 'success', mode: 'managed' }, value: 1 },
+    ]);
+  });
+
+  it('counts no_token with the mode the submit claimed', async () => {
+    expect(await verifyCaptchaToken(undefined, undefined, { mode: 'managed' })).toBe(false);
+    expect(await verifyCaptchaToken(undefined)).toBe(false);
+    expect(await captchaSamples()).toEqual([
+      { labels: { result: 'no_token', mode: 'managed' }, value: 1 },
+      { labels: { result: 'no_token', mode: 'invisible' }, value: 1 },
+    ]);
+  });
+
+  it('counts no_secret as mode=managed (the only mode that can reach it)', async () => {
+    // Invisible secret set, managed one absent → a managed submit has nothing to verify against.
+    expect(await verifyCaptchaToken('tok', undefined, { mode: 'managed' })).toBe(false);
+    expect(await captchaSamples()).toEqual([
+      { labels: { result: 'no_secret', mode: 'managed' }, value: 1 },
+    ]);
+  });
+
+  it('counts http_error with the mode', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('nope', { status: 500 }))
+    );
+    expect(await verifyCaptchaToken('tok')).toBe(false);
+    expect(await captchaSamples()).toEqual([
+      { labels: { result: 'http_error', mode: 'invisible' }, value: 1 },
+    ]);
+  });
+
+  it('carries the mode into the http_error Axiom row too, not only the counter', async () => {
+    // A verification outage that answers 500 rather than refusing the connection lands here, so this is
+    // the reject the mode split most needs to break down. The counter gets `mode` from the shared
+    // assembly site; the Axiom row is hand-built, so it has to be passed explicitly.
+    process.env.CF_MANAGED_TURNSTILE_SECRET = 'man-secret';
+    logToAxiom.mockClear();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('nope', { status: 500 }))
+    );
+    expect(await verifyCaptchaToken('tok', undefined, { mode: 'managed' })).toBe(false);
+    expect(rejectRow()).toMatchObject({ reason: 'http_error', mode: 'managed' });
+  });
+
+  it('counts one verification once, even when a sink throws after the count', async () => {
+    // The outer catch counts too, so a throw from a log line after a branch has already counted would
+    // otherwise record one verification twice under two different results.
+    logToAxiom.mockImplementationOnce(() => {
+      throw new Error('axiom exploded');
+    });
+    stubSiteverify({ success: false, 'error-codes': ['timeout-or-duplicate'] });
+    expect(await verifyCaptchaToken('tok')).toBe(false);
+    expect(await captchaSamples()).toEqual([
+      { labels: { result: 'siteverify_failed', mode: 'invisible' }, value: 1 },
+    ]);
+    logToAxiom.mockImplementation(async () => undefined);
+  });
+
+  it('counts siteverify_failed with the mode', async () => {
+    stubSiteverify({ success: false, 'error-codes': ['timeout-or-duplicate'] });
+    expect(await verifyCaptchaToken('tok')).toBe(false);
+    expect(await captchaSamples()).toEqual([
+      { labels: { result: 'siteverify_failed', mode: 'invisible' }, value: 1 },
+    ]);
+  });
+
+  it('counts hostname_mismatch with the mode', async () => {
+    process.env.CF_MANAGED_TURNSTILE_SECRET = 'man-secret';
+    stubSiteverify({ success: true, hostname: 'civitai.com', action: 'login' });
+    expect(await verifyCaptchaToken('tok', undefined, { mode: 'managed' })).toBe(false);
+    expect(await captchaSamples()).toEqual([
+      { labels: { result: 'hostname_mismatch', mode: 'managed' }, value: 1 },
+    ]);
+  });
+
+  it('counts a siteverify NETWORK failure, with the mode', async () => {
+    // Uncounted, this class is invisible: an upstream verification outage shows as a volume drop with
+    // no reason beside it, inside the denominator the mode split is read against.
+    process.env.CF_MANAGED_TURNSTILE_SECRET = 'man-secret';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('network down');
+      })
+    );
+    expect(await verifyCaptchaToken('tok', undefined, { mode: 'managed' })).toBe(false);
+    expect(await captchaSamples()).toEqual([
+      { labels: { result: 'verify_error', mode: 'managed' }, value: 1 },
+    ]);
+  });
+
+  it('counts a MALFORMED siteverify body as the same class', async () => {
+    // A 200 that is not JSON throws out of res.json(), inside the same try — same outage, same reason.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('<html>502</html>', { status: 200 }))
+    );
+    expect(await verifyCaptchaToken('tok')).toBe(false);
+    expect(await captchaSamples()).toEqual([
+      { labels: { result: 'verify_error', mode: 'invisible' }, value: 1 },
+    ]);
+  });
+
+  it('logs the network failure, without the token or the secret', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('network down');
+      })
+    );
+    expect(await verifyCaptchaToken('tok-abc')).toBe(false);
+    expect(errSpy).toHaveBeenCalledWith(
+      'captcha verify rejected',
+      expect.objectContaining({ reason: 'verify_error', error: 'network down' })
+    );
+    // The reject log is the one place a caught exception could carry credentials into an aggregator.
+    const logged = JSON.stringify(errSpy.mock.calls);
+    expect(logged).not.toContain('tok-abc');
+    expect(logged).not.toContain('inv-secret');
+  });
+
+  it('counts action_mismatch with the mode', async () => {
+    stubSiteverify({ success: true, hostname: HUB_HOST, action: 'signup' });
+    expect(await verifyCaptchaToken('tok')).toBe(false);
+    expect(await captchaSamples()).toEqual([
+      { labels: { result: 'action_mismatch', mode: 'invisible' }, value: 1 },
+    ]);
+  });
+
+  // The dashboard aggregates `sum by (result) (rate(hub_captcha_verifications_total[5m]))`, so the
+  // metric name and the `result` label are a contract with a consumer outside this repo: this pins
+  // the whole label set, so dropping `result` or renaming the metric fails here by name rather than
+  // as a confusing empty-sample assertion elsewhere. Asserted on the label SET, not the exposition
+  // string — prom-client emits labels in insertion order, so a string match would go red for
+  // reordering `{ result, mode }`, which no consumer can observe.
+  it('keeps the metric name and the result label (external consumers aggregate on them)', async () => {
+    stubSiteverify({ success: true, hostname: HUB_HOST, action: 'login' });
+    await verifyCaptchaToken('tok');
+    const samples = await captchaSamples(); // empty if the metric were renamed
+    expect(samples).toHaveLength(1);
+    expect(Object.keys(samples[0].labels).sort()).toEqual(['mode', 'result']);
   });
 });

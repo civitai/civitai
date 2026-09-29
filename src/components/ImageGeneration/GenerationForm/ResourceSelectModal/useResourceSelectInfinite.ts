@@ -64,10 +64,14 @@ export function useResourceSelectInfinite({ query }: { query: string }) {
     }
   );
 
+  const coverageNext = queryResult.data?.pages[0]?.coverageNext ?? false;
+  // Absent page = no data yet; member:false is the narrower view, so a hit cannot flash selectable.
+  const member = queryResult.data?.pages[0]?.member ?? false;
+
   const items = useMemo(
     () => queryResult.data?.pages.flatMap((p) => p.items) ?? [],
     [queryResult.data]
   );
 
-  return { ...queryResult, items };
+  return { ...queryResult, items, coverageNext, member };
 }

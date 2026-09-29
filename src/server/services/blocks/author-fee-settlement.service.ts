@@ -277,7 +277,7 @@ export async function settleBlockAuthorFees(args: {
             toAccountType: bucket.buzzType as BuzzAccountType,
             amount: bucket.totalBuzz,
             description: `App author fee (${bucket.accrualDay})`,
-            type: TransactionType.Fee,
+            type: TransactionType.AppAuthorFee,
             externalTransactionId: key,
           },
         ]);

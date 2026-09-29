@@ -3416,29 +3416,6 @@ export const comicsRouter = router({
         };
       }
 
-      // Backstop timeout: orchestrator step timeout is 21 min, use 25 min as hard cap
-      const GENERATION_TIMEOUT = 25 * 60 * 1000;
-      if (panel.createdAt.getTime() < Date.now() - GENERATION_TIMEOUT) {
-        const updated = await dbWrite.comicPanel.update({
-          where: { id: panel.id },
-          data: {
-            status: ComicPanelStatus.Failed,
-            errorMessage: 'Generation timed out',
-          },
-        });
-        sendComicPanelSignal(ctx.user!.id, {
-          panelId: updated.id,
-          projectId: panel.projectId,
-          status: updated.status,
-        });
-        return {
-          id: updated.id,
-          status: updated.status,
-          imageUrl: updated.imageUrl,
-          errorMessage: updated.errorMessage,
-        };
-      }
-
       // Check orchestrator status
       try {
         const token = await getOrchestratorToken(ctx.user!.id, ctx);
@@ -3824,7 +3801,12 @@ export const comicsRouter = router({
           };
         }
 
-        if (workflow.status === 'failed' || workflow.status === 'canceled') {
+        // `expired` is terminal too — every other surface already treats it that way.
+        if (
+          workflow.status === 'failed' ||
+          workflow.status === 'canceled' ||
+          workflow.status === 'expired'
+        ) {
           const updated = await dbWrite.comicPanel.update({
             where: { id: panel.id },
             data: {
@@ -3845,7 +3827,29 @@ export const comicsRouter = router({
           };
         }
       } catch (error) {
-        // If we can't check the workflow, don't fail the poll - just return current state
+        // A workflow the orchestrator no longer has is never coming back, and this poll is the only
+        // thing that can say so — otherwise the panel spins on every page view for good.
+        if ((error as { code?: string })?.code === 'NOT_FOUND') {
+          const updated = await dbWrite.comicPanel.update({
+            where: { id: panel.id },
+            data: {
+              status: ComicPanelStatus.Failed,
+              errorMessage: 'Generation is no longer available',
+            },
+          });
+          sendComicPanelSignal(ctx.user!.id, {
+            panelId: updated.id,
+            projectId: panel.projectId,
+            status: updated.status,
+          });
+          return {
+            id: updated.id,
+            status: updated.status,
+            imageUrl: updated.imageUrl,
+            errorMessage: updated.errorMessage,
+          };
+        }
+        // Any other read failure is transient — don't fail the poll, just return current state.
         console.error('Failed to poll workflow status:', error);
       }
 

@@ -28,8 +28,16 @@ export const HOLD_VELOCITY_CENTS = 100_000;
  * trips a velocity/volume hold, in which case the rows are parked in
  * status='held' for manual review instead.
  *
- * confirmed rows are eligible for the bulk payout job; until they're
- * confirmed, no payout can fire. held rows are the actionable ops signal:
+ * confirmed is the TERMINAL state — nothing DISBURSES it. The write-free stub cron
+ * that used to aggregate these rows and the mint it was to call were both removed,
+ * so no purchase-rail share is paid out anywhere, and nothing writes `paid_out` any
+ * more either. 🔴 It is still READ, and by user-facing surfaces: this write is what
+ * `app-collaborator-earnings.service.ts` and `getRevenueForOwner` aggregate, what the
+ * two earnings panels show as their "Confirmed (unpaid)" bucket, and what
+ * /apps/revenue's subtitle describes as "Confirmed earnings accrue here". Dropping or
+ * repurposing it would silently zero all of those.
+ *
+ * `held` rows are the actionable ops signal:
  * a human reviews them and either confirms (re-run picks them up once
  * unparked back to pending, or a manual UPDATE confirms them) or voids.
  *
@@ -76,8 +84,7 @@ export const confirmPendingBlockAttributions = createJob(
       const heldOwnerIds = groups
         .filter(
           (g) =>
-            g._count > HOLD_VELOCITY_COUNT ||
-            (g._sum.appOwnerShareCents ?? 0) > HOLD_VELOCITY_CENTS
+            g._count > HOLD_VELOCITY_COUNT || (g._sum.appOwnerShareCents ?? 0) > HOLD_VELOCITY_CENTS
         )
         .map((g) => g.appOwnerUserId);
 

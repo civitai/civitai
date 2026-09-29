@@ -368,6 +368,22 @@ export const APPS_ACTIVE_PREVIEWS_COLUMNS: AppsTableColumns = [3, 2, 2, 2, null]
  * (The `before` @2560 row reproduces the recorded `natural @2560` figures exactly, which
  * is the control on the re-measurement: the instrument agrees with the number that was
  * already in this comment before it was pointed at anything new.)
+ *
+ * ── ⚠️ THE SCOPE OF ALL OF THE ABOVE: CONTAINERS ≥768 ─────────────────────────
+ *
+ * Every number in this note comes from the 768 / 1200 / 1440 / 2560 ladder, and the
+ * `no-surplus` argument is "max-content sum ≈ container content width AT 768". Nothing in
+ * it is wrong; it simply never described the panel's OTHER mount.
+ * `AppPermissionsActivityDrawer` renders it in a Mantine `size="md"` drawer — 27.5rem,
+ * ~408px of content — where ~735px of max-content is ~80% over and overflow is certain.
+ *
+ * So the exemption now states its own bound: NO-SURPLUS AT ≥768, and below ~560px the panel
+ * renders the STACKED variant (`AppActivityPanel.module.scss`, a `container-type: inline-size`
+ * query) where each row is a card and there are no columns to ledger. A `<colgroup>` is inert
+ * against `display: block` cells, so the two decisions do not interact. Both halves are
+ * measured: `the activity table renders ONE LINE per cell at every width` holds the ≥768
+ * claim, and `the drawer's activity feed renders the STACKED variant, and the wide page does
+ * not` holds the narrow one — `__tests__/appsWideLayout.test.ts` requires both arms by name.
  */
 
 /**

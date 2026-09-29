@@ -43,7 +43,7 @@ import {
   upsertModelHandler,
 } from '~/server/controllers/model.controller';
 import { dbRead } from '~/server/db/client';
-import { applyUserPreferences, cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
+import { applyUserPreferences, cacheIt, edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import type { EarlyAccessRefundSummary } from '~/server/services/model-early-access-refund.service';
 import { toEarlyAccessRefundSummary } from '~/server/services/model-early-access-refund.service';
@@ -82,7 +82,15 @@ import {
   toggleModelLockSchema,
   unpublishModelSchema,
   updateGallerySettingsSchema,
+  upsertCreatorGalleryHiddenUserSchema,
+  removeCreatorGalleryHiddenUserSchema,
 } from '~/server/schema/model.schema';
+import {
+  addCreatorGalleryHiddenUser,
+  getCreatorGalleryHiddenUsers,
+  removeCreatorGalleryHiddenUser,
+  updateCreatorGalleryHiddenUserNote,
+} from '~/server/services/creator-gallery-hidden-users.service';
 import {
   getAllModelsWithCategories,
   getAssociatedResourcesSimple,
@@ -192,6 +200,13 @@ const skipEdgeCache = middleware(async ({ input, ctx, next }) => {
     },
   });
 });
+
+// Add and remove share one quota: each busts the gallery cache of every model the creator owns.
+const creatorGalleryHiddenUsersRateLimit = rateLimit(
+  { limit: 100, period: CacheTTL.hour },
+  undefined,
+  { sharedKey: 'creator-gallery-hidden-users' }
+);
 
 export const modelRouter = router({
   getById: publicProcedure
@@ -394,6 +409,38 @@ export const modelRouter = router({
     .input(updateGallerySettingsSchema)
     .use(isOwnerOrModerator)
     .mutation(updateGallerySettingsHandler),
+  // Always the caller's own list: a moderator editing someone else's model never reaches it.
+  getCreatorGalleryHiddenUsers: protectedProcedure
+    .meta({ requiredScope: TokenScope.ModelsRead })
+    .query(({ ctx }) => getCreatorGalleryHiddenUsers(ctx.user.id)),
+  addCreatorGalleryHiddenUser: guardedProcedure
+    .meta({ requiredScope: TokenScope.ModelsWrite })
+    .input(upsertCreatorGalleryHiddenUserSchema)
+    .use(creatorGalleryHiddenUsersRateLimit)
+    .mutation(({ ctx, input }) =>
+      addCreatorGalleryHiddenUser({
+        creatorId: ctx.user.id,
+        userId: input.userId,
+        note: input.note,
+      })
+    ),
+  updateCreatorGalleryHiddenUserNote: guardedProcedure
+    .meta({ requiredScope: TokenScope.ModelsWrite })
+    .input(upsertCreatorGalleryHiddenUserSchema)
+    .mutation(({ ctx, input }) =>
+      updateCreatorGalleryHiddenUserNote({
+        creatorId: ctx.user.id,
+        userId: input.userId,
+        note: input.note,
+      })
+    ),
+  removeCreatorGalleryHiddenUser: guardedProcedure
+    .meta({ requiredScope: TokenScope.ModelsWrite })
+    .input(removeCreatorGalleryHiddenUserSchema)
+    .use(creatorGalleryHiddenUsersRateLimit)
+    .mutation(({ ctx, input }) =>
+      removeCreatorGalleryHiddenUser({ creatorId: ctx.user.id, userId: input.userId })
+    ),
   toggleCheckpointCoverage: moderatorProcedure
     .input(toggleCheckpointCoverageSchema)
     .mutation(toggleCheckpointCoverageHandler),

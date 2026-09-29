@@ -32,8 +32,23 @@ export const mainAppWebhookToken = process.env.MAIN_APP_WEBHOOK_TOKEN ?? '';
 export const pushEnabled = Boolean(
   vapidPublicKey && vapidPrivateKey && mainAppUrl && mainAppWebhookToken
 );
-/** Per-user daily push ceiling; past it, one summary push then silence until the day rolls over. */
-export const pushDailyCap = Number(process.env.PUSH_DAILY_CAP ?? 20);
+export const DEFAULT_PUSH_DAILY_CAP = 20;
+/**
+ * Per-user daily push ceiling; past it, one summary push then silence until the day rolls over.
+ *
+ * Parsed defensively because the failure is SILENT and total: a non-numeric value makes this NaN,
+ * and every comparison in `checkQuota` against NaN is false — so the first push of the day falls
+ * through to `'skip'` and EVERY push is dropped under `outcome="capped"`, for every user, with no
+ * error anywhere. A negative or fractional cap is degenerate for the same reason. Anything that
+ * isn't a non-negative integer falls back to the default rather than disabling push by typo.
+ */
+function parseDailyCap(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === '') return DEFAULT_PUSH_DAILY_CAP;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 0) return DEFAULT_PUSH_DAILY_CAP;
+  return parsed;
+}
+export const pushDailyCap = parseDailyCap(process.env.PUSH_DAILY_CAP);
 
 /**
  * Fail-fast boot validation. Called from server.ts BEFORE listen (not from buildServer, so vitest — which
@@ -50,6 +65,13 @@ export function assertRequiredEnv() {
   if (!process.env.DATABASE_REPLICA_URL) missing.push('DATABASE_REPLICA_URL');
   // In prod the producer API must be authed — an empty token disables the gate (see auth.ts).
   if (isProd && !notificationsToken) missing.push('NOTIFICATIONS_TOKEN (required in production)');
+  // `pushEnabled` does not imply the push dispatcher can WRITE. Its bookkeeping (lastSuccessAt,
+  // the failure streak, deleting 410'd endpoints) goes through `mainDbWrite()` on DATABASE_URL,
+  // and every one of those calls is wrapped in `bestEffort` — so with push configured but no
+  // DATABASE_URL, sends keep succeeding while no dead endpoint is ever pruned and no streak ever
+  // advances, logged per-send and visible nowhere else. Fail at boot instead.
+  if (pushEnabled && !process.env.DATABASE_URL)
+    missing.push('DATABASE_URL (required when push is configured)');
 
   if (missing.length) {
     throw new Error(`[notifications] missing required env: ${missing.join(', ')}`);
