@@ -1617,10 +1617,8 @@ export const publishModelVersionById = async ({
   id,
   publishedAt,
   meta,
-  republishing,
 }: PublishVersionInput & {
   meta?: ModelVersionMeta;
-  republishing?: boolean;
 }) => {
   let status: ModelStatus = ModelStatus.Published;
   if (publishedAt && publishedAt > new Date()) status = ModelStatus.Scheduled;
@@ -1791,8 +1789,9 @@ export const publishModelVersionById = async ({
     select: { id: true },
   });
 
-  if (!republishing && !meta?.unpublishedBy)
-    await updateModelLastVersionAt({ id: version.modelId });
+  // Recompute on republish too: unpublish already moved lastVersionAt down, and this can't bump
+  // the model because a version's publishedAt is immutable once public.
+  await updateModelLastVersionAt({ id: version.modelId });
   await bustMvCache(version.id, version.modelId);
 
   // Best-effort: evict any cached by-hash 404 for this version's hashes so a
