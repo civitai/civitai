@@ -24,10 +24,28 @@ describe('mapDataToGraphInput — non-array images guard', () => {
 
   it('still maps a well-formed images array', () => {
     const out = mapDataToGraphInput(
-      { prompt: 'x', images: [{ url: 'http://a/img.png', width: 64, height: 48 }] },
+      {
+        prompt: 'x',
+        // First-party media host: the meta-URL host gate (see
+        // legacy-metadata-mapper.meta-urls.test.ts) drops foreign hosts, and this
+        // suite pins the non-array guard, not the URL policy.
+        images: [
+          {
+            url: 'https://orchestration.civitai.com/v1/consumer/blobs/abc?sig=s&exp=1',
+            width: 64,
+            height: 48,
+          },
+        ],
+      },
       []
     );
-    expect(out.images).toEqual([{ url: 'http://a/img.png', width: 64, height: 48 }]);
+    expect(out.images).toEqual([
+      {
+        url: 'https://orchestration.civitai.com/v1/consumer/blobs/abc?sig=s&exp=1',
+        width: 64,
+        height: 48,
+      },
+    ]);
   });
 
   it('leaves images undefined for a non-array (no partial/garbage mapping)', () => {
