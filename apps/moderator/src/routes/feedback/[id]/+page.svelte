@@ -33,6 +33,12 @@
   </p>
 </header>
 
+<!-- ⚠️ A BARE `/feedback`, SO RETURNING DROPS THE VIEW: the status filter, the sort and the keyset
+     page all ride the query string, and this link carries none of them. Deliberate for now — this
+     route is reached from links that never had a queue view to preserve (a sibling report, a ticket,
+     a message), and the alternative is threading the originating URL through a param that would be
+     wrong for every one of those entry points. The cost is real for an operator who arrived by
+     clicking a sibling out of a filtered queue, and it is the trade this line accepts. -->
 <p class="mb-4"><a class={LINK_CLASS} href="/feedback">← Feedback queue</a></p>
 
 <!-- The status the queue shows in its own column. Repeated here because this page has no row above

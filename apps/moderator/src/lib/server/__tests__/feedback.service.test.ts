@@ -703,7 +703,8 @@ describe('reads', () => {
  * either route's suite.
  */
 describe('feedbackPanelExtras', () => {
-  const withGrant = { 'feedback.bug.promote': true };
+  // `as const`, so the value is `true` and not `boolean` — `PermissionSet` is keyed to the literal.
+  const withGrant = { 'feedback.bug.promote': true } as const;
 
   it('loads the picker’s options for an UNLINKED row held by someone who may promote', async () => {
     const id = await seedFeedback(db, { userId: reporter });

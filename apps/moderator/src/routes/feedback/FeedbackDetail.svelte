@@ -6,7 +6,7 @@
   import { dateTime } from '$lib/format';
   import { FEEDBACK_STATUSES, handledByLabel, type FeedbackContext } from '$lib/feedback';
   import { feedbackRefusal, type FeedbackFormName } from '$lib/feedback-refusal';
-  import { isFeedbackPromoteDraftDirty, makeFeedbackPromoteDraft } from '$lib/feedback-drafts';
+  import { feedbackPanelHasUnsavedDraft, makeFeedbackPromoteDraft } from '$lib/feedback-drafts';
   import FeedbackContextPanel from './FeedbackContextPanel.svelte';
   import FeedbackAttachments from './FeedbackAttachments.svelte';
   import FeedbackPromote from './FeedbackPromote.svelte';
@@ -102,10 +102,11 @@
    */
   let promoteDraft = $state(makeFeedbackPromoteDraft());
 
-  // The one fact the queue needs about this panel, kept in step with the draft it describes. See
-  // the `draftDirty` prop for why this is an effect rather than a `$derived`.
+  // The one fact the queue needs about this panel, kept in step with the draft AND with the row —
+  // a linked report renders no promote form, so its draft is text nothing can still reach. See the
+  // `draftDirty` prop for why this is an effect rather than a `$derived`.
   $effect(() => {
-    draftDirty = isFeedbackPromoteDraftDirty(promoteDraft);
+    draftDirty = feedbackPanelHasUnsavedDraft(row, promoteDraft);
   });
 
   /**
@@ -271,8 +272,8 @@
       </form>
     {:else}
       <p class="text-sm text-dark-2">
-        You can read this queue but not triage it — that needs the “Set feedback status and triage
-        notes” permission.
+        You can read this queue but not triage it — that needs the “Set feedback status”
+        permission.
       </p>
     {/if}
 

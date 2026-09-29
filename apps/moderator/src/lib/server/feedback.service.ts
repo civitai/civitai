@@ -7,6 +7,7 @@ import {
   type FeedbackSortColumn,
 } from '$lib/feedback-sort';
 import { MAX_INT4 } from './users.service';
+import type { PermissionSet } from '$lib/permissions';
 
 /**
  * The `Feedback` table, read and triaged.
@@ -728,7 +729,15 @@ export async function getKnownIssues(limit = 200): Promise<KnownIssueOption[]> {
  */
 export async function feedbackPanelExtras(
   row: Pick<FeedbackRow, 'id' | 'bugId'>,
-  grants: Partial<Record<string, boolean>>
+  /**
+   * 🔴 `PermissionSet`, NOT A LOOSE STRING RECORD — this is the ONE site that gates the issue picker
+   * on both routes, so a widened key type retires the invariant `apps/moderator/CLAUDE.md` states in
+   * its own words: "a mistyped id does not compile". Measured with `svelte-check`: a typo here under
+   * the loose type produced 0 errors, and the same typo against `locals.grants` produced 1 naming
+   * the valid union. A typo that compiles renders the picker's "No issues to pick from yet" branch,
+   * which reads as an empty `Bug` table rather than a defect — on both routes at once.
+   */
+  grants: PermissionSet
 ): Promise<{ siblings: FeedbackSibling[]; knownIssues: KnownIssueOption[] }> {
   const siblings =
     row.bugId != null ? await getSiblingFeedback({ bugId: row.bugId, excludeId: row.id }) : [];

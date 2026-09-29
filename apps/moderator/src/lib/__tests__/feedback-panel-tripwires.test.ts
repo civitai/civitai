@@ -294,11 +294,13 @@ describe('the refusal banner sees which form the operator used last', () => {
    * other's, which is precisely the defect that rule was written for. The SELECTION itself is tested
    * for real in `feedback-refusal.test.ts`; only the wiring is pinned here.
    *
-   * ⚠️ WHAT THIS REPLACES: a pin on the two `onSubmit` handlers CLEARING each other's error. That
-   * wiring is deliberately gone. It collapsed the common orderings to one live refusal, and it paid
-   * for that by discarding a standing promote refusal whenever an unrelated triage save SUCCEEDED —
-   * leaving a pre-filled promote form and nothing on screen explaining why. Ranking on
-   * `lastSubmitted` buys the same collapse without throwing a live refusal away.
+   * ⚠️ THE CROSS-CLEARING IS STILL THERE, AND THIS SENTENCE USED TO SAY IT WAS "DELIBERATELY GONE".
+   * It was removed once, that removal was reverted when it left a promote refusal on screen over a
+   * triage save that SUCCEEDED, and the paragraph describing the removal survived the revert — so a
+   * maintainer acting on it would have deleted a guard the very next test in this file pins by exact
+   * string (`clears each form error when the other form starts submitting`). The two mechanisms are
+   * complementary: cross-clearing collapses the common orderings, `lastSubmitted` decides the
+   * interleaved one neither ordering rules out.
    */
   it('records which form submitted last, on both forms', () => {
     const detail = source('FeedbackDetail.svelte');
@@ -371,9 +373,12 @@ describe('the refusal banner sees which form the operator used last', () => {
    * guard was measuring documentation. `source()` now strips comments and that count is 2; the
    * control above asserts precisely this, on this file, so the claim is measured rather than argued.
    *
-   * The pair is kept because it pins a PAIRING that matters on its own: `reload: true` is what makes
-   * the re-seed read a fresh column, and a form that dropped it while keeping `reset: false` would
-   * still satisfy a bare pin.
+   * ⚠️ THE PAIR IS KEPT, AND ITS ORIGINAL REASON IS GONE RATHER THAN REPLACED. It used to read that
+   * `reload: true` is what makes "the re-seed" read a fresh column — `reseedTriageNote` was deleted
+   * in this PR along with the note box, so that sentence described nothing. What the pairing still
+   * buys is narrower and worth stating plainly: `reload: true` is what re-renders the status badge,
+   * the handled-by line and the issue link after a write, and a form that dropped it while keeping
+   * `reset: false` would satisfy a bare `/reset: false/` pin while quietly showing stale data.
    */
   it('keeps reset disabled on both forms', () => {
     const detail = source('FeedbackDetail.svelte');
@@ -558,7 +563,12 @@ describe('the row click is an enhancement over a real link', () => {
   it('reports the draft dirtiness out of the panel and into the queue', () => {
     const detail = source('FeedbackDetail.svelte');
     expect(detail).toContain('draftDirty = $bindable(false),');
-    expect(detail).toContain('draftDirty = isFeedbackPromoteDraftDirty(promoteDraft);');
+    // 🔴 `feedbackPanelHasUnsavedDraft(row, …)`, NOT the bare dirty check. The row half is what
+    // stops a SUCCESSFUL promote wedging the queue: it sets `bugId`, `FeedbackPromote` swaps to its
+    // linked-issue view and every box unmounts, but the draft object survives in this component —
+    // so the bare check goes on reporting the text of a form nobody can see, and every row click in
+    // the queue does nothing for the life of the page.
+    expect(detail).toContain('draftDirty = feedbackPanelHasUnsavedDraft(row, promoteDraft);');
     expect(source('+page.svelte')).toContain('bind:draftDirty={panelDirty}');
   });
 

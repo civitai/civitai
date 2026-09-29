@@ -206,6 +206,7 @@
         interactive: target instanceof Element && !!target.closest(FEEDBACK_ROW_INTERACTIVE),
         selection: window.getSelection()?.toString() ?? '',
         openPanelDirty: data.openVisible && panelDirty,
+        alreadyOpen: data.open === id,
       })
     )
       return;

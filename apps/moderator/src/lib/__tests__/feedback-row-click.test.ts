@@ -12,14 +12,19 @@ const plain = {
   interactive: false,
   selection: '',
   openPanelDirty: false,
+  alreadyOpen: false,
 };
 
 describe('feedbackRowExpands', () => {
   /**
    * The positive control, and it is first for the reason this app's tripwire file gives: every other
    * case here asserts `false`, and a predicate hard-wired to `false` would satisfy all of them.
+   *
+   * `plain` is the ONE input that expands: an ordinary left-click on a row, with nothing open — or
+   * with a panel open that holds no typed text, which this predicate cannot tell apart and is not
+   * asked to. See the case at the end of this block for why there is no second positive.
    */
-  it('expands on an ordinary left-click on the row', () => {
+  it('expands on an ordinary left-click with nothing at risk', () => {
     expect(feedbackRowExpands(plain)).toBe(true);
   });
 
@@ -77,18 +82,6 @@ describe('feedbackRowExpands', () => {
   });
 
   /**
-   * 🔴 THE RULE THIS ROUND RESTORED, AND THE ARM THAT WAS RED. The predicate used to decline
-   * whenever ANY panel was open, which protected the draft and took the gesture with it: after the
-   * first expand, no row in the queue responded to a click again. Measured at `8933b04022`, this
-   * exact case — a panel open, nothing typed into it — returned `false`.
-   *
-   * Unmounting a panel that holds nothing discards nothing, so the click goes through.
-   */
-  it('expands when the open panel has a clean draft', () => {
-    expect(feedbackRowExpands({ ...plain, openPanelDirty: false })).toBe(true);
-  });
-
-  /**
    * 🔴 AND THE ARM THAT MUST NOT MOVE. `?open=` is single-valued, so expanding another row unmounts
    * the open panel — and the promote draft lives in that panel's memory and nowhere else, with no
    * undo and no second copy.
@@ -104,9 +97,27 @@ describe('feedbackRowExpands', () => {
     expect(feedbackRowExpands({ ...plain, openPanelDirty: true, selection: '' })).toBe(false);
   });
 
-  /** Nothing open at all — the cold-queue case, unchanged by this round. */
-  it('expands when no panel is open', () => {
-    expect(feedbackRowExpands({ ...plain, openPanelDirty: false })).toBe(true);
+  /**
+   * ⚠️ THERE IS NO SEPARATE "CLEAN PANEL OPEN" CASE, AND THERE CANNOT BE ONE. This file used to
+   * carry three cases — "ordinary click", "clean draft", "nothing open" — whose inputs were
+   * byte-identical to `plain`, each with a docstring claiming a distinct arm. Measured: deleting the
+   * `openPanelDirty` guard reddened exactly one test and left all three green.
+   *
+   * The predicate collapses "no panel open" and "an open panel with nothing typed in it" into one
+   * boolean BY DESIGN — what it is asked is whether unmounting costs anything, and both answer no.
+   * The positive control above is that one case, under its real name, asserted once.
+   *
+   * The distinction the old cases were reaching for lives where it is expressible:
+   * `feedbackPanelHasUnsavedDraft` in `feedback-drafts.test.ts` is what turns a row and a draft into
+   * this boolean, and that is where a linked row, a clean draft and a dirty one are separable.
+   */
+  it('declines a click on the row that is already expanded', () => {
+    // Not about the panel — about history. The handler never toggles, so this click would `goto`
+    // the URL the page is on, and `goto` pushes unconditionally. The row carries `cursor-pointer`,
+    // so it looked inert and ate a Back press.
+    expect(feedbackRowExpands({ ...plain, alreadyOpen: true })).toBe(false);
+    // And it declines regardless of the draft, so neither guard is load-bearing for the other.
+    expect(feedbackRowExpands({ ...plain, alreadyOpen: true, openPanelDirty: true })).toBe(false);
   });
 });
 

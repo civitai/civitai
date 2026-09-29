@@ -46,6 +46,16 @@ export type FeedbackRowClick = {
    * field replaced — see the guard.
    */
   openPanelDirty: boolean;
+  /**
+   * Whether the clicked row is the one already expanded — `data.open === id`.
+   *
+   * 🔴 IT IS ABOUT HISTORY, NOT ABOUT THE PANEL. The handler never toggles, so a click here would
+   * navigate to the URL the page is already on — and `goto` pushes unconditionally
+   * (`@sveltejs/kit@2.66.0` passes `replace_state: undefined` through to `history.pushState`, where
+   * SvelteKit's own anchor handler defaults to `url.href === location.href`). The row advertises
+   * itself with `cursor-pointer`, so every such click looked inert and silently ate one Back press.
+   */
+  alreadyOpen: boolean;
 };
 
 /**
@@ -76,6 +86,7 @@ export type FeedbackRowClick = {
  * discards the draft — deliberately, because it is a labelled control rather than a stray click.
  */
 export function feedbackRowExpands(click: FeedbackRowClick): boolean {
+  if (click.alreadyOpen) return false;
   if (click.openPanelDirty) return false;
   if (click.defaultPrevented) return false;
   if (click.button !== 0) return false;

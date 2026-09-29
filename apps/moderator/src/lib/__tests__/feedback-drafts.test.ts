@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   FEEDBACK_PROMOTE_DRAFT_FIELDS,
+  feedbackPanelHasUnsavedDraft,
   isFeedbackPromoteDraftDirty,
   makeFeedbackPromoteDraft,
 } from '$lib/feedback-drafts';
@@ -103,5 +104,49 @@ describe('isFeedbackPromoteDraftDirty', () => {
     expect(isFeedbackPromoteDraftDirty({ ...makeFeedbackPromoteDraft(), attachMode: true })).toBe(
       false
     );
+  });
+});
+
+describe('feedbackPanelHasUnsavedDraft', () => {
+  /** What the operator had typed when they hit Create issue, still sitting in the draft after. */
+  const submitted = {
+    ...makeFeedbackPromoteDraft(),
+    title: 'sort resets on back',
+    summary: 'the store drops the ordering',
+  };
+
+  /**
+   * 🔴 THE DEFECT THAT WEDGED THE QUEUE. A successful promote sets `bugId` and reloads; on any
+   * filter that RETAINS the row — anything but the default `['new']` view, since the row moves to
+   * `actioned` — the keyed `{#each}` entry and its `{#if open}` both survive, so `FeedbackDetail` is
+   * NOT rebuilt. `FeedbackPromote` swaps to its linked-issue branch and every box unmounts, but the
+   * draft object lives in the parent and survives. Reported dirty from there, it made every row
+   * click in the queue do nothing for the life of the page, with no box on screen holding the text
+   * being protected and no message explaining it.
+   *
+   * The draft is deliberately UNCHANGED between the two assertions — only `bugId` moves — so this
+   * pins the row half and cannot pass by the draft happening to be clean.
+   */
+  it('stops reporting a submitted draft once the row is linked', () => {
+    expect(feedbackPanelHasUnsavedDraft({ bugId: null }, submitted)).toBe(true);
+    expect(feedbackPanelHasUnsavedDraft({ bugId: 4102 }, submitted)).toBe(false);
+  });
+
+  /**
+   * ⚠️ IT READS THE ROW, NOT A SUBMIT, and that covers one case a success callback cannot: a
+   * colleague linking this report while the panel is open arrives through the same reload, with no
+   * local submit to hang anything on.
+   */
+  it('is false for a linked row whatever the draft holds', () => {
+    expect(feedbackPanelHasUnsavedDraft({ bugId: 4102 }, makeFeedbackPromoteDraft())).toBe(false);
+    expect(
+      feedbackPanelHasUnsavedDraft({ bugId: 1 }, { ...makeFeedbackPromoteDraft(), bugId: '99' })
+    ).toBe(false);
+  });
+
+  /** An unlinked row still delegates to the dirty check, both ways — the guard is a gate, not a mute. */
+  it('follows the draft on an unlinked row', () => {
+    expect(feedbackPanelHasUnsavedDraft({ bugId: null }, makeFeedbackPromoteDraft())).toBe(false);
+    expect(feedbackPanelHasUnsavedDraft({ bugId: null }, submitted)).toBe(true);
   });
 });

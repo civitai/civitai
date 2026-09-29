@@ -83,3 +83,30 @@ export function makeFeedbackPromoteDraft(): FeedbackPromoteDraft {
 export function isFeedbackPromoteDraftDirty(draft: FeedbackPromoteDraft): boolean {
   return FEEDBACK_PROMOTE_DRAFT_FIELDS.some((field) => draft[field].trim() !== '');
 }
+
+/**
+ * Whether unmounting this panel would lose anything — the question the queue's row click asks.
+ *
+ * 🔴 A DIRTY DRAFT ON A LINKED ROW IS NOT AT RISK, BECAUSE THE FORM HOLDING IT IS ALREADY GONE.
+ * `FeedbackPromote` renders the create/attach form only while `row.bugId` is null; once the report
+ * is linked it switches to the linked-issue view and every box unmounts. The draft object survives
+ * that — it is owned by `FeedbackDetail`, which is NOT rebuilt — so `isFeedbackPromoteDraftDirty`
+ * goes on reporting the text of a form nobody can see.
+ *
+ * 🔴 THAT IS A DEFECT THAT SHIPPED, AND IT WEDGED THE QUEUE. A successful promote sets `bugId` and
+ * reloads; on any filter that RETAINS the row (anything but the default `['new']` view, since the
+ * row moves to `actioned`) the keyed `{#each}` entry and its `{#if open}` both survive, so the panel
+ * is not rebuilt and the submitted title/summary stayed "dirty" for the life of the page. Every row
+ * click in the queue then did nothing, with no box on screen holding the text being protected and
+ * no message explaining it.
+ *
+ * Reading `bugId` rather than clearing the draft on a successful submit covers the same defect and
+ * one more: a colleague linking the report while this panel is open arrives through the same
+ * reload, and there is no local submit to hang a callback on.
+ */
+export function feedbackPanelHasUnsavedDraft(
+  row: { bugId: number | null },
+  draft: FeedbackPromoteDraft
+): boolean {
+  return row.bugId === null && isFeedbackPromoteDraftDirty(draft);
+}
