@@ -4260,6 +4260,24 @@ export function getGenerationBaseModelRecords(): BaseModelRecord[] {
   });
 }
 
+let modelLockedBaseModelSet: Set<string> | undefined;
+
+/**
+ * Whether this base model's ecosystem pins the checkpoint to its own versions.
+ *
+ * `createCheckpointGraph` rewrites a version id outside the workflow's own list back to that
+ * workflow's default, on the server parse as well as in the form, so a community checkpoint on one
+ * of these can never reach the orchestrator however it was selected. `isGenerationEligible` is the
+ * only consumer; `no-divergent-can-generate-derivation` keeps `src/` from adding another.
+ */
+export function isModelLockedBaseModel(baseModel: string): boolean {
+  return (modelLockedBaseModelSet ??= new Set(
+    baseModelRecords
+      .filter((m) => getEcosystemDefaults(m.ecosystemId)?.modelLocked)
+      .map((m) => m.name)
+  )).has(baseModel);
+}
+
 /**
  * Get base models available for training
  */

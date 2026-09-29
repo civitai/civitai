@@ -71,17 +71,25 @@ export type ResourceLoadState = {
   unloadableReason?: UnloadableReason;
 };
 
+/** The live rule too: `isGenerationEligible` holds a locked ecosystem's checkpoints to it. */
 async function getCoveredVersionIds(
   modelVersionIds: number[],
   audience: { next: boolean; member: boolean }
 ) {
-  if (!modelVersionIds.length) return new Set<number>();
+  const empty = { covered: new Set<number>(), live: new Set<number>() };
+  if (!modelVersionIds.length) return empty;
   const covered = coveredForUserSql(audience);
-  const rows = await dbRead.$queryRaw<{ modelVersionId: number }[]>`
-    SELECT "modelVersionId" FROM "GenerationCoverage"
-    WHERE ${covered} AND "modelVersionId" IN (${Prisma.join(modelVersionIds)})
+  const rows = await dbRead.$queryRaw<
+    { modelVersionId: number; audience: boolean; live: boolean }[]
+  >`
+    SELECT "modelVersionId", ${covered} AS audience, "covered" AS live
+    FROM "GenerationCoverage"
+    WHERE "modelVersionId" IN (${Prisma.join(modelVersionIds)})
   `;
-  return new Set(rows.map((r) => r.modelVersionId));
+  return {
+    covered: new Set(rows.filter((r) => r.audience).map((r) => r.modelVersionId)),
+    live: new Set(rows.filter((r) => r.live).map((r) => r.modelVersionId)),
+  };
 }
 
 /** Live residency for a set of model versions. */
@@ -92,7 +100,7 @@ export async function getResourceLoadState(
   const versions = await getVersionsForAir(modelVersionIds);
   if (!versions.length) return [];
 
-  const coveredIds = await getCoveredVersionIds(
+  const coverage = await getCoveredVersionIds(
     versions.map((v) => v.id),
     audience
   );
@@ -107,7 +115,8 @@ export async function getResourceLoadState(
       name: version.name,
       modelName: version.model.name,
       eligible: isGenerationEligible({
-        covered: coveredIds.has(version.id),
+        covered: coverage.covered.has(version.id),
+        coveredLive: coverage.live.has(version.id),
         baseModel: version.baseModel,
         modelType: version.model.type,
         flags: version.flags,

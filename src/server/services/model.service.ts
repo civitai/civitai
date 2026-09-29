@@ -1,6 +1,7 @@
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import {
   coverageColumn,
+  coveragePair,
   pickCovered,
   nextCoverageEnabled,
 } from '~/server/services/generation/coverage-source';
@@ -1650,7 +1651,7 @@ export const getModelsWithImagesAndModelVersions = async ({
         if (!filteredImages.length && !showImageless) return null;
 
         const canGenerate = isGenerationEligible({
-          covered: pickCovered(version, next),
+          ...coveragePair(version, next),
           baseModel: version?.baseModel ?? '',
           modelType: model.type,
           flags: version?.flags ?? 0,

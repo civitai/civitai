@@ -159,9 +159,14 @@ it was implemented.
 
 ### 12. Whether a quantized community checkpoint can be loaded
 
-Asked about an int8 variant of a published community model. Unanswered.
+Asked about an int8 variant of a published community model. **Answered 2026-09-29:** it can — the
+loader's test is a scanned SafeTensor, not a precision — but the asker cannot *choose* it. The AIR
+names a version, not a file, and on an exact score tie the served file is now fp8 first, so an int8
+sibling is never served while an fp8 one exists; nothing lets a creator or a user pick
+([paid-model-loading.md](paid-model-loading.md), "Which FILE loads, for a multi-precision version").
+On a `modelLocked` ecosystem — most of the video ones — no community checkpoint is eligible at all.
 
-*Closes when:* the asker has an answer.
+*Closes when:* the asker has been told.
 
 ---
 

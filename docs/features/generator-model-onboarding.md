@@ -80,7 +80,7 @@ Publish **before** removing the gate. While the rule is in place, the published 
 
 After that, only if relevant:
 
-- A `GenerationBaseModel` row makes community resources for downloadable weights generatable (coverage branch 3). Its key is the base model's **display name**.
+- A `GenerationBaseModel` row makes community resources for downloadable weights generatable (coverage branch 3). Its key is the base model's **display name**. On a `modelLocked` ecosystem it reaches LoRAs and embeddings only — community **checkpoints** there stay in `coveredNext` but `isGenerationEligible` holds them to the live column, because the graph rewrites a foreign checkpoint id back to the workflow default ([paid-model-loading-coverage.md](paid-model-loading-coverage.md), "Model-locked ecosystems").
 - An `AuctionBase` row adds a paid featured-resources auction. Whether to add one is a product decision. Its key is the ecosystem **key**.
 - Training support: the `add-training-support` skill.
 - An ecosystem landing page: the `ecosystem-seo-page` skill.

@@ -307,7 +307,9 @@ export const BM = {
   ecosystemId: ECO.NewEcosystem,
   defaults: {
     engine: 'engineName',      // Orchestrator engine identifier (required for video models)
-    modelLocked: true,         // Optional: true for video models (user can't change base)
+    // Optional: true for video models (user can't change base). Also holds community checkpoints on
+    // this ecosystem to the LIVE coverage rule — see the `add-generation-support` skill.
+    modelLocked: true,
     model: { id: BM.NewModel },// Optional: default checkpoint model
   },
 },

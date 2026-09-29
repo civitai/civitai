@@ -59,6 +59,7 @@ type VersionRow = {
   requireAuth: boolean;
   checkPermission: boolean;
   covered?: boolean;
+  coveredLive?: boolean;
   isPromoted: boolean;
   generationAlias?: GenerationAlias | null;
   freeTrialLimit?: number;
@@ -162,7 +163,12 @@ export default MixedAuthEndpoint(async function handler(
       -- off must therefore close this surface too, or the orchestrator keeps loading community
       -- checkpoints the site has stopped offering.
       -- See docs/features/paid-model-loading-coverage.md.
-      (SELECT ${coverage} FROM "GenerationCoverage" WHERE "modelVersionId" = mv.id) AS "covered",
+      -- Both columns off ONE evaluation of the view: a second scalar subquery re-runs the whole
+      -- view body (its three IN-lists, the ModelFile aggregate) against the PRIMARY pool, per
+      -- resource per submit -- measured at +58% buffers on this query.
+      gc.${coverage} AS "covered",
+      -- isGenerationEligible holds a locked ecosystem's checkpoints to the live rule.
+      gc."covered" AS "coveredLive",
       -- Auction winners, for the orchestrator to prioritise their downloads. It does not read this yet.
       EXISTS (
         SELECT 1 FROM "CoveredCheckpoint" cc
@@ -188,6 +194,9 @@ export default MixedAuthEndpoint(async function handler(
     LEFT JOIN "LicensingRoot" lr ON lr."modelVersionId" = mv.id
     LEFT JOIN "ModelVersion" lsv ON lsv.id = mv."licensingSourceVersionId"
     LEFT JOIN "Model" lsm ON lsm.id = lsv."modelId"
+    LEFT JOIN LATERAL (
+      SELECT "covered", "coveredNext" FROM "GenerationCoverage" WHERE "modelVersionId" = mv.id
+    ) gc ON TRUE
     WHERE ${Prisma.join(where, ' AND ')}
   `;
   if (!modelVersion) return res.status(404).json({ error: 'Model not found' });
@@ -210,6 +219,9 @@ export default MixedAuthEndpoint(async function handler(
     LEFT JOIN "ModelFileHash" mfh ON mfh."fileId" = mf.id
     WHERE mf."modelVersionId" = ${id}
     GROUP BY mf.id, mf.type, mf.visibility, mf.url, mf.metadata, mf."sizeKB", mf.name, mf."replacedAt"
+    -- requestedFile below calls the bare getPrimaryFile, which settles a full tie by input order,
+    -- and that choice decides the epoch branch. (getGenerationFile does its own id sort.)
+    ORDER BY mf.id
   `;
 
   const { modelFileId } = results.data;
@@ -363,6 +375,7 @@ export default MixedAuthEndpoint(async function handler(
         usageControl: modelVersion.usageControl,
         baseModel: modelVersion.baseModel,
         covered: modelVersion.covered ?? false,
+        coveredLive: modelVersion.coveredLive ?? false,
         modelUserId: modelVersion.modelUserId,
         modelType: modelVersion.type,
         flags: modelVersion.versionFlags,

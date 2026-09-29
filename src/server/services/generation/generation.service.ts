@@ -2,6 +2,7 @@ import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import {
   coverageAudience,
   coverageColumn,
+  coveragePair,
   coveredBy,
   coveredForUser,
   nextCoverageEnabled,
@@ -601,7 +602,7 @@ async function resolveAliasGateVersions(
       {
         ...rest,
         usageControl: usageControl ?? undefined,
-        covered: coveredBy({ generationCoverage }, next) ?? null,
+        ...coveragePair(generationCoverage, next),
         modelUserId: model.userId,
         modelType: model.type,
       },
@@ -1136,6 +1137,8 @@ export type ResolveCanGenerateVersion = {
   usageControl?: string;
   baseModel: string;
   covered: boolean | null | undefined;
+  /** The LIVE rule's answer, which `isGenerationEligible` holds a locked ecosystem's checkpoints to. */
+  coveredLive: boolean | null | undefined;
   modelUserId: number;
   modelType: ModelType;
   /** ModelVersion.flags — the GenerationDisabled bit gates canGenerate. */
@@ -1216,6 +1219,7 @@ export async function resolveCanGenerateForVersions(
         }) &&
         isGenerationEligible({
           covered: gate.covered,
+          coveredLive: gate.coveredLive,
           baseModel: gate.baseModel,
           modelType: gate.modelType,
           flags: gate.flags,
@@ -1264,6 +1268,21 @@ export async function getResourceData(
     const isPrivate =
       item.availability === 'Private' || ['Draft', 'Training'].includes(item.status);
 
+    const covered = coveredForUser(item, next, {
+      member,
+      isCheckpoint: item.model.type === 'Checkpoint',
+    });
+    // 🔴 `getResourceCanGenerate` ALONE, deliberately — not the `isGenerationEligible` pair that
+    // `resolveCanGenerateForVersions` uses. This path receives every resource in the request, and the
+    // helper's third clause is the ecosystem's flat model-TYPE list, which the generator has never
+    // applied to additional resources: adding it refuses live-covered Wan/LTXV LoRAs, Flux.1 D DoRAs
+    // and LoCons with a hard "not available for generation", and breaks remix from every image that
+    // used one. The view's `other_type` disjunct covers those by design, so the two rules disagree
+    // permanently. Counts: docs/features/paid-model-loading-coverage.md.
+    //
+    // The cost is that a community checkpoint on a `modelLocked` ecosystem reads generatable here
+    // while the model page, the search index and `mini/[id]` refuse it. That is the silent
+    // substitution of issue #3520, which is counted rather than changed.
     const canGenerate = getResourceCanGenerate({
       resource: {
         id: item.id,
@@ -1271,10 +1290,7 @@ export async function getResourceData(
         availability: item.availability,
         usageControl: item.usageControl,
         baseModel: item.baseModel,
-        covered: coveredForUser(item, next, {
-          member,
-          isCheckpoint: item.model.type === 'Checkpoint',
-        }),
+        covered,
         modelUserId: item.model.userId,
         flags: item.flags,
       },
