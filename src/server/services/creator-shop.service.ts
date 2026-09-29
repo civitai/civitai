@@ -256,13 +256,24 @@ export async function readBounded(
       // happens: an await-loop whose promise resolves immediately starves the macrotask
       // queue, so the AbortSignal timer CANNOT fire and rescue it.
       //
-      // MEASURED (node v24.20.0): 60,000,000 iterations of exactly that shape against a 300 ms
-      // `AbortSignal.timeout` ran 2,053 ms and 2,105 ms over two runs — 6.8x and 7.0x the
-      // budget — with `signal.aborted === false` at the end of both. ⚠ An earlier figure here
-      // said 6,000,000 iterations, and that one does NOT demonstrate the mechanism: the same
-      // shape completes in 227–270 ms on this host, i.e. INSIDE the 300 ms budget, so the timer
-      // not having fired proves only that the loop finished first. Do not reinstate it — a
-      // starvation claim needs an elapsed time that EXCEEDS the timeout.
+      // MEASURED, 60,000,000 iterations of exactly that shape against a 300 ms
+      // `AbortSignal.timeout`, `signal.aborted === false` at the end of every run. Two
+      // independent measurements on this host: 2,053 / 2,105 ms, and 2,904 / 3,445 ms — so
+      // 6.8x to 11.5x the budget. Node v24.20.0 (the host); this repo's own dev shell pins
+      // v24.19.0, and both were measured.
+      //
+      // ⚠ THIS IS THE THIRD FIGURE WRITTEN HERE. If you are about to replace it, you are the
+      // fourth — so record what you measured rather than reasoning about it. The first draft
+      // cited no elapsed time at all ("6,000,000 iterations … had still not fired"), which is
+      // why it demonstrated nothing: a starvation claim needs an elapsed time that EXCEEDS the
+      // timeout, and that draft reported none. That alone retires it. The second draft then
+      // asserted 6,000,000 iterations complete in 227–270 ms, i.e. INSIDE the budget — do not
+      // reinstate THAT either, but not because it is too low: an independent re-measurement of
+      // the same shape on the same host got 345–408 ms over 10 runs, i.e. ABOVE the budget.
+      // 6,000,000 straddles 300 ms under ordinary load variance (the two runs differ ~1.5x, and
+      // load was ~52 on 24 cores during the slower one), so at that count the result is
+      // indistinguishable from the budget and cannot settle anything either way. Pick a count
+      // whose margin survives a busy machine; 60,000,000 does.
       //
       // That is the event-loop-freeze class, and it would take out the whole web pod rather
       // than one request. The branch bought nothing; failing loudly costs nothing.

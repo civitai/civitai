@@ -19,12 +19,21 @@ import { describe, expect, it, vi } from 'vitest';
  * `CosmeticShopItem.meta` and read back by `findDuplicateArtwork`, so a silent truncation or
  * mis-offset would corrupt duplicate detection rather than fail loudly.
  *
- * FIXTURES. Four rows pass `{ body: <real ReadableStream> }` object literals, so those
- * assertions are against genuine web-stream semantics rather than a mock's idea of them. The
- * other three pass hand-rolled `getReader()` mocks with no stream at all — deliberately, because
- * they pin reader-level behaviour (`cancel()` being called, a `{done:false, value:undefined}`
- * yield) that a real stream cannot be made to produce. No `Response` object appears in this
- * file; an earlier draft of this docblock claimed one did.
+ * FIXTURES — counted, because an earlier draft of this paragraph mis-partitioned them. Of the
+ * nine rows, EIGHT carry a fixture and they split 5 / 2 / 1:
+ *   * FIVE pass a real `ReadableStream`, so those assertions are against genuine web-stream
+ *     semantics rather than a mock's idea of them — the four `streamOf(...)` rows, PLUS
+ *     `stops READING at the bound`, whose stream is built inline with a `pull` source. That
+ *     last one is easy to mis-file as a mock and is the row that matters most: its
+ *     `expect(pulled).toBeLessThan(10)` counts real backpressure pulls, and it is the ONLY row
+ *     in this file that catches the bound-moved-out-of-loop regression.
+ *   * TWO pass hand-rolled `getReader()` mocks with no stream at all — deliberately, because
+ *     they pin reader-level behaviour (`cancel()` being called, a `{done:false,
+ *     value:undefined}` yield) that a real stream cannot be made to produce. Those two
+ *     behaviours are the whole of this bucket; a count of three never matched them.
+ *   * ONE is the `arrayBuffer()` fallback row, which has no stream by construction.
+ * The ninth row asserts the cap constant and carries no fixture. No `Response` object appears
+ * in this file; an earlier draft of this docblock claimed one did.
  */
 
 vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedUserContent: vi.fn() }));
