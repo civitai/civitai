@@ -42,16 +42,25 @@ const EVIL_URL = 'https://evil.com/badge.png';
 const STORAGE_KEY = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/badge.png';
 
 /**
- * 🔴 A DEFAULT resolution with an accusatory id, not a bare reset. With `submitWorkflow`
- * returning `undefined`, deleting the guard would kill the test on `Badge resize failed`
- * — an error about a broken mock, not about the allowlist, i.e. a mutant dying for the wrong
- * reason and reading as coverage.
+ * A DEFAULT resolution rather than a bare reset, so a guard-deleted mutant gets PAST the
+ * `if (!data)` throw instead of dying on `Badge resize failed: unknown error` — an error about
+ * the mock rather than about the allowlist.
+ *
+ * ⚠ CORRECTED: this block used to claim the planted `'MUSTNOTHAPPEN'` id was the accusatory
+ * signal. It is not, and cannot be — the implementation reads `step?.output?.blob?.url`
+ * (`product-badge.service.ts`), never `output.images[0].id`, so that string is never read by
+ * anything and a deleted guard dies on `'Badge resize did not return an output blob'`
+ * instead. The comment asserted a mechanism it did not have. **What actually discriminates**
+ * is the pair every test below asserts: the guard's own message
+ * (`'not on the ingestion allowlist'`), which no downstream failure produces, AND
+ * `mockSubmitWorkflow` never having been called. The id is left in place only as inert
+ * fixture shape; do not reintroduce a claim about it.
  */
 const allowSubmitByDefault = () =>
   mockSubmitWorkflow.mockReset().mockResolvedValue({
     data: {
       status: 'succeeded',
-      steps: [{ status: 'succeeded', output: { images: [{ id: 'MUSTNOTHAPPEN' }] } }],
+      steps: [{ status: 'succeeded', output: { images: [{ id: 'inert-fixture' }] } }],
     },
     error: undefined,
     response: undefined,
@@ -83,12 +92,25 @@ describe('resizeBadgeImage URL allowlist', () => {
     expect(mockSubmitWorkflow).not.toHaveBeenCalled();
   });
 
-  it('does NOT reach the guard on the early-return path (already target size)', async () => {
-    // The width/height short-circuit precedes the guard, so an already-200x200 badge is
-    // returned untouched. Pinned so a future reorder does not silently start rejecting
-    // stored urls that never needed re-encoding.
-    await expect(resizeBadgeImage({ url: EVIL_URL, width: 200, height: 200 })).resolves.toBe(
-      EVIL_URL
+  it('refuses an off-allowlist url even on the target-size SHORT-CIRCUIT path', async () => {
+    // 🔴 THIS ROW REPLACES ONE THAT PINNED THE BYPASS AS INTENDED, which is worse than having
+    // no row: `width`/`height` are caller input (`product-badge.schema.ts`, plain optional
+    // positive ints), so when the short-circuit preceded the guard this exact call returned
+    // EVIL_URL and `upsertProductBadge` persisted it into the cosmetic's `data.url` for the
+    // phash sweep to replay — the outcome the guard's own comment says it prevents. The old
+    // row asserted `.resolves.toBe(EVIL_URL)` and a green suite certified the hole.
+    await expect(resizeBadgeImage({ url: EVIL_URL, width: 200, height: 200 })).rejects.toThrow(
+      'not on the ingestion allowlist'
+    );
+    expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('still short-circuits an ALLOWED url at target size — no orchestrator round-trip', async () => {
+    // The cost short-circuit must survive the reorder: an allowed, already-200x200 badge is
+    // returned untouched and submits nothing. Without this row, moving the guard first could
+    // have been "fixed" by deleting the short-circuit and nothing would have objected.
+    await expect(resizeBadgeImage({ url: STORAGE_KEY, width: 200, height: 200 })).resolves.toBe(
+      STORAGE_KEY
     );
     expect(mockSubmitWorkflow).not.toHaveBeenCalled();
   });

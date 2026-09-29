@@ -3,19 +3,38 @@ import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * SEAM guard: the LEDGER of every module that turns a caller-supplied string into a URL
- * something will fetch, and the assertion that each one goes through the ONE shared guard.
+ * SEAM guard over the modules that consume `image-scan-url`'s guard identifiers.
  *
- * 🔴 Why a ledger rather than another per-function test. Each funnel already has its own
- * suite, and every one of those passes in ISOLATION — which is exactly how this class of
- * defect survived: `createImageIngestionRequest` was gated and audit-clean while three
- * sibling funnels built the same fetchable URL the same way and were not, because no test
- * was scoped to the RELATIONSHIP. This pins the relationship: it fails when the consumer set
- * GROWS (a new funnel appears and must be gated deliberately) and when it SHRINKS (a guard
- * is removed).
+ * 🔴 READ WHAT THIS DOES AND DOES NOT ASSERT — an earlier docblock called it "the LEDGER of
+ * every module that turns a caller-supplied string into a URL something will fetch" and said
+ * it "fails when a new funnel appears un-gated". BOTH WERE FALSE, and false in the direction
+ * that stops people looking. What it actually asserts is narrower on three axes:
  *
- * It is a STRUCTURAL check and says so: it proves a module references the guard, never that
- * it calls it on the right value. The behavioural half lives in the per-funnel suites.
+ *  1. **Guard CONSUMERS, not funnels.** The set it pins is "files whose text contains one of
+ *     `GUARD_TOKENS`". A new funnel that never mentions those identifiers is INVISIBLE to it,
+ *     so the set GROWING is not the event "a funnel appeared" — it is "a file mentioned the
+ *     guard". An ungated new funnel does not grow the set at all.
+ *  2. **A REFERENCE, not a call.** A file satisfies its row by carrying an `import`. Measured:
+ *     deleting the badge guard's call while keeping its import leaves this suite GREEN and
+ *     only the behavioural suite red. The behavioural suites are the real gate.
+ *  3. **This guard family only.** `training.service.ts` is the fourth funnel in this PR and is
+ *     deliberately NOT in the ledger, because it is guarded by `isPublicHttpsUrl` — a
+ *     different identifier. Deleting `assertSafeMediaUrls` outright reddens no row here.
+ *
+ * 🔴 KNOWN UN-LEDGERED SERVER-SIDE FETCHES OF A CALLER-INFLUENCED URL, recorded so this file
+ * cannot be read as an exhaustive inventory of the hazard class:
+ *  - `src/server/utils/og-image-helpers.ts` — `fetch()` on a `getEdgeUrl(image.url, …)`,
+ *    reached from the public `src/pages/api/og.tsx`. Whether every `Image.url` reaching it can
+ *    be attacker-chosen is NOT established.
+ *  - `src/server/services/chat.service.ts` — `unfurl(href)` on a URL parsed out of a user's
+ *    chat message; `src/server/utils/safe-fetch.ts` names `unfurl.js` as unguarded.
+ * Neither is in scope for this change. They are listed because a guard whose description is
+ * wider than its body is worse than no guard.
+ *
+ * Why a seam guard at all: each funnel's own suite passes in ISOLATION, and that is exactly
+ * how this class survived — `createImageIngestionRequest` was gated and audit-clean while
+ * three siblings built the same fetchable URL the same way and were not, because no test was
+ * scoped to the RELATIONSHIP.
  */
 
 const SRC = join(__dirname, '..', '..', '..');
@@ -32,6 +51,11 @@ function sourceFiles(): [string, string][] {
         continue;
       }
       if (!/\.tsx?$/.test(entry)) continue;
+      // 🔴 Skip test files BY NAME, not only by `__tests__` directory. Measured: 179
+      // `*.test.ts` files in this repo live OUTSIDE a `__tests__` dir, so a new suite at the
+      // ordinary spelling `src/server/utils/image-scan-url.test.ts` would have joined the
+      // guard-consumer set and reddened the set-equality row for no defect at all.
+      if (/\.(test|spec|browser\.test)\.tsx?$/.test(entry)) continue;
       out.push([relative(SRC, full), readFileSync(full, 'utf8')]);
     }
   };
@@ -88,15 +112,27 @@ describe('media-fetch funnel ledger', () => {
       .map(([p]) => p)
       .sort();
     const expected = GATED_FUNNELS.map(([p]) => p).sort();
-    // A new consumer is a deliberate act: add it here WITH a behavioural test, or find out
-    // why it is reaching the guard. A missing one means a funnel lost its gate.
+    // A new guard CONSUMER is a deliberate act: add it here WITH a behavioural test, or find
+    // out why it is reaching the guard. A missing one means a consumer dropped its reference.
+    // ⚠ Not "a funnel appeared" — see axis 1 of the docblock. And this row can go red for a
+    // NON-defect: any `src/**` file that merely NAMES a guard identifier in a comment joins
+    // the set. If that happens, the fix is to add the path or reword the comment, NOT to
+    // assume a gate was lost — the message this row used to carry said the latter.
     expect(actual).toEqual(expected);
   });
 
   it('no SERVER-SIDE module still open-codes the passthrough ternary against getEdgeUrl', () => {
-    // The `url.startsWith('http') ? url : getEdgeUrl(url, …)` shape is the structural marker
-    // of an UNGATED funnel — it was the spelling all three newly-gated sites shared, and it
-    // disagrees with getEdgeUrl's own predicate on `http:/host` (one slash).
+    // The `url.startsWith('http') ? url : getEdgeUrl(url, …)` shape is the spelling all three
+    // newly-gated sites shared, and it disagrees with getEdgeUrl's own predicate on
+    // `http:/host` (one slash).
+    //
+    // 🔴 IT IS NOT "THE STRUCTURAL MARKER OF AN UNGATED FUNNEL" — this row used to say that
+    // and it is false. A NEW funnel needs no ternary at all: `getEdgeUrl` forwards an absolute
+    // URL unmodified by itself, so the shortest un-gated funnel is a bare
+    // `fetch(getEdgeUrl(url))`. The regex is also spelling-bound — it requires a bare
+    // identifier in the true branch, so `url.trim()`, `isEdgeUrlPassthrough(url) ? …` and
+    // `startsWith('https')` all evade it. This row pins that the THREE HISTORICAL spellings do
+    // not come back; it cannot discover a fourth funnel, and nothing here can.
     //
     // Scoped to the ternary PAIRED WITH getEdgeUrl on purpose: the bare `startsWith('http')`
     // idiom is used legitimately in 4 unrelated modules (html-sanitize-helpers, buzz.service,

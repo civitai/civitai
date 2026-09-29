@@ -662,11 +662,26 @@ type AutoLabelStepMetadata = {
 //
 // 🔴 This used to carry its OWN `PRIVATE_HOST_PATTERNS` array, which had DRIFTED from the
 // canonical list in `~/server/utils/ssrf-hostname` and was weaker than it. MEASURED against
-// the old array — exactly four shapes it ADMITTED and `isPublicHttpsUrl` refuses:
-//   `https://[::ffff:127.0.0.1]/x`      IPv4-mapped IPv6 loopback  ← the load-bearing one
-//   `https://foo.internal/x`            internal TLD
-//   `https://foo.local/x`               mDNS TLD
-//   `https://metadata.google.internal/x` cloud metadata (subsumed by `.internal`)
+// the old array — NINE shapes it ADMITTED that reach private/internal space and
+// `isPublicHttpsUrl` refuses:
+//   `https://[::ffff:127.0.0.1]/x`         IPv4-mapped IPv6 loopback
+//   `https://[0:0:0:0:0:ffff:7f00:1]/x`    the same, spelled out uncompressed
+//   `https://[::ffff:169.254.169.254]/x`   mapped cloud metadata
+//   `https://[64:ff9b::a9fe:a9fe]/x`       NAT64 well-known prefix embedding 169.254.169.254
+//   `https://[2002:7f00:1::]/x`            6to4 embedding 127.0.0.1
+//   `https://[::]/x`                       unspecified address
+//   `https://foo.internal/x`               internal TLD
+//   `https://foo.local/x`                  mDNS TLD
+//   `https://metadata.google.internal/x`   cloud metadata (subsumed by `.internal`)
+// ⚠ AN EARLIER VERSION OF THIS COMMENT SAID "exactly FOUR", and the test pinned
+// `toHaveLength(4)`. That was an incomplete enumeration presented as exhaustive: the first
+// probe only tested the shapes its author thought of, so the five IPv6-embedding spellings
+// were never fed to it. A count is a claim — if you extend this list, feed the candidate set
+// to the differential rather than reasoning about it.
+// ⚠ Precision about WHY the IPv6 ones are refused, because it is not the obvious reason:
+// `[64:ff9b::…]`, `[2002:…]` and `[::]` fail `isPublicHttpsUrl`'s "hostname must be a public
+// dotted name" test, NOT its NAT64/6to4 logic — that logic lives in `isPrivateIp`, the
+// FETCH-TIME guard, which this lexical path never calls.
 // ⚠ And the three shapes it is TEMPTING to list here — integer (`https://2130706433/x`),
 // hex (`https://0x7f000001/x`) and octal (`https://0177.0.0.1/x`) IPv4 literals — were
 // ALREADY refused, so do not "re-close" them or cite them as a reason for this change:

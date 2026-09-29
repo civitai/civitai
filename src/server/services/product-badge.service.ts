@@ -139,8 +139,6 @@ export const resizeBadgeImage = async ({
   width?: number;
   height?: number;
 }): Promise<string> => {
-  if (width === BADGE_TARGET_SIZE && height === BADGE_TARGET_SIZE) return url;
-
   // 🔴 Same SSRF boundary as `createImageIngestionRequest`: this hands the orchestrator a
   // caller-supplied URL it fetches from inside our network. The rung here is
   // `moderatorProcedure` (product-badge.router), so this is the narrowest of the funnels —
@@ -150,7 +148,19 @@ export const resizeBadgeImage = async ({
   // This THROWS rather than returning the url unchanged: returning it would hand an
   // un-resized, un-validated url straight into `upsertProductBadge`'s cosmetic `data.url`,
   // where the phash sweep would then replay it on a schedule.
+  //
+  // 🔴 IT MUST PRECEDE THE TARGET-SIZE SHORT-CIRCUIT BELOW, and for a while it did not.
+  // `width`/`height` are CALLER INPUT (`product-badge.schema.ts` — both plain optional
+  // positive ints), so `{ badgeUrl: 'https://evil.example/x.png', sourceWidth: 200,
+  // sourceHeight: 200 }` took the early return and handed the url straight back — landing it
+  // in `upsertProductBadge`'s cosmetic `data.url` and the phash sweep, i.e. EXACTLY the
+  // outcome the paragraph above says this throw exists to prevent. A guard a request field
+  // can step around is not a guard.
   if (!isAllowedImageScanUrl(url)) throw new ImageIngestionUrlBlockedError(url);
+
+  // Already the target size ⇒ nothing to re-encode, so skip the orchestrator round-trip and
+  // return the (now validated) url. This is a COST short-circuit, never a security one.
+  if (width === BADGE_TARGET_SIZE && height === BADGE_TARGET_SIZE) return url;
 
   // The `url.startsWith('http') ? url : getEdgeUrl(url, …)` ternary this replaces was a
   // no-op (getEdgeUrl forwards a passthrough src on exactly that predicate) and a fourth

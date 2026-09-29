@@ -84,9 +84,21 @@ beforeEach(() => {
   ownModelAsTrained();
 });
 
-describe('assertSafeMediaUrls — the four shapes the drifted local array ADMITTED', () => {
+describe('assertSafeMediaUrls — the shapes the drifted local array ADMITTED', () => {
+  /**
+   * 🔴 THIS LIST WAS FOUR ROWS AND THE COUNT ROW PINNED `toHaveLength(4)`. Both were wrong:
+   * the original differential only fed it the shapes its author imagined, so every
+   * IPv6-embedding spelling went untested. Re-measured, the old array admitted NINE
+   * private-space shapes. A count row makes the number a claim — so when adding to this
+   * list, run the candidate through the differential; do not reason about it.
+   */
   const admittedByTheOldArray: [string, string][] = [
     ['https://[::ffff:127.0.0.1]/x.png', 'IPv4-mapped IPv6 loopback'],
+    ['https://[0:0:0:0:0:ffff:7f00:1]/x.png', 'the same, spelled out uncompressed'],
+    ['https://[::ffff:169.254.169.254]/x.png', 'mapped cloud metadata'],
+    ['https://[64:ff9b::a9fe:a9fe]/x.png', 'NAT64 prefix embedding 169.254.169.254'],
+    ['https://[2002:7f00:1::]/x.png', '6to4 embedding 127.0.0.1'],
+    ['https://[::]/x.png', 'unspecified address'],
     ['https://foo.internal/x.png', 'internal TLD'],
     ['https://foo.local/x.png', 'mDNS TLD'],
     ['https://metadata.google.internal/x.png', 'cloud metadata host'],
@@ -96,7 +108,7 @@ describe('assertSafeMediaUrls — the four shapes the drifted local array ADMITT
     await expect(submit(url)).rejects.toThrow('mediaUrl host is not reachable');
   });
 
-  it('refuses ALL FOUR — the count is the claim, so a shrinking set fails here', async () => {
+  it('refuses ALL NINE — the count is the claim, so a shrinking set fails here', async () => {
     const refused: string[] = [];
     for (const [url] of admittedByTheOldArray) {
       await submit(url).then(
@@ -106,7 +118,8 @@ describe('assertSafeMediaUrls — the four shapes the drifted local array ADMITT
         }
       );
     }
-    expect(refused).toHaveLength(4);
+    expect(refused).toHaveLength(admittedByTheOldArray.length);
+    expect(refused).toHaveLength(9);
   });
 });
 
