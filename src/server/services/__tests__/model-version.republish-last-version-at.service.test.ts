@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
-// Republishing a version the owner unpublished must recompute Model.lastVersionAt: the unpublish
-// already recomputed it downward, and skipping it here left the model stuck at an older version's
-// date. The recompute cannot bump the model — see model-republish-last-version-at.service.test.ts.
+// Only a version's FIRST publish moves Model.lastVersionAt. Unpublish and republish leave it alone:
+// unpublish used to recompute it downward, and republish never restored it, so a new version that
+// went through an unpublish/republish cycle left its model buried in the Newest feed.
 
 const { mockUpdateModelLastVersionAt } = vi.hoisted(() => ({
   mockUpdateModelLastVersionAt: vi.fn(),
@@ -74,7 +74,10 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => {
   return { ...actual, deleteModelFileObjects: vi.fn() };
 });
 
-import { publishModelVersionById } from '~/server/services/model-version.service';
+import {
+  publishModelVersionById,
+  unpublishModelVersionById,
+} from '~/server/services/model-version.service';
 
 const VERSION_ID = 3364560;
 const MODEL_ID = 2503012;
@@ -107,15 +110,34 @@ beforeEach(() => {
   dbMock.dbRead.modelFileHash.findMany.mockResolvedValue([]);
 });
 
-describe('publishModelVersionById — lastVersionAt on republish', () => {
-  it('recomputes lastVersionAt when the version carries an unpublish stamp', async () => {
-    await publishModelVersionById({ id: VERSION_ID, meta: { unpublishedBy: OWNER_ID } as never });
+describe('Model.lastVersionAt across a version publish lifecycle', () => {
+  it('recomputes on a first publish', async () => {
+    await publishModelVersionById({ id: VERSION_ID, republishing: false });
 
     expect(mockUpdateModelLastVersionAt).toHaveBeenCalledWith({ id: MODEL_ID });
   });
 
-  it('keeps the anti-bump guard on the version publishedAt it recomputes from', async () => {
-    await publishModelVersionById({ id: VERSION_ID });
+  it('leaves it alone when the version is unpublished', async () => {
+    dbMock.dbWrite.modelVersion.update.mockResolvedValue({
+      id: VERSION_ID,
+      model: { id: MODEL_ID, userId: OWNER_ID, nsfw: false },
+    });
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([{ id: VERSION_ID, meta: null }]);
+    dbMock.dbWrite.modelVersion.findUniqueOrThrow.mockResolvedValue({ status: 'Published' });
+
+    await unpublishModelVersionById({ id: VERSION_ID, user: { id: OWNER_ID } as never });
+
+    expect(mockUpdateModelLastVersionAt).not.toHaveBeenCalled();
+  });
+
+  it('leaves it alone when the version is republished', async () => {
+    await publishModelVersionById({ id: VERSION_ID, republishing: true });
+
+    expect(mockUpdateModelLastVersionAt).not.toHaveBeenCalled();
+  });
+
+  it('keeps the anti-bump guard on the version publishedAt a republish writes', async () => {
+    await publishModelVersionById({ id: VERSION_ID, republishing: true });
 
     const publishedAtWrite = dbMock.dbWrite.$executeRaw.mock.calls
       .map(([strings]) => (strings as TemplateStringsArray).join('?'))

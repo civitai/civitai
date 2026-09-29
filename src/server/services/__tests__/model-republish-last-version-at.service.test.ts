@@ -1,14 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
-// Unpublishing a version recomputes Model.lastVersionAt downward, so a republish that skips the
-// recompute leaves the model pinned at an older version's date and buried in the Newest feed. The
-// recompute is safe on republish because it only reads versions' publishedAt, which the publish
-// paths never move once it is in the past — so it can restore the original date but never bump it.
+// Unpublishing and republishing a whole model must not move Model.lastVersionAt — otherwise the
+// cycle is a way to push a model back to the top of the Newest feed, or to knock a bumped one down.
 
 const { mockTx } = vi.hoisted(() => ({
   mockTx: {
-    model: { update: vi.fn() },
+    model: { update: vi.fn(), findUniqueOrThrow: vi.fn() },
     modelVersion: { findFirst: vi.fn(), updateMany: vi.fn() },
     $executeRaw: vi.fn(),
   },
@@ -87,7 +85,7 @@ vi.mock('~/server/utils/cache-helpers', () => ({
 vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObjects: vi.fn() }));
 vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn() }));
 
-import { publishModelById, updateModelLastVersionAt } from '~/server/services/model.service';
+import { publishModelById, unpublishModelById } from '~/server/services/model.service';
 
 const MODEL_ID = 42;
 const OWNER_ID = 7;
@@ -106,7 +104,9 @@ beforeEach(() => {
     modelVersions: [{ id: VERSION_ID, baseModel: 'Illustrious' }],
     status: 'Published',
   });
+  mockTx.model.findUniqueOrThrow.mockResolvedValue({ status: 'Published' });
   mockTx.modelVersion.findFirst.mockResolvedValue({ publishedAt: ORIGINAL_PUBLISHED_AT });
+  dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([]);
   mockTx.$executeRaw.mockResolvedValue(0);
   dbMock.dbWrite.post.findMany.mockResolvedValue([]);
   dbMock.dbWrite.image.findMany.mockResolvedValue([]);
@@ -118,8 +118,21 @@ const lastVersionAtWrites = () =>
     .map(([args]) => args.data?.lastVersionAt)
     .filter((value) => value !== undefined);
 
-describe('publishModelById — republish restores lastVersionAt', () => {
-  it('recomputes lastVersionAt when an owner republishes a model they unpublished', async () => {
+describe('Model.lastVersionAt across a whole-model publish lifecycle', () => {
+  it('recomputes on a first publish', async () => {
+    await publishModelById({ id: MODEL_ID, versionIds: [VERSION_ID], republishing: false });
+
+    expect(lastVersionAtWrites()).toEqual([ORIGINAL_PUBLISHED_AT]);
+  });
+
+  it('leaves it alone when the model is unpublished', async () => {
+    await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID });
+
+    expect(mockTx.model.update).toHaveBeenCalled();
+    expect(lastVersionAtWrites()).toEqual([]);
+  });
+
+  it('leaves it alone when the model is republished with all its versions', async () => {
     await publishModelById({
       id: MODEL_ID,
       versionIds: [VERSION_ID],
@@ -127,24 +140,7 @@ describe('publishModelById — republish restores lastVersionAt', () => {
       republishing: true,
     });
 
-    expect(lastVersionAtWrites()).toEqual([ORIGINAL_PUBLISHED_AT]);
-  });
-});
-
-describe('updateModelLastVersionAt — reads only fixed, past publish dates', () => {
-  it('takes the newest publishedAt among published versions that is not in the future', async () => {
-    await updateModelLastVersionAt({ id: MODEL_ID, tx: mockTx as never });
-
-    const [args] = mockTx.modelVersion.findFirst.mock.calls[0];
-    expect(args.where).toMatchObject({
-      modelId: MODEL_ID,
-      status: 'Published',
-      publishedAt: { not: null, lte: expect.any(Date) },
-    });
-    expect(args.orderBy).toEqual({ publishedAt: 'desc' });
-    expect(mockTx.model.update).toHaveBeenCalledWith({
-      where: { id: MODEL_ID },
-      data: { lastVersionAt: ORIGINAL_PUBLISHED_AT },
-    });
+    expect(mockTx.model.update).toHaveBeenCalled();
+    expect(lastVersionAtWrites()).toEqual([]);
   });
 });

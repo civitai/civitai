@@ -3364,9 +3364,7 @@ export const publishModelById = async ({
             AND (p."publishedAt" IS NULL OR p."publishedAt" > NOW())
         `;
       }
-      // Recompute on republish too: unpublish already moved lastVersionAt down, and this can't bump
-      // the model because a version's publishedAt is immutable once public.
-      await updateModelLastVersionAt({ id, tx });
+      if (!republishing && !meta?.unpublishedBy) await updateModelLastVersionAt({ id, tx });
 
       return model;
     },

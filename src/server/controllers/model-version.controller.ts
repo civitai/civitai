@@ -850,9 +850,11 @@ export const publishModelVersionHandler = async ({
       throw throwAuthorizationError('You are not authorized to publish this model version');
     }
 
+    const republishing =
+      version.status !== ModelStatus.Draft && version.status !== ModelStatus.Scheduled;
     const { needsReview, unpublishedReason, unpublishedAt, unpublishedBy, customMessage, ...meta } =
       versionMeta || {};
-    const updatedVersion = await publishModelVersionById({ ...input, meta });
+    const updatedVersion = await publishModelVersionById({ ...input, meta, republishing });
 
     await queueModelEarlyAccessReindex({ id: updatedVersion.modelId }).catch((e) => {
       console.error('Unable to update model early access deadline');
