@@ -534,12 +534,15 @@ describe('the storage path carries the VERIFIED claim, not just a local', () => 
   });
 
   it.each(STORAGE_CARRIER.writers)(
-    '[INV] %s takes privateRun from the resolver, not from anywhere else',
+    '[REG] %s takes privateRun from the resolver, not from anywhere else',
     (writer) => {
-      // ⚠️ [INV], MEASURED — the base ref already destructures from the resolver in both
-      // writers and verifies once, so this is green there. A ledger invariant over a
-      // pre-existing shape, NOT regression coverage; it was [REG] until a base-ref run said
-      // otherwise.
+      // 🔴 [REG], AND THE LABEL WENT [REG] → [INV] → [REG] ACROSS TWO ROUNDS BECAUSE THE
+      // ASSERTION CHANGED UNDER IT. A round-2 measurement found the ORIGINAL form green at
+      // the base ref — correctly: it counted destructures file-wide with a `>=`, which the
+      // base already satisfied, which is also why it was vacuous. The per-writer form that
+      // replaced it requires each writer to destructure `privateRun`, a field the base ref
+      // does not have, so it is red there. Re-measured after the rewrite rather than carried
+      // over: a label belongs to an assertion, not to a test name.
       // 🔴 THE OTHER END OF THE SEAM, ASSERTED PER WRITER. A writer that computed
       // `privateRun` itself — from a second `verifyBlockToken`, or from a field it happened
       // to have — would satisfy the spelling check above while bypassing the one
