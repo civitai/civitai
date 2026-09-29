@@ -24,27 +24,59 @@ import { logToAxiom } from '~/server/logging/client';
  * `ip` instead or they collapse into a single phantom viewer. Hence the
  * `uniqExactIf(userId, …) + uniqExactIf(ip, …)` split below.
  *
- * 🔴 THIS RAIL DOES NOT EXCLUDE PRIVATE RUNS, AND IT IS A FLAG-FLIP PRECONDITION.
- * A private run of a delisted app — a moderator, the owner, or an accepted listing
- * collaborator running its already-deployed bundle — MOUNTS THE HOST, so it emits a
- * `blockRenders` row like any other view and appears in the owner's impressions. Worse than
- * a total: the uniques split above is computed per `userId`, so the reviewer lands as an
- * identifiable unique viewer on the exact day review happened. The operator decision for that
- * feature is that such a run is invisible to the app's owner INCLUDING IN ANALYTICS.
+ * 🔴 THIS RAIL EXCLUDES PRIVATE RUNS — CLOSED AT THE WRITERS, NOT HERE. It used to be
+ * the last open flag-flip precondition, so the mechanism is recorded rather than deleted.
  *
- * The sibling `block_scope_invocations` rail solves this with a `source` marker written from
- * the verified token claim (`blocks/scope-activity-predicate.ts`). That cannot be reused
- * here: different store, different writer, and NEITHER writer sees a block token — the row
- * comes from a client beacon (`components/AppBlocks/sendBlockRender.ts` →
- * `pages/api/track/block-render.ts`) and from `track.router.ts`. Closing it means either
- * suppressing the beacon on the private-run host, or carrying a flag through the beacon
- * schema, both writers and a new column.
+ * THE LEAK: a private run of a delisted app — a moderator, the owner, or an accepted
+ * listing collaborator running its already-deployed bundle — MOUNTS THE HOST, so it emitted
+ * a `blockRenders` row like any other view and appeared in the owner's impressions. Worse
+ * than a total: the uniques split above is computed per `userId`, so the reviewer landed as
+ * an identifiable unique viewer on the exact day review happened. The operator decision for
+ * that feature is that such a run is invisible to the app's owner INCLUDING IN ANALYTICS.
  *
- * ⚠️ Over-filtering is the quieter hazard if you do: excluding too much silently deletes the
- * owner's real impression counts, and nobody reports numbers they never saw.
+ * The sibling `block_scope_invocations` rail solves the same problem with a `source` marker
+ * written from the verified token claim (`blocks/scope-activity-predicate.ts`). That could
+ * not be reused: different store, different writer, and NEITHER writer sees a block token —
+ * the row comes from a client beacon (`components/AppBlocks/sendBlockRender.ts` →
+ * `pages/api/track/block-render.ts`) and from `track.router.ts`.
  *
- * CLOSING CONDITION: one private run against a delisted app, then the operator reads that
- * app's analytics panel and confirms `views.count` and `views.uniqueViewers` did not move.
+ * ── THE TWO SHAPES, AND WHY THIS ONE ─────────────────────────────────────────
+ * (a) SUPPRESS THE INSERT on a private-run mount. (b) Carry a marker through the beacon
+ * schema, both writers and a NEW ClickHouse column, then exclude it at the read. (a) shipped,
+ * for three reasons, in order of weight:
+ *
+ *  1. 🔴 (b) IS NOT DELIVERABLE FROM THIS REPO. There is no DDL for `blockRenders` here —
+ *     the table is provisioned out-of-repo by the tracker service — so the column, the
+ *     writer-side field and the read filter could not land together. A marker written into a
+ *     column that does not exist is a silent no-op, which is the worst version of this fix.
+ *  2. THE ROW WAS NOT THE RECORD. The concern with (a) is losing the evidence that a review
+ *     happened; it is not lost. A private run cannot boot without a token, and the mint
+ *     writes `app-blocks.private-run.mint` (userId, appBlockId, slug, audience, status,
+ *     listingStatus, scopes, spendGranted) to Axiom AND stdout, plus
+ *     `app-blocks.private-run.mint-refused` for refusals. The operator decision is that the
+ *     trail is INTERNAL-AUDIT-ONLY, which is precisely what those lines are and what a
+ *     ClickHouse row the owner can read is not.
+ *  3. (a) MIRRORS AN EXISTING, REVIEWED SUPPRESSION on this exact pair of writers:
+ *     `secondary` already skips the insert in both, symmetrically, for the same reason
+ *     (a row with no status column that must not be written twice).
+ *
+ * The gate is ONE predicate — `blocks/private-run-impression.service.ts` — called by BOTH
+ * writers; its docblock carries the derivation, the ordering and the cost. 🔴 The signal is
+ * derived from the SESSION, never from the request body: a client-settable field on a public
+ * beacon would let any viewer suppress their own impressions, which is a larger defect than
+ * the one being fixed.
+ *
+ * ⚠️ OVER-FILTERING is the quieter hazard — excluding too much silently deletes the owner's
+ * real impression counts, and nobody reports numbers they never saw. It is bounded
+ * STRUCTURALLY rather than by care: suppression requires the app to be NON-APPROVED (the
+ * predicate refuses `approved` outright, so nothing publicly mountable can be hidden) AND
+ * the viewer to be that app's owner, an accepted collaborator, or a moderator. A third
+ * party's impression is therefore unreachable from the gate, and every gate in it fails
+ * toward RECORDING the row.
+ *
+ * ACCEPTANCE (the condition this arc closes on): one private run against a delisted app,
+ * then the operator reads that app's analytics panel and confirms `views.count` and
+ * `views.uniqueViewers` did not move.
  *
  * 🔴 NEVER interpolate into these queries. The `$query` tagged template on the
  * ClickHouse client formats strings VERBATIM (`formatSqlType` returns the raw

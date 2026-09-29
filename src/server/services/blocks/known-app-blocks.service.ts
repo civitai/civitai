@@ -16,11 +16,23 @@
 // empty, so every id buckets to 'other' (bounded) rather than passing through.
 const KNOWN_APP_BLOCKS_TTL_MS = 5 * 60_000; // 5min — approved set changes rarely
 
-type CacheEntry = { ids: Set<string>; expiresAt: number };
+/**
+ * A resolved view of the approved-id set.
+ *
+ * 🔴 `trusted` RECORDS WHETHER THE QUERY BEHIND `ids` SUCCEEDED, and it exists
+ * because the fail-safe posture above is only safe for the thing it was written
+ * for. Clamping a prom label wants "assume unknown" — an empty set buckets
+ * everything to 'other', which is bounded. But an empty set also makes EVERY id
+ * look non-approved, so any consumer that reads "not in the set" as a FACT about
+ * the app is reading a database outage as a universal claim. Consumers that care
+ * must ask for `isConfirmedNonApprovedAppBlockId`, which answers `false` here.
+ */
+type ApprovedSet = { ids: Set<string>; trusted: boolean };
+type CacheEntry = ApprovedSet & { expiresAt: number };
 let _cache: CacheEntry | null = null;
-let _inflight: Promise<Set<string>> | null = null;
+let _inflight: Promise<ApprovedSet> | null = null;
 
-async function loadKnownAppBlockIds(): Promise<Set<string>> {
+async function loadKnownAppBlockIds(): Promise<ApprovedSet> {
   const ids = new Set<string>();
   try {
     // Dynamic import so this module doesn't eager-load the Prisma client into
@@ -41,20 +53,27 @@ async function loadKnownAppBlockIds(): Promise<Set<string>> {
         err instanceof Error ? err.message : String(err)
       }`
     );
+    // NOT trusted: the set is empty because we could not ask, not because there
+    // are no approved apps.
+    return { ids, trusted: false };
   }
-  return ids;
+  return { ids, trusted: true };
 }
 
-async function getKnownAppBlockIds(): Promise<Set<string>> {
+async function getKnownAppBlockIds(): Promise<ApprovedSet> {
   const now = Date.now();
   const cached = _cache;
-  if (cached && cached.expiresAt > now) return cached.ids;
+  // A failed load is cached for the same TTL as a good one — unchanged, and
+  // deliberate: it is what keeps a database outage from re-querying per request.
+  // `trusted` rides along in the entry so the untrusted window is visible to
+  // consumers for exactly as long as it lasts.
+  if (cached && cached.expiresAt > now) return cached;
   // Single-flight: coalesce concurrent cold-start refreshes into one query.
   if (_inflight) return _inflight;
   _inflight = loadKnownAppBlockIds()
-    .then((ids) => {
-      _cache = { ids, expiresAt: Date.now() + KNOWN_APP_BLOCKS_TTL_MS };
-      return ids;
+    .then((set) => {
+      _cache = { ...set, expiresAt: Date.now() + KNOWN_APP_BLOCKS_TTL_MS };
+      return set;
     })
     .finally(() => {
       _inflight = null;
@@ -68,8 +87,31 @@ async function getKnownAppBlockIds(): Promise<Set<string>> {
  * to false (→ 'other') on a cold cache / DB error.
  */
 export async function isKnownAppBlockId(appBlockId: string): Promise<boolean> {
-  const ids = await getKnownAppBlockIds();
+  const { ids } = await getKnownAppBlockIds();
   return ids.has(appBlockId);
+}
+
+/**
+ * True iff `appBlockId` is CONFIRMED to be outside the approved set — the query
+ * behind the cache succeeded and the id was not in it.
+ *
+ * 🔴 THIS IS NOT `!isKnownAppBlockId(id)`, AND THE DIFFERENCE IS THE WHOLE POINT.
+ * That negation answers `true` for every id in the world whenever the approved
+ * lookup fails, because the failure path caches an EMPTY set (see `ApprovedSet`).
+ * A consumer using it as a cheap pre-filter before expensive work would therefore
+ * escalate every request during a database outage — adding load to the failing
+ * database, on whatever path it sits on. This form answers `false` while the set
+ * is untrusted, so "I could not ask" never reads as "the app is not approved".
+ *
+ * Used by `private-run-impression.service` to decide, for free, that an
+ * impression on a live approved app cannot be a private run. It is a COST filter
+ * there: the authoritative status check is `resolvePrivateRunAccess`, which
+ * refuses an approved app outright, so a wrong answer here changes load, not
+ * behaviour.
+ */
+export async function isConfirmedNonApprovedAppBlockId(appBlockId: string): Promise<boolean> {
+  const { ids, trusted } = await getKnownAppBlockIds();
+  return trusted && !ids.has(appBlockId);
 }
 
 /**

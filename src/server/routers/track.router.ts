@@ -6,6 +6,7 @@ import {
   blockRenderSchema,
   blockRenderTrackerPayload,
 } from '~/server/schema/track.schema';
+import { isPrivateRunImpression } from '~/server/services/blocks/private-run-impression.service';
 import { publicProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -43,16 +44,18 @@ export const trackRouter = router({
     // `blockRenderTrackerPayload` is the shared ALLOWLIST that makes this
     // impossible to get wrong in one place and not the other.
     //
-    // 🔴 NEITHER WRITER EXCLUDES PRIVATE RUNS, AND THAT IS AN OPEN FLAG-FLIP
-    // PRECONDITION — and the two-writer symmetry above is exactly why it is called
-    // out here as well as in the beacon route. A private run of a delisted app mounts
-    // the host and so lands a `blockRenders` row, surfacing in the owner's
-    // impressions and unique viewers; the `block_scope_invocations` `source` marker
-    // cannot be reused, because neither of these writers ever sees a block token.
-    // Whatever closure is chosen MUST be applied to BOTH writers or a bearer/API-key
-    // caller reintroduces the leak — the same failure shape the allowlist above
-    // exists to prevent. Canonical note, both closure shapes, the over-filtering
-    // hazard and the closing condition:
+    // 🔴 BOTH WRITERS EXCLUDE PRIVATE RUNS, THROUGH THE SAME PREDICATE — and the
+    // two-writer symmetry above is exactly why it is called out here as well as in the
+    // beacon route. A private run of a delisted app mounts the host and so would land a
+    // `blockRenders` row, surfacing in the owner's impressions and unique viewers; the
+    // `block_scope_invocations` `source` marker cannot be reused, because neither of
+    // these writers ever sees a block token, so the closure is a predicate over the
+    // SESSION (`isPrivateRunImpression`) applied at the insert on BOTH sides. Gating
+    // only the beacon would leave this procedure — reachable by a bearer/API-key caller
+    // — able to reintroduce the leak, the same failure shape the allowlist above exists
+    // to prevent. `block-render-writer.call-site-ledger.test.ts` fails if a writer is
+    // added, removed, or stops calling it. Canonical note, why suppression rather than a
+    // new ClickHouse column, the over-filtering bound and the acceptance step:
     // `src/server/services/blocks/app-views.service.ts`.
     //
     // 🔴 `secondary` additionally SUPPRESSES the insert, matching the beacon route
@@ -61,8 +64,15 @@ export const trackRouter = router({
     // would write an undedupable duplicate. Both writers must agree on this or a
     // bearer/API-key caller could reintroduce the double-count the beacon route
     // prevents.
-    .mutation(({ input, ctx }) => {
+    .mutation(async ({ input, ctx }) => {
       if (input.secondary) return;
+      // 🔴 SAME GATE, SAME POLARITY AS THE BEACON ROUTE. Derived from `ctx.user` — the
+      // server-resolved session — never from `input`, which this caller chooses. Note
+      // this resolver is now `async`: the predicate reads the approved-app cache and, on
+      // the rare non-approved path, the database. That is accepted here because this is
+      // the legacy bearer/API-key path; the browser hosts use the beacon route, where the
+      // ordering inside the predicate keeps the common path free of both.
+      if (await isPrivateRunImpression({ appBlockId: input.appBlockId, viewer: ctx.user })) return;
       return ctx.track.blockRender({ ...blockRenderTrackerPayload(input), isAnon: !ctx.user });
     }),
   trackShare: publicProcedure
