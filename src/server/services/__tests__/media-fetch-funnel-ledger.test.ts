@@ -55,7 +55,10 @@ const GUARD_TOKENS = /isAllowedImageScanUrl|isAllowedAvatarUrl|ImageIngestionUrl
 const GATED_FUNNELS: [string, string][] = [
   ['server/utils/image-scan-url.ts', 'the guard itself'],
   ['server/services/image.service.ts', 'ingestImage pre-check'],
-  ['server/services/orchestrator/orchestrator.service.ts', 'createImageIngestionRequest + getPerceptualHash'],
+  [
+    'server/services/orchestrator/orchestrator.service.ts',
+    'createImageIngestionRequest + getPerceptualHash',
+  ],
   ['server/services/product-badge.service.ts', 'resizeBadgeImage → orchestrator convertImage'],
   ['server/services/creator-shop.service.ts', 'validateArtwork → fetch() from the WEB pod'],
   ['server/controllers/user.controller.ts', 'verifyAvatar'],
@@ -114,9 +117,7 @@ describe('media-fetch funnel ledger', () => {
     // ⚠ The regex spans NEWLINES (`\s*` matches them), which is what catches the wrapped
     // form. A line-oriented grep does NOT see those two — measured.
     const banned = /startsWith\(['"]http['"]\)\s*\?\s*[A-Za-z_$][\w$]*\s*:\s*getEdgeUrl/;
-    const serverSide = files.filter(
-      ([p]) => p.startsWith('server/') || p.startsWith('pages/api/')
-    );
+    const serverSide = files.filter(([p]) => p.startsWith('server/') || p.startsWith('pages/api/'));
     // Positive control for the SCOPE, not just the walk: the filter must retain a real corpus.
     expect(serverSide.length).toBeGreaterThan(100);
 
