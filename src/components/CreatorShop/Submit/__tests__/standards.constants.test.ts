@@ -18,11 +18,13 @@ describe('sticker design standards', () => {
     expect(labels.filter((l) => l.startsWith(enforced))).toHaveLength(1);
   });
 
-  it('states no size but the enforced upload size and the inline render height', () => {
+  // The shipped bug was a shape claim ("Square keeps it aligned") as much as a size.
+  it('states no size or shape but the enforced upload rule and the inline render height', () => {
+    const inline = new RegExp(String.raw`\b${STICKER_SIZE.inline}px\b`);
+    const sizeOrShape =
+      /\d+[\s-]*(?:px|pixels?)\b|\d+\s*(?:[x×✕*]|by)\s*\d+|\d+\s*:\s*\d+|\bsquare\b/i;
     const stray = labels.filter((l) =>
-      /\d+\s*(px\b|(?:[x×]|by)\s*\d+)/i.test(
-        l.replace(enforced, '').replace(`${STICKER_SIZE.inline}px`, '')
-      )
+      sizeOrShape.test(l.replace(enforced, '').replace(inline, ''))
     );
     expect(stray).toEqual([]);
   });
