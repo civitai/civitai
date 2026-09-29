@@ -1,6 +1,8 @@
 import * as z from 'zod';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { dailyChallengeConfig } from '~/server/games/daily-challenge/daily-challenge.utils';
+import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { insertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import { sleep } from '~/server/utils/concurrency-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -11,8 +13,9 @@ import { booleanString } from '~/utils/zod-helpers';
  * "Hide challenge entries" filter hides them too. Re-runnable: already-tagged entries are skipped.
  *
  * Sequential committed batches, resumable from the returned `next` cursor. Before every batch it
- * reads the retained WAL of the logical replication `slot` and stops if the slot is missing, over
- * `maxLagMb`, or grown more than `maxLagGrowthMb` since the call started.
+ * reads the retained WAL of each logical replication slot in `slots` and stops if one is missing,
+ * over `maxLagMb`, or grown more than `maxLagGrowthMb` past `baselineMb`. Pass the returned
+ * `baselineMb` back with `next`, or growth is measured from each call's own start.
  *
  *   /api/admin/temp/backfill-daily-challenge-tag?token=$WEBHOOK_TOKEN&dryRun=false&collectionId=0&itemId=0
  */
@@ -22,10 +25,15 @@ const schema = z.object({
   itemId: z.coerce.number().int().min(0).default(0),
   batchSize: z.coerce.number().int().min(1).max(2000).default(1000),
   pauseMs: z.coerce.number().int().min(0).max(60_000).default(2000),
-  maxBatches: z.coerce.number().int().min(1).max(1000).default(100),
-  slot: z.string().min(1).default('mediarank_sub'),
-  maxLagMb: z.coerce.number().positive().default(1024),
-  maxLagGrowthMb: z.coerce.number().positive().default(64),
+  maxBatches: z.coerce.number().int().min(1).max(1000).default(30),
+  slots: z
+    .string()
+    .default('mediarank_sub')
+    .transform((value) => [...new Set(value.split(',').map((s) => s.trim()))].filter(Boolean))
+    .pipe(z.array(z.string()).min(1)),
+  maxLagMb: z.coerce.number().positive().max(4096).default(1024),
+  maxLagGrowthMb: z.coerce.number().positive().max(1024).default(64),
+  baselineMb: z.coerce.number().min(0).optional(),
 });
 
 type StopReason =
@@ -38,14 +46,16 @@ type StopReason =
 
 const MB = 1024 ** 2;
 
-async function getSlotRetainedWalBytes(slot: string) {
-  const { rows } = await pgDbWrite.query<{ lag: string | null }>(
-    `SELECT pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)::bigint AS lag
-     FROM pg_replication_slots WHERE slot_name = $1`,
-    [slot]
+/** The largest retained WAL across `slots`, or null if any slot is absent or holds no WAL. */
+async function getMaxRetainedWalBytes(slots: string[]) {
+  const { rows } = await pgDbWrite.query<{ slot: string; lag: string | null }>(
+    `SELECT slot_name AS slot, pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)::bigint AS lag
+     FROM pg_replication_slots WHERE slot_name = ANY($1)`,
+    [slots]
   );
-  const lag = rows[0]?.lag;
-  return lag === null || lag === undefined ? null : Number(lag);
+  const lags = slots.map((slot) => rows.find((row) => row.slot === slot)?.lag ?? null);
+  if (lags.some((lag) => lag === null)) return null;
+  return Math.max(...lags.map(Number));
 }
 
 export default WebhookEndpoint(async (req, res) => {
@@ -57,11 +67,15 @@ export default WebhookEndpoint(async (req, res) => {
     closed = true;
   });
 
+  const {
+    rows: [{ lsn: startLsn }],
+  } = await pgDbWrite.query<{ lsn: string }>(`SELECT pg_current_wal_lsn()::text AS lsn`);
+
   const { rows: collections } = await pgDbWrite.query<{ id: number }>(
     `SELECT col.id
      FROM "Challenge" c
      JOIN "Collection" col ON col.id = c."collectionId"
-     WHERE (col.metadata->>'autoTagId')::int = $1 AND col.id >= $2
+     WHERE c.source = 'System' AND (col.metadata->>'autoTagId')::int = $1 AND col.id >= $2
      ORDER BY col.id`,
     [tagId, params.collectionId]
   );
@@ -72,7 +86,7 @@ export default WebhookEndpoint(async (req, res) => {
   let untaggedFound = 0;
   let written = 0;
   let wroteLastBatch = false;
-  let baselineLag: number | undefined;
+  let baselineLag = params.baselineMb === undefined ? undefined : params.baselineMb * MB;
   let lagBytes: number | null = null;
   let stopReason: StopReason | undefined;
   let error: string | undefined;
@@ -94,7 +108,7 @@ export default WebhookEndpoint(async (req, res) => {
       if (wroteLastBatch && params.pauseMs) await sleep(params.pauseMs);
       wroteLastBatch = false;
 
-      lagBytes = await getSlotRetainedWalBytes(params.slot);
+      lagBytes = await getMaxRetainedWalBytes(params.slots);
       if (lagBytes === null) {
         stopReason = 'slot-not-found';
         break outer;
@@ -124,9 +138,10 @@ export default WebhookEndpoint(async (req, res) => {
 
       const untagged = rows.filter((row) => !row.tagged);
       if (!params.dryRun && untagged.length) {
+        const imageIds = untagged.map(({ imageId }) => imageId);
         try {
           await insertTagsOnImageNew(
-            untagged.map(({ imageId }) => ({
+            imageIds.map((imageId) => ({
               imageId,
               tagId,
               source: 'User' as const,
@@ -137,6 +152,12 @@ export default WebhookEndpoint(async (req, res) => {
         } catch (e) {
           stopReason = 'error';
           error = (e as Error).message;
+          // Some chunks may have committed; a rerun skips those as tagged and would never
+          // queue them, so they have to reach the index now.
+          await queueImageSearchIndexUpdate({
+            ids: imageIds,
+            action: SearchIndexUpdateQueueAction.Update,
+          }).catch(() => undefined);
           break outer;
         }
         written += untagged.length;
@@ -153,20 +174,28 @@ export default WebhookEndpoint(async (req, res) => {
     }
   }
 
+  const {
+    rows: [{ bytes: walBytes }],
+  } = await pgDbWrite.query<{ bytes: string }>(
+    `SELECT pg_wal_lsn_diff(pg_current_wal_lsn(), $1::pg_lsn)::bigint AS bytes`,
+    [startLsn]
+  );
+
+  const toMb = (bytes: number | null | undefined) =>
+    bytes === null || bytes === undefined ? null : Math.round(bytes / MB);
+
   return res.status(200).json({
     dryRun: params.dryRun,
     done: !stopReason,
     stopReason,
     error,
     next,
+    baselineMb: toMb(baselineLag),
     batches,
     scanned,
     untaggedFound,
     written,
-    lagMb: lagBytes === null ? null : Math.round(lagBytes / MB),
-    lagGrowthMb:
-      lagBytes === null || baselineLag === undefined
-        ? null
-        : Math.round((lagBytes - baselineLag) / MB),
+    lagMb: toMb(lagBytes),
+    walMb: toMb(Number(walBytes)),
   });
 });
