@@ -111,6 +111,58 @@ describe('triageFeedback', () => {
   });
 
   /**
+   * 🔴 AN ABSENT NOTE LEAVES THE COLUMN STANDING; A BLANK ONE CLEARS IT. The panel's note box was
+   * removed and the status buttons now post no `note` field at all, while `Feedback.triageNote`
+   * still holds every note written before that — so a `SET "triageNote" = NULL` on a status click
+   * destroys one, on the first click, with the save reporting success. Nothing in this app can put
+   * it back: no second copy is stored, and `ModActivity` has no column for it.
+   *
+   * Asserted against a ROW rather than against the call, because the defect is what the UPDATE
+   * WRITES. A mocked builder can only be asked what it was told, and `undefined` handed to a `.set()`
+   * is exactly the value whose meaning a builder decides.
+   *
+   * Both halves in one case so neither can pass alone: the status HAS to move — a guard that
+   * preserved the note by writing nothing at all would be a different and worse defect.
+   *
+   * ⚠️ THIS IS AN INVARIANT GUARD, NOT REGRESSION COVERAGE, AND THE DIFFERENCE IS WORTH THE LINE.
+   * Measured against the pre-change service: it passes there too, because Kysely already drops
+   * `undefined` values from a `.set()` — what the old signature did was make `undefined`
+   * unexpressible, so the ACTION collapsed an absent field to `null` before the service ever saw it.
+   * The red→green half of this pair therefore lives in
+   * `routes/feedback/__tests__/feedback-actions.test.ts`. What this case pins is the behaviour that
+   * action now DEPENDS on — a Kysely upgrade that started emitting `SET "triageNote" = NULL` for an
+   * undefined value would break the guarantee with nothing else to notice.
+   */
+  it('leaves an existing triageNote untouched when no note is given, and clears it when one is blank', async () => {
+    const id = await seedFeedback(db, { userId: reporter, triageNote: 'dupe of #1187' });
+
+    const absent = await service.triageFeedback({
+      id,
+      status: 'reviewed',
+      expectedStatus: 'new',
+      moderatorId: moderator,
+    });
+
+    expect(absent).toEqual({ ok: true, changed: true });
+    const afterAbsent = await readFeedback(db, id);
+    expect(afterAbsent.status).toBe('reviewed');
+    expect(afterAbsent.triageNote).toBe('dupe of #1187');
+    expect(afterAbsent.handledById).toBe(moderator);
+
+    // The control. `null` is a caller saying "clear it", and it must still mean that — otherwise
+    // this test passes over a service that has simply stopped writing the column at all.
+    await service.triageFeedback({
+      id,
+      status: 'actioned',
+      expectedStatus: 'reviewed',
+      note: null,
+      moderatorId: moderator,
+    });
+
+    expect((await readFeedback(db, id)).triageNote).toBeNull();
+  });
+
+  /**
    * 🔴 Moving a row back to `new` CLEARS the handler. Stamping it would leave "handled by
    * <moderator>" on a row sitting in the unhandled queue — a claim the screen cannot support.
    */

@@ -1,89 +1,76 @@
 import { describe, expect, it } from 'vitest';
-import { FEEDBACK_FORM_NAMES, feedbackRefusal } from '$lib/feedback-refusal';
-import { FEEDBACK_FORM_TAB, FEEDBACK_TABS, type FeedbackTab } from '$lib/feedback-tabs';
+import {
+  FEEDBACK_FORM_NAMES,
+  feedbackRefusal,
+  type FeedbackFormName,
+} from '$lib/feedback-refusal';
 
 const TRIAGE_MSG = 'Someone else set this to resolved while you had it open.';
 const PROMOTE_MSG = 'Issue #4102 does not exist.';
 
-/** Distinct from every tab id and from both messages, so nothing can match it by coincidence. */
 const none = { triage: null, promote: null };
 
 describe('the form ledger', () => {
   /**
-   * 🔴 A RELATIONSHIP, NOT A COUNT. `feedbackRefusal` walks `FEEDBACK_FORM_NAMES`, and anything
-   * absent from that tuple is a form whose refusal the banner can never show — a silent failure of
-   * exactly the kind the banner exists to prevent. Fails when the mapping GROWS (a third form added
-   * to `FEEDBACK_FORM_TAB` and not here) and when it SHRINKS (a name left here after its form is
-   * gone, which would read a permanently-undefined error).
+   * 🔴 A RELATIONSHIP, NOT A COUNT. `feedbackRefusal` walks `FEEDBACK_FORM_NAMES`, and a form absent
+   * from that tuple is a form whose refusal the banner can never show — a silent failure of exactly
+   * the kind the banner exists to prevent. Fails when the set GROWS and when it SHRINKS.
+   *
+   * ⚠️ IT USED TO BE PINNED AGAINST `FEEDBACK_FORM_TAB`, the mapping that told the banner which TAB
+   * to name. There are no tabs, so that mapping is gone and the names are declared here. The
+   * relationship that replaces it is the panel's own: `FeedbackDetail` constructs one `FormState`
+   * per name below and nothing else.
    */
-  it('covers every form in FEEDBACK_FORM_TAB, and nothing else', () => {
-    expect([...FEEDBACK_FORM_NAMES].sort()).toEqual(Object.keys(FEEDBACK_FORM_TAB).sort());
+  it('is exactly the two forms the panel renders', () => {
+    expect([...FEEDBACK_FORM_NAMES]).toEqual(['triage', 'promote']);
   });
 });
 
 describe('feedbackRefusal', () => {
   it('says nothing when neither form was refused', () => {
-    for (const tab of FEEDBACK_TABS) expect(feedbackRefusal(none, tab.id)).toBeNull();
+    for (const last of [...FEEDBACK_FORM_NAMES, null] as Array<FeedbackFormName | null>)
+      expect(feedbackRefusal(none, last)).toBeNull();
   });
-
-  it('shows a lone refusal bare on its own tab', () => {
-    expect(feedbackRefusal({ triage: TRIAGE_MSG, promote: null }, 'triage')).toBe(TRIAGE_MSG);
-    expect(feedbackRefusal({ triage: null, promote: PROMOTE_MSG }, 'issue')).toBe(PROMOTE_MSG);
-  });
-
-  /** Off the owning tab the message has to say where to go, or it is an instruction with no address. */
-  it.each([['message'], ['context'], ['issue']] as Array<[FeedbackTab]>)(
-    'names the Triage tab when read from %s',
-    (tab) => {
-      expect(feedbackRefusal({ triage: TRIAGE_MSG, promote: null }, tab)).toBe(
-        `${TRIAGE_MSG} (on the Triage tab)`
-      );
-    }
-  );
-
-  it.each([['message'], ['context'], ['triage']] as Array<[FeedbackTab]>)(
-    'names the Issue tab when read from %s',
-    (tab) => {
-      expect(feedbackRefusal({ triage: null, promote: PROMOTE_MSG }, tab)).toBe(
-        `${PROMOTE_MSG} (on the Issue tab)`
-      );
-    }
-  );
 
   /**
-   * 🔴 THE REGRESSION. The rule this replaced was "triage wins when both are set", justified by a
-   * claim that both could not be. Refuse a triage save, move to the Issue tab, refuse a promote:
-   * both are set, and the fixed preference showed the OLDER triage message while the refusal the
-   * operator had just caused never appeared. The operator's next move is on the tab they are on, so
-   * that is the form whose answer the banner owes them.
-   *
-   * Both arms are asserted, and they are asserted to differ: a rule that ignored `activeTab`
-   * entirely would satisfy one arm and fail the other whichever constant it preferred.
+   * A lone refusal is shown bare, wherever the operator's attention is. Both sections are on screen
+   * and the banner sits directly above them, so there is no tab to name and nowhere to send anyone.
    */
-  it('prefers the refusal belonging to the tab the operator is on', () => {
+  it('shows a lone refusal whatever submitted last', () => {
+    for (const last of [...FEEDBACK_FORM_NAMES, null] as Array<FeedbackFormName | null>) {
+      expect(feedbackRefusal({ triage: TRIAGE_MSG, promote: null }, last)).toBe(TRIAGE_MSG);
+      expect(feedbackRefusal({ triage: null, promote: PROMOTE_MSG }, last)).toBe(PROMOTE_MSG);
+    }
+  });
+
+  /**
+   * 🔴 THE REGRESSION. The rule this replaced was "triage wins when both are set": refuse a triage
+   * save, then submit the promote form and have that refused too, and the banner showed the OLDER
+   * triage message while the refusal the operator had just caused never appeared. The form they
+   * submitted last is the one whose answer they are waiting for.
+   *
+   * Both arms are asserted, and asserted to DIFFER: a rule that ignored `lastSubmitted` entirely
+   * would satisfy one arm and fail the other whichever constant it preferred.
+   */
+  it('prefers the refusal belonging to the form that submitted most recently', () => {
     const both = { triage: TRIAGE_MSG, promote: PROMOTE_MSG };
-    expect(feedbackRefusal(both, 'issue')).toBe(PROMOTE_MSG);
+    expect(feedbackRefusal(both, 'promote')).toBe(PROMOTE_MSG);
     expect(feedbackRefusal(both, 'triage')).toBe(TRIAGE_MSG);
   });
 
   /**
-   * With both live and the operator on a tab that owns neither, there is no "the one you just
-   * caused" to prefer — the tuple order decides, and the banner still names where to go.
+   * The fallback, reached whenever no live refusal belongs to the form that last submitted — a
+   * standing promote refusal still on screen after a triage save that SUCCEEDED, or a panel whose
+   * refusal arrived before anything was submitted in this instance.
    */
-  it.each([['message'], ['context']] as Array<[FeedbackTab]>)(
-    'falls back to the declared order on %s, which owns neither form',
-    (tab) => {
-      expect(feedbackRefusal({ triage: TRIAGE_MSG, promote: PROMOTE_MSG }, tab)).toBe(
-        `${TRIAGE_MSG} (on the Triage tab)`
-      );
-    }
-  );
+  it('falls back to the declared order when the last submitter has nothing to say', () => {
+    expect(feedbackRefusal({ triage: TRIAGE_MSG, promote: PROMOTE_MSG }, null)).toBe(TRIAGE_MSG);
+    expect(feedbackRefusal({ triage: null, promote: PROMOTE_MSG }, 'triage')).toBe(PROMOTE_MSG);
+  });
 
   /** An empty string is not a refusal — a blank banner is worse than none, and reads as a bug. */
   it('treats an empty message as no refusal', () => {
     expect(feedbackRefusal({ triage: '', promote: null }, 'triage')).toBeNull();
-    expect(feedbackRefusal({ triage: '', promote: PROMOTE_MSG }, 'triage')).toBe(
-      `${PROMOTE_MSG} (on the Issue tab)`
-    );
+    expect(feedbackRefusal({ triage: '', promote: PROMOTE_MSG }, 'triage')).toBe(PROMOTE_MSG);
   });
 });

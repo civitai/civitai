@@ -439,6 +439,38 @@ describe('triage action', () => {
   });
 
   /**
+   * 🔴 AN ABSENT `note` IS NOT AN EMPTY ONE, AND COLLAPSING THEM DESTROYS DATA. The panel has no
+   * note box any more — the status buttons post `id`, `expectedStatus` and `status` alone — while
+   * `Feedback.triageNote` still holds every note written before the box was removed. Read as `''`
+   * and stored as `null`, the FIRST status click on any such report wipes it, with a green screen
+   * over it and nothing in this app able to put it back.
+   *
+   * `undefined` is what `triageFeedback` reads as "leave the column out of the SET"; the test above
+   * is its control, proving a PRESENT blank box still means "clear it". The two cases have to differ
+   * or this one passes over an action that simply renamed `null` to `undefined`.
+   */
+  it('leaves the stored note alone when the form posts no note field at all', async () => {
+    const data = new FormData();
+    data.append('id', '5');
+    data.append('status', 'reviewed');
+    data.append('expectedStatus', 'new');
+
+    const result = await actions.triage({
+      request: { formData: async () => data },
+      locals: { user: MOD, grants: ALL_GRANTS },
+    } as never);
+
+    expect(result).toMatchObject({ success: true, triaged: 5 });
+    expect(triageFeedback).toHaveBeenCalledWith({
+      id: 5,
+      status: 'reviewed',
+      expectedStatus: 'new',
+      note: undefined,
+      moderatorId: 7,
+    });
+  });
+
+  /**
    * Moving a row back to `new` must clear the handler — "handled by" naming a moderator on a row
    * sitting in the unhandled queue is a claim the screen cannot support. The action's job is to
    * pass `status: 'new'` through faithfully; the service is what clears the two columns, and

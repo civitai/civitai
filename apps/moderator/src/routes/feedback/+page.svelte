@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import {
     Table,
@@ -16,7 +17,8 @@
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { LINK_CLASS, dateTime, shortAge } from '$lib/format';
   import { issuesUrl, userLookupUrl } from '$lib/entity-url';
-  import { feedbackOpenHref } from '$lib/feedback-tabs';
+  import { feedbackOpenHref, feedbackReportHref } from '$lib/feedback-open';
+  import { FEEDBACK_ROW_INTERACTIVE, feedbackRowExpands } from '$lib/feedback-row-click';
   import { feedbackNextPageHref } from '$lib/feedback-sort';
   import {
     feedbackAttachmentCount,
@@ -150,12 +152,44 @@
   );
 
   /**
-   * 🔴 `feedbackOpenHref`, NOT a bare `urlWith({ open })` — it also DELETES `?tab=`, and that
-   * deletion is the whole reason the helper exists (its docstring carries the repro). Opening a row
-   * is the one navigation that changes WHICH report is on screen, so it is the one that must not
-   * inherit the tab chosen for the previous one.
+   * 🔴 ONE SPELLING OF `?open=`, and `feedbackOpenHref` is it. The queue's filters, sort and cursor
+   * all ride the same query string, so a hand-rolled `new URL(...)` here is how one of them gets
+   * dropped on a click whose only job is to expand a row.
    */
   const rowHref = (id: number) => feedbackOpenHref(page.url, data.open === id ? null : id);
+
+  /**
+   * 🔴 PROGRESSIVE ENHANCEMENT OVER THE `Open`/`Close` ANCHOR, NEVER A REPLACEMENT FOR IT. That
+   * anchor is the no-JS surface AND the keyboard affordance: it is the one thing that makes the
+   * panel and its forms reachable for a client that never ran a handler, and it is already in the
+   * tab order. Nothing here adds a `tabindex` to the `<tr>` — a second tab stop per row that opened
+   * the same panel would make keyboard traversal of a 50-row queue twice as long for no new
+   * capability.
+   *
+   * The decision itself is `feedbackRowExpands`, a pure function, because this app has no Svelte
+   * test tier and a guard written inline here is a guard nothing can assert. What stays here is the
+   * single DOM read it cannot do: which control, if any, the click landed on.
+   */
+  function rowClick(event: MouseEvent, id: number) {
+    const target = event.target;
+    if (
+      !feedbackRowExpands({
+        button: event.button,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+        shiftKey: event.shiftKey,
+        altKey: event.altKey,
+        defaultPrevented: event.defaultPrevented,
+        interactive: target instanceof Element && !!target.closest(FEEDBACK_ROW_INTERACTIVE),
+        selection: window.getSelection()?.toString() ?? '',
+      })
+    )
+      return;
+
+    // The same navigation the anchor performs, so the two cannot diverge in history or scroll
+    // behaviour — `rowHref` is what both read.
+    goto(rowHref(id));
+  }
 
   /**
    * 🔴 THE NO-JS SURFACE, and only that. Deleting it as dead code is the mistake to avoid.
@@ -168,8 +202,7 @@
    * re-runs `load` ONLY on success (`@sveltejs/kit@2.66.0`, `runtime/app/forms.js:99-107` — both
    * the reset and `invalidateAll()` sit inside `if (result.type === 'success')`), so a refusal
    * leaves `data` untouched, the row open, `openVisible` true, and the panel mounted to render its
-   * own message — which since the tab strip landed is a single banner ABOVE that strip, in
-   * `FeedbackDetail.svelte`, rather than one inside each form's own section. The two surfaces still
+   * own message — one banner above every section, in `FeedbackDetail.svelte`. The two surfaces
    * cover disjoint paths; neither is redundant.
    *
    * The other half of "unreachable", which that paragraph left implicit: a LATER navigation could
@@ -177,9 +210,6 @@
    * nulls `form` on navigation and leaves it alone only on invalidation (`client.js:1380-1381`,
    * `form: invalidating ? undefined : null`) — and invalidation here happens only after a SUCCESS,
    * whose `form` carries no `error` key for the guard above to find.
-   *
-   * 🔴 The tab triggers are LINKS for this same reason (`FeedbackTabs.svelte`): a no-JS client must
-   * still be able to reach `?tab=triage`, or the form this message is about would be unreachable.
    */
   const pageError = $derived(
     refusalTarget === 'page' && form && 'error' in form && form.error ? String(form.error) : null
@@ -274,8 +304,13 @@
          region — a design change, not a move. The bar-gone gap is narrowed, not closed. -->
     <ErrorAlert message={orphanedBulkFailure} class="mb-4" />
   {:else if refusalTarget === 'none' && data.open !== null && !data.openVisible}
+    <!-- 🔴 THE LINK IS THE ANSWER, "clear the filters" IS THE WORKAROUND. `?open=` resolves against
+         the rows this view holds, so it can name a report the queue genuinely cannot show;
+         `/feedback/<id>` resolves whatever the filters say. Offer the thing that works first. -->
     <p class="mb-4 text-sm text-dark-2">
-      Report #{data.open} is not in this view — clear the filters to open it.
+      Report #{data.open} is not in this view —
+      <a href={feedbackReportHref(data.open)} class={LINK_CLASS}>open it on its own page</a>, or
+      clear the filters.
     </p>
   {/if}
 
@@ -324,7 +359,7 @@
           {@const context = splitContext(row.context)}
           {@const attachments = feedbackAttachmentCount(context)}
           {@const open = data.open === row.id}
-          <TableRow>
+          <TableRow class="cursor-pointer" onclick={(event) => rowClick(event, row.id)}>
             {#if canSetStatus}
               <TableCell>
                 {#if isFeedbackStatus(row.status)}
