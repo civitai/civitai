@@ -17,14 +17,16 @@ async function markBountyNsfw({
   await dbWrite.$executeRaw`
     UPDATE "Bounty" b
     SET nsfw = TRUE,
-        "lockedProperties" = array_append(b."lockedProperties", 'nsfw'),
+        "lockedProperties" = ARRAY(
+          SELECT DISTINCT unnest(COALESCE(b."lockedProperties", ARRAY[]::text[]) || ARRAY['nsfw']::text[])
+        ),
         details = (CASE WHEN jsonb_typeof(b.details) = 'object' THEN b.details ELSE '{}'::jsonb END) || jsonb_build_object(
           'textScanNsfw',
           jsonb_build_object('workflowId', ${workflowId}::text, 'level', ${level}::int, 'at', now())
         )
     WHERE b.id = ${entityId}
       AND b.nsfw = FALSE
-      AND NOT ('nsfw' = ANY(b."lockedProperties"))
+      AND NOT ('nsfw' = ANY(COALESCE(b."lockedProperties", ARRAY[]::text[])))
       AND b."moderatorNsfwLevel" IS NULL
   `;
 }

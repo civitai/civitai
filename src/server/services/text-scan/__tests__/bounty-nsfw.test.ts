@@ -34,9 +34,11 @@ describe('applyBountyNsfwTextScan', () => {
   it('marks and locks nsfw on a bounty whose text scans R or above, then applies the floor', async () => {
     await applyBountyNsfwTextScan(args(NsfwLevel.R));
     const sql = flipSql();
-    expect(sql).toContain(`"lockedProperties" = array_append(b."lockedProperties", 'nsfw')`);
+    expect(sql.replace(/\s+/g, ' ')).toContain(
+      `"lockedProperties" = ARRAY( SELECT DISTINCT unnest(COALESCE(b."lockedProperties", ARRAY[]::text[]) || ARRAY['nsfw']::text[]) )`
+    );
     expect(sql).toContain('b.nsfw = FALSE');
-    expect(sql).toContain(`NOT ('nsfw' = ANY(b."lockedProperties"))`);
+    expect(sql).toContain(`NOT ('nsfw' = ANY(COALESCE(b."lockedProperties", ARRAY[]::text[])))`);
     expect(sql).toContain(`b."moderatorNsfwLevel" IS NULL`);
     expect(sql).toContain(`'textScanNsfw'`);
     // details can hold JSON null, and `null || object` is null.
@@ -51,7 +53,7 @@ describe('applyBountyNsfwTextScan', () => {
   // against can still hold every NSFW bit, so the verdict reads as "not raised".
   it('marks and locks nsfw on an R+ verdict that did not count as a raise', async () => {
     await applyBountyNsfwTextScan(args(NsfwLevel.X, false));
-    expect(flipSql()).toContain(`array_append(b."lockedProperties", 'nsfw')`);
+    expect(flipSql()).toContain(`ARRAY['nsfw']::text[]`);
   });
 
   it('leaves nsfw alone below R, but still applies the floor', async () => {
