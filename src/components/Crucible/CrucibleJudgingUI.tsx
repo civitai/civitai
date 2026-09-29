@@ -20,8 +20,7 @@ export type JudgingEntry = NonNullable<JudgingPairData>['left'];
 
 export type WatchedMs = { winnerWatchedMs: number; loserWatchedMs: number };
 
-// A held key auto-repeats, which cast a vote on every pair that loaded under it — and a long enough
-// run of those earns streak influence.
+// A held key would otherwise vote on every pair that loads while it is down.
 const ignoreKeyRepeat = (action: () => void) => (event: KeyboardEvent) => {
   if (!event.repeat) action();
 };

@@ -331,7 +331,6 @@ describe('createCrucible — prize customization fee', () => {
   });
 
   it('charges the fee for a custom split whatever the client claims about it', async () => {
-    // The client used to send `prizeCustomized`, so a custom split sent with it false was free.
     await createCrucible(input({ prizeCustomized: false }));
 
     expect(chargedAmounts()).toEqual([CRUCIBLE_PRIZE_CUSTOMIZATION_COST]);

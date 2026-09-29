@@ -113,8 +113,7 @@ export const createCrucible = async ({
   if (!isModerator) await assertCanCreateCrucible(userId);
 
   await throwOnBlockedUserContent([name, description], { isModerator, surface: 'crucible' });
-  // Crucible names and descriptions show in the shared feed; on an SFW-only crucible they should
-  // read as SFW too.
+  // throwOnBlockedUserContent doesn't catch profanity, so SFW-only crucibles check it here.
   const isSfwOnly = (nsfwLevel & ~sfwBrowsingLevelsFlag) === 0;
   if (!isModerator && isSfwOnly && getProfanityFilter().isProfane(`${name} ${description}`)) {
     throw throwBadRequestError(
@@ -475,8 +474,8 @@ const getAllowedResources = (crucible: EntryEligibilityCrucible) =>
   Array.isArray(crucible.allowedResources) ? (crucible.allowedResources as number[]) : [];
 
 /**
- * The one statement of the entry rules that need the image's history rather than its own fields,
- * shared by submission and by the submit modal's per-image check so the two cannot disagree.
+ * Shared by `submitEntry` and `checkCrucibleEntryEligibility` so the submit modal cannot disagree
+ * with submission — add server-checked entry rules here, not inline.
  */
 const getEntryIneligibleReasons = async (
   crucible: EntryEligibilityCrucible,

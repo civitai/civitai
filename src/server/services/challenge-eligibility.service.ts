@@ -161,8 +161,7 @@ export async function getUserChallengeCreateEligibility(
   return buildCreateEligibility({ standing, recentCount, activeCount, tier: subscription?.tier });
 }
 
-/** The create requirements over already-fetched counts, shared with crucibles, which apply the
- * same limits counted against their own table. */
+/** Crucibles reuse this, so the CHALLENGE_* limits it applies gate crucible creation too. */
 export function buildCreateEligibility({
   standing,
   recentCount,

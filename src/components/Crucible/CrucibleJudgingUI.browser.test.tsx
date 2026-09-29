@@ -194,7 +194,6 @@ describe('CrucibleJudgingUI — hotkeys', () => {
     renderWithProviders(<CrucibleJudgingUI pair={pairOf(1, 2)} onVote={onVote} onSkip={vi.fn()} />);
     await expectBothCardsRendered();
 
-    // What holding "2" sends: one press, then a stream of repeats.
     press('2', 'Digit2', false);
     for (let i = 0; i < 5; i++) press('2', 'Digit2', true);
 

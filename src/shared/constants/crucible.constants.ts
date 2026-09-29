@@ -5,10 +5,7 @@ import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
  * These constants define limits and configuration for the Crucible feature
  */
 
-/**
- * Every crucible charges an entry fee: entry fees are what fund the prize pool, so a free crucible
- * has nothing to pay out unless the creator seeds it.
- */
+/** The minimum is nonzero because entry fees are what fund the prize pool. */
 export const CRUCIBLE_MIN_ENTRY_FEE = 10;
 export const CRUCIBLE_MAX_ENTRY_FEE = 1_000;
 
@@ -18,11 +15,7 @@ export const CRUCIBLE_MAX_ENTRY_FEE = 1_000;
  */
 export const CRUCIBLE_MAX_ENTRIES = 10_000;
 
-/**
- * Bounds on the optional cap across all users. Judging needs a pair, so a cap of one could never be
- * judged; the ceiling keeps the value inside the int4 column, which a larger one overflowed at
- * insert time with a generic error.
- */
+/** Judging needs a pair, so the cap is at least 2; `maxTotalEntries` is int4, so the ceiling must stay under 2^31. */
 export const CRUCIBLE_MIN_TOTAL_ENTRIES = 2;
 export const CRUCIBLE_MAX_TOTAL_ENTRIES = 100_000;
 
@@ -55,11 +48,7 @@ export const CRUCIBLE_DEFAULT_PRIZE_POSITIONS: Readonly<Record<string, number>> 
 
 export const CRUCIBLE_MAX_PRIZE_POSITIONS = 100;
 
-/**
- * Whether a distribution differs from the default, which is what the customization fee is charged
- * for. Derived from the positions rather than taken from the client, so the fee cannot be skipped by
- * sending a custom split with the flag off.
- */
+/** Decides the customization fee — compute it from the positions, never from a client-sent flag. */
 export const isCustomPrizeDistribution = (prizePositions: Record<string, number>) => {
   const keys = Object.keys(prizePositions);
   const defaultKeys = Object.keys(CRUCIBLE_DEFAULT_PRIZE_POSITIONS);

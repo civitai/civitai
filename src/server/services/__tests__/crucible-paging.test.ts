@@ -6,7 +6,6 @@ import { dbMock } from '~/__tests__/mocks';
 // and reset per test file — see docs/testing/shared-module-mocks.md.
 const { getInfiniteCruciblesHandler } = await import('~/server/controllers/crucible.controller');
 
-// Signed out, so no block list is looked up.
 const anonymous = {} as never;
 
 /**

@@ -121,7 +121,7 @@ function ImageCard({
   validationCriteria,
   onClick,
   isAlreadySubmitted,
-  isScanning,
+  isChecking,
 }: {
   image: {
     id: number;
@@ -136,7 +136,7 @@ function ImageCard({
   validationCriteria: ValidationCriterion[];
   onClick: () => void;
   isAlreadySubmitted: boolean;
-  isScanning: boolean;
+  isChecking: boolean;
 }) {
   const disabled = !isValid || isAlreadySubmitted;
 
@@ -146,12 +146,12 @@ function ImageCard({
         'group relative aspect-square cursor-pointer overflow-visible rounded-lg border-2 transition-all',
         isSelected
           ? 'border-green-500 shadow-[0_0_10px_rgba(81,207,102,0.4)]'
-          : isScanning
+          : isChecking
           ? 'border-yellow-500/50'
           : isValid
           ? 'border-[#373a40] hover:border-[#535458]'
           : 'border-red-500/50',
-        disabled && (isScanning ? 'cursor-wait' : 'cursor-not-allowed opacity-60')
+        disabled && (isChecking ? 'cursor-wait' : 'cursor-not-allowed opacity-60')
       )}
       onClick={disabled ? undefined : onClick}
     >
@@ -182,14 +182,14 @@ function ImageCard({
               'absolute right-1.5 top-1.5 z-10 flex size-6 cursor-pointer items-center justify-center rounded-full text-white shadow-md transition-transform hover:scale-110',
               isAlreadySubmitted
                 ? 'bg-gray-500'
-                : isScanning
+                : isChecking
                 ? 'bg-yellow-500'
                 : isValid
                 ? 'bg-green-500'
                 : 'bg-red-500'
             )}
           >
-            {isScanning ? (
+            {isChecking ? (
               <Loader size={12} color="white" />
             ) : isAlreadySubmitted ? (
               <IconCheck size={14} />
@@ -211,14 +211,14 @@ function ImageCard({
               'mb-2 flex items-center gap-1.5 text-xs font-semibold',
               isAlreadySubmitted
                 ? 'text-gray-400'
-                : isScanning
+                : isChecking
                 ? 'text-yellow-400'
                 : isValid
                 ? 'text-green-400'
                 : 'text-red-400'
             )}
           >
-            {isScanning ? (
+            {isChecking ? (
               <>
                 <IconAlertCircle size={14} />
                 Checking…
@@ -486,8 +486,7 @@ export default function CrucibleSubmitEntryModal({
     return imagesData?.pages.flatMap((page) => page.items) ?? [];
   }, [imagesData]);
 
-  // Recency and required models depend on the image's history, which the library listing does not
-  // carry, so the server answers them with the same rule submission enforces.
+  // Answered with submission's own rule — don't re-derive recency from the listing's `createdAt`.
   const imageIds = useMemo(() => images.map((image) => image.id), [images]);
   const { data: eligibility } = trpc.crucible.checkEntryEligibility.useQuery(
     { crucibleId, imageIds },
@@ -509,7 +508,7 @@ export default function CrucibleSubmitEntryModal({
       return {
         isValid: false,
         isAlreadySubmitted: false,
-        isScanning: true,
+        isChecking: true,
         criteria: [
           {
             label: 'Content scan',
@@ -600,8 +599,7 @@ export default function CrucibleSubmitEntryModal({
         isRecentEnough &&
         (!requiresResources || usesRequiredModel),
       isAlreadySubmitted,
-      // Still waiting on the server's half of the check, for an entry that passes the rest.
-      isScanning:
+      isChecking:
         eligibilityPending &&
         !isAlreadySubmitted &&
         isCompatibleNsfw &&
@@ -666,7 +664,7 @@ export default function CrucibleSubmitEntryModal({
     const settled = images.filter(
       (image) =>
         awaitingScan.includes(image.id) &&
-        !validateImage(image).isScanning &&
+        !validateImage(image).isChecking &&
         ineligibleReasonsById.has(image.id)
     );
     if (!settled.length) return;
@@ -679,7 +677,7 @@ export default function CrucibleSubmitEntryModal({
       }
       return next;
     });
-    // validateImage is recreated each render; images/awaitingScan are what change the outcome.
+    // validateImage is recreated each render; the deps below are what change its outcome.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [images, awaitingScan, remainingEntries, ineligibleReasonsById]);
 
@@ -905,7 +903,7 @@ export default function CrucibleSubmitEntryModal({
                 <>
                   <div className="grid grid-cols-4 gap-3 sm:grid-cols-5">
                     {images.map((image) => {
-                      const { isValid, isAlreadySubmitted, isScanning, criteria } =
+                      const { isValid, isAlreadySubmitted, isChecking, criteria } =
                         validateImage(image);
                       const isSelected = selectedImages.includes(image.id);
 
@@ -925,7 +923,7 @@ export default function CrucibleSubmitEntryModal({
                           validationCriteria={criteria}
                           onClick={() => toggleImage(image.id)}
                           isAlreadySubmitted={isAlreadySubmitted}
-                          isScanning={isScanning}
+                          isChecking={isChecking}
                         />
                       );
                     })}

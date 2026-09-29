@@ -133,7 +133,6 @@ const formSchema = z.object({
     .min(CRUCIBLE_MIN_ENTRY_FEE, `Entry fee must be ${entryFeeRangeLabel}`)
     .max(CRUCIBLE_MAX_ENTRY_FEE, `Entry fee must be ${entryFeeRangeLabel}`),
   entryLimit: z.number().int().min(1).max(10),
-  // 0 is accepted as "no limit", which is what people type when they mean it.
   maxTotalEntries: z
     .number()
     .int()
@@ -209,7 +208,6 @@ export default function CrucibleCreate() {
   const [currentStep, { goToNextStep, goToPrevStep, setStep }] = useStepper(4);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // On a query error no gate renders; the create mutation still enforces the same limits.
   const { data: createEligibility } = trpc.crucible.getCreateEligibility.useQuery(undefined, {
     enabled: !!currentUser && !currentUser.isModerator,
   });

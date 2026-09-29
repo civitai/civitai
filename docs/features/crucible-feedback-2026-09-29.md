@@ -18,7 +18,7 @@ Decisions:
 
 Second walkthrough (confirmed; nothing is cut):
 - Confirmed: the creation limits, the D16 edit rules, and splitting unfilled places among the winners (B29).
-- **P1 add:** B29, B30, B31, B19, D18–D28, D31.
+- **P1 add:** B32, B29, B30, B31, B19, D18–D28, D31.
 - **Later:** D29, D30.
 
 ## Bugs
@@ -88,3 +88,4 @@ Second walkthrough:
 
 - [x] **B28. The prize-customization fee is now derived from the split** rather than trusted from the client.
 - [ ] **B29. Unfilled prize places pay nobody** when a crucible has fewer entries than paid places. Decided: split the leftover among the winners, pro rata to their shares.
+- [ ] **B32. The crucible jobs never run: their Flipt flag `crucible-jobs-enabled` does not exist.** `finalize-crucibles` (which also activates scheduled crucibles) and `sync-crucible-scores` both return early on `isFlipt(CRUCIBLE_JOBS_ENABLED)`; a missing key evaluates false, and `FLIPT_LOCAL_OVERRIDES` is ignored in production builds. Launch blocker: prod would never activate, finalize or pay out.
