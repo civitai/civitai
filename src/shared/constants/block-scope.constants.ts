@@ -25,6 +25,13 @@
  */
 
 import { TokenScope } from './token-scope.constants';
+// 🔴 `import type`, NOT a value import, and the distinction is load-bearing for this
+// module. `app-capabilities.constants` itself imports from `~/server/services/blocks/…`,
+// so a VALUE import would pull a server path into a module this file's own header keeps
+// deliberately dependency-free and which client code imports. A type-only import is
+// ERASED at compile time and creates no runtime edge at all, so it buys the compile-time
+// binding described at `PrivateRunAudience` below at zero graph cost.
+import type { AppRole } from './app-capabilities.constants';
 
 /**
  * Sentinel value for scopes that intentionally do not require an OAuth-bitmask
@@ -260,6 +267,157 @@ export function manifestWantsOauthToken(manifest: unknown): boolean {
  * cumulative ceiling is what actually bounds a run-for-real session.
  */
 export const REVIEW_RUN_FOR_REAL_BUZZ_CAP = 5000;
+
+/**
+ * The audiences admitted to a PRIVATE RUN of a delisted / suspended app.
+ *
+ * 🔴 A CLOSED SET, AND THE ORDER OF POWER IS NOT THE ORDER LISTED. `moderator` has
+ * full parity including capped spend; `owner` likewise (self-bound, as the existing
+ * dev-tunnel precedent already is); `editor` — an ACCEPTED `AppCollaborator` seat —
+ * is READ-ONLY by operator decision, delivered by stripping `ai:write:budgeted` in
+ * `clampPrivateRunScopes`. Read that function, not this list, for what each audience
+ * can actually do.
+ *
+ * Client-safe (this module is imported by client code), so the host chrome and the
+ * server mint name the same three values.
+ */
+export const PRIVATE_RUN_AUDIENCES = ['owner', 'editor', 'moderator'] as const;
+
+/**
+ * 🔴 EVERY DECLARATION OF THIS UNION MUST IMPORT THIS TYPE, NEVER SPELL IT INLINE.
+ *
+ * Six sites originally hand-spelled `'owner' | 'editor' | 'moderator'` — the two clamp
+ * and signer signatures, the two claim declarations, and two page props. The failure
+ * that shape produces is in the UNSAFE direction and is invisible: widening
+ * `PRIVATE_RUN_AUDIENCES` immediately widens `isPrivateRunAudience`, so the verifier
+ * starts ADMITTING a fourth value into fields still typed to three. Claims are a JWT
+ * payload with no compile-time binding, so `claims.privateRunAudience === 'editor'` in
+ * the read-only belt still type-checks — and the new audience silently receives
+ * owner/moderator treatment. That is precisely the failure the claim's own docblock
+ * says it is guarding against; the verifier guard closes the FORGED case, and importing
+ * this type is what closes the WIDENED one.
+ *
+ * It IS derived from the tuple above — see the next docblock for why that beat the
+ * alternative. The property the predicate's audience bridge depends on is not the spelling
+ * of this line but `AppRole` being a SUBSET of it, which `_appRoleSubsetWitness` asserts at
+ * compile time; a future third `AppRole` is a COMPILE ERROR there rather than being
+ * silently collapsed into `'editor'` — a collapse that would under-grant (safe) while
+ * mislabelling the audit line and the chrome copy (not safe to leave unnoticed).
+ *
+ * ⚠️ THIS PARAGRAPH USED TO SAY "It is NOT derived from the tuple above directly. It is
+ * `AppRole | 'moderator'`". That declaration was tried and REVERTED in the round-2 fixes,
+ * for the reasons argued below — but the paragraph describing it survived, one line above
+ * the code contradicting it, so a reader met two adjacent docblocks giving opposite
+ * accounts of the same type. Worth naming rather than quietly deleting: the retraction is
+ * the interesting half, and a docblock that describes a reverted design is indistinguishable
+ * from one that is merely out of date.
+ */
+export type PrivateRunAudience = (typeof PRIVATE_RUN_AUDIENCES)[number];
+
+/**
+ * 🔴 `AppRole` MUST REMAIN A SUBSET OF `PrivateRunAudience`, ASSERTED AT COMPILE TIME.
+ *
+ * ⚠️ THE TYPE WAS BRIEFLY DECLARED AS `AppRole | 'moderator'` INSTEAD, AND THAT WAS
+ * UNSOUND IN THE DANGEROUS DIRECTION — review caught it. Decoupling the type from the
+ * tuple bought a compile error when `AppRole` GREW, and paid for it by making
+ * `isPrivateRunAudience`'s `value is PrivateRunAudience` predicate a LIE: it tests
+ * membership of the tuple, so adding a fourth member to the TUPLE alone made the guard
+ * admit a value the type says cannot exist. Nothing type-errored — the narrowing at the
+ * verifier laundered it — and downstream `=== 'editor'` is false for the new value, so
+ * it would have received owner/moderator power with full spend. That is verbatim the
+ * failure the decoupling was introduced to prevent, one direction over.
+ *
+ * So the type is DERIVED from the tuple again (the predicate is sound by construction),
+ * and the `AppRole`-growth property is bought separately by this assignability
+ * assertion, which costs one unused type and no runtime bytes. Both directions are now
+ * compile-time:
+ *   - `AppRole` grows  → this line errors (the new role is not in the tuple).
+ *   - the tuple grows  → `PRIVATE_RUN_AUDIENCE_WITNESS` below errors, and the runtime
+ *     lockstep test compares the two.
+ */
+type _AppRoleIsAPrivateRunAudience = AppRole extends PrivateRunAudience ? true : never;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const _appRoleSubsetWitness: _AppRoleIsAPrivateRunAudience = true;
+
+/**
+ * The BIDIRECTIONAL LOCKSTEP between the type and the tuple.
+ *
+ * ⚠️ THE DOCBLOCK ABOVE CLAIMED "the lockstep test below pins the two against each
+ * other" BEFORE THIS EXISTED. That was a comment asserting a guarantee nothing provided
+ * — the one class of defect this feature's review found most of — so it is made true
+ * here rather than softened. It matters because the two can drift in BOTH directions and
+ * only one of them is loud:
+ *
+ *   - `AppRole` grows (it gains a third role): the tuple no longer covers it, so
+ *     `isPrivateRunAudience` would REJECT a legitimate audience. Caught by
+ *     `_appRoleSubsetWitness` above, not by this literal — since the type is derived from
+ *     the tuple, this literal's keys move with the tuple and cannot see that case.
+ *   - The TUPLE grows without the type: `isPrivateRunAudience` starts ADMITTING a value
+ *     the type says cannot exist, which is the unsafe direction — the verifier lets it
+ *     through and the read-only belt's `=== 'editor'` silently treats it as an owner.
+ *     🔴 CAUGHT TWICE, AND NEITHER HALF IS REDUNDANT — DO NOT DELETE EITHER. (a) AT COMPILE
+ *     TIME BY THIS LITERAL: the type is derived from the tuple, so growing the tuple moves
+ *     the type and `Record<PrivateRunAudience, true>` fails — TS2741 for ONE added member,
+ *     TS2739 only at two or more. The mirror edit (a witness key the tuple lacks) fails
+ *     instead as an excess property, TS2353. Codes measured against this repo's tsc 5.9.2.
+ *     (b) AT RUNTIME BY THE HARDCODED TUPLE LEDGER at
+ *     `src/server/middleware/__tests__/block-scope.private-run-claims.test.ts`, which
+ *     asserts `PRIVATE_RUN_AUDIENCES` equals the three members literally.
+ *
+ *     🔴 (b) IS THE ONLY THING THAT CATCHES A TUPLE **AND** WITNESS WIDENING — that edit is
+ *     typecheck-clean, so (a) is blind to it, and a widened tuple makes
+ *     `isPrivateRunAudience` admit a value the read-only belt's `=== 'editor'` then treats
+ *     as an owner. (b) also fails on a one-line tuple REORDER or a duplicate member, both
+ *     typecheck-clean and both behaviour-preserving, because `toEqual` on an array is
+ *     order-sensitive — so the guarantee is about WIDENING, not about mutations in general.
+ *
+ * 🔴 IT LIVES IN PRODUCTION CODE, NOT IN A TEST, AND THAT PLACEMENT IS THE POINT.
+ * `tsconfig.json` EXCLUDES `src/**` `__tests__` directories, so a compile-time
+ * exhaustiveness witness written in the sibling test file would never be typechecked and
+ * would provide exactly nothing. Here it is checked by `pnpm typecheck` on every run.
+ *
+ * Exported so the test can compare against it rather than hand-copying the members —
+ * a hand-copied expectation is how the first version of the matrix's completeness check
+ * went stale.
+ */
+export const PRIVATE_RUN_AUDIENCE_WITNESS: Record<PrivateRunAudience, true> = {
+  owner: true,
+  editor: true,
+  moderator: true,
+};
+
+/**
+ * Membership test for the `privateRunAudience` token claim.
+ *
+ * 🔴 AN OWN-SET TEST OVER A FROZEN TUPLE, NOT an `in` on an object — the sibling
+ * `isKnownBlockScope` used to use `in`, which walks the prototype chain and let 12
+ * inherited `Object.prototype` keys through as "known". The claim arrives from a
+ * VERIFIED token, but the verifier is what calls this, so it must not be the weak
+ * link in its own guard.
+ */
+export function isPrivateRunAudience(value: unknown): value is PrivateRunAudience {
+  return typeof value === 'string' && (PRIVATE_RUN_AUDIENCES as readonly string[]).includes(value);
+}
+
+/**
+ * PRIVATE RUN — the AGGREGATE Buzz ceiling one viewer's OWN account can spend across
+ * ALL private-run generations of ONE delisted app, over the reservation window
+ * (~25h, re-armed on first write). Enforced as a per-(viewer, appBlockId) cumulative
+ * Redis reservation in `blocks.router.ts` (see `reservePrivateRunBuzzSpend`).
+ *
+ * 🔴 TIGHTER THAN `REVIEW_RUN_FOR_REAL_BUZZ_CAP` (5000), ON PURPOSE. A run-for-real
+ * review session is vetting an app the platform is deciding ABOUT; a private run is
+ * of an app the platform has already TAKEN DOWN. The stricter posture is the correct
+ * default for the second case, and it is cheap to widen later. The two values are
+ * also deliberately DIFFERENT so a test asserting the private-run ceiling cannot
+ * pass by accidentally reading the review one.
+ *
+ * SINGLE SOURCE OF TRUTH, defined in this client-safe module so the server
+ * enforcement, the mint and any future consent copy read the identical value. A low
+ * per-call `buzzBudget` alone is NOT sufficient — a hostile app loops sub-budget
+ * calls — so this cumulative ceiling is what actually bounds a private-run session.
+ */
+export const PRIVATE_RUN_BUZZ_CAP = 2500;
 
 /**
  * PLATFORM per-(USER, UTC-day) cumulative Buzz-spend ceiling across ALL the apps

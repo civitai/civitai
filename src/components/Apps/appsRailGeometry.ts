@@ -3,13 +3,22 @@ import { APPS_RAIL_COOKIE } from '~/shared/utils/cookies';
 /**
  * `/apps/*` LEFT RAIL — the pure geometry + persistence VOCABULARY.
  *
- * 🔴 DEPENDENCY-FREE ON PURPOSE. `appListingGrid.ts` derives the store's four-column
- * threshold from {@link appsRailChromeWidth}, and that module is read by node-tier unit
- * tests and by `AppListingsMarketplaceBody.module.scss`'s seam test. Splitting the
- * constants out of `appsRailState.tsx` keeps React (and, through
- * `~/hooks/useSubnavBottom`, the scroll-area context) off that path entirely. The React
- * half re-exports everything here, so a consumer never has to know which file a name
- * lives in.
+ * 🔴 DEPENDENCY-FREE ON PURPOSE. Splitting these constants out of `appsRailState.tsx`
+ * keeps React (and, through `~/hooks/useSubnavBottom`, the scroll-area context) off the
+ * path of any node-tier importer. The React half re-exports everything here, so a consumer
+ * never has to know which file a name lives in.
+ *
+ * ⚠️ THIS PARAGRAPH USED TO CLAIM `appListingGrid.ts` DERIVES THE STORE'S FOUR-COLUMN
+ * THRESHOLD FROM {@link appsRailChromeWidth}. IT DOES NOT. `appListingGrid.ts` imports
+ * exactly one module — `~/components/Apps/appsPageWidths` (`APPS_CONTAINER_GUTTER`,
+ * `APPS_PAGE_CONTAINER_WIDTH`) — and never reads anything from this file. The rail's cost
+ * IS an input to how that ladder was chosen (see `APPS_RAIL_MIN_VIEWPORT` below), but that
+ * is provenance recorded in prose, not a code dependency. `appsRailChromeWidth` in fact has
+ * no non-test consumers at all today: the layout applies the width inline, the stylesheet
+ * only names the function in a comment, and every live call site is a geometry test.
+ * Keeping the function is still right — it is the one place "276 open / 72 collapsed" is
+ * arithmetic rather than a literal, and the tests that assert the rendered rect read it —
+ * but do not reason about this module's dependents from the sentence that was here.
  */
 
 /** The open rail's width, px. */

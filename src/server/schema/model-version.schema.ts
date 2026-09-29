@@ -75,6 +75,9 @@ export const trainingDetailsBaseModelsLtx25 = ['ltx25'] as const;
 export const trainingDetailsBaseModelsMiniMaxH3 = ['minimaxh3'] as const;
 export const trainingDetailsBaseModelsErnie = ['ernie'] as const;
 export const trainingDetailsBaseModelsHiDreamO1 = ['hidream_o1'] as const;
+export const trainingDetailsBaseModelsQwen21 = ['qwen21'] as const;
+export const trainingDetailsBaseModelsMing = ['ming'] as const;
+export const trainingDetailsBaseModelsYue2 = ['yue2'] as const;
 export const trainingDetailsBaseModelsAnima = ['anima'] as const;
 export const trainingDetailsBaseModelsBoogu = ['boogu'] as const;
 export const trainingDetailsBaseModelsKrea2 = ['krea2'] as const;
@@ -99,6 +102,8 @@ const trainingDetailsBaseModelsImage = [
   ...trainingDetailsBaseModelsErnie,
   ...trainingDetailsBaseModelsHiDreamO1,
   ...trainingDetailsBaseModelsAnima,
+  ...trainingDetailsBaseModelsMing,
+  ...trainingDetailsBaseModelsQwen21,
   ...trainingDetailsBaseModelsBoogu,
   ...trainingDetailsBaseModelsKrea2,
   ...trainingDetailsBaseModelsMageFlow,
@@ -114,6 +119,7 @@ const trainingDetailsBaseModelsVideo = [
 ] as const;
 const trainingDetailsBaseModelsAudio = [
   ...trainingDetailsBaseModelsAcestep15,
+  ...trainingDetailsBaseModelsYue2,
   ...trainingDetailsBaseModelsAcestep15Xl,
 ] as const;
 
@@ -243,6 +249,10 @@ export const audioSampleOverrideSchema = z.object({
   steps: z.number().int().min(1).max(200).optional(),
   cfg: z.number().min(0).max(20).optional(),
 });
+export const yue2SampleOverrideSchema = audioSampleOverrideSchema
+  .pick({ lyrics: true, duration: true, steps: true })
+  .extend({ steps: z.number().int().min(1).max(100).optional() });
+
 export type AudioSampleOverrideSchema = z.infer<typeof audioSampleOverrideSchema>;
 
 export type TrainingDetailsObj = z.infer<typeof trainingDetailsObj>;

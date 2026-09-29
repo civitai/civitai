@@ -1092,6 +1092,35 @@ describe('purchaseBlockGood — the money path', () => {
     expect(result).toMatchObject({ charge: 'unknown', retryable: true });
   });
 
+  it('only a 400 can reach the insufficient_funds arm — pins it to knownPreMoney', async () => {
+    // The `insufficient_funds` arm is the ternary's `else`, so it LOOKS like it
+    // catches every unlisted status. It cannot: `refusal` is returned only
+    // inside `if (knownPreMoney)`, and that predicate lists 400/409/404. The
+    // safety is therefore a COUPLING between two expressions, not a property of
+    // either — widen `knownPreMoney` by one status and that status silently
+    // acquires "you do not have enough Buzz", which on an attempt whose ledger
+    // effect is unknown is the one message that invites a double-charge.
+    //
+    // Statuses chosen to straddle the predicate: 402 and 422 are 4xx that are
+    // NOT in it (the shape a future widening would add), 500 is a 5xx. None may
+    // yield a funds verdict today.
+    for (const status of [402, 422, 500]) {
+      mockCreateMulti.mockRejectedValueOnce(buzzApiError(status, `status ${status}`));
+      const result = await purchaseBlockGood(purchaseInput());
+      expect(result, `status ${status} must not claim a funds verdict`).toMatchObject({
+        ok: false,
+        reason: 'charge_unknown',
+      });
+    }
+    // POSITIVE CONTROL: the arm is reachable, so the loop above is not passing
+    // because nothing can ever reach it.
+    mockCreateMulti.mockRejectedValueOnce(buzzApiError(400, 'Insufficient funds'));
+    expect(await purchaseBlockGood(purchaseInput())).toMatchObject({
+      ok: false,
+      reason: 'insufficient_funds',
+    });
+  });
+
   it('treats a throw with NO recognisable buzz status as UNKNOWN, not as a refusal', async () => {
     // A raw `fetch` failure or an abort never reaches `mapError` at all, so
     // `getBuzzApiStatus` returns undefined. Fail-safe means UNKNOWN, not 400.

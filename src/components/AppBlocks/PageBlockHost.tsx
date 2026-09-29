@@ -8,7 +8,11 @@ import { BlockFallback } from './BlockFallback';
 import { failureSnapshot } from './failureSnapshot';
 import { AppBlockChrome } from './IframeHost';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
-import { blockInitFragmentEnabled, type BlockHostSurface } from './blockInitFragmentGate';
+import {
+  blockInitFragmentEnabled,
+  BLOCK_HOST_DEEP_LINK_BASE,
+  type BlockHostSurface,
+} from './blockInitFragmentGate';
 import { useBlockIframeSrc } from './useBlockIframeSrc';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import {
@@ -1880,14 +1884,29 @@ export function PageBlockHost({
       if (cleaned.startsWith('/') || cleaned.includes('//') || cleaned.split('/').includes('..')) {
         return;
       }
+      // 🔴 THE ROUTE BASE IS LOOKED UP BY `surface`, NOT HARDCODED — and hardcoding it
+      // was a real dead end, not a tidiness issue. A block's own client router pushes
+      // sub-paths through this handler; on the PRIVATE-RUN surface a hardcoded
+      // `/apps/run/<slug>` sends the viewer to the PUBLIC run route, which requires
+      // `status: 'approved'` and therefore **404s for the very suspended app they are
+      // looking at**. The app would work until the first in-app navigation and then
+      // vanish, which reads as "the private-run feature is broken".
+      //
+      // `BLOCK_HOST_DEEP_LINK_BASE` is a TOTAL record over `BlockHostSurface`, so a new
+      // surface is a compile error there rather than silently inheriting the public
+      // route — see its docblock, which also records that `dev-tunnel`'s mapping to the
+      // public route is pre-existing behaviour rather than a decision. A `null` base
+      // means "drop the navigation"; nothing maps to `null` on a page surface today.
+      const base = BLOCK_HOST_DEEP_LINK_BASE[surface];
+      if (base == null) return;
       const target = cleaned
-        ? `/apps/run/${encodeURIComponent(slug)}/${cleaned}`
-        : `/apps/run/${encodeURIComponent(slug)}`;
+        ? `${base}/${encodeURIComponent(slug)}/${cleaned}`
+        : `${base}/${encodeURIComponent(slug)}`;
       void router.push(target, undefined, { shallow: true });
     });
     return off;
     // `status` deliberately absent — see the REQUEST_CONSENT deps note.
-  }, [onMessage, readGateStatus, router, slug, reviewMode]);
+  }, [onMessage, readGateStatus, router, slug, reviewMode, surface]);
 
   // Forward host-side navigation (back/forward, or our own shallow push) into
   // the block so it can re-render the right view. Fires whenever the resolved

@@ -143,6 +143,21 @@ const aiToolkitTrainingParams = z
       ecosystem: z.literal('flux2klein'),
       modelVariant: z.enum(['4b', '9b']),
     }),
+    aiToolkitBaseParams.extend({
+      ecosystem: z.literal('qwen21'),
+      modelVariant: z.undefined().optional(),
+      batchSize: z.literal(1).optional(),
+    }),
+    aiToolkitBaseParams.extend({
+      ecosystem: z.literal('ming'),
+      modelVariant: z.undefined().optional(),
+      batchSize: z.literal(1).optional(),
+    }),
+    aiToolkitBaseParams.extend({
+      ecosystem: z.literal('yue2'),
+      modelVariant: z.undefined().optional(),
+      batchSize: z.literal(1).optional(),
+    }),
     // ACE-Step audio
     aiToolkitBaseParams.extend({
       ecosystem: z.literal('ace_step_15'),
@@ -240,6 +255,7 @@ const whatIfAiToolkitParams = z.object({
   // fees attach to; without them the whatif estimate omits the fee that the
   // real submission incurs. Optional so pre-update clients still validate.
   samplePrompts: z.array(z.string()).optional(),
+  samplesOverrides: z.array(audioSampleOverrideSchema).optional(),
 });
 
 export const imageTrainingRouterWhatIfSchema = z

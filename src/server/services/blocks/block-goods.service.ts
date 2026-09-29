@@ -258,12 +258,68 @@ function blockGoodLedgerStem(args: BlockGoodLedgerKeyArgs): string {
  * 🔴 EVERY ID BUILT HERE IS PREFIX-FREE AGAINST EVERY OTHER, AND THAT IS A
  * CORRECTNESS REQUIREMENT, NOT TIDINESS. `externalTransactionIdPrefix` — what
  * `rollbackCharge` and `refundBlockGoodPurchase` pass to
- * `refundMultiAccountTransaction` — is a genuine STRING prefix match, the same
- * hazard `challenge-funding.ts` records for `challenge-entry-fee-5-` vs
- * challenge 50. An unterminated trailing buyer id made buyer 5's key a prefix
- * of buyers 51's and 500's, so rolling back one attempt reversed OTHER buyers'
+ * `refundMultiAccountTransaction` — selects a whole FAMILY of ledger rows, the
+ * same hazard `challenge-funding.ts` records for `challenge-entry-fee-5-` vs
+ * challenge 50. An unterminated trailing buyer id made buyer 5's key cover
+ * buyers 51's and 500's, so rolling back one attempt reversed OTHER buyers'
  * settled purchases: they kept their entitlements, got their Buzz back, the
  * owner kept the 70%, and nothing raised.
+ *
+ * ⚠ CORRECTED: IT IS NOT A `StartsWith`, AND THE LEDGER DOES NOT STORE THE ID
+ * WE SEND. This comment said "a genuine STRING prefix match" through four audit
+ * rounds; the Buzz service (`civitai-buzz`, `src/Civitai.Buzz.Api/Program.cs`)
+ * actually does:
+ *   - on `POST /multi-transactions`, it STORES
+ *     `$"{ExternalTransactionIdPrefix}-{accountType}"` — appending a suffix
+ *     AFTER our terminator. The single-transaction endpoint the payout legs use
+ *     matches `ExternalTransactionId` exactly and appends nothing, so a BUY leg
+ *     is stored suffixed and a SELL leg verbatim.
+ *     ⚠ THE SUFFIX IS A C# ENUM NAME, NOT OUR LOWERCASE WIRE VALUE, AND FOR
+ *     THIS RAIL IT IS DETERMINATE: `-Generation` and `-User`.
+ *     `AccountType` (`Civitai.Buzz.Infrastructure/Entities/AccountType.cs`)
+ *     declares `User = 0` / `Yellow = 0` and `Generation = 3` / `Blue = 3` as
+ *     duplicate-valued ALIASES; `ToString()` on a duplicate value renders the
+ *     FIRST-DECLARED name, so 0 renders `User` and 3 renders `Generation`. We
+ *     send `payWith: ['blue', 'yellow']` and the client passes the PLURAL
+ *     `fromAccountTypes` through unmapped (`toApiTransaction` maps only the
+ *     singular from/to types), so Buzz's `JsonStringEnumConverter` resolves
+ *     them to 3 and 0 — hence exactly those two suffixes.
+ *     🔴 TWO EARLIER DRAFTS OF THIS SENTENCE WERE WRONG AND ARE RECORDED SO
+ *     NOBODY DERIVES A THIRD: (1) `-blue` / `-yellow`, i.e. our lowercase wire
+ *     values, which the enum never renders; (2) "whichever name the runtime
+ *     resolves … the live ledger carries `-Yellow`, `-Blue`, `-User` AND
+ *     `-Generation`. We do not control which." That second one rested on a
+ *     ledger-wide substring count, which mixes producers: the `-Yellow` /
+ *     `-Blue` rows are built by `src/server/jobs/deliver-creator-compensation.ts`
+ *     from PascalCase ClickHouse account types, not by this endpoint. An
+ *     ungrouped aggregate over a table with more than one writer is not
+ *     evidence about one writer.
+ *     What the safety argument needs is only that every suffix begins `-`.
+ *   - on `POST /multi-transactions/refund`, it selects the half-open range
+ *     `id >= prefix AND id < prefix + "ZZZZZZZZZZZZZ"` (a 13-`Z` sentinel),
+ *     excluding rows already of type Refund.
+ * Prefix-freedom is SUFFICIENT for that range to behave — the range is a prefix
+ * match minus continuations that sort at or above the sentinel — so the argument
+ * below still holds and nothing here changes. It is simply not a model of the
+ * matcher, which is why it was worth writing down.
+ *
+ * 🔴 TWO RESIDUALS, NEITHER PINNED BY ANY GUARD IN THIS REPO, AND AN EARLIER
+ * DRAFT CLAIMED ONE OF THEM WAS. The property that matters is that a stored
+ * continuation sorts BELOW the sentinel; every one observed does, because they
+ * all begin `-`. But NOTHING IN THIS REPO DETERMINES THAT CHARACTER — the
+ * separator and the enum rendering are both chosen inside the Buzz service — so
+ * no test here can fail from any change made here, and a guard asserting it was
+ * deleted for being vacuous rather than kept for looking reassuring. (It was
+ * worse than vacuous: it built its input as `prefix + '-' + c` and then sliced
+ * `prefix` back off, so it re-derived its own expectation and passed for a
+ * totally rewritten key shape.) The second residual: the comparison runs under
+ * the Buzz database's own collation, and `>=`/`<` being ASCII-ordinal is an
+ * assumption about that collation this repo cannot see. Both are questions for
+ * the Buzz service owner, not properties this codebase can assert.
+ *
+ * What IS pinned here, and was already, is prefix-freedom over the ids we
+ * BUILD: see the `prefixPairs` guards and the on-the-wire payout-separation
+ * case in `block-goods.service.test.ts`.
  *
  * THE ARGUMENT, so a later edit can be checked against it rather than guessed
  * at. Every id is a `:`-separated token list:
@@ -679,6 +735,56 @@ export async function purchaseBlockGood(
     //   409 the external id is already occupied, reversed ones included.
     //   404 the ledger could not resolve the request at all. Not a funds
     //       verdict, so it must not borrow one.
+    //
+    // 🔴 WHY THE `else` ARM MAY CLAIM THE FUNDS VERDICT AT ALL — the ternary
+    // looks like it hands every unlisted status "you do not have enough Buzz",
+    // and it does not. `refusal` has exactly ONE consumer, the return inside
+    // `if (knownPreMoney)` below, and `knownPreMoney` is `400 || 409 || 404` —
+    // so the only status that can reach the `else` is 400. 402, 422, every 5xx
+    // and an unreadable status never get here: they fall to the
+    // `charge_unknown` path, which is the fail-safe answer for an attempt whose
+    // ledger effect is not established.
+    //
+    // ⚠ THAT SAFETY IS A COUPLING, NOT A PROPERTY OF THIS TERNARY: it holds
+    // only while `knownPreMoney` and these arms list the same statuses. Widen
+    // `knownPreMoney` by one — a 402, say — and that status silently acquires
+    // the funds answer, which on a status whose ledger effect is unknown is the
+    // one instruction that could double-charge. The test
+    // "only a 400 can reach the insufficient_funds arm" pins the pair so the
+    // widening is a red test rather than a wrong message. (An audit round read
+    // this ternary in isolation and reported the wide hole as already live; it
+    // is not, and the reachability above is why.)
+    //
+    // 🔴 THIS 409 ARM IS UNREACHABLE — BUT `ledger_conflict` AS A REASON IS
+    // LIVE, AND CONFLATING THE TWO IS A MISREADING WORTH HEADING OFF. The
+    // occupied-id case is the one the service DOES produce: 200 with the leg
+    // marked `duplicate: true`, handled further down this function, which
+    // returns `ledger_conflict` with `charge: 'unknown'`. So deleting this arm
+    // would delete a branch, not a reason, and the occupied-id outcome would be
+    // unchanged. The arm is RETAINED DELIBERATELY.
+    // `POST /multi-transactions` cannot return 409: measured against
+    // `civitai-buzz` `src/Civitai.Buzz.Api/Program.cs` at `origin/master`
+    // 4148403, that handler's only exits are 4x BadRequest, one Ok and one
+    // Problem — with a positive control, because a negative grep is worthless
+    // otherwise: `Results.Conflict` DOES occur three times in that same file
+    // (the single-transaction and refund endpoints), so the pattern can match
+    // and its absence in this handler is real. On an occupied external id the
+    // handler instead returns 200 with the leg marked `duplicate: true`, which
+    // is why reading that flag is load-bearing rather than defensive.
+    //
+    // Kept rather than deleted because the Buzz service is a SEPARATELY
+    // DEPLOYED binary this repo does not gate. If it ever starts answering 409
+    // here, deleting this arm sends the viewer down the `insufficient_funds`
+    // path — telling someone with plenty of Buzz that they are broke, about a
+    // key topping up can never get them past, which is the exact defect the
+    // paragraph above exists to prevent. An unreachable arm costs a branch; a
+    // missing one costs the wrong answer at the worst moment.
+    //
+    // ⚠ Its SIBLING IS LIVE, and the distinction matters: the REFUND endpoint
+    // (`POST /multi-transactions/refund`) does return 409 —
+    // "One or more refund transactions already exist" — so 409 handling on the
+    // refund path is a real case, not a dead one. Do not generalise this note
+    // to "the Buzz service never 409s".
     const refusal: Pick<PurchaseBlockGoodRefusal, 'status' | 'reason' | 'error'> =
       buzzStatus === 409
         ? {

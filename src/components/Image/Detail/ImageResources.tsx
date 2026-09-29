@@ -14,7 +14,9 @@ import {
 import { useSessionStorage } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { IconDownload, IconMessageCircle2, IconX } from '@tabler/icons-react';
+import { ModeratorLookupIcon } from '~/components/Moderation/ModeratorLookupMenuItem';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { moderatorModelVersionLookupPath } from '~/shared/constants/moderator-app';
 import { cloneElement, useMemo, useState } from 'react';
 
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -180,6 +182,12 @@ export function ImageResources({ imageId }: { imageId: number }) {
                             )}
                           </CopyButton>
                         )} */}
+                        {currentUser?.isModerator && !!resource.modelVersionId && (
+                          <ModeratorLookupIcon
+                            path={moderatorModelVersionLookupPath(resource.modelVersionId)}
+                            label="Lookup version"
+                          />
+                        )}
                         {currentUser?.isModerator && (
                           <LegacyActionIcon
                             size="xs"

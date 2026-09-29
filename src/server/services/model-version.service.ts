@@ -1786,8 +1786,7 @@ export const publishModelVersionById = async ({
     select: { id: true },
   });
 
-  if (!republishing && !meta?.unpublishedBy)
-    await updateModelLastVersionAt({ id: version.modelId });
+  await updateModelLastVersionAt({ id: version.modelId, onlyForward: republishing });
   await bustMvCache(version.id, version.modelId);
 
   // Best-effort: evict any cached by-hash 404 for this version's hashes so a

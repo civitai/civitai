@@ -612,22 +612,19 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                   })}
                 >
                   <Accordion.Item value="details">
-                    <Accordion.Control>
-                      <Group justify="space-between">
-                        Details
-                        <Button
-                          size="compact-xs"
-                          variant="light"
-                          leftSection={<IconWand size={12} />}
-                          onClick={(e: React.MouseEvent) => {
-                            e.stopPropagation();
-                            openReviewModal();
-                          }}
-                        >
-                          Write a review
-                        </Button>
-                      </Group>
-                    </Accordion.Control>
+                    {/* Beside the control, not inside it — the control is a <button>. */}
+                    <div className="flex items-center">
+                      <Accordion.Control className="flex-1">Details</Accordion.Control>
+                      <Button
+                        className="mr-3 shrink-0"
+                        size="compact-xs"
+                        variant="light"
+                        leftSection={<IconWand size={12} />}
+                        onClick={openReviewModal}
+                      >
+                        Write a review
+                      </Button>
+                    </div>
                     <Accordion.Panel p={0}>
                       <Stack
                         gap={0}

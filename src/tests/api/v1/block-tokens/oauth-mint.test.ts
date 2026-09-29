@@ -66,6 +66,12 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksAuthorEnabled: vi.fn(async () => false),
   isAppBlocksDevTunnelEnabled: vi.fn(async () => false),
   isAppBlocksDevTunnelUnsubmittedSpendEnabled: vi.fn(async () => false),
+  // PHASE 3 (private run) is reached on this path, BEFORE the bare 404, so the
+  // mint imports this accessor. `false` is both the correct default for these
+  // suites (none of them exercises the private-run branch) and the flag's real
+  // ship state: it is base-off in Flipt until PR 3 creates the row. A missing key
+  // here does not fail open — it throws, which is how this was found.
+  isAppBlocksPrivateRunEnabled: vi.fn(async () => false),
 }));
 vi.mock('@civitai/auth', async (importOriginal) => ({
   ...(await importOriginal<typeof CivitaiAuth>()),

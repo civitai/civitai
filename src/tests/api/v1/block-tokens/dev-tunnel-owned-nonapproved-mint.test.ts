@@ -77,6 +77,12 @@ const {
     isAppBlocksAuthorEnabled: vi.fn(async () => true),
     isAppBlocksDevTunnelEnabled: vi.fn(async () => true),
     isAppBlocksDevTunnelUnsubmittedSpendEnabled: vi.fn(async () => true),
+    // PHASE 3 (private run) is reached on this path, BEFORE the bare 404, so the
+    // mint imports this accessor. `false` is both the correct default for these
+    // suites (none of them exercises the private-run branch) and the flag's real
+    // ship state: it is base-off in Flipt until PR 3 creates the row. A missing key
+    // here does not fail open — it throws, which is how this was found.
+    isAppBlocksPrivateRunEnabled: vi.fn(async () => false),
   };
   const devTunnelService = {
     getActiveDevTunnel: vi.fn<(...args: any[]) => Promise<any>>(async () => ({

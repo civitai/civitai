@@ -115,7 +115,7 @@ import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { env } from '~/env/client';
-import { moderatorBulkImageManagerPath } from '~/shared/constants/moderator-app';
+import { moderatorModelLookupPath } from '~/shared/constants/moderator-app';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
@@ -1183,11 +1183,8 @@ export default function ModelDetailsV2({
                             </Menu.Item>
                             {isModerator && (
                               <>
-                                {/* The moderator app has no model page of its own; Bulk Image Manager
-                                    keyed to the model is every image across every version, which is
-                                    what a report about a model is about. */}
                                 <ModeratorLookupMenuItem
-                                  path={moderatorBulkImageManagerPath('model', model.id)}
+                                  path={moderatorModelLookupPath(model.id, selectedVersion?.id)}
                                 >
                                   Lookup Model
                                 </ModeratorLookupMenuItem>

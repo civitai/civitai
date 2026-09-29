@@ -84,7 +84,13 @@ const SCOPE = 'user:read:self';
 const OWNER_ID = 42;
 
 async function mint(
-  opts: { dev?: boolean; reviewRunForReal?: boolean; userId?: number } = {}
+  opts: {
+    dev?: boolean;
+    reviewRunForReal?: boolean;
+    userId?: number;
+    privateRun?: boolean;
+    privateRunAudience?: 'owner' | 'editor' | 'moderator';
+  } = {}
 ): Promise<string> {
   const { token } = await BlockTokenService.sign({
     userId: opts.userId ?? OWNER_ID,
@@ -96,6 +102,8 @@ async function mint(
     ctx: {},
     ...(opts.dev ? { dev: true } : {}),
     ...(opts.reviewRunForReal ? { reviewRunForReal: true } : {}),
+    ...(opts.privateRun ? { privateRun: true } : {}),
+    ...(opts.privateRunAudience ? { privateRunAudience: opts.privateRunAudience } : {}),
   } as Parameters<typeof BlockTokenService.sign>[0]);
   return token;
 }
@@ -1088,5 +1096,91 @@ describe('the lookup_failed log is throttled per pod', () => {
     findUniqueMock.mockRejectedValue(new Error('replica unreachable'));
     await resolveRestApprovalVerdict(claims);
     expect(warnSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * 🔴 POPULATION G — THE PRIVATE RUN, ADMITTED END TO END THROUGH `withBlockScope`.
+ *
+ * ⚠️ THIS DESCRIBE WAS ADDED BECAUSE THE ADMISSION WAS COVERED NOWHERE. The
+ * `private_run_exempt` verdict was pinned at the PREDICATE
+ * (`blocks/__tests__/block-approval.private-run.test.ts`) and at NEITHER of its two
+ * readers. Deleting `&& approval !== 'private_run_exempt'` from the middleware's allow
+ * condition made every block REST route 403 for a private-run token — i.e. the exact
+ * failure the feature exists to avoid, the one its own docblock calls "the iframe boots
+ * and then every single bridge call 403s" — and nothing in the repo went red.
+ *
+ * These rows drive the REAL middleware over a REAL minted RS256 token, so they cover the
+ * verdict, the admission condition, and the fact that the refusal counter is NOT
+ * incremented for an admitted token (which would put a working feature into the
+ * operator's refusal series).
+ */
+describe('POPULATION G — a private-run token is ADMITTED on a non-approved app', () => {
+  it('reaches the handler on a SUSPENDED app, for every audience', async () => {
+    for (const audience of ['owner', 'editor', 'moderator'] as const) {
+      vi.clearAllMocks();
+      findUniqueMock.mockReset();
+      findUniqueMock.mockResolvedValue({ status: 'suspended' });
+      oauthMock.mockReset();
+      oauthMock.mockResolvedValue({ userId: OWNER_ID });
+      isFliptMock.mockImplementation(async (flag: string) => flag === 'app-blocks-runtime-enabled');
+      isRevokedMock.mockImplementation(async () => false);
+      tunnelMock.mockReset();
+      tunnelMock.mockResolvedValue(null);
+
+      const token = await mint({ privateRun: true, privateRunAudience: audience });
+      const { handler, res } = await drive(token);
+      expect(handler, `audience=${audience} must reach the handler`).toHaveBeenCalled();
+      expect(res.statusCode).toBe(200);
+      // 🔴 AND IT IS NOT COUNTED AS A REFUSAL. An admitted verdict that still increments
+      // `recordBlockRestApprovalVerdict` would make a working feature indistinguishable
+      // from a fleet of 403s on the one series an operator watches.
+      expect(recordVerdictMock).not.toHaveBeenCalled();
+    }
+  });
+
+  it('🔴 NEGATIVE CONTROL: the SAME app and the SAME route refuse a PLAIN token', async () => {
+    // Without this the row above cannot distinguish "the private-run claim admitted it"
+    // from "this fixture was never refused in the first place". Same suspended row, same
+    // route, no private-run claim → the ordinary 403.
+    findUniqueMock.mockResolvedValue({ status: 'suspended' });
+    const { handler, res } = await drive(await mint());
+    expect(handler).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(403);
+    expect(recordVerdictMock).toHaveBeenCalledWith('not_approved');
+  });
+
+  it('🔴 a LONE privateRun claim with no audience is REFUSED end to end', async () => {
+    // The pair-keying, observed at the route rather than at the predicate. The signer can
+    // produce this shape (it only refuses a lone AUDIENCE), so it is reachable — and it
+    // must be exempt from nothing.
+    findUniqueMock.mockResolvedValue({ status: 'suspended' });
+    const { handler, res } = await drive(await mint({ privateRun: true }));
+    expect(handler).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('an APPROVED app still answers ok for a private-run token — no behaviour change', async () => {
+    // The exemption must not be the thing that makes an approved app work, or it has
+    // become load-bearing on the happy path.
+    findUniqueMock.mockResolvedValue({ status: 'approved' });
+    const { handler, res } = await drive(
+      await mint({ privateRun: true, privateRunAudience: 'moderator' })
+    );
+    expect(handler).toHaveBeenCalled();
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('a REVOKED instance still refuses a private-run token — revocation runs FIRST', async () => {
+    // Ordering: the Redis revocation check precedes the approval verdict, so a banned
+    // publisher's app is refused at the runtime layer even for an admitted audience —
+    // which is the free half of the ban protection the predicate's own gate backs up.
+    findUniqueMock.mockResolvedValue({ status: 'suspended' });
+    isRevokedMock.mockImplementation(async () => true);
+    const { handler, res } = await drive(
+      await mint({ privateRun: true, privateRunAudience: 'moderator' })
+    );
+    expect(handler).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(403);
   });
 });

@@ -3,17 +3,16 @@ import { Readable } from 'stream';
 import type { ReadableStream as NodeReadableStream } from 'stream/web';
 import * as z from 'zod';
 import { env } from '~/env/server';
-import { dbRead } from '~/server/db/client';
-import { pickBestTrainingFile } from '~/server/schema/model-file.schema';
-import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
+import { AuthedEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { trainingEpochModelFileName } from '~/shared/utils/training-file-names';
 import {
   isTrustedOrchestratorUrl,
   logHostOf,
 } from '~/server/services/orchestrator/trusted-blob-url';
 import { logToAxiom } from '~/server/logging/client';
-import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
-import { trainingArchitectureKey } from '~/utils/training/run-summary';
+import type { TrainingResults } from '~/server/schema/model-file.schema';
+import { normalizeEpochs } from '~/server/services/orchestrator/training/epoch-archive';
+import { resolveTrainingRun } from '~/server/services/orchestrator/training/training-state';
 
 // Disable body parser size limit and response size limit for large epoch files
 export const config = {
@@ -36,58 +35,29 @@ export default AuthedEndpoint(
 
     const { modelVersionId, epochNumber } = queryResults.data;
 
-    // Get the model version and verify ownership
-    const modelVersion = await dbRead.modelVersion.findUnique({
-      where: { id: modelVersionId },
-      select: {
-        id: true,
-        trainingDetails: true,
-        model: { select: { id: true, userId: true, name: true } },
-        files: {
-          select: { metadata: true },
-          where: { type: 'Training Data' },
-        },
-      },
-    });
-
-    if (!modelVersion) {
-      return res.status(404).json({ error: 'Model version not found' });
+    let resolved: Awaited<ReturnType<typeof resolveTrainingRun>>;
+    try {
+      resolved = await resolveTrainingRun({
+        modelVersionId,
+        userId: user.id,
+        isModerator: !!user.isModerator,
+        ctx: { req, res },
+      });
+    } catch (error) {
+      return handleEndpointError(res, error);
     }
+    const { state, run } = resolved;
 
-    // Only the model owner can download training epochs
-    if (modelVersion.model.userId !== user.id && !user.isModerator) {
-      return res.status(403).json({ error: 'You do not have permission to download this epoch' });
-    }
-
-    const trainingFile = pickBestTrainingFile(modelVersion.files);
-    if (!trainingFile) {
-      return res.status(404).json({ error: 'Training data not found' });
-    }
-
-    const metadata = trainingFile.metadata as Record<string, unknown>;
-    const trainingResults = metadata?.trainingResults as {
-      version?: number;
-      epochs?: Array<{
-        epochNumber?: number;
-        epoch_number?: number;
-        modelUrl?: string;
-        model_url?: string;
-      }>;
-    };
-
-    if (!trainingResults?.epochs?.length) {
-      return res.status(404).json({ error: 'No training epochs found' });
-    }
-
-    const epoch = trainingResults.epochs.find((e) =>
-      'epoch_number' in e ? e.epoch_number === epochNumber : e.epochNumber === epochNumber
-    );
-
+    const trainingResults = state.trainingResults as TrainingResults | null;
+    const epoch = trainingResults
+      ? normalizeEpochs(trainingResults).find((e) => e.epochNumber === epochNumber)
+      : undefined;
     if (!epoch) {
       return res.status(404).json({ error: `Epoch ${epochNumber} not found` });
     }
 
-    const epochUrl = 'epoch_number' in epoch ? epoch.model_url : epoch.modelUrl;
+    // Stored input; a legacy epoch can carry no URL despite the type.
+    const epochUrl = epoch.modelUrl as string | undefined;
     if (!epochUrl) {
       return res.status(404).json({ error: 'Epoch download URL not available' });
     }
@@ -135,14 +105,7 @@ export default AuthedEndpoint(
         .json({ error: 'Failed to fetch epoch from storage' });
     }
 
-    const fileName = trainingEpochModelFileName({
-      modelName: modelVersion.model.name,
-      versionId: modelVersion.id,
-      architecture: trainingArchitectureKey(
-        modelVersion.trainingDetails as TrainingDetailsObj | null
-      ),
-      epochNumber,
-    });
+    const fileName = trainingEpochModelFileName({ ...run, epochNumber });
 
     // Stream the response to the client
     res.setHeader('Content-Type', 'application/octet-stream');
