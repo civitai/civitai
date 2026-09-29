@@ -146,15 +146,19 @@ describe('sweepChatWindows', () => {
   it('stops at the time budget and logs how far behind it is', async () => {
     cursorAt(0);
     let t = 0;
+    let reads = 0;
+    // Terminates on its own: a broken deadline then reads 50 batches and fails the count below
+    // instead of looping forever.
     dbMock.dbWrite.chatMessage.findMany.mockImplementation(
       async ({ where }: { where: { id: { gt: number } } }) => {
         t += 1000;
+        if (++reads > 50) return [];
         return [msg(where.id.gt + 1, 10, 5), msg(where.id.gt + 2, 11, 5)];
       }
     );
     const result = await sweepChatWindows(NOW, { batchSize: 2, budgetMs: 2500, clock: () => t });
     expect(result).toMatchObject({ caughtUp: false, lagMs: NOW.getTime() - SETTLED.getTime() });
-    expect(dbMock.dbWrite.chatMessage.findMany.mock.calls.length).toBeLessThan(5);
+    expect(reads).toBe(3);
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
         name: 'text-scan',
@@ -163,6 +167,21 @@ describe('sweepChatWindows', () => {
         job: 'text-scan-chat-windows',
       })
     );
+  });
+
+  it('a full batch whose second row is unsettled is caught up after one read', async () => {
+    cursorAt(0);
+    let t = 0;
+    let reads = 0;
+    dbMock.dbWrite.chatMessage.findMany.mockImplementation(async () => {
+      t += 1000;
+      if (++reads > 50) return [];
+      return [msg(1, 10, 5), msg(2, 11, 5, { createdAt: FRESH })];
+    });
+    const result = await sweepChatWindows(NOW, { batchSize: 2, budgetMs: 60_000, clock: () => t });
+    expect(result).toMatchObject({ rows: 1, caughtUp: true });
+    expect(reads).toBe(1);
+    expect(lastCursor()).toBe(1);
   });
 
   it('keeps going and still advances when one scan throws', async () => {

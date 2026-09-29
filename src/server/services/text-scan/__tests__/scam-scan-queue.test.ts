@@ -42,14 +42,12 @@ describe('queueScamScan', () => {
     for (let id = 1; id <= 5; id++) queue({ entityType: 'Comment', entityId: id });
     await flush();
     expect(scan).toHaveBeenCalledTimes(1);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'text-scan',
-        type: 'warning',
-        message: 'scam scan queue full, dropped',
-        entityId: 4,
-      })
-    );
+    const dropped = vi
+      .mocked(loggingMock.logToAxiom)
+      .mock.calls.map(([event]) => event as { message?: string; entityId?: number })
+      .filter((event) => event.message === 'scam scan queue full, dropped')
+      .map((event) => event.entityId);
+    expect(dropped).toEqual([3, 4, 5]);
   });
 
   it('logs a scan that throws and keeps going', async () => {
