@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   blankComments,
   callSites,
+  countPrivateRunThreading,
   declRegions,
   enclosingDecl,
   MONEY_MARKERS,
+  PRIVATE_RUN_THREADED_SPELLINGS,
   moneyIdentifiersIn,
   moneyMarkersIn,
   sourceDecls,
@@ -294,5 +296,39 @@ describe('topLevelPropertyText — depth filtering', () => {
 
   it('returns empty for a slice with no object at all', () => {
     expect(topLevelPropertyText('fn(')).toBe('');
+  });
+});
+
+describe('private-run threading spellings', () => {
+  /**
+   * 🔴 THE PROPERTY TWO LEDGERS DEPEND ON, PROVEN ONCE HERE. Both assert an EXACT total of
+   * threading occurrences against a ledgered call-site count. That total is only exact if no
+   * accepted spelling is a substring of another — otherwise one site scores twice and the
+   * ledger needs a WRONG number to stay green, which is the failure mode that reads as
+   * working.
+   */
+  it('no spelling is a substring of another', () => {
+    for (const a of PRIVATE_RUN_THREADED_SPELLINGS) {
+      for (const b of PRIVATE_RUN_THREADED_SPELLINGS) {
+        if (a === b) continue;
+        expect(b, `\`${a}\` must not be a substring of \`${b}\``).not.toContain(a);
+      }
+    }
+  });
+
+  it('counts each spelling once, and a mixed source exactly', () => {
+    // Positive control first: the counter CAN return non-zero, so a zero below would be a
+    // measurement rather than a function wired to nothing.
+    for (const t of PRIVATE_RUN_THREADED_SPELLINGS) {
+      expect(countPrivateRunThreading(`a: ${t},`)).toBe(1);
+    }
+    const mixed = PRIVATE_RUN_THREADED_SPELLINGS.map((t, i) => `k${i}: ${t},`).join(' ');
+    expect(countPrivateRunThreading(mixed)).toBe(PRIVATE_RUN_THREADED_SPELLINGS.length);
+  });
+
+  it('counts a source with no threading as zero', () => {
+    // The negative control. `privateRun` alone must not count — the whole point of pinning
+    // the expression is that `privateRun: false` and a drifted local do NOT qualify.
+    expect(countPrivateRunThreading('privateRun: false, privateRun: true, privateRun')).toBe(0);
   });
 });

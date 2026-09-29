@@ -200,9 +200,17 @@ function wireMocks() {
     if (!sql.includes('block_scope_invocations')) return [];
     // Mirror the real statement: always range-bounded and app-bounded; exclude a `source`
     // value ONLY when the statement actually names one, and only the value it binds.
-    const excluded = sql.includes('"source" <> ')
-      ? (arg.__values as unknown[]).find((v) => typeof v === 'string' && v.length > 0)
-      : undefined;
+    // 🔴 BOUND BY POSITION, NOT "the first string in the list". The shim's `__sql` joins
+    // the template's static parts with `?`, so the parameter index of the `source` value is
+    // the number of `?` that precede it — and reading "the first string" happened to be
+    // right only because no other string interpolation precedes it TODAY. One added ahead
+    // of it and the shim would silently exclude the wrong value while still looking correct.
+    const marker = '"source" <> ';
+    const at = sql.indexOf(marker);
+    const excluded =
+      at === -1
+        ? undefined
+        : (arg.__values as unknown[])[sql.slice(0, at + marker.length).split('?').length - 1];
     const visible = rows.filter(
       (r) => r.appBlockId === OWNED_ID && (excluded === undefined || r.source !== excluded)
     );
@@ -271,11 +279,18 @@ describe('owner-visible engagement analytics exclude private-run activity', () =
     expect((await analytics()).engagement.activeUsers).toBe(2);
   });
 
-  it('[REG] POSITIVE CONTROL — the SAME row unmarked is counted, in all five numbers', async () => {
+  it('[INV] POSITIVE CONTROL — the SAME row unmarked is counted, in all five numbers', async () => {
     // 🔴 FEED A VALUE THE FILTER MUST NOT MATCH AND WATCH THE COUNT MOVE. Without this,
     // every assertion above is satisfied by a filter that excludes everything — and that
     // filter would silently delete the owner's real usage data. The twin differs from the
     // private-run row in ONE field.
+    //
+    // ⚠️ [INV], NOT [REG], AND THE CORRECTION MATTERS. This was labelled [REG] until a
+    // review lane ran it with every production file reverted to the base ref and found it
+    // GREEN — correctly, because an unfiltered read counts the unmarked twin too. It is a
+    // control, and a control that cannot go red at base is an invariant. Labelling it [REG]
+    // launders the segment's ONLY over-filter control into the regression count, which is
+    // the exact error the sibling ledger's own docblock names.
     rows = [...ORDINARY_ROWS, UNMARKED_TWIN];
     const a = await analytics();
     expect(a.engagement.apiCalls).toBe(4);

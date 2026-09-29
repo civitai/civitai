@@ -2,8 +2,10 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
 import {
+  PRIVATE_RUN_THREADED_SPELLINGS,
   blankComments,
   callSites,
+  countPrivateRunThreading,
   enclosingDecl,
   topLevelPropertyText,
 } from '~/test-utils/routerSourceRegions';
@@ -61,12 +63,19 @@ import {
  * unit run, minutes later, in a file nobody was looking at.
  *
  * ── RED AT BASE — AND EXACTLY WHICH PARTS ───────────────────────────────────
- * At the base ref the router contains ZERO `privateRun:` arguments, so the four
- * THREADING assertions (three per-population + the total) are red there. The three
- * COUNT assertions are NOT: the populations are 4 / 4 / 2 at the base ref too, so
- * those are `[INV]` and are labelled as such. An earlier revision of this paragraph
- * claimed "every `toBe(...)` below fails with 0", which was false and is exactly the
- * kind of sentence that launders an invariant into regression coverage.
+ * ⚠️ THE NUMBERS IN THIS PARAGRAPH WERE STALE FOR ONE PR AND ARE NOT RESTATED AGAIN.
+ * It said "the four THREADING assertions (three per-population + the total)" and "the
+ * three COUNT assertions … 4 / 4 / 2", and quoted a red-at-base total of 22 — all correct
+ * for the PR that wrote it and all wrong the moment a fourth population landed. A count
+ * written into prose is a claim that rots; the `LEDGER` array below is the authority, and
+ * the matrix belongs in the commit that measures it.
+ *
+ * The DURABLE part is the split, which is what stops an invariant being laundered into
+ * regression coverage: the per-population THREADING assertions and the total are `[REG]`
+ * (the router carries no `privateRun:` argument at the ref before the money arms landed),
+ * while the per-population COUNT assertions are `[INV]` — those populations predate this
+ * work, so they are green at base and must never be reported as regression coverage. An
+ * earlier revision claimed "every `toBe(...)` below fails with 0", which was false.
  *
  * ── WHAT THIS LEDGER DOES *NOT* CLOSE ───────────────────────────────────────
  * It closes each of the three populations against growth and shrinkage, but it does
@@ -92,21 +101,16 @@ const ROUTER = path.join(process.cwd(), 'src/server/routers/blocks.router.ts');
 const THREADED = 'privateRun: claims.privateRun === true';
 
 /**
- * The SAME expression where the verified claims arrive on an options bag rather than a
- * local. Exactly one governed site is written that way (`recordBlockPostInvocation`'s
- * `opts.claims`), and the two spellings are safe to count independently because neither is
- * a substring of the other: `privateRun: opts.claims…` does not contain
- * `privateRun: claims…`. Verified by the unit case at the bottom of this file rather than
- * asserted here.
+ * 🔴 THE ACCEPTED SPELLINGS ARE IMPORTED, NOT RE-DECLARED HERE, and that is a correction.
+ * This file listed two and its cross-file sibling listed three, over the SAME router text.
+ * A future router writer using the third (destructured) spelling would have passed the
+ * sibling's per-site check, gone UNCOUNTED by the total below, and produced a red test here
+ * reading "add it to LEDGER" — a failure pointing at the wrong fix. One list, in
+ * `routerSourceRegions`, where the shared ledger vocabulary already lives; the non-overlap
+ * property the exact total depends on is proven in that module's own test.
  */
-const THREADED_OPTS = 'privateRun: opts.claims.privateRun === true';
-
-/** Every spelling that counts as "the verified claim was threaded". */
-const THREADED_SPELLINGS = [THREADED, THREADED_OPTS] as const;
-
-/** Count occurrences of every accepted spelling across a whole source file. */
-const countThreaded = (src: string) =>
-  THREADED_SPELLINGS.reduce((n, t) => n + (src.split(t).length - 1), 0);
+const THREADED_SPELLINGS = PRIVATE_RUN_THREADED_SPELLINGS;
+const countThreaded = countPrivateRunThreading;
 
 /**
  * The money call sites this ledger governs, with why each one is in the set.
@@ -257,9 +261,14 @@ describe('the private-run claim is threaded to every governed router call site',
 
       expect(
         unthreaded,
-        `these ${opener} call sites do not pass \`${THREADED}\` ` +
-          'as a TOP-LEVEL property of the argument object. ' +
-          'Thread the claim rather than exempting the path: ' +
+        `these ${opener} call sites do not pass the verified private-run claim as a ` +
+          'TOP-LEVEL property of the argument object. Accepted spellings: ' +
+          // 🔴 ALL OF THEM, not just `${THREADED}`. The message used to name the `claims`
+          // spelling alone, which tells a developer standing at the `opts.claims` site to
+          // write an expression that would not compile there — a red test pointing at the
+          // wrong fix, which is the failure mode a guard's message exists to prevent.
+          THREADED_SPELLINGS.map((t) => `\`${t}\``).join(' | ') +
+          '. Thread the claim rather than exempting the path: ' +
           why
       ).toEqual([]);
     });
@@ -334,17 +343,28 @@ describe('the private-run claim is threaded to every governed router call site',
     ).toBe(expected);
   });
 
-  it('[INV] the two accepted spellings cannot double-count one site', () => {
-    // 🔴 THE CONTROL FOR `countThreaded`, and the reason the total above is still exact
-    // after gaining a second spelling. If `THREADED` were a SUBSTRING of `THREADED_OPTS`,
-    // the one `opts.claims` site would score 2 and the total would silently need a wrong
-    // number to stay green. It is not, and this pins that rather than leaving it as a
-    // sentence in a docblock.
-    expect(THREADED_OPTS).not.toContain(THREADED);
-    expect(THREADED).not.toContain(THREADED_OPTS);
-    // And the counter agrees on a fixture containing exactly one of each.
-    expect(countThreaded(`a: ${THREADED}, b: ${THREADED_OPTS}`)).toBe(2);
-    // A lone `opts.claims` site counts ONCE, not twice.
-    expect(countThreaded(`a: ${THREADED_OPTS}`)).toBe(1);
+  it('[INV] the shared spellings are pairwise non-overlapping — the total depends on it', () => {
+    // 🔴 THIS FILE'S EXACT TOTAL RESTS ON IT, SO IT IS CHECKED IN THIS FILE. The full proof
+    // lives in `src/test-utils/__tests__/routerSourceRegions.test.ts` — but that file is not
+    // a `no-*.test.ts`, so it is NOT in the `test:lint-rules` selector, and a precondition
+    // that only runs in the full suite is a precondition nobody sees until minutes later.
+    // If any spelling were a substring of another, one site would score twice and the total
+    // below would need a WRONG number to stay green.
+    for (const a of THREADED_SPELLINGS) {
+      for (const b of THREADED_SPELLINGS) {
+        if (a === b) continue;
+        expect(b, `\`${a}\` must not be a substring of \`${b}\``).not.toContain(a);
+      }
+    }
+  });
+
+  it('[INV] the pinned expression is one of the shared accepted spellings', () => {
+    // 🔴 THE INSTRUMENT CONTROL FOR THE IMPORT. `THREADED` is quoted verbatim in the failure
+    // messages and the negative-control fixture above, so if the shared list ever stopped
+    // containing it those would describe a spelling the counter does not accept — the
+    // per-site checks would keep passing off the OTHER members while the message lied.
+    // The non-overlap property this file's exact total rests on is proven in
+    // `src/test-utils/__tests__/routerSourceRegions.test.ts`, not restated here.
+    expect(THREADED_SPELLINGS).toContain(THREADED);
   });
 });

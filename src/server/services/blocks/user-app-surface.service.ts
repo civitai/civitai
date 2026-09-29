@@ -17,6 +17,7 @@ import { Prisma } from '@prisma/client';
 import {
   GLOBAL_SCOPE_ACTIVITY_OR,
   PRIVATE_RUN_INVOCATION_SOURCE,
+  type BlockScopeInvocationSource,
 } from '~/server/services/blocks/scope-activity-predicate';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -1330,8 +1331,13 @@ export async function recordScopeInvocation(opts: {
    * `'external-oauth'` (a standard external OAuth access token). Consumers filter
    * on this. Omitting it lets the DB column DEFAULT ('app-block') apply, so the
    * existing block-token call sites write a byte-identical row.
+   *
+   * ⚠️ The third value, `'private-run'`, is NOT settable through this field — it is
+   * derived from the `privateRun` claim below, so the mapping has one home. It is in the
+   * union only so `BlockScopeInvocationSource` is the whole value space of the column and
+   * nothing has to widen to `string` to express it.
    */
-  source?: 'app-block' | 'external-oauth';
+  source?: BlockScopeInvocationSource;
   scope: string;
   endpoint: string;
   statusCode: number;
@@ -1396,7 +1402,12 @@ export async function recordScopeInvocation(opts: {
   // docblock for why that is the safe direction. `undefined` (the ordinary case) leaves the
   // key off the row entirely, so every existing call site stays byte-identical and `source`
   // falls to the DB DEFAULT.
-  const sourceForRow: string | undefined =
+  // 🔴 TYPED WITH THE UNION, NOT `string`. An earlier revision widened it to `string` just
+  // to hold the third value, which silently dropped the only compile-time check on the
+  // column's value space — and this module's sibling leaf records that exact lesson
+  // (a looser annotation let an `appBlokId` typo typecheck at zero errors). The `data`
+  // object below is bridge-cast, so this annotation is the last place a typo can be caught.
+  const sourceForRow: BlockScopeInvocationSource | undefined =
     opts.privateRun === true ? PRIVATE_RUN_INVOCATION_SOURCE : opts.source;
   try {
     // Build the row conditionally so an `'app-block'` call site writes a

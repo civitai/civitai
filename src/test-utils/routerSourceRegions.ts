@@ -101,6 +101,49 @@ export const MONEY_MARKERS = [
  */
 export const MONEY_IDENTIFIER = /\b((?:reserve|charge|refund|settle|debit|credit)[A-Z]\w*)\(/g;
 
+/**
+ * 🔴 EVERY SPELLING THAT COUNTS AS "THE VERIFIED PRIVATE-RUN CLAIM WAS THREADED", in ONE
+ * place because TWO ledgers read it and they must agree.
+ *
+ * ── WHY IT LIVES HERE ───────────────────────────────────────────────────────
+ * It was declared twice — in `no-unthreaded-private-run-claim.test.ts` with two members and
+ * in `no-unmarked-private-run-invocation.test.ts` with three — over the SAME router file.
+ * That is the exact drift this module exists to prevent, and it had a concrete failure: a
+ * future router writer using the destructured spelling passes the second ledger's per-site
+ * check, is NOT counted by the first ledger's exact total, and the first ledger then fails
+ * with "add it to LEDGER" — a red test pointing at the wrong fix. One list, one meaning.
+ *
+ * ── PINNED AS WHOLE STRINGS, NOT AS THE FIELD NAME ──────────────────────────
+ * `toContain('privateRun')` would be satisfied by `privateRun: false`, `privateRun: true`,
+ * or a local that has drifted from the claim — three spellings that each disable the arm
+ * (or wrongly enable it) while reading as correctly wired. The claim is the only value an
+ * RS256 signature has vouched for.
+ *
+ * ── WHY THREE, AND WHY THEY CANNOT DOUBLE-COUNT ─────────────────────────────
+ * The verified claim reaches its consumers three ways: as a local `claims`, on an options
+ * bag (`opts.claims`), and — on the storage path only — destructured off the resolver that
+ * performed the verification, because those two writers never see the claims object at all.
+ * No member is a substring of another, which is what lets a caller SUM occurrences of all
+ * three and still get an exact total; that property is pinned in this module's own test
+ * rather than restated in each ledger.
+ */
+export const PRIVATE_RUN_THREADED_SPELLINGS = [
+  'privateRun: claims.privateRun === true',
+  'privateRun: opts.claims.privateRun === true',
+  'privateRun: privateRun === true',
+] as const;
+
+/**
+ * Count occurrences of every accepted threading spelling across a whole source text.
+ *
+ * 🔴 EXACT ONLY BECAUSE THE SPELLINGS ARE PAIRWISE NON-OVERLAPPING — see the constant's
+ * docblock. A caller asserting an exact total against a ledger depends on that, so it is
+ * proven in this module's test, not assumed at each call site.
+ */
+export function countPrivateRunThreading(source: string): number {
+  return PRIVATE_RUN_THREADED_SPELLINGS.reduce((n, t) => n + (source.split(t).length - 1), 0);
+}
+
 /** Every money-primitive identifier `source` calls, bare (no paren), sorted. */
 export function moneyIdentifiersIn(source: string): string[] {
   MONEY_IDENTIFIER.lastIndex = 0;

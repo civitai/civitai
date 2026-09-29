@@ -435,18 +435,42 @@ export async function getMyAppAnalytics({
     // ENGAGEMENT — block_scope_invocations. AUTH + scoped-call only. Hits
     // bsi_app_block_invoked_idx (app_block_id, invoked_at).
     //
-    // 🔴 ALL FIVE ENGAGEMENT READS EXCLUDE PRIVATE-RUN ROWS, AND THE SET MUST STAY
-    // COMPLETE. A private run is a moderator (or the owner, or an accepted collaborator)
-    // running a DELISTED app's deployed bundle, and the operator decision is that it must
-    // be invisible to that app's owner INCLUDING IN ANALYTICS — a visible review run tells
-    // a bad actor exactly when review is happening. The invocation row carries the app's
-    // real id and the reviewer's real user id by design, so these `appBlockId IN (ownedIds)`
-    // aggregates are precisely where it lands. Miss ONE of the five and the leak survives
-    // in whichever number that read feeds: the API-call total, the distinct-active-user
-    // count, the error rate's numerator, or either top-5 rollup. The exclusion is spread
-    // from `OWNER_VISIBLE_INVOCATION_FILTER` rather than re-spelled per read, so the five
-    // cannot drift apart; the population is ledgered by
+    // 🔴 ALL FIVE `block_scope_invocations` READS BELOW EXCLUDE PRIVATE-RUN ROWS, AND THE
+    // SET MUST STAY COMPLETE. A private run is a moderator (or the owner, or an accepted
+    // collaborator) running a DELISTED app's deployed bundle, and the operator decision is
+    // that it must be invisible to that app's owner INCLUDING IN ANALYTICS — a visible
+    // review run tells a bad actor exactly when review is happening. The invocation row
+    // carries the app's real id and the reviewer's real user id by design, so these
+    // `appBlockId IN (ownedIds)` aggregates are precisely where it lands. Miss ONE of the
+    // five and the leak survives in whichever number that read feeds: the API-call total,
+    // the distinct-active-user count, the error rate's numerator, or either top-5 rollup.
+    // The exclusion is spread from `OWNER_VISIBLE_INVOCATION_FILTER` rather than re-spelled
+    // per read, so the five cannot drift apart; the population is ledgered by
     // `src/server/services/__tests__/no-unmarked-private-run-invocation.test.ts`.
+    //
+    // 🔴 READ THAT AS A CLAIM ABOUT ONE TABLE, NOT ABOUT THIS FUNCTION. An earlier revision
+    // of this paragraph opened "ALL FIVE ENGAGEMENT READS EXCLUDE PRIVATE-RUN ROWS" with no
+    // such qualifier, sitting a dozen lines above two OTHER rails of the same
+    // owner-visible payload that still disclose a private run — which is the shape that
+    // stops the next person looking. Three review lanes found it independently. The two:
+    //
+    //   · `runs` / `runs.buzzSpent` / `runs.series` — the `block_spend_attribution` reads
+    //     above carry NO `status` predicate, so a private run's generation writes a
+    //     `voided` / `voidedReason: 'manual_review'` row that is still COUNTED as a run and
+    //     its Buzz still summed here. Deliberately held: see the note in
+    //     `buzz-attribution.service.ts`, which requires that filter to land before the
+    //     private-run surface is ENABLED. ⚠️ And when it does, the naive narrow spelling
+    //     `voidedReason: { not: 'manual_review' }` is a TRAP — that column is nullable and
+    //     NULL is the ordinary `tracked` population, so Prisma's `not` drops every real row
+    //     and zeroes the owner's run count. Use a top-level `NOT: { voidedReason: … }` or
+    //     an explicit `OR` with `null`.
+    //   · `views.count` / `views.uniqueViewers` — the ClickHouse `blockRenders` read at the
+    //     bottom of this `Promise.all` has no discriminator column at all, and its beacon
+    //     is written from the client with no verified claim to thread. A marker cannot reach
+    //     it; suppressing the beacon on the private-run host is the only available shape.
+    //
+    // Neither is in scope here, and both must be closed before the private-run flag is
+    // enabled. Naming them beside the claim is the point: the claim is true and narrow.
     //
     // ⚠️ The predicate names ONE exact value and excludes nothing else. It is deliberately
     // NOT an allowlist (`source: 'app-block'`): over-filtering here silently deletes the
@@ -455,8 +479,16 @@ export async function getMyAppAnalytics({
     // shipping: zero of the rows this filter can see carry the marker, so it changes no
     // existing number — unlike the `status <> 'voided'` filter deliberately held back on
     // the attribution table, which would have moved ~9 in 10 owner-visible rows.
+    //
+    // 🔴 THE SPREAD COMES FIRST, AND THAT ORDER IS LOAD-BEARING. `appBlockId: idIn` is the
+    // ONLY thing scoping these reads to the caller's own apps, and a spread placed LAST
+    // wins any key collision — `satisfies Prisma.BlockScopeInvocationWhereInput` constrains
+    // the constant's shape, not which keys it may hold, so a later edit adding `appBlockId`
+    // to the shared filter would silently replace the ownership scope on four aggregates
+    // served to app developers, with no type error and no failing test. Spread first and
+    // the explicit keys always win.
     dbRead.blockScopeInvocation.count({
-      where: { appBlockId: idIn, invokedAt: rangeFilter, ...OWNER_VISIBLE_INVOCATION_FILTER },
+      where: { ...OWNER_VISIBLE_INVOCATION_FILTER, appBlockId: idIn, invokedAt: rangeFilter },
     }),
     dbRead.$queryRaw<Array<{ value: bigint }>>(Prisma.sql`
       SELECT count(DISTINCT "user_id")::bigint AS value
@@ -468,22 +500,22 @@ export async function getMyAppAnalytics({
     `),
     dbRead.blockScopeInvocation.count({
       where: {
+        ...OWNER_VISIBLE_INVOCATION_FILTER,
         appBlockId: idIn,
         invokedAt: rangeFilter,
         statusCode: { gte: 400 },
-        ...OWNER_VISIBLE_INVOCATION_FILTER,
       },
     }),
     dbRead.blockScopeInvocation.groupBy({
       by: ['scope'],
-      where: { appBlockId: idIn, invokedAt: rangeFilter, ...OWNER_VISIBLE_INVOCATION_FILTER },
+      where: { ...OWNER_VISIBLE_INVOCATION_FILTER, appBlockId: idIn, invokedAt: rangeFilter },
       _count: true,
       orderBy: { _count: { scope: 'desc' } },
       take: 5,
     }),
     dbRead.blockScopeInvocation.groupBy({
       by: ['endpoint'],
-      where: { appBlockId: idIn, invokedAt: rangeFilter, ...OWNER_VISIBLE_INVOCATION_FILTER },
+      where: { ...OWNER_VISIBLE_INVOCATION_FILTER, appBlockId: idIn, invokedAt: rangeFilter },
       _count: true,
       orderBy: { _count: { endpoint: 'desc' } },
       take: 5,

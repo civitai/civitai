@@ -63,7 +63,7 @@ describe('recordScopeInvocation — the private-run audit marker', () => {
     mockLog.mockResolvedValue(undefined);
   });
 
-  it('marks the row when the verified claim is true', async () => {
+  it('[REG] marks the row when the verified claim is true', async () => {
     await recordScopeInvocation({ ...ORDINARY, privateRun: true });
     expect(mockCreate).toHaveBeenCalledTimes(1);
     // 🔴 THE LITERAL FIRST, THEN THE CONSTANT, AND THE ORDER IS THE POINT. Asserting only
@@ -93,7 +93,7 @@ describe('recordScopeInvocation — the private-run audit marker', () => {
     ['the claim is absent', {}],
     ['the claim is explicitly false', { privateRun: false }],
     ['the claim is undefined', { privateRun: undefined }],
-  ])('writes a byte-identical ORDINARY row when %s', async (_label, extra) => {
+  ])('[INV] writes a byte-identical ORDINARY row when %s', async (_label, extra) => {
     await recordScopeInvocation({ ...ORDINARY, ...extra });
     expect(mockCreate).toHaveBeenCalledWith({
       data: {
@@ -108,7 +108,7 @@ describe('recordScopeInvocation — the private-run audit marker', () => {
     expect(writtenData().source).toBeUndefined();
   });
 
-  it('a non-boolean claim value fails toward the ORDINARY row, not toward suppression', async () => {
+  it('[INV] a non-boolean claim value fails toward the ORDINARY row, not toward suppression', async () => {
     // 🔴 ABSENT OR GARBAGE MUST MEAN "AN ORDINARY ROW". The token verifier rejects a
     // non-boolean `privateRun` outright, so this is belt-and-braces — but the mirror
     // failure (a truthy non-boolean marking the row) would delete an owner's real usage
@@ -120,7 +120,7 @@ describe('recordScopeInvocation — the private-run audit marker', () => {
     expect(writtenData().source).toBeUndefined();
   });
 
-  it('the marker WINS over an explicitly-passed source', async () => {
+  it('[REG] the marker WINS over an explicitly-passed source', async () => {
     // The two are disjoint in production (an external-OAuth token cannot carry a
     // block-token claim), so this pins the resolution of a case that should never arise.
     // Private-run wins because the cost of getting it wrong that way is a row missing from
@@ -136,7 +136,7 @@ describe('recordScopeInvocation — the private-run audit marker', () => {
     expect(writtenData().source).toBe(PRIVATE_RUN_INVOCATION_SOURCE);
   });
 
-  it('an ordinary external-oauth row is untouched by the marker path', async () => {
+  it('[INV] an ordinary external-oauth row is untouched by the marker path', async () => {
     // The control for the case above: with no claim, `source` is passed through verbatim.
     await recordScopeInvocation({
       userId: ORDINARY.userId,
@@ -149,7 +149,7 @@ describe('recordScopeInvocation — the private-run audit marker', () => {
     expect(writtenData().source).toBe('external-oauth');
   });
 
-  it('the marker survives onto the synthetic-appBlockId retry row', async () => {
+  it('[REG] the marker survives onto the synthetic-appBlockId retry row', async () => {
     // 🔴 THE SECOND WRITE PATH, which had no `source` key at all before this change. It is
     // unreachable for a private run today (the verifier refuses the `privateRun` + `dev`
     // pair, and this branch is gated on `dev`), and it is covered anyway so the marker's
@@ -172,9 +172,13 @@ describe('recordScopeInvocation — the private-run audit marker', () => {
     expect(retry.source).toBe(PRIVATE_RUN_INVOCATION_SOURCE);
   });
 
-  it('the retry row stays byte-identical for an ORDINARY dev token', async () => {
+  it('[INV] the retry row omits the source key for an ORDINARY dev token', async () => {
     // The control for the case above — the retry path must not have gained a key on the
     // path that actually runs in production.
+    // ⚠️ RENAMED from "stays byte-identical", which the body did not check: it asserts the
+    // `source` key alone. The full-row equality lives in the ORDINARY cases above, which do
+    // use an exact `toHaveBeenCalledWith`. A title claiming more than the body checks is the
+    // same defect class as a docblock claiming more than its guard.
     const fkError = Object.assign(new Error('fk'), { code: 'P2003' });
     mockCreate
       .mockRejectedValueOnce(fkError)
@@ -187,7 +191,7 @@ describe('recordScopeInvocation — the private-run audit marker', () => {
     expect(writtenData(1).source).toBeUndefined();
   });
 
-  it('a marked write that fails is still swallowed, and still logged', async () => {
+  it('[INV] a marked write that fails is still swallowed, and still logged', async () => {
     // The audit pipeline must never affect a response that has already shipped — the
     // marker must not change that.
     mockCreate.mockRejectedValueOnce(new Error('db down'));
@@ -197,7 +201,7 @@ describe('recordScopeInvocation — the private-run audit marker', () => {
     expect(mockLog).toHaveBeenCalledTimes(1);
   });
 
-  it('the marker value is the one the readers exclude, and is not one of the existing two', () => {
+  it('[REG] the marker value is the one the readers exclude, and is not one of the existing two', () => {
     // 🔴 A WRITER AND A FILTER THAT DISAGREE BOTH LOOK CORRECT. Both sides import this
     // constant, so this pins the value itself: it must be distinct from both live `source`
     // values, or the filter would drop an existing population wholesale.
