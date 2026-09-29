@@ -1,7 +1,7 @@
-import { readdirSync, readFileSync, statSync } from 'fs';
-import { join, relative, sep } from 'path';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { describe, expect, it } from 'vitest';
-import { stripCommentsAndStrings } from '../../../../../test/strip-comments';
+import { scanSource } from '../../../../../test/source-scan';
 
 /**
  * THE SSR⇄MINT SEAM, LEDGERED — and it is the guard this whole feature is shaped
@@ -44,33 +44,6 @@ import { stripCommentsAndStrings } from '../../../../../test/strip-comments';
 
 const ROOT = process.cwd();
 
-function walk(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    if (entry === 'node_modules' || entry === '.next' || entry === '.git') continue;
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) walk(full, out);
-    else if (/\.tsx?$/.test(entry)) out.push(full);
-  }
-  return out;
-}
-
-/** Every non-test .ts/.tsx under src/, as repo-relative POSIX-ish paths. */
-function sourceFiles(): string[] {
-  return walk(join(ROOT, 'src'))
-    .map((f) => relative(ROOT, f).split(sep).join('/'))
-    .filter((f) => !/__tests__|\.test\.tsx?$|(^|\/)src\/tests\//.test(f));
-}
-
-const FILES = sourceFiles();
-const CODE = new Map(
-  FILES.map((f) => [f, stripCommentsAndStrings(readFileSync(join(ROOT, f), 'utf8'))] as const)
-);
-
-/** Raw file text, for assertions about literals (which `CODE` has stripped). */
-function raw(file: string): string {
-  return readFileSync(join(ROOT, file), 'utf8');
-}
-
 /**
  * Where each scanned symbol is DEFINED, excluded from its own caller set.
  *
@@ -89,12 +62,11 @@ const DEFINED_IN: Record<string, string> = {
   resolvePageBlock: 'src/server/services/block-registry.service.ts',
 };
 
-/** Files whose CODE (comments and string literals stripped) calls `name(`. */
-function callersOf(name: string): string[] {
-  const re = new RegExp(`\\b${name}\\s*\\(`);
-  const home = DEFINED_IN[name];
-  return FILES.filter((f) => re.test(CODE.get(f)!) && f !== home).sort();
-}
+// The walk, the comment/string strip and the caller scan are SHARED with the sibling
+// ledgers — see `test/source-scan.ts`. The population filter in particular is the
+// DEFINITION of what this file's enumerated-equality assertions range over, so a copy of
+// it here is a copy of the thing that must not drift.
+const { files: FILES, code: CODE, raw, callersOf } = scanSource(ROOT, DEFINED_IN);
 
 describe('the private-run seam — instrument validation', () => {
   it('POSITIVE CONTROL: the scan enumerates a real population and can match', () => {

@@ -1,7 +1,5 @@
-import { readdirSync, readFileSync, statSync } from 'fs';
-import { join, relative, sep } from 'path';
 import { describe, expect, it } from 'vitest';
-import { stripCommentsAndStrings } from '../../../../../test/strip-comments';
+import { scanSource } from '../../../../../test/source-scan';
 
 /**
  * THE `blockRenders` WRITER SET, LEDGERED — and the ledger pins a RELATIONSHIP, not a
@@ -46,28 +44,6 @@ import { stripCommentsAndStrings } from '../../../../../test/strip-comments';
 
 const ROOT = process.cwd();
 
-function walk(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    if (entry === 'node_modules' || entry === '.next' || entry === '.git') continue;
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) walk(full, out);
-    else if (/\.tsx?$/.test(entry)) out.push(full);
-  }
-  return out;
-}
-
-/** Every non-test .ts/.tsx under src/, as repo-relative POSIX-ish paths. */
-function sourceFiles(): string[] {
-  return walk(join(ROOT, 'src'))
-    .map((f) => relative(ROOT, f).split(sep).join('/'))
-    .filter((f) => !/__tests__|\.test\.tsx?$|(^|\/)src\/tests\//.test(f));
-}
-
-const FILES = sourceFiles();
-const CODE = new Map(
-  FILES.map((f) => [f, stripCommentsAndStrings(readFileSync(join(ROOT, f), 'utf8'))] as const)
-);
-
 /**
  * Where each scanned symbol is DEFINED, excluded from its own call-site set.
  *
@@ -81,12 +57,9 @@ const DEFINED_IN: Record<string, string> = {
   isPrivateRunImpression: 'src/server/services/blocks/private-run-impression.service.ts',
 };
 
-/** Files whose CODE (comments and string literals stripped) calls `name(`. */
-function callersOf(name: string): string[] {
-  const re = new RegExp(`\\b${name}\\s*\\(`);
-  const home = DEFINED_IN[name];
-  return FILES.filter((f) => re.test(CODE.get(f)!) && f !== home).sort();
-}
+// The walk, the comment/string strip and the caller scan are SHARED — see
+// `test/source-scan.ts` for why the population filter in particular must not be copied.
+const { files: FILES, code: CODE, raw, callersOf } = scanSource(ROOT, DEFINED_IN);
 
 /**
  * Files that call `.blockRender(` ON SOMETHING — a tracker instance or `ctx.track`.
@@ -100,11 +73,6 @@ function callersOf(name: string): string[] {
  */
 function trackerWriteSites(): string[] {
   return FILES.filter((f) => /\.blockRender\s*\(/.test(CODE.get(f)!)).sort();
-}
-
-/** Raw file text, for assertions about literals (which `CODE` has stripped). */
-function raw(file: string): string {
-  return readFileSync(join(ROOT, file), 'utf8');
 }
 
 describe('the blockRenders writer set — instrument validation', () => {
@@ -125,17 +93,22 @@ describe('the blockRenders writer set — instrument validation', () => {
   it('🔴 CONTROL: the scan reads CODE, so a mention in a COMMENT is not a call site', () => {
     // The failure this prevents has bitten a sibling ledger: a regex over RAW source turns
     // green the moment somebody writes the gate's name in a doc comment, with the file
-    // calling nothing. Several files legitimately NAME the gate in prose — the client
-    // beacon emitter and the canonical note at the read site among them — and none of them
-    // may count.
+    // calling nothing.
+    //
+    // ⚠️ THE POPULATION IS EXACTLY ONE FILE, AND THIS USED TO SAY "several" — measured, it
+    // is the client beacon emitter alone. (`app-views.service.ts` names the module PATH,
+    // not the identifier; the two writers name it in prose AND call it, so they are in
+    // CODE and correctly excluded.) That matters: with `toBeGreaterThan(0)` the whole
+    // control rests on ONE prose paragraph, and this repo's comment policy actively
+    // encourages deleting paragraphs — so it is pinned BY NAME, and a deletion is then a
+    // red test with an obvious fix rather than a control that silently stops controlling.
     const mentionsInProse = FILES.filter((f) => {
       const text = raw(f);
       return (
         text.includes('isPrivateRunImpression') && !CODE.get(f)!.includes('isPrivateRunImpression')
       );
     });
-    // At least one such file must exist, or this control is proving nothing.
-    expect(mentionsInProse.length).toBeGreaterThan(0);
+    expect(mentionsInProse).toEqual(['src/components/AppBlocks/sendBlockRender.ts']);
     for (const f of mentionsInProse) {
       expect(callersOf('isPrivateRunImpression')).not.toContain(f);
     }
@@ -189,28 +162,46 @@ describe('the blockRenders writer set — the ledger [INV]', () => {
     expect(callersOf('isPrivateRunImpression')).toEqual(trackerWriteSites());
   });
 
-  it('each writer SUPPRESSES on the gate rather than merely calling it', () => {
-    // The nearest thing a text scan can say about the answer being USED. A writer that
-    // awaited the gate and ignored it would satisfy the equality above; it cannot satisfy
-    // this. Read from CODE so a `return` written in a comment cannot pass it.
-    for (const f of WRITERS) {
-      const code = CODE.get(f)!;
-      expect(code, `${f} must call the gate inside a condition that returns`).toMatch(
-        /if\s*\(await isPrivateRunImpression\(\{[\s\S]{0,200}?\}\)\)[\s\S]{0,80}?return/
-      );
-    }
-  });
+  /**
+   * 🔴 DELETED, NOT TIGHTENED: an assertion that each writer "SUPPRESSES on the gate
+   * rather than merely calling it", matched as
+   * `if\s*\(await isPrivateRunImpression\(\{…\}\)\)[\s\S]{0,80}?return`.
+   *
+   * It was a guard on a SPELLING, and review demonstrated the walk rather than arguing
+   * it. In `track.router.ts` the statement AFTER the gate is `return ctx.track.blockRender
+   * (…)` — the RECORDING path's own `return`. So the mutant
+   * `if (await isPrivateRunImpression({…}));` — compute the answer, discard it, insert
+   * anyway — matched and went GREEN: the guard's evidence came from the code path it
+   * existed to exclude. It was also pinned to a source line sitting exactly at prettier's
+   * `printWidth: 100`, so a one-character rename anywhere on that line reformats the `if`
+   * across lines and fires a guard whose message names a deleted gate.
+   *
+   * Tightening the regex was the obvious fix and is how the first weakness got there.
+   * The property is already carried, behaviourally and per writer, by
+   * `src/tests/api/track/block-render.private-run.test.ts` — which kills that exact
+   * mutant on the tRPC leg (1 row where 0 is expected). A structural scan cannot see
+   * whether an answer was USED; that is not a gap to patch, it is the boundary between
+   * the two halves of this guard.
+   */
 
   it('the gate is reached with a SERVER-RESOLVED viewer, never a parsed body field', () => {
-    // 🔴 The one property a structural guard can genuinely carry about the derivation: the
-    // viewer argument must come from the resolved session, and the only `viewer:` spelling
-    // in each writer must be one of those two. A body-derived viewer would be a different
-    // token here, and the behavioural suite's spoofing cases cover the values.
+    // 🔴 ENUMERATE, DO NOT SAMPLE AN ALLOWLIST. This used to be
+    // `ALLOWED.filter(s => code.includes(s))` → `toHaveLength(1)`, which asserts that one
+    // of two permitted spellings is PRESENT and says nothing about any other. Review ran
+    // the mutant: a SECOND gate call with `viewer: input.viewer` alongside the correct one
+    // left the count at 1 and passed. Matching every `viewer:` in the file and requiring
+    // each to be allowlisted is the difference between "a good one exists" and "no bad one
+    // exists", and only the second is the claim.
     const ALLOWED_VIEWER_SOURCES = ['viewer: session?.user', 'viewer: ctx.user'];
     for (const f of WRITERS) {
-      const code = CODE.get(f)!;
-      const used = ALLOWED_VIEWER_SOURCES.filter((s) => code.includes(s));
-      expect(used, `${f} must thread the resolved session into the gate`).toHaveLength(1);
+      const used = CODE.get(f)!.match(/viewer:\s*[^,}\n]+/g) ?? [];
+      expect(used.length, `${f} must thread a viewer into the gate`).toBeGreaterThan(0);
+      for (const spelling of used) {
+        expect(
+          ALLOWED_VIEWER_SOURCES,
+          `${f} threads \`${spelling.trim()}\` — only a SERVER-RESOLVED session may reach the gate`
+        ).toContain(spelling.trim());
+      }
     }
   });
 
@@ -227,6 +218,12 @@ describe('the blockRenders writer set — the ledger [INV]', () => {
     // module every route imports. Putting it there would look like better symmetry and
     // would drag Prisma, Flipt and the app-blocks service graph into the lightweight
     // beacon's import path — the one cost that route exists to avoid.
+    //
+    // 🔴 THE PAIRED POSITIVE CONTROL IS NOT OPTIONAL. `stripCommentsAndStrings` is
+    // documented as biased toward over-stripping, so a `not.toContain` against a CODE
+    // entry that had been stripped to whitespace would pass having measured nothing —
+    // a reassuring zero. This line proves the same CODE entry can still match.
+    expect(CODE.get('src/server/clickhouse/tracker.ts')!).toContain('blockRender');
     expect(CODE.get('src/server/clickhouse/tracker.ts')!).not.toContain('isPrivateRunImpression');
   });
 });

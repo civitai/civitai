@@ -52,13 +52,23 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
   PublicEndpoint: (handler: unknown) => handler,
 }));
 
+// 🔴 `isProd` IS **FALSE**, NOT `!isDev`, AND THAT IS A REAL TRAP RATHER THAN A TIDY-UP.
+// The sibling suite spells it `!devStore.isDev`, which with `isDev = false` makes `isProd`
+// TRUE — and `src/env/client-schema.ts` reads
+// `NEXT_PUBLIC_CIVITAI_LINK: isProd ? z.url() : z.url().optional()`. So any module graph
+// this file pulls in that reaches `~/env/client` (which validates UNCONDITIONALLY at
+// module scope) throws `Invalid environment variables`. That is exactly what happened
+// here, and because the gate catches every throw and fails toward RECORDING, it surfaced
+// as four suppression cases reading "1 row" with no hint the env, not the gate, was the
+// broken thing. Under `NODE_ENV=test` both flags really are false, so this mock is also
+// the more faithful one.
 vi.mock('~/env/other', () => ({
   get isDev() {
     return devStore.isDev;
   },
-  get isProd() {
-    return !devStore.isDev;
-  },
+  isProd: false,
+  isTest: true,
+  isPreview: false,
 }));
 
 vi.mock('~/server/auth/get-server-auth-session', () => ({
@@ -78,17 +88,20 @@ vi.mock('~/server/clickhouse/client', () => ({
 
 vi.mock('~/server/services/blocks/known-app-blocks.service', () => mockKnown);
 vi.mock('~/server/services/app-blocks-flag', () => mockFlag);
-// 🔴 A PLAIN FACTORY, NOT `importOriginal`, AND THE REASON IS A REAL FAILURE THIS FILE
-// HIT. `importOriginal` evaluates the real predicate module, whose transitive graph
-// validates the CLIENT env — which throws in this suite's environment. The gate catches
-// every throw and fails toward RECORDING the impression (by design), so the suppression
-// cases went green-looking-red: every assertion read "1 row" with no hint that the module
-// mock, not the gate, was the thing that broke. The gate's own suite
-// (`blocks/__tests__/private-run-impression.service.test.ts`) keeps `importOriginal` where
-// it needs the real `PRIVATE_RUN_REFUSAL_REASONS` tuple; this file needs only the TYPE,
-// which is erased.
+// A plain factory rather than `importOriginal`: this file needs only the predicate's TYPE
+// (erased at runtime), so evaluating the real module — which statically pulls `dbRead`,
+// `dbWrite` and `BlockRegistry` — would buy nothing. The sibling gate suite DOES use
+// `importOriginal` on this same module, because it needs the real
+// `PRIVATE_RUN_REFUSAL_REASONS` tuple, and it works there; an earlier version of this
+// comment claimed `importOriginal` was impossible here, which review correctly flagged as
+// a contradiction between two files. Re-derived: the blocker was this file's own
+// `~/env/other` mock, fixed above — not a property of the predicate module.
 vi.mock('~/server/services/blocks/private-run-access.service', () => mockAccess);
 
+// The CANONICAL logging mock — `~/server/logging/client` has one, so a per-file
+// registration of it would be a `no-direct-shared-module-mock` failure. Used here as the
+// discriminator between "the gate decided" and "the gate fell open".
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { trackRouter } from '~/server/routers/track.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -206,7 +219,39 @@ type Scenario = {
   world?: () => void;
   /** 1 = the impression is recorded; 0 = it is suppressed. */
   expectInserts: 0 | 1;
+  /**
+   * TRUE when this row is supposed to reach the gate's fail-open catch rather than a
+   * decision. Exactly one row sets it, and that is what makes `decided()` below a
+   * discriminator instead of a constant.
+   */
+  expectThrow?: true;
 };
+
+/**
+ * Did the gate DECIDE, or fall open?
+ *
+ * The two are indistinguishable from the insert count alone — a gate that throws on every
+ * call produces exactly the "1 row" that a correct refusal produces — so every recording
+ * case would otherwise pass just as happily with the gate broken. The fail-open path is
+ * the one that logs, so the log IS the discriminator.
+ *
+ * 🔴 FILTERED BY EVENT NAME, AND THE FIRST VERSION WAS NOT — it asked whether
+ * `logToAxiom` had been called AT ALL, and went red on nine passing cases. The beacon
+ * route writes its OWN `block-render-unknown-app` line for any id outside the approved
+ * set, which is EVERY fixture in this file by construction. So the unfiltered form was a
+ * discriminator for "did anything log", not "did the gate fail", and it would equally
+ * have gone GREEN-for-the-wrong-reason had the polarity been the other way round.
+ */
+function gateFailedOpen(): boolean {
+  const calls = (
+    loggingMock.logToAxiom as unknown as { mock: { calls: Array<[{ name?: string }]> } }
+  ).mock.calls;
+  return calls.some(([payload]) => payload?.name === 'private-run-impression-gate-failed');
+}
+
+function decided(): boolean {
+  return !gateFailedOpen();
+}
 
 const SCENARIOS: Scenario[] = [
   {
@@ -252,12 +297,32 @@ const SCENARIOS: Scenario[] = [
     appBlockId: DELISTED_APP,
     world: () => mockAccess.resolvePrivateRunAccess.mockRejectedValue(new Error('db down')),
     expectInserts: 1,
+    expectThrow: true,
   },
 ];
 
-describe('the two blockRenders writers agree about a private run [REG]', () => {
+/**
+ * 🔴 THE LABEL IS PER TEST, NOT PER FILE, AND THAT CORRECTION IS THE POINT.
+ *
+ * This describe was labelled `[REG]` wholesale. Applying this repo's own mechanical
+ * definition — would it go RED against pre-change behaviour? — only ONE of its rows
+ * qualifies: at base nothing is ever suppressed, so every `expectInserts: 1` row is green
+ * there and is an INVARIANT guard. Labelling five invariants as regression coverage is
+ * the exact mistake `app-analytics.private-run-exclusion.test.ts` records having made and
+ * corrected, so each `it` carries its own label below.
+ *
+ * ⚠️ AND `[REG]` IS NOT ESTABLISHABLE HERE THE USUAL WAY: `private-run-impression.service`
+ * does not exist at `origin/main`, so at base this file is a COLLECTION FAILURE — "no
+ * tests" — not a red assertion. The substitute measurement is gate-removal at BOTH
+ * writers on this tree, which reproduces base behaviour at both: **4 of 16 red** —
+ * scenario 1, both SERVER-WINS cases, and the counter case. That is a real measurement
+ * and it is not the claim `[REG]` normally makes; recorded here so it is never quoted as
+ * "watched red at the base ref".
+ */
+describe('the two blockRenders writers agree about a private run', () => {
   for (const s of SCENARIOS) {
-    it(`${s.name} → ${s.expectInserts} row, from BOTH writers`, async () => {
+    const label = s.expectInserts === 0 ? '[REG]' : '[INV]';
+    it(`${label} ${s.name} → ${s.expectInserts} row, from BOTH writers`, async () => {
       // BEACON
       vi.clearAllMocks();
       armed();
@@ -265,6 +330,7 @@ describe('the two blockRenders writers agree about a private run [REG]', () => {
       s.world?.();
       sessionStore.session = s.viewer ? { user: s.viewer } : null;
       const beacon = await viaBeacon({ ...identifiers(), appBlockId: s.appBlockId });
+      const beaconDecided = decided();
 
       // tRPC
       vi.clearAllMocks();
@@ -276,14 +342,25 @@ describe('the two blockRenders writers agree about a private run [REG]', () => {
       expect(beacon, 'the beacon writer').toBe(s.expectInserts);
       expect(trpc, 'the tRPC writer').toBe(s.expectInserts);
       expect(beacon, 'the two writers must agree').toBe(trpc);
+
+      // 🔴 DECIDED, NOT FELL OPEN. Without this, every `expectInserts: 1` row is ALSO what
+      // a gate that throws on every call produces — so the recording half of the table
+      // could not tell "the gate answered false" from "the gate is broken", which is the
+      // failure this whole design fails toward. `expectThrow` rows assert the inverse, so
+      // the pair is a control rather than a blanket.
+      expect(beaconDecided, 'beacon: gate decided vs failed open').toBe(!s.expectThrow);
+      expect(decided(), 'tRPC: gate decided vs failed open').toBe(!s.expectThrow);
     });
   }
 
-  it('POSITIVE CONTROL: the table exercises both polarities on both writers', () => {
+  it('[INV] POSITIVE CONTROL: the table exercises both polarities on both writers', () => {
     // Without both polarities present, "they agree" is satisfied by two writers that
     // always suppress, or two that never do.
     expect(SCENARIOS.filter((s) => s.expectInserts === 0).length).toBeGreaterThan(0);
     expect(SCENARIOS.filter((s) => s.expectInserts === 1).length).toBeGreaterThan(3);
+    // And at least one row must exercise the fail-open path, or the `decided()` assertion
+    // above is a constant rather than a discriminator.
+    expect(SCENARIOS.filter((s) => s.expectThrow).length).toBeGreaterThan(0);
   });
 });
 
@@ -304,12 +381,22 @@ describe('🔴 the private-run signal cannot be SPOOFED from the request body', 
   for (const spoof of SPOOFS) {
     it(`records the impression despite ${JSON.stringify(spoof)} in the body`, async () => {
       // An unrelated viewer of a NON-APPROVED app: every gate before the predicate PASSES,
-      // so the request reaches the one check that can refuse it. That is what makes this a
-      // reachability case and not an accident of an earlier short-circuit.
+      // so the request reaches the one check that can refuse it.
       refuses('no-role');
       sessionStore.session = { user: STRANGER };
 
       expect(await viaBeacon({ ...identifiers(), ...spoof })).toBe(1);
+      // 🔴 REACHABILITY, ASSERTED RATHER THAN CLAIMED. The sentence above used to be the
+      // only thing saying the predicate was reached — and "1 row" is also what an earlier
+      // short-circuit, a broken leaf mock, or a gate that threw would produce. Then the
+      // comment would still be there telling the reader this was a reachability case while
+      // nothing measured it. A guard whose description claims more than it checks is worse
+      // than none, because it stops the next person looking.
+      expect(
+        mockAccess.resolvePrivateRunAccess,
+        'the spoof must REACH the predicate'
+      ).toHaveBeenCalled();
+      expect(decided(), 'and the predicate must have DECIDED, not fallen open').toBe(true);
       // And nothing smuggled reaches the row.
       expect(Object.keys(mockCh.insert.mock.calls[0][0]).sort()).toEqual([
         'appBlockId',
@@ -322,6 +409,11 @@ describe('🔴 the private-run signal cannot be SPOOFED from the request body', 
       armed();
       refuses('no-role');
       expect(await viaTrpc({ ...identifiers(), ...spoof }, STRANGER)).toBe(1);
+      expect(
+        mockAccess.resolvePrivateRunAccess,
+        'tRPC: the spoof must REACH the predicate'
+      ).toHaveBeenCalled();
+      expect(decided(), 'tRPC: decided, not fallen open').toBe(true);
     });
   }
 

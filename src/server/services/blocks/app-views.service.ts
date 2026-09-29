@@ -53,9 +53,12 @@ import { logToAxiom } from '~/server/logging/client';
  *     happened; it is not lost. A private run cannot boot without a token, and the mint
  *     writes `app-blocks.private-run.mint` (userId, appBlockId, slug, audience, status,
  *     listingStatus, scopes, spendGranted) to Axiom AND stdout, plus
- *     `app-blocks.private-run.mint-refused` for refusals. The operator decision is that the
- *     trail is INTERNAL-AUDIT-ONLY, which is precisely what those lines are and what a
- *     ClickHouse row the owner can read is not.
+ *     `app-blocks.private-run.mint-refused` for every refusal EXCEPT `flag-off`, which is
+ *     deliberately unlogged for volume. The operator decision is that the trail is
+ *     INTERNAL-AUDIT-ONLY, which is precisely what those lines are and what a ClickHouse
+ *     row the owner can read is not. ⚠️ Reconciling a suppressed impression by grepping
+ *     `private-run.mint` alone will MISS the dev-tunnel case below — that mount audits
+ *     under `app-blocks.dev-tunnel.*`, a different event name.
  *  3. (a) MIRRORS AN EXISTING, REVIEWED SUPPRESSION on this exact pair of writers:
  *     `secondary` already skips the insert in both, symmetrically, for the same reason
  *     (a row with no status column that must not be written twice).
@@ -73,6 +76,34 @@ import { logToAxiom } from '~/server/logging/client';
  * the viewer to be that app's owner, an accepted collaborator, or a moderator. A third
  * party's impression is therefore unreachable from the gate, and every gate in it fails
  * toward RECORDING the row.
+ *
+ * 🔴 NOTHING IN THIS FILE ENFORCES IT, AND THAT IS THE DESIGN — do not read the heading
+ * above as a claim about the query below. The rows simply never arrive; the read is
+ * unchanged and keeps its existing plan. The structural guarantee that BOTH writers gate
+ * is `blocks/__tests__/block-render-writer.call-site-ledger.test.ts`, and the behavioural
+ * one is `src/tests/api/track/block-render.private-run.test.ts`. A future reader looking
+ * here for a `source <> …` filter will not find one and should not add one.
+ *
+ * ⚠️ TWO RAILS, TWO INDEPENDENT DERIVATIONS OF "THIS IS A PRIVATE RUN", AND NOTHING
+ * ASSERTS THEY AGREE. `block_scope_invocations` derives it from the VERIFIED TOKEN CLAIM
+ * at call time; this rail derives it from the SESSION + database at beacon time. Those
+ * inputs can disagree at the margin — a mount served under a token minted before the flag
+ * was turned off for that viewer would land an owner-visible impression while its
+ * invocation rows stay hidden. Blast radius is one telemetry row per mount, not access,
+ * so it is recorded rather than guarded; the alternative (a third derivation to reconcile
+ * them) is worse than the seam.
+ *
+ * 🔴 A LOAD PRECONDITION THIS CLOSURE CREATES, WHICH MUST BE SETTLED BEFORE THE FLAG IS
+ * WIDENED. The gate can reach `resolvePrivateRunAccess` — ~7 statements, one of them on
+ * the WRITE PRIMARY — and the branch is selected by a client-chosen `appBlockId` on a
+ * route with NO RATE LIMIT, whose own header records that "a scripted client could post
+ * unlimited DISTINCT ids". Before this change the common beacon path did ZERO Postgres
+ * queries. Unreachable in production today (the flag is base-off AND its key does not
+ * exist in `flipt-state`), so this is a precondition and not an incident — but the moment
+ * that key is created with any rollout, the two decisions are the same decision.
+ * CLOSING CONDITION: either `/api/track/block-render` carries a rate limit (this repo has
+ * several to copy under `server/utils/`), or the flag's rollout is confirmed to admit only
+ * the moderators segment. Whoever creates the flag row checks one of those two.
  *
  * ACCEPTANCE (the condition this arc closes on): one private run against a delisted app,
  * then the operator reads that app's analytics panel and confirms `views.count` and

@@ -108,6 +108,18 @@ export async function isKnownAppBlockId(appBlockId: string): Promise<boolean> {
  * there: the authoritative status check is `resolvePrivateRunAccess`, which
  * refuses an approved app outright, so a wrong answer here changes load, not
  * behaviour.
+ *
+ * 🔴 THAT LAST SENTENCE IS A PRECONDITION ON THE CALLER, NOT A PROPERTY OF THIS
+ * FUNCTION. It holds only because the one existing consumer re-checks status
+ * authoritatively downstream. A consumer that treats this answer as the DECISION
+ * turns it into a correctness gate, and then the `trusted` semantics read the
+ * other way round: during an approved-lookup outage this answers `false` for
+ * every id, which such a consumer would read as "every app is approved". If you
+ * are adding the second caller, say which of the two you are.
+ *
+ * ⚠️ And one edge that is not a defect but is worth knowing: a SUCCESSFUL query
+ * returning zero rows yields `trusted: true` with an empty set, so every id is
+ * "confirmed non-approved". Real only in an environment with no approved apps.
  */
 export async function isConfirmedNonApprovedAppBlockId(appBlockId: string): Promise<boolean> {
   const { ids, trusted } = await getKnownAppBlockIds();

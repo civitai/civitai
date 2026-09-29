@@ -143,10 +143,21 @@ describe('isPrivateRunImpression — an ordinary impression survives [INV]', () 
     armed();
   });
 
-  it('🔴 EVERY refusal reason records the impression — completeness derived from the real tuple', async () => {
-    // A refusal means "this mount is not a private run", so the row is real. The rows are
-    // derived from the production tuple, so a ninth reason added without considering this
-    // gate fails HERE rather than silently defaulting to suppression.
+  it('EVERY refusal reason records the impression, swept over the real tuple', async () => {
+    // A refusal means "this mount is not a private run", so the row is real.
+    //
+    // ⚠️ THIS USED TO CLAIM "a ninth reason added without considering this gate fails
+    // HERE". IT CANNOT, and the correction matters more than the sweep does. The gate
+    // reads `access.allowed === true` — ONE branch for every reason — so adding a tenth
+    // member adds one more PASSING iteration and no mutation of "add a reason" can turn
+    // this red. The loop is nine copies of one assertion; it is kept because sweeping the
+    // real tuple costs nothing and documents the polarity, not because it is a
+    // completeness guard. A guard whose description claims coverage it does not provide
+    // is worse than none.
+    //
+    // The line below IS a working control, and it is the reason the tuple is imported at
+    // all: if the `importOriginal` spread ever produced a mocked or empty module, `.length`
+    // is `undefined`/`0` and this goes red BEFORE the loop can pass vacuously.
     expect(PRIVATE_RUN_REFUSAL_REASONS.length).toBeGreaterThan(5);
     for (const reason of PRIVATE_RUN_REFUSAL_REASONS) {
       mockAccess.resolvePrivateRunAccess.mockResolvedValue(refuse(reason));
@@ -199,6 +210,11 @@ describe('isPrivateRunImpression — an ordinary impression survives [INV]', () 
       false
     );
     expect(mockAccess.resolvePrivateRunAccess).not.toHaveBeenCalled();
+    // 🔴 AND THE CHEAP GATE RAN FIRST. Without this the case pins "4 unreached" but says
+    // nothing about 2 PRECEDING 3 — a reordering that put the flag eval ahead of the
+    // cached set lookup would keep this green while making every signed-in beacon pay the
+    // more expensive of the two. The ordering IS the cost claim, so it is asserted.
+    expect(mockKnown.isConfirmedNonApprovedAppBlockId).toHaveBeenCalled();
   });
 });
 
@@ -231,15 +247,29 @@ describe('isPrivateRunImpression — failures fail TOWARD recording [INV]', () =
     expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
   });
 
-  it('the fail-open log carries NO app id and NO user id', async () => {
+  it('🔴 the fail-open log carries the error CLASS, never the error MESSAGE', async () => {
     // The identifiers belong in the mint's audit line. This is a health signal, and a
-    // per-impression health signal that carries identifiers is a second, unreviewed
-    // audit trail on a public write path.
-    mockAccess.resolvePrivateRunAccess.mockRejectedValue(new Error('boom'));
+    // per-impression health signal that carries identifiers is a second, unreviewed audit
+    // trail on a public write path.
+    //
+    // 🔴 THE MESSAGE IS THE LEAK VECTOR, AND A "no user id" SWEEP DOES NOT CATCH IT. The
+    // gate logged `err.message` under a comment promising no user id, and a
+    // `PrismaClientValidationError` renders the failing invocation INCLUDING ITS
+    // ARGUMENTS — the call inside the try being `user.findUnique({ where: { id:
+    // <viewer.id> } })`. A fixture whose error text happens to be clean (`'boom'`) sweeps
+    // green over exactly that defect, which is why this pins the SHAPE — class in, message
+    // out — instead of grepping the output for today's ids.
+    const secret = `prisma-arg-${MODERATOR.id}-${DELISTED_APP}`;
+    const err = new TypeError(secret);
+    mockAccess.resolvePrivateRunAccess.mockRejectedValue(err);
     await isPrivateRunImpression({ appBlockId: DELISTED_APP, viewer: MODERATOR });
-    const payload = JSON.stringify(loggingMock.logToAxiom.mock.calls[0]?.[0] ?? {});
-    expect(payload).not.toContain(DELISTED_APP);
-    expect(payload).not.toContain(String(MODERATOR.id));
+
+    const [payload] = loggingMock.logToAxiom.mock.calls[0] as [Record<string, unknown>];
+    expect(payload.errorClass, 'the class is what a health signal needs').toBe('TypeError');
+    const serialised = JSON.stringify(payload);
+    expect(serialised, 'no message text may reach the log').not.toContain(secret);
+    expect(serialised).not.toContain(DELISTED_APP);
+    expect(serialised).not.toContain(String(MODERATOR.id));
   });
 
   it('records the impression when the FLAG CLIENT throws', async () => {
