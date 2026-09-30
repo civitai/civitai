@@ -2,6 +2,7 @@ import { Badge, Button, Container, Text, Title } from '@mantine/core';
 import { IconArrowLeft, IconUsers } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { NavigateBack } from '~/components/BackButton/BackButton';
+import { CrucibleContextMenu } from '~/components/Crucible/CrucibleContextMenu';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -117,20 +118,25 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
         size="xl"
         className="relative z-10 flex w-full flex-col justify-between gap-6 pt-4"
       >
-        <NavigateBack url="/crucibles">
-          {({ onClick }) => (
-            <Button
-              variant="light"
-              color="gray"
-              size="compact-sm"
-              leftSection={<IconArrowLeft size={16} />}
-              onClick={onClick}
-              className="self-start"
-            >
-              Back
-            </Button>
-          )}
-        </NavigateBack>
+        <div className="flex items-center justify-between">
+          <NavigateBack url="/crucibles">
+            {({ onClick }) => (
+              <Button
+                variant="light"
+                color="gray"
+                size="compact-sm"
+                leftSection={<IconArrowLeft size={16} />}
+                onClick={onClick}
+              >
+                Back
+              </Button>
+            )}
+          </NavigateBack>
+          <CrucibleContextMenu
+            crucible={{ id: crucible.id, userId: crucible.user.id }}
+            position="bottom-end"
+          />
+        </div>
 
         <div
           className="mb-8 max-w-2xl self-start rounded-xl border border-white/10 p-5 sm:p-8"

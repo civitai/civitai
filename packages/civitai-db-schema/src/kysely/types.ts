@@ -2469,6 +2469,10 @@ export type CrucibleEntry = {
   buzzTransactionId: string | null;
   createdAt: Generated<Timestamp>;
 };
+export type CrucibleReport = {
+  crucibleId: number;
+  reportId: number;
+};
 export type CryptoDeposit = {
   paymentId: string;
   userId: number;
@@ -4880,6 +4884,7 @@ export type DB = {
   CreatorGalleryHiddenUser: CreatorGalleryHiddenUser;
   Crucible: Crucible;
   CrucibleEntry: CrucibleEntry;
+  CrucibleReport: CrucibleReport;
   CryptoDeposit: CryptoDeposit;
   CryptoTransaction: CryptoTransaction;
   CryptoWallet: CryptoWallet;

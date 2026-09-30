@@ -1288,6 +1288,7 @@ export interface Report {
   model3d?: Model3DReport | null;
   model3dReview?: Model3DReviewReport | null;
   announcement?: AnnouncementReport | null;
+  crucible?: CrucibleReport | null;
 }
 
 export interface ResourceReviewReport {
@@ -5706,6 +5707,14 @@ export interface Crucible {
   scannedAt: Date | null;
   textNsfw: boolean;
   entries?: CrucibleEntry[];
+  reports?: CrucibleReport[];
+}
+
+export interface CrucibleReport {
+  crucibleId: number;
+  crucible?: Crucible;
+  reportId: number;
+  report?: Report;
 }
 
 export interface CrucibleEntry {

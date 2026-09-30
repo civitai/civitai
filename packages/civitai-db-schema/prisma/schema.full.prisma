@@ -1597,6 +1597,7 @@ model Report {
   model3d        Model3DReport?
   model3dReview  Model3DReviewReport?
   announcement   AnnouncementReport?
+  crucible       CrucibleReport?
 }
 
 model ResourceReviewReport {
@@ -8959,12 +8960,23 @@ model Crucible {
   textNsfw          Boolean        @default(false)
 
   entries CrucibleEntry[]
+  reports CrucibleReport[]
 
   @@index([userId], type: Hash)
   @@index([status])
   @@index([endAt])
   @@index([startAt])
   @@index([status, ingestion])
+}
+
+model CrucibleReport {
+  crucibleId Int
+  crucible   Crucible @relation(fields: [crucibleId], references: [id], onDelete: Cascade)
+  reportId   Int      @unique
+  report     Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, crucibleId])
+  @@index([crucibleId], type: Hash)
 }
 
 model CrucibleEntry {

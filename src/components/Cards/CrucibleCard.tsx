@@ -6,6 +6,7 @@ import cardClasses from '~/components/Cards/Cards.module.css';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
+import { CrucibleContextMenu } from '~/components/Crucible/CrucibleContextMenu';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { Currency, CrucibleStatus } from '~/shared/utils/prisma/enums';
 import {
@@ -77,7 +78,7 @@ export function CrucibleCard({ data }: { data: CrucibleCardData }) {
           : undefined
       }
       header={
-        <div className="flex w-full justify-end">
+        <div className="flex w-full items-center justify-end gap-1">
           <Badge
             className={cardClasses.chip}
             color={statusBadge.color}
@@ -89,6 +90,7 @@ export function CrucibleCard({ data }: { data: CrucibleCardData }) {
           >
             {statusBadge.label}
           </Badge>
+          <CrucibleContextMenu crucible={{ id, userId: user.id }} position="bottom-end" />
         </div>
       }
       footerGradient
