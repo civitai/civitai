@@ -2,7 +2,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * ARM A of the private-run money safety: a PRIVATE RUN of a delisted / suspended
- * app writes its `block_spend_attribution` row `voided`, not `tracked`.
+ * app writes **NO** `block_spend_attribution` row at all.
+ *
+ * ⚠️ THIS HEADER SAID "writes its `block_spend_attribution` row `voided`, not `tracked`"
+ * — the pre-rescope design — while the `describe` below already read "writes NO
+ * spend-attribution row at all". A file whose header contradicts its own assertions is
+ * worse than one with neither, because the header is what a reader skims. The FILENAME
+ * still says `-void` and is deliberately not renamed in the same change as the rewrite:
+ * a rename would detach the rows from their history at exactly the moment someone needs
+ * to see what they used to assert.
  *
  * ── WHY THIS MATTERS, AND WHAT IT IS *NOT* ──────────────────────────────────
  * 🔴 NO BUZZ MOVES ON THIS RAIL EITHER WAY. `recordSpendAttribution` hardcodes
@@ -166,9 +174,20 @@ describe('arm A — privateRun writes NO spend-attribution row at all', () => {
    * DELETED. It used to assert that a private run wrote the row with
    * `status: 'voided'` / `voidedReason: 'manual_review'`, leaving every READER to filter
    * voided rows back out. The rescope moved the exclusion to the WRITE side: no row is
-   * created. Read-side exclusion had to be got right in every reader in two repos (14
-   * non-test readers in this repo plus talos-infra's `civitai-app-blocks-digest`), and it
+   * created. Read-side exclusion has to be got right in every reader, in two repos, and it
    * is the design that produced this rail's nullability trap; write-side is got right once.
+   *
+   * ⚠️ THE FIGURE HERE SAID "14 non-test readers in this repo" AND THAT WAS A COUNT OF
+   * FILE MENTIONS, NOT OF READERS — most of those hits are comments, and one is a
+   * Prometheus counter. Enumerated properly, this table has **3 read sites in 2 files**:
+   * `app-analytics.service.ts:516` (the owner-visible Prisma aggregate),
+   * `app-analytics.service.ts:523` (the owner-visible raw series), and
+   * `buzz-attribution.service.ts:989` (the P2002 dedupe lookup, which is not
+   * owner-visible). Plus one cross-repo consumer, talos-infra's
+   * `civitai-app-blocks-digest`. The write-side argument does not depend on the number
+   * and still holds on its own terms — an absent row is the safe failure for a reader
+   * that forgets the filter, a voided row is the leak — but the stated burden was ~5x
+   * the real one, and a committed number gets acted on.
    *
    * 🔴 EVERY ROW BELOW IS A REWRITE OF A ROW THAT EXISTED, NOT A NEW ONE. That matters
    * because "the tests changed to match the code" is how coverage evaporates. Each one

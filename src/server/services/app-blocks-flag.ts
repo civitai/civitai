@@ -698,11 +698,23 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  *
  * So, before widening on THIS count, exactly TWO things remain — item 1's filter has LANDED
  * and item 3's flag-key carry-over is SATISFIED:
- *   · item 3(b): the two unrate-limited `blockRenders` writers.
+ *   · item 3(b): 🔴 RESTATED — it is no longer "the two unrate-limited `blockRenders`
+ *     writers". NOTHING on this surface is rate-limited: the limiter PR was closed
+ *     unmerged (its limiter covered one of two callers of the access predicate while the
+ *     SSR route drove the same read unbounded), and the rescope then wired the PUBLIC,
+ *     linked, crawlable `/apps/run/<slug>` into that same predicate as a fallback. So the
+ *     enumeration is THREE doors, not two, and the cost bound is now THE FLAG ITSELF
+ *     rather than any limiter. That is a deliberate operator decision on the grounds that
+ *     the flag admits only trusted audiences — and it is only sound while that holds.
+ *     🔴 RE-PRICE THIS BEFORE WIDENING TO ALL APP OWNERS: an owner is not an operator,
+ *     and `private-run-access.service.ts` does an unconditional `dbWrite.user.findUnique`
+ *     (it ignores the `db: 'read'` argument), so every resolve hits the write primary.
  *   · item 1's acceptance check: one real private run, read on the owner's own analytics panel.
- * All three analytics rails now filter, so the void DOES deliver the invisibility at the row
- * level; what it does not deliver on its own is the evidence that it works end to end, which
- * is what the acceptance check buys.
+ * ⚠️ THIS PARAGRAPH SAID "All three analytics rails now filter, so the void DOES deliver
+ * the invisibility at the row level." Rail 1 no longer filters and there is no void — a
+ * private run writes NO spend-attribution row at all. The other rails are unchanged. What
+ * is still true is the part that mattered: none of it delivers the evidence that the
+ * feature works end to end, which is what the acceptance check buys.
  *
  * ⚠️ THIS PARAGRAPH IS A COUNT, AND A COUNT IS THE THING THAT ROTS. It said "item 3's two
  * carry-overs (the flag key existing in `flipt-state`, …)" while that key had ALREADY been

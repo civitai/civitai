@@ -229,9 +229,20 @@ describe('private-run SSR — the grant path [REG]', () => {
     });
   });
 
-  it('🔴 a private run records NO play and NO recents entry', async () => {
-    // THE analytics property the whole feature rests on. Recording either would move the
+  it('🔴 a private run records NO play', async () => {
+    // THE analytics property the whole feature rests on. Recording this would move the
     // suspended app owner's own numbers — the exact reading the acceptance check performs.
+    //
+    // ⚠️ THIS ROW USED TO ALSO ASSERT `expect(mockRecordRecent).not.toHaveBeenCalled()`
+    // AND THAT ASSERTION WAS VACUOUS — proven by mutation: deleting the guard left this
+    // file fully green. `recordRecentlyOpenedApp` is called from a `useEffect` inside
+    // `AppPage`, and this suite drives the SSR RESOLVER ONLY; it never renders the
+    // component, so the effect never ran and the mock could never have been called
+    // whatever the code did. Worse, two other files pointed AT this row as the coverage.
+    // The recents decision is now a pure function with its own real tests below —
+    // `shouldRecordRecents` — and the claim has been removed from here rather than
+    // reworded. `recordAppListingOpen` is genuinely called from the RESOLVER, so that
+    // half was always real and stays.
     mockResolvePrivateRunAccess.mockResolvedValue({
       allowed: true,
       audience: 'moderator',
@@ -240,7 +251,6 @@ describe('private-run SSR — the grant path [REG]', () => {
     const res = await resolver()(ctx());
     expect(res.notFound).toBeUndefined();
     expect(mockRecordOpen).not.toHaveBeenCalled();
-    expect(mockRecordRecent).not.toHaveBeenCalled();
   });
 
   it('🔴 POSITIVE CONTROL: the SAME mocks DO fire on the public branch', async () => {
@@ -341,16 +351,22 @@ describe('private-run SSR — the grant path [REG]', () => {
 });
 
 describe('🔴 private-run SSR — NO EXISTENCE ORACLE [REG]', () => {
-  const reasons = [
-    'flag-off',
-    'viewer-ineligible',
-    'no-app',
-    'approved',
-    'not-a-page',
-    'no-role',
-    'owner-banned',
-    'not-deployed',
-  ] as const;
+  // 🔴 DERIVED FROM THE RUNTIME TUPLE, NOT HAND-COPIED — and the hand-copied version was
+  // ALREADY WRONG, which is the whole argument for deriving it. It listed eight of the
+  // nine reasons and omitted `no-iframe-src`, so that refusal was asserted by nothing
+  // under a heading claiming EVERY refusal is indistinguishable.
+  //
+  // `PRIVATE_RUN_REFUSAL_REASONS` exists as a runtime tuple for exactly this: its own
+  // docblock says a test enumerating reasons against a hand-written array "stays GREEN
+  // when a ninth member is added to the union and has no coverage, under a comment
+  // claiming the enumeration is complete." That is what had happened here. The module
+  // mock spreads `importOriginal`, so the real tuple is in scope.
+  let reasons: readonly string[] = [];
+  beforeEach(async () => {
+    ({ PRIVATE_RUN_REFUSAL_REASONS: reasons } = await import(
+      '~/server/services/blocks/private-run-access.service'
+    ));
+  });
 
   it('EVERY refusal reason produces the IDENTICAL bare notFound', async () => {
     // Deep equality against the missing-app baseline, for the same reason the mint test
@@ -359,6 +375,14 @@ describe('🔴 private-run SSR — NO EXISTENCE ORACLE [REG]', () => {
     mockResolvePrivateRunAccess.mockResolvedValue({ allowed: false, reason: 'no-app' });
     const baseline = await resolver()(ctx());
     expect(baseline).toEqual({ notFound: true });
+
+    // POSITIVE CONTROL ON THE ENUMERATION ITSELF. `reasons` is now resolved at runtime,
+    // so an import that silently yielded `undefined` or `[]` would make the loop below
+    // iterate nothing and this test pass having compared zero cases — the precise failure
+    // the tuple exists to prevent, reintroduced by the fix for it. Assert the floor and
+    // the one member the hand-written list had omitted.
+    expect(reasons.length).toBeGreaterThanOrEqual(9);
+    expect(reasons).toContain('no-iframe-src');
 
     for (const reason of reasons) {
       mockResolvePrivateRunAccess.mockResolvedValue({ allowed: false, reason });
@@ -489,5 +513,70 @@ describe('the private-run chrome copy [REG]', () => {
       privateRunNotice({ audience: 'moderator', status: 'pending' }),
     ]);
     expect(variants.size).toBe(4);
+  });
+});
+
+/**
+ * ── THE TWO CLIENT-SIDE DECISIONS ────────────────────────────────────────────────
+ *
+ * 🔴 THIS BLOCK EXISTS BECAUSE ITS TWO PROPERTIES WERE PREVIOUSLY ASSERTED BY NOTHING,
+ * AND ONE OF THEM WAS ASSERTED BY SOMETHING VACUOUS, WHICH IS WORSE. Both decisions live
+ * inside `AppPage`, which this suite never renders — it drives the SSR resolver only. So:
+ *
+ *   · the recents guard was "covered" by `expect(mockRecordRecent).not.toHaveBeenCalled()`
+ *     in a test that never triggers the effect. Deleting the guard left the file GREEN.
+ *   · the `surface` prop had NO assertion in the repo. Replacing the ternary with a
+ *     constant `'page-run'` left 51 tests green across three files.
+ *
+ * Both are now pure exported functions, so the DECISION is testable in node without a
+ * renderer. These rows fail on the mutation that the previous arrangement survived.
+ *
+ * ⚠️ WHAT THIS STILL DOES NOT PROVE, stated rather than glossed: that the COMPONENT calls
+ * them. A pure function nothing calls is the obvious next way for this to go quiet, and it
+ * would not be caught here. That half is pinned structurally in
+ * `private-run-access.call-site-ledger.test.ts`; neither check is sufficient alone.
+ */
+describe('the audience-keyed client decisions [REG]', () => {
+  it('🔴 the host surface is `private-run` for EVERY private audience, `page-run` only when public', async () => {
+    // The surface carries an unconditional BLOCK_INIT fragment refusal. Collapsing a
+    // private audience onto `page-run` hands a suspended app a fast path its own gate
+    // denies — and the allowlist is non-empty today, so that is reachable.
+    const { hostSurfaceFor } = await import('~/pages/apps/run/[slug]/[[...path]]');
+    expect(hostSurfaceFor('moderator')).toBe('private-run');
+    expect(hostSurfaceFor('owner')).toBe('private-run');
+    expect(hostSurfaceFor('editor')).toBe('private-run');
+    // POSITIVE CONTROL — without this the three rows above pass against a function that
+    // returns `'private-run'` unconditionally, which would break every public render.
+    expect(hostSurfaceFor(null)).toBe('page-run');
+  });
+
+  it('🔴 a private run writes NO recents entry, and a public one does', async () => {
+    // Both link shapes the recents rail builds 404 for a delisted app once the flag
+    // narrows, so an entry written here is a rail row that breaks later.
+    const { shouldRecordRecents } = await import('~/pages/apps/run/[slug]/[[...path]]');
+    expect(shouldRecordRecents('moderator')).toBe(false);
+    expect(shouldRecordRecents('owner')).toBe(false);
+    expect(shouldRecordRecents('editor')).toBe(false);
+    // POSITIVE CONTROL — a function returning `false` always would silently disable the
+    // recents rail for every public run, and the three rows above cannot see that.
+    expect(shouldRecordRecents(null)).toBe(true);
+  });
+
+  it('🔴 the two decisions are EXACT COMPLEMENTS across the audience domain', async () => {
+    // They are separate functions with separate reasons, so nothing structurally forces
+    // them to agree — but a private render must both take the private surface AND skip
+    // recents. Enumerated over the audience tuple rather than a hand-written list, so a
+    // FOURTH audience added to `PRIVATE_RUN_AUDIENCES` lands here with no coverage gap.
+    const { hostSurfaceFor, shouldRecordRecents } = await import(
+      '~/pages/apps/run/[slug]/[[...path]]'
+    );
+    const { PRIVATE_RUN_AUDIENCES } = await import('~/shared/constants/block-scope.constants');
+    expect(PRIVATE_RUN_AUDIENCES.length).toBeGreaterThan(0);
+    for (const a of PRIVATE_RUN_AUDIENCES) {
+      expect(hostSurfaceFor(a)).toBe('private-run');
+      expect(shouldRecordRecents(a)).toBe(false);
+    }
+    expect(hostSurfaceFor(null)).toBe('page-run');
+    expect(shouldRecordRecents(null)).toBe(true);
   });
 });

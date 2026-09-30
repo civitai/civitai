@@ -216,6 +216,26 @@ describe('the private-run seam — the call-site ledger [INV]', () => {
     expect(pub).toContain('audience');
   });
 
+  it('🔴 the run route CALLS the two audience-keyed decisions rather than re-deriving them', () => {
+    // ── WHY A STRUCTURAL CHECK HERE AND BEHAVIOURAL TESTS ELSEWHERE ─────────────────
+    // `hostSurfaceFor` and `shouldRecordRecents` live inside `AppPage`'s render, which the
+    // page suite cannot reach — it drives the SSR resolver only, with no renderer. That
+    // gap is what made both decisions untestable as inline ternaries: an audit proved the
+    // recents guard could be DELETED with the suite green, and the `surface` prop had no
+    // assertion anywhere in the repo at all.
+    //
+    // Extracting them made the DECISION testable (see the behavioural rows in
+    // `run-page-private-run.test.ts`). This row closes the half that extraction opens: a
+    // pure function nothing calls is exactly how this goes quiet again, and no behavioural
+    // test of the function can see it. Both checks are necessary; neither is sufficient.
+    const pub = CODE.get('src/pages/apps/run/[slug]/[[...path]].tsx')!;
+    expect(pub).toContain('hostSurfaceFor(audience)');
+    expect(pub).toContain('shouldRecordRecents(audience)');
+    // 🔴 AND THE INLINE FORMS MUST NOT COME BACK. Re-inlining either ternary restores the
+    // exact untestable shape, and would otherwise satisfy nothing above.
+    expect(pub).not.toContain("? 'private-run' : 'page-run'");
+  });
+
   it('EVERY consumer evaluates the flag for the caller and passes it in', () => {
     // The structural half of "fail-closed on both surfaces". The behavioural half is
     // below. Neither consumer may call the predicate without a `privateRunEnabled`

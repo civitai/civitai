@@ -378,25 +378,34 @@ export type RecordSpendAttributionInput = {
   generationPriceIsCap?: boolean | null;
   /**
    * PRIVATE RUN of a delisted / suspended app — from the verified token's
-   * `privateRun` claim. When true the row is written `voided` instead of
-   * `tracked`.
+   * `privateRun` claim. 🔴 When true, **NO ROW IS WRITTEN AT ALL**: the function
+   * returns `{ written: false, row: null }` before the row is built.
    *
-   * 🔴 THE ROW IS STILL WRITTEN, AND THAT IS DELIBERATE. The alternative —
-   * a non-resolving synthetic `appId`, which is how the mod review sandbox
-   * excludes both money rails — would also break per-app storage namespacing,
-   * the `page_<appBlockId>` ban-revocation instance id, and every runtime
-   * metric label. So the real ids are kept and the rail is closed explicitly
-   * here. A voided row preserves the audit trail at zero money cost:
-   * `spendSharePct` and `appOwnerShareCents` are already hardcoded 0 below, so
-   * void-vs-tracked moves no Buzz either way — what it protects is the RUN
-   * COUNT and BUZZ SUM a suspended app's owner can see.
+   * ⚠️ THIS DOCBLOCK DESCRIBED THE OPPOSITE UNTIL THE WRITE-SIDE CHANGE, AND IT IS
+   * THE ONE A CALLER READS WHEN DECIDING WHETHER TO PASS `privateRun` — so the four
+   * claims it made are recorded here rather than silently dropped. It said: "the row
+   * is written `voided` instead of `tracked`"; "🔴 THE ROW IS STILL WRITTEN, AND THAT
+   * IS DELIBERATE"; "a voided row preserves the audit trail at zero money cost"; and
+   * "✅ THE VOID NOW DELIVERS THE PROTECTION". All four are now false. They were
+   * missed by the commit that corrected four sibling claims in other files — the
+   * stale text was three lines above the code that falsified it, which is exactly
+   * where a sweep keyed on the changed hunk does not look.
    *
-   * ✅ THE VOID NOW DELIVERS THE PROTECTION. Both owner-visible reads of this
-   * table -- `app-analytics.service.ts`'s `aggregate` and its raw per-bucket
-   * series -- exclude `status = 'voided'`, so a voided row is neither counted as
-   * a run nor summed into the owner's dashboard. Until that landed, the two
-   * PRE-EXISTING voids (`self_spend`, `internal_owner`) were being counted, which
-   * was the evidence that this marker had no reader; it has one now.
+   * WHAT SURVIVES FROM IT, because it is still true and still load-bearing: the mod
+   * review sandbox's alternative — a non-resolving synthetic `appId` — is deliberately
+   * NOT copied here, because it would also break per-app storage namespacing, the
+   * `page_<appBlockId>` ban-revocation instance id, and every runtime metric label.
+   * The real ids are resolved and the rail is closed by an explicit branch instead.
+   *
+   * NO MONEY MOVES EITHER WAY: `spendSharePct` and `appOwnerShareCents` are hardcoded
+   * 0 below, so this was never a payout decision. What it protects is the RUN COUNT
+   * and BUZZ SUM a suspended app's owner can see.
+   *
+   * ⚠️ ONE OBSERVABILITY CONSEQUENCE, NOT PREVIOUSLY NAMED: the early return precedes
+   * `blockSpendAttributionWriteCounter.inc({ status })`, so a private-run generation
+   * now increments NOTHING on that counter, where it previously landed in
+   * `status="voided"`. Per-generation coverage survives via `block_scope_invocations`
+   * rows carrying `source: 'private-run'`.
    *
    * 🔴 THE FILTER WAS HELD FOR TWO STATED REASONS AND BOTH WERE SETTLED BY
    * MEASUREMENT, NOT BY DECISION — recorded because the reasons read as permanent

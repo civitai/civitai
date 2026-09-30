@@ -170,7 +170,17 @@ const VOIDED_SELF_F: Row = {
   buzzAmount: 23,
   attributedAt: new Date('2026-06-06T09:00:00Z'),
 };
-/** THE PRIVATE RUN. `manual_review` is the reason a private-run generation is voided with. */
+/**
+ * A `manual_review`-voided row.
+ *
+ * ⚠️ LABELLED "THE PRIVATE RUN" UNTIL THE WRITE-SIDE CHANGE, AND THAT IS NO LONGER WHAT IT
+ * COVERS. A private run now writes NO row, so this fixture can no longer be produced by
+ * one. The coverage is still REAL and still needed — `manual_review` rows exist from two
+ * live sources: the HISTORICAL private runs written before the change, and
+ * `backpay.service.ts`, which writes `status: 'held', voidedReason: 'manual_review'`.
+ * 🔴 What it must NOT be read as is coverage of the write-side exclusion; nothing here
+ * exercises that. `buzz-attribution.private-run-void.test.ts` owns it.
+ */
 const VOIDED_REVIEW_G: Row = {
   appBlockId: OWNED_ID,
   status: VOIDED,
@@ -475,9 +485,14 @@ describe('owner-visible run analytics exclude voided attribution rows', () => {
     expect(after).toEqual(before);
   });
 
-  it('[REG] a private run (voided/manual_review) is not counted and its Buzz is not summed', async () => {
-    // 🔴 CALLED OUT SEPARATELY BECAUSE IT IS THE ROW THE FEATURE EXISTS FOR. Its day collides
-    // with a surviving row's, so a bucket-level leak is visible rather than appended.
+  it('[REG] a manual_review-voided row is not counted and its Buzz is not summed', async () => {
+    // 🔴 CALLED OUT SEPARATELY BECAUSE ITS DAY COLLIDES with a surviving row's, so a
+    // bucket-level leak is visible rather than appended.
+    //
+    // ⚠️ NAMED "a private run (voided/manual_review)" until the write-side change. A
+    // private run writes no row now; this row's live producers are historical private runs
+    // and `backpay.service.ts`'s held rows. The assertion is unchanged and still correct —
+    // only the claim its NAME made about what produces the row was stale.
     rows = [...SURVIVING, VOIDED_REVIEW_G];
     const a = await analytics();
     expect(a.runs.count).toBe(7);

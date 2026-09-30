@@ -9,6 +9,7 @@ import { PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
 import { useBlockToken } from '~/components/AppBlocks/useBlockToken';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { BlockInstall, PageContext } from '~/components/AppBlocks/types';
+import type { BlockHostSurface } from '~/components/AppBlocks/blockInitFragmentGate';
 import { IconEyeOff, IconFlask } from '@tabler/icons-react';
 import { dbRead } from '~/server/db/client';
 import { BlockRegistry } from '~/server/services/block-registry.service';
@@ -320,6 +321,52 @@ export const getServerSideProps = createServerSideProps<PageProps>({
 });
 
 /**
+ * ── THE TWO AUDIENCE-KEYED DECISIONS, AS PURE FUNCTIONS ──────────────────────────
+ *
+ * 🔴 THESE WERE INLINE TERNARIES UNTIL AN AUDIT PROVED BOTH WERE UNTESTABLE IN PRACTICE,
+ * AND THE EXTRACTION IS THE FIX — not a style preference. Both decisions live inside
+ * `AppPage`, a component this suite never renders (it is a node unit test that drives the
+ * SSR resolver only), so:
+ *
+ *   · `expect(mockRecordRecent).not.toHaveBeenCalled()` passed whether or not the guard
+ *     existed — the effect that would call it never ran. Deleting `if (isPrivateRun)
+ *     return` left the suite fully GREEN. A vacuous guard, with a comment in two other
+ *     files pointing AT it as the coverage.
+ *   · the `surface` prop had NO assertion anywhere in the repo; replacing the ternary with
+ *     a constant `'page-run'` left 51 tests green across three files, while a comment
+ *     called it "the single most important line of the route merge".
+ *
+ * Pulling both out makes the DECISION testable in node without a renderer, and the
+ * component's job becomes calling them. The call sites are pinned structurally in
+ * `private-run-access.call-site-ledger.test.ts`, so extracting-then-orphaning fails too —
+ * a pure function nothing calls is the obvious next way for this to go quiet.
+ */
+
+/**
+ * Which block-host surface this render is. 🔴 `private-run` carries an UNCONDITIONAL
+ * refusal of the BLOCK_INIT fragment fast path (`blockInitFragmentEnabledWith`, refusal
+ * (1)): a delisted app must boot on its ordinary path, because the fast path perturbs
+ * `location.hash` routing and that may be the very behaviour under diagnosis. Collapsing
+ * both onto `page-run` hands a suspended app a fast path its own gate refuses — and four
+ * blocks are on `BLOCK_INIT_FRAGMENT_ALLOWLIST` today, so that is reachable, not theoretical.
+ */
+export function hostSurfaceFor(audience: PrivateRunAudience | null): BlockHostSurface {
+  return audience != null ? 'private-run' : 'page-run';
+}
+
+/**
+ * Whether this render may write a localStorage "recently opened" entry.
+ *
+ * 🔴 A PRIVATE RUN MAY NOT. Both link shapes the recents rail builds —
+ * `/apps/run/<slug>` and `/apps/store-preview/<slug>` — 404 for a delisted app once the
+ * flag narrows again, so an entry written here is a rail row that breaks later. That is
+ * the defect `ownerId` (#4048) was added to stop, arriving by a different route.
+ */
+export function shouldRecordRecents(audience: PrivateRunAudience | null): boolean {
+  return audience == null;
+}
+
+/**
  * The private-run chrome's copy. Exported so the page test asserts the STRING a viewer
  * reads, rather than re-deriving it — a test that rebuilds the sentence from the same
  * inputs passes whatever the sentence says.
@@ -360,7 +407,6 @@ function AppPage(props: PageProps) {
     audience,
     privateRunStatus,
   } = props;
-  const isPrivateRun = audience != null;
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const colorScheme = useComputedColorScheme('dark');
@@ -406,7 +452,7 @@ function AppPage(props: PageProps) {
   // effect rather than on the call site so the hook order is unconditional.
   const recentsOwnerId = currentUser?.id ?? null;
   useEffect(() => {
-    if (isPrivateRun) return;
+    if (!shouldRecordRecents(audience)) return;
     recordRecentlyOpenedApp(
       {
         id: appBlockId,
@@ -439,7 +485,7 @@ function AppPage(props: PageProps) {
       },
       recentsOwnerId
     );
-  }, [appBlockId, blockId, appName, iconUrl, recentsOwnerId, isPrivateRun]);
+  }, [appBlockId, blockId, appName, iconUrl, recentsOwnerId, audience]);
 
   // Synthetic page instance id — the mint resolves `page_<appBlockId>` directly
   // from the approved AppBlock (no install row).
@@ -625,7 +671,7 @@ function AppPage(props: PageProps) {
           // behaviour under diagnosis may be exactly that. Collapsing both onto `page-run`
           // would silently hand a suspended app the fast path its own gate refuses.
           // Pinned by `run-page-private-run.test.ts`.
-          surface={isPrivateRun ? 'private-run' : 'page-run'}
+          surface={hostSurfaceFor(audience)}
           // 🔴 THE DOUBLE-SCROLLBAR FIX, and it is only half of one — it is
           // correct ONLY in combination with `scrollable: false` on the `Page`
           // options below. `fit="fill"` makes the host claim no height of its
