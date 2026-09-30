@@ -86,14 +86,20 @@ describe('DailyCreatorCompReward earnings source', () => {
     // The license-fee probe (no accountType) only exists to decide whether to show the toggle
     // while on Compensation; firing it here would be a wasted request.
     expect(queryCalls.filter((c) => c.enabled && !('accountType' in c.input))).toEqual([]);
-    // The gate was actually exercised: the pre-storage render asked with the queries off.
-    expect(queryCalls.some((c) => !c.enabled)).toBe(true);
+    // The first render cannot see storage yet, so the main query must start disabled.
+    const firstMain = queryCalls.find((c) => 'accountType' in c.input);
+    expect(firstMain).toMatchObject({ input: { source: 'compensation' }, enabled: false });
   });
 
   it('queries Compensation when nothing is stored', async () => {
     await mount();
 
-    const enabledSources = queryCalls.filter((c) => c.enabled).map((c) => c.input.source);
-    expect(enabledSources).toContain('compensation');
+    // The probe must run here: it is what shows the toggle to a creator with license fees.
+    const enabledQueries = new Set(
+      queryCalls
+        .filter((c) => c.enabled)
+        .map((c) => `${'accountType' in c.input ? 'main' : 'probe'}:${c.input.source}`)
+    );
+    expect([...enabledQueries].sort()).toEqual(['main:compensation', 'probe:licenseFee']);
   });
 });
