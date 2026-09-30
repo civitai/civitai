@@ -25,7 +25,7 @@ export const ModelVersionFlag = {
   /** This version is not a derivative of a licensing root — so the version form doesn't require or auto-select a "fine-tuned from" parent for it (e.g. an ecosystem's API-only official checkpoints). It can still set its own licensing fee. Moderator-controlled. */
   NotDerivative: 1 << 2, // 4
 
-  /** Generation nodes must keep at least one copy of this version's files; surfaced to the orchestrator as `evictable: false` on the mini endpoint. Set by hand in SQL. */
+  /** Generation nodes must keep at least one copy of this version's files; surfaced to the orchestrator as `evictable: false` on the mini endpoint. Moderator-controlled. */
   NotEvictable: 1 << 3, // 8
 } as const;
 

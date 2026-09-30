@@ -1,15 +1,13 @@
-import { defineConfig } from 'vitest/config';
 import { fileURLToPath } from 'node:url';
+import { defineConfig } from 'vitest/config';
 
-// `$lib` is the only SvelteKit alias the tested modules use. `name` must keep the `app:` prefix —
-// see the `apps/*` note in the root vitest.config.mts.
 export default defineConfig({
+  // This config does not load the SvelteKit plugin, so `$lib` needs aliasing by hand.
   resolve: {
-    alias: {
-      $lib: fileURLToPath(new URL('./src/lib', import.meta.url)),
-    },
+    alias: { $lib: fileURLToPath(new URL('./src/lib', import.meta.url)) },
   },
   test: {
+    // Required — see the `apps/*` note in the root vitest.config.mts.
     name: 'app:training-studio',
     environment: 'node',
     include: ['src/**/*.{test,spec}.ts'],

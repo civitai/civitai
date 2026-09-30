@@ -11,8 +11,8 @@
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "typecheck": "svelte-check --tsconfig ./tsconfig.json",
     "lint": "eslint . --ext .js,.ts,.svelte --cache --cache-strategy metadata",
-    "build:element": "vite build --config vite.element.config.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "build:element": "vite build --config vite.element.config.ts"
   },
   "dependencies": {
     "@civitai/auth": "workspace:*",
@@ -47,7 +47,6 @@
     "svelte-eslint-parser": "^0.43.0",
     "tailwindcss": "^4.1.0",
     "typescript": "^5.9.2",
-    "vite": "^7.0.4",
-    "vitest": "^4.1.11"
+    "vite": "^7.0.4"
   }
 }

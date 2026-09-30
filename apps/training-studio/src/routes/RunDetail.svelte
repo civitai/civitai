@@ -41,6 +41,7 @@
   import { ToggleGroup, ToggleGroupItem } from '@civitai/ui/components/ui/toggle-group/index.js';
   import { Toggle } from '@civitai/ui/components/ui/toggle/index.js';
   import TrainingTrace from '$lib/components/TrainingTrace.svelte';
+  import LossGraph from '$lib/components/LossGraph.svelte';
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
   import SampleImage from '$lib/components/SampleImage.svelte';
   import SampleViewer from '$lib/components/SampleViewer.svelte';
@@ -738,6 +739,12 @@
          resets cleanly when navigating to a different training. -->
     {#key d.workflowId}
       <TrainingTrace traceUrl={d.liveTraceUrl} plannedEpochs={d.plannedEpochs ?? null} {currentEpoch} />
+    {/key}
+  {/if}
+
+  {#if d.traces.length}
+    {#key d.workflowId}
+      <LossGraph traces={d.traces} training={d.state === 'training'} />
     {/key}
   {/if}
 
