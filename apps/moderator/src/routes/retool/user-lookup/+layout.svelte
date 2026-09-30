@@ -215,9 +215,12 @@
     </div>
   {/if}
 
-  <!-- A fixed-width pane here does not stack below `md`; pinned by
-       `src/__tests__/two-pane-stacking.test.ts`, which finds this container by `data-two-pane`. -->
-  <div data-two-pane class="grid gap-6 md:grid-cols-[14rem_1fr]">
+  <!-- A fixed-width pane here does not stack below `lg`; pinned by
+       `src/__tests__/two-pane-stacking.test.ts`, which finds this container by `data-two-pane`.
+       `lg` not `md`: the app sidebar is 16rem of FLOW width from 768px up, so at `md` this pane
+       would leave 216px of content -- narrower than at 767px, and below the 280px bar this repo
+       already rejected as too tight for the sibling layout. -->
+  <div data-two-pane class="grid gap-6 lg:grid-cols-[14rem_1fr]">
     <nav data-pane class="min-w-0">
       <ul class="space-y-0.5">
         {#each SECTIONS as s (s.slug)}
