@@ -27,11 +27,10 @@ const dir = path.dirname(fileURLToPath(import.meta.url));
 const read = (p: string) => stripComments(readFileSync(path.resolve(dir, '..', p), 'utf8'));
 
 const LAYOUTS = [
-  { name: 'retool/user-lookup', file: 'routes/retool/user-lookup/+layout.svelte', paneRem: 14 },
+  { name: 'retool/user-lookup', file: 'routes/retool/user-lookup/+layout.svelte' },
   {
     name: 'audit/generator-restrictions',
     file: 'routes/audit/generator-restrictions/+page.svelte',
-    paneRem: 26,
   },
 ] as const;
 
@@ -96,7 +95,42 @@ function panes(source: string): (string | null)[] {
   return tagsMarked(source, 'data-pane').map(classOf);
 }
 
-describe.each(LAYOUTS)('$name stacks instead of pinning a pane', ({ file, paneRem }) => {
+/**
+ * The breakpoint at which the panes go side by side, and the pane's width in rem — both read from
+ * the markup. Handles the grid idiom (`lg:grid-cols-[14rem_1fr]`) and the flex one
+ * (`lg:w-56` on a pane, which this app uses more often); returns null when neither is readable,
+ * which the assertion reports rather than skipping.
+ *
+ * Takes the LAST breakpoint, not the first: Tailwind is written small-to-large, so a container
+ * refined as `md:grid-cols-1 lg:grid-cols-[14rem_1fr]` is one column at `md` and two at `lg` --
+ * strictly safer than a bare `lg:`, and reading the first token would fail it for being safer.
+ */
+function paneGeometry(source: string): { bp: string; at: number; paneRem: number } | null {
+  const cls = container(source) ?? '';
+  const grid = [...cls.matchAll(/(?:^|\s)(sm|md|lg|xl|2xl):grid-cols-\[(\d+(?:\.\d+)?)rem_/g)].at(
+    -1
+  );
+  if (grid) {
+    return {
+      bp: grid[1],
+      at: BREAKPOINT_PX[grid[1] as keyof typeof BREAKPOINT_PX],
+      paneRem: Number(grid[2]),
+    };
+  }
+  const flex = panes(source)
+    .flatMap((c) => [...(c ?? '').matchAll(/(?:^|\s)(sm|md|lg|xl|2xl):w-(\d+)(?:\s|$)/g)])
+    .at(-1);
+  if (flex) {
+    return {
+      bp: flex[1],
+      at: BREAKPOINT_PX[flex[1] as keyof typeof BREAKPOINT_PX],
+      paneRem: Number(flex[2]) / 4,
+    };
+  }
+  return null;
+}
+
+describe.each(LAYOUTS)('$name stacks instead of pinning a pane', ({ file }) => {
   const source = read(file);
 
   // Positive control. Asserts nothing about widths or breakpoints — a control that shares the step
@@ -124,18 +158,28 @@ describe.each(LAYOUTS)('$name stacks instead of pinning a pane', ({ file, paneRe
     ).toBe(true);
   });
 
-  it('picks a breakpoint that leaves a usable content column', () => {
-    // The one assertion that would have caught the `md` experiment this PR reverted. At `md` the
-    // app sidebar has just become 256px of FLOW width, so the content column is NARROWER at 768px
+  it('picks a breakpoint and pane width that leave a usable content column', () => {
+    // The assertion that would have caught the `md` experiment this PR reverted: at `md` the app
+    // sidebar has just become 256px of FLOW width, so the content column is NARROWER at 768px
     // than at 767px, where the sidebar is off-canvas.
-    const bp = container(source)?.match(/(?:^|\s)(sm|md|lg|xl|2xl):grid-cols-/)?.[1];
-    if (!bp) return; // the flex idiom; the assertions above already cover it
-    const at = BREAKPOINT_PX[bp as keyof typeof BREAKPOINT_PX];
+    //
+    // 🔴 BOTH operands are read from the markup, never from a table beside it. An earlier revision
+    // carried the pane width as a constant here, which made this blind to the very thing its own
+    // failure message told you to change: widening the grid track to `46rem` — a NEGATIVE content
+    // column — passed. A duplicated literal is the one that drifts.
+    const geometry = paneGeometry(source);
+    expect(
+      geometry,
+      'cannot read a breakpoint and a pane width from this container, so the content column is ' +
+        'unchecked. Express the panes as `<bp>:grid-cols-[<n>rem_1fr]`, or extend paneGeometry().'
+    ).not.toBeNull();
+    const { bp, at, paneRem } = geometry!;
     const content = at - SIDEBAR_PX - CONTAINER_PX_6 - paneRem * 16 - GAP_6;
     expect(
       content,
-      `at \`${bp}\` (${at}px) this pane leaves ${content}px of content — below the ${MIN_CONTENT_PX}px ` +
-        `the sibling layout already sits at. Raise the breakpoint, or narrow the pane.`
+      `at \`${bp}\` (${at}px) a ${paneRem}rem pane leaves ${content}px of content — below the ` +
+        `${MIN_CONTENT_PX}px the sibling layout already sits at. Raise the breakpoint, or narrow ` +
+        `the pane.`
     ).toBeGreaterThanOrEqual(MIN_CONTENT_PX);
   });
 
@@ -143,8 +187,8 @@ describe.each(LAYOUTS)('$name stacks instead of pinning a pane', ({ file, paneRe
     // Numeric, arbitrary, and the three CONTENT/VIEWPORT keywords: `w-max`, `w-fit`/`min-w-fit`
     // and `w-screen` size a pane from something other than its grid track and so can overflow it.
     // `-full` is deliberately NOT here: `w-full` is 100% of the track, a no-op either side of the
-    // breakpoint and a 72-occurrence idiom in this app, and `basis-full` CAUSES stacking rather
-    // than preventing it. `w-0`/`min-w-0` are likewise not pinning, hence `[1-9]`.
+    // breakpoint and a 65-occurrence idiom in this app, and `basis-full` is inert in a grid and,
+    // IN A WRAPPING flex row, forces the item onto its own line rather than pinning it. `w-0`/`min-w-0` are likewise not pinning, hence `[1-9]`.
     const pinned = panes(source).filter((c) =>
       // Boundary is any of whitespace, string start, quote or brace — a width INTERPOLATED into a
       // literal class (`class="min-w-0 {x ? 'w-56' : ''}"`) is preceded by a quote, not a space,
