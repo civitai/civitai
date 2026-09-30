@@ -278,6 +278,18 @@ describe('PageBlockHost NAVIGATE bridge (#5209)', () => {
     await new Promise((r) => setTimeout(r, 150));
     expect(router.push).not.toHaveBeenCalled();
     expect(openSpy).not.toHaveBeenCalled();
+
+    // Positive control, same mount. A navigation control is structurally
+    // impossible here — the surface refuses EVERY destination, which is the whole
+    // assertion — so the control is on the BRIDGE instead: `data-block-ready` is
+    // set by the host only after it processed a `postFromBlock('BLOCK_READY')`,
+    // so it still reading `true` at the moment of measurement proves messages from
+    // this helper are reaching a live host. A silently-broken `postFromBlock` or
+    // `driveToReady` cannot satisfy this, and the three payloads above are each
+    // shown to DO navigate on the `page-run` surface by the earlier tests in this
+    // file — that is the non-zero half of the pair.
+    const iframe = page.getByTestId('app-page-iframe').element();
+    expect(iframe.getAttribute('data-block-ready')).toBe('true');
   });
 
   test('site-absolute /api/* is refused (a block cannot sign the viewer out)', async () => {
@@ -304,7 +316,21 @@ describe('PageBlockHost NAVIGATE bridge (#5209)', () => {
     renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
 
-    for (const path of ['https://evil.example/steal', '//evil.example', 'javascript:alert(1)']) {
+    for (const path of [
+      'https://evil.example/steal',
+      '//evil.example',
+      'javascript:alert(1)',
+      // The percent-encoded dot-segment family (#5250 F1). These are not off-origin,
+      // but they resolve to the refused `/api/auth/logout` and belong on the same
+      // bridge assertion: `window.open` resolves the string with no Next involved,
+      // and `router.push` gets Next's `new URL`-normalised pathname.
+      '/%2e%2e/api/auth/logout',
+      '/%2E%2E/api/auth/logout',
+      '/%2e/api/auth/logout',
+      '/.%2e/api/auth/logout',
+      '/%2e./api/auth/logout',
+      '/models/%2e%2e/api/auth/logout',
+    ]) {
       postFromBlock('NAVIGATE', { path });
       postFromBlock('NAVIGATE', { path, target: 'new_tab' });
     }
@@ -312,6 +338,15 @@ describe('PageBlockHost NAVIGATE bridge (#5209)', () => {
     await new Promise((r) => setTimeout(r, 150));
     expect(router.push).not.toHaveBeenCalled();
     expect(openSpy).not.toHaveBeenCalled();
+
+    // Positive control, same mount: an ordinary site route from the same block DOES
+    // navigate, so the two zeros above measure the refusals and not a bridge wired
+    // to nothing. Without this, a silently-broken `driveToReady`/`postFromBlock`
+    // satisfies both `not.toHaveBeenCalled()` assertions vacuously.
+    postFromBlock('NAVIGATE', { path: '/models/500' });
+    await vi.waitFor(() => {
+      expect(router.push).toHaveBeenCalledWith('/models/500', undefined, undefined);
+    });
   });
 
   test('NAVIGATE before BLOCK_READY is dropped (pre-handshake blocks cannot drive nav)', async () => {
@@ -326,5 +361,16 @@ describe('PageBlockHost NAVIGATE bridge (#5209)', () => {
     await new Promise((r) => setTimeout(r, 150));
     expect(router.push).not.toHaveBeenCalled();
     expect(openSpy).not.toHaveBeenCalled();
+
+    // Positive control, same mount, and it is the exact discriminator: complete the
+    // handshake and post the SAME payload. It navigates. So the zero above is a
+    // measurement of the pre-handshake gate specifically — not of a bridge that was
+    // never wired, and not of a host that refuses `/models/500` for some other
+    // reason.
+    await driveToReady();
+    postFromBlock('NAVIGATE', { path: '/models/500' });
+    await vi.waitFor(() => {
+      expect(router.push).toHaveBeenCalledWith('/models/500', undefined, undefined);
+    });
   });
 });

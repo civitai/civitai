@@ -182,7 +182,13 @@ function storageErrorMessage(err: unknown): string {
  *     block's own route), and a leading `/` is SITE-ABSOLUTE — the block may send
  *     the viewer to a civitai.com page route. There is deliberately no
  *     destination allowlist; what is refused is other ORIGINS (any scheme,
- *     protocol-relative, backslash, control characters), traversal, and
+ *     protocol-relative, backslash, control characters, and —
+ *     structurally — a resolved origin that is not the sentinel), any path whose
+ *     RESOLVED form is not the string the block sent (which is what covers
+ *     traversal in every spelling, `..` and `%2e` alike, rather than the
+ *     literal-segment blocklist that shipped first and was bypassed by
+ *     `/%2e%2e/api/auth/logout`), an app-scoped path that escapes the block's own
+ *     route, and
  *     site-absolute `/api/*`, which is not a page route and whose
  *     `/api/auth/logout` — a GET with no method gate — would end the viewer's
  *     session on a block's say-so. `resolveNavigateRequest` in

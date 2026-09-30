@@ -1052,7 +1052,15 @@ describe('resolveNavigateRequest (#5209 — site-absolute vs app-scoped)', () =>
       }
     });
 
-    it('refuses traversal and empty segments in BOTH scopes', () => {
+    it('refuses LITERALLY-SPELLED traversal and empty segments in BOTH scopes', () => {
+      // 🔴 THE NAME USED TO READ "refuses traversal and empty segments in BOTH
+      // scopes", and that overstated its own coverage in the direction that
+      // matters: every fixture here spells the dot segment literally, so the test
+      // said nothing about `%2e`, which WHATWG URL also counts as a dot segment
+      // and which bypassed the guard these fixtures were pinning. A test name is a
+      // coverage claim, and an over-wide one is worse than no test because it stops
+      // anyone looking. The encoded spellings are pinned in the
+      // "RESOLVED form" describe below; this one is the literal half only.
       for (const path of [
         '/../etc',
         '/a/../b',
@@ -1110,6 +1118,238 @@ describe('resolveNavigateRequest (#5209 — site-absolute vs app-scoped)', () =>
     it('does NOT refuse an APP-SCOPED api sub-path — it reaches no site handler', () => {
       expect(resolveNavigateRequest({ path: 'api/thing' }, PAGE)?.href).toBe(
         '/apps/run/model-benchmarking/api/thing'
+      );
+    });
+  });
+
+  /**
+   * 🔴 THE RESOLVED FORM IS WHAT THE CONSUMERS SEE — regression coverage for the
+   * percent-encoded dot-segment bypass.
+   *
+   * Every fixture in this describe was measured against `new URL(path,
+   * <origin>)` in node before it was written here, and every expectation is the
+   * literal value that measurement produced — never a value read back out of the
+   * implementation. The resolutions, for the record:
+   *
+   *   /%2e%2e/api/auth/logout        -> /api/auth/logout
+   *   /%2E%2E/api/auth/logout        -> /api/auth/logout
+   *   /%2e/api/auth/logout           -> /api/auth/logout
+   *   /.%2e/api/auth/logout          -> /api/auth/logout
+   *   /%2e./api/auth/logout          -> /api/auth/logout
+   *   /models/%2e%2e/api/auth/logout -> /api/auth/logout
+   *   /apps/run/model-benchmarking/%2e%2e/x               -> /apps/run/x
+   *   /apps/run/model-benchmarking/%2e%2e/%2e%2e/%2e%2e/x -> /x
+   *
+   * Both consumers get there: `window.open` resolves the string itself with no
+   * Next involved, and Next's `parseRelativeUrl` is `new URL`-based and hands the
+   * router the normalised pathname, which misses the route manifest and
+   * hard-navigates. Neither needs a user gesture.
+   */
+  describe('the RESOLVED form is what is judged (percent-encoded dot segments)', () => {
+    /**
+     * The six shapes that reached `/api/auth/logout` — a bare GET with no method
+     * gate and no CSRF token that clears the session, device and legacy cookies.
+     * RED at 082ca47d9f: each of these returned a NavigateRequest whose href the
+     * consumers resolved to the refused route.
+     */
+    const ENCODED_API = [
+      '/%2e%2e/api/auth/logout',
+      '/%2E%2E/api/auth/logout',
+      '/%2e/api/auth/logout',
+      '/.%2e/api/auth/logout',
+      '/%2e./api/auth/logout',
+      '/models/%2e%2e/api/auth/logout',
+    ];
+
+    it('refuses every percent-encoded dot-segment route to /api/auth/logout', () => {
+      for (const path of ENCODED_API) {
+        expect(resolveNavigateRequest({ path }, PAGE), path).toBeNull();
+      }
+    });
+
+    it('refuses them in the new_tab target too — window.open resolves with no Next', () => {
+      for (const path of ENCODED_API) {
+        expect(resolveNavigateRequest({ path, target: 'new_tab' }, PAGE), path).toBeNull();
+      }
+    });
+
+    it('refuses an APP-SCOPED path that escapes the block base by encoded traversal', () => {
+      // One `%2e%2e` leaves the block's own route; three leave the app surface
+      // entirely and land at the site root — the containment property this
+      // module's docblock asserts, and which the segment-split could not deliver.
+      //
+      // ⚠️ ATTRIBUTION, measured rather than assumed: the guard that delivers these
+      // refusals is the FIXPOINT RULE, not the containment check. A mutation run
+      // forcing the containment condition to `false` left this test GREEN (see the
+      // note at that line — it is provably unreachable behind the fixpoint rule).
+      // So this test is coverage for the fixpoint rule applied to the app scope, and
+      // the containment check has no test that exercises it. Stated so a later
+      // reader does not delete the fixpoint rule believing this test protects them.
+      expect(resolveNavigateRequest({ path: '%2e%2e/x' }, PAGE)).toBeNull();
+      expect(resolveNavigateRequest({ path: '%2e%2e/%2e%2e/%2e%2e/x' }, PAGE)).toBeNull();
+    });
+
+    it('refuses a SLUG that is itself a dot segment (the base cannot be walked either)', () => {
+      // `encodeURIComponent('..')` is `..` — dots are unreserved — so a `..` slug
+      // built an appBase of `/apps/run/..` and the pushed href resolved to
+      // `/apps/x`, out of the app surface. Resolving base and path TOGETHER is what
+      // sees this; validating only the block's half never could.
+      expect(resolveNavigateRequest({ path: 'x' }, { base: '/apps/run', slug: '..' })).toBeNull();
+    });
+
+    it('refuses percent-encoded path SEPARATORS, which no downstream decode can split', () => {
+      // `new URL` does not decode these, so they survive as ONE segment and the
+      // first-segment check would judge `api%2fauth%2flogout` rather than `api`.
+      for (const path of [
+        '/api%2fauth%2flogout',
+        '/API%2Fauth',
+        '/a%2fb',
+        '/a%5cb',
+        'x%2f%2e%2e%2f%2e%2e',
+      ]) {
+        expect(resolveNavigateRequest({ path }, PAGE), path).toBeNull();
+      }
+    });
+
+    it('refuses a percent-encoded spelling of the api segment itself', () => {
+      // `/%61pi/auth/logout` is a resolution FIXPOINT — `new URL` keeps `%61`
+      // literal — so the fixpoint rule does not catch it and the first-segment
+      // check must decode before comparing.
+      for (const path of ['/%61pi/auth/logout', '/%41PI/x', '/%61%70%69/x']) {
+        expect(resolveNavigateRequest({ path }, PAGE), path).toBeNull();
+      }
+    });
+
+    it('refuses a site path with a malformed escape it cannot decode', () => {
+      // A segment whose meaning cannot be established is not pushed. `/a%` and
+      // `/a%zz` are fixpoints, so only the decode attempt sees them.
+      for (const path of ['/%/x', '/%zz/x', '/%e0%a4%a/x']) {
+        expect(resolveNavigateRequest({ path }, PAGE), path).toBeNull();
+      }
+    });
+
+    it('refuses a path resolution would REWRITE rather than preserve', () => {
+      // `/a<b` resolves to `/a%3Cb`. Fail-closed: the block gets no navigation
+      // rather than a silently different destination, and it can encode the
+      // character itself if it means it.
+      for (const path of ['/a<b', '/a>b', '/a`b', '/a{b']) {
+        expect(resolveNavigateRequest({ path }, PAGE), path).toBeNull();
+      }
+    });
+
+    it('[invariant guard — green at base] DOUBLE-encoding is deliberately allowed', () => {
+      // INVARIANT GUARD, not regression coverage: the pre-change code accepted these
+      // too, so it was never red. It is here to pin a DECISION, not to prove a fix.
+      //
+      // 🔴 A DELIBERATE NON-REFUSAL, pinned so a later reader does not "fix" it.
+      // Reaching a dot segment from `%252e` needs TWO decodes. `new URL` does
+      // zero, so this is a fixpoint whose first segment is the literal string
+      // `%252e%252e`; one downstream decode yields `%2e%2e`, still a literal
+      // segment, because dot-segment resolution happens in the URL parser BEFORE
+      // the request is sent, not after a server decodes it. Refusing `%25`
+      // outright would break `/models/500/50%25-off-lora`, a legitimate slug route.
+      expect(resolveNavigateRequest({ path: '/%252e%252e/api/auth/logout' }, PAGE)?.href).toBe(
+        '/%252e%252e/api/auth/logout'
+      );
+      expect(resolveNavigateRequest({ path: '/models/500/50%25-off-lora' }, PAGE)?.href).toBe(
+        '/models/500/50%25-off-lora'
+      );
+    });
+
+    it('[invariant guard — green at base] does NOT refuse a segment merely CONTAINING dots', () => {
+      // INVARIANT GUARD, not regression coverage — green before the change too. Its
+      // job is to stop the fixpoint rule being over-widened into "refuse any dot",
+      // which is the cheapest wrong way to make the red tests above pass.
+      //
+      // Positive control for the fixpoint rule: `..b`, `b..` and `...` are
+      // ordinary literal segments, not dot segments, and are measured fixpoints.
+      // Without this the rule could be "refuse anything with a dot in it" and pass.
+      expect(resolveNavigateRequest({ path: '/a/..b' }, PAGE)?.href).toBe('/a/..b');
+      expect(resolveNavigateRequest({ path: '/a/b..' }, PAGE)?.href).toBe('/a/b..');
+      expect(resolveNavigateRequest({ path: '/a/...' }, PAGE)?.href).toBe('/a/...');
+      expect(resolveNavigateRequest({ path: 'v1.2/detail' }, PAGE)?.href).toBe(
+        '/apps/run/model-benchmarking/v1.2/detail'
+      );
+    });
+
+    it('[invariant guard — green at base] IDEMPOTENCY: a returned href is a fixpoint', () => {
+      // INVARIANT GUARD, not regression coverage — GREEN at 082ca47d9f, because the
+      // old code rebuilt the href from already-split segments and so happened to
+      // emit fixpoints for every input it ACCEPTED. It could not have caught the
+      // bypass, which was about the inputs it accepted, not the hrefs it emitted.
+      // It is kept because the new code returns a string produced by a PARSER rather
+      // than by concatenation, which is the shape that could regress this.
+      //
+      // 🔴 The property that makes "judge the resolved form" mean anything: what
+      // was validated and what is pushed must be ONE string. If a returned href
+      // resolved to something else, the guards above would have been applied to a
+      // string the consumer never sees.
+      const ORIGIN = 'https://page-block-host.invalid';
+      const paths = [
+        '/models/12345',
+        '/models/500?modelVersionId=1001',
+        '/images/9#comments',
+        '/generate/',
+        '/',
+        '/a/..b',
+        '/%252e%252e/thing',
+        '/models/500/50%25-off-lora',
+        'detail/500',
+        '',
+        'detail?id=7',
+        'api/thing',
+        'v1.2/detail',
+      ];
+      let checked = 0;
+      for (const path of paths) {
+        const href = resolveNavigateRequest({ path }, PAGE)?.href;
+        expect(href, `expected a request for ${JSON.stringify(path)}`).toBeTypeOf('string');
+        const u = new URL(href as string, ORIGIN);
+        expect(u.pathname + u.search + u.hash, JSON.stringify(path)).toBe(href);
+        expect(u.origin, JSON.stringify(path)).toBe(ORIGIN);
+        checked += 1;
+      }
+      // Positive control on the loop itself: a filter that matched nothing would
+      // otherwise report green.
+      expect(checked).toBe(paths.length);
+    });
+
+    /**
+     * INVARIANT GUARD, not regression coverage — GREEN at 082ca47d9f.
+     * The pre-change code refused these too (the literal `..` predicate caught the
+     * traversal ones, and `startsWith`-style base building kept the rest inside the
+     * block route). They are kept because the NEW code reaches the same verdicts by
+     * a completely different route — resolved-form containment rather than a
+     * segment blocklist — so they pin that the rewrite did not widen the app scope
+     * while closing the encoded hole. Do not count them toward the fix's coverage.
+     */
+    it('[invariant guard — green at base] keeps literal app-scope traversal refused', () => {
+      for (const path of ['../x', 'a/../../x', './x', 'a/./b']) {
+        expect(resolveNavigateRequest({ path }, PAGE), path).toBeNull();
+      }
+    });
+
+    /**
+     * INVARIANT GUARD, not regression coverage — GREEN at 082ca47d9f.
+     * A sibling route whose name merely starts with the base must not read as
+     * contained. The old code could not produce this shape at all (it always
+     * emitted `<base>/<segments>`), so there was nothing to regress; the new code
+     * CAN, because it validates a resolved string, and this pins that the `/`
+     * boundary in the containment check is present rather than a bare `startsWith`.
+     */
+    it('[invariant guard — green at base] a sibling route is not "contained"', () => {
+      expect(
+        resolveNavigateRequest({ path: 'detail' }, { base: '/apps/run', slug: 'mb' })?.href
+      ).toBe('/apps/run/mb/detail');
+      // `/apps/run/mb-evil` starts with `/apps/run/mb` but is a different route.
+      // 🔴 NOT ASSERTED, and this test cannot assert it: no input produces that
+      // shape, because the candidate is built as the literal `<base>/<path>`. A
+      // mutation run confirmed it — dropping the `/` from the containment check
+      // (mutant M3b) left every test green. So the two expectations below pin the
+      // ACCEPTED shapes only; the boundary refinement is unreachable, and the report
+      // for this change says so rather than claiming it is covered.
+      expect(resolveNavigateRequest({ path: '' }, { base: '/apps/run', slug: 'mb' })?.href).toBe(
+        '/apps/run/mb'
       );
     });
   });
