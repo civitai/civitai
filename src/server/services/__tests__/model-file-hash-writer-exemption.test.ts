@@ -36,13 +36,6 @@ vi.mock('~/utils/delivery-worker', () => ({
 }));
 vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (url: string) => url }));
 vi.mock('~/env/other', () => ({ isProd: false }));
-vi.mock('~/env/server', () => ({
-  env: {
-    ORCHESTRATOR_ACCESS_TOKEN: undefined,
-    NEXTAUTH_URL: 'https://civitai.test',
-    WEBHOOK_TOKEN: 'wh-token',
-  },
-}));
 
 // --- model-file-scan.service edges (normalizeScanHashes itself stays real) --
 vi.mock('~/server/redis/caches', () => ({ dataForModelsCache: { refresh: vi.fn() } }));
@@ -69,6 +62,7 @@ import { createModelFileScanRequest } from '~/server/services/orchestrator/orche
 import { normalizeScanHashes } from '~/server/services/model-file-scan.service';
 import type { ModelHashType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 const mockDbWrite = dbMock.dbWrite;
 dbMock.dbWrite.modelFile.update.mockResolvedValue({});
@@ -96,6 +90,31 @@ const sentinelWritten = () => {
 describe('the ledger-exempt ModelFileHash writer', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // The ONE env value this file needs, per the call-time row of the two-bucket rule in
+    // docs/testing/shared-module-mock-migration.md. An explicit `undefined` override is
+    // honoured — `read()` consults `overrides.has(prop)`, not truthiness — so this reads as
+    // unset even though TEST_ENV_DEFAULTS supplies a token, which is what selects
+    // `createModelFileScanRequest`'s dev-only skip. That is documented nowhere else, hence
+    // the note. The old mock's NEXTAUTH_URL / WEBHOOK_TOKEN are not declared because their
+    // only read (orchestrator.service.ts:839) sits past the dev-skip `return` and so is
+    // unreachable here; the defaults cover them if that ever changes.
+    //
+    // Read at call time (orchestrator.service.ts `if (!isProd && !env.ORCHESTRATOR_ACCESS_TOKEN)`)
+    // and at module scope nowhere IN THIS GRAPH — the one module-scope reader,
+    // `~/server/services/orchestrator/client`, is mocked at the top of this file. 🔴 Widening
+    // that to `importOriginal` puts a module-scope read back in the graph, which a per-file
+    // override cannot answer.
+    //
+    // 🔴 Do NOT restore the wholesale vi.mock factory for ~/env/server (the 3-key `{ env: … }`
+    // object) this replaced — and do not re-spell it adjacently here: `mockPattern` in
+    // src/__tests__/mocks/guarded-specifiers.ts is textual and comment-blind, so quoting the
+    // literal call makes this file register as unmigrated forever. The factory made the file
+    // UNCOLLECTABLE: `normalizeScanHashes` is deliberately real, and its module graph reaches
+    // `resource-data.redis` → `cache-helpers`, which calls `createLogger` at MODULE scope →
+    // `env.LOGGING.includes(...)` on an env object that 3-key factory left without `LOGGING`.
+    // `TypeError: Cannot read properties of undefined`, 0 tests collected, shard 1 red on
+    // every PR.
+    setEnv({ ORCHESTRATOR_ACCESS_TOKEN: undefined });
     mockDbWrite.modelFile.update.mockResolvedValue({});
     mockDbWrite.modelFileHash.upsert.mockResolvedValue({});
   });
