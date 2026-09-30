@@ -288,6 +288,17 @@ describe('crucible.getById', () => {
 
     expect(await caller(signedIn(OWNER_ID)).getById({ id: CRUCIBLE_ID })).toBeNull();
   });
+  it('hides a green crucible off the green site, except from its creator', async () => {
+    findUnique.mockResolvedValue({
+      id: CRUCIBLE_ID,
+      userId: 555,
+      status: CrucibleStatus.Active,
+      buzzType: 'green',
+    });
+
+    expect(await caller(signedIn(STRANGER_ID)).getById({ id: CRUCIBLE_ID })).toBeNull();
+    expect(await caller(signedIn(555)).getById({ id: CRUCIBLE_ID })).not.toBeNull();
+  });
 });
 
 describe('crucible.getJudgingPair', () => {

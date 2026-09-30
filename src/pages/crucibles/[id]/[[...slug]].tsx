@@ -40,6 +40,7 @@ import { env } from '~/env/client';
 import { getModelUrl } from '~/utils/string-helpers';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CrucibleContentLevelBadges } from '~/components/Crucible/CrucibleContentLevelBadges';
 import { CrucibleHeader } from '~/components/Crucible/CrucibleHeader';
 import { CrucibleLeaderboard } from '~/components/Crucible/CrucibleLeaderboard';
@@ -88,6 +89,7 @@ export const getServerSideProps = createServerSideProps({
 function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const router = useRouter();
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const queryUtils = trpc.useUtils();
   const browsingLevel = useBrowsingLevelDebounced();
 
@@ -231,6 +233,8 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
     : [];
 
   const isModerator = currentUser?.isModerator ?? false;
+  const isOffDomain =
+    !!features.isGreen && crucible.buzzType !== 'green' && !isCreator && !isModerator;
   const isFinished =
     crucible.status === CrucibleStatus.Completed || crucible.status === CrucibleStatus.Cancelled;
   const canCancel = (isModerator && !isFinished) || (isCreator && isPending);
@@ -278,6 +282,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
     <>
       <Gated
         contentNsfwLevel={crucible.nsfwLevel}
+        nsfw={isOffDomain}
         meta={{
           title: `${crucible.name} | Civitai Crucible`,
           description: crucible.description ?? undefined,

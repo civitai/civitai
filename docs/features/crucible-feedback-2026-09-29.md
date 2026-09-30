@@ -85,6 +85,28 @@ Second walkthrough:
 - [ ] **D30. Creator-defined eligibility prompt**, run by an LLM on each entry, to reject off-theme submissions. Later.
 - [x] **D31. Put the discover feed's sort options on the same line as the title.** → Done.
 
+## Third round (product review)
+
+- [x] **B33. Local `/crucibles` crash in `DumbSortFilter` (`sortOptions[type]` undefined).** → Not code: stale chunks from another checkout on the same dev port (sortOptions.crucibles exists). Hard reload.
+- [x] **B34. Hero card went full width after the B30 container change.** → Fixed: `self-start max-w-2xl` (this repo's `max-w-xl` is 1440px, from breakpoints.json).
+- [x] **B35. Creation charged Buzz before inserting the row, so a failed insert showed debit-then-refund toasts.** → Fixed: insert as upcoming first, then charge, then open; a failed charge deletes the unpaid row (same order as user challenges).
+- [x] **D32. Optional hero background image, separate from the card cover.** → Done: `Crucible.heroImageId` (migration 20260930120000), wizard upload, hero uses it and falls back to the cover. Drawn only when its rating is inside the viewer's level.
+- [x] **D33. Content-level badges everywhere match the create form's picker.** → Done: `CrucibleContentLevelBadges` in the hero, rules table and submit modal. Not on feed cards (removed on request).
+- [x] **D34. Secondary "Generate an entry" CTA on the detail page.** → Done: opens the generator with the first required version and the crucible's media type.
+- [x] **D35. Prize panel uses the challenges SpotlightCard hover effect.** → Done: `SpotlightCard` extracted to `src/components/SpotlightCard` and reused.
+- [x] **D36. Edit with the form: everything while upcoming, only outcome-neutral fields once running.** → Done: `/crucibles/[id]/edit` (shared `CrucibleUpsertWizard`); server settles cost differences while upcoming; running allows name, description, cover, hero.
+- [x] **D37. Create form preview is the feed card; durations fill the row.** → Done.
+- [x] **D38. Prizes step: Done needs 100%, colours avoid Buzz colours, places capped by max entries, Reset to Default when edited.** → Done (server also refuses more places than the entry cap).
+- [x] **D39. Feed filters beside sort: type and status.** → Done: `CrucibleFiltersDropdown`, URL-backed.
+- [x] **D40. Crucible cards filter by the viewer's browsing level like other feeds.** → Done server-side (feed + featured), capped on green: the crucible's levels and its cover's rating must both intersect; creators see their own. Note: a cover is hidden from others until scanned.
+- [x] **D2 (update). Buzz type:** from the domain at creation like challenges (green on the SFW site, yellow on the mature site), stored on the crucible; setup fee, seed, entry fees and prizes use it; green is SFW-only; refunds follow the original charge. Decided (Manuel): also domain-scoped like user challenges, on top of browsing level — feed, featured and judging suggestions show only the site's currency (creators see their own); off green a green crucible is not found; on green a yellow one shows the mature-site redirect, and its judge page is not found.
+- [x] **B36. An unpaid crucible could be opened by the activation job mid-charge.** → Fixed: inserted with no start until paid.
+- [x] **B37. Editing asked for the full new amount while the form showed the difference.** → Fixed: a changed leg is refunded before its replacement is charged; failures charge the original back.
+- [x] **B38. Moderators could change an upcoming crucible's settings and bill the owner.** → Fixed: full edit is the owner's; moderators keep presentation fields and content levels.
+- [x] **B39. A hero image still uploading was dropped on changing step.** → Fixed: step changes and submit wait for uploads.
+- [x] **B40. The hero showed a gradient instead of the cover when the hero was above the viewer's level.** → Fixed: falls back to the cover.
+- Judge slug: routing ignores the slug, so only the exact segment `judge` (now also `edit`) is remapped; "Judge Crucible" → `/judge-crucible` resolves to the detail page. No change needed.
+
 ## Found while fixing
 
 - [x] **B28. The prize-customization fee is now derived from the split** rather than trusted from the client.

@@ -65,7 +65,10 @@ import { Tracker } from '~/server/clickhouse/client';
 import { createLogger } from '~/utils/logging';
 import { createNotification } from '~/server/services/notification.service';
 import { resolveCoverImageId } from '~/server/services/cover-image.service';
-import { isNonSfwForGreen } from '~/server/games/daily-challenge/challenge-currency';
+import {
+  deriveDomainCurrency,
+  isNonSfwForGreen,
+} from '~/server/games/daily-challenge/challenge-currency';
 import { getEffectiveBrowsingLevel } from '~/server/games/daily-challenge/challenge-visibility';
 import { checkCrucibleSettings } from '~/server/schema/crucible.schema';
 import { createPost } from '~/server/services/post.service';
@@ -752,6 +755,7 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
   // As the challenges feed: the crucible's allowed levels and its cover's rating must each intersect
   // the viewer's level, so an under-declared crucible can't leak its cover. Creators always see
   // their own.
+  const and: Prisma.CrucibleWhereInput[] = [];
   const effectiveLevel = getEffectiveBrowsingLevel({
     isGreen,
     isLoggedIn: viewerId != null,
@@ -763,8 +767,13 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
       nsfwLevel: { in: levels },
       image: { nsfwLevel: { in: levels } },
     };
-    where.AND = [viewerId ? { OR: [{ userId: viewerId }, visible] } : visible];
+    and.push(viewerId ? { OR: [{ userId: viewerId }, visible] } : visible);
   }
+
+  // As user challenges: a crucible shows only on the site whose currency it runs on.
+  const onDomain: Prisma.CrucibleWhereInput = { buzzType: deriveDomainCurrency(isGreen) };
+  and.push(viewerId ? { OR: [{ userId: viewerId }, onDomain] } : onDomain);
+  where.AND = and;
 
   // "Ending soon" only means something for crucibles still running; without this, an unfiltered
   // feed would lead with the ones that ended longest ago.
@@ -3139,6 +3148,7 @@ export const getFeaturedCrucible = async ({
     WHERE c.status = ${CrucibleStatus.Active}::"CrucibleStatus"
       -- Status lags the clock until finalize-crucibles runs; don't feature one that already ended.
       AND (c."endAt" IS NULL OR c."endAt" > now())
+      AND c."buzzType" = ${deriveDomainCurrency(isGreen)}
       ${
         effectiveLevel > 0
           ? Prisma.sql`AND (c."nsfwLevel" & ${effectiveLevel}) <> 0 AND (i."nsfwLevel" & ${effectiveLevel}) <> 0`
@@ -3233,7 +3243,12 @@ export const getJudgingSuggestions = async ({
   excludeCrucibleId,
   limit,
   excludedUserIds = [],
-}: GetJudgingSuggestionsSchema & { userId: number; excludedUserIds?: number[] }) => {
+  isGreen = false,
+}: GetJudgingSuggestionsSchema & {
+  userId: number;
+  excludedUserIds?: number[];
+  isGreen?: boolean;
+}) => {
   const rows = await dbRead.$queryRaw<{ id: number }[]>`
     SELECT c.id
     FROM "Crucible" c
@@ -3241,6 +3256,7 @@ export const getJudgingSuggestions = async ({
     WHERE c.status = ${CrucibleStatus.Active}::"CrucibleStatus"
       -- Status lags the clock until finalize-crucibles runs.
       AND (c."endAt" IS NULL OR c."endAt" > now())
+      AND c."buzzType" = ${deriveDomainCurrency(isGreen)}
       AND (c."nsfwLevel" & ${browsingLevel}) <> 0
       AND (i.id IS NULL OR (i."nsfwLevel" & ${browsingLevel}) <> 0)
       ${excludeCrucibleId ? Prisma.sql`AND c.id <> ${excludeCrucibleId}` : Prisma.empty}

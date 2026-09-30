@@ -390,6 +390,13 @@ describe('getCrucibles — browsing level', () => {
     expect(where.AND[0].OR[0]).toEqual({ userId: 4 });
   });
 
+  it("shows only crucibles in the site's own currency, and the viewer's own anyway", async () => {
+    expect((await whereFor({ isGreen: true })).AND.at(-1)).toEqual({ buzzType: 'green' });
+    expect((await whereFor({ isGreen: false, viewerId: 4 })).AND.at(-1)).toEqual({
+      OR: [{ userId: 4 }, { buzzType: 'yellow' }],
+    });
+  });
+
   it('caps the level on green even when the client asks for everything', async () => {
     const where = await whereFor({ browsingLevel: 31, isGreen: true, viewerId: 4 });
     expect(where.AND[0].OR[1].nsfwLevel.in).not.toContain(4);
@@ -405,20 +412,18 @@ describe('getCrucibles — status for an unfiltered feed', () => {
   };
 
   it('limits Ending Soon to active crucibles, so long-ended ones do not lead', async () => {
-    expect(await whereFor({ sort: CrucibleSort.EndingSoon })).toEqual({
-      status: CrucibleStatus.Active,
-    });
+    expect((await whereFor({ sort: CrucibleSort.EndingSoon })).status).toBe(CrucibleStatus.Active);
   });
 
   it('keeps an explicit status on Ending Soon', async () => {
     expect(
-      await whereFor({ sort: CrucibleSort.EndingSoon, status: CrucibleStatus.Completed })
-    ).toEqual({ status: CrucibleStatus.Completed });
+      (await whereFor({ sort: CrucibleSort.EndingSoon, status: CrucibleStatus.Completed })).status
+    ).toBe(CrucibleStatus.Completed);
   });
 
   it('leaves cancelled crucibles out of the other sorts', async () => {
-    expect(await whereFor({ sort: CrucibleSort.Newest })).toEqual({
-      status: { not: CrucibleStatus.Cancelled },
+    expect((await whereFor({ sort: CrucibleSort.Newest })).status).toEqual({
+      not: CrucibleStatus.Cancelled,
     });
   });
 

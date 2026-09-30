@@ -36,6 +36,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CrucibleJudgingUI } from '~/components/Crucible/CrucibleJudgingUI';
 import type { JudgingPairData, WatchedMs } from '~/components/Crucible/CrucibleJudgingUI';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
@@ -75,6 +76,7 @@ export const getServerSideProps = createServerSideProps({
 
 function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
 
   // Session stats
   const [sessionVotes, setSessionVotes] = useState(0);
@@ -273,6 +275,13 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
   // Loading state
   if (isLoadingCrucible) return <PageLoader />;
   if (!crucible) return <NotFound />;
+  if (
+    features.isGreen &&
+    crucible.buzzType !== 'green' &&
+    !currentUser?.isModerator &&
+    currentUser?.id !== crucible.userId
+  )
+    return <NotFound />;
 
   // Check if user is logged in
   if (!currentUser) {

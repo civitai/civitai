@@ -82,6 +82,11 @@ export const getCrucibleByIdHandler = async ({
     });
     if (blocked) return null;
   }
+  // Off the green site a green crucible doesn't exist, as for user challenges; on green a yellow one
+  // is returned so the page can show the redirect to the mature site.
+  const canPreview = !!ctx.user?.isModerator || crucible?.userId === ctx.user?.id;
+  if (crucible && !ctx.features?.isGreen && crucible.buzzType === 'green' && !canPreview)
+    return null;
   return crucible;
 };
 
@@ -234,5 +239,10 @@ export const getJudgingSuggestionsHandler = async ({
   ctx: ProtectedContext;
 }) => {
   const excludedUserIds = await getBlockedByUserIds(ctx.user);
-  return getJudgingSuggestions({ ...input, userId: ctx.user.id, excludedUserIds });
+  return getJudgingSuggestions({
+    ...input,
+    userId: ctx.user.id,
+    excludedUserIds,
+    isGreen: !!ctx.features?.isGreen,
+  });
 };
