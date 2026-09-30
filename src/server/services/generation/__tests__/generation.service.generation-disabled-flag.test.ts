@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Prisma } from '@prisma/client';
 
 /**
  * Regression guard for the GenerationDisabled flag gate.
@@ -49,7 +50,12 @@ vi.mock('~/server/utils/otel-helpers', () => ({
   withSpan: (_name: string, fn: () => unknown) => fn(),
 }));
 
-import { getResourceCanGenerate } from '~/server/services/generation/generation.service';
+import {
+  getResourceCanGenerate,
+  setEvictable,
+  toggleGenerationDisabled,
+} from '~/server/services/generation/generation.service';
+import { bustMvCache } from '~/server/services/model-version.service';
 import { ModelVersionFlag } from '~/shared/constants/model-version-flags.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
@@ -101,5 +107,103 @@ describe('getResourceCanGenerate — GenerationDisabled flag', () => {
       hiddenGates: noHiddenGates,
     });
     expect(result).toBe(false);
+  });
+});
+
+describe('moderator flag writes', () => {
+  const VERSION_ID = 7;
+  const MODEL_ID = 70;
+  const queryRaw = () => vi.mocked(dbMock.dbWrite.$queryRaw);
+  const lastUpdate = () => {
+    const query = queryRaw().mock.calls[0]?.[0] as unknown as Prisma.Sql;
+    return { sql: query.text.replace(/\s+/g, ' ').trim(), values: query.values };
+  };
+  const returning = (flags: number) =>
+    queryRaw().mockResolvedValueOnce([{ modelId: MODEL_ID, flags }] as never);
+
+  beforeEach(() => {
+    queryRaw().mockReset();
+    vi.mocked(bustMvCache).mockReset();
+  });
+
+  it('toggleGenerationDisabled XORs its bit in one statement', async () => {
+    returning(ModelVersionFlag.GenerationDisabled);
+    await toggleGenerationDisabled({ id: VERSION_ID, isModerator: true });
+    expect(lastUpdate()).toEqual({
+      sql: 'UPDATE "ModelVersion" SET flags = flags # $1 WHERE id = $2 RETURNING "modelId", flags',
+      values: [ModelVersionFlag.GenerationDisabled, VERSION_ID],
+    });
+    expect(bustMvCache).toHaveBeenCalledWith(VERSION_ID, MODEL_ID);
+  });
+
+  // A toggle sent from a stale menu would clear the pin on a base model; setting the
+  // requested value makes a repeated or stale click a no-op instead.
+  it.each([
+    [
+      false,
+      'UPDATE "ModelVersion" SET flags = flags | $1 WHERE id = $2 RETURNING "modelId", flags',
+    ],
+    [
+      true,
+      'UPDATE "ModelVersion" SET flags = flags & ~($1::int) WHERE id = $2 RETURNING "modelId", flags',
+    ],
+  ])(
+    'setEvictable(%s) sets the bit to the requested state, never flips it',
+    async (evictable, sql) => {
+      returning(evictable ? 0 : ModelVersionFlag.NotEvictable);
+      await setEvictable({ id: VERSION_ID, evictable, isModerator: true });
+      expect(lastUpdate()).toEqual({ sql, values: [ModelVersionFlag.NotEvictable, VERSION_ID] });
+      expect(bustMvCache).toHaveBeenCalledWith(VERSION_ID, MODEL_ID);
+    }
+  );
+
+  it('reports generationDisabled from the returned flags', async () => {
+    returning(ModelVersionFlag.GenerationDisabled | ModelVersionFlag.NotEvictable);
+    expect(await toggleGenerationDisabled({ id: VERSION_ID, isModerator: true })).toEqual({
+      id: VERSION_ID,
+      generationDisabled: true,
+    });
+    returning(ModelVersionFlag.NotEvictable);
+    expect(await toggleGenerationDisabled({ id: VERSION_ID, isModerator: true })).toEqual({
+      id: VERSION_ID,
+      generationDisabled: false,
+    });
+  });
+
+  it('reports evictable from the returned flags', async () => {
+    returning(ModelVersionFlag.NotEvictable | ModelVersionFlag.GenerationDisabled);
+    expect(await setEvictable({ id: VERSION_ID, evictable: false, isModerator: true })).toEqual({
+      id: VERSION_ID,
+      evictable: false,
+    });
+    returning(ModelVersionFlag.GenerationDisabled);
+    expect(await setEvictable({ id: VERSION_ID, evictable: true, isModerator: true })).toEqual({
+      id: VERSION_ID,
+      evictable: true,
+    });
+  });
+
+  it.each([
+    [
+      'toggleGenerationDisabled',
+      () => toggleGenerationDisabled({ id: VERSION_ID, isModerator: false }),
+    ],
+    ['setEvictable', () => setEvictable({ id: VERSION_ID, evictable: false, isModerator: false })],
+  ] as const)('%s refuses a non-moderator without writing', async (_, call) => {
+    await expect(call()).rejects.toThrow();
+    expect(queryRaw()).not.toHaveBeenCalled();
+    expect(bustMvCache).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'toggleGenerationDisabled',
+      () => toggleGenerationDisabled({ id: VERSION_ID, isModerator: true }),
+    ],
+    ['setEvictable', () => setEvictable({ id: VERSION_ID, evictable: false, isModerator: true })],
+  ] as const)('%s 404s on a missing version and busts nothing', async (_, call) => {
+    queryRaw().mockResolvedValueOnce([] as never);
+    await expect(call()).rejects.toThrow(`No model version with id ${VERSION_ID}`);
+    expect(bustMvCache).not.toHaveBeenCalled();
   });
 });

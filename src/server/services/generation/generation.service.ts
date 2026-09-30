@@ -23,6 +23,7 @@ import type {
   GenerationStatusMode,
   GetGenerationDataSchema,
   ResolveImageMetaInput,
+  SetEvictableInput,
 } from '~/server/schema/generation.schema';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
@@ -69,6 +70,7 @@ import { removeNulls } from '~/utils/object-helpers';
 import { parseAIR, stringifyAIR } from '~/shared/utils/air';
 import {
   ModelVersionFlag,
+  isEvictable,
   isGenerationDisabled,
 } from '~/shared/constants/model-version-flags.constants';
 import { pickPreviewImage } from '~/shared/utils/resource-preview';
@@ -979,29 +981,51 @@ export async function getGenerationConfig(
   };
 }
 
+async function updateModelVersionFlags(id: number, flags: Prisma.Sql) {
+  // One atomic statement, never a read-modify-write: `flags` holds several bits,
+  // and a round trip would clobber a concurrent write to the others.
+  const [updated] = await dbWrite.$queryRaw<{ modelId: number; flags: number }[]>(Prisma.sql`
+    UPDATE "ModelVersion"
+    SET flags = ${flags}
+    WHERE id = ${id}
+    RETURNING "modelId", flags
+  `);
+  if (!updated) throw throwNotFoundError(`No model version with id ${id}`);
+
+  // The flags are baked into cached version/model rows (resourceDataCache,
+  // dataForModelsCache, search index), so bust them the same way a coverage
+  // toggle does — otherwise the change wouldn't surface until TTL expiry.
+  await bustMvCache(id, updated.modelId);
+
+  return updated.flags;
+}
+
 export async function toggleGenerationDisabled({
   id,
   isModerator,
 }: GetByIdInput & { isModerator?: boolean }) {
   if (!isModerator) throw throwAuthorizationError();
+  const flags = await updateModelVersionFlags(
+    id,
+    Prisma.sql`flags # ${ModelVersionFlag.GenerationDisabled}`
+  );
+  return { id, generationDisabled: isGenerationDisabled(flags) };
+}
 
-  // Flip the bit in a single atomic statement (`#` is Postgres bitwise XOR).
-  // `flags` is shared with NotDerivative, so a read-modify-write would clobber a
-  // concurrent write to those other bits.
-  const [updated] = await dbWrite.$queryRaw<{ modelId: number; flags: number }[]>`
-    UPDATE "ModelVersion"
-    SET flags = flags # ${ModelVersionFlag.GenerationDisabled}
-    WHERE id = ${id}
-    RETURNING "modelId", flags
-  `;
-  if (!updated) throw throwNotFoundError(`No model version with id ${id}`);
-
-  // The flag is baked into cached version/model rows (resourceDataCache,
-  // dataForModelsCache, search index), so bust them the same way a coverage
-  // toggle does — otherwise the change wouldn't surface until TTL expiry.
-  await bustMvCache(id, updated.modelId);
-
-  return { id, generationDisabled: isGenerationDisabled(updated.flags) };
+// Sets rather than toggles: a flip sent from a stale menu would un-pin a base model.
+export async function setEvictable({
+  id,
+  evictable,
+  isModerator,
+}: SetEvictableInput & { isModerator?: boolean }) {
+  if (!isModerator) throw throwAuthorizationError();
+  const flags = await updateModelVersionFlags(
+    id,
+    evictable
+      ? Prisma.sql`flags & ~(${ModelVersionFlag.NotEvictable}::int)`
+      : Prisma.sql`flags | ${ModelVersionFlag.NotEvictable}`
+  );
+  return { id, evictable: isEvictable(flags) };
 }
 
 const FREE_RESOURCE_TYPES: ModelType[] = ['VAE', 'Checkpoint'];
