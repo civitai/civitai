@@ -25,7 +25,8 @@
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
-  import { backend, portalProps } from '$lib/host';
+  import { backend, hostConfig, portalProps } from '$lib/host';
+  import { isMatureNsfwLevel, nsfwLevelLabel } from '$lib/buzz-balance.svelte';
   import { directDatasetUrl, type ReuseItem } from '$lib/reuse';
   import { playOnHover, resetOnLeave } from '$lib/video-preview';
   import { extOfAir, mediaOfExt, mimeOfExt } from '$lib/media';
@@ -51,6 +52,7 @@
     runCard,
     splitTags,
     tagsHaveTrigger,
+    type DatasetFilter,
     type Img,
     type Selection,
   } from './trainingFlow';
@@ -69,6 +71,7 @@
     labelMode = $bindable('tag'),
     autoLabel = $bindable('auto'),
     excludeTags = $bindable([]),
+    filter = $bindable('all'),
     reuseItems = [],
     onContinue,
     onBack,
@@ -85,6 +88,8 @@
      *  settle, and tags auto-label results must never apply (tag mode; a caption no-op). */
     autoLabel: 'auto' | 'manual';
     excludeTags: string[];
+    /** Owned by the flow so Review's "see which" can land on the Mature view. */
+    filter: DatasetFilter;
     /** A "Train again" hand-off: existing blobs (air + caption) to seed the dataset with, no re-upload. */
     reuseItems?: ReuseItem[];
     onContinue: () => void;
@@ -211,16 +216,22 @@
   // Filter the tile grid so a single unlabeled image in a big dataset is findable. Partitions ALL images by
   // whether they carry a label (tags or caption), so a blocked/erroring tile with no label surfaces under
   // "Unlabeled" too — it's a problem tile the user needs to see.
-  let filter = $state<'all' | 'labeled' | 'unlabeled'>('all');
   const labeledTotal = $derived(images.filter(isLabeled).length);
   const unlabeledTotal = $derived(images.length - labeledTotal);
+  // Trainable only, matching Review's count — a blocked tile can't cause the Yellow charge.
+  const isMature = (i: Img) => isTrainable(i) && isMatureNsfwLevel(i.nsfwLevel);
+  const matureTotal = $derived(images.filter(isMature).length);
   const shownImages = $derived(
     filter === 'labeled'
       ? images.filter(isLabeled)
       : filter === 'unlabeled'
         ? images.filter((i) => !isLabeled(i))
-        : images
+        : filter === 'mature'
+          ? images.filter(isMature)
+          : images
   );
+  // Mirrors Review's `blueExcluded`: unknown membership is warned too.
+  const matureChargesYellow = hostConfig().isPaidMember !== true;
 
   let seq = 0;
   let dragging = $state(false);
@@ -665,6 +676,28 @@
   const triggerText = $derived(trigger.trim());
 </script>
 
+{#snippet ratingBadge(img: Img)}
+  {@const rating = nsfwLevelLabel(img.nsfwLevel)}
+  {#if rating}
+    {@const badgeClass = 'absolute bottom-1.5 left-1.5 rounded px-1.5 py-0.5 font-mono text-xs font-semibold'}
+    {#if isMature(img) && matureChargesYellow}
+      <Tooltip.Provider>
+        <Tooltip.Root>
+          <Tooltip.Trigger class="{badgeClass} bg-buzz text-black" aria-label="Rated {rating}">
+            {rating}
+          </Tooltip.Trigger>
+          <Tooltip.Content class="max-w-[240px] text-xs" portalProps={portalProps()}>
+            Rated {rating}. Without a membership, one mature image charges the whole run in Yellow
+            Buzz — remove it to pay in Blue.
+          </Tooltip.Content>
+        </Tooltip.Root>
+      </Tooltip.Provider>
+    {:else}
+      <span class="{badgeClass} bg-black/60 text-on-accent" title="Rated {rating}">{rating}</span>
+    {/if}
+  {/if}
+{/snippet}
+
 {#snippet triggerTags(tags: string[], limit: number)}
   <div class="flex flex-wrap gap-1">
     {#if triggerText && !tagsHaveTrigger(trigger, tags)}
@@ -997,7 +1030,7 @@
             type="single"
             value={filter}
             onValueChange={(v) => {
-              if (v === 'all' || v === 'labeled' || v === 'unlabeled') filter = v;
+              if (v === 'all' || v === 'labeled' || v === 'unlabeled' || v === 'mature') filter = v;
             }}
             variant="outline"
             size="sm"
@@ -1012,8 +1045,20 @@
                 >{unlabeledTotal}</span
               >
             </ToggleGroupItem>
+            {#if matureTotal > 0 || filter === 'mature'}
+              <ToggleGroupItem value="mature" aria-label="Show images rated mature">
+                Mature <span class={matureTotal > 0 ? 'ml-1 font-semibold text-buzz' : 'ml-1'}>{matureTotal}</span>
+              </ToggleGroupItem>
+            {/if}
           </ToggleGroup>
         </div>
+
+        {#if reuseItems.length > 0 && images.some((i) => isTrainable(i) && !i.nsfwLevel)}
+          <p class="mb-3 text-xs text-dark-2">
+            Images reused from an earlier training have no rating badge. Retraining is charged the same
+            way the original run was.
+          </p>
+        {/if}
 
         {#if shownImages.length === 0}
           <div
@@ -1023,7 +1068,9 @@
               ? 'No unlabeled images — every image has a label.'
               : filter === 'labeled'
                 ? 'No labeled images yet.'
-                : 'No images.'}
+                : filter === 'mature'
+                  ? 'No images rated mature.'
+                  : 'No images.'}
           </div>
         {/if}
 
@@ -1113,6 +1160,7 @@
                   <span class="absolute left-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full bg-emerald-500 text-on-accent">
                     <IconCheck size={12} stroke={3} />
                   </span>
+                  {@render ratingBadge(img)}
                 {/if}
               </div>
 
