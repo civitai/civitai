@@ -172,12 +172,16 @@ async function hydrateSuggestions(
   // image via `pickPreviewImage`, which only ever returns an image ALREADY visible at
   // `browsingLevel` — so the image level always intersects the ceiling and the re-check
   // becomes a no-op, admitting a `Model.nsfw = true` model with a PG cover to a SFW block.
-  // `generation-resources.ts` omits it for exactly this reason (see its own comment), and
-  // the projection emits no image field, so requesting one bought nothing but that hole.
-  const resources = await getResourceData(
-    ordered.map((entry) => entry.versionId),
-    { browsingLevel }
-  );
+  // `generation-resources.ts` also omits it, and its own comment confirms the EFFECT —
+  // "model.nsfw is the ACTIVE clamp signal in this path" — though not this reasoning:
+  // it calls a future cover level desirable. Cited for the effect, not the rationale.
+  // The projection emits no image field either way, so requesting one bought nothing.
+  // No options at all: `browsingLevel` is read at exactly ONE site inside
+  // getResourceData — `pickPreviewImage`, within `if (withPreview)` — so passing it
+  // without a preview is inert, and an inert maturity-shaped argument at a call site
+  // reads as a clamp that is applied and is not. That is the same shape as the bug
+  // above. The clamp that DOES apply is `resourceExceedsCatalogCeiling`, below.
+  const resources = await getResourceData(ordered.map((entry) => entry.versionId));
   const byId = new Map(resources.map((resource) => [resource.id, resource]));
   const suggestions: ResourceIntentSuggestion[] = [];
   for (const entry of ordered) {

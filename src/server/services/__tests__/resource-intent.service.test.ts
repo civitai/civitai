@@ -442,23 +442,12 @@ describe('stage flow', () => {
     expect(result.suggestions.map((s) => s.versionId)).toEqual([11]);
   });
 
-  it('hydration drops a mature version on a SFW ceiling', async () => {
-    mockStage1();
-    mockFindCandidates.mockResolvedValue(SHORTLIST);
-    mockStage3({ '0': 0.7, '1': 0.2, none: 0.1 });
-    mockGetResourceData.mockImplementation(async () => [
-      genResource(11),
-      // nsfwLevel 4 (X) on the cover image vs the SFW ceiling (PG+PG13): the
-      // resource's maturity signal is the IMAGE level when present, so a mature
-      // cover is what exceeds — mirroring resourceExceedsCatalogCeiling.
-      genResource(22, {
-        image: { url: 'https://example.com/x.jpeg', type: 'image/jpeg', nsfwLevel: 4 },
-      }),
-    ]);
-    const result = await getResourceIntent(INPUT, CTX);
-    expect(result.suggestions.map((s) => s.versionId)).toEqual([11]);
-  });
-
+  // ⚠️ REMOVED: 'hydration drops a mature version on a SFW ceiling', which planted a
+  // cover `nsfwLevel: 4`. That input is now unreachable in production on BOTH callers
+  // of resourceExceedsCatalogCeiling: `resource.image` has exactly one writer and it
+  // sits inside getResourceData's `if (withPreview)`, which neither caller sets. The
+  // `imageNsfwLevel` arm is therefore dead, and a test exercising it asserted nothing
+  // about a path that can run. The reachable case is the one below.
   it('🔴 drops a mature-FLAGGED model whose cover image is SFW', async () => {
     mockStage1();
     mockFindCandidates.mockResolvedValue(SHORTLIST);
@@ -495,9 +484,11 @@ describe('stage flow', () => {
       ids.map((id) => genResource(id))
     );
     await getResourceIntent(INPUT, CTX);
-    const opts = mockGetResourceData.mock.calls[0][1] as Record<string, unknown>;
-    expect(opts).not.toHaveProperty('withPreview');
-    expect(opts).toMatchObject({ browsingLevel: 3 });
+    // Asserted on the WHOLE options argument, not one key: `withPreview: false`
+    // would satisfy a `not.toHaveProperty` check while re-adding the option, and
+    // `browsingLevel` is inert here (getResourceData reads it only inside its
+    // `if (withPreview)` branch), so passing either is the thing to catch.
+    expect(mockGetResourceData.mock.calls[0][1]).toBeUndefined();
   });
 });
 

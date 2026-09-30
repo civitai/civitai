@@ -180,9 +180,17 @@ export function buildPrompt(request: JevRequest): { system: string; user: string
   // top-level key. An earlier draft described the per-answer shape and never named
   // the wrapper, so a model that followed the prompt exactly returned answers at the
   // top level and was refused as malformed on EVERY call — the endpoint would have
-  // been 100% degraded from its first real request, silently, since a degraded
-  // response is indistinguishable from an honest "no resource needed". Keep the
-  // wrapper named here and in the example below; `jev.test.ts` pins the round trip.
+  // been 100% degraded from its first real request. Keep the wrapper named here and
+  // in the example below; `jev.test.ts` pins the round trip against this text.
+  //
+  // ⚠️ An earlier version of this comment justified that with "a degraded response is
+  // indistinguishable from an honest 'no resource needed'". That is FALSE and is
+  // retracted: the two differ in five fields (`degraded`, `intent`, `criteria`,
+  // `noneProbability`, `model`), `docs/resource-intent-primitive.md` hard rule 4 says
+  // so, and every degrade also writes `degraded=1` + `degradedReason` to the shadow
+  // table and emits a `resource-intent-degraded` log. The true statement is narrower:
+  // the SIGNAL exists and nothing ALERTS on it, so the failure is silent to operators
+  // rather than invisible in the data.
   const system = [
     'You are a bounded judgment engine. You never write prose.',
     'You receive a state and a list of questions.',
@@ -195,7 +203,7 @@ export function buildPrompt(request: JevRequest): { system: string; user: string
     'You may add "confidence": <0..1> to any answer.',
     'Example for questions with ids "a" (noul) and "b" (choice over x|y):',
     '{"answers":{"a":{"value":0.8},"b":{"value":"x","distribution":{"x":0.7,"y":0.3}}}}',
-    'Respond with ONLY that JSON object.',
+    'Respond with ONLY the JSON object described above, using the real question ids.',
   ].join('\n');
   const user = `State:\n${JSON.stringify(request.state)}\n\nQuestions:\n${JSON.stringify(
     request.questions.map(({ id, type, prompt, ...rest }) => ({ id, type, prompt, ...rest }))

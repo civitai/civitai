@@ -324,8 +324,13 @@ describe('🔴 the PROMPT and the PARSER describe the same envelope', () => {
    * earlier draft never named the wrapper: a model obeying the prompt exactly
    * returned answers at the top level and `askJev` refused it as malformed on
    * EVERY call. The endpoint would have been 100% degraded from its first real
-   * request, and — because a degraded response is byte-identical to an honest
-   * "no resource needed" — nothing would have said so.
+   * request.
+   *
+   * ⚠️ An earlier version of this docstring added "because a degraded response is
+   * byte-identical to an honest 'no resource needed', nothing would have said so".
+   * RETRACTED — it is false: the two responses differ in five fields, and a degrade
+   * also writes `degraded=1` to the shadow table and logs. What is true is that
+   * nothing ALERTS on it. Do not re-derive the stronger claim.
    *
    * These derive the expectation from the PROMPT TEXT instead.
    */
@@ -344,14 +349,42 @@ describe('🔴 the PROMPT and the PARSER describe the same envelope', () => {
     expect(example, 'the prompt must carry a concrete JSON example').toBeTruthy();
     const parsedExample = JSON.parse(example as string);
 
-    // Re-key the example onto THIS request's ids, preserving its SHAPE.
+    // Re-key the example onto THIS request's ids, preserving its SHAPE — which
+    // means taking the example's OWN key names for BOTH answers. An earlier
+    // version of this test hand-wrote the choice answer with a literal
+    // `distribution`, so renaming that key in the prompt's example (say to
+    // `probabilities`) left all three tests green while production degraded on
+    // every call — the exact defect this guard exists to prevent, reachable by a
+    // one-word edit. Only the OPTION STRINGS are remapped; every key comes from
+    // the example.
     const answers: Record<string, unknown> = {};
     const shapes = Object.values(parsedExample.answers as Record<string, unknown>);
+    expect(shapes, 'the example must carry both answer shapes').toHaveLength(2);
     answers[noulQuestion.id] = shapes[0];
-    answers[choiceQuestion.id] = {
-      value: 'style',
-      distribution: { style: 0.7, character: 0.3 },
-    };
+
+    const choiceShape = shapes[1] as Record<string, unknown>;
+    const exampleDist = Object.entries(
+      (Object.values(choiceShape).find((v) => typeof v === 'object' && v !== null) ?? {}) as Record<
+        string,
+        number
+      >
+    );
+    expect(
+      exampleDist.length,
+      'the example choice answer must carry a distribution'
+    ).toBeGreaterThan(0);
+    // Rebuild using the example's own key names, with our option strings.
+    const remapped: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(choiceShape)) {
+      if (typeof v === 'object' && v !== null) {
+        remapped[k] = Object.fromEntries(
+          exampleDist.map(([, p], i) => [choiceQuestion.options[i] ?? 'none', p])
+        );
+      } else {
+        remapped[k] = choiceQuestion.options[0];
+      }
+    }
+    answers[choiceQuestion.id] = remapped;
 
     send.mockResolvedValue({
       choices: [{ message: { content: JSON.stringify({ answers }) } }],
