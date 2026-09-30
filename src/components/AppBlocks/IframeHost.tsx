@@ -2252,12 +2252,22 @@ export function IframeHost({
     modelCtx.slotId,
   ]);
 
-  // Checkpoint picker: the block fires OPEN_CHECKPOINT_PICKER with the
-  // ecosystem group (e.g. 'Flux1') it wants restricted to. We open the
-  // platform's existing ResourceSelectModal filtered to Checkpoints in that
-  // family, then post the selection back via CHECKPOINT_PICKER_RESULT.
-  // Empty `selected` means the user closed without picking — the block's
-  // SDK promise resolves to `{ selected: undefined }`.
+  // Checkpoint picker: the block fires OPEN_CHECKPOINT_PICKER, OPTIONALLY with
+  // an ecosystem group (e.g. 'Flux1') to restrict the pick to. We open the
+  // platform's existing ResourceSelectModal on Checkpoints — narrowed to that
+  // family when a group was sent, and NOT narrowed at all when one was not (an
+  // absent group means "every checkpoint the viewer can generate with", see the
+  // detail on `groupKey` below) — then post the selection back via
+  // CHECKPOINT_PICKER_RESULT. Empty `selected` means the user closed without
+  // picking — the block's SDK promise resolves to `{ selected: undefined }`.
+  //
+  // The group is OPTIONAL, and that is the normal case rather than the
+  // exception: a block that passes the family it is already in pins its viewer
+  // to that ecosystem forever. This summary used to say the block sends "the
+  // ecosystem group it wants restricted to" and that we open the modal
+  // "filtered to Checkpoints in that family", full stop — which reads as though
+  // an unconstrained pick were unsupported, and is the exact misreading that
+  // made SDK callers over-constrain in the first place.
   useEffect(() => {
     const off = onMessage<
       { requestId?: unknown; baseModelGroup?: unknown; currentVersionId?: unknown } | undefined
