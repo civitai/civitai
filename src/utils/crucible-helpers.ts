@@ -14,7 +14,6 @@ export function getCrucibleSlug(name: string) {
   return RESERVED_CRUCIBLE_SLUGS.has(slug) ? `${slug}-crucible` : slug;
 }
 
-/** The column is free text; anything but green reads as yellow, like challenges. */
 export const toCrucibleBuzzType = (value: string): 'green' | 'yellow' =>
   value === 'green' ? 'green' : 'yellow';
 

@@ -134,7 +134,6 @@ const assertCanAfford = async (userId: number, buzzType: CrucibleBuzzType, amoun
   }
 };
 
-/** Charges each non-zero leg; if a later leg fails the earlier ones are refunded before rethrowing. */
 const chargeCrucibleCreator = async (
   userId: number,
   buzzType: CrucibleBuzzType,
@@ -244,8 +243,8 @@ export const createCrucible = async ({
   const seedAmount = seededPrizePool ?? 0;
   await assertCanAfford(userId, buzzType, setupCost + seedAmount);
 
-  // Inserted before any Buzz moves, as upcoming, so a failed insert costs nothing and an unpaid
-  // crucible is never open for entries; a failed charge deletes it.
+  // Inserted unpaid with no start before any Buzz moves: a failed insert costs nothing, and
+  // activateScheduledCrucibles only opens a crucible whose start has passed.
   const created = await dbWrite.crucible.create({
     data: {
       userId,
@@ -260,8 +259,6 @@ export const createCrucible = async ({
       seededPrizePool: seedAmount,
       entryLimit,
       maxTotalEntries: maxTotalEntries ?? null,
-      // Coerced to null rather than passed through: the schema lets these be undefined, and
-      // Crucible_video_settings_require_video rejects anything but NULL on an image crucible.
       minViewSeconds: isVideoCrucible ? minViewSeconds ?? null : null,
       maxClipSeconds: isVideoCrucible ? maxClipSeconds ?? null : null,
       prizePositions: prizePositions as Prisma.JsonObject,
@@ -269,8 +266,8 @@ export const createCrucible = async ({
         ? (allowedResources as Prisma.JsonArray)
         : Prisma.JsonNull,
       duration: duration * 60, // Convert hours to minutes for storage
-      startAt,
-      endAt,
+      startAt: null,
+      endAt: null,
       status: CrucibleStatus.Pending,
     },
   });
@@ -295,6 +292,8 @@ export const createCrucible = async ({
       where: { id: created.id },
       data: {
         ...charges,
+        startAt,
+        endAt,
         status: isScheduled ? CrucibleStatus.Pending : CrucibleStatus.Active,
       },
     });
@@ -375,11 +374,11 @@ export const updateCrucible = async ({
   if (hasEnded && !isModerator)
     throw throwBadRequestError('This crucible has ended and can no longer be edited');
 
-  const isUpcoming = crucible.status === CrucibleStatus.Pending;
+  const canEditSettings = isOwner && crucible.status === CrucibleStatus.Pending;
   const provided = (Object.keys(changes) as (keyof typeof changes)[]).filter(
     (key) => changes[key] !== undefined
   );
-  if (!isUpcoming) {
+  if (!canEditSettings) {
     const allowed: readonly string[] = isModerator
       ? [...PRESENTATION_FIELDS, 'nsfwLevel']
       : PRESENTATION_FIELDS;
@@ -453,8 +452,8 @@ export const updateCrucible = async ({
     nsfwLevel: changes.nsfwLevel,
   };
 
-  let settle: { charged: string[]; refund: string[] } = { charged: [], refund: [] };
-  if (isUpcoming) {
+  let settlement: Awaited<ReturnType<typeof settleCrucibleCostChange>> = null;
+  if (canEditSettings) {
     const isVideo = crucibleSupportsVideoSettings(next.contentType);
     Object.assign(data, {
       contentType: next.contentType,
@@ -485,7 +484,7 @@ export const updateCrucible = async ({
       });
     }
 
-    settle = await settleCrucibleCostChange({
+    settlement = await settleCrucibleCostChange({
       userId: crucible.userId,
       crucibleId: crucible.id,
       buzzType,
@@ -507,28 +506,38 @@ export const updateCrucible = async ({
         ),
         seedAmount: next.seededPrizePool,
       },
-      data,
     });
+    if (settlement) Object.assign(data, settlement.data);
   }
 
   try {
-    const updated = await dbWrite.crucible.update({ where: { id }, data });
-    await refundCrucibleCharges(settle.refund, 'crucible edited', { entityId: id });
-    return updated;
+    return await dbWrite.crucible.update({ where: { id }, data });
   } catch (error) {
-    await refundCrucibleCharges(settle.charged, 'edit failed', { entityId: id });
+    await settlement?.rollback();
     throw error;
   }
 };
 
-/** Re-charges only the legs whose amount changed; the replaced legs are refunded after the write. */
+type CostLeg = 'setup' | 'seed';
+
+const legTransactionIds = (
+  legs: CostLeg[],
+  charges: { buzzTransactionId: string | null; seedTransactionId: string | null }
+) => ({
+  ...(legs.includes('setup') && { buzzTransactionId: charges.buzzTransactionId }),
+  ...(legs.includes('seed') && { seedTransactionId: charges.seedTransactionId }),
+});
+
+/**
+ * A changed leg is refunded before its replacement is charged, so the creator only needs the
+ * difference. Anything that fails after a refund charges the original amount back.
+ */
 async function settleCrucibleCostChange({
   userId,
   crucibleId,
   buzzType,
   before,
   after,
-  data,
 }: {
   userId: number;
   crucibleId: number;
@@ -540,36 +549,72 @@ async function settleCrucibleCostChange({
     seedTransactionId: string | null;
   };
   after: { setupCost: number; seedAmount: number };
-  data: Prisma.CrucibleUpdateInput;
 }) {
-  const setupChanged = before.setupCost !== after.setupCost;
-  const seedChanged = before.seedAmount !== after.seedAmount;
-  if (!setupChanged && !seedChanged) return { charged: [], refund: [] };
-
-  await assertCanAfford(
-    userId,
-    buzzType,
-    (setupChanged ? after.setupCost : 0) + (seedChanged ? after.seedAmount : 0)
+  const amountOf = (source: { setupCost: number; seedAmount: number }, leg: CostLeg) =>
+    leg === 'setup' ? source.setupCost : source.seedAmount;
+  const legs = (['setup', 'seed'] as const).filter(
+    (leg) => amountOf(before, leg) !== amountOf(after, leg)
   );
-  const charges = await chargeCrucibleCreator(userId, buzzType, {
-    setupCost: setupChanged ? after.setupCost : 0,
-    seedAmount: seedChanged ? after.seedAmount : 0,
-    details: { entityId: crucibleId },
-  });
+  if (!legs.length) return null;
 
-  const refund: string[] = [];
-  if (setupChanged) {
-    data.buzzTransactionId = charges.buzzTransactionId;
-    if (before.buzzTransactionId) refund.push(before.buzzTransactionId);
-  }
-  if (seedChanged) {
-    data.seedTransactionId = charges.seedTransactionId;
-    if (before.seedTransactionId) refund.push(before.seedTransactionId);
-  }
-  return {
-    charged: [charges.buzzTransactionId, charges.seedTransactionId].filter(isDefined),
-    refund,
+  const total = (source: { setupCost: number; seedAmount: number }, only: readonly CostLeg[]) =>
+    only.reduce((sum, leg) => sum + amountOf(source, leg), 0);
+  await assertCanAfford(userId, buzzType, total(after, legs) - total(before, legs));
+
+  const details = { entityId: crucibleId };
+  const refunded: CostLeg[] = [];
+  const restore = async () => {
+    if (!refunded.length) return;
+    try {
+      const restored = await chargeCrucibleCreator(userId, buzzType, {
+        setupCost: refunded.includes('setup') ? before.setupCost : 0,
+        seedAmount: refunded.includes('seed') ? before.seedAmount : 0,
+        details,
+      });
+      await dbWrite.crucible.update({
+        where: { id: crucibleId },
+        data: legTransactionIds(refunded, restored),
+      });
+    } catch (error) {
+      log(
+        `CRITICAL: Failed to restore the original charges on crucible ${crucibleId}: ${String(
+          error
+        )}`
+      );
+    }
   };
+
+  try {
+    for (const leg of legs) {
+      const prefix = leg === 'setup' ? before.buzzTransactionId : before.seedTransactionId;
+      if (prefix)
+        await refundMultiAccountTransaction({
+          externalTransactionIdPrefix: prefix,
+          description: 'Crucible refund - crucible edited',
+          details: { entityType: 'Crucible', ...details },
+        });
+      refunded.push(leg);
+    }
+    const charges = await chargeCrucibleCreator(userId, buzzType, {
+      setupCost: legs.includes('setup') ? after.setupCost : 0,
+      seedAmount: legs.includes('seed') ? after.seedAmount : 0,
+      details,
+    });
+    return {
+      data: legTransactionIds(legs, charges),
+      rollback: async () => {
+        await refundCrucibleCharges(
+          [charges.buzzTransactionId, charges.seedTransactionId].filter(isDefined),
+          'edit failed',
+          details
+        );
+        await restore();
+      },
+    };
+  } catch (error) {
+    await restore();
+    throw error;
+  }
 }
 
 function assertCrucibleSettings(settings: Parameters<typeof checkCrucibleSettings>[0]) {
@@ -704,9 +749,9 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
 }) => {
   const where: Prisma.CrucibleWhereInput = {};
 
-  // Same rule as the challenges feed: the crucible's allowed levels and its cover's own rating both
-  // have to fall inside what the viewer browses, capped on green so omitting the level can't widen
-  // it. Creators always see their own.
+  // As the challenges feed: the crucible's allowed levels and its cover's rating must each intersect
+  // the viewer's level, so an under-declared crucible can't leak its cover. Creators always see
+  // their own.
   const effectiveLevel = getEffectiveBrowsingLevel({
     isGreen,
     isLoggedIn: viewerId != null,
@@ -1128,8 +1173,6 @@ export const submitEntry = async ({
       // Generate transaction prefix for potential refunds
       const transactionPrefix = getCrucibleEntryTransactionPrefix(crucibleId, userId);
 
-      // Create multi-account transaction to collect entry fee
-      // Transfers from user's yellow/green Buzz to central bank (account 0)
       await createMultiAccountBuzzTransaction({
         fromAccountId: userId,
         fromAccountTypes: [crucible.buzzType as 'green' | 'yellow'],

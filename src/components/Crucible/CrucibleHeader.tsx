@@ -67,10 +67,11 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
   const entryCount = _count.entries ?? 0;
   const prizePool = getCrucibleTotalPrizePool({ entryFee, entryCount, seededPrizePool });
   const browsingLevel = useBrowsingLevelDebounced();
-  const candidate = heroImage ?? image;
   // Drawn without an ImageGuard, so it only shows once scanned and inside the viewer's level.
   const backgroundImage =
-    candidate && Flags.intersects(candidate.nsfwLevel, browsingLevel) ? candidate : null;
+    [heroImage, image].find(
+      (candidate) => candidate && Flags.intersects(candidate.nsfwLevel, browsingLevel)
+    ) ?? null;
 
   const statusBadge = getCrucibleStatusBadge(status, endAt);
 

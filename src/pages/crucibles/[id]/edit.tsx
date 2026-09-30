@@ -55,7 +55,6 @@ export const getServerSideProps = createServerSideProps({
       (!!crucible.endAt && crucible.endAt <= new Date());
     const canEdit =
       isModerator || (crucible.userId === session.user?.id && !hasEnded && !session.user?.muted);
-    // Not the slugged URL: a crucible named "edit" would slug straight back to this page.
     if (!canEdit) return { redirect: { destination: `/crucibles/${id}`, permanent: false } };
 
     if (ssg) await ssg.crucible.getById.prefetch({ id });

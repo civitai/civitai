@@ -1,11 +1,7 @@
--- Crucible: the Buzz currency a crucible runs on (from the domain it was created on, like
--- challenges) and an optional hero background separate from the card cover.
+-- Idempotent: applied by hand, possibly more than once.
 --
--- Idempotent, like 20260914120000_crucible: these environments are updated by hand.
---
--- 🔴 APPLY THIS BEFORE THE CODE DEPLOYS. Both columns join the crucible selects, so the new build
--- SELECTs them on every crucible read; without them every crucible page errors. The reverse order
--- is safe: existing rows default to yellow and nothing reads either column until the deploy lands.
+-- 🔴 APPLY BEFORE THE CODE DEPLOYS: the new build selects both columns on every crucible read.
+-- The reverse order is safe — existing rows default to yellow and the old build reads neither.
 
 ALTER TABLE "Crucible" ADD COLUMN IF NOT EXISTS "buzzType" TEXT NOT NULL DEFAULT 'yellow';
 ALTER TABLE "Crucible" ADD COLUMN IF NOT EXISTS "heroImageId" INTEGER;

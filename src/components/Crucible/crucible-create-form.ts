@@ -41,7 +41,7 @@ export const CRUCIBLE_NO_DESCRIPTION = 'No description provided';
 export const entryFeeRangeLabel = `${CRUCIBLE_MIN_ENTRY_FEE.toLocaleString()}–${CRUCIBLE_MAX_ENTRY_FEE.toLocaleString()} Buzz`;
 
 // The form's resolver rebuilds the schema from `.shape`, so object-level refines would be dropped:
-// the cross-field rules live in the page's step checks instead.
+// the cross-field rules live in `CrucibleUpsertWizard`'s step checks instead.
 export const crucibleCreateFormSchema = z.object({
   name: z.string().trim().min(1, 'Name is required').max(CRUCIBLE_NAME_MAX_LENGTH),
   description: z.string().trim().max(CRUCIBLE_DESCRIPTION_MAX_LENGTH).optional(),

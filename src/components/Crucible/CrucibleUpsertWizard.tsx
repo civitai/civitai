@@ -118,7 +118,6 @@ const contentTypeOptions: ContentTypeOption[] = [
 const formatSeconds = (seconds: number) =>
   seconds < 60 ? `${seconds} seconds` : `${seconds / 60} minute${seconds === 60 ? '' : 's'}`;
 
-// 0 is the select's "no rule" choice; the server spells that as an absent value.
 const NO_RULE = 0;
 const toVideoRule = (seconds: number | undefined) => seconds || undefined;
 
@@ -201,8 +200,7 @@ export function CrucibleUpsertWizard(props: Props) {
 
   const isStep1Valid = () => values.name.trim().length > 0 && !!values.coverImage;
 
-  // Mirrors the server's cross-field refine. Both set and inverted means nothing can clear the
-  // bar, so the crucible would have nothing votable in it.
+  // Mirrors the server's `checkCrucibleSettings`.
   const minViewSeconds = toVideoRule(values.minViewSeconds);
   const maxClipSeconds = toVideoRule(values.maxClipSeconds);
   const videoSettingsError =
@@ -255,7 +253,14 @@ export function CrucibleUpsertWizard(props: Props) {
     !isStep1Valid() ? 1 : !isStep2Valid() ? 2 : !isStep3Valid() ? 3 : CRUCIBLE_CREATE_STEP_COUNT
   );
   const allStepsValid = isStep1Valid() && isStep2Valid() && isStep3Valid();
+  const [uploadingImages, setUploadingImages] = useState<Record<string, boolean>>({});
+  const imagesUploading = Object.values(uploadingImages).some(Boolean);
+  const setUploadingImage = (field: string, uploading: boolean) =>
+    setUploadingImages((current) => ({ ...current, [field]: uploading }));
+
   const setStep = (step: number) => {
+    // A step unmounts its upload inputs, which would drop an image still uploading.
+    if (imagesUploading) return;
     form.setValue('step', step);
     wizardTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   };
@@ -347,6 +352,7 @@ export function CrucibleUpsertWizard(props: Props) {
         label="Cover Image"
         description="This image appears on discovery cards (16:9 aspect ratio recommended)"
         dropzoneLabel="Drag & drop cover image here or click to browse"
+        onUploadingChange={(uploading) => setUploadingImage('coverImage', uploading)}
         withAsterisk
       />
 
@@ -355,6 +361,7 @@ export function CrucibleUpsertWizard(props: Props) {
         label="Hero Background"
         description="Optional. Shown behind the crucible's header; the cover image is used when this is empty."
         dropzoneLabel="Drag & drop a background image here or click to browse"
+        onUploadingChange={(uploading) => setUploadingImage('heroImage', uploading)}
       />
 
       <InputText
@@ -1009,7 +1016,7 @@ export function CrucibleUpsertWizard(props: Props) {
 
   const submitLabel = crucible ? 'Save Changes' : 'Create Crucible';
   const showSubmit = crucible ? true : currentStep === CRUCIBLE_CREATE_STEP_COUNT;
-  const submitDisabled = !allStepsValid || (!!crucible && !hasChanges);
+  const submitDisabled = !allStepsValid || (!!crucible && !hasChanges) || imagesUploading;
 
   return (
     <Form form={form}>
@@ -1074,7 +1081,7 @@ export function CrucibleUpsertWizard(props: Props) {
               variant="light"
               color="gray"
               onClick={() => setStep(currentStep - 1)}
-              disabled={currentStep === 1}
+              disabled={currentStep === 1 || imagesUploading}
               leftSection={<IconArrowLeft size={16} />}
             >
               Previous
@@ -1083,6 +1090,7 @@ export function CrucibleUpsertWizard(props: Props) {
               <Button
                 onClick={handleNext}
                 disabled={
+                  imagesUploading ||
                   (currentStep === 1 && !isStep1Valid()) ||
                   (currentStep === 2 && !isStep2Valid()) ||
                   (currentStep === 3 && !isStep3Valid())

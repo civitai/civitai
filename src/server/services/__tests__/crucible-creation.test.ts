@@ -71,7 +71,6 @@ const input = (overrides: Record<string, unknown> = {}) => ({
 const balance = (amount: number) =>
   getUserBuzzAccount.mockResolvedValue([{ balance: amount, type: 'yellow' }]);
 
-/** What the row ends up holding: the insert, then the write that records the payment. */
 const storedData = () => ({
   ...crucibleCreate.mock.calls[0][0].data,
   ...(crucibleUpdate.mock.calls[0]?.[0].data ?? {}),
@@ -183,6 +182,8 @@ describe('createCrucible — the row is written before any Buzz moves', () => {
     await createCrucible(input({ seededPrizePool: 5_000 }));
 
     expect(crucibleCreate.mock.calls[0][0].data.status).toBe(CrucibleStatus.Pending);
+    // No start until paid, so activateScheduledCrucibles can't open it mid-charge.
+    expect(crucibleCreate.mock.calls[0][0].data.startAt).toBeNull();
     expect(crucibleCreate.mock.invocationCallOrder[0]).toBeLessThan(
       createMultiAccountBuzzTransaction.mock.invocationCallOrder[0]
     );

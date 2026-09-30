@@ -248,8 +248,8 @@ export const getJudgingPairSchema = z.object({
   excludeEntryIds: z.array(z.number()).max(50).optional(),
 });
 
-// Explicit rather than `createCrucibleInputBaseSchema.partial()`: the create defaults would fill
-// every omitted field and overwrite the stored value.
+// Not `createCrucibleInputBaseSchema.partial()`: Zod 4 still applies its `.default()`s to omitted
+// keys, overwriting the stored value.
 export type UpdateCrucibleSchema = z.infer<typeof updateCrucibleSchema>;
 export const updateCrucibleSchema = z.object({
   id: z.number(),
@@ -325,7 +325,6 @@ export type UserActiveCrucible = {
   imageUrl: string | null;
 };
 
-// Schema for getting featured crucible (no input needed - returns highest prize pool active crucible)
 export type GetFeaturedCrucibleSchema = z.infer<typeof getFeaturedCrucibleSchema>;
 export const getFeaturedCrucibleSchema = z.object({
   browsingLevel: z.number().int().min(0).optional(),

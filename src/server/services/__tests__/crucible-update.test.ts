@@ -3,6 +3,7 @@ import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks';
 import {
   CRUCIBLE_DURATION_COSTS,
+  CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
   CRUCIBLE_RESOURCE_REQUIREMENTS_COST,
 } from '~/shared/constants/crucible.constants';
 import type * as BlocklistService from '~/server/services/blocklist.service';
@@ -139,17 +140,34 @@ describe('updateCrucible — while upcoming', () => {
     expect(written()).toMatchObject({ entryFee: 200, nsfwLevel: 3, entryLimit: 3 });
   });
 
-  it('charges a new setup fee, then refunds the old one, when a paid option changes', async () => {
+  it('refunds the old setup fee before charging the new one', async () => {
     findUnique.mockResolvedValue(upcoming({ buzzTransactionId: 'crucible-setup-4-old' }));
 
     await edit({ allowedResources: [10] });
 
-    expect(charged()).toEqual([CRUCIBLE_RESOURCE_REQUIREMENTS_COST]);
-    expect(written().buzzTransactionId).toMatch(/^crucible-setup-4-/);
     expect(refunded()).toEqual(['crucible-setup-4-old']);
-    expect(update.mock.invocationCallOrder[0]).toBeLessThan(
-      refundMultiAccountTransaction.mock.invocationCallOrder[0]
+    expect(charged()).toEqual([CRUCIBLE_RESOURCE_REQUIREMENTS_COST]);
+    expect(refundMultiAccountTransaction.mock.invocationCallOrder[0]).toBeLessThan(
+      createMultiAccountBuzzTransaction.mock.invocationCallOrder[0]
     );
+    expect(written().buzzTransactionId).toMatch(/^crucible-setup-4-(?!old)/);
+  });
+
+  it('asks the creator only for the difference', async () => {
+    findUnique.mockResolvedValue(
+      upcoming({ seededPrizePool: 1_000, seedTransactionId: 'crucible-seed-4-old' })
+    );
+    getUserBuzzAccount.mockResolvedValue([{ balance: 100, type: 'yellow' }]);
+
+    await edit({ seededPrizePool: 1_100 });
+
+    expect(charged()).toEqual([1_100]);
+  });
+
+  it("keeps an upcoming crucible's settings with its owner, not a moderator", async () => {
+    findUnique.mockResolvedValue(upcoming());
+    await expect(edit({ entryFee: 300 }, 1, true)).rejects.toThrow(/entryFee/);
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
   });
 
   it('re-charges only the seed when only the seed changes', async () => {
@@ -170,22 +188,36 @@ describe('updateCrucible — while upcoming', () => {
     expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
   });
 
-  it('changes nothing when the new charge fails', async () => {
-    findUnique.mockResolvedValue(upcoming({ buzzTransactionId: 'crucible-setup-4-old' }));
-    createMultiAccountBuzzTransaction.mockRejectedValue(new Error('buzz down'));
+  it('charges the original amount back and keeps the settings when the new charge fails', async () => {
+    findUnique.mockResolvedValue(
+      upcoming({ buzzTransactionId: 'crucible-setup-4-old', prizePositions: { '1': 70, '2': 30 } })
+    );
+    createMultiAccountBuzzTransaction.mockRejectedValueOnce(new Error('buzz down'));
 
     await expect(edit({ duration: 168 })).rejects.toThrow('buzz down');
-    expect(update).not.toHaveBeenCalled();
-    expect(refunded()).toEqual([]);
+
+    expect(refunded()).toEqual(['crucible-setup-4-old']);
+    expect(charged()).toEqual([
+      CRUCIBLE_DURATION_COSTS[168] + CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
+      CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
+    ]);
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(Object.keys(written())).toEqual(['buzzTransactionId']);
   });
 
-  it('refunds the new charge, and keeps the old one, when the write fails', async () => {
-    findUnique.mockResolvedValue(upcoming({ buzzTransactionId: 'crucible-setup-4-old' }));
-    update.mockRejectedValue(new Error('db down'));
+  it('refunds the new charge and charges the original back when the write fails', async () => {
+    findUnique.mockResolvedValue(
+      upcoming({ seededPrizePool: 1_000, seedTransactionId: 'crucible-seed-4-old' })
+    );
+    update.mockRejectedValueOnce(new Error('db down'));
 
-    await expect(edit({ duration: 168 })).rejects.toThrow('db down');
-    expect(charged()).toEqual([CRUCIBLE_DURATION_COSTS[168]]);
-    expect(refunded()).toEqual([expect.stringMatching(/^crucible-setup-4-(?!old)/)]);
+    await expect(edit({ seededPrizePool: 2_000 })).rejects.toThrow('db down');
+
+    expect(charged()).toEqual([2_000, 1_000]);
+    expect(refunded()).toEqual([
+      'crucible-seed-4-old',
+      expect.stringMatching(/^crucible-seed-4-(?!old)/),
+    ]);
   });
 
   it('moves the end with the start', async () => {

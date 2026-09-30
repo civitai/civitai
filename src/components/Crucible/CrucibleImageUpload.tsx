@@ -13,7 +13,7 @@ type Props = Omit<InputWrapperProps, 'children' | 'onChange' | 'onBlur'> & {
   value?: CrucibleImageSchema | null | '';
   onChange?: (value: CrucibleImageSchema | null) => void;
   dropzoneLabel: string;
-  // Passed by `withController`, and not valid on the wrapper's DOM node.
+  onUploadingChange?: (uploading: boolean) => void;
   onBlur?: () => void;
   placeholder?: string;
   reset?: number;
@@ -23,6 +23,8 @@ export function CrucibleImageUpload({
   value,
   onChange,
   dropzoneLabel,
+  onUploadingChange,
+  // `withController` injects these; kept out of `wrapperProps` so they don't reach Input.Wrapper.
   onBlur,
   placeholder,
   reset,
@@ -40,6 +42,11 @@ export function CrucibleImageUpload({
     const { url, width, height, hash } = file;
     onChange?.({ url, width, height, hash });
   }, [file?.status, file?.url]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const isUploading = !!uploading;
+  useEffect(() => {
+    onUploadingChange?.(isUploading);
+  }, [isUploading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDrop = (droppedFiles: File[]) => {
     resetFiles();
