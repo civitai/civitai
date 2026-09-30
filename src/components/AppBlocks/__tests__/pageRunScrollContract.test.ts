@@ -285,15 +285,19 @@ describe('the run page and its host agree on who owns the height', () => {
     // feature, and only the public one is pinned by the equivalence test.
     //
     // ⚠️ THE ONE STRUCTURAL DIFFERENCE, RECORDED BECAUSE IT IS THE THING THAT COULD
-    // BREAK IT: the private-run page renders an UNCONDITIONAL banner as a preceding
-    // sibling of that wrapper, where the run page's beta notice is conditional. A
-    // sibling above the wrapper takes its own height out of the non-scrolling `<main>`
-    // and the host's `flex: 1` resolves against the remainder, so it introduces no new
-    // scroll container — but a future edit that moves it INSIDE the wrapper would put a
-    // second child in a container `PageBlockHost` is documented to own alone.
+    // BREAK IT: the run page renders its notices (beta, and the private-run banner) as
+    // preceding SIBLINGS of that wrapper. A sibling above the wrapper takes its own
+    // height out of the non-scrolling `<main>` and the host's `flex: 1` resolves against
+    // the remainder, so it introduces no new scroll container — but a future edit that
+    // moves one INSIDE the wrapper would put a second child in a container
+    // `PageBlockHost` is documented to own alone.
+    //
+    // ⚠️ `/apps/private-run/<slug>` was REMOVED — the private run is now served by the
+    // run page's own fallback, so its banner is one of the two this route renders rather
+    // than a second file. The count here dropping by one is that deletion, not a
+    // regression in coverage.
     expect(offenders.sort()).toEqual([
       'src/components/Apps/ReviewBlockPreviewHost.tsx',
-      'src/pages/apps/private-run/[slug]/[[...path]].tsx',
       'src/pages/apps/run/[slug]/[[...path]].tsx',
     ]);
   });

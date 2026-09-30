@@ -443,8 +443,22 @@ export type RecordSpendAttributionInput = {
 };
 
 export type RecordSpendAttributionResult = {
-  /** False when the (workflow, app) UNIQUE blocked a duplicate write. */
+  /**
+   * False when the (workflow, app) UNIQUE blocked a duplicate write, AND when the call
+   * was a PRIVATE RUN, for which no row is written at all.
+   */
   written: boolean;
+  /**
+   * 🔴 `null` ONLY for a private run, where the write is skipped entirely (see the
+   * write-side exclusion in `recordSpendAttribution`). Every other path — including the
+   * duplicate branch — still returns the row it found or created.
+   *
+   * Nullable rather than synthesised: inventing a zeroed row to keep the type simple
+   * would make "no attribution exists" indistinguishable from "an attribution of zero",
+   * which is exactly the conflation the write-side exclusion is meant to remove. All four
+   * production callers `await` this and discard the result, so the nullability costs them
+   * nothing today and forces a decision on any future reader.
+   */
   row: {
     id: string;
     status: string;
@@ -453,7 +467,7 @@ export type RecordSpendAttributionResult = {
     grossValueCents: number;
     rateCardVersion: string;
     voidedReason: string | null;
-  };
+  } | null;
 };
 
 /**
@@ -684,14 +698,41 @@ export async function recordSpendAttribution(
   // distinguishable from an operator-voided row *in this column* — accepted,
   // because nothing pays out of this table and the mint audit line carries the
   // discriminating fields anyway.
-  const voidedReason =
-    privateRun === true
-      ? 'manual_review'
-      : isSelfSpend
-      ? 'self_spend'
-      : isInternal
-      ? 'internal_owner'
-      : null;
+  // ── PRIVATE RUN — NOT WRITTEN AT ALL ────────────────────────────────────────────
+  // 🔴 WRITE-SIDE EXCLUSION, NOT A VOIDED ROW. This used to write the row with
+  // `voidedReason: 'manual_review'` and rely on EVERY reader filtering voided rows back
+  // out. That is the design that generated this rail's worst defects: the nullability
+  // trap (`NOT (voided_reason IN (…))` retains 0 of 639 rows, because `voided_reason` is
+  // nullable and NULL *is* the ordinary tracked population), the latent
+  // `internalAppOwnerUserIds` trap in `rate-card.ts`, and a cross-repo coupling to
+  // talos-infra's `civitai-app-blocks-digest/digest.py`. Read-side exclusion has to be
+  // got right in every reader, in two repos, forever; write-side is got right once.
+  //
+  // 🔴 EQUIVALENT FOR EVERY FILTERED READER, STRICTLY BETTER FOR AN UNFILTERED ONE. A
+  // voided row and an absent row are indistinguishable to any reader that excludes
+  // voided — which is all of the owner-visible ones. For a reader that forgets the
+  // filter, an absent row is the SAFE failure and a voided row is the leak. That
+  // asymmetry is the whole argument.
+  //
+  // ⚠️ WHAT IS GIVEN UP, NAMED RATHER THAN GLOSSED: the voided row was a durable,
+  // queryable record that a private run happened. That record now exists ONLY in the
+  // `app-blocks.private-run.mint` audit line (dual-sinked to Axiom and stdout), which was
+  // already the discriminating record — the operator decision to reuse `'manual_review'`
+  // said so in its own words, because the column could not distinguish a private run from
+  // an operator-voided row anyway. So the queryable-by-SQL property is lost; the audit
+  // property is not.
+  //
+  // NOTHING IS PAID EITHER WAY: `spendSharePct` and `appOwnerShareCents` are hardcoded 0
+  // above, and the AUTHOR FEE — the rail that does move Buzz — is excluded separately and
+  // earlier, by `resolveBlockAuthorFeePayee` refusing with reason `private-run`.
+  //
+  // IDEMPOTENCY IS UNAFFECTED: the dedupe is the `(workflowId, appBlockId)` UNIQUE
+  // constraint, i.e. the row IS the dedupe record. Writing zero rows cannot double-count.
+  if (privateRun === true) {
+    return { written: false, row: null };
+  }
+
+  const voidedReason = isSelfSpend ? 'self_spend' : isInternal ? 'internal_owner' : null;
   const status = voidedReason ? 'voided' : 'tracked';
   const voidedAt = voidedReason ? new Date() : null;
 

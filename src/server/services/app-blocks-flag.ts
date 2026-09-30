@@ -577,7 +577,7 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
 
 /**
  * Dedicated kill-switch for the PRIVATE RUN of a DELISTED / SUSPENDED app — the
- * `/apps/private-run/<slug>` SSR route plus the PHASE 3 page-token mint branch, which
+ * `/apps/run/<slug>` SSR route's private-run fallback plus the PHASE 3 page-token mint branch, which
  * together serve a taken-down app's ALREADY-DEPLOYED bundle to its owner, an accepted
  * listing collaborator, or a moderator. Never publicly: the public run route and the
  * public page mint keep their `status: 'approved'` requirement untouched.

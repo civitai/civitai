@@ -77,7 +77,8 @@ export type BlockHostSurface =
   /** Moderator review surfaces (review modal + full-page preview). */
   | 'review-preview'
   /**
-   * The PRIVATE RUN of a DELISTED / SUSPENDED app, `/apps/private-run/<slug>`, for its
+   * The PRIVATE RUN of a DELISTED / SUSPENDED app, served by `/apps/run/<slug>`'s own
+   * fallback (the dedicated `/apps/private-run/<slug>` route was removed), for its
    * owner, an accepted listing collaborator, or a moderator. 🔴 Never eligible — see
    * the unconditional refusal in `blockInitFragmentEnabledWith`.
    */
@@ -126,7 +127,13 @@ export const BLOCK_HOST_DEEP_LINK_BASE: Record<BlockHostSurface, string | null> 
   'page-run': '/apps/run',
   'dev-tunnel': '/apps/run',
   'review-preview': '/apps/run',
-  'private-run': '/apps/private-run',
+  // 🔴 `/apps/run`, NOT a private path — the dedicated `/apps/private-run/<slug>` route
+  // was REMOVED and a private run is now served by the public route's fallback, so this
+  // is the base a private run's own deep links must push to. The SURFACE stays distinct
+  // (it still carries the unconditional fragment refusal below); only its route moved.
+  // Pointing this at the deleted path would make a block's first in-app navigation 404 —
+  // the exact failure this total record's docblock exists to prevent.
+  'private-run': '/apps/run',
 };
 
 /**

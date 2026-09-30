@@ -1,24 +1,36 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Module scope, not a test body: from a body this transform is charged to one test's
 // 60s budget. See vitest.config.mts.
-import '~/pages/apps/private-run/[slug]/[[...path]]';
+import '~/pages/apps/run/[slug]/[[...path]]';
 // Type-only namespace import: an inline `typeof import('…')` is an ERROR under
 // @typescript-eslint/consistent-type-imports, and this file is an ADDED file, where that
 // gate BLOCKS. Erased at compile time, so it does not load the module mocked below.
 import type * as PrivateRunAccessModule from '~/server/services/blocks/private-run-access.service';
 
 /**
- * THE PRIVATE-RUN SSR ROUTE — `/apps/private-run/<slug>`.
+ * THE PRIVATE-RUN BRANCH OF THE SSR RUN ROUTE — `/apps/run/<slug>`.
+ *
+ * ⚠️ THIS FILE USED TO TEST A SEPARATE ROUTE, `/apps/private-run/<slug>`, which was
+ * REMOVED when the feature was rescoped. The private run is now a FALLBACK inside the
+ * public run route's resolver, reached only when the approved-only
+ * `resolvePageBlockBySlug` returns null. Every gate below still binds — they are the same
+ * gates, reached through one more door — and the file was MOVED rather than rewritten so
+ * the coverage is visibly carried across rather than silently re-created.
+ *
+ * 🔴 WHAT IS NEW HERE, AND WHY IT IS THE POINT OF THE MOVE: while the private run had its
+ * own file, "a private run records no play" could be asserted by grepping that file for
+ * `recordAppListingOpen`. One shared route cannot be checked that way — the identifier is
+ * legitimately present for the public path — so the guard became BEHAVIOURAL: drive the
+ * private branch, assert the recorder was not called, and pair it with a POSITIVE control
+ * that drives the public branch and watches the same mock fire exactly once. A zero with
+ * no positive control beside it is indistinguishable from a mock wired to nothing.
  *
  * [REG] in the literal sense only, and the distinction matters enough to spell out: the
- * route does not exist at `f7f5eb4996`, so every row here is red there because the module
- * cannot be imported. That proves the feature was ADDED. It is NOT the same evidence as a
- * row watched red against a PRESENT-but-wrong implementation, and it must not be counted as
- * if it were — read "51 [REG] across the branch" as "51 rows red at the base", never as
- * "51 regressions pinned". The rows in this branch that carry the stronger form are the ones
- * that caught the scope-ceiling defect: those were watched red against the implementation
- * at `6f041babc2`/`a6576fbc83`, which existed and was wrong. What proves each individual
- * guard here does the work its name claims is the MUTATION matrix, not the label.
+ * feature does not exist at `f7f5eb4996`, so rows here are red there because the behaviour
+ * is absent. That proves the feature was ADDED. It is NOT the same evidence as a row
+ * watched red against a PRESENT-but-wrong implementation, and it must not be counted as if
+ * it were. What proves each individual guard does the work its name claims is the MUTATION
+ * matrix, not the label.
  *
  * NOTE: this test lives under `src/tests/` (NOT co-located under `src/pages/`). Next
  * treats every file under `pages/` as a route needing a default export, so a `*.test.ts`
@@ -64,6 +76,41 @@ vi.mock('~/server/services/blocks/private-run-access.service', async (importOrig
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksPrivateRunEnabled: mockFlag,
 }));
+
+// ── THE PUBLIC HALF OF THE SHARED ROUTE ─────────────────────────────────────────────
+// The private run is a FALLBACK behind `resolvePageBlockBySlug` returning null, so this
+// mock is what selects which branch the resolver takes. It defaults to `null` (⇒ private
+// branch) in `beforeEach`; the positive-control tests set it to a real page to drive the
+// PUBLIC branch through the very same resolver.
+//
+// 🔴 `recordAppListingOpen` IS THE INSTRUMENT THIS WHOLE FILE TURNS ON. The private
+// branch must never call it — recording a play would move `views.count` /
+// `views.uniqueViewers` on the owner's own analytics panel, which is precisely the
+// number the feature's acceptance check reads. Asserting that zero is worthless without
+// the paired positive control, so both live here.
+const { mockResolvePageBlockBySlug, mockRecordOpen, mockRecordRecent } = vi.hoisted(() => ({
+  mockResolvePageBlockBySlug: vi.fn<(...a: any[]) => Promise<any>>(),
+  mockRecordOpen: vi.fn<(...a: any[]) => Promise<void>>(),
+  mockRecordRecent: vi.fn<(...a: any[]) => void>(),
+}));
+vi.mock('~/server/services/block-registry.service', () => ({
+  BlockRegistry: { resolvePageBlockBySlug: mockResolvePageBlockBySlug },
+}));
+vi.mock('~/server/services/blocks/app-listing-open.service', () => ({
+  recordAppListingOpen: mockRecordOpen,
+}));
+vi.mock('~/components/Apps/recentlyOpenedAppsStore', () => ({
+  recordRecentlyOpenedApp: mockRecordRecent,
+}));
+// Both fail open to their "absent" value on the public path, so a stub that simply
+// resolves is faithful rather than convenient.
+vi.mock('~/server/services/blocks/app-listing-beta.service', () => ({
+  readListingBetaBySlugForRender: async () => ({ isBeta: false, betaMessage: null }),
+}));
+vi.mock('~/server/services/blocks/app-listing-icon.service', () => ({
+  readListingIconBySlugForRender: async () => null,
+}));
+vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 
 // Real-ish host gate: mature (r/x) requires civitai.red.
 vi.mock('~/server/utils/server-domain', () => ({
@@ -136,6 +183,13 @@ beforeEach(() => {
   mockResolvePrivateRunAccess.mockReset();
   mockFlag.mockReset();
   mockFlag.mockResolvedValue(true);
+  mockResolvePageBlockBySlug.mockReset();
+  // DEFAULT: the approved-only resolver finds nothing, which is the ONLY way the private
+  // fallback is reachable. A test that wants the public branch overrides this explicitly.
+  mockResolvePageBlockBySlug.mockResolvedValue(null);
+  mockRecordOpen.mockReset();
+  mockRecordOpen.mockResolvedValue(undefined);
+  mockRecordRecent.mockReset();
 });
 
 describe('private-run SSR — the grant path [REG]', () => {
@@ -153,10 +207,71 @@ describe('private-run SSR — the grant path [REG]', () => {
       slug: 'seed-explorer-fixture',
       iframeSrc: 'https://seed-explorer-fixture.civit.ai',
       audience: 'moderator',
-      status: 'suspended',
+      privateRunStatus: 'suspended',
       trustTier: 'unverified',
       sandbox: 'allow-scripts',
     });
+  });
+
+  it('🔴 a private run records NO play and NO recents entry', async () => {
+    // THE analytics property the whole feature rests on. Recording either would move the
+    // suspended app owner's own numbers — the exact reading the acceptance check performs.
+    mockResolvePrivateRunAccess.mockResolvedValue({
+      allowed: true,
+      audience: 'moderator',
+      block: BLOCK(),
+    });
+    const res = await resolver()(ctx());
+    expect(res.notFound).toBeUndefined();
+    expect(mockRecordOpen).not.toHaveBeenCalled();
+    expect(mockRecordRecent).not.toHaveBeenCalled();
+  });
+
+  it('🔴 POSITIVE CONTROL: the SAME mocks DO fire on the public branch', async () => {
+    // Without this row the zero above is indistinguishable from a recorder wired to
+    // nothing. Same resolver, same mock objects — only the approved-only resolve differs,
+    // which is what proves the omission is the BRANCH and not the harness.
+    mockResolvePageBlockBySlug.mockResolvedValue({
+      appBlockId: 'apb_public',
+      blockId: 'public-app',
+      appId: 'app_public',
+      iframeSrc: 'https://public-app.civit.ai',
+      sandbox: 'allow-scripts',
+      trustTier: 'unverified',
+      name: 'Public App',
+      pageTitle: 'Public',
+      scopes: [],
+      contentRating: 'g',
+      bootSkeleton: false,
+    });
+    const res = await resolver()(ctx());
+    expect(res.notFound).toBeUndefined();
+    expect(mockRecordOpen).toHaveBeenCalledTimes(1);
+    // And the public branch carries NO audience, so the chrome notice cannot render and
+    // every private-only behaviour keyed on it stays off.
+    expect(res.props).toMatchObject({ audience: null, privateRunStatus: null });
+  });
+
+  it('🔴 the private predicate is NOT consulted when the public resolve SUCCEEDS', async () => {
+    // The ordering that makes one shared route safe: an approved app is served by the
+    // public path and never touches the private predicate or the flag. If this ever
+    // inverted, a public request would be taking an authorization decision it must not.
+    mockResolvePageBlockBySlug.mockResolvedValue({
+      appBlockId: 'apb_public',
+      blockId: 'public-app',
+      appId: 'app_public',
+      iframeSrc: 'https://public-app.civit.ai',
+      sandbox: 'allow-scripts',
+      trustTier: 'unverified',
+      name: 'Public App',
+      pageTitle: 'Public',
+      scopes: [],
+      contentRating: 'g',
+      bootSkeleton: false,
+    });
+    await resolver()(ctx());
+    expect(mockResolvePrivateRunAccess).not.toHaveBeenCalled();
+    expect(mockFlag).not.toHaveBeenCalled();
   });
 
   it('🔴 the predicate is called with the SLUG and the REPLICA pool', async () => {
@@ -187,17 +302,25 @@ describe('private-run SSR — the grant path [REG]', () => {
     );
   });
 
-  it('🔴 an ANONYMOUS caller never reaches the flag accessor at all', async () => {
-    // `isAppBlocksPrivateRunEnabled` REQUIRES a user, so a global evaluation — which
-    // would return the flag's BASE value rather than denying — must be unreachable. The
-    // route short-circuits to `false` instead.
+  it('🔴 an ANONYMOUS caller reaches NEITHER the flag accessor NOR the predicate', async () => {
+    // THE PROPERTY, unchanged: `isAppBlocksPrivateRunEnabled` REQUIRES a user, so a
+    // global evaluation — which would return the flag's BASE value rather than denying —
+    // must be unreachable for an anonymous caller.
+    //
+    // ⚠️ THE SECOND ASSERTION CHANGED WITH THE ROUTE MERGE, AND IT IS A STRENGTHENING,
+    // NOT A RELAXATION — stated because "the test changed to match the code" is exactly
+    // how a guard gets quietly hollowed out. The removed route computed
+    // `viewer ? await flag() : false` and then called the predicate ANYWAY, so the old
+    // row asserted it was invoked with `privateRunEnabled: false` and let the predicate's
+    // own gate (1) produce the refusal. The merged route returns `notFound` on the
+    // missing viewer BEFORE either, so an anonymous request now touches no flag, no
+    // predicate, and no database at all. That is a superset of the old guarantee: the old
+    // form cannot be restored without making this row red.
     mockResolvePrivateRunAccess.mockResolvedValue({ allowed: false, reason: 'viewer-ineligible' });
     const res = await resolver()(ctx({ user: null }));
     expect(res).toEqual({ notFound: true });
     expect(mockFlag).not.toHaveBeenCalled();
-    expect(mockResolvePrivateRunAccess).toHaveBeenCalledWith(
-      expect.objectContaining({ privateRunEnabled: false })
-    );
+    expect(mockResolvePrivateRunAccess).not.toHaveBeenCalled();
   });
 });
 
@@ -311,7 +434,7 @@ describe('the private-run chrome copy [REG]', () => {
     // The sentence that stops a reviewer reviewing the wrong bytes. A re-submitted app
     // is `pending`, and what is DEPLOYED — and therefore running — is still the last
     // approved build, not the submitted one.
-    const { privateRunNotice } = await import('~/pages/apps/private-run/[slug]/[[...path]]');
+    const { privateRunNotice } = await import('~/pages/apps/run/[slug]/[[...path]]');
     const pending = privateRunNotice({ audience: 'moderator', status: 'pending' });
     expect(pending).toMatch(/re-submitted/i);
     expect(pending).toMatch(/last approved build/i);
@@ -319,14 +442,14 @@ describe('the private-run chrome copy [REG]', () => {
   });
 
   it('a suspended app says it is not publicly listed or runnable', async () => {
-    const { privateRunNotice } = await import('~/pages/apps/private-run/[slug]/[[...path]]');
+    const { privateRunNotice } = await import('~/pages/apps/run/[slug]/[[...path]]');
     const copy = privateRunNotice({ audience: 'moderator', status: 'suspended' });
     expect(copy).toMatch(/not publicly listed/i);
     expect(copy).toMatch(/last approved build/i);
   });
 
   it('each audience is told WHY it is here, and an editor is told it is read-only', async () => {
-    const { privateRunNotice } = await import('~/pages/apps/private-run/[slug]/[[...path]]');
+    const { privateRunNotice } = await import('~/pages/apps/run/[slug]/[[...path]]');
     expect(privateRunNotice({ audience: 'moderator', status: 'suspended' })).toMatch(
       /as a moderator/i
     );
@@ -342,7 +465,7 @@ describe('the private-run chrome copy [REG]', () => {
   it('POSITIVE CONTROL: the copy actually varies across audience and status', async () => {
     // Four assertions above would all pass against a constant string if it happened to
     // contain every phrase. Prove the function discriminates.
-    const { privateRunNotice } = await import('~/pages/apps/private-run/[slug]/[[...path]]');
+    const { privateRunNotice } = await import('~/pages/apps/run/[slug]/[[...path]]');
     const variants = new Set([
       privateRunNotice({ audience: 'owner', status: 'suspended' }),
       privateRunNotice({ audience: 'editor', status: 'suspended' }),
