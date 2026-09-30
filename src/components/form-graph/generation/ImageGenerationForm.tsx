@@ -17,6 +17,7 @@ import { Krea2StyleReferencesInput } from '~/components/generation_v2/inputs/Kre
 import { SeedInput } from '~/components/generation_v2/inputs/SeedInput';
 import { SelectInput } from '~/components/generation_v2/inputs/SelectInput';
 import { SliderInput } from '~/components/generation_v2/inputs/SliderInput';
+import { MissingPreprocessorExamplesAlert } from '~/components/generation_v2/inputs/MissingPreprocessorExamplesAlert';
 import { PreprocessKindParamsInput } from '~/components/generation_v2/inputs/PreprocessKindParamsInput';
 import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControlWrapper';
 import { PreprocessorExamples } from '~/components/generation_v2/inputs/PreprocessorExamples';
@@ -152,6 +153,7 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
                   />
                 }
               />
+              <MissingPreprocessorExamplesAlert />
             </div>
           );
         }}

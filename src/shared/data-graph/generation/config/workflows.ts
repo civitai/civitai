@@ -45,9 +45,6 @@ export type { WorkflowCategory };
 /** SD family ecosystem IDs */
 const SD_FAMILY_IDS = [ECO.SD1, ECO.SDXL, ECO.Pony, ECO.Illustrious, ECO.NoobAI];
 
-/** Ecosystem IDs that support draft mode (SD family + Flux1) */
-const DRAFT_IDS = [...SD_FAMILY_IDS, ECO.Flux1];
-
 /** Image ecosystems that support image:edit (accept optional/required images for editing) */
 const EDIT_IMG_IDS = [
   ECO.Qwen,
@@ -181,13 +178,6 @@ export const workflowConfigs: WorkflowConfigs = {
     ecosystemIds: TXT2IMG_IDS,
     // Grok v1.5 is video-only.
     excludeModelVersionIds: [grokVersionIds['v1.5']],
-  },
-
-  'txt2img:draft': {
-    label: 'Draft',
-    description: 'Fast generation for quick iterations',
-    category: 'image',
-    ecosystemIds: DRAFT_IDS,
   },
 
   'txt2img:face-fix': {

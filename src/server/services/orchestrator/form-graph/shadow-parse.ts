@@ -18,14 +18,24 @@ import { reconcileSelectors } from '~/shared/form-graph/generation/reconcile';
  * ports the metrics tap onto the hub's correction notes.
  */
 
+/**
+ * What the hub corrected this parse, as `key:kind` pairs — never `detail`, which
+ * can carry the value. A divergence the hub EXPLAINS is a different finding from
+ * one it cannot, and only these say which is which.
+ */
+function noteLabels(notes: readonly { key: string; kind: string }[] | undefined) {
+  return (notes ?? []).map((n) => `${n.key}:${n.kind}`).sort();
+}
+
 export type HubParse =
   | {
       ok: true;
       data: Record<string, unknown>;
       /** Wire-named computed keys, straight from the parse result. */
       computedKeys: readonly string[];
+      corrections: readonly string[];
     }
-  | { ok: false; errors: Record<string, { message: string }> };
+  | { ok: false; errors: Record<string, { message: string }>; corrections: readonly string[] };
 
 /** The hub parse, never throwing — a throw is a divergence class of its own. */
 export function runHubParse(
@@ -34,13 +44,15 @@ export function runHubParse(
 ): HubParse | { ok: null; error: unknown } {
   try {
     const result = generationHub.parse(reconcileSelectors(input).raw, externalCtx);
+    const corrections = noteLabels(result.notes);
     return result.success
       ? {
           ok: true,
           data: result.data as Record<string, unknown>,
           computedKeys: result.computedKeys ?? [],
+          corrections,
         }
-      : { ok: false, errors: result.errors };
+      : { ok: false, errors: result.errors, corrections };
   } catch (error) {
     return { ok: null, error };
   }
@@ -84,6 +96,7 @@ export function recordShadowComparison(
       v1Success: v1.success,
       hubSuccess: hub.ok,
       errorKeys: Object.keys((v1.success ? (hub as { errors?: object }).errors : v1.errors) ?? {}),
+      corrections: hub.corrections,
     });
     return;
   }
@@ -92,7 +105,7 @@ export function recordShadowComparison(
     const v1Keys = Object.keys(v1.errors ?? {}).sort();
     const hubKeys = Object.keys(hub.errors).sort();
     if (isEqual(v1Keys, hubKeys)) emit('match');
-    else emit('diverged', { kind: 'error-keys', v1Keys, hubKeys });
+    else emit('diverged', { kind: 'error-keys', v1Keys, hubKeys, corrections: hub.corrections });
     return;
   }
 
@@ -104,5 +117,10 @@ export function recordShadowComparison(
     if (!isEqual(v1Data[key], hubData[key])) differing.push(key);
   }
   if (differing.length === 0) emit('match');
-  else emit('diverged', { kind: 'data-keys', keys: differing.sort() });
+  else
+    emit('diverged', {
+      kind: 'data-keys',
+      keys: differing.sort(),
+      corrections: hub.ok === true ? hub.corrections : [],
+    });
 }
