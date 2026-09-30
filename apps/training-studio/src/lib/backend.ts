@@ -42,6 +42,8 @@ export interface StudioBackend {
   ): Promise<{ done: boolean; results: AutoLabelResult[] }>;
   submitTraining(runs: TrainingRunPayload[]): Promise<string[]>;
   rename(workflowId: string, name: string): Promise<void>;
+  /** Refused unless `canDeleteRun` holds for the run's current state. */
+  deleteTraining(workflowId: string): Promise<void>;
   continueQuote(
     workflowId: string,
     fromEpoch: number,

@@ -103,6 +103,13 @@ export const shellBackend: StudioBackend = {
     if (!res.ok) throw new Error(await messageOf(res, `Could not rename (${res.status})`));
   },
 
+  deleteTraining: async (workflowId) => {
+    const res = await fetch(`/api/trainings?id=${encodeURIComponent(workflowId)}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) throw new Error(await messageOf(res, `Could not delete (${res.status})`));
+  },
+
   continueQuote: async (workflowId, fromEpoch, addEpochs) => {
     const res = await fetch(
       `/api/continue-training?id=${encodeURIComponent(

@@ -55,3 +55,7 @@ export function continueTrainingWhatIf(
 export function renameTraining(token: string, workflowId: string, name: string): Promise<void> {
   return core.renameTraining(orchestratorClient(token), workflowId, name);
 }
+
+export function deleteTraining(token: string, workflowId: string): Promise<void> {
+  return core.deleteTraining(orchestratorClient(token), workflowId);
+}
