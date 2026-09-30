@@ -429,6 +429,16 @@ export async function getResourceIntent(
     // The matcher never ran, so the shortlist size is unknown; the hydrated
     // post-gate count is recorded instead of a misleading zero.
     shortlistCount = response.suggestions.length;
+    if (response.degraded) {
+      // A degrade served from cache (60s TTL) never entered the catch, so it has
+      // no reason of its own and emits no `resource-intent-degraded` log. Without
+      // this it lands in the shadow table as `degraded=1` with an EMPTY reason —
+      // and the migration's own fallback-rate query groups BY reason, so those
+      // rows would pool in a blank bucket that reads like a writer bug. Naming
+      // the replay keeps that query honest and keeps cached degrades countable
+      // separately from the vendor failures that caused them.
+      degradedReason = 'cached_degrade';
+    }
   }
 
   void (async () => {

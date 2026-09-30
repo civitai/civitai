@@ -380,8 +380,15 @@ describe('🔴 the PROMPT and the PARSER describe the same envelope', () => {
         remapped[k] = Object.fromEntries(
           exampleDist.map(([, p], i) => [choiceQuestion.options[i] ?? 'none', p])
         );
-      } else {
+      } else if (typeof v === 'string') {
+        // Only a STRING is an option name needing a remap. An earlier version
+        // overwrote EVERY non-object value with an option string, so adding the
+        // `confidence` the prompt explicitly permits ("You may add confidence to
+        // any answer") turned this guard red with `confidence ... is not a finite
+        // number` — blaming the parser for a legal edit to the example.
         remapped[k] = choiceQuestion.options[0];
+      } else {
+        remapped[k] = v;
       }
     }
     answers[choiceQuestion.id] = remapped;

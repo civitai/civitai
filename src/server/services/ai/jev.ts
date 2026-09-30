@@ -187,8 +187,10 @@ export function buildPrompt(request: JevRequest): { system: string; user: string
   // indistinguishable from an honest 'no resource needed'". That is FALSE and is
   // retracted: the two differ in five fields (`degraded`, `intent`, `criteria`,
   // `noneProbability`, `model`), `docs/resource-intent-primitive.md` hard rule 4 says
-  // so, and every degrade also writes `degraded=1` + `degradedReason` to the shadow
-  // table and emits a `resource-intent-degraded` log. The true statement is narrower:
+  // so, and every degrade writes `degraded=1` to the shadow table — one that REACHED
+  // the vendor also carries a `degradedReason` and emits a `resource-intent-degraded`
+  // log, while one replayed from the 60s cache is tagged `cached_degrade` and logs
+  // nothing, because it never entered the catch. The true statement is narrower:
   // the SIGNAL exists and nothing ALERTS on it, so the failure is silent to operators
   // rather than invisible in the data.
   const system = [

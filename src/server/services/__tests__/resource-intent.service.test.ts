@@ -493,6 +493,32 @@ describe('stage flow', () => {
 });
 
 describe('shadow event', () => {
+  it('🔴 a degrade REPLAYED from cache is tagged, not left with a blank reason', async () => {
+    // A cached degrade never enters the catch, so it has no reason of its own and
+    // emits no `resource-intent-degraded` log. Untagged it lands as `degraded=1`
+    // with an EMPTY reason — and the migration's fallback-rate query groups BY
+    // reason, so those rows pool in a blank bucket that reads like a writer bug.
+    redisMock.redis.packed.get.mockResolvedValue({
+      degraded: true,
+      intent: null,
+      criteria: null,
+      suggestions: [],
+      noneProbability: null,
+      model: 'jev-unavailable',
+      criteriaVersion: 1,
+    });
+
+    await getResourceIntent(INPUT, { ...CTX, now: () => new Date('2026-09-29T00:00:00.000Z') });
+
+    expect(mockAskJev).not.toHaveBeenCalled(); // confirm it really was a cache hit
+    const row = mockInsert.mock.calls[0][0].values[0] as Record<string, unknown>;
+    expect(row.degraded).toBe(1);
+    expect(row.degradedReason).toBe('cached_degrade');
+    // and no log for a replay — the log lives in the catch, which did not run
+    const logged = loggingMock.logToAxiom.mock.calls.map((c) => (c[0] as { type?: string }).type);
+    expect(logged).not.toContain('resource-intent-degraded');
+  });
+
   it('records the pinned model, spec hash and suggestion ids to ClickHouse', async () => {
     mockStage1();
     mockFindCandidates.mockResolvedValue(SHORTLIST);
