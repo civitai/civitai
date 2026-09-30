@@ -1,5 +1,5 @@
 import { Badge, Button, Container, Text, Title } from '@mantine/core';
-import { IconArrowLeft, IconUsers } from '@tabler/icons-react';
+import { IconArrowLeft, IconPhoto, IconUsers, IconVideo } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { NavigateBack } from '~/components/BackButton/BackButton';
 import { CrucibleContextMenu } from '~/components/Crucible/CrucibleContextMenu';
@@ -8,7 +8,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CrucibleTimer } from '~/components/Crucible/CrucibleTimer';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { Currency, CrucibleStatus } from '~/shared/utils/prisma/enums';
+import { Currency, CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { CrucibleContentLevelBadges } from '~/components/Crucible/CrucibleContentLevelBadges';
@@ -37,6 +37,7 @@ export type CrucibleHeaderData = {
   seededPrizePool: number;
   buzzType: BuzzSpendType;
   endAt: Date | null;
+  contentType: MediaType;
   user: SimpleUser;
   image: CrucibleHeaderImage | null;
   heroImage: CrucibleHeaderImage | null;
@@ -60,6 +61,7 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
     seededPrizePool,
     buzzType,
     endAt,
+    contentType,
     user,
     image,
     heroImage,
@@ -205,7 +207,19 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
 
             {status === CrucibleStatus.Active && endAt && <CrucibleTimer endAt={endAt} />}
 
-            <CrucibleContentLevelBadges nsfwLevel={nsfwLevel} />
+            <div className="flex flex-wrap items-center gap-1">
+              <Badge
+                size="sm"
+                variant="light"
+                color="gray"
+                leftSection={
+                  contentType === MediaType.video ? <IconVideo size={12} /> : <IconPhoto size={12} />
+                }
+              >
+                {contentType === MediaType.video ? 'Videos' : 'Images'}
+              </Badge>
+              <CrucibleContentLevelBadges nsfwLevel={nsfwLevel} />
+            </div>
           </div>
         </div>
       </Container>

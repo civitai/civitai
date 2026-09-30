@@ -9,6 +9,7 @@ import type {
   GetFeaturedCrucibleSchema,
   CreateCrucibleInputSchema,
   GetCrucibleByIdSchema,
+  GetCrucibleRequiredModelsSchema,
   GetCruciblesInfiniteSchema,
   GetJudgesCountSchema,
   GetJudgeStatsSchema,
@@ -32,6 +33,7 @@ import {
   getCrucibleDetail,
   getCrucibleEntries,
   getCrucibleMinVotesToPlace,
+  getCrucibleRequiredModels,
   getCrucibles,
   getFeaturedCrucible,
   getJudgesCount,
@@ -140,6 +142,23 @@ export const getCrucibleEntriesHandler = async ({
     isModerator: !!ctx.user?.isModerator,
   });
 };
+
+export const getRequiredModelsHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetCrucibleRequiredModelsSchema;
+  ctx: Context;
+}) =>
+  getCrucibleRequiredModels({
+    crucibleId: input.id,
+    browsingLevel: input.browsingLevel,
+    viewer: {
+      viewerId: ctx.user?.id,
+      isModerator: !!ctx.user?.isModerator,
+      isGreen: !!ctx.features?.isGreen,
+    },
+  });
 
 export const getMinVotesToPlaceHandler = async ({
   input,

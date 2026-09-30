@@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
+import type * as ImageService from '~/server/services/image.service';
 import type * as CrucibleService from '~/server/services/crucible.service';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
 
@@ -15,7 +16,15 @@ import type * as FeatureFlagsService from '~/server/services/feature-flags.servi
  * own id into the service is part of the behaviour under test.
  */
 
-const { mockGetJudgingPair } = vi.hoisted(() => ({ mockGetJudgingPair: vi.fn() }));
+const { mockGetJudgingPair, imagesFetch } = vi.hoisted(() => ({
+  mockGetJudgingPair: vi.fn(),
+  imagesFetch: vi.fn(),
+}));
+
+vi.mock('~/server/services/image.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ImageService>()),
+  imagesForModelVersionsCache: { fetch: imagesFetch },
+}));
 
 vi.mock('~/server/services/crucible.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CrucibleService>()),
@@ -260,6 +269,91 @@ describe('crucible.getById — placed entries', () => {
 
     expect(crucible?.placedEntryCount).toBeNull();
     expect(count).not.toHaveBeenCalled();
+  });
+});
+
+describe('crucible.getRequiredModels', () => {
+  const findVersions = dbMock.dbRead.modelVersion.findMany;
+  const cover = (id: number, nsfwLevel: number) => ({
+    id,
+    url: `cover-${id}`,
+    nsfwLevel,
+    hash: 'h',
+    width: 512,
+    height: 512,
+    type: 'image',
+  });
+  const requiring = (allowedResources: number[] | null) =>
+    findUnique.mockResolvedValue({ ...scanned, status: CrucibleStatus.Active, allowedResources });
+
+  beforeEach(() => {
+    findVersions.mockResolvedValue([
+      { id: 101, name: 'SDXL V1.0', baseModel: 'SDXL 1.0', model: { id: 9, name: 'Gyroid' } },
+    ]);
+  });
+
+  it('lists each required version with its model, base model and a cover the viewer may see', async () => {
+    requiring([101]);
+    imagesFetch.mockResolvedValue({ 101: { images: [cover(1, 4), { ...cover(2, 1), extra: 'x' }] } });
+
+    const models = await caller(undefined).getRequiredModels({ id: CRUCIBLE_ID, browsingLevel: 1 });
+
+    expect(models).toEqual([
+      {
+        id: 9,
+        name: 'Gyroid',
+        versionId: 101,
+        versionName: 'SDXL V1.0',
+        baseModel: 'SDXL 1.0',
+        image: cover(2, 1),
+      },
+    ]);
+  });
+
+  it('sends no cover when every image is above the viewer level', async () => {
+    requiring([101]);
+    imagesFetch.mockResolvedValue({ 101: { images: [cover(1, 4)] } });
+
+    const [model] = await caller(undefined).getRequiredModels({ id: CRUCIBLE_ID, browsingLevel: 1 });
+
+    expect(model.image).toBeNull();
+  });
+
+  it('caps the cover at the SFW levels on the green site whatever level is asked for', async () => {
+    requiring([101]);
+    imagesFetch.mockResolvedValue({ 101: { images: [cover(1, 4)] } });
+    findUnique.mockResolvedValue({ ...scanned, buzzType: 'green', status: CrucibleStatus.Active, allowedResources: [101] });
+
+    const [model] = await caller(signedIn(STRANGER_ID), { isGreen: true }).getRequiredModels({
+      id: CRUCIBLE_ID,
+      browsingLevel: 31,
+    });
+
+    expect(model.image).toBeNull();
+  });
+
+  it('looks nothing up when any model may enter', async () => {
+    requiring(null);
+
+    expect(await caller(undefined).getRequiredModels({ id: CRUCIBLE_ID })).toEqual([]);
+    expect(findVersions).not.toHaveBeenCalled();
+  });
+
+  it('is not found for a crucible still under review, like its entries', async () => {
+    findUnique.mockResolvedValue({ ...scanned, ingestion: 'Pending', status: CrucibleStatus.Active, allowedResources: [101] });
+
+    await expect(
+      caller(signedIn(STRANGER_ID)).getRequiredModels({ id: CRUCIBLE_ID })
+    ).rejects.toBeInstanceOf(TRPCError);
+    expect(findVersions).not.toHaveBeenCalled();
+  });
+
+  it('is not found off its site, like its entries', async () => {
+    findUnique.mockResolvedValue({ ...scanned, status: CrucibleStatus.Active, allowedResources: [101] });
+
+    await expect(
+      caller(signedIn(STRANGER_ID), { isGreen: true }).getRequiredModels({ id: CRUCIBLE_ID })
+    ).rejects.toBeInstanceOf(TRPCError);
   });
 });
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import {
+  getCrucibleCountdown,
   getCrucibleManageActions,
   getCrucibleMinVotes,
   getCruciblePrizeAmount,
@@ -275,5 +276,40 @@ describe('getCrucibleManageActions', () => {
       canEdit: false,
       canCancel: false,
     });
+  });
+});
+
+describe('getCrucibleCountdown', () => {
+  const now = new Date('2026-10-01T00:00:00Z');
+  const inHours = (h: number) => new Date(now.getTime() + h * 60 * 60 * 1000);
+  const countdown = (status: CrucibleStatus, startAt: Date | null, endAt: Date | null) =>
+    getCrucibleCountdown({ status, startAt, endAt, now });
+
+  it('counts down to the start of an upcoming crucible', () => {
+    expect(countdown(CrucibleStatus.Pending, inHours(45), inHours(69))).toEqual({
+      label: 'Starts In',
+      value: '1d 21h',
+      at: inHours(45),
+    });
+  });
+
+  it('says it is starting once an upcoming crucible is past its start but not yet opened', () => {
+    expect(countdown(CrucibleStatus.Pending, inHours(-0.1), inHours(24))).toMatchObject({
+      label: 'Starts In',
+      value: 'Starting',
+    });
+  });
+
+  it('counts down to the end of a running crucible', () => {
+    expect(countdown(CrucibleStatus.Active, inHours(-5), inHours(2.5))).toEqual({
+      label: 'Time Left',
+      value: '2h 30m',
+      at: inHours(2.5),
+    });
+  });
+
+  it('says ended once past the end, finalized or not', () => {
+    expect(countdown(CrucibleStatus.Active, inHours(-30), inHours(-1)).value).toBe('Ended');
+    expect(countdown(CrucibleStatus.Completed, inHours(-30), inHours(-1)).value).toBe('Ended');
   });
 });

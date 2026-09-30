@@ -63,6 +63,44 @@ export function getCrucibleTotalPrizePool({
   return seededPrizePool + entryFee * entryCount;
 }
 
+const formatDuration = (ms: number) => {
+  const days = Math.floor(ms / (1000 * 60 * 60 * 24));
+  const hours = Math.floor((ms % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+  const minutes = Math.floor((ms % (1000 * 60 * 60)) / (1000 * 60));
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+};
+
+/** An upcoming crucible counts down to its start, a running one to its end. */
+export function getCrucibleCountdown({
+  status,
+  startAt,
+  endAt,
+  now = new Date(),
+}: {
+  status: CrucibleStatus;
+  startAt: Date | null;
+  endAt: Date | null;
+  now?: Date;
+}): { label: 'Starts In' | 'Time Left'; value: string; at: Date | null } {
+  if (status === CrucibleStatus.Pending && startAt) {
+    const msToStart = new Date(startAt).getTime() - now.getTime();
+    return {
+      label: 'Starts In',
+      value: msToStart > 0 ? formatDuration(msToStart) : 'Starting',
+      at: new Date(startAt),
+    };
+  }
+  const msToEnd = endAt ? new Date(endAt).getTime() - now.getTime() : 0;
+  const running = status === CrucibleStatus.Active && msToEnd > 0;
+  return {
+    label: 'Time Left',
+    value: running ? formatDuration(msToEnd) : endAt ? 'Ended' : '-',
+    at: endAt ? new Date(endAt) : null,
+  };
+}
+
 /** Nothing is managed once a crucible ends, including one past `endAt` that isn't finalized yet. */
 export function getCrucibleManageActions({
   status,
@@ -83,7 +121,8 @@ export function getCrucibleManageActions({
     (!!endAt && new Date(endAt) <= now);
   const isPending = status === CrucibleStatus.Pending;
   return {
-    canEdit: !ended && (isModerator || (isCreator && (isPending || status === CrucibleStatus.Active))),
+    canEdit:
+      !ended && (isModerator || (isCreator && (isPending || status === CrucibleStatus.Active))),
     canCancel: !ended && (isModerator || (isCreator && isPending)),
   };
 }

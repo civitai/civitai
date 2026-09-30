@@ -44,6 +44,12 @@ export const getCrucibleByIdSchema = z.object({
   id: z.number(),
 });
 
+export const getCrucibleRequiredModelsSchema = z.object({
+  id: z.number(),
+  browsingLevel: z.number().optional(),
+});
+export type GetCrucibleRequiredModelsSchema = z.infer<typeof getCrucibleRequiredModelsSchema>;
+
 // Schema for crucible cover image (accepts CF upload data).
 //
 // `isUUID` rather than `z.string().uuid()`: Cloudflare image ids are uuid-SHAPED but not

@@ -91,9 +91,11 @@ import {
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { assertCanCreateCrucible } from '~/server/services/crucible-eligibility.service';
+import { getEligibleModels } from '~/server/services/eligible-models.service';
 import { getProfanityFilter } from '~/libs/profanity-simple';
 import {
   nsfwBrowsingLevelsFlag,
+  publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
@@ -2191,6 +2193,40 @@ const rankableEntryWhere = (
     nsfwLevel: { in: levelsIntersecting(nsfwLevel) },
   },
 });
+
+export const getCrucibleRequiredModels = async ({
+  crucibleId,
+  browsingLevel,
+  viewer,
+}: {
+  crucibleId: number;
+  browsingLevel?: number;
+  viewer: CrucibleViewer;
+}) => {
+  const crucible = await dbRead.crucible.findUnique({
+    where: { id: crucibleId },
+    select: {
+      userId: true,
+      buzzType: true,
+      ingestion: true,
+      allowedResources: true,
+      image: { select: { ingestion: true } },
+    },
+  });
+  if (!crucible || isCrucibleHiddenByScan(crucible, viewer) || isCrucibleOffDomain(crucible, viewer))
+    throw throwNotFoundError('Crucible not found');
+
+  const versionIds = Array.isArray(crucible.allowedResources)
+    ? (crucible.allowedResources as number[])
+    : [];
+  const viewerLevel = getEffectiveBrowsingLevel({
+    isGreen: !!viewer.isGreen,
+    isLoggedIn: !!viewer.viewerId,
+    requested: browsingLevel,
+  });
+  // 0 means "no filter" to entry queries; a cover nobody asked a level for stays PG.
+  return getEligibleModels(versionIds, { viewerLevel: viewerLevel || publicBrowsingLevelsFlag });
+};
 
 /** From the counts the sync job last wrote, so it trails live voting by up to one sync. */
 export const getCrucibleMinVotesToPlace = async ({

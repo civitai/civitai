@@ -3,11 +3,13 @@ import {
   Button,
   Container,
   Group,
+  Loader,
   Paper,
   Progress,
   Stack,
   Text,
   Title,
+  Tooltip,
 } from '@mantine/core';
 import { openConfirmModal, closeAllModals } from '@mantine/modals';
 import type { InferGetServerSidePropsType } from 'next';
@@ -16,6 +18,7 @@ import { useEffect, useRef, useState } from 'react';
 import * as z from 'zod';
 import {
   IconBrush,
+  IconCube,
   IconGavel,
   IconUpload,
   IconBook,
@@ -30,6 +33,7 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import {
   CRUCIBLE_MIN_VOTES_PERCENT,
+  getCrucibleCountdown,
   getCrucibleManageActions,
   getCrucibleTotalPrizePool,
   getCrucibleUrl,
@@ -39,17 +43,16 @@ import {
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { env } from '~/env/client';
-import { getModelUrl } from '~/utils/string-helpers';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { CrucibleContentLevelBadges } from '~/components/Crucible/CrucibleContentLevelBadges';
 import { CrucibleHeader } from '~/components/Crucible/CrucibleHeader';
 import { CrucibleLeaderboard } from '~/components/Crucible/CrucibleLeaderboard';
 import { CrucibleEntryGrid } from '~/components/Crucible/CrucibleEntryGrid';
 import { CruciblePodium } from '~/components/Crucible/CruciblePodium';
 import { CruciblePrizeBreakdown } from '~/components/Crucible/CruciblePrizeBreakdown';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
+import { EligibleModelsList } from '~/components/EligibleModels/EligibleModelsList';
 import { crucibleRankingsAreFinal } from '~/shared/constants/crucible.constants';
 import {
   CrucibleIngestionStatus,
@@ -310,6 +313,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
             seededPrizePool: crucible.seededPrizePool,
             buzzType: toCrucibleBuzzType(crucible.buzzType),
             endAt: crucible.endAt,
+            contentType: crucible.contentType,
             user: crucible.user,
             image: crucible.image,
             heroImage: crucible.heroImage,
@@ -337,10 +341,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
               <div className="mb-6 grid grid-cols-3 gap-4">
                 <StatBox value={entryCount.toString()} label="Entries" />
                 <StatBox value={abbreviateNumber(judgesCount)} label="Judges" />
-                <StatBox
-                  value={crucible.endAt ? getTimeRemaining(crucible.endAt, crucible.status) : '-'}
-                  label="Time Left"
-                />
+                <StatBox {...countdownStat(crucible)} />
               </div>
 
               {/* CTA Button - Start Judging */}
@@ -471,6 +472,18 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                 </Paper>
               )}
 
+              {allowedResources.length > 0 && (
+                <EligibleModelsPanel
+                  crucibleId={crucible.id}
+                  versionIds={allowedResources}
+                  onGenerate={
+                    canSubmitEntries && !isCreator && !allEntriesUsed && !currentUser?.muted
+                      ? (versionId) => openCrucibleGenerator(crucible.contentType, [versionId])
+                      : undefined
+                  }
+                />
+              )}
+
               {/* Prize Pool & Standings */}
               {rankingsVisible ? (
                 <CrucibleLeaderboard
@@ -501,50 +514,36 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                   <Group gap="xs" p="xs">
                     <IconBook size={16} />
                     <Text size="md" fw={500}>
-                      Rules & Requirements
+                      Rules
                     </Text>
                   </Group>
                 }
                 labelWidth="40%"
                 items={[
                   {
-                    label: 'Accepted Entries',
-                    value: crucible.contentType === MediaType.video ? 'Videos only' : 'Images only',
-                  },
-                  {
-                    label: 'Content Levels',
-                    value: <CrucibleContentLevelBadges nsfwLevel={crucible.nsfwLevel} />,
-                  },
-                  {
-                    label: 'Starts',
-                    value: crucible.startAt ? formatDate(crucible.startAt, undefined, true) : null,
-                    visible: isPending && !!crucible.startAt,
-                  },
-                  {
-                    label: 'Required Resources',
-                    value: <RequiredResources versionIds={allowedResources} />,
-                    visible: allowedResources.length > 0,
-                  },
-                  {
-                    label: 'Deadline',
-                    value: crucible.endAt ? formatDate(crucible.endAt, undefined, true) : null,
-                    visible: !!crucible.endAt,
-                  },
-                  {
-                    label: 'Max Entries Per User',
-                    value: `${maxUserEntries} ${maxUserEntries === 1 ? 'entry' : 'entries'}`,
+                    label: 'Entries Per Person',
+                    value: maxUserEntries.toString(),
                   },
                   {
                     label: 'Total Entry Cap',
                     value: `${crucible.maxTotalEntries} max`,
                     visible: !!crucible.maxTotalEntries,
                   },
-                  { label: 'Judging', value: 'Continuous & Live' },
+                  {
+                    label: 'Max Clip Length',
+                    value: `${crucible.maxClipSeconds}s`,
+                    visible: crucible.contentType === MediaType.video && !!crucible.maxClipSeconds,
+                  },
+                  {
+                    label: 'Watch Before Voting',
+                    value: `Judges watch at least ${crucible.minViewSeconds}s of each clip`,
+                    visible: crucible.contentType === MediaType.video && !!crucible.minViewSeconds,
+                  },
                   {
                     label: 'Minimum Votes',
                     value: `An entry needs ${CRUCIBLE_MIN_VOTES_PERCENT}% of the average entry's votes to place`,
                   },
-                  { label: 'Tie-Breaking', value: 'Earlier entries rank higher' },
+                  { label: 'Ties', value: 'Earlier entries rank higher' },
                 ]}
               />
 
@@ -653,6 +652,18 @@ function CrucibleReviewNotice({ crucible }: { crucible: CrucibleDetail }) {
   );
 }
 
+function useGeneratableVersionIds(versionIds: number[]) {
+  const { data: resources } = trpc.generation.getResourceDataByIds.useQuery(
+    { ids: versionIds },
+    { enabled: versionIds.length > 0 }
+  );
+  return new Set(
+    resources
+      ?.filter((resource) => resource.canGenerate || resource.substitute?.canGenerate)
+      .map((resource) => resource.id)
+  );
+}
+
 /** Hidden when the crucible requires models and none of them can generate for this viewer. */
 function GenerateEntryButton({
   contentType,
@@ -661,23 +672,13 @@ function GenerateEntryButton({
   contentType: MediaType;
   requiredVersionIds: number[];
 }) {
-  const requiresModels = requiredVersionIds.length > 0;
-  const { data: resources } = trpc.generation.getResourceDataByIds.useQuery(
-    { ids: requiredVersionIds },
-    { enabled: requiresModels }
-  );
-
-  const generatable = new Set(
-    resources
-      ?.filter((resource) => resource.canGenerate || resource.substitute?.canGenerate)
-      .map((resource) => resource.id)
-  );
+  const generatable = useGeneratableVersionIds(requiredVersionIds);
   const generatableIds = requiredVersionIds.filter((id) => generatable.has(id));
-  if (requiresModels && !generatableIds.length) return null;
+  if (requiredVersionIds.length > 0 && !generatableIds.length) return null;
 
   return (
     <Button
-      variant="default"
+      variant="outline"
       fullWidth
       leftSection={<IconBrush size={16} />}
       onClick={() => openCrucibleGenerator(contentType, generatableIds)}
@@ -750,72 +751,75 @@ function YourStandingPanel({
   );
 }
 
-function StatBox({ value, label }: { value: string; label: string }) {
+function StatBox({ value, label, tooltip }: { value: string; label: string; tooltip?: string }) {
   return (
-    <Paper className="rounded-lg p-4 text-center" bg="dark.6">
-      <Text className="text-2xl font-bold text-white">{value}</Text>
-      <Text size="xs" c="dimmed" tt="uppercase" className="tracking-wider" mt={4}>
-        {label}
+    <Tooltip label={tooltip} disabled={!tooltip} withArrow>
+      <Paper className="rounded-lg p-4 text-center" bg="dark.6">
+        <Text className="text-2xl font-bold text-white">{value}</Text>
+        <Text size="xs" c="dimmed" tt="uppercase" className="tracking-wider" mt={4}>
+          {label}
+        </Text>
+      </Paper>
+    </Tooltip>
+  );
+}
+
+const countdownStat = (crucible: Pick<CrucibleDetail, 'status' | 'startAt' | 'endAt'>) => {
+  const { label, value, at } = getCrucibleCountdown(crucible);
+  return {
+    label,
+    value,
+    tooltip: at
+      ? `${label === 'Starts In' ? 'Starts' : 'Ends'} ${formatDate(at, 'MMM D, YYYY h:mm A')}`
+      : undefined,
+  };
+};
+
+function EligibleModelsPanel({
+  crucibleId,
+  versionIds,
+  onGenerate,
+}: {
+  crucibleId: number;
+  versionIds: number[];
+  onGenerate?: (versionId: number) => void;
+}) {
+  const browsingLevel = useBrowsingLevelDebounced();
+  const { data: models = [], isLoading } = trpc.crucible.getRequiredModels.useQuery({
+    id: crucibleId,
+    browsingLevel,
+  });
+  const generatable = useGeneratableVersionIds(versionIds);
+  const missing = isLoading ? 0 : versionIds.length - models.length;
+
+  return (
+    <Paper className="rounded-lg px-3 py-6" bg="dark.6">
+      <Title
+        order={5}
+        className="mb-1 flex items-center gap-2 px-3 uppercase tracking-wider text-white"
+      >
+        <IconCube size={16} />
+        Eligible Models
+      </Title>
+      <Text size="xs" c="dimmed" className="mb-3 px-3">
+        Entries must be made with at least one of these.
       </Text>
+      {isLoading ? (
+        <Loader size="sm" className="mx-3" />
+      ) : (
+        <EligibleModelsList
+          models={models}
+          onGenerate={onGenerate ? (m) => onGenerate(m.versionId) : undefined}
+          canGenerate={(m) => generatable.has(m.versionId)}
+        />
+      )}
+      {missing > 0 && (
+        <Text size="xs" c="dimmed" className="mt-2 px-3">
+          {missing} required {missing === 1 ? 'model is' : 'models are'} no longer available.
+        </Text>
+      )}
     </Paper>
   );
-}
-
-function RequiredResources({ versionIds }: { versionIds: number[] }) {
-  const { data: versions, isLoading } = trpc.modelVersion.getVersionsByIds.useQuery({
-    ids: versionIds,
-  });
-
-  if (isLoading) return <>Loading…</>;
-  if (!versions?.length) return <>{`${versionIds.length} specific models`}</>;
-
-  return (
-    <div className="flex flex-col gap-1">
-      <Text size="xs" c="dimmed">
-        At least one of:
-      </Text>
-      {versions.map((version) => (
-        <Link
-          key={version.id}
-          href={getModelUrl({
-            modelId: version.modelId,
-            modelName: version.modelName,
-            modelVersionId: version.id,
-          })}
-          target="_blank"
-          className="text-blue-400 hover:underline"
-        >
-          {version.modelName} — {version.name}
-        </Link>
-      ))}
-    </div>
-  );
-}
-
-function getTimeRemaining(endAt: Date, status: CrucibleStatus): string {
-  if (status === CrucibleStatus.Completed || status === CrucibleStatus.Cancelled) {
-    return 'Ended';
-  }
-
-  const now = new Date();
-  const end = new Date(endAt);
-  const diff = end.getTime() - now.getTime();
-
-  if (diff <= 0) return 'Ended';
-
-  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-  const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-
-  if (days > 0) {
-    return `${days}d ${hours}h`;
-  }
-
-  const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-  if (hours > 0) {
-    return `${hours}h ${minutes}m`;
-  }
-
-  return `${minutes}m`;
 }
 
 export default Page(CrucibleDetailPage);
