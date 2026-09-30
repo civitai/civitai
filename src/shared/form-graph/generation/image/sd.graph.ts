@@ -1,7 +1,8 @@
 import { defineGraph } from 'form-graph';
 import {
   sd1AspectRatioBuckets,
-  sdxlAspectRatioBuckets,
+  sdxlFamilyAspectRatioBuckets,
+  sdxlFamilyPriorityAspectRatios,
   samplers,
 } from '~/shared/constants/generation.constants';
 import {
@@ -114,9 +115,14 @@ export const sd = defineGraph<FamilyExt>({ scope: familyScope })
   .field('aspectRatio', ({ images, effectiveEcosystem }) =>
     hasImages(images)
       ? null
-      : aspectRatioDef({
-          options: effectiveEcosystem === 'SD1' ? sd1AspectRatioBuckets : sdxlAspectRatioBuckets,
-        })
+      : aspectRatioDef(
+          effectiveEcosystem === 'SD1'
+            ? { options: sd1AspectRatioBuckets }
+            : {
+                options: sdxlFamilyAspectRatioBuckets,
+                priorityOptions: sdxlFamilyPriorityAspectRatios,
+              }
+        )
   )
   .use(textBlock)
   .field('sampler', SAMPLER)
