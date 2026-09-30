@@ -129,8 +129,12 @@ describe('the Lua script itself', () => {
   const source = readFileSync(path.join(__dirname, '../../redis/crucible-elo.redis.ts'), 'utf8');
 
   it('moves each side by its own K, so a new entry finds its level without dragging an established one as far', () => {
-    expect(source).toContain('local winnerChange = math.floor(winnerK * (1 - expectedWinner) + 0.5)');
-    expect(source).toContain('local loserChange = -math.floor(loserK * (1 - expectedWinner) + 0.5)');
+    expect(source).toContain(
+      'local winnerChange = math.floor(winnerK * (1 - expectedWinner) + 0.5)'
+    );
+    expect(source).toContain(
+      'local loserChange = -math.floor(loserK * (1 - expectedWinner) + 0.5)'
+    );
     expect(source).not.toContain('avgK');
   });
 

@@ -68,7 +68,6 @@ export type CrucibleEntryGridProps = {
   onEntryClick?: (entry: CrucibleEntryData) => void;
 };
 
-
 /**
  * CrucibleEntryGrid - Displays crucible entries in a masonry-style grid
  *

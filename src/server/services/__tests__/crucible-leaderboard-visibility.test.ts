@@ -225,7 +225,9 @@ describe('crucible.getEntries — once the crucible is over', () => {
     'reveals every score and position (%s)',
     async (status) => {
       findUnique.mockResolvedValue({ ...scanned, status });
-      queryRaw.mockResolvedValue(ids([ownedAndFirst, latestAndSecond, earliestAndLast]).map((id) => ({ id })));
+      queryRaw.mockResolvedValue(
+        ids([ownedAndFirst, latestAndSecond, earliestAndLast]).map((id) => ({ id }))
+      );
 
       const { items } = await caller(signedIn(STRANGER_ID)).getEntries({ crucibleId: CRUCIBLE_ID });
 
@@ -294,7 +296,9 @@ describe('crucible.getRequiredModels', () => {
 
   it('lists each required version with its model, base model and a cover the viewer may see', async () => {
     requiring([101]);
-    imagesFetch.mockResolvedValue({ 101: { images: [cover(1, 4), { ...cover(2, 1), extra: 'x' }] } });
+    imagesFetch.mockResolvedValue({
+      101: { images: [cover(1, 4), { ...cover(2, 1), extra: 'x' }] },
+    });
 
     const models = await caller(undefined).getRequiredModels({ id: CRUCIBLE_ID, browsingLevel: 1 });
 
@@ -314,7 +318,10 @@ describe('crucible.getRequiredModels', () => {
     requiring([101]);
     imagesFetch.mockResolvedValue({ 101: { images: [cover(1, 4)] } });
 
-    const [model] = await caller(undefined).getRequiredModels({ id: CRUCIBLE_ID, browsingLevel: 1 });
+    const [model] = await caller(undefined).getRequiredModels({
+      id: CRUCIBLE_ID,
+      browsingLevel: 1,
+    });
 
     expect(model.image).toBeNull();
   });
@@ -322,7 +329,12 @@ describe('crucible.getRequiredModels', () => {
   it('caps the cover at the SFW levels on the green site whatever level is asked for', async () => {
     requiring([101]);
     imagesFetch.mockResolvedValue({ 101: { images: [cover(1, 4)] } });
-    findUnique.mockResolvedValue({ ...scanned, buzzType: 'green', status: CrucibleStatus.Active, allowedResources: [101] });
+    findUnique.mockResolvedValue({
+      ...scanned,
+      buzzType: 'green',
+      status: CrucibleStatus.Active,
+      allowedResources: [101],
+    });
 
     const [model] = await caller(signedIn(STRANGER_ID), { isGreen: true }).getRequiredModels({
       id: CRUCIBLE_ID,
@@ -340,7 +352,12 @@ describe('crucible.getRequiredModels', () => {
   });
 
   it('is not found for a crucible still under review, like its entries', async () => {
-    findUnique.mockResolvedValue({ ...scanned, ingestion: 'Pending', status: CrucibleStatus.Active, allowedResources: [101] });
+    findUnique.mockResolvedValue({
+      ...scanned,
+      ingestion: 'Pending',
+      status: CrucibleStatus.Active,
+      allowedResources: [101],
+    });
 
     await expect(
       caller(signedIn(STRANGER_ID)).getRequiredModels({ id: CRUCIBLE_ID })
@@ -349,7 +366,11 @@ describe('crucible.getRequiredModels', () => {
   });
 
   it('is not found off its site, like its entries', async () => {
-    findUnique.mockResolvedValue({ ...scanned, status: CrucibleStatus.Active, allowedResources: [101] });
+    findUnique.mockResolvedValue({
+      ...scanned,
+      status: CrucibleStatus.Active,
+      allowedResources: [101],
+    });
 
     await expect(
       caller(signedIn(STRANGER_ID), { isGreen: true }).getRequiredModels({ id: CRUCIBLE_ID })
@@ -373,7 +394,11 @@ describe('crucible.getMinVotesToPlace', () => {
   });
 
   it('is not found for a crucible still under review, like its entries', async () => {
-    findUnique.mockResolvedValue({ ...scanned, ingestion: 'Pending', status: CrucibleStatus.Active });
+    findUnique.mockResolvedValue({
+      ...scanned,
+      ingestion: 'Pending',
+      status: CrucibleStatus.Active,
+    });
 
     await expect(
       caller(signedIn(STRANGER_ID)).getMinVotesToPlace({ id: CRUCIBLE_ID })

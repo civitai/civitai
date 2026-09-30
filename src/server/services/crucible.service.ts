@@ -1003,12 +1003,14 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
 
   // "Ending soon" only means something for crucibles still running; without this, an unfiltered
   // feed would lead with the ones that ended longest ago.
-  const effectiveStatus =
-    status ?? (sort === CrucibleSort.EndingSoon ? CrucibleStatus.Active : undefined);
-  if (effectiveStatus === CrucibleStatus.Cancelled && !isModerator) {
-    return { items: [], nextCursor: undefined };
-  }
-  where.status = effectiveStatus ?? { in: [CrucibleStatus.Active, CrucibleStatus.Pending] };
+  const picked = status?.length
+    ? status
+    : sort === CrucibleSort.EndingSoon
+    ? [CrucibleStatus.Active]
+    : [CrucibleStatus.Active, CrucibleStatus.Pending];
+  const statuses = isModerator ? picked : picked.filter((s) => s !== CrucibleStatus.Cancelled);
+  if (!statuses.length) return { items: [], nextCursor: undefined };
+  where.status = { in: statuses };
   if (contentType) where.contentType = contentType;
 
   if (excludedUserIds.length > 0) {
@@ -2213,7 +2215,11 @@ export const getCrucibleRequiredModels = async ({
       image: { select: { ingestion: true } },
     },
   });
-  if (!crucible || isCrucibleHiddenByScan(crucible, viewer) || isCrucibleOffDomain(crucible, viewer))
+  if (
+    !crucible ||
+    isCrucibleHiddenByScan(crucible, viewer) ||
+    isCrucibleOffDomain(crucible, viewer)
+  )
     throw throwNotFoundError('Crucible not found');
 
   const versionIds = Array.isArray(crucible.allowedResources)
@@ -2246,7 +2252,11 @@ export const getCrucibleMinVotesToPlace = async ({
       image: { select: { ingestion: true } },
     },
   });
-  if (!crucible || isCrucibleHiddenByScan(crucible, viewer) || isCrucibleOffDomain(crucible, viewer))
+  if (
+    !crucible ||
+    isCrucibleHiddenByScan(crucible, viewer) ||
+    isCrucibleOffDomain(crucible, viewer)
+  )
     throw throwNotFoundError('Crucible not found');
 
   const { _sum, _count } = await dbRead.crucibleEntry.aggregate({

@@ -25,7 +25,6 @@ import { getChangelogsInput } from '~/server/schema/changelog.schema';
 import {
   Availability,
   BountyType,
-  CrucibleStatus,
   CheckpointType,
   ImageGenerationProcess,
   MediaType,
@@ -154,7 +153,6 @@ const bountyFilterSchema = z.object({
 
 type CrucibleFilterSchema = z.infer<typeof crucibleFilterSchema>;
 const crucibleFilterSchema = z.object({
-  status: z.enum(CrucibleStatus).optional(),
   sort: z.enum(CrucibleSort).default(CrucibleSort.PrizePool),
 });
 

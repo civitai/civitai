@@ -4,6 +4,7 @@ import type { GetCruciblesInfiniteSchema } from '~/server/schema/crucible.schema
 import { trpc } from '~/utils/trpc';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
+import { commaDelimitedEnumArray } from '~/utils/zod-helpers';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
@@ -12,7 +13,7 @@ import { CrucibleSort } from '~/server/common/enums';
 import { CRUCIBLE_CONTENT_TYPES } from '~/shared/constants/crucible.constants';
 
 const crucibleQueryParamsSchema = z.object({
-  status: z.nativeEnum(CrucibleStatus).optional(),
+  status: commaDelimitedEnumArray(Object.values(CrucibleStatus)).optional(),
   contentType: z.enum(CRUCIBLE_CONTENT_TYPES).optional(),
   sort: z.nativeEnum(CrucibleSort).optional(),
 });

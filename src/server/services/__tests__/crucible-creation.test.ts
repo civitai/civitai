@@ -503,20 +503,22 @@ describe('getCrucibles — browsing level', () => {
 
 describe('getCrucibles — status for an unfiltered feed', () => {
   const findMany = dbMock.dbRead.crucible.findMany;
-  const whereFor = async (input: { sort?: CrucibleSort; status?: CrucibleStatus }) => {
+  const whereFor = async (input: { sort?: CrucibleSort; status?: CrucibleStatus[] }) => {
     findMany.mockResolvedValue([]);
     await getCrucibles({ input: { limit: 10, ...input }, select: { id: true } });
     return findMany.mock.calls.at(-1)![0].where;
   };
 
   it('limits Ending Soon to active crucibles, so long-ended ones do not lead', async () => {
-    expect((await whereFor({ sort: CrucibleSort.EndingSoon })).status).toBe(CrucibleStatus.Active);
+    expect((await whereFor({ sort: CrucibleSort.EndingSoon })).status).toEqual({
+      in: [CrucibleStatus.Active],
+    });
   });
 
   it('keeps an explicit status on Ending Soon', async () => {
     expect(
-      (await whereFor({ sort: CrucibleSort.EndingSoon, status: CrucibleStatus.Completed })).status
-    ).toBe(CrucibleStatus.Completed);
+      (await whereFor({ sort: CrucibleSort.EndingSoon, status: [CrucibleStatus.Completed] })).status
+    ).toEqual({ in: [CrucibleStatus.Completed] });
   });
 
   it('shows only running and upcoming crucibles until a status is picked', async () => {
@@ -525,9 +527,23 @@ describe('getCrucibles — status for an unfiltered feed', () => {
     });
   });
 
-  it('returns nothing for an explicit Cancelled filter unless the caller moderates', async () => {
+  it('shows every picked status together', async () => {
+    const picked = [CrucibleStatus.Pending, CrucibleStatus.Completed];
+    expect((await whereFor({ sort: CrucibleSort.Newest, status: picked })).status).toEqual({
+      in: picked,
+    });
+  });
+
+  it('drops Cancelled from the picked statuses unless the caller moderates', async () => {
+    const picked = [CrucibleStatus.Active, CrucibleStatus.Cancelled];
+    expect((await whereFor({ sort: CrucibleSort.Newest, status: picked })).status).toEqual({
+      in: [CrucibleStatus.Active],
+    });
+  });
+
+  it('returns nothing for Cancelled alone unless the caller moderates', async () => {
     findMany.mockResolvedValue([{ id: 11 }]);
-    const cancelled = { limit: 10, sort: CrucibleSort.Newest, status: CrucibleStatus.Cancelled };
+    const cancelled = { limit: 10, sort: CrucibleSort.Newest, status: [CrucibleStatus.Cancelled] };
 
     await expect(getCrucibles({ input: cancelled, select: { id: true } })).resolves.toEqual({
       items: [],

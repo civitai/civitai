@@ -2,7 +2,6 @@ import {
   Alert,
   Button,
   Container,
-  Group,
   Loader,
   Paper,
   Progress,
@@ -51,7 +50,6 @@ import { CrucibleLeaderboard } from '~/components/Crucible/CrucibleLeaderboard';
 import { CrucibleEntryGrid } from '~/components/Crucible/CrucibleEntryGrid';
 import { CruciblePodium } from '~/components/Crucible/CruciblePodium';
 import { CruciblePrizeBreakdown } from '~/components/Crucible/CruciblePrizeBreakdown';
-import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { EligibleModelsList } from '~/components/EligibleModels/EligibleModelsList';
 import { crucibleRankingsAreFinal } from '~/shared/constants/crucible.constants';
 import {
@@ -413,6 +411,12 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                     </Alert>
                   ) : (
                     <Stack gap="xs" className="mb-4">
+                      {!currentUser?.muted && (
+                        <GenerateEntryButton
+                          contentType={crucible.contentType}
+                          requiredVersionIds={allowedResources}
+                        />
+                      )}
                       <Button
                         variant="light"
                         fullWidth
@@ -422,12 +426,6 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                       >
                         Submit Entry
                       </Button>
-                      {!currentUser?.muted && (
-                        <GenerateEntryButton
-                          contentType={crucible.contentType}
-                          requiredVersionIds={allowedResources}
-                        />
-                      )}
                     </Stack>
                   )}
 
@@ -509,24 +507,15 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                 </>
               )}
 
-              <DescriptionTable
-                title={
-                  <Group gap="xs" p="xs">
-                    <IconBook size={16} />
-                    <Text size="md" fw={500}>
-                      Rules
-                    </Text>
-                  </Group>
-                }
-                labelWidth="40%"
-                items={[
+              <RulesPanel
+                rules={[
                   {
                     label: 'Entries Per Person',
-                    value: maxUserEntries.toString(),
+                    value: `${maxUserEntries} ${maxUserEntries === 1 ? 'entry' : 'entries'}`,
                   },
                   {
                     label: 'Total Entry Cap',
-                    value: `${crucible.maxTotalEntries} max`,
+                    value: `${crucible.maxTotalEntries} entries`,
                     visible: !!crucible.maxTotalEntries,
                   },
                   {
@@ -541,9 +530,9 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                   },
                   {
                     label: 'Minimum Votes',
-                    value: `An entry needs ${CRUCIBLE_MIN_VOTES_PERCENT}% of the average entry's votes to place`,
+                    value: `${CRUCIBLE_MIN_VOTES_PERCENT}% of the average entry's votes to place`,
                   },
-                  { label: 'Ties', value: 'Earlier entries rank higher' },
+                  { label: 'Ties', value: 'The earlier entry ranks higher' },
                 ]}
               />
 
@@ -678,7 +667,7 @@ function GenerateEntryButton({
 
   return (
     <Button
-      variant="outline"
+      variant="filled"
       fullWidth
       leftSection={<IconBrush size={16} />}
       onClick={() => openCrucibleGenerator(contentType, generatableIds)}
@@ -774,6 +763,31 @@ const countdownStat = (crucible: Pick<CrucibleDetail, 'status' | 'startAt' | 'en
       : undefined,
   };
 };
+
+function RulesPanel({ rules }: { rules: { label: string; value: string; visible?: boolean }[] }) {
+  return (
+    <Paper className="rounded-lg p-6" bg="dark.6">
+      <Title order={5} className="mb-4 flex items-center gap-2 uppercase tracking-wider text-white">
+        <IconBook size={16} />
+        Rules
+      </Title>
+      <Stack gap="md">
+        {rules
+          .filter((rule) => rule.visible !== false)
+          .map((rule) => (
+            <div key={rule.label}>
+              <Text size="xs" c="dimmed" tt="uppercase" mb={4}>
+                {rule.label}
+              </Text>
+              <Text size="sm" fw={600} c="white">
+                {rule.value}
+              </Text>
+            </div>
+          ))}
+      </Stack>
+    </Paper>
+  );
+}
 
 function EligibleModelsPanel({
   crucibleId,

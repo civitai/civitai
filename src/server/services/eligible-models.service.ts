@@ -27,7 +27,8 @@ export async function getEligibleModels(
 
   return versions.map((v) => {
     const images = imageCache[v.id]?.images ?? [];
-    const img = (viewerLevel === undefined ? images[0] : pickPreviewImage(images, viewerLevel)) ?? null;
+    const img =
+      (viewerLevel === undefined ? images[0] : pickPreviewImage(images, viewerLevel)) ?? null;
     return {
       id: v.model.id,
       name: v.model.name,

@@ -31,7 +31,7 @@ export { CrucibleSort };
 // Schema for infinite list of crucibles with filters
 export type GetCruciblesInfiniteSchema = z.infer<typeof getCruciblesInfiniteSchema>;
 export const getCruciblesInfiniteSchema = infiniteQuerySchema.extend({
-  status: z.nativeEnum(CrucibleStatus).optional(),
+  status: z.array(z.nativeEnum(CrucibleStatus)).optional(),
   contentType: z.enum(CRUCIBLE_CONTENT_TYPES).optional(),
   browsingLevel: z.number().int().min(0).optional(),
   sort: z.nativeEnum(CrucibleSort).default(CrucibleSort.PrizePool),

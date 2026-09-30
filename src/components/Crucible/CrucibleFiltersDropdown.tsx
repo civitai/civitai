@@ -1,4 +1,4 @@
-import { Divider, Drawer, Group, Indicator, Popover, Stack } from '@mantine/core';
+import { Chip, Divider, Drawer, Group, Indicator, Popover, Stack } from '@mantine/core';
 import { IconFilter } from '@tabler/icons-react';
 import { useCallback, useMemo } from 'react';
 import { FilterButton } from '~/components/Buttons/FilterButton';
@@ -11,7 +11,7 @@ import type { CrucibleContentType } from '~/shared/constants/crucible.constants'
 import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 
 type CrucibleFilterState = {
-  status?: CrucibleStatus;
+  status: CrucibleStatus[];
   contentType?: CrucibleContentType;
 };
 
@@ -21,24 +21,35 @@ const contentTypeOptions: { value?: CrucibleContentType; label: string }[] = [
   { value: MediaType.video, label: 'Videos' },
 ];
 
-const statusOptions: { value?: CrucibleStatus; label: string }[] = [
-  { label: 'Active & Upcoming' },
-  { value: CrucibleStatus.Pending, label: 'Upcoming' },
+const statusOptions = [
   { value: CrucibleStatus.Active, label: 'Active' },
+  { value: CrucibleStatus.Pending, label: 'Upcoming' },
   { value: CrucibleStatus.Completed, label: 'Completed' },
 ];
+
+// The server's feed default; kept out of the URL while selected.
+const defaultStatus = [CrucibleStatus.Active, CrucibleStatus.Pending];
+const isDefaultStatus = (status: CrucibleStatus[]) =>
+  status.length === defaultStatus.length && defaultStatus.every((s) => status.includes(s));
 
 export function CrucibleFiltersDropdown() {
   const mobile = useIsMobile();
   const { query, replace } = useCrucibleQueryParams();
 
   const committedFilters = useMemo<CrucibleFilterState>(
-    () => ({ status: query.status, contentType: query.contentType }),
+    () => ({
+      status: query.status?.length ? query.status : defaultStatus,
+      contentType: query.contentType,
+    }),
     [query.status, query.contentType]
   );
 
   const handleApply = useCallback(
-    (next: CrucibleFilterState) => replace({ status: next.status, contentType: next.contentType }),
+    (next: CrucibleFilterState) =>
+      replace({
+        status: isDefaultStatus(next.status) ? undefined : next.status.join(','),
+        contentType: next.contentType,
+      }),
     [replace]
   );
 
@@ -63,7 +74,8 @@ export function CrucibleFiltersDropdown() {
     onClear: handleClear,
   });
 
-  const filterLength = (mergedFilters.status ? 1 : 0) + (mergedFilters.contentType ? 1 : 0);
+  const filterLength =
+    (isDefaultStatus(mergedFilters.status) ? 0 : 1) + (mergedFilters.contentType ? 1 : 0);
 
   const target = (
     <Indicator
@@ -98,17 +110,21 @@ export function CrucibleFiltersDropdown() {
       </Stack>
       <Stack gap="md">
         <Divider label="Status" className="text-sm font-bold" />
-        <Group gap={8}>
-          {statusOptions.map(({ value, label }) => (
-            <FilterChip
-              key={label}
-              checked={mergedFilters.status === value}
-              onChange={() => patchPending({ status: value })}
-            >
-              <span>{label}</span>
-            </FilterChip>
-          ))}
-        </Group>
+        <Chip.Group
+          multiple
+          value={mergedFilters.status}
+          onChange={(value) => {
+            if (value.length) patchPending({ status: value as CrucibleStatus[] });
+          }}
+        >
+          <Group gap={8}>
+            {statusOptions.map(({ value, label }) => (
+              <FilterChip key={value} value={value}>
+                <span>{label}</span>
+              </FilterChip>
+            ))}
+          </Group>
+        </Chip.Group>
       </Stack>
     </Stack>
   );

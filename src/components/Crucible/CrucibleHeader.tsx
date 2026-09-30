@@ -213,7 +213,11 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
                 variant="light"
                 color="gray"
                 leftSection={
-                  contentType === MediaType.video ? <IconVideo size={12} /> : <IconPhoto size={12} />
+                  contentType === MediaType.video ? (
+                    <IconVideo size={12} />
+                  ) : (
+                    <IconPhoto size={12} />
+                  )
                 }
               >
                 {contentType === MediaType.video ? 'Videos' : 'Images'}
