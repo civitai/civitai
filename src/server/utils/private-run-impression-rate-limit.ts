@@ -1,4 +1,5 @@
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { recordPrivateRunImpressionRateLimitRefusal } from '~/server/metrics/app-block-runtime.metrics';
 
 /**
@@ -46,6 +47,26 @@ import { recordPrivateRunImpressionRateLimitRefusal } from '~/server/metrics/app
  * right trade — a cache incident must not start leaking review activity into owners'
  * analytics panels — but it is a trade, not a free choice.
  *
+ * 🔴 A HANG IS NOT AN ERROR, AND THE `catch` CANNOT SEE ONE. The sys client carries no
+ * socketTimeout (`REDIS_SYS_SOCKET_TIMEOUT_MS` defaults to 0) and a per-command timeout
+ * does not bound a command once it has been WRITTEN, so on a silent half-open the MULTI
+ * parks until OS TCP keepalive errors the socket. `/api/track/block-render` awaits the
+ * gate above this UNWRAPPED and with no timeout of its own, so an unbounded await here
+ * parks request handlers on a public, high-volume beacon — which is the fail-open promised
+ * two paragraphs up turning into its exact opposite. `withSysReadDeadline` converts that
+ * open-ended park into a rejection, which the `catch` below then handles as the fail-open
+ * it already was. Same treatment, same shape, as `api/v1/blocks/submit-version.ts` — which
+ * fails CLOSED on that rejection because a mod-gated bundle upload wants the opposite
+ * trade.
+ *
+ * 🔴 AND THE FAIL-OPEN SAYS SO. Every fail-open arm emits `logSysRedisFailOpen`
+ * (`rate-limit-write-degraded`, the subtype whose Loki alert already means "abuse
+ * prevention is effectively disabled"). The refusal COUNTER cannot carry this: it grades a
+ * ceiling BITING, and a limiter fault is the opposite reading — the bound is absent and
+ * nothing was refused. Without the log, a sustained incident is indistinguishable from
+ * health on every signal this file emits, precisely while the cost bound is gone. No
+ * viewer id rides along, for the same reason the counter carries no labels.
+ *
  * ── THE COST BOUND, WITH ITS ARITHMETIC ─────────────────────────────────────
  * ≤ 30 reaching calls / minute / viewer ⇒ ≤ 30 × 9 = 270 single-row queries / minute /
  * viewer, of which ≤ 30 touch the WRITE PRIMARY (the predicate reads the viewer row there
@@ -70,6 +91,17 @@ export const PRIVATE_RUN_IMPRESSION_RATE_LIMIT_WINDOW_SECONDS = 60;
 
 export type PrivateRunImpressionRateLimitResult =
   | { allowed: true }
+  /**
+   * `retryAfterSeconds` is the FULL window, as a constant — never a live TTL read.
+   * Enumerated: the only production consumer (`blocks/private-run-impression.service.ts`
+   * gate 3.5) reads `.allowed` and discards the rest, so a TTL round-trip here bought a
+   * value nobody read while costing an extra unbounded sysRedis call on the REFUSAL path —
+   * by definition the abuse path — and a synchronous throw from it escaped to the outer
+   * catch, turning a DECIDED REFUSAL into an ALLOW with no counter emitted. The field
+   * survives because it is the honest upper bound on the wait and is what a future caller
+   * would surface as `Retry-After`; a fixed window makes the constant correct-by-construction
+   * as an upper bound, and merely conservative as an estimate.
+   */
   | { allowed: false; retryAfterSeconds: number };
 
 /**
@@ -91,11 +123,20 @@ export async function checkPrivateRunImpressionRateLimit(
   try {
     // ATOMIC WINDOW ARMING: the `SET … NX EX` creates the counter WITH its expiry, so the
     // TTL can never be missing. `INCR` in the same MULTI returns this call's count.
-    const multiResult = await sysRedis
-      .multi()
-      .set(key, '0', { NX: true, EX: PRIVATE_RUN_IMPRESSION_RATE_LIMIT_WINDOW_SECONDS })
-      .incr(key)
-      .exec();
+    //
+    // 🔴 RACED AGAINST THE SYS READ DEADLINE — see the docblock. A MULTI is exactly the
+    // shape `withSysReadDeadline` exists for: its own note says a per-command timeout
+    // "never bounds MULTI sub-commands", so this wall-clock race is the ONLY bound on the
+    // handler's wait. On a breach it REJECTS (verified against the wrapper, not assumed),
+    // which lands in the `catch` below and fails open like any other limiter fault. The
+    // orphaned command settles in the background and is reaped by `Promise.race`.
+    const multiResult = await withSysReadDeadline(
+      sysRedis
+        .multi()
+        .set(key, '0', { NX: true, EX: PRIVATE_RUN_IMPRESSION_RATE_LIMIT_WINDOW_SECONDS })
+        .incr(key)
+        .exec()
+    );
     const count = multiResult?.[1];
 
     // 🔴 FAIL OPEN ON A NON-THROWING BAD REPLY, NOT ONLY ON A THROW — a `catch` guards
@@ -106,24 +147,38 @@ export async function checkPrivateRunImpressionRateLimit(
     // deliberate: written the other way round — `if (count > max) refuse` — a bad reply
     // would coincidentally fail open and this guard would be unreachable, i.e. a guard
     // nobody could ever watch work.)
-    if (typeof count !== 'number' || !Number.isFinite(count)) return { allowed: true };
+    if (typeof count !== 'number' || !Number.isFinite(count)) {
+      // A fail-open arm like the `catch`, and just as invisible without this. `err` is
+      // `null` because nothing threw — the same shape `moderation-utils.ts` uses for its
+      // non-throwing fail-open.
+      logSysRedisFailOpen(
+        'rate-limit-write-degraded',
+        'checkPrivateRunImpressionRateLimit: malformed counter reply',
+        null,
+        { replyType: typeof count }
+      );
+      return { allowed: true };
+    }
     if (count <= PRIVATE_RUN_IMPRESSION_RATE_LIMIT_MAX) return { allowed: true };
 
-    // Over the ceiling. Surface the remaining window so a caller could back off; if the
-    // TTL read fails or is unset (-1/-2) fall back to the full window rather than to an
-    // immediate retry.
-    let retryAfterSeconds = await sysRedis.ttl(key).catch(() => -1);
-    if (!Number.isFinite(retryAfterSeconds) || retryAfterSeconds < 1)
-      retryAfterSeconds = PRIVATE_RUN_IMPRESSION_RATE_LIMIT_WINDOW_SECONDS;
-
+    // Over the ceiling. `retryAfterSeconds` is the window CONSTANT, not a live TTL read —
+    // the type's own note above records the enumeration behind that and why the extra
+    // round-trip was worse than the precision it bought.
     // 🔴 EMITTED HERE RATHER THAN AT THE CALL SITE, and NOT because it is tidier: the
     // counter measures THE GATE, which is shared by both `blockRenders` writers, so one
     // emit inside the one decision covers both by construction. The gate is also the
     // reason there is no `app_block_id` label — see the emitter's own docblock.
     recordPrivateRunImpressionRateLimitRefusal();
-    return { allowed: false, retryAfterSeconds };
-  } catch {
+    return {
+      allowed: false,
+      retryAfterSeconds: PRIVATE_RUN_IMPRESSION_RATE_LIMIT_WINDOW_SECONDS,
+    };
+  } catch (err) {
     // FAIL OPEN — see the docblock. Here that means "pay for the queries", not "serve".
+    // 🔴 AND SAY SO. This arm now also covers a deadline-bounded HANG, which is the arm a
+    // sustained incident actually produces; silent, it reads as health on every other
+    // signal this file emits. No viewer id — see the docblock.
+    logSysRedisFailOpen('rate-limit-write-degraded', 'checkPrivateRunImpressionRateLimit', err);
     return { allowed: true };
   }
 }

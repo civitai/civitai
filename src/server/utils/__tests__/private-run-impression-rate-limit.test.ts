@@ -1,6 +1,7 @@
 import client from 'prom-client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import {
@@ -13,7 +14,7 @@ import {
  * Unit coverage for the per-viewer COST ceiling in front of the private-run analytics
  * gate's expensive leg (`blocks/private-run-impression.service.ts` gate 3.5).
  *
- * Six contracts, and the first two are the ones no sibling limiter has:
+ * Eight contracts, and the first two are the ones no sibling limiter has:
  *   (a) 🔴 THE KEY IS THE VIEWER AND NOTHING ELSE. Asserted as a WHOLE STRING, not a
  *       prefix: the defect this bucket must not grow is an `appBlockId` appended to the
  *       key, which is body-chosen and would hand a caller a fresh bucket per invented id.
@@ -27,17 +28,27 @@ import {
  *   (d) fail-open on a THROW and on a BAD ANSWER — a `catch` guards against throws, the
  *       `typeof` guard against answers, and the second is load-bearing only because of the
  *       comparison's polarity (see the implementation's comment).
- *   (e) `retryAfterSeconds` from the live TTL, falling back to the FULL window when the
- *       TTL is unset or unreadable.
- *   (f) the refusal counter — a real prom-registry read, because a refusal here has a
+ *   (e) 🔴 fail-open on a HANG. A `catch` guards against a throw and the leaf's real
+ *       failure mode is a park, so this is the arm the other four could not see: the MULTI
+ *       is raced against the sys read deadline and a never-settling `exec` must still
+ *       answer `allowed`. Two arms, one of them a positive control — see that describe.
+ *   (f) 🔴 and the fail-open SAYS SO. Every fail-open arm emits `sysredis-fail-open` /
+ *       `rate-limit-write-degraded`; a refusal and a clean call emit nothing. Without it a
+ *       sustained incident reads as health on every other signal here.
+ *   (g) `retryAfterSeconds` is the window CONSTANT — asserted with the TTL mock armed to a
+ *       value the constant cannot equal, and with `ttl` asserted NEVER called.
+ *   (h) the refusal counter — a real prom-registry read, because a refusal here has a
  *       CORRECTNESS consequence (the impression gets recorded, so it reaches the owner)
  *       and a silent refusal is the reassuring-zero shape.
  *
- * ⚠️ LABEL THIS FILE HONESTLY: it is NOT regression coverage. The limiter does not exist on
- * the pre-change tree, so nothing here could be watched failing against a build that had
- * the defect. The red-then-green matrix for the BEHAVIOUR lives in
- * `blocks/__tests__/private-run-impression.service.test.ts`, which is driven through the
- * gate and whose new cases were each watched red with gate 3.5 removed.
+ * ⚠️ LABEL THIS FILE HONESTLY, AND THE LABEL IS NOW MIXED. Contracts (a)–(d), (g) and (h)
+ * are NOT regression coverage: the limiter did not exist on the pre-change tree, so nothing
+ * there could be watched failing against a build that had the defect. The red-then-green
+ * matrix for that BEHAVIOUR lives in `blocks/__tests__/private-run-impression.service.test.ts`,
+ * driven through the gate, whose cases were each watched red with gate 3.5 removed.
+ * Contracts (e) and (f) ARE regression coverage — marked `[REG]` — and were watched red on
+ * this branch's own previous head, where the limiter shipped with an unwrapped await and a
+ * bare `catch {}`.
  *
  * `sysRedis` is the CANONICAL shared mock (`~/__tests__/mocks/redis.mock`). A per-file
  * registration of the redis-client specifier would both trip `no-direct-shared-module-mock`
@@ -63,6 +74,8 @@ let store: Map<string, number>;
 /** When set, `exec` returns this instead of the real op results. */
 let execOverride: unknown[] | null | undefined | false = false;
 let execThrows = false;
+/** When true, `exec` returns a promise that NEVER settles — the silent half-open shape. */
+let execHangs = false;
 
 /**
  * A faithful-enough `MULTI: SET k 0 NX EX w` + `INCR k`: the `SET` creates the key at 0
@@ -93,6 +106,9 @@ function armSysRedis() {
       },
       exec: async () => {
         if (execThrows) throw new Error('redis down');
+        // A HANG, not a throw. This is what a silent half-open produces: the command is
+        // written, nothing ever answers, and no `catch` anywhere can see it.
+        if (execHangs) return new Promise(() => {});
         const real = ops.map((op) => op());
         return execOverride === false ? real : execOverride;
       },
@@ -120,6 +136,7 @@ beforeEach(() => {
   store = new Map();
   execOverride = false;
   execThrows = false;
+  execHangs = false;
   armSysRedis();
   redisMock.sysRedis.ttl.mockResolvedValue(PRIVATE_RUN_IMPRESSION_RATE_LIMIT_WINDOW_SECONDS);
 });
@@ -245,36 +262,156 @@ describe('checkPrivateRunImpressionRateLimit — fails OPEN [INV]', () => {
   });
 });
 
+describe('checkPrivateRunImpressionRateLimit — a sysRedis HANG [REG]', () => {
+  /**
+   * 🔴 THE DEFECT THIS PAIR PINS: a `catch` guards against a THROW, and the failure mode
+   * this limiter's leaf actually has is a HANG. The sys client carries no socketTimeout
+   * (`REDIS_SYS_SOCKET_TIMEOUT_MS` defaults to 0) and a per-command timeout does not bound
+   * a command once written, so on a silent half-open a written sys command parks until OS
+   * TCP keepalive errors the socket. `block-render.ts` awaits this gate unwrapped and with
+   * no timeout of its own, so an unbounded await here parks request handlers on a public,
+   * high-volume beacon — the opposite of the fail-open this file's docblock promises.
+   *
+   * TWO ARMS ON PURPOSE. Arm A is the POSITIVE CONTROL: it proves this probe can observe a
+   * fail-open at all, so arm B settling is a claim about the deadline rather than about a
+   * limiter that can only ever answer `allowed`. Watched red-then-green: with the
+   * `withSysReadDeadline` wrapper removed, arm A stays GREEN and arm B FAILS on the
+   * sentinel — i.e. the pair separates the two mechanisms rather than merely failing.
+   *
+   * The wrapper here is the REAL one: `~/__tests__/mocks/redis.mock` defaults the
+   * `withSysReadDeadline` seam to the real implementation, so this exercises the shipped
+   * race and the shipped default (`REDIS_SYS_READ_TIMEOUT_MS`), not a stand-in whose
+   * rejection shape could differ from it. That is the whole point — the finding was about
+   * assuming a failure mode instead of reading it.
+   */
+  /** Comfortably past the shipped read deadline; only a genuinely unbounded await hits it. */
+  const NEVER_SETTLED_AFTER_MS = 8_000;
+  const SENTINEL = 'NEVER SETTLED' as const;
+
+  async function raceAgainstSentinel(): Promise<unknown> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const sentinel = new Promise<typeof SENTINEL>((resolve) => {
+      timer = setTimeout(() => resolve(SENTINEL), NEVER_SETTLED_AFTER_MS);
+    });
+    return Promise.race([checkPrivateRunImpressionRateLimit(VIEWER), sentinel]).finally(() => {
+      if (timer) clearTimeout(timer);
+    });
+  }
+
+  it('ARM A — POSITIVE CONTROL: a REJECTING exec settles fail-open well inside the sentinel', async () => {
+    execThrows = true;
+    expect(await raceAgainstSentinel()).toEqual({ allowed: true });
+  });
+
+  it('🔴 ARM B: a NEVER-SETTLING exec still settles fail-open, bounded by the read deadline', async () => {
+    execHangs = true;
+    expect(
+      await raceAgainstSentinel(),
+      'an unbounded sysRedis await parks the beacon handler — it must be raced against the sys read deadline'
+    ).toEqual({ allowed: true });
+    // A hang is a limiter fault, not a ceiling biting: the counter grades refusals.
+    expect(await refusals(), 'a hang is not a refusal').toBe(0);
+  });
+
+  it('routes the MULTI through the sys read-deadline seam at all', async () => {
+    // The structural half. Arm B is the behavioural claim; this one fails loudly if the
+    // wrapper is deleted while some other timeout coincidentally settles the await.
+    await checkPrivateRunImpressionRateLimit(VIEWER);
+    expect(redisMock.withSysReadDeadline).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('checkPrivateRunImpressionRateLimit — retryAfterSeconds [INV]', () => {
   beforeEach(() => {
     store.set(KEY, PRIVATE_RUN_IMPRESSION_RATE_LIMIT_MAX);
   });
 
-  it('reports the LIVE remaining window', async () => {
+  it('🔴 is the WINDOW CONSTANT, and costs NO second Redis round-trip', async () => {
+    // It used to be a live `sysRedis.ttl` read. Enumerated dead — the only production
+    // consumer reads `.allowed` — and it was worse than merely unused: an extra unbounded
+    // sysRedis call on the REFUSAL path (the abuse path), and a SYNCHRONOUS throw from it
+    // escaped to the outer catch, converting a decided refusal into an ALLOW with no
+    // counter emitted. The TTL mock below is armed to a value the constant cannot equal, so
+    // a reintroduced read is a red test rather than a coincidence.
     redisMock.sysRedis.ttl.mockResolvedValue(17);
     expect(await checkPrivateRunImpressionRateLimit(VIEWER)).toEqual({
       allowed: false,
-      retryAfterSeconds: 17,
+      retryAfterSeconds: PRIVATE_RUN_IMPRESSION_RATE_LIMIT_WINDOW_SECONDS,
     });
+    expect(redisMock.sysRedis.ttl, 'the refusal path must not read the TTL').not.toHaveBeenCalled();
   });
 
-  it('falls back to the FULL window when the TTL is unset or unreadable', async () => {
-    // -1 (no TTL), -2 (no key) and a rejecting TTL read must all back off sanely rather
-    // than invite an immediate retry.
-    for (const ttl of [-1, -2, 0]) {
-      redisMock.sysRedis.ttl.mockResolvedValue(ttl);
+  it('is the same constant on EVERY refusal, not only the first', async () => {
+    // The window is fixed, so the answer cannot legitimately drift between refusals within
+    // one window — and a residual TTL read would make it drift.
+    for (let i = 0; i < 3; i++) {
       store.set(KEY, PRIVATE_RUN_IMPRESSION_RATE_LIMIT_MAX);
       expect(await checkPrivateRunImpressionRateLimit(VIEWER)).toEqual({
         allowed: false,
         retryAfterSeconds: PRIVATE_RUN_IMPRESSION_RATE_LIMIT_WINDOW_SECONDS,
       });
     }
-    redisMock.sysRedis.ttl.mockRejectedValue(new Error('ttl read failed'));
+  });
+});
+
+describe('checkPrivateRunImpressionRateLimit — the fail-open SAYS SO [REG]', () => {
+  /**
+   * 🔴 THE DEFECT: the fail-open was a bare `catch {}`, so during a sustained Redis
+   * incident — exactly when the cost bound is absent — every signal this limiter emits
+   * reads as health. The refusal counter cannot carry it and must not: it grades a ceiling
+   * BITING, and the two suites either side of this one assert it stays at zero on a fault.
+   *
+   * The subtype is `rate-limit-write-degraded`, whose own docblock in `fail-open-log.ts`
+   * says a sustained spike means abuse prevention is effectively disabled, and which
+   * already has a Loki alert consuming it.
+   */
+  function failOpenLogs() {
+    return (loggingMock.logToAxiom.mock.calls as Array<[Record<string, unknown>]>)
+      .map(([payload]) => payload)
+      .filter((payload) => payload?.name === 'sysredis-fail-open');
+  }
+
+  it('🔴 a THROW emits the fail-open log exactly once', async () => {
+    execThrows = true;
+    expect(await checkPrivateRunImpressionRateLimit(VIEWER)).toEqual({ allowed: true });
+    const logs = failOpenLogs();
+    expect(logs).toHaveLength(1);
+    expect(logs[0].subtype).toBe('rate-limit-write-degraded');
+    expect(logs[0].fn).toBe('checkPrivateRunImpressionRateLimit');
+  });
+
+  it('🔴 a deadline-bounded HANG emits it too — the arm an incident actually produces', async () => {
+    execHangs = true;
+    expect(await checkPrivateRunImpressionRateLimit(VIEWER)).toEqual({ allowed: true });
+    expect(failOpenLogs().map((l) => l.subtype)).toEqual(['rate-limit-write-degraded']);
+  });
+
+  it('🔴 a BAD ANSWER emits it too — a `catch` never runs, so it would stay silent', async () => {
+    execOverride = ['OK', undefined];
+    expect(await checkPrivateRunImpressionRateLimit(VIEWER)).toEqual({ allowed: true });
+    const logs = failOpenLogs();
+    expect(logs).toHaveLength(1);
+    expect(logs[0].fn).toBe('checkPrivateRunImpressionRateLimit: malformed counter reply');
+  });
+
+  it('NEGATIVE CONTROL: an allowed call and a REFUSAL both log nothing', async () => {
+    // Without this, the three above are satisfied by a logger that fires on every call —
+    // which on this beacon would flood the sink and make the signal worthless. The refusal
+    // half matters separately: a ceiling biting is the limiter WORKING, not degraded.
+    await checkPrivateRunImpressionRateLimit(VIEWER);
     store.set(KEY, PRIVATE_RUN_IMPRESSION_RATE_LIMIT_MAX);
     expect(await checkPrivateRunImpressionRateLimit(VIEWER)).toEqual({
       allowed: false,
       retryAfterSeconds: PRIVATE_RUN_IMPRESSION_RATE_LIMIT_WINDOW_SECONDS,
     });
+    expect(failOpenLogs()).toHaveLength(0);
+  });
+
+  it('🔴 carries NO viewer id — same reason the counter carries no labels', async () => {
+    execThrows = true;
+    await checkPrivateRunImpressionRateLimit(VIEWER);
+    for (const payload of failOpenLogs())
+      expect(JSON.stringify(payload)).not.toContain(String(VIEWER));
   });
 });
 

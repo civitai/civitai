@@ -242,9 +242,19 @@ describe('the blockRenders writer set — the ledger [INV]', () => {
 
   it('🔴 the gate DEFERS the flag and the predicate — static imports would sink the beacon', () => {
     // The one property the gate's docblock calls load-bearing that nothing else observes.
-    // Converting either `await import(...)` to a top-level import type-checks, keeps every
-    // suite green, and silently drags Flipt, Prisma and the app-blocks service graph into
-    // the eager import path of a route whose entire reason for existing is to avoid that.
+    // Converting any of the three `await import(...)`s to a top-level import type-checks and
+    // keeps every suite green, so this count is the only thing that notices.
+    //
+    // ⚠️ AND THE JUSTIFICATION THAT USED TO BE HERE IS FALSE, so read the sizes rather than
+    // the story. It said a conversion "silently drags Flipt, Prisma and the app-blocks
+    // service graph into the eager import path". Measured over `block-render.ts`'s static
+    // closure with type-only edges excluded (83 first-party modules): `~/server/flipt/client`
+    // is ALREADY eager via `clickhouse/client` → `tracker`, and `@prisma/client` via
+    // `endpoint-helpers` → `errorHandling`. Only the third noun survives, and only as the
+    // SERVICE MODULES rather than their libraries — the per-deferral additions are 9 modules
+    // for the flag, 23 plus `jose` for the access predicate, and ONE (itself, zero packages)
+    // for the cost ceiling. So this assertion is worth keeping for two of the three on graph
+    // grounds and for all three as a REMOVAL guard, which is the claim it actually makes.
     // Same technique as the `tracker.ts` control below, pointed at the gate's own imports.
     const gate = CODE.get('src/server/services/blocks/private-run-impression.service.ts')!;
     for (const deferred of [
@@ -260,9 +270,14 @@ describe('the blockRenders writer set — the ledger [INV]', () => {
       ).toContain(deferred);
     }
     // THREE dynamic imports, and no static `import … from` beyond the two cheap ones the
-    // beacon route already pulls in. The third is the cost ceiling (gate 3.5), whose module
-    // pulls the Redis client and the prom registry — both exactly the kind of graph this
-    // route exists to keep out of its eager path.
+    // beacon route already pulls in. The third is the cost ceiling (gate 3.5). ⚠️ Its old
+    // rationale here — "whose module pulls the Redis client and the prom registry, both
+    // exactly the kind of graph this route exists to keep out of its eager path" — is
+    // FALSE: the route statically imports `~/server/metrics/app-block-runtime.metrics`
+    // (hence `prom-client`) and reaches `~/server/redis/client` through
+    // `get-server-auth-session` → `auth/session-client`, so both are eager with or without
+    // gate 3.5. The count still guards gate 3.5 — against DELETION, which is the failure
+    // this file exists for — it just does not guard an import-graph property for that one.
     expect(
       (gate.match(/await import\(/g) ?? []).length,
       'the flag, the cost ceiling and the predicate must ALL stay behind `await import`'
@@ -270,8 +285,12 @@ describe('the blockRenders writer set — the ledger [INV]', () => {
 
     // 🔴 ENUMERATED EQUALITY, NOT TWO SAMPLES. Asserting that the two cheap specifiers are
     // PRESENT says nothing about a third being ADDED — `import { dbRead } from
-    // '~/server/db/client'` would have left the earlier form of this test green, which is
-    // precisely the eager-Prisma edge it exists to prevent. Enumerating also subsumes the
+    // '~/server/db/client'` would have left the earlier form of this test green. ⚠️ That
+    // example used to be justified as "precisely the eager-Prisma edge it exists to
+    // prevent", and it is not: `@prisma/client` is already eager on this route via
+    // `endpoint-helpers` → `errorHandling` (measured). The enumeration is still the right
+    // assertion, for the reason its own name gives — a THIRD specifier of any kind is
+    // invisible to a presence check — not for a Prisma-specific one. Enumerating also subsumes the
     // namespace and default import forms, which a named-import regex cannot see.
     //
     // Specifiers live in string literals, which `CODE` strips — so this reads RAW, and

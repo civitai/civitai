@@ -94,15 +94,36 @@ export async function isPrivateRunImpression(args: {
     if (!(await isConfirmedNonApprovedAppBlockId(appBlockId))) return false;
 
     // (3) THE KILL-SWITCH, evaluated FOR THIS VIEWER because that is what the predicate
-    // requires and refuses to do itself. Dynamically imported so the beacon route's
-    // import graph does not eagerly pull Flipt in to do nothing — the same reason the
-    // mint defers it.
+    // requires and refuses to do itself.
+    //
+    // ⚠️ DEFERRED, AND THE REASON WRITTEN HERE WAS WRONG. It said the deferral keeps the
+    // beacon route's import graph from "eagerly pulling Flipt in to do nothing".
+    // `~/server/flipt/client` is ALREADY eager on that route — `block-render.ts` imports
+    // `~/server/clickhouse/client`, which re-exports `./tracker`, which value-imports
+    // `isFlipt` from it. What this deferral actually keeps out, measured over the route's
+    // static closure with type-only edges excluded, is 9 modules (this flag service and
+    // its own dependencies) plus `@civitai/flipt/context` and `slugify` — real, but not
+    // the thing the comment named. See the note on gate 3.5 for why the number is quoted
+    // rather than the mechanism.
     const { isAppBlocksPrivateRunEnabled } = await import('~/server/services/app-blocks-flag');
     const privateRunEnabled = await isAppBlocksPrivateRunEnabled({ user: viewer });
     if (!privateRunEnabled) return false;
 
-    // (3.5) THE COST CEILING on the one expensive gate. Deferred like its neighbours so the
-    // beacon route's eager import graph does not pull the Redis client in to do nothing.
+    // (3.5) THE COST CEILING on the one expensive gate.
+    //
+    // 🔴 DEFERRED LIKE ITS NEIGHBOURS, AND THIS ONE HAS NO GRAPH REASON AT ALL — said
+    // plainly rather than replaced with a better-sounding one. The comment here claimed the
+    // deferral keeps "the Redis client" out of the beacon route's eager graph. Both things
+    // it could have meant are already eager on that route: `~/server/redis/client` arrives
+    // via `get-server-auth-session` → `auth/session-client`, and `prom-client` via the
+    // route's own static import of `~/server/metrics/app-block-runtime.metrics`. Measured
+    // over the route's static closure with type-only edges excluded, converting THIS
+    // `await import` to a top-level one would add exactly ONE module — the limiter itself —
+    // and zero packages. (Contrast gate 4, which keeps 23 modules and `jose` out; that one
+    // is load-bearing.) It stays deferred because it is harmless and consistent with its
+    // two neighbours, NOT because it buys anything measurable, and the `await import` COUNT
+    // asserted in `block-render-writer.call-site-ledger.test.ts` is what actually guards
+    // gate 3.5 against removal.
     //
     // 🔴 REFUSED ⇒ `false` ⇒ THE IMPRESSION IS RECORDED. Never `true`: `true` means
     // "suppress", so refusing that way would let any viewer hide their own impressions by

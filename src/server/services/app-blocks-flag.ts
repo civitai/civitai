@@ -648,8 +648,10 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  *      and skip the insert; the canonical reasoning is at `blocks/app-views.service.ts`.
  *      ⚠️ ITS TWO CARRY-OVERS ARE BOTH SATISFIED NOW, and they stay here rather than only
  *      at the read site because each is a CONTROL a later change can remove — a widener
- *      needs to be able to re-check them, and (b) carries residuals that are live by
- *      design. Neither is an open item; the only open item is in the summary below:
+ *      needs to be able to re-check them, and (b) carries residuals that are live. Two of
+ *      those are by design; the THIRD is a scope boundary, not a decision, and is flagged
+ *      as such where it is listed. Neither CARRY-OVER is an open item; the open items are
+ *      that third residual and the one in the summary below:
  *        (a) ✅ SATISFIED. The key EXISTS in `flipt-state`, base-off with no rollout
  *            (`civitai/flipt-state` PR #100, squash `c94c807`; verified present at
  *            `enabled: false`). It had to, because an ABSENT key makes the evaluation
@@ -675,9 +677,17 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  *            COUNT that carries that, NOT the specifier the same test also lists by name:
  *            that one reads RAW source, which the gate's own docblock already satisfies in
  *            prose (measured — removing the call left it green and only the count red), so
- *            do not weaken the count on the strength of it. 🔴 THE RATE LIMIT IS THE
- *            CLOSURE: no fact about this flag's rollout shape substitutes for it.
- *            🔴 WHAT IT DOES NOT CLOSE, and a widener should know both:
+ *            do not weaken the count on the strength of it. 🔴 THE RATE LIMIT BOUNDS THE
+ *            PER-VIEWER COST, AND ONLY THAT — it does NOT substitute for a narrow rollout,
+ *            which is what bounds the AGGREGATE. (This sentence read "THE RATE LIMIT IS THE
+ *            CLOSURE: no fact about this flag's rollout shape substitutes for it", and that
+ *            was stronger than the control: the key is the viewer alone, so the arithmetic
+ *            below multiplies by however many viewers reach it. Gate 2 is
+ *            `trusted && !ids.has(appBlockId)`, i.e. TRUE for any string not in the
+ *            approved set, so the reaching population is "everyone the flag admits who
+ *            sends an unknown id" — and how many people that is, is exactly the rollout
+ *            shape. Both halves matter; neither replaces the other.)
+ *            🔴 WHAT IT DOES NOT CLOSE, and a widener should know all three:
  *              · ABOVE THE CEILING the refused call RECORDS the impression (returning
  *                "suppress" would let a viewer hide their own impressions by exhausting
  *                their own window — a larger defect than the leak). So past 30/min the
@@ -685,9 +695,30 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  *              · DURING A REDIS INCIDENT the limiter fails OPEN, which here means the
  *                expensive query is paid — the cost bound is simply absent, by design,
  *                because a cache incident must not start leaking review activity into an
- *                owner's panel.
- *            Both are instrumented:
- *            `civitai_app_block_private_run_impression_rate_limit_refusals_total`.
+ *                owner's panel. A HANG is part of this arm: the sys client has no socket
+ *                timeout, so the MULTI is raced against the sys read deadline and the
+ *                breach rejects into the same fail-open.
+ *              · 🔴 THE OTHER CALLERS OF THE SAME PREDICATE ARE NOT COVERED BY THIS
+ *                CEILING, and one of them is unbounded. `resolvePrivateRunAccess` has
+ *                three production callers: this gate (the two `blockRenders` writers, now
+ *                bounded), the block-token mint (its own per-IP limiter, 120/60 s), and
+ *                the private-run SSR page route, which takes the slug from the URL and has
+ *                NO rate limit of any kind. So after widening, the predicate's
+ *                write-primary viewer read (`blocks/private-run-access.service.ts`,
+ *                `dbWrite.user.findUnique`) stays drivable at page-load rate from a plain
+ *                GET. Recorded here as a NAMED, STILL-OPEN residual rather than only in a
+ *                PR body, for the reason this whole paragraph exists; it is deliberately
+ *                out of scope for the change that added this ceiling, which was scoped to
+ *                the two writers.
+ *            🔴 INSTRUMENTATION, STATED PER ARM RATHER THAN AS ONE WORD. This sentence
+ *            claimed "Both are instrumented:
+ *            `civitai_app_block_private_run_impression_rate_limit_refusals_total`", and
+ *            that counter covers ONLY the first arm — it grades a ceiling BITING, and two
+ *            suites assert it stays at ZERO on a limiter fault, which is correct and is
+ *            exactly why it cannot carry the second. The refusal arm is the counter; the
+ *            fail-open arm is a structured log — `sysredis-fail-open` /
+ *            `rate-limit-write-degraded`, the subtype that already has a Loki alert. The
+ *            third residual above is instrumented by NOTHING, and saying so is the point.
  *            (Keep this at the level of the control — this repo is public.)
  *   4. ⚖️ `block_buzz_attribution` (owner-visible `buzzPurchased`) — NOT FILTERED, BY
  *      DECISION, and recorded here so the enumeration is not mistaken for complete at
@@ -712,6 +743,11 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  * and BOTH of item 3's carry-overs are now SATISFIED (the flag key exists in `flipt-state`,
  * and the two writers share one rate-limited gate):
  *   · item 1's acceptance check: one real private run, read on the owner's own analytics panel.
+ * ⚠️ THAT COUNT IS SCOPED TO THIS PRECONDITION — owner-visible ANALYTICS INVISIBILITY — and
+ * is not a statement that widening is otherwise free. Item 3(b)'s third residual (the SSR
+ * page route reaching the same predicate with no rate limit) is a COST surface, not an
+ * invisibility one, so it does not belong in this count; it is still a thing a widener
+ * should have read, which is why it is named in 3(b) rather than left to a PR body.
  * All three analytics rails now filter, so the void DOES deliver the invisibility at the row
  * level; what it does not deliver on its own is the evidence that it works end to end, which
  * is what the acceptance check buys. That remaining item is DELIBERATELY NOT CLOSEABLE BY

@@ -471,8 +471,15 @@ describe('isPrivateRunImpression — failures fail TOWARD recording [INV]', () =
     // The limiter must not be able to turn a Redis fault into a gate failure: `block-render.ts`
     // awaits this gate with no try/catch of its own, and the gate's own catch would RECORD the
     // impression — i.e. a Redis blip would start leaking review activity into owners' panels.
-    // So the decision here must be the PREDICATE's (suppress), not the catch's (record), and
-    // the fail-open log must stay silent. That is a stronger claim than `resolves` alone.
+    // So the decision here must be the PREDICATE's (suppress), not the catch's (record).
+    //
+    // 🔴 THE LOG ASSERTION IS BY NAME, AND IT USED TO BE `not.toHaveBeenCalled()` ON THE
+    // WHOLE MOCK. That form conflated two different claims — "the GATE did not fail" and
+    // "nothing was logged at all" — so it blocked instrumenting the limiter's own fail-open
+    // while asserting nothing extra about the gate. Both halves are asserted separately
+    // now: the gate's error line must be ABSENT, and the limiter's fail-open line must be
+    // PRESENT, because a Redis fault that logs nothing anywhere is the reassuring-zero
+    // shape this feature keeps regenerating.
     redisMock.sysRedis.multi.mockImplementation(() => {
       throw new Error('multi threw synchronously');
     });
@@ -485,7 +492,13 @@ describe('isPrivateRunImpression — failures fail TOWARD recording [INV]', () =
       mockAccess.resolvePrivateRunAccess,
       'gate 4 must still be reached'
     ).toHaveBeenCalledTimes(1);
-    expect(loggingMock.logToAxiom, 'this is not a gate failure').not.toHaveBeenCalled();
+    const logged = (loggingMock.logToAxiom.mock.calls as Array<[Record<string, unknown>]>).map(
+      ([payload]) => payload?.name
+    );
+    expect(logged, 'this is not a gate failure').not.toContain(
+      'private-run-impression-gate-failed'
+    );
+    expect(logged, 'but a Redis fault must not be silent either').toEqual(['sysredis-fail-open']);
   });
 
   it('records the impression when the predicate answers a SHAPE it should not', async () => {
@@ -614,6 +627,15 @@ describe('isPrivateRunImpression — the cost ceiling on gate 4', () => {
     );
     expect(mockAccess.resolvePrivateRunAccess).toHaveBeenCalledTimes(1);
     expect(await rateRefusals(), 'a Redis fault is not a refusal').toBe(before);
+    // 🔴 AND IT IS NOT SILENT. The counter staying flat is correct and is exactly why the
+    // incident needs its own signal: with both quiet, a sustained fault — the window in
+    // which the cost bound does not exist — reads as health on everything this path emits.
+    expect(
+      (loggingMock.logToAxiom.mock.calls as Array<[Record<string, unknown>]>).map(
+        ([payload]) => [payload?.name, payload?.subtype] as const
+      ),
+      'the absent cost bound must be observable'
+    ).toEqual([['sysredis-fail-open', 'rate-limit-write-degraded']]);
   });
 
   it('[INV] 🔴 FAILS OPEN on a BAD ANSWER too — a `catch` guards throws, not answers', async () => {
