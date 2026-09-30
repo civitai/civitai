@@ -1,7 +1,8 @@
 -- Sets ModelVersionFlag.NotEvictable (bit 8, see
--- packages/civitai-shared/src/model-version-flags.constants.ts) on the default model of every
--- self-hosted generation ecosystem, so generation nodes keep a copy of each. The mini endpoint
--- reports these as `evictable: false`.
+-- packages/civitai-shared/src/model-version-flags.constants.ts) on an initial, hand-picked set:
+-- the default model of each self-hosted generation ecosystem as of 2026-09-30. The bit is the
+-- source of truth, not that rule -- a new ecosystem or a changed default needs its own UPDATE.
+-- The mini endpoint reports flagged versions as `evictable: false`.
 --
 -- Data only; safe to apply before or after the deploy (code that predates the bit ignores it).
 -- Applied manually per environment; re-runnable.
