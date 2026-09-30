@@ -205,7 +205,12 @@ export const submitEntryHandler = async ({
   input: SubmitEntrySchema;
   ctx: ProtectedContext;
 }) => {
-  return submitEntry({ ...input, userId: ctx.user.id });
+  return submitEntry({
+    ...input,
+    userId: ctx.user.id,
+    isGreen: !!ctx.features?.isGreen,
+    isModerator: ctx.user.isModerator,
+  });
 };
 
 export const getJudgingPairHandler = async ({

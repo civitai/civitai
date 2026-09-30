@@ -1243,7 +1243,9 @@ export const submitEntry = async ({
   crucibleId,
   imageId,
   userId,
-}: SubmitEntrySchema & { userId: number }) => {
+  isGreen = false,
+  isModerator = false,
+}: SubmitEntrySchema & { userId: number; isGreen?: boolean; isModerator?: boolean }) => {
   // Acquire distributed lock to prevent race conditions on entry limit
   const lockAcquired = await acquireEntryLock(crucibleId, userId);
   if (!lockAcquired) {
@@ -1280,7 +1282,12 @@ export const submitEntry = async ({
       },
     });
 
-    if (!crucible || isCrucibleHiddenByScan(crucible, { viewerId: userId })) {
+    const viewer = { viewerId: userId, isGreen, isModerator };
+    if (
+      !crucible ||
+      isCrucibleHiddenByScan(crucible, viewer) ||
+      isCrucibleOffDomain(crucible, viewer)
+    ) {
       return throwNotFoundError('Crucible not found');
     }
 

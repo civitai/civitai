@@ -498,6 +498,7 @@ const crucibleRow = (contentType: MediaType, maxClipSeconds: number | null = nul
   name: 'Test Crucible',
   userId: 99,
   status: CrucibleStatus.Active,
+  buzzType: 'yellow',
   nsfwLevel: 1,
   contentType,
   entryFee: 0,
@@ -707,6 +708,34 @@ describe('createCrucibleInputSchema — video settings', () => {
     expect(Math.max(...CRUCIBLE_MAX_CLIP_SECONDS_OPTIONS)).toBeLessThanOrEqual(
       constants.mediaUpload.maxVideoDurationSeconds
     );
+  });
+});
+
+describe('submitEntry — site', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.image),
+      buzzType: 'green',
+    });
+    dbMock.dbRead.image.findUnique.mockResolvedValue(imageRow(MediaType.image));
+  });
+
+  it("refuses a crucible from the other site before charging, as its pages don't show it", async () => {
+    await expect(
+      submitEntry({ crucibleId: 1, imageId: 7, userId: 42, isGreen: false })
+    ).rejects.toThrow('Crucible not found');
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+  });
+
+  it('gets past the site check on its own site', async () => {
+    const outcome = await submitEntry({
+      crucibleId: 1,
+      imageId: 7,
+      userId: 42,
+      isGreen: true,
+    }).catch((error: Error) => error);
+    expect(outcome instanceof Error ? outcome.message : '').not.toContain('Crucible not found');
   });
 });
 

@@ -8,6 +8,7 @@ import {
   getCrucibleCostBreakdown,
   getCrucibleEditableFields,
   getCrucibleUpdateChanges,
+  getMaxCrucibleSeed,
   getPlaceBuzz,
   getPrizePlaceColor,
   getPrizePlaceLimit,
@@ -18,6 +19,7 @@ import { NsfwLevel } from '~/server/common/enums';
 import { calculateCrucibleSetupCost } from '~/server/schema/crucible.schema';
 import {
   CRUCIBLE_MAX_PRIZE_POSITIONS,
+  CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
   isCustomPrizeDistribution,
 } from '~/shared/constants/crucible.constants';
 import { MediaType } from '~/shared/utils/prisma/enums';
@@ -108,6 +110,25 @@ describe('crucible create draft restore — Buzz type', () => {
     const result = restore({ ...crucibleCreateDefaultValues, buzzType: 'blue' });
     expect(result.success).toBe(true);
     expect(result.success && result.data.buzzType).toBeUndefined();
+  });
+});
+
+describe('getMaxCrucibleSeed', () => {
+  it('caps the seed at the Buzz the creator holds', () => {
+    expect(getMaxCrucibleSeed({ balance: 5_000 })).toBe(5_000);
+  });
+
+  it('never goes above the crucible seed limit, however much Buzz there is', () => {
+    expect(getMaxCrucibleSeed({ balance: 50_000_000 })).toBe(CRUCIBLE_MAX_SEEDED_PRIZE_POOL);
+  });
+
+  it('counts the seed already paid when editing, since it is refunded before the new one is charged', () => {
+    expect(getMaxCrucibleSeed({ balance: 500, paidSeed: 1_000 })).toBe(1_500);
+  });
+
+  it('allows no new Buzz from an empty or negative balance', () => {
+    expect(getMaxCrucibleSeed({ balance: -20 })).toBe(0);
+    expect(getMaxCrucibleSeed({ balance: 0, paidSeed: 300 })).toBe(300);
   });
 });
 

@@ -33,6 +33,7 @@ import { useEffect, useRef, useState } from 'react';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
+import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import { CrucibleCard } from '~/components/Cards/CrucibleCard';
 import { ContentRatingSelect } from '~/components/Challenge/ContentRatingSelect';
 import { ModelVersionMultiSelect } from '~/components/Challenge/ModelVersionMultiSelect';
@@ -45,6 +46,7 @@ import {
   getCrucibleCostBreakdown,
   getCrucibleEditableFields,
   getCrucibleUpdateChanges,
+  getMaxCrucibleSeed,
   getPlaceBuzz,
   getPrizePlaceColor,
   getPrizePlaceLimit,
@@ -119,6 +121,12 @@ const contentTypeOptions: ContentTypeOption[] = [
 
 const formatSeconds = (seconds: number) =>
   seconds < 60 ? `${seconds} seconds` : `${seconds / 60} minute${seconds === 60 ? '' : 's'}`;
+
+/** Stops a value past the limit while typing; the minimum is still applied on blur. */
+const atMost =
+  (max: number) =>
+  ({ floatValue }: { floatValue?: number }) =>
+    floatValue === undefined || floatValue <= max;
 
 const NO_RULE = 0;
 const toVideoRule = (seconds: number | undefined) => seconds || undefined;
@@ -253,8 +261,25 @@ export function CrucibleUpsertWizard(props: Props) {
       : null;
   const prizeSplitError = prizeDistributionError ?? prizePlacesError;
 
+  const {
+    data: { accounts: buzzAccounts },
+  } = useQueryBuzz([buzzType]);
+  const buzzBalance = buzzAccounts.find((account) => account.type === buzzType)?.balance;
+  const maxSeed =
+    buzzBalance === undefined
+      ? CRUCIBLE_MAX_SEEDED_PRIZE_POOL
+      : getMaxCrucibleSeed({ balance: buzzBalance, paidSeed: initialValues?.seededPrizePool });
+  const seedError =
+    !rulesLocked && buzzBalance !== undefined && (values.seededPrizePool ?? 0) > maxSeed
+      ? `You have ${Math.max(
+          0,
+          buzzBalance
+        ).toLocaleString()} ${buzzType} Buzz, so the seed can be at most ${maxSeed.toLocaleString()}.`
+      : null;
+
   const isStep3Valid = () =>
-    rulesLocked || (values.seededPrizePool != null && !prizeDistributionError && !prizePlacesError);
+    rulesLocked ||
+    (values.seededPrizePool != null && !prizeDistributionError && !prizePlacesError && !seedError);
 
   // Clamped so a restored draft can't open past a step it no longer passes.
   const currentStep = Math.min(
@@ -525,6 +550,7 @@ export function CrucibleUpsertWizard(props: Props) {
         leftSection={<CurrencyIcon currency={Currency.BUZZ} type={buzzType} size={16} />}
         min={CRUCIBLE_MIN_ENTRY_FEE}
         max={CRUCIBLE_MAX_ENTRY_FEE}
+        isAllowed={atMost(CRUCIBLE_MAX_ENTRY_FEE)}
         step={10}
         allowNegative={false}
         allowDecimal={false}
@@ -539,6 +565,7 @@ export function CrucibleUpsertWizard(props: Props) {
         description={`How many times can one user enter? (1–${CRUCIBLE_MAX_ENTRIES})`}
         min={1}
         max={CRUCIBLE_MAX_ENTRIES}
+        isAllowed={atMost(CRUCIBLE_MAX_ENTRIES)}
         allowNegative={false}
         allowDecimal={false}
         clampBehavior="blur"
@@ -555,8 +582,10 @@ export function CrucibleUpsertWizard(props: Props) {
           placeholder="No limit"
           min={0}
           max={CRUCIBLE_MAX_TOTAL_ENTRIES}
+          isAllowed={atMost(CRUCIBLE_MAX_TOTAL_ENTRIES)}
           allowNegative={false}
           allowDecimal={false}
+          clampBehavior="blur"
           disabled={rulesLocked}
           clearable
           // Step errors are only re-checked on Next, so a corrected value would keep the old one.
@@ -648,14 +677,16 @@ export function CrucibleUpsertWizard(props: Props) {
       <InputNumber
         name="seededPrizePool"
         label="Seed the Prize Pool"
-        description={
+        description={`${
           crucible
             ? 'Add your own Buzz on top of what entry fees collect. A change is charged or refunded when you save.'
             : 'Add your own Buzz on top of what entry fees collect. Charged when you create the crucible.'
-        }
+        } Up to ${maxSeed.toLocaleString()} Buzz.`}
         leftSection={<CurrencyIcon currency={Currency.BUZZ} type={buzzType} size={16} />}
         min={0}
-        max={CRUCIBLE_MAX_SEEDED_PRIZE_POOL}
+        max={maxSeed}
+        isAllowed={atMost(maxSeed)}
+        error={seedError}
         step={100}
         allowNegative={false}
         allowDecimal={false}

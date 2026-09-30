@@ -162,6 +162,17 @@ export function getPlaceBuzz({
   );
 }
 
+/** The seed comes from the creator's own Buzz; an edit refunds the seed already paid first. */
+export function getMaxCrucibleSeed({
+  balance,
+  paidSeed = 0,
+}: {
+  balance: number;
+  paidSeed?: number;
+}) {
+  return Math.min(CRUCIBLE_MAX_SEEDED_PRIZE_POOL, Math.max(0, Math.floor(balance)) + paidSeed);
+}
+
 export type CrucibleBuzzType = 'green' | 'yellow';
 
 /** Mirrors the server's `isNonSfwForGreen`: a green crucible accepts SFW content only. */
