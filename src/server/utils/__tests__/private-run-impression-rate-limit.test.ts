@@ -121,7 +121,11 @@ function armSysRedis() {
         if (execThrows) throw new Error('redis down');
         // A HANG, not a throw. This is what a silent half-open produces: the command is
         // written, nothing ever answers, and no `catch` anywhere can see it.
-        if (execHangs) return new Promise(() => {});
+        // The executor returns `undefined` rather than being an empty `{}` block: it never
+        // calls resolve or reject either way, so the promise never settles and the arm is
+        // unchanged — but `() => {}` trips `no-empty-function`, and this file is an ADDED
+        // file, where the lint gate is BLOCKING rather than report-only.
+        if (execHangs) return new Promise(() => undefined);
         const real = ops.map((op) => op());
         return execOverride === false ? real : execOverride;
       },
