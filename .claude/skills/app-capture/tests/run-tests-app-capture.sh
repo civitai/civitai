@@ -6173,23 +6173,32 @@ for slug, form in sorted(FORMS.items()):
                                "the anchor disagree" % (slug, box["y"], want_y))
 
 # plan.py emits the key capture.sh branches on, and ONLY for the optional verb
-# 🔴 THE STATE NAME HAS MOVED TWICE AND THAT IS WHY IT IS NAMED HERE, NOT INDEXED.
-# It was "grid", one of the three tab-panel states; 0.4.7 deleted the tab strip and
-# the states became three OVERLAYS (grid-contribute / matchup-detail / prompt-detail);
-# 2026-09-29, app 0.4.11 deleted the Contribute menu too, so `grid-contribute` is gone
-# and the set is five (grids-board / matchups-board / prompts-board / matchup-detail /
-# prompt-detail). ✅ THE NAMING IS DOING ITS JOB: this line went RED on the re-point
-# with `REFUSE[unknown_state]`, which is exactly the visible coupling an index would
-# have hidden — an index would have silently re-pointed at whatever state happened to
-# be first and kept passing. `matchup-detail` is chosen now because it is the only
-# state name that has survived BOTH re-points, so it is the least likely to move again.
-# This check is about the `optional` key, not about which state carries it — but it does
-# need a state with TWO clicks (the dismissal plus one trigger), which rules out
-# `grids-board`: that state clicks nothing but the how-to.
+# 🔴 THE STATE NAME HAS MOVED THREE TIMES AND THAT IS WHY IT IS NAMED HERE, NOT
+# INDEXED. "grid" (a tab panel) -> "matchup-detail" (an overlay, 0.4.7) -> and on
+# 2026-09-30 the two detail states were DELETED outright, because the live store
+# gallery is three shots and the detail assets mapped to none of them. ✅ THE
+# NAMING IS DOING ITS JOB, TWICE NOW: this line went RED with
+# `REFUSE[unknown_state]` on the 0.4.11 re-point AND again on this deletion —
+# exactly the visible coupling an index would have hidden by silently re-pointing
+# at whatever state happened to be first and staying green.
+# This check is about the `optional` key, not about which state carries it — but it
+# does need a state with TWO clicks (the dismissal plus one trigger), which rules
+# out `grids-board`: that state clicks nothing but the how-to.
+# 🔴 THAT REQUIREMENT IS WHY THE DELETION HAD TO BE THOUGHT ABOUT RATHER THAN JUST
+# APPLIED. `matchup-detail` looked like the last two-click state, so removing it
+# looked like it would leave this check with no subject. It does not:
+# `matchups-board` and `prompts-board` each click the how-to and then one
+# `board-nav-*` segment — verified by planning all three survivors (1/2/2 clicks,
+# one optional each). `matchups-board` is taken because it is the FIRST two-click
+# state in the recipe's own order — a rule the next reader can re-apply, not a
+# preference. 🔴 RETAINING ONE DETAIL STATE PURELY TO FEED THIS LINE WAS THE OTHER
+# OPTION AND IT WAS REJECTED: it would make a test the reason a recipe ships an
+# asset the listing does not want. The guard is not weakened to buy that — it
+# still names a state, and it still fails loudly when that state goes away.
 p = subprocess.run(["python3", PLAN, os.path.join(RECIPES, "model-benchmarking.json"),
-                    "--observed", OBS, "--state", "matchup-detail"], capture_output=True, text=True)
+                    "--observed", OBS, "--state", "matchups-board"], capture_output=True, text=True)
 if p.returncode != 0:
-    bad.append("model-benchmarking/matchup-detail did not plan: %s" % p.stderr[:120])
+    bad.append("model-benchmarking/matchups-board did not plan: %s" % p.stderr[:120])
 else:
     steps = json.loads(p.stdout)["steps"]
     opt = [s for s in steps if s.get("optional")]
@@ -6199,7 +6208,7 @@ else:
     elif "howto-dismiss" not in " ".join(opt[0]["argv"]):
         bad.append("the optional step is not the how-to dismissal: %s" % opt[0]["argv"])
     if len(clicks) != 2:
-        bad.append("%d click ops, expected the dismissal plus the overlay trigger" % len(clicks))
+        bad.append("%d click ops, expected the dismissal plus the board-nav trigger" % len(clicks))
     if any(s.get("optional") for s in clicks if "howto-dismiss" not in " ".join(s["argv"])):
         bad.append("a REQUIRED click was marked optional — every selector miss in "
                    "this recipe would go silent")
