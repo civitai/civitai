@@ -27,12 +27,37 @@ const dir = path.dirname(fileURLToPath(import.meta.url));
 const read = (p: string) => stripComments(readFileSync(path.resolve(dir, '..', p), 'utf8'));
 
 const LAYOUTS = [
-  { name: 'retool/user-lookup', file: 'routes/retool/user-lookup/+layout.svelte' },
+  { name: 'retool/user-lookup', file: 'routes/retool/user-lookup/+layout.svelte', paneRem: 14 },
   {
     name: 'audit/generator-restrictions',
     file: 'routes/audit/generator-restrictions/+page.svelte',
+    paneRem: 26,
   },
 ] as const;
+
+/** Tailwind v4 defaults; this app overrides no `--breakpoint-*`. */
+const BREAKPOINT_PX = { sm: 640, md: 768, lg: 1024, xl: 1280, '2xl': 1536 } as const;
+
+/**
+ * Everything between the viewport edge and the content column once the panes sit side by side:
+ * the app sidebar (`SIDEBAR_WIDTH` 16rem, in FLOW from 768px up), the page container's `px-6`,
+ * and the `gap-6` between the panes.
+ *
+ * 🔴 This arithmetic is the whole point of the test below. An earlier revision of this PR moved a
+ * breakpoint to `md` on figures that OMITTED the sidebar, which put the content column at 216px —
+ * narrower than at 767px, where the sidebar is off-canvas. Encoding it here is what stops that
+ * being re-derived wrongly; a change to any of these three constants must be made here too.
+ */
+const SIDEBAR_PX = 256;
+const CONTAINER_PX_6 = 48;
+const GAP_6 = 24;
+
+/**
+ * The floor the sibling layout already sits at: `generator-restrictions` accepts 280px of content
+ * at `lg`. A narrower column than something already shipped is the signal to raise the breakpoint,
+ * not a law of nature — raise this only with a measurement.
+ */
+const MIN_CONTENT_PX = 280;
 
 /**
  * A breakpoint token at the START of a class, so `max-lg:` and `not-lg:` do NOT count.
@@ -42,8 +67,11 @@ const LAYOUTS = [
 const BREAKPOINT = String.raw`(?:^|\s)(?:sm|md|lg|xl|2xl):`;
 
 /**
- * Opening tags, tolerating a `>` inside a quoted value or a `{…}` expression — `onclick={() => x}`
- * and `title="a > b"` are both ordinary Svelte, and a naive `[^>]*` drops the whole element.
+ * Opening tags, tolerating a `>` inside a quoted value (`title="a > b"`) or a simple `{…}`
+ * expression (`onclick={() => x}`) — both ordinary Svelte, and a naive `[^>]*` drops the whole
+ * element. NOT tolerated: a `}` inside a string inside an expression (`{() => go("}")}`), which
+ * ends the `{…}` branch early. That case drops the pane and the control below fails loudly, which
+ * is the acceptable direction.
  */
 const TAGS = /<[a-zA-Z][a-zA-Z0-9-]*(?:"[^"]*"|'[^']*'|\{[^}]*\}|[^>"'{])*>/g;
 
@@ -68,7 +96,7 @@ function panes(source: string): (string | null)[] {
   return tagsMarked(source, 'data-pane').map(classOf);
 }
 
-describe.each(LAYOUTS)('$name stacks instead of pinning a pane', ({ file }) => {
+describe.each(LAYOUTS)('$name stacks instead of pinning a pane', ({ file, paneRem }) => {
   const source = read(file);
 
   // Positive control. Asserts nothing about widths or breakpoints — a control that shares the step
@@ -96,15 +124,32 @@ describe.each(LAYOUTS)('$name stacks instead of pinning a pane', ({ file }) => {
     ).toBe(true);
   });
 
+  it('picks a breakpoint that leaves a usable content column', () => {
+    // The one assertion that would have caught the `md` experiment this PR reverted. At `md` the
+    // app sidebar has just become 256px of FLOW width, so the content column is NARROWER at 768px
+    // than at 767px, where the sidebar is off-canvas.
+    const bp = container(source)?.match(/(?:^|\s)(sm|md|lg|xl|2xl):grid-cols-/)?.[1];
+    if (!bp) return; // the flex idiom; the assertions above already cover it
+    const at = BREAKPOINT_PX[bp as keyof typeof BREAKPOINT_PX];
+    const content = at - SIDEBAR_PX - CONTAINER_PX_6 - paneRem * 16 - GAP_6;
+    expect(
+      content,
+      `at \`${bp}\` (${at}px) this pane leaves ${content}px of content — below the ${MIN_CONTENT_PX}px ` +
+        `the sibling layout already sits at. Raise the breakpoint, or narrow the pane.`
+    ).toBeGreaterThanOrEqual(MIN_CONTENT_PX);
+  });
+
   it('pins no pane to an unconditional width', () => {
-    // Numeric, arbitrary AND keyword: `w-max`/`min-w-fit`/`w-screen`/`basis-full` hold a pane as
-    // firmly as `w-56`, and all three survived while this only checked `[1-9]` or `[`.
-    // `min-w-0` and `w-0` are the opposite of pinning and must not trip it, hence `[1-9]`.
+    // Numeric, arbitrary, and the three CONTENT/VIEWPORT keywords: `w-max`, `w-fit`/`min-w-fit`
+    // and `w-screen` size a pane from something other than its grid track and so can overflow it.
+    // `-full` is deliberately NOT here: `w-full` is 100% of the track, a no-op either side of the
+    // breakpoint and a 72-occurrence idiom in this app, and `basis-full` CAUSES stacking rather
+    // than preventing it. `w-0`/`min-w-0` are likewise not pinning, hence `[1-9]`.
     const pinned = panes(source).filter((c) =>
       // Boundary is any of whitespace, string start, quote or brace — a width INTERPOLATED into a
       // literal class (`class="min-w-0 {x ? 'w-56' : ''}"`) is preceded by a quote, not a space,
       // and an idiom that common must not be a silent hole.
-      new RegExp(String.raw`(?:^|[\s'"{(])(?:min-w|w|basis)-(?:[1-9]|\[|max|fit|screen|full)`).test(
+      new RegExp(String.raw`(?:^|[\s'"{(])(?:min-w|w|basis)-(?:[1-9]|\[|max|fit|screen)`).test(
         c ?? ''
       )
     );
