@@ -866,6 +866,8 @@ export interface RunParamDefaults {
   batchSize: number;
   lrScheduler: string;
   optimizer: string;
+  /** 0 turns it off. The main trainer's base is 0.1, zeroed per model by its `overrides`. */
+  noiseOffset: number;
 }
 
 // Modern caption models cluster on the same values; SD-family and a few others deviate. Every field below
@@ -881,6 +883,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 32,
     resolution: 512,
     batchSize: 4,
+    noiseOffset: 0.1,
     lrScheduler: 'cosine',
     optimizer: 'Adafactor',
   },
@@ -892,6 +895,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 32,
     resolution: 512,
     batchSize: 4,
+    noiseOffset: 0.1,
     lrScheduler: 'cosine',
     optimizer: 'AdamW8Bit',
   },
@@ -903,6 +907,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 32,
     resolution: 512,
     batchSize: 2,
+    noiseOffset: 0.1,
     lrScheduler: 'cosine',
     optimizer: 'AdamW8Bit',
   },
@@ -914,6 +919,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 32,
     resolution: 512,
     batchSize: 4,
+    noiseOffset: 0.1,
     lrScheduler: 'cosine',
     optimizer: 'AdamW8Bit',
   },
@@ -926,6 +932,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 32,
     resolution: 1024,
     batchSize: 4,
+    noiseOffset: 0.1,
     lrScheduler: 'cosine',
     optimizer: 'Adafactor',
   },
@@ -937,6 +944,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 32,
     resolution: 1024,
     batchSize: 4,
+    noiseOffset: 0.1,
     lrScheduler: 'cosine',
     optimizer: 'Adafactor',
   },
@@ -948,6 +956,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 32,
     resolution: 1024,
     batchSize: 4,
+    noiseOffset: 0.1,
     lrScheduler: 'cosine',
     optimizer: 'Adafactor',
   },
@@ -960,6 +969,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 16,
     resolution: 512,
     batchSize: 1,
+    noiseOffset: 0.1,
     lrScheduler: 'cosine',
     optimizer: 'AdamW8Bit',
   },
@@ -971,6 +981,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 16,
     resolution: 512,
     batchSize: 1,
+    noiseOffset: 0.1,
     lrScheduler: 'cosine',
     optimizer: 'AdamW8Bit',
   },
@@ -982,6 +993,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 16,
     resolution: 512,
     batchSize: 1,
+    noiseOffset: 0.1,
     lrScheduler: 'cosine',
     optimizer: 'AdamW8Bit',
   },
@@ -993,6 +1005,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 32,
     resolution: 1024,
     batchSize: 2,
+    noiseOffset: 0,
     lrScheduler: 'constant',
     optimizer: 'AdamW8Bit',
   },
@@ -1004,6 +1017,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 32,
     resolution: 1024,
     batchSize: 2,
+    noiseOffset: 0,
     lrScheduler: 'cosine',
     optimizer: 'Automagic',
   },
@@ -1015,6 +1029,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 32,
     resolution: 1024,
     batchSize: 2,
+    noiseOffset: 0,
     lrScheduler: 'constant',
     optimizer: 'AdamW8Bit',
   },
@@ -1026,6 +1041,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 32,
     resolution: 1024,
     batchSize: 2,
+    noiseOffset: 0,
     lrScheduler: 'constant',
     optimizer: 'AdamW8Bit',
   },
@@ -1037,6 +1053,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 32,
     resolution: 1024,
     batchSize: 1,
+    noiseOffset: 0,
     lrScheduler: 'constant',
     optimizer: 'AdamW8Bit',
   },
@@ -1048,6 +1065,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 32,
     resolution: 1024,
     batchSize: 1,
+    noiseOffset: 0,
     lrScheduler: 'constant',
     optimizer: 'AdamW8Bit',
   },
@@ -1059,6 +1077,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 32,
     resolution: 1024,
     batchSize: 1,
+    noiseOffset: 0,
     lrScheduler: 'constant',
     optimizer: 'AdamW8Bit',
   },
@@ -1070,6 +1089,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 32,
     resolution: 1024,
     batchSize: 1,
+    noiseOffset: 0,
     lrScheduler: 'constant',
     optimizer: 'AdamW8Bit',
   },
@@ -1081,6 +1101,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 32,
     resolution: 512,
     batchSize: 1,
+    noiseOffset: 0,
     lrScheduler: 'constant',
     optimizer: 'AdamW8Bit',
   },
@@ -1092,6 +1113,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 32,
     resolution: 1024,
     batchSize: 1,
+    noiseOffset: 0,
     lrScheduler: 'constant',
     optimizer: 'AdamW8Bit',
   },
@@ -1103,6 +1125,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 32,
     resolution: 1024,
     batchSize: 1,
+    noiseOffset: 0,
     lrScheduler: 'constant',
     optimizer: 'AdamW8Bit',
   },
@@ -1114,6 +1137,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 32,
     resolution: 1024,
     batchSize: 1,
+    noiseOffset: 0,
     lrScheduler: 'constant',
     optimizer: 'AdamW8Bit',
   },
@@ -1125,6 +1149,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 32,
     resolution: 1024,
     batchSize: 1,
+    noiseOffset: 0,
     lrScheduler: 'constant',
     optimizer: 'AdamW8Bit',
   },
@@ -1137,6 +1162,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 16,
     resolution: 512,
     batchSize: 2,
+    noiseOffset: 0.1,
     lrScheduler: 'cosine',
     optimizer: 'AdamW8Bit',
   },
@@ -1149,6 +1175,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 1,
     resolution: 960,
     batchSize: 1,
+    noiseOffset: 0,
     lrScheduler: 'constant',
     optimizer: 'AdamW8Bit',
   },
@@ -1160,6 +1187,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 1,
     resolution: 960,
     batchSize: 1,
+    noiseOffset: 0,
     lrScheduler: 'constant',
     optimizer: 'AdamW8Bit',
   },
@@ -1171,6 +1199,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 1,
     resolution: 960,
     batchSize: 1,
+    noiseOffset: 0,
     lrScheduler: 'constant',
     optimizer: 'AdamW8Bit',
   },
@@ -1182,6 +1211,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 32,
     resolution: 960,
     batchSize: 1,
+    noiseOffset: 0,
     lrScheduler: 'cosine',
     optimizer: 'AdamW8Bit',
   },
@@ -1193,6 +1223,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 32,
     resolution: 960,
     batchSize: 1,
+    noiseOffset: 0,
     lrScheduler: 'cosine',
     optimizer: 'AdamW8Bit',
   },
@@ -1204,6 +1235,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 1,
     resolution: 960,
     batchSize: 1,
+    noiseOffset: 0,
     lrScheduler: 'constant',
     optimizer: 'AdamW8Bit',
   },
@@ -1215,6 +1247,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 32,
     resolution: 960,
     batchSize: 1,
+    noiseOffset: 0,
     lrScheduler: 'constant',
     optimizer: 'AdamW8Bit',
   },
@@ -1227,6 +1260,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 32,
     resolution: 512,
     batchSize: 1,
+    noiseOffset: 0,
     lrScheduler: 'constant',
     optimizer: 'AdamW8Bit',
   },
@@ -1238,6 +1272,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 32,
     resolution: 512,
     batchSize: 1,
+    noiseOffset: 0,
     lrScheduler: 'constant',
     optimizer: 'AdamW8Bit',
   },
@@ -1249,6 +1284,7 @@ export const PARAM_DEFAULTS: Record<string, RunParamDefaults> = {
     networkAlpha: 32,
     resolution: 512,
     batchSize: 1,
+    noiseOffset: 0,
     lrScheduler: 'constant',
     optimizer: 'AdamW8Bit',
   },
@@ -1265,6 +1301,7 @@ const PARAM_FALLBACK: RunParamDefaults = {
   batchSize: 1,
   lrScheduler: 'constant',
   optimizer: 'AdamW8Bit',
+  noiseOffset: 0,
 };
 
 /** SDXL-family cards (tags) allow bigger nets and higher resolution than the base ai-toolkit bounds. */
@@ -1313,6 +1350,8 @@ export const TARGET_STEPS = { min: 1, max: 10000, step: 1 } as const satisfies P
  * these instead of letting the run burn Buzz and hang. Anima's TE training works — don't add it.
  */
 export const TE_TRAINING_UNSUPPORTED = new Set(['krea2']);
+export const TE_TRAINING_UNSUPPORTED_REASON =
+  'its backend cannot train the text encoder, and a run that tries hangs without finishing.';
 
 /** Per-field input bounds for a card — mirrors the ai-toolkit constraints: SDXL-family gets 256-dim nets and
  *  1024–2048 resolution; batch is capped per family; epochs are 1–20; LR is 0–1. */
@@ -1343,3 +1382,77 @@ export function paramBounds(card: ModelCard): Record<string, ParamBound> {
  * `$lib/server/pricing`). PARTIAL: a model the orchestrator can't price is simply absent — there is no
  * static fallback, so callers must handle a missing entry (show "—", not a guessed number). */
 export type FromPrices = Record<string, number>;
+
+/** The AI-Toolkit parameters beyond the core set, gated per model + dataset by
+ *  `extraParamCapabilities`: a field that does nothing for a model (tag shuffling on a caption
+ *  dataset) is hidden with its reason, and `minSnrGamma` is declared only on the SD-family inputs.
+ *  Mirrors the per-model `overrides` in `src/components/Training/Form/TrainingParams.tsx`. */
+export type ExtraParamField =
+  | 'shuffleTokens'
+  | 'keepTokens'
+  | 'minSnrGamma'
+  | 'noiseOffset'
+  | 'flipAugmentation';
+
+export const EXTRA_PARAM_FIELDS: ExtraParamField[] = [
+  'shuffleTokens',
+  'keepTokens',
+  'minSnrGamma',
+  'noiseOffset',
+  'flipAugmentation',
+];
+
+export interface ExtraParamCapability {
+  supported: boolean;
+  /** Shown to the user in place of the field. */
+  reason?: string;
+  bound?: ParamBound;
+}
+
+export interface ExtraParamDefaults {
+  shuffleTokens: boolean;
+  keepTokens: number;
+  minSnrGamma: number;
+  noiseOffset: number;
+  flipAugmentation: boolean;
+}
+
+/** Ecosystems whose ai-toolkit trainer takes Min SNR gamma — the main app only sends it for these two
+ *  (training.orch.ts), so it is never offered elsewhere. */
+const SD_FAMILY_ECOSYSTEMS = new Set(['sd1', 'sdxl']);
+
+/** The recommended values for the extra fields — the Review seed and the "Reset" target. Independent
+ *  of the dataset's label mode: an unsupported field keeps its default and is zeroed at submit. */
+export function extraParamDefaults(card: ModelCard, versionKey: string): ExtraParamDefaults {
+  return {
+    shuffleTokens: false,
+    keepTokens: 0,
+    minSnrGamma: 5,
+    noiseOffset: paramsForVersion(card, versionKey).noiseOffset,
+    flipAugmentation: false,
+  };
+}
+
+export function extraParamCapabilities(
+  card: ModelCard,
+  version: ModelVersionInfo,
+  labelMode: LabelType
+): Record<ExtraParamField, ExtraParamCapability> {
+  const image = card.media === 'image';
+  const tagOnly = {
+    supported: labelMode === 'tag',
+    reason: 'Only applies to tag datasets — this dataset uses captions.',
+  };
+  const imageOnly = { supported: image, reason: `Not used when training on ${card.media}.` };
+  return {
+    shuffleTokens: tagOnly,
+    keepTokens: { ...tagOnly, bound: { min: 0, max: 3, step: 1 } },
+    minSnrGamma: {
+      supported: SD_FAMILY_ECOSYSTEMS.has(version.ecosystem),
+      reason: 'Only SD 1.5 and SDXL-family training uses Min SNR gamma.',
+      bound: { min: 0, max: 20, step: 1 },
+    },
+    noiseOffset: { ...imageOnly, bound: { min: 0, max: 1, step: 0.01 } },
+    flipAugmentation: imageOnly,
+  };
+}

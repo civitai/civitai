@@ -26,6 +26,8 @@
     IconAlertTriangle,
     IconStarFilled,
     IconDownload,
+    IconFileDownload,
+    IconPackages,
     IconPhoto,
     IconArchive,
     IconRepeat,
@@ -51,6 +53,7 @@
   import { mediaCount } from '$lib/data/trainingModels';
   import { directDatasetUrl, handoffReuse, toReuseItems } from '$lib/reuse';
   import { extOfAir, extOfMime } from '$lib/media';
+  import { slugify } from '$lib/slug';
   import { RETENTION_DAYS } from '$lib/orchestrator-core';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
   import { buzzMode } from '$lib/buzz-mode.svelte';
@@ -280,8 +283,13 @@
     if (fromAir && fromAir.length <= 4) return fromAir;
     return extOfMime(mime) ?? 'png';
   }
-  function slug(s: string): string {
-    return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'dataset';
+  function saveBlob(blob: Blob, fileName: string) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   async function fetchDatasetBlob(air: string): Promise<Blob> {
@@ -323,16 +331,41 @@
         downloadError = "Couldn't fetch the dataset images — nothing to download.";
         return;
       }
-      const out = await zip.generateAsync({ type: 'blob' });
-      const url = URL.createObjectURL(out);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${slug(d.name)}-dataset.zip`;
-      a.click();
-      URL.revokeObjectURL(url);
+      saveBlob(await zip.generateAsync({ type: 'blob' }), `${slugify(d.name, 'dataset')}-dataset.zip`);
     } finally {
       downloading = false;
     }
+  }
+
+  let archiving = $state(false);
+  let archiveError = $state('');
+  // A blob KEY, not a URL: a legacy run's epochs download one by one from signed URLs but name no
+  // blob the archive could include.
+  const archivableEpochs = $derived(d.epochs.filter((e) => e.modelKey).length);
+  async function downloadAllCheckpoints() {
+    if (archiving) return;
+    archiving = true;
+    archiveError = '';
+    try {
+      const { url } = await backend().epochArchive(d.workflowId);
+      const a = document.createElement('a');
+      a.href = url;
+      // New tab: an attachment response downloads there; a failed one can't replace the run page.
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.click();
+    } catch (e) {
+      archiveError = e instanceof Error ? e.message : "Couldn't build the archive.";
+    } finally {
+      archiving = false;
+    }
+  }
+
+  function downloadSettings() {
+    saveBlob(
+      new Blob([JSON.stringify(d.settings, null, 2)], { type: 'application/json' }),
+      `${slugify(d.name, 'training')}-training-settings.json`
+    );
   }
 
   // Reuse this run's already-scanned dataset blobs as-is (no re-upload) to seed a new training.
@@ -658,6 +691,24 @@
         </dd>
       </div>
     </dl>
+    <div class="mt-3 flex flex-wrap items-center gap-2 border-t border-dark-4 pt-3">
+      <span class="font-mono text-xs uppercase tracking-wider text-dark-2">Download</span>
+      {#if archivableEpochs > 0}
+        <Button size="sm" variant="outline" disabled={archiving} onclick={downloadAllCheckpoints}
+          title="One zip with every ready checkpoint's weights and sample images">
+          <IconPackages size={14} stroke={2} />
+          {archiving
+            ? 'Building archive…'
+            : `All ${archivableEpochs} checkpoint${archivableEpochs === 1 ? '' : 's'} (.zip)`}
+        </Button>
+      {/if}
+      <Button size="sm" variant="ghost" onclick={downloadSettings} title="The run's effective training configuration as JSON">
+        <IconFileDownload size={14} stroke={2} />Settings (.json)
+      </Button>
+      {#if archiveError}
+        <span class="font-mono text-xs text-red-400">{archiveError}</span>
+      {/if}
+    </div>
   </header>
 
   {#if d.state === 'training'}
