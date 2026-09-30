@@ -1,11 +1,12 @@
 import { Checkbox, Input, Stack, Textarea } from '@mantine/core';
 import { AccordionLayout } from '~/components/generation_v2/AccordionLayout';
-import { Controller, useField } from 'form-graph/react';
+import { Controller, MultiController, useField } from 'form-graph/react';
 
 import { GenerationTextEditor } from '~/components/Generate/Input/GenerationTextEditor';
 import { PromptEditorShell } from '~/components/Generate/Input/PromptEditorShell';
 import { ImageUploadMultipleInput } from '~/components/generation_v2/inputs/ImageUploadMultipleInput';
 import { ResourceSelectInput } from '~/components/generation_v2/inputs/ResourceSelectInput';
+import { ResourceAlerts } from '~/components/generation_v2/ResourceAlerts';
 import { SeedInput } from '~/components/generation_v2/inputs/SeedInput';
 import { SliderInput } from '~/components/generation_v2/inputs/SliderInput';
 import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControlWrapper';
@@ -59,6 +60,11 @@ export function AudioGenerationForm({ store }: { store: GenerationStore }) {
             </>
           );
         }}
+      />
+      <MultiController
+        graph={audioHub}
+        names={['model'] as const}
+        render={({ values }) => <ResourceAlerts model={values.model} />}
       />
       <GateRuleWarnings />
       <Controller
