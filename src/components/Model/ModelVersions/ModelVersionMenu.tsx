@@ -28,6 +28,7 @@ import { getModelUrl } from '~/utils/string-helpers';
 import { PAID_ACCESS_REFUND_WINDOW_DAYS } from '~/server/utils/early-access-helpers';
 import { moderatorModelVersionLookupPath } from '~/shared/constants/moderator-app';
 import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
+import { getEvictableAction } from '~/components/Model/ModelVersions/evictable-action';
 
 export function ModelVersionMenu({
   modelVersionId,
@@ -113,20 +114,18 @@ export function ModelVersionMenu({
       }),
   });
 
+  const evictableAction = getEvictableAction(evictable);
   const handleToggleEvictable = () => {
-    const label = evictable ? 'Mark not evictable' : 'Mark evictable';
     dialogStore.trigger({
       id: 'toggle-evictable',
       component: ConfirmDialog,
       props: {
-        title: label,
-        message: evictable
-          ? "Generation nodes will be told not to evict the last copy of this version's files."
-          : "Generation nodes may evict the last copy of this version's files when they need space.",
-        labels: { cancel: 'Cancel', confirm: label },
+        title: evictableAction.label,
+        message: evictableAction.message,
+        labels: { cancel: 'Cancel', confirm: evictableAction.label },
         onConfirm: () =>
           setEvictableMutation
-            .mutateAsync({ id: modelVersionId, evictable: !evictable })
+            .mutateAsync({ id: modelVersionId, evictable: evictableAction.next })
             .catch(() => null),
       },
     });
@@ -466,7 +465,7 @@ export function ModelVersionMenu({
                 handleToggleEvictable();
               }}
             >
-              {evictable ? 'Mark not evictable' : 'Mark evictable'}
+              {evictableAction.label}
             </Menu.Item>
           </>
         )}
