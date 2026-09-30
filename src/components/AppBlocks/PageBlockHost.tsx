@@ -3642,10 +3642,29 @@ export function PageBlockHost({
       const { requestId, baseModelGroup } = req;
 
       // Normalize the optional family hint through getBaseModelGroup (accepts an
-      // ecosystem key like 'Flux1' OR a baseModel name like 'Flux.1 D'). Empty /
-      // unresolved group → baseModels:[] → no checkpoints rather than all
-      // families (matching IframeHost: "all" would include incompatible families
-      // that 400 at submit).
+      // ecosystem key like 'Flux1' OR a baseModel name like 'Flux.1 D'). An
+      // absent/unresolved group → baseModels:[] → NO baseModel narrowing: the
+      // modal emits the bare `type = Checkpoint` clause, so it returns ALL
+      // checkpoints (still gated by `canGenerate`), NOT a subset and NOT none.
+      // Identical mechanism to OPEN_RESOURCE_PICKER above — same expression,
+      // same `resources:[{type, baseModels}]`, same modal. That is intentional
+      // and safe for the same reason: the server is the authority on family
+      // compatibility at spend, so an incompatible pick is rejected there rather
+      // than being silently filtered out of the picker here.
+      //
+      // This comment used to claim the opposite ("no checkpoints rather than all
+      // families"). It was wrong. Three layers each special-case the empty array
+      // as "no narrowing": ResourceSelectProvider (`resourceBaseModels.length > 0
+      // ? … : filterBaseModels`), `selectableVersions` in resource-select.types
+      // (`modelBaseModels.length === 0 ||`), and the query builder in
+      // resource-select.service (`_baseModels.length ? and(eq(type), inArray(…))
+      // : eq(type)`).
+      //
+      // NB `getBaseModelGroup('')` returns the REAL ecosystem key 'Other', not
+      // null — so an empty string is NOT an "unconstrained" hint, it narrows to
+      // the Other family. resolveCheckpointPickerRequest already strips '' to
+      // undefined, which is what keeps the guard below correct; callers wanting
+      // an unconstrained pick must OMIT the key rather than send ''.
       const groupKey = baseModelGroup ? getBaseModelGroup(baseModelGroup) : null;
       const baseModels = groupKey ? getBaseModelsByGroup(groupKey) : [];
 

@@ -2267,9 +2267,25 @@ export function IframeHost({
       // The block may send either an ecosystem key ('Flux1') or a baseModel
       // name ('Flux.1 D'). Normalize through getBaseModelGroup — it accepts
       // both forms and returns the ecosystem key, which is what
-      // getBaseModelsByGroup expects. Empty filter → no checkpoints at all
-      // rather than all checkpoints, since "all" includes incompatible
-      // families that would 400 at submit.
+      // getBaseModelsByGroup expects. An ABSENT baseModelGroup → groupKey null →
+      // baseModels:[] → NO baseModel narrowing: the modal emits the bare
+      // `type = Checkpoint` clause and returns ALL checkpoints (still gated by
+      // `canGenerate`). That is safe because the server is the authority on
+      // family compatibility at spend — an incompatible pick is rejected there,
+      // not silently filtered out of the picker here.
+      //
+      // This comment used to claim an empty filter yielded "no checkpoints at
+      // all rather than all checkpoints". It was wrong: the empty array is
+      // special-cased as "no narrowing" by ResourceSelectProvider, by
+      // `selectableVersions` in resource-select.types, and by the query builder
+      // in resource-select.service.
+      //
+      // 🔴 An EMPTY STRING is not the same as absent here. `getBaseModelGroup('')`
+      // returns the REAL ecosystem key 'Other', so `baseModelGroup: ''` narrows
+      // the picker to the Other family rather than widening it. Unlike the page
+      // host — whose resolveCheckpointPickerRequest strips '' to undefined —
+      // this handler passes any string straight through, so a block wanting an
+      // unconstrained pick must OMIT the key.
       const groupKey =
         typeof raw.baseModelGroup === 'string' ? getBaseModelGroup(raw.baseModelGroup) : null;
       const baseModels = groupKey ? getBaseModelsByGroup(groupKey) : [];
