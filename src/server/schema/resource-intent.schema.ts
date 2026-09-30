@@ -1,7 +1,11 @@
 import { createHash } from 'crypto';
 import * as z from 'zod';
 
-import type { JevQuestionSpec } from '~/server/services/ai/jev';
+// `JEV_MAX_CHOICE_OPTIONS` is the VENDOR's cap and belongs to the client that
+// enforces it — imported rather than restated, so the constraint has ONE edit
+// site. A second copy here would let `STAGE3_MAX_RANKED` derive from a stale
+// value the day the vendor's limit moves.
+import { JEV_MAX_CHOICE_OPTIONS, type JevQuestionSpec } from '~/server/services/ai/jev';
 import { ModelType } from '~/shared/utils/prisma/enums';
 
 /**
@@ -17,9 +21,6 @@ import { ModelType } from '~/shared/utils/prisma/enums';
 export const QUESTION_SPEC_VERSION = 1;
 export const RESOURCE_INTENT_CRITERIA_VERSION = 1;
 
-// Jev Choice is capped at 255 options by the vendor. Stage 3 always appends the
-// `none` fallback, so the shortlist it ranks must leave room for it.
-export const JEV_MAX_CHOICE_OPTIONS = 255;
 // The number of shortlist entries stage 3 can actually rank: the vendor's
 // option budget minus the `none` fallback. `RESOURCE_INTENT_MAX_SHORTLIST`
 // remains the response/limit cap — a 255-entry shortlist ships, its last
@@ -212,7 +213,3 @@ export const resourceIntentResponseSchema = z.strictObject({
 });
 
 export type ResourceIntentResponse = z.infer<typeof resourceIntentResponseSchema>;
-
-export function resourceIntentSpecHash(): string {
-  return RESOURCE_INTENT_SPEC_HASH;
-}

@@ -19,8 +19,9 @@ import { extractJson } from '~/server/services/ai/json-extract';
  *
  * Model pin: `AI_MODELS.JEV` (numbered) — `provider.allowFallbacks` is FALSE so
  * OpenRouter cannot silently route the call to a different model and make the
- * recorded `model` a lie. The direct-API seam (`TYPESAFE_API_KEY`) keeps the
- * same interface but is deliberately unimplemented.
+ * recorded `model` a lie. The numbering is not stylistic: measured 2026-09-30,
+ * `typesafe/jev-1.13` resolves (one endpoint, 32k ctx) while `typesafe/jev-latest`
+ * returns 404, so an unnumbered slug does not exist to fall back to.
  */
 
 export type JevChoiceQuestion = {
@@ -297,11 +298,11 @@ export async function askJev(
   return { answers, usage, model };
 }
 
-/**
- * Direct-API seam (`api.typesafe.ai`) — kept at the same interface so a future
- * vendor switch is a transport swap only. NOT implemented: OpenRouter is the
- * only wired path (the org's key already flows; no new egress or secret).
+/*
+ * There is deliberately NO direct-`api.typesafe.ai` seam here. An earlier draft
+ * shipped one as a function that only ever threw, plus a `TYPESAFE_API_KEY` env
+ * entry nothing read. It bought nothing: `askJev` is already the interface a
+ * transport swap would replace, and the direct path additionally needs a SOPS
+ * secret and an egress decision that no stub can pre-make. Add it when it is
+ * wired, not before.
  */
-export async function askJevTypesafeDirect(): Promise<JevResponse> {
-  fail('not-configured', 'TYPESAFE direct API seam is not implemented; use the OpenRouter path');
-}
