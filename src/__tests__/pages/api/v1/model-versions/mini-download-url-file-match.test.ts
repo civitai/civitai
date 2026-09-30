@@ -70,6 +70,7 @@ import handler from '~/pages/api/v1/model-versions/mini/[id]';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { modelVersionToAir } from '~/server/utils/resource-air';
+import { ModelVersionFlag } from '~/shared/constants/model-version-flags.constants';
 
 const VERSION_ID = 555;
 const OWNER_ID = 4242;
@@ -232,6 +233,7 @@ type Body = {
   hashes: Record<string, string>;
   downloadUrls: string[];
   isPromoted?: boolean;
+  evictable?: boolean;
 };
 
 async function run(
@@ -783,5 +785,31 @@ describe('GET /api/v1/model-versions/mini/[id] — the generation file', () => {
 
     expect(miniType).toBe('diffusionmodel');
     expect(lastAirArgs()?.type).toBe(miniType);
+  });
+});
+
+describe('evictable', () => {
+  it.each([
+    [0, true],
+    [ModelVersionFlag.NotEvictable, false],
+    [ModelVersionFlag.NotEvictable | ModelVersionFlag.GenerationDisabled, false],
+    [ModelVersionFlag.GenerationDisabled | ModelVersionFlag.NotDerivative, true],
+  ])('versionFlags %i -> evictable %s', async (versionFlags, evictable) => {
+    const { status, body } = await run([SAFETENSOR], {}, { versionFlags });
+    expect(status).toBe(200);
+    expect(body.evictable).toBe(evictable);
+  });
+
+  it('is the same whichever file the caller asks about', async () => {
+    const versionFlags = ModelVersionFlag.NotEvictable;
+    const byDefault = await run([SAFETENSOR, GGUF], {}, { versionFlags });
+    const byFileId = await run(
+      [SAFETENSOR, GGUF],
+      { modelFileId: String(GGUF.id) },
+      { versionFlags }
+    );
+    expect(byFileId.body.fileName).toBe(GGUF.name);
+    expect(byDefault.body.evictable).toBe(false);
+    expect(byFileId.body.evictable).toBe(false);
   });
 });

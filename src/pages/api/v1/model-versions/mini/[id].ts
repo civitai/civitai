@@ -29,6 +29,7 @@ import { Availability, ModelFileVisibility } from '~/shared/utils/prisma/enums';
 import { stringifyAIR } from '~/shared/utils/air';
 import { Flags } from '~/shared/utils/flags';
 import { UserFlag } from '~/shared/constants/user-flags.constants';
+import { isEvictable } from '~/shared/constants/model-version-flags.constants';
 
 export const schema = z.object({
   // Bound to Postgres int4 (the `ModelVersion.id` column type, max 2147483647).
@@ -501,6 +502,7 @@ export default MixedAuthEndpoint(async function handler(
     canGenerate,
     isFeatured,
     isPromoted: modelVersion.isPromoted,
+    evictable: isEvictable(modelVersion.versionFlags),
     requireAuth: modelVersion.requireAuth,
     checkPermission: modelVersion.checkPermission,
     earlyAccessEndsAt: modelVersion.checkPermission ? modelVersion.earlyAccessEndsAt : undefined,
