@@ -674,10 +674,14 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  *            writer is added, removed, or stops calling that gate — and the SAME file pins
  *            the ceiling itself by asserting the gate's `await import` COUNT, so deleting
  *            gate 3.5 is a RED TEST rather than a silently-reopened item. ⚠️ It is the
- *            COUNT that carries that, NOT the specifier the same test also lists by name:
- *            that one reads RAW source, which the gate's own docblock already satisfies in
- *            prose (measured — removing the call left it green and only the count red), so
- *            do not weaken the count on the strength of it. 🔴 THE RATE LIMIT BOUNDS THE
+ *            COUNT that carries that IN THAT FILE, NOT the specifier the same test also
+ *            lists by name: that one reads RAW source, which the gate's own docblock
+ *            already satisfies in prose (measured — removing the call left it green and,
+ *            within that file, only the count red), so do not weaken the count on the
+ *            strength of it. ⚠️ SCOPE THAT HONESTLY: repo-wide a deletion reddens EIGHT
+ *            tests across two files, the other seven being the gate's own behavioural
+ *            suite, so the count is this ledger's guard rather than the only one anywhere.
+ *            🔴 THE RATE LIMIT BOUNDS THE
  *            PER-VIEWER COST, AND ONLY THAT — it does NOT substitute for a narrow rollout,
  *            which is what bounds the AGGREGATE. (This sentence read "THE RATE LIMIT IS THE
  *            CLOSURE: no fact about this flag's rollout shape substitutes for it", and that

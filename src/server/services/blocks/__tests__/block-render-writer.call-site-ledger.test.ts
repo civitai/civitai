@@ -245,13 +245,30 @@ describe('the blockRenders writer set — the ledger [INV]', () => {
     // Converting any of the three `await import(...)`s to a top-level import type-checks and
     // keeps every other suite green.
     //
-    // ⚠️ AND SAY WHICH MUTATION, because "this count is the only thing that notices" — what
-    // this line used to claim — is too wide. The count is the unique guard against a
-    // deferral being DELETED. Against a CONVERSION to a static import it is not: the
+    // ⚠️ AND SAY WHICH MUTATION, because "this count is the only thing that notices" — the
+    // first wording here — is too wide. So was its replacement, "the count is the UNIQUE
+    // guard against a deferral being DELETED", which stood until this round and is what the
+    // measurement below refutes: deleting gate 3.5 outright reddens EIGHT tests across TWO
+    // files, and this count is ONE OF EIGHT. The other seven live in
+    // `blocks/__tests__/private-run-impression.service.test.ts`, drive the gate for real and
+    // assert `redisMock.sysRedis.multi` was consulted (or not) on each path, so a deletion
+    // cannot get past them either. What IS true of the count: it is the only case in THIS
+    // file that a deletion reddens — measured, 1 failed / 12 passed here, and the message
+    // that fires is the `toBe(3)` below.
+    //
+    // Against a CONVERSION to a static import the count is not the guard either: the
     // enumerated-specifier assertion at the end of this same test would catch that
     // independently, since the new specifier joins the static list. It simply never gets
     // the chance, because the count assertion aborts the `it` first. Two guards, one
-    // reachable — worth knowing before anyone "simplifies" either of them away.
+    // reachable — worth knowing before anyone "simplifies" either of them away, and worth
+    // reading the sibling docblock in `~/server/services/app-blocks-flag` at the size it
+    // states rather than as a claim that this count is the last line of defence.
+    //
+    // 🔴 AND THAT IS THE THIRD UNCHECKED SUPERLATIVE THIS AUDIT LADDER HAS CORRECTED IN
+    // THIS FILE — the second on this sentence alone. A fourth is the likely next one, so:
+    // before writing "only", "unique", "the one thing", run the mutation and COUNT THE
+    // REDS. A narrowed superlative is still a superlative; this round replaced one with an
+    // arithmetic fact on purpose.
     //
     // ⚠️ AND THE JUSTIFICATION THAT USED TO BE HERE IS FALSE, so read the sizes rather than
     // the story. It said a conversion "silently drags Flipt, Prisma and the app-blocks

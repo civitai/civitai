@@ -125,6 +125,9 @@ function armSysRedis() {
         // calls resolve or reject either way, so the promise never settles and the arm is
         // unchanged — but `() => {}` trips `no-empty-function`, and this file is an ADDED
         // file, where the lint gate is BLOCKING rather than report-only.
+        // 🔴 The never-settling property is ASSERTED, not merely written: `settleAcrossDeadline`
+        // reads whether the call answered at t=0, and swapping this for `Promise.resolve()`
+        // reddens both hang arms. It used to redden nothing.
         if (execHangs) return new Promise(() => undefined);
         const real = ops.map((op) => op());
         return execOverride === false ? real : execOverride;
@@ -142,6 +145,53 @@ async function refusals(): Promise<number> {
   if (!metric) return 0;
   const { values } = await metric.get();
   return values.reduce((sum, v) => sum + v.value, 0);
+}
+
+/** The call has not answered yet. A value no limiter result can equal. */
+const PENDING = Symbol('PENDING');
+
+/**
+ * Comfortably past any configured `REDIS_SYS_READ_TIMEOUT_MS`. Fake time, so its size is
+ * free — it is a ceiling on the deadline, not a wait.
+ */
+const PAST_ANY_DEADLINE_MS = 60_000;
+
+/**
+ * Drive ONE limiter call across the sys read deadline on a FAKE clock, reporting what it
+ * had answered BEFORE the clock moved and what it answered after.
+ *
+ * 🔴 THE `beforeDeadline` READ IS THE POINT, AND IT IS WHAT THE PREVIOUS SHAPE LACKED.
+ * This pair used to race the call against a real 8 s sentinel and assert only the final
+ * answer. That assertion is satisfied by ANY fail-open, including an instant one:
+ * measured, replacing the hang fixture with `Promise.resolve(undefined)` — which settles
+ * immediately into the MALFORMED-REPLY arm, also `{ allowed: true }`, also
+ * `rate-limit-write-degraded`, also zero refusals — left the whole suite green (27/27, the
+ * two hang arms 0 ms each and the file's test time 10 ms against 4.02 s). So the arms'
+ * titles claimed a hang while nothing pinned one. `beforeDeadline` is the discriminator: a
+ * hang cannot be answered at t=0, an instant settle can be answered at nothing else.
+ *
+ * Fake timers rather than a latency floor because the floor costs a real 2 s per arm and
+ * buys a weaker claim — this pins WHEN, deterministically, at no wall-clock cost.
+ */
+async function settleAcrossDeadline(): Promise<{
+  beforeDeadline: unknown;
+  afterDeadline: unknown;
+}> {
+  vi.useFakeTimers();
+  try {
+    let settled: unknown = PENDING;
+    void checkPrivateRunImpressionRateLimit(VIEWER).then((result) => {
+      settled = result;
+    });
+    // Advancing by ZERO still flushes the microtask queue, so anything that can answer
+    // without a timer has answered by the next line.
+    await vi.advanceTimersByTimeAsync(0);
+    const beforeDeadline = settled;
+    await vi.advanceTimersByTimeAsync(PAST_ANY_DEADLINE_MS);
+    return { beforeDeadline, afterDeadline: settled };
+  } finally {
+    vi.useRealTimers();
+  }
 }
 
 beforeEach(() => {
@@ -293,8 +343,11 @@ describe('checkPrivateRunImpressionRateLimit — a sysRedis HANG [REG]', () => {
    * TWO ARMS ON PURPOSE. Arm A is the POSITIVE CONTROL: it proves this probe can observe a
    * fail-open at all, so arm B settling is a claim about the deadline rather than about a
    * limiter that can only ever answer `allowed`. Watched red-then-green: with the
-   * `withSysReadDeadline` wrapper removed, arm A stays GREEN and arm B FAILS on the
-   * sentinel — i.e. the pair separates the two mechanisms rather than merely failing.
+   * `withSysReadDeadline` wrapper removed, arm A stays GREEN and arm B FAILS on its
+   * `afterDeadline` assertion — i.e. the pair separates the two mechanisms rather than
+   * merely failing. The arms read OPPOSITE halves of the same probe: A asserts an answer
+   * at t=0, B asserts the ABSENCE of one, which is why a fixture that stops hanging breaks
+   * exactly one of them.
    *
    * The wrapper here is the REAL one: `~/__tests__/mocks/redis.mock` defaults the
    * `withSysReadDeadline` seam to the real implementation, so this exercises the shipped
@@ -302,29 +355,26 @@ describe('checkPrivateRunImpressionRateLimit — a sysRedis HANG [REG]', () => {
    * rejection shape could differ from it. That is the whole point — the finding was about
    * assuming a failure mode instead of reading it.
    */
-  /** Comfortably past the shipped read deadline; only a genuinely unbounded await hits it. */
-  const NEVER_SETTLED_AFTER_MS = 8_000;
-  const SENTINEL = 'NEVER SETTLED' as const;
-
-  async function raceAgainstSentinel(): Promise<unknown> {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const sentinel = new Promise<typeof SENTINEL>((resolve) => {
-      timer = setTimeout(() => resolve(SENTINEL), NEVER_SETTLED_AFTER_MS);
-    });
-    return Promise.race([checkPrivateRunImpressionRateLimit(VIEWER), sentinel]).finally(() => {
-      if (timer) clearTimeout(timer);
-    });
-  }
-
-  it('ARM A — POSITIVE CONTROL: a REJECTING exec settles fail-open well inside the sentinel', async () => {
+  it('ARM A — POSITIVE CONTROL: a REJECTING exec settles fail-open BEFORE any clock moves', async () => {
     execThrows = true;
-    expect(await raceAgainstSentinel()).toEqual({ allowed: true });
+    const { beforeDeadline } = await settleAcrossDeadline();
+    expect(
+      beforeDeadline,
+      'a rejection needs no deadline — if this is PENDING the probe cannot observe a fail-open at all'
+    ).toEqual({ allowed: true });
   });
 
-  it('🔴 ARM B: a NEVER-SETTLING exec still settles fail-open, bounded by the read deadline', async () => {
+  it('🔴 ARM B: a NEVER-SETTLING exec is still PENDING at t=0 and fails open once the deadline fires', async () => {
     execHangs = true;
+    const { beforeDeadline, afterDeadline } = await settleAcrossDeadline();
+    // 🔴 THE HANG HALF, and the assertion this arm did not have. Until this line the arm
+    // was satisfied by a fixture that did not hang at all — see the helper's note.
     expect(
-      await raceAgainstSentinel(),
+      beforeDeadline,
+      'a hang must NOT be answerable at t=0 — if it is, this fixture is not hanging and the arm is vacuous'
+    ).toBe(PENDING);
+    expect(
+      afterDeadline,
       'an unbounded sysRedis await parks the beacon handler — it must be raced against the sys read deadline'
     ).toEqual({ allowed: true });
     // A hang is a limiter fault, not a ceiling biting: the counter grades refusals.
@@ -419,8 +469,19 @@ describe('checkPrivateRunImpressionRateLimit — the fail-open SAYS SO [REG]', (
 
   it('🔴 a deadline-bounded HANG emits it too — the arm an incident actually produces', async () => {
     execHangs = true;
-    expect(await checkPrivateRunImpressionRateLimit(VIEWER)).toEqual({ allowed: true });
-    expect(failOpenLogs().map((l) => l.subtype)).toEqual(['rate-limit-write-degraded']);
+    const { beforeDeadline, afterDeadline } = await settleAcrossDeadline();
+    // Same vacuity as the HANG describe, and the same cure: without this the case passed
+    // on a fixture that settled instantly into the malformed-reply arm.
+    expect(beforeDeadline, 'a hang must not be answerable at t=0').toBe(PENDING);
+    expect(afterDeadline).toEqual({ allowed: true });
+    const logs = failOpenLogs();
+    expect(logs.map((l) => l.subtype)).toEqual(['rate-limit-write-degraded']);
+    // 🔴 AND THE `fn`, BECAUSE THE SUBTYPE ALONE CANNOT TELL THE ARMS APART. The
+    // malformed-reply arm emits the SAME subtype under a different `fn`, so asserting the
+    // subtype is satisfied by the wrong arm. This spelling is the `catch`'s.
+    expect(logs[0].fn, 'the deadline breach must land in the catch, not the reply guard').toBe(
+      'checkPrivateRunImpressionRateLimit'
+    );
   });
 
   it('🔴 a BAD ANSWER emits it too — a `catch` never runs, so it would stay silent', async () => {
