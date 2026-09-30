@@ -484,34 +484,60 @@ export function resolveGetImagesByIdsRequest(raw: unknown): GetImagesByIdsReques
 }
 
 // ── NAVIGATE (#5209) ─────────────────────────────────────────────────────────
-// A block asks the host to navigate. TWO scopes, discriminated by a LEADING
-// SLASH, and that is the whole contract:
+// A block asks the host to navigate. TWO spaces, selected by an EXPLICIT `scope`
+// field on the payload, and that is the whole contract:
 //
-//   `navigate('/models/500')`  → SITE-ABSOLUTE. The host leaves the app and
-//                                lands on the site page. Unrestricted across
-//                                page routes — there is deliberately NO
-//                                destination allowlist (see the posture note
-//                                below).
-//   `navigate('detail/500')`   → APP-SCOPED. Resolved under the block's own
-//                                route (`<base>/<slug>/detail/500`), shallow, so
-//                                the page stays mounted and the sub-path change
-//                                reflects back into the block. Unchanged
-//                                behaviour.
+//   { scope: 'app',  path: 'detail/500' }  → APP-SCOPED, and the DEFAULT.
+//        Resolved under the block's own route (`<base>/<slug>/detail/500`),
+//        shallow, so the page stays mounted and the sub-path change reflects back
+//        into the block through ROUTE_CHANGED. This is the pre-#5209 behaviour.
+//   { scope: 'site', path: 'models/500' }  → SITE-ABSOLUTE. The host leaves the
+//        app and lands on the site page, non-shallow. Unrestricted across page
+//        routes — there is deliberately NO destination allowlist — except the one
+//        narrow `/api/*` refusal, and only on a surface that HOLDS the capability
+//        (`BLOCK_HOST_SITE_NAVIGATION`).
 //
-// 🔴 THE LEADING SLASH USED TO BE DISCARDED, AND THAT IS THE DEFECT (#5209).
-// The handler ran `rawPath.replace(/^\/+/, '')` first, so `/models/500` and
-// `models/500` resolved IDENTICALLY — both under the app's own route. A block
-// calling the SDK's own documented example (`navigate('/models/12345')`) got a
-// URL-bar change, no page change, and a URL that 404s on reload. The signal that
-// distinguishes the two intents was destroyed before anything could read it.
+// 🔴 `scope` DEFAULTS TO `'app'`, AND THAT DEFAULT IS THE POINT, not a
+// convenience. Every block deployed today sends no `scope` at all, so every one
+// of them keeps exactly the behaviour it had before this change — for `'/x'` and
+// for `'x'` alike. A host that cannot be rolled out without re-releasing the
+// fleet is not a host change, it is a fleet migration.
 //
-// WHY THE LOOSER POSTURE IS THE CORRECT ONE, not a relaxation:
-//   - The DEV host already behaves this way. `@civitai/blocks-react`'s
-//     `liveHost` resolves the path against the backend origin and assigns it,
-//     with a comment saying "so an in-app path (`/models/123`) opens on the real
-//     site".
-//   - The published SDK JSDoc and the developer docs both promise it, and both
-//     use `/models/12345` as the worked example.
+// 🔴 A LEADING SLASH CARRIES NO MEANING. `scope` selects the space and `path` is
+// a path WITHIN that space, so leading slashes are NORMALISED AWAY:
+// `{scope:'app', path:'/settings'}` and `{scope:'app', path:'settings'}` are one
+// request, as are `{scope:'site', path:'/models/500'}` and
+// `{scope:'site', path:'models/500'}`. DO NOT reintroduce punctuation semantics
+// here — see the retraction below for what it cost the first time.
+//
+// ⚠️ RETRACTED DESIGN, recorded so it is not re-derived: an earlier revision of
+// this change keyed site-vs-app on the LEADING SLASH itself — `/models/500` was
+// site, `models/500` was app. That is wrong for a reason specific to this
+// platform, not merely inelegant. A page block owns a whole multi-page sub-path
+// space (`/apps/run/[slug]/[[...path]].tsx`, the `subPath` in its init payload,
+// the ROUTE_CHANGED forwarding above), so `navigate('/settings')` — the standard
+// SPA idiom for an app's OWN absolute route — is a request every block author
+// would write meaning "my settings page". Under the slash rule it silently left
+// the app. And because BOTH spellings meant app-scoped before this change, that
+// was a silent meaning change for every block ever written, delivered by a host
+// deploy, with no version gate and no way for the block to notice: NAVIGATE is
+// fire-and-forget, with no requestId and no NACK. Carrying intent in punctuation
+// is exactly the prose/heuristic shape a deterministic field replaces.
+//
+// CONSEQUENCE, stated because it is the cost of the default and not a defect:
+// the one real fleet caller of site-absolute navigation today
+// (`civitai-app-custom-generators`, whose `onOpenInGenerator` calls
+// `navigate('/generate')`) sends no `scope`, so it is app-scoped here and still
+// does not reach the site generator. It did not reach it before this change
+// either — so this is not a regression — but it does mean the host change ALONE
+// no longer fixes that consumer. The app must opt in with `scope: 'site'`.
+//
+// WHY SITE SCOPE IS ALLOWED AT ALL, and why the width is an operator decision:
+//   - The DEV host already behaves this way. `@civitai/blocks-react`'s `liveHost`
+//     resolves the path against the backend origin and assigns it, with a comment
+//     saying "so an in-app path (`/models/123`) opens on the real site".
+//   - The published SDK JSDoc and the developer docs both promise it, and both use
+//     `/models/12345` as the worked example.
 //   So production was the odd one out among host, dev host and documentation.
 //   This DOES widen what a block can do, deliberately. `ALLOWED_SANDBOX_TOKENS`
 //   carries no `allow-top-navigation*`, so before this change a block could not
@@ -537,14 +563,15 @@ export function resolveGetImagesByIdsRequest(raw: unknown): GetImagesByIdsReques
 //   - PERCENT-ENCODED path separators (`%2f`, `%5c`, either case) anywhere in the
 //     block's own string — the only encodings that can change how many segments a
 //     path has if anything downstream decodes once (see `navigatePathIsHostile`);
-//   - any path whose RESOLVED form is not the string the block sent — which is
-//     what covers every traversal spelling, `.` and `..` and `%2e` alike, without
-//     naming one (see the RESOLVED-FORM note below); plus empty path segments
-//     (the `a//b` shape), which resolution deliberately does NOT collapse;
-//   - a site-absolute path that escapes nothing but an app-scoped one that leaves
-//     the block's own route — containment is asserted on the resolved path;
-//   - 🔴 `/api/*`, SITE-ABSOLUTE ONLY. A DELIBERATE NARROW EXCLUSION, and
-//     explicitly NOT a destination allowlist. `/api/*` is not a page route, so a
+//   - any path whose RESOLVED form has a different SEGMENT STRUCTURE from the one
+//     the block sent — which is what covers every traversal spelling, `.` and `..`
+//     and `%2e` alike, without naming one (see the RESOLVED-FORM note below); plus
+//     empty path segments (the `a//b` shape), which resolution does NOT collapse;
+//   - an app-scoped path that leaves the block's own route — containment is
+//     asserted on the resolved path;
+//   - site scope on a surface that does not hold the capability;
+//   - 🔴 `/api/*`, SITE SCOPE ONLY. A DELIBERATE NARROW EXCLUSION, and explicitly
+//     NOT a destination allowlist. `/api/*` is not a page route, so a
 //     `router.push` at it does not render anything — Next falls back to a HARD
 //     navigation. The worked case is `/api/auth/logout`, and it is REAL: that
 //     handler takes a bare GET with no `req.method` gate, no 405 and no CSRF
@@ -555,14 +582,14 @@ export function resolveGetImagesByIdsRequest(raw: unknown): GetImagesByIdsReques
 //     repo: that is a next-auth name and auth here is `@civitai/auth`, whose
 //     route is `logout.ts`. Do not "fix" this guard by checking the old example
 //     and finding nothing there — the hole it covers is real.
-//     Excluding `/api/*` costs the feature nothing (no page
-//     destination lives there) and is the only content-based refusal here.
-//     App-scoped `api/...` is untouched: it resolves under the block's own route
-//     and reaches no site handler.
+//     Excluding `/api/*` costs the feature nothing (no page destination lives
+//     there) and is the only content-based refusal here. An APP-scoped `api/...`
+//     is untouched: it resolves under the block's own route and reaches no site
+//     handler.
 export type NavigateScope = 'site' | 'app';
 
 export type NavigateRequest = {
-  /** Where the block wants to go. */
+  /** Which space the block asked for. `'app'` unless it explicitly said `'site'`. */
   scope: NavigateScope;
   /**
    * The host-router path to push, fully resolved. REBUILT from validated parts
@@ -584,15 +611,42 @@ export type NavigateRequest = {
 
 /** Rejected outright, before any scope decision. */
 function navigatePathIsHostile(rawPath: string): boolean {
-  // Whitespace + C0/C1 controls: URL parsers strip tab/newline and trim the
-  // ends, so the string a guard inspects would not be the string that resolves.
-  if (/[\u0000-\u0020\u007f-\u009f]/.test(rawPath)) return true;
-  // Protocol-relative (`//host`, and `/\host` which Chrome folds to it).
+  // C0 controls, DEL and C1: URL parsers STRIP tab/LF/CR wherever they appear, so
+  // the string a guard inspects would not be the string that resolves.
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(rawPath)) return true;
+  // A LEADING OR TRAILING SPACE, and only those. WHATWG trims
+  // C0-control-or-space from both ends — the same hazard in a different position —
+  // but it does NOT strip an INTERIOR space, it percent-encodes it.
+  //
+  // 🔴 THE INTERIOR CASE USED TO BE REFUSED HERE TOO, by a class that ran to
+  // `U+0020` INCLUSIVE, and that was a SECOND refusal channel for exactly the class
+  // the structural rule below was relaxed to admit. Fixing only the structural rule
+  // would have left `navigate('a b')` — which WORKED at the merge base, no
+  // resolver having existed then — silently dropped, with the fix looking
+  // applied and a green suite. Both channels had to move. This one is NOT subsumed
+  // by the structural rule: `' /models/1'` resolves to `/models/1` with the segment
+  // count PRESERVED, so the count comparison cannot see the trimmed byte.
+  if (/^ | $/.test(rawPath)) return true;
+  // Protocol-relative (`//host`, and `/\host` which Chrome folds to it). Note
+  // this runs on the RAW string, BEFORE leading slashes are normalised away, so
+  // `//evil.example` is refused rather than read as a redundantly-slashed path.
   if (/^\/[/\\]/.test(rawPath)) return true;
   // Any scheme at all — `https:`, `javascript:`, `data:`, `mailto:`.
   if (/^[a-zA-Z][a-zA-Z0-9+.\-]*:/.test(rawPath)) return true;
-  // A backslash anywhere: folded to `/` by several parsers, so it can smuggle a
-  // segment past the split-based checks below.
+  // A backslash ANYWHERE, including in the query or fragment — folded to `/` by
+  // several parsers.
+  //
+  // ⚠️ SCOPE NOTE, measured: in the PATH portion this line is now redundant.
+  // `new URL` folds `\` to `/` for a special scheme, so `models\500` resolves
+  // with a DIFFERENT segment count and the structural rule below refuses it
+  // anyway. What this line uniquely still refuses is a backslash in QUERY or
+  // FRAGMENT position (`/search?q=a\b`), which the structural rule cannot see
+  // because the path portion ends at the first `?`. That is kept deliberately
+  // rather than narrowed to the path: the resolved `href` is handed to consumers
+  // beyond `new URL` (Next's router, `window.open`, and anything that later logs
+  // or re-parses it), and a parser that folds `\` to `/` in a query is the case
+  // this closes. The cost is a query shape no caller has been observed to use.
+  // Pinned by its own test so it is not zero-coverage decoration.
   if (rawPath.includes('\\')) return true;
   // 🔴 PERCENT-ENCODED PATH SEPARATORS. `new URL` does NOT decode these — measured,
   // `/api%2fauth%2flogout` resolves to itself and `/a%2fb` stays `/a%2fb` — so they
@@ -620,17 +674,42 @@ function navigatePathIsHostile(rawPath: string): boolean {
 const NAVIGATE_SENTINEL_ORIGIN = 'https://page-block-host.invalid';
 
 /**
+ * Segment count of a path portion, with ONE trailing empty segment dropped.
+ *
+ * 🔴 THE DROP IS LOAD-BEARING AND WAS FOUND BY MEASUREMENT, NOT BY READING THE
+ * SPEC. When WHATWG removes a dot segment that is LAST, it appends an empty
+ * string to the path — so `/a/.` resolves to `/a/`, `/..` and `/.` both resolve
+ * to `/`, and a naive `split('/').length` comparison is PRESERVED across those
+ * three, i.e. it would let a trailing dot segment through. Dropping one trailing
+ * empty on both sides cancels that compensation exactly, and leaves the trailing
+ * slash the contract does tolerate (`/generate/` counts as `/generate`) intact.
+ *
+ * Measured over a generated corpus of 1,020 dot-segment shapes (every spelling in
+ * {`.`, `..`, `%2e`, `%2E`, `%2e%2e`, `%2E%2E`, `.%2e`, `%2e.`, `%2E.`, `.%2E`} at
+ * every position in paths of length 1–4, in pairs, and walking out of an app base,
+ * each with and without a trailing slash): 1,020 of 1,020 refused, every one of
+ * them by THIS comparison. Against a 28-case normalisation corpus (non-ASCII,
+ * spaces, the URL path percent-encode set, double-encoding, `..b`/`b..`/`...`,
+ * `%61pi`, a trailing slash, `/`): 0 refused.
+ */
+function navigateSegmentCount(pathPortion: string): number {
+  const parts = pathPortion.split('/');
+  if (parts.length > 1 && parts[parts.length - 1] === '') parts.pop();
+  return parts.length;
+}
+
+/**
  * 🔴 JUDGE THE RESOLVED STRING, NOT THE SPELLING SENT — and return the resolved
  * string, so what was validated and what gets pushed are the same bytes.
  *
- * The first version of this resolver split the raw path on `/` and refused a
- * segment that literally equalled `.` or `..`, then refused a first segment that
- * literally equalled `api`. Both were SPELLED guards, and the hazard existed in a
- * different spelling: WHATWG URL counts `%2e` as a dot segment, so
- * `{ path: '/%2e%2e/api/auth/logout' }` had no segment equal to `..` and a first
- * segment of `%2e%2e` rather than `api`, and passed — while BOTH consumers
- * resolved it straight to the refused route. Measured in node, all six of these
- * resolve to `/api/auth/logout`:
+ * THE HAZARD THIS CLOSES. The first version of this resolver split the raw path
+ * on `/` and refused a segment that literally equalled `.` or `..`, then refused a
+ * first segment that literally equalled `api`. Both were SPELLED guards, and the
+ * hazard existed in a different spelling: WHATWG URL counts `%2e` as a dot
+ * segment, so `{ path: '/%2e%2e/api/auth/logout' }` had no segment equal to `..`
+ * and a first segment of `%2e%2e` rather than `api`, and passed — while BOTH
+ * consumers resolved it straight to the refused route. Measured in node, all six
+ * of these resolve to `/api/auth/logout`:
  *
  *   /%2e%2e/api/auth/logout        /%2E%2E/api/auth/logout
  *   /%2e/api/auth/logout           /.%2e/api/auth/logout
@@ -639,84 +718,103 @@ const NAVIGATE_SENTINEL_ORIGIN = 'https://page-block-host.invalid';
  * `target: 'new_tab'` reaches the handler through `window.open` with no Next
  * involved; `target: 'current'` reaches it because Next's `parseRelativeUrl` is
  * `new URL`-based and hands the router the NORMALISED pathname, which then misses
- * the route manifest and hard-navigates. Neither needs a user gesture.
+ * the route manifest and hard-navigates. Neither needs a user gesture. The same
+ * root cause broke app-scope containment — measured,
+ * `/apps/run/<slug>/%2e%2e/%2e%2e/%2e%2e/x` resolved to `/x`.
  *
- * The same root cause broke app-scope containment, which is the property this
- * module's own docblock asserts — measured,
- * `/apps/run/<slug>/%2e%2e/%2e%2e/%2e%2e/x` resolved to `/x`, i.e. right out of
- * the block's route and off the app surface entirely.
+ * 🔴 THE TEST IS STRUCTURAL, AND IT USED TO BE BYTE-EQUALITY. THAT WAS A
+ * REGRESSION AGAINST `origin/main` AND IS THE SECOND THING THIS FUNCTION FIXES.
+ * The first fix asked "is the resolved pathname ALREADY the string handed in?" —
+ * a normalisation FIXPOINT. That closed the hole, but it refuses everything
+ * resolution rewrites, which is every non-ASCII codepoint and every member of the
+ * URL path percent-encode set (space, `"`, `<`, `>`, `^`, `` ` ``, `{`, `}`). Two
+ * reachable costs, one of them a genuine regression:
+ *   - `/tag/<tagname>` is a live route (`src/pages/tag/[tagname].tsx`) and this
+ *     codebase already percent-encodes tag names when it builds that URL itself
+ *     — 5 sites across 3 files, derived rather than quoted:
+ *     `find src -type f \( -name '*.ts' -o -name '*.tsx' \) -print0 | xargs -0
+ *     grep -n 'tag/${encodeURIComponent'`. (⚠ an earlier draft said "three
+ *     places"; that was an undercount from a narrower search.) So the codebase
+ *     already concedes tag names are not ASCII-safe, and a block could not link
+ *     one.
+ *   - 🔴 APP-SCOPED SUB-PATHS. At the merge base there was no resolver at all:
+ *     leading slashes were stripped and only `//`, a literal `..` segment and a
+ *     re-leading `/` were refused. So `navigate('José')`, `navigate('café')` and
+ *     `navigate('a b')` each pushed `/apps/run/<slug>/<raw>` and WORKED. The
+ *     fixpoint rule dropped all three silently. App sub-paths are entirely the
+ *     block author's own namespace, so that is the member most likely to exist in
+ *     the wild, and a block cannot detect the drop.
  *
- * The fix is NOT another blocklist entry. Adding `%2e` would be the same mistake
- * one encoding deeper. Instead: resolve the candidate exactly as the consumers
- * do, refuse unless the resolved path is ALREADY the string we were handed (a
- * normalisation fixpoint), and hand the resolved parts back so every downstream
- * check and the returned `href` read one string.
- *
- * Why the fixpoint rule is the load-bearing half: it does not ask "is this
- * traversal?", it asks "did resolving this change it?" — so it refuses every
- * spelling of a dot segment, present and future, including any the URL spec
- * decides to add. Measured: NO bare `.` or `..` segment survives resolution
- * unchanged, in any position, so the old literal predicate is strictly subsumed
- * and has been deleted rather than kept as decoration. (`..b`, `b..` and `...`
- * ARE fixpoints — they are ordinary literal segments, not dot segments, and were
- * never refused.) Empty segments, by contrast, ARE fixpoints (`/a//b` resolves to
- * itself), so that predicate stays and is doing real work.
+ * So the rule is now: the resolved path must have the SAME SEGMENT STRUCTURE as
+ * the candidate. Every traversal shape changes the segment count (`/%2e%2e/api/x`
+ * is 3 → 2); pure percent-encoding normalisation preserves it (`/tag/José` is
+ * 3 → 3, rewritten but not restructured). That keeps the guard structural — no
+ * dot spelling is named anywhere in it — while allowing the international and
+ * space-bearing paths the byte comparison refused. See `navigateSegmentCount` for
+ * the trailing-dot-segment correction the naive count needs, and the corpus it
+ * was measured over.
  *
  * Encoding shapes considered and decided, so none of this is re-derived:
- *   - `%2e` / `%2E`, and the mixed `.%2e` / `%2e.` forms: closed by the fixpoint
- *     rule. Case never enters into it, because we compare strings before and
- *     after resolution instead of matching a pattern.
+ *   - `%2e` / `%2E`, and the mixed `.%2e` / `%2e.` forms: closed by the segment
+ *     count. Case never enters into it, because nothing pattern-matches a
+ *     spelling — the counts of two strings are compared.
  *   - `%2f` / `%5c` (encoded separators): refused upstream in
  *     `navigatePathIsHostile`, with the reasoning there.
  *   - `%252e` (double-encoded): ALLOWED, and this is a decision, not an oversight.
  *     Reaching a dot segment from it needs TWO decodes; `new URL` does zero, so
- *     `/%252e%252e/api/x` is a fixpoint whose first segment is the literal string
- *     `%252e%252e`. A single downstream decode yields `%2e%2e`, still a literal
- *     segment — dot-segment resolution happens in the URL parser BEFORE the
- *     request is sent, not after a server decodes it, so there is no second
+ *     `/%252e%252e/api/x` keeps 5 segments and its first segment is the literal
+ *     string `%252e%252e`. A single downstream decode yields `%2e%2e`, still a
+ *     literal segment — dot-segment resolution happens in the URL parser BEFORE
+ *     the request is sent, not after a server decodes it, so there is no second
  *     resolution pass for the decoded form to be fed into. Refusing `%25`
  *     outright was considered and rejected: `/models/500/50%25-off-lora` is a
  *     legitimate civitai slug route, so that would be a real false refusal.
  *   - a trailing slash: tolerated exactly as before (one, and only at the end).
  *     `/api/` still refuses because the segment check runs on the stripped path;
  *     `/apps/run/<slug>/` still satisfies containment because it strips to the
- *     base itself. The strip happens after the fixpoint check, and the stripped
- *     result is itself a fixpoint, which is pinned by an idempotency test.
+ *     base itself. The strip happens after the structural check, and the stripped
+ *     result is itself structurally stable, which is pinned by an idempotency test.
  *   - a surviving `%` that changes SEGMENTATION: impossible once `%2f`/`%5c` are
  *     refused, because those are the only single decodes that produce a
  *     separator. A surviving `%` can still change a segment's VALUE (`%61pi`
  *     decodes to `api`), which is why the `/api` check below decodes before
  *     comparing.
  *   - a character resolution REWRITES rather than preserves (`/a<b` becomes
- *     `/a%3Cb`): refused by the fixpoint rule. Fail-closed and correct — the
- *     block gets no navigation instead of a silently different one, and it can
- *     percent-encode the character itself if it means it.
+ *     `/a%3Cb`, `/tag/José` becomes `/tag/Jos%C3%A9`): now ALLOWED, and the
+ *     returned href is the RESOLVED form, so what was judged is what is pushed.
+ *     That is the regression fix above.
  */
 function resolveNavigatePath(candidate: string): { path: string; suffix: string } | null {
   let url: URL;
   try {
     url = new URL(candidate, NAVIGATE_SENTINEL_ORIGIN);
   } catch {
-    // An input the consumers' own parser rejects is one whose resolved form we
-    // cannot know. Refuse rather than guess.
+    // 🔴 UNREACHABLE (guard 1 of the list in this module's NAVIGATE tests), and
+    // labelled rather than counted as coverage. A relative reference resolved
+    // against a valid absolute base does not throw: swept every Unicode codepoint
+    // in 7 positions × both scopes with `navigatePathIsHostile` applied as
+    // production applies it — 15,567,954 candidates, 0 throws — and a mutant that
+    // ADOPTS an unresolvable candidate instead of refusing it left the suite
+    // green. Kept as a structural backstop because `new URL` is a platform API
+    // whose throw conditions are not ours to fix, and refusing is the only
+    // fail-closed answer for a string whose resolved form we cannot know.
     return null;
   }
-  // Structural close on off-origin — and 🔴 ALSO CURRENTLY UNREACHABLE, measured the
-  // same way: forcing this condition to `false` left all 117 tests green, because
-  // `navigatePathIsHostile` refuses every scheme and every `//host` shape before we
-  // get here, and with those gone a relative input resolved against an absolute base
-  // cannot produce another origin. Kept for the same reason as the containment check
-  // below: it states the property structurally, so loosening the pattern checks
-  // cannot silently take the property with them. NOT coverage.
+  // 🔴 UNREACHABLE (guard 2), measured the same way: forcing this condition to
+  // `false` leaves the suite green, because `navigatePathIsHostile` refuses every
+  // scheme and every `//host` shape before we get here, and with those gone a
+  // relative input resolved against an absolute base cannot produce another
+  // origin. Kept because it states the property structurally, so loosening a
+  // pattern check cannot silently take the property with it. NOT coverage.
   if (url.origin !== NAVIGATE_SENTINEL_ORIGIN) return null;
 
   // The path portion of the candidate ends at the first `?` or `#` — per the URL
   // spec, no escape can move that boundary.
   const cut = candidate.search(/[?#]/);
   const candidatePath = cut === -1 ? candidate : candidate.slice(0, cut);
-  // THE FIXPOINT RULE. Anything resolution would rewrite is refused, so the string
-  // we judge below is the string the block sent AND the string we return.
-  if (url.pathname !== candidatePath) return null;
+  // THE STRUCTURAL RULE. Resolution may rewrite a segment's bytes; it may not
+  // change how many segments there are.
+  if (navigateSegmentCount(candidatePath) !== navigateSegmentCount(url.pathname)) return null;
 
   // One trailing slash is tolerated (`/generate/` is a plausible authoring shape,
   // and silently dropping the navigation is the "the feature looks dead" failure
@@ -726,29 +824,63 @@ function resolveNavigatePath(candidate: string): { path: string; suffix: string 
       ? url.pathname.slice(0, -1)
       : url.pathname;
   const segments = path === '/' ? [] : path.slice(1).split('/');
-  if (segments.some((s) => s === '')) return null;
+  for (const s of segments) {
+    // REACHABLE and tested: `/a//b` is structurally stable (resolution does not
+    // collapse empty segments), so the count rule cannot see it and this does.
+    if (s === '') return null;
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(s);
+    } catch {
+      // A malformed escape cannot BE a dot segment, so it is not this clause's
+      // business. Deliberately NOT a refusal — `/x/50%-off` is a legitimate
+      // segment shape, and refusing it here would widen the refusal set for
+      // nothing. (Site scope's FIRST segment is a separate, deliberate
+      // exception — see `navigateSiteFirstSegmentIsRefused`.)
+      continue;
+    }
+    // 🔴 UNREACHABLE (guard 3). A resolved path never CONTAINS a dot segment:
+    // WHATWG removes `.`, `..` and every percent spelling of them during
+    // resolution, and a segment that merely contains dots (`..b`, `a%2e`) does not
+    // decode to `.` or `..`. Measured over the 1,020-shape dot corpus — the count
+    // rule above refused all 1,020 and this clause fired 0 times. Kept as a
+    // structural backstop in case a future URL-spec revision leaves a dot
+    // spelling in place, which is precisely the case the count rule would then
+    // also miss. NOT coverage.
+    if (decoded === '.' || decoded === '..') return null;
+  }
 
   return { path, suffix: url.search + url.hash };
 }
 
 /**
- * Does a resolved site path's FIRST segment name the `/api` tree? Operates on the
- * resolved path, so no dot-segment spelling can hide the segment from it, and
- * decodes that segment before comparing so no percent-encoding can hide the WORD
- * (`/%61pi/auth/logout` is a fixpoint whose first segment decodes to `api`).
+ * Site-scope refusal on a resolved path's FIRST segment. Operates on the resolved
+ * path, so no dot-segment spelling can hide the segment from it, and decodes that
+ * segment before comparing so no percent-encoding can hide the WORD
+ * (`/%61pi/auth/logout` is structurally stable and its first segment decodes to
+ * `api`).
+ *
+ * ⚠️ THE NAME SAYS "REFUSED", NOT "IS API", BECAUSE THERE ARE TWO CHANNELS AND
+ * THE SECOND ONE IS NOT THE `/api` RULE. A malformed escape in the first segment
+ * (`/%/x`, `/%zz/x`) cannot be decoded, so its meaning cannot be established and
+ * it is refused too. That is a deliberate fail-closed decision, but calling the
+ * function `…IsApi` made it a refusal channel wearing a predicate's name: it
+ * returned `true` for a segment that is not `api` at all. The asymmetry it
+ * creates is real and is kept rather than hidden — `/50%-off/x` is refused while
+ * `/x/50%-off` is allowed, because only the FIRST segment decides the `/api`
+ * question and only this call site needs a verdict on it.
  *
  * The decode is safe to reason about only because `%2f`/`%5c` are already refused:
  * with those gone, decoding a segment cannot introduce a separator, so it cannot
  * turn one segment into two and cannot move which segment is first.
  */
-function navigateFirstSegmentIsApi(path: string): boolean {
+function navigateSiteFirstSegmentIsRefused(path: string): boolean {
   const first = path === '/' ? '' : path.slice(1).split('/')[0];
   let decoded: string;
   try {
     decoded = decodeURIComponent(first);
   } catch {
-    // A malformed escape (`/%`, `/%zz`) is a segment whose meaning we cannot
-    // establish. Refuse it rather than push a string we could not judge.
+    // Channel 2: a segment whose meaning cannot be established is not pushed.
     return true;
   }
   // ONE comparison, deliberately. A `first.toLowerCase() === 'api'` fast path was
@@ -765,68 +897,107 @@ function navigateFirstSegmentIsApi(path: string): boolean {
  * DROPPED. Pure — the caller owns `router.push` and the `reviewMode` / gate-status
  * refusals, which are conditions on the HOST, not on the payload.
  *
- * `base` is the surface's deep-link base from `BLOCK_HOST_DEEP_LINK_BASE`. A
- * `null` base means the surface drops in-app navigation; a site-absolute request
- * is dropped there too, because a surface with no page route of its own is a
- * surface with no business moving the viewer (the review preview is a MODAL over
- * the moderator's own page).
+ * 🔴 THE TWO SURFACE INPUTS ARE INDEPENDENT, AND THAT SEPARATION IS THE DESIGN.
+ * `base` is the surface's APP deep-link root (`BLOCK_HOST_DEEP_LINK_BASE`); a
+ * `null` base means the surface has no in-app route to push into, so app-scoped
+ * navigation is dropped. `siteNavigation` is a SEPARATE per-surface capability
+ * (`BLOCK_HOST_SITE_NAVIGATION`): may this surface let a block move the viewer
+ * OFF the app? One concern each, one authority each — a surface that should do
+ * neither says so twice, explicitly, rather than having one `null` stand in for
+ * two different decisions. Both are total `Record`s over `BlockHostSurface`, so a
+ * new surface is a compile error in both until someone decides both.
  */
 export function resolveNavigateRequest(
   raw: unknown,
-  opts: { base: string | null; slug: string }
+  opts: { base: string | null; slug: string; siteNavigation: boolean }
 ): NavigateRequest | null {
   if (!raw || typeof raw !== 'object') return null;
   const obj = raw as Record<string, unknown>;
   const rawPath = obj.path;
   if (typeof rawPath !== 'string') return null;
   if (navigatePathIsHostile(rawPath)) return null;
-  // A surface with no deep-link base navigates nowhere, in either scope.
-  if (opts.base == null) return null;
 
   const target: 'current' | 'new_tab' = obj.target === 'new_tab' ? 'new_tab' : 'current';
-  const scope: NavigateScope = rawPath.startsWith('/') ? 'site' : 'app';
+  // 🔴 ABSENT OR UNKNOWN `scope` IS `'app'`. This is the back-compat property: a
+  // block deployed before `scope` existed sends nothing and keeps its old
+  // behaviour. Compared with the literal `'site'` rather than validated against
+  // the union, so an unknown future value fails CLOSED onto the narrower space.
+  const scope: NavigateScope = obj.scope === 'site' ? 'site' : 'app';
+  // Leading slashes are normalised away — `scope` already said which space this
+  // is, so the slash has nothing left to mean. `//x` never reaches here (refused
+  // as protocol-relative above), so at most one slash is ever stripped; the `+` is
+  // belt-and-braces rather than a second rule.
+  const path = rawPath.replace(/^\/+/, '');
 
   if (scope === 'site') {
-    const resolved = resolveNavigatePath(rawPath);
+    // 🔴 PER-SURFACE CAPABILITY. `private-run` holds a base (its own app route) but
+    // NOT this capability: that route resolves an audience including `moderator`,
+    // serves `suspended` and delisted apps, and passes no `reviewMode` — so
+    // without this refusal a suspended app could move a moderator's tab to any
+    // page route on the site. App-scoped deep-linking inside the author's own
+    // preview is harmless and is what that surface exists for, which is why this
+    // is a capability and not another `null` base.
+    if (!opts.siteNavigation) return null;
+    const resolved = resolveNavigatePath(`/${path}`);
     if (resolved === null) return null;
     // The one content-based refusal. See the `/api/*` note above.
-    if (navigateFirstSegmentIsApi(resolved.path)) return null;
+    if (navigateSiteFirstSegmentIsRefused(resolved.path)) return null;
     return { scope, href: `${resolved.path}${resolved.suffix}`, shallow: false, target };
   }
 
+  // A surface with no app deep-link base has nowhere to push an app-scoped path.
+  //
+  // 🔴 UNREACHABLE (guard 5), and this one was FOUND BY THE MUTATION BATTERY
+  // for this change rather than reasoned about: removing the line leaves the suite
+  // green. The reason is an ACCIDENT and must not be relied on — `String(null)`
+  // is `'null'`, so a null base builds the candidate `null/<slug>/<path>`, a
+  // RELATIVE reference whose resolution prepends `/` and therefore adds a segment,
+  // which the structural rule refuses. Every real base starts with `/`.
+  //
+  // It is kept BECAUSE that is an accident. A surface's "I have no in-app route"
+  // decision must not rest on how JavaScript stringifies `null`, and a future base
+  // value that happened to start with `/` would silently grant app navigation to a
+  // surface that declared none. NOT coverage.
+  //
+  // ⚠ It was REACHABLE at the PR head, where this check sat BEFORE the scope
+  // branch and refused site scope too. Separating the two surface inputs moved the
+  // site half onto `siteNavigation` (reachable — its own mutants are killed) and
+  // left this half behind the structural rule.
+  if (opts.base == null) return null;
   // App scope: resolve the candidate the consumers will actually resolve — base
   // and block path TOGETHER — because the containment property is about the whole
   // string, not about the block's half of it. Appending `/` unconditionally is
-  // correct: an empty `rawPath` yields `<base>/`, which the trailing-slash rule
+  // correct: an empty `path` yields `<base>/`, which the trailing-slash rule
   // strips back to the base, matching the pre-existing app-root behaviour.
   const appBase = `${opts.base}/${encodeURIComponent(opts.slug)}`;
-  const resolved = resolveNavigatePath(`${appBase}/${rawPath}`);
+  const resolved = resolveNavigatePath(`${appBase}/${path}`);
   if (resolved === null) return null;
   // CONTAINMENT, ASSERTED ON THE RESOLVED PATH — a BACKSTOP that pins the property,
-  // and 🔴 CURRENTLY UNREACHABLE. Say so plainly, because a line that reads as the
+  // and 🔴 UNREACHABLE (guard 4). Say so plainly, because a line that reads as the
   // defence while never executing is worse than no line: it stops the next reader
   // looking for the real one.
   //
-  // MEASURED, mutation run 2026-09-30: forcing this condition to `false` left all
-  // 117 tests GREEN. What actually closes the app-scope escape is the FIXPOINT RULE
-  // inside `resolveNavigatePath` — `%2e%2e/x` builds the candidate
-  // `<appBase>/%2e%2e/x`, which resolves to `/apps/run/x`, a different string, and
-  // is refused there before this line runs. And that is not an accident of the
-  // fixtures: the candidate is built as the literal `${appBase}/${rawPath}`, so IF
-  // resolution changed nothing then the resolved path still begins with
-  // `${appBase}/` by construction, and the only other accepted shape is the
-  // trailing-slash strip of `${appBase}/` back to `${appBase}` itself. Containment
-  // is therefore a THEOREM of the fixpoint rule here, not an independent check.
+  // MEASURED: forcing this condition to `false` leaves the suite GREEN, and a sweep
+  // of 200 app-scope block paths built from every dot spelling produced 0 escapes
+  // with this line removed. What actually closes the app-scope escape is the
+  // STRUCTURAL RULE inside `resolveNavigatePath` — `%2e%2e/x` builds the candidate
+  // `<appBase>/%2e%2e/x`, whose resolved form has fewer segments, and is refused
+  // there before this line runs. And that is not an accident of the fixtures: the
+  // candidate is built as the literal `${appBase}/${path}`, resolution never ADDS a
+  // segment, and `${appBase}` is itself structurally stable (host-chosen base plus
+  // `encodeURIComponent(slug)`), so IF the segment count survived then segment i of
+  // the resolved path still corresponds to segment i of the candidate and the base
+  // prefix is intact. Containment is therefore a THEOREM of the structural rule
+  // here, not an independent check.
   //
-  // It is kept anyway, deliberately: the theorem has two premises, and a future
-  // change that relaxes the fixpoint rule (to permit normalisation, say) would
-  // silently take the property with it. This line makes the property fail loudly
-  // instead. Do NOT count it as coverage, and do not delete the fixpoint rule on
-  // the strength of it.
+  // It is kept anyway, deliberately: the theorem has premises, and a future change
+  // that relaxes the structural rule would silently take the property with it. This
+  // line makes the property fail loudly instead. Do NOT count it as coverage, and
+  // do not delete the structural rule on the strength of it.
   //
   // The explicit `/` is what stops a sibling route whose name merely starts with
   // the base from passing a bare `startsWith`; that refinement is unreachable for
-  // the same reason (mutant M3b also survived).
+  // the same reason (its own mutant also survives).
   if (resolved.path !== appBase && !resolved.path.startsWith(`${appBase}/`)) return null;
   return { scope, href: `${resolved.path}${resolved.suffix}`, shallow: true, target };
 }

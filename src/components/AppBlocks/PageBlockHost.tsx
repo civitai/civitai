@@ -11,6 +11,7 @@ import { IframeInitController, shouldStartInit } from './iframeInitController';
 import {
   blockInitFragmentEnabled,
   BLOCK_HOST_DEEP_LINK_BASE,
+  BLOCK_HOST_SITE_NAVIGATION,
   type BlockHostSurface,
 } from './blockInitFragmentGate';
 import { useBlockIframeSrc } from './useBlockIframeSrc';
@@ -177,27 +178,29 @@ function storageErrorMessage(err: unknown): string {
  *     never "*"); incoming messages from other origins are dropped.
  *   - Sandbox is the manifest ∩ trust-tier allowlist (client-side belt).
  *   - referrerPolicy=no-referrer; the page never carries a model/money scope.
- *   - Block-requested navigation (NAVIGATE) resolves in one of TWO scopes, keyed
- *     on a leading slash: a relative path is app-scoped (shallow push under the
- *     block's own route), and a leading `/` is SITE-ABSOLUTE — the block may send
- *     the viewer to a civitai.com page route. There is deliberately no
+ *   - Block-requested navigation (NAVIGATE) resolves in one of TWO spaces,
+ *     selected by an EXPLICIT `scope` field that defaults to `'app'`: `'app'` is a
+ *     shallow push under the block's own route, `'site'` lets the block send the
+ *     viewer to a civitai.com page route. A leading slash means nothing in either
+ *     — it is normalised away — so a block deployed before `scope` existed keeps
+ *     its old, app-scoped behaviour for both spellings. There is deliberately no
  *     destination allowlist; what is refused is other ORIGINS (any scheme,
- *     protocol-relative, backslash, control characters, and —
- *     structurally — a resolved origin that is not the sentinel), any path whose
- *     RESOLVED form is not the string the block sent (which is what covers
+ *     protocol-relative, backslash, control characters, and — structurally — a
+ *     resolved origin that is not the sentinel), any path whose RESOLVED form has
+ *     a different SEGMENT STRUCTURE from the one the block sent (which covers
  *     traversal in every spelling, `..` and `%2e` alike, rather than the
  *     literal-segment blocklist that shipped first and was bypassed by
  *     `/%2e%2e/api/auth/logout`), an app-scoped path that escapes the block's own
- *     route, and
- *     site-absolute `/api/*`, which is not a page route and whose
- *     `/api/auth/logout` — a GET with no method gate — would end the viewer's
- *     session on a block's say-so. `resolveNavigateRequest` in
- *     `pageBlockHostLogic` owns that decision and is unit-tested, so a block
- *     cannot reach another origin in either scope. `target: 'new_tab'` is opened
- *     by the HOST from the parent frame — the destination is host-validated and
- *     the tab inherits no sandbox, so it gets a real origin;
- *     `allow-popups-to-escape-sandbox` is deliberately still absent from
- *     `ALLOWED_SANDBOX_TOKENS`. (#5209)
+ *     route, site scope on a surface that does not hold the
+ *     `BLOCK_HOST_SITE_NAVIGATION` capability, and site-scope `/api/*`, which is
+ *     not a page route and whose `/api/auth/logout` — a GET with no method gate —
+ *     would end the viewer's session on a block's say-so.
+ *     `resolveNavigateRequest` in `pageBlockHostLogic` owns that decision and is
+ *     unit-tested, so a block cannot reach another origin in either space.
+ *     `target: 'new_tab'` is opened by the HOST from the parent frame — the
+ *     destination is host-validated and the tab inherits no sandbox, so it gets a
+ *     real origin; `allow-popups-to-escape-sandbox` is deliberately still absent
+ *     from `ALLOWED_SANDBOX_TOKENS`. (#5209)
  */
 
 /**
@@ -248,6 +251,19 @@ export const LAUNCH_REVEAL_MS = 260;
 const BUZZ_PURCHASE_AMOUNT_CAP = 50_000;
 
 type Status = 'loading' | 'ready' | 'timeout' | 'fatal' | 'no_token' | 'error';
+
+/**
+ * The NAVIGATE wire payload as the HOST reads it — every field `unknown`, because
+ * it comes from an untrusted frame and `resolveNavigateRequest` is what decides
+ * what any of it means.
+ *
+ * 🔴 EVERY FIELD THE HOST MEANS TO READ MUST APPEAR HERE. This existed as an
+ * inline `{ path?: unknown } | undefined` generic and `target` was therefore not
+ * in the type and read NOWHERE, so `target: 'new_tab'` silently became a same-tab
+ * navigation (#5209). `scope` joins it for the same reason: a field absent from
+ * the generic is a field the handler cannot see.
+ */
+type NavigateMessage = { path?: unknown; scope?: unknown; target?: unknown } | undefined;
 
 // MOD REVIEW SANDBOX (#2831): the reason string every reviewMode NACK carries — a
 // clear, block-surfaced message so the mod (and the block's own error UI)
@@ -1877,21 +1893,27 @@ export function PageBlockHost({
     reviewRunForReal,
   ]);
 
-  // Deep-link bridge — the block asks the host to navigate. TWO scopes, keyed on
-  // a LEADING SLASH: `/models/500` is SITE-ABSOLUTE (leave the app, land on the
-  // site page, non-shallow) and `detail/500` is APP-SCOPED (resolved under the
-  // block's own route, shallow, so the page stays mounted and the subPath change
-  // reflects back into the block via the popstate handler below).
+  // Deep-link bridge — the block asks the host to navigate. TWO spaces, selected
+  // by an EXPLICIT `scope` field: `{ scope: 'site', path: 'models/500' }` leaves
+  // the app and lands on the site page (non-shallow), while `{ path: 'detail/500' }`
+  // — no `scope`, the DEFAULT — resolves under the block's own route, shallow, so
+  // the page stays mounted and the subPath change reflects back into the block via
+  // the popstate handler below.
   //
-  // 🔴 #5209 — THE LEADING SLASH USED TO BE STRIPPED BEFORE ANYTHING READ IT, so
-  // both spellings resolved app-scoped and the SDK's own documented example
-  // (`navigate('/models/12345')`) produced a URL-bar change with no page change
-  // and a URL that 404s on reload. The whole validation + resolution decision now
-  // lives in `resolveNavigateRequest` (pure, unit-tested): what is refused, which
-  // scope a path lands in, and whether the push is shallow. This handler keeps
-  // only the conditions that are about the HOST rather than the payload.
+  // 🔴 #5209 — THE SITE SPACE USED TO BE UNREACHABLE: the handler stripped a
+  // leading slash before anything could read it, so the SDK's own documented
+  // example (`navigate('/models/12345')`) produced a URL-bar change with no page
+  // change and a URL that 404s on reload. 🔴 AND THE FIRST FIX FOR THAT KEYED THE
+  // SCOPE ON THE SLASH ITSELF, which is why `scope` exists: a page block owns a
+  // whole sub-path space, so `navigate('/settings')` is the standard SPA spelling
+  // of an app's OWN route and reading it as "leave the app" silently changed the
+  // meaning of every block already deployed. `scope` defaults to `'app'`, so a
+  // block that sends none behaves exactly as it did before. The whole validation
+  // + resolution decision lives in `resolveNavigateRequest` (pure, unit-tested):
+  // what is refused, which space a path lands in, and whether the push is
+  // shallow. This handler keeps only the conditions that are about the HOST.
   useEffect(() => {
-    const off = onMessage<{ path?: unknown; target?: unknown } | undefined>('NAVIGATE', (raw) => {
+    const off = onMessage<NavigateMessage>('NAVIGATE', (raw) => {
       // reviewMode: the review host is a MODAL, not the `/apps/run/<slug>` page —
       // let a block yank the mod's router and it would navigate them off the
       // review flow (to a page a pending app doesn't even have). Fire-and-forget
@@ -1933,10 +1955,20 @@ export function PageBlockHost({
       // surface is a compile error there rather than silently inheriting the public
       // route — see its docblock, which also records that `dev-tunnel`'s mapping to the
       // public route is pre-existing behaviour rather than a decision. A `null` base
-      // means "drop the navigation", in EITHER scope.
+      // means "drop APP-SCOPED navigation".
+      //
+      // 🔴 SITE SCOPE IS A SEPARATE PER-SURFACE CAPABILITY, `BLOCK_HOST_SITE_NAVIGATION`,
+      // and it is separate because `private-run` answers the two questions
+      // DIFFERENTLY: it keeps its own app route (a non-null base) and is refused
+      // site navigation, because that route resolves an audience including
+      // `moderator`, serves suspended/delisted apps, and passes no `reviewMode` —
+      // so without the capability refusal a suspended app could move a moderator's
+      // tab anywhere on the site. Also a total record: a new surface is a compile
+      // error in BOTH maps until someone decides both.
       const req = resolveNavigateRequest(raw, {
         base: BLOCK_HOST_DEEP_LINK_BASE[surface],
         slug,
+        siteNavigation: BLOCK_HOST_SITE_NAVIGATION[surface],
       });
       if (!req) return;
       // 🔴 `new_tab` IS OPENED BY THE HOST, NOT BY THE BLOCK, AND THE

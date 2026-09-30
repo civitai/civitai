@@ -184,11 +184,11 @@ describe('PageBlockHost NAVIGATE bridge (#5209)', () => {
     openSpy.mockRestore();
   });
 
-  test('site-absolute path lands on the SITE route, non-shallow (the #5209 regression)', async () => {
+  test("scope:'site' lands on the SITE route, non-shallow (the #5209 regression)", async () => {
     renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
 
-    postFromBlock('NAVIGATE', { path: '/models/500?modelVersionId=1001' });
+    postFromBlock('NAVIGATE', { scope: 'site', path: '/models/500?modelVersionId=1001' });
 
     await vi.waitFor(() => {
       expect(router.push).toHaveBeenCalledTimes(1);
@@ -206,7 +206,40 @@ describe('PageBlockHost NAVIGATE bridge (#5209)', () => {
     expect(options).toBeUndefined();
   });
 
-  test('app-scoped (no leading slash) still pushes the shallow sub-path', async () => {
+  test("a leading slash is irrelevant to scope:'site' — both spellings push the same href", async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+
+    postFromBlock('NAVIGATE', { scope: 'site', path: '/generate' });
+    postFromBlock('NAVIGATE', { scope: 'site', path: 'generate' });
+
+    await vi.waitFor(() => {
+      expect(router.push).toHaveBeenCalledTimes(2);
+    });
+    const calls = (router.push as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls[0]).toEqual(['/generate', undefined, undefined]);
+    expect(calls[1]).toEqual(['/generate', undefined, undefined]);
+  });
+
+  test('🔴 back-compat: an ABSOLUTE path with NO scope is APP-scoped, through the real bridge', async () => {
+    // 🔴 THE REGRESSION A SLASH-KEYED CONTRACT WOULD HAVE SHIPPED. Every block
+    // deployed today sends no `scope`, and `/settings` is the ordinary SPA spelling
+    // of an app's OWN route — a page block owns a whole sub-path space. Under the
+    // slash rule this call left the app; here it must not.
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+
+    postFromBlock('NAVIGATE', { path: '/settings' });
+
+    await vi.waitFor(() => {
+      expect(router.push).toHaveBeenCalledTimes(1);
+    });
+    expect(router.push).toHaveBeenCalledWith('/apps/run/my-page-app/settings', undefined, {
+      shallow: true,
+    });
+  });
+
+  test('app-scoped (no scope field) still pushes the shallow sub-path', async () => {
     renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
 
@@ -220,11 +253,29 @@ describe('PageBlockHost NAVIGATE bridge (#5209)', () => {
     });
   });
 
+  test('🔴 a non-ASCII app sub-path navigates, percent-encoded (worked at the merge base)', async () => {
+    // 🔴 The app-scope half of the byte-equality regression, measured through the
+    // real postMessage bridge rather than only at the resolver: at the merge base
+    // there was no resolver and this pushed `/apps/run/<slug>/José`; the fixpoint
+    // rule dropped it silently, with no NACK for the block to notice.
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+
+    postFromBlock('NAVIGATE', { path: 'José/2' });
+
+    await vi.waitFor(() => {
+      expect(router.push).toHaveBeenCalledTimes(1);
+    });
+    expect(router.push).toHaveBeenCalledWith('/apps/run/my-page-app/Jos%C3%A9/2', undefined, {
+      shallow: true,
+    });
+  });
+
   test("target:'new_tab' is opened BY THE HOST, and does not navigate the current tab", async () => {
     renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
 
-    postFromBlock('NAVIGATE', { path: '/models/500', target: 'new_tab' });
+    postFromBlock('NAVIGATE', { scope: 'site', path: '/models/500', target: 'new_tab' });
 
     await vi.waitFor(() => {
       expect(openSpy).toHaveBeenCalledTimes(1);
@@ -239,7 +290,7 @@ describe('PageBlockHost NAVIGATE bridge (#5209)', () => {
     renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
 
-    postFromBlock('NAVIGATE', { path: '/models/500', target: 'current' });
+    postFromBlock('NAVIGATE', { scope: 'site', path: '/models/500', target: 'current' });
 
     await vi.waitFor(() => {
       expect(router.push).toHaveBeenCalledTimes(1);
@@ -264,16 +315,47 @@ describe('PageBlockHost NAVIGATE bridge (#5209)', () => {
     });
   });
 
-  test('the review surface navigates NOWHERE — app-scoped OR site-absolute', async () => {
-    // An unreviewed block must not be able to move a moderator's tab. Two
-    // independent refusals cover this (the `reviewMode` prop and a `null` deep-link
-    // base); the mount passes both props exactly as ReviewBlockPreviewHost does.
+  test('🔴 private-run refuses SITE scope while KEEPING app scope', async () => {
+    // 🔴 THE PER-SURFACE CAPABILITY, through the real bridge. That route resolves
+    // an audience including `moderator`, serves suspended and delisted apps, and
+    // passes no `reviewMode` — so site navigation there would let a suspended app
+    // move a moderator's tab to any page route. App-scoped deep-linking inside the
+    // owner's own preview is what the surface is for and stays working, which is
+    // why this is a capability rather than another `null` base.
+    renderWithProviders(<PageBlockHost {...baseProps} surface="private-run" />);
+    await driveToReady();
+
+    postFromBlock('NAVIGATE', { scope: 'site', path: '/models/500' });
+    postFromBlock('NAVIGATE', { scope: 'site', path: '/models/500', target: 'new_tab' });
+    postFromBlock('NAVIGATE', { scope: 'site', path: '/generate' });
+
+    await new Promise((r) => setTimeout(r, 150));
+    expect(router.push).not.toHaveBeenCalled();
+    expect(openSpy).not.toHaveBeenCalled();
+
+    // Positive control, same mount, and it is the exact discriminator: an APP-scoped
+    // request on this very surface DOES navigate. So the two zeros above measure the
+    // site capability specifically, not a bridge wired to nothing and not a host
+    // that refuses everything on `private-run`.
+    postFromBlock('NAVIGATE', { path: 'detail' });
+    await vi.waitFor(() => {
+      expect(router.push).toHaveBeenCalledWith('/apps/private-run/my-page-app/detail', undefined, {
+        shallow: true,
+      });
+    });
+  });
+
+  test('the review surface navigates NOWHERE — app scope OR site scope', async () => {
+    // An unreviewed block must not be able to move a moderator's tab. THREE
+    // independent refusals cover this (the `reviewMode` prop, a `null` deep-link
+    // base, and a `false` site-navigation capability); the mount passes both props
+    // exactly as ReviewBlockPreviewHost does.
     renderWithProviders(<PageBlockHost {...baseProps} surface="review-preview" reviewMode />);
     await driveToReady();
 
     postFromBlock('NAVIGATE', { path: 'detail' });
-    postFromBlock('NAVIGATE', { path: '/models/500' });
-    postFromBlock('NAVIGATE', { path: '/models/500', target: 'new_tab' });
+    postFromBlock('NAVIGATE', { scope: 'site', path: '/models/500' });
+    postFromBlock('NAVIGATE', { scope: 'site', path: '/models/500', target: 'new_tab' });
 
     await new Promise((r) => setTimeout(r, 150));
     expect(router.push).not.toHaveBeenCalled();
@@ -292,12 +374,13 @@ describe('PageBlockHost NAVIGATE bridge (#5209)', () => {
     expect(iframe.getAttribute('data-block-ready')).toBe('true');
   });
 
-  test('site-absolute /api/* is refused (a block cannot sign the viewer out)', async () => {
+  test('site-scope /api/* is refused (a block cannot sign the viewer out)', async () => {
     renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
 
-    postFromBlock('NAVIGATE', { path: '/api/auth/logout' });
-    postFromBlock('NAVIGATE', { path: '/api/auth/logout', target: 'new_tab' });
+    postFromBlock('NAVIGATE', { scope: 'site', path: '/api/auth/logout' });
+    postFromBlock('NAVIGATE', { scope: 'site', path: '/api/auth/logout', target: 'new_tab' });
+    postFromBlock('NAVIGATE', { scope: 'site', path: 'api/auth/logout' });
 
     await new Promise((r) => setTimeout(r, 150));
     expect(router.push).not.toHaveBeenCalled();
@@ -306,7 +389,7 @@ describe('PageBlockHost NAVIGATE bridge (#5209)', () => {
     // Positive control, same mount: an ordinary site route from the same block DOES
     // navigate — so the two zeros above are a measurement of the exclusion and not
     // of a bridge that is wired to nothing.
-    postFromBlock('NAVIGATE', { path: '/models/500' });
+    postFromBlock('NAVIGATE', { scope: 'site', path: '/models/500' });
     await vi.waitFor(() => {
       expect(router.push).toHaveBeenCalledWith('/models/500', undefined, undefined);
     });
@@ -331,8 +414,8 @@ describe('PageBlockHost NAVIGATE bridge (#5209)', () => {
       '/%2e./api/auth/logout',
       '/models/%2e%2e/api/auth/logout',
     ]) {
-      postFromBlock('NAVIGATE', { path });
-      postFromBlock('NAVIGATE', { path, target: 'new_tab' });
+      postFromBlock('NAVIGATE', { scope: 'site', path });
+      postFromBlock('NAVIGATE', { scope: 'site', path, target: 'new_tab' });
     }
 
     await new Promise((r) => setTimeout(r, 150));
@@ -343,9 +426,47 @@ describe('PageBlockHost NAVIGATE bridge (#5209)', () => {
     // navigate, so the two zeros above measure the refusals and not a bridge wired
     // to nothing. Without this, a silently-broken `driveToReady`/`postFromBlock`
     // satisfies both `not.toHaveBeenCalled()` assertions vacuously.
-    postFromBlock('NAVIGATE', { path: '/models/500' });
+    postFromBlock('NAVIGATE', { scope: 'site', path: '/models/500' });
     await vi.waitFor(() => {
       expect(router.push).toHaveBeenCalledWith('/models/500', undefined, undefined);
+    });
+  });
+
+  test('the same off-origin and encoded-traversal set is refused in APP space too', async () => {
+    // A `scope` field is untrusted input like any other, so NEITHER space may
+    // reach these. Split from the site-space test above rather than folded into
+    // it: posting all four variants per path in one mount floods the bridge and
+    // the trailing positive control never lands (measured — the control failed
+    // with 0 router calls, which would have read as a refusal defect).
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+
+    for (const path of [
+      'https://evil.example/steal',
+      '//evil.example',
+      'javascript:alert(1)',
+      '/%2e%2e/api/auth/logout',
+      '/%2E%2E/api/auth/logout',
+      '/%2e/api/auth/logout',
+      '/.%2e/api/auth/logout',
+      '/%2e./api/auth/logout',
+      '/models/%2e%2e/api/auth/logout',
+    ]) {
+      postFromBlock('NAVIGATE', { path });
+    }
+
+    await new Promise((r) => setTimeout(r, 150));
+    expect(router.push).not.toHaveBeenCalled();
+    expect(openSpy).not.toHaveBeenCalled();
+
+    // Positive control, same mount, in the SAME space: an ordinary app sub-path
+    // DOES navigate, so the zeros above measure the refusals and not a bridge
+    // wired to nothing.
+    postFromBlock('NAVIGATE', { path: 'detail' });
+    await vi.waitFor(() => {
+      expect(router.push).toHaveBeenCalledWith('/apps/run/my-page-app/detail', undefined, {
+        shallow: true,
+      });
     });
   });
 
@@ -356,7 +477,7 @@ describe('PageBlockHost NAVIGATE bridge (#5209)', () => {
       if (!el.contentWindow) throw new Error('not mounted yet');
     });
 
-    postFromBlock('NAVIGATE', { path: '/models/500' });
+    postFromBlock('NAVIGATE', { scope: 'site', path: '/models/500' });
 
     await new Promise((r) => setTimeout(r, 150));
     expect(router.push).not.toHaveBeenCalled();
@@ -368,7 +489,7 @@ describe('PageBlockHost NAVIGATE bridge (#5209)', () => {
     // never wired, and not of a host that refuses `/models/500` for some other
     // reason.
     await driveToReady();
-    postFromBlock('NAVIGATE', { path: '/models/500' });
+    postFromBlock('NAVIGATE', { scope: 'site', path: '/models/500' });
     await vi.waitFor(() => {
       expect(router.push).toHaveBeenCalledWith('/models/500', undefined, undefined);
     });

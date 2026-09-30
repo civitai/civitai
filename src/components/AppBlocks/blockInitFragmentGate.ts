@@ -88,10 +88,12 @@ export type BlockHostSurface =
  * Where a block's own client router may push an APP-SCOPED sub-path, per surface.
  *
  * 🔴 SCOPE, since #5209: this map governs the APP-SCOPED half of `NAVIGATE` only —
- * a path with NO leading slash. A path WITH a leading slash is site-absolute and
- * does not pass through a base at all. What the map still decides for BOTH halves
- * is the `null` case: a `null` base means the surface performs no block-requested
- * navigation whatsoever.
+ * a payload with `scope: 'app'`, which is the default. A `scope: 'site'` request
+ * does not pass through a base at all; whether a surface may serve one is a
+ * SEPARATE per-surface capability, `BLOCK_HOST_SITE_NAVIGATION` below. One
+ * concern each: this map answers "where does an in-app sub-path go?", that one
+ * answers "may a block move the viewer off the app?". They are deliberately not
+ * folded together — `private-run` says yes to the first and no to the second.
  *
  * 🔴 A TOTAL `Record`, NOT A TERNARY, AND THAT IS THE WHOLE VALUE OF IT. `PageBlockHost`
  * handles a block's `NAVIGATE` request by pushing `<base>/<slug>/<path>`, and the base
@@ -157,6 +159,44 @@ export const BLOCK_HOST_DEEP_LINK_BASE: Record<BlockHostSurface, string | null> 
   // Pointing this at the deleted path would make a block's first in-app navigation 404 —
   // the exact failure this total record's docblock exists to prevent.
   'private-run': '/apps/run',
+};
+
+/**
+ * May a block on this surface ask the host to leave the app — a `NAVIGATE` with
+ * `scope: 'site'`?
+ *
+ * 🔴 A SEPARATE RECORD FROM `BLOCK_HOST_DEEP_LINK_BASE` ON PURPOSE. The two
+ * questions are independent and a surface can answer them differently, so folding
+ * site navigation into a `null` base would force them to move together and make
+ * each refusal untraceable to a decision. Total over `BlockHostSurface` for the
+ * same reason as the base map: a new surface is a COMPILE ERROR here until
+ * someone decides whether it may move the viewer off the app, rather than
+ * inheriting an answer from a default branch.
+ *
+ * 🔴 `private-run` IS THE CASE THAT MOTIVATED SPLITTING THEM, and the refusal is
+ * load-bearing rather than tidy. That route (`/apps/private-run/<slug>`) resolves
+ * an audience that includes `moderator`, it exists precisely to serve `suspended`
+ * and delisted apps, and it passes NO `reviewMode` — so the review surface's two
+ * refusals do not cover it. Without this entry a suspended app could move a
+ * moderator's tab to any page route on the site, which is the same hazard
+ * `review-preview` is closed against, on a surface that reaches the same viewer.
+ * APP-scoped deep-linking inside the owner's own private preview stays working
+ * (its base above is non-null) — that is what the surface is for, and it reaches
+ * no site route.
+ *
+ * `review-preview` and `model-slot` are `false` as well, but they are not the
+ * interesting entries: both already have a `null` base, so they perform no
+ * app-scoped navigation either. `false` here states the site half explicitly
+ * instead of leaving it to be inferred from the other map.
+ */
+export const BLOCK_HOST_SITE_NAVIGATION: Record<BlockHostSurface, boolean> = {
+  'model-slot': false,
+  'page-run': true,
+  'dev-tunnel': true,
+  'review-preview': false,
+  // 🔴 See the docblock above — a suspended app must not be able to move a
+  // moderator's tab off the private-run route. App scope stays enabled.
+  'private-run': false,
 };
 
 /**
