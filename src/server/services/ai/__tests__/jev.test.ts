@@ -328,9 +328,12 @@ describe('🔴 the PROMPT and the PARSER describe the same envelope', () => {
    *
    * ⚠️ An earlier version of this docstring added "because a degraded response is
    * byte-identical to an honest 'no resource needed', nothing would have said so".
-   * RETRACTED — it is false: the two responses differ in five fields, and a degrade
-   * also writes `degraded=1` to the shadow table and logs. What is true is that
-   * nothing ALERTS on it. Do not re-derive the stronger claim.
+   * RETRACTED — it is false: the two responses differ in five fields, and every
+   * degrade writes `degraded=1` to the shadow table. One computed on a cache MISS
+   * also carries a `degradedReason` and logs; one REPLAYED from the 60s cache is
+   * tagged `cached_degrade` and logs nothing, having never entered the catch — so
+   * a `degraded=1` row with no log is a replay, not a broken writer. What is true
+   * is that nothing ALERTS on any of it. Do not re-derive the stronger claim.
    *
    * These derive the expectation from the PROMPT TEXT instead.
    */
