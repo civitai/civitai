@@ -38,7 +38,9 @@ function svelteFiles(from: string): string[] {
 }
 
 const files = svelteFiles(SRC).sort();
-const source = new Map(files.map((f) => [path.relative(SRC, f), stripComments(readFileSync(f, 'utf8'))]));
+const source = new Map(
+  files.map((f) => [path.relative(SRC, f), stripComments(readFileSync(f, 'utf8'))])
+);
 
 /**
  * A raw checkbox input, tolerating attributes in any order and across newlines — five of the six this
@@ -254,7 +256,9 @@ describe('destructive surfaces carry the touch-target marker', () => {
     expect(unmarkedCheckboxes('<div data-touch-target><Checkbox /></div>')).toHaveLength(0);
     // An `<input>` is void: a walk that pushed it would leave the stack permanently poisoned with
     // whatever attributes preceded it and report every later checkbox as marked.
-    expect(unmarkedCheckboxes('<div data-touch-target><input name="x"></div><p><Checkbox /></p>')).toHaveLength(1);
+    expect(
+      unmarkedCheckboxes('<div data-touch-target><input name="x"></div><p><Checkbox /></p>')
+    ).toHaveLength(1);
 
     expect(
       checkboxes,

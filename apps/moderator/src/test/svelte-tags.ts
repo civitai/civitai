@@ -38,8 +38,20 @@ const TAG = /<(\/?)([a-zA-Z][\w.-]*)((?:[^>"'{]|"[^"]*"|'[^']*'|\{[^{}]*\})*?)(\
 
 /** HTML elements with no closing tag. A nesting walk that pushes these never pops them. */
 export const VOID_ELEMENTS = new Set([
-  'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source',
-  'track', 'wbr',
+  'area',
+  'base',
+  'br',
+  'col',
+  'embed',
+  'hr',
+  'img',
+  'input',
+  'link',
+  'meta',
+  'param',
+  'source',
+  'track',
+  'wbr',
 ]);
 
 export function tokenizeTags(source: string): SvelteTag[] {
