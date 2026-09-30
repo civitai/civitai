@@ -1,5 +1,6 @@
 import {
   Alert,
+  Anchor,
   Badge,
   Button,
   Group,
@@ -13,7 +14,14 @@ import {
 import { IconMusic, IconPhoto, IconVideo } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
 import * as z from 'zod';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { goNext } from '~/components/Training/Form/TrainingCommon';
+import {
+  disabledMediaTooltip,
+  isStudioToggleAvailable,
+  showStudioAudioNotice,
+} from '~/components/Training/Form/studioAudioNotice';
 import { Form, InputRadioGroup, InputSegmentedControl, InputText, useForm } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
@@ -144,6 +152,10 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
   const queryUtils = trpc.useUtils();
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
   const features = useFeatureFlags();
+  const { data: userFeatures } = trpc.user.getFeatureFlags.useQuery(undefined, {
+    gcTime: Infinity,
+    staleTime: Infinity,
+  });
   const status = useTrainingServiceStatus();
 
   const { resetRuns } = trainingStore;
@@ -392,11 +404,7 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
 
               return {
                 label: (
-                  <Tooltip
-                    disabled={!notAllowed}
-                    label="Temporarily disabled - check back soon!"
-                    withinPortal
-                  >
+                  <Tooltip disabled={!notAllowed} label={disabledMediaTooltip(mt)} withinPortal>
                     <Group gap="xs" justify="center">
                       {icon}
                       <Text>{titleCase(mt)}</Text>
@@ -414,6 +422,34 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
             fullWidth
           />
         </Input.Wrapper>
+        {showStudioAudioNotice({
+          features,
+          studioToggleAvailable: isStudioToggleAvailable(userFeatures),
+          mediaType: trainingMediaType,
+        }) && (
+          <AlertWithIcon
+            icon={<IconMusic size={16} />}
+            iconColor="blue"
+            color="blue"
+            size="sm"
+            title="New in Training Studio: audio training"
+          >
+            <Stack gap={4}>
+              <Text size="sm">
+                Our new training experience, <b>Training Studio</b> (Beta), lets you train ACE-Step
+                audio LoRAs — teach a genre, a voice, or an artist&rsquo;s sound from a few tracks —
+                alongside a redesigned flow for image and video training.
+              </Text>
+              <Text size="sm">
+                To try it, go to{' '}
+                <Anchor component={Link} href="/user/account/preferences">
+                  Settings → Preferences
+                </Anchor>{' '}
+                and turn on <b>Training Studio</b>. You can switch back at any time.
+              </Text>
+            </Stack>
+          </AlertWithIcon>
+        )}
         {trainingMediaType === 'audio' ? (
           <Alert color="blue" radius="md">
             <Stack gap={4}>
