@@ -443,8 +443,13 @@ describe('the surface table', () => {
 
   // Equality, not containment, so a third surface has to come here and be given
   // a decline rate and an expiry rather than silently inheriting someone else's.
-  it('is exactly the two surfaces this foundation was built for', () => {
-    expect([...placementSurfaces].sort()).toEqual(['remixGallery', 'sticker']);
+  it('is exactly the surfaces that have been given their own rates', () => {
+    expect([...placementSurfaces].sort()).toEqual([
+      'galleryPromotion',
+      'modelPromotion',
+      'remixGallery',
+      'sticker',
+    ]);
   });
 
   it('gives every surface a usable decline rate and expiry', () => {
