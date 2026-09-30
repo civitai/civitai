@@ -4,7 +4,7 @@ import * as React from 'react';
 import type { act as actType } from 'react-dom/test-utils';
 import type { Root } from 'react-dom/client';
 import { createRoot } from 'react-dom/client';
-import type { EarningsSource } from '~/components/Buzz/Rewards/useEarningsSource';
+import type { CompensationSource } from '~/server/schema/buzz.schema';
 import {
   EARNINGS_SOURCE_STORAGE_KEY,
   useEarningsSource,
@@ -13,12 +13,12 @@ import {
 const act = (React as unknown as { act: typeof actType }).act;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-type Snapshot = { source: EarningsSource; ready: boolean };
+type Snapshot = { source: CompensationSource; ready: boolean };
 
 let container: HTMLDivElement;
 let root: Root;
 let renders: Snapshot[];
-let setSource: (value: EarningsSource) => void;
+let setSource: (value: CompensationSource) => void;
 
 function Probe() {
   const result = useEarningsSource();

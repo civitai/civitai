@@ -38,13 +38,13 @@ import { ClearableTextInput } from '~/components/ClearableTextInput/ClearableTex
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import type { CompensationSource } from '~/server/schema/buzz.schema';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { formatDate, getDatesAsList, stripTime } from '~/utils/date-helpers';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { GenerationBuzzEmptyState } from './GenerationBuzzEmptyState';
-import type { EarningsSource } from './useEarningsSource';
 import { useEarningsSource } from './useEarningsSource';
 import { getAccountTypeLabel } from '~/utils/buzz';
 
@@ -319,7 +319,7 @@ export function DailyCreatorCompReward({
                     className="shrink-0"
                     value={source}
                     onChange={(value) => {
-                      setSource(value as EarningsSource);
+                      setSource(value as CompensationSource);
                       setSearch('');
                       setFilteredVersionIds([]);
                     }}
