@@ -715,6 +715,23 @@ export const sdxlAspectRatioBuckets = [
   { label: '3:2', value: '3:2', width: 1216, height: 832 },
 ];
 
+/** The full SDXL training bucket set, portrait to landscape. SDXL-family
+ * ecosystems only (SDXL, Pony, Illustrious, NoobAI) — the other ~1M-pixel
+ * models above keep the three-bucket list. Labels are approximate, the same
+ * way 832×1216 is called 2:3. */
+export const sdxlFamilyAspectRatioBuckets = [
+  { label: '9:21', value: '9:21', width: 640, height: 1536 },
+  { label: '9:16', value: '9:16', width: 768, height: 1344 },
+  { label: '3:4', value: '3:4', width: 896, height: 1152 },
+  ...sdxlAspectRatioBuckets,
+  { label: '4:3', value: '4:3', width: 1152, height: 896 },
+  { label: '16:9', value: '16:9', width: 1344, height: 768 },
+  { label: '21:9', value: '21:9', width: 1536, height: 640 },
+];
+
+/** Shown before the picker's "More" button, so the SDXL picker's first row is unchanged. */
+export const sdxlFamilyPriorityAspectRatios = ['2:3', '1:1', '3:2'];
+
 /** SD1 training buckets (~512² area, /64 aligned). */
 export const sd1AspectRatioBuckets = [
   { label: '2:3', value: '2:3', width: 512, height: 768 },
