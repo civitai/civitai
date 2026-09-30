@@ -1,6 +1,7 @@
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import {
   coverageColumn,
+  coveragePair,
   pickCovered,
   nextCoverageEnabled,
 } from '~/server/services/generation/coverage-source';
@@ -553,7 +554,11 @@ export const getModelsRaw = async ({
     AND.push(Prisma.sql`(${pSql}."poi" = false OR mm."userId" = ${userId})`);
   }
   if (disableMinor) {
-    AND.push(Prisma.sql`${pSql}."minor" = false`);
+    AND.push(
+      userId
+        ? Prisma.sql`(${pSql}."minor" = false OR mm."userId" = ${userId})`
+        : Prisma.sql`${pSql}."minor" = false`
+    );
   }
   if (input.excludedTagIds?.length) {
     const notExcluded = Prisma.sql`NOT EXISTS (
@@ -1650,7 +1655,7 @@ export const getModelsWithImagesAndModelVersions = async ({
         if (!filteredImages.length && !showImageless) return null;
 
         const canGenerate = isGenerationEligible({
-          covered: pickCovered(version, next),
+          ...coveragePair(version, next),
           baseModel: version?.baseModel ?? '',
           modelType: model.type,
           flags: version?.flags ?? 0,

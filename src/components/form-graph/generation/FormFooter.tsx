@@ -94,7 +94,7 @@ import { showWarningNotification } from '~/utils/notifications';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 
 import { getMissingFieldMessage, useWhatIfContext } from './WhatIfProvider';
-import type { GenerationStore } from './store';
+import { useSelectedResourceIds, type GenerationStore } from './store';
 
 // =============================================================================
 // Cost (including tips)
@@ -179,6 +179,7 @@ function PriorityAlertSpace({
     isLoading: isBuzzLoading,
   } = useQueryBuzz(availableTypes);
   const totalCost = useTotalGenerationCost(store);
+  const selectedIds = useSelectedResourceIds(store);
   const featureFlags = useFeatureFlags();
 
   const selectedBalance = accounts.find((a) => a.type === selectedType)?.balance ?? 0;
@@ -229,6 +230,7 @@ function PriorityAlertSpace({
     showingTrialAlert = true;
     priorityAlert = (
       <TrialBlockedAlert
+        selectedIds={selectedIds}
         message={blockingTrialMessage}
         remaining={trialRemaining}
         onClose={blockingTrialMessage === submitError ? onClearSubmitError : undefined}
@@ -348,7 +350,9 @@ function PriorityAlertSpace({
       <GeneratorMessageWarnings />
       <BaseModelWarnings />
       <DownloadWarning />
-      {whatIfSettled && !showingTrialAlert && <TrialAccessWarning remaining={trialRemaining} />}
+      {whatIfSettled && !showingTrialAlert && (
+        <TrialAccessWarning selectedIds={selectedIds} remaining={trialRemaining} />
+      )}
       {priorityAlert}
     </>
   );

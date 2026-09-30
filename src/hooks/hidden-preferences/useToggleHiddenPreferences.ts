@@ -6,6 +6,7 @@ import {
   HIDDEN_KIND_TO_KEY,
   planToggleRollback,
 } from '~/shared/hidden-preferences/compact';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export const useToggleHiddenPreferences = () => {
@@ -34,7 +35,8 @@ export const useToggleHiddenPreferences = () => {
       }
       if (variables.kind === 'blockedUser') await queryUtils.user.getFollowsMe.invalidate();
     },
-    onError: async (_error, _variables, context) => {
+    onError: async (error, _variables, context) => {
+      if (error.data?.code === 'TOO_MANY_REQUESTS') showErrorNotification({ error });
       const plan = planToggleRollback(context?.previous as any);
       if ('restore' in plan)
         queryUtils.hiddenPreferences.getHidden.setData(undefined, plan.restore as any);

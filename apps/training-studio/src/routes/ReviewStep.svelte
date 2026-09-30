@@ -50,9 +50,10 @@
     params = $bindable(),
     presetType = $bindable(),
     imageCount,
-    datasetMature,
+    matureCount,
     onStart,
     onBack,
+    onShowMature,
   }: {
     selection: Selection;
     name: string;
@@ -61,8 +62,8 @@
     params: Record<string, RunParams>;
     presetType: string;
     imageCount: number;
-    /** A trainable image's upload scan rated it mature (R and up). */
-    datasetMature: boolean;
+    /** Trainable images whose upload scan rated them mature (R and up). */
+    matureCount: number;
     onStart: (
       launched: LaunchedRun[],
       prompts: string[],
@@ -70,6 +71,8 @@
       currencies: string[]
     ) => Promise<void>;
     onBack: () => void;
+    /** Back to the Data step, filtered to the mature images. */
+    onShowMature: () => void;
   } = $props();
 
   let starting = $state(false);
@@ -86,7 +89,7 @@
   // it seconds after submit, and charges the whole price in Yellow. Users read that silent switch as a
   // billing bug, so it is warned here and confirmed at Start. Unknown membership warns too, hedged.
   const membership = hostConfig().isPaidMember;
-  const blueExcluded = $derived(datasetMature && membership !== true);
+  const blueExcluded = $derived(matureCount > 0 && membership !== true);
 
 
   const OPTIMIZERS = ['AdamW8Bit', 'Adafactor', 'Prodigy', 'Automagic'];
@@ -504,7 +507,12 @@
       >
         <IconAlertTriangle size={14} stroke={2} class="mt-px shrink-0 text-buzz" />
         <span>
-          Your dataset was rated <strong>mature</strong>.
+          {matureCount}
+          {matureCount === 1 ? 'image in your dataset was' : 'images in your dataset were'} rated
+          <strong>mature</strong> (R or above) —
+          <button type="button" onclick={onShowMature} class="font-semibold text-primary hover:underline">
+            see which
+          </button>.
           <span class="text-blue-400">Blue</span> Buzz can't pay for mature content without a
           membership, so {membership === undefined ? 'unless you have one, ' : ''}this
           {multi ? 'training' : 'run'} is charged in full in <span class="text-buzz">Yellow</span> Buzz.

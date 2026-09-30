@@ -149,8 +149,10 @@ condition anyone will check, or turned out to need nothing.
 
 ### Custom video checkpoints cannot be loaded — correct behaviour
 
-Kept because it explains a recurring complaint. Of 73 MiniMax H3 checkpoints, 52 are covered; every
-uncovered one has a reason:
+Kept because it explains a recurring complaint, and the answer changed under it on 2026-09-29.
+
+At triage, 52 of 73 MiniMax H3 checkpoints were covered, and every uncovered one had a file-level
+reason:
 
 - **GGUF** — 9 of the 21. The loader serves SafeTensor only, which `UNLOADABLE_MESSAGES` states. The
   model named in the thread is itself a GGUF build.
@@ -158,6 +160,15 @@ uncovered one has a reason:
 - **Unpublished or draft** — 5 of the 7 uncovered versions that do carry a SafeTensor.
 - **Unscanned** — the last 2 are ~63 GB uploads with pickle and virus scans still `Pending`, or whose
   only SafeTensor is an `Enhancement LoRA` rather than a `Model` file.
+
+Those reasons no longer decide the case for **community** checkpoints here. MiniMax H3 is
+`modelLocked`, so
+`isGenerationEligible` holds every **community** checkpoint on it to the live rule — 47 were being
+offered on 2026-09-29, 4 of them already loaded. The ecosystem's own
+`EcosystemCheckpoints` versions keep their coverage. The refusal is now deliberate rather than
+incidental: the graph rewrites a custom checkpoint back to the workflow default, so loading one buys
+nothing. Reasoning and the per-base-model table:
+[paid-model-loading-coverage.md](paid-model-loading-coverage.md), "Model-locked ecosystems".
 
 Nothing to fix. The gap is that none of it is stated where a user hits it.
 

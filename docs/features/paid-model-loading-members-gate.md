@@ -15,7 +15,12 @@ Feature it extends: [paid-model-loading.md](paid-model-loading.md).
 | | non-member | member |
 | --- | --- | --- |
 | **Checkpoint** | `covered` OR (`coveredNext` AND already resident) | `coveredNext` |
+| **Checkpoint on a `modelLocked` ecosystem** | `covered` | `covered` |
 | **everything else** | `coveredNext` | `coveredNext` |
+
+The locked row is not this gate's doing and is not audience-dependent: `isGenerationEligible` holds
+those checkpoints to the live column for everyone, after `coveredForUser` has answered
+([paid-model-loading-coverage.md](paid-model-loading-coverage.md), "Model-locked ecosystems").
 
 **Moderators count as members**, whatever their tier — the same rule `isGatedFor.members` applies in
 `gates.ts` ("mods + members keep access"). Leaving them out made a moderator unable to see the feature

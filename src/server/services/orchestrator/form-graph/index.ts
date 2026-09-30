@@ -50,6 +50,7 @@ import { createKlingInput } from './kling.handler';
 import { createAceAudioInput } from './ace.handler';
 import { createMiniMaxMusicInput } from './minimax-music.handler';
 import { createYuE2Input } from './yue2.handler';
+import { createSoniloInput } from './sonilo.handler';
 import {
   createPolyGenInput,
   createTripoInput,
@@ -104,6 +105,7 @@ export { createKlingInput } from './kling.handler';
 export { createAceAudioInput } from './ace.handler';
 export { createMiniMaxMusicInput } from './minimax-music.handler';
 export { createYuE2Input } from './yue2.handler';
+export { createSoniloInput } from './sonilo.handler';
 export {
   createPolyGenInput,
   createTripoInput,
@@ -288,6 +290,9 @@ function createStep(
 
     case 'YuE2':
       return createYuE2Input(data, handlerCtx);
+
+    case 'Sonilo':
+      return createSoniloInput(data, handlerCtx);
 
     case 'PolyGen':
       return createPolyGenInput(data, handlerCtx);

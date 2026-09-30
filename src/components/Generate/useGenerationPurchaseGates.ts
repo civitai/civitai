@@ -11,11 +11,22 @@ import { trpc } from '~/utils/trpc';
 /**
  * The selected resources this viewer can still be sold generation access to, so the generator can offer
  * the purchase instead of waiting for a spent trial to fail a submission.
+ *
+ * `selectedIds` must come from the form: the resource provider also holds every ecosystem's prefetched
+ * default checkpoint, so its full list would gate on models nobody picked.
  */
-export function useGenerationPurchaseGates(): { gates: PurchaseGate[]; isLoading: boolean } {
+export function useGenerationPurchaseGates(selectedIds: readonly number[]): {
+  gates: PurchaseGate[];
+  isLoading: boolean;
+} {
   const currentUser = useCurrentUser();
-  const { resources } = useResourceDataContext();
+  const { resources: provided } = useResourceDataContext();
   const isModerator = !!currentUser?.isModerator;
+
+  const resources = useMemo(
+    () => provided.filter((resource) => selectedIds.includes(resource.id)),
+    [provided, selectedIds]
+  );
 
   const candidateIds = useMemo(
     () => purchaseGateCandidates(resources, { isModerator }).map((resource) => resource.id),

@@ -24,7 +24,11 @@ import type {
   VideoGenStepTemplate,
   VideoInterpolationStepTemplate,
 } from '@civitai/client';
-import type { PreprocessVideoStepTemplate, YuE2StepTemplate } from '@civitai/orchestration-client';
+import type {
+  PreprocessVideoStepTemplate,
+  SoniloAudioGenStepTemplate,
+  YuE2StepTemplate,
+} from '@civitai/orchestration-client';
 import { maxRandomSeed } from '~/server/common/constants';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import type { GenerationHandlerCtx } from '../orchestration-new.service';
@@ -61,6 +65,7 @@ import { createPonyV7Input } from './pony-v7.handler';
 import { createAceAudioInput } from './ace-audio.handler';
 import { createMiniMaxMusicInput } from './minimax-music.handler';
 import { createYuE2Input } from './yue2.handler';
+import { createSoniloInput } from './sonilo.handler';
 
 // 3D model ecosystem handlers
 import { createPolyGenInput } from './polygen-graph.handler';
@@ -97,6 +102,7 @@ export type StepInput =
   | AceStepAudioStepTemplate
   | MiniMaxMusic3StepTemplate
   | YuE2StepTemplate
+  | SoniloAudioGenStepTemplate
   | ChatCompletionStepTemplate
   | PromptEnhancementStepTemplate
   | PreprocessImageStepTemplate
@@ -284,6 +290,7 @@ export { createMageFlowInput } from './mage-flow.handler';
 export { createAceAudioInput } from './ace-audio.handler';
 export { createMiniMaxMusicInput } from './minimax-music.handler';
 export { createYuE2Input } from './yue2.handler';
+export { createSoniloInput } from './sonilo.handler';
 
 // 3D model ecosystems
 export { createPolyGenInput } from './polygen-graph.handler';
@@ -557,6 +564,9 @@ async function createEcosystemStep(
 
     case 'YuE2':
       return createYuE2Input(normalizedData, handlerCtx);
+
+    case 'Sonilo':
+      return createSoniloInput(normalizedData, handlerCtx);
 
     // =========================================================================
     // 3D Model Ecosystems — polyGen step (Meshy via Fal)

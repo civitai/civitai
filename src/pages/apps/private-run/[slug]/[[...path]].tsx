@@ -49,16 +49,19 @@ import type { PrivateRunAudience } from '~/shared/constants/block-scope.constant
  * now. The audit trail for a private run is the mint's internal
  * `app-blocks.private-run.mint` line, which the owner cannot see.
  *
- * ⚠️ BUT THIS OMISSION DOES NOT BY ITSELF MAKE A PRIVATE RUN INVISIBLE, AND AN EARLIER
+ * ⚠️ THIS OMISSION DOES NOT BY ITSELF MAKE A PRIVATE RUN INVISIBLE, AND AN EARLIER
  * VERSION OF THIS PARAGRAPH IMPLIED IT DID. The play count is closed here; the
- * ANALYTICS half is not. Two other writers still feed the owner-visible panel — the
- * voided `block_spend_attribution` row (whose owner-visible reads carry no `status`
- * predicate) and every `block_scope_invocations` row `withBlockScope` writes for a
- * scoped call, which is read into the engagement count and a `count(DISTINCT
- * user_id)`. Neither is reachable while the flag is off, and both are a documented
- * PRECONDITION on widening it (stated at `isAppBlocksPrivateRunEnabled`). Saying so
- * here matters because this is the comment a reader would otherwise cite as evidence
- * that the invisibility decision is delivered.
+ * ANALYTICS half is closed ELSEWHERE, at the reads, and both halves of it are now in:
+ * the voided `block_spend_attribution` row is excluded by `status <> 'voided'` on both
+ * owner-visible reads, and every `block_scope_invocations` row `withBlockScope` writes
+ * carries a `source` marker excluded by all five owner-visible reads.
+ *
+ * 🔴 DO NOT READ THAT AS "nothing blocks the flag", and do not re-derive the list here.
+ * This comment is the one a reader would otherwise cite as evidence either way, and it
+ * has now been wrong in BOTH directions — it asserted the analytics half was open for a
+ * while after the invocation rail closed. The authoritative, kept-current enumeration is
+ * the precondition block at `APP_BLOCKS_PRIVATE_RUN_FLAG` in
+ * `~/server/services/app-blocks-flag.ts`. Read it there.
  *
  * It also omits the beta and listing-icon reads the public route performs: both are
  * store-listing chrome, and this app's listing is `removed`.

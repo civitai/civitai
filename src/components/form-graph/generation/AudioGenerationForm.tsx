@@ -137,6 +137,20 @@ export function AudioGenerationForm({ store }: { store: GenerationStore }) {
       />
       <Controller
         graph={audioHub}
+        name="soniloOperation"
+        render={({ value, meta, onChange }) => (
+          <div className="flex flex-col gap-1">
+            <Input.Label>Generate</Input.Label>
+            <SegmentedControlWrapper
+              value={value}
+              onChange={(v) => onChange(v as typeof value)}
+              data={meta?.options?.map((o) => ({ label: o.label, value: o.value })) ?? []}
+            />
+          </div>
+        )}
+      />
+      <Controller
+        graph={audioHub}
         name="prompt"
         render={({ value, meta, onChange, error }) => (
           <PromptEditorShell

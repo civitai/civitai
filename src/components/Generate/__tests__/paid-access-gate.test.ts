@@ -7,6 +7,7 @@ import {
   pickGateForMessage,
   purchaseGateCandidates,
   resolvePurchaseGates,
+  selectedResourceIds,
 } from '~/components/Generate/paid-access-gate';
 
 const TRIAL: ModelVersionTerms = { generation: { price: 200, trialLimit: 5 } };
@@ -165,5 +166,17 @@ describe('pickGateForMessage', () => {
     expect(
       pickGateForMessage([], 'You have 0 trial generations remaining with Sulphur')
     ).toBeUndefined();
+  });
+});
+
+describe('selectedResourceIds', () => {
+  it('collects the checkpoint, every additional resource and the VAE', () => {
+    expect(
+      selectedResourceIds({ model: { id: 1 }, resources: [{ id: 2 }, { id: 3 }], vae: { id: 4 } })
+    ).toEqual([1, 2, 3, 4]);
+  });
+
+  it('skips empty slots', () => {
+    expect(selectedResourceIds({ model: null, resources: undefined, vae: null })).toEqual([]);
   });
 });

@@ -1,3 +1,4 @@
+import { NsfwLevel } from '~/server/common/enums';
 import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as PlacementUtil from '~/components/Sticker/placement.util';
@@ -128,7 +129,7 @@ vi.mock('~/hooks/useCurrentUser', () => ({
 }));
 
 const renderBar = async () => {
-  renderWithProviders(<StickerPlacementBar imageId={IMAGE_ID} />);
+  renderWithProviders(<StickerPlacementBar imageId={IMAGE_ID} imageNsfwLevel={NsfwLevel.PG} />);
   // Anchored on "a button exists" rather than on a name. Every name in this row
   // is either the thing under test or, if the names collide, ambiguous — and an
   // ambiguous locator turns a failure into a 15 s strict-mode retry rather than

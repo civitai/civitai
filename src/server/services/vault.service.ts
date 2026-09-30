@@ -15,13 +15,18 @@ import type {
 } from '~/server/schema/vault.schema';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
+import { deleteVaultItems } from '~/server/services/vault-item-deletion';
 import { getCategoryTags } from '~/server/services/system-cache';
-import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwBadRequestError,
+  throwInternalServerError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { getFileDisplayName, getPrimaryFile } from '~/server/utils/model-helpers';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { ModelStatus, ModelUsageControl, VaultItemStatus } from '~/shared/utils/prisma/enums';
 import { formatKBytes } from '~/utils/number-helpers';
-import { deleteManyObjects, getGetUrlByKey } from '~/utils/s3-utils';
+import { getGetUrlByKey } from '~/utils/s3-utils';
 import { isDefined } from '~/utils/type-guards';
 
 type VaultWithUsedStorage = {
@@ -264,32 +269,11 @@ export const removeModelVersionsFromVault = async ({
 }: VaultItemsRemoveModelVersionsSchema & {
   userId: number;
 }) => {
-  await dbWrite.vaultItem.deleteMany({
-    where: {
-      vaultId: userId,
-      modelVersionId: { in: modelVersionIds },
-    },
-  });
-
-  const keys = modelVersionIds
-    .map((modelVersionId) => {
-      return [
-        constants.vault.keys.details
-          .replace(':modelVersionId', modelVersionId.toString())
-          .replace(':userId', userId.toString()),
-        constants.vault.keys.images
-          .replace(':modelVersionId', modelVersionId.toString())
-          .replace(':userId', userId.toString()),
-        constants.vault.keys.cover
-          .replace(':modelVersionId', modelVersionId.toString())
-          .replace(':userId', userId.toString()),
-      ];
-    })
-    .flat();
-  if (!keys.length) return;
-
-  if (env.S3_VAULT_BUCKET) {
-    await deleteManyObjects(env.S3_VAULT_BUCKET, keys);
+  const { failedModelVersionIds } = await deleteVaultItems({ userId, modelVersionIds });
+  if (failedModelVersionIds.length) {
+    throwInternalServerError(
+      new Error('Some items could not be removed from your Vault. Please try again.')
+    );
   }
 };
 

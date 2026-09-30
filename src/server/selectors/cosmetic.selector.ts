@@ -38,6 +38,8 @@ export type SimpleCosmetic = Omit<
    * decorations carry it too, not only stickers — but on no other procedure.
    */
   createdById?: number | null;
+  /** `CosmeticFlag` bits. Selected by `getUserCosmetics` alone, like `createdById`. */
+  flags?: number;
 };
 
 export type BadgeCosmetic = Omit<SimpleCosmetic, 'data'> & {

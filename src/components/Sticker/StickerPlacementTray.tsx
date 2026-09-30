@@ -19,6 +19,7 @@ import {
   useFreePlacementStanding,
   useImagePlacementSpace,
 } from '~/components/Sticker/placement.util';
+import { isStickerKeptOffImage } from '~/shared/constants/cosmetic-flags.constants';
 import { stickerMaxScale } from '~/shared/utils/sticker-placement';
 import { remainingStickerUses, useOwnedSticker } from '~/components/Sticker/sticker.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -59,9 +60,22 @@ const STICKER_SEARCH_THRESHOLD = 12;
 const trayRowsHeight = (rows: number) =>
   rows * STICKER_TILE_HEIGHT + (rows - 1) * STICKER_TILE_GAP + 2 * STICKER_TILE_GAP;
 
-export function StickerPlacementTray({ imageId }: { imageId: number }) {
+export function StickerPlacementTray({
+  imageId,
+  imageNsfwLevel,
+}: {
+  imageId: number;
+  imageNsfwLevel: number;
+}) {
   const currentUser = useCurrentUser();
-  const { sticker, isLoading } = useOwnedSticker();
+  const { sticker: owned, isLoading } = useOwnedSticker();
+  const sticker = useMemo(
+    () =>
+      owned.filter(
+        (option) => !isStickerKeptOffImage({ cosmeticFlags: option.flags ?? 0, imageNsfwLevel })
+      ),
+    [owned, imageNsfwLevel]
+  );
   const [shopping, setShopping] = useState(false);
   const [search, setSearch] = useState('');
   const [mineOnlyRequested, setMineOnlyRequested] = useState(false);
@@ -245,7 +259,13 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
       <div className="flex w-full max-w-xl flex-col">
         {/* Above the tray, not in place of it: the row of what you own is the
             thing you are shopping to add to, so it stays visible while you buy. */}
-        {shopping && <StickerShopPanel maxScale={maxScale} onClose={() => setShopping(false)} />}
+        {shopping && (
+          <StickerShopPanel
+            maxScale={maxScale}
+            imageNsfwLevel={imageNsfwLevel}
+            onClose={() => setShopping(false)}
+          />
+        )}
         <div className="overflow-hidden rounded-lg border border-gray-3 bg-white shadow-lg dark:border-dark-4 dark:bg-dark-7">
           <div className="flex flex-wrap items-start gap-2 border-b border-gray-3 px-3 py-2 dark:border-dark-4">
             <div className="order-1 min-w-0 flex-1">

@@ -260,6 +260,7 @@ const featureFlags = createFeatureFlags({
   krea2Training: { availability: ['public'], fliptKey: 'krea2-training' },
   mageflowTraining: { availability: ['public'], fliptKey: 'mageflow-training' },
   ideogram4Training: { availability: ['mod'], fliptKey: 'ideogram4-training' },
+  // Old trainer only — Training Studio gates ACE-Step on its own `training-studio-audio-training`.
   audioTraining: { availability: ['mod'], fliptKey: 'audio-training' },
   // Steps-based training pricing + QOL inputs (steps/batchSize/sample params/continue-training).
   // Public availability so it can be rolled out to a tester segment via Flipt; default off.

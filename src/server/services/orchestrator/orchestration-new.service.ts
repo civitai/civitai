@@ -2631,6 +2631,7 @@ export function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] 
       return [{ ...(output.blob as AudioBlob), type: 'audio' as const }];
     case 'miniMaxMusic3':
     case 'yuE2':
+    case 'soniloAudioGen':
       return output.blob ? [{ ...(output.blob as AudioBlob), type: 'audio' as const }] : [];
     case 'polyGen':
       // Bundle every PolyGen sibling onto a single item — the format step

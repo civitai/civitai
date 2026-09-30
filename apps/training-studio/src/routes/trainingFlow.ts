@@ -137,6 +137,8 @@ export function recommendedCardFor(
 
 export type ImgStatus = 'uploading' | 'uploaded' | 'blocked' | 'error';
 
+export type DatasetFilter = 'all' | 'labeled' | 'unlabeled' | 'mature';
+
 /** A dataset item: its source file, upload/scan state against the orchestrator, and its label.
  *  Owned by the flow so it survives Back/Continue. Once uploaded the bytes live in the orchestrator
  *  (`blobId` is the training-data reference, `blobUrl` the scanned media URL); labels are edited

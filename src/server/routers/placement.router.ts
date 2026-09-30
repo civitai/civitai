@@ -188,11 +188,13 @@ export const placementRouter = router({
       return { ...allowance, usedHere };
     }),
 
-  getStickerPlacements: publicProcedure
-    .input(getStickerPlacementsSchema)
-    .query(({ input, ctx }) =>
-      getStickerPlacements({ imageIds: input.imageIds, viewerId: ctx.user?.id })
-    ),
+  getStickerPlacements: publicProcedure.input(getStickerPlacementsSchema).query(({ input, ctx }) =>
+    getStickerPlacements({
+      imageIds: input.imageIds,
+      viewerId: ctx.user?.id,
+      isModerator: ctx.user?.isModerator,
+    })
+  ),
 
   // Its own query, hit only when someone hovers a sticker. Folding it into the
   // listing would pay for it on every sticker in a feed.

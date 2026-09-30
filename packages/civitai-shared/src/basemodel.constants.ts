@@ -205,6 +205,7 @@ export const ECO = {
   AceAudio: 68,
   MiniMaxMusic3: 85,
   YuE2: 87,
+  Sonilo: 91,
 
   // Root ecosystems - 3D Model providers
   // PolyGen has been displaced twice on main merges:
@@ -895,6 +896,13 @@ export const ecosystems: EcosystemRecord[] = [
     displayName: 'YuE2',
     sortOrder: 307,
   },
+  {
+    id: ECO.Sonilo,
+    key: 'Sonilo',
+    displayName: 'Sonilo',
+    familyId: 28,
+    sortOrder: 308,
+  },
 
   // 3D Model ecosystems
   {
@@ -1271,6 +1279,7 @@ export const ecosystemSupport: EcosystemSupport[] = [
   { ecosystemId: ECO.MiniMaxMusic3, supportType: 'generation', modelTypes: checkpointOnly },
   { ecosystemId: ECO.YuE2, supportType: 'generation', modelTypes: checkpointOnly },
   { ecosystemId: ECO.YuE2, supportType: 'training', modelTypes: loraOnly },
+  { ecosystemId: ECO.Sonilo, supportType: 'generation', modelTypes: checkpointOnly },
 
   // PolyGen - remote 3D generator (Meshy via Fal). No Civitai checkpoint/LoRA;
   // entry exists so the unified generator picker can route 3D-Models workflows
@@ -1751,6 +1760,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.YuE2,
     defaults: {
       model: { id: 3337846 },
+      modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.Sonilo,
+    defaults: {
+      model: { id: 3370181 },
       modelLocked: true,
     },
   },
@@ -2288,6 +2304,7 @@ export const BM = {
   YuE2: 106,
   Ming: 108,
   MingLayer: 109,
+  Sonilo: 110,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2611,6 +2628,11 @@ export const licenses: LicenseRecord[] = [
       'Qwen is licensed under the Qwen RESEARCH LICENSE AGREEMENT, Copyright (c) 2026 Hangzhou Tongyi Laboratory Technology Co., Ltd. All Rights Reserved.',
     nonCommercial: true,
   },
+  {
+    id: 46,
+    name: 'Sonilo Terms of Service',
+    url: 'https://sonilo.com/terms',
+  },
 ];
 
 export const licenseById = new Map(licenses.map((l) => [l.id, l]));
@@ -2754,6 +2776,11 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
     id: 27,
     name: 'inclusionAI',
     description: "inclusionAI's image generation and design models",
+  },
+  {
+    id: 28,
+    name: 'Sonilo',
+    description: "Sonilo's music and sound-effect generation models",
   },
 ];
 
@@ -3745,6 +3772,15 @@ export const baseModelRecords: BaseModelRecord[] = [
     hidden: true,
   },
 
+  {
+    id: BM.Sonilo,
+    name: 'Sonilo',
+    description: "Sonilo's music and sound-effect generation model",
+    type: 'audio',
+    ecosystemId: ECO.Sonilo,
+    licenseId: 46,
+  },
+
   // PolyGen (Meshy via Fal) — remote 3D model generator. Type='image' matches
   // the Upscaler base-model convention for "no Civitai checkpoint" ecosystems
   // (Prisma's MediaType enum has no 'model3d' variant). Hidden from the
@@ -4247,6 +4283,24 @@ export function getGenerationBaseModelRecords(): BaseModelRecord[] {
     if (m.hidden || m.disabled) return false;
     return isModelSupported(m.id, 'generation');
   });
+}
+
+let modelLockedBaseModelSet: Set<string> | undefined;
+
+/**
+ * Whether this base model's ecosystem pins the checkpoint to its own versions.
+ *
+ * `createCheckpointGraph` rewrites a version id outside the workflow's own list back to that
+ * workflow's default, on the server parse as well as in the form, so a community checkpoint on one
+ * of these can never reach the orchestrator however it was selected. `isGenerationEligible` is the
+ * only consumer; `no-divergent-can-generate-derivation` keeps `src/` from adding another.
+ */
+export function isModelLockedBaseModel(baseModel: string): boolean {
+  return (modelLockedBaseModelSet ??= new Set(
+    baseModelRecords
+      .filter((m) => getEcosystemDefaults(m.ecosystemId)?.modelLocked)
+      .map((m) => m.name)
+  )).has(baseModel);
 }
 
 /**

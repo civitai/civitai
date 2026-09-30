@@ -16,6 +16,7 @@
     runCard,
     runParamsKey,
     seedPrompts,
+    type DatasetFilter,
     type Img,
     type LaunchedRun,
     type RunParams,
@@ -38,6 +39,7 @@
   ] as const;
 
   let step = $state(1);
+  let dataFilter = $state<DatasetFilter>('all');
   let selection = $state<Selection | null>(null);
   // Dataset + trigger + label mode are owned here so they survive Back/Continue between steps. `labelMode`
   // defaults to the chosen model's default label and is only user-changeable for a `bothLabels` model.
@@ -76,8 +78,8 @@
   });
   // Only successfully uploaded + scanned images train — blocked / in-flight tiles don't count.
   const trainableCount = $derived(images.filter(isTrainable).length);
-  const datasetMature = $derived(
-    images.some((i) => isTrainable(i) && isMatureNsfwLevel(i.nsfwLevel))
+  const matureCount = $derived(
+    images.filter((i) => isTrainable(i) && isMatureNsfwLevel(i.nsfwLevel)).length
   );
 
   // The dataset's own labels (joined tags or captions) — Review seeds its sample prompts from these.
@@ -99,8 +101,15 @@
     images = [];
   });
 
+  // Leaving Data drops its filter; only Review's "see which" hands one across a step change.
+  function leaveData() {
+    dataFilter = 'all';
+  }
+
   function jump(n: number) {
-    if (n <= step) step = n;
+    if (n > step) return;
+    if (step === 2) leaveData();
+    step = n;
   }
 
   function enterReview() {
@@ -122,6 +131,7 @@
         return [key, runParams[key] ?? defaultRunParams(run)];
       })
     );
+    leaveData();
     step = 3;
   }
 
@@ -217,9 +227,13 @@
       bind:trigger
       bind:labelMode
       bind:autoLabel
+      bind:filter={dataFilter}
       bind:excludeTags
       onContinue={enterReview}
-      onBack={() => (step = 1)}
+      onBack={() => {
+        leaveData();
+        step = 1;
+      }}
     />
   {:else if step === 3 && selection}
     <ReviewStep
@@ -229,9 +243,13 @@
       bind:params={runParams}
       bind:presetType
       imageCount={trainableCount}
-      {datasetMature}
+      {matureCount}
       onStart={start}
       onBack={() => (step = 2)}
+      onShowMature={() => {
+        dataFilter = 'mature';
+        step = 2;
+      }}
     />
   {/if}
 </section>

@@ -139,6 +139,21 @@ const CASES: Record<string, unknown>[] = [
     yue2Mode: 'off',
     yue2Abc: 'X:1\nK:C\nC D E G |',
   },
+  { workflow: 'txt2music', ecosystem: 'Sonilo', prompt: 'warm lo-fi hip hop' },
+  {
+    workflow: 'txt2music',
+    ecosystem: 'Sonilo',
+    soniloOperation: 'soundEffect',
+    prompt: 'glass bottle shattering on concrete',
+    duration: 2.5,
+  },
+  {
+    workflow: 'txt2music',
+    ecosystem: 'Sonilo',
+    soniloOperation: 'music',
+    prompt: 'upbeat synth-pop at 118 BPM',
+    duration: 120,
+  },
 
   // SD family: imageGen, comfy (img2img + hires), controlnets
   { workflow: 'txt2img', ecosystem: 'SDXL', prompt: 'a cat', seed: 42 },
