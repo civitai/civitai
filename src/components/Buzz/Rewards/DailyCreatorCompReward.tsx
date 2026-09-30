@@ -44,6 +44,8 @@ import { formatDate, getDatesAsList, stripTime } from '~/utils/date-helpers';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { GenerationBuzzEmptyState } from './GenerationBuzzEmptyState';
+import type { EarningsSource } from './useEarningsSource';
+import { useEarningsSource } from './useEarningsSource';
 import { getAccountTypeLabel } from '~/utils/buzz';
 
 ChartJS.register(
@@ -82,20 +84,20 @@ export function DailyCreatorCompReward({
   const mobile = useIsMobile({ breakpoint: 'sm' });
   const [filteredVersionIds, setFilteredVersionIds] = useState<number[]>([]);
   const [selectedDate, setSelectedDate] = useState(dateOptions[0].value);
-  const [source, setSource] = useState<'compensation' | 'licenseFee'>('compensation');
+  const { source, setSource, ready: sourceReady } = useEarningsSource();
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
   const { data, isLoading } = trpc.buzz.getDailyBuzzCompensation.useQuery(
     { date: selectedDate, accountType: buzzAccountType, source },
-    { enabled: !!features.buzz }
+    { enabled: !!features.buzz && sourceReady }
   );
   const resources = data?.resources ?? [];
   const hasPublishedResources = data?.hasPublishedResources ?? false;
 
   const { data: licenseProbe } = trpc.buzz.getDailyBuzzCompensation.useQuery(
     { date: selectedDate, source: 'licenseFee' },
-    { enabled: !!features.buzz && source === 'compensation' }
+    { enabled: !!features.buzz && sourceReady && source === 'compensation' }
   );
   const hasLicenseEarnings = (licenseProbe?.resources.length ?? 0) > 0 || source === 'licenseFee';
   const theme = useMantineTheme();
@@ -317,7 +319,7 @@ export function DailyCreatorCompReward({
                     className="shrink-0"
                     value={source}
                     onChange={(value) => {
-                      setSource(value as 'compensation' | 'licenseFee');
+                      setSource(value as EarningsSource);
                       setSearch('');
                       setFilteredVersionIds([]);
                     }}
