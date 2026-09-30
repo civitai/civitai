@@ -19,6 +19,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 import type { MediaType } from '~/shared/utils/prisma/enums';
+import { rankCrucibleEntries } from '~/utils/crucible-helpers';
 
 export type CrucibleEntryData = {
   id: number;
@@ -57,6 +58,8 @@ export type CrucibleEntryGridProps = {
   onLoadMore?: () => void;
   title?: string;
   showRanks?: boolean;
+  /** Ranks come from placings; entries without enough votes to place get none. */
+  completed?: boolean;
   showUserEntries?: boolean;
   currentUserId?: number | null;
   maxUserEntries?: number;
@@ -65,7 +68,6 @@ export type CrucibleEntryGridProps = {
   onEntryClick?: (entry: CrucibleEntryData) => void;
 };
 
-const scoreOf = (entry: CrucibleEntryData) => entry.score ?? Number.NEGATIVE_INFINITY;
 
 /**
  * CrucibleEntryGrid - Displays crucible entries in a masonry-style grid
@@ -86,6 +88,7 @@ export function CrucibleEntryGrid({
   onLoadMore,
   title,
   showRanks = false,
+  completed = false,
   showUserEntries = false,
   currentUserId,
   maxUserEntries,
@@ -96,12 +99,8 @@ export function CrucibleEntryGrid({
   const currentUser = useCurrentUser();
   const userId = currentUserId ?? currentUser?.id;
 
-  // Pages arrive in score order once ranks are visible, so a loaded entry's index is its rank;
-  // the viewer's own entries may sit on a page not loaded yet and carry their final position.
   const rankedEntries = showRanks
-    ? [...entries]
-        .sort((a, b) => scoreOf(b) - scoreOf(a))
-        .map((entry, index) => ({ ...entry, rank: entry.position ?? index + 1 }))
+    ? rankCrucibleEntries(entries, { completed })
     : entries.map((entry) => ({ ...entry, rank: null }));
 
   const separateViewer = showUserEntries && !!userId;

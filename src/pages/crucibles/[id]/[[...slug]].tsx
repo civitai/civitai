@@ -29,6 +29,8 @@ import { Page } from '~/components/AppLayout/Page';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import {
+  CRUCIBLE_MIN_VOTES_PERCENT,
+  getCrucibleManageActions,
   getCrucibleTotalPrizePool,
   getCrucibleUrl,
   toCrucibleBuzzType,
@@ -241,12 +243,12 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
   const isModerator = currentUser?.isModerator ?? false;
   const isOffDomain =
     !!features.isGreen && crucible.buzzType !== 'green' && !isCreator && !isModerator;
-  const isFinished =
-    crucible.status === CrucibleStatus.Completed || crucible.status === CrucibleStatus.Cancelled;
-  const canCancel = (isModerator && !isFinished) || (isCreator && isPending);
-  const canEdit =
-    (isModerator && crucible.status !== CrucibleStatus.Cancelled) ||
-    (isCreator && (isPending || isOpen));
+  const { canEdit, canCancel } = getCrucibleManageActions({
+    status: crucible.status,
+    endAt: crucible.endAt,
+    isCreator,
+    isModerator,
+  });
 
   // Handle cancel action with confirmation dialog
   const handleCancelCrucible = () => {
@@ -319,7 +321,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
           <CruciblePodium
             entries={loadedEntries}
             prizePositions={prizePositions}
-            entryCount={entryCount}
+            entryCount={crucible.placedEntryCount ?? entryCount}
             totalPrizePool={totalPrizePool}
             buzzType={toCrucibleBuzzType(crucible.buzzType)}
           />
@@ -380,6 +382,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                 onEntryClick={openEntry}
                 title="All Entries"
                 showRanks={rankingsVisible}
+                completed={crucible.status === CrucibleStatus.Completed}
                 showUserEntries={!!currentUser}
                 currentUserId={currentUser?.id}
                 maxUserEntries={maxUserEntries}
@@ -473,6 +476,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                 <CrucibleLeaderboard
                   entries={loadedEntries.filter(hasScore)}
                   totalCount={entryCount}
+                  placedCount={crucible.placedEntryCount}
                   hasMore={!!hasMoreEntries}
                   onLoadMore={loadMoreEntries}
                   prizePositions={prizePositions}
@@ -536,6 +540,10 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                     visible: !!crucible.maxTotalEntries,
                   },
                   { label: 'Judging', value: 'Continuous & Live' },
+                  {
+                    label: 'Minimum Votes',
+                    value: `An entry needs ${CRUCIBLE_MIN_VOTES_PERCENT}% of the average entry's votes to place`,
+                  },
                   { label: 'Tie-Breaking', value: 'Earlier entries rank higher' },
                 ]}
               />
@@ -610,6 +618,8 @@ const getSubmitEntryProps = (crucible: CrucibleDetail) => ({
   maxClipSeconds: crucible.maxClipSeconds,
   requiresResources:
     Array.isArray(crucible.allowedResources) && crucible.allowedResources.length > 0,
+  startAt: crucible.startAt,
+  endAt: crucible.endAt,
 });
 
 // Required resources are alternatives ("at least one of"), so only the first is preselected.

@@ -77,22 +77,15 @@ export class CrucibleEloRedisClient {
   }
 
   /**
-   * Process a vote atomically using a Lua script
-   * This prevents race conditions from concurrent votes by ensuring read-compute-update happens atomically
-   *
-   * @param crucibleId - The crucible ID
-   * @param winnerEntryId - The entry ID that won
-   * @param loserEntryId - The entry ID that lost
-   * @param winnerKFactor - The K-factor for the winner
-   * @param loserKFactor - The K-factor for the loser
-   * @returns Object with old and new ELO values and changes for both entries
+   * Applies one vote in a single Lua script, so concurrent votes can't lose updates or both read a
+   * pre-vote count. Each side moves by its own K (provisional until `provisionalVotes`), which lets
+   * a new entry find its level without pushing an established one as far.
    */
   async processVoteAtomic(
     crucibleId: number,
     winnerEntryId: number,
     loserEntryId: number,
-    winnerKFactor: number,
-    loserKFactor: number
+    k: { provisionalK: number; establishedK: number; provisionalVotes: number }
   ): Promise<{
     winnerElo: number;
     loserElo: number;
@@ -101,55 +94,50 @@ export class CrucibleEloRedisClient {
     winnerChange: number;
     loserChange: number;
   }> {
-    const key = this.getKey(crucibleId);
-
-    // Lua script for atomic read-compute-update of ELO scores
-    // This prevents race conditions by running all operations on the Redis server
-    // IMPORTANT: Uses zero-sum ELO calculation to prevent rating inflation
     const script = `
       local eloKey = KEYS[1]
+      local votesKey = KEYS[2]
       local winnerField = ARGV[1]
       local loserField = ARGV[2]
-      local winnerK = tonumber(ARGV[3])
-      local loserK = tonumber(ARGV[4])
-      local defaultElo = tonumber(ARGV[5])
+      local provisionalK = tonumber(ARGV[3])
+      local establishedK = tonumber(ARGV[4])
+      local provisionalVotes = tonumber(ARGV[5])
+      local defaultElo = tonumber(ARGV[6])
 
-      -- Get current ELO scores (use default if not set)
+      local function kFor(field)
+        local votes = tonumber(redis.call('HGET', votesKey, field)) or 0
+        if votes < provisionalVotes then return provisionalK end
+        return establishedK
+      end
+      local winnerK = kFor(winnerField)
+      local loserK = kFor(loserField)
+
       local winnerElo = tonumber(redis.call('HGET', eloKey, winnerField)) or defaultElo
       local loserElo = tonumber(redis.call('HGET', eloKey, loserField)) or defaultElo
 
-      -- Calculate expected score for winner using ELO formula
-      -- Expected probability that winner beats loser: 1 / (1 + 10^((loserElo - winnerElo) / 400))
       local expectedWinner = 1 / (1 + math.pow(10, (loserElo - winnerElo) / 400))
+      local winnerChange = math.floor(winnerK * (1 - expectedWinner) + 0.5)
+      local loserChange = -math.floor(loserK * (1 - expectedWinner) + 0.5)
 
-      -- Use averaged K-factor to ensure zero-sum outcome
-      -- This prevents ELO inflation that occurs when players have different K-factors
-      local avgK = (winnerK + loserK) / 2
-
-      -- Calculate winner's rating change using averaged K-factor
-      -- Winner gets actual score of 1, expected was expectedWinner
-      local winnerChange = math.floor(avgK * (1 - expectedWinner) + 0.5)
-      -- Loser change is negative of winner change (zero-sum)
-      local loserChange = -winnerChange
-
-      -- Update ELO scores
       local newWinnerElo = winnerElo + winnerChange
       local newLoserElo = loserElo + loserChange
 
       redis.call('HSET', eloKey, winnerField, newWinnerElo)
       redis.call('HSET', eloKey, loserField, newLoserElo)
+      redis.call('HINCRBY', votesKey, winnerField, 1)
+      redis.call('HINCRBY', votesKey, loserField, 1)
 
-      -- Return old and new values for logging
       return {winnerElo, loserElo, newWinnerElo, newLoserElo, winnerChange, loserChange}
     `;
 
     const result = (await this.redis.eval(script, {
-      keys: [key],
+      keys: [this.getKey(crucibleId), this.getVotesKey(crucibleId)],
       arguments: [
         winnerEntryId.toString(),
         loserEntryId.toString(),
-        winnerKFactor.toString(),
-        loserKFactor.toString(),
+        k.provisionalK.toString(),
+        k.establishedK.toString(),
+        k.provisionalVotes.toString(),
         DEFAULT_ELO.toString(),
       ],
     })) as number[];
@@ -219,26 +207,6 @@ export class CrucibleEloRedisClient {
    */
   private getVotesKey(crucibleId: number): RedisKeyTemplateSys {
     return `${REDIS_SYS_KEYS.CRUCIBLE.ELO}:${crucibleId}:votes` as RedisKeyTemplateSys;
-  }
-
-  /**
-   * Get the vote count for an entry in a crucible
-   * Returns 0 if the entry doesn't exist in Redis
-   */
-  async getVoteCount(crucibleId: number, entryId: number): Promise<number> {
-    const key = this.getVotesKey(crucibleId);
-    const value = await this.redis.hGet<string>(key, entryId.toString());
-    return value ? parseInt(value, 10) : 0;
-  }
-
-  /**
-   * Increment vote count for an entry (called when entry participates in a vote)
-   * Returns the new vote count
-   */
-  async incrementVoteCount(crucibleId: number, entryId: number): Promise<number> {
-    const key = this.getVotesKey(crucibleId);
-    const newValue = await this.redis.hIncrBy(key, entryId.toString(), 1);
-    return newValue;
   }
 
   /**

@@ -519,9 +519,9 @@ describe('getCrucibles — status for an unfiltered feed', () => {
     ).toBe(CrucibleStatus.Completed);
   });
 
-  it('leaves cancelled crucibles out of the other sorts', async () => {
+  it('shows only running and upcoming crucibles until a status is picked', async () => {
     expect((await whereFor({ sort: CrucibleSort.Newest })).status).toEqual({
-      not: CrucibleStatus.Cancelled,
+      in: [CrucibleStatus.Active, CrucibleStatus.Pending],
     });
   });
 

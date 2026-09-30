@@ -22,7 +22,7 @@ const contentTypeOptions: { value?: CrucibleContentType; label: string }[] = [
 ];
 
 const statusOptions: { value?: CrucibleStatus; label: string }[] = [
-  { label: 'All' },
+  { label: 'Active & Upcoming' },
   { value: CrucibleStatus.Pending, label: 'Upcoming' },
   { value: CrucibleStatus.Active, label: 'Active' },
   { value: CrucibleStatus.Completed, label: 'Completed' },

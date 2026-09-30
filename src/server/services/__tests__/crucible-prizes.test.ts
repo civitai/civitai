@@ -46,6 +46,7 @@ const dbEntry = (id: number, userId: number, createdAtMs: number) => ({
   id,
   userId,
   score: 1500,
+  voteCount: 0,
   createdAt: new Date(createdAtMs),
 });
 

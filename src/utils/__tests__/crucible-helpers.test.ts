@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import {
+  getCrucibleManageActions,
+  getCrucibleMinVotes,
   getCruciblePrizeAmount,
   getCrucibleRatingLabel,
   getCrucibleStatusBadge,
   getCrucibleUrl,
+  isCrucibleFinalStretch,
   parsePrizePositions,
+  rankCrucibleEntries,
 } from '~/utils/crucible-helpers';
 
 describe('parsePrizePositions', () => {
@@ -144,5 +148,132 @@ describe('getCruciblePrizeAmount', () => {
     ];
     expect(amounts(2, short).slice(0, 2)).toEqual([600, 200]);
     expect(amounts(1, short)[0]).toBe(800);
+  });
+});
+
+describe('getCrucibleMinVotes', () => {
+  it('asks for 75% of the average votes per entry, rounded up', () => {
+    // Average 14 → 10.5, and a vote count is whole, so 11.
+    expect(getCrucibleMinVotes({ totalVotes: 56, entryCount: 4 })).toBe(11);
+  });
+
+  it('does not round an exact 75% up to the next vote', () => {
+    // Average 12 → exactly 9.
+    expect(getCrucibleMinVotes({ totalVotes: 48, entryCount: 4 })).toBe(9);
+  });
+
+  it('asks for nothing when nobody has voted or nobody has entered', () => {
+    expect(getCrucibleMinVotes({ totalVotes: 0, entryCount: 5 })).toBe(0);
+    expect(getCrucibleMinVotes({ totalVotes: 0, entryCount: 0 })).toBe(0);
+  });
+});
+
+describe('isCrucibleFinalStretch', () => {
+  const startAt = new Date('2026-10-01T00:00:00Z');
+  const endAt = new Date('2026-10-02T00:00:00Z'); // 24h, so the last 20% is 4.8h
+  const at = (iso: string) => isCrucibleFinalStretch({ startAt, endAt, now: new Date(iso) });
+
+  it('is false while more than a fifth of the crucible is left', () => {
+    expect(at('2026-10-01T19:00:00Z')).toBe(false);
+  });
+
+  it('is true inside the last fifth', () => {
+    expect(at('2026-10-01T19:30:00Z')).toBe(true);
+  });
+
+  it('is false once the crucible has ended', () => {
+    expect(at('2026-10-02T00:00:01Z')).toBe(false);
+  });
+
+  it('is false without both dates', () => {
+    expect(isCrucibleFinalStretch({ startAt: null, endAt, now: new Date() })).toBe(false);
+    expect(isCrucibleFinalStretch({ startAt, endAt: null, now: new Date() })).toBe(false);
+  });
+});
+
+describe('rankCrucibleEntries', () => {
+  const entry = (id: number, score: number, position: number | null) => ({ id, score, position });
+
+  it('orders a completed crucible by its placings and leaves unplaced entries unranked, last', () => {
+    const ranked = rankCrucibleEntries(
+      [entry(1, 1560, null), entry(2, 1480, 2), entry(3, 1550, 1)],
+      { completed: true }
+    );
+
+    expect(ranked.map((e) => [e.id, e.rank])).toEqual([
+      [3, 1],
+      [2, 2],
+      [1, null],
+    ]);
+  });
+
+  it('ranks a cancelled crucible by score, since nobody was placed', () => {
+    const ranked = rankCrucibleEntries([entry(1, 1400, null), entry(2, 1600, null)], {
+      completed: false,
+    });
+
+    expect(ranked.map((e) => [e.id, e.rank])).toEqual([
+      [2, 1],
+      [1, 2],
+    ]);
+  });
+});
+
+describe('getCrucibleManageActions', () => {
+  const past = new Date(Date.now() - 60_000);
+  const future = new Date(Date.now() + 60_000);
+  const actions = (
+    status: CrucibleStatus,
+    endAt: Date | null,
+    who: { isCreator?: boolean; isModerator?: boolean }
+  ) =>
+    getCrucibleManageActions({
+      status,
+      endAt,
+      isCreator: !!who.isCreator,
+      isModerator: !!who.isModerator,
+    });
+
+  it('offers nothing once a running crucible is past its end, even before it is finalized', () => {
+    expect(actions(CrucibleStatus.Active, past, { isModerator: true })).toEqual({
+      canEdit: false,
+      canCancel: false,
+    });
+    expect(actions(CrucibleStatus.Active, past, { isCreator: true })).toEqual({
+      canEdit: false,
+      canCancel: false,
+    });
+  });
+
+  it('offers nothing on a completed crucible, moderators included', () => {
+    expect(actions(CrucibleStatus.Completed, past, { isModerator: true })).toEqual({
+      canEdit: false,
+      canCancel: false,
+    });
+  });
+
+  it('lets a moderator edit and cancel a running crucible', () => {
+    expect(actions(CrucibleStatus.Active, future, { isModerator: true })).toEqual({
+      canEdit: true,
+      canCancel: true,
+    });
+  });
+
+  it('lets the creator edit a running crucible but cancel only before it starts', () => {
+    expect(actions(CrucibleStatus.Active, future, { isCreator: true })).toEqual({
+      canEdit: true,
+      canCancel: false,
+    });
+    expect(actions(CrucibleStatus.Pending, future, { isCreator: true })).toEqual({
+      canEdit: true,
+      canCancel: true,
+    });
+  });
+
+  it('offers a stranger nothing', () => {
+    expect(actions(CrucibleStatus.Active, future, {})).toEqual({
+      canEdit: false,
+      canCancel: false,
+    });
   });
 });

@@ -1,4 +1,5 @@
 import {
+  Alert,
   Badge,
   Button,
   Center,
@@ -49,7 +50,7 @@ import { downloadGeneratorImages } from '~/utils/generator-import';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { getMimeTypesFromMediaTypes } from '~/shared/constants/mime-types';
 import { trpc } from '~/utils/trpc';
-import { getCrucibleRatingLabel } from '~/utils/crucible-helpers';
+import { getCrucibleRatingLabel, isCrucibleFinalStretch } from '~/utils/crucible-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { Flags } from '~/shared/utils/flags';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
@@ -71,6 +72,8 @@ export interface CrucibleSubmitEntryModalProps {
   maxClipSeconds?: number | null;
   /** Whether entries must be made with one of the crucible's required models. */
   requiresResources?: boolean;
+  startAt?: Date | null;
+  endAt?: Date | null;
   /** Optional array of allowed resource names to display in requirements */
   allowedResourceNames?: string[];
   onSuccess?: () => void;
@@ -324,6 +327,8 @@ export default function CrucibleSubmitEntryModal({
   maxClipSeconds,
   requiresResources = false,
   allowedResourceNames,
+  startAt = null,
+  endAt = null,
   onSuccess,
 }: CrucibleSubmitEntryModalProps) {
   const dialog = useDialogContext();
@@ -473,6 +478,13 @@ export default function CrucibleSubmitEntryModal({
           : false,
     }
   );
+
+  const inFinalStretch = isCrucibleFinalStretch({ startAt, endAt });
+  const { data: minVotesToPlace } = trpc.crucible.getMinVotesToPlace.useQuery(
+    { id: crucibleId },
+    { enabled: !!currentUser && inFinalStretch }
+  );
+  const minVotes = inFinalStretch ? minVotesToPlace?.minVotes ?? 0 : 0;
 
   // Get images that are already submitted to this crucible
   const { data: crucibleData } = trpc.crucible.getById.useQuery(
@@ -840,6 +852,13 @@ export default function CrucibleSubmitEntryModal({
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-5 pb-5">
+          {minVotes > 0 && (
+            <Alert color="yellow" radius="md" mb="md" icon={<IconAlertCircle size={16} />}>
+              This crucible is close to ending. An entry needs about {minVotes}{' '}
+              {minVotes === 1 ? 'vote' : 'votes'} to place and win a prize, and a new one may not
+              get there in time.
+            </Alert>
+          )}
           <Tabs value={activeTab} onChange={setActiveTab} classNames={{ panel: 'pt-4' }}>
             <Tabs.List>
               <Tabs.Tab

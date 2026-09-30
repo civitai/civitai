@@ -44,6 +44,7 @@ const dbEntry = (id: number, userId: number, createdAtMs: number) => ({
   id,
   userId,
   score: 1500,
+  voteCount: 0,
   createdAt: new Date(createdAtMs),
 });
 
@@ -243,6 +244,19 @@ describe('finalizeCrucible — completion', () => {
     });
   });
 
+  it('clears earlier positions first, so a retry leaves none on an entry that no longer ranks', async () => {
+    const clear = dbMock.dbWrite.crucibleEntry.updateMany;
+    clear.mockResolvedValue({ count: 0 });
+
+    await finalizeCrucible(1);
+
+    expect(clear).toHaveBeenCalledWith({
+      where: { crucibleId: 1, position: { not: null } },
+      data: { position: null },
+    });
+    expect(clear.mock.invocationCallOrder[0]).toBeLessThan(executeRaw.mock.invocationCallOrder[0]);
+  });
+
   it('writes the final scores and positions back to Postgres', async () => {
     await finalizeCrucible(1);
     expect(executeRaw).toHaveBeenCalled();
@@ -321,6 +335,126 @@ describe('finalizeCrucible — single entry', () => {
     expect(result.finalEntries[0]).toMatchObject({ entryId: 1, position: 1 });
     expect(result.totalPrizePool).toBe(100);
     expect(result.finalEntries[0].prizeAmount).toBe(100);
+  });
+});
+
+describe('finalizeCrucible — minimum votes to place', () => {
+  // Votes 20/18/16/2 average 14, so an entry needs 11 (75%, rounded up) to place.
+  const fourEntries = [
+    dbEntry(1, 10, 1_000),
+    dbEntry(2, 11, 2_000),
+    dbEntry(3, 12, 3_000),
+    dbEntry(4, 13, 4_000),
+  ];
+
+  it('leaves an entry under the minimum unplaced, even with the top score', async () => {
+    setupCrucible({
+      entries: fourEntries,
+      elos: { 1: 1550, 2: 1520, 3: 1480, 4: 1560 },
+      voteCounts: { 1: 20, 2: 18, 3: 16, 4: 2 },
+    });
+
+    const result = await finalizeCrucible(1);
+
+    expect(result.finalEntries.map((e) => [e.entryId, e.position])).toEqual([
+      [1, 1],
+      [2, 2],
+      [3, 3],
+      [4, null],
+    ]);
+    expect(result.finalEntries.find((e) => e.entryId === 4)?.prizeAmount).toBe(0);
+  });
+
+  it('places an entry sitting exactly on the minimum', async () => {
+    // Average 12 → exactly 9.
+    setupCrucible({
+      entries: fourEntries,
+      elos: { 1: 1550, 2: 1520, 3: 1580, 4: 1450 },
+      voteCounts: { 1: 12, 2: 12, 3: 9, 4: 15 },
+    });
+
+    const result = await finalizeCrucible(1);
+
+    expect(result.finalEntries.find((e) => e.entryId === 3)?.position).toBe(1);
+  });
+
+  it("splits an unplaced entry's would-be place among the placed winners", async () => {
+    setupCrucible({
+      entryFee: 100,
+      elos: { 1: 1500, 2: 1450, 3: 1600 },
+      voteCounts: { 1: 10, 2: 10, 3: 0 },
+    });
+
+    const result = await finalizeCrucible(1);
+
+    // 50/30/20 of a 300 pool with only two placed: 50 and 30 scale to 62.5% and 37.5%.
+    expect(result.finalEntries.map((e) => [e.entryId, e.prizeAmount])).toEqual([
+      [1, 187],
+      [2, 112],
+      [3, 0],
+    ]);
+  });
+
+  it('writes a null position for the unplaced entry', async () => {
+    setupCrucible({
+      entries: fourEntries,
+      elos: { 1: 1550, 2: 1520, 3: 1480, 4: 1560 },
+      voteCounts: { 1: 20, 2: 18, 3: 16, 4: 2 },
+    });
+
+    await finalizeCrucible(1);
+
+    const values = executeRaw.mock.calls.flatMap(
+      ([, rows]) => (rows as { values: unknown[] }).values
+    );
+    // (entryId, score, position, voteCount) for entry 4.
+    expect(values.slice(12, 16)).toEqual([4, 1560, null, 2]);
+  });
+
+  it('tells an unplaced entrant they were not placed rather than naming a position', async () => {
+    setupCrucible({
+      entries: fourEntries,
+      elos: { 1: 1550, 2: 1520, 3: 1480, 4: 1560 },
+      voteCounts: { 1: 20, 2: 18, 3: 16, 4: 2 },
+    });
+
+    await finalizeCrucible(1);
+
+    const won = createNotification.mock.calls
+      .map(([arg]) => arg)
+      .find((arg) => arg.type === 'crucible-won' && arg.userId === 13);
+    expect(won?.details).toMatchObject({ position: null, prizeAmount: 0 });
+  });
+
+  it('falls back to the synced vote counts when Redis has lost them', async () => {
+    setupCrucible({
+      entries: fourEntries.map((entry, i) => ({ ...entry, voteCount: [20, 18, 16, 2][i] })),
+      elos: { 1: 1550, 2: 1520, 3: 1480, 4: 1560 },
+      voteCounts: {},
+    });
+
+    const result = await finalizeCrucible(1);
+
+    expect(result.finalEntries.find((e) => e.entryId === 4)).toMatchObject({
+      position: null,
+      voteCount: 2,
+    });
+    expect(result.finalEntries.find((e) => e.entryId === 1)?.voteCount).toBe(20);
+  });
+
+  it("names a user's placed entry over their unplaced one", async () => {
+    setupCrucible({
+      entries: [dbEntry(1, 10, 1_000), dbEntry(2, 11, 2_000), dbEntry(3, 10, 3_000)],
+      elos: { 1: 1450, 2: 1500, 3: 1600 },
+      voteCounts: { 1: 10, 2: 10, 3: 0 },
+    });
+
+    await finalizeCrucible(1);
+
+    const won = createNotification.mock.calls
+      .map(([arg]) => arg)
+      .find((arg) => arg.type === 'crucible-won' && arg.userId === 10);
+    expect(won?.details).toMatchObject({ position: 2 });
   });
 });
 

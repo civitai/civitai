@@ -31,6 +31,7 @@ import {
   createCrucible,
   getCrucibleDetail,
   getCrucibleEntries,
+  getCrucibleMinVotesToPlace,
   getCrucibles,
   getFeaturedCrucible,
   getJudgesCount,
@@ -139,6 +140,22 @@ export const getCrucibleEntriesHandler = async ({
     isModerator: !!ctx.user?.isModerator,
   });
 };
+
+export const getMinVotesToPlaceHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetCrucibleByIdSchema;
+  ctx: ProtectedContext;
+}) =>
+  getCrucibleMinVotesToPlace({
+    crucibleId: input.id,
+    viewer: {
+      viewerId: ctx.user.id,
+      isModerator: !!ctx.user.isModerator,
+      isGreen: !!ctx.features?.isGreen,
+    },
+  });
 
 export const createEntryPostHandler = async ({
   input,

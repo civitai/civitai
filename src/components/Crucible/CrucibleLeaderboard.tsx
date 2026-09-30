@@ -6,7 +6,11 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { getCruciblePrizeAmount, type PrizePosition } from '~/utils/crucible-helpers';
+import {
+  getCruciblePrizeAmount,
+  rankCrucibleEntries,
+  type PrizePosition,
+} from '~/utils/crucible-helpers';
 import { useState } from 'react';
 import { CrucibleUserLink } from '~/components/Crucible/CrucibleUserLink';
 import type { SimpleUser } from '~/server/selectors/user.selector';
@@ -43,15 +47,17 @@ export type CrucibleLeaderboardProps = {
   pageSize?: number;
   /** Every ranked entry, loaded or not; defaults to the loaded count. */
   totalCount?: number;
+  /** Entries that placed, which prizes split among; defaults to `totalCount`. */
+  placedCount?: number | null;
   hasMore?: boolean;
   onLoadMore?: () => void;
 };
 
 /**
- * CrucibleLeaderboard - Displays entries ranked by ELO score
+ * CrucibleLeaderboard - Displays entries ranked by placing
  *
  * Features:
- * - Entries ranked by ELO score
+ * - Entries ranked by placing, then unplaced entries by ELO score
  * - Entry thumbnail, score, and position
  * - Crown icons for top 3 positions (gold, silver, bronze)
  * - Highlights current user's entries
@@ -66,6 +72,7 @@ export function CrucibleLeaderboard({
   className,
   pageSize = 10,
   totalCount,
+  placedCount,
   hasMore = false,
   onLoadMore,
 }: CrucibleLeaderboardProps) {
@@ -75,14 +82,7 @@ export function CrucibleLeaderboard({
   const currentUser = useCurrentUser();
   const [page, setPage] = useState(0);
 
-  // Sort entries by score descending to get rankings
-  const sortedEntries = [...entries].sort((a, b) => b.score - a.score);
-
-  // Assign positions based on sort order
-  const rankedEntries = sortedEntries.map((entry, index) => ({
-    ...entry,
-    rank: index + 1,
-  }));
+  const rankedEntries = rankCrucibleEntries(entries, { completed: awarded });
 
   // Calculate pagination
   const totalPages = Math.ceil((totalCount ?? rankedEntries.length) / pageSize);
@@ -99,7 +99,7 @@ export function CrucibleLeaderboard({
   const prizeMap = new Map<number, PrizePosition>();
   prizePositions.forEach((prize) => prizeMap.set(prize.position, prize));
 
-  const entryCount = totalCount ?? rankedEntries.length;
+  const entryCount = placedCount ?? totalCount ?? rankedEntries.length;
   const prizeFor = (position: number) =>
     getCruciblePrizeAmount({ position, prizePositions, entryCount, totalPrizePool });
 
@@ -156,8 +156,8 @@ export function CrucibleLeaderboard({
               key={entry.id}
               entry={entry}
               rank={entry.rank}
-              prizeInfo={prizeMap.get(entry.rank)}
-              prizeAmount={prizeFor(entry.rank)}
+              prizeInfo={entry.rank ? prizeMap.get(entry.rank) : undefined}
+              prizeAmount={entry.rank ? prizeFor(entry.rank) : 0}
               buzzType={buzzType}
               isCurrentUser={currentUser?.id === entry.userId}
             />
@@ -209,7 +209,8 @@ export function CrucibleLeaderboard({
 
 type LeaderboardEntryItemProps = {
   entry: LeaderboardEntry;
-  rank: number;
+  /** Null for an entry that didn't get enough votes to place. */
+  rank: number | null;
   prizeInfo?: PrizePosition;
   prizeAmount: number;
   buzzType: 'green' | 'yellow';
@@ -227,7 +228,7 @@ function LeaderboardEntryItem({
   buzzType,
   isCurrentUser,
 }: LeaderboardEntryItemProps) {
-  const isTopThree = rank <= 3;
+  const isTopThree = rank !== null && rank <= 3;
 
   // Medal colors based on position
   const getMedalStyle = () => {
@@ -258,7 +259,7 @@ function LeaderboardEntryItem({
           borderColor: 'transparent',
           bgColor: 'rgba(201, 203, 207, 0.1)',
           textColor: '#909296',
-          label: `${rank}${getOrdinalSuffix(rank)}`,
+          label: rank === null ? '' : `${rank}${getOrdinalSuffix(rank)}`,
         };
     }
   };
@@ -316,7 +317,7 @@ function LeaderboardEntryItem({
             fontSize: '0.875rem',
           }}
         >
-          {rank}
+          {rank ?? '–'}
         </div>
 
         <CrucibleUserLink user={entry.user} className="flex-1">
@@ -330,6 +331,11 @@ function LeaderboardEntryItem({
             {isCurrentUser && (
               <Text size="xs" c="blue">
                 Your entry
+              </Text>
+            )}
+            {rank === null && (
+              <Text size="xs" c="dimmed">
+                Not enough votes to place
               </Text>
             )}
           </div>

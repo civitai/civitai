@@ -13,6 +13,7 @@ import {
   getJudgeStatsHandler,
   getJudgingPairHandler,
   getJudgingSuggestionsHandler,
+  getMinVotesToPlaceHandler,
   getUserActiveCruciblesHandler,
   getUserCrucibleStatsHandler,
   submitEntryHandler,
@@ -61,6 +62,11 @@ export const crucibleRouter = router({
     .use(isFlagProtected('crucible'))
     .input(getCrucibleEntriesSchema)
     .query(getCrucibleEntriesHandler),
+
+  getMinVotesToPlace: protectedProcedure
+    .use(isFlagProtected('crucible'))
+    .input(getCrucibleByIdSchema)
+    .query(getMinVotesToPlaceHandler),
 
   getCreateEligibility: protectedProcedure
     .use(isFlagProtected('crucible'))

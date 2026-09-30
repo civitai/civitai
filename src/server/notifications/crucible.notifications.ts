@@ -21,6 +21,12 @@ export const crucibleNotifications = createNotificationProcessor({
     category: NotificationCategory.System,
     toggleable: true,
     prepareMessage: ({ details }) => {
+      if (details.position == null) {
+        return {
+          message: `The crucible "${details.crucibleName}" has ended. Your entry didn't get enough votes to place. Thanks for participating!`,
+          url: `/crucibles/${details.crucibleId}`,
+        };
+      }
       // If prizeAmount is 0, user participated but didn't win a prize
       if (!details.prizeAmount || details.prizeAmount === 0) {
         return {

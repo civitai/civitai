@@ -16,10 +16,8 @@ const {
   K_FACTOR_ESTABLISHED,
   K_FACTOR_PROVISIONAL,
   PROVISIONAL_VOTE_THRESHOLD,
-  estimateEloChange,
   getAllEntryElos,
   getEntryElo,
-  getKFactor,
   initializeEntryElo,
   processVote,
 } = await import('~/server/services/crucible-elo.service');
@@ -44,54 +42,6 @@ describe('constants', () => {
   });
 });
 
-describe('getKFactor', () => {
-  it('returns the provisional K below the threshold', () => {
-    expect(getKFactor(0)).toBe(K_FACTOR_PROVISIONAL);
-    expect(getKFactor(PROVISIONAL_VOTE_THRESHOLD - 1)).toBe(K_FACTOR_PROVISIONAL);
-  });
-
-  it('returns the established K at and above the threshold', () => {
-    expect(getKFactor(PROVISIONAL_VOTE_THRESHOLD)).toBe(K_FACTOR_ESTABLISHED);
-    expect(getKFactor(500)).toBe(K_FACTOR_ESTABLISHED);
-  });
-});
-
-describe('estimateEloChange', () => {
-  it('splits the K evenly when both entries are level', () => {
-    expect(estimateEloChange(1500, 1500)).toEqual([16, -16]);
-    expect(estimateEloChange(1500, 1500, K_FACTOR_PROVISIONAL)).toEqual([32, -32]);
-  });
-
-  it('awards less for beating a weaker entry than a stronger one', () => {
-    const [beatWeaker] = estimateEloChange(1800, 1200);
-    const [beatStronger] = estimateEloChange(1200, 1800);
-
-    expect(beatWeaker).toBeLessThan(beatStronger);
-    expect(beatWeaker).toBeGreaterThanOrEqual(0);
-  });
-
-  it('is zero-sum at every rating gap, so the pool cannot inflate', () => {
-    const gaps = [0, 25, 100, 400, 1200, -400];
-    for (const gap of gaps) {
-      const [winner, loser] = estimateEloChange(1500 + gap, 1500);
-      expect(winner + loser).toBe(0);
-    }
-  });
-
-  it('never exceeds the K it was given', () => {
-    for (const gap of [0, 200, 800, -800]) {
-      const [winner] = estimateEloChange(1500 + gap, 1500, K_FACTOR_PROVISIONAL);
-      expect(Math.abs(winner)).toBeLessThanOrEqual(K_FACTOR_PROVISIONAL);
-    }
-  });
-
-  it('defaults to the established K when none is passed', () => {
-    expect(estimateEloChange(1500, 1500)).toEqual(
-      estimateEloChange(1500, 1500, K_FACTOR_ESTABLISHED)
-    );
-  });
-});
-
 describe('processVote', () => {
   const atomicResult = {
     winnerElo: 1532,
@@ -102,26 +52,22 @@ describe('processVote', () => {
     loserChange: -32,
   };
 
-  it('derives each K-factor from that entry own vote count', async () => {
+  it('hands the script both K-factors and the threshold, so it picks each side from the counts it reads', async () => {
     processVoteAtomic.mockResolvedValue(atomicResult);
 
-    await processVote(7, 101, 102, 3, 40);
+    await processVote(7, 101, 102);
 
-    // Provisional winner, established loser — the service must not collapse them to one value
-    // before handing them to Redis; the Lua script is what averages them.
-    expect(processVoteAtomic).toHaveBeenCalledWith(
-      7,
-      101,
-      102,
-      K_FACTOR_PROVISIONAL,
-      K_FACTOR_ESTABLISHED
-    );
+    expect(processVoteAtomic).toHaveBeenCalledWith(7, 101, 102, {
+      provisionalK: K_FACTOR_PROVISIONAL,
+      establishedK: K_FACTOR_ESTABLISHED,
+      provisionalVotes: PROVISIONAL_VOTE_THRESHOLD,
+    });
   });
 
   it('returns the ELO the Lua script computed, not its own recomputation', async () => {
     processVoteAtomic.mockResolvedValue({ ...atomicResult, winnerElo: 1600, loserElo: 1400 });
 
-    const result = await processVote(7, 101, 102, 0, 0);
+    const result = await processVote(7, 101, 102);
 
     expect(result).toEqual({ winnerElo: 1600, loserElo: 1400 });
   });
@@ -129,7 +75,7 @@ describe('processVote', () => {
   it('propagates a Redis failure rather than reporting a vote that did not land', async () => {
     processVoteAtomic.mockRejectedValue(new Error('redis down'));
 
-    await expect(processVote(7, 101, 102, 0, 0)).rejects.toThrow('redis down');
+    await expect(processVote(7, 101, 102)).rejects.toThrow('redis down');
   });
 });
 

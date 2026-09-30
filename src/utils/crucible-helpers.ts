@@ -63,6 +63,31 @@ export function getCrucibleTotalPrizePool({
   return seededPrizePool + entryFee * entryCount;
 }
 
+/** Nothing is managed once a crucible ends, including one past `endAt` that isn't finalized yet. */
+export function getCrucibleManageActions({
+  status,
+  endAt,
+  isCreator,
+  isModerator,
+  now = new Date(),
+}: {
+  status: CrucibleStatus;
+  endAt: Date | null;
+  isCreator: boolean;
+  isModerator: boolean;
+  now?: Date;
+}) {
+  const ended =
+    status === CrucibleStatus.Completed ||
+    status === CrucibleStatus.Cancelled ||
+    (!!endAt && new Date(endAt) <= now);
+  const isPending = status === CrucibleStatus.Pending;
+  return {
+    canEdit: !ended && (isModerator || (isCreator && (isPending || status === CrucibleStatus.Active))),
+    canCancel: !ended && (isModerator || (isCreator && isPending)),
+  };
+}
+
 export type PrizePosition = {
   position: number;
   percentage: number;
@@ -92,6 +117,56 @@ export function getCruciblePrizeAmount({
   const filled = sumOf(filledPositions);
   if (!filled) return Math.floor(((configured / 100) * totalPrizePool) / filledPositions.length);
   return Math.floor((prize.percentage / 100) * totalPrizePool * (configured / filled));
+}
+
+export const CRUCIBLE_MIN_VOTES_PERCENT = 75;
+
+/** Votes an entry needs to place: a share of the average per entry, so late entries can't win unjudged. */
+export function getCrucibleMinVotes({
+  totalVotes,
+  entryCount,
+}: {
+  totalVotes: number;
+  entryCount: number;
+}) {
+  if (!entryCount) return 0;
+  // Integer division keeps an exact share exact; a float 0.75 × average can land just above it.
+  return Math.ceil((totalVotes * CRUCIBLE_MIN_VOTES_PERCENT) / (entryCount * 100));
+}
+
+const FINAL_STRETCH_FRACTION = 0.2;
+
+/** The last fifth of a crucible's run, when a new entry may not collect enough votes to place. */
+export function isCrucibleFinalStretch({
+  startAt,
+  endAt,
+  now = new Date(),
+}: {
+  startAt: Date | null;
+  endAt: Date | null;
+  now?: Date;
+}) {
+  if (!startAt || !endAt) return false;
+  const end = new Date(endAt).getTime();
+  const remaining = end - now.getTime();
+  return remaining > 0 && remaining <= (end - new Date(startAt).getTime()) * FINAL_STRETCH_FRACTION;
+}
+
+/**
+ * A completed crucible is ranked by its placings, with entries that didn't get enough votes to
+ * place after them and unranked. A cancelled one placed nobody, so it ranks by score.
+ */
+export function rankCrucibleEntries<T extends { score: number | null; position: number | null }>(
+  entries: T[],
+  { completed }: { completed: boolean }
+): (T & { rank: number | null })[] {
+  const byScore = (a: T, b: T) => (b.score ?? 0) - (a.score ?? 0);
+  if (!completed)
+    return [...entries].sort(byScore).map((entry, index) => ({ ...entry, rank: index + 1 }));
+
+  return [...entries]
+    .sort((a, b) => (a.position ?? Infinity) - (b.position ?? Infinity) || byScore(a, b))
+    .map((entry) => ({ ...entry, rank: entry.position }));
 }
 
 /**

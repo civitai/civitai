@@ -83,6 +83,18 @@ describe('submitVote — only a pair this judge was served', () => {
   });
 });
 
+describe('submitVote — rating update', () => {
+  it('leaves the vote counts to the atomic rating script instead of a second round-trip', async () => {
+    const { crucibleEloRedis } = await import('~/server/redis/crucible-elo.redis');
+
+    await vote(10, 20);
+
+    expect(processVote).toHaveBeenCalledWith(1, 10, 20);
+    expect(crucibleEloRedis.getVoteCount).not.toHaveBeenCalled();
+    expect(crucibleEloRedis.incrementVoteCount).not.toHaveBeenCalled();
+  });
+});
+
 describe('submitVote — per-judge cap on each entry', () => {
   it('refuses once the judge has voted on either entry as often as allowed', async () => {
     redisMock.sysRedis.hGet.mockImplementation(async (_key: string, field: string) =>
