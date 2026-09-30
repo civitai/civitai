@@ -249,7 +249,11 @@ function ReceivedTab({
 
 function sentStatus(row: SentRow) {
   if (row.status === 'approved' && row.resolvedAt && row.days) {
-    return isPromotionLive({ acceptedAt: new Date(row.resolvedAt), days: row.days })
+    return isPromotionLive({
+      acceptedAt: new Date(row.resolvedAt),
+      days: row.days,
+      endsAt: row.endsAt ?? undefined,
+    })
       ? { label: 'Running', color: 'green' }
       : { label: 'Finished', color: 'gray' };
   }

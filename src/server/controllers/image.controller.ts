@@ -38,6 +38,7 @@ import { clearAccountDeletionImageMarkers } from '~/server/services/account-dele
 import { buildSearchActor } from '~/server/meilisearch/client';
 import { getGallerySettingsByModelId } from '~/server/services/model.service';
 import { getSponsoredGalleryPost } from '~/server/services/promotion.service';
+import { sponsoredBrowsingLevel, sponsoredSlotIndex } from '~/shared/utils/promotion';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import { queueComicsForPanelImage } from '~/server/services/nsfwLevels.service';
@@ -467,19 +468,22 @@ export const getImagesAsPostsInfiniteHandler = async ({
             modelVersionId: input.modelVersionId,
           }).catch(() => undefined)
         : undefined;
-    if (sponsoredPost && !versionPinnedPosts.includes(sponsoredPost.postId)) {
+    const sponsoredLevel = sponsoredPost
+      ? sponsoredBrowsingLevel({
+          domainUncapped: !!user && features.canViewNsfw,
+          browsingLevel: input.browsingLevel,
+          viewerBrowsingLevel: input.viewerBrowsingLevel,
+          servingLevel: sponsoredPost.servingLevel,
+        })
+      : 0;
+    if (sponsoredPost && sponsoredLevel && !versionPinnedPosts.includes(sponsoredPost.postId)) {
       const { items: sponsoredImages } = await getAllImages({
         ...input,
         domain: getRequestBoardDomainColor(ctx.req),
         modelVersionId: undefined,
         modelId: undefined,
         reviewId: undefined,
-        browsingLevel: sponsoredPost.acceptedLevel
-          ? Flags.intersection(
-              input.viewerBrowsingLevel ?? input.browsingLevel,
-              sponsoredPost.acceptedLevel
-            )
-          : input.browsingLevel,
+        browsingLevel: sponsoredLevel,
         limit: POST_IMAGE_LIMIT,
         followed: false,
         postIds: [sponsoredPost.postId],
@@ -698,9 +702,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
       const createdAt = sponsored.map((image) => new Date(image.sortAt)).sort()[0];
       let nsfwLevel = 0;
       for (const image of sponsored) nsfwLevel = Flags.addFlag(nsfwLevel, image.nsfwLevel);
-      // With no pins it takes position 2, so the page still opens on an organic post.
       const pinnedCount = results.filter((result) => result.pinned).length;
-      results.splice(pinnedCount || Math.min(1, results.length), 0, {
+      results.splice(sponsoredSlotIndex(pinnedCount, results.length), 0, {
         postId: sponsoredPostId,
         pinned: false,
         sponsored: true,

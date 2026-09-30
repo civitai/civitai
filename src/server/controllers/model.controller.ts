@@ -1,5 +1,6 @@
 import { Flags } from '~/shared/utils/flags';
 import { getSponsoredModel } from '~/server/services/promotion.service';
+import { sponsoredSlotIndex } from '~/shared/utils/promotion';
 import { Prisma } from '@prisma/client';
 import {
   coverageAudience,
@@ -1793,7 +1794,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
         ({ id, resourceType }) => resourceType === 'model' && id === sponsored.modelId
       );
       if (organic >= 0) resourcesIds.splice(organic, 1);
-      resourcesIds.splice(Math.min(1, resourcesIds.length), 0, {
+      resourcesIds.splice(sponsoredSlotIndex(0, resourcesIds.length), 0, {
         id: sponsored.modelId,
         resourceType: 'model' as const,
       });
@@ -1965,14 +1966,9 @@ export const getAssociatedResourcesCardDataHandler = async ({
             if (!model) return null;
             if (excludedUserIds.includes(model.user.id)) return null;
             const isSponsored = id === sponsored?.modelId;
-            // Held to the page's level cap as it stood when the host accepted. A
-            // buyer who re-rates their model above it ends their own run.
-            if (
-              isSponsored &&
-              sponsored.acceptedLevel &&
-              !Flags.hasFlag(sponsored.acceptedLevel, model.nsfwLevel)
-            )
-              return null;
+            // A buyer who re-rates their model above what the page may show ends
+            // their own run.
+            if (isSponsored && !Flags.hasFlag(sponsored.servingLevel, model.nsfwLevel)) return null;
 
             return { resourceType: 'model' as const, ...model, sponsored: isSponsored };
         }

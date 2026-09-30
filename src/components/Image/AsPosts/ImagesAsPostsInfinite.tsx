@@ -53,6 +53,7 @@ import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.const
 import { Flags } from '~/shared/utils/flags';
 import { removeEmpty } from '~/utils/object-helpers';
 import { QS } from '~/utils/qs';
+import { sponsoredSlotIndex } from '~/shared/utils/promotion';
 import { trpc } from '~/utils/trpc';
 import { GalleryModerationModal } from './GalleryModerationModal';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -211,7 +212,7 @@ export function ImagesAsPostsInfinite({
   const items = useMemo(() => {
     if (!sponsoredItems.length) return organicItems;
     const pinnedCount = organicItems.filter((post) => post.pinned).length;
-    const at = pinnedCount || Math.min(1, organicItems.length);
+    const at = sponsoredSlotIndex(pinnedCount, organicItems.length);
     return [...organicItems.slice(0, at), ...sponsoredItems, ...organicItems.slice(at)];
   }, [organicItems, sponsoredItems]);
 

@@ -7,6 +7,8 @@ import {
   isPromotionLive,
   parseGalleryPromotionData,
   parseHostModelId,
+  sponsoredBrowsingLevel,
+  sponsoredSlotIndex,
   parseModelPromotionData,
   promotionAmount,
   promotionRunEndsAt,
@@ -157,5 +159,41 @@ describe('parseHostModelId', () => {
     expect(parseHostModelId('https://civitai.com/posts/4201')).toBeNull();
     expect(parseHostModelId('0')).toBeNull();
     expect(parseHostModelId('')).toBeNull();
+  });
+});
+
+describe('sponsoredBrowsingLevel', () => {
+  const everything = NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R | NsfwLevel.X | NsfwLevel.XXX;
+
+  it('never lets a capped viewer widen their level through the unclamped field', () => {
+    // A signed-out or SFW-domain request whose browsingLevel the middleware
+    // already cut to PG, asking for everything through viewerBrowsingLevel.
+    expect(
+      sponsoredBrowsingLevel({
+        domainUncapped: false,
+        browsingLevel: NsfwLevel.PG,
+        viewerBrowsingLevel: everything,
+        servingLevel: everything,
+      })
+    ).toBe(NsfwLevel.PG);
+  });
+
+  it("lets an uncapped viewer see past today's gallery cap, up to what was sold", () => {
+    expect(
+      sponsoredBrowsingLevel({
+        domainUncapped: true,
+        browsingLevel: NsfwLevel.PG,
+        viewerBrowsingLevel: NsfwLevel.PG | NsfwLevel.R | NsfwLevel.X,
+        servingLevel: NsfwLevel.PG | NsfwLevel.R,
+      })
+    ).toBe(NsfwLevel.PG | NsfwLevel.R);
+  });
+});
+
+describe('sponsoredSlotIndex', () => {
+  it('goes after the pinned items, else second, else first in an empty list', () => {
+    expect(sponsoredSlotIndex(3, 10)).toBe(3);
+    expect(sponsoredSlotIndex(0, 10)).toBe(1);
+    expect(sponsoredSlotIndex(0, 0)).toBe(0);
   });
 });

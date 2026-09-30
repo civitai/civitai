@@ -25,6 +25,37 @@ export type PromotionRunDays = (typeof PROMOTION_RUN_DAYS)[number];
 export const isPromotionRunDays = (days: unknown): days is PromotionRunDays =>
   (PROMOTION_RUN_DAYS as readonly unknown[]).includes(days);
 
+/**
+ * Where a sponsored item goes in a list: after the pinned items, or second when
+ * there are none, so the list still opens on an organic item. The gallery server
+ * and client both splice by this, and must agree.
+ */
+export const sponsoredSlotIndex = (pinnedCount: number, length: number) =>
+  pinnedCount || Math.min(1, length);
+
+/**
+ * The level a sponsored gallery post is fetched at for this viewer.
+ *
+ * `viewerBrowsingLevel` is the client's word and nothing clamps it, so only a
+ * viewer the domain does not cap at all (signed in, on a domain that serves
+ * mature content) may use it to see past the gallery's current cap. Everyone
+ * else keeps the middleware-clamped `browsingLevel`.
+ */
+export function sponsoredBrowsingLevel({
+  domainUncapped,
+  browsingLevel,
+  viewerBrowsingLevel,
+  servingLevel,
+}: {
+  domainUncapped: boolean;
+  browsingLevel: number;
+  viewerBrowsingLevel?: number;
+  servingLevel: number;
+}) {
+  const viewer = domainUncapped ? viewerBrowsingLevel ?? browsingLevel : browsingLevel;
+  return Flags.intersection(viewer, servingLevel);
+}
+
 export const promotionRunLabel = (days: number) => (days === 1 ? '1 day' : `${days} days`);
 
 /** How many rows a promotion queue returns. */

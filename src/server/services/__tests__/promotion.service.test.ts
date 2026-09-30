@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Caches from '~/server/redis/caches';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import {
@@ -53,6 +53,7 @@ const {
   createGalleryPromotion,
   createModelPromotion,
   getSponsoredGalleryPost,
+  getSponsoredModel,
   hostPromotionLevel,
 } = await import('~/server/services/promotion.service');
 
@@ -70,6 +71,11 @@ const hostModel = {
   gallerySettings: null,
 };
 const promotedModel = { ...hostModel, id: PROMOTED_MODEL, userId: PLACER };
+/** The host page as it is now; a case changes it to break exactly one thing. */
+let hostRow: typeof hostModel & Record<string, unknown> = { ...hostModel };
+/** A host that capped its gallery at PG and R, so a default level cannot pass for it. */
+const CAPPED = NsfwLevel.PG | NsfwLevel.R;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const cleanImage = (id: number) => ({
   id,
@@ -100,12 +106,14 @@ const pendingGallery = {
 beforeEach(() => {
   vi.clearAllMocks();
   postImages = [cleanImage(11), cleanImage(12)];
+  hostRow = { ...hostModel };
+  dbMock.dbRead.model.findUnique.mockImplementation(async () => hostRow);
   settlePlacement.mockResolvedValue({ settled: true });
   isPlacementEscrowFunded.mockResolvedValue(true);
   holdPlacementEscrow.mockResolvedValue({ fee: 63, principal: 147 });
 
   dbMock.dbWrite.model.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) =>
-    where.id === HOST_MODEL ? hostModel : where.id === PROMOTED_MODEL ? promotedModel : null
+    where.id === HOST_MODEL ? hostRow : where.id === PROMOTED_MODEL ? promotedModel : null
   );
   dbMock.dbWrite.post.findUnique.mockResolvedValue({
     id: POST,
@@ -162,18 +170,64 @@ describe('actOnPromotion', () => {
     expect(settlePlacement).not.toHaveBeenCalled();
   });
 
-  it('records the images the host accepted and freezes the level and end', async () => {
+  describe('with a fixed clock', () => {
+    const NOW = new Date('2026-10-01T12:00:00.000Z');
+    beforeEach(() => {
+      vi.useFakeTimers();
+      vi.setSystemTime(NOW);
+    });
+    afterEach(() => vi.useRealTimers());
+
+    it('freezes the host model cap and the run end, for a model promotion too', async () => {
+      hostRow = { ...hostModel, gallerySettings: { level: CAPPED } };
+      dbMock.dbWrite.placement.findUnique.mockResolvedValue({
+        ...pendingGallery,
+        surface: 'modelPromotion',
+        amount: DAILY_PRICE,
+        data: { modelId: PROMOTED_MODEL, days: 1 },
+      });
+      await actOnPromotion({ placementId: PLACEMENT, action: 'approve', userId: OWNER });
+
+      expect(dbMock.dbWrite.placement.updateMany).toHaveBeenCalledWith({
+        where: { id: PLACEMENT, status: 'pending' },
+        data: {
+          data: {
+            modelId: PROMOTED_MODEL,
+            days: 1,
+            acceptedLevel: CAPPED,
+            endsAt: new Date(NOW.getTime() + DAY_MS).toISOString(),
+          },
+        },
+      });
+    });
+  });
+
+  it('refuses to accept a model promotion whose model is now rated above the page', async () => {
+    hostRow = { ...hostModel, gallerySettings: { level: NsfwLevel.PG } };
+    dbMock.dbWrite.placement.findUnique.mockResolvedValue({
+      ...pendingGallery,
+      surface: 'modelPromotion',
+      amount: DAILY_PRICE,
+      data: { modelId: PROMOTED_MODEL, days: 1 },
+    });
+    dbMock.dbWrite.model.findUnique.mockImplementation(
+      async ({ where }: { where: { id: number } }) =>
+        where.id === HOST_MODEL ? hostRow : { ...promotedModel, nsfwLevel: NsfwLevel.R }
+    );
+    await expect(
+      actOnPromotion({ placementId: PLACEMENT, action: 'approve', userId: OWNER })
+    ).rejects.toThrow('rated above');
+    expect(settlePlacement).not.toHaveBeenCalled();
+  });
+
+  it('records the images the host accepted', async () => {
     await actOnPromotion({ placementId: PLACEMENT, action: 'approve', userId: OWNER });
 
     expect(dbMock.dbWrite.placement.updateMany).toHaveBeenCalledTimes(1);
     const written = dbMock.dbWrite.placement.updateMany.mock.calls[0][0] as {
-      where: unknown;
       data: { data: Record<string, unknown> };
     };
-    expect(written.where).toEqual({ id: PLACEMENT, status: 'pending' });
     expect(written.data.data.imageIds).toEqual([11, 12]);
-    expect(written.data.data.acceptedLevel).toBe(allBrowsingLevelsFlag);
-    expect(typeof written.data.data.endsAt).toBe('string');
     expect(settlePlacement).toHaveBeenCalledTimes(1);
     expect(settlePlacement).toHaveBeenCalledWith({
       placementId: PLACEMENT,
@@ -214,6 +268,41 @@ describe('createGalleryPromotion', () => {
       expectedPrice: DAILY_PRICE,
       spendType: 'green',
     });
+
+  it('writes the post, the host versions it used and its images', async () => {
+    await buy();
+    expect(dbMock.dbWrite.placement.create).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.placement.create.mock.calls[0][0]).toMatchObject({
+      data: {
+        surface: 'galleryPromotion',
+        targetType: 'model',
+        targetId: HOST_MODEL,
+        ownerId: OWNER,
+        placerId: PLACER,
+        amount: DAILY_PRICE * 3,
+        status: 'pending',
+        data: { postId: POST, days: 3, modelVersionIds: [HOST_VERSION], imageIds: [11, 12] },
+      },
+    });
+  });
+
+  it.each([
+    ['unreviewed', { ingestion: 'Pending' }],
+    ['held for review', { needsReview: 'poi' }],
+    ['flagged minor', { minor: true }],
+    ['marked an acceptable minor', { acceptableMinor: true }],
+    ['a real person', { poi: true }],
+    ['a ToS violation', { tosViolation: true }],
+  ])('refuses a post with an image that is %s', async (_label, change) => {
+    postImages = [cleanImage(11), { ...cleanImage(12), ...change }];
+    await expect(buy()).rejects.toThrow('cannot be promoted');
+    expect(dbMock.dbWrite.placement.create).not.toHaveBeenCalled();
+  });
+
+  it('accepts a stalled scan a moderator rated, as the rest of the site does', async () => {
+    postImages = [{ ...cleanImage(11), ingestion: 'Pending', nsfwLevelLocked: true }];
+    await expect(buy()).resolves.toEqual({ id: PLACEMENT });
+  });
 
   it('holds the daily price for every day of the run', async () => {
     await buy();
@@ -268,6 +357,21 @@ describe('one promotion of a thing per page', () => {
     expect(dbMock.dbWrite.placement.create).not.toHaveBeenCalled();
   });
 
+  it('looks for the same promoted model on the same page', async () => {
+    await buy();
+    expect(dbMock.dbWrite.placement.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          surface: 'modelPromotion',
+          targetType: 'model',
+          targetId: HOST_MODEL,
+          status: { in: ['pending', 'approved'] },
+          data: { path: ['modelId'], equals: PROMOTED_MODEL },
+        },
+      })
+    );
+  });
+
   it('is blocked by a live one and not by one that has ended', async () => {
     dbMock.dbWrite.placement.findMany.mockResolvedValue([
       { status: 'approved', resolvedAt: new Date(), data: { modelId: PROMOTED_MODEL, days: 1 } },
@@ -318,12 +422,47 @@ describe('getSponsoredGalleryPost', () => {
     data: { postId: POST, days: 3, modelVersionIds: [HOST_VERSION], imageIds: [11], ...data },
   });
 
-  it('serves only the images and level frozen at accept', async () => {
-    const endsAt = new Date(Date.now() + 60_000).toISOString();
-    dbMock.dbRead.placement.findMany.mockResolvedValue([live({ acceptedLevel: 3, endsAt })]);
+  const endsAt = () => new Date(Date.now() + 60_000).toISOString();
+
+  it('reads only approved runs on this page', async () => {
+    await getSponsoredGalleryPost({ modelId: HOST_MODEL, modelVersionId: HOST_VERSION });
+    expect(dbMock.dbRead.placement.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          surface: 'galleryPromotion',
+          targetId: HOST_MODEL,
+          status: 'approved',
+        }),
+      })
+    );
+  });
+
+  it('serves the approved images at the cap frozen at accept', async () => {
+    // The host has since lowered their gallery to PG; the run keeps what it was sold.
+    hostRow = { ...hostModel, gallerySettings: { level: NsfwLevel.PG } };
+    dbMock.dbRead.placement.findMany.mockResolvedValue([
+      live({ acceptedLevel: CAPPED, endsAt: endsAt() }),
+    ]);
     await expect(
       getSponsoredGalleryPost({ modelId: HOST_MODEL, modelVersionId: HOST_VERSION })
-    ).resolves.toEqual({ placementId: PLACEMENT, postId: POST, imageIds: [11], acceptedLevel: 3 });
+    ).resolves.toEqual({
+      placementId: PLACEMENT,
+      postId: POST,
+      imageIds: [11],
+      servingLevel: CAPPED,
+    });
+  });
+
+  it('still applies the minor lock set after accept', async () => {
+    hostRow = { ...hostModel, minor: true };
+    dbMock.dbRead.placement.findMany.mockResolvedValue([
+      live({ acceptedLevel: allBrowsingLevelsFlag, endsAt: endsAt() }),
+    ]);
+    const served = await getSponsoredGalleryPost({
+      modelId: HOST_MODEL,
+      modelVersionId: HOST_VERSION,
+    });
+    expect(served?.servingLevel).toBe(sfwBrowsingLevelsFlag);
   });
 
   it('stops at the frozen end, and in galleries of versions the post did not use', async () => {
@@ -337,5 +476,34 @@ describe('getSponsoredGalleryPost', () => {
     await expect(
       getSponsoredGalleryPost({ modelId: HOST_MODEL, modelVersionId: HOST_VERSION + 1 })
     ).resolves.toBeUndefined();
+  });
+});
+
+describe('getSponsoredModel', () => {
+  it('serves a live run at the frozen cap and the platform lock as it is now', async () => {
+    hostRow = { ...hostModel, sfwOnly: true };
+    dbMock.dbRead.placement.findMany.mockResolvedValue([
+      {
+        id: PLACEMENT,
+        placerId: PLACER,
+        resolvedAt: new Date(Date.now() - 60_000),
+        data: {
+          modelId: PROMOTED_MODEL,
+          days: 1,
+          acceptedLevel: CAPPED,
+          endsAt: new Date(Date.now() + 60_000).toISOString(),
+        },
+      },
+    ]);
+    await expect(getSponsoredModel({ modelId: HOST_MODEL })).resolves.toEqual({
+      placementId: PLACEMENT,
+      modelId: PROMOTED_MODEL,
+      servingLevel: CAPPED & sfwBrowsingLevelsFlag,
+    });
+    expect(dbMock.dbRead.placement.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ surface: 'modelPromotion', status: 'approved' }),
+      })
+    );
   });
 });

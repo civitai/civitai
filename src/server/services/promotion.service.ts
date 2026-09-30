@@ -90,13 +90,19 @@ async function loadModel(modelId: number): Promise<HostModel> {
   return model;
 }
 
-const isShowableModel = (model: HostModel) =>
+const isShowableModel = (
+  model: Pick<HostModel, 'status' | 'deletedAt' | 'poi' | 'availability' | 'mode'>
+) =>
   model.status === ModelStatus.Published &&
   !model.deletedAt &&
   !model.poi &&
   model.availability !== 'Private' &&
   model.mode !== ModelModifier.TakenDown &&
   model.mode !== ModelModifier.Archived;
+
+/** The platform's lock on a page: a minor or SFW-only model shows PG/PG-13 only. */
+export const platformPromotionLevel = (model: Pick<HostModel, 'minor' | 'sfwOnly'>) =>
+  model.minor || model.sfwOnly ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
 
 /**
  * The highest browsing level the host's page accepts a promotion at. The host
@@ -106,9 +112,27 @@ const isShowableModel = (model: HostModel) =>
 export function hostPromotionLevel(
   model: Pick<HostModel, 'minor' | 'sfwOnly' | 'gallerySettings'>
 ) {
-  if (model.minor || model.sfwOnly) return sfwBrowsingLevelsFlag;
+  const platform = platformPromotionLevel(model);
+  if (platform !== allBrowsingLevelsFlag) return platform;
   const level = (model.gallerySettings as ModelGallerySettingsSchema | null)?.level;
   return level ? Flags.intersection(level, allBrowsingLevelsFlag) : allBrowsingLevelsFlag;
+}
+
+/**
+ * What a running promotion may be shown at on its page now. The host's own cap
+ * is the one frozen at accept, so lowering it cannot hide a paid run; the
+ * platform lock is read as it stands today, because it is a safety rule and not
+ * the host's choice. `undefined` when the page is gone.
+ */
+async function promotionServingLevel(modelId: number, acceptedLevel: number | undefined) {
+  const model = await dbRead.model.findUnique({
+    where: { id: modelId },
+    select: { minor: true, sfwOnly: true, gallerySettings: true },
+  });
+  if (!model) return undefined;
+  return acceptedLevel
+    ? Flags.intersection(acceptedLevel, platformPromotionLevel(model))
+    : hostPromotionLevel(model);
 }
 
 async function loadGalleryHostSettings(model: HostModel): Promise<GalleryHostSettings> {
@@ -338,18 +362,14 @@ async function assertNotAlreadyPromoted({
     },
     select: { status: true, resolvedAt: true, data: true },
   });
+  const parse =
+    surface === 'galleryPromotion' ? parseGalleryPromotionData : parseModelPromotionData;
   const blocking = rows.some((row) => {
     if (row.status === 'pending') return true;
-    const { days, endsAt } = (row.data ?? {}) as { days?: unknown; endsAt?: unknown };
-    return (
-      !!row.resolvedAt &&
-      isPromotionRunDays(days) &&
-      isPromotionLive({
-        acceptedAt: row.resolvedAt,
-        days,
-        endsAt: typeof endsAt === 'string' ? endsAt : undefined,
-      })
-    );
+    const data = parse(row.data);
+    // Serving refuses the same unreadable row, so it holds no slot.
+    if (!data) return false;
+    return !!row.resolvedAt && isPromotionLive({ acceptedAt: row.resolvedAt, ...data });
   });
   if (blocking) throw throwBadRequestError('promotion: that is already promoted on this page');
 }
@@ -593,16 +613,19 @@ export async function getSponsoredGalleryPost({
     if (!data || !row.resolvedAt) return [];
     if (!isPromotionLive({ acceptedAt: row.resolvedAt, ...data })) return [];
     if (!data.modelVersionIds.includes(modelVersionId)) return [];
-    return [
-      {
-        placementId: row.id,
-        postId: data.postId,
-        imageIds: data.imageIds,
-        acceptedLevel: data.acceptedLevel,
-      },
-    ];
+    return [{ placementId: row.id, ...data }];
   });
-  return pickOne(live);
+  const picked = pickOne(live);
+  if (!picked) return undefined;
+
+  const servingLevel = await promotionServingLevel(modelId, picked.acceptedLevel);
+  if (!servingLevel) return undefined;
+  return {
+    placementId: picked.placementId,
+    postId: picked.postId,
+    imageIds: picked.imageIds,
+    servingLevel,
+  };
 }
 
 /** The sponsored model card for a model page's Suggested Resources, if any is running. */
@@ -612,9 +635,14 @@ export async function getSponsoredModel({ modelId }: { modelId: number }) {
     const data = parseModelPromotionData(row.data);
     if (!data || !row.resolvedAt) return [];
     if (!isPromotionLive({ acceptedAt: row.resolvedAt, ...data })) return [];
-    return [{ placementId: row.id, modelId: data.modelId, acceptedLevel: data.acceptedLevel }];
+    return [{ placementId: row.id, ...data }];
   });
-  return pickOne(live);
+  const picked = pickOne(live);
+  if (!picked) return undefined;
+
+  const servingLevel = await promotionServingLevel(modelId, picked.acceptedLevel);
+  if (!servingLevel) return undefined;
+  return { placementId: picked.placementId, modelId: picked.modelId, servingLevel };
 }
 
 /**
@@ -634,20 +662,20 @@ export async function getPromotionHostsForPost({
 
   // The primary, like the purchase: the replica can be missing resource rows the
   // purchase would accept.
-  const models = await dbWrite.$queryRaw<{ id: number; name: string; userId: number }[]>`
-    SELECT DISTINCT m.id, m.name, m."userId"
+  const used = await dbWrite.$queryRaw<
+    (Pick<HostModel, 'id' | 'userId' | 'status' | 'deletedAt' | 'poi' | 'availability' | 'mode'> & {
+      name: string;
+    })[]
+  >`
+    SELECT DISTINCT m.id, m.name, m."userId", m.status::text AS status, m."deletedAt", m.poi,
+           m.availability::text AS availability, m.mode::text AS mode
     FROM "ImageResourceNew" ir
     JOIN "Image" i ON i.id = ir."imageId"
     JOIN "ModelVersion" mv ON mv.id = ir."modelVersionId"
     JOIN "Model" m ON m.id = mv."modelId"
-    WHERE i."postId" = ${postId}
-      AND m."userId" != ${placerId}
-      AND m.status = 'Published'
-      AND m."deletedAt" IS NULL
-      AND m.availability != 'Private'
-      AND NOT m.poi
-      AND (m.mode IS NULL OR m.mode NOT IN ('TakenDown', 'Archived'))
+    WHERE i."postId" = ${postId} AND m."userId" != ${placerId}
   `;
+  const models = used.filter(isShowableModel);
 
   // A model's promotion space is its owner's account, so one quote per owner. A
   // post can use a hundred models, hence the concurrency limit as well.
@@ -758,6 +786,7 @@ async function describePromotionRows<T extends { targetId: number; data: unknown
       postId: gallery?.postId ?? null,
       promotedModelId: model?.modelId ?? null,
       days: gallery?.days ?? model?.days ?? null,
+      endsAt: gallery?.endsAt ?? model?.endsAt ?? null,
     };
   });
 
@@ -774,13 +803,14 @@ async function describePromotionRows<T extends { targetId: number; data: unknown
     : [];
   const names = new Map(models.map((model) => [model.id, model.name]));
 
-  return described.map(({ row, postId, promotedModelId, days }) => ({
+  return described.map(({ row, postId, promotedModelId, days, endsAt }) => ({
     ...row,
     hostModelName: names.get(row.targetId) ?? null,
     postId,
     promotedModelId,
     promotedModelName: promotedModelId ? names.get(promotedModelId) ?? null : null,
     days,
+    endsAt,
   }));
 }
 
