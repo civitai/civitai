@@ -10,6 +10,7 @@ import type {
   CreateCrucibleInputSchema,
   GetCrucibleByIdSchema,
   GetCrucibleRequiredModelsSchema,
+  GetJudgingProgressSchema,
   GetCruciblesInfiniteSchema,
   GetJudgesCountSchema,
   GetJudgeStatsSchema,
@@ -34,6 +35,7 @@ import {
   getCrucibleEntries,
   getCrucibleMinVotesToPlace,
   getCrucibleRequiredModels,
+  getJudgingProgress,
   getCrucibles,
   getFeaturedCrucible,
   getJudgesCount,
@@ -124,7 +126,7 @@ export const createCrucibleHandler = async ({
     ...input,
     userId: ctx.user.id,
     isModerator: ctx.user.isModerator,
-    buzzType: deriveDomainCurrency(!!ctx.features?.isGreen),
+    buzzType: input.buzzType ?? deriveDomainCurrency(!!ctx.features?.isGreen),
   });
 };
 
@@ -222,6 +224,20 @@ export const getJudgingPairHandler = async ({
 
   return withoutEntryScores(pair);
 };
+
+export const getJudgingProgressHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetJudgingProgressSchema;
+  ctx: ProtectedContext;
+}) =>
+  getJudgingProgress({
+    ...input,
+    userId: ctx.user.id,
+    isGreen: !!ctx.features?.isGreen,
+    isModerator: ctx.user.isModerator,
+  });
 
 export const submitVoteHandler = async ({
   input,

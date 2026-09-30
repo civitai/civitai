@@ -36,6 +36,7 @@ import type {
   CreateCrucibleInputSchema,
   SubmitEntrySchema,
   GetJudgingPairSchema,
+  GetJudgingProgressSchema,
   GetJudgingSuggestionsSchema,
   SubmitVoteSchema,
   CancelCrucibleSchema,
@@ -1837,6 +1838,93 @@ async function fetchEntrySample(
     },
   }));
 }
+
+/**
+ * Unjudged pairs among entries this judge can still vote on, bounded by the votes left on them: a
+ * vote spends one of each entry's per-judge allowance.
+ */
+export function countRemainingPairs({
+  entryIds,
+  judgeEntryVotes,
+  votedPairKeys,
+  maxVotesPerEntry,
+}: {
+  entryIds: number[];
+  judgeEntryVotes: Record<string, string>;
+  votedPairKeys: string[];
+  maxVotesPerEntry: number;
+}) {
+  const votesLeft = new Map<number, number>();
+  for (const id of entryIds) {
+    const left = maxVotesPerEntry - Number(judgeEntryVotes[id] ?? 0);
+    if (left > 0) votesLeft.set(id, left);
+  }
+  const n = votesLeft.size;
+  if (n < 2) return 0;
+
+  const votedAmongThem = votedPairKeys.filter((key) => {
+    const [a, b] = key.split(':').map(Number);
+    return votesLeft.has(a) && votesLeft.has(b);
+  }).length;
+  const totalVotesLeft = [...votesLeft.values()].reduce((sum, left) => sum + left, 0);
+  return Math.max(0, Math.min((n * (n - 1)) / 2 - votedAmongThem, Math.floor(totalVotesLeft / 2)));
+}
+
+export const getJudgingProgress = async ({
+  crucibleId,
+  userId,
+  browsingLevel,
+  isGreen = false,
+  isModerator = false,
+}: GetJudgingProgressSchema & { userId: number; isGreen?: boolean; isModerator?: boolean }) => {
+  const crucible = await dbRead.crucible.findUnique({
+    where: { id: crucibleId },
+    select: {
+      status: true,
+      endAt: true,
+      userId: true,
+      buzzType: true,
+      nsfwLevel: true,
+      ingestion: true,
+      image: { select: { ingestion: true } },
+    },
+  });
+  const viewer = { viewerId: userId, isModerator, isGreen };
+  if (
+    !crucible ||
+    isCrucibleHiddenByScan(crucible, viewer) ||
+    isCrucibleOffDomain(crucible, viewer)
+  )
+    throw throwNotFoundError('Crucible not found');
+  if (crucible.status !== CrucibleStatus.Active || (crucible.endAt && crucible.endAt <= new Date()))
+    return { remainingPairs: 0 };
+
+  const visibleImage = visibleEntryImageSql(
+    crucible.nsfwLevel,
+    getEffectiveBrowsingLevel({ isGreen, isLoggedIn: true, requested: browsingLevel })
+  );
+  const [entries, judgeEntryVotes, votedPairKeys] = await Promise.all([
+    dbRead.$queryRaw<{ id: number }[]>`
+      SELECT ce.id
+      FROM "CrucibleEntry" ce
+      JOIN "Image" i ON i.id = ce."imageId"
+      WHERE ce."crucibleId" = ${crucibleId}
+        AND ce."userId" != ${userId}
+        AND ${visibleImage}
+    `,
+    sysRedis.hGetAll(getJudgeEntryVotesKey(crucibleId, userId)),
+    sysRedis.sMembers(getVotedPairsKey(crucibleId, userId)),
+  ]);
+
+  return {
+    remainingPairs: countRemainingPairs({
+      entryIds: entries.map(({ id }) => id),
+      judgeEntryVotes: (judgeEntryVotes ?? {}) as Record<string, string>,
+      votedPairKeys,
+      maxVotesPerEntry: CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
+    }),
+  };
+};
 
 type RatedEntry = EntryForJudging & { votes: number };
 

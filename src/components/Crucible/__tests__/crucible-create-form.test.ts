@@ -98,6 +98,19 @@ describe('crucible create draft restore', () => {
   });
 });
 
+describe('crucible create draft restore — Buzz type', () => {
+  it('keeps the picked Buzz type', () => {
+    const result = restore({ ...crucibleCreateDefaultValues, buzzType: 'green' });
+    expect(result.success && result.data.buzzType).toBe('green');
+  });
+
+  it('drops an unknown Buzz type instead of failing the restore', () => {
+    const result = restore({ ...crucibleCreateDefaultValues, buzzType: 'blue' });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.buzzType).toBeUndefined();
+  });
+});
+
 describe('getPlaceBuzz', () => {
   const prizePositions = { '1': 50, '2': 30, '3': 20 };
 

@@ -61,6 +61,7 @@ import {
   Form,
   InputDateTimePicker,
   InputNumber,
+  InputSegmentedControl,
   InputSelect,
   InputText,
   InputTextArea,
@@ -174,7 +175,14 @@ export function CrucibleUpsertWizard(props: Props) {
 
   const [domainBuzzType] = useAvailableBuzz();
   // Stored on the crucible, and a moderator can edit from the other domain.
-  const buzzType = toCrucibleBuzzType(crucible ? crucible.buzzType : domainBuzzType);
+  const buzzType = toCrucibleBuzzType(
+    crucible ? crucible.buzzType : values.buzzType ?? domainBuzzType
+  );
+
+  useEffect(() => {
+    if (!crucible && !values.buzzType)
+      form.setValue('buzzType', toCrucibleBuzzType(domainBuzzType));
+  }, [crucible, values.buzzType, domainBuzzType]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const isModerator = !!currentUser?.isModerator;
   const hasStarted = !!crucible && hasCrucibleStarted(crucible);
@@ -430,6 +438,28 @@ export function CrucibleUpsertWizard(props: Props) {
         disabled={rulesLocked}
         clearable
       />
+
+      {!crucible && (
+        <Input.Wrapper
+          label="Buzz Type"
+          description="Green Buzz crucibles are Safe-For-Work (PG / PG-13) and run on civitai.com; Yellow Buzz crucibles run on civitai.red. It can't be changed after creation."
+        >
+          <InputSegmentedControl
+            name="buzzType"
+            fullWidth
+            mt={5}
+            data={(['yellow', 'green'] as const).map((type) => ({
+              value: type,
+              label: (
+                <Group gap={6} justify="center" wrap="nowrap">
+                  <CurrencyIcon currency={Currency.BUZZ} type={type} size={16} />
+                  <span>{type === 'green' ? 'Green Buzz' : 'Yellow Buzz'}</span>
+                </Group>
+              ),
+            }))}
+          />
+        </Input.Wrapper>
+      )}
 
       <InputContentRatingSelect
         name="nsfwLevel"

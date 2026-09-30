@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { dbMock } from '~/__tests__/mocks';
+import { dbMock, redisMock } from '~/__tests__/mocks';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import type * as ImageService from '~/server/services/image.service';
 import type * as CrucibleService from '~/server/services/crucible.service';
@@ -375,6 +375,45 @@ describe('crucible.getRequiredModels', () => {
     await expect(
       caller(signedIn(STRANGER_ID), { isGreen: true }).getRequiredModels({ id: CRUCIBLE_ID })
     ).rejects.toBeInstanceOf(TRPCError);
+  });
+});
+
+describe('crucible.getJudgingProgress', () => {
+  it("counts the caller's pairs left among the entries they can judge", async () => {
+    queryRaw.mockResolvedValue([{ id: 1 }, { id: 2 }, { id: 3 }]);
+    redisMock.sysRedis.hGetAll.mockResolvedValue({});
+    redisMock.sysRedis.sMembers.mockResolvedValue(['1:2']);
+
+    const progress = await caller(signedIn(STRANGER_ID)).getJudgingProgress({
+      crucibleId: CRUCIBLE_ID,
+    });
+
+    expect(progress).toEqual({ remainingPairs: 2 });
+    expect(lastRenderedSql()).toContain('ce."userId" !=');
+  });
+
+  it('is not found for a crucible still under review, like its pairs', async () => {
+    findUnique.mockResolvedValue({
+      ...scanned,
+      ingestion: 'Pending',
+      status: CrucibleStatus.Active,
+    });
+
+    await expect(
+      caller(signedIn(STRANGER_ID)).getJudgingProgress({ crucibleId: CRUCIBLE_ID })
+    ).rejects.toBeInstanceOf(TRPCError);
+  });
+
+  it('has nothing left once the crucible has ended', async () => {
+    findUnique.mockResolvedValue({
+      ...scanned,
+      status: CrucibleStatus.Active,
+      endAt: new Date(Date.now() - 1000),
+    });
+
+    expect(
+      await caller(signedIn(STRANGER_ID)).getJudgingProgress({ crucibleId: CRUCIBLE_ID })
+    ).toEqual({ remainingPairs: 0 });
   });
 });
 

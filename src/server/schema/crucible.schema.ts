@@ -111,7 +111,8 @@ const prizePositionsSchema = z
     'Prize percentages must add up to exactly 100%'
   );
 
-const createCrucibleInputBaseSchema = z.object({
+export const createCrucibleInputBaseSchema = z.object({
+  buzzType: z.enum(['green', 'yellow']).optional(),
   name: z.string().trim().nonempty().max(CRUCIBLE_NAME_MAX_LENGTH),
   description: z.string().nonempty().max(CRUCIBLE_DESCRIPTION_MAX_LENGTH),
   coverImage: crucibleImageSchema,
@@ -248,6 +249,12 @@ export const submitVoteSchema = z
 
 // Schema for getting a judging pair
 export type GetJudgingPairSchema = z.infer<typeof getJudgingPairSchema>;
+export type GetJudgingProgressSchema = z.infer<typeof getJudgingProgressSchema>;
+export const getJudgingProgressSchema = z.object({
+  crucibleId: z.number(),
+  browsingLevel: z.number().int().min(0).optional(),
+});
+
 export const getJudgingPairSchema = z.object({
   crucibleId: z.number(),
   // Entry IDs to exclude from pair selection (e.g., recently skipped entries)

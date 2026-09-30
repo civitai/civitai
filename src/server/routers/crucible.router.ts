@@ -15,6 +15,7 @@ import {
   getJudgingSuggestionsHandler,
   getMinVotesToPlaceHandler,
   getRequiredModelsHandler,
+  getJudgingProgressHandler,
   getUserActiveCruciblesHandler,
   getUserCrucibleStatsHandler,
   submitEntryHandler,
@@ -30,6 +31,7 @@ import {
   createCrucibleInputSchema,
   getCrucibleByIdSchema,
   getCrucibleRequiredModelsSchema,
+  getJudgingProgressSchema,
   getCruciblesInfiniteSchema,
   getFeaturedCrucibleSchema,
   getJudgesCountSchema,
@@ -104,6 +106,12 @@ export const crucibleRouter = router({
     .use(rateLimit({ limit: 120, period: 60 }))
     .input(getJudgingPairSchema)
     .query(getJudgingPairHandler),
+
+  getJudgingProgress: guardedProcedure
+    .use(isFlagProtected('crucible'))
+    .use(rateLimit({ limit: 120, period: 60 }))
+    .input(getJudgingProgressSchema)
+    .query(getJudgingProgressHandler),
 
   submitVote: guardedProcedure
     .use(isFlagProtected('crucible'))

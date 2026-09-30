@@ -135,6 +135,12 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
     }
   );
 
+  // Refreshed after each vote, which also picks up entries that arrived meanwhile.
+  const { data: progress, refetch: refetchProgress } = trpc.crucible.getJudgingProgress.useQuery(
+    { crucibleId: id, browsingLevel },
+    { enabled: canRequestPairs, refetchOnWindowFocus: false }
+  );
+
   // Fetch judge stats for this user
   const { data: judgeStats } = trpc.crucible.getJudgeStats.useQuery(
     { crucibleId: id },
@@ -224,6 +230,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
         setSessionVotes((prev) => prev + 1);
         setCurrentStreak((prev) => prev + 1); // Increment streak on vote
         setLastVoteAttempt(null);
+        refetchProgress();
         if (skippedEntryIds.length) {
           // Skips last until the next vote. Changing the input fetches the next pair on its own.
           setSkippedEntryIds([]);
@@ -239,7 +246,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
         setIsVoting(false);
       }
     },
-    [isVoting, pair, id, submitVoteMutation, refetchPair, skippedEntryIds]
+    [isVoting, pair, id, submitVoteMutation, refetchPair, refetchProgress, skippedEntryIds]
   );
 
   // Retry last vote attempt
@@ -413,7 +420,12 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
             </div>
 
             {!showDoneState && (
-              <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-4">
+              <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3 lg:grid-cols-5">
+                <StatItem
+                  label="Pairs Left"
+                  value={progress ? abbreviateNumber(progress.remainingPairs) : '-'}
+                  secondary="For you to judge here"
+                />
                 <StatItem
                   label="Pairs Rated This Session"
                   value={sessionVotes.toString()}
