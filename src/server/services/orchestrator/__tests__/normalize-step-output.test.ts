@@ -68,3 +68,19 @@ describe('normalizeStepOutput — preprocessVideo', () => {
     expect(result[0]).toMatchObject({ type: 'image' });
   });
 });
+
+describe('normalizeStepOutput — soniloAudioGen', () => {
+  const AUDIO_BLOB = { id: 'blob-2', url: 'https://x/track.m4a', available: true };
+
+  it('surfaces the generated clip as audio', async () => {
+    const result = await normalize({ $type: 'soniloAudioGen', output: { blob: AUDIO_BLOB } });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ ...AUDIO_BLOB, type: 'audio' });
+  });
+
+  it('returns nothing when the step has no output yet', async () => {
+    expect(await normalize({ $type: 'soniloAudioGen', output: undefined })).toEqual([]);
+    expect(await normalize({ $type: 'soniloAudioGen', output: {} })).toEqual([]);
+  });
+});

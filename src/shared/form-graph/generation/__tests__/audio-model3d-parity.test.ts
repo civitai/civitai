@@ -89,6 +89,11 @@ const AUDIO_SHAPES: AnyRecord[] = [
   { prompt: '' },
   { prompt: 'an upbeat song', seed: 42, duration: 45 },
   { prompt: 'an upbeat song', duration: 9999 },
+  { soniloOperation: 'soundEffect', prompt: 'a door creaking', duration: 2.5 },
+  { soniloOperation: 'soundEffect', prompt: 'a door creaking' },
+  { soniloOperation: 'soundEffect', prompt: 'a door creaking', duration: 300 },
+  { soniloOperation: 'music', prompt: 'an upbeat song', duration: 2.5 },
+  { soniloOperation: 'speech', prompt: 'an upbeat song' },
   // custom mode: full control surface; missing required editors
   {
     aceAudioMode: 'custom',
@@ -175,7 +180,7 @@ const MODEL3D_SHAPES: AnyRecord[] = [
   { images: [IMAGE], faceLimit: 5 },
 ];
 
-const AUDIO_ECOSYSTEMS = ['Ace', 'MiniMaxMusic3', 'YuE2'];
+const AUDIO_ECOSYSTEMS = ['Ace', 'MiniMaxMusic3', 'YuE2', 'Sonilo'];
 const MODEL3D_ECOSYSTEMS = ['PolyGen', 'Tripo', 'Hunyuan3D', 'Pixal3D', 'Trellis2'];
 
 const SLICES: Array<{ ecosystems: string[]; workflows: string[]; shapes: AnyRecord[] }> = [
