@@ -86,6 +86,7 @@ import {
   CRUCIBLE_RESOURCE_REQUIREMENTS_COST,
   getMaxCrucibleStartAt,
   getPrizeDistributionTotal,
+  hasCrucibleStarted,
   isCustomPrizeDistribution,
   type CrucibleContentType,
 } from '~/shared/constants/crucible.constants';
@@ -176,11 +177,11 @@ export function CrucibleUpsertWizard(props: Props) {
   const buzzType = toCrucibleBuzzType(crucible ? crucible.buzzType : domainBuzzType);
 
   const isModerator = !!currentUser?.isModerator;
-  const hasStarted = !!crucible && crucible.status !== CrucibleStatus.Pending;
+  const hasStarted = !!crucible && hasCrucibleStarted(crucible);
   const canEditAll = !crucible || (crucible.userId === currentUser?.id && !hasStarted);
   const rulesLocked = !canEditAll;
-  const canEditContentLevels = canEditAll || isModerator;
-  const editableFields = getCrucibleEditableFields({ canEditAll, isModerator });
+  const canEditContentLevels = canEditAll || (isModerator && !hasStarted);
+  const editableFields = getCrucibleEditableFields({ canEditAll, canEditContentLevels });
 
   useEffect(() => {
     if (!canEditContentLevels) return;

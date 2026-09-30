@@ -230,7 +230,7 @@ describe('crucible edit', () => {
     heroImage: { url: '9b2d4f6a-1c3e-4a5b-8d7f-0e1a2b3c4d5e', width: null, height: null },
   };
   const initial = crucibleToFormValues(crucible);
-  const allFields = getCrucibleEditableFields({ canEditAll: true, isModerator: false });
+  const allFields = getCrucibleEditableFields({ canEditAll: true, canEditContentLevels: true });
 
   it('reads the stored minutes as hours', () => {
     expect(initial.duration).toBe(72);
@@ -272,7 +272,7 @@ describe('crucible edit', () => {
   });
 
   it('never sends a field the viewer cannot change', () => {
-    const editableFields = getCrucibleEditableFields({ canEditAll: false, isModerator: false });
+    const editableFields = getCrucibleEditableFields({ canEditAll: false, canEditContentLevels: false });
     expect(editableFields).toEqual(CRUCIBLE_EDITABLE_WHILE_ACTIVE);
 
     const changes = getCrucibleUpdateChanges({
@@ -283,13 +283,15 @@ describe('crucible edit', () => {
     expect(changes).toEqual({ description: 'No description provided' });
   });
 
-  it('lets a moderator change content levels on a started crucible', () => {
-    const changes = getCrucibleUpdateChanges({
-      initial,
-      values: { ...initial, nsfwLevel: NsfwLevel.PG13 },
-      editableFields: getCrucibleEditableFields({ canEditAll: false, isModerator: true }),
-    });
-    expect(changes).toEqual({ nsfwLevel: NsfwLevel.PG13 });
+  it("sends content levels only when they're editable", () => {
+    const edit = (canEditContentLevels: boolean) =>
+      getCrucibleUpdateChanges({
+        initial,
+        values: { ...initial, nsfwLevel: NsfwLevel.PG13 },
+        editableFields: getCrucibleEditableFields({ canEditAll: false, canEditContentLevels }),
+      });
+    expect(edit(true)).toEqual({ nsfwLevel: NsfwLevel.PG13 });
+    expect(edit(false)).toEqual({});
   });
 
   it('clears the video rules when a video crucible becomes an image crucible', () => {

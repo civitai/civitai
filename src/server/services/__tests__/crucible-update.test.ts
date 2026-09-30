@@ -126,9 +126,17 @@ describe('updateCrucible — once running', () => {
     expect(update).not.toHaveBeenCalled();
   });
 
-  it('lets a moderator change the content levels', async () => {
-    await edit({ nsfwLevel: 3 }, 1, true);
-    expect(written()).toMatchObject({ nsfwLevel: 3 });
+  it('refuses content-level changes from a moderator too', async () => {
+    await expect(edit({ nsfwLevel: 3 }, 1, true)).rejects.toThrow(/nsfwLevel/);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('counts a scheduled crucible whose start has passed as running, before the job flips it', async () => {
+    findUnique.mockResolvedValue(upcoming({ startAt: new Date(Date.now() - 60_000) }));
+
+    await expect(edit({ nsfwLevel: 3 })).rejects.toThrow(/nsfwLevel/);
+    await expect(edit({ nsfwLevel: 3 }, 1, true)).rejects.toThrow(/nsfwLevel/);
+    expect(update).not.toHaveBeenCalled();
   });
 
   it('never moves Buzz', async () => {
@@ -187,6 +195,12 @@ describe('updateCrucible — while upcoming', () => {
     await edit({ seededPrizePool: 1_100 });
 
     expect(charged()).toEqual([1_100]);
+  });
+
+  it('lets a moderator change the content levels before it starts', async () => {
+    findUnique.mockResolvedValue(upcoming());
+    await edit({ nsfwLevel: 3 }, 1, true);
+    expect(written()).toMatchObject({ nsfwLevel: 3 });
   });
 
   it("keeps an upcoming crucible's settings with its owner, not a moderator", async () => {

@@ -38,6 +38,7 @@ import {
   clipLengthAllowed,
   crucibleRankingsAreFinal,
   crucibleSupportsVideoSettings,
+  hasCrucibleStarted,
   isCustomPrizeDistribution,
 } from '~/shared/constants/crucible.constants';
 import type { VideoMetadata } from '~/server/schema/media.schema';
@@ -393,14 +394,14 @@ export const updateCrucible = async ({
   if (hasEnded && !isModerator)
     throw throwBadRequestError('This crucible has ended and can no longer be edited');
 
-  const canEditSettings = isOwner && crucible.status === CrucibleStatus.Pending;
+  const hasStarted = hasCrucibleStarted(crucible);
+  const canEditSettings = isOwner && !hasStarted;
   const provided = (Object.keys(changes) as (keyof typeof changes)[]).filter(
     (key) => changes[key] !== undefined
   );
   if (!canEditSettings) {
-    const allowed: readonly string[] = isModerator
-      ? [...PRESENTATION_FIELDS, 'nsfwLevel']
-      : PRESENTATION_FIELDS;
+    const allowed: readonly string[] =
+      isModerator && !hasStarted ? [...PRESENTATION_FIELDS, 'nsfwLevel'] : PRESENTATION_FIELDS;
     const locked = provided.filter((key) => !allowed.includes(key));
     if (locked.length)
       throw throwBadRequestError(

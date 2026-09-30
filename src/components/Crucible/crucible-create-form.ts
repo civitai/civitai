@@ -340,13 +340,13 @@ export const CRUCIBLE_EDITABLE_WHILE_ACTIVE = [
 
 export function getCrucibleEditableFields({
   canEditAll,
-  isModerator,
+  canEditContentLevels,
 }: {
   canEditAll: boolean;
-  isModerator: boolean;
+  canEditContentLevels: boolean;
 }): readonly CrucibleEditableField[] {
   if (canEditAll) return CRUCIBLE_EDITABLE_FIELDS;
-  return isModerator
+  return canEditContentLevels
     ? [...CRUCIBLE_EDITABLE_WHILE_ACTIVE, 'nsfwLevel']
     : CRUCIBLE_EDITABLE_WHILE_ACTIVE;
 }
