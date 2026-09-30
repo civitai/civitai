@@ -361,3 +361,6 @@ export const resolveWildcardPackSchema = z.object({
    *  fetches + unzips it client-side, as the logged-in user). */
   modelVersionId: z.number().int().positive(),
 });
+
+export const setEvictableSchema = z.object({ id: z.number(), evictable: z.boolean() });
+export type SetEvictableInput = z.infer<typeof setEvictableSchema>;

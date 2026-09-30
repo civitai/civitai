@@ -23,6 +23,7 @@ import type {
   GenerationStatusMode,
   GetGenerationDataSchema,
   ResolveImageMetaInput,
+  SetEvictableInput,
 } from '~/server/schema/generation.schema';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
@@ -69,7 +70,6 @@ import { removeNulls } from '~/utils/object-helpers';
 import { parseAIR, stringifyAIR } from '~/shared/utils/air';
 import {
   ModelVersionFlag,
-  type ModelVersionFlagValue,
   isEvictable,
   isGenerationDisabled,
 } from '~/shared/constants/model-version-flags.constants';
@@ -981,16 +981,15 @@ export async function getGenerationConfig(
   };
 }
 
-async function toggleModelVersionFlag(id: number, flag: ModelVersionFlagValue) {
-  // Flip the bit in a single atomic statement (`#` is Postgres bitwise XOR).
-  // `flags` holds several bits, so a read-modify-write would clobber a
-  // concurrent write to the others.
-  const [updated] = await dbWrite.$queryRaw<{ modelId: number; flags: number }[]>`
+async function updateModelVersionFlags(id: number, flags: Prisma.Sql) {
+  // One atomic statement, never a read-modify-write: `flags` holds several bits,
+  // and a round trip would clobber a concurrent write to the others.
+  const [updated] = await dbWrite.$queryRaw<{ modelId: number; flags: number }[]>(Prisma.sql`
     UPDATE "ModelVersion"
-    SET flags = flags # ${flag}
+    SET flags = ${flags}
     WHERE id = ${id}
     RETURNING "modelId", flags
-  `;
+  `);
   if (!updated) throw throwNotFoundError(`No model version with id ${id}`);
 
   // The flags are baked into cached version/model rows (resourceDataCache,
@@ -1006,16 +1005,26 @@ export async function toggleGenerationDisabled({
   isModerator,
 }: GetByIdInput & { isModerator?: boolean }) {
   if (!isModerator) throw throwAuthorizationError();
-  const flags = await toggleModelVersionFlag(id, ModelVersionFlag.GenerationDisabled);
+  const flags = await updateModelVersionFlags(
+    id,
+    Prisma.sql`flags # ${ModelVersionFlag.GenerationDisabled}`
+  );
   return { id, generationDisabled: isGenerationDisabled(flags) };
 }
 
-export async function toggleEvictable({
+// Sets rather than toggles: a flip sent from a stale menu would un-pin a base model.
+export async function setEvictable({
   id,
+  evictable,
   isModerator,
-}: GetByIdInput & { isModerator?: boolean }) {
+}: SetEvictableInput & { isModerator?: boolean }) {
   if (!isModerator) throw throwAuthorizationError();
-  const flags = await toggleModelVersionFlag(id, ModelVersionFlag.NotEvictable);
+  const flags = await updateModelVersionFlags(
+    id,
+    evictable
+      ? Prisma.sql`flags & ~(${ModelVersionFlag.NotEvictable}::int)`
+      : Prisma.sql`flags | ${ModelVersionFlag.NotEvictable}`
+  );
   return { id, evictable: isEvictable(flags) };
 }
 

@@ -104,7 +104,7 @@ export function ModelVersionMenu({
     });
   };
 
-  const toggleEvictableMutation = trpc.generation.toggleEvictable.useMutation({
+  const setEvictableMutation = trpc.generation.setEvictable.useMutation({
     onSuccess: () => queryUtils.model.getById.invalidate({ id: modelId }),
     onError: (error) =>
       showErrorNotification({
@@ -121,11 +121,13 @@ export function ModelVersionMenu({
       props: {
         title: label,
         message: evictable
-          ? "Generation nodes will always keep at least one copy of this version's files."
+          ? "Generation nodes will be told not to evict the last copy of this version's files."
           : "Generation nodes may evict the last copy of this version's files when they need space.",
         labels: { cancel: 'Cancel', confirm: label },
         onConfirm: () =>
-          toggleEvictableMutation.mutateAsync({ id: modelVersionId }).catch(() => null),
+          setEvictableMutation
+            .mutateAsync({ id: modelVersionId, evictable: !evictable })
+            .catch(() => null),
       },
     });
   };
@@ -449,9 +451,9 @@ export function ModelVersionMenu({
               {generationDisabled ? 'Unblock generation' : 'Block generation'}
             </Menu.Item>
             <Menu.Item
-              disabled={toggleEvictableMutation.isPending}
+              disabled={setEvictableMutation.isPending}
               leftSection={
-                toggleEvictableMutation.isPending ? (
+                setEvictableMutation.isPending ? (
                   <Loader size="xs" />
                 ) : (
                   <IconPin size={14} stroke={1.5} />
