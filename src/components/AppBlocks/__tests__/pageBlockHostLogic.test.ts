@@ -934,9 +934,11 @@ describe('toHostGateStatus', () => {
  * list; COUNT IT rather than trusting a total written next to it (three separate
  * surfaces once carried three different totals for it):
  *
- *   1. the `catch` in `resolveNavigatePath` — a candidate `new URL` rejects. Swept
- *      every Unicode codepoint in 7 positions × both spaces with the hostile
- *      filter applied as production applies it: 15,567,954 candidates, 0 throws.
+ *   1. the `catch` in `resolveNavigatePath` — a candidate `new URL` rejects.
+ *      Swept every Unicode scalar value in 7 positions × both spaces THROUGH the
+ *      public entry point, so the hostile filter applies as production applies
+ *      it: 15,568,896 candidates, 0 throws, with 15,567,940 ACCEPTED as the
+ *      positive control that the sweep is not refusing everything.
  *   2. the resolved-origin check in `resolveNavigatePath` — the scheme and
  *      protocol-relative patterns always win first.
  *   3. the decoded-dot-segment clause in `resolveNavigatePath`'s segment loop —

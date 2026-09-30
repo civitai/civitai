@@ -791,11 +791,18 @@ function resolveNavigatePath(candidate: string): { path: string; suffix: string 
   } catch {
     // 🔴 UNREACHABLE (guard 1 of the list in this module's NAVIGATE tests), and
     // labelled rather than counted as coverage. A relative reference resolved
-    // against a valid absolute base does not throw: swept every Unicode codepoint
-    // in 7 positions × both scopes with `navigatePathIsHostile` applied as
-    // production applies it — 15,567,954 candidates, 0 throws — and a mutant that
-    // ADOPTS an unresolvable candidate instead of refusing it left the suite
-    // green. Kept as a structural backstop because `new URL` is a platform API
+    // against a valid absolute base does not throw. MEASURED THROUGH THIS
+    // FUNCTION'S OWN PUBLIC ENTRY POINT, so the hostile filter is applied exactly
+    // as production applies it: every Unicode scalar value (0x0..0x10FFFF minus
+    // surrogates) in 7 positions × both scope spellings — 15,568,896 candidates,
+    // 0 throws. With two controls, because a zero alone is indistinguishable from
+    // a sweep wired to nothing: 15,567,940 of those candidates were ACCEPTED (so
+    // the sweep is not merely refusing everything), and the harness was shown able
+    // to count a throw at all against an input `new URL` really does reject. A
+    // mutant that ADOPTS an unresolvable candidate instead of refusing it also
+    // left the suite green.
+    // ⚠ An earlier draft of this line said 15,567,954, a figure carried over from
+    // the review rather than re-derived; the number above is this tree's own. Kept as a structural backstop because `new URL` is a platform API
     // whose throw conditions are not ours to fix, and refusing is the only
     // fail-closed answer for a string whose resolved form we cannot know.
     return null;
