@@ -122,12 +122,6 @@ const contentTypeOptions: ContentTypeOption[] = [
 const formatSeconds = (seconds: number) =>
   seconds < 60 ? `${seconds} seconds` : `${seconds / 60} minute${seconds === 60 ? '' : 's'}`;
 
-/** Stops a value past the limit while typing; the minimum is still applied on blur. */
-const atMost =
-  (max: number) =>
-  ({ floatValue }: { floatValue?: number }) =>
-    floatValue === undefined || floatValue <= max;
-
 const NO_RULE = 0;
 const toVideoRule = (seconds: number | undefined) => seconds || undefined;
 
@@ -550,7 +544,7 @@ export function CrucibleUpsertWizard(props: Props) {
         leftSection={<CurrencyIcon currency={Currency.BUZZ} type={buzzType} size={16} />}
         min={CRUCIBLE_MIN_ENTRY_FEE}
         max={CRUCIBLE_MAX_ENTRY_FEE}
-        isAllowed={atMost(CRUCIBLE_MAX_ENTRY_FEE)}
+        clampToMax
         step={10}
         allowNegative={false}
         allowDecimal={false}
@@ -565,7 +559,7 @@ export function CrucibleUpsertWizard(props: Props) {
         description={`How many times can one user enter? (1–${CRUCIBLE_MAX_ENTRIES})`}
         min={1}
         max={CRUCIBLE_MAX_ENTRIES}
-        isAllowed={atMost(CRUCIBLE_MAX_ENTRIES)}
+        clampToMax
         allowNegative={false}
         allowDecimal={false}
         clampBehavior="blur"
@@ -582,7 +576,7 @@ export function CrucibleUpsertWizard(props: Props) {
           placeholder="No limit"
           min={0}
           max={CRUCIBLE_MAX_TOTAL_ENTRIES}
-          isAllowed={atMost(CRUCIBLE_MAX_TOTAL_ENTRIES)}
+          clampToMax
           allowNegative={false}
           allowDecimal={false}
           clampBehavior="blur"
@@ -685,7 +679,7 @@ export function CrucibleUpsertWizard(props: Props) {
         leftSection={<CurrencyIcon currency={Currency.BUZZ} type={buzzType} size={16} />}
         min={0}
         max={maxSeed}
-        isAllowed={atMost(maxSeed)}
+        clampToMax
         error={seedError}
         step={100}
         allowNegative={false}
@@ -794,6 +788,11 @@ export function CrucibleUpsertWizard(props: Props) {
                     }
                     min={0}
                     max={100}
+                    isAllowed={({ floatValue }) => {
+                      if ((floatValue ?? 0) <= 100) return true;
+                      setPrizePositions({ ...values.prizePositions, [position]: 100 });
+                      return false;
+                    }}
                     allowNegative={false}
                     allowDecimal={false}
                     clampBehavior="strict"
