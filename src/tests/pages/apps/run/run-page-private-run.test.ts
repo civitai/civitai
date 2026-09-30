@@ -6,6 +6,17 @@ import '~/pages/apps/run/[slug]/[[...path]]';
 // @typescript-eslint/consistent-type-imports, and this file is an ADDED file, where that
 // gate BLOCKS. Erased at compile time, so it does not load the module mocked below.
 import type * as PrivateRunAccessModule from '~/server/services/blocks/private-run-access.service';
+// NOTE: the db client is NOT mocked here. Its canonical mock is registered globally in
+// `src/__tests__/setup.ts`, and this file declares no behaviour on it — the route's
+// database work is reached only through `resolvePrivateRunAccess` and `BlockRegistry`,
+// both mocked below. Mocking that module directly is forbidden and caught by
+// `no-direct-shared-module-mock.test.ts`; importing `dbMock` without declaring anything
+// on it would just be an unused import.
+//
+// 🔴 DO NOT SPELL THAT FORBIDDEN CALL OUT IN A COMMENT HERE, even to say "don't do this".
+// The guard matches a regex against RAW source, comments included, so naming the call
+// verbatim makes this file a violator by DESCRIBING the violation — which is exactly what
+// happened while writing this note, and it cost a CI round.
 
 /**
  * THE PRIVATE-RUN BRANCH OF THE SSR RUN ROUTE — `/apps/run/<slug>`.
@@ -110,8 +121,6 @@ vi.mock('~/server/services/blocks/app-listing-beta.service', () => ({
 vi.mock('~/server/services/blocks/app-listing-icon.service', () => ({
   readListingIconBySlugForRender: async () => null,
 }));
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
-
 // Real-ish host gate: mature (r/x) requires civitai.red.
 vi.mock('~/server/utils/server-domain', () => ({
   ratingAllowedOnHost: (rating: unknown, host: string) => {
@@ -132,7 +141,14 @@ vi.mock('~/components/AppBlocks/PageBlockHost', () => ({ PageBlockHost: () => nu
 vi.mock('~/components/AppBlocks/useBlockToken', () => ({ useBlockToken: () => ({}) }));
 vi.mock('~/components/Meta/Meta', () => ({ Meta: () => null }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-vi.mock('@tabler/icons-react', () => ({ IconEyeOff: () => null }));
+// 🔴 BOTH ICONS THE ROUTE IMPORTS, not just the private-run one. This factory is
+// WHOLESALE — every export not named here is `undefined` at import time — and the route
+// merge widened what the module under test pulls: the shared route renders the beta
+// notice (`IconFlask`) as well as the private-run notice (`IconEyeOff`). Listing only
+// `IconEyeOff`, as this file did while it tested a separate route, leaves `IconFlask`
+// undefined, which is the exact one-key-factory hazard called out on the
+// `private-run-access.service` mock above.
+vi.mock('@tabler/icons-react', () => ({ IconEyeOff: () => null, IconFlask: () => null }));
 
 const BLOCK = (over: Record<string, unknown> = {}) => ({
   appBlockId: 'apb_privrun',
