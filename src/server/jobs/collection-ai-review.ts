@@ -1,9 +1,14 @@
 import { Prisma } from '@prisma/client';
 import pLimit from 'p-limit';
-import { CollectionItemRejectionReason, CollectionItemStatus } from '~/shared/utils/prisma/enums';
+import {
+  CollectionItemRejectionReason,
+  CollectionItemStatus,
+  ImageIngestionStatus,
+} from '~/shared/utils/prisma/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { Tracker } from '~/server/clickhouse/tracker';
 import { logToAxiom } from '~/server/logging/client';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { CollectionAiReviewSchema } from '~/server/schema/collection.schema';
 import { collectionAiReviewSchema } from '~/server/schema/collection.schema';
 import {
@@ -31,12 +36,19 @@ const BATCH_SIZE = 300;
 const CHUNK_SIZE = 50;
 const CONCURRENCY = 15;
 
+export const MAX_REVIEW_ATTEMPTS = 3;
+const ATTEMPTS_TTL_SECONDS = 7 * 24 * 60 * 60;
+
+export const UNAVAILABLE_IMAGE_REJECTION =
+  "We couldn't load this image. Try uploading it again and resubmitting.";
+
 type PendingItem = {
   collectionItemId: number;
   imageId: number;
   url: string;
   type: string;
   nsfwLevel: number;
+  ingestion: string;
   prompt: string | null;
 };
 
@@ -68,12 +80,12 @@ export const collectionAiReview = createJob(
   { lockExpiration: 1800 }
 );
 
-async function reviewCollection(collectionId: number, config: CollectionAiReviewSchema) {
+export async function reviewCollection(collectionId: number, config: CollectionAiReviewSchema) {
   // reviewedById marks an item as already seen, so nothing is reclassified — or re-billed — on a
   // later run.
   const pending = await dbWrite.$queryRaw<PendingItem[]>`
     SELECT ci.id "collectionItemId", i.id "imageId", i.url, i.type::text, i."nsfwLevel",
-           i.meta->>'prompt' prompt
+           i.ingestion::text, i.meta->>'prompt' prompt
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
     WHERE ci."collectionId" = ${collectionId}
@@ -84,8 +96,10 @@ async function reviewCollection(collectionId: number, config: CollectionAiReview
   `;
 
   // Ingestion has not rated these yet, so there is no level to check them against. Skipped rather
-  // than stamped, so they are picked up once they have one.
-  const reviewable = pending.filter((item) => !isUnratedNsfwLevel(item.nsfwLevel));
+  // than stamped, so they are picked up once they have one. A NotFound image never will be.
+  const reviewable = pending.filter(
+    (item) => isUnavailableImage(item) || !isUnratedNsfwLevel(item.nsfwLevel)
+  );
   if (!reviewable.length) return;
 
   const tracker = new Tracker();
@@ -119,9 +133,14 @@ async function classifyItem({
 }): Promise<Outcome | undefined> {
   let decision: AiReviewDecision;
   let reason = '';
+  let rejectionMessage: string | undefined;
   let usage = { promptTokens: 0, completionTokens: 0 };
 
-  if (!isNsfwLevelAllowed(item.nsfwLevel, config.allowedNsfwLevels)) {
+  if (isUnavailableImage(item)) {
+    decision = { decision: 'reject', violations: [], escalations: [] };
+    reason = 'The image file could not be found.';
+    rejectionMessage = UNAVAILABLE_IMAGE_REJECTION;
+  } else if (!isNsfwLevelAllowed(item.nsfwLevel, config.allowedNsfwLevels)) {
     decision = { decision: 'reject', violations: ['sexual/adult content'], escalations: [] };
     reason = `Rated outside the levels this collection allows (nsfwLevel ${item.nsfwLevel}).`;
   } else {
@@ -156,15 +175,19 @@ async function classifyItem({
       decision = decideFromObservations(result.observations, { isVideo: item.type === 'video' });
       reason = (result.observations as { reason?: string } | null)?.reason?.slice(0, 500) ?? '';
     } catch (error) {
+      const attempts = await recordFailedAttempt(item.collectionItemId);
       logToAxiom({
         type: 'job-error',
         name: 'collection-ai-review',
         collectionId,
         imageId: item.imageId,
+        attempts,
         error: (error as Error).message,
       }).catch(() => undefined);
-      // Stamped so a permanently broken image (the CDN refuses some of them) is not retried on
-      // every run for the life of the collection.
+      // Most failures clear on a later run, so the item is left for the next one. Stamped once the
+      // attempts run out, so a permanently broken image (the CDN refuses some of them) is not
+      // retried, and re-billed, on every run for the life of the collection.
+      if (attempts < MAX_REVIEW_ATTEMPTS) return undefined;
       return { collectionItemId: item.collectionItemId, action: 'stamp' };
     }
   }
@@ -179,7 +202,7 @@ async function classifyItem({
     if (decision.decision === 'approve') action = 'accept';
     else if (decision.decision === 'reject' || config.escalationAction === 'reject') {
       action = 'reject';
-      message = resolveRejectionMessage(decision.violations, config.reasonCopy);
+      message = rejectionMessage ?? resolveRejectionMessage(decision.violations, config.reasonCopy);
     }
   }
 
@@ -202,6 +225,23 @@ async function classifyItem({
   });
 
   return { collectionItemId: item.collectionItemId, action, message };
+}
+
+// The scanner could not fetch the file, and nothing moves an image out of NotFound.
+function isUnavailableImage(item: Pick<PendingItem, 'ingestion'>) {
+  return item.ingestion === ImageIngestionStatus.NotFound;
+}
+
+// A Redis failure reads as exhausted, so the item is stamped rather than re-billed every run.
+export async function recordFailedAttempt(collectionItemId: number) {
+  const key = `${REDIS_SYS_KEYS.COLLECTION_AI_REVIEW.ATTEMPTS}:${collectionItemId}` as const;
+  try {
+    const attempts = await sysRedis.incrBy(key, 1);
+    await sysRedis.expire(key, ATTEMPTS_TTL_SECONDS);
+    return attempts;
+  } catch {
+    return MAX_REVIEW_ATTEMPTS;
+  }
 }
 
 // Keyed on the status alone: an AI rejection with no message is still an AI rejection, and gating
