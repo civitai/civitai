@@ -1977,12 +1977,21 @@ export function PageBlockHost({
       //
       // 🔴 SITE SCOPE IS A SEPARATE PER-SURFACE CAPABILITY, `BLOCK_HOST_SITE_NAVIGATION`,
       // and it is separate because `private-run` answers the two questions
-      // DIFFERENTLY: it keeps its own app route (a non-null base) and is refused
-      // site navigation, because that route resolves an audience including
-      // `moderator`, serves suspended/delisted apps, and passes no `reviewMode` —
-      // so without the capability refusal a suspended app could move a moderator's
-      // tab anywhere on the site. Also a total record: a new surface is a compile
-      // error in BOTH maps until someone decides both.
+      // DIFFERENTLY: it keeps a non-null app base and is refused site navigation,
+      // because that surface resolves an audience including `moderator`, serves
+      // suspended/delisted apps, and passes no `reviewMode` — so without the
+      // capability refusal a suspended app could move a moderator's tab anywhere on
+      // the site. Also a total record: a new surface is a compile error in BOTH maps
+      // until someone decides both.
+      //
+      // ⚠️ AN EARLIER WORDING SAID `private-run` "keeps its OWN app route", AND THE
+      // ROUTE MERGE ABOVE FALSIFIED IT. There is no separate private route any more,
+      // and `BLOCK_HOST_DEEP_LINK_BASE['private-run']` is the same `'/apps/run'` that
+      // `page-run` carries — so the base below cannot distinguish the two surfaces
+      // and `BLOCK_HOST_SITE_NAVIGATION` is the only thing here that does. That makes
+      // the split MORE load-bearing than when it was written, not less: collapsing
+      // site scope into the base map would hand a suspended app the public surface's
+      // capability by value equality alone, with nothing at this call site to notice.
       const req = resolveNavigateRequest(raw, {
         base: BLOCK_HOST_DEEP_LINK_BASE[surface],
         slug,

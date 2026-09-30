@@ -118,10 +118,19 @@ export type BlockHostSurface =
  * ⚠️ `model-slot` IS `null` AND THAT IS NOT A BEHAVIOUR CHANGE — verified rather than
  * assumed, because the ternary this replaced gave every non-private surface
  * `/apps/run`. `PageBlockHost` is never mounted with `surface: 'model-slot'` in
- * production: its FOUR production mounts are the public run route (`page-run`), the
- * private run route (`private-run`), `/apps/dev/<blockId>` (`dev-tunnel`) and
- * `~/components/Apps/ReviewBlockPreviewHost` (`review-preview`) — the moderator's live
- * preview, which the paragraph above names and which this enumeration used to omit.
+ * production: its THREE production mount sites pass FOUR surfaces between them —
+ * `src/pages/apps/run/[slug]/[[...path]].tsx` passes `hostSurfaceFor(audience)`, which
+ * is `page-run` OR `private-run`; `src/pages/apps/dev/[blockId].tsx` passes
+ * `dev-tunnel`; and `~/components/Apps/ReviewBlockPreviewHost` passes `review-preview`
+ * — the moderator's live preview, which the paragraph above names and which this
+ * enumeration used to omit.
+ * ⚠️ IT SAID "FOUR PRODUCTION MOUNTS … the private run route (`private-run`)" AND BOTH
+ * HALVES WERE FALSIFIED BY #5255, which deleted `/apps/private-run/<slug>` and moved
+ * the private run onto the run route's own fallback. Re-measured by enumerating every
+ * non-test `surface=` / `surface:` site: three mounts, four surfaces. The distinction
+ * is not pedantic here — this enumeration IS the evidence for the no-behaviour-change
+ * claim below, so a reader auditing which mounts reach this map would go looking for a
+ * route file that no longer exists.
  * ⚠️ That omission mattered in the direction that weakens the argument: this list IS the
  * evidence for the no-behaviour-change claim, and `review-preview` is one of the surfaces
  * whose base is now LOOKED UP rather than defaulted. ⚠️ It mapped to `/apps/run` when this
@@ -174,15 +183,27 @@ export const BLOCK_HOST_DEEP_LINK_BASE: Record<BlockHostSurface, string | null> 
  * inheriting an answer from a default branch.
  *
  * 🔴 `private-run` IS THE CASE THAT MOTIVATED SPLITTING THEM, and the refusal is
- * load-bearing rather than tidy. That route (`/apps/private-run/<slug>`) resolves
- * an audience that includes `moderator`, it exists precisely to serve `suspended`
- * and delisted apps, and it passes NO `reviewMode` — so the review surface's two
- * refusals do not cover it. Without this entry a suspended app could move a
- * moderator's tab to any page route on the site, which is the same hazard
- * `review-preview` is closed against, on a surface that reaches the same viewer.
- * APP-scoped deep-linking inside the owner's own private preview stays working
- * (its base above is non-null) — that is what the surface is for, and it reaches
- * no site route.
+ * load-bearing rather than tidy. That surface resolves an audience that includes
+ * `moderator`, it exists precisely to serve `suspended` and delisted apps, and it
+ * passes NO `reviewMode` — so the review surface's two refusals do not cover it.
+ * Without this entry a suspended app could move a moderator's tab to any page
+ * route on the site, which is the same hazard `review-preview` is closed against,
+ * on a surface that reaches the same viewer. APP-scoped deep-linking inside the
+ * owner's own private preview stays working (its base above is non-null) — that
+ * is what the surface is for, and it reaches no site route.
+ *
+ * ⚠️ IT USED TO NAME A ROUTE, `/apps/private-run/<slug>`, AND THAT ROUTE IS GONE
+ * (#5255 folded the private run into `/apps/run/<slug>`'s own fallback behind the
+ * approved-only resolver). None of the three facts above moved with it — the
+ * audience, the suspended-app population and the absent `reviewMode` are
+ * properties of the SURFACE, which is still distinct. What DID move is the
+ * argument's cheapest support: `private-run`'s base is now `'/apps/run'`, BYTE-
+ * IDENTICAL to `page-run`'s, so the base can no longer tell the two surfaces
+ * apart and "it keeps its own route" is no longer a true sentence about either.
+ * 🔴 Read that as strengthening the split, not weakening it: this record is now
+ * the ONLY thing in the host that distinguishes a private run from a public one,
+ * so folding it into the base map would silently grant a suspended app the public
+ * surface's site capability.
  *
  * `review-preview` and `model-slot` are `false` as well, but they are not the
  * interesting entries: both already have a `null` base, so they perform no
@@ -195,7 +216,10 @@ export const BLOCK_HOST_SITE_NAVIGATION: Record<BlockHostSurface, boolean> = {
   'dev-tunnel': true,
   'review-preview': false,
   // 🔴 See the docblock above — a suspended app must not be able to move a
-  // moderator's tab off the private-run route. App scope stays enabled.
+  // moderator's tab off the run route it is being served on. App scope stays
+  // enabled, and since #5255 that base is `'/apps/run'`, the same string
+  // `page-run` carries: this `false` is the only difference between the two
+  // surfaces that the navigate handler can still see.
   'private-run': false,
 };
 

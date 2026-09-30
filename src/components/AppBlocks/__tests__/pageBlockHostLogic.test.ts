@@ -975,7 +975,19 @@ describe('resolveNavigateRequest (#5209 — explicit scope, app by default)', ()
   // site hrefs asserted below, so a mutant that leaked base or slug into a site
   // href cannot survive.
   const PAGE = { base: '/apps/run', slug: 'model-benchmarking', siteNavigation: true };
-  /** A surface that holds an app base but NOT the site capability (private-run). */
+  /**
+   * A surface that holds an app base but NOT the site capability (private-run).
+   *
+   * ⚠️ `/apps/private-run` IS A SYNTHETIC BASE, NOT A LIVE ROUTE — #5255 deleted
+   * that route and the real `BLOCK_HOST_DEEP_LINK_BASE['private-run']` is now
+   * `'/apps/run'`. The string is kept anyway, deliberately: `resolveNavigateRequest`
+   * takes the base as a parameter and never reads the record, and the fixture's
+   * whole job is to be pairwise distinct from `PAGE`'s base so a mutant leaking the
+   * base into a SITE href cannot survive. Pointing it at the real value would
+   * collide with `PAGE` and quietly retire that property. The per-surface wiring —
+   * which base each surface actually gets — is asserted against the real record in
+   * the total-record cases near the end of this file.
+   */
   const NO_SITE = { base: '/apps/private-run', slug: 'suspended-app', siteNavigation: false };
 
   describe("scope: 'site' — the case that was broken", () => {
@@ -1908,8 +1920,14 @@ describe('resolveNavigateRequest (#5209 — explicit scope, app by default)', ()
         // 🔴 null since #5209 — the moderator's review preview performs no
         // block-requested navigation, in either space.
         'review-preview': null,
-        // 🔴 KEPT. private-run loses SITE scope, not app scope.
-        'private-run': '/apps/private-run/demo/sub',
+        // 🔴 KEPT. private-run loses SITE scope, not app scope. ⚠️ The value is
+        // `/apps/run/...`, the SAME string `page-run` and `dev-tunnel` produce, and
+        // it read `/apps/private-run/demo/sub` until #5255 deleted that route and
+        // pointed the private run at the public route's own fallback. So the three
+        // non-null rows are no longer distinguishable from each other here; what
+        // this case still pins is the two `null` rows and the fact that
+        // `private-run` is not one of them.
+        'private-run': '/apps/run/demo/sub',
       };
       for (const surface of ALL_SURFACES) {
         const got = resolveNavigateRequest(
@@ -1930,8 +1948,10 @@ describe('resolveNavigateRequest (#5209 — explicit scope, app by default)', ()
         'page-run': '/models/500',
         'dev-tunnel': '/models/500',
         'review-preview': null,
-        // 🔴 THE DECISION. A suspended app cannot move a moderator's tab off the
-        // private-run route.
+        // 🔴 THE DECISION, AND THE ONLY ROW THAT STILL SEPARATES `private-run` FROM
+        // `page-run` ANYWHERE IN THE HOST — since #5255 the two share the base
+        // `/apps/run`, so the app-scoped case above cannot tell them apart. A
+        // suspended app cannot move a moderator's tab off the run route serving it.
         'private-run': null,
       };
       let allowed = 0;

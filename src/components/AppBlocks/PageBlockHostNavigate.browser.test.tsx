@@ -298,10 +298,19 @@ describe('PageBlockHost NAVIGATE bridge (#5209)', () => {
     expect(openSpy).not.toHaveBeenCalled();
   });
 
-  test('the app-scoped base follows the SURFACE — private-run keeps its own route', async () => {
-    // A hardcoded `/apps/run` here sends the viewer to the PUBLIC run route, which
-    // requires `status: 'approved'` and therefore 404s for the very suspended app
-    // they are looking at.
+  test('private-run still performs APP-SCOPED navigation, at the shared run base', async () => {
+    // ⚠️ THIS CASE NO LONGER DISCRIMINATES A HARDCODED BASE, AND IT USED TO. It was
+    // named "the app-scoped base follows the SURFACE — private-run keeps its own
+    // route" and asserted `/apps/private-run/<slug>/detail`, on the argument that a
+    // hardcoded `/apps/run` would send the viewer to the approved-only public route
+    // and 404 the very suspended app they were looking at. #5255 deleted that route:
+    // the private run is now served BY `/apps/run/<slug>`, so
+    // `BLOCK_HOST_DEEP_LINK_BASE['private-run']` is `'/apps/run'` by design and this
+    // assertion would pass against a hardcoded base. Renamed to the property it
+    // still pins — that `private-run` navigates app-scoped AT ALL, which is the
+    // positive control the site-capability case below depends on. What still pins
+    // the per-surface lookup is the `null` pair (`review-preview`, `model-slot`),
+    // asserted in the review case further down.
     renderWithProviders(<PageBlockHost {...baseProps} surface="private-run" />);
     await driveToReady();
 
@@ -310,18 +319,25 @@ describe('PageBlockHost NAVIGATE bridge (#5209)', () => {
     await vi.waitFor(() => {
       expect(router.push).toHaveBeenCalledTimes(1);
     });
-    expect(router.push).toHaveBeenCalledWith('/apps/private-run/my-page-app/detail', undefined, {
+    expect(router.push).toHaveBeenCalledWith('/apps/run/my-page-app/detail', undefined, {
       shallow: true,
     });
   });
 
   test('🔴 private-run refuses SITE scope while KEEPING app scope', async () => {
-    // 🔴 THE PER-SURFACE CAPABILITY, through the real bridge. That route resolves
+    // 🔴 THE PER-SURFACE CAPABILITY, through the real bridge. That surface resolves
     // an audience including `moderator`, serves suspended and delisted apps, and
     // passes no `reviewMode` — so site navigation there would let a suspended app
     // move a moderator's tab to any page route. App-scoped deep-linking inside the
     // owner's own preview is what the surface is for and stays working, which is
     // why this is a capability rather than another `null` base.
+    //
+    // 🔴 AND SINCE #5255 THIS IS THE ONLY HOST-SIDE DIFFERENCE BETWEEN THE TWO RUN
+    // SURFACES. The private run no longer has its own route, so its deep-link base
+    // is the same `'/apps/run'` `page-run` carries — the positive control below is
+    // byte-identical to the one a `page-run` mount would produce. The two zeros
+    // above are therefore the whole discrimination, which is what makes this case
+    // load-bearing rather than a restatement of the base map.
     renderWithProviders(<PageBlockHost {...baseProps} surface="private-run" />);
     await driveToReady();
 
@@ -339,7 +355,7 @@ describe('PageBlockHost NAVIGATE bridge (#5209)', () => {
     // that refuses everything on `private-run`.
     postFromBlock('NAVIGATE', { path: 'detail' });
     await vi.waitFor(() => {
-      expect(router.push).toHaveBeenCalledWith('/apps/private-run/my-page-app/detail', undefined, {
+      expect(router.push).toHaveBeenCalledWith('/apps/run/my-page-app/detail', undefined, {
         shallow: true,
       });
     });
