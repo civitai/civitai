@@ -257,11 +257,29 @@ type Status = 'loading' | 'ready' | 'timeout' | 'fatal' | 'no_token' | 'error';
  * it comes from an untrusted frame and `resolveNavigateRequest` is what decides
  * what any of it means.
  *
- * 🔴 EVERY FIELD THE HOST MEANS TO READ MUST APPEAR HERE. This existed as an
- * inline `{ path?: unknown } | undefined` generic and `target` was therefore not
- * in the type and read NOWHERE, so `target: 'new_tab'` silently became a same-tab
- * navigation (#5209). `scope` joins it for the same reason: a field absent from
- * the generic is a field the handler cannot see.
+ * ⚠️ THIS IS DOCUMENTATION OF THE WIRE SHAPE, NOT A GATE — AND THIS COMMENT USED
+ * TO CLAIM THE OPPOSITE. It read "🔴 EVERY FIELD THE HOST MEANS TO READ MUST
+ * APPEAR HERE … a field absent from the generic is a field the handler cannot
+ * see", and that is MEASURED FALSE. Stripping this alias back to the inline
+ * `{ path?: unknown } | undefined` it replaced leaves `node scripts/typecheck.mjs`
+ * at 0 type errors and `pageBlockHostLogic.test.ts` at 133/133 — measured, with a
+ * negative control confirming that typecheck does report an error planted in this
+ * very file. The reason is structural: `raw` is handed straight to
+ * `resolveNavigateRequest(raw: unknown, …)`, which casts to
+ * `Record<string, unknown>` and reads `obj.scope` / `obj.target` off that. Nothing
+ * on the path dereferences a typed field, so the field list here is INERT.
+ *
+ * WHAT ACTUALLY MAKES A FIELD READABLE IS THE RESOLVER READING IT. The #5209
+ * defect was the handler never reading `target` at all — not this type omitting
+ * it. Listing `target` here would not have fixed it, and delisting it would not
+ * reintroduce it. What pins both fields is behavioural: the "defaults to
+ * 'current' for absent, unknown and non-string targets" and "`target` and `scope`
+ * are independent" cases in `pageBlockHostLogic.test.ts`, which fail on a resolver
+ * that stops reading either one.
+ *
+ * The fields stay listed because an accurate record of what the wire carries is
+ * worth its two lines, and someone adding a field is at least looking in a file
+ * that names the others. Do not read the list as coverage.
  */
 type NavigateMessage = { path?: unknown; scope?: unknown; target?: unknown } | undefined;
 

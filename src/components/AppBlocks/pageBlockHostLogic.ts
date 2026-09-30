@@ -558,8 +558,11 @@ export function resolveGetImagesByIdsRequest(raw: unknown): GetImagesByIdsReques
 //   - any scheme (`https:`, `javascript:`, `data:`, …) and protocol-relative
 //     `//host` — a block cannot push the host at another origin;
 //   - backslashes, which several URL parsers fold to `/`;
-//   - control characters and whitespace, which parsers strip (a stripped byte
-//     changes which string the guard judged vs which one the browser resolves);
+//   - C0 controls, DEL and C1, which parsers strip wherever they appear (a
+//     stripped byte changes which string the guard judged vs which one the browser
+//     resolves). ⚠️ NOT a space, in ANY position — this line read "control
+//     characters and whitespace" while a leading/trailing space was also refused,
+//     and that rule is gone (see the retraction in `navigatePathIsHostile`);
 //   - PERCENT-ENCODED path separators (`%2f`, `%5c`, either case) anywhere in the
 //     block's own string — the only encodings that can change how many segments a
 //     path has if anything downstream decodes once (see `navigatePathIsHostile`);
@@ -614,19 +617,54 @@ function navigatePathIsHostile(rawPath: string): boolean {
   // C0 controls, DEL and C1: URL parsers STRIP tab/LF/CR wherever they appear, so
   // the string a guard inspects would not be the string that resolves.
   if (/[\u0000-\u001f\u007f-\u009f]/.test(rawPath)) return true;
-  // A LEADING OR TRAILING SPACE, and only those. WHATWG trims
-  // C0-control-or-space from both ends — the same hazard in a different position —
-  // but it does NOT strip an INTERIOR space, it percent-encodes it.
+  // ⚠️ A LEADING OR TRAILING SPACE WAS REFUSED HERE AND THE RULE IS NOW GONE. The
+  // retraction is recorded AT THE LINE so the wrong explanation is not re-derived.
+  //
+  // What the rule claimed: that it was not subsumed by the structural rule below,
+  // because `' /models/1'` "resolves to `/models/1` with the segment count
+  // PRESERVED, so the count comparison cannot see the trimmed byte". The
+  // CONCLUSION was right — the structural rule genuinely cannot see it — but the
+  // MECHANISM was false for the leading position, and that is the half the worked
+  // example named. The candidate is REBUILT as `/${path}` before resolution, so a
+  // leading space is never at a string END for WHATWG to trim: measured,
+  // `new URL('/ x', <sentinel>).pathname` is `/%20x`, and `' /models/1'` resolves
+  // to `/%20/models/1`, NOT to `/models/1`. It is percent-encoded exactly like the
+  // INTERIOR space this change deliberately re-admitted. So the leading half had
+  // no mechanism at all: nothing is trimmed, therefore nothing is hidden from any
+  // guard.
+  //
+  // The TRAILING half's mechanism IS real — `new URL('/x ', <sentinel>).pathname`
+  // is `/x`, at an unchanged count of 2 → 2 — and it still closed nothing, because
+  // every decision downstream reads the RESOLVED path, which is this function's
+  // whole design: the `/api` first-segment check, app containment, and the
+  // returned `href` itself. Measured with the rule removed,
+  // `{ scope: 'site', path: 'api/auth/logout ' }` is STILL refused, by the `/api`
+  // check reading the resolved first segment.
+  //
+  // So it was fail-closed POSTURE, not a hazard closure, and it cost
+  // `navigate(' x')` and `navigate('x ')`, both of which WORKED at the merge base.
+  // That is the same class the structural rule was relaxed to re-admit, and the
+  // same class the interior-space refusal above was removed for: an app sub-path
+  // in the block author's own namespace, dropped silently, undetectable by the
+  // block. Dropped for consistency with that decision rather than kept as a third
+  // spelling of it.
+  //
+  // MEASURED BEFORE DROPPING, over a 26-shape space corpus in BOTH scopes:
+  // 0 containment escapes, 0 `/api` leaks, 0 off-origin (3/26 accepted with the
+  // rule; 13/26 site and 15/26 app without it). Every href the wider set accepts
+  // is a re-resolution FIXPOINT — 21 of 21, against a positive control (`/a/../b`)
+  // that is not — so no consumer can re-derive a different path from one. And
+  // whitespace-ONLY paths stay refused without this rule: `' '` and `'/ '` resolve
+  // to `/`, which the structural rule sees as 2 → 1.
   //
   // 🔴 THE INTERIOR CASE USED TO BE REFUSED HERE TOO, by a class that ran to
   // `U+0020` INCLUSIVE, and that was a SECOND refusal channel for exactly the class
   // the structural rule below was relaxed to admit. Fixing only the structural rule
   // would have left `navigate('a b')` — which WORKED at the merge base, no
   // resolver having existed then — silently dropped, with the fix looking
-  // applied and a green suite. Both channels had to move. This one is NOT subsumed
-  // by the structural rule: `' /models/1'` resolves to `/models/1` with the segment
-  // count PRESERVED, so the count comparison cannot see the trimmed byte.
-  if (/^ | $/.test(rawPath)) return true;
+  // applied and a green suite. Both channels had to move; this paragraph is why
+  // U+0020 is excluded from the control-character class on the line above.
+
   // Protocol-relative (`//host`, and `/\host` which Chrome folds to it). Note
   // this runs on the RAW string, BEFORE leading slashes are normalised away, so
   // `//evil.example` is refused rather than read as a redundantly-slashed path.
@@ -789,7 +827,8 @@ function resolveNavigatePath(candidate: string): { path: string; suffix: string 
   try {
     url = new URL(candidate, NAVIGATE_SENTINEL_ORIGIN);
   } catch {
-    // 🔴 UNREACHABLE (guard 1 of the list in this module's NAVIGATE tests), and
+    // 🔴 UNREACHABLE FOR EVERY SHIPPED BASE (guard 1 of the list in this module's
+    // NAVIGATE tests — see the precondition at the end of this block), and
     // labelled rather than counted as coverage. A relative reference resolved
     // against a valid absolute base does not throw. MEASURED THROUGH THIS
     // FUNCTION'S OWN PUBLIC ENTRY POINT, so the hostile filter is applied exactly
@@ -805,14 +844,41 @@ function resolveNavigatePath(candidate: string): { path: string; suffix: string 
     // the review rather than re-derived; the number above is this tree's own. Kept as a structural backstop because `new URL` is a platform API
     // whose throw conditions are not ours to fix, and refusing is the only
     // fail-closed answer for a string whose resolved form we cannot know.
+    //
+    // 🔴 THE PRECONDITION THAT MAKES THIS LABEL AND GUARD 2'S TRUE, AND NOTHING
+    // VALIDATES IT: every value in `BLOCK_HOST_DEEP_LINK_BASE` is a path rooted at
+    // exactly ONE `/` and is not `/` itself. App scope builds the candidate as
+    // `${base}/${encodeURIComponent(slug)}/${path}`, so a base of `/` would make
+    // it `//<slug>/…` — PROTOCOL-RELATIVE, which `navigatePathIsHostile` never
+    // sees because that filter runs on the BLOCK's string, not on the host-built
+    // candidate. Measured with a hypothetical `base: '/'` over the same sweep as
+    // above (15,568,896 candidates): guard 2 fires 7,783,978 times — every
+    // app-scoped candidate that reaches it — guard 1 fires 0, and there are 0
+    // containment escapes, 0 `/api` leaks and 0 off-origin hrefs. So these two
+    // lines are NOT decoration under that base; they are the entire defence, which
+    // is the case FOR keeping them and is why the labels now say "for every
+    // SHIPPED base" rather than "unreachable". A base is a hand-written constant
+    // today; if one is ever derived, these labels expire before the code does.
+    // ⚠ The audit that raised this reported guards 1 and 2 firing 8,446 times EACH.
+    // Not reproduced here: with a fixed valid slug the authority is always the
+    // slug, so `new URL` cannot throw and guard 1 cannot fire. Recorded as
+    // unexplained rather than restated.
     return null;
   }
-  // 🔴 UNREACHABLE (guard 2), measured the same way: forcing this condition to
-  // `false` leaves the suite green, because `navigatePathIsHostile` refuses every
-  // scheme and every `//host` shape before we get here, and with those gone a
-  // relative input resolved against an absolute base cannot produce another
-  // origin. Kept because it states the property structurally, so loosening a
-  // pattern check cannot silently take the property with it. NOT coverage.
+  // 🔴 UNREACHABLE FOR EVERY SHIPPED BASE (guard 2), measured the same way:
+  // forcing this condition to `false` leaves the suite green, because
+  // `navigatePathIsHostile` refuses every scheme and every `//host` shape before we
+  // get here, and with those gone a relative input resolved against an absolute
+  // base cannot produce another origin. Kept because it states the property
+  // structurally, so loosening a pattern check cannot silently take the property
+  // with it. NOT coverage.
+  //
+  // 🔴 SAME PRECONDITION AS GUARD 1, and it binds this line HARDER: under a
+  // hypothetical `base: '/'` the host-built candidate is protocol-relative and
+  // THIS line is what refuses it — 7,783,978 times over the sweep, with 0 escapes.
+  // `navigatePathIsHostile` cannot help there, because it inspects the block's
+  // string and the `//` comes from the host's own base. Read the precondition
+  // paragraph in the `catch` above before calling this line decoration.
   if (url.origin !== NAVIGATE_SENTINEL_ORIGIN) return null;
 
   // The path portion of the candidate ends at the first `?` or `#` — per the URL

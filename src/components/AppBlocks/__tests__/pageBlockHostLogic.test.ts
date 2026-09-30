@@ -953,6 +953,20 @@ describe('toHostGateStatus', () => {
  *      WAS reachable at the PR head, where it also gated site scope; separating
  *      the two surface inputs moved that half onto the capability (reachable).
  *
+ * 🔴 THE PRECONDITION ON 1 AND 2, WHICH THIS LIST USED TO OMIT, AND NOTHING
+ * VALIDATES IT: they are unreachable only while EVERY value in
+ * `BLOCK_HOST_DEEP_LINK_BASE` is a path rooted at exactly one `/` and is not `/`
+ * itself. App scope builds `${base}/${encodeURIComponent(slug)}/${path}`, so a
+ * base of `/` yields a PROTOCOL-RELATIVE candidate that `navigatePathIsHostile`
+ * cannot see — that filter reads the block's string, not the host-built candidate.
+ * Measured over the same sweep with a hypothetical `base: '/'`: guard 2 fires
+ * 7,783,978 times, catching every app-scoped candidate, with 0 containment
+ * escapes, 0 `/api` leaks and 0 off-origin hrefs. Guard 1 stays at 0 there,
+ * because the authority is always the slug and a valid slug is a valid host. So
+ * the pair is evidence FOR keeping both lines, not against: under that base they
+ * are the whole defence. Every base is a hand-written constant today; the moment
+ * one is derived, these two labels expire before the code does.
+ *
  * Every expectation is a literal value, never derived from the implementation —
  * the point is to pin the contract the SDK docs promise.
  */
@@ -1168,11 +1182,14 @@ describe('resolveNavigateRequest (#5209 — explicit scope, app by default)', ()
       }
     });
 
-    it('refuses control characters and whitespace a URL parser would strip', () => {
+    it('refuses the control characters a URL parser would strip', () => {
       // A stripped byte means the string the guard judged is not the string the
       // browser resolves — so these are refused rather than normalised. NOTE this
-      // is about C0/C1 and the ends, NOT about an interior space: `a b` is a
-      // legitimate segment and is ALLOWED (see the structural-rule describe).
+      // is about C0/C1 ONLY — not about a space in ANY position. ⚠️ This line used
+      // to read "C0/C1 and the ends", which stopped being true when the
+      // leading/trailing-space rule was dropped: U+0020 is outside this class at
+      // every position now, so `a b`, `' x'` and `'x '` are all ALLOWED (the
+      // structural-rule describe and the space cases below).
       for (const path of ['/mod\tels/1', '/models\n/1', '/models\r/1', '/ab']) {
         expect(
           resolveNavigateRequest({ scope: 'site', path }, PAGE),
@@ -1181,31 +1198,117 @@ describe('resolveNavigateRequest (#5209 — explicit scope, app by default)', ()
       }
     });
 
-    it('🔴 refuses a LEADING or TRAILING space while ALLOWING an interior one', () => {
-      // 🔴 TWO CHANNELS REFUSED THE SPACE CLASS, and only one of them was the
-      // structural rule. The control-character class used to run to U+0020
-      // INCLUSIVE, so `a b` was refused twice over — relaxing the structural rule
-      // alone would have left it dropped while the fix looked applied.
+    it('🔴 a LEADING or TRAILING space is ALLOWED, in every position (back-compat)', () => {
+      // 🔴 RED AT `3254aac863`, GREEN HERE. This branch refused a leading/trailing
+      // space; `navigate(' x')` and `navigate('x ')` app-scoped WORKED at the merge
+      // base, so that refusal was a silent back-compat break in exactly the class
+      // the structural rule was relaxed to re-admit. The refusal is dropped and
+      // these rows are what notices it returning. Full retraction — including why
+      // the old comment's worked example was false for the LEADING position — sits
+      // at the dropped rule in `navigatePathIsHostile`.
       //
-      // The positions are not symmetric: WHATWG TRIMS a leading/trailing
-      // C0-control-or-space (so the guard judged a different string from the one
-      // that resolves, and the segment count is PRESERVED across the trim — the
-      // structural rule cannot see it), but it PERCENT-ENCODES an interior space.
-      // So the ends stay refused and the middle is allowed, and both halves are
-      // asserted here because a single-sided fix satisfies neither.
-      for (const path of [' /models/1', '/models/1 ', ' /models/1 ']) {
-        expect(
-          resolveNavigateRequest({ scope: 'site', path }, PAGE),
-          `site ${JSON.stringify(path)}`
-        ).toBeNull();
-        expect(resolveNavigateRequest({ path }, PAGE), `app ${JSON.stringify(path)}`).toBeNull();
-      }
+      // The positions are not symmetric and the hrefs say so. A leading space is
+      // PERCENT-ENCODED (the candidate is rebuilt as `/${path}`, so it is never at
+      // a string end for WHATWG to trim); a trailing space IS trimmed. Both are
+      // fine, because what is returned is the RESOLVED path either way.
+      expect(resolveNavigateRequest({ path: ' x' }, PAGE)?.href).toBe(
+        '/apps/run/model-benchmarking/%20x'
+      );
+      expect(resolveNavigateRequest({ path: 'x ' }, PAGE)?.href).toBe(
+        '/apps/run/model-benchmarking/x'
+      );
+      // Site scope too — the rule was not scope-specific and neither is its removal.
+      expect(resolveNavigateRequest({ scope: 'site', path: ' /models/1' }, PAGE)?.href).toBe(
+        '/%20/models/1'
+      );
+      expect(resolveNavigateRequest({ scope: 'site', path: '/models/1 ' }, PAGE)?.href).toBe(
+        '/models/1'
+      );
+      // An INTERIOR space keeps working — the half that was already right, and the
+      // reason U+0020 is excluded from the control-character class above.
       expect(resolveNavigateRequest({ scope: 'site', path: '/mo dels' }, PAGE)?.href).toBe(
         '/mo%20dels'
       );
       expect(resolveNavigateRequest({ path: 'mo dels' }, PAGE)?.href).toBe(
         '/apps/run/model-benchmarking/mo%20dels'
       );
+    });
+
+    it('[invariant guard — green at base] no space shape reaches a REFUSED destination', () => {
+      // INVARIANT GUARD, green at base — and green for a DIFFERENT REASON on each
+      // side, which is exactly why it is worth pinning. At `3254aac863` the space
+      // rule refused every row; here the RESOLVED-FORM checks do, and that is the
+      // claim dropping the rule rests on. Non-vacuous by mutation, measured, each
+      // row failing with its OWN assertion message rather than a neighbour's:
+      // neutering `navigateSiteFirstSegmentIsRefused` to `return false` fails on
+      // `site "api/auth/logout "`, and making the structural comparison never
+      // refuse (`if (false)`) fails on `site " "`.
+      //
+      // The first two are the load-bearing pair: `/api/auth/logout` stays
+      // unreachable with a trailing space because the `/api` check reads the
+      // resolved FIRST SEGMENT, after the trim, not the block's spelling.
+      for (const path of [
+        'api/auth/logout ',
+        '/api/auth/logout ',
+        // Whitespace-only: resolves to `/`, a 2 → 1 segment change, so the
+        // structural rule refuses it with no space rule in sight.
+        ' ',
+        '  ',
+        '/ ',
+        // Traversal and encoded-separator shapes are unaffected by a space.
+        ' ../../../api/auth/logout',
+        '../../../api/auth/logout ',
+        '%2e%2e/api/auth/logout ',
+        ' //evil.example',
+        '//evil.example ',
+        ' https://evil.example',
+        'https://evil.example ',
+      ]) {
+        expect(
+          resolveNavigateRequest({ scope: 'site', path }, PAGE),
+          `site ${JSON.stringify(path)}`
+        ).toBeNull();
+      }
+    });
+
+    it('🔴 every ACCEPTED space shape stays inside the app base — 15 of 15', () => {
+      // 🔴 MIXED, AND LABELLED AS MIXED. The containment assertion is an INVARIANT
+      // GUARD (green at base — nothing ever escaped). The accept LEDGER is a
+      // regression assertion and is RED at `3254aac863`: only 2 of these 15 resolve
+      // there (the two interior-space rows), so the count was 2, not 15, and the
+      // containment loop was nearly empty. The ledger is what stops the invariant
+      // half passing vacuously, and what lets this case see the accept set widen —
+      // or narrow back — again.
+      const SHAPES = [
+        ' x',
+        'x ',
+        ' x ',
+        'a b',
+        ' /models/1',
+        '/models/1 ',
+        ' /models/1 ',
+        '/mo dels/1',
+        ' /',
+        '/ /models/1',
+        'api/auth/logout ',
+        ' api/auth/logout',
+        '/api/auth/logout ',
+        ' /api/auth/logout',
+        ' %2e%2e/api/auth/logout',
+      ];
+      let accepted = 0;
+      for (const path of SHAPES) {
+        const req = resolveNavigateRequest({ path }, PAGE);
+        if (!req) continue;
+        accepted += 1;
+        expect(req.scope, `scope ${JSON.stringify(path)}`).toBe('app');
+        expect(
+          req.href === '/apps/run/model-benchmarking' ||
+            req.href.startsWith('/apps/run/model-benchmarking/'),
+          `contained ${JSON.stringify(path)} -> ${req.href}`
+        ).toBe(true);
+      }
+      expect(accepted, 'app-scope accept ledger over the space corpus').toBe(SHAPES.length);
     });
 
     it('[invariant guard — green at base] a BACKSLASH is refused in query position too', () => {
@@ -1753,11 +1856,35 @@ describe('resolveNavigateRequest (#5209 — explicit scope, app by default)', ()
       ]);
     });
 
-    it('🔴 the two surface records are TOTAL over the same key set', () => {
-      // The compile-time `Record<BlockHostSurface, …>` already enforces this; the
-      // runtime mirror exists because the `Typecheck` job is SKIPPED for a
-      // same-repo PR onto main, so a missing key would otherwise reach review
-      // unchecked. A new surface must appear in BOTH maps.
+    it('🔴 the two surface records AGREE WITH EACH OTHER on their key set', () => {
+      // 🔴 WHAT THIS CHECKS, NARROWLY: that the two maps carry the SAME keys —
+      // which, with the case above pinning that set against five literals, means
+      // both maps carry exactly those five. It does NOT check totality against
+      // `BlockHostSurface`. A runtime test cannot enumerate a TypeScript union,
+      // and `ALL_SURFACES` is derived from `Object.keys(BLOCK_HOST_DEEP_LINK_BASE)`
+      // — one of the two maps being compared, not the type.
+      //
+      // ⚠️ THE DESCRIPTION HERE USED TO BE WIDER THAN THE BODY. It said the mirror
+      // exists because `Typecheck` is skipped, "so a missing key would otherwise
+      // reach review unchecked" — claiming coverage for the LIKELIEST instance
+      // while providing none for it. TRACED: add a member to `BlockHostSurface`
+      // and to NEITHER map, and `Object.keys` stays at 5 on both sides, so this
+      // case and the literal-key case above BOTH PASS (measured: 133/133). That is
+      // exactly the state a new surface starts in. Add it to ONE map and four
+      // cases in this describe go red — the map-to-map disagreement is the thing
+      // these mirrors genuinely catch, and the only thing.
+      //
+      // ⚠️ THE STATED REASON WAS WRONG AS WELL, and the correction changes where
+      // the real closure lives. The Actions `Typecheck` job IS skipped for a
+      // same-repo PR onto `main` (measured on this PR's head SHA:
+      // `conclusion: skipped`), but the in-cluster `tekton / typecheck` status runs
+      // `tsc --noEmit` over the same tree on that same path and reported `success`
+      // on that SHA — and it is what sees the uncovered case: the type-only
+      // addition above produces two type errors, one per `Record<BlockHostSurface,
+      // …>`. So a missing key does NOT reach review unchecked, and the fix for the
+      // gap this case cannot close is reading the Tekton status, not widening this
+      // case. `.github/workflows/lint.yml` records the narrowing and why the
+      // Actions job is the complement of Tekton's coverage rather than a duplicate.
       expect(Object.keys(BLOCK_HOST_SITE_NAVIGATION).sort()).toEqual([...ALL_SURFACES].sort());
     });
 
