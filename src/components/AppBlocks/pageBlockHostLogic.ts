@@ -483,6 +483,149 @@ export function resolveGetImagesByIdsRequest(raw: unknown): GetImagesByIdsReques
   return { requestId: obj.requestId, imageIds };
 }
 
+// ── NAVIGATE (#5209) ─────────────────────────────────────────────────────────
+// A block asks the host to navigate. TWO scopes, discriminated by a LEADING
+// SLASH, and that is the whole contract:
+//
+//   `navigate('/models/500')`  → SITE-ABSOLUTE. The host leaves the app and
+//                                lands on the site page. Unrestricted across
+//                                page routes — there is deliberately NO
+//                                destination allowlist (see the posture note
+//                                below).
+//   `navigate('detail/500')`   → APP-SCOPED. Resolved under the block's own
+//                                route (`<base>/<slug>/detail/500`), shallow, so
+//                                the page stays mounted and the sub-path change
+//                                reflects back into the block. Unchanged
+//                                behaviour.
+//
+// 🔴 THE LEADING SLASH USED TO BE DISCARDED, AND THAT IS THE DEFECT (#5209).
+// The handler ran `rawPath.replace(/^\/+/, '')` first, so `/models/500` and
+// `models/500` resolved IDENTICALLY — both under the app's own route. A block
+// calling the SDK's own documented example (`navigate('/models/12345')`) got a
+// URL-bar change, no page change, and a URL that 404s on reload. The signal that
+// distinguishes the two intents was destroyed before anything could read it.
+//
+// WHY THE LOOSER POSTURE IS THE CORRECT ONE, not a relaxation:
+//   - The DEV host already behaves this way. `@civitai/blocks-react`'s
+//     `liveHost` resolves the path against the backend origin and assigns it,
+//     with a comment saying "so an in-app path (`/models/123`) opens on the real
+//     site".
+//   - The published SDK JSDoc and the developer docs both promise it, and both
+//     use `/models/12345` as the worked example.
+//   So production was the odd one out among host, dev host and documentation.
+//   A block ALREADY renders arbitrary links and arbitrary text; the thing a
+//   site-absolute push adds over `<a href>` is that the destination gets a real
+//   origin instead of the frame's opaque one. It does not widen what a block can
+//   persuade a viewer to visit.
+//
+// WHAT IS STILL REFUSED (fail-closed; a refusal returns `null` and the caller
+// drops the message — NAVIGATE is fire-and-forget with no requestId, so a drop
+// can never hang the block):
+//   - any scheme (`https:`, `javascript:`, `data:`, …) and protocol-relative
+//     `//host` — a block cannot push the host at another origin;
+//   - backslashes, which several URL parsers fold to `/`;
+//   - control characters and whitespace, which parsers strip (a stripped byte
+//     changes which string the guard judged vs which one the browser resolves);
+//   - `.` / `..` / empty path segments — traversal and the `a//b` shapes;
+//   - 🔴 `/api/*`, SITE-ABSOLUTE ONLY. A DELIBERATE NARROW EXCLUSION, and
+//     explicitly NOT a destination allowlist. `/api/*` is not a page route, so a
+//     `router.push` at it does not render anything — Next falls back to a HARD
+//     navigation, which for `/api/auth/signout` would SIGN THE VIEWER OUT on a
+//     block's say-so. Excluding it costs the feature nothing (no page
+//     destination lives there) and is the only content-based refusal here.
+//     App-scoped `api/...` is untouched: it resolves under the block's own route
+//     and reaches no site handler.
+export type NavigateScope = 'site' | 'app';
+
+export type NavigateRequest = {
+  /** Where the block wants to go. */
+  scope: NavigateScope;
+  /**
+   * The host-router path to push, fully resolved. REBUILT from validated parts
+   * rather than passed through, so a byte that survived the guards but not a
+   * parser cannot reach the router.
+   */
+  href: string;
+  /**
+   * Shallow routing is correct ONLY for an app-scoped sub-path change — it keeps
+   * the page mounted and skips the data fetch, which is the point there and
+   * exactly wrong for a site destination (a shallow push at `/models/500` would
+   * change the URL and render nothing, i.e. reproduce the #5209 symptom by a
+   * second route).
+   */
+  shallow: boolean;
+  /** Normalized target. Anything other than the literal `'new_tab'` is `'current'`. */
+  target: 'current' | 'new_tab';
+};
+
+/** Rejected outright, before any scope decision. */
+function navigatePathIsHostile(rawPath: string): boolean {
+  // Whitespace + C0/C1 controls: URL parsers strip tab/newline and trim the
+  // ends, so the string a guard inspects would not be the string that resolves.
+  if (/[\u0000-\u0020\u007f-\u009f]/.test(rawPath)) return true;
+  // Protocol-relative (`//host`, and `/\host` which Chrome folds to it).
+  if (/^\/[/\\]/.test(rawPath)) return true;
+  // Any scheme at all — `https:`, `javascript:`, `data:`, `mailto:`.
+  if (/^[a-zA-Z][a-zA-Z0-9+.\-]*:/.test(rawPath)) return true;
+  // A backslash anywhere: folded to `/` by several parsers, so it can smuggle a
+  // segment past the split-based checks below.
+  if (rawPath.includes('\\')) return true;
+  return false;
+}
+
+/**
+ * Validate a raw NAVIGATE payload from an untrusted iframe and resolve it to the
+ * host-router push the caller should perform, or `null` when the message must be
+ * DROPPED. Pure — the caller owns `router.push` and the `reviewMode` / gate-status
+ * refusals, which are conditions on the HOST, not on the payload.
+ *
+ * `base` is the surface's deep-link base from `BLOCK_HOST_DEEP_LINK_BASE`. A
+ * `null` base means the surface drops in-app navigation; a site-absolute request
+ * is dropped there too, because a surface with no page route of its own is a
+ * surface with no business moving the viewer (the review preview is a MODAL over
+ * the moderator's own page).
+ */
+export function resolveNavigateRequest(
+  raw: unknown,
+  opts: { base: string | null; slug: string }
+): NavigateRequest | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  const rawPath = obj.path;
+  if (typeof rawPath !== 'string') return null;
+  if (navigatePathIsHostile(rawPath)) return null;
+  // A surface with no deep-link base navigates nowhere, in either scope.
+  if (opts.base == null) return null;
+
+  const target: 'current' | 'new_tab' = obj.target === 'new_tab' ? 'new_tab' : 'current';
+  const scope: NavigateScope = rawPath.startsWith('/') ? 'site' : 'app';
+  const body = scope === 'site' ? rawPath.slice(1) : rawPath;
+
+  // Split the query/hash off before any segment reasoning — `?a=b/c` must not
+  // read as a path segment, and `#x` must not read as one either.
+  const qIdx = body.search(/[?#]/);
+  const pathPart = qIdx === -1 ? body : body.slice(0, qIdx);
+  const suffix = qIdx === -1 ? '' : body.slice(qIdx);
+
+  // One trailing slash is tolerated (`/generate/` is a plausible authoring
+  // shape, and silently dropping it is the "the feature looks dead" failure this
+  // change exists to end). Every OTHER empty segment is a rejection.
+  const trimmed = pathPart.endsWith('/') ? pathPart.slice(0, -1) : pathPart;
+  const segments = trimmed === '' ? [] : trimmed.split('/');
+  if (segments.some((s) => s === '' || s === '.' || s === '..')) return null;
+
+  if (scope === 'site') {
+    // The one content-based refusal. See the `/api/*` note above.
+    if (segments.length > 0 && segments[0].toLowerCase() === 'api') return null;
+    return { scope, href: `/${segments.join('/')}${suffix}`, shallow: false, target };
+  }
+
+  const appBase = `${opts.base}/${encodeURIComponent(opts.slug)}`;
+  const href =
+    segments.length > 0 ? `${appBase}/${segments.join('/')}${suffix}` : `${appBase}${suffix}`;
+  return { scope, href, shallow: true, target };
+}
+
 export type PageFallbackReason = 'timeout' | 'token_error' | 'fatal_block_error';
 
 /**

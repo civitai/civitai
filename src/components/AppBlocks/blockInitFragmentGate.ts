@@ -85,7 +85,13 @@ export type BlockHostSurface =
   | 'private-run';
 
 /**
- * Where a block's own client router may push a sub-path, per surface.
+ * Where a block's own client router may push an APP-SCOPED sub-path, per surface.
+ *
+ * 🔴 SCOPE, since #5209: this map governs the APP-SCOPED half of `NAVIGATE` only —
+ * a path with NO leading slash. A path WITH a leading slash is site-absolute and
+ * does not pass through a base at all. What the map still decides for BOTH halves
+ * is the `null` case: a `null` base means the surface performs no block-requested
+ * navigation whatsoever.
  *
  * 🔴 A TOTAL `Record`, NOT A TERNARY, AND THAT IS THE WHOLE VALUE OF IT. `PageBlockHost`
  * handles a block's `NAVIGATE` request by pushing `<base>/<slug>/<path>`, and the base
@@ -102,8 +108,10 @@ export type BlockHostSurface =
  * reach it and does push `/apps/run/<slug>` — pushing the author off their tunnel onto
  * the public route. Recorded as `'/apps/run'` here because that IS today's behaviour and
  * this change must not alter it; naming it is what makes it fixable. `null` is reserved
- * for a surface that should drop the navigation instead, which is probably what the dev
- * tunnel and the review preview both want.
+ * for a surface that should drop the navigation instead — which is what the REVIEW
+ * PREVIEW now does (see its entry below). The dev tunnel probably wants the same and
+ * still does not have it; that is a separate, load-bearing decision about the author's
+ * own surface, not a tidy-up to fold into this one.
  *
  * ⚠️ `model-slot` IS `null` AND THAT IS NOT A BEHAVIOUR CHANGE — verified rather than
  * assumed, because the ternary this replaced gave every non-private surface
@@ -114,9 +122,10 @@ export type BlockHostSurface =
  * preview, which the paragraph above names and which this enumeration used to omit.
  * ⚠️ That omission mattered in the direction that weakens the argument: this list IS the
  * evidence for the no-behaviour-change claim, and `review-preview` is one of the surfaces
- * whose base is now LOOKED UP rather than defaulted. It maps to `/apps/run`, which is
- * exactly what the ternary it replaced produced — so the claim holds, but it now rests on
- * a complete enumeration rather than one missing its only non-obvious member. The model slot is `IframeHost`, a SEPARATE component
+ * whose base is now LOOKED UP rather than defaulted. ⚠️ It mapped to `/apps/run` when this
+ * paragraph was written, and since #5209 it maps to `null` — for a reason recorded at its
+ * own entry, and STILL without a behaviour change, because the value was never reachable.
+ * The model slot is `IframeHost`, a SEPARATE component
  * with its own message handlers, which uses the string only to call
  * `blockInitFragmentEnabled` directly. So this entry is unreachable today, and `null` is
  * the honest value — a model slot has no page route to deep-link into, so inheriting the
@@ -126,7 +135,21 @@ export const BLOCK_HOST_DEEP_LINK_BASE: Record<BlockHostSurface, string | null> 
   'model-slot': null,
   'page-run': '/apps/run',
   'dev-tunnel': '/apps/run',
-  'review-preview': '/apps/run',
+  // 🔴 `null` SINCE #5209, AND IT IS STILL NOT A BEHAVIOUR CHANGE. It read
+  // `'/apps/run'` to preserve the ternary this map replaced — but that value was
+  // never reachable: the NAVIGATE handler returns early on the `reviewMode` prop,
+  // and the ONE mount that passes `surface: 'review-preview'`
+  // (`~/components/Apps/ReviewBlockPreviewHost`) also passes `reviewMode`. So the
+  // two were a single condition expressed twice, coupled only by that mount
+  // remembering to pass both props.
+  //
+  // What changed is the STAKE on that coupling, not the coupling. Before #5209 a
+  // forgotten `reviewMode` let unreviewed code push the moderator to a sub-path
+  // of the app they were already looking at. With a site-absolute contract it
+  // would let unreviewed code move the moderator's tab to ANY page route. `null`
+  // makes the refusal structural — a second mount of this surface cannot
+  // re-open it by omission.
+  'review-preview': null,
   // 🔴 `/apps/run`, NOT a private path — the dedicated `/apps/private-run/<slug>` route
   // was REMOVED and a private run is now served by the public route's fallback, so this
   // is the base a private run's own deep links must push to. The SURFACE stays distinct

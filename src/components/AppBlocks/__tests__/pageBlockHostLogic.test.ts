@@ -16,12 +16,16 @@ import {
   type MidSessionLossBeaconArgs,
   resolveCheckpointPickerRequest,
   resolveImageUploadRequest,
+  resolveNavigateRequest,
   resolveResourcePickerRequest,
   resolveReviewConsentNotice,
   toHostGateStatus,
   PAGE_RESOURCE_PICKER_TYPES,
   type PageHostStatus,
 } from '../pageBlockHostLogic';
+// The production surface→deep-link-base record, imported rather than retyped so a
+// new surface (or a changed base) cannot leave the NAVIGATE suite below untested.
+import { BLOCK_HOST_DEEP_LINK_BASE } from '../blockInitFragmentGate';
 
 /**
  * W10 PageBlockHost pure logic.
@@ -900,5 +904,326 @@ describe('toHostGateStatus', () => {
     expect(toHostGateStatus('ready')).toBe('ready');
     const openers = ALL.filter((s) => toHostGateStatus(s) === 'ready');
     expect(openers).toEqual(['ready']);
+  });
+});
+
+/**
+ * NAVIGATE resolution (#5209) — `resolveNavigateRequest`.
+ *
+ * The defect: `/models/500` and `models/500` resolved IDENTICALLY, because the
+ * handler ran `rawPath.replace(/^\/+/, '')` before anything could read the leading
+ * slash. A block calling the SDK's own documented example got a URL-bar change, no
+ * page change, and a URL that 404s on reload. The two spellings now have distinct
+ * meanings:
+ *
+ *   leading `/`    → SITE-ABSOLUTE, non-shallow, unrestricted across page routes
+ *   no leading `/` → APP-SCOPED under `<base>/<slug>/…`, shallow (unchanged)
+ *
+ * There is deliberately NO destination allowlist. The refusals are about reaching
+ * another ORIGIN, traversal, and one narrow `/api/*` exclusion.
+ *
+ * Every expectation is a literal value, never derived from the implementation —
+ * the point is to pin the contract the SDK docs promise.
+ */
+describe('resolveNavigateRequest (#5209 — site-absolute vs app-scoped)', () => {
+  const PAGE = { base: '/apps/run', slug: 'model-benchmarking' };
+
+  describe('site-absolute (leading slash): the case that was broken', () => {
+    it("resolves the SDK's documented example to the SITE page, not the app sub-path", () => {
+      // 🔴 THE REGRESSION. Before the fix this produced
+      // `/apps/run/model-benchmarking/models/12345`.
+      expect(resolveNavigateRequest({ path: '/models/12345' }, PAGE)).toEqual({
+        scope: 'site',
+        href: '/models/12345',
+        shallow: false,
+        target: 'current',
+      });
+    });
+
+    it("carries the query string through (the issue's exact consumer case)", () => {
+      expect(resolveNavigateRequest({ path: '/models/500?modelVersionId=1001' }, PAGE)).toEqual({
+        scope: 'site',
+        href: '/models/500?modelVersionId=1001',
+        shallow: false,
+        target: 'current',
+      });
+    });
+
+    it('carries a hash through', () => {
+      expect(resolveNavigateRequest({ path: '/images/9#comments' }, PAGE)?.href).toBe(
+        '/images/9#comments'
+      );
+    });
+
+    it('does NOT use shallow routing — a shallow push at a site route renders nothing', () => {
+      // The second way to reproduce #5209's symptom, so it is pinned separately
+      // from the href: a correct href pushed shallowly is still a dead feature.
+      expect(resolveNavigateRequest({ path: '/generate' }, PAGE)?.shallow).toBe(false);
+    });
+
+    it('resolves a bare "/" to the site root', () => {
+      expect(resolveNavigateRequest({ path: '/' }, PAGE)).toEqual({
+        scope: 'site',
+        href: '/',
+        shallow: false,
+        target: 'current',
+      });
+    });
+
+    it('tolerates ONE trailing slash rather than dropping the navigation', () => {
+      expect(resolveNavigateRequest({ path: '/generate/' }, PAGE)?.href).toBe('/generate');
+    });
+
+    it('is not restricted to an allowlist of destinations — that was the decision', () => {
+      // A deliberately arbitrary set, including one that is not a civitai feature.
+      // None is refused: the posture is "any page route", not "these routes".
+      for (const p of [
+        '/models/1',
+        '/user/alice',
+        '/images/2',
+        '/generate',
+        '/collections/3',
+        '/whatever/deep/page',
+      ]) {
+        expect(resolveNavigateRequest({ path: p }, PAGE)?.scope, p).toBe('site');
+      }
+    });
+  });
+
+  describe('app-scoped (no leading slash): unchanged behaviour', () => {
+    it("resolves under the block's own route with shallow routing", () => {
+      expect(resolveNavigateRequest({ path: 'detail/500' }, PAGE)).toEqual({
+        scope: 'app',
+        href: '/apps/run/model-benchmarking/detail/500',
+        shallow: true,
+        target: 'current',
+      });
+    });
+
+    it('resolves an EMPTY path to the app root (the pre-existing behaviour)', () => {
+      expect(resolveNavigateRequest({ path: '' }, PAGE)).toEqual({
+        scope: 'app',
+        href: '/apps/run/model-benchmarking',
+        shallow: true,
+        target: 'current',
+      });
+    });
+
+    it('keeps the query on an app-scoped sub-path', () => {
+      expect(resolveNavigateRequest({ path: 'detail?id=7' }, PAGE)?.href).toBe(
+        '/apps/run/model-benchmarking/detail?id=7'
+      );
+    });
+
+    it('percent-encodes the SLUG (a slug with a slash cannot forge a route segment)', () => {
+      expect(
+        resolveNavigateRequest({ path: 'a/b' }, { base: '/apps/run', slug: 'a b/c' })?.href
+      ).toBe('/apps/run/a%20b%2Fc/a/b');
+    });
+  });
+
+  describe('refusals: another ORIGIN is never reachable', () => {
+    const HOSTILE = [
+      'https://evil.example/steal',
+      'http://evil.example',
+      'HTTPS://evil.example',
+      '//evil.example',
+      '/\\evil.example',
+      '\\\\evil.example',
+      'javascript:alert(1)',
+      'JavaScript:alert(1)',
+      'data:text/html,<b>x</b>',
+      'mailto:a@b.c',
+      'vbscript:x',
+      'models\\500',
+    ];
+
+    it('refuses every absolute, protocol-relative and scheme-bearing form', () => {
+      for (const path of HOSTILE) {
+        expect(resolveNavigateRequest({ path }, PAGE), path).toBeNull();
+      }
+    });
+
+    it('refuses control characters and whitespace a URL parser would strip', () => {
+      // A stripped byte means the string the guard judged is not the string the
+      // browser resolves — so these are refused rather than normalised.
+      for (const path of ['/mod\tels/1', '/models\n/1', ' /models/1', '/models/1 ', '/mo dels']) {
+        expect(resolveNavigateRequest({ path }, PAGE), JSON.stringify(path)).toBeNull();
+      }
+    });
+
+    it('refuses traversal and empty segments in BOTH scopes', () => {
+      for (const path of [
+        '/../etc',
+        '/a/../b',
+        'a/../b',
+        '../x',
+        '/a//b',
+        'a//b',
+        '/./a',
+        'a/./b',
+      ]) {
+        expect(resolveNavigateRequest({ path }, PAGE), path).toBeNull();
+      }
+    });
+
+    it('refuses a non-string path, and a non-object payload', () => {
+      for (const raw of [
+        undefined,
+        null,
+        'string',
+        42,
+        [],
+        {},
+        { path: 1 },
+        { path: null },
+        { path: ['/a'] },
+      ]) {
+        expect(resolveNavigateRequest(raw, PAGE), JSON.stringify(raw ?? null)).toBeNull();
+      }
+    });
+  });
+
+  describe('the /api/* exclusion — deliberately narrow, and NOT an allowlist', () => {
+    it('refuses a site-absolute /api path', () => {
+      // `router.push('/api/auth/signout')` has no page to render, so Next falls
+      // back to a HARD navigation and the viewer is signed out on a block's say-so.
+      for (const path of ['/api/auth/signout', '/api', '/api/v1/models', '/api/']) {
+        expect(resolveNavigateRequest({ path }, PAGE), path).toBeNull();
+      }
+    });
+
+    it('refuses it case-insensitively', () => {
+      for (const path of ['/API/auth/signout', '/Api/v1/x', '/aPI']) {
+        expect(resolveNavigateRequest({ path }, PAGE), path).toBeNull();
+      }
+    });
+
+    it('does NOT refuse a path that merely STARTS with the letters api', () => {
+      // Positive control for the exclusion: it is a SEGMENT match. Without this the
+      // "narrow" claim is untested and a prefix match would pass unnoticed.
+      expect(resolveNavigateRequest({ path: '/apiary/1' }, PAGE)?.href).toBe('/apiary/1');
+      expect(resolveNavigateRequest({ path: '/models/api' }, PAGE)?.href).toBe('/models/api');
+    });
+
+    it('does NOT refuse an APP-SCOPED api sub-path — it reaches no site handler', () => {
+      expect(resolveNavigateRequest({ path: 'api/thing' }, PAGE)?.href).toBe(
+        '/apps/run/model-benchmarking/api/thing'
+      );
+    });
+  });
+
+  describe('target normalization (the handler read it NOWHERE before #5209)', () => {
+    it("reads a literal 'new_tab'", () => {
+      expect(resolveNavigateRequest({ path: '/models/1', target: 'new_tab' }, PAGE)?.target).toBe(
+        'new_tab'
+      );
+    });
+
+    it("defaults to 'current' for absent, unknown and non-string targets", () => {
+      for (const target of [
+        undefined,
+        'current',
+        'CURRENT',
+        'new tab',
+        '_blank',
+        1,
+        null,
+        {},
+        ['new_tab'],
+      ]) {
+        expect(
+          resolveNavigateRequest({ path: '/models/1', target }, PAGE)?.target,
+          JSON.stringify(target ?? null)
+        ).toBe('current');
+      }
+    });
+
+    it('applies to an app-scoped path too', () => {
+      expect(resolveNavigateRequest({ path: 'detail', target: 'new_tab' }, PAGE)).toEqual({
+        scope: 'app',
+        href: '/apps/run/model-benchmarking/detail',
+        shallow: true,
+        target: 'new_tab',
+      });
+    });
+  });
+
+  describe('the surface base — all five surfaces, read from the real map', () => {
+    const ALL_SURFACES = Object.keys(BLOCK_HOST_DEEP_LINK_BASE) as Array<
+      keyof typeof BLOCK_HOST_DEEP_LINK_BASE
+    >;
+
+    it('covers every member of BlockHostSurface (a surface added untested fails here)', () => {
+      expect([...ALL_SURFACES].sort()).toEqual([
+        'dev-tunnel',
+        'model-slot',
+        'page-run',
+        'private-run',
+        'review-preview',
+      ]);
+    });
+
+    it('resolves the app-scoped base per surface, and refuses where the base is null', () => {
+      const expected: Record<string, string | null> = {
+        'model-slot': null,
+        'page-run': '/apps/run/demo/sub',
+        'dev-tunnel': '/apps/run/demo/sub',
+        // 🔴 null since #5209 — the moderator's review preview performs no
+        // block-requested navigation, in either scope.
+        'review-preview': null,
+        'private-run': '/apps/private-run/demo/sub',
+      };
+      for (const surface of ALL_SURFACES) {
+        const got = resolveNavigateRequest(
+          { path: 'sub' },
+          { base: BLOCK_HOST_DEEP_LINK_BASE[surface], slug: 'demo' }
+        );
+        expect(got?.href ?? null, `app-scoped on ${surface}`).toBe(expected[surface]);
+      }
+    });
+
+    it('a null base refuses a SITE-ABSOLUTE path too, not just an app-scoped one', () => {
+      // The important half: a surface with no page route of its own must not be a
+      // way to move the viewer anywhere on the site.
+      const nullBase = ALL_SURFACES.filter((s) => BLOCK_HOST_DEEP_LINK_BASE[s] === null);
+      expect(nullBase.length).toBeGreaterThan(0); // the loop below is not vacuous
+      for (const surface of nullBase) {
+        expect(
+          resolveNavigateRequest(
+            { path: '/models/500' },
+            { base: BLOCK_HOST_DEEP_LINK_BASE[surface], slug: 'demo' }
+          ),
+          `site-absolute on ${surface}`
+        ).toBeNull();
+      }
+    });
+
+    it('a non-null base DOES allow a site-absolute path (positive control for the above)', () => {
+      const withBase = ALL_SURFACES.filter((s) => BLOCK_HOST_DEEP_LINK_BASE[s] !== null);
+      expect(withBase.length).toBeGreaterThan(0);
+      for (const surface of withBase) {
+        expect(
+          resolveNavigateRequest(
+            { path: '/models/500' },
+            { base: BLOCK_HOST_DEEP_LINK_BASE[surface], slug: 'demo' }
+          )?.href,
+          `site-absolute on ${surface}`
+        ).toBe('/models/500');
+      }
+    });
+
+    it('the site-absolute href depends on NEITHER the base nor the slug', () => {
+      // Two fixtures whose base and slug are pairwise distinct AND distinct from
+      // every substring of the expected value, so a mutant that leaked either into
+      // the site href cannot survive.
+      expect(
+        resolveNavigateRequest({ path: '/models/500' }, { base: '/apps/run', slug: 'aaa' })?.href
+      ).toBe('/models/500');
+      expect(
+        resolveNavigateRequest({ path: '/models/500' }, { base: '/apps/private-run', slug: 'zzz' })
+          ?.href
+      ).toBe('/models/500');
+    });
   });
 });

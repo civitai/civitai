@@ -28,6 +28,7 @@ import {
   resolveCheckpointPickerRequest,
   resolveGetImagesByIdsRequest,
   resolveImageUploadRequest,
+  resolveNavigateRequest,
   resolvePublishGenerationOutputsRequest,
   resolveResourcePickerRequest,
   resolveReviewConsentNotice,
@@ -176,9 +177,20 @@ function storageErrorMessage(err: unknown): string {
  *     never "*"); incoming messages from other origins are dropped.
  *   - Sandbox is the manifest ∩ trust-tier allowlist (client-side belt).
  *   - referrerPolicy=no-referrer; the page never carries a model/money scope.
- *   - Block-requested navigation (NAVIGATE) is constrained to the page's own
- *     sub-path space and uses shallow routing — a block can deep-link WITHIN
- *     its page but can't push the host off to an arbitrary route.
+ *   - Block-requested navigation (NAVIGATE) resolves in one of TWO scopes, keyed
+ *     on a leading slash: a relative path is app-scoped (shallow push under the
+ *     block's own route), and a leading `/` is SITE-ABSOLUTE — the block may send
+ *     the viewer to a civitai.com page route. There is deliberately no
+ *     destination allowlist; what is refused is other ORIGINS (any scheme,
+ *     protocol-relative, backslash, control characters), traversal, and
+ *     site-absolute `/api/*`, which is not a page route and whose
+ *     `/api/auth/signout` would sign the viewer out. `resolveNavigateRequest` in
+ *     `pageBlockHostLogic` owns that decision and is unit-tested, so a block
+ *     cannot reach another origin in either scope. `target: 'new_tab'` is opened
+ *     by the HOST from the parent frame — the destination is host-validated and
+ *     the tab inherits no sandbox, so it gets a real origin;
+ *     `allow-popups-to-escape-sandbox` is deliberately still absent from
+ *     `ALLOWED_SANDBOX_TOKENS`. (#5209)
  */
 
 /**
@@ -1858,32 +1870,39 @@ export function PageBlockHost({
     reviewRunForReal,
   ]);
 
-  // Deep-link bridge — block requests in-page navigation. The block may push a
-  // new sub-path WITHIN its own page space; we constrain it to the page route so
-  // a block can't navigate the host off to an arbitrary path. `path` is an
-  // untrusted same-origin sub-path: reject absolute URLs, protocol-relative
-  // (`//`), and `..` traversal. Shallow routing keeps the page mounted (no SSR
-  // round-trip) and the subPath change reflects back into the block via the
-  // popstate handler below.
+  // Deep-link bridge — the block asks the host to navigate. TWO scopes, keyed on
+  // a LEADING SLASH: `/models/500` is SITE-ABSOLUTE (leave the app, land on the
+  // site page, non-shallow) and `detail/500` is APP-SCOPED (resolved under the
+  // block's own route, shallow, so the page stays mounted and the subPath change
+  // reflects back into the block via the popstate handler below).
+  //
+  // 🔴 #5209 — THE LEADING SLASH USED TO BE STRIPPED BEFORE ANYTHING READ IT, so
+  // both spellings resolved app-scoped and the SDK's own documented example
+  // (`navigate('/models/12345')`) produced a URL-bar change with no page change
+  // and a URL that 404s on reload. The whole validation + resolution decision now
+  // lives in `resolveNavigateRequest` (pure, unit-tested): what is refused, which
+  // scope a path lands in, and whether the push is shallow. This handler keeps
+  // only the conditions that are about the HOST rather than the payload.
   useEffect(() => {
-    const off = onMessage<{ path?: unknown } | undefined>('NAVIGATE', (raw) => {
+    const off = onMessage<{ path?: unknown; target?: unknown } | undefined>('NAVIGATE', (raw) => {
       // reviewMode: the review host is a MODAL, not the `/apps/run/<slug>` page —
       // let a block yank the mod's router and it would navigate them off the
       // review flow (to a page a pending app doesn't even have). Fire-and-forget
-      // ⇒ dropping it never hangs the block.
+      // ⇒ dropping it never hangs the block. 🔴 This is the FIRST of TWO
+      // independent refusals covering the review surface, deliberately: this one
+      // reads the `reviewMode` prop, and `BLOCK_HOST_DEEP_LINK_BASE` maps
+      // `review-preview` to `null` so the resolver refuses as well. They were ONE
+      // condition expressed twice by convention — every `surface: 'review-preview'`
+      // mount also passes `reviewMode` — and a site-absolute contract raises the
+      // stake on that coupling enough to make it structural instead: a future
+      // mount that forgets `reviewMode` would otherwise let UNREVIEWED code move a
+      // moderator's tab anywhere on the site.
       if (reviewMode) return;
       // FIFTH status-gated handler (the four money/permission gates are the
       // others) — it reads the same render-body mirror for the same reason. No
       // NACK: NAVIGATE is fire-and-forget with no requestId, so a drop is
       // incapable of hanging the block.
       if (readGateStatus() !== 'ready') return; // pre-handshake blocks can't drive nav
-      const rawPath = raw && typeof raw === 'object' ? (raw as { path?: unknown }).path : undefined;
-      if (typeof rawPath !== 'string') return;
-      // Normalize: strip a single leading slash; reject anything unsafe.
-      const cleaned = rawPath.replace(/^\/+/, '');
-      if (cleaned.startsWith('/') || cleaned.includes('//') || cleaned.split('/').includes('..')) {
-        return;
-      }
       // 🔴 THE ROUTE BASE IS LOOKED UP BY `surface`, NOT HARDCODED — the total record is
       // what makes a NEW surface a compile error rather than a silent inheritance of the
       // public base.
@@ -1907,13 +1926,55 @@ export function PageBlockHost({
       // surface is a compile error there rather than silently inheriting the public
       // route — see its docblock, which also records that `dev-tunnel`'s mapping to the
       // public route is pre-existing behaviour rather than a decision. A `null` base
-      // means "drop the navigation"; nothing maps to `null` on a page surface today.
-      const base = BLOCK_HOST_DEEP_LINK_BASE[surface];
-      if (base == null) return;
-      const target = cleaned
-        ? `${base}/${encodeURIComponent(slug)}/${cleaned}`
-        : `${base}/${encodeURIComponent(slug)}`;
-      void router.push(target, undefined, { shallow: true });
+      // means "drop the navigation", in EITHER scope.
+      const req = resolveNavigateRequest(raw, {
+        base: BLOCK_HOST_DEEP_LINK_BASE[surface],
+        slug,
+      });
+      if (!req) return;
+      // 🔴 `new_tab` IS OPENED BY THE HOST, NOT BY THE BLOCK, AND THE
+      // SYNCHRONOUS CALL BELOW IS LOAD-BEARING. Three facts, all MEASURED in
+      // Brave/Chromium 152 with the popup blocker ON (a no-gesture
+      // `window.open` was confirmed BLOCKED in the same run, so the blocker was
+      // genuinely active and the positive results are not an artefact of a
+      // permissive harness):
+      //
+      //   1. User activation from a click inside a CROSS-ORIGIN SANDBOXED iframe
+      //      (`allow-scripts allow-forms`, `event.origin === 'null'`) DOES reach
+      //      this frame — `navigator.userActivation.isActive` was `true` here —
+      //      so the open is permitted. The intuition that `postMessage` cannot
+      //      carry activation is right about the message and wrong about the
+      //      outcome: activation propagates up the frame tree independently.
+      //   2. 🔴 IT IS TRANSIENT. Deferring the same open by 6s (past the
+      //      activation window) was BLOCKED. So this MUST stay synchronous in the
+      //      message handler — no `await`, no `setTimeout`, nothing that yields
+      //      before the call. Adding one silently kills the feature, and it
+      //      cannot be caught by a unit test.
+      //   3. The opened tab gets a REAL origin: it read a host-set cookie and
+      //      wrote `localStorage`. That is the whole reason the HOST opens it. A
+      //      popup opened by the BLOCK inherits the opener's sandbox flags and
+      //      lands at an opaque origin — a logged-out page, worse than no link
+      //      at all — which is why `allow-popups-to-escape-sandbox` is NOT the
+      //      fix here and stays out of `ALLOWED_SANDBOX_TOKENS` (granting
+      //      third-party code the right to escape its own sandbox is a real
+      //      escalation; a host-opened tab gets the same result with none of it).
+      //
+      // The host also decides the destination, so the block cannot aim the tab
+      // at another origin — `resolveNavigateRequest` has already refused every
+      // scheme, protocol-relative form and traversal shape above.
+      //
+      // NOT MEASURED: any non-Chromium engine. If one blocks this, the viewer
+      // gets no tab — the pre-#5209 behaviour — rather than a wrong one, so the
+      // downside is a dead affordance, not a hazard.
+      if (req.target === 'new_tab') {
+        // `noopener` also means `window.open` returns null on SUCCESS, so the
+        // return value is deliberately not read: there is nothing actionable to
+        // do with a blocked popup (NAVIGATE has no reply channel) and a false
+        // "blocked" reading would be worse than none.
+        window.open(req.href, '_blank', 'noopener');
+        return;
+      }
+      void router.push(req.href, undefined, req.shallow ? { shallow: true } : undefined);
     });
     return off;
     // `status` deliberately absent — see the REQUEST_CONSENT deps note.
