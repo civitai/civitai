@@ -24,6 +24,7 @@ import {
   isFlux2,
   type OrchestratorClient,
 } from './orchestrator-core';
+import type { ExtraParamField } from '$lib/data/trainingModels';
 import {
   CIVITAI_TAG,
   epochModelKey,
@@ -32,7 +33,8 @@ import {
   type EpochModelOutput,
   type TrainingStudioMeta,
 } from '$lib/data/trainingRows';
-import { TARGET_STEPS } from '$lib/data/trainingModels';
+import { EXTRA_PARAM_FIELDS, TARGET_STEPS } from '$lib/data/trainingModels';
+import { slugify } from '$lib/slug';
 
 /** One dataset item: the uploaded blob (a bare key, blobs URL, or AIR — normalized at submission) plus
  *  its label. The trigger word is applied separately via `triggerWord`, so captions here are raw. */
@@ -64,6 +66,15 @@ export interface TrainingRunInput {
   batchSize: number;
   lrScheduler: string;
   optimizer: string;
+  /** The extra ai-toolkit knobs. Optional on the wire — an older client (or the continuation
+   *  rebuild of a run submitted before they shipped) omits them and the orchestrator applies its
+   *  own defaults. `minSnrGamma` is only meaningful for SD-family ecosystems; senders leave it
+   *  undefined elsewhere (`extraParamCapabilities`). */
+  shuffleTokens?: boolean;
+  keepTokens?: number;
+  minSnrGamma?: number;
+  noiseOffset?: number;
+  flipAugmentation?: boolean;
   trigger: string;
   items: TrainingItem[];
   prompts: string[];
@@ -101,6 +112,15 @@ function resolveCurrencies(input?: string[]): BuzzClientAccount[] {
 /** Identity of the blob an item's `air` names, for dedupe. Keys are case-insensitive base32. */
 export function trainingBlobKey(air: string): string {
   return blobIdFromAir(air.trim()).toLowerCase();
+}
+
+/** The extra knobs `obj` actually carries — a submit or continuation sends only what was set, never
+ *  an invented default. Iterates `EXTRA_PARAM_FIELDS` so a sixth knob can't be dropped here. */
+function pick(obj: object, keys: readonly ExtraParamField[]): Record<string, unknown> {
+  const source = obj as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const key of keys) if (source[key] !== undefined) out[key] = source[key];
+  return out;
 }
 
 /** Build one run's training step. Both shapes carry the dataset as a blob list (the orchestrator accepts
@@ -159,6 +179,7 @@ function buildStep(run: TrainingRunInput, traceMode: string): WorkflowStepTempla
           networkDim: run.networkDim,
           networkAlpha: run.networkAlpha,
           resolution: run.resolution,
+          ...pick(run, EXTRA_PARAM_FIELDS),
           triggerWord: run.trigger,
           // "Keep training": continue from a previous checkpoint's weights instead of the base model.
           ...(run.continueFrom ? { continueFrom: run.continueFrom } : {}),
@@ -178,15 +199,6 @@ function buildStep(run: TrainingRunInput, traceMode: string): WorkflowStepTempla
 // (for finding it). This prefix is the one place the tag shape is written and matched.
 const NAME_TAG_PREFIX = 'name:';
 
-/** A short tag-safe slug of the run name, so a training can be found by name later. */
-function nameSlug(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 60);
-}
-
 /** Submit one real training workflow; returns its id. Charges Buzz — the single write in the flow. A
  *  `callbacks` entry registers the orchestrator push that emits live `workflow-update` signals for this run. */
 export async function submitTraining(
@@ -195,7 +207,7 @@ export async function submitTraining(
   { callbacks, traceMode = 'events' }: SubmitOptions = {}
 ): Promise<string> {
   const metadata: TrainingStudioMeta = { ...run.meta, v: META_VERSION };
-  const slug = run.meta.name ? nameSlug(run.meta.name) : '';
+  const slug = run.meta.name ? slugify(run.meta.name) : '';
   const { data, error } = await submitWorkflow({
     client,
     body: {
@@ -241,6 +253,8 @@ const POSITIVE_NUMBER_FIELDS = [
   'networkAlpha',
   'resolution',
 ] as const;
+const OPTIONAL_NON_NEGATIVE_FIELDS = ['keepTokens', 'minSnrGamma', 'noiseOffset'] as const;
+const OPTIONAL_BOOLEAN_FIELDS = ['shuffleTokens', 'flipAugmentation'] as const;
 const OPTIONAL_STRING_FIELDS = ['modelVariant', 'version', 'engine', 'model'] as const;
 const AIR_FIELDS = ['customModel', 'continueFrom'] as const;
 
@@ -260,6 +274,16 @@ function validateRun(run: TrainingRunInput | undefined, field: string): void {
   if (!isNonEmptyString(run.lrScheduler))
     fail(`${field}.lrScheduler`, 'must be a non-empty string.');
   if (!isNonEmptyString(run.optimizer)) fail(`${field}.optimizer`, 'must be a non-empty string.');
+  for (const key of OPTIONAL_NON_NEGATIVE_FIELDS) {
+    if (run[key] !== undefined && !(isFiniteNumber(run[key]) && run[key] >= 0))
+      fail(`${field}.${key}`, 'must be a non-negative number.');
+  }
+  if (run.keepTokens !== undefined && !Number.isInteger(run.keepTokens))
+    fail(`${field}.keepTokens`, 'must be an integer.');
+  for (const key of OPTIONAL_BOOLEAN_FIELDS) {
+    if (run[key] !== undefined && typeof run[key] !== 'boolean')
+      fail(`${field}.${key}`, 'must be a boolean.');
+  }
   if (!isString(run.trigger)) fail(`${field}.trigger`, 'must be a string.');
   if (!Array.isArray(run.items) || run.items.length === 0)
     fail(`${field}.items`, 'must be a non-empty array.');
@@ -415,7 +439,7 @@ async function buildContinuation(
     sourceWorkflowId: opts.workflowId,
     sourceEpoch: opts.fromEpoch,
   };
-  const slug = name ? nameSlug(name) : '';
+  const slug = name ? slugify(name) : '';
 
   // Only the fields we submit (mirrors buildStep) — never the server-computed read-only ones the orch echoes
   // back (defaultSteps, storageBuzzPerEpoch, …), which it rejects on re-submit.
@@ -435,6 +459,7 @@ async function buildContinuation(
     networkDim: input.networkDim,
     networkAlpha: input.networkAlpha,
     resolution: input.resolution,
+    ...pick(input, EXTRA_PARAM_FIELDS),
     triggerWord: input.triggerWord,
     continueFrom,
     ...(traceMode !== 'none' ? { trace: traceMode } : {}),
@@ -499,7 +524,7 @@ export async function renameTraining(
 
   const trimmed = name.trim();
   const metadata = { ...(current.metadata ?? {}), name: trimmed };
-  const slug = trimmed ? nameSlug(trimmed) : '';
+  const slug = trimmed ? slugify(trimmed) : '';
   const tags = [
     ...(current.tags ?? []).filter((t) => !t.startsWith(NAME_TAG_PREFIX)),
     ...(slug ? [`${NAME_TAG_PREFIX}${slug}`] : []),

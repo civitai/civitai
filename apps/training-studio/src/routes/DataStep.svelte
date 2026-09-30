@@ -1264,7 +1264,7 @@
 <GenerationPickerModal bind:open={genPickerOpen} {media} onAdd={addFromGenerations} />
 <ReuseDatasetModal bind:open={reuseOpen} {media} onReuse={addFromBlobs} />
 
-<ManageTagsModal bind:open={manageOpen} {tagFreq} {images} />
+<ManageTagsModal bind:open={manageOpen} {tagFreq} {images} {media} />
 
 <Dialog.Root bind:open={switchDialogOpen}>
   <Dialog.Content class="sm:max-w-md" portalProps={portalProps()}>

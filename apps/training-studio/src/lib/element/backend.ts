@@ -157,6 +157,8 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
 
     rename: (workflowId, name) => call((client) => train.renameTraining(client, workflowId, name)),
 
+    epochArchive: (workflowId) => call((client) => orch.createEpochArchive(client, workflowId)),
+
     continueQuote: (workflowId, fromEpoch, addEpochs) =>
       call((client) =>
         train.continueTrainingWhatIf(client, { workflowId, fromEpoch, addEpochs }, submitOpts())

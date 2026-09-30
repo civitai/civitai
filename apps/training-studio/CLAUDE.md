@@ -59,6 +59,15 @@ enters the flow.
 are present, grouped by family with versions. Re-mirror by hand when the trainer's list changes; if
 `trainingModelInfo` ever moves to a `packages/civitai-*`, import it instead.
 
+## Tests
+
+Node-env vitest over the plain modules only (`vitest.config.ts`, project `app:training-studio`; run
+with `pnpm --filter @civitai/training-studio-app test`, or from the root `pnpm run test:apps:run`).
+They cover what the UI can't be typechecked into: the flow's param/prompt rules (`trainingFlow.test.ts`),
+the workflow readers and archive entries (`trainingRows.test.ts`), and the submit wire shape
+(`train-core.test.ts`). `@civitai/client` is mocked by hand there — its dist imports a directory, which
+Node's ESM loader refuses when a `vi.mock` factory spreads `importOriginal`.
+
 ## Previewing the UI without OAuth
 
 `hooks.server.ts` has a **dev-only** bypass: in `vite dev` with `TRAINING_STUDIO_DEV_LOGIN=1` (set in

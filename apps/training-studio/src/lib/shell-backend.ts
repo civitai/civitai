@@ -4,6 +4,7 @@
 // (the shell-only signals token) and trace.ts (its dev-only trace proxy).
 import type { AutoLabelResult, StudioBackend, TrainingRunPayload } from '$lib/backend';
 import type { GenerationItem, TrainingDetail, TrainingRow } from '$lib/data/trainingRows';
+import type { EpochArchive } from '$lib/orchestrator-core';
 import { UploadError, uploadProblem } from '$lib/upload';
 
 /** Pull `message` out of a SvelteKit error body, falling back to a status-tagged default. */
@@ -101,6 +102,14 @@ export const shellBackend: StudioBackend = {
       body: JSON.stringify({ workflowId, name }),
     });
     if (!res.ok) throw new Error(await messageOf(res, `Could not rename (${res.status})`));
+  },
+
+  epochArchive: async (workflowId) => {
+    const res = await fetch(`/api/epoch-archive?id=${encodeURIComponent(workflowId)}`, {
+      method: 'POST',
+    });
+    if (!res.ok) throw new Error(await messageOf(res, "Couldn't build the archive."));
+    return (await res.json()) as EpochArchive;
   },
 
   continueQuote: async (workflowId, fromEpoch, addEpochs) => {
