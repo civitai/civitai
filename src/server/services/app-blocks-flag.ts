@@ -646,11 +646,15 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  *      it emitted a row like any other view and the reviewer landed as an identifiable
  *      unique viewer. Both writers now consult `blocks/private-run-impression.service`
  *      and skip the insert; the canonical reasoning is at `blocks/app-views.service.ts`.
- *      🔴 BUT IT LEAVES TWO THINGS FOR WHOEVER WIDENS THIS FLAG, and this is the reason
+ *      🔴 BUT IT LEAVES ONE THING FOR WHOEVER WIDENS THIS FLAG, and this is the reason
  *      the item stays here rather than only at the read site:
- *        (a) THE FLAG KEY MUST EXIST IN `flipt-state`, BASE-OFF. An ABSENT key makes the
- *            evaluation throw — it bypasses the eval cache and logs on every reaching
- *            call — and that gate now sits on the `/api/track/block-render` beacon.
+ *        (a) ✅ SATISFIED. The key EXISTS in `flipt-state`, base-off with no rollout
+ *            (`civitai/flipt-state` PR #100, squash `c94c807`; verified present at
+ *            `enabled: false`). It had to, because an ABSENT key makes the evaluation
+ *            throw — bypassing the eval cache and logging on every reaching call — and
+ *            that gate sits on the `/api/track/block-render` beacon. Left here as a
+ *            SATISFIED entry rather than deleted: the requirement still binds if anyone
+ *            ever removes that row, and a deleted line cannot say so.
  *        (b) 🔴 NEITHER OF THE TWO WRITERS IS RATE-LIMITED, and once this flag admits
  *            anyone, each one's gate can reach the private-run access predicate — which
  *            touches the write primary — on a caller-chosen app id. Before that change
@@ -679,12 +683,20 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  * refuse before resolving anything, so no private-run row of either kind can exist.
  * It becomes live the moment this value is anything else.
  *
- * So, before widening on THIS count: item 1's filter has LANDED, so what remains is item
- * 3's two carry-overs (the flag key existing in `flipt-state`, and the two unrate-limited
- * `blockRenders` writers) plus item 1's acceptance check — one real private run, read on the
- * owner's own analytics panel. All three analytics rails now filter, so the void DOES deliver
- * the invisibility at the row level; what it does not deliver on its own is the evidence that
- * it works end to end, which is what the acceptance check buys.
+ * So, before widening on THIS count, exactly TWO things remain — item 1's filter has LANDED
+ * and item 3's flag-key carry-over is SATISFIED:
+ *   · item 3(b): the two unrate-limited `blockRenders` writers.
+ *   · item 1's acceptance check: one real private run, read on the owner's own analytics panel.
+ * All three analytics rails now filter, so the void DOES deliver the invisibility at the row
+ * level; what it does not deliver on its own is the evidence that it works end to end, which
+ * is what the acceptance check buys.
+ *
+ * ⚠️ THIS PARAGRAPH IS A COUNT, AND A COUNT IS THE THING THAT ROTS. It said "item 3's two
+ * carry-overs (the flag key existing in `flipt-state`, …)" while that key had ALREADY been
+ * created hours earlier — the same shape that has now bitten this feature four times: a
+ * precondition true when written, satisfied by work that landed since, still reading as open
+ * in the one file a widener opens. If you satisfy an item, fix THIS summary in the same commit,
+ * not only the item above. Do not restate the count anywhere else; point here.
  *
  * ────────────────────────────────────────────────────────────────────────────────
  * 🔴 SECOND PRECONDITION, AND IT IS A PRODUCT QUESTION RATHER THAN A DELIVERY GAP:
