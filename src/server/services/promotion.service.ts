@@ -3,8 +3,14 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import type { ModelGallerySettingsSchema } from '~/server/schema/model.schema';
+import { isImageReviewed } from '~/server/common/image-visibility';
 import { getCreatorGalleryHiddenUserIds } from '~/server/services/creator-gallery-hidden-users.service';
-import { holdPlacementEscrow, settlePlacement } from '~/server/services/placement-escrow.service';
+import {
+  holdPlacementEscrow,
+  isPlacementEscrowFunded,
+  settlePlacement,
+} from '~/server/services/placement-escrow.service';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
 import { getPlacementConfig } from '~/server/services/placement.service';
@@ -21,11 +27,13 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { Flags } from '~/shared/utils/flags';
 import { declineFeeAmount, PLACEMENT_SURFACES } from '~/shared/utils/placement';
 import { ModelModifier, ModelStatus } from '~/shared/utils/prisma/enums';
+import type { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import type {
   GalleryHostSettings,
   GalleryPromotionData,
   GalleryPromotionRefusal,
   ModelPromotionData,
+  PromotionAcceptance,
   PromotionRunDays,
   PromotionSurface,
 } from '~/shared/utils/promotion';
@@ -37,6 +45,8 @@ import {
   parseGalleryPromotionData,
   parseModelPromotionData,
   promotionAmount,
+  promotionRunEndsAt,
+  PROMOTION_QUEUE_LIMIT,
   PROMOTION_RUN_DAYS,
   PROMOTION_TARGET_TYPE,
 } from '~/shared/utils/promotion';
@@ -115,16 +125,17 @@ const GALLERY_REFUSAL_MESSAGE: Record<GalleryPromotionRefusal, string> = {
   noImages: 'promotion: that post has no images to show',
   unrated: 'promotion: that post is still being rated',
   aboveMaxLevel: "promotion: that post is rated above what this model's page shows",
-  aboveGalleryLevel: "promotion: that post is rated above what this model's page shows",
   hiddenByHost: 'promotion: not available for this gallery',
 };
 
 type PromotedPostImage = {
   id: number;
   nsfwLevel: number;
-  ingestion: string;
+  ingestion: ImageIngestionStatus;
+  nsfwLevelLocked: boolean;
   needsReview: string | null;
   minor: boolean;
+  acceptableMinor: boolean;
   poi: boolean;
   tosViolation: boolean;
 };
@@ -137,8 +148,8 @@ async function loadPromotedPost(postId: number) {
   if (!post) throw throwNotFoundError('promotion: that post no longer exists');
 
   const images = await dbWrite.$queryRaw<PromotedPostImage[]>`
-    SELECT i.id, i."nsfwLevel", i.ingestion::text AS ingestion, i."needsReview",
-           i.minor, i.poi, i."tosViolation"
+    SELECT i.id, i."nsfwLevel", i.ingestion::text AS ingestion, i."nsfwLevelLocked",
+           i."needsReview", i.minor, i."acceptableMinor", i.poi, i."tosViolation"
     FROM "Image" i
     WHERE i."postId" = ${postId}
   `;
@@ -182,9 +193,10 @@ async function assertGalleryPromotable({
   if (
     images.some(
       (image) =>
-        image.ingestion !== 'Scanned' ||
+        !isImageReviewed(image) ||
         image.needsReview ||
         image.minor ||
+        image.acceptableMinor ||
         image.poi ||
         image.tosViolation
     )
@@ -208,7 +220,7 @@ async function assertGalleryPromotable({
   });
   if (refusal) throw throwBadRequestError(GALLERY_REFUSAL_MESSAGE[refusal]);
 
-  return { modelVersionIds };
+  return { modelVersionIds, imageIds: images.map((image) => image.id) };
 }
 
 async function assertModelPromotable({
@@ -328,11 +340,15 @@ async function assertNotAlreadyPromoted({
   });
   const blocking = rows.some((row) => {
     if (row.status === 'pending') return true;
-    const days = (row.data as { days?: unknown } | null)?.days;
+    const { days, endsAt } = (row.data ?? {}) as { days?: unknown; endsAt?: unknown };
     return (
       !!row.resolvedAt &&
       isPromotionRunDays(days) &&
-      isPromotionLive({ acceptedAt: row.resolvedAt, days })
+      isPromotionLive({
+        acceptedAt: row.resolvedAt,
+        days,
+        endsAt: typeof endsAt === 'string' ? endsAt : undefined,
+      })
     );
   });
   if (blocking) throw throwBadRequestError('promotion: that is already promoted on this page');
@@ -403,7 +419,7 @@ export async function createGalleryPromotion({
   const surface = 'galleryPromotion' as const;
   const { space, days, dailyPrice } = await preparePromotion({ ...input, surface });
   const host = await loadModel(input.modelId);
-  const { modelVersionIds } = await assertGalleryPromotable({
+  const { modelVersionIds, imageIds } = await assertGalleryPromotable({
     placerId: input.placerId,
     postId,
     host,
@@ -416,7 +432,7 @@ export async function createGalleryPromotion({
     ownerId: space.ownerId,
     placerId: input.placerId,
     amount: promotionAmount(dailyPrice, days),
-    data: { postId, days, modelVersionIds },
+    data: { postId, days, modelVersionIds, imageIds },
     spendType: input.spendType,
   });
 }
@@ -451,9 +467,9 @@ export async function createModelPromotion({
  * The host's answer to a pending promotion. Accepting pays the host at once
  * (the standard placement settle) and starts the run; `resolvedAt` is the start.
  *
- * There is no remove. A host is held to an accepted run for
- * `PROMOTION_REMOVAL_LOCK_HOURS`, which outlasts every run, so the only ways a
- * run ends early are a moderator takedown or the buyer's own change.
+ * There is deliberately no remove: the host is paid at accept, so a host who
+ * could end the run could keep the Buzz and drop the promotion. A run ends early
+ * only through a moderator takedown or the buyer's own change.
  */
 export async function actOnPromotion({
   placementId,
@@ -473,6 +489,7 @@ export async function actOnPromotion({
       ownerId: true,
       placerId: true,
       status: true,
+      amount: true,
       data: true,
     },
   });
@@ -484,11 +501,24 @@ export async function actOnPromotion({
     throw throwBadRequestError(`promotion: that promotion is already ${placement.status}`);
 
   if (action === 'approve') {
+    // The row is committed before its escrow is taken, so a host can see it while
+    // the hold is still in flight. Accepting then would pay out of nothing.
+    if (!(await isPlacementEscrowFunded({ placementId, amount: placement.amount })))
+      throw throwBadRequestError('promotion: the payment for this is still processing');
+
     const host = await loadModel(placement.targetId);
+    let accepted: GalleryPromotionData | ModelPromotionData;
     if (placement.surface === 'galleryPromotion') {
       const data = parseGalleryPromotionData(placement.data);
       if (!data) throw throwBadRequestError('promotion: that promotion cannot be shown');
-      await assertGalleryPromotable({ placerId: placement.placerId, postId: data.postId, host });
+      // What the host accepted is the post as it is now. Serving shows only these
+      // images, so anything the buyer adds afterwards never reaches the page.
+      const approved = await assertGalleryPromotable({
+        placerId: placement.placerId,
+        postId: data.postId,
+        host,
+      });
+      accepted = { ...data, ...approved };
     } else {
       const data = parseModelPromotionData(placement.data);
       if (!data) throw throwBadRequestError('promotion: that promotion cannot be shown');
@@ -497,7 +527,17 @@ export async function actOnPromotion({
         promotedModelId: data.modelId,
         host,
       });
+      accepted = data;
     }
+
+    const acceptance: PromotionAcceptance = {
+      acceptedLevel: hostPromotionLevel(host),
+      endsAt: promotionRunEndsAt(new Date(), accepted.days).toISOString(),
+    };
+    await dbWrite.placement.updateMany({
+      where: { id: placementId, status: 'pending' },
+      data: { data: { ...accepted, ...acceptance } as Prisma.InputJsonValue },
+    });
   }
 
   const result = await settlePlacement({ placementId, action, actorId: userId });
@@ -551,9 +591,16 @@ export async function getSponsoredGalleryPost({
   const live = rows.flatMap((row) => {
     const data = parseGalleryPromotionData(row.data);
     if (!data || !row.resolvedAt) return [];
-    if (!isPromotionLive({ acceptedAt: row.resolvedAt, days: data.days })) return [];
+    if (!isPromotionLive({ acceptedAt: row.resolvedAt, ...data })) return [];
     if (!data.modelVersionIds.includes(modelVersionId)) return [];
-    return [{ placementId: row.id, postId: data.postId }];
+    return [
+      {
+        placementId: row.id,
+        postId: data.postId,
+        imageIds: data.imageIds,
+        acceptedLevel: data.acceptedLevel,
+      },
+    ];
   });
   return pickOne(live);
 }
@@ -564,8 +611,8 @@ export async function getSponsoredModel({ modelId }: { modelId: number }) {
   const live = rows.flatMap((row) => {
     const data = parseModelPromotionData(row.data);
     if (!data || !row.resolvedAt) return [];
-    if (!isPromotionLive({ acceptedAt: row.resolvedAt, days: data.days })) return [];
-    return [{ placementId: row.id, modelId: data.modelId }];
+    if (!isPromotionLive({ acceptedAt: row.resolvedAt, ...data })) return [];
+    return [{ placementId: row.id, modelId: data.modelId, acceptedLevel: data.acceptedLevel }];
   });
   return pickOne(live);
 }
@@ -585,7 +632,9 @@ export async function getPromotionHostsForPost({
   const post = await dbRead.post.findUnique({ where: { id: postId }, select: { userId: true } });
   if (!post || post.userId !== placerId) return [];
 
-  const models = await dbRead.$queryRaw<{ id: number; name: string; userId: number }[]>`
+  // The primary, like the purchase: the replica can be missing resource rows the
+  // purchase would accept.
+  const models = await dbWrite.$queryRaw<{ id: number; name: string; userId: number }[]>`
     SELECT DISTINCT m.id, m.name, m."userId"
     FROM "ImageResourceNew" ir
     JOIN "Image" i ON i.id = ir."imageId"
@@ -595,15 +644,26 @@ export async function getPromotionHostsForPost({
       AND m."userId" != ${placerId}
       AND m.status = 'Published'
       AND m."deletedAt" IS NULL
+      AND m.availability != 'Private'
+      AND NOT m.poi
+      AND (m.mode IS NULL OR m.mode NOT IN ('TakenDown', 'Archived'))
   `;
 
-  const hosts = await Promise.all(
-    models.map(async (model) => {
-      const quote = await promotionQuote({ surface: 'galleryPromotion', modelId: model.id });
-      return quote && { modelId: model.id, name: model.name, ...quote };
-    })
+  // A model's promotion space is its owner's account, so one quote per owner. A
+  // post can use a hundred models, hence the concurrency limit as well.
+  const quotes = new Map<number, Awaited<ReturnType<typeof promotionQuote>>>();
+  const owners = [...new Map(models.map((model) => [model.userId, model.id])).entries()];
+  await limitConcurrency(
+    owners.map(([ownerId, modelId]) => async () => {
+      quotes.set(ownerId, await promotionQuote({ surface: 'galleryPromotion', modelId }));
+    }),
+    5
   );
-  return hosts.filter((host): host is NonNullable<typeof host> => !!host);
+
+  return models.flatMap((model) => {
+    const quote = quotes.get(model.userId);
+    return quote ? [{ modelId: model.id, name: model.name, ...quote }] : [];
+  });
 }
 
 /**
@@ -685,8 +745,6 @@ export async function getModelPromotionOffer({
   return { open: true, modelId: host.id, name: host.name, ...quote };
 }
 
-const QUEUE_LIMIT = 50;
-
 /** What a queue row needs to be read: the page it is on, what it promotes and for how long. */
 async function describePromotionRows<T extends { targetId: number; data: unknown }>(
   surface: PromotionSurface,
@@ -746,7 +804,7 @@ export async function getPendingPromotions({
       placer: { select: { id: true, username: true } },
     },
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-    take: QUEUE_LIMIT,
+    take: PROMOTION_QUEUE_LIMIT,
   });
   return describePromotionRows(surface, rows);
 }
@@ -773,7 +831,7 @@ export async function getMyPromotions({
       takenDownAt: true,
     },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-    take: QUEUE_LIMIT,
+    take: PROMOTION_QUEUE_LIMIT,
   });
   return describePromotionRows(surface, rows);
 }

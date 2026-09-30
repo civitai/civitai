@@ -474,6 +474,12 @@ export const getImagesAsPostsInfiniteHandler = async ({
         modelVersionId: undefined,
         modelId: undefined,
         reviewId: undefined,
+        browsingLevel: sponsoredPost.acceptedLevel
+          ? Flags.intersection(
+              input.viewerBrowsingLevel ?? input.browsingLevel,
+              sponsoredPost.acceptedLevel
+            )
+          : input.browsingLevel,
         limit: POST_IMAGE_LIMIT,
         followed: false,
         postIds: [sponsoredPost.postId],
@@ -482,7 +488,10 @@ export const getImagesAsPostsInfiniteHandler = async ({
         include: [...input.include, 'tagIds', 'profilePictures'],
         dbTarget: 'datapacket',
       });
-      sponsored.push(...(sponsoredImages as ResultType[]));
+      const approved = new Set(sponsoredPost.imageIds);
+      sponsored.push(
+        ...(sponsoredImages as ResultType[]).filter((image) => approved.has(image.id))
+      );
     }
     const sponsoredPostId = sponsored.length ? sponsoredPost?.postId : undefined;
 

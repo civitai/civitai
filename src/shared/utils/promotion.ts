@@ -1,5 +1,6 @@
 import { Flags } from '~/shared/utils/flags';
 import type { PlacementSurface } from '~/shared/utils/placement';
+import { parseCivitaiUrlSafe } from '~/utils/civitai-url';
 
 /**
  * Paid promotions on someone else's model page: a post in its gallery, or a
@@ -24,14 +25,10 @@ export type PromotionRunDays = (typeof PROMOTION_RUN_DAYS)[number];
 export const isPromotionRunDays = (days: unknown): days is PromotionRunDays =>
   (PROMOTION_RUN_DAYS as readonly unknown[]).includes(days);
 
-/**
- * How long after accepting a host may not end a promotion. The same week the
- * sticker and remix surfaces hold an owner to, because the host is paid at
- * accept: without it a host could accept, keep the Buzz and end the run at once.
- *
- * At least as long as the longest run, so a host never ends an accepted run.
- */
-export const PROMOTION_REMOVAL_LOCK_HOURS = 24 * 7;
+export const promotionRunLabel = (days: number) => (days === 1 ? '1 day' : `${days} days`);
+
+/** How many rows a promotion queue returns. */
+export const PROMOTION_QUEUE_LIMIT = 50;
 
 /** What the buyer pays: the host's daily price for every day of the run. */
 export const promotionAmount = (dailyPrice: number, days: PromotionRunDays) => dailyPrice * days;
@@ -42,21 +39,42 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export const promotionRunEndsAt = (acceptedAt: Date, days: number) =>
   new Date(acceptedAt.getTime() + days * DAY_MS);
 
+/** `endsAt` is the end frozen at accept; a run accepted without one ends `days` after. */
 export const isPromotionLive = (
-  { acceptedAt, days }: { acceptedAt: Date; days: number },
+  { acceptedAt, days, endsAt }: { acceptedAt: Date; days: number; endsAt?: string },
   now = new Date()
-) => acceptedAt <= now && now < promotionRunEndsAt(acceptedAt, days);
+) => acceptedAt <= now && now < (endsAt ? new Date(endsAt) : promotionRunEndsAt(acceptedAt, days));
 
-/** A model page link (`/models/123/...`) or a bare id. */
+/** A link to one of our model pages, or a bare model id. */
 export function parseHostModelId(value: string) {
   const trimmed = value.trim();
-  const match = /^\d+$/.test(trimmed) ? trimmed : /\/models\/(\d+)/.exec(trimmed)?.[1];
-  const id = match ? Number(match) : NaN;
-  return Number.isSafeInteger(id) && id > 0 ? id : null;
+  if (/^\d+$/.test(trimmed)) {
+    const id = Number(trimmed);
+    return Number.isSafeInteger(id) && id > 0 ? id : null;
+  }
+  const ref = parseCivitaiUrlSafe(trimmed);
+  return ref?.type === 'model' ? ref.modelId : null;
 }
 
 const positiveInt = (value: unknown): value is number =>
   Number.isSafeInteger(value) && (value as number) > 0;
+
+/**
+ * Written when the host accepts, so everyone is held to what was sold: the run
+ * ends at `endsAt`, and until then it is served at the page's browsing-level cap
+ * as it stood at accept. A host who lowers their cap mid-run cannot hide a run
+ * they were already paid for.
+ */
+export type PromotionAcceptance = { acceptedLevel: number; endsAt: string };
+
+/** Both or neither; a half-written acceptance is refused as malformed. */
+function parseAcceptance(value: Record<string, unknown>): Partial<PromotionAcceptance> | null {
+  const { acceptedLevel, endsAt } = value;
+  if (acceptedLevel === undefined && endsAt === undefined) return {};
+  if (!positiveInt(acceptedLevel)) return null;
+  if (typeof endsAt !== 'string' || Number.isNaN(Date.parse(endsAt))) return null;
+  return { acceptedLevel, endsAt };
+}
 
 /** `galleryPromotion` payload: the promoted post, and the host versions it used. */
 export type GalleryPromotionData = {
@@ -64,28 +82,37 @@ export type GalleryPromotionData = {
   days: PromotionRunDays;
   /** The host model's versions the post was made with. It shows in those galleries. */
   modelVersionIds: number[];
-};
+  /** The post's images as the host last judged them; only these are shown. */
+  imageIds: number[];
+} & Partial<PromotionAcceptance>;
 
 /** `modelPromotion` payload: the promoted model. */
 export type ModelPromotionData = {
   modelId: number;
   days: PromotionRunDays;
-};
+} & Partial<PromotionAcceptance>;
 
 export const parseGalleryPromotionData = (value: unknown): GalleryPromotionData | null => {
   if (!value || typeof value !== 'object') return null;
-  const { postId, days, modelVersionIds } = value as Record<string, unknown>;
+  const record = value as Record<string, unknown>;
+  const { postId, days, modelVersionIds, imageIds } = record;
   if (!positiveInt(postId) || !isPromotionRunDays(days)) return null;
   if (!Array.isArray(modelVersionIds) || !modelVersionIds.length) return null;
   if (!modelVersionIds.every(positiveInt)) return null;
-  return { postId, days, modelVersionIds };
+  if (!Array.isArray(imageIds) || !imageIds.length || !imageIds.every(positiveInt)) return null;
+  const acceptance = parseAcceptance(record);
+  if (!acceptance) return null;
+  return { postId, days, modelVersionIds, imageIds, ...acceptance };
 };
 
 export const parseModelPromotionData = (value: unknown): ModelPromotionData | null => {
   if (!value || typeof value !== 'object') return null;
-  const { modelId, days } = value as Record<string, unknown>;
+  const record = value as Record<string, unknown>;
+  const { modelId, days } = record;
   if (!positiveInt(modelId) || !isPromotionRunDays(days)) return null;
-  return { modelId, days };
+  const acceptance = parseAcceptance(record);
+  if (!acceptance) return null;
+  return { modelId, days, ...acceptance };
 };
 
 export type PromotedImage = { id: number; nsfwLevel: number; tagIds: number[] };
@@ -94,16 +121,9 @@ export type GalleryHostSettings = {
   hiddenUserIds: number[];
   hiddenTagIds: number[];
   hiddenImageIds: number[];
-  /** The gallery's browsing-level cap, as a flag. `undefined` when the host set none. */
-  level?: number;
 };
 
-export type GalleryPromotionRefusal =
-  | 'noImages'
-  | 'unrated'
-  | 'aboveMaxLevel'
-  | 'aboveGalleryLevel'
-  | 'hiddenByHost';
+export type GalleryPromotionRefusal = 'noImages' | 'unrated' | 'aboveMaxLevel' | 'hiddenByHost';
 
 /**
  * Whether a post may be promoted in a host's gallery, judged against the host's
@@ -127,9 +147,6 @@ export function galleryPromotionRefusal({
   if (!images.length) return 'noImages';
   if (images.some((image) => !image.nsfwLevel)) return 'unrated';
   if (images.some((image) => !Flags.hasFlag(maxLevel, image.nsfwLevel))) return 'aboveMaxLevel';
-  const galleryLevel = host.level;
-  if (galleryLevel && images.some((image) => !Flags.hasFlag(galleryLevel, image.nsfwLevel)))
-    return 'aboveGalleryLevel';
 
   const hiddenTags = new Set(host.hiddenTagIds);
   const hiddenImages = new Set(host.hiddenImageIds);

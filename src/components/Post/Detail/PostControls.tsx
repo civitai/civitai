@@ -92,7 +92,7 @@ export function PostControls({
               dialogStore.trigger({ component: GalleryPromotionModal, props: { postId } })
             }
           >
-            Promote in a model gallery
+            Promote in a gallery
           </Menu.Item>
         )}
         {(!isOwner || !currentUser) && (

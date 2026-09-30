@@ -38,7 +38,7 @@ export function GalleryPromotionModal({ postId }: { postId: number }) {
       {...dialog}
       title={
         <span className="flex flex-col gap-0.5">
-          <span>Promote in a model gallery</span>
+          <span>Promote in a gallery</span>
           <Text span size="xs" fw={400} c="dimmed" className="block leading-snug">
             Show this post, marked Sponsored, in the gallery of a model you made it with.
           </Text>

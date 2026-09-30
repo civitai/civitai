@@ -10,8 +10,6 @@ import {
   parseModelPromotionData,
   promotionAmount,
   promotionRunEndsAt,
-  PROMOTION_REMOVAL_LOCK_HOURS,
-  PROMOTION_RUN_DAYS,
   PROMOTION_SURFACES,
 } from '~/shared/utils/promotion';
 
@@ -32,7 +30,7 @@ describe('galleryPromotionRefusal', () => {
     ).toBeNull();
   });
 
-  it('refuses an image above the page level, so a minor-flagged host stays PG/PG-13', () => {
+  it('refuses an image above the page level', () => {
     expect(
       galleryPromotionRefusal({
         placerId: 7,
@@ -43,22 +41,11 @@ describe('galleryPromotionRefusal', () => {
     ).toBe('aboveMaxLevel');
   });
 
-  it("refuses an image above the host's gallery level cap", () => {
-    expect(
-      galleryPromotionRefusal({
-        placerId: 7,
-        images: [pg, r],
-        host: { ...noHostSettings, level: sfwBrowsingLevelsFlag },
-        maxLevel: allLevels,
-      })
-    ).toBe('aboveGalleryLevel');
-  });
-
   it('refuses an unrated image rather than reading 0 as allowed', () => {
     expect(
       galleryPromotionRefusal({
         placerId: 7,
-        images: [{ id: 3, nsfwLevel: 0, tagIds: [] }],
+        images: [pg, { id: 3, nsfwLevel: 0, tagIds: [] }],
         host: noHostSettings,
         maxLevel: allLevels,
       })
@@ -104,24 +91,38 @@ describe('promotion runs', () => {
     expect(isPromotionLive({ acceptedAt, days: 1 }, new Date('2026-09-30T23:59:59Z'))).toBe(false);
   });
 
-  // Decision 19: a host is held to an accepted run. If a longer run is added,
-  // or the lock shortened, a host could end a paid run early and keep the Buzz.
-  it('holds the host for at least the longest run', () => {
-    expect(PROMOTION_REMOVAL_LOCK_HOURS).toBeGreaterThanOrEqual(
-      Math.max(...PROMOTION_RUN_DAYS) * 24
+  it('ends at the end frozen at accept, not at accept plus the run length', () => {
+    const endsAt = '2026-10-01T12:00:00.000Z';
+    expect(isPromotionLive({ acceptedAt, days: 1, endsAt }, new Date('2026-10-01T11:59:59Z'))).toBe(
+      true
+    );
+    expect(isPromotionLive({ acceptedAt, days: 1, endsAt }, new Date('2026-10-01T12:00:00Z'))).toBe(
+      false
     );
   });
 });
 
 describe('promotion payloads', () => {
   it('reads a well-formed gallery payload and refuses a malformed one', () => {
-    expect(parseGalleryPromotionData({ postId: 5, days: 3, modelVersionIds: [9] })).toEqual({
-      postId: 5,
+    const gallery = { postId: 5, days: 3, modelVersionIds: [9], imageIds: [11, 12] };
+    expect(parseGalleryPromotionData(gallery)).toEqual(gallery);
+    expect(parseGalleryPromotionData({ ...gallery, days: 2 })).toBeNull();
+    expect(parseGalleryPromotionData({ ...gallery, modelVersionIds: [] })).toBeNull();
+    // A post with no approved images could only ever show nothing.
+    expect(parseGalleryPromotionData({ ...gallery, imageIds: [] })).toBeNull();
+  });
+
+  it('carries the acceptance frozen at accept, and refuses a half-written one', () => {
+    const accepted = { acceptedLevel: 3, endsAt: '2026-10-04T00:00:00.000Z' };
+    expect(parseModelPromotionData({ modelId: 4, days: 3, ...accepted })).toEqual({
+      modelId: 4,
       days: 3,
-      modelVersionIds: [9],
+      ...accepted,
     });
-    expect(parseGalleryPromotionData({ postId: 5, days: 2, modelVersionIds: [9] })).toBeNull();
-    expect(parseGalleryPromotionData({ postId: 5, days: 3, modelVersionIds: [] })).toBeNull();
+    expect(parseModelPromotionData({ modelId: 4, days: 3, acceptedLevel: 3 })).toBeNull();
+    expect(
+      parseModelPromotionData({ modelId: 4, days: 3, ...accepted, endsAt: 'soon' })
+    ).toBeNull();
   });
 
   it('reads a well-formed model payload and refuses a malformed one', () => {
@@ -140,6 +141,11 @@ describe('promotion surfaces', () => {
 });
 
 describe('parseHostModelId', () => {
+  it('refuses a download link, whose number is a version, and another site', () => {
+    expect(parseHostModelId('https://civitai.com/api/download/models/123')).toBeNull();
+    expect(parseHostModelId('https://example.com/models/5')).toBeNull();
+  });
+
   it('reads a model page link or a bare id', () => {
     expect(parseHostModelId('https://civitai.com/models/4201/some-model?modelVersionId=9')).toBe(
       4201

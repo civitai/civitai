@@ -1132,7 +1132,7 @@ export default function ModelDetailsV2({
                               })
                             }
                           >
-                            Promote on another model page
+                            Promote this model
                           </Menu.Item>
                         )}
                         {features.collections && (
@@ -1561,7 +1561,8 @@ export default function ModelDetailsV2({
           ) : null}
           {canLoadBelowTheFold && (
             <>
-              {(isOwner || model.hasSuggestedResources) && (
+              {/* A sponsored card can run on a page with no suggestions of its own. */}
+              {(isOwner || model.hasSuggestedResources || features.creatorPromotions) && (
                 <>
                   {model.hasSuggestedResources && <AdUnitTopSection />}
                   {selectedVersion && (

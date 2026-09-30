@@ -1,3 +1,4 @@
+import { Flags } from '~/shared/utils/flags';
 import { getSponsoredModel } from '~/server/services/promotion.service';
 import { Prisma } from '@prisma/client';
 import {
@@ -1785,16 +1786,18 @@ export const getAssociatedResourcesCardDataHandler = async ({
       type === 'Suggested' && ctx.features.creatorPromotions
         ? await getSponsoredModel({ modelId: fromId }).catch(() => undefined)
         : undefined;
-    if (
-      sponsored &&
-      !resourcesIds.some(
+    if (sponsored) {
+      // Its organic copy is dropped, as in the gallery, so the card the buyer paid
+      // for is the one in the sponsored slot.
+      const organic = resourcesIds.findIndex(
         ({ id, resourceType }) => resourceType === 'model' && id === sponsored.modelId
-      )
-    )
+      );
+      if (organic >= 0) resourcesIds.splice(organic, 1);
       resourcesIds.splice(Math.min(1, resourcesIds.length), 0, {
         id: sponsored.modelId,
         resourceType: 'model' as const,
       });
+    }
 
     if (!resourcesIds.length) return [];
 
@@ -1961,12 +1964,17 @@ export const getAssociatedResourcesCardDataHandler = async ({
             const model = completeModels.find((model) => model.id === id);
             if (!model) return null;
             if (excludedUserIds.includes(model.user.id)) return null;
+            const isSponsored = id === sponsored?.modelId;
+            // Held to the page's level cap as it stood when the host accepted. A
+            // buyer who re-rates their model above it ends their own run.
+            if (
+              isSponsored &&
+              sponsored.acceptedLevel &&
+              !Flags.hasFlag(sponsored.acceptedLevel, model.nsfwLevel)
+            )
+              return null;
 
-            return {
-              resourceType: 'model' as const,
-              ...model,
-              sponsored: id === sponsored?.modelId,
-            };
+            return { resourceType: 'model' as const, ...model, sponsored: isSponsored };
         }
       })
       .filter(isDefined);

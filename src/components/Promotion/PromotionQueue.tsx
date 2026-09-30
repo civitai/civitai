@@ -18,7 +18,12 @@ import { useState } from 'react';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { Currency } from '~/shared/utils/prisma/enums';
 import type { PromotionSurface } from '~/shared/utils/promotion';
-import { isPromotionLive, PROMOTION_SURFACES } from '~/shared/utils/promotion';
+import {
+  isPromotionLive,
+  promotionRunLabel,
+  PROMOTION_QUEUE_LIMIT,
+  PROMOTION_SURFACES,
+} from '~/shared/utils/promotion';
 import type { RouterOutput } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -60,7 +65,16 @@ function HostPage({ row }: { row: ReceivedRow | SentRow }) {
   );
 }
 
-const runLabel = (days: number | null) => (days === 1 ? '1 day' : `${days ?? '?'} days`);
+const runLabel = (days: number | null) => (days ? promotionRunLabel(days) : 'an unknown run');
+
+function QueueCapNote({ count }: { count: number }) {
+  if (count < PROMOTION_QUEUE_LIMIT) return null;
+  return (
+    <Text size="xs" c="dimmed">
+      Showing the first {PROMOTION_QUEUE_LIMIT}.
+    </Text>
+  );
+}
 
 /** Promotions waiting on the host's model pages, and the ones this user has bought on others'. */
 export function PromotionQueue() {
@@ -180,6 +194,7 @@ function ReceivedTab({
         Accepting pays you straight away and starts the run. You can&rsquo;t end a promotion once
         you have accepted it.
       </Text>
+      <QueueCapNote count={rows.length} />
       {rows.map((row) => (
         <Card key={row.id} withBorder>
           <Group justify="space-between" wrap="nowrap" align="flex-start">
@@ -282,6 +297,7 @@ function SentTab({
 
   return (
     <Stack gap="md">
+      <QueueCapNote count={rows.length} />
       {rows.map((row) => {
         const status = sentStatus(row);
         return (

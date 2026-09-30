@@ -148,7 +148,7 @@ export function ImagesAsPostsInfinite({
       : true);
   const { data, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
     trpc.image.getImagesAsPostsInfinite.useInfiniteQuery(
-      { ...filters, limit, browsingLevel: intersection },
+      { ...filters, limit, browsingLevel: intersection, viewerBrowsingLevel: browsingLevel },
       {
         getNextPageParam: (lastPage) => lastPage.nextCursor,
         trpc: { context: { skipBatch: true } },
@@ -196,7 +196,8 @@ export function ImagesAsPostsInfinite({
   const { items: sponsoredItems } = useApplyHiddenPreferences({
     type: 'posts',
     data: sponsoredData,
-    browsingLevel: intersection,
+    // The server already held it to the cap frozen at accept, not today's cap.
+    browsingLevel,
   });
   const { items: organicItems } = useApplyHiddenPreferences({
     type: 'posts',

@@ -50,11 +50,15 @@ export const promotionRouter = router({
 
   getHostsForPost: protectedProcedure
     .input(getPromotionHostsForPostSchema)
-    .query(({ input, ctx }) => getPromotionHostsForPost({ ...input, placerId: ctx.user.id })),
+    .query(({ input, ctx }) => {
+      assertPromotionsEnabled(ctx);
+      return getPromotionHostsForPost({ ...input, placerId: ctx.user.id });
+    }),
 
-  getModelOffer: protectedProcedure
-    .input(getModelPromotionOfferSchema)
-    .query(({ input, ctx }) => getModelPromotionOffer({ ...input, placerId: ctx.user.id })),
+  getModelOffer: protectedProcedure.input(getModelPromotionOfferSchema).query(({ input, ctx }) => {
+    assertPromotionsEnabled(ctx);
+    return getModelPromotionOffer({ ...input, placerId: ctx.user.id });
+  }),
 
   getPending: protectedProcedure
     .input(getPromotionQueueSchema)

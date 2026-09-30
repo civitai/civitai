@@ -3,7 +3,7 @@ import { IconAlertTriangle } from '@tabler/icons-react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import type { PromotionRunDays } from '~/shared/utils/promotion';
-import { promotionAmount, PROMOTION_RUN_DAYS } from '~/shared/utils/promotion';
+import { promotionAmount, promotionRunLabel, PROMOTION_RUN_DAYS } from '~/shared/utils/promotion';
 
 export const PROMOTION_CHECKOUT_TERMS =
   "Once the page owner accepts, your Buzz is theirs, and they can't end your promotion early. Promotions are not refunded if moderation removes them, or if you change or remove what you promoted.";
@@ -38,7 +38,7 @@ export function PromotionCheckout({
           onChange={(value) => onDaysChange(Number(value) as PromotionRunDays)}
           data={PROMOTION_RUN_DAYS.map((option) => ({
             value: String(option),
-            label: option === 1 ? '1 day' : `${option} days`,
+            label: promotionRunLabel(option),
           }))}
         />
       </Group>
