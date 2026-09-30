@@ -34,8 +34,9 @@ The clickable design of record is checked in — **open it before writing UI**:
    optional trigger word (model-dependent). ← next
 3. **Review & start** — Steps as the primary field shown as **"each image seen ~N×"** with a low
    warning; type acts as a preset; advanced collapsed; sample prompts; whatif price; Start.
-4. **Results (live)** — progress header (step/checkpoint, no loss/LR), epoch cards stream in; then
-   Publish / Generate / Save+Download / Train further / Remix.
+4. **Results (live)** — progress header (step/checkpoint, no loss/LR), a collapsible loss graph read
+   from every epoch's trace, epoch cards stream in; then Publish / Generate / Save+Download / Train
+   further / Remix.
 
 Landing is **My trainings** (`src/routes/MyTrainings.svelte`) — the reconnect surface; "New training"
 enters the flow.
