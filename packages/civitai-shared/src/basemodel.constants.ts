@@ -1036,6 +1036,20 @@ const fullAddonTypes = [
   ModelType.TextualInversion,
 ];
 
+/**
+ * Everything `fullAddonTypes` has except TextualInversion, for an ecosystem whose
+ * generation endpoint carries `loras` but no `embeddings` field. Listing TI here
+ * makes it SELECTABLE and then silently undeliverable: the handler has nowhere to
+ * put it, so the image comes out without it while the metadata still credits it.
+ */
+const addonTypesWithoutEmbeddings = [
+  ModelType.Checkpoint,
+  ModelType.LORA,
+  ModelType.DoRA,
+  ModelType.LoCon,
+  ModelType.VAE,
+];
+
 const checkpointAndLora = [ModelType.Checkpoint, ModelType.LORA];
 const checkpointOnly = [ModelType.Checkpoint];
 const loraOnly = [ModelType.LORA];
@@ -1085,7 +1099,7 @@ export const ecosystemSupport: EcosystemSupport[] = [
   { ecosystemId: ECO.Flux2Klein_4B_base, supportType: 'generation', modelTypes: checkpointAndLora },
 
   // Chroma - full addon support
-  { ecosystemId: ECO.Chroma, supportType: 'generation', modelTypes: fullAddonTypes },
+  { ecosystemId: ECO.Chroma, supportType: 'generation', modelTypes: addonTypesWithoutEmbeddings },
   { ecosystemId: ECO.Chroma, supportType: 'training', modelTypes: loraOnly },
 
   // Qwen - checkpoint and LORA
@@ -4186,6 +4200,13 @@ export function filterCompatibleResources<T extends ResourceLikeForCompat & { id
     if (!r.baseModel) return true;
     const bm = baseModelByName.get(r.baseModel);
     if (!bm) return true;
+    // `getGenerationSupport` returns 'full' for ANY same-ecosystem pair without
+    // consulting the ecosystem's own `modelTypes`, so on its own this filter cannot
+    // drop a type the ecosystem does not support for generation — a Chroma
+    // TextualInversion survived here while `canGenerate` said false, leaving a
+    // selection the form refused and nothing could clear. Ask the eligibility
+    // derivation first; cross-ecosystem cases still fall through to the rules below.
+    if (!isBaseModelGenerationSupported(r.baseModel, r.model.type as ModelType)) return false;
     return getGenerationSupport(ecosystemId, bm.ecosystemId, r.model.type as ModelType) !== null;
   });
 }
