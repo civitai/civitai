@@ -6,10 +6,17 @@ import type { MembershipTier } from '~/shared/utils/subscription-tokens';
  * is which — a surface supplies its own payload and render, and reaches this
  * layer only through the table below.
  */
-export type PlacementSurface = 'sticker' | 'remixGallery';
+export type PlacementSurface = 'sticker' | 'remixGallery' | 'galleryPromotion' | 'modelPromotion';
 
 /** Where a space can be configured. Resolution runs image -> post -> account. */
 export type PlacementSpaceEntity = 'image' | 'post' | 'user';
+
+/**
+ * What a placement sits on. Not the same set as `PlacementSpaceEntity`: a
+ * gallery promotion sits on a model, but its space is configured on the
+ * owner's account only.
+ */
+export type PlacementTargetType = 'image' | 'model';
 
 export type PlacementSpaceMode =
   /** Nothing may be placed. */
@@ -138,6 +145,28 @@ export const PLACEMENT_LEDGER_TEXT: Record<
     toPlatform: 'Platform share of a remix submission',
     forfeit: 'Forfeited remix submission',
   },
+  galleryPromotion: {
+    holdFee: 'Gallery promotion fee, held while the creator decides',
+    holdPrincipal: 'Gallery promotion, held while the creator decides',
+    toOwner: 'Someone promoted a post in your gallery',
+    feeToOwner: 'Fee kept from a gallery promotion you declined',
+    toSeller: 'Share of a gallery promotion',
+    principalToPlacer: 'Refund: your gallery promotion',
+    feeToPlacer: 'Refund: gallery promotion fee',
+    toPlatform: 'Platform share of a gallery promotion',
+    forfeit: 'Forfeited gallery promotion',
+  },
+  modelPromotion: {
+    holdFee: 'Model promotion fee, held while the creator decides',
+    holdPrincipal: 'Model promotion, held while the creator decides',
+    toOwner: 'Someone promoted a model on your model page',
+    feeToOwner: 'Fee kept from a model promotion you declined',
+    toSeller: 'Share of a model promotion',
+    principalToPlacer: 'Refund: your model promotion',
+    feeToPlacer: 'Refund: model promotion fee',
+    toPlatform: 'Platform share of a model promotion',
+    forfeit: 'Forfeited model promotion',
+  },
 };
 
 /** The placement descriptions a Buzz surface may render to a user verbatim. */
@@ -211,11 +240,53 @@ export const PLACEMENT_SURFACES = {
     // else's page, so every entry passes its owner.
     allowedModes: ['off', 'review'],
   },
+  /**
+   * A paid post shown in a model's gallery for a fixed run. `price` is per day;
+   * the placement's `amount` is price × run days.
+   */
+  galleryPromotion: {
+    label: 'gallery promotions',
+    targets: ['model'],
+    // On by default and reviewed, like the remix gallery: a host earns only
+    // from what they accept, so opting in costs them nothing.
+    defaultMode: 'review',
+    defaultPrice: 100,
+    trackMinPrice: 50,
+    serverMinPrice: 50,
+    defaultDeclineFeeRate: 0.3,
+    defaultSellerShare: 0,
+    defaultPlatformShare: 0,
+    expiryHours: 48,
+    // Nobody gets a free ad slot.
+    defaultFreeSlots: 0,
+    maxPendingPerOwner: 10,
+    allowedModes: ['off', 'review'],
+  },
+  /**
+   * A paid card for another model in a model page's Suggested Resources, for a
+   * fixed run. Priced per day like `galleryPromotion`, and configured apart
+   * from it so a host can price the two slots differently.
+   */
+  modelPromotion: {
+    label: 'model promotions',
+    targets: ['model'],
+    defaultMode: 'review',
+    defaultPrice: 100,
+    trackMinPrice: 50,
+    serverMinPrice: 50,
+    defaultDeclineFeeRate: 0.3,
+    defaultSellerShare: 0,
+    defaultPlatformShare: 0,
+    expiryHours: 48,
+    defaultFreeSlots: 0,
+    maxPendingPerOwner: 10,
+    allowedModes: ['off', 'review'],
+  },
 } as const satisfies Record<
   PlacementSurface,
   {
     label: string;
-    targets: readonly PlacementSpaceEntity[];
+    targets: readonly PlacementTargetType[];
     defaultMode: PlacementSpaceMode;
     defaultPrice: number | null;
     /** The bottom of the price slider's track. Presentation only. */

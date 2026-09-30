@@ -84,6 +84,8 @@ import { domainSpendType } from '~/server/utils/buzz-helpers';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { domainServableLevels, viewerBrowsingLevel } from '~/server/utils/browsing-level';
 import type { PlacementSurface } from '~/shared/utils/placement';
+import { isPromotionSurface } from '~/shared/utils/promotion';
+import { assertPromotionsEnabled } from '~/server/utils/promotion-gate';
 import type { Context } from '~/server/createContext';
 
 /**
@@ -128,6 +130,7 @@ function assertRemixGalleryEnabled(ctx: Context) {
  */
 function assertSurfaceEnabled(ctx: Context, surface: PlacementSurface) {
   if (surface === 'remixGallery') return assertRemixGalleryEnabled(ctx);
+  if (isPromotionSurface(surface)) return assertPromotionsEnabled(ctx);
   return assertPlacementEnabled(ctx);
 }
 

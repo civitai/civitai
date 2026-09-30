@@ -37,6 +37,7 @@ import {
 import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
 import { buildSearchActor } from '~/server/meilisearch/client';
 import { getGallerySettingsByModelId } from '~/server/services/model.service';
+import { getSponsoredGalleryPost } from '~/server/services/promotion.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import { queueComicsForPanelImage } from '~/server/services/nsfwLevels.service';
@@ -455,6 +456,36 @@ export const getImagesAsPostsInfiniteHandler = async ({
       }
     }
 
+    // A paid, host-accepted promotion, shown after the pinned posts on the first
+    // page only. Fetched like a pinned post so the viewer's own level and filters
+    // still apply to it.
+    const sponsored: ResultType[] = [];
+    const sponsoredPost =
+      !cursor && features.creatorPromotions && input.modelId && input.modelVersionId
+        ? await getSponsoredGalleryPost({
+            modelId: input.modelId,
+            modelVersionId: input.modelVersionId,
+          }).catch(() => undefined)
+        : undefined;
+    if (sponsoredPost && !versionPinnedPosts.includes(sponsoredPost.postId)) {
+      const { items: sponsoredImages } = await getAllImages({
+        ...input,
+        domain: getRequestBoardDomainColor(ctx.req),
+        modelVersionId: undefined,
+        modelId: undefined,
+        reviewId: undefined,
+        limit: POST_IMAGE_LIMIT,
+        followed: false,
+        postIds: [sponsoredPost.postId],
+        user,
+        headers: { src: 'getImagesAsPostsInfiniteHandler' },
+        include: [...input.include, 'tagIds', 'profilePictures'],
+        dbTarget: 'datapacket',
+      });
+      sponsored.push(...(sponsoredImages as ResultType[]));
+    }
+    const sponsoredPostId = sponsored.length ? sponsoredPost?.postId : undefined;
+
     const actor = buildSearchActor({
       userId: user?.id,
       ip: ctx.ip,
@@ -480,7 +511,12 @@ export const getImagesAsPostsInfiniteHandler = async ({
       // Merge images by postId
       for (const image of items) {
         // Skip images that aren't part of a post or are pinned
-        if (!image?.postId || versionPinnedPosts.includes(image.postId)) continue;
+        if (
+          !image?.postId ||
+          versionPinnedPosts.includes(image.postId) ||
+          image.postId === sponsoredPostId
+        )
+          continue;
         if (!posts[image.postId]) posts[image.postId] = [];
         posts[image.postId].push(image);
       }
@@ -560,6 +596,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         postId: image.postId as number,
         // postTitle: image.postTitle,
         pinned: !!(image.postId && pinned[image.postId]),
+        sponsored: false,
         nsfwLevel,
         modelVersionId: image.modelVersionId,
         publishedAt: image.publishedAt,
@@ -646,6 +683,28 @@ export const getImagesAsPostsInfiniteHandler = async ({
         if (b.pinned) return 1;
         return aCreatedAt - bCreatedAt;
       });
+
+    if (sponsoredPostId) {
+      const [first] = sponsored;
+      const createdAt = sponsored.map((image) => new Date(image.sortAt)).sort()[0];
+      let nsfwLevel = 0;
+      for (const image of sponsored) nsfwLevel = Flags.addFlag(nsfwLevel, image.nsfwLevel);
+      // With no pins it takes position 2, so the page still opens on an organic post.
+      const pinnedCount = results.filter((result) => result.pinned).length;
+      results.splice(pinnedCount || Math.min(1, results.length), 0, {
+        postId: sponsoredPostId,
+        pinned: false,
+        sponsored: true,
+        nsfwLevel,
+        modelVersionId: first.modelVersionId,
+        publishedAt: first.publishedAt,
+        sortAt: first.sortAt,
+        createdAt,
+        user: first.user,
+        ...buildPostImagesWire(sponsored, { lazy: features.galleryLazyPostImages }),
+        review: undefined,
+      });
+    }
 
     return {
       nextCursor: cursor,

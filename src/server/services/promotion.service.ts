@@ -1,0 +1,660 @@
+import type { Prisma } from '@prisma/client';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
+import { tagIdsForImagesCache } from '~/server/redis/caches';
+import type { ModelGallerySettingsSchema } from '~/server/schema/model.schema';
+import { getCreatorGalleryHiddenUserIds } from '~/server/services/creator-gallery-hidden-users.service';
+import { holdPlacementEscrow, settlePlacement } from '~/server/services/placement-escrow.service';
+import { assertCanPlace } from '~/server/services/placement-moderation.service';
+import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
+import {
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { Flags } from '~/shared/utils/flags';
+import { PLACEMENT_SURFACES } from '~/shared/utils/placement';
+import { ModelModifier, ModelStatus } from '~/shared/utils/prisma/enums';
+import type {
+  GalleryHostSettings,
+  GalleryPromotionData,
+  GalleryPromotionRefusal,
+  ModelPromotionData,
+  PromotionSurface,
+} from '~/shared/utils/promotion';
+import {
+  galleryPromotionRefusal,
+  isPromotionLive,
+  isPromotionRunDays,
+  isPromotionSurface,
+  parseGalleryPromotionData,
+  parseModelPromotionData,
+  promotionAmount,
+  PROMOTION_RUN_DAYS,
+  PROMOTION_TARGET_TYPE,
+} from '~/shared/utils/promotion';
+
+const LIVE_STATUSES = ['pending', 'approved'] as const;
+const MAX_RUN_MS = Math.max(...PROMOTION_RUN_DAYS) * 24 * 60 * 60 * 1000;
+
+type HostModel = {
+  id: number;
+  userId: number;
+  nsfwLevel: number;
+  poi: boolean;
+  minor: boolean;
+  sfwOnly: boolean;
+  status: string;
+  mode: string | null;
+  availability: string;
+  deletedAt: Date | null;
+  gallerySettings: Prisma.JsonValue;
+};
+
+/** From the primary: these decide a mutation and what it charges. */
+async function loadModel(modelId: number): Promise<HostModel> {
+  const model = await dbWrite.model.findUnique({
+    where: { id: modelId },
+    select: {
+      id: true,
+      userId: true,
+      nsfwLevel: true,
+      poi: true,
+      minor: true,
+      sfwOnly: true,
+      status: true,
+      mode: true,
+      availability: true,
+      deletedAt: true,
+      gallerySettings: true,
+    },
+  });
+  if (!model) throw throwNotFoundError('promotion: that model no longer exists');
+  return model;
+}
+
+const isShowableModel = (model: HostModel) =>
+  model.status === ModelStatus.Published &&
+  !model.deletedAt &&
+  !model.poi &&
+  model.availability !== 'Private' &&
+  model.mode !== ModelModifier.TakenDown &&
+  model.mode !== ModelModifier.Archived;
+
+/**
+ * The highest browsing level the host's page accepts a promotion at. The host
+ * sets it through the model's gallery level; a minor or SFW-only model is held
+ * to PG/PG-13 and the host cannot raise it, matching the gallery's own lock.
+ */
+export function hostPromotionLevel(
+  model: Pick<HostModel, 'minor' | 'sfwOnly' | 'gallerySettings'>
+) {
+  if (model.minor || model.sfwOnly) return sfwBrowsingLevelsFlag;
+  const level = (model.gallerySettings as ModelGallerySettingsSchema | null)?.level;
+  return level ? Flags.intersection(level, allBrowsingLevelsFlag) : allBrowsingLevelsFlag;
+}
+
+async function loadGalleryHostSettings(model: HostModel): Promise<GalleryHostSettings> {
+  const settings = (model.gallerySettings ?? {}) as ModelGallerySettingsSchema;
+  const creatorHidden = await getCreatorGalleryHiddenUserIds(model.userId, { fresh: true });
+  return {
+    hiddenUserIds: [...(settings.users ?? []), ...creatorHidden],
+    hiddenTagIds: settings.tags ?? [],
+    hiddenImageIds: Object.values(settings.hiddenImages ?? {}).flat(),
+  };
+}
+
+const GALLERY_REFUSAL_MESSAGE: Record<GalleryPromotionRefusal, string> = {
+  noImages: 'promotion: that post has no images to show',
+  unrated: 'promotion: that post is still being rated',
+  aboveMaxLevel: "promotion: that post is rated above what this model's page shows",
+  aboveGalleryLevel: "promotion: that post is rated above what this model's page shows",
+  hiddenByHost: 'promotion: not available for this gallery',
+};
+
+type PromotedPostImage = {
+  id: number;
+  nsfwLevel: number;
+  ingestion: string;
+  needsReview: string | null;
+  minor: boolean;
+  poi: boolean;
+  tosViolation: boolean;
+};
+
+async function loadPromotedPost(postId: number) {
+  const post = await dbWrite.post.findUnique({
+    where: { id: postId },
+    select: { id: true, userId: true, publishedAt: true, tosViolation: true },
+  });
+  if (!post) throw throwNotFoundError('promotion: that post no longer exists');
+
+  const images = await dbWrite.$queryRaw<PromotedPostImage[]>`
+    SELECT i.id, i."nsfwLevel", i.ingestion::text AS ingestion, i."needsReview",
+           i.minor, i.poi, i."tosViolation"
+    FROM "Image" i
+    WHERE i."postId" = ${postId}
+  `;
+  return { post, images };
+}
+
+/** Which of the host model's versions the post's images were made with, per resource detection. */
+async function hostVersionsUsedByPost({ postId, modelId }: { postId: number; modelId: number }) {
+  const rows = await dbWrite.$queryRaw<{ modelVersionId: number }[]>`
+    SELECT DISTINCT ir."modelVersionId"
+    FROM "ImageResourceNew" ir
+    JOIN "Image" i ON i.id = ir."imageId"
+    JOIN "ModelVersion" mv ON mv.id = ir."modelVersionId"
+    WHERE i."postId" = ${postId} AND mv."modelId" = ${modelId}
+  `;
+  return rows.map((row) => row.modelVersionId);
+}
+
+/**
+ * Everything that decides whether a post may be promoted in a gallery right now.
+ * Run at purchase and again when the host accepts, so an accept honours the
+ * host's settings as they stand at review.
+ */
+async function assertGalleryPromotable({
+  placerId,
+  postId,
+  host,
+}: {
+  placerId: number;
+  postId: number;
+  host: HostModel;
+}) {
+  if (!isShowableModel(host))
+    throw throwBadRequestError('promotion: this model is not accepting promotions right now');
+
+  const { post, images } = await loadPromotedPost(postId);
+  if (post.userId !== placerId)
+    throw throwAuthorizationError('promotion: you can only promote your own posts');
+  if (!post.publishedAt || post.tosViolation)
+    throw throwBadRequestError('promotion: only published posts can be promoted');
+  if (
+    images.some(
+      (image) =>
+        image.ingestion !== 'Scanned' ||
+        image.needsReview ||
+        image.minor ||
+        image.poi ||
+        image.tosViolation
+    )
+  )
+    throw throwBadRequestError('promotion: that post cannot be promoted');
+
+  const modelVersionIds = await hostVersionsUsedByPost({ postId, modelId: host.id });
+  if (!modelVersionIds.length)
+    throw throwBadRequestError('promotion: that post was not made with this model');
+
+  const tagIds = await tagIdsForImagesCache.fetch(images.map((image) => image.id));
+  const refusal = galleryPromotionRefusal({
+    placerId,
+    images: images.map((image) => ({
+      id: image.id,
+      nsfwLevel: image.nsfwLevel,
+      tagIds: tagIds[image.id]?.tags ?? [],
+    })),
+    host: await loadGalleryHostSettings(host),
+    maxLevel: hostPromotionLevel(host),
+  });
+  if (refusal) throw throwBadRequestError(GALLERY_REFUSAL_MESSAGE[refusal]);
+
+  return { modelVersionIds };
+}
+
+async function assertModelPromotable({
+  placerId,
+  promotedModelId,
+  host,
+}: {
+  placerId: number;
+  promotedModelId: number;
+  host: HostModel;
+}) {
+  if (!isShowableModel(host))
+    throw throwBadRequestError('promotion: this model is not accepting promotions right now');
+  if (promotedModelId === host.id)
+    throw throwBadRequestError('promotion: a model cannot be promoted on its own page');
+
+  const promoted = await loadModel(promotedModelId);
+  if (promoted.userId !== placerId)
+    throw throwAuthorizationError('promotion: you can only promote your own models');
+  if (!isShowableModel(promoted) || promoted.minor)
+    throw throwBadRequestError('promotion: that model cannot be promoted');
+  if (!promoted.nsfwLevel || !Flags.hasFlag(hostPromotionLevel(host), promoted.nsfwLevel))
+    throw throwBadRequestError("promotion: that model is rated above what this model's page shows");
+}
+
+type CreatePromotionBase = {
+  placerId: number;
+  /** The host model: the page the promotion shows on. */
+  modelId: number;
+  days: number;
+  /** The daily price the buyer was shown. Refused if the host has moved it since. */
+  expectedPrice?: number;
+  /** Decided at the router from the request's domain, never from the client. */
+  spendType: BuzzSpendType;
+};
+
+/** Everything both surfaces refuse on before a row exists. */
+async function preparePromotion({
+  surface,
+  placerId,
+  modelId,
+  days,
+  expectedPrice,
+}: CreatePromotionBase & { surface: PromotionSurface }) {
+  if (!isPromotionRunDays(days))
+    throw throwBadRequestError(`promotion: runs are ${PROMOTION_RUN_DAYS.join(', ')} days`);
+
+  const space = await resolvePlacementSpaceFor({
+    surface,
+    targetType: PROMOTION_TARGET_TYPE,
+    targetId: modelId,
+  });
+  if (space.mode === 'off')
+    throw throwBadRequestError('promotion: this creator is not accepting promotions');
+  // `review` is the only open mode these surfaces allow. A row written outside
+  // the settings mutation would still read back, so this refuses it.
+  if (space.mode !== 'review')
+    throw throwBadRequestError('promotion: promotions here need the creator to review them');
+  if (space.ownerId === placerId)
+    throw throwBadRequestError('promotion: you cannot promote on your own page');
+
+  if (space.price == null)
+    throw throwBadRequestError('promotion: this creator has not set a price yet');
+  if (space.price < PLACEMENT_SURFACES[surface].serverMinPrice)
+    throw throwBadRequestError('promotion: this page is not priced for promotions');
+  if (expectedPrice != null && expectedPrice !== space.price)
+    throw throwBadRequestError(
+      `promotion: the price changed to ${space.price} Buzz a day while you were deciding`
+    );
+
+  return { space, days, dailyPrice: space.price };
+}
+
+async function assertUnderPendingCap({
+  surface,
+  ownerId,
+  placerId,
+}: {
+  surface: PromotionSurface;
+  ownerId: number;
+  placerId: number;
+}) {
+  const pending = await dbWrite.placement.count({
+    where: { surface, ownerId, placerId, status: 'pending' },
+  });
+  if (pending >= PLACEMENT_SURFACES[surface].maxPendingPerOwner)
+    throw throwBadRequestError(
+      'promotion: you already have the maximum promotions waiting with this creator'
+    );
+}
+
+/**
+ * One promoted thing per page at a time, pending or live. A second copy would
+ * only buy a second slot of the same rotation, or hand the host a second fee for
+ * the same decision.
+ */
+async function assertNotAlreadyPromoted({
+  surface,
+  modelId,
+  key,
+  value,
+}: {
+  surface: PromotionSurface;
+  modelId: number;
+  key: 'postId' | 'modelId';
+  value: number;
+}) {
+  const rows = await dbWrite.placement.findMany({
+    where: {
+      surface,
+      targetType: PROMOTION_TARGET_TYPE,
+      targetId: modelId,
+      status: { in: [...LIVE_STATUSES] },
+      data: { path: [key], equals: value },
+    },
+    select: { status: true, resolvedAt: true, data: true },
+  });
+  const blocking = rows.some((row) => {
+    if (row.status === 'pending') return true;
+    const days = (row.data as { days?: unknown } | null)?.days;
+    return (
+      !!row.resolvedAt &&
+      isPromotionRunDays(days) &&
+      isPromotionLive({ acceptedAt: row.resolvedAt, days })
+    );
+  });
+  if (blocking) throw throwBadRequestError('promotion: that is already promoted on this page');
+}
+
+/**
+ * Creates the placement row and takes the escrow. The row must exist before the
+ * escrow can reference it, so a failure after the insert expires it, which
+ * refunds through real refunds of real holds. Same order as the remix gallery.
+ */
+async function createPromotionPlacement({
+  surface,
+  modelId,
+  ownerId,
+  placerId,
+  amount,
+  data,
+  spendType,
+}: {
+  surface: PromotionSurface;
+  modelId: number;
+  ownerId: number;
+  placerId: number;
+  amount: number;
+  data: GalleryPromotionData | ModelPromotionData;
+  spendType: BuzzSpendType;
+}) {
+  await assertCanPlace({ ownerId, placerId });
+  await assertUnderPendingCap({ surface, ownerId, placerId });
+
+  const placement = await dbWrite.placement.create({
+    data: {
+      surface,
+      targetType: PROMOTION_TARGET_TYPE,
+      targetId: modelId,
+      ownerId,
+      placerId,
+      sellerId: null,
+      amount,
+      status: 'pending',
+      data: data as Prisma.InputJsonValue,
+    },
+    select: { id: true },
+  });
+
+  try {
+    await holdPlacementEscrow({ placementId: placement.id, placerId, surface, amount, spendType });
+  } catch (error) {
+    await settlePlacement({ placementId: placement.id, action: 'expire' }).catch((settleError) =>
+      logToAxiom({
+        name: 'promotion',
+        type: 'error',
+        message: 'compensating settle failed; escrow may be held for a rejected promotion',
+        placementId: placement.id,
+        error: settleError instanceof Error ? settleError.message : String(settleError),
+      }).catch(() => undefined)
+    );
+    throw error;
+  }
+
+  return placement;
+}
+
+export async function createGalleryPromotion({
+  postId,
+  ...input
+}: CreatePromotionBase & { postId: number }) {
+  const surface = 'galleryPromotion' as const;
+  const { space, days, dailyPrice } = await preparePromotion({ ...input, surface });
+  const host = await loadModel(input.modelId);
+  const { modelVersionIds } = await assertGalleryPromotable({
+    placerId: input.placerId,
+    postId,
+    host,
+  });
+  await assertNotAlreadyPromoted({ surface, modelId: host.id, key: 'postId', value: postId });
+
+  return createPromotionPlacement({
+    surface,
+    modelId: host.id,
+    ownerId: space.ownerId,
+    placerId: input.placerId,
+    amount: promotionAmount(dailyPrice, days),
+    data: { postId, days, modelVersionIds },
+    spendType: input.spendType,
+  });
+}
+
+export async function createModelPromotion({
+  promotedModelId,
+  ...input
+}: CreatePromotionBase & { promotedModelId: number }) {
+  const surface = 'modelPromotion' as const;
+  const { space, days, dailyPrice } = await preparePromotion({ ...input, surface });
+  const host = await loadModel(input.modelId);
+  await assertModelPromotable({ placerId: input.placerId, promotedModelId, host });
+  await assertNotAlreadyPromoted({
+    surface,
+    modelId: host.id,
+    key: 'modelId',
+    value: promotedModelId,
+  });
+
+  return createPromotionPlacement({
+    surface,
+    modelId: host.id,
+    ownerId: space.ownerId,
+    placerId: input.placerId,
+    amount: promotionAmount(dailyPrice, days),
+    data: { modelId: promotedModelId, days },
+    spendType: input.spendType,
+  });
+}
+
+/**
+ * The host's answer to a pending promotion. Accepting pays the host at once
+ * (the standard placement settle) and starts the run; `resolvedAt` is the start.
+ *
+ * There is no remove. A host is held to an accepted run for
+ * `PROMOTION_REMOVAL_LOCK_HOURS`, which outlasts every run, so the only ways a
+ * run ends early are a moderator takedown or the buyer's own change.
+ */
+export async function actOnPromotion({
+  placementId,
+  action,
+  userId,
+}: {
+  placementId: number;
+  action: 'approve' | 'decline';
+  userId: number;
+}) {
+  const placement = await dbWrite.placement.findUnique({
+    where: { id: placementId },
+    select: {
+      id: true,
+      surface: true,
+      targetId: true,
+      ownerId: true,
+      placerId: true,
+      status: true,
+      data: true,
+    },
+  });
+  if (!placement || !isPromotionSurface(placement.surface))
+    throw throwNotFoundError('promotion: that promotion no longer exists');
+  if (placement.ownerId !== userId)
+    throw throwAuthorizationError('promotion: that promotion is not on your page');
+  if (placement.status !== 'pending')
+    throw throwBadRequestError(`promotion: that promotion is already ${placement.status}`);
+
+  if (action === 'approve') {
+    const host = await loadModel(placement.targetId);
+    if (placement.surface === 'galleryPromotion') {
+      const data = parseGalleryPromotionData(placement.data);
+      if (!data) throw throwBadRequestError('promotion: that promotion cannot be shown');
+      await assertGalleryPromotable({ placerId: placement.placerId, postId: data.postId, host });
+    } else {
+      const data = parseModelPromotionData(placement.data);
+      if (!data) throw throwBadRequestError('promotion: that promotion cannot be shown');
+      await assertModelPromotable({
+        placerId: placement.placerId,
+        promotedModelId: data.modelId,
+        host,
+      });
+    }
+  }
+
+  const result = await settlePlacement({ placementId, action, actorId: userId });
+  if (!result.settled)
+    throw throwBadRequestError('promotion: that promotion was already answered elsewhere');
+  return result;
+}
+
+type LivePromotionRow = { id: number; placerId: number; resolvedAt: Date | null; data: unknown };
+
+async function liveApprovedPromotions({
+  surface,
+  modelId,
+}: {
+  surface: PromotionSurface;
+  modelId: number;
+}) {
+  const rows: LivePromotionRow[] = await dbRead.placement.findMany({
+    where: {
+      surface,
+      targetType: PROMOTION_TARGET_TYPE,
+      targetId: modelId,
+      status: 'approved',
+      resolvedAt: { gt: new Date(Date.now() - MAX_RUN_MS) },
+    },
+    select: { id: true, placerId: true, resolvedAt: true, data: true },
+  });
+  return rows;
+}
+
+const pickOne = <T>(items: T[]) =>
+  items.length ? items[Math.floor(Math.random() * items.length)] : undefined;
+
+/**
+ * The sponsored post for one version's gallery, if any is running. Rotates
+ * between overlapping runs per request.
+ *
+ * The host's gallery settings are deliberately NOT re-applied here: they were
+ * checked at purchase and at accept, and the removal lock means a later change
+ * does not end an accepted run. Viewer-side filtering still happens when the
+ * post's images are fetched.
+ */
+export async function getSponsoredGalleryPost({
+  modelId,
+  modelVersionId,
+}: {
+  modelId: number;
+  modelVersionId: number;
+}) {
+  const rows = await liveApprovedPromotions({ surface: 'galleryPromotion', modelId });
+  const live = rows.flatMap((row) => {
+    const data = parseGalleryPromotionData(row.data);
+    if (!data || !row.resolvedAt) return [];
+    if (!isPromotionLive({ acceptedAt: row.resolvedAt, days: data.days })) return [];
+    if (!data.modelVersionIds.includes(modelVersionId)) return [];
+    return [{ placementId: row.id, postId: data.postId }];
+  });
+  return pickOne(live);
+}
+
+/** The sponsored model card for a model page's Suggested Resources, if any is running. */
+export async function getSponsoredModel({ modelId }: { modelId: number }) {
+  const rows = await liveApprovedPromotions({ surface: 'modelPromotion', modelId });
+  const live = rows.flatMap((row) => {
+    const data = parseModelPromotionData(row.data);
+    if (!data || !row.resolvedAt) return [];
+    if (!isPromotionLive({ acceptedAt: row.resolvedAt, days: data.days })) return [];
+    return [{ placementId: row.id, modelId: data.modelId }];
+  });
+  return pickOne(live);
+}
+
+/**
+ * The models a post was made with, other than the buyer's own, with each
+ * page's resolved promotion price. A listing only: the purchase re-decides all
+ * of it.
+ */
+export async function getPromotionHostsForPost({
+  postId,
+  placerId,
+}: {
+  postId: number;
+  placerId: number;
+}) {
+  const post = await dbRead.post.findUnique({ where: { id: postId }, select: { userId: true } });
+  if (!post || post.userId !== placerId) return [];
+
+  const models = await dbRead.$queryRaw<{ id: number; name: string; userId: number }[]>`
+    SELECT DISTINCT m.id, m.name, m."userId"
+    FROM "ImageResourceNew" ir
+    JOIN "Image" i ON i.id = ir."imageId"
+    JOIN "ModelVersion" mv ON mv.id = ir."modelVersionId"
+    JOIN "Model" m ON m.id = mv."modelId"
+    WHERE i."postId" = ${postId}
+      AND m."userId" != ${placerId}
+      AND m.status = 'Published'
+      AND m."deletedAt" IS NULL
+  `;
+
+  const hosts = await Promise.all(
+    models.map(async (model) => {
+      const space = await resolvePlacementSpaceFor({
+        surface: 'galleryPromotion',
+        targetType: PROMOTION_TARGET_TYPE,
+        targetId: model.id,
+      }).catch(() => null);
+      if (!space || space.mode !== 'review' || space.price == null) return null;
+      return { modelId: model.id, name: model.name, dailyPrice: space.price };
+    })
+  );
+  return hosts.filter((host): host is NonNullable<typeof host> => !!host);
+}
+
+const QUEUE_LIMIT = 50;
+
+/** Promotions waiting on this host, oldest first so the ones about to expire lead. */
+export const getPendingPromotions = ({
+  surface,
+  ownerId,
+}: {
+  surface: PromotionSurface;
+  ownerId: number;
+}) =>
+  dbRead.placement.findMany({
+    where: { surface, ownerId, status: 'pending' },
+    select: {
+      id: true,
+      targetId: true,
+      amount: true,
+      data: true,
+      createdAt: true,
+      expiresAt: true,
+      placer: { select: { id: true, username: true } },
+    },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    take: QUEUE_LIMIT,
+  });
+
+/** What this buyer has promoted, newest first, with enough to show the run's state. */
+export const getMyPromotions = ({
+  surface,
+  placerId,
+}: {
+  surface: PromotionSurface;
+  placerId: number;
+}) =>
+  dbRead.placement.findMany({
+    where: { surface, placerId },
+    select: {
+      id: true,
+      targetId: true,
+      amount: true,
+      status: true,
+      removedBy: true,
+      data: true,
+      createdAt: true,
+      resolvedAt: true,
+      takenDownAt: true,
+    },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    take: QUEUE_LIMIT,
+  });
