@@ -3,7 +3,10 @@
 -- Apply this MANUALLY, BEFORE the code that emits it deploys. We do not auto-run DDL (same policy as
 -- the Postgres migrations).
 --
--- 🔴 NOT YET APPLIED.
+-- ✅ COLUMN APPLIED 2026-09-30: `default.reports.entityType` carries 'crucible' = 18 on both replicas,
+-- 1..17 unchanged, no mutation scheduled.
+-- 🔴 The tracker-restart half is NOT recorded. Treat "is the tracker actually writing this value" as
+-- OPEN until the positive control below returns non-zero.
 --
 -- WHY. `ReportEntity` (src/shared/utils/report-helpers.ts) gains 'crucible', which
 -- `createReportHandler` emits as `entityType`. The column's newest definition —
