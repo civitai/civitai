@@ -1090,3 +1090,358 @@ describe('classifyException — extension tag: deliberate negatives (may be app 
     expect(classifyException(exc('TypeError', 'Novel app bug', APP_FRAME)).category).toBe('real');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// PHRASING VARIANTS. Each rule below already matched ONE spelling of an error the browser or the
+// server emits under several. Measured over 6h of dp-prod beacons (bot-filtered,
+// `context_error_category="real"`): 1,017 of 7,214 real exceptions — 14.1% — were a phrasing
+// variant of something the classifier was already meant to handle.
+//
+// 🔴 The DROP rules differ in whether they carry a SECOND conjunct, and every test group below is
+// shaped by that: the abort DROP is gated on `!hasProjectSourceFrame`, so adding a phrasing to it
+// changes the outcome only for beacons whose stack proves nothing; the autoplay DROP has no such
+// gate, so its new phrasing is anchored to the whole message instead.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+describe('classifyException — GROUP A: abort phrasing variants (drop is stack-gated)', () => {
+  // Chromium emits a different sentence per reason a play() promise was superseded, and the help
+  // URL is appended on some builds and not others. All four forms are the same benign event.
+  it.each([
+    [
+      'AbortError',
+      'The play() request was interrupted because the media was removed from the document. https://goo.gl/LdLk22',
+    ],
+    [
+      'AbortError',
+      'The play() request was interrupted because video-only background media was paused to save power. https://goo.gl/LdLk22',
+    ],
+    [
+      'AbortError',
+      'The play() request was interrupted because the media was removed from the document.',
+    ],
+    ['AbortError', 'Fetch is aborted'],
+    ['AbortError', 'BodyStreamBuffer was aborted'],
+  ])('drops the abort phrasing %s / %s when the stack proves nothing', (type, value) => {
+    const r = classifyException(exc(type, value));
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('abort');
+  });
+
+  // 🔴 THE BOUND, PINNED. The abort rule is conjoined with `!hasProjectSourceFrame`, so these
+  // phrasings do NOT drop unconditionally — a beacon carrying an app frame is still KEPT. This is
+  // the test that stops the volume figures above being read as "479 beacons stop arriving".
+  it.each([
+    [
+      'AbortError',
+      'The play() request was interrupted because the media was removed from the document.',
+    ],
+    ['AbortError', 'Fetch is aborted'],
+    ['AbortError', 'BodyStreamBuffer was aborted'],
+  ])('KEEPS %s / %s when the stack carries a project-source frame', (type, value) => {
+    const r = classifyException(exc(type, value, APP_FRAME));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // The message-only form: Faro sometimes folds the type into the value, and the two short
+  // phrasings are anchored, so their optional `SomeError: ` prefix is the only thing that lets
+  // them match it. Nothing else observes that prefix on these two patterns.
+  it.each([['AbortError: Fetch is aborted'], ['AbortError: BodyStreamBuffer was aborted']])(
+    'drops %s carried entirely in the message',
+    (value) => {
+      const r = classifyException({ value });
+      expect(r.drop).toBe(true);
+      expect(r.category).toBe('abort');
+    }
+  );
+
+  // 🔴 SAFETY (invariant guards — green before this change too, kept as false-drop guards). The
+  // two short phrasings are anchored BECAUSE they are short. These fixtures deliberately carry NO
+  // stack at all, so the rule's `!hasProjectSourceFrame` conjunct offers no protection and the
+  // anchoring is the only thing keeping them: relaxing either pattern to a substring turns all
+  // three red.
+  it.each([
+    ['Error', 'Model fetch is aborted by the retry budget after 3 attempts'],
+    [
+      'Error',
+      'BodyStreamBuffer was aborted while streaming the user upload, so the draft was lost',
+    ],
+    ['Error', 'Upload cancelled: fetch is aborted downstream'],
+  ])('does NOT drop the real app error %s / %s (anchoring is the only guard)', (type, value) => {
+    const r = classifyException(exc(type, value));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // Invariant guard: the enumerated reason clauses must not collapse into a bare
+  // `The play() request was interrupted` prefix match, which would drop an unmeasured phrasing.
+  it('does NOT drop an unenumerated play() interruption reason', () => {
+    const r = classifyException(
+      exc(
+        'AbortError',
+        'The play() request was interrupted by a smoke alarm. https://goo.gl/LdLk22'
+      )
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+});
+
+describe('classifyException — GROUP B: the autoplay gesture phrasing (drop is UNGATED)', () => {
+  it('drops the Chromium gesture-required phrasing', () => {
+    const r = classifyException(
+      exc('NotAllowedError', 'play() can only be initiated by a user gesture.')
+    );
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('autoplay');
+  });
+
+  it('drops the gesture phrasing carried entirely in the message', () => {
+    const r = classifyException({
+      value: 'NotAllowedError: play() can only be initiated by a user gesture.',
+    });
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('autoplay');
+  });
+
+  // 🔴 The rule consults NO stack, so an app frame does not protect this one — pinned so the
+  // asymmetry with GROUP A is visible rather than inferred.
+  it('drops the gesture phrasing even with a project-source app frame (rule 3 is ungated)', () => {
+    const r = classifyException(
+      exc('NotAllowedError', 'play() can only be initiated by a user gesture.', APP_FRAME)
+    );
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('autoplay');
+  });
+
+  // 🔴 THE DELIBERATE EXCLUSION (invariant guard — green before this change, and it must stay
+  // green after). Same error TYPE, nearly the same sentence, entirely different meaning: this is a
+  // user permission denial (camera / microphone / clipboard), which may be a real bug in our own
+  // gating. `The play method is not allowed…` drops; `The request is not allowed…` must not.
+  it.each([[APP_FRAME], [undefined]])(
+    'does NOT drop the NotAllowedError PERMISSION-denial sibling (frames: %#)',
+    (frames) => {
+      const r = classifyException(
+        exc(
+          'NotAllowedError',
+          'The request is not allowed by the user agent or the platform in the current context, possibly because the user denied permission.',
+          frames
+        )
+      );
+      expect(r.drop).toBe(false);
+      expect(r.category).toBe('real');
+    }
+  );
+
+  // Invariant guard: anchoring is what makes an ungated DROP safe. No stack here either.
+  it('does NOT drop a real app error that merely QUOTES the gesture phrasing', () => {
+    const r = classifyException(
+      exc('Error', 'Autoplay bootstrap failed: play() can only be initiated by a user gesture.')
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+});
+
+describe('classifyException — GROUP C: TAG the MetaMask extension (kept, never dropped)', () => {
+  // The exception `type` arrives MINIFIED (`i`), so it carries no information and the match is on
+  // the VALUE alone. This is the shape that made 206 beacons land in `real`.
+  it('tags a minified-type MetaMask connect failure as extension', () => {
+    const r = classifyException(exc('i', 'Failed to connect to MetaMask'));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('extension');
+  });
+
+  it('tags a MetaMask connect failure that carries an app frame', () => {
+    const r = classifyException(exc('i', 'Failed to connect to MetaMask', APP_FRAME));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('extension');
+  });
+
+  // 🔴 KEEP+TAG, never DROP. A tag is recoverable — the beacon is in Loki and queryable by
+  // `context_error_category="extension"` — so if a first-party wallet connector ever ships, a
+  // mis-tag can be undone from the data. A drop could not be.
+  it('never drops a MetaMask error, whatever the stack shape', () => {
+    for (const frames of [undefined, APP_FRAME, { frames: [OTEL_FETCH_FRAME] }]) {
+      expect(classifyException(exc('i', 'Failed to connect to MetaMask', frames)).drop).toBe(false);
+    }
+  });
+
+  // Anchored at the start, so a mid-message occurrence is not evidence. Documented consequence,
+  // not an accident: this stays `real`.
+  it('does NOT tag a message that merely mentions the MetaMask failure mid-sentence', () => {
+    const r = classifyException(
+      exc('TypeError', 'Wallet bridge threw: Failed to connect to MetaMask', APP_FRAME)
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+});
+
+describe('classifyException — GROUP D: bizlogic phrasings (moderation + SFW-model block)', () => {
+  // The server builds this as `Your prompt was flagged: ${blockedFor.join(', ')}`, so the suffix
+  // is an open set. The pattern is anchored at the START and open at the end.
+  it.each([
+    ['Your prompt was flagged: breasts'],
+    ['Your prompt was flagged: Inappropriate minor content'],
+    // The `green`-currency variant appends a two-newline redirect hint after the reasons.
+    ['Your prompt was flagged: minor\n\nTry the SFW model instead.'],
+    // Matches what two live components already branch on: `startsWith('Your prompt was flagged')`,
+    // with no colon required.
+    ['Your prompt was flagged'],
+  ])('tags the moderation phrasing %j as bizlogic', (value) => {
+    const r = classifyException(exc('TRPCClientError', value));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('bizlogic');
+  });
+
+  it('tags the moderation phrasing carried entirely in the message', () => {
+    const r = classifyException({ value: 'TRPCClientError: Your prompt was flagged: breasts' });
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('bizlogic');
+  });
+
+  // The `green`/SFW-model rewrite of `Prompt requires mature content but workflow does not allow
+  // it` — same user state, different sentence. The tail is left unmatched so a reworded tail
+  // cannot silently make the pattern inert.
+  it.each([
+    [
+      'The prompt has been blocked due to mature content which is not supported by the current model',
+    ],
+    ['The prompt has been blocked due to mature content which this model cannot produce'],
+  ])('tags the SFW-model block %j as bizlogic', (value) => {
+    const r = classifyException(exc('TRPCClientError', value));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('bizlogic');
+  });
+
+  // Invariant guards: neither pattern may be reachable from the middle of an app message. The
+  // moderation one is anchored; the SFW one is a distinctive full clause. Both are KEEP+TAG, so
+  // the cost of a false positive is a mis-tag rather than lost data — but a mis-tag still hides a
+  // real bug from the `real` stream, which is what the dashboards and alerts count.
+  it.each([
+    ['Error', 'Could not determine whether your prompt was flagged: the audit call timed out'],
+    ['Error', 'Moderation sync failed while replaying flagged prompts'],
+    ['Error', 'The prompt has been saved to drafts'],
+  ])('does NOT tag %s / %s as bizlogic', (type, value) => {
+    const r = classifyException(exc(type, value, APP_FRAME));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // A bizlogic tag must never become a drop.
+  it('keeps every new bizlogic phrasing (tag-only, no drop)', () => {
+    for (const value of [
+      'Your prompt was flagged: breasts',
+      'The prompt has been blocked due to mature content which is not supported by the current model',
+    ]) {
+      expect(classifyException(exc('TRPCClientError', value)).drop).toBe(false);
+    }
+  });
+});
+
+// 🔴 GROUP E. Before this change, `/\(evaluating ['"]window\.ethereum/i` was the only DROP-or-TAG
+// predicate in the module that was an unanchored substring with NO second conjunct, and it fires
+// by design on beacons carrying app frames (rule 7 runs after every DROP). `viem` and
+// `@coinbase/cdp-sdk` are live dependencies, so the day a wallet connector ships,
+// `window.ethereum.*` becomes APP code and its genuine failures would be tagged out of `real`.
+// Requiring `.selectedAddress` costs nothing measurable: 0 of 364 hits referenced any other
+// property.
+describe('classifyException — GROUP E: window.ethereum narrowed to .selectedAddress', () => {
+  // No-regression pin: the shape that actually occurs still tags.
+  it.each([
+    ["undefined is not an object (evaluating 'window.ethereum.selectedAddress = undefined')"],
+    ["undefined is not an object (evaluating 'window.ethereum.selectedAddress')"],
+  ])('still tags the injected read %j as extension', (value) => {
+    const r = classifyException(exc('TypeError', value, APP_FRAME));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('extension');
+  });
+
+  // The prefix trap named in the brief: `window.ethereumProvider` matched the OLD pattern, because
+  // `window\.ethereum` is a prefix of it and nothing terminated the match.
+  it('does NOT tag window.ethereumProvider — it only matched as a PREFIX', () => {
+    const r = classifyException(
+      exc(
+        'TypeError',
+        "undefined is not an object (evaluating 'window.ethereumProvider.selectedAddress')",
+        APP_FRAME
+      )
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // Any OTHER property on the object is now app-attributable. These are the shapes a first-party
+  // wallet connector would produce.
+  it.each([
+    ["undefined is not an object (evaluating 'window.ethereum.request')"],
+    ["undefined is not an object (evaluating 'window.ethereum.enable()')"],
+    ["undefined is not an object (evaluating 'window.ethereum.on')"],
+  ])('does NOT tag the non-selectedAddress access %j', (value) => {
+    const r = classifyException(exc('TypeError', value, APP_FRAME));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // Invariant guard: narrowing one entry must not have touched its siblings on the same array.
+  it('still tags the __firefox__ object path (sibling pattern untouched)', () => {
+    const r = classifyException(
+      exc(
+        'TypeError',
+        "undefined is not an object (evaluating 'window.__firefox__.reader')",
+        APP_FRAME
+      )
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('extension');
+  });
+});
+
+// A single sweep asserting the pre-existing categories are all still reachable and unchanged.
+// Every phrasing added above went into an EXISTING rule, so the risk is a regex that swallowed a
+// neighbour rather than a new category behaving oddly.
+describe('classifyException — no-regression sweep across every category', () => {
+  it.each([
+    ['abort', true, exc('AbortError', 'The user aborted a request.')],
+    [
+      'adblock',
+      true,
+      exc(
+        'UnhandledRejection',
+        'Failed to load script: //securepubads.g.doubleclick.net/tag/js/gpt.js'
+      ),
+    ],
+    [
+      'autoplay',
+      true,
+      exc('NotAllowedError', 'The play method is not allowed by the user agent in this context'),
+    ],
+    ['script_error', true, exc('Error', 'Script error.')],
+    [
+      'injected',
+      true,
+      exc('ReferenceError', "Can't find variable: EmptyRanges", {
+        frames: [{ filename: 'undefined', lineno: 1705, colno: 541 }],
+      }),
+    ],
+    ['network', true, exc('TypeError', 'Failed to fetch')],
+    ['extension', false, exc('ReferenceError', "Can't find variable: __firefox__", APP_FRAME)],
+    ['bizlogic', false, exc('TRPCClientError', 'insufficientBuzz')],
+    ['chunkload', false, exc('ChunkLoadError', 'Loading chunk 4823 failed.')],
+    [
+      'meili',
+      false,
+      exc('MeiliSearchCommunicationError', 'request to https://search.civitai.com failed'),
+    ],
+    [
+      'real',
+      false,
+      exc('TypeError', "Cannot read properties of undefined (reading 'M_ID')", APP_FRAME),
+    ],
+  ])('%s still classifies as before (drop=%s)', (category, drop, payload) => {
+    const r = classifyException(payload as ClassifiableException);
+    expect(r.category).toBe(category);
+    expect(r.drop).toBe(drop);
+  });
+});
