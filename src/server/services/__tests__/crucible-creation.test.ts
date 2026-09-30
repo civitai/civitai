@@ -25,6 +25,7 @@ const crucibleUpdate = dbMock.dbWrite.crucible.update;
 const crucibleDelete = dbMock.dbWrite.crucible.delete;
 const crucibleUpdateMany = dbMock.dbWrite.crucible.updateMany;
 const modelVersionCount = dbMock.dbRead.modelVersion.count;
+const modelVersionFindMany = dbMock.dbRead.modelVersion.findMany;
 const getUserBuzzAccount = vi.fn();
 const createMultiAccountBuzzTransaction = vi.fn();
 const refundMultiAccountTransaction = vi.fn();
@@ -103,6 +104,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   balance(1_000_000);
   modelVersionCount.mockImplementation(allPublished);
+  modelVersionFindMany.mockResolvedValue([]);
   createMultiAccountBuzzTransaction.mockResolvedValue({ transactions: [] });
   refundMultiAccountTransaction.mockResolvedValue(undefined);
   assertCanCreateCrucible.mockResolvedValue(undefined);
@@ -375,6 +377,27 @@ describe('createCrucible — resource requirements', () => {
     });
     expect(crucibleCreate).not.toHaveBeenCalled();
     expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('refuses a required model that makes the other media type, before anything is written', async () => {
+    modelVersionFindMany.mockResolvedValue([
+      { baseModel: 'SDXL 1.0' },
+      { baseModel: 'MiniMax H3' },
+    ]);
+
+    await expect(createCrucible(input({ allowedResources: [123, 124] }))).rejects.toThrow(
+      /must make images/
+    );
+    expect(crucibleCreate).not.toHaveBeenCalled();
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('accepts a model that makes both images and videos', async () => {
+    modelVersionFindMany.mockResolvedValue([{ baseModel: 'Grok' }]);
+
+    await createCrucible(input({ allowedResources: [123] }));
+
+    expect(crucibleCreate).toHaveBeenCalled();
   });
 });
 

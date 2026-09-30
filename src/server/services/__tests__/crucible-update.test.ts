@@ -47,6 +47,7 @@ const HOUR = 60 * 60 * 1000;
 const findUnique = dbMock.dbRead.crucible.findUnique;
 const update = dbMock.dbWrite.crucible.update;
 const modelVersionCount = dbMock.dbRead.modelVersion.count;
+const modelVersionFindMany = dbMock.dbRead.modelVersion.findMany;
 
 /** Every id the service asks about counts as a published, public model version. */
 const allPublished = async ({ where }: { where: { id: { in: number[] } } }) => where.id.in.length;
@@ -102,6 +103,7 @@ beforeEach(() => {
   createMultiAccountBuzzTransaction.mockResolvedValue({ transactions: [] });
   refundMultiAccountTransaction.mockResolvedValue(undefined);
   modelVersionCount.mockImplementation(allPublished);
+  modelVersionFindMany.mockResolvedValue([]);
 });
 
 describe('updateCrucible — text scan', () => {
@@ -202,6 +204,43 @@ describe('updateCrucible — while upcoming', () => {
       where: expect.objectContaining({ id: { in: [11] } }),
     });
     expect(update).not.toHaveBeenCalled();
+  });
+
+  it('re-checks every required model against a new content type', async () => {
+    findUnique.mockResolvedValue(upcoming({ allowedResources: [10] }));
+    modelVersionFindMany.mockResolvedValue([{ baseModel: 'SDXL 1.0' }]);
+
+    await expect(edit({ contentType: MediaType.video })).rejects.toThrow(/must make videos/);
+    expect(modelVersionFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: [10] } } })
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('checks only newly added models when the content type stays', async () => {
+    findUnique.mockResolvedValue(upcoming({ allowedResources: [10] }));
+    modelVersionFindMany.mockImplementation(
+      async ({ where }: { where: { id: { in: number[] } } }) =>
+        where.id.in.map((id) => ({ baseModel: id === 10 ? 'MiniMax H3' : 'SDXL 1.0' }))
+    );
+
+    await edit({ name: 'Renamed' });
+    expect(written()).toMatchObject({ name: 'Renamed' });
+
+    await expect(edit({ allowedResources: [10, 12] })).resolves.toBeDefined();
+    expect(modelVersionFindMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ where: { id: { in: [12] } } })
+    );
+  });
+
+  it("doesn't re-check the requirements of a crucible that has started", async () => {
+    findUnique.mockResolvedValue(crucible({ allowedResources: [10] }));
+    modelVersionFindMany.mockResolvedValue([{ baseModel: 'MiniMax H3' }]);
+
+    await edit({ name: 'Renamed' });
+
+    expect(modelVersionFindMany).not.toHaveBeenCalled();
+    expect(written()).toMatchObject({ name: 'Renamed' });
   });
 
   it('does not re-check a required model the crucible already had', async () => {

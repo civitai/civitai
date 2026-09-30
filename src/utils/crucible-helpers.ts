@@ -1,4 +1,6 @@
+import type { MediaType } from '~/shared/utils/prisma/enums';
 import { CrucibleIngestionStatus, CrucibleStatus } from '~/shared/utils/prisma/enums';
+import { getBaseModelConfig } from '~/shared/constants/basemodel.constants';
 import {
   browsingLevelLabels,
   parseBitwiseBrowsingLevel,
@@ -19,6 +21,13 @@ export const toCrucibleBuzzType = (value: string): 'green' | 'yellow' =>
 
 export const getCrucibleUrl = (id: number, name: string) =>
   `/crucibles/${id}/${getCrucibleSlug(name)}`;
+
+/** "Other" (and any base model we don't know) says nothing about what it makes, so it passes. */
+export function baseModelMakesMediaType(baseModel: string, mediaType: MediaType) {
+  const { name, type } = getBaseModelConfig(baseModel);
+  if (name === 'Other') return true;
+  return Array.isArray(type) ? type.includes(mediaType) : type === mediaType;
+}
 
 // `buzzTransactionSchema` caps a description at 100 characters, and a crucible name alone can be 100.
 const BUZZ_DESCRIPTION_MAX_LENGTH = 100;
@@ -47,16 +56,20 @@ const STATUS_BADGES: Record<CrucibleStatus, { label: string; color: string }> = 
   [CrucibleStatus.Cancelled]: { label: 'Cancelled', color: 'red' },
 };
 
-/** `status` stays Active until the finalize job runs, so an Active crucible is read against `endAt`. */
+/**
+ * `status` stays Active until the finalize job runs, so an Active crucible is read against `endAt`.
+ * The shortest run is itself 24h, so "Ending soon" also needs the final stretch.
+ */
 export function getCrucibleStatusBadge(
   status: CrucibleStatus,
-  endAt: Date | null,
+  { startAt, endAt }: { startAt: Date | null; endAt: Date | null },
   now: Date = new Date()
 ) {
   if (status === CrucibleStatus.Active && endAt) {
     const msLeft = new Date(endAt).getTime() - now.getTime();
     if (msLeft <= 0) return { label: 'Ended', color: 'gray' };
-    if (msLeft <= ENDING_SOON_MS) return { label: 'Ending soon', color: 'orange' };
+    if (msLeft <= ENDING_SOON_MS && isCrucibleFinalStretch({ startAt, endAt, now }))
+      return { label: 'Ending soon', color: 'orange' };
   }
   return STATUS_BADGES[status];
 }

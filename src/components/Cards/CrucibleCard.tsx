@@ -22,6 +22,7 @@ type CrucibleCardData = {
   name: string;
   status: CrucibleStatus;
   nsfwLevel: number;
+  startAt: Date | null;
   endAt: Date | null;
   entryFee: number;
   seededPrizePool: number;
@@ -48,14 +49,25 @@ type CrucibleCardData = {
 };
 
 export function CrucibleCard({ data }: { data: CrucibleCardData }) {
-  const { id, name, status, endAt, entryFee, seededPrizePool, buzzType, user, image, _count } =
-    data;
+  const {
+    id,
+    name,
+    status,
+    startAt,
+    endAt,
+    entryFee,
+    seededPrizePool,
+    buzzType,
+    user,
+    image,
+    _count,
+  } = data;
   const entryCount = _count.entries ?? 0;
   const prizePool = getCrucibleTotalPrizePool({ entryFee, entryCount, seededPrizePool });
 
   const now = useMemo(() => new Date(), []);
 
-  const statusBadge = getCrucibleStatusBadge(status, endAt, now);
+  const statusBadge = getCrucibleStatusBadge(status, { startAt, endAt }, now);
 
   return (
     <AspectRatioImageCard

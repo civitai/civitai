@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 
 export const crucibleListSelect = Prisma.validator<Prisma.CrucibleSelect>()({
   id: true,
@@ -63,7 +63,7 @@ export const crucibleDetailSelect = Prisma.validator<Prisma.CrucibleSelect>()({
   updatedAt: true,
   ingestion: true,
   textNsfw: true,
-  user: { select: simpleUserSelect },
+  user: { select: userWithCosmeticsSelect },
   image: {
     select: {
       id: true,

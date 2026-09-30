@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { CrucibleIngestionStatus, CrucibleStatus } from '~/shared/utils/prisma/enums';
+import { CrucibleIngestionStatus, CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import {
+  baseModelMakesMediaType,
   getCrucibleCountdown,
   getCrucibleManageActions,
   getCrucibleMinVotes,
@@ -92,18 +93,37 @@ describe('getCrucibleStatusBadge', () => {
   const now = new Date('2026-09-29T12:00:00Z');
   const hoursFromNow = (h: number) => new Date(now.getTime() + h * 60 * 60 * 1000);
 
+  // A 7-day run, so its final stretch (the last 20%) is longer than the 24h cap.
+  const sevenDayRun = (hoursLeft: number) => ({
+    startAt: hoursFromNow(hoursLeft - 7 * 24),
+    endAt: hoursFromNow(hoursLeft),
+  });
+
   it.each([
     [48, 'Active'],
     [23, 'Ending soon'],
     [-1, 'Ended'],
   ])('labels an Active crucible ending in %ih as %s', (hours, label) => {
-    expect(getCrucibleStatusBadge(CrucibleStatus.Active, hoursFromNow(hours), now).label).toBe(
+    expect(getCrucibleStatusBadge(CrucibleStatus.Active, sevenDayRun(hours), now).label).toBe(
       label
     );
   });
 
+  it('keeps a 24h crucible Active until its final stretch', () => {
+    const twentyFourHourRun = (hoursLeft: number) => ({
+      startAt: hoursFromNow(hoursLeft - 24),
+      endAt: hoursFromNow(hoursLeft),
+    });
+    expect(getCrucibleStatusBadge(CrucibleStatus.Active, twentyFourHourRun(23), now).label).toBe(
+      'Active'
+    );
+    expect(getCrucibleStatusBadge(CrucibleStatus.Active, twentyFourHourRun(4), now).label).toBe(
+      'Ending soon'
+    );
+  });
+
   it('ignores endAt once the crucible has left Active', () => {
-    expect(getCrucibleStatusBadge(CrucibleStatus.Completed, hoursFromNow(-1), now).label).toBe(
+    expect(getCrucibleStatusBadge(CrucibleStatus.Completed, sevenDayRun(-1), now).label).toBe(
       'Completed'
     );
   });
@@ -362,5 +382,20 @@ describe('getCrucibleTransactionDescription', () => {
     );
     expect(description.length).toBeLessThanOrEqual(100);
     expect(description).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+  });
+});
+
+describe('baseModelMakesMediaType', () => {
+  it.each([
+    ['SDXL 1.0', MediaType.image, true],
+    ['SDXL 1.0', MediaType.video, false],
+    ['MiniMax H3', MediaType.image, false],
+    ['MiniMax H3', MediaType.video, true],
+    ['Grok', MediaType.image, true],
+    ['Grok', MediaType.video, true],
+    ['Other', MediaType.video, true],
+    ['Some Unknown Base', MediaType.video, true],
+  ])('%s makes %s: %s', (baseModel, mediaType, expected) => {
+    expect(baseModelMakesMediaType(baseModel, mediaType)).toBe(expected);
   });
 });

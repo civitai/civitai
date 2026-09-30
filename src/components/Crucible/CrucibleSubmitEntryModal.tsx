@@ -792,11 +792,13 @@ export default function CrucibleSubmitEntryModal({
       size={600}
       withCloseButton={false}
       padding={0}
+      // Mantine scrolls the content itself; only the body below should, so its height flows down.
       classNames={{
-        content: 'bg-[#25262b] border border-[#373a40]',
+        content: 'bg-[#25262b] border border-[#373a40] flex flex-col overflow-hidden',
+        body: 'flex min-h-0 flex-1 flex-col',
       }}
     >
-      <div className="flex max-h-[90vh] flex-col">
+      <div className="flex min-h-0 flex-1 flex-col">
         {/* Header */}
         <div className="flex items-start justify-between gap-4 p-5">
           <div className="flex-1">

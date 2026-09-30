@@ -34,11 +34,13 @@ import {
   CRUCIBLE_MIN_VOTES_PERCENT,
   getCrucibleCountdown,
   getCrucibleManageActions,
+  getCrucibleRatingLabel,
   getCrucibleTotalPrizePool,
   getCrucibleUrl,
   toCrucibleBuzzType,
   parsePrizePositions,
 } from '~/utils/crucible-helpers';
+import { Flags } from '~/shared/utils/flags';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { env } from '~/env/client';
@@ -310,6 +312,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
             entryFee: crucible.entryFee,
             seededPrizePool: crucible.seededPrizePool,
             buzzType: toCrucibleBuzzType(crucible.buzzType),
+            startAt: crucible.startAt,
             endAt: crucible.endAt,
             contentType: crucible.contentType,
             user: crucible.user,
@@ -331,7 +334,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
 
         {/* Main Content */}
         <Container size="xl" className="py-8">
-          <CrucibleReviewNotice crucible={crucible} />
+          <CrucibleReviewNotice crucible={crucible} canManage={canEdit} />
           <div className="grid grid-cols-1 gap-8 lg:grid-cols-[1fr_340px]">
             {/* Left Column - Main Content */}
             <div>
@@ -621,7 +624,13 @@ function openCrucibleGenerator(contentType: MediaType, modelVersionIds: number[]
 }
 
 /** Only the creator and moderators can open a crucible that hasn't passed review. */
-function CrucibleReviewNotice({ crucible }: { crucible: CrucibleDetail }) {
+function CrucibleReviewNotice({
+  crucible,
+  canManage,
+}: {
+  crucible: CrucibleDetail;
+  canManage: boolean;
+}) {
   if (crucible.ingestion === CrucibleIngestionStatus.Blocked)
     return (
       <Alert color="red" radius="md" className="mb-6">
@@ -631,8 +640,17 @@ function CrucibleReviewNotice({ crucible }: { crucible: CrucibleDetail }) {
   if (
     crucible.ingestion === CrucibleIngestionStatus.Scanned &&
     crucible.image?.ingestion === ImageIngestionStatus.Scanned
-  )
-    return null;
+  ) {
+    const coverLevel = crucible.image.nsfwLevel;
+    if (!canManage || Flags.intersects(coverLevel, crucible.nsfwLevel)) return null;
+    return (
+      <Alert color="yellow" radius="md" className="mb-6">
+        The cover is rated {getCrucibleRatingLabel(coverLevel)}, outside this crucible&apos;s
+        content levels ({getCrucibleRatingLabel(crucible.nsfwLevel)}), so people browsing at those
+        levels won&apos;t see it in the feed. Change the cover to list it for them.
+      </Alert>
+    );
+  }
   return (
     <Alert color="yellow" radius="md" className="mb-6">
       We&apos;re reviewing this crucible&apos;s text and images. It&apos;s hidden from everyone else

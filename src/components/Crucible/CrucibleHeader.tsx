@@ -7,6 +7,7 @@ import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLe
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CrucibleTimer } from '~/components/Crucible/CrucibleTimer';
+import { Username } from '~/components/User/Username';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { Currency, CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -15,7 +16,7 @@ import { CrucibleContentLevelBadges } from '~/components/Crucible/CrucibleConten
 import { CrucibleUserLink } from '~/components/Crucible/CrucibleUserLink';
 import { getCrucibleStatusBadge, getCrucibleTotalPrizePool } from '~/utils/crucible-helpers';
 import { Flags } from '~/shared/utils/flags';
-import type { SimpleUser } from '~/server/selectors/user.selector';
+import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 type CrucibleHeaderImage = {
@@ -36,9 +37,10 @@ export type CrucibleHeaderData = {
   entryFee: number;
   seededPrizePool: number;
   buzzType: BuzzSpendType;
+  startAt: Date | null;
   endAt: Date | null;
   contentType: MediaType;
-  user: SimpleUser;
+  user: UserWithCosmetics;
   image: CrucibleHeaderImage | null;
   heroImage: CrucibleHeaderImage | null;
   _count: {
@@ -60,6 +62,7 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
     entryFee,
     seededPrizePool,
     buzzType,
+    startAt,
     endAt,
     contentType,
     user,
@@ -76,7 +79,7 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
       (candidate) => candidate && Flags.intersects(candidate.nsfwLevel, browsingLevel)
     ) ?? null;
 
-  const statusBadge = getCrucibleStatusBadge(status, endAt);
+  const statusBadge = getCrucibleStatusBadge(status, { startAt, endAt });
 
   return (
     <div
@@ -165,19 +168,25 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
           </Title>
 
           {description && (
-            <ContentClamp maxHeight={72} className="mb-4">
-              <Text size="sm" c="dimmed" lh={1.6} className="[overflow-wrap:anywhere]">
-                {description}
-              </Text>
-            </ContentClamp>
+            // Spoiler draws "Show More" in its bottom margin; a margin here would collapse into it.
+            <div className="pb-4">
+              <ContentClamp maxHeight={72}>
+                <Text size="sm" c="dimmed" lh={1.6} className="[overflow-wrap:anywhere]">
+                  {description}
+                </Text>
+              </ContentClamp>
+            </div>
           )}
 
           <CrucibleUserLink user={user}>
             <UserAvatar user={user} avatarSize={40} size="lg" withHoverCard={false} />
             <div className="flex flex-col">
-              <Text size="sm" fw={600} c="white" lh={1.3}>
-                {user.deletedAt ? '[deleted]' : user.username}
-              </Text>
+              <Username
+                username={user.username}
+                deletedAt={user.deletedAt}
+                cosmetics={user.cosmetics}
+                size="sm"
+              />
               {!user.deletedAt && user.username && (
                 <Text size="xs" c="dimmed" lh={1.3}>
                   @{user.username}

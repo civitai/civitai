@@ -84,6 +84,7 @@ import { NotificationCategory } from '~/server/common/enums';
 import { imageResourcesCache } from '~/server/redis/caches';
 import {
   getCrucibleMinVotes,
+  baseModelMakesMediaType,
   getCruciblePrizeAmount,
   getCrucibleTotalPrizePool,
   getCrucibleTransactionDescription,
@@ -243,6 +244,7 @@ export const createCrucible = async ({
   await throwOnBlockedUserContent([name, description], { isModerator, surface: 'crucible' });
   if (!isModerator) assertSfwCrucibleText([name, description], nsfwLevel);
   await assertPublishedModelVersions(allowedResources ?? []);
+  await assertRequiredModelsMakeContentType(allowedResources ?? [], contentType ?? MediaType.image);
 
   const now = new Date();
   const isScheduled = !!requestedStartAt && requestedStartAt > now;
@@ -457,6 +459,17 @@ async function assertPublishedModelVersions(versionIds: number[]) {
     throw throwBadRequestError('Every required model must be a published, public model.');
 }
 
+async function assertRequiredModelsMakeContentType(versionIds: number[], contentType: MediaType) {
+  const ids = [...new Set(versionIds)];
+  if (!ids.length) return;
+  const versions = await dbRead.modelVersion.findMany({
+    where: { id: { in: ids } },
+    select: { baseModel: true },
+  });
+  if (versions.some(({ baseModel }) => !baseModelMakesMediaType(baseModel, contentType)))
+    throw throwBadRequestError(`Every required model must make ${contentType}s.`);
+}
+
 const PRESENTATION_FIELDS = ['name', 'description', 'coverImage', 'heroImage'] as const;
 
 /**
@@ -566,9 +579,16 @@ export const updateCrucible = async ({
   });
   if (!isModerator) assertSfwCrucibleText([nextName, nextDescription], next.nsfwLevel);
   // Only newly added ones: a required model unpublished later shouldn't block editing the rest.
-  await assertPublishedModelVersions(
-    next.allowedResources.filter((versionId) => !current.allowedResources.includes(versionId))
+  const addedResources = next.allowedResources.filter(
+    (versionId) => !current.allowedResources.includes(versionId)
   );
+  await assertPublishedModelVersions(addedResources);
+  // A content type switch re-checks every pick, since an earlier one can now make the wrong media.
+  if (canEditSettings)
+    await assertRequiredModelsMakeContentType(
+      next.contentType !== current.contentType ? next.allowedResources : addedResources,
+      next.contentType
+    );
 
   const imageId = changes.coverImage
     ? await resolveCoverImageId({

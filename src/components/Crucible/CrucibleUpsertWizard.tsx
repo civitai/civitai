@@ -37,6 +37,7 @@ import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import { CrucibleCard } from '~/components/Cards/CrucibleCard';
 import { ContentRatingSelect } from '~/components/Challenge/ContentRatingSelect';
 import { ModelVersionMultiSelect } from '~/components/Challenge/ModelVersionMultiSelect';
+import { CrucibleContentLevelBadges } from '~/components/Crucible/CrucibleContentLevelBadges';
 import { CrucibleImageUpload } from '~/components/Crucible/CrucibleImageUpload';
 import {
   CRUCIBLE_CREATE_STEP_COUNT,
@@ -386,9 +387,9 @@ export function CrucibleUpsertWizard(props: Props) {
 
       <InputCrucibleImage
         name="heroImage"
-        label="Hero Background"
-        description="Optional. Shown behind the crucible's header; the cover image is used when this is empty."
-        dropzoneLabel="Drag & drop a background image here or click to browse"
+        label="Banner Image"
+        description="Optional. Shown across the top of the crucible's page, so a wide image works best (about 3:1, e.g. 1920×640). The cover image is used when this is empty."
+        dropzoneLabel="Drag & drop a banner image here or click to browse"
         onUploadingChange={(uploading) => setUploadingImage('heroImage', uploading)}
       />
 
@@ -658,6 +659,7 @@ export function CrucibleUpsertWizard(props: Props) {
         description="Entries must use at least one of the selected models. Leave empty to allow any model."
         disabled={rulesLocked}
         generatableOnly={false}
+        mediaType={values.contentType}
       />
     </Stack>
   );
@@ -936,7 +938,7 @@ export function CrucibleUpsertWizard(props: Props) {
             </Text>
           </Group>
           <Group justify="space-between">
-            <Text c="dimmed">Hero Background</Text>
+            <Text c="dimmed">Banner Image</Text>
             <Text fw={500}>{values.heroImage ? 'Custom' : 'Cover image'}</Text>
           </Group>
         </Stack>
@@ -953,6 +955,10 @@ export function CrucibleUpsertWizard(props: Props) {
             <Text fw={500}>
               {contentTypeOptions.find((o) => o.value === values.contentType)?.label}
             </Text>
+          </Group>
+          <Group justify="space-between">
+            <Text c="dimmed">Content Levels</Text>
+            <CrucibleContentLevelBadges nsfwLevel={values.nsfwLevel} className="justify-end" />
           </Group>
           <Group justify="space-between">
             <Text c="dimmed">Entry Fee</Text>
@@ -1046,6 +1052,7 @@ export function CrucibleUpsertWizard(props: Props) {
     status:
       crucible?.status ?? (startMs > Date.now() ? CrucibleStatus.Pending : CrucibleStatus.Active),
     nsfwLevel: values.nsfwLevel,
+    startAt: hasStarted ? crucible?.startAt ?? null : new Date(startMs),
     endAt: hasStarted
       ? crucible?.endAt ?? null
       : new Date(startMs + values.duration * 60 * 60 * 1000),
