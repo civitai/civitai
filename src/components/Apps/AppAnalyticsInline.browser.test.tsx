@@ -73,7 +73,8 @@ describe('AppAnalyticsInline — unavailable vs genuine zero', () => {
     // 🔴 These two stay NON-exact ON PURPOSE. Do NOT "fix" them to `{ exact: true }`
     // for consistency with the sibling — the sibling needs `exact` because it resolves
     // a SINGLE element and a substring match there collides with the stat's own hover
-    // tooltip ("Runs and unique users in the last 30 days…"). This branch renders
+    // tooltip (which begins "Generations run through your app by other people, and unique
+    // users making scoped API calls, in the last 30 days."). This branch renders
     // neither the stat nor that tooltip, so there is nothing to collide with: verified
     // by parking the pointer on the "Analytics unavailable" text and re-querying —
     // 0 matches for both words, hovered and unhovered.
@@ -104,9 +105,19 @@ describe('AppAnalyticsInline — unavailable vs genuine zero', () => {
     await expect.element(page.getByRole('button', { name: /^analytics$/i })).toBeInTheDocument();
 
     // 🔴 `{ exact: true }` is load-bearing. `getByText('runs')` is substring +
-    // case-insensitive, so it ALSO matches this stat's own tooltip copy ("Runs
-    // and unique users in the last 30 days…") — which Mantine mounts whenever
-    // the pointer rests on the stat (`mounted: !!tooltip.opened`, hover-only).
+    // case-insensitive, so it ALSO matches this stat's own tooltip copy — which
+    // Mantine mounts whenever the pointer rests on the stat
+    // (`mounted: !!tooltip.opened`, hover-only).
+    //
+    // ⚠️ RE-QUOTED 2026-09-29, and the justification only became TRUE then. This
+    // comment used to quote the copy as "Runs and unique users in the last 30
+    // days…", which matched neither the copy at the time nor any earlier one —
+    // stale at least as far back as `396da07d5f`. The live copy now begins
+    // "Generations run through your app by other people, and unique users making
+    // scoped API calls, in the last 30 days." Note that the OLD copy contained no
+    // substring "runs" at all, so `{ exact: true }` was guarding against a
+    // collision that could not happen; the self-testing disclosure added the word
+    // "runs" to the label, so the guard is load-bearing now rather than vacuous.
     // Vitest browser mode shares ONE browser page across every `.browser.test.tsx`
     // file, so in the full-suite CI run the pointer position left behind by an
     // earlier file can already sit over this stat at mount — the locator then

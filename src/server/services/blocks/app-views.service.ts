@@ -25,11 +25,18 @@ import { logToAxiom } from '~/server/logging/client';
  * `uniqExactIf(userId, …) + uniqExactIf(ip, …)` split below.
  *
  * 🔴 THIS RAIL EXCLUDES PRIVATE RUNS — CLOSED AT THE WRITERS, NOT HERE. It was ONE OF TWO
- * open flag-flip preconditions; 🔴 THE ATTRIBUTION RAIL IS STILL OPEN — a private run's
- * generation writes a voided `block_spend_attribution` row that the owner-visible reads
- * still count into `runs` / `runs.buzzSpent`. See `blocks/buzz-attribution.service.ts`,
- * and the flag's own precondition block in `app-blocks-flag.ts`, which is the file an
- * operator opens before widening. Do not read this heading as "nothing blocks the flag".
+ * open flag-flip preconditions, and ✅ THE OTHER ONE — the attribution rail — IS NOW CLOSED
+ * TOO: the two owner-visible reads of `block_spend_attribution` in `app-analytics.service.ts`
+ * exclude `status = 'voided'`, so a private run's generation row no longer counts into
+ * `runs` / `runs.buzzSpent`. Both analytics rails this file's heading is about are therefore
+ * shut.
+ *
+ * ⚠️ THAT IS NOT "nothing blocks the flag", and this sentence is deliberately not a list.
+ * Other preconditions live on the flag itself and they move; the authoritative, kept-current
+ * enumeration is the precondition block at `APP_BLOCKS_PRIVATE_RUN_FLAG` in
+ * `app-blocks-flag.ts`, which is the file an operator opens before widening. Read them there
+ * rather than inferring the flag's readiness from any count in this docblock — an earlier
+ * revision of this very paragraph named a rail as open that had been closed hours before.
  *
  * THE LEAK: a private run of a delisted app — a moderator, the owner, or an accepted
  * listing collaborator running its already-deployed bundle — MOUNTS THE HOST, so it emitted

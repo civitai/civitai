@@ -28,6 +28,13 @@ type InlineAnalytics = {
  * `runs` comes from `block_spend_attribution`, one row per AUTHENTICATED
  * generation submitted through the app — note a zero-cost run (cache hit,
  * free gen) still writes a row, so this is "submits", not "spent Buzz".
+ * ⚠️ AND IT IS NOT EVERY SUBMIT: the owner-visible reads exclude
+ * `status = 'voided'`, so the app owner's OWN runs on their own app
+ * (`self_spend`) and a moderator's private run (`manual_review`) are absent.
+ * On the population measured when that filter shipped this was 582 of 639
+ * rows, so for an owner who has only self-tested, `runs` is legitimately 0.
+ * That zero is MEASURED, not fabricated — do not route it through the
+ * `unavailable` discriminator, which exists for never-queried counters.
  * `activeUsers` comes from `block_scope_invocations`, written only on
  * authenticated, scope-gated calls. The render-event instrumentation (#2695) has since
  * SHIPPED; this inline stat deliberately does not read it. The "App loads"
@@ -77,7 +84,7 @@ export function AppAnalyticsInline({
         </Tooltip>
       ) : data ? (
         <Tooltip
-          label="Generations run through your app, and unique users making scoped API calls, in the last 30 days. Both count signed-in activity only, so both undercount anonymous visitors. Open Analytics for App loads, which counts every load."
+          label="Generations run through your app by other people, and unique users making scoped API calls, in the last 30 days. Your own test runs on your own app are not counted. Both count signed-in activity only, so both undercount anonymous visitors. Open Analytics for App loads, which counts every load."
           multiline
           maw={260}
           withinPortal

@@ -36,6 +36,98 @@ export const DEFAULT_RANGE_DAYS = 30;
 export const MAX_RANGE_DAYS = 366; // ~1y cap so no unbounded scans
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * 🔴 THE ONE SPELLING of the `block_spend_attribution.status` value that takes a row OUT of
+ * the owner's view. Bound as a PARAMETER in the raw series read and compared via Prisma's
+ * `not` in the aggregate — the two reads must never disagree, so neither re-spells it.
+ *
+ * ── WHY A DENYLIST AND NOT AN ALLOWLIST ─────────────────────────────────────────
+ * `block_spend_attribution_status_check` permits SIX values — `tracked, pending, confirmed,
+ * voided, paid_out, held` (read off the live constraint, not inferred from a migration).
+ * `status: 'tracked'` would therefore silently drop a row the moment the payout rail starts
+ * writing `confirmed` / `paid_out`, which is the same silent-deletion failure as the
+ * nullability trap below, only arriving later and with nobody looking. Excluding the one
+ * value that MEANS "not owner-visible" is the narrowest predicate that works.
+ *
+ * ── AND WHY IT IS `status`, NOT `voidedReason` ──────────────────────────────────
+ * 🔴 `status` is `TEXT NOT NULL DEFAULT 'tracked'`, so Prisma's `not` and a bare SQL `<>`
+ * agree on it. `voided_reason` is NULLABLE and NULL *is* the ordinary `tracked` population,
+ * so the narrow spelling `voidedReason: { not: 'manual_review' }` drops every real row and
+ * zeroes the owner's run count. Do not move this predicate onto that column.
+ *
+ * 🔴 AND IF YOU MUST, USE THE `OR`-WITH-`null` FORM — NOT a top-level `NOT`. This file used
+ * to recommend either, and the `NOT` half is WRONG, measured against the live table
+ * 2026-09-29: `WHERE NOT (voided_reason IN ('manual_review','self_spend'))` retains
+ * **0 of 639 rows**, because `NULL IN (…)` is NULL and `NOT NULL` is NULL, so every one of
+ * the 57 real `tracked` rows is filtered out. That is the exact zero the paragraph above
+ * warns about, produced by the remedy it offered.
+ *
+ * 🔴 THERE IS EXACTLY ONE FORM THAT BOTH KEEPS NULLs AND ACTUALLY NARROWS:
+ *   `voided_reason IS NULL OR voided_reason NOT IN (…)`  → 57 ✅
+ * ⚠️ `voided_reason IS DISTINCT FROM 'manual_review'` → **639**, and an earlier version of
+ * this note listed that as a second "form that works". It is null-aware but SINGLE-VALUED,
+ * so against a two-value exclusion it narrows NOTHING — 639 is the whole population. Printing
+ * 57 and 639 side by side as two working options invites picking the one that excludes
+ * nothing, which is the same silent-no-op this paragraph exists to prevent.
+ *
+ * ⚠️ AND THE SCOPE OF THAT CLAIM, because it has been over- and under-stated in turn. What
+ * is MEASURED here is the OUTCOME in Postgres: the SQL above retains 0 rows. A previous
+ * revision of this note went further and asserted the RENDERING — "the engine emits a bare
+ * `(NOT <expr>)` with no `IS NULL` disjunct" — which nothing in this change measured; no
+ * generated SQL was ever captured. Prisma's own `in` reference is reported to document the
+ * same combination ("combine `in` and `NOT` … rows with `null` are not returned"), but that
+ * quote could not be re-confirmed against the live docs at the pinned major, so treat it as
+ * corroboration rather than proof. Among the SCALAR filters, only `equals: null` /
+ * `not: null` are null-aware — that is deliberately not a claim about the whole filter
+ * surface (`isSet`, and the relation filters, interact with null on their own terms).
+ *
+ * None of that changes the instruction, which is why the hedging is worth getting right
+ * rather than dropping: the observed behaviour is enough. Spell the `OR`.
+ */
+const VOIDED_ATTRIBUTION_STATUS = 'voided';
+
+/**
+ * 🔴 THE ONE DEFINITION of "exclude voided attribution rows", for every OWNER-VISIBLE read
+ * of `block_spend_attribution`. Spread into the `where` of the aggregate below.
+ *
+ * A private run of a delisted app writes its generation row `voided` /
+ * `voidedReason: 'manual_review'`, and the row carries the app's REAL id by design — so it
+ * lands squarely in the owner's own `appBlockId IN (ownedIds)` aggregate. Nothing else
+ * removes it.
+ *
+ * ⚠️ THE PREDICATE IS WIDER THAN THE LEAK, DELIBERATELY, AND THAT IS AN OPERATOR DECISION
+ * RATHER THAN A DETAIL. `status = 'voided'` covers THREE populations, not one —
+ * `manual_review` (the private run), `self_spend` (the owner running their own app), and
+ * `internal_owner`. Excluding `self_spend` is the accepted behaviour change: measured on
+ * the live table before shipping, it was 582 of 639 rows, every one of them the app owner
+ * spending on their own app, with no row of real third-party usage voided at all.
+ *
+ * 🔴 BUT "IT REMOVES SELF-TESTING, NOT USAGE" IS A CLAIM ABOUT TODAY'S ROWS, NOT ABOUT THE
+ * MECHANISM — an earlier version of this docblock asserted the stronger form and it was
+ * wrong. `internal_owner` is keyed on the APP OWNER, not the spender:
+ * `buzz-attribution.service.ts` computes it as
+ * `ACTIVE_RATE_CARD.internalAppOwnerUserIds.includes(app.userId)`. So the moment that
+ * array is populated — and `blocks/rate-card.ts` instructs whoever launches to populate it
+ * with civitai team userIds "before going live" — EVERY spend row on a team-owned app is
+ * written `voided` regardless of who spent it, and this filter then reports 0 runs / 0 Buzz
+ * for a first-party app's GENUINE third-party usage. It is inert today only because the
+ * array is empty. The warning for whoever populates it lives on that field's own docblock.
+ *
+ * 🔴 AND IF YOU TAKE THE NARROWER FIX, READ THE TRAP PARAGRAPH ABOVE FIRST. Excluding by
+ * `voidedReason` (`manual_review` + `self_spend`) is the right SHAPE, but every obvious
+ * spelling of it is NULL-unsafe: `{ notIn: [...] }`, `{ not: ... }` AND a top-level `NOT`
+ * all drop the 57 real `tracked` rows, whose `voided_reason` is NULL. Use the explicit
+ * `OR`-with-`null` form, keep the `status` guard alongside it rather than replacing it, and
+ * verify the row count moves the way you expect before believing it.
+ *
+ * ⚠️ Spread it FIRST and let the explicit keys win — `appBlockId: idIn` is the only thing
+ * scoping this read to the caller's own apps, and a spread placed LAST wins any key
+ * collision. `satisfies` constrains the constant's SHAPE, not which keys it may hold.
+ */
+const OWNER_VISIBLE_SPEND_FILTER = {
+  status: { not: VOIDED_ATTRIBUTION_STATUS },
+} satisfies Prisma.BlockSpendAttributionWhereInput;
+
 export type AnalyticsTimePoint = { bucket: string; value: number };
 
 export type AppAnalytics = {
@@ -410,7 +502,7 @@ export async function getMyAppAnalytics({
     // app + Buzz burned, within the range. Hits bsa_app_block_dashboard_idx
     // (app_block_id, attributed_at).
     dbRead.blockSpendAttribution.aggregate({
-      where: { appBlockId: idIn, attributedAt: rangeFilter },
+      where: { ...OWNER_VISIBLE_SPEND_FILTER, appBlockId: idIn, attributedAt: rangeFilter },
       _count: true,
       _sum: { buzzAmount: true },
     }),
@@ -420,6 +512,7 @@ export async function getMyAppAnalytics({
       WHERE "app_block_id" IN (${Prisma.join(ownedIds)})
         AND "attributed_at" >= ${range.from}
         AND "attributed_at" <= ${range.to}
+        AND "status" <> ${VOIDED_ATTRIBUTION_STATUS}
       GROUP BY 1
       ORDER BY 1 ASC
     `),
@@ -452,16 +545,22 @@ export async function getMyAppAnalytics({
     // the same owner-visible payload are covered separately — read the ✅/open marks, not
     // the count:
     //
-    //   · `runs` / `runs.buzzSpent` / `runs.series` — the `block_spend_attribution` reads
-    //     above carry NO `status` predicate, so a private run's generation writes a
-    //     `voided` / `voidedReason: 'manual_review'` row that is still COUNTED as a run and
-    //     its Buzz still summed here. Deliberately held: see the note in
-    //     `buzz-attribution.service.ts`, which requires that filter to land before the
-    //     private-run surface is ENABLED. ⚠️ And when it does, the naive narrow spelling
-    //     `voidedReason: { not: 'manual_review' }` is a TRAP — that column is nullable and
-    //     NULL is the ordinary `tracked` population, so Prisma's `not` drops every real row
-    //     and zeroes the owner's run count. Use a top-level `NOT: { voidedReason: … }` or
-    //     an explicit `OR` with `null`.
+    //   · ✅ `runs` / `runs.buzzSpent` / `runs.series` — CLOSED, and closed HERE. Both
+    //     `block_spend_attribution` reads above exclude `status = 'voided'`, so a private
+    //     run's generation row (`voided` / `voidedReason: 'manual_review'`) is neither
+    //     counted as a run nor summed. The aggregate spreads `OWNER_VISIBLE_SPEND_FILTER`
+    //     and the raw series binds `VOIDED_ATTRIBUTION_STATUS` as a parameter — one
+    //     constant, so the two cannot drift. Measured consequence, both directions, in
+    //     `__tests__/app-analytics.void-exclusion.test.ts`.
+    //     ⚠️ THE TRAP THAT WAS WAITING HERE IS STILL A TRAP, so it stays written down: the
+    //     naive narrow spelling `voidedReason: { not: 'manual_review' }` is WRONG — that
+    //     column is nullable and NULL is the ordinary `tracked` population, so Prisma's
+    //     `not` drops every real row and zeroes the owner's run count. The predicate above
+    //     avoids it by keying on `status`, which is `TEXT NOT NULL`. If a future change does
+    //     need the reason, use the explicit `OR`-with-`null` form.
+    //     🔴 NOT a top-level `NOT` — this line used to say either would do, and the `NOT`
+    //     half is wrong: measured 2026-09-29, `NOT (voided_reason IN (…))` retains 0 of 639
+    //     rows because `NOT NULL` is NULL. See `VOIDED_ATTRIBUTION_STATUS` above.
     //   · ✅ `views.count` / `views.uniqueViewers` — CLOSED, and closed at the WRITERS
     //     rather than here, so do not go looking for a filter on the ClickHouse read at the
     //     bottom of this `Promise.all`. It was the sharper of the two, because impressions
@@ -480,24 +579,28 @@ export async function getMyAppAnalytics({
     //     Reasoning, the shape that was rejected and why, and the over-filtering bound:
     //     the canonical note in `blocks/app-views.service.ts`.
     //
-    // 🔴 THE ATTRIBUTION RAIL ABOVE IS STILL A FLAG-FLIP PRECONDITION, NOT A FOLLOW-UP. It
-    // is not in scope here and it is not optional: enabling the private-run flag with it
-    // open re-opens the disclosure this whole feature exists to prevent, on a rail nobody
-    // is filtering.
-    //
-    // CLOSING CONDITION, so it is a work item rather than a note: one private run against a
-    // delisted app, then the operator reads that app's own analytics panel and confirms
-    // `runs` / `runs.buzzSpent` did not move. That is a named human judgement over named
-    // evidence. (The same check, against `views.count` / `views.uniqueViewers`, is the
-    // acceptance step for the closure that already shipped.)
+    // ✅ THE ATTRIBUTION RAIL ABOVE IS NO LONGER A FLAG-FLIP PRECONDITION — it shipped, in
+    // the same change that added this line. Its remaining ACCEPTANCE step is unchanged and
+    // still belongs to whoever widens the flag: one private run against a delisted app, then
+    // the operator reads that app's own analytics panel and confirms `runs` /
+    // `runs.buzzSpent` did not move. That is a named human judgement over named evidence, and
+    // it is the same shape as the `views.count` / `views.uniqueViewers` check for the rail
+    // that closed before it. A filter verified by unit test is not the same claim as a
+    // private run verified on a real dashboard; do not read one as the other.
     //
     // ⚠️ The predicate names ONE exact value and excludes nothing else. It is deliberately
     // NOT an allowlist (`source: 'app-block'`): over-filtering here silently deletes the
     // owner's REAL usage from their own dashboard, which is the worse failure because
     // nobody reports numbers they never saw. Measured against the live table before
     // shipping: zero of the rows this filter can see carry the marker, so it changes no
-    // existing number — unlike the `status <> 'voided'` filter deliberately held back on
-    // the attribution table, which would have moved ~9 in 10 owner-visible rows.
+    // existing number.
+    //
+    // 🔴 THE SIBLING `status <> 'voided'` FILTER IS THE OPPOSITE CASE, AND THE CONTRAST IS
+    // WORTH KEEPING. It moved ~9 in 10 owner-visible rows (639 to 57 rows, 4,738 to 268
+    // Buzz), which is exactly why it was held for months. What unblocked it was measuring
+    // the population rather than the proportion: every voided row is an owner spending on
+    // their own app, so the drop is entirely self-testing and no real third-party usage row
+    // is affected. A big percentage is not the same fact as a big harm — check which rows.
     //
     // 🔴 THE SPREAD COMES FIRST, AND THAT ORDER IS LOAD-BEARING. `appBlockId: idIn` is the
     // ONLY thing scoping these reads to the caller's own apps, and a spread placed LAST
