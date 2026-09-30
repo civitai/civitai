@@ -39,6 +39,10 @@ const OWNER = 4;
 const HOUR = 60 * 60 * 1000;
 const findUnique = dbMock.dbRead.crucible.findUnique;
 const update = dbMock.dbWrite.crucible.update;
+const modelVersionCount = dbMock.dbRead.modelVersion.count;
+
+/** Every id the service asks about counts as a published, public model version. */
+const allPublished = async ({ where }: { where: { id: { in: number[] } } }) => where.id.in.length;
 
 const crucible = (overrides: Record<string, unknown> = {}) => ({
   id: 1,
@@ -90,6 +94,7 @@ beforeEach(() => {
   getUserBuzzAccount.mockResolvedValue([{ balance: 1_000_000, type: 'yellow' }]);
   createMultiAccountBuzzTransaction.mockResolvedValue({ transactions: [] });
   refundMultiAccountTransaction.mockResolvedValue(undefined);
+  modelVersionCount.mockImplementation(allPublished);
 });
 
 describe('updateCrucible — who may edit', () => {
@@ -151,6 +156,26 @@ describe('updateCrucible — while upcoming', () => {
       createMultiAccountBuzzTransaction.mock.invocationCallOrder[0]
     );
     expect(written().buzzTransactionId).toMatch(/^crucible-setup-4-(?!old)/);
+  });
+
+  it('refuses swapping in a model that is not published and public', async () => {
+    findUnique.mockResolvedValue(upcoming({ allowedResources: [10] }));
+    modelVersionCount.mockResolvedValue(0);
+
+    await expect(edit({ allowedResources: [11] })).rejects.toThrow(/published, public model/);
+    expect(modelVersionCount).toHaveBeenCalledWith({
+      where: expect.objectContaining({ id: { in: [11] } }),
+    });
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('does not re-check a required model the crucible already had', async () => {
+    findUnique.mockResolvedValue(upcoming({ allowedResources: [10] }));
+    modelVersionCount.mockResolvedValue(0);
+
+    await edit({ entryFee: 200 });
+
+    expect(written()).toMatchObject({ entryFee: 200 });
   });
 
   it('asks the creator only for the difference', async () => {

@@ -40,7 +40,8 @@ export type WatchedMs = { winnerWatchedMs: number; loserWatchedMs: number };
 type Side = 'left' | 'right';
 type MediaStatus = 'loading' | 'loaded' | 'error';
 
-const MEDIA_LOAD_TIMEOUT_MS = 20_000;
+const IMAGE_LOAD_TIMEOUT_MS = 12_000;
+const VIDEO_LOAD_TIMEOUT_MS = 20_000;
 const bothLoading = { left: 'loading', right: 'loading' } as const;
 
 // Below md the pair gets fixed heights and the page scrolls: squeezed into the space left under
@@ -464,9 +465,12 @@ function JudgingMedia({
   // A stalled request fires neither load nor error, and would otherwise spin forever.
   useEffect(() => {
     if (status !== 'loading') return;
-    const timeout = setTimeout(() => setStatus('error'), MEDIA_LOAD_TIMEOUT_MS);
+    const timeout = setTimeout(
+      () => setStatus('error'),
+      isVideo ? VIDEO_LOAD_TIMEOUT_MS : IMAGE_LOAD_TIMEOUT_MS
+    );
     return () => clearTimeout(timeout);
-  }, [status]);
+  }, [status, isVideo]);
 
   const applySound = useCallback(() => {
     const video = ref.current?.querySelector('video');
@@ -539,7 +543,9 @@ function JudgingMedia({
         wrapperProps={{ className: 'flex size-full items-center justify-center' }}
         // EdgeVideo defaults a native-controls player to `preload="none"`, and a clip that never
         // loads never unlocks the vote.
-        videoProps={{ onTimeUpdate, preload: 'auto' }}
+        // Playback is driven here, so EdgeVideo's delayed hover-play (which a tap also triggers)
+        // would start a clip the judge didn't choose.
+        videoProps={{ onTimeUpdate, preload: 'auto', hoverPlay: false }}
       />
 
       {status === 'loading' && (

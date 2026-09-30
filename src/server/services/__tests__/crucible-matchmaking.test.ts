@@ -8,7 +8,8 @@ import { dbMock, redisMock } from '~/__tests__/mocks';
 // re-mock the specifier.
 const findUnique = dbMock.dbRead.crucible.findUnique;
 const queryRaw = dbMock.dbRead.$queryRaw;
-const sIsMember = redisMock.sysRedis.sIsMember;
+const hGetAll = redisMock.sysRedis.hGetAll;
+const sMembers = redisMock.sysRedis.sMembers;
 const getAllEntryElos = vi.fn();
 
 vi.mock('~/server/services/crucible-elo.service', async (importOriginal) => ({
@@ -41,11 +42,27 @@ const rawEntry = (id: number, userId: number, score = 1500) => ({
   user_image: null,
 });
 
+/** Each entry's vote count across all judges, where `crucibleEloRedis.getAllVoteCounts` reads it. */
+const withVoteCounts = (counts: Record<number, number>) =>
+  hGetAll.mockImplementation(async (key: string) =>
+    key.endsWith(':votes')
+      ? Object.fromEntries(Object.entries(counts).map(([id, n]) => [id, String(n)]))
+      : {}
+  );
+
+/** Pairs this judge has already voted on. */
+const withVotedPairs = (...pairs: [number, number][]) =>
+  sMembers.mockResolvedValue(pairs.map(([a, b]) => `${Math.min(a, b)}:${Math.max(a, b)}`));
+
+const pairIds = (pair: Awaited<ReturnType<typeof getJudgingPair>>) =>
+  pair ? [pair.left.id, pair.right.id].sort((a, b) => a - b) : null;
+
 beforeEach(() => {
   vi.clearAllMocks();
   findUnique.mockResolvedValue(activeCrucible);
   getAllEntryElos.mockResolvedValue({});
-  sIsMember.mockResolvedValue(0);
+  hGetAll.mockResolvedValue({});
+  sMembers.mockResolvedValue([]);
 });
 
 describe('getJudgingPair — crucible state', () => {
@@ -115,26 +132,119 @@ describe('getJudgingPair — pair selection', () => {
 });
 
 describe('getJudgingPair — already-voted pairs', () => {
-  it('gives up after a bounded number of samples when every pair is already voted', async () => {
+  it('never serves a pair this judge has already voted on', async () => {
     queryRaw.mockResolvedValue([rawEntry(1, 99), rawEntry(2, 98), rawEntry(3, 97)]);
-    sIsMember.mockResolvedValue(1); // every candidate pair has been voted on
+    withVotedPairs([1, 2]);
 
-    const pair = await getJudgingPair({ crucibleId: 1, userId: 1 });
+    for (let i = 0; i < 20; i++) {
+      expect(pairIds(await getJudgingPair({ crucibleId: 1, userId: 1 }))).not.toEqual([1, 2]);
+    }
+    expect(sMembers).toHaveBeenCalledWith(expect.stringMatching(/:1:1$/));
+  });
 
-    expect(pair).toBeNull();
+  it('returns null after ONE query when a short sample holds every entry and all are judged', async () => {
+    queryRaw.mockResolvedValue([rawEntry(1, 99), rawEntry(2, 98), rawEntry(3, 97)]);
+    withVotedPairs([1, 2], [1, 3], [2, 3]);
+
+    expect(await getJudgingPair({ crucibleId: 1, userId: 1 })).toBeNull();
+    // Fewer rows than the sample size means the sample was the whole crucible; drawing again
+    // returns the same rows.
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives up after a bounded number of full samples when every pair in them is judged', async () => {
+    const ids = Array.from({ length: 100 }, (_, i) => i + 1);
+    queryRaw.mockResolvedValue(ids.map((id) => rawEntry(id, 1000 + id)));
+    withVotedPairs(
+      ...ids.flatMap((a) => ids.filter((b) => b > a).map((b) => [a, b] as [number, number]))
+    );
+
+    expect(await getJudgingPair({ crucibleId: 1, userId: 1 })).toBeNull();
     // The retry loop is capped at MAX_SAMPLE_ATTEMPTS. Asserting the exact count means removing
     // that cap fails here in milliseconds rather than spinning the sampler forever.
     expect(queryRaw).toHaveBeenCalledTimes(3);
   });
+});
 
-  it('returns a pair the judge has not yet seen', async () => {
-    queryRaw.mockResolvedValue([rawEntry(1, 99), rawEntry(2, 98)]);
-    sIsMember.mockResolvedValue(0);
+describe('getJudgingPair — pairing', () => {
+  it('puts the least-voted entry in every pair, even when its rating has moved off 1500', async () => {
+    queryRaw.mockResolvedValue([
+      rawEntry(1, 11, 1500),
+      rawEntry(2, 12, 1500),
+      rawEntry(3, 13, 1500),
+      rawEntry(4, 14, 1600),
+      rawEntry(5, 15, 1540),
+    ]);
+    withVoteCounts({ 1: 9, 2: 9, 3: 9, 4: 9, 5: 0 });
 
-    const pair = await getJudgingPair({ crucibleId: 1, userId: 1 });
+    for (let i = 0; i < 20; i++) {
+      const ids = pairIds(await getJudgingPair({ crucibleId: 1, userId: 7 }));
+      expect(ids, 'entry 5 has no votes, so it must be in the pair').toContain(5);
+    }
+  });
 
-    expect(pair).not.toBeNull();
-    expect(sIsMember).toHaveBeenCalled();
+  it('opposes it with the nearest-rated opponent', async () => {
+    queryRaw.mockResolvedValue([
+      rawEntry(1, 11, 1500),
+      rawEntry(2, 12, 1700),
+      rawEntry(3, 13, 1510),
+      rawEntry(4, 14, 1300),
+      rawEntry(5, 15, 1400),
+    ]);
+    withVoteCounts({ 1: 0, 2: 3, 3: 3, 4: 3, 5: 3 });
+
+    for (let i = 0; i < 20; i++) {
+      expect(pairIds(await getJudgingPair({ crucibleId: 1, userId: 7 }))).toEqual([1, 3]);
+    }
+  });
+
+  it('takes the opponent from the least-voted candidates, not the nearest in the whole field', async () => {
+    // Entry 2 is the nearest rating to entry 1 but has far more votes than the ten others.
+    const others = Array.from({ length: 11 }, (_, i) => i + 3);
+    queryRaw.mockResolvedValue([
+      rawEntry(1, 11, 1500),
+      rawEntry(2, 12, 1500),
+      ...others.map((id) => rawEntry(id, 10 + id, 1700 + id)),
+    ]);
+    withVoteCounts({ 1: 0, 2: 50, ...Object.fromEntries(others.map((id) => [id, 1])) });
+
+    for (let i = 0; i < 20; i++) {
+      const ids = pairIds(await getJudgingPair({ crucibleId: 1, userId: 7 }));
+      expect(ids).toContain(1);
+      expect(ids).not.toContain(2);
+    }
+  });
+
+  it('falls back to any unjudged pair once the least-voted entries are exhausted', async () => {
+    queryRaw.mockResolvedValue([
+      rawEntry(1, 11, 1500),
+      rawEntry(2, 12, 1500),
+      rawEntry(3, 13, 1700),
+      rawEntry(4, 14, 1700),
+    ]);
+    withVoteCounts({ 1: 0, 2: 0, 3: 5, 4: 5 });
+    withVotedPairs([1, 2], [1, 3], [1, 4], [2, 3], [2, 4]);
+
+    expect(pairIds(await getJudgingPair({ crucibleId: 1, userId: 7 }))).toEqual([3, 4]);
+  });
+
+  it('brings skipped entries back instead of ending the session', async () => {
+    const all = [rawEntry(1, 11), rawEntry(2, 12), rawEntry(3, 13)];
+    queryRaw.mockImplementation(async (strings: TemplateStringsArray) =>
+      strings.join('').includes('NOT IN') ? all.filter((e) => e.id === 3) : all
+    );
+
+    const pair = await getJudgingPair({ crucibleId: 1, userId: 7, excludeEntryIds: [1, 2] });
+
+    expect(pair, 'three unjudged pairs were left, only behind the skip list').not.toBeNull();
+    expect(queryRaw).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not query again when nothing was skipped', async () => {
+    queryRaw.mockResolvedValue([rawEntry(1, 11)]);
+
+    expect(await getJudgingPair({ crucibleId: 1, userId: 7 })).toBeNull();
+    expect(queryRaw).toHaveBeenCalledTimes(1);
   });
 });
 

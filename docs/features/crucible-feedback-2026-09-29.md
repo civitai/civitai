@@ -28,7 +28,7 @@ Second walkthrough (confirmed; nothing is cut):
 - [x] **B3. A crucible whose slug is `judge` routes to the judging page** instead of its detail page. → Fixed: `getCrucibleUrl` never emits the reserved `judge` slug (it becomes `judge-crucible`).
 - [x] **B4. The submit modal's eligibility check ignores required resources** (the server enforces them). → Fixed: new `crucible.checkEntryEligibility` answers recency and required models per image with the same rule submission uses; the modal header no longer says "Any model".
 - [x] **B5. The resource picker resets on every open**, so several versions can't be added in one go. → Fixed: the picker (shared `ModelVersionMultiSelect`) keeps the current picks and adds several versions per open via the modal's multi-select. Challenge creation gets the same control.
-- [x] **B7. The judge page occasionally stalls mid-session** until refreshed. → Fixed (root cause unconfirmed; recovery instead): per-side load state with a 20s timeout, Retry/Skip on a failed side, votes locked until both sides load, and an error state when the pair request fails.
+- [x] **B7. The judge page occasionally stalls mid-session** until refreshed. → Fixed (root cause unconfirmed; recovery instead): per-side load state with a load timeout (12s for images, 20s for videos; D41), Retry/Skip on a failed side, votes locked until both sides load, and an error state when the pair request fails.
 - [ ] **B8. The vote highlight persists after a click.**
 - [x] **B9. Mobile judging crops pair images to strips** and sometimes renders none. → Fixed: stacked on portrait phones, side by side in landscape, `object-contain` throughout.
 - [x] **B10. Mobile create flow:** Next doesn't scroll to the top; sliders are hard to use on touch. → Fixed: Next/Previous/step tabs scroll the wizard top into view; sliders got a % input (D6a).
@@ -65,7 +65,7 @@ Second walkthrough:
 - [ ] **D11. Moderator editing of title, description and rating; owner cancel of a scheduled crucible; cancelled crucibles hidden from non-moderators.** → D11b: moderator edit + owner cancel before start done with D16 (rating editing server-only for now). D11a async text moderation still open.
 - [ ] **D12. Explain influence in the UI**, decide snapshot vs live weighting, and reset it at launch. → UI explanation done: influence is 10 × √(pairs rated), unweighted; the fake streak text and default of 100 are gone. Snapshot-vs-live and the launch reset are still open.
 - [ ] **D14. Remaining-pairs counter; image/video filter on the list.**
-- [ ] **D17. Should required resources be limited to models available in the generator?**
+- [x] **D17. Should required resources be limited to models available in the generator?** → Decided: no, any published model, on crucibles only (challenges keep the generator-only picker). The server refuses unpublished or private versions. "Generate an entry" is hidden when none of the required versions can generate for the viewer, and opens the generator with the first one that can.
 - [x] **D15. Image and video can't be mixed in one crucible** — decided.
 - [ ] **D16. Editing: the owner edits freely before start and name, description and cover while running; nothing once ended.** → Server done: `crucible.update` (owner until the end; resources only before start and only swapped, never added or removed; content levels moderator-only; moderators any time) and owner cancel before start (refunds setup fee + seed). UI: a "Manage Crucible" panel with name/description edit and cancel. Cover, resources and rating editing have no UI yet.
 
@@ -74,7 +74,7 @@ Second walkthrough:
 - [x] **D19. Show rules and requirements in the details table** used on model versions and challenges. → Done: a `DescriptionTable`.
 - [x] **D20. Give the prize-pool panel the challenges' growing-prize-pool treatment** rather than a bare number. → Done: teal "Growing Prize Pool" header with the shimmering total and "+fee per entry", as on challenges.
 - [x] **D21. Once a user has used all their entries,** show an alert saying so in place of the disabled button, and hide the entry fee. → Done: an alert replaces the button and the entry fee is hidden.
-- [ ] **D22. Audit the pairing and ELO logic:** how opponents are chosen, why pairs repeat, and how many judgments N entries need. Code: `getJudgingPair` in `crucible.service.ts`, `processVoteAtomic` in `crucible-elo.redis.ts`. → Audit done. Vote-integrity hardening shipped; pairing-quality changes (least-voted-first pairing, nearest-rating opponent, fall back to any unjudged pair before showing the end screen) are open.
+- [x] **D22. Audit the pairing and ELO logic:** how opponents are chosen, why pairs repeat, and how many judgments N entries need. Code: `getJudgingPair` in `crucible.service.ts`, `processVoteAtomic` in `crucible-elo.redis.ts`. → Audit done. Vote-integrity hardening shipped. Pairing shipped: the least-voted entry first, against the nearest-rated of the least-voted opponents the judge hasn't paired it with; any unjudged pair (skipped ones included) before the end screen; the judge page's skip list clears after each vote. K-factor and tie-break choices are separate open decisions.
 - [x] **D23. "Continue judging" suggestions use the landing-page crucible card**, with the cover. → Done: suggestions render as `CrucibleCard` with a Start Judging button.
 - [x] **D24. Completed crucibles get the challenges winners podium** at the top. → Done: `CruciblePodium` reuses `WinnerPodiumCard` above the completed crucible's content.
 - [x] **D25. Entry card redesign:** cleaner numbers, username without "by", rank top-right; the same layout without score or rank before completion. Design options first. → Done: the "corner rank" layout (Manuel's pick) — rank chip top-right in gold/silver/bronze for the podium, avatar + username, score as one number; the top three also get the `WinnerPodiumCard` podium (D24).
@@ -106,6 +106,11 @@ Second walkthrough:
 - [x] **B39. A hero image still uploading was dropped on changing step.** → Fixed: step changes and submit wait for uploads.
 - [x] **B40. The hero showed a gradient instead of the cover when the hero was above the viewer's level.** → Fixed: falls back to the cover.
 - Judge slug: routing ignores the slug, so only the exact segment `judge` (now also `edit`) is remapped; "Judge Crucible" → `/judge-crucible` resolves to the detail page. No change needed.
+
+## Fourth round (2026-09-29)
+
+- [x] **B41. On touch screens, tapping a clip on the judge page also set off the shared video player's own delayed hover-play.** → Fixed: `EdgeVideo` takes `hoverPlay` (on by default) and the judge page turns it off; the judge page's own hover/tap playback is unchanged.
+- [x] **D41. Judge media load timeout: 12s for images, 20s for videos** (it was 20s for both). → Done.
 
 ## Found while fixing
 

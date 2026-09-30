@@ -603,6 +603,7 @@ export function CrucibleUpsertWizard(props: Props) {
         }
         description="Entries must use at least one of the selected models. Leave empty to allow any model."
         disabled={rulesLocked}
+        generatableOnly={false}
       />
     </Stack>
   );

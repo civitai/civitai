@@ -412,16 +412,10 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                         Submit Entry
                       </Button>
                       {!currentUser?.muted && (
-                        <Button
-                          variant="default"
-                          fullWidth
-                          leftSection={<IconBrush size={16} />}
-                          onClick={() =>
-                            openCrucibleGenerator(crucible.contentType, allowedResources)
-                          }
-                        >
-                          Generate an entry
-                        </Button>
+                        <GenerateEntryButton
+                          contentType={crucible.contentType}
+                          requiredVersionIds={allowedResources}
+                        />
                       )}
                     </Stack>
                   )}
@@ -619,6 +613,40 @@ function openCrucibleGenerator(contentType: MediaType, modelVersionIds: number[]
     generationGraphPanel.open();
   }
   generationFormStore.setType(contentType);
+}
+
+/** Hidden when the crucible requires models and none of them can generate for this viewer. */
+function GenerateEntryButton({
+  contentType,
+  requiredVersionIds,
+}: {
+  contentType: MediaType;
+  requiredVersionIds: number[];
+}) {
+  const requiresModels = requiredVersionIds.length > 0;
+  const { data: resources } = trpc.generation.getResourceDataByIds.useQuery(
+    { ids: requiredVersionIds },
+    { enabled: requiresModels }
+  );
+
+  const generatable = new Set(
+    resources
+      ?.filter((resource) => resource.canGenerate || resource.substitute?.canGenerate)
+      .map((resource) => resource.id)
+  );
+  const generatableIds = requiredVersionIds.filter((id) => generatable.has(id));
+  if (requiresModels && !generatableIds.length) return null;
+
+  return (
+    <Button
+      variant="default"
+      fullWidth
+      leftSection={<IconBrush size={16} />}
+      onClick={() => openCrucibleGenerator(contentType, generatableIds)}
+    >
+      Generate an entry
+    </Button>
+  );
 }
 
 const toGridEntry = (entry: CrucibleEntry) => ({

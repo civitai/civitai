@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { isDefined } from '~/utils/type-guards';
 import dayjs from '~/shared/utils/dayjs';
 import plimit from 'p-limit';
-import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
+import { Availability, CrucibleStatus, MediaType, ModelStatus } from '~/shared/utils/prisma/enums';
 import { CrucibleSort } from '../schema/crucible.schema';
 import { dbRead, dbWrite } from '../db/client';
 import { Flags } from '~/shared/utils/flags';
@@ -56,7 +56,6 @@ import { CacheTTL } from '~/server/common/constants';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import {
   getEntryElo,
-  CRUCIBLE_DEFAULT_ELO,
   processVote as processEloVote,
   getAllEntryElos,
 } from './crucible-elo.service';
@@ -223,6 +222,7 @@ export const createCrucible = async ({
 
   await throwOnBlockedUserContent([name, description], { isModerator, surface: 'crucible' });
   if (!isModerator) assertSfwCrucibleText([name, description], nsfwLevel);
+  await assertPublishedModelVersions(allowedResources ?? []);
 
   const now = new Date();
   const isScheduled = !!requestedStartAt && requestedStartAt > now;
@@ -322,6 +322,22 @@ function assertSfwCrucibleText(texts: string[], nsfwLevel: number) {
       "The name or description contains language that isn't allowed on a PG or PG-13 crucible."
     );
   }
+}
+
+async function assertPublishedModelVersions(versionIds: number[]) {
+  const ids = [...new Set(versionIds)];
+  if (!ids.length) return;
+  const notPrivate = { not: Availability.Private };
+  const published = await dbRead.modelVersion.count({
+    where: {
+      id: { in: ids },
+      status: ModelStatus.Published,
+      availability: notPrivate,
+      model: { status: ModelStatus.Published, deletedAt: null, availability: notPrivate },
+    },
+  });
+  if (published < ids.length)
+    throw throwBadRequestError('Every required model must be a published, public model.');
 }
 
 const PRESENTATION_FIELDS = ['name', 'description', 'coverImage', 'heroImage'] as const;
@@ -427,6 +443,10 @@ export const updateCrucible = async ({
     surface: 'crucible',
   });
   if (!isModerator) assertSfwCrucibleText([nextName, nextDescription], next.nsfwLevel);
+  // Only newly added ones: a required model unpublished later shouldn't block editing the rest.
+  await assertPublishedModelVersions(
+    next.allowedResources.filter((versionId) => !current.allowedResources.includes(versionId))
+  );
 
   const imageId = changes.coverImage
     ? await resolveCoverImageId({
@@ -1283,12 +1303,6 @@ export const submitEntry = async ({
   }
 };
 
-// ELO deviation thresholds for estimating vote activity
-// An entry with ELO closer to 1500 has likely received fewer votes
-const ELO_DEVIATION_LOW = 50; // 0-50 ELO deviation: likely 0-5 votes (calibration)
-const ELO_DEVIATION_MED = 150; // 50-150 ELO deviation: likely 6-20 votes (discovery)
-// >150 ELO deviation: likely 20+ votes (optimization)
-
 /**
  * Redis key for tracking voted pairs per user per crucible
  */
@@ -1443,34 +1457,6 @@ export async function getUserJudgeStats(userId: number): Promise<{
   };
 }
 
-/**
- * Check multiple pairs for voted status in parallel
- * Uses SISMEMBER for each pair in parallel for better performance
- */
-async function arePairsVoted(
-  crucibleId: number,
-  userId: number,
-  pairs: Array<{ entryId1: number; entryId2: number }>
-): Promise<boolean[]> {
-  const key = getVotedPairsKey(crucibleId, userId);
-  const results = await Promise.all(
-    pairs.map(async ({ entryId1, entryId2 }) => {
-      const pairKey = createPairKey(entryId1, entryId2);
-      return await sysRedis.sIsMember(key, pairKey);
-    })
-  );
-  // sIsMember returns 1 if member exists, 0 if not - convert to boolean
-  return results.map((result) => Boolean(result));
-}
-
-/**
- * Estimate vote activity based on ELO deviation from default
- * Entries closer to 1500 have likely received fewer votes
- */
-function getEloDeviation(score: number): number {
-  return Math.abs(score - CRUCIBLE_DEFAULT_ELO);
-}
-
 type EntryForJudging = {
   id: number;
   imageId: number;
@@ -1519,9 +1505,9 @@ export const withoutEntryScores = (pair: JudgingPair): JudgingPairForClient => {
   return { left: project(pair.left), right: project(pair.right) };
 };
 
-// Constants for sampling in getJudgingPair
-const SAMPLE_SIZE = 100; // Number of candidates to fetch per attempt
-const MAX_SAMPLE_ATTEMPTS = 3; // Maximum sampling attempts before giving up
+const SAMPLE_SIZE = 100;
+const MAX_SAMPLE_ATTEMPTS = 3;
+const OPPONENT_POOL_SIZE = 10;
 
 /**
  * Raw SQL query result for entry sampling
@@ -1633,30 +1619,39 @@ async function fetchEntrySample(
   }));
 }
 
+type RatedEntry = EntryForJudging & { votes: number };
+
 /**
- * Get a pair of entries for judging
- *
- * PERFORMANCE OPTIMIZATION:
- * - Uses database-level random sampling instead of loading all entries
- * - Fetches only ~100 candidate entries per request (not all entries)
- * - Retries up to 3 times if no valid pair found in sample
- *
- * Selection algorithm:
- * 1. Fetch a random sample of eligible entries (excludes user's own entries)
- * 2. Image A: Weighted by lowest ELO deviation (prioritize under-voted entries near 1500)
- * 3. Image B: Based on voting phase of Image A (estimated from ELO deviation):
- *    - Calibration (deviation 0-50): Pick anchor (high deviation, established ELO)
- *    - Discovery (deviation 50-150): Pick uncertain (similar uncertain ELO)
- *    - Optimization (deviation >150): Pick similar ELO
- * 4. Exclude pairs the user has already voted on
- * 5. Randomize left/right position
+ * The least-voted entry, against the nearest-rated of the least-voted opponents this judge hasn't
+ * already paired it with. Ties break randomly.
  */
+function pickUnjudgedPair(entries: RatedEntry[], votedPairs: Set<string>) {
+  const byVotes = entries
+    .map((entry) => ({ entry, tieBreak: Math.random() }))
+    .sort((x, y) => x.entry.votes - y.entry.votes || x.tieBreak - y.tieBreak)
+    .map(({ entry }) => entry);
+
+  for (const a of byVotes) {
+    const opponents = byVotes
+      .filter((b) => b.id !== a.id && !votedPairs.has(createPairKey(a.id, b.id)))
+      .slice(0, OPPONENT_POOL_SIZE);
+    if (!opponents.length) continue;
+
+    const distance = (entry: RatedEntry) => Math.abs(entry.score - a.score);
+    const b = opponents.reduce((nearest, candidate) =>
+      distance(candidate) < distance(nearest) ? candidate : nearest
+    );
+    return { a, b };
+  }
+
+  return null;
+}
+
 export const getJudgingPair = async ({
   crucibleId,
   userId,
   excludeEntryIds,
 }: GetJudgingPairSchema & { userId: number }): Promise<JudgingPair> => {
-  // Fetch the crucible to validate it's active
   const crucible = await dbRead.crucible.findUnique({
     where: { id: crucibleId },
     select: {
@@ -1681,117 +1676,42 @@ export const getJudgingPair = async ({
     return null;
   }
 
-  const [redisElos, judgeEntryVotes] = await Promise.all([
+  const [redisElos, voteCounts, judgeEntryVotes, votedPairKeys] = await Promise.all([
     getAllEntryElos(crucibleId),
+    crucibleEloRedis.getAllVoteCounts(crucibleId),
     sysRedis.hGetAll(getJudgeEntryVotesKey(crucibleId, userId)),
+    sysRedis.sMembers(getVotedPairsKey(crucibleId, userId)),
   ]);
-  const underJudgeCap = (entryId: number) =>
-    Number(judgeEntryVotes?.[entryId] ?? 0) < CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY;
+  const votedPairs = new Set(votedPairKeys);
+  const underJudgeCap = (entry: EntryForJudging) =>
+    Number(judgeEntryVotes?.[entry.id] ?? 0) < CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY;
+  const rate = (entry: EntryForJudging): RatedEntry => ({
+    ...entry,
+    score: redisElos[entry.id] ?? entry.score,
+    votes: voteCounts[entry.id] ?? 0,
+  });
 
-  let imageA: EntryForJudging | null = null;
-  let imageB: EntryForJudging | null = null;
-
-  // Try multiple sampling attempts if no valid pair found
-  for (let attempt = 0; attempt < MAX_SAMPLE_ATTEMPTS; attempt++) {
-    // Fetch a random sample of entries (excludes user's own entries and any specified excluded entries in SQL)
-    const sampleEntries = await fetchEntrySample(crucibleId, userId, SAMPLE_SIZE, excludeEntryIds);
-
-    // Need at least 2 entries to form a pair
-    if (sampleEntries.length < 2) {
-      return null;
+  const search = async (exclusions?: number[]) => {
+    for (let attempt = 0; attempt < MAX_SAMPLE_ATTEMPTS; attempt++) {
+      const sample = await fetchEntrySample(crucibleId, userId, SAMPLE_SIZE, exclusions);
+      const pair = pickUnjudgedPair(sample.filter(underJudgeCap).map(rate), votedPairs);
+      if (pair) return pair;
+      // A short sample already held every entry, so another draw returns the same set.
+      if (sample.length < SAMPLE_SIZE) return null;
     }
-
-    const entries: EntryForJudging[] = sampleEntries
-      .filter((entry) => underJudgeCap(entry.id))
-      .map((entry) => ({
-        ...entry,
-        score: redisElos[entry.id] ?? entry.score,
-      }));
-    if (entries.length < 2) continue;
-
-    // Step 1: Select Image A - weighted by lowest ELO deviation (closest to 1500)
-    // Sort by ELO deviation ascending, then add some randomness among entries with similar deviation
-    // Sort in place to avoid creating a new array
-    entries.sort((a, b) => getEloDeviation(a.score) - getEloDeviation(b.score));
-
-    // Get the minimum deviation
-    const minDeviation = getEloDeviation(entries[0].score);
-
-    // Find entries with deviation close to minimum (within 30 ELO points)
-    // Use indices to avoid creating intermediate arrays
-    let lowDeviationEndIndex = 0;
-    for (let i = 0; i < entries.length; i++) {
-      if (getEloDeviation(entries[i].score) <= minDeviation + 30) {
-        lowDeviationEndIndex = i + 1;
-      } else {
-        break;
-      }
-    }
-
-    // Shuffle the low deviation pool in place using Fisher-Yates
-    for (let i = lowDeviationEndIndex - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [entries[i], entries[j]] = [entries[j], entries[i]];
-    }
-
-    // Try each candidate A from the low deviation pool
-    for (let aIdx = 0; aIdx < lowDeviationEndIndex; aIdx++) {
-      const candidateA = entries[aIdx];
-      const phase = getVotingPhase(getEloDeviation(candidateA.score));
-
-      // Get candidate B pool based on phase (excludes imageA, but not voted pairs yet)
-      const candidateBPool = getCandidateBPool(entries, candidateA, phase);
-
-      if (candidateBPool.length === 0) {
-        continue; // No valid B candidates for this A, try next A
-      }
-
-      // Shuffle B pool in place using Fisher-Yates
-      for (let i = candidateBPool.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [candidateBPool[i], candidateBPool[j]] = [candidateBPool[j], candidateBPool[i]];
-      }
-
-      // Batch check which pairs have been voted on using SISMEMBER (O(1) per check, parallel)
-      const pairsToCheck = candidateBPool.map((candidateB) => ({
-        entryId1: candidateA.id,
-        entryId2: candidateB.id,
-      }));
-      const votedStatuses = await arePairsVoted(crucibleId, userId, pairsToCheck);
-
-      // Find first candidate B that hasn't been voted on
-      for (let i = 0; i < candidateBPool.length; i++) {
-        if (!votedStatuses[i]) {
-          imageA = candidateA;
-          imageB = candidateBPool[i];
-          break;
-        }
-      }
-
-      if (imageA && imageB) break;
-    }
-
-    // Found a valid pair
-    if (imageA && imageB) break;
-
-    // No valid pair in this sample, try another sample
-    log(
-      `Attempt ${attempt + 1}: No valid pair found in sample of ${
-        sampleEntries.length
-      } entries for crucible ${crucibleId}`
-    );
-  }
-
-  // If no valid pair found after all attempts
-  if (!imageA || !imageB) {
     return null;
-  }
+  };
+
+  // A skip means "not now": once only skipped entries are left, they come back instead of the
+  // judge being told there is nothing left to judge.
+  const pair = (await search(excludeEntryIds)) ?? (excludeEntryIds?.length ? await search() : null);
+  if (!pair) return null;
+  const { a: imageA, b: imageB } = pair;
 
   const servedKey = getServedPairsKey(crucibleId, userId);
   await sysRedis.sAdd(servedKey, createPairKey(imageA.id, imageB.id));
   await sysRedis.expire(servedKey, JUDGE_KEY_TTL_SECONDS);
 
-  // Step 4: Randomize left/right position
   const swapPositions = Math.random() < 0.5;
 
   return {
@@ -1799,86 +1719,6 @@ export const getJudgingPair = async ({
     right: swapPositions ? imageA : imageB,
   };
 };
-
-/**
- * Determine the voting phase based on ELO deviation
- */
-function getVotingPhase(deviation: number): 'calibration' | 'discovery' | 'optimization' {
-  if (deviation <= ELO_DEVIATION_LOW) {
-    return 'calibration';
-  } else if (deviation <= ELO_DEVIATION_MED) {
-    return 'discovery';
-  } else {
-    return 'optimization';
-  }
-}
-
-/**
- * Get candidate pool for Image B based on voting phase
- * Note: Does NOT filter by voted pairs - that check happens asynchronously via SISMEMBER
- */
-function getCandidateBPool(
-  entries: EntryForJudging[],
-  imageA: EntryForJudging,
-  phase: 'calibration' | 'discovery' | 'optimization'
-): EntryForJudging[] {
-  // Filter out Image A only - voted pair check happens asynchronously
-  const validCandidates = entries.filter((entry) => entry.id !== imageA.id);
-
-  if (validCandidates.length === 0) return [];
-
-  switch (phase) {
-    case 'calibration': {
-      // Anchor: Pick entries with high ELO deviation (established ratings)
-      // These serve as reference points for new entries
-      const highDeviationEntries = validCandidates.filter(
-        (entry) => getEloDeviation(entry.score) > ELO_DEVIATION_LOW
-      );
-      // If no high-deviation entries available, fall back to any available entries
-      return highDeviationEntries.length > 0 ? highDeviationEntries : validCandidates;
-    }
-
-    case 'discovery': {
-      // Uncertain: Pick entries with similar uncertain ELO
-      // Find entries within 200 ELO points and similar deviation range
-      const imageAElo = imageA.score;
-
-      const uncertainEntries = validCandidates.filter((entry) => {
-        const eloDiff = Math.abs(imageAElo - entry.score);
-        const entryDeviation = getEloDeviation(entry.score);
-        // Wide ELO range (200) and similar phase entries
-        return (
-          eloDiff <= 200 &&
-          entryDeviation >= ELO_DEVIATION_LOW &&
-          entryDeviation <= ELO_DEVIATION_MED * 2
-        );
-      });
-      // Fall back to any available if no similar entries
-      return uncertainEntries.length > 0 ? uncertainEntries : validCandidates;
-    }
-
-    case 'optimization': {
-      // Similar ELO: Pick entries with similar ELO for fine-tuning rankings
-      const imageAElo = imageA.score;
-
-      // Narrow ELO range (100) for optimization
-      let similarEloEntries = validCandidates.filter((entry) => {
-        const eloDiff = Math.abs(imageAElo - entry.score);
-        return eloDiff <= 100;
-      });
-
-      // If no similar ELO entries, expand to 200 range
-      if (similarEloEntries.length === 0) {
-        similarEloEntries = validCandidates.filter((entry) => {
-          const eloDiff = Math.abs(imageAElo - entry.score);
-          return eloDiff <= 200;
-        });
-      }
-
-      return similarEloEntries.length > 0 ? similarEloEntries : validCandidates;
-    }
-  }
-}
 
 /**
  * Submit a vote result type

@@ -1,5 +1,5 @@
 import { useState, type ComponentProps } from 'react';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
@@ -18,6 +18,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 // stalls accumulation after one second.
 const playheads = vi.hoisted(() => new Map<string, number>());
 const mediaOutcome = vi.hoisted(() => new Map<string, 'loadedmetadata' | 'error' | 'pending'>());
+const lastVideoProps = vi.hoisted(() => new Map<string, Record<string, unknown>>());
 
 vi.mock('~/components/EdgeMedia/EdgeMedia', async () => {
   const { useEffect, useRef } = await import('react');
@@ -30,6 +31,7 @@ vi.mock('~/components/EdgeMedia/EdgeMedia', async () => {
       videoProps?: { onTimeUpdate?: (e: { currentTarget: { currentTime: number } }) => void };
     }) {
       const videoRef = useRef<HTMLVideoElement>(null);
+      lastVideoProps.set(src, videoProps ?? {});
       useEffect(() => {
         const outcome = mediaOutcome.get(src) ?? 'loadedmetadata';
         if (outcome !== 'pending') videoRef.current?.dispatchEvent(new Event(outcome));
@@ -63,7 +65,7 @@ const { CrucibleJudgingUI } = await import('~/components/Crucible/CrucibleJudgin
 
 const srcOf = (id: number) => `0000000${id}-0000-4000-8000-000000000000`;
 
-const entry = (id: number) => ({
+const entry = (id: number, type: 'video' | 'image' = 'video') => ({
   id,
   imageId: id * 10,
   userId: id * 100,
@@ -71,7 +73,7 @@ const entry = (id: number) => ({
     id: id * 10,
     name: `clip-${id}.webm`,
     url: srcOf(id),
-    type: 'video' as const,
+    type,
     metadata: { duration: 30 },
     nsfwLevel: 1,
     width: 512,
@@ -123,6 +125,7 @@ const expectBothCardsRendered = async () =>
 beforeEach(() => {
   playheads.clear();
   mediaOutcome.clear();
+  lastVideoProps.clear();
 });
 
 describe('CrucibleJudgingUI — minimum view time', () => {
@@ -248,6 +251,38 @@ describe('CrucibleJudgingUI — media loading', () => {
     expect(mediaStatus('right')).toBe('loaded');
     expect(onVote).not.toHaveBeenCalled();
   });
+
+  describe('load timeout', () => {
+    afterEach(() => vi.useRealTimers());
+
+    const statusOf = (side: 'left' | 'right') =>
+      document
+        .querySelector(`[aria-label^="Vote for ${side}"]`)
+        ?.querySelector<HTMLElement>('[data-media-status]')?.dataset.mediaStatus;
+
+    test('gives up on an image after 12s and on a video after 20s', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      mediaOutcome.set(srcOf(1), 'pending');
+      mediaOutcome.set(srcOf(2), 'pending');
+      renderWithProviders(
+        <CrucibleJudgingUI
+          pair={{ left: entry(1, 'image'), right: entry(2) } as never}
+          onVote={vi.fn()}
+          onSkip={vi.fn()}
+        />
+      );
+      await vi.waitFor(() => expect(statusOf('left')).toBe('loading'));
+
+      vi.advanceTimersByTime(12_100);
+      await vi.waitFor(() => expect(statusOf('left'), 'image after 12s').toBe('error'));
+      // Rendered in the same pass as the image's timeout, so a video timer that had also fired
+      // would show here.
+      expect(statusOf('right'), 'video after 12s').toBe('loading');
+
+      vi.advanceTimersByTime(8_000);
+      await vi.waitFor(() => expect(statusOf('right'), 'video after 20s').toBe('error'));
+    });
+  });
 });
 
 describe('CrucibleJudgingUI — video playback', () => {
@@ -279,6 +314,16 @@ describe('CrucibleJudgingUI — video playback', () => {
 
     await vi.waitFor(() => expect(pauseRight).toHaveBeenCalled());
     expect(pauseLeft).not.toHaveBeenCalled();
+  });
+
+  test("turns off the player's own hover-to-play, which a tap also triggers", async () => {
+    renderWithProviders(
+      <CrucibleJudgingUI pair={pairOf(1, 2)} onVote={vi.fn()} onSkip={vi.fn()} />
+    );
+    await expectBothCardsRendered();
+
+    expect(lastVideoProps.get(srcOf(1))).toMatchObject({ hoverPlay: false });
+    expect(lastVideoProps.get(srcOf(2))).toMatchObject({ hoverPlay: false });
   });
 });
 

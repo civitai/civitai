@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
+import { CrucibleStatus, MediaType, ModelStatus } from '~/shared/utils/prisma/enums';
 import {
   CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
   CRUCIBLE_RESOURCE_REQUIREMENTS_COST,
@@ -17,6 +17,7 @@ const crucibleCreate = dbMock.dbWrite.crucible.create;
 const crucibleUpdate = dbMock.dbWrite.crucible.update;
 const crucibleDelete = dbMock.dbWrite.crucible.delete;
 const crucibleUpdateMany = dbMock.dbWrite.crucible.updateMany;
+const modelVersionCount = dbMock.dbRead.modelVersion.count;
 const getUserBuzzAccount = vi.fn();
 const createMultiAccountBuzzTransaction = vi.fn();
 const refundMultiAccountTransaction = vi.fn();
@@ -79,12 +80,16 @@ const storedData = () => ({
 const chargedAmounts = () =>
   createMultiAccountBuzzTransaction.mock.calls.map(([arg]) => arg.amount);
 
+/** Every id the service asks about counts as a published, public model version. */
+const allPublished = async ({ where }: { where: { id: { in: number[] } } }) => where.id.in.length;
+
 const refundedPrefixes = () =>
   refundMultiAccountTransaction.mock.calls.map(([arg]) => arg.externalTransactionIdPrefix);
 
 beforeEach(() => {
   vi.clearAllMocks();
   balance(1_000_000);
+  modelVersionCount.mockImplementation(allPublished);
   createMultiAccountBuzzTransaction.mockResolvedValue({ transactions: [] });
   refundMultiAccountTransaction.mockResolvedValue(undefined);
   assertCanCreateCrucible.mockResolvedValue(undefined);
@@ -344,6 +349,19 @@ describe('createCrucible — resource requirements', () => {
     expect(chargedAmounts()).toEqual([SETUP_FEE]);
     const [{ data }] = crucibleCreate.mock.calls[0];
     expect(data.allowedResources).not.toEqual([]);
+  });
+
+  it('refuses a model that is not published and public, before anything is written or charged', async () => {
+    modelVersionCount.mockResolvedValue(0);
+
+    await expect(createCrucible(input({ allowedResources: [123] }))).rejects.toThrow(
+      /published, public model/
+    );
+    expect(modelVersionCount).toHaveBeenCalledWith({
+      where: expect.objectContaining({ id: { in: [123] }, status: ModelStatus.Published }),
+    });
+    expect(crucibleCreate).not.toHaveBeenCalled();
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
   });
 });
 

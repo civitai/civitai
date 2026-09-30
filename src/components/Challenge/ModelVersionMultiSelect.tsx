@@ -24,6 +24,8 @@ type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   onChange?: (ids: number[]) => void;
   maxSelections?: number;
   disabled?: boolean;
+  /** When false, any published model can be picked, not only ones the generator can run. */
+  generatableOnly?: boolean;
 };
 
 /**
@@ -36,6 +38,7 @@ export function ModelVersionMultiSelect({
   onChange,
   maxSelections = 10,
   disabled,
+  generatableOnly = true,
   ...inputWrapperProps
 }: Props) {
   // Track selected resources for display
@@ -92,7 +95,7 @@ export function ModelVersionMultiSelect({
       onSelectMultiple: addResources,
       limit: maxSelections - value.length,
       options: {
-        canGenerate: true,
+        canGenerate: generatableOnly || undefined,
         resources: [
           { type: ModelType.Checkpoint },
           { type: ModelType.LORA },
@@ -101,7 +104,7 @@ export function ModelVersionMultiSelect({
         ],
         excludeIds: value,
       },
-      selectSource: 'generation',
+      selectSource: generatableOnly ? 'generation' : 'addResource',
     });
   };
 
