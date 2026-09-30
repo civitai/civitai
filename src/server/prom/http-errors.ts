@@ -97,7 +97,22 @@ function collapseSegment(seg: string): string {
   return seg;
 }
 
-function reconstructApiRoute(req: NextApiRequest): string {
+/**
+ * EXPORTED for `handleEndpointError`'s error log, not only for this counter.
+ *
+ * 🔴 The point of sharing it is that the log field and the metric label are then
+ * THE SAME STRING, so a route seen in `civitai_app_http_errors_total{kind="api"}`
+ * joins to its log lines by equality rather than by eyeballing two spellings. A
+ * second, independently-written normalizer on the log side would diverge the first
+ * time either was touched, and the divergence would be silent.
+ *
+ * Reusing it also inherits the two safety properties this function already has,
+ * which a naive `req.url` on the log side would NOT: query-string keys are
+ * excluded from param matching (so nothing attacker-controlled reaches the
+ * output), and the query string never appears at all — meaning a token passed as
+ * `?token=…` cannot be logged by this path.
+ */
+export function reconstructApiRoute(req: NextApiRequest): string {
   const method = (req.method ?? 'GET').toUpperCase();
   let pathname: string;
   let queryStringKeys: Set<string>;
