@@ -59,6 +59,23 @@ const DEGRADED_CACHE_TTL_SECONDS = 60;
 const DEGRADED_MODEL = 'jev-unavailable';
 
 /**
+ * ClickHouse `DateTime64(3)` under the server-default `date_time_input_format =
+ * basic`, which does NOT accept an ISO-8601 `T` separator or a trailing `Z` — so a
+ * raw `toISOString()` is rejected at parse time. Same shape the repo's other
+ * DateTime64(3) writer uses (`feed-request-capture.service.ts`); the DateTime
+ * writer in `scanner-audit.service.ts` slices to 19 instead, dropping millis.
+ *
+ * 🔴 This is worth getting right precisely because it CANNOT fail loudly: the
+ * client sets `wait_for_async_insert: 0`, so a flush-time parse error is never
+ * returned to the caller — `writeShadowEvent`'s catch sees success and the
+ * write-failed log never fires. A bad format here leaves the shadow table
+ * silently empty, and it is the only data source the M4 gate reads.
+ */
+function clickhouseDateTime64(d: Date): string {
+  return d.toISOString().slice(0, 23).replace('T', ' ');
+}
+
+/**
  * The effective suggestion ceiling for one request. Single source for the matcher
  * cap, the cache key and the serve-time truncation, so those three can never
  * disagree about how wide a response is allowed to be.
@@ -149,9 +166,17 @@ async function hydrateSuggestions(
   browsingLevel: number
 ): Promise<ResourceIntentSuggestion[]> {
   if (!ordered.length) return [];
+  // 🔴 NO `withPreview` — deliberately, and it is a CLAMP decision, not a cost one.
+  // `resourceExceedsCatalogCeiling` reads `level = imageNsfwLevel || (modelNsfw ? R : 0)`,
+  // so a PRESENT image level shadows `modelNsfw` entirely. `withPreview` populates that
+  // image via `pickPreviewImage`, which only ever returns an image ALREADY visible at
+  // `browsingLevel` — so the image level always intersects the ceiling and the re-check
+  // becomes a no-op, admitting a `Model.nsfw = true` model with a PG cover to a SFW block.
+  // `generation-resources.ts` omits it for exactly this reason (see its own comment), and
+  // the projection emits no image field, so requesting one bought nothing but that hole.
   const resources = await getResourceData(
     ordered.map((entry) => entry.versionId),
-    { withPreview: true, browsingLevel }
+    { browsingLevel }
   );
   const byId = new Map(resources.map((resource) => [resource.id, resource]));
   const suggestions: ResourceIntentSuggestion[] = [];
@@ -406,7 +431,7 @@ export async function getResourceIntent(
     const answer = response?.intent;
     // Degraded rows carry zero/empty summary columns; `degraded` discriminates.
     await writeShadowEvent({
-      time: (ctx.now ?? (() => new Date()))().toISOString(),
+      time: clickhouseDateTime64((ctx.now ?? (() => new Date()))()),
       promptHash: createHash('sha256').update(input.prompt).digest('hex'),
       promptLength: input.prompt.length,
       baseModel: input.baseModel ?? '',

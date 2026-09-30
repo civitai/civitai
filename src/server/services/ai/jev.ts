@@ -175,15 +175,27 @@ function parseAnswer(question: JevQuestionSpec, raw: unknown, idPath: string): J
   }
 }
 
-function buildPrompt(request: JevRequest): { system: string; user: string } {
+export function buildPrompt(request: JevRequest): { system: string; user: string } {
+  // 🔴 The `answers` envelope is REQUIRED here because `askJev` rejects any other
+  // top-level key. An earlier draft described the per-answer shape and never named
+  // the wrapper, so a model that followed the prompt exactly returned answers at the
+  // top level and was refused as malformed on EVERY call — the endpoint would have
+  // been 100% degraded from its first real request, silently, since a degraded
+  // response is indistinguishable from an honest "no resource needed". Keep the
+  // wrapper named here and in the example below; `jev.test.ts` pins the round trip.
   const system = [
     'You are a bounded judgment engine. You never write prose.',
-    'You receive a state and a list of questions. For EVERY question, return exactly one answer keyed by its id.',
+    'You receive a state and a list of questions.',
+    'Return a JSON object with EXACTLY ONE top-level key, "answers", whose value is an object keyed by question id.',
+    'Include EVERY question id exactly once. Do not add any other top-level key.',
     'Answer shape by question type:',
     '- choice: {"value": "<one of options>", "distribution": {"<option>": <probability 0..1>}} — the distribution must cover the offered options and sum to 1.',
     '- score: {"value": <integer within the stated range>}',
     '- noul: {"value": <probability 0..1>}',
-    'You may add "confidence": <0..1> to any answer. Respond with ONLY the JSON object.',
+    'You may add "confidence": <0..1> to any answer.',
+    'Example for questions with ids "a" (noul) and "b" (choice over x|y):',
+    '{"answers":{"a":{"value":0.8},"b":{"value":"x","distribution":{"x":0.7,"y":0.3}}}}',
+    'Respond with ONLY that JSON object.',
   ].join('\n');
   const user = `State:\n${JSON.stringify(request.state)}\n\nQuestions:\n${JSON.stringify(
     request.questions.map(({ id, type, prompt, ...rest }) => ({ id, type, prompt, ...rest }))

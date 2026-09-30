@@ -1,6 +1,6 @@
 # Resource-intent primitive (Jev)
 
-**Status:** M1–M3 implemented, dark behind `resourceIntentJev` (default-deny). M4/M5 are gated follow-ons — see [Rollout](#rollout).
+**Status:** **M1 only** — the primitive and its REST surface, dark behind `resourceIntentJev` (default-deny). M2 and M3 were built and then REMOVED before merge because neither could run; see the section on them below. M4/M5 are gated follow-ons — see [Rollout](#rollout).
 
 A versioned, headless API primitive: **prompt → intent + criteria → civitai resource suggestions**. A prompt becomes a typed intent (what kinds of resources it wants, with full probability distributions), the intent compiles into a deterministic shortlist over the model search index, and a second judgment ranks the shortlist. `none` is a first-class answer at every stage — most prompts need no resource.
 
@@ -10,7 +10,7 @@ The judgment model is [TypeSafe Jev](https://openrouter.ai) (`typesafe/jev-1.13`
 
 ```
 POST /api/v1/blocks/resource-intent {prompt, baseModel?, limit?}
-  → [redis cache, key sha256(prompt|baseModel|browsingLevel|specVersion), TTL 1h]
+  → [redis cache, key sha256(prompt|baseModel|browsingLevel|cap|specVersion), TTL 1h]
   → Jev request #1: 6 questions, one round trip      (src/server/services/ai/jev.ts)
   → criteria (versioned object, criteriaVersion: 1)  (src/server/schema/resource-intent.schema.ts)
   → matcher: Meilisearch models_v9 filtered + ordered (src/server/services/resource-intent-matcher.service.ts)
@@ -32,7 +32,7 @@ POST /api/v1/blocks/resource-intent {prompt, baseModel?, limit?}
 
 1. **Pin the model.** `typesafe/jev-1.13` (numbered). The client sends `allowFallbacks: false`, so OpenRouter cannot route the call to a different model while we record ours. `jev-latest` never appears in code.
 2. **Fail closed, fail empty.** Any Jev error/timeout/malformed response returns HTTP 200 with `degraded: true` and `suggestions: []`. Never a stack trace, never fabricated suggestions.
-3. **Deterministic gates always win.** Availability (no Private), the token's `maxBrowsingLevel` maturity clamp (authoritative — no client maturity field is read), region restriction, canGenerate coverage, baseModel compatibility (caller-supplied, never Jev output), and the hard-coded `celebrity` tag exclusion are applied in the matcher and re-applied at hydration. Jev output can only reorder/drop within the gate-passing set, never add — the stage-3 option list contains exactly the shortlisted keys plus `none`, so an unknown version is unrepresentable.
+3. **Deterministic gates always win.** Availability (no Private), the token's `maxBrowsingLevel` maturity clamp (authoritative — no client maturity field is read), region restriction, canGenerate coverage, baseModel compatibility (caller-supplied, never Jev output), and the hard-coded `celebrity` tag exclusion are applied in the matcher. Hydration re-checks exactly TWO of them — `hasAccess` and the maturity ceiling — because those are the ones whose indexed value can lag; coverage, baseModel and the celebrity exclusion are NOT re-checked there, and `canGenerate` is present on the hydrated resource and deliberately unread. Jev output can only reorder/drop within the gate-passing set, never add — the stage-3 option list contains exactly the shortlisted keys plus `none`, so an unknown version is unrepresentable.
 4. **`none` is a first-class answer.** Stage-1 `role` includes `none`; stage 3 includes `none`. An argmax of `none` returns empty suggestions _without_ `degraded`.
 5. **Stable question IDs + spec hash.** `QUESTION_SPEC_VERSION` plus a sha256 over the question spec ride every response and shadow row; a question edit invalidates old analytics instead of blending with them.
 6. **Reject unknown answer keys.** Every response parse rejects keys outside the question set, distributions must sum to ~1 (±0.02) over the offered options, scores/nouls must be in range. Confidence is recorded, never used as a permission slip — thresholds come from the study, and none are enforced in M1.

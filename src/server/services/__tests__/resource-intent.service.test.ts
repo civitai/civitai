@@ -458,6 +458,47 @@ describe('stage flow', () => {
     const result = await getResourceIntent(INPUT, CTX);
     expect(result.suggestions.map((s) => s.versionId)).toEqual([11]);
   });
+
+  it('🔴 drops a mature-FLAGGED model whose cover image is SFW', async () => {
+    mockStage1();
+    mockFindCandidates.mockResolvedValue(SHORTLIST);
+    mockStage3({ '0': 0.7, '1': 0.2, none: 0.1 });
+    // The reachable case the sibling test above CANNOT produce. `pickPreviewImage`
+    // only ever returns an image already visible at the ceiling, so an image level
+    // of 4 against a SFW ceiling is not something production can hand us — while
+    // `Model.nsfw = true` with a PG cover is both common and, under the old
+    // `withPreview: true`, silently admitted: a present image level shadows
+    // `modelNsfw` in resourceExceedsCatalogCeiling.
+    mockGetResourceData.mockImplementation(async () => [
+      genResource(11),
+      // No `image` — that is what production now returns, since the service no
+      // longer asks for a preview. `modelNsfw` is therefore the active signal.
+      (({ image: _image, ...rest }) => ({
+        ...rest,
+        model: { ...rest.model, nsfw: true },
+      }))(genResource(22)),
+    ]);
+    const result = await getResourceIntent(INPUT, CTX);
+    expect(result.suggestions.map((s) => s.versionId)).toEqual([11]);
+  });
+
+  it('🔴 does NOT ask getResourceData for a preview image', async () => {
+    // The behavioural arm above passes whether or not `withPreview` is sent,
+    // because the mock ignores it — so THIS is the arm that pins the fix.
+    // Requesting a preview re-populates `image.nsfwLevel`, which shadows
+    // `modelNsfw` and reopens the hole. It also buys nothing: the projection
+    // emits no image field.
+    mockStage1();
+    mockFindCandidates.mockResolvedValue(SHORTLIST);
+    mockStage3({ '0': 0.7, '1': 0.2, none: 0.1 });
+    mockGetResourceData.mockImplementation(async (ids: number[]) =>
+      ids.map((id) => genResource(id))
+    );
+    await getResourceIntent(INPUT, CTX);
+    const opts = mockGetResourceData.mock.calls[0][1] as Record<string, unknown>;
+    expect(opts).not.toHaveProperty('withPreview');
+    expect(opts).toMatchObject({ browsingLevel: 3 });
+  });
 });
 
 describe('shadow event', () => {
@@ -480,7 +521,12 @@ describe('shadow event', () => {
     expect(call.format).toBe('JSONEachRow');
     const row = call.values[0];
     expect(row).toMatchObject({
-      time: '2026-09-29T00:00:00.000Z',
+      // 🔴 ClickHouse `DateTime64(3)` under `date_time_input_format = basic`:
+      // space separator, no trailing `Z`. A raw toISOString() is REJECTED at
+      // flush — and because the client sets `wait_for_async_insert: 0`, that
+      // rejection never reaches us, so the table would just stay empty.
+      // Pinned as a literal, not derived from the implementation.
+      time: '2026-09-29 00:00:00.000',
       model: 'typesafe/jev-1.13',
       degraded: 0,
       role: 'style',

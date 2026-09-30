@@ -22,7 +22,7 @@ vi.mock('~/server/services/ai/openrouter', async (importOriginal) => {
   };
 });
 
-const { askJev, JevError, JEV_TIMEOUT_MS } = await import('~/server/services/ai/jev');
+const { askJev, buildPrompt, JevError, JEV_TIMEOUT_MS } = await import('~/server/services/ai/jev');
 
 const choiceQuestion = {
   id: 'role',
@@ -314,5 +314,71 @@ describe('askJev — timeout', () => {
     await expect(askJev({ state: {}, questions: [choiceQuestion] })).rejects.toMatchObject({
       kind: 'transport',
     });
+  });
+});
+
+describe('🔴 the PROMPT and the PARSER describe the same envelope', () => {
+  /**
+   * Every other fixture in this file hand-wraps its response in `answers`, which
+   * encodes the PARSER. None of them read the prompt, so none could see that an
+   * earlier draft never named the wrapper: a model obeying the prompt exactly
+   * returned answers at the top level and `askJev` refused it as malformed on
+   * EVERY call. The endpoint would have been 100% degraded from its first real
+   * request, and — because a degraded response is byte-identical to an honest
+   * "no resource needed" — nothing would have said so.
+   *
+   * These derive the expectation from the PROMPT TEXT instead.
+   */
+  const questions = [noulQuestion, choiceQuestion] as const;
+
+  it('names the `answers` envelope and forbids other top-level keys', () => {
+    const { system } = buildPrompt({ state: { prompt: 'p' }, questions });
+    expect(system).toContain('"answers"');
+    expect(system).toMatch(/EXACTLY ONE top-level key/i);
+  });
+
+  it('🔴 the example the prompt SHOWS is accepted by the parser that reads it', async () => {
+    const { system } = buildPrompt({ state: { prompt: 'p' }, questions });
+    // Pull the literal JSON example out of the prompt — not a fixture we wrote.
+    const example = system.split('\n').find((line) => line.trim().startsWith('{'));
+    expect(example, 'the prompt must carry a concrete JSON example').toBeTruthy();
+    const parsedExample = JSON.parse(example as string);
+
+    // Re-key the example onto THIS request's ids, preserving its SHAPE.
+    const answers: Record<string, unknown> = {};
+    const shapes = Object.values(parsedExample.answers as Record<string, unknown>);
+    answers[noulQuestion.id] = shapes[0];
+    answers[choiceQuestion.id] = {
+      value: 'style',
+      distribution: { style: 0.7, character: 0.3 },
+    };
+
+    send.mockResolvedValue({
+      choices: [{ message: { content: JSON.stringify({ answers }) } }],
+      usage: { prompt_tokens: 10, completion_tokens: 5 },
+    });
+
+    const res = await askJev({ state: { prompt: 'p' }, questions });
+    expect(res.answers.map((a) => a.id)).toEqual([noulQuestion.id, choiceQuestion.id]);
+  });
+
+  it('🔴 an answer object at the TOP LEVEL — what the old prompt described — is refused', async () => {
+    // The exact shape a compliant model produced against the pre-fix prompt.
+    send.mockResolvedValue({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              [noulQuestion.id]: { value: 0.8 },
+              [choiceQuestion.id]: { value: 'style', distribution: { style: 1 } },
+            }),
+          },
+        },
+      ],
+      usage: { prompt_tokens: 10, completion_tokens: 5 },
+    });
+    await expect(askJev({ state: { prompt: 'p' }, questions })).rejects.toThrow(
+      /unknown top-level key/
+    );
   });
 });
