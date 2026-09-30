@@ -535,9 +535,10 @@ describe('isPrivateRunImpression — failures fail TOWARD recording [INV]', () =
     // containment deliberately swallows rather than recursing. So this arm is silent where
     // the arm above is not. That is the accepted trade (a lost log line beats a recorded
     // impression), not an oversight; pinning it here stops it being "fixed" into a rethrow.
-    expect(logged, 'the logger threw, so nothing could be logged — including a gate failure').toEqual(
-      []
-    );
+    expect(
+      logged,
+      'the logger threw, so nothing could be logged — including a gate failure'
+    ).toEqual([]);
   });
 
   it('records the impression when the predicate answers a SHAPE it should not', async () => {
