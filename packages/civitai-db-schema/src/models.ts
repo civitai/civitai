@@ -1055,7 +1055,6 @@ export interface ModelVersion {
   imageResources?: ImageResource[];
   posts?: Post[];
   resourceReviews?: ResourceReview[];
-  resourceInsight?: ResourceInsight | null;
   hashes?: ModelHash[];
   metricsDaily?: ModelMetricDaily[];
   modelVersionExploration?: ModelVersionExploration[];
@@ -1408,20 +1407,6 @@ export interface ResourceReviewReaction {
   reaction: ReviewReactions;
   createdAt: Date;
   updatedAt: Date;
-}
-
-export interface ResourceInsight {
-  modelVersionId: number;
-  modelVersion?: ModelVersion;
-  role: string;
-  styleFamily: string;
-  contentTypes: string[];
-  qualityScore: number;
-  confidence: number;
-  specHash: string;
-  model: string;
-  createdAt: Date;
-  stale: boolean;
 }
 
 export interface Post {

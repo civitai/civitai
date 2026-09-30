@@ -30,12 +30,9 @@ vi.mock('~/server/services/generation/coverage-source', async (importOriginal) =
   coverageAudience: vi.fn(async () => ({ next: false, member: false })),
 }));
 
-const {
-  buildResourceIntentFilter,
-  expandShortlist,
-  applyInsightRanking,
-  findResourceIntentCandidates,
-} = await import('~/server/services/resource-intent-matcher.service');
+const { buildResourceIntentFilter, expandShortlist, findResourceIntentCandidates } = await import(
+  '~/server/services/resource-intent-matcher.service'
+);
 const { RESOURCE_INTENT_MAX_SHORTLIST } = await import('~/server/schema/resource-intent.schema');
 
 const COVERAGE = { next: false, member: false };
@@ -212,54 +209,6 @@ describe('expandShortlist — determinism, cap, gates', () => {
       cap: 50,
     });
     expect(entries).toHaveLength(1);
-  });
-});
-
-describe('applyInsightRanking — the M2 quality seam', () => {
-  const entries = [
-    {
-      versionId: 1,
-      modelId: 1,
-      modelName: 'a',
-      versionName: 'a',
-      baseModel: 'b',
-      modelType: 'LORA',
-      thumbsUpCount: 5,
-    },
-    {
-      versionId: 2,
-      modelId: 1,
-      modelName: 'a',
-      versionName: 'a',
-      baseModel: 'b',
-      modelType: 'LORA',
-      thumbsUpCount: 4,
-    },
-    {
-      versionId: 3,
-      modelId: 1,
-      modelName: 'a',
-      versionName: 'a',
-      baseModel: 'b',
-      modelType: 'LORA',
-      thumbsUpCount: 3,
-    },
-  ];
-
-  it('is a no-op with an empty or absent map', () => {
-    expect(applyInsightRanking(entries)).toBe(entries);
-    expect(applyInsightRanking(entries, new Map())).toBe(entries);
-  });
-
-  it('floats scored entries above unscored ones, best score first, stable otherwise', () => {
-    const ranked = applyInsightRanking(
-      entries,
-      new Map([
-        [3, 0.7],
-        [1, 0.9],
-      ])
-    );
-    expect(ranked.map((e) => e.versionId)).toEqual([1, 3, 2]);
   });
 });
 

@@ -27,8 +27,6 @@ POST /api/v1/blocks/resource-intent {prompt, baseModel?, limit?}
 | `src/server/services/resource-intent.service.ts`         | Cache → stage 1 → criteria → matcher → stage 3 → hydration → shadow event. Plain async function; reusable without the REST surface. |
 | `src/server/services/resource-intent-matcher.service.ts` | Deterministic gates + popularity ordering + hard cap.                                                                               |
 | `src/pages/api/v1/blocks/resource-intent.ts`             | Block-token REST surface.                                                                                                           |
-| `scripts/label-resource-insights.ts`                     | M2: batch labeling of the published corpus into `ResourceInsight`.                                                                  |
-| `scripts/eval-resource-intent-goldset.ts`                | M3: stage-1 quality study over the provenance corpus.                                                                               |
 
 ## Hard rules
 
@@ -62,22 +60,26 @@ The role compiles to a ModelType filter (`ROLE_MODEL_TYPES` in the schema file �
 - **Rate limit:** per-`blockInstanceId` LLM bucket (`:llm:` sub-namespace, 30 req/60s, fail-open) — a request is up to two vendor round trips, so it does not share the catalog bucket.
 - **Flag:** `resourceIntentJev` in `feature-flags.service.ts` (`availability: []`, fliptKey `resource-intent-jev`). Flipt owns the decision; an unknown flag or unreachable Flipt denies. The flag is checked **before** the cache read — a dark endpoint never reads and never spends. The Flipt flag definition itself is a separate flipt-state change and must ship default-OFF.
 
-## Data model (M2)
+## Not in this change: the M2 labeling chain and the M3 study
 
-`ResourceInsight` (see `packages/civitai-db-schema/prisma/schema.full.prisma`): one row per published version — `role`, `styleFamily`, `contentTypes[]`, `qualityScore`, `confidence`, `specHash`, `model`, `stale`. The labeling pass (`scripts/label-resource-insights.ts`) batches ≥10 resources per Jev request, is cursor-resumable, and marks rows `stale` when the label spec hash changes rather than blending two taxonomies.
+An earlier draft of this change also shipped a `ResourceInsight` table (one
+quality/meaning row per published version), the batch labeling script that fills
+it, a matcher re-rank seam that read it, and an offline gold-set study. All of it
+was removed before merge, on the round-0 audit finding that **none of it could
+run**: the re-rank seam's only caller never supplied the score map, so it returned
+its input unchanged on every request while reading as a working feature, and the
+table's only in-repo reader was its own writer. Neither script had ever been
+executed.
 
-**The migration is applied manually per environment** (this repo never auto-runs migrations) — `packages/civitai-db-schema/prisma/migrations/20260929170000_resource_insights/`. The labeling fleet run is a gated follow-up: it must not start until the migration exists on the target DB.
-
-Once populated, `ResourceInsight.qualityScore` re-ranks the shortlist via the matcher's `applyInsightRanking` seam (scored entries float above unscored ones, stable otherwise).
-
-## Study (M3)
-
-`scripts/eval-resource-intent-goldset.ts` samples the provenance corpus — prompts that attached resources (`ImageResourceNew`) and prompts that did not — runs stage-1 offline, and measures role agreement at the type level, `needsResource` calibration by bucket, and review-rate curves by role-confidence threshold. Committed with fixture tests; execution needs a prod replica read + an API key (team step) and is deliberately not part of this change.
+They are parked on `zach/jev-resource-intent-m2m3-parked` and should land in the
+change that also writes their consumer — a ranking seam with no source of scores,
+and a study whose only consumer is a milestone that may not be implemented yet,
+are both easier to review beside the thing that uses them.
 
 ## Rollout
 
 - **M1 (this change):** primitive + REST surface, dark behind `resourceIntentJev`.
-- **M2:** migration applied manually per environment → labeling fleet run → `ResourceInsight` quality ordering becomes live.
+- **M2 (not in this change):** the labeling chain lands with the caller that consumes its scores. See the section above.
 - **M4 (suggestions UI)** — NOT implemented. Closing condition: M1 merged + shadow volume ≥1k/day for 7 days + p95 end-to-end ≤2s.
 - **M5 (auto-attach)** — NOT implemented, and never before BOTH: the threshold study shows per-slice precision ≥0.9 at the chosen operating point AND ≥2 weeks of live shadow agreement ≥80%.
 
@@ -89,4 +91,3 @@ Unit suites (fixture-based, no external calls):
 - `src/server/services/__tests__/resource-intent-matcher.service.test.ts` — gates, determinism, cap.
 - `src/server/services/__tests__/resource-intent.service.test.ts` — cache, degradation, stage flow.
 - `src/server/__tests__/blocks/resource-intent.endpoint.test.ts` — auth/clamp mirror, deny-before-spend.
-- `scripts/__tests__/label-resource-insights.test.ts`, `scripts/__tests__/eval-resource-intent-goldset.test.ts`.

@@ -126,26 +126,14 @@ export function expandShortlist(
   return entries;
 }
 
-/**
- * Optional `ResourceInsight` quality re-rank (M2 seam). Stable: entries without
- * a score keep their popularity order after the scored ones. A no-op when the
- * map is empty (the state before the labeling pass has run).
+/*
+ * There is deliberately NO quality re-rank seam here yet. An earlier draft
+ * shipped one (`applyInsightRanking`, fed by a `ResourceInsight` table) and it
+ * could never fire: the only caller never supplied the score map, so it returned
+ * its input unchanged on every request while reading as a working feature. Add
+ * the re-rank in the change that also writes the caller which supplies the
+ * scores — a ranking seam with no source of scores is not a seam.
  */
-export function applyInsightRanking(
-  entries: ResourceIntentShortlistEntry[],
-  qualityByVersion?: Map<number, number>
-): ResourceIntentShortlistEntry[] {
-  if (!qualityByVersion?.size) return entries;
-  return entries
-    .map((entry, index) => ({ entry, index, quality: qualityByVersion.get(entry.versionId) }))
-    .sort((a, b) => {
-      const qa = a.quality ?? Number.NEGATIVE_INFINITY;
-      const qb = b.quality ?? Number.NEGATIVE_INFINITY;
-      if (qa !== qb) return qb - qa;
-      return a.index - b.index;
-    })
-    .map(({ entry }) => entry);
-}
 
 async function searchShortlistModels(
   filter: string | null,
@@ -184,7 +172,6 @@ export async function findResourceIntentCandidates(
     browsingLevel: number;
     coverage: ResourceIntentCoverage;
     cap: number;
-    qualityByVersion?: Map<number, number>;
   }
 ): Promise<ResourceIntentShortlistEntry[]> {
   if (criteria.role === 'none') return [];
@@ -200,5 +187,5 @@ export async function findResourceIntentCandidates(
     coverage: opts.coverage,
     cap: opts.cap,
   });
-  return applyInsightRanking(entries, opts.qualityByVersion);
+  return entries;
 }
