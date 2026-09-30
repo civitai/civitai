@@ -31,6 +31,7 @@ import {
   IconDotsVertical,
   IconDownload,
   IconEdit,
+  IconSpeakerphone,
   IconExclamationMark,
   IconFlag,
   IconLock,
@@ -68,6 +69,7 @@ import { openUnpublishModal } from '~/components/Dialog/triggers/unpublish';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
 import dynamic from 'next/dynamic';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { ModelPromotionModal } from '~/components/Promotion/ModelPromotionModal';
 
 const MigrateModelToCollection = dynamic(
   () => import('~/components/Model/Actions/MigrateModelToCollection'),
@@ -1119,6 +1121,19 @@ export default function ModelDetailsV2({
                               Edit Model
                             </Menu.Item>
                           </>
+                        )}
+                        {isCreator && published && features.creatorPromotions && (
+                          <Menu.Item
+                            leftSection={<IconSpeakerphone size={14} stroke={1.5} />}
+                            onClick={() =>
+                              dialogStore.trigger({
+                                component: ModelPromotionModal,
+                                props: { modelId: model.id },
+                              })
+                            }
+                          >
+                            Promote on another model page
+                          </Menu.Item>
                         )}
                         {features.collections && (
                           <AddToCollectionMenuItem

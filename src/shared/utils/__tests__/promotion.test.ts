@@ -6,6 +6,7 @@ import {
   galleryPromotionRefusal,
   isPromotionLive,
   parseGalleryPromotionData,
+  parseHostModelId,
   parseModelPromotionData,
   promotionAmount,
   promotionRunEndsAt,
@@ -135,5 +136,20 @@ describe('promotion surfaces', () => {
     expect(config.allowedModes).not.toContain('auto');
     expect(config.defaultFreeSlots).toBe(0);
     expect(config.targets).toEqual(['model']);
+  });
+});
+
+describe('parseHostModelId', () => {
+  it('reads a model page link or a bare id', () => {
+    expect(parseHostModelId('https://civitai.com/models/4201/some-model?modelVersionId=9')).toBe(
+      4201
+    );
+    expect(parseHostModelId(' 4201 ')).toBe(4201);
+  });
+
+  it('refuses anything that does not name one model', () => {
+    expect(parseHostModelId('https://civitai.com/posts/4201')).toBeNull();
+    expect(parseHostModelId('0')).toBeNull();
+    expect(parseHostModelId('')).toBeNull();
   });
 });

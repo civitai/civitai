@@ -15,6 +15,7 @@
 export const PLACEMENT_SURFACE_TABS = [
   { value: 'sticker', label: 'Stickers' },
   { value: 'remix', label: 'Remixes' },
+  { value: 'promotion', label: 'Promotions' },
 ] as const;
 
 export type PlacementSurfaceTab = (typeof PLACEMENT_SURFACE_TABS)[number]['value'];

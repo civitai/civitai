@@ -2,6 +2,7 @@ import {
   actOnPromotionSchema,
   createGalleryPromotionSchema,
   createModelPromotionSchema,
+  getModelPromotionOfferSchema,
   getPromotionHostsForPostSchema,
   getPromotionQueueSchema,
 } from '~/server/schema/promotion.schema';
@@ -9,6 +10,7 @@ import {
   actOnPromotion,
   createGalleryPromotion,
   createModelPromotion,
+  getModelPromotionOffer,
   getMyPromotions,
   getPendingPromotions,
   getPromotionHostsForPost,
@@ -49,6 +51,10 @@ export const promotionRouter = router({
   getHostsForPost: protectedProcedure
     .input(getPromotionHostsForPostSchema)
     .query(({ input, ctx }) => getPromotionHostsForPost({ ...input, placerId: ctx.user.id })),
+
+  getModelOffer: protectedProcedure
+    .input(getModelPromotionOfferSchema)
+    .query(({ input, ctx }) => getModelPromotionOffer({ ...input, placerId: ctx.user.id })),
 
   getPending: protectedProcedure
     .input(getPromotionQueueSchema)

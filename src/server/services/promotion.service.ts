@@ -7,6 +7,7 @@ import { getCreatorGalleryHiddenUserIds } from '~/server/services/creator-galler
 import { holdPlacementEscrow, settlePlacement } from '~/server/services/placement-escrow.service';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
+import { getPlacementConfig } from '~/server/services/placement.service';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -18,13 +19,14 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { Flags } from '~/shared/utils/flags';
-import { PLACEMENT_SURFACES } from '~/shared/utils/placement';
+import { declineFeeAmount, PLACEMENT_SURFACES } from '~/shared/utils/placement';
 import { ModelModifier, ModelStatus } from '~/shared/utils/prisma/enums';
 import type {
   GalleryHostSettings,
   GalleryPromotionData,
   GalleryPromotionRefusal,
   ModelPromotionData,
+  PromotionRunDays,
   PromotionSurface,
 } from '~/shared/utils/promotion';
 import {
@@ -597,29 +599,142 @@ export async function getPromotionHostsForPost({
 
   const hosts = await Promise.all(
     models.map(async (model) => {
-      const space = await resolvePlacementSpaceFor({
-        surface: 'galleryPromotion',
-        targetType: PROMOTION_TARGET_TYPE,
-        targetId: model.id,
-      }).catch(() => null);
-      if (!space || space.mode !== 'review' || space.price == null) return null;
-      return { modelId: model.id, name: model.name, dailyPrice: space.price };
+      const quote = await promotionQuote({ surface: 'galleryPromotion', modelId: model.id });
+      return quote && { modelId: model.id, name: model.name, ...quote };
     })
   );
   return hosts.filter((host): host is NonNullable<typeof host> => !!host);
 }
 
+/**
+ * A page's promotion price and what the host keeps on a decline, for each run
+ * length. `null` when the page is not taking promotions on this surface. Display
+ * only: the purchase re-decides all of it.
+ */
+async function promotionQuote({
+  surface,
+  modelId,
+}: {
+  surface: PromotionSurface;
+  modelId: number;
+}) {
+  const space = await resolvePlacementSpaceFor({
+    surface,
+    targetType: PROMOTION_TARGET_TYPE,
+    targetId: modelId,
+  }).catch(() => null);
+  if (!space || space.mode !== 'review' || space.price == null) return null;
+  if (space.price < PLACEMENT_SURFACES[surface].serverMinPrice) return null;
+
+  const config = await getPlacementConfig();
+  const rate = config.declineFeeRate(surface);
+  const dailyPrice = space.price;
+  return {
+    ownerId: space.ownerId,
+    ownerUsername: space.ownerUsername,
+    dailyPrice,
+    // Amounts, not a rate: the fee floors at 1 Buzz, so a client multiplying a
+    // percentage would be wrong on a cheap run.
+    declineFees: Object.fromEntries(
+      PROMOTION_RUN_DAYS.map((days) => [
+        days,
+        declineFeeAmount(promotionAmount(dailyPrice, days), rate),
+      ])
+    ) as Record<PromotionRunDays, number>,
+  };
+}
+
+export type PromotionOffer =
+  | { open: false; reason: string }
+  | ({ open: true; modelId: number; name: string } & NonNullable<
+      Awaited<ReturnType<typeof promotionQuote>>
+    >);
+
+/** Whether a model page takes model promotions from this buyer, and at what price. */
+export async function getModelPromotionOffer({
+  modelId,
+  placerId,
+}: {
+  modelId: number;
+  placerId: number;
+}): Promise<PromotionOffer> {
+  const host = await dbRead.model.findUnique({
+    where: { id: modelId },
+    select: {
+      id: true,
+      name: true,
+      userId: true,
+      nsfwLevel: true,
+      poi: true,
+      minor: true,
+      sfwOnly: true,
+      status: true,
+      mode: true,
+      availability: true,
+      deletedAt: true,
+      gallerySettings: true,
+    },
+  });
+  if (!host || !isShowableModel(host))
+    return { open: false, reason: 'That model is not accepting promotions right now.' };
+  if (host.userId === placerId)
+    return { open: false, reason: 'You cannot promote on your own model page.' };
+
+  const quote = await promotionQuote({ surface: 'modelPromotion', modelId });
+  if (!quote) return { open: false, reason: 'This creator is not taking model promotions.' };
+  return { open: true, modelId: host.id, name: host.name, ...quote };
+}
+
 const QUEUE_LIMIT = 50;
 
+/** What a queue row needs to be read: the page it is on, what it promotes and for how long. */
+async function describePromotionRows<T extends { targetId: number; data: unknown }>(
+  surface: PromotionSurface,
+  rows: T[]
+) {
+  const described = rows.map((row) => {
+    const gallery = surface === 'galleryPromotion' ? parseGalleryPromotionData(row.data) : null;
+    const model = surface === 'modelPromotion' ? parseModelPromotionData(row.data) : null;
+    return {
+      row,
+      postId: gallery?.postId ?? null,
+      promotedModelId: model?.modelId ?? null,
+      days: gallery?.days ?? model?.days ?? null,
+    };
+  });
+
+  const modelIds = new Set<number>();
+  for (const { row, promotedModelId } of described) {
+    modelIds.add(row.targetId);
+    if (promotedModelId) modelIds.add(promotedModelId);
+  }
+  const models = modelIds.size
+    ? await dbRead.model.findMany({
+        where: { id: { in: [...modelIds] } },
+        select: { id: true, name: true },
+      })
+    : [];
+  const names = new Map(models.map((model) => [model.id, model.name]));
+
+  return described.map(({ row, postId, promotedModelId, days }) => ({
+    ...row,
+    hostModelName: names.get(row.targetId) ?? null,
+    postId,
+    promotedModelId,
+    promotedModelName: promotedModelId ? names.get(promotedModelId) ?? null : null,
+    days,
+  }));
+}
+
 /** Promotions waiting on this host, oldest first so the ones about to expire lead. */
-export const getPendingPromotions = ({
+export async function getPendingPromotions({
   surface,
   ownerId,
 }: {
   surface: PromotionSurface;
   ownerId: number;
-}) =>
-  dbRead.placement.findMany({
+}) {
+  const rows = await dbRead.placement.findMany({
     where: { surface, ownerId, status: 'pending' },
     select: {
       id: true,
@@ -633,16 +748,18 @@ export const getPendingPromotions = ({
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     take: QUEUE_LIMIT,
   });
+  return describePromotionRows(surface, rows);
+}
 
 /** What this buyer has promoted, newest first, with enough to show the run's state. */
-export const getMyPromotions = ({
+export async function getMyPromotions({
   surface,
   placerId,
 }: {
   surface: PromotionSurface;
   placerId: number;
-}) =>
-  dbRead.placement.findMany({
+}) {
+  const rows = await dbRead.placement.findMany({
     where: { surface, placerId },
     select: {
       id: true,
@@ -658,3 +775,5 @@ export const getMyPromotions = ({
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     take: QUEUE_LIMIT,
   });
+  return describePromotionRows(surface, rows);
+}

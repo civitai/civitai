@@ -38,6 +38,8 @@ export const actOnPromotionSchema = z.object({
 
 export const getPromotionHostsForPostSchema = z.object({ postId: id });
 
+export const getModelPromotionOfferSchema = z.object({ modelId: id });
+
 export const getPromotionQueueSchema = z.object({
   surface: z.enum(['galleryPromotion', 'modelPromotion']),
 });

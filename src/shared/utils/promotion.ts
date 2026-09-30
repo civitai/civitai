@@ -47,6 +47,14 @@ export const isPromotionLive = (
   now = new Date()
 ) => acceptedAt <= now && now < promotionRunEndsAt(acceptedAt, days);
 
+/** A model page link (`/models/123/...`) or a bare id. */
+export function parseHostModelId(value: string) {
+  const trimmed = value.trim();
+  const match = /^\d+$/.test(trimmed) ? trimmed : /\/models\/(\d+)/.exec(trimmed)?.[1];
+  const id = match ? Number(match) : NaN;
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
 const positiveInt = (value: unknown): value is number =>
   Number.isSafeInteger(value) && (value as number) > 0;
 
