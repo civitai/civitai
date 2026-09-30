@@ -4110,8 +4110,18 @@ export function getGenerationSupport(
 
   if (!checkpointEcosystem || !addonEcosystem) return null;
 
-  // Same ecosystem = always Full (same-ecosystem resources are inherently compatible)
-  if (checkpointEcosystemId === addonEcosystemId) return 'full';
+  // Same ecosystem is compatible only for a TYPE the ecosystem actually supports. The
+  // unconditional 'full' this replaces ran BEFORE the disabled/type checks below, which made
+  // it the one answer in this file that could contradict `isBaseModelGenerationSupported` —
+  // and `canGenerate` is built on that one. Two things came of it: a resource the picker
+  // refuses could sit in the form as a value the output rejects and nothing clears, and
+  // `blocks.router` records a fail-OPEN on a billing boundary for the literal 'Other'
+  // baseModel, which it had to re-reject by hand at the call site.
+  if (checkpointEcosystemId === addonEcosystemId) {
+    const sameSupport = getEcosystemSupport(checkpointEcosystemId, 'generation');
+    if (!sameSupport || sameSupport.disabled) return null;
+    return sameSupport.modelTypes.includes(addonModelType) ? 'full' : null;
+  }
 
   // Check if generation is supported at all
   const support = getEcosystemSupport(checkpointEcosystemId, 'generation');
@@ -4174,16 +4184,30 @@ interface ResourceLikeForCompat {
 /**
  * Check if ALL resources are compatible with a given ecosystem.
  */
+/**
+ * Whether one resource can be used for generation alongside a checkpoint of `ecosystemId`.
+ *
+ * TWO GRANULARITIES, not one fact twice. `getGenerationSupport` is keyed on ECOSYSTEM ids, so
+ * it cannot see a per-baseModel disable: SDXL Turbo carries `disabled: true` on its
+ * BaseModelRecord while the SDXL ecosystem supports every addon type. Without the
+ * `isBaseModelGenerationSupported` call an SDXL Turbo resource stays selected for a generation
+ * it can never run; without `getGenerationSupport` the cross-ecosystem rules go unread.
+ *
+ * Shared by the `every` and `filter` forms below, which stated it twice.
+ */
+function isResourceCompatibleWithEcosystem(ecosystemId: number, r: ResourceLikeForCompat): boolean {
+  if (!r.baseModel) return true;
+  const bm = baseModelByName.get(r.baseModel);
+  if (!bm) return true;
+  if (!isBaseModelGenerationSupported(r.baseModel, r.model.type as ModelType)) return false;
+  return getGenerationSupport(ecosystemId, bm.ecosystemId, r.model.type as ModelType) !== null;
+}
+
 export function areResourcesCompatible(
   ecosystemId: number,
   resources: ResourceLikeForCompat[]
 ): boolean {
-  return resources.every((r) => {
-    if (!r.baseModel) return true;
-    const bm = baseModelByName.get(r.baseModel);
-    if (!bm) return true;
-    return getGenerationSupport(ecosystemId, bm.ecosystemId, r.model.type as ModelType) !== null;
-  });
+  return resources.every((r) => isResourceCompatibleWithEcosystem(ecosystemId, r));
 }
 
 /**
@@ -4195,20 +4219,9 @@ export function filterCompatibleResources<T extends ResourceLikeForCompat & { id
   resources: T[],
   excludeIds?: Set<number>
 ): T[] {
-  return resources.filter((r) => {
-    if (excludeIds?.has(r.id)) return false;
-    if (!r.baseModel) return true;
-    const bm = baseModelByName.get(r.baseModel);
-    if (!bm) return true;
-    // `getGenerationSupport` returns 'full' for ANY same-ecosystem pair without
-    // consulting the ecosystem's own `modelTypes`, so on its own this filter cannot
-    // drop a type the ecosystem does not support for generation — a Chroma
-    // TextualInversion survived here while `canGenerate` said false, leaving a
-    // selection the form refused and nothing could clear. Ask the eligibility
-    // derivation first; cross-ecosystem cases still fall through to the rules below.
-    if (!isBaseModelGenerationSupported(r.baseModel, r.model.type as ModelType)) return false;
-    return getGenerationSupport(ecosystemId, bm.ecosystemId, r.model.type as ModelType) !== null;
-  });
+  return resources.filter(
+    (r) => !excludeIds?.has(r.id) && isResourceCompatibleWithEcosystem(ecosystemId, r)
+  );
 }
 
 /**

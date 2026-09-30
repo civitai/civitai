@@ -7,6 +7,7 @@ import type { GenerationCtx } from '~/shared/data-graph/generation/context';
 import {
   MAX_NEGATIVE_PROMPT_LENGTH,
   SNIPPETS,
+  snippetsSchema,
   resourcesDef,
   sliderDef,
   textDef,
@@ -49,6 +50,11 @@ export type TextBlockNeeds = FamilyExt & {
  * itself through an effect that writes an empty target slice. The editor set of
  * a given graph is static, so the port bakes the same result into the value
  * rather than converging on it — same output, no evaluation-order dependence.
+ *
+ * It has to be baked on BOTH paths. `coerce` alone covers trusted `set()` writes
+ * only — the lib says so — so a parse that SUPPLIED a snippets value kept whatever
+ * targets the caller sent and registered none of the editors, while v1's effects
+ * added them. Measured as the largest single shadow-parse divergence class.
  */
 const withTargets = (value: SnippetsValue, names: readonly string[]): SnippetsValue => {
   const targets = { ...(value.targets ?? {}) };
@@ -124,6 +130,9 @@ export function makeTextBlock(
           ? {
               ...SNIPPETS,
               default: withTargets(SNIPPETS.default as SnippetsValue, editorsFor(_ext)),
+              input: snippetsSchema
+                .optional()
+                .transform((v) => (v ? withTargets(v, editorsFor(_ext)) : v)),
               coerce: (raw: unknown) => withTargets(raw as SnippetsValue, editorsFor(_ext)),
             }
           : null

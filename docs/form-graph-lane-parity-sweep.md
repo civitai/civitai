@@ -213,6 +213,28 @@ and cannot see the gate). `shadow-parse` now carries those notes as `key:kind` l
 Nothing here needed a change in the form-graph library: `correct` and `ValidationResult.notes`
 already existed, and the app was using an `input` transform and discarding `result.notes`.
 
+**The `data-keys` classes, worked through.** Of 441/week:
+
+- **`snippets` (265) — a real hub bug, fixed.** v1 registers each text editor as a
+  `snippets.targets` slice through an effect; the port bakes the set into the value instead, which
+  is the better shape — but it did it in `coerce`, which the library runs for trusted `set()`
+  writes only. So a parse that SUPPLIED a snippets value kept the caller's targets and registered
+  no editors. A bare parse uses `default`, which already baked them, which is why it survived
+  review. Now done on the `input` path as well.
+- **Z-Image (28) and MageFlow (28) — closed by the ecosystem correction** moving onto the field.
+  Both now match.
+- **MiniMax (102) — the hub is right and v1 is wrong.** `ecosystemByKey.get('MiniMax')` is
+  `undefined`: it is a legacy key predating the H3 rename, still arriving from stored client
+  state. The hub drops an unknown key at the boundary so the default applies and the payload comes
+  out complete; v1 keeps it and returns `aspectRatio`/`duration` undefined on a txt2vid submit.
+  No hub change — but it means the CURRENT lane emits an incomplete payload for those users.
+- ~32 remain across small per-workflow tails (img2img 10, img2vid:ref2vid 6, img2img:face-fix 5,
+  img2vid 3, img2img:edit 2, a `duration`-only class 6). Not examined.
+
+So the counter should not be read as "441 bugs": one class was a hub defect, two were fixed
+upstream of it, and the largest remaining class is v1's. That is what the `corrections` labels in
+`shadow-parse` exist to make legible without this kind of manual pass.
+
 `src/components/form-graph/generation/__tests__/lane-parity.test.ts` guards the five fixed findings
 by reading both lanes' entry files, plus the image and audio bodies for the two per-body mounts — the defect class is "the call site is absent in one lane", which
 source can answer, and rendering either lane needs its whole provider stack. Mutation-checked:
