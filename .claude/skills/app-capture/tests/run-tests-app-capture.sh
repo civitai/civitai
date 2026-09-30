@@ -6173,17 +6173,23 @@ for slug, form in sorted(FORMS.items()):
                                "the anchor disagree" % (slug, box["y"], want_y))
 
 # plan.py emits the key capture.sh branches on, and ONLY for the optional verb
-# 🔴 THE STATE NAME MOVED 2026-09-27 AND THAT IS WHY IT IS NAMED HERE, NOT INDEXED.
+# 🔴 THE STATE NAME HAS MOVED TWICE AND THAT IS WHY IT IS NAMED HERE, NOT INDEXED.
 # It was "grid", one of the three tab-panel states; 0.4.7 deleted the tab strip and
-# the states became three OVERLAYS (grid-contribute / matchup-detail / prompt-detail).
-# This check is about the `optional` key, not about which state carries it, so any
-# state would do — but a name makes the coupling VISIBLE in the diff when the recipe
-# is re-pointed again, where an index would have silently kept passing on whatever
-# state happened to be first.
+# the states became three OVERLAYS (grid-contribute / matchup-detail / prompt-detail);
+# 2026-09-29, app 0.4.11 deleted the Contribute menu too, so `grid-contribute` is gone
+# and the set is five (grids-board / matchups-board / prompts-board / matchup-detail /
+# prompt-detail). ✅ THE NAMING IS DOING ITS JOB: this line went RED on the re-point
+# with `REFUSE[unknown_state]`, which is exactly the visible coupling an index would
+# have hidden — an index would have silently re-pointed at whatever state happened to
+# be first and kept passing. `matchup-detail` is chosen now because it is the only
+# state name that has survived BOTH re-points, so it is the least likely to move again.
+# This check is about the `optional` key, not about which state carries it — but it does
+# need a state with TWO clicks (the dismissal plus one trigger), which rules out
+# `grids-board`: that state clicks nothing but the how-to.
 p = subprocess.run(["python3", PLAN, os.path.join(RECIPES, "model-benchmarking.json"),
-                    "--observed", OBS, "--state", "grid-contribute"], capture_output=True, text=True)
+                    "--observed", OBS, "--state", "matchup-detail"], capture_output=True, text=True)
 if p.returncode != 0:
-    bad.append("model-benchmarking/grid-contribute did not plan: %s" % p.stderr[:120])
+    bad.append("model-benchmarking/matchup-detail did not plan: %s" % p.stderr[:120])
 else:
     steps = json.loads(p.stdout)["steps"]
     opt = [s for s in steps if s.get("optional")]
