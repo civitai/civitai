@@ -1,3 +1,4 @@
+import { getSponsoredModel } from '~/server/services/promotion.service';
 import { Prisma } from '@prisma/client';
 import {
   coverageAudience,
@@ -1778,6 +1779,23 @@ export const getAssociatedResourcesCardDataHandler = async ({
         : { id: toArticleId, resourceType: 'article' as const }
     );
 
+    // A paid, host-accepted model promotion takes the second slot. The viewer's
+    // own level and hidden lists still apply to it below, like any other card.
+    const sponsored =
+      type === 'Suggested' && ctx.features.creatorPromotions
+        ? await getSponsoredModel({ modelId: fromId }).catch(() => undefined)
+        : undefined;
+    if (
+      sponsored &&
+      !resourcesIds.some(
+        ({ id, resourceType }) => resourceType === 'model' && id === sponsored.modelId
+      )
+    )
+      resourcesIds.splice(Math.min(1, resourcesIds.length), 0, {
+        id: sponsored.modelId,
+        resourceType: 'model' as const,
+      });
+
     if (!resourcesIds.length) return [];
 
     const modelResources = resourcesIds
@@ -1944,7 +1962,11 @@ export const getAssociatedResourcesCardDataHandler = async ({
             if (!model) return null;
             if (excludedUserIds.includes(model.user.id)) return null;
 
-            return { resourceType: 'model' as const, ...model };
+            return {
+              resourceType: 'model' as const,
+              ...model,
+              sponsored: id === sponsored?.modelId,
+            };
         }
       })
       .filter(isDefined);

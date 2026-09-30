@@ -188,14 +188,31 @@ export function ImagesAsPostsInfinite({
   }, [source.kind, selectedVersionId, gallerySettings, model3dGallerySettings]);
 
   const flatData = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
-  const { items } = useApplyHiddenPreferences({
+  // A sponsored post was checked against this gallery's settings when the host
+  // accepted it, and a host cannot end an accepted run, so only the viewer's own
+  // preferences apply to it here.
+  const organicData = useMemo(() => flatData?.filter((post) => !post.sponsored), [flatData]);
+  const sponsoredData = useMemo(() => flatData?.filter((post) => post.sponsored), [flatData]);
+  const { items: sponsoredItems } = useApplyHiddenPreferences({
     type: 'posts',
-    data: flatData,
+    data: sponsoredData,
+    browsingLevel: intersection,
+  });
+  const { items: organicItems } = useApplyHiddenPreferences({
+    type: 'posts',
+    data: organicData,
     hiddenImages: !showHidden ? hiddenImageIds : undefined,
     hiddenUsers: !showHidden ? hiddenUsers : undefined,
     hiddenTags: !showHidden ? hiddenTags : undefined,
     browsingLevel: intersection,
   });
+
+  const items = useMemo(() => {
+    if (!sponsoredItems.length) return organicItems;
+    const pinnedCount = organicItems.filter((post) => post.pinned).length;
+    const at = pinnedCount || Math.min(1, organicItems.length);
+    return [...organicItems.slice(0, at), ...sponsoredItems, ...organicItems.slice(at)];
+  }, [organicItems, sponsoredItems]);
 
   const handleAddPostClick = (opts?: { reviewing?: boolean }) => {
     const queryString = QS.stringify(

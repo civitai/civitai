@@ -1,3 +1,4 @@
+import { SponsoredBadge } from '~/components/Promotion/SponsoredBadge';
 import { Button, Group, LoadingOverlay, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import type { AssociationType } from '~/shared/utils/prisma/enums';
 import { IconRocketOff } from '@tabler/icons-react';
@@ -76,12 +77,20 @@ export function AssociatedModels({
               data={recommendedResources}
               render={({ data, ...props }) =>
                 data.resourceType === 'model' ? (
-                  <ModelCard
-                    {...props}
-                    data={data}
-                    data-activity="follow-suggestion:model"
-                    forceInView
-                  />
+                  <div className="relative">
+                    {data.sponsored && (
+                      <SponsoredBadge
+                        kind="model"
+                        className="absolute left-1/2 top-2 -translate-x-1/2"
+                      />
+                    )}
+                    <ModelCard
+                      {...props}
+                      data={data}
+                      data-activity="follow-suggestion:model"
+                      forceInView
+                    />
+                  </div>
                 ) : (
                   <ArticleCard {...props} data={data} data-activity="follow-suggestion:article" />
                 )
