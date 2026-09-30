@@ -6,6 +6,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { CollectionItemRejectionReason, CollectionItemStatus } from '~/shared/utils/prisma/enums';
 import type { CollectionAiReviewSchema } from '~/server/schema/collection.schema';
+import { DEFAULT_AI_REVIEW_REASON_COPY } from '~/server/services/ai/collection-review.service';
 import {
   MAX_REVIEW_ATTEMPTS,
   UNAVAILABLE_IMAGE_REJECTION,
@@ -88,16 +89,19 @@ beforeEach(() => {
 });
 
 describe('reviewCollection: a failed model call', () => {
-  it('leaves the item unclaimed for a later run while attempts remain', async () => {
-    queuePending(pendingItem());
-    reviewImage.mockRejectedValue(new Error('Response validation failed'));
-    redisMock.sysRedis.incrBy.mockResolvedValue(1);
+  it.each([1, MAX_REVIEW_ATTEMPTS - 1])(
+    'leaves the item unclaimed for a later run after failed attempt %i',
+    async (attempts) => {
+      queuePending(pendingItem());
+      reviewImage.mockRejectedValue(new Error('Response validation failed'));
+      redisMock.sysRedis.incrBy.mockResolvedValue(attempts);
 
-    await reviewCollection(COLLECTION_ID, config);
+      await reviewCollection(COLLECTION_ID, config);
 
-    expect(reviewImage).toHaveBeenCalledTimes(1);
-    expect(claimCalls()).toHaveLength(0);
-  });
+      expect(reviewImage).toHaveBeenCalledTimes(1);
+      expect(claimCalls()).toHaveLength(0);
+    }
+  );
 
   it('stamps the item for a human once the attempts run out', async () => {
     queuePending(pendingItem());
@@ -108,11 +112,17 @@ describe('reviewCollection: a failed model call', () => {
 
     expect(claimCalls()).toHaveLength(1);
     expect(updateCollectionItemsStatus).not.toHaveBeenCalled();
+    // Per collection item, not per image: one image submitted to two collections gets two budgets.
+    expect(redisMock.sysRedis.incrBy).toHaveBeenCalledTimes(1);
+    expect(redisMock.sysRedis.incrBy).toHaveBeenCalledWith(
+      `system:collection-ai-review:attempts:${ITEM_ID}`,
+      1
+    );
   });
 });
 
 describe('recordFailedAttempt', () => {
-  it('counts per item and refreshes the expiry', async () => {
+  it('counts per item and keeps the count for a week', async () => {
     redisMock.sysRedis.incrBy.mockResolvedValue(2);
 
     await expect(recordFailedAttempt(ITEM_ID)).resolves.toBe(2);
@@ -120,9 +130,10 @@ describe('recordFailedAttempt', () => {
       `system:collection-ai-review:attempts:${ITEM_ID}`,
       1
     );
+    // Must outlive the 15-minute gap between runs, or the count never reaches the cap.
     expect(redisMock.sysRedis.expire).toHaveBeenCalledWith(
       `system:collection-ai-review:attempts:${ITEM_ID}`,
-      expect.any(Number)
+      7 * 24 * 60 * 60
     );
   });
 
@@ -131,6 +142,27 @@ describe('recordFailedAttempt', () => {
     redisMock.sysRedis.incrBy.mockRejectedValue(new Error('redis down'));
 
     await expect(recordFailedAttempt(ITEM_ID)).resolves.toBe(MAX_REVIEW_ATTEMPTS);
+  });
+
+  it('reads a failure to set the expiry as out of attempts', async () => {
+    redisMock.sysRedis.incrBy.mockResolvedValue(1);
+    redisMock.sysRedis.expire.mockRejectedValueOnce(new Error('redis down'));
+
+    await expect(recordFailedAttempt(ITEM_ID)).resolves.toBe(MAX_REVIEW_ATTEMPTS);
+  });
+});
+
+describe('reviewCollection: an image rated outside the allowed levels', () => {
+  it('is rejected with the collection copy, not the unavailable-image copy', async () => {
+    queuePending(pendingItem({ nsfwLevel: 4 }));
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(reviewImage).not.toHaveBeenCalled();
+    expect(updateCollectionItemsStatus).toHaveBeenCalledTimes(1);
+    expect(updateCollectionItemsStatus.mock.calls[0][0].rejectionDetail).toBe(
+      DEFAULT_AI_REVIEW_REASON_COPY['sexual/adult content']
+    );
   });
 });
 
@@ -147,6 +179,7 @@ describe('reviewCollection: an image the scanner could not find', () => {
         collectionId: COLLECTION_ID,
         collectionItemIds: [ITEM_ID],
         status: CollectionItemStatus.REJECTED,
+        rejectionReason: CollectionItemRejectionReason.Automated,
       },
       rejectionDetail: UNAVAILABLE_IMAGE_REJECTION,
     });

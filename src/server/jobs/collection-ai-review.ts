@@ -227,7 +227,7 @@ async function classifyItem({
   return { collectionItemId: item.collectionItemId, action, message };
 }
 
-// The scanner could not fetch the file, and nothing moves an image out of NotFound.
+// The scanner could not fetch the file, and nothing rescans a NotFound image on its own.
 function isUnavailableImage(item: Pick<PendingItem, 'ingestion'>) {
   return item.ingestion === ImageIngestionStatus.NotFound;
 }
