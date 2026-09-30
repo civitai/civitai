@@ -59,13 +59,29 @@ import { recordPrivateRunImpressionRateLimitRefusal } from '~/server/metrics/app
  * fails CLOSED on that rejection because a mod-gated bundle upload wants the opposite
  * trade.
  *
- * 🔴 AND THE FAIL-OPEN SAYS SO. Every fail-open arm emits `logSysRedisFailOpen`
- * (`rate-limit-write-degraded`, the subtype whose Loki alert already means "abuse
- * prevention is effectively disabled"). The refusal COUNTER cannot carry this: it grades a
- * ceiling BITING, and a limiter fault is the opposite reading — the bound is absent and
- * nothing was refused. Without the log, a sustained incident is indistinguishable from
- * health on every signal this file emits, precisely while the cost bound is gone. No
- * viewer id rides along, for the same reason the counter carries no labels.
+ * 🔴 AND THE FAIL-OPEN SAYS SO — BUT NOTHING CONSUMES IT YET. Every fail-open arm emits
+ * `logSysRedisFailOpen` with subtype `rate-limit-write-degraded`.
+ * ⚠️ THIS SENTENCE CLAIMED THAT SUBTYPE "already has a Loki alert", AND THAT WAS FALSE.
+ * Measured against the infrastructure repo at its default branch: `rate-limit-write-degraded`
+ * resolves to exactly ONE file there, a dated handoff note — no alert rule, no dashboard
+ * panel. Positive control, same search, same tree: the sibling subtype
+ * `tracking-write-cliff` resolves to five files, two of them alert definitions, so the
+ * search can match. The generic catch-all error-signature detector does not cover it
+ * either — it excludes the `sysredis-fail-open` name from its regex AND selects
+ * error-level lines, while this emit is `type: 'warning'`. So the honest state is: the
+ * signal is EMITTED and UNCONSUMED, i.e. the observability residual here is OPEN, not
+ * closed. It is recorded as a named open residual in the flag's precondition ledger
+ * (`~/server/services/app-blocks-flag`, item 3(b)) rather than asserted as closed here.
+ * 🔴 DO NOT REPLACE THIS WITH A FRESH CLAIM ABOUT WHAT WATCHES THE SIGNAL. Substituting a
+ * better-sounding consumer for an unchecked one is exactly how the false claim arrived,
+ * and it survived a fix round that was looking straight at this line.
+ *
+ * The emit still earns its place: the refusal COUNTER cannot carry this — it grades a
+ * ceiling BITING, and a limiter fault is the opposite reading, the bound absent and
+ * nothing refused — so without the log a sustained incident leaves NO trace on any signal
+ * this file emits, precisely while the cost bound is gone. It is a signal waiting for a
+ * consumer, which is a different thing from a signal nobody needs. No viewer id rides
+ * along, for the same reason the counter carries no labels.
  *
  * ── THE COST BOUND, WITH ITS ARITHMETIC ─────────────────────────────────────
  * ≤ 30 reaching calls / minute / viewer ⇒ ≤ 30 × 9 = 270 single-row queries / minute /
@@ -151,12 +167,9 @@ export async function checkPrivateRunImpressionRateLimit(
       // A fail-open arm like the `catch`, and just as invisible without this. `err` is
       // `null` because nothing threw — the same shape `moderation-utils.ts` uses for its
       // non-throwing fail-open.
-      logSysRedisFailOpen(
-        'rate-limit-write-degraded',
-        'checkPrivateRunImpressionRateLimit: malformed counter reply',
-        null,
-        { replyType: typeof count }
-      );
+      reportFailOpen('checkPrivateRunImpressionRateLimit: malformed counter reply', null, {
+        replyType: typeof count,
+      });
       return { allowed: true };
     }
     if (count <= PRIVATE_RUN_IMPRESSION_RATE_LIMIT_MAX) return { allowed: true };
@@ -178,7 +191,45 @@ export async function checkPrivateRunImpressionRateLimit(
     // 🔴 AND SAY SO. This arm now also covers a deadline-bounded HANG, which is the arm a
     // sustained incident actually produces; silent, it reads as health on every other
     // signal this file emits. No viewer id — see the docblock.
-    logSysRedisFailOpen('rate-limit-write-degraded', 'checkPrivateRunImpressionRateLimit', err);
+    reportFailOpen('checkPrivateRunImpressionRateLimit', err);
     return { allowed: true };
+  }
+}
+
+/**
+ * Emit the fail-open health signal. NEVER THROWS — that is the whole reason it is a
+ * function rather than two inline calls.
+ *
+ * 🔴 A THROW INSIDE A `catch` BLOCK IS NOT CAUGHT BY THAT BLOCK, and `logSysRedisFailOpen`
+ * CAN throw synchronously: it calls `safeError(err)` before awaiting anything, and that
+ * helper's non-Error branch is `String(e)`, which throws on a value with no `toString` —
+ * a null-prototype object being the smallest real one. Inlined in the `catch` above, such
+ * a value turned a fail-open into a REJECTION out of this function.
+ *
+ * 🔴 AND THE CONSEQUENCE WAS THE LEAK THIS FEATURE EXISTS TO CLOSE, not a lost log line.
+ * The rejection reaches the gate's own catch in
+ * `~/server/services/blocks/private-run-impression.service`, which answers `false` — "not
+ * a private run" — so the impression IS RECORDED and reaches the app owner's panel.
+ * Failing open inside the limiter instead lets the access predicate decide. Measured on
+ * this branch: a `multi()` throwing `Object.create(null)` rejected with
+ * `TypeError: Cannot convert object to primitive value` at head `201d858cd7` and resolved
+ * at `47a5fcdea7`, where this log did not yet exist — i.e. the observability added to
+ * protect the limiter is what made its body non-total again.
+ *
+ * Same shape, and for the same stated reason, as `reportGateFailure` twelve lines into the
+ * gate module named above — which is the in-repo precedent, not a pattern invented here.
+ *
+ * ⚠️ SCOPE, HONESTLY: only the `catch` arm can currently reach the throw, because the
+ * malformed-reply arm passes `err = null` and `safeError(null)` returns before it
+ * stringifies anything. That arm routes through here for symmetry and as an invariant
+ * guard against a future logger, NOT because an escape was found there — do not cite it as
+ * one. The `[REG]` coverage in this file's suite is written against the `catch` arm alone.
+ */
+function reportFailOpen(fn: string, err: unknown, extra?: Record<string, unknown>): void {
+  try {
+    logSysRedisFailOpen('rate-limit-write-degraded', fn, err, extra);
+  } catch {
+    // A fail-open logger must never be able to fail the path it is observing. Nothing to
+    // report it TO, either — the reporter is what threw.
   }
 }

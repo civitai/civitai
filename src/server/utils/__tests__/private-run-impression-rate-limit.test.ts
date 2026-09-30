@@ -14,7 +14,7 @@ import {
  * Unit coverage for the per-viewer COST ceiling in front of the private-run analytics
  * gate's expensive leg (`blocks/private-run-impression.service.ts` gate 3.5).
  *
- * Eight contracts, and the first two are the ones no sibling limiter has:
+ * Nine contracts, and the first two are the ones no sibling limiter has:
  *   (a) 🔴 THE KEY IS THE VIEWER AND NOTHING ELSE. Asserted as a WHOLE STRING, not a
  *       prefix: the defect this bucket must not grow is an `appBlockId` appended to the
  *       key, which is body-chosen and would hand a caller a fresh bucket per invented id.
@@ -40,15 +40,21 @@ import {
  *   (h) the refusal counter — a real prom-registry read, because a refusal here has a
  *       CORRECTNESS consequence (the impression gets recorded, so it reaches the owner)
  *       and a silent refusal is the reassuring-zero shape.
+ *   (i) 🔴 and the fail-open log CANNOT THROW OUT of the limiter. (f) added a synchronous
+ *       `safeError` call inside the `catch`, which made this body non-total again — so (i)
+ *       exists because (f) shipped, and the two must be read together rather than as one
+ *       "observability" contract.
  *
  * ⚠️ LABEL THIS FILE HONESTLY, AND THE LABEL IS NOW MIXED. Contracts (a)–(d), (g) and (h)
  * are NOT regression coverage: the limiter did not exist on the pre-change tree, so nothing
  * there could be watched failing against a build that had the defect. The red-then-green
  * matrix for that BEHAVIOUR lives in `blocks/__tests__/private-run-impression.service.test.ts`,
  * driven through the gate, whose cases were each watched red with gate 3.5 removed.
- * Contracts (e) and (f) ARE regression coverage — marked `[REG]` — and were watched red on
- * this branch's own previous head, where the limiter shipped with an unwrapped await and a
- * bare `catch {}`.
+ * Contracts (e), (f) and (i) ARE regression coverage — marked `[REG]`. (e) and (f) were
+ * watched red on this branch's PREVIOUS head, where the limiter shipped with an unwrapped
+ * await and a bare `catch {}`. (i) was watched red on head `201d858cd7` — i.e. on the
+ * commit that added (f) — and green at `47a5fcdea7`, which is the honest reading: the
+ * instrumentation in (f) is what introduced the defect (i) pins.
  *
  * `sysRedis` is the CANONICAL shared mock (`~/__tests__/mocks/redis.mock`). A per-file
  * registration of the redis-client specifier would both trip `no-direct-shared-module-mock`
@@ -76,6 +82,12 @@ let execOverride: unknown[] | null | undefined | false = false;
 let execThrows = false;
 /** When true, `exec` returns a promise that NEVER settles — the silent half-open shape. */
 let execHangs = false;
+/**
+ * When set, `sysRedis.multi()` THROWS `.value` — boxed so a thrown `undefined`/`null` is
+ * still distinguishable from "not arming this at all". Exists to reach the `catch` arm
+ * with a NON-Error value, which is the only way to drive the logger's own throw.
+ */
+let multiThrows: { value: unknown } | null = null;
 
 /**
  * A faithful-enough `MULTI: SET k 0 NX EX w` + `INCR k`: the `SET` creates the key at 0
@@ -85,6 +97,7 @@ let execHangs = false;
  */
 function armSysRedis() {
   redisMock.sysRedis.multi.mockImplementation(() => {
+    if (multiThrows) throw multiThrows.value;
     const ops: Array<() => unknown> = [];
     const chain: Record<string, unknown> = {
       set: (key: string, value: unknown, options: unknown) => {
@@ -137,6 +150,7 @@ beforeEach(() => {
   execOverride = false;
   execThrows = false;
   execHangs = false;
+  multiThrows = null;
   armSysRedis();
   redisMock.sysRedis.ttl.mockResolvedValue(PRIVATE_RUN_IMPRESSION_RATE_LIMIT_WINDOW_SECONDS);
 });
@@ -344,6 +358,15 @@ describe('checkPrivateRunImpressionRateLimit — retryAfterSeconds [INV]', () =>
   it('is the same constant on EVERY refusal, not only the first', async () => {
     // The window is fixed, so the answer cannot legitimately drift between refusals within
     // one window — and a residual TTL read would make it drift.
+    //
+    // 🔴 THIS ARMING IS THE POINT, AND WITHOUT IT THE SENTENCE ABOVE WAS A LIE ABOUT THIS
+    // TEST. The shared `beforeEach` arms `ttl` to WINDOW_SECONDS — the exact constant
+    // asserted below — so a mutant that reads the TTL returns the asserted value BY
+    // CONSTRUCTION and this case stays green. Measured: reintroducing the TTL read left
+    // this test passing and only its sibling above red. A fixture that can only ever
+    // produce the constant's own value cannot see a mutant that returns that constant.
+    // So feed a value the constant CANNOT equal, exactly as the sibling does.
+    redisMock.sysRedis.ttl.mockResolvedValue(23);
     for (let i = 0; i < 3; i++) {
       store.set(KEY, PRIVATE_RUN_IMPRESSION_RATE_LIMIT_MAX);
       expect(await checkPrivateRunImpressionRateLimit(VIEWER)).toEqual({
@@ -362,8 +385,18 @@ describe('checkPrivateRunImpressionRateLimit — the fail-open SAYS SO [REG]', (
    * BITING, and the two suites either side of this one assert it stays at zero on a fault.
    *
    * The subtype is `rate-limit-write-degraded`, whose own docblock in `fail-open-log.ts`
-   * says a sustained spike means abuse prevention is effectively disabled, and which
-   * already has a Loki alert consuming it.
+   * says a sustained spike means abuse prevention is effectively disabled.
+   *
+   * ⚠️ AND THIS DOCBLOCK ADDED "and which already has a Loki alert consuming it", WHICH IS
+   * FALSE. Measured against the infrastructure repo at its default branch, that subtype
+   * appears in exactly one file — a dated handoff note — with no alert rule and no
+   * dashboard panel; the positive control on the sibling subtype `tracking-write-cliff`
+   * resolves to five files including two alert definitions, so the search can match. The
+   * catch-all error-signature detector is doubly blind to it: it excludes the
+   * `sysredis-fail-open` name from its regex and selects error-level lines, while this is
+   * emitted at `warning`. So these cases assert that the signal is EMITTED. Whether
+   * anything CONSUMES it is a separate, currently-OPEN question, tracked as a named
+   * residual in the flag's precondition ledger — not something this suite can or does show.
    */
   function failOpenLogs() {
     return (loggingMock.logToAxiom.mock.calls as Array<[Record<string, unknown>]>)
@@ -412,6 +445,54 @@ describe('checkPrivateRunImpressionRateLimit — the fail-open SAYS SO [REG]', (
     await checkPrivateRunImpressionRateLimit(VIEWER);
     for (const payload of failOpenLogs())
       expect(JSON.stringify(payload)).not.toContain(String(VIEWER));
+  });
+});
+
+describe('checkPrivateRunImpressionRateLimit — the fail-open LOG cannot throw OUT of it [REG]', () => {
+  /**
+   * 🔴 THE DEFECT THIS PINS: adding the fail-open log made the limiter's body NON-TOTAL
+   * again. `logSysRedisFailOpen` calls `safeError(err)` SYNCHRONOUSLY, and that helper's
+   * non-Error branch is `String(e)` (`packages/civitai-axiom/src/client.ts`), which THROWS
+   * on a value with no `toString` — a null-prototype object, a `Symbol`. A throw raised
+   * inside a `catch` block is not caught by that block, so it rejected straight out of
+   * `checkPrivateRunImpressionRateLimit`.
+   *
+   * WHY THAT MATTERS MORE THAN A LOST LOG LINE: the rejection reaches the gate's own
+   * `catch` (`blocks/private-run-impression.service.ts`), which answers `false` — "not a
+   * private run" — so the impression IS RECORDED. That is exactly the leak this feature
+   * exists to close, produced by the observability added to protect it. Fail-open inside
+   * the limiter would instead have let the access predicate decide.
+   *
+   * Watched red-then-green on this branch: red at head `201d858cd7` with
+   * `TypeError: Cannot convert object to primitive value`, green at `47a5fcdea7` (where the
+   * log did not yet exist) and green once each emit got its own `try {} catch {}`.
+   *
+   * ⚠️ HONEST SCOPE: only the `catch` arm is reachable this way. The malformed-reply arm
+   * passes `err = null`, and `safeError(null)` returns `undefined` before it can stringify
+   * anything — its wrap is an invariant guard against a future logger, not a fix for a live
+   * escape, and is asserted below as such rather than counted as regression coverage.
+   */
+  it('🔴 a thrown value with NO `toString` still fails OPEN instead of rejecting', async () => {
+    // A null-prototype object is the smallest real instance: `String(x)` on it throws
+    // rather than producing "[object Object]".
+    multiThrows = { value: Object.create(null) };
+    await expect(
+      checkPrivateRunImpressionRateLimit(VIEWER),
+      'the fail-open logger must not be able to reject the limiter it is observing'
+    ).resolves.toEqual({ allowed: true });
+    // A logger fault is not a ceiling biting, exactly like every other fail-open arm.
+    expect(await refusals(), 'a swallowed logger throw is not a refusal').toBe(0);
+  });
+
+  it('POSITIVE CONTROL: an ORDINARY Error still reaches the log', async () => {
+    // Without this, the two above are satisfied by a fix that simply stopped logging. The
+    // containment must swallow the LOGGER's throw, never the emit itself.
+    execThrows = true;
+    expect(await checkPrivateRunImpressionRateLimit(VIEWER)).toEqual({ allowed: true });
+    const logged = (loggingMock.logToAxiom.mock.calls as Array<[Record<string, unknown>]>)
+      .map(([payload]) => payload)
+      .filter((payload) => payload?.name === 'sysredis-fail-open');
+    expect(logged, 'a stringifiable error must still be reported').toHaveLength(1);
   });
 });
 

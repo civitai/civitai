@@ -717,8 +717,30 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  *            suites assert it stays at ZERO on a limiter fault, which is correct and is
  *            exactly why it cannot carry the second. The refusal arm is the counter; the
  *            fail-open arm is a structured log — `sysredis-fail-open` /
- *            `rate-limit-write-degraded`, the subtype that already has a Loki alert. The
- *            third residual above is instrumented by NOTHING, and saying so is the point.
+ *            `rate-limit-write-degraded`.
+ *            🔴 TWO OBSERVABILITY RESIDUALS ARE OPEN HERE, AND BOTH ARE NAMED RATHER THAN
+ *            ROUNDED OFF:
+ *              · ⚠️ THE FAIL-OPEN LOG HAS NO CONSUMER. This sentence said that subtype
+ *                "already has a Loki alert", and that was FALSE — measured against the
+ *                infrastructure repo at its default branch, `rate-limit-write-degraded`
+ *                appears in exactly ONE file there, a dated handoff note, with no alert
+ *                rule and no dashboard panel; the positive control on the sibling subtype
+ *                `tracking-write-cliff` resolves to five files including two alert
+ *                definitions, so the search can match. The catch-all error-signature
+ *                detector is doubly blind to it — it excludes the `sysredis-fail-open`
+ *                name from its regex AND selects error-level lines, while this emit is
+ *                `warning`. So the limiter's degraded state is EMITTED and UNWATCHED.
+ *                CLOSES WHEN: an alert rule selecting that subtype exists in the
+ *                infrastructure repo's fail-open alert definitions — a one-command check
+ *                there, not a judgement call here. Until then, treat the fail-open arm as
+ *                instrumented-but-unmonitored.
+ *              · the third residual above (the SSR page route) is instrumented by NOTHING
+ *                at all, which is a weaker position again, and saying so is the point.
+ *            🔴 THE FALSE HALF ABOVE IS WHY THIS BULLET IS SO LONG. It was written into
+ *            three files at once, survived a fix round that edited the very lines around
+ *            it, and nobody checked it because it read like a fact rather than a claim.
+ *            Whoever edits this next: if you cannot establish a consumer, write that there
+ *            is none. Do NOT substitute a different alert that "probably" covers it.
  *            (Keep this at the level of the control — this repo is public.)
  *   4. ⚖️ `block_buzz_attribution` (owner-visible `buzzPurchased`) — NOT FILTERED, BY
  *      DECISION, and recorded here so the enumeration is not mistaken for complete at

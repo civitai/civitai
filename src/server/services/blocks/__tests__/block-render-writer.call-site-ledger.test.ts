@@ -243,7 +243,15 @@ describe('the blockRenders writer set — the ledger [INV]', () => {
   it('🔴 the gate DEFERS the flag and the predicate — static imports would sink the beacon', () => {
     // The one property the gate's docblock calls load-bearing that nothing else observes.
     // Converting any of the three `await import(...)`s to a top-level import type-checks and
-    // keeps every suite green, so this count is the only thing that notices.
+    // keeps every other suite green.
+    //
+    // ⚠️ AND SAY WHICH MUTATION, because "this count is the only thing that notices" — what
+    // this line used to claim — is too wide. The count is the unique guard against a
+    // deferral being DELETED. Against a CONVERSION to a static import it is not: the
+    // enumerated-specifier assertion at the end of this same test would catch that
+    // independently, since the new specifier joins the static list. It simply never gets
+    // the chance, because the count assertion aborts the `it` first. Two guards, one
+    // reachable — worth knowing before anyone "simplifies" either of them away.
     //
     // ⚠️ AND THE JUSTIFICATION THAT USED TO BE HERE IS FALSE, so read the sizes rather than
     // the story. It said a conversion "silently drags Flipt, Prisma and the app-blocks
@@ -303,7 +311,20 @@ describe('the blockRenders writer set — the ledger [INV]', () => {
       .sort();
     expect(
       staticSpecifiers,
-      "a new static import here lands Flipt or Prisma in the beacon route's EAGER graph"
+      // 🔴 THIS MESSAGE IS WHAT VITEST PRINTS WHEN THE GUARD FIRES, so it is the
+      // explanation the next engineer acts on — not skippable prose. It used to read "a
+      // new static import here lands Flipt or Prisma in the beacon route's EAGER graph",
+      // which is FALSE and was already disproved three comment blocks up in this same
+      // file: both are ALREADY eager on that route, Flipt via `clickhouse/client` →
+      // `tracker` and Prisma via `endpoint-helpers` → `errorHandling`. A previous round
+      // corrected those comments and left this string, so the disproved rationale survived
+      // as the authoritative one. What the assertion actually protects is the ENUMERATION:
+      // this file's static import list is exhaustive, so a third specifier of any kind is
+      // visible here instead of slipping past a presence check.
+      'this list is EXHAUSTIVE — a static import was added, removed or renamed. Re-read the ' +
+        'graph note above before assuming it is free: Flipt and Prisma are already eager on ' +
+        'the beacon route, so the cost of a new specifier is whatever IT drags in, which you ' +
+        'have to measure rather than assume'
     ).toEqual([
       '~/server/logging/client',
       '~/server/services/blocks/known-app-blocks.service',

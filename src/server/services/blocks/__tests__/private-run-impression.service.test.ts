@@ -501,6 +501,45 @@ describe('isPrivateRunImpression — failures fail TOWARD recording [INV]', () =
     expect(logged, 'but a Redis fault must not be silent either').toEqual(['sysredis-fail-open']);
   });
 
+  it('🔴 …and TOTAL for a NON-Error throw too — the shape that reopened the leak', async () => {
+    // ⚠️ THE CASE ABOVE SAYS "TOTAL" AND CANNOT SEE THIS ONE. It throws an ordinary `Error`,
+    // which `safeError` stringifies happily — so it stayed GREEN through a live regression
+    // on this branch: the limiter's own fail-open log calls `safeError` SYNCHRONOUSLY, that
+    // helper's non-Error branch is `String(e)`, and a value with no `toString` made it throw
+    // INSIDE the limiter's `catch`, where a `catch` cannot catch it. A guard whose name
+    // claims totality while its fixture only ever supplies the easy shape is exactly how
+    // that shipped, and this sibling is the width the name was already promising.
+    //
+    // Driven from the GATE, not the limiter, so the assertion is the CONSEQUENCE rather
+    // than the mechanism: an escaping limiter rejection lands in the gate's catch, which
+    // answers `false` — "not a private run" — and the impression is RECORDED into the app
+    // owner's panel. `true` here means the PREDICATE still made the decision.
+    redisMock.sysRedis.multi.mockImplementation(() => {
+      throw Object.create(null);
+    });
+    mockAccess.resolvePrivateRunAccess.mockResolvedValue(grant('moderator'));
+
+    expect(
+      await isPrivateRunImpression({ appBlockId: DELISTED_APP, viewer: MODERATOR }),
+      'a fault in the limiter — or in its own logger — must never become a recorded impression'
+    ).toBe(true);
+    expect(
+      mockAccess.resolvePrivateRunAccess,
+      'gate 4 must still be reached'
+    ).toHaveBeenCalledTimes(1);
+    const logged = (loggingMock.logToAxiom.mock.calls as Array<[Record<string, unknown>]>).map(
+      ([payload]) => payload?.name
+    );
+    // ⚠️ AND THE HONEST COST, ASSERTED RATHER THAN GLOSSED: when the logger itself is what
+    // throws, the fail-open LINE IS LOST — there is nothing left to report it with, and the
+    // containment deliberately swallows rather than recursing. So this arm is silent where
+    // the arm above is not. That is the accepted trade (a lost log line beats a recorded
+    // impression), not an oversight; pinning it here stops it being "fixed" into a rethrow.
+    expect(logged, 'the logger threw, so nothing could be logged — including a gate failure').toEqual(
+      []
+    );
+  });
+
   it('records the impression when the predicate answers a SHAPE it should not', async () => {
     // `allowed === true` is required, not `allowed` truthiness — a future refactor that
     // returns a string, or omits the field, must not be read as a grant.

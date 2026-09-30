@@ -138,12 +138,29 @@ export async function isPrivateRunImpression(args: {
     // degradation is observable rather than silent.
     //
     // A limiter failure FAILS OPEN INSIDE THE LIMITER (it returns `allowed`), so a Redis
-    // incident removes the cost bound rather than the protection — see its docblock. Its
-    // BODY is total: a throwing `multi()`, a rejecting `exec` and a malformed reply all
-    // answer `allowed` rather than reaching the catch below, so none of them can be
-    // mistaken for a gate failure by anything reading the fail-open log. ⚠️ The one thing
-    // that CAN reach that catch is the dynamic import itself failing, which is a gate
-    // failure like any other and is handled as one.
+    // incident removes the cost bound rather than the protection — see its docblock.
+    //
+    // ⚠️ THIS COMMENT ASSERTED THAT THE LIMITER'S BODY IS TOTAL, AND THAT WENT FALSE ON
+    // THIS BRANCH WITHOUT THE SENTENCE MOVING. Making the fail-open observable put a
+    // SYNCHRONOUS `safeError` call inside the limiter's own `catch`, and a throw raised in
+    // a `catch` is not caught by that block — so a thrown value with no `toString` (a
+    // null-prototype object) rejected straight out of the limiter, landed in the catch
+    // below, and RECORDED the impression: the leak this gate exists to close, opened by
+    // the instrumentation added to protect it. Measured, not reasoned: red at this
+    // branch's head `201d858cd7`, green at `47a5fcdea7`.
+    //
+    // The limiter now routes every emit through its own `try {} catch {}` (`reportFailOpen`
+    // there — the same shape, and the same reason, as `reportGateFailure` below). THAT is
+    // what restores totality, and it is a property of the wrap rather than one the limiter
+    // has for free: a new emit added there without one re-breaks this exactly the same way.
+    // Pinned by a `[REG]` case in the limiter's own suite, watched failing on the unwrapped
+    // head.
+    //
+    // With the wrap in place: a throwing `multi()`, a rejecting `exec`, a deadline breach
+    // and a malformed reply all answer `allowed` rather than reaching the catch below, so
+    // none can be mistaken for a gate failure by anything reading the fail-open log. The
+    // remaining way for gate 3.5 to reach that catch is the dynamic import itself failing,
+    // which is a gate failure like any other and is handled as one.
     const { checkPrivateRunImpressionRateLimit } = await import(
       '~/server/utils/private-run-impression-rate-limit'
     );
