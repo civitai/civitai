@@ -806,9 +806,6 @@ export const serverSchema = z
 
     // OpenRouter (unified LLM API)
     OPENROUTER_API_KEY: z.string().optional(),
-    // TypeSafe direct API seam for the Jev judgment model (services/ai/jev.ts) —
-    // reserved; the OpenRouter path is the only wired implementation today.
-    TYPESAFE_API_KEY: z.string().optional(),
     // Youtube related:
     YOUTUBE_APP_CLIENT_ID: z.string().optional(),
     YOUTUBE_APP_CLIENT_SECRET: z.string().optional(),
