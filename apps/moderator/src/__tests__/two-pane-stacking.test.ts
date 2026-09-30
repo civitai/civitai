@@ -53,8 +53,19 @@ describe.each(LAYOUTS)('$name stacks instead of pinning a pane', ({ file }) => {
     expect(source).toContain('</div>');
   });
 
-  it('gives the two-pane container a lg: column template, so it is one column below lg', () => {
-    expect(source).toMatch(/class="[^"]*\bgrid\b[^"]*\blg:grid-cols-\[/);
+  it('makes its two-column arrangement conditional on a breakpoint', () => {
+    // 🔴 Pins the STATE, not one spelling of it. This app has TWO idioms for a two-pane layout and
+    // the flex one is the MAJORITY (6 pages: retool/{post-reports,bulk-ban,user-reports,image-help}
+    // and user-lookup/[section] ×2, all `lg:w-*`/`xl:w-*` + `shrink-0`), against 5 grid pages.
+    // An earlier version asserted the word `grid`, which went RED against a correct flex +
+    // `lg:w-56 lg:shrink-0` fix — reddening correct code written in the app's own dominant style.
+    // Either idiom is fine; what must not happen is two columns at EVERY width.
+    const gridTemplate = /class="[^"]*\b(?:sm|md|lg|xl|2xl):grid-cols-/.test(source);
+    const breakpointWidth = /class="[^"]*\b(?:sm|md|lg|xl|2xl):w-\d/.test(source);
+    expect(
+      gridTemplate || breakpointWidth,
+      'no breakpoint-gated two-column arrangement: the panes sit side by side at every width'
+    ).toBe(true);
   });
 
   it('pins no pane to an unconditional fixed width', () => {

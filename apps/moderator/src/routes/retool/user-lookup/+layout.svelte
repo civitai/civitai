@@ -215,9 +215,10 @@
     </div>
   {/if}
 
-  <!-- Grid, not flex: `w-56 shrink-0` beside a flex sibling left ~80px of content at 390px on the
-       page carrying Ban / Purge / Mute. Stacks below `lg`; same shape as the /xguard pages. -->
-  <div class="grid gap-6 lg:grid-cols-[14rem_1fr] lg:items-start">
+  <!-- A fixed-width pane here does not stack below `lg`; pinned by
+       `src/__tests__/two-pane-stacking.test.ts`. No `items-*`: grid defaults to stretch, which is
+       what the previous flex row did, so `lg` and above is unchanged. -->
+  <div class="grid gap-6 lg:grid-cols-[14rem_1fr]">
     <nav class="min-w-0">
       <ul class="space-y-0.5">
         {#each SECTIONS as s (s.slug)}

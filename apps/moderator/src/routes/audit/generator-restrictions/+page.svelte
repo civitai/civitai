@@ -51,8 +51,8 @@
 
 <RestrictionFilters q={data.q} status={data.status} type={data.type} />
 
-<!-- Grid, not flex: `w-104` is 26rem/416px, wider than the 342px content box at 390px, so the
-     queue column alone overflowed the viewport. Stacks below `lg`; same shape as /xguard. -->
+<!-- A fixed-width pane here does not stack below `lg`; pinned by
+     `src/__tests__/two-pane-stacking.test.ts`. -->
 <div class="grid items-start gap-6 lg:grid-cols-[26rem_1fr]">
   <div class="flex min-w-0 flex-col">
     {#if data.items.length === 0}
