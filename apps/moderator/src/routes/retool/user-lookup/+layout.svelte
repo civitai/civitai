@@ -215,8 +215,10 @@
     </div>
   {/if}
 
-  <div class="flex gap-6">
-    <nav class="w-56 shrink-0">
+  <!-- Grid, not flex: `w-56 shrink-0` beside a flex sibling left ~80px of content at 390px on the
+       page carrying Ban / Purge / Mute. Stacks below `lg`; same shape as the /xguard pages. -->
+  <div class="grid gap-6 lg:grid-cols-[14rem_1fr] lg:items-start">
+    <nav class="min-w-0">
       <ul class="space-y-0.5">
         {#each SECTIONS as s (s.slug)}
           <li>
@@ -264,7 +266,7 @@
       </ul>
     </nav>
 
-    <div class="min-w-0 flex-1">
+    <div class="min-w-0">
       {@render children()}
     </div>
   </div>
