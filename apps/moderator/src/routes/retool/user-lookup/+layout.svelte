@@ -215,11 +215,10 @@
     </div>
   {/if}
 
-  <!-- A fixed-width pane here does not stack below `lg`; pinned by
-       `src/__tests__/two-pane-stacking.test.ts`. No `items-*`: grid defaults to stretch, which is
-       what the previous flex row did, so `lg` and above is unchanged. -->
-  <div class="grid gap-6 lg:grid-cols-[14rem_1fr]">
-    <nav class="min-w-0">
+  <!-- A fixed-width pane here does not stack below `md`; pinned by
+       `src/__tests__/two-pane-stacking.test.ts`, which finds this container by `data-two-pane`. -->
+  <div data-two-pane class="grid gap-6 md:grid-cols-[14rem_1fr]">
+    <nav data-pane class="min-w-0">
       <ul class="space-y-0.5">
         {#each SECTIONS as s (s.slug)}
           <li>
@@ -267,7 +266,7 @@
       </ul>
     </nav>
 
-    <div class="min-w-0">
+    <div data-pane class="min-w-0">
       {@render children()}
     </div>
   </div>

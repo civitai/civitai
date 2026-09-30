@@ -5,21 +5,21 @@ import { describe, expect, it } from 'vitest';
 import { stripComments } from '../test/strip-comments';
 
 /**
- * ⚠️ A TEXT PIN over TWO NAMED LAYOUTS. Nothing here renders a page or measures a pixel.
- *
- * 🔴 WHAT IT IS NOT: a responsive lint. It says nothing about the other ~150 route components,
- * and a third page can reintroduce this defect freely. It pins the two layouts that had it.
+ * ⚠️ A TEXT PIN OVER TWO NAMED LAYOUTS. Nothing here renders a page or measures a pixel.
  *
  * Both were a flex row with a fixed-width pane and no stacking breakpoint, so the pane kept its
- * width at every viewport: `w-56` (14rem) left roughly 80px of content at 390px on the page
- * carrying Ban / Purge / Mute, and `w-104` (26rem = 416px) was itself wider than the 342px
- * content box.
+ * width at every viewport and squeezed the content column — on `user-lookup`, the page carrying
+ * Ban / Purge / Mute.
  *
- * The non-obvious half, and the reason this file exists rather than trusting review: converting
- * the container to a grid is NOT sufficient on its own. Below `lg` the grid is a single column, so
- * a fixed width put back on a PANE still overflows — while the diff reads as "already a grid, so
- * this is fine". `shrink-0` is also inert in a grid, so the old flex idiom can return looking
- * harmless.
+ * 🔴 WHAT IT CANNOT SEE, first, because an earlier version of this file claimed more than it
+ * delivered. It reads `class="…"` ATTRIBUTES only, so a width moved into `class={cn(…)}` — an
+ * idiom `user-lookup/+layout.svelte` already uses for its nav links — is invisible. It is also
+ * NOT a responsive lint: it pins the two elements marked `data-two-pane` / `data-pane` and says
+ * nothing about any other page.
+ *
+ * The markers exist so the pin can tell a PANE from an icon. Scanning every `class="…"` in the
+ * file made an ordinary `<span class="w-4 shrink-0">` — live elsewhere in this app — fail a test
+ * whose message pointed at the container.
  */
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const read = (p: string) => stripComments(readFileSync(path.resolve(dir, '..', p), 'utf8'));
@@ -32,45 +32,58 @@ const LAYOUTS = [
   },
 ] as const;
 
-/** `class="…"` values that pair an unconditional `w-<n>` with `shrink-0` — the flex-pane idiom. */
-function fixedWidthPanes(source: string): string[] {
-  return [...source.matchAll(/class="([^"]*)"/g)]
-    .map((m) => m[1])
-    .filter((c) => /(^|\s)w-\d+(\s|$)/.test(c) && /(^|\s)shrink-0(\s|$)/.test(c));
+/**
+ * A breakpoint token at the START of a class, so `max-lg:` and `not-lg:` do NOT count.
+ * They are not stacking: `max-lg:grid-cols-[14rem_1fr]` gives two columns ONLY BELOW `lg`, which
+ * is the original defect inverted and confined to exactly the widths this pin exists to protect.
+ */
+const BREAKPOINT = String.raw`(?:^|\s)(?:sm|md|lg|xl|2xl):`;
+
+/** The `class` of the element marked `data-two-pane`, or null. */
+function container(source: string): string | null {
+  return (
+    source
+      .match(/data-two-pane[^>]*?class="([^"]*)"|class="([^"]*)"[^>]*?data-two-pane/)
+      ?.slice(1)
+      .find(Boolean) ?? null
+  );
+}
+
+/** The `class` of every element marked `data-pane`. */
+function panes(source: string): string[] {
+  return [...source.matchAll(/data-pane[^>]*?class="([^"]*)"|class="([^"]*)"[^>]*?data-pane/g)].map(
+    (m) => m[1] ?? m[2]
+  );
 }
 
 describe.each(LAYOUTS)('$name stacks instead of pinning a pane', ({ file }) => {
   const source = read(file);
 
-  // Positive control: every assertion below is a claim about parsed substrings, so an empty read
-  // would satisfy them vacuously. Deliberately asserts NOTHING about `grid` or widths — a control
-  // that shares the step under test is a second sample of the same unknown, not a control. (An
-  // earlier version asserted `grid` here, and reverting the fix failed the control too, which
-  // reads as a broken harness rather than a caught regression.)
-  it('reads a real markup file', () => {
-    expect(source.length).toBeGreaterThan(200);
-    expect(source).toContain('class="');
-    expect(source).toContain('</div>');
+  // Positive control. Asserts nothing about widths or breakpoints — a control that shares the step
+  // under test is a second sample of the same unknown, not a control.
+  it('finds the marked container and both panes', () => {
+    expect(container(source)).not.toBeNull();
+    expect(panes(source)).toHaveLength(2);
   });
 
   it('makes its two-column arrangement conditional on a breakpoint', () => {
-    // 🔴 Pins the STATE, not one spelling of it. This app has TWO idioms for a two-pane layout and
-    // the flex one is the MAJORITY (6 pages: retool/{post-reports,bulk-ban,user-reports,image-help}
-    // and user-lookup/[section] ×2, all `lg:w-*`/`xl:w-*` + `shrink-0`), against 5 grid pages.
-    // An earlier version asserted the word `grid`, which went RED against a correct flex +
-    // `lg:w-56 lg:shrink-0` fix — reddening correct code written in the app's own dominant style.
-    // Either idiom is fine; what must not happen is two columns at EVERY width.
-    const gridTemplate = /class="[^"]*\b(?:sm|md|lg|xl|2xl):grid-cols-/.test(source);
-    const breakpointWidth = /class="[^"]*\b(?:sm|md|lg|xl|2xl):w-\d/.test(source);
+    // Either idiom is accepted: a `*:grid-cols-` template, or a `*:w-<n>` pane. This app uses both,
+    // and the flex one is the majority. What must not happen is two columns at EVERY width.
+    const gated =
+      new RegExp(BREAKPOINT + 'grid-cols-').test(container(source) ?? '') ||
+      panes(source).some((c) => new RegExp(BREAKPOINT + String.raw`w-\d`).test(c));
     expect(
-      gridTemplate || breakpointWidth,
+      gated,
       'no breakpoint-gated two-column arrangement: the panes sit side by side at every width'
     ).toBe(true);
   });
 
-  it('pins no pane to an unconditional fixed width', () => {
-    // A breakpoint-prefixed width (`lg:w-56`) is fine — it cannot apply in the stacked layout.
-    // An unprefixed one overflows below `lg` whether or not the container is a grid.
-    expect(fixedWidthPanes(source)).toEqual([]);
+  it('pins no pane to an unconditional width', () => {
+    // `min-w-0` is the opposite of pinning and must not trip this, hence `[1-9]`. `basis-` and an
+    // arbitrary `w-[…]` are included: both hold a pane's width as firmly as `w-56` does.
+    const pinned = panes(source).filter((c) =>
+      new RegExp(String.raw`(?:^|\s)(?:min-w|w|basis)-(?:[1-9]|\[)`).test(c)
+    );
+    expect(pinned).toEqual([]);
   });
 });
