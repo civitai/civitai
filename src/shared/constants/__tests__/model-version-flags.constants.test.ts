@@ -15,6 +15,13 @@ describe('ModelVersionFlag', () => {
     expect(ModelVersionFlag.NotEvictable).toBe(8);
   });
 
+  it('gives every flag its own single bit, never the retired bit 1', () => {
+    const bits = Object.values(ModelVersionFlag).filter((v) => v !== ModelVersionFlag.None);
+    expect(new Set(bits).size).toBe(bits.length);
+    for (const bit of bits) expect(bit & (bit - 1), `flag ${bit} is not a single bit`).toBe(0);
+    expect(bits).not.toContain(1);
+  });
+
   it('has a label for every flag', () => {
     const flags = Object.values(ModelVersionFlag).filter((v) => v !== ModelVersionFlag.None);
     for (const flag of flags) expect(modelVersionFlagLabels[flag], `flag ${flag}`).toBeTruthy();
