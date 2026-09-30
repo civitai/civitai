@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type * as BlockScopeMiddleware from '~/server/middleware/block-scope.middleware';
 
 /**
  * Endpoint-contract tests for POST /api/v1/blocks/resource-intent.
@@ -18,9 +20,7 @@ const mockCheckBlockLLMRateLimit = vi.fn();
 const mockGetResourceIntent = vi.fn();
 
 vi.mock('~/server/middleware/block-scope.middleware', async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import('~/server/middleware/block-scope.middleware')
-  >();
+  const actual = await importOriginal<typeof BlockScopeMiddleware>();
   return {
     ...actual,
     // Inject the verified claims the real middleware would produce, then hand
@@ -110,8 +110,6 @@ const call = async (req: Record<string, unknown>) => {
   );
   return { res, headers };
 };
-
-let regionSpy: MockInstance | undefined;
 
 beforeEach(() => {
   vi.clearAllMocks();

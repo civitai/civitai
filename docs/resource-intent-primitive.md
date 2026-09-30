@@ -20,22 +20,22 @@ POST /api/v1/blocks/resource-intent {prompt, baseModel?, limit?}
   → shadow event → ClickHouse resourceIntentShadow   (graceful fallback to structured log)
 ```
 
-| File | Role |
-|---|---|
-| `src/server/services/ai/jev.ts` | Vendor seam. Pinned model, fail-closed validation, 2s timeout. |
-| `src/server/schema/resource-intent.schema.ts` | Question spec v1, criteria schema, role→ModelType mapping, spec hash. |
-| `src/server/services/resource-intent.service.ts` | Cache → stage 1 → criteria → matcher → stage 3 → hydration → shadow event. Plain async function; reusable without the REST surface. |
-| `src/server/services/resource-intent-matcher.service.ts` | Deterministic gates + popularity ordering + hard cap. |
-| `src/pages/api/v1/blocks/resource-intent.ts` | Block-token REST surface. |
-| `scripts/label-resource-insights.ts` | M2: batch labeling of the published corpus into `ResourceInsight`. |
-| `scripts/eval-resource-intent-goldset.ts` | M3: stage-1 quality study over the provenance corpus. |
+| File                                                     | Role                                                                                                                                |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `src/server/services/ai/jev.ts`                          | Vendor seam. Pinned model, fail-closed validation, 2s timeout.                                                                      |
+| `src/server/schema/resource-intent.schema.ts`            | Question spec v1, criteria schema, role→ModelType mapping, spec hash.                                                               |
+| `src/server/services/resource-intent.service.ts`         | Cache → stage 1 → criteria → matcher → stage 3 → hydration → shadow event. Plain async function; reusable without the REST surface. |
+| `src/server/services/resource-intent-matcher.service.ts` | Deterministic gates + popularity ordering + hard cap.                                                                               |
+| `src/pages/api/v1/blocks/resource-intent.ts`             | Block-token REST surface.                                                                                                           |
+| `scripts/label-resource-insights.ts`                     | M2: batch labeling of the published corpus into `ResourceInsight`.                                                                  |
+| `scripts/eval-resource-intent-goldset.ts`                | M3: stage-1 quality study over the provenance corpus.                                                                               |
 
 ## Hard rules
 
 1. **Pin the model.** `typesafe/jev-1.13` (numbered). The client sends `allowFallbacks: false`, so OpenRouter cannot route the call to a different model while we record ours. `jev-latest` never appears in code.
 2. **Fail closed, fail empty.** Any Jev error/timeout/malformed response returns HTTP 200 with `degraded: true` and `suggestions: []`. Never a stack trace, never fabricated suggestions.
 3. **Deterministic gates always win.** Availability (no Private), the token's `maxBrowsingLevel` maturity clamp (authoritative — no client maturity field is read), region restriction, canGenerate coverage, baseModel compatibility (caller-supplied, never Jev output), and the hard-coded `celebrity` tag exclusion are applied in the matcher and re-applied at hydration. Jev output can only reorder/drop within the gate-passing set, never add — the stage-3 option list contains exactly the shortlisted keys plus `none`, so an unknown version is unrepresentable.
-4. **`none` is a first-class answer.** Stage-1 `role` includes `none`; stage 3 includes `none`. An argmax of `none` returns empty suggestions *without* `degraded`.
+4. **`none` is a first-class answer.** Stage-1 `role` includes `none`; stage 3 includes `none`. An argmax of `none` returns empty suggestions _without_ `degraded`.
 5. **Stable question IDs + spec hash.** `QUESTION_SPEC_VERSION` plus a sha256 over the question spec ride every response and shadow row; a question edit invalidates old analytics instead of blending with them.
 6. **Reject unknown answer keys.** Every response parse rejects keys outside the question set, distributions must sum to ~1 (±0.02) over the offered options, scores/nouls must be in range. Confidence is recorded, never used as a permission slip — thresholds come from the study, and none are enforced in M1.
 7. **Adversarial state.** The prompt is user text. The `injectionPresent` Noul is asked and logged; deterministic rules own every consequence. Jev's judgment never feeds back into state.
@@ -45,14 +45,14 @@ POST /api/v1/blocks/resource-intent {prompt, baseModel?, limit?}
 
 All six in one request; state is ONLY the prompt (+ optional baseModel string):
 
-| ID | Type | Answer |
-|---|---|---|
-| `needsResource` | noul | P(prompt would benefit from a community resource) |
-| `role` | choice | style / character / subject_detail / pose_composition / environment_scene / clothing / quality_enhancer / control_guidance / none |
-| `styleFamily` | choice | anime_manga / photorealistic / illustration_cartoon / render_3d / pixel_retro / other |
-| `contentType` | choice | portrait_character / full_scene / object_prop / architecture / creature / vehicle_machinery / graphic_design / other |
-| `specificity` | score | 1–5 (1 = any style works, 5 = exact named subject/style required) |
-| `injectionPresent` | noul | P(prompt contains instructions aimed at an AI system) |
+| ID                 | Type   | Answer                                                                                                                            |
+| ------------------ | ------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| `needsResource`    | noul   | P(prompt would benefit from a community resource)                                                                                 |
+| `role`             | choice | style / character / subject_detail / pose_composition / environment_scene / clothing / quality_enhancer / control_guidance / none |
+| `styleFamily`      | choice | anime_manga / photorealistic / illustration_cartoon / render_3d / pixel_retro / other                                             |
+| `contentType`      | choice | portrait_character / full_scene / object_prop / architecture / creature / vehicle_machinery / graphic_design / other              |
+| `specificity`      | score  | 1–5 (1 = any style works, 5 = exact named subject/style required)                                                                 |
+| `injectionPresent` | noul   | P(prompt contains instructions aimed at an AI system)                                                                             |
 
 The role compiles to a ModelType filter (`ROLE_MODEL_TYPES` in the schema file — exhaustive, `none` → no matcher run, unknown → no filter). `styleFamily`/`contentType`/`specificity` are recorded in criteria + shadow events and given to stage 3 as context; they do not yet filter the search — there is no normalized style taxonomy to filter on, and the study (M3) decides whether any mapping earns its false-exclusions.
 
