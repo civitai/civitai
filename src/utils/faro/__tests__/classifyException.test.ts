@@ -51,6 +51,38 @@ const AD_SCRIPT_FRAME = {
   colno: 419,
 };
 
+/**
+ * A third-party script on a host that is NOT one of the enumerated ad/analytics domains. Real
+ * host, measured on this stream and deliberately left off `AD_NETWORK_FRAME_HOST_RES`: it
+ * appeared on 2 of the 4,000 beacons sampled across two 6h windows, below any threshold worth
+ * widening a denylist for. The path is synthetic — the real one carries an opaque 32-char token,
+ * which is the class `redact.ts` scrubs, so it does not belong in a fixture.
+ */
+const UNLISTED_THIRD_PARTY_FRAME = {
+  filename: 'https://static-lib.com/s/example-bundle-id/base.min.js?v=20.9',
+  function: 'n',
+  lineno: 1,
+  colno: 5504,
+};
+
+/**
+ * A minified first-party chunk — how our bundled code is spelled in the browser. (Our own code
+ * also reaches the browser as `/workers/*.worker.js`, which is why `FIRST_PARTY_ASSET_PATH_RE`
+ * admits `/workers/` too.)
+ */
+const MINIFIED_CHUNK_FRAME = {
+  filename: 'https://civitai.com/_next/static/chunks/31x1i4exiz8mm.js',
+  function: 'o',
+  lineno: 19,
+  colno: 7373,
+};
+const MINIFIED_CHUNK_FRAME_2 = {
+  filename: 'https://civitai.com/_next/static/chunks/1tpwgcnp2976m.js',
+  function: 'r.fetch',
+  lineno: 11,
+  colno: 96602,
+};
+
 /** A genuine first-party caller — OUR code asking for something over the network. */
 const OUR_FETCH_CALLER_FRAME = {
   filename: 'turbopack:///[project]/src/components/Generate/useGenerate.ts',
@@ -404,10 +436,21 @@ describe('classifyException — project-source frame edges', () => {
   // Without this, `frames.some(...)` and `isProjectSourceFrame(frames[frames.length - 1])` are
   // indistinguishable across the whole file: every other fixture puts its app frame last.
   // Shape: a third-party script invokes OUR callback, which calls fetch.
+  //
+  // 🔴 The outermost frame is deliberately an UNENUMERATED third-party host, not an ad network.
+  // With `AD_SCRIPT_FRAME` last this assertion could not be `drop: false` at all — rule 6b would
+  // fire — so the test would be red rather than merely blind. `static-lib.com` keeps the
+  // assertion reachable AND still pins `.some(...)`: under a last-frame-only mutation the middle
+  // app frame stops counting, rule 6 fires, and this goes red.
   it('KEEPS a stack whose only app frame is in the MIDDLE, not at either end', () => {
     const r = classifyException(
       exc('TypeError', 'Failed to fetch', {
-        frames: [OTEL_FETCH_FRAME, UPDATE_WATCHER_FRAME, OUR_FETCH_CALLER_FRAME, AD_SCRIPT_FRAME],
+        frames: [
+          OTEL_FETCH_FRAME,
+          UPDATE_WATCHER_FRAME,
+          OUR_FETCH_CALLER_FRAME,
+          UNLISTED_THIRD_PARTY_FRAME,
+        ],
       })
     );
     expect(r.drop).toBe(false);
@@ -428,27 +471,19 @@ describe('classifyException — project-source frame edges', () => {
     expect(r.category).toBe('network');
   });
 
-  // 🔴 DOCUMENTS AN ASSUMPTION THE WHOLE FIX RESTS ON. These exclusions can only work while
-  // beacons carry source-resolved paths. If frames ever arrive as minified bundle URLs, our code
-  // and our dependencies are indistinguishable — everything is `/_next/`, the guard says
-  // "project source", and this fix drops NOTHING. That is the safe direction (no false drops),
-  // but it is silent, so pin it: this test passing with `real` is the tell.
-  it('an all-minified-bundle stack is KEPT as real (the fix is inert on unmapped frames)', () => {
+  // 🔴 THE PRODUCTION SHAPE, and the one stack in this describe that a real browser can produce.
+  // `beforeSend` sees the browser's own frames and the collector resolves source maps afterwards,
+  // so every one of our chunks arrives as `/_next/static/chunks/<hash>.js` —
+  // `hasProjectSourceFrame` answers TRUE and rule 6 cannot fire. Rule 6b decides it on the
+  // OUTERMOST frame: the ad network asked for the request, so it is theirs.
+  it('drops a minified-bundle stack whose OUTERMOST frame is an ad network (the production shape)', () => {
     const r = classifyException(
       exc('TypeError', 'Failed to fetch', {
-        frames: [
-          { filename: 'https://civitai.com/_next/static/chunks/8154-7d2a.js', lineno: 1, colno: 9 },
-          {
-            filename: 'https://civitai.com/_next/static/chunks/main-app-11ab.js',
-            lineno: 1,
-            colno: 4,
-          },
-          AD_SCRIPT_FRAME,
-        ],
+        frames: [MINIFIED_CHUNK_FRAME, MINIFIED_CHUNK_FRAME_2, AD_SCRIPT_FRAME],
       })
     );
-    expect(r.drop).toBe(false);
-    expect(r.category).toBe('real');
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('adblock');
   });
 
   // The abort rule shares this guard and matches its phrases as UNANCHORED substrings, so
@@ -1443,5 +1478,263 @@ describe('classifyException — no-regression sweep across every category', () =
     const r = classifyException(payload as ClassifiableException);
     expect(r.category).toBe(category);
     expect(r.drop).toBe(drop);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────────────────────
+
+// ──────────────────────────────────────────────────────────────────────────────────────────────
+// RULE 6b — third-party ad/analytics REQUEST INITIATORS
+//
+// 🔴 WHY THESE FIXTURES LOOK DIFFERENT FROM EVERY FIXTURE ABOVE. This classifier runs on the
+// frames the BROWSER produced, where each of our chunks is spelled
+// `https://<our-host>/_next/static/chunks/<hash>.js`. The `turbopack:///[project]/…` and
+// `webpack://…` paths used by the fixtures above are a source-map `sources` spelling, produced by
+// the collector after `beforeSend` has returned — so the rule 6 conjunct those fixtures exercise
+// cannot fire on a real browser stack, and rule 6b is the only rule in this file with
+// production-shaped coverage. MEASURED: of 4,000 `Failed to fetch` beacons sampled from two 6h
+// windows on 2026-09-30 (2,000 from each; `client_class!="bot"`, `context_error_category="real"`),
+// 4,000 carried a project-source frame under that guard.
+// ──────────────────────────────────────────────────────────────────────────────────────────────
+
+/** Build the production stack shape: minified first-party plumbing, then the initiator outermost. */
+const prodStack = (initiator: { filename: string }) => ({
+  frames: [MINIFIED_CHUNK_FRAME, MINIFIED_CHUNK_FRAME_2, initiator],
+});
+
+describe('classifyException — rule 6b: DROP a bare network failure an ad network initiated', () => {
+  // One case per enumerated domain, each spelled with the subdomain it was MEASURED under (which
+  // is why the patterns are domain-anchored rather than hostname-exact). Deleting any one pattern
+  // flips exactly the matching row.
+  it.each([
+    ['https://securepubads.g.doubleclick.net/pagead/managed/js/gpt/m202609250101/pubads_impl.js'],
+    ['https://www.googletagmanager.com/gtag/js?id=G-TESTID001'],
+    ['https://cdn.snigelweb.com/prebid/11.29.0-snpbjs/prebid.js?v=20389'],
+  ])('drops a `Failed to fetch` whose outermost frame is %s', (filename) => {
+    const r = classifyException(exc('TypeError', 'Failed to fetch', prodStack({ filename })));
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('adblock');
+  });
+
+  // The `(?:^|\.)` alternation, both halves. Without the `^` an apex-only host stops matching;
+  // without the alternation being an alternation, `notdoubleclick.net` starts matching.
+  it('drops on the bare apex domain', () => {
+    const r = classifyException(
+      exc('TypeError', 'Failed to fetch', prodStack({ filename: 'https://doubleclick.net/gpt.js' }))
+    );
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('adblock');
+  });
+  it('does NOT drop a host that merely ENDS with the domain text', () => {
+    const r = classifyException(
+      exc(
+        'TypeError',
+        'Failed to fetch',
+        prodStack({ filename: 'https://notdoubleclick.net/gpt.js' })
+      )
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // The `$` anchor. A host that only CONTAINS an enumerated domain as a left-hand label is a
+  // different site.
+  it.each([
+    ['https://doubleclick.net.example.com/x.js'],
+    ['https://googletagmanager.com.cdn.example/x.js'],
+  ])('does NOT drop a look-alike host: %s', (filename) => {
+    const r = classifyException(exc('TypeError', 'Failed to fetch', prodStack({ filename })));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // 🔴 The host is PARSED out of the authority, never substring-matched against the filename —
+  // and these fixtures have to be built carefully to observe that. A first-party URL merely
+  // CONTAINING an ad domain is not enough: `…/chunks/doubleclick-shim.js` has no `.net` at all,
+  // and `…?provider=googletagmanager.com` fails the `(?:^|\.)` because the preceding character is
+  // `=`. The observing shape needs the domain terminal AND dot-prefixed inside the path or query.
+  // The pathless row additionally observes the `?` in the authority char class: without it the
+  // authority runs on into the query string and the whole thing reads as an ad host.
+  it.each([
+    ['https://civitai.com/_next/static/chunks/a.js?ref=.doubleclick.net'],
+    ['https://civitai.com?ref=x.doubleclick.net'],
+    ['https://civitai.com/_next/static/chunks/doubleclick-shim.js'],
+  ])('does NOT drop a FIRST-PARTY url that merely contains an ad host: %s', (filename) => {
+    const r = classifyException(exc('TypeError', 'Failed to fetch', prodStack({ filename })));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // The authority parse: userinfo, port, the FQDN root label, and case are all normalised before
+  // the host is tested. Each row is the sole observer of one of those.
+  //
+  // 🔴 The userinfo row puts the credentials IMMEDIATELY before the matched domain on purpose.
+  // Spelled `user:pw@securepubads.g.doubleclick.net` the character before `doubleclick` is still
+  // a `.`, so the pattern matches with or without the strip and the fixture observes nothing — it
+  // survived exactly that mutant. Spelled `…@doubleclick.net` the preceding character is `@`, the
+  // `(?:^|\.)` fails, and the strip is the only reason this is attributed to the ad network.
+  it.each([
+    ['https://user:pw@doubleclick.net/gpt/pubads_impl.js'],
+    ['https://securepubads.g.doubleclick.net:443/gpt/pubads_impl.js'],
+    ['https://doubleclick.net./gpt.js'],
+    ['//securepubads.g.doubleclick.net/gpt/pubads_impl.js'],
+    ['HTTPS://WWW.GOOGLETAGMANAGER.COM/gtag/js?id=G-TESTID002'],
+    ['  https://securepubads.g.doubleclick.net/gpt/pubads_impl.js  '],
+  ])(
+    'drops regardless of userinfo / port / root label / scheme / case / padding: %s',
+    (filename) => {
+      const r = classifyException(exc('TypeError', 'Failed to fetch', prodStack({ filename })));
+      expect(r.drop).toBe(true);
+      expect(r.category).toBe('adblock');
+    }
+  );
+
+  // `lastIndexOf('@')`, not `indexOf`. With two `@` the first-index variant leaves
+  // `b@doubleclick.net`, whose `@` defeats the `(?:^|\.)` — so this row flips to KEEP under that
+  // mutant and is its only observer.
+  it('drops when the authority carries more than one @', () => {
+    const r = classifyException(
+      exc(
+        'TypeError',
+        'Failed to fetch',
+        prodStack({ filename: 'https://a@b@doubleclick.net/x.js' })
+      )
+    );
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('adblock');
+  });
+});
+
+describe('classifyException — rule 6b: deliberate negatives (a false drop hides a real bug)', () => {
+  // 🔴 THE SAFETY TEST THIS RULE EXISTS AROUND. Browser extensions demonstrably patch
+  // `window.fetch` — over one measured 6h window, 1,175 of that window's 1,727 sampled
+  // `TypeError: Failed to fetch` beacons carried a `chrome-extension://…` frame, our own requests
+  // included. If an ad script ever does the same, its frame joins every fetch rejection as one
+  // more unconditional layer, and an "ad-host frame anywhere on the stack" rule would drop the
+  // WHOLE bare-network stream, genuine first-party bugs included. Requiring the ad frame to be
+  // OUTERMOST is what makes that impossible: replace `frames[length - 1]` with a `.some(...)` and
+  // only this test fails.
+  it('KEEPS our own fetch failure when an ad script merely WRAPPED fetch (frame not outermost)', () => {
+    const r = classifyException(
+      exc('TypeError', 'Failed to fetch', {
+        frames: [
+          AD_SCRIPT_FRAME,
+          MINIFIED_CHUNK_FRAME,
+          MINIFIED_CHUNK_FRAME_2,
+          {
+            filename: 'https://civitai.com/_next/static/chunks/upload-4f2a.js',
+            function: 'uploadSourceImage',
+          },
+        ],
+      })
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // The message conjunct, in both directions. A real app bug whose message merely NAMES an ad
+  // network, or carries the network phrase inside a larger sentence, is kept even though its
+  // stack is identical to the dropped population's.
+  it.each([
+    ['TypeError', "Cannot read properties of undefined (reading 'googletag')"],
+    ['TypeError', 'Failed to fetch the ad slot configuration'],
+    ['TypeError', 'Ad refresh failed: Failed to fetch'],
+  ])('KEEPS a non-anchored message with an ad initiator: %s / %s', (type, value) => {
+    const r = classifyException(exc(type, value, prodStack(AD_SCRIPT_FRAME)));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // 🔴 The authority parse accepts ONLY `http(s)` and protocol-relative frames, and both halves
+  // of that are safety properties with their own observer here. An extension-scheme frame is not
+  // initiator evidence (extensions wrap fetch — see the safety test above), and `blob:` is a real
+  // frame spelling for worker code whose host is merely the origin that CREATED the blob. Each
+  // row carries an ad domain as its host, so it flips to DROP the moment the scheme restriction
+  // or the `^` anchor is relaxed — varying the scheme against a matching host, rather than the
+  // host against a fixed scheme, is what makes them observe anything.
+  it.each([
+    ['chrome-extension://doubleclick.net/injectScriptAdjust.js'],
+    ['moz-extension://googletagmanager.com/content.js'],
+    ['blob:https://securepubads.g.doubleclick.net/9f2c-1d'],
+  ])('does NOT drop on an ad-domain host behind a non-http(s) scheme: %s', (filename) => {
+    const r = classifyException(exc('TypeError', 'Failed to fetch', prodStack({ filename })));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // `frameHost` returns null for a frame that is not an absolute URL, or that has no authority at
+  // all. These are the spellings that actually occur on this stream.
+  it.each([
+    ['turbopack:///[project]/src/components/TrackView/TrackPageView.tsx'],
+    ['<anonymous>'],
+    ['//'],
+  ])('does NOT drop on a frame with no parseable host: %s', (filename) => {
+    const r = classifyException(exc('TypeError', 'Failed to fetch', prodStack({ filename })));
+    expect(r.drop).toBe(false);
+  });
+
+  // Fails OPEN on an unreadable outermost frame: no filename to parse means no host, so no drop.
+  //
+  // 🔴 Of the malformed-frame shapes, only these two reach rule 6b — getting that wrong is how a
+  // test reads as coverage while providing none. Both start with a `/_next/` frame, so
+  // `hasProjectSourceFrame` answers TRUE, rule 6 declines, and 6b is genuinely the rule under
+  // test. An EMPTY or NON-ARRAY `frames` cannot get here at all: `hasProjectSourceFrame` returns
+  // `false` from its own malformed guard, so rule 6 drops the beacon as `network` first — which
+  // is asserted separately below, and is why 6b's own `Array.isArray` guard has no behavioural
+  // observer (its docstring says so).
+  it.each<[string, unknown]>([
+    ['a frame with no filename', { frames: [MINIFIED_CHUNK_FRAME, {}] }],
+    ['an undefined trailing frame', { frames: [MINIFIED_CHUNK_FRAME, undefined] }],
+  ])('does not throw, and keeps as real, on %s', (_name, stacktrace) => {
+    const r = classifyException({
+      type: 'TypeError',
+      value: 'Failed to fetch',
+      stacktrace,
+    } as ClassifiableException);
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // The ordering fact the note above rests on. This does NOT observe 6b's malformed guard — no
+  // single-point change to `isAdNetworkInitiatedRequest` can move these, because rule 6 decides
+  // them first. It pins that rule 6 is what decides them, which is the premise.
+  it.each<[string, unknown]>([
+    ['empty frames array', { frames: [] }],
+    ['malformed non-array frames', { frames: 'not-an-array' }],
+    [
+      'an array-LIKE object indexable to an ad host',
+      { frames: { length: 1, 0: { filename: 'https://securepubads.g.doubleclick.net/gpt.js' } } },
+    ],
+  ])('rule 6 — not 6b — decides a bare-network message with %s', (_name, stacktrace) => {
+    const r = classifyException({
+      type: 'TypeError',
+      value: 'Failed to fetch',
+      stacktrace,
+    } as ClassifiableException);
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('network');
+  });
+
+  // 🔴 The TRPC differential, pinned because the mechanism inverts on inspection.
+  // `BARE_NETWORK_VALUE_RES` permits only a `TypeError:` prefix, so the `type + ': ' + value`
+  // composite does NOT match for a `TRPCClientError` — but the bare `value` DOES, so these
+  // beacons are fully eligible for rules 6 and 6b and survive on the frame conjunct alone.
+  // MEASURED over three adjacent 6h windows on 2026-09-30: 448–460 per window, every sampled one
+  // a two-frame stack of our own minified chunks with no foreign frame at any position.
+  it('KEEPS a TRPCClientError `Failed to fetch` whose stack is two of our own chunks', () => {
+    const r = classifyException(
+      exc('TRPCClientError', 'Failed to fetch', {
+        frames: [MINIFIED_CHUNK_FRAME_2, MINIFIED_CHUNK_FRAME],
+      })
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+  it('drops a TRPCClientError `Failed to fetch` that an ad network initiated', () => {
+    const r = classifyException(
+      exc('TRPCClientError', 'Failed to fetch', prodStack(AD_SCRIPT_FRAME))
+    );
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('adblock');
   });
 });
