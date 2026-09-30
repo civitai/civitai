@@ -588,9 +588,7 @@ describe('the audience-keyed client decisions [REG]', () => {
     // them to agree — but a private render must both take the private surface AND skip
     // recents. Enumerated over the audience tuple rather than a hand-written list, so a
     // FOURTH audience added to `PRIVATE_RUN_AUDIENCES` lands here with no coverage gap.
-    const { hostSurfaceFor, recentsEntryFor } = await import(
-      '~/pages/apps/run/[slug]/[[...path]]'
-    );
+    const { hostSurfaceFor, recentsEntryFor } = await import('~/pages/apps/run/[slug]/[[...path]]');
     const args = { appBlockId: 'apb_x', blockId: 'cool-app', appName: 'Cool', iconUrl: null };
     const { PRIVATE_RUN_AUDIENCES } = await import('~/shared/constants/block-scope.constants');
     expect(PRIVATE_RUN_AUDIENCES.length).toBeGreaterThan(0);
