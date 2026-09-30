@@ -45,7 +45,7 @@ Second walkthrough (confirmed; nothing is cut):
 - [x] **B23. Reloading the create wizard loses all progress.** → Fixed: `useFormStorage` draft (`crucible_new`) holds form values, step and uploaded cover; "Restore unsaved changes?" on reload; cleared on create.
 - [x] **B24. "Continue judging" suggestions include crucibles with nothing to judge,** or that have already ended. → Fixed: `crucible.getJudgingSuggestions` returns only Active crucibles ending in the future, with ≥2 entries the viewer can judge, inside the viewer's browsing level, excluding blockers.
 - [x] **B25. The done screen says every pair was rated when there were simply too few entries to judge.** → Fixed: "Nothing for you to judge yet" when the only entries are the viewer's.
-- [ ] **B26. Investigate:** the video submit modal marks nearly every video ineligible on a PG crucible.
+- [x] **B26. Investigate:** the video submit modal marks nearly every video ineligible on a PG crucible. → Not a code bug. The reporter's modal on that crucible (PG only, 10s clip cap) listed their 35 newest videos: 28 rated above PG and 30 longer than 10s. The one video it marked eligible is the only one passing both, as in the screenshot. Five of those clips ran 10.1s, just over the cap (see D42).
 
 Second walkthrough:
 - [x] **B30. On the detail page, the card under the cover hero is misaligned** with the rest of the content. → Fixed: the hero uses the same `Container size="xl"` as the page body (it was `max-w-7xl`).
@@ -111,6 +111,7 @@ Second walkthrough:
 
 - [x] **B41. On touch screens, tapping a clip on the judge page also set off the shared video player's own delayed hover-play.** → Fixed: `EdgeVideo` takes `hoverPlay` (on by default) and the judge page turns it off; the judge page's own hover/tap playback is unchanged.
 - [x] **D41. Judge media load timeout: 12s for images, 20s for videos** (it was 20s for both). → Done.
+- [x] **D42. Should the clip-length cap allow a little over?** Generated clips often run a fraction of a second past a round length (10.06–10.1s), so a 10s cap refuses them, and the modal shows them as 0:11. Found investigating B26. → Decided: keep the cap exact.
 
 ## Found while fixing
 
