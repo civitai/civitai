@@ -13,7 +13,7 @@ const steps = [
     icon: IconGavel,
     color: 'green',
     title: 'Judge',
-    text: 'Pick the better of two entries, head to head. Every vote moves the rankings, and your influence grows the more you judge.',
+    text: "Pick the better of two entries, head to head. Every vote moves the rankings, and every judge's vote counts the same.",
   },
   {
     icon: IconTrophy,

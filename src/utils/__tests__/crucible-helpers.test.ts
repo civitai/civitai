@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CrucibleStatus } from '~/shared/utils/prisma/enums';
+import { CrucibleIngestionStatus, CrucibleStatus } from '~/shared/utils/prisma/enums';
 import {
   getCrucibleCountdown,
   getCrucibleManageActions,
@@ -7,6 +7,7 @@ import {
   getCruciblePrizeAmount,
   getCrucibleRatingLabel,
   getCrucibleStatusBadge,
+  getCrucibleTransactionDescription,
   getCrucibleUrl,
   isCrucibleFinalStretch,
   parsePrizePositions,
@@ -311,5 +312,55 @@ describe('getCrucibleCountdown', () => {
   it('says ended once past the end, finalized or not', () => {
     expect(countdown(CrucibleStatus.Active, inHours(-30), inHours(-1)).value).toBe('Ended');
     expect(countdown(CrucibleStatus.Completed, inHours(-30), inHours(-1)).value).toBe('Ended');
+  });
+});
+
+describe('getCrucibleTransactionDescription', () => {
+  const scanned = (name: string) => ({
+    name,
+    ingestion: CrucibleIngestionStatus.Scanned,
+    textNsfw: false,
+  });
+
+  it('names the crucible after the transaction text', () => {
+    expect(
+      getCrucibleTransactionDescription('Crucible prize - 1st place', scanned('Liminal Stuff'))
+    ).toBe('Crucible prize - 1st place: Liminal Stuff');
+  });
+
+  it.each([
+    ['still under review', { ingestion: CrucibleIngestionStatus.Pending, textNsfw: false }],
+    ['blocked by the scan', { ingestion: CrucibleIngestionStatus.Blocked, textNsfw: false }],
+    ['flagged as adult text', { ingestion: CrucibleIngestionStatus.Scanned, textNsfw: true }],
+  ])('leaves out a name %s', (_, scan) => {
+    expect(
+      getCrucibleTransactionDescription('Crucible prize - 1st place', { name: 'Bad Name', ...scan })
+    ).toBe('Crucible prize - 1st place');
+  });
+
+  it('cuts a long name so the whole description fits in 100 characters', () => {
+    const description = getCrucibleTransactionDescription(
+      'Crucible entry fee refund - crucible cancelled',
+      scanned('x'.repeat(100))
+    );
+    expect(description).toHaveLength(100);
+    expect(description.endsWith('x…')).toBe(true);
+  });
+
+  it('keeps a name that fits exactly', () => {
+    const text = 'Crucible entry fee';
+    const name = 'y'.repeat(100 - text.length - 2);
+    expect(getCrucibleTransactionDescription(text, scanned(name))).toBe(`${text}: ${name}`);
+  });
+
+  it('never splits an emoji when cutting', () => {
+    const text = 'Crucible entry fee';
+    const room = 100 - text.length - 2;
+    const description = getCrucibleTransactionDescription(
+      text,
+      scanned(`${'z'.repeat(room - 2)}😀😀`)
+    );
+    expect(description.length).toBeLessThanOrEqual(100);
+    expect(description).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
   });
 });

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { BuzzApiError } from '@civitai/buzz';
-import { CrucibleStatus } from '~/shared/utils/prisma/enums';
+import { CrucibleIngestionStatus, CrucibleStatus } from '~/shared/utils/prisma/enums';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as CrucibleEloRedis from '~/server/redis/crucible-elo.redis';
 import { dbMock } from '~/__tests__/mocks';
@@ -38,6 +38,9 @@ const entry = (id: number, userId: number, buzzTransactionId: string | null) => 
 
 const crucible = (overrides: Record<string, unknown> = {}) => ({
   id: 1,
+  name: 'Liminal Stuff',
+  ingestion: CrucibleIngestionStatus.Scanned,
+  textNsfw: false,
   userId: 4,
   status: CrucibleStatus.Active,
   entryFee: 100,
@@ -179,6 +182,31 @@ describe('cancelCrucible — entry refunds', () => {
     expect(result.refundedEntries).toBe(2);
     expect(result.totalRefunded).toBe(200); // 2 entries x 100 entryFee
     expect(result.failedRefunds).toEqual([]);
+  });
+
+  it('names and links the crucible on each entry refund', async () => {
+    await cancelCrucible({ id: 1, userId: 4, isModerator: true });
+
+    expect(refundMultiAccountTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        externalTransactionIdPrefix: 'entry-1-10',
+        description: 'Crucible entry fee refund - crucible cancelled: Liminal Stuff',
+        details: expect.objectContaining({ entityId: 1, entityType: 'Crucible' }),
+      })
+    );
+  });
+
+  it('leaves a name flagged as adult text off the entry refunds', async () => {
+    findUnique.mockResolvedValue(crucible({ textNsfw: true }));
+
+    await cancelCrucible({ id: 1, userId: 4, isModerator: true });
+
+    expect(refundMultiAccountTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        externalTransactionIdPrefix: 'entry-1-10',
+        description: 'Crucible entry fee refund - crucible cancelled',
+      })
+    );
   });
 
   it('skips entries with no transaction prefix rather than refunding a free entry', async () => {

@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { CrucibleStatus, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import {
+  CrucibleIngestionStatus,
+  CrucibleStatus,
+  ImageIngestionStatus,
+} from '~/shared/utils/prisma/enums';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as CrucibleEloRedis from '~/server/redis/crucible-elo.redis';
@@ -66,10 +70,13 @@ const setupCrucible = ({
   entries = [dbEntry(1, 10, 1_000), dbEntry(2, 11, 2_000), dbEntry(3, 12, 3_000)],
   elos = { 1: 1600, 2: 1550, 3: 1400 } as Record<number, number>,
   voteCounts = {} as Record<number, number>,
+  ingestion = CrucibleIngestionStatus.Scanned,
 } = {}) => {
   findUnique.mockResolvedValue({
     id: 1,
     name: 'Test Crucible',
+    ingestion,
+    textNsfw: false,
     userId: 4,
     status,
     entryFee,
@@ -335,6 +342,35 @@ describe('finalizeCrucible — single entry', () => {
     expect(result.finalEntries[0]).toMatchObject({ entryId: 1, position: 1 });
     expect(result.totalPrizePool).toBe(100);
     expect(result.finalEntries[0].prizeAmount).toBe(100);
+  });
+
+  it('names and links the crucible on the prize transaction', async () => {
+    setupCrucible({ entryFee: 100, entries: [dbEntry(1, 10, 1_000)], elos: { 1: 1500 } });
+
+    await finalizeCrucible(1);
+
+    expect(createBuzzTransactionMany).toHaveBeenCalledWith([
+      expect.objectContaining({
+        toAccountId: 10,
+        description: 'Crucible prize - 1st place: Test Crucible',
+        details: expect.objectContaining({ entityId: 1, entityType: 'Crucible' }),
+      }),
+    ]);
+  });
+
+  it('leaves a name still under review off the prize transaction', async () => {
+    setupCrucible({
+      entryFee: 100,
+      entries: [dbEntry(1, 10, 1_000)],
+      elos: { 1: 1500 },
+      ingestion: CrucibleIngestionStatus.Pending,
+    });
+
+    await finalizeCrucible(1);
+
+    expect(createBuzzTransactionMany).toHaveBeenCalledWith([
+      expect.objectContaining({ description: 'Crucible prize - 1st place' }),
+    ]);
   });
 });
 

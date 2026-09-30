@@ -1,4 +1,4 @@
-import { CrucibleStatus } from '~/shared/utils/prisma/enums';
+import { CrucibleIngestionStatus, CrucibleStatus } from '~/shared/utils/prisma/enums';
 import {
   browsingLevelLabels,
   parseBitwiseBrowsingLevel,
@@ -19,6 +19,24 @@ export const toCrucibleBuzzType = (value: string): 'green' | 'yellow' =>
 
 export const getCrucibleUrl = (id: number, name: string) =>
   `/crucibles/${id}/${getCrucibleSlug(name)}`;
+
+// `buzzTransactionSchema` caps a description at 100 characters, and a crucible name alone can be 100.
+const BUZZ_DESCRIPTION_MAX_LENGTH = 100;
+
+/**
+ * A ledger row can't be edited or retracted, and it shows on both sites, so the name goes in only
+ * once its text has passed the scan as safe for everyone. Otherwise the row's link names the crucible.
+ */
+export function getCrucibleTransactionDescription(
+  text: string,
+  crucible: { name: string; ingestion: CrucibleIngestionStatus; textNsfw: boolean }
+) {
+  if (crucible.ingestion !== CrucibleIngestionStatus.Scanned || crucible.textNsfw) return text;
+  const room = BUZZ_DESCRIPTION_MAX_LENGTH - text.length - 2;
+  if (crucible.name.length <= room) return `${text}: ${crucible.name}`;
+  const cut = crucible.name.slice(0, room - 1).replace(/[\uD800-\uDBFF]$/, '');
+  return `${text}: ${cut.trimEnd()}…`;
+}
 
 const ENDING_SOON_MS = 24 * 60 * 60 * 1000;
 

@@ -86,6 +86,7 @@ import {
   getCrucibleMinVotes,
   getCruciblePrizeAmount,
   getCrucibleTotalPrizePool,
+  getCrucibleTransactionDescription,
   parsePrizePositions,
   toCrucibleBuzzType,
 } from '~/utils/crucible-helpers';
@@ -1275,6 +1276,7 @@ export const submitEntry = async ({
         createdAt: true,
         endAt: true,
         ingestion: true,
+        textNsfw: true,
         image: { select: { ingestion: true } },
         _count: {
           select: { entries: true },
@@ -1433,7 +1435,7 @@ export const submitEntry = async ({
         amount: crucible.entryFee,
         type: TransactionType.Fee,
         externalTransactionIdPrefix: transactionPrefix,
-        description: 'Crucible entry fee',
+        description: getCrucibleTransactionDescription('Crucible entry fee', crucible),
         details: {
           entityId: crucibleId,
           entityType: 'Crucible',
@@ -1500,7 +1502,10 @@ export const submitEntry = async ({
         try {
           await refundMultiAccountTransaction({
             externalTransactionIdPrefix: buzzTransactionId,
-            description: 'Crucible entry fee refund - database write failed',
+            description: getCrucibleTransactionDescription(
+              'Crucible entry fee refund - database write failed',
+              crucible
+            ),
             details: {
               entityId: crucibleId,
               entityType: 'Crucible',
@@ -2385,6 +2390,8 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
     select: {
       id: true,
       name: true,
+      ingestion: true,
+      textNsfw: true,
       userId: true, // Crucible creator for notification
       status: true,
       buzzType: true,
@@ -2666,7 +2673,10 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
       toAccountType: crucible.buzzType as 'green' | 'yellow',
       amount: winner.prizeAmount,
       type: TransactionType.Reward,
-      description: `Crucible prize - ${getOrdinalPosition(winner.position)} place`,
+      description: getCrucibleTransactionDescription(
+        `Crucible prize - ${getOrdinalPosition(winner.position)} place`,
+        crucible
+      ),
       details: {
         entityId: crucibleId,
         entityType: 'Crucible',
@@ -3003,6 +3013,9 @@ export const cancelCrucible = async ({
     where: { id },
     select: {
       id: true,
+      name: true,
+      ingestion: true,
+      textNsfw: true,
       userId: true, // Creator: receives the setup-fee and seed refunds
       status: true,
       entryFee: true,
@@ -3063,7 +3076,10 @@ export const cancelCrucible = async ({
           try {
             const settled = await refundCrucibleTransactionOnce({
               externalTransactionIdPrefix: entry.buzzTransactionId!,
-              description: 'Crucible entry fee refund - crucible cancelled',
+              description: getCrucibleTransactionDescription(
+                'Crucible entry fee refund - crucible cancelled',
+                crucible
+              ),
               crucibleId: crucible.id,
               label: `entry ${entry.id} for user ${entry.userId}`,
             });

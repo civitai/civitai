@@ -450,7 +450,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
                 <StatItem
                   label="Your Influence"
                   value={influenceScore.toString()}
-                  secondary={influenceScore >= 150 ? "You're influential!" : 'Growing influence'}
+                  secondary="Doesn't weight your votes"
                   info={
                     <>
                       Influence measures how much judging you&apos;ve done across all crucibles: 10

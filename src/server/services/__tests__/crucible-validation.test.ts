@@ -13,6 +13,7 @@ import { constants } from '~/server/common/constants';
 import { CrucibleSort } from '~/server/common/enums';
 import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks';
+import type * as BuzzService from '~/server/services/buzz.service';
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as PostService from '~/server/services/post.service';
 import type * as Caches from '~/server/redis/caches';
@@ -38,6 +39,14 @@ import {
 const createNotification = vi.fn();
 const createPost = vi.fn();
 const fetchImageResources = vi.fn();
+const getUserBuzzAccount = vi.fn();
+const createMultiAccountBuzzTransaction = vi.fn();
+
+vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof BuzzService>()),
+  getUserBuzzAccount,
+  createMultiAccountBuzzTransaction,
+}));
 
 vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationService>()),
@@ -511,6 +520,7 @@ const crucibleRow = (contentType: MediaType, maxClipSeconds: number | null = nul
   createdAt: CRUCIBLE_STARTED_AT,
   endAt: new Date(Date.now() + 60_000),
   ingestion: 'Scanned',
+  textNsfw: false,
   image: { ingestion: 'Scanned' },
   _count: { entries: 0 },
 });
@@ -795,6 +805,36 @@ describe('submitEntry — maximum clip length', () => {
     dbMock.dbRead.image.findUnique.mockResolvedValue(imageRow(MediaType.video, {}));
 
     await expect(submit()).resolves.toMatchObject({ id: 5 });
+  });
+});
+
+describe('submitEntry — entry fee', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    createNotification.mockResolvedValue(undefined);
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.image),
+      entryFee: 50,
+    });
+    dbMock.dbRead.crucibleEntry.count.mockResolvedValue(0);
+    dbMock.dbRead.crucibleEntry.findFirst.mockResolvedValue(null);
+    dbMock.dbRead.image.findUnique.mockResolvedValue(imageRow(MediaType.image));
+    dbMock.dbRead.image.count.mockResolvedValue(1);
+    dbMock.dbWrite.crucibleEntry.create.mockResolvedValue({ id: 5, user: { username: 'tester' } });
+    getUserBuzzAccount.mockResolvedValue([{ balance: 500 }]);
+    createMultiAccountBuzzTransaction.mockResolvedValue(undefined);
+  });
+
+  it('names and links the crucible on the fee', async () => {
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+
+    expect(createMultiAccountBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amount: 50,
+        description: 'Crucible entry fee: Test Crucible',
+        details: { entityId: 1, entityType: 'Crucible' },
+      })
+    );
   });
 });
 
