@@ -1031,11 +1031,13 @@ export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerat
   // with it, so nothing can resolve this afterwards.
   const collectionsToRebuild = await getCollectionIdsForPostCascade({ postId: id });
 
-  const { post, deletedImages, orphanedImageIds } = await dbWrite.$transaction(
+  const { post, deletedImages, orphanedImageIds, imageOwnerIds } = await dbWrite.$transaction(
     async (tx) => {
       // `deletable` is projected, not filtered: the skipped rows are the orphan list below.
-      const images = await tx.$queryRaw<{ id: number; url: string; deletable: boolean }[]>`
-        SELECT i.id, i.url, ${Prisma.raw(
+      const images = await tx.$queryRaw<
+        { id: number; url: string; userId: number; deletable: boolean }[]
+      >`
+        SELECT i.id, i.url, i."userId", ${Prisma.raw(
           isModerator ? 'TRUE' : 'i."userId" = p."userId"'
         )} AS deletable
         FROM "Image" i
@@ -1064,7 +1066,9 @@ export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerat
       // selects `postId IS NOT NULL`, so it never revisits them — their docs must be dropped here.
       const orphanedImageIds = images.filter((image) => !image.deletable).map(({ id }) => id);
 
-      return { post, deletedImages, orphanedImageIds };
+      const imageOwnerIds = uniq(images.map((image) => image.userId));
+
+      return { post, deletedImages, orphanedImageIds, imageOwnerIds };
     },
     // Back to 10s (2026-08-22). This was temporarily raised to 30s in #4276 while post
     // deletion was failing with Prisma P2028 "Transaction already closed"; that comment
@@ -1112,6 +1116,7 @@ export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerat
   }
 
   await bustCachesForPosts(id);
+  await userImageVideoCountCaches.bust(imageOwnerIds);
 
   return post;
 };
