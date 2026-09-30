@@ -24,6 +24,7 @@ vi.mock('~/server/services/generation/generation.service', () => ({
   setGenerationStatus: vi.fn(),
   setSelfHostedGenerationStatus: vi.fn(),
   toggleGenerationDisabled: vi.fn(),
+  toggleEvictable: vi.fn(),
 }));
 vi.mock('~/server/services/wildcard-pack.service', () => ({
   resolveWildcardPackForUser: vi.fn(),

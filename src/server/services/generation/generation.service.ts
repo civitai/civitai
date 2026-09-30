@@ -69,6 +69,8 @@ import { removeNulls } from '~/utils/object-helpers';
 import { parseAIR, stringifyAIR } from '~/shared/utils/air';
 import {
   ModelVersionFlag,
+  type ModelVersionFlagValue,
+  isEvictable,
   isGenerationDisabled,
 } from '~/shared/constants/model-version-flags.constants';
 import { pickPreviewImage } from '~/shared/utils/resource-preview';
@@ -979,29 +981,42 @@ export async function getGenerationConfig(
   };
 }
 
-export async function toggleGenerationDisabled({
-  id,
-  isModerator,
-}: GetByIdInput & { isModerator?: boolean }) {
-  if (!isModerator) throw throwAuthorizationError();
-
+async function toggleModelVersionFlag(id: number, flag: ModelVersionFlagValue) {
   // Flip the bit in a single atomic statement (`#` is Postgres bitwise XOR).
-  // `flags` is shared with NotDerivative, so a read-modify-write would clobber a
-  // concurrent write to those other bits.
+  // `flags` holds several bits, so a read-modify-write would clobber a
+  // concurrent write to the others.
   const [updated] = await dbWrite.$queryRaw<{ modelId: number; flags: number }[]>`
     UPDATE "ModelVersion"
-    SET flags = flags # ${ModelVersionFlag.GenerationDisabled}
+    SET flags = flags # ${flag}
     WHERE id = ${id}
     RETURNING "modelId", flags
   `;
   if (!updated) throw throwNotFoundError(`No model version with id ${id}`);
 
-  // The flag is baked into cached version/model rows (resourceDataCache,
+  // The flags are baked into cached version/model rows (resourceDataCache,
   // dataForModelsCache, search index), so bust them the same way a coverage
   // toggle does — otherwise the change wouldn't surface until TTL expiry.
   await bustMvCache(id, updated.modelId);
 
-  return { id, generationDisabled: isGenerationDisabled(updated.flags) };
+  return updated.flags;
+}
+
+export async function toggleGenerationDisabled({
+  id,
+  isModerator,
+}: GetByIdInput & { isModerator?: boolean }) {
+  if (!isModerator) throw throwAuthorizationError();
+  const flags = await toggleModelVersionFlag(id, ModelVersionFlag.GenerationDisabled);
+  return { id, generationDisabled: isGenerationDisabled(flags) };
+}
+
+export async function toggleEvictable({
+  id,
+  isModerator,
+}: GetByIdInput & { isModerator?: boolean }) {
+  if (!isModerator) throw throwAuthorizationError();
+  const flags = await toggleModelVersionFlag(id, ModelVersionFlag.NotEvictable);
+  return { id, evictable: isEvictable(flags) };
 }
 
 const FREE_RESOURCE_TYPES: ModelType[] = ['VAE', 'Checkpoint'];

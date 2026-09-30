@@ -27,6 +27,7 @@ import {
   // textToImage,
   // textToImageTestRun,
   toggleGenerationDisabled,
+  toggleEvictable,
 } from '~/server/services/generation/generation.service';
 import { generatorMessageSchema } from '~/shared/generation/messages';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
@@ -142,6 +143,9 @@ export const generationRouter = router({
     .mutation(({ input, ctx }) =>
       toggleGenerationDisabled({ ...input, isModerator: ctx.user.isModerator })
     ),
+  toggleEvictable: moderatorProcedure
+    .input(getByIdSchema)
+    .mutation(({ input, ctx }) => toggleEvictable({ ...input, isModerator: ctx.user.isModerator })),
   getResourceDataByIds: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(getResourceDataByIdsSchema)

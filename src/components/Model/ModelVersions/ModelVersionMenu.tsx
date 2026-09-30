@@ -11,6 +11,7 @@ import {
   IconAi,
   IconShieldHalf,
   IconPlaylistX,
+  IconPin,
 } from '@tabler/icons-react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -37,6 +38,7 @@ export function ModelVersionMenu({
   published,
   canGenerate,
   generationDisabled,
+  evictable,
   showToggleCoverage,
 }: {
   modelVersionId: number;
@@ -47,6 +49,7 @@ export function ModelVersionMenu({
   published: boolean;
   canGenerate: boolean;
   generationDisabled: boolean;
+  evictable: boolean;
   showToggleCoverage: boolean;
 }) {
   const router = useRouter();
@@ -97,6 +100,32 @@ export function ModelVersionMenu({
         // the dialog still closes and clears its loading state.
         onConfirm: () =>
           toggleGenerationDisabledMutation.mutateAsync({ id: modelVersionId }).catch(() => null),
+      },
+    });
+  };
+
+  const toggleEvictableMutation = trpc.generation.toggleEvictable.useMutation({
+    onSuccess: () => queryUtils.model.getById.invalidate({ id: modelId }),
+    onError: (error) =>
+      showErrorNotification({
+        title: 'Error updating eviction setting',
+        error: new Error(error.message),
+      }),
+  });
+
+  const handleToggleEvictable = () => {
+    const label = evictable ? 'Mark not evictable' : 'Mark evictable';
+    dialogStore.trigger({
+      id: 'toggle-evictable',
+      component: ConfirmDialog,
+      props: {
+        title: label,
+        message: evictable
+          ? "Generation nodes will always keep at least one copy of this version's files."
+          : "Generation nodes may evict the last copy of this version's files when they need space.",
+        labels: { cancel: 'Cancel', confirm: label },
+        onConfirm: () =>
+          toggleEvictableMutation.mutateAsync({ id: modelVersionId }).catch(() => null),
       },
     });
   };
@@ -418,6 +447,24 @@ export function ModelVersionMenu({
               }}
             >
               {generationDisabled ? 'Unblock generation' : 'Block generation'}
+            </Menu.Item>
+            <Menu.Item
+              disabled={toggleEvictableMutation.isPending}
+              leftSection={
+                toggleEvictableMutation.isPending ? (
+                  <Loader size="xs" />
+                ) : (
+                  <IconPin size={14} stroke={1.5} />
+                )
+              }
+              color="yellow"
+              onClick={(e: React.MouseEvent) => {
+                e.stopPropagation();
+                e.preventDefault();
+                handleToggleEvictable();
+              }}
+            >
+              {evictable ? 'Mark not evictable' : 'Mark evictable'}
             </Menu.Item>
           </>
         )}
