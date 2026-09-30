@@ -674,30 +674,33 @@ export async function recordSpendAttribution(
   const spendSharePct = 0;
   const appOwnerShareCents = 0;
 
-  // Void rows that are zero because of WHO spent/owns, or because the run was not
-  // a USE of the app at all. Otherwise the row is 'tracked'. ⚠️ NOT
-  // "share-pending awaiting a payout-time backpay" — that was the removed spend
-  // bounty. No backpay reads this table; 'tracked' is where a spend row stays. The
-  // void/track distinction is kept because it is the self-spend / internal-owner /
-  // private-run marker the analytics reader and any future rail would both need,
+  // Void rows that are zero because of WHO spent/owns. Otherwise the row is
+  // 'tracked'. ⚠️ NOT "share-pending awaiting a payout-time backpay" — that was the
+  // removed spend bounty. No backpay reads this table; 'tracked' is where a spend row
+  // stays. The void/track distinction is kept because it is the self-spend /
+  // internal-owner marker the analytics reader and any future rail would both need,
   // and voiding costs nothing.
   //
-  // 🔴 PRIVATE RUN IS TESTED FIRST, AND THE ORDER IS A DISCRIMINABILITY CHOICE, NOT
-  // A MONEY ONE. Every arm here produces the same money outcome (the row is voided;
-  // the share columns are already 0), so ordering cannot change what anyone is paid.
-  // What it changes is the LABEL on an owner's own private run, where both this arm
-  // and `isSelfSpend` are true: testing private-run first records WHY the row exists
-  // (a diagnostic run) rather than merely who spent. The audience — owner, editor or
-  // moderator — is deliberately NOT on this row; it rides the mint's audit line
-  // instead, so a money/audit table gains no new column and no new enum value.
+  // ⚠️ TWO PARAGRAPHS THAT STOOD HERE WERE DELETED RATHER THAN REWORDED, AND WHAT THEY
+  // CLAIMED IS WORTH KNOWING BECAUSE IT READS AS STILL-TRUE ELSEWHERE IN THE TREE.
+  // They explained (a) that the private-run arm was TESTED FIRST, as a
+  // "discriminability choice" deciding the LABEL on an owner's own private run where
+  // both that arm and `isSelfSpend` are true, and (b) that `'manual_review'` was REUSED
+  // rather than adding a `'private_run'` value, so the change shipped with no migration.
   //
-  // 🔴 `'manual_review'` IS REUSED RATHER THAN ADDING A `'private_run'` VALUE
-  // (operator decision, 2026-09-27). It is already legal under
-  // `block_spend_attribution_voided_reason_check`, so this ships with NO migration
-  // and no per-environment hand-apply. The cost is that a private run is not
-  // distinguishable from an operator-voided row *in this column* — accepted,
-  // because nothing pays out of this table and the mint audit line carries the
-  // discriminating fields anyway.
+  // Both described the VOIDED-ROW design. A private run now writes NO ROW (see the
+  // exclusion below), so there is no arm to order and no column to carry a value: (a)
+  // describes an ordering that no longer exists and (b) a write that no longer happens.
+  // Neither is reworded here, because a reworded version would be a fresh rationale for
+  // a decision that has been superseded rather than revised.
+  //
+  // 🔴 `'manual_review'` IS STILL WRITTEN TO THIS COLUMN BY ANOTHER PRODUCER — do not
+  // read its disappearance from here as the value becoming dead.
+  // `backpay.service.ts` writes `status: 'held', voidedReason: 'manual_review'`, so the
+  // reason remains live and the readers that filter it remain necessary. That is a
+  // second, independent argument for keeping the read-side filters this change did NOT
+  // remove, and it is the one that survives even for a reader who only cares about
+  // rows written from today onward.
   // ── PRIVATE RUN — NOT WRITTEN AT ALL ────────────────────────────────────────────
   // 🔴 WRITE-SIDE EXCLUSION, NOT A VOIDED ROW. This used to write the row with
   // `voidedReason: 'manual_review'` and rely on EVERY reader filtering voided rows back

@@ -90,15 +90,27 @@ const VOIDED_ATTRIBUTION_STATUS = 'voided';
  * 🔴 THE ONE DEFINITION of "exclude voided attribution rows", for every OWNER-VISIBLE read
  * of `block_spend_attribution`. Spread into the `where` of the aggregate below.
  *
- * A private run of a delisted app writes its generation row `voided` /
- * `voidedReason: 'manual_review'`, and the row carries the app's REAL id by design — so it
- * lands squarely in the owner's own `appBlockId IN (ownedIds)` aggregate. Nothing else
- * removes it.
+ * ⚠️ A PRIVATE RUN NO LONGER WRITES A ROW AT ALL — the exclusion moved to the WRITE side
+ * (`recordSpendAttribution` returns before building the row). This paragraph used to read
+ * "A private run of a delisted app writes its generation row `voided` /
+ * `voidedReason: 'manual_review'` … nothing else removes it", which was true when written
+ * and is now false.
+ *
+ * 🔴 THE FILTER BELOW IS NOT DEAD, AND THREE SEPARATE FACTS KEEP IT ALIVE — do not remove
+ * it on the grounds that private runs no longer write: (1) the historical private-run rows
+ * written BEFORE the write-side change are still in the table; (2) `self_spend` and
+ * `internal_owner` are unaffected and are the bulk of the population anyway; (3)
+ * `'manual_review'` has a SECOND, still-live producer — `backpay.service.ts` writes
+ * `status: 'held', voidedReason: 'manual_review'`. Removing this filter would surface all
+ * three.
  *
  * ⚠️ THE PREDICATE IS WIDER THAN THE LEAK, DELIBERATELY, AND THAT IS AN OPERATOR DECISION
  * RATHER THAN A DETAIL. `status = 'voided'` covers THREE populations, not one —
- * `manual_review` (the private run), `self_spend` (the owner running their own app), and
- * `internal_owner`. Excluding `self_spend` is the accepted behaviour change: measured on
+ * `manual_review`, `self_spend` (the owner running their own app), and
+ * `internal_owner`. ⚠️ `manual_review` was glossed here as "the private run" and that is no
+ * longer its live meaning — private runs write no row, so today's `manual_review` rows are
+ * HISTORICAL private runs plus the held rows `backpay.service.ts` writes.
+ * Excluding `self_spend` is the accepted behaviour change: measured on
  * the live table before shipping, it was 582 of 639 rows, every one of them the app owner
  * spending on their own app, with no row of real third-party usage voided at all.
  *

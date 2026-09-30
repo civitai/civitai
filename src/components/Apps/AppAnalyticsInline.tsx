@@ -30,7 +30,10 @@ type InlineAnalytics = {
  * free gen) still writes a row, so this is "submits", not "spent Buzz".
  * ⚠️ AND IT IS NOT EVERY SUBMIT: the owner-visible reads exclude
  * `status = 'voided'`, so the app owner's OWN runs on their own app
- * (`self_spend`) and a moderator's private run (`manual_review`) are absent.
+ * (`self_spend`) are absent. ⚠️ A moderator's private run is absent too, but NOT via this
+ * filter any more: it writes no attribution row at all (the exclusion moved to the write
+ * side). This line used to credit `manual_review` for it, which is now only the
+ * HISTORICAL private-run rows plus `backpay.service.ts`'s held rows.
  * On the population measured when that filter shipped this was 582 of 639
  * rows, so for an owner who has only self-tested, `runs` is legitimately 0.
  * That zero is MEASURED, not fabricated — do not route it through the

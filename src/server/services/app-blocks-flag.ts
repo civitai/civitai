@@ -616,11 +616,24 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  * decision rather than a filter, so "three rails" is a claim about writers and not about
  * how many aggregates the owner's panel serves:
  *
- *   1. ✅ `block_spend_attribution` — CLOSED. A private run's row is written VOIDED, and
- *      both owner-visible reads in `app-analytics.service.ts` now exclude
+ *   1. ✅ `block_spend_attribution` — CLOSED, BY A DIFFERENT MECHANISM THAN THIS ITEM
+ *      ORIGINALLY DESCRIBED. A private run now writes **NO ROW AT ALL**: the exclusion is
+ *      WRITE-side, an early return in `recordSpendAttribution` before the row is built.
+ *      ⚠️ THIS LINE PREVIOUSLY READ "A private run's row is written VOIDED", which was
+ *      true when written and was falsified by the write-side change. It is corrected
+ *      here rather than in a later sweep because this ledger's own 🔴 rule below says to
+ *      fix THIS summary in the same commit that satisfies an item — and the rot it
+ *      warns about is exactly what happened: the mechanism changed and the description
+ *      did not, in the one file the Flipt description points a widener at.
+ *      The owner-visible reads in `app-analytics.service.ts` still exclude
  *      `status = 'voided'` (the aggregate spreads `OWNER_VISIBLE_SPEND_FILTER`; the raw
- *      series binds the same constant as a parameter). Measured both directions in
- *      `blocks/__tests__/app-analytics.void-exclusion.test.ts`.
+ *      series binds the same constant as a parameter), measured both directions in
+ *      `blocks/__tests__/app-analytics.void-exclusion.test.ts`. 🔴 THOSE FILTERS WERE
+ *      DELIBERATELY KEPT and are NOT dead code: they still exclude the historical
+ *      private-run rows written before the change, they still exclude `self_spend`, and
+ *      `'manual_review'` has a SECOND live producer in `backpay.service.ts` (held rows).
+ *      Removing them on the grounds that private runs no longer write is wrong on three
+ *      counts.
  *      ⚠️ IT SHIPPED AS A DELIBERATE CHANGE TO EXISTING DISPLAYED NUMBERS, which is the
  *      part an operator should know rather than discover: 639 rows to 57 (91.08%), 4,738
  *      Buzz to 268 (94.34%). The two reasons it had been HELD were both settled by

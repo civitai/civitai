@@ -181,8 +181,11 @@ export const getServerSideProps = createServerSideProps<PageProps>({
     // `tryPrivateRunMint`, `src/pages/api/v1/block-tokens/index.ts`). That symmetry is the
     // point: the SSR↔mint asymmetry is the defect this feature was built to avoid, and two
     // surfaces resolving through the same ordered shape is what prevents it. Both end in
-    // `resolvePrivateRunAccess`, the single access predicate, whose call-site ledger pins
-    // that there are exactly two callers.
+    // `resolvePrivateRunAccess`, the single access predicate. ⚠️ Its call-site ledger pins
+    // THREE callers, not two — this route, the mint, and the analytics impression gate. An
+    // earlier draft of this comment said two, copying a claim that was already known-wrong and
+    // retracted in `private-run-impression.service.ts`; the third caller takes no access
+    // decision, which is why it cannot reproduce the SSR↔mint asymmetry described above.
     //
     // 🔴 `resolvePrivateRunAccess` REFUSES AN APPROVED APP (reason `'approved'`), so this
     // branch can never double-serve something the public path owns.
@@ -192,8 +195,13 @@ export const getServerSideProps = createServerSideProps<PageProps>({
       // definition a signed-in, role-bearing action.
       if (!viewer) return { notFound: true };
 
+      // 🔴 NO `if (!privateRunEnabled) return notFound` HERE, DELIBERATELY. An earlier draft
+      // had one, and it was a SECOND COPY of a rule the predicate already owns: its gate (1)
+      // returns `flag-off` for exactly this input and this route maps every refusal onto the
+      // same bare 404, so the two could only ever agree — until one of them was edited. A
+      // predicate open-coded at two sites is the shape that regenerates the same bug at both.
+      // The saving it bought was one function call on a path that is already 404-ing.
       const privateRunEnabled = await isAppBlocksPrivateRunEnabled({ user: viewer });
-      if (!privateRunEnabled) return { notFound: true };
 
       const access = await resolvePrivateRunAccess({
         by: { slug },
