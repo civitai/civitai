@@ -9,12 +9,19 @@ import {
 import type * as BlocklistService from '~/server/services/blocklist.service';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as CoverImageService from '~/server/services/cover-image.service';
+import type * as TextModerationService from '~/server/services/text-moderation.service';
 
 const throwOnBlockedUserContent = vi.fn();
 const resolveCoverImageId = vi.fn();
 const getUserBuzzAccount = vi.fn();
 const createMultiAccountBuzzTransaction = vi.fn();
 const refundMultiAccountTransaction = vi.fn();
+const submitTextModeration = vi.fn();
+
+vi.mock('~/server/services/text-moderation.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof TextModerationService>()),
+  submitTextModeration,
+}));
 
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BlocklistService>()),
@@ -95,6 +102,26 @@ beforeEach(() => {
   createMultiAccountBuzzTransaction.mockResolvedValue({ transactions: [] });
   refundMultiAccountTransaction.mockResolvedValue(undefined);
   modelVersionCount.mockImplementation(allPublished);
+});
+
+describe('updateCrucible — text scan', () => {
+  it('puts it back under review and rescans the new text, read from the primary', async () => {
+    dbMock.dbWrite.crucible.findUnique.mockResolvedValue({ name: 'New name', description: null });
+
+    await edit({ name: 'New name' });
+
+    expect(written()).toMatchObject({ ingestion: 'Pending', scannedAt: null });
+    expect(submitTextModeration).toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: 'Crucible', entityId: 1, content: 'New name' })
+    );
+  });
+
+  it('leaves the verdict alone when the text is unchanged', async () => {
+    await edit({ name: 'Old name', description: 'Old description', coverImage: { url: 'x' } });
+
+    expect(written()).not.toHaveProperty('ingestion');
+    expect(submitTextModeration).not.toHaveBeenCalled();
+  });
 });
 
 describe('updateCrucible — who may edit', () => {

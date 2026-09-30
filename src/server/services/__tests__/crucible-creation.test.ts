@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { CrucibleStatus, MediaType, ModelStatus } from '~/shared/utils/prisma/enums';
+import {
+  CrucibleIngestionStatus,
+  CrucibleStatus,
+  ImageIngestionStatus,
+  MediaType,
+  ModelStatus,
+} from '~/shared/utils/prisma/enums';
 import {
   CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
   CRUCIBLE_RESOURCE_REQUIREMENTS_COST,
@@ -8,6 +14,7 @@ import type * as BuzzService from '~/server/services/buzz.service';
 import type * as BlocklistService from '~/server/services/blocklist.service';
 import type * as CrucibleEligibilityService from '~/server/services/crucible-eligibility.service';
 import type * as CoverImageService from '~/server/services/cover-image.service';
+import type * as TextModerationService from '~/server/services/text-moderation.service';
 import { dbMock } from '~/__tests__/mocks';
 import { CrucibleSort } from '~/server/common/enums';
 
@@ -24,6 +31,12 @@ const refundMultiAccountTransaction = vi.fn();
 const assertCanCreateCrucible = vi.fn();
 const throwOnBlockedUserContent = vi.fn();
 const resolveCoverImageId = vi.fn();
+const submitTextModeration = vi.fn();
+
+vi.mock('~/server/services/text-moderation.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof TextModerationService>()),
+  submitTextModeration,
+}));
 
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzService>()),
@@ -376,6 +389,55 @@ describe('activateScheduledCrucibles', () => {
     expect(where.startAt.lte.getTime()).toBeLessThanOrEqual(Date.now());
     expect(data).toEqual({ status: CrucibleStatus.Active });
   });
+
+  it('keeps one whose text or cover has not passed its scan closed', async () => {
+    crucibleUpdateMany.mockResolvedValue({ count: 0 });
+
+    await activateScheduledCrucibles();
+
+    const { where } = crucibleUpdateMany.mock.calls[0][0];
+    expect(where.ingestion).toBe(CrucibleIngestionStatus.Scanned);
+    expect(where.image).toEqual({ ingestion: ImageIngestionStatus.Scanned });
+  });
+});
+
+describe('createCrucible — text scan', () => {
+  beforeEach(() => {
+    submitTextModeration.mockResolvedValue(undefined);
+    dbMock.dbWrite.crucible.findUnique.mockResolvedValue({
+      name: 'Test Crucible',
+      description: 'A description',
+    });
+  });
+
+  it('starts it under review and queues the name and description once it is open', async () => {
+    await createCrucible(input());
+
+    expect(crucibleCreate.mock.calls[0][0].data.ingestion).toBe(CrucibleIngestionStatus.Pending);
+    expect(submitTextModeration).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entityType: 'Crucible',
+        entityId: 1,
+        content: 'Test Crucible\nA description',
+      })
+    );
+    expect(submitTextModeration.mock.invocationCallOrder[0]).toBeGreaterThan(
+      crucibleUpdate.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('queues nothing when the charge fails and the row is removed', async () => {
+    createMultiAccountBuzzTransaction.mockRejectedValue(new Error('buzz down'));
+
+    await expect(createCrucible(input())).rejects.toThrow();
+    expect(submitTextModeration).not.toHaveBeenCalled();
+  });
+
+  it('still creates it when the scan cannot be queued', async () => {
+    submitTextModeration.mockRejectedValue(new Error('orchestrator down'));
+
+    await expect(createCrucible(input())).resolves.toBeTruthy();
+  });
 });
 
 describe('getCrucibles — browsing level', () => {
@@ -397,10 +459,27 @@ describe('getCrucibles — browsing level', () => {
 
   it('requires both the crucible and its cover to fall inside the level', async () => {
     const where = await whereFor({ browsingLevel: 1 });
-    const [visible] = where.AND;
-    expect(visible.nsfwLevel.in).toContain(31);
-    expect(visible.nsfwLevel.in).not.toContain(4);
-    expect(visible.image.nsfwLevel.in).toEqual(visible.nsfwLevel.in);
+    const levels = where.AND[0].AND[1];
+    expect(levels.nsfwLevel.in).toContain(31);
+    expect(levels.nsfwLevel.in).not.toContain(4);
+    expect(levels.image.nsfwLevel.in).toEqual(levels.nsfwLevel.in);
+  });
+
+  it('lists only crucibles whose text and cover passed their scans, level or not', async () => {
+    for (const browsingLevel of [undefined, 1]) {
+      const where = await whereFor({ browsingLevel });
+      expect(where.AND[0].AND[0]).toEqual({
+        ingestion: CrucibleIngestionStatus.Scanned,
+        image: { ingestion: ImageIngestionStatus.Scanned },
+      });
+    }
+  });
+
+  it('hides adult text from a viewer who browses no R or above', async () => {
+    expect((await whereFor({ browsingLevel: 3 })).AND[0].AND).toContainEqual({ textNsfw: false });
+    expect((await whereFor({ browsingLevel: 31 })).AND[0].AND).not.toContainEqual({
+      textNsfw: false,
+    });
   });
 
   it('always shows the viewer their own crucibles', async () => {
@@ -417,7 +496,8 @@ describe('getCrucibles — browsing level', () => {
 
   it('caps the level on green even when the client asks for everything', async () => {
     const where = await whereFor({ browsingLevel: 31, isGreen: true, viewerId: 4 });
-    expect(where.AND[0].OR[1].nsfwLevel.in).not.toContain(4);
+    expect(where.AND[0].OR[1].AND[1].nsfwLevel.in).not.toContain(4);
+    expect(where.AND[0].OR[1].AND).toContainEqual({ textNsfw: false });
   });
 });
 

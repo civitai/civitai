@@ -4,6 +4,7 @@ import {
   activateScheduledCrucibles,
   finalizeCrucible,
   getCruciblesForFinalization,
+  voidUnscannedCrucibles,
 } from '~/server/services/crucible.service';
 import { logToAxiom } from '~/server/logging/client';
 
@@ -32,6 +33,9 @@ export const finalizeCruciblesJob = createJob(
 
     // Before finalization: finalization only picks up Active crucibles, so a scheduled one whose
     // whole window passed while the job was off would otherwise sit in Pending forever.
+    const voided = await voidUnscannedCrucibles();
+    if (voided.length > 0) log(`Cancelled unscanned crucibles: ${voided.join(', ')}`);
+
     const activated = await activateScheduledCrucibles();
     if (activated > 0) log(`Activated ${activated} scheduled crucibles`);
 

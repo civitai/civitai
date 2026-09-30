@@ -61,6 +61,8 @@ export const crucibleDetailSelect = Prisma.validator<Prisma.CrucibleSelect>()({
   endAt: true,
   createdAt: true,
   updatedAt: true,
+  ingestion: true,
+  textNsfw: true,
   user: { select: simpleUserSelect },
   image: {
     select: {
@@ -72,6 +74,7 @@ export const crucibleDetailSelect = Prisma.validator<Prisma.CrucibleSelect>()({
       nsfwLevel: true,
       width: true,
       height: true,
+      ingestion: true,
     },
   },
   heroImage: {
@@ -84,6 +87,7 @@ export const crucibleDetailSelect = Prisma.validator<Prisma.CrucibleSelect>()({
       nsfwLevel: true,
       width: true,
       height: true,
+      ingestion: true,
     },
   },
   _count: {

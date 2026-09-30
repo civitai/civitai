@@ -49,7 +49,13 @@ import { CruciblePodium } from '~/components/Crucible/CruciblePodium';
 import { CruciblePrizeBreakdown } from '~/components/Crucible/CruciblePrizeBreakdown';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { crucibleRankingsAreFinal } from '~/shared/constants/crucible.constants';
-import { CrucibleStatus, Currency, MediaType } from '~/shared/utils/prisma/enums';
+import {
+  CrucibleIngestionStatus,
+  CrucibleStatus,
+  Currency,
+  ImageIngestionStatus,
+  MediaType,
+} from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Gated } from '~/components/Gated/Gated';
@@ -101,7 +107,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
     isFetchingNextPage: isLoadingMoreEntries,
     fetchNextPage: loadMoreEntries,
   } = trpc.crucible.getEntries.useInfiniteQuery(
-    { crucibleId: id, seed: entriesSeed },
+    { crucibleId: id, seed: entriesSeed, browsingLevel },
     { getNextPageParam: (lastPage) => lastPage.nextCursor }
   );
   const { data: judgesData } = trpc.crucible.getJudgesCount.useQuery(
@@ -321,6 +327,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
 
         {/* Main Content */}
         <Container size="xl" className="py-8">
+          <CrucibleReviewNotice crucible={crucible} />
           <div className="grid grid-cols-1 gap-8 lg:grid-cols-[1fr_340px]">
             {/* Left Column - Main Content */}
             <div>
@@ -613,6 +620,27 @@ function openCrucibleGenerator(contentType: MediaType, modelVersionIds: number[]
     generationGraphPanel.open();
   }
   generationFormStore.setType(contentType);
+}
+
+/** Only the creator and moderators can open a crucible that hasn't passed review. */
+function CrucibleReviewNotice({ crucible }: { crucible: CrucibleDetail }) {
+  if (crucible.ingestion === CrucibleIngestionStatus.Blocked)
+    return (
+      <Alert color="red" radius="md" className="mb-6">
+        This crucible is hidden because its text violates our Terms of Service.
+      </Alert>
+    );
+  if (
+    crucible.ingestion === CrucibleIngestionStatus.Scanned &&
+    crucible.image?.ingestion === ImageIngestionStatus.Scanned
+  )
+    return null;
+  return (
+    <Alert color="yellow" radius="md" className="mb-6">
+      We&apos;re reviewing this crucible&apos;s text and images. It&apos;s hidden from everyone else
+      until that&apos;s done, usually within a few minutes.
+    </Alert>
+  );
 }
 
 /** Hidden when the crucible requires models and none of them can generate for this viewer. */

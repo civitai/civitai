@@ -272,7 +272,10 @@ describe('crucible edit', () => {
   });
 
   it('never sends a field the viewer cannot change', () => {
-    const editableFields = getCrucibleEditableFields({ canEditAll: false, canEditContentLevels: false });
+    const editableFields = getCrucibleEditableFields({
+      canEditAll: false,
+      canEditContentLevels: false,
+    });
     expect(editableFields).toEqual(CRUCIBLE_EDITABLE_WHILE_ACTIVE);
 
     const changes = getCrucibleUpdateChanges({

@@ -196,6 +196,7 @@ export const getCrucibleEntriesSchema = z.object({
   limit: z.number().min(1).max(100).default(50),
   cursor: z.number().optional(),
   seed: z.number().int().optional(),
+  browsingLevel: z.number().int().min(0).optional(),
 });
 
 export type CreateEntryPostSchema = z.infer<typeof createEntryPostSchema>;
@@ -246,6 +247,7 @@ export const getJudgingPairSchema = z.object({
   // Entry IDs to exclude from pair selection (e.g., recently skipped entries)
   // These entries won't appear in the returned pair
   excludeEntryIds: z.array(z.number()).max(50).optional(),
+  browsingLevel: z.number().int().min(0).optional(),
 });
 
 // Not `createCrucibleInputBaseSchema.partial()`: Zod 4 still applies its `.default()`s to omitted

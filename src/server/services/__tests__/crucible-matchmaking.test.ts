@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { CrucibleStatus } from '~/shared/utils/prisma/enums';
+import {
+  CrucibleIngestionStatus,
+  CrucibleStatus,
+  ImageIngestionStatus,
+} from '~/shared/utils/prisma/enums';
 import type * as EloService from '~/server/services/crucible-elo.service';
 import { dbMock, redisMock } from '~/__tests__/mocks';
 
@@ -23,6 +27,11 @@ const activeCrucible = {
   id: 1,
   status: CrucibleStatus.Active,
   endAt: new Date(Date.now() + 60 * 60 * 1000),
+  userId: 999,
+  buzzType: 'yellow',
+  nsfwLevel: 31,
+  ingestion: CrucibleIngestionStatus.Scanned,
+  image: { ingestion: ImageIngestionStatus.Scanned },
 };
 
 /** Shape `fetchEntrySample`'s raw SQL projection returns, before it maps to EntryForJudging. */
@@ -312,5 +321,61 @@ describe('getJudgingPair — vote integrity', () => {
       const pair = await getJudgingPair({ crucibleId: 1, userId: 7 });
       expect([pair?.left.id, pair?.right.id].sort()).toEqual([2, 3]);
     }
+  });
+});
+
+describe('getJudgingPair — what a judge may see', () => {
+  /** Every bound value in a `$queryRaw` call, through any depth of nested `Prisma.sql`. */
+  const boundValues = (call: unknown[]): unknown[] =>
+    call.slice(1).flatMap(function flatten(value): unknown[] {
+      const nested = (value as { values?: unknown[] })?.values;
+      return Array.isArray(nested) ? nested.flatMap(flatten) : [value];
+    });
+  const sqlText = (call: unknown[]): string =>
+    [call[0] as string[], ...call.slice(1)]
+      .flatMap(function strings(value): string[] {
+        if (Array.isArray(value)) return value as string[];
+        const sql = value as { strings?: string[]; values?: unknown[] };
+        return sql?.strings ? [...sql.strings, ...(sql.values ?? []).flatMap(strings)] : [];
+      })
+      .join(' ');
+
+  it("samples only entries whose image is scanned and inside both the crucible's and the viewer's levels", async () => {
+    findUnique.mockResolvedValue({ ...activeCrucible, nsfwLevel: 7 });
+    queryRaw.mockResolvedValue([rawEntry(1, 11), rawEntry(2, 12)]);
+
+    await getJudgingPair({ crucibleId: 1, userId: 7, browsingLevel: 1 });
+
+    const call = queryRaw.mock.calls[0];
+    expect(sqlText(call)).toContain('i.ingestion =');
+    expect(sqlText(call)).toMatch(/i\."nsfwLevel" & .*i\."nsfwLevel" &/s);
+    expect(boundValues(call)).toEqual(expect.arrayContaining([ImageIngestionStatus.Scanned, 7, 1]));
+  });
+
+  it('caps the viewer level to SFW on the green site', async () => {
+    findUnique.mockResolvedValue({ ...activeCrucible, buzzType: 'green', nsfwLevel: 3 });
+    queryRaw.mockResolvedValue([rawEntry(1, 11), rawEntry(2, 12)]);
+
+    await getJudgingPair({ crucibleId: 1, userId: 7, browsingLevel: 31, isGreen: true });
+
+    expect(boundValues(queryRaw.mock.calls[0])).not.toContain(31);
+  });
+
+  it('refuses a crucible from the other site, except for a moderator', async () => {
+    await expect(getJudgingPair({ crucibleId: 1, userId: 7, isGreen: true })).rejects.toThrow(
+      /not found/i
+    );
+
+    queryRaw.mockResolvedValue([rawEntry(1, 11), rawEntry(2, 12)]);
+    await expect(
+      getJudgingPair({ crucibleId: 1, userId: 7, isGreen: true, isModerator: true })
+    ).resolves.not.toBeNull();
+  });
+
+  it('refuses a crucible still under review', async () => {
+    findUnique.mockResolvedValue({ ...activeCrucible, ingestion: CrucibleIngestionStatus.Pending });
+
+    await expect(getJudgingPair({ crucibleId: 1, userId: 7 })).rejects.toThrow(/not found/i);
+    expect(queryRaw).not.toHaveBeenCalled();
   });
 });

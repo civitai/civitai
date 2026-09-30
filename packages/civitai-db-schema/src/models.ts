@@ -258,6 +258,8 @@ export type UserHubSourceType = "User" | "Model" | "ModelVersion" | "Collection"
 
 export type CrucibleStatus = "Pending" | "Active" | "Completed" | "Cancelled";
 
+export type CrucibleIngestionStatus = "Pending" | "Scanned" | "Blocked" | "Error";
+
 export interface Account {
   id: number;
   userId: number;
@@ -5700,6 +5702,9 @@ export interface Crucible {
   updatedAt: Date;
   buzzTransactionId: string | null;
   seedTransactionId: string | null;
+  ingestion: CrucibleIngestionStatus;
+  scannedAt: Date | null;
+  textNsfw: boolean;
   entries?: CrucibleEntry[];
 }
 

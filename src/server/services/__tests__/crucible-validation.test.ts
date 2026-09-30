@@ -509,6 +509,8 @@ const crucibleRow = (contentType: MediaType, maxClipSeconds: number | null = nul
   startAt: CRUCIBLE_STARTED_AT,
   createdAt: CRUCIBLE_STARTED_AT,
   endAt: new Date(Date.now() + 60_000),
+  ingestion: 'Scanned',
+  image: { ingestion: 'Scanned' },
   _count: { entries: 0 },
 });
 
@@ -518,6 +520,7 @@ const imageRow = (type: MediaType, metadata: Record<string, unknown> | null = nu
   type,
   nsfwLevel: 1,
   metadata,
+  ingestion: 'Scanned',
   createdAt: new Date(CRUCIBLE_STARTED_AT.getTime() + 60_000),
 });
 
@@ -541,6 +544,29 @@ describe('submitEntry — content type', () => {
   it('accepts an image in an image crucible — the pre-video behaviour', async () => {
     await expect(submit()).resolves.toMatchObject({ id: 5 });
     expect(dbMock.dbWrite.crucibleEntry.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses an image still being scanned, which judging would never show', async () => {
+    dbMock.dbRead.image.findUnique.mockResolvedValue({
+      ...imageRow(MediaType.image),
+      ingestion: 'Pending',
+    });
+
+    await expect(submit()).rejects.toThrow(/still being checked/);
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['its text is still being scanned', { ingestion: 'Pending' }],
+    ['its cover has not passed its scan', { image: { ingestion: 'Blocked' } }],
+  ])('refuses an entry while %s', async (_, override) => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.image),
+      ...override,
+    });
+
+    await expect(submit()).rejects.toThrow(/not found/);
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
   });
 
   it('rejects an image that is not published', async () => {

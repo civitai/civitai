@@ -134,6 +134,7 @@ import type {
   OutboxEntity,
   UserHubSourceType,
   CrucibleStatus,
+  CrucibleIngestionStatus,
 } from './enums';
 
 export type Account = {
@@ -2453,6 +2454,9 @@ export type Crucible = {
   updatedAt: Timestamp;
   buzzTransactionId: string | null;
   seedTransactionId: string | null;
+  ingestion: Generated<CrucibleIngestionStatus>;
+  scannedAt: Timestamp | null;
+  textNsfw: Generated<boolean>;
 };
 export type CrucibleEntry = {
   id: Generated<number>;

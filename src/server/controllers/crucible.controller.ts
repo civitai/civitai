@@ -21,6 +21,7 @@ import { crucibleListSelect } from '~/server/selectors/crucible.selector';
 import { getCrucibleCreateEligibility } from '~/server/services/crucible-eligibility.service';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
+import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import {
   checkCrucibleEntryEligibility,
@@ -38,6 +39,7 @@ import {
   getJudgingSuggestions,
   getUserActiveCrucibles,
   getUserCrucibleStats,
+  isCrucibleHiddenByScan,
   submitEntry,
   submitVote,
   withoutEntryScores,
@@ -75,6 +77,8 @@ export const getCrucibleByIdHandler = async ({
   ctx: Context;
 }) => {
   const crucible = await getCrucibleDetail({ id: input.id, userId: ctx.user?.id });
+  const viewer = { viewerId: ctx.user?.id, isModerator: !!ctx.user?.isModerator };
+  if (crucible && isCrucibleHiddenByScan(crucible, viewer)) return null;
   if (crucible && ctx.user && !ctx.user.isModerator) {
     const blocked = await amIBlockedByUser({
       userId: ctx.user.id,
@@ -87,6 +91,22 @@ export const getCrucibleByIdHandler = async ({
   const canPreview = !!ctx.user?.isModerator || crucible?.userId === ctx.user?.id;
   if (crucible && !ctx.features?.isGreen && crucible.buzzType === 'green' && !canPreview)
     return null;
+  // Returned on green only so the page can point to the mature site; its adult text stays off green.
+  if (
+    crucible &&
+    ctx.features?.isGreen &&
+    crucible.buzzType !== 'green' &&
+    crucible.textNsfw &&
+    !canPreview
+  )
+    return { ...crucible, name: 'Crucible', description: null };
+  // A background image that hasn't passed its scan falls back to the cover for everyone else.
+  if (
+    crucible?.heroImage &&
+    crucible.heroImage.ingestion !== ImageIngestionStatus.Scanned &&
+    !canPreview
+  )
+    return { ...crucible, heroImage: null };
   return crucible;
 };
 
@@ -112,7 +132,12 @@ export const getCrucibleEntriesHandler = async ({
   input: GetCrucibleEntriesSchema;
   ctx: Context;
 }) => {
-  return getCrucibleEntries({ ...input, userId: ctx.user?.id });
+  return getCrucibleEntries({
+    ...input,
+    userId: ctx.user?.id,
+    isGreen: !!ctx.features?.isGreen,
+    isModerator: !!ctx.user?.isModerator,
+  });
 };
 
 export const createEntryPostHandler = async ({
@@ -152,7 +177,12 @@ export const getJudgingPairHandler = async ({
   input: GetJudgingPairSchema;
   ctx: ProtectedContext;
 }) => {
-  const pair = await getJudgingPair({ ...input, userId: ctx.user.id });
+  const pair = await getJudgingPair({
+    ...input,
+    userId: ctx.user.id,
+    isGreen: !!ctx.features?.isGreen,
+    isModerator: ctx.user.isModerator,
+  });
 
   return withoutEntryScores(pair);
 };

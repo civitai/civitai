@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { CrucibleStatus } from '~/shared/utils/prisma/enums';
+import { CrucibleStatus, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as CrucibleEloRedis from '~/server/redis/crucible-elo.redis';
 import type * as EloService from '~/server/services/crucible-elo.service';
-import { dbMock } from '~/__tests__/mocks';
+import { loggingMock, dbMock } from '~/__tests__/mocks';
 
 // `~/server/db/client` and `~/server/redis/client` are registered globally by the setup file
 // and reset per test file — see docs/testing/shared-module-mocks.md.
@@ -76,6 +76,7 @@ const setupCrucible = ({
     seedTransactionId: null,
     prizePositions: { '1': 50, '2': 30, '3': 20 },
     endAt: new Date(Date.now() - 1000),
+    nsfwLevel: 1,
     _count: { entries: entries.length },
   });
   pageEntries([entries]);
@@ -119,6 +120,31 @@ describe('finalizeCrucible — guards', () => {
 });
 
 describe('finalizeCrucible — positions', () => {
+  it("ranks every entry except a blocked one or one re-rated outside the crucible's levels", async () => {
+    await finalizeCrucible(1);
+
+    const { where } = dbMock.dbRead.crucibleEntry.findMany.mock.calls[0][0];
+    expect(where).toEqual({
+      crucibleId: 1,
+      image: {
+        ingestion: { not: ImageIngestionStatus.Blocked },
+        nsfwLevel: { in: expect.arrayContaining([1, 3]) },
+      },
+    });
+    expect(where.image.nsfwLevel.in).not.toContain(2);
+  });
+
+  it('holds the money for review, loudly, when every entry is disqualified', async () => {
+    setupCrucible({ entries: [] });
+    findUnique.mockResolvedValue({ ...(await findUnique()), _count: { entries: 3 } });
+
+    await finalizeCrucible(1);
+
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', name: 'crucible-finalize-all-disqualified' })
+    );
+  });
+
   it('ranks by ELO descending', async () => {
     setupCrucible({ elos: { 1: 1400, 2: 1600, 3: 1500 } });
 

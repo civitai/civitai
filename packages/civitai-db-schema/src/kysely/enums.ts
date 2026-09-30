@@ -1008,3 +1008,11 @@ export const CrucibleStatus = {
   Cancelled: 'Cancelled',
 } as const;
 export type CrucibleStatus = (typeof CrucibleStatus)[keyof typeof CrucibleStatus];
+export const CrucibleIngestionStatus = {
+  Pending: 'Pending',
+  Scanned: 'Scanned',
+  Blocked: 'Blocked',
+  Error: 'Error',
+} as const;
+export type CrucibleIngestionStatus =
+  (typeof CrucibleIngestionStatus)[keyof typeof CrucibleIngestionStatus];

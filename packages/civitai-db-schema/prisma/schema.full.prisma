@@ -8916,6 +8916,13 @@ enum CrucibleStatus {
   Cancelled
 }
 
+enum CrucibleIngestionStatus {
+  Pending
+  Scanned
+  Blocked
+  Error
+}
+
 model Crucible {
   id                Int            @id @default(autoincrement())
   userId            Int
@@ -8945,6 +8952,11 @@ model Crucible {
   updatedAt         DateTime       @updatedAt
   buzzTransactionId String?
   seedTransactionId String?
+  // Text scan of name + description. Defaults to Scanned so rows from before the scan stay visible.
+  ingestion         CrucibleIngestionStatus @default(Scanned)
+  scannedAt         DateTime?
+  // The scan found the text adult: list surfaces show it only to viewers who browse R or above.
+  textNsfw          Boolean        @default(false)
 
   entries CrucibleEntry[]
 
@@ -8952,6 +8964,7 @@ model Crucible {
   @@index([status])
   @@index([endAt])
   @@index([startAt])
+  @@index([status, ingestion])
 }
 
 model CrucibleEntry {

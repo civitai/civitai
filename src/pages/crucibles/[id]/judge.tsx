@@ -77,6 +77,7 @@ export const getServerSideProps = createServerSideProps({
 function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
+  const browsingLevel = useBrowsingLevelDebounced();
 
   // Session stats
   const [sessionVotes, setSessionVotes] = useState(0);
@@ -120,7 +121,11 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
     error: pairError,
     refetch: refetchPair,
   } = trpc.crucible.getJudgingPair.useQuery(
-    { crucibleId: id, excludeEntryIds: skippedEntryIds.length > 0 ? skippedEntryIds : undefined },
+    {
+      crucibleId: id,
+      browsingLevel,
+      excludeEntryIds: skippedEntryIds.length > 0 ? skippedEntryIds : undefined,
+    },
     {
       enabled: canRequestPairs,
       refetchOnWindowFocus: false,

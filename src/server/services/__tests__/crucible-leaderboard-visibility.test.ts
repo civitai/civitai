@@ -61,7 +61,11 @@ const signedIn = (id: number) => ({
   emailVerified: new Date('2026-01-01'),
 });
 
-const caller = (user?: unknown) => crucibleRouter.createCaller(fakeCtx(user) as never);
+const caller = (user?: unknown, features: Record<string, boolean> = {}) =>
+  crucibleRouter.createCaller({
+    ...fakeCtx(user),
+    features: { crucible: true, ...features },
+  } as never);
 
 const START = new Date('2026-09-01T00:00:00Z').getTime();
 
@@ -123,9 +127,18 @@ const lastRawQuery = () => {
   };
 };
 
+/** A crucible that passed its scans, on this (non-green) site. */
+const scanned = {
+  userId: 555,
+  buzzType: 'yellow',
+  nsfwLevel: 31,
+  ingestion: 'Scanned',
+  image: { ingestion: 'Scanned' },
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
-  findUnique.mockResolvedValue({ status: CrucibleStatus.Active });
+  findUnique.mockResolvedValue({ ...scanned, status: CrucibleStatus.Active });
   findEntries.mockResolvedValue(rows);
   queryRaw.mockResolvedValue(ids(rows).map((id) => ({ id })));
 });
@@ -134,7 +147,7 @@ describe('crucible.getEntries — while the crucible is still running', () => {
   it.each([CrucibleStatus.Pending, CrucibleStatus.Active])(
     'gives a caller who owns no entries no score and no position (%s)',
     async (status) => {
-      findUnique.mockResolvedValue({ status });
+      findUnique.mockResolvedValue({ ...scanned, status });
 
       const { items } = await caller(signedIn(STRANGER_ID)).getEntries({ crucibleId: CRUCIBLE_ID });
 
@@ -195,7 +208,7 @@ describe('crucible.getEntries — once the crucible is over', () => {
   it.each([CrucibleStatus.Completed, CrucibleStatus.Cancelled])(
     'reveals every score and position (%s)',
     async (status) => {
-      findUnique.mockResolvedValue({ status });
+      findUnique.mockResolvedValue({ ...scanned, status });
       findEntries.mockResolvedValue([ownedAndFirst, latestAndSecond, earliestAndLast]);
 
       const { items } = await caller(signedIn(STRANGER_ID)).getEntries({ crucibleId: CRUCIBLE_ID });
@@ -206,7 +219,7 @@ describe('crucible.getEntries — once the crucible is over', () => {
   );
 
   it('orders by score, the earlier entry first on a tie', async () => {
-    findUnique.mockResolvedValue({ status: CrucibleStatus.Completed });
+    findUnique.mockResolvedValue({ ...scanned, status: CrucibleStatus.Completed });
 
     await caller(undefined).getEntries({ crucibleId: CRUCIBLE_ID });
 
@@ -246,7 +259,7 @@ describe('crucible.getEntries — paging', () => {
   });
 
   it('continues from the cursor by id once the ranking is final', async () => {
-    findUnique.mockResolvedValue({ status: CrucibleStatus.Completed });
+    findUnique.mockResolvedValue({ ...scanned, status: CrucibleStatus.Completed });
     findEntries.mockResolvedValue([ownedAndFirst]);
 
     const { nextCursor } = await caller(undefined).getEntries({
@@ -262,7 +275,7 @@ describe('crucible.getEntries — paging', () => {
 
 describe('crucible.getById', () => {
   beforeEach(() => {
-    findUnique.mockResolvedValue({ id: CRUCIBLE_ID, status: CrucibleStatus.Active });
+    findUnique.mockResolvedValue({ ...scanned, id: CRUCIBLE_ID, status: CrucibleStatus.Active });
     findEntries.mockResolvedValue([ownedAndFirst]);
   });
 
@@ -290,6 +303,7 @@ describe('crucible.getById', () => {
   });
   it('hides a green crucible off the green site, except from its creator', async () => {
     findUnique.mockResolvedValue({
+      ...scanned,
       id: CRUCIBLE_ID,
       userId: 555,
       status: CrucibleStatus.Active,
@@ -338,5 +352,118 @@ describe('crucible.getJudgingPair', () => {
       caller(undefined).getJudgingPair({ crucibleId: CRUCIBLE_ID })
     ).rejects.toBeInstanceOf(TRPCError);
     expect(mockGetJudgingPair).not.toHaveBeenCalled();
+  });
+});
+
+describe('crucible.getEntries — what a viewer may see', () => {
+  it("while running, keeps the caller's own entries and others' only when scanned and in range", async () => {
+    await caller(signedIn(STRANGER_ID)).getEntries({ crucibleId: CRUCIBLE_ID, browsingLevel: 1 });
+
+    const { text } = lastRawQuery();
+    expect(text).toContain('JOIN "Image" i');
+    expect(text).toContain('ce."userId" =');
+    expect(text).toContain('i.ingestion =');
+  });
+
+  it('once over, applies the same rule in the entries query', async () => {
+    findUnique.mockResolvedValue({ ...scanned, status: CrucibleStatus.Completed, nsfwLevel: 1 });
+
+    await caller(signedIn(STRANGER_ID)).getEntries({ crucibleId: CRUCIBLE_ID, browsingLevel: 1 });
+
+    const { where } = findEntries.mock.calls.at(-1)![0] as { where: { OR: unknown[] } };
+    expect(where.OR).toEqual([
+      { userId: STRANGER_ID },
+      {
+        image: {
+          ingestion: 'Scanned',
+          AND: [
+            {
+              nsfwLevel: {
+                in: [
+                  1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31, 33, 35, 37, 39, 41, 43,
+                  45, 47, 49, 51, 53, 55, 57, 59, 61, 63,
+                ],
+              },
+            },
+            { nsfwLevel: { in: expect.any(Array) } },
+          ],
+        },
+      },
+    ]);
+  });
+
+  it('is not found for others while the crucible is under review', async () => {
+    findUnique.mockResolvedValue({
+      ...scanned,
+      status: CrucibleStatus.Active,
+      ingestion: 'Pending',
+    });
+
+    await expect(
+      caller(signedIn(STRANGER_ID)).getEntries({ crucibleId: CRUCIBLE_ID })
+    ).rejects.toThrow(/not found/i);
+    await expect(
+      caller(signedIn(555)).getEntries({ crucibleId: CRUCIBLE_ID })
+    ).resolves.toBeTruthy();
+  });
+
+  it('is not found on the green site for a mature-site crucible', async () => {
+    await expect(
+      caller(signedIn(STRANGER_ID), { isGreen: true }).getEntries({ crucibleId: CRUCIBLE_ID })
+    ).rejects.toThrow(/not found/i);
+  });
+});
+
+describe('crucible.getById — review gates', () => {
+  it('hides a crucible under review from everyone but its creator', async () => {
+    findUnique.mockResolvedValue({
+      ...scanned,
+      id: CRUCIBLE_ID,
+      status: CrucibleStatus.Active,
+      ingestion: 'Pending',
+    });
+    findEntries.mockResolvedValue([]);
+
+    expect(await caller(signedIn(STRANGER_ID)).getById({ id: CRUCIBLE_ID })).toBeNull();
+    expect(await caller(signedIn(555)).getById({ id: CRUCIBLE_ID })).not.toBeNull();
+  });
+
+  it('drops a background image that has not passed its scan, for everyone but its creator', async () => {
+    findUnique.mockResolvedValue({
+      ...scanned,
+      id: CRUCIBLE_ID,
+      status: CrucibleStatus.Active,
+      heroImage: { id: 3, ingestion: 'Pending' },
+    });
+    findEntries.mockResolvedValue([]);
+
+    expect(
+      (await caller(signedIn(STRANGER_ID)).getById({ id: CRUCIBLE_ID }))!.heroImage
+    ).toBeNull();
+    expect((await caller(signedIn(555)).getById({ id: CRUCIBLE_ID }))!.heroImage).toEqual({
+      id: 3,
+      ingestion: 'Pending',
+    });
+  });
+});
+
+describe('crucible.getById — adult text on the green site', () => {
+  it("keeps a mature-site crucible's adult text off green, except for its creator", async () => {
+    findUnique.mockResolvedValue({
+      ...scanned,
+      id: CRUCIBLE_ID,
+      status: CrucibleStatus.Active,
+      name: 'Adult name',
+      description: 'Adult description',
+      textNsfw: true,
+    });
+    findEntries.mockResolvedValue([]);
+
+    const stranger = await caller(signedIn(STRANGER_ID), { isGreen: true }).getById({
+      id: CRUCIBLE_ID,
+    });
+    expect(stranger).toMatchObject({ name: 'Crucible', description: null });
+    const creator = await caller(signedIn(555), { isGreen: true }).getById({ id: CRUCIBLE_ID });
+    expect(creator).toMatchObject({ name: 'Adult name', description: 'Adult description' });
   });
 });
