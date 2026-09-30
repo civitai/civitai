@@ -58,3 +58,16 @@ const MATURE_NSFW_LEVELS = new Set(['r', 'x', 'xxx']);
 export function isMatureNsfwLevel(level: string | null | undefined): boolean {
   return !!level && MATURE_NSFW_LEVELS.has(level);
 }
+
+const NSFW_LEVEL_LABELS: Record<string, string> = {
+  pg: 'PG',
+  pg13: 'PG-13',
+  r: 'R',
+  x: 'X',
+  xxx: 'XXX',
+};
+
+/** A scan rating as users see it on civitai.com; undefined when unrated (`na`) or unknown. */
+export function nsfwLevelLabel(level: string | null | undefined): string | undefined {
+  return level ? NSFW_LEVEL_LABELS[level] : undefined;
+}
