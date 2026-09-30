@@ -230,7 +230,16 @@ describe('the private-run seam — the call-site ledger [INV]', () => {
     // test of the function can see it. Both checks are necessary; neither is sufficient.
     const pub = CODE.get('src/pages/apps/run/[slug]/[[...path]].tsx')!;
     expect(pub).toContain('hostSurfaceFor(audience)');
-    expect(pub).toContain('recentsEntryFor(');
+    // 🔴 THE ARGUMENT, NOT JUST THE CALL. This read `toContain('recentsEntryFor(')` for one
+    // round and that was a REGRESSION against the row it replaced: the base pinned
+    // `shouldRecordRecents(audience)`, so hardcoding the audience at the call site was RED
+    // there and went GREEN here (32/32, and typecheck clean — the type guard cannot see a
+    // wrong VALUE, only a null one). A call site reading `recentsEntryFor({ audience: null,
+    // … })` would make every private run write a recents entry whose link 404s once the
+    // flag narrows — the exact defect this extraction exists to prevent.
+    // The call text carries no comment or string literal, so it survives
+    // `stripCommentsAndStrings` intact and CAN be asserted against `CODE`.
+    expect(pub).toContain('recentsEntryFor({ audience,');
     // ⚠️ AN ANTI-RE-INLINE ASSERTION STOOD HERE AND WAS DELETED, NOT REPAIRED. It read
     // `expect(pub).not.toContain("? 'private-run' : 'page-run'")` and was VACUOUS TWICE
     // OVER — a guard that could never fail, reading as the thing that stops a regression:
@@ -243,9 +252,17 @@ describe('the private-run seam — the call-site ledger [INV]', () => {
     //      `hostSurfaceFor` itself. The forbidden pattern IS the implementation.
     //
     // Its stated reason was wrong in the other direction too: a plain re-inline that drops
-    // the call is already caught by the two `toContain` rows above. There is no form of
-    // this assertion that both works and means anything, so it is gone rather than
-    // rewritten — reaching for a third spelling is how the previous two were arrived at.
+    // the call is already caught by the two `toContain` rows above.
+    //
+    // ⚠️ AND THE ABSOLUTE THIS CARRIED — "There is no form of this assertion that both
+    // works and means anything" — IS WITHDRAWN, because it is false. A COUNT over raw
+    // source works: `expect(raw(pub).match(/\? 'private-run' : 'page-run'/g)).toHaveLength(1)`
+    // passes today (that ternary occurs exactly once, as `hostSurfaceFor`'s body) and would
+    // catch a re-inline that leaves the extracted function in place — which the `toContain`
+    // rows do not. It is not added here because the argument pins above cover the mutations
+    // that matter and a second spelling of the same idea is what this block is about; but
+    // "no form works" was an overstatement written to justify a deletion, which is the
+    // habit this file keeps catching.
   });
 
   it('EVERY consumer evaluates the flag for the caller and passes it in', () => {

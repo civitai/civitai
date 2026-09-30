@@ -349,7 +349,10 @@ export const getServerSideProps = createServerSideProps<PageProps>({
  * (1)): a delisted app must boot on its ordinary path, because the fast path perturbs
  * `location.hash` routing and that may be the very behaviour under diagnosis. Collapsing
  * both onto `page-run` hands a suspended app a fast path its own gate refuses — and four
- * blocks are on `BLOCK_INIT_FRAGMENT_ALLOWLIST` today, so that is reachable, not theoretical.
+ * blocks are on `BLOCK_INIT_FRAGMENT_ALLOWLIST` today. ⚠️ That said "reachable, not
+ * theoretical" and the word was too strong: with the flag base-off NO private run is
+ * reachable at all today, so the hazard is real only once the flag widens. The
+ * allowlist count is accurate (4).
  */
 export function hostSurfaceFor(audience: PrivateRunAudience | null): BlockHostSurface {
   return audience != null ? 'private-run' : 'page-run';
@@ -382,13 +385,29 @@ export function hostSurfaceFor(audience: PrivateRunAudience | null): BlockHostSu
  * inverting the call site to `if (!entry) recordRecentlyOpenedApp(entry, recentsOwnerId)`
  * narrows `entry` to `null` and produces
  *   `error TS2345: Argument of type 'null' is not assignable to parameter of type 'RecentApp'`
- * at that exact line, under the repo's own `scripts/typecheck.mjs`. The blocking CI job
- * `App unit tests + typecheck` runs it, so this is enforced pre-merge.
+ * at that line, under the repo's own `scripts/typecheck.mjs`.
  *
- * ⚠️ TWO HONEST LIMITS. (a) The unit suite does NOT catch the inversion — it stays 32/32
- * green — so if anyone moves this enforcement, the tests will not tell them. (b) An
- * `as any` at the call site defeats it, as it defeats any type-level guard; that is a
- * mutant which disables the guard rather than one the guard should catch.
+ * 🔴 WHAT ENFORCES IT, CORRECTED — AND NOTHING HERE IS A MERGE GATE. This said "The
+ * blocking CI job `App unit tests + typecheck` runs it, so this is enforced pre-merge",
+ * and ALL THREE parts of that were false, measured at this PR's own head:
+ *   · that job runs `scripts/ci/typecheck-apps.mjs`, which covers `apps/*` ONLY — its own
+ *     header says the root typecheck's `include` has no `apps/*` entry, so the two are
+ *     complements and this file is outside it;
+ *   · the Actions job that DOES typecheck `src/` — `Typecheck (main pushes / fork PRs /
+ *     non-main base)` — was **skipped**, because its `if:` excludes an internal PR
+ *     targeting `main`, which is the ordinary case here;
+ *   · `required_status_checks` on `main` is EMPTY, so nothing blocks a merge at all.
+ * The only thing that actually typechecked this file is the commit STATUS
+ * `tekton / typecheck` — advisory, not a gate.
+ *
+ * ⚠️ THREE HONEST LIMITS, and the third was missing. (a) The unit suite does NOT catch the
+ * inversion — it stays green — so if the Tekton status moves, nothing tells you. (b) An
+ * `as any` at the call site defeats it, as it defeats any type-level guard. (c) 🔴 THE TYPE
+ * GUARD ONLY SEES A `null`, NEVER A WRONG VALUE: a call site passing `audience: null`
+ * literally type-checks fine and reintroduces the whole defect. That case is pinned
+ * separately and structurally, by the argument assertion in
+ * `blocks/__tests__/private-run-access.call-site-ledger.test.ts` — the two guards cover
+ * different mutations and neither is sufficient alone.
  *
  * ⚠️ AND A MEASUREMENT TRAP WORTH KEEPING: a bare `npx tsc --noEmit` reported NO error
  * here. The repo's own script is what found it — it sets the memory ceiling the bare

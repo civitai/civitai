@@ -503,9 +503,14 @@ describe('owner-visible run analytics exclude voided attribution rows', () => {
     // bucket-level leak is visible rather than appended.
     //
     // ⚠️ NAMED "a private run (voided/manual_review)" until the write-side change. A
-    // private run writes no row now; this row's live producers are historical private runs
-    // and `backpay.service.ts`'s held rows. The assertion is unchanged and still correct —
-    // only the claim its NAME made about what produces the row was stale.
+    // private run writes no row now, and NOTHING ELSE writes this value to this table
+    // either — see the fixture's own docblock above, which retracts the two producers an
+    // earlier correction claimed (historical private runs; `backpay.service.ts`, which
+    // writes a different table with `status: 'held'`). 🔴 THIS COMMENT ASSERTED BOTH OF
+    // THEM 330 LINES BELOW THE DOCBLOCK THAT RETRACTED THEM, so the file contradicted
+    // itself; a sweep that stops at the site you were editing is how that happens.
+    // The assertion is unchanged and still correct: it pins that the denylist keys on
+    // `status`, whatever the `voidedReason`.
     rows = [...SURVIVING, VOIDED_REVIEW_G];
     const a = await analytics();
     expect(a.runs.count).toBe(7);

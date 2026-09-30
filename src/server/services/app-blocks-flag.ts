@@ -629,11 +629,18 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  *      `status = 'voided'` (the aggregate spreads `OWNER_VISIBLE_SPEND_FILTER`; the raw
  *      series binds the same constant as a parameter), measured both directions in
  *      `blocks/__tests__/app-analytics.void-exclusion.test.ts`. 🔴 THOSE FILTERS WERE
- *      DELIBERATELY KEPT and are NOT dead code: they still exclude the historical
- *      private-run rows written before the change, they still exclude `self_spend`, and
- *      `'manual_review'` has a SECOND live producer in `backpay.service.ts` (held rows).
- *      Removing them on the grounds that private runs no longer write is wrong on three
- *      counts.
+ *      DELIBERATELY KEPT and are NOT dead code — but for ONE reason, not three: they
+ *      exclude `self_spend` and `internal_owner`, which are the entire live voided
+ *      population (the 582 rows below, every one `self_spend`).
+ *      ⚠️ THIS SENTENCE CLAIMED THREE REASONS AND TWO WERE FALSE. It said the filters
+ *      "still exclude the historical private-run rows written before the change" and that
+ *      "`'manual_review'` has a SECOND live producer in `backpay.service.ts` (held rows)".
+ *      There are no historical rows — the flag never shipped, so no private run ever wrote
+ *      one. And `backpay.service.ts` writes `blockSubscriptionAttribution`, a DIFFERENT
+ *      TABLE, with `status: 'held'`, which a `status = 'voided'` filter does not exclude
+ *      in any case. 🔴 THIS COPY SURVIVED THE SWEEP THAT RETRACTED THE OTHER FOUR — in
+ *      the one file this ledger itself calls the one a widener opens. A retraction is a
+ *      tree-wide sweep or it is nothing.
  *      ⚠️ IT SHIPPED AS A DELIBERATE CHANGE TO EXISTING DISPLAYED NUMBERS, which is the
  *      part an operator should know rather than discover: 639 rows to 57 (91.08%), 4,738
  *      Buzz to 268 (94.34%). The two reasons it had been HELD were both settled by
