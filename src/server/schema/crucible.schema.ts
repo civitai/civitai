@@ -32,6 +32,8 @@ export { CrucibleSort };
 export type GetCruciblesInfiniteSchema = z.infer<typeof getCruciblesInfiniteSchema>;
 export const getCruciblesInfiniteSchema = infiniteQuerySchema.extend({
   status: z.nativeEnum(CrucibleStatus).optional(),
+  contentType: z.enum(CRUCIBLE_CONTENT_TYPES).optional(),
+  browsingLevel: z.number().int().min(0).optional(),
   sort: z.nativeEnum(CrucibleSort).default(CrucibleSort.PrizePool),
   limit: z.coerce.number().min(1).max(200).default(20),
 });
@@ -107,6 +109,7 @@ const createCrucibleInputBaseSchema = z.object({
   name: z.string().trim().nonempty().max(CRUCIBLE_NAME_MAX_LENGTH),
   description: z.string().nonempty().max(CRUCIBLE_DESCRIPTION_MAX_LENGTH),
   coverImage: crucibleImageSchema,
+  heroImage: crucibleImageSchema.optional(),
   nsfwLevel: z.number(),
   contentType: z.enum(CRUCIBLE_CONTENT_TYPES).default(MediaType.image),
   entryFee: z.number().int().min(CRUCIBLE_MIN_ENTRY_FEE).max(CRUCIBLE_MAX_ENTRY_FEE),
@@ -145,31 +148,46 @@ const createCrucibleInputBaseSchema = z.object({
     .nullish(),
 });
 
-export const createCrucibleInputSchema = createCrucibleInputBaseSchema
-  .refine(
-    ({ contentType, minViewSeconds, maxClipSeconds }) =>
-      contentType === MediaType.video || (minViewSeconds == null && maxClipSeconds == null),
-    {
+type CrucibleSettings = {
+  contentType: string;
+  minViewSeconds?: number | null;
+  maxClipSeconds?: number | null;
+  entryLimit: number;
+  maxTotalEntries?: number | null;
+  prizePositions: Record<string, number>;
+};
+
+/** The cross-field rules, shared by create and by an edit's merged result. */
+export function checkCrucibleSettings(settings: CrucibleSettings) {
+  const { contentType, minViewSeconds, maxClipSeconds, entryLimit, maxTotalEntries } = settings;
+  if (contentType !== MediaType.video && (minViewSeconds != null || maxClipSeconds != null))
+    return {
       message: 'Minimum view time and maximum clip length apply to video crucibles only',
-      path: ['contentType'],
-    }
-  )
-  .refine(
-    ({ minViewSeconds, maxClipSeconds }) =>
-      minViewSeconds == null || maxClipSeconds == null || minViewSeconds <= maxClipSeconds,
-    {
-      // Otherwise no entry can clear the bar and the crucible has nothing votable in it.
+      path: 'contentType',
+    };
+  // Otherwise no entry can clear the bar and the crucible has nothing votable in it.
+  if (minViewSeconds != null && maxClipSeconds != null && minViewSeconds > maxClipSeconds)
+    return {
       message: 'Minimum view time cannot exceed the maximum clip length',
-      path: ['minViewSeconds'],
-    }
-  )
-  .refine(
-    ({ entryLimit, maxTotalEntries }) => maxTotalEntries == null || entryLimit <= maxTotalEntries,
-    {
+      path: 'minViewSeconds',
+    };
+  if (maxTotalEntries != null && entryLimit > maxTotalEntries)
+    return {
       message: 'Entries per user cannot exceed the maximum total entries',
-      path: ['entryLimit'],
-    }
-  );
+      path: 'entryLimit',
+    };
+  if (maxTotalEntries != null && Object.keys(settings.prizePositions).length > maxTotalEntries)
+    return {
+      message: 'There cannot be more prize places than the maximum total entries',
+      path: 'prizePositions',
+    };
+  return null;
+}
+
+export const createCrucibleInputSchema = createCrucibleInputBaseSchema.superRefine((input, ctx) => {
+  const issue = checkCrucibleSettings(input);
+  if (issue) ctx.addIssue({ code: 'custom', message: issue.message, path: [issue.path] });
+});
 
 // Schema for submitting an entry to a crucible
 export type GetCrucibleEntriesSchema = z.infer<typeof getCrucibleEntriesSchema>;
@@ -230,14 +248,48 @@ export const getJudgingPairSchema = z.object({
   excludeEntryIds: z.array(z.number()).max(50).optional(),
 });
 
+// Explicit rather than `createCrucibleInputBaseSchema.partial()`: the create defaults would fill
+// every omitted field and overwrite the stored value.
 export type UpdateCrucibleSchema = z.infer<typeof updateCrucibleSchema>;
 export const updateCrucibleSchema = z.object({
   id: z.number(),
   name: z.string().trim().nonempty().max(CRUCIBLE_NAME_MAX_LENGTH).optional(),
   description: z.string().nonempty().max(CRUCIBLE_DESCRIPTION_MAX_LENGTH).optional(),
   coverImage: crucibleImageSchema.optional(),
-  allowedResources: z.array(z.number().int()).max(CRUCIBLE_MAX_ALLOWED_RESOURCES).optional(),
+  heroImage: crucibleImageSchema.nullish(),
   nsfwLevel: z.number().int().positive().optional(),
+  contentType: z.enum(CRUCIBLE_CONTENT_TYPES).optional(),
+  entryFee: z.number().int().min(CRUCIBLE_MIN_ENTRY_FEE).max(CRUCIBLE_MAX_ENTRY_FEE).optional(),
+  seededPrizePool: z.number().int().min(0).max(CRUCIBLE_MAX_SEEDED_PRIZE_POOL).optional(),
+  entryLimit: z.number().int().min(1).max(CRUCIBLE_MAX_ENTRIES).optional(),
+  maxTotalEntries: z
+    .number()
+    .int()
+    .min(CRUCIBLE_MIN_TOTAL_ENTRIES)
+    .max(CRUCIBLE_MAX_TOTAL_ENTRIES)
+    .nullish(),
+  prizePositions: prizePositionsSchema.optional(),
+  allowedResources: z.array(z.number().int()).max(CRUCIBLE_MAX_ALLOWED_RESOURCES).optional(),
+  duration: z
+    .number()
+    .refine((hours) => hours in CRUCIBLE_DURATION_COSTS, {
+      message: 'Unsupported crucible duration',
+    })
+    .optional(),
+  startAt: z
+    .date()
+    .refine((startAt) => startAt <= getMaxCrucibleStartAt(), {
+      message: `A crucible can start at most ${CRUCIBLE_MAX_START_LEAD_DAYS} days from now`,
+    })
+    .nullish(),
+  minViewSeconds: z
+    .number()
+    .refine((s) => (CRUCIBLE_MIN_VIEW_SECONDS_OPTIONS as readonly number[]).includes(s))
+    .nullish(),
+  maxClipSeconds: z
+    .number()
+    .refine((s) => (CRUCIBLE_MAX_CLIP_SECONDS_OPTIONS as readonly number[]).includes(s))
+    .nullish(),
 });
 
 // Schema for cancelling a crucible
@@ -275,7 +327,9 @@ export type UserActiveCrucible = {
 
 // Schema for getting featured crucible (no input needed - returns highest prize pool active crucible)
 export type GetFeaturedCrucibleSchema = z.infer<typeof getFeaturedCrucibleSchema>;
-export const getFeaturedCrucibleSchema = z.object({});
+export const getFeaturedCrucibleSchema = z.object({
+  browsingLevel: z.number().int().min(0).optional(),
+});
 
 // Schema for getting judges count for a crucible
 export type GetJudgesCountSchema = z.infer<typeof getJudgesCountSchema>;

@@ -1,9 +1,12 @@
 import { Badge, Button, Card, Group, Skeleton, Stack, Text } from '@mantine/core';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { IconFlame, IconLogin, IconInfoCircle, IconStar } from '@tabler/icons-react';
 import Link from 'next/link';
 import { trpc } from '~/utils/trpc';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { getBuzzCurrencyConfig } from '~/shared/constants/currency.constants';
 
 /**
  * FeaturedCrucibleHero - Large hero card for featured/promoted crucible
@@ -16,7 +19,8 @@ import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
  * - Two CTAs: "Enter Competition" and "Learn More"
  */
 export function FeaturedCrucibleHero() {
-  const { data: featured, isLoading } = trpc.crucible.getFeatured.useQuery({});
+  const browsingLevel = useBrowsingLevelDebounced();
+  const { data: featured, isLoading } = trpc.crucible.getFeatured.useQuery({ browsingLevel });
 
   if (isLoading) {
     return <FeaturedCrucibleHeroSkeleton />;
@@ -35,6 +39,7 @@ type FeaturedCrucibleData = {
   name: string;
   description: string;
   prizePool: number;
+  buzzType: BuzzSpendType;
   timeRemaining: string;
   entriesCount: number;
   imageUrl: string | null;
@@ -115,7 +120,7 @@ function FeaturedCrucibleHeroContent({ featured }: { featured: FeaturedCrucibleD
             <StatItem
               label="Prize Pool"
               value={`${abbreviateNumber(featured.prizePool)} Buzz`}
-              highlight
+              color={getBuzzCurrencyConfig(featured.buzzType).color}
             />
             <StatItem label="Time Remaining" value={featured.timeRemaining} />
             <StatItem label="Entries" value={String(featured.entriesCount)} />
@@ -152,16 +157,16 @@ function FeaturedCrucibleHeroContent({ featured }: { featured: FeaturedCrucibleD
 type StatItemProps = {
   label: string;
   value: string;
-  highlight?: boolean;
+  color?: string;
 };
 
-function StatItem({ label, value, highlight }: StatItemProps) {
+function StatItem({ label, value, color = 'white' }: StatItemProps) {
   return (
     <Stack gap={4}>
       <Text size="xs" c="dimmed" tt="uppercase" style={{ letterSpacing: '0.05em' }}>
         {label}
       </Text>
-      <Text fz="xl" fw={700} c={highlight ? 'yellow' : 'white'} className="md:text-2xl">
+      <Text fz="xl" fw={700} c={color} className="md:text-2xl">
         {value}
       </Text>
     </Stack>

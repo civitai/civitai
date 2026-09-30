@@ -14,6 +14,8 @@ import { CrucibleSort } from '~/server/common/enums';
 // `~/server/db/client` and `~/server/redis/client` are registered globally by the setup file
 // and reset per test file — see docs/testing/shared-module-mocks.md.
 const crucibleCreate = dbMock.dbWrite.crucible.create;
+const crucibleUpdate = dbMock.dbWrite.crucible.update;
+const crucibleDelete = dbMock.dbWrite.crucible.delete;
 const crucibleUpdateMany = dbMock.dbWrite.crucible.updateMany;
 const getUserBuzzAccount = vi.fn();
 const createMultiAccountBuzzTransaction = vi.fn();
@@ -69,6 +71,12 @@ const input = (overrides: Record<string, unknown> = {}) => ({
 const balance = (amount: number) =>
   getUserBuzzAccount.mockResolvedValue([{ balance: amount, type: 'yellow' }]);
 
+/** What the row ends up holding: the insert, then the write that records the payment. */
+const storedData = () => ({
+  ...crucibleCreate.mock.calls[0][0].data,
+  ...(crucibleUpdate.mock.calls[0]?.[0].data ?? {}),
+});
+
 const chargedAmounts = () =>
   createMultiAccountBuzzTransaction.mock.calls.map(([arg]) => arg.amount);
 
@@ -87,6 +95,11 @@ beforeEach(() => {
     id: 1,
     ...data,
   }));
+  crucibleUpdate.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
+    id: 1,
+    ...data,
+  }));
+  crucibleDelete.mockResolvedValue({ id: 1 });
 });
 
 describe('createCrucible — cover image', () => {
@@ -122,7 +135,7 @@ describe('createCrucible — seeded prize pool', () => {
   it('stores the seed and the prefix that can refund it', async () => {
     await createCrucible(input({ seededPrizePool: 5_000 }));
 
-    const [{ data }] = crucibleCreate.mock.calls[0];
+    const data = storedData();
     expect(data.seededPrizePool).toBe(5_000);
     expect(data.seedTransactionId).toMatch(/^crucible-seed-4-/);
     expect(data.seedTransactionId).not.toBe(data.buzzTransactionId);
@@ -131,7 +144,7 @@ describe('createCrucible — seeded prize pool', () => {
   it('stores no seed prefix when nothing was seeded', async () => {
     await createCrucible(input({ seededPrizePool: 0 }));
 
-    const [{ data }] = crucibleCreate.mock.calls[0];
+    const data = storedData();
     expect(data.seededPrizePool).toBe(0);
     expect(data.seedTransactionId).toBeNull();
     expect(chargedAmounts()).toEqual([SETUP_FEE]);
@@ -160,13 +173,36 @@ describe('createCrucible — the creator cannot afford the seed', () => {
     balance(4_000);
 
     await expect(createCrucible(input({ seededPrizePool: 5_000 }))).rejects.toThrow(
-      new RegExp(`${(SETUP_FEE + 5_000).toLocaleString()} Buzz`)
+      new RegExp(`${(SETUP_FEE + 5_000).toLocaleString()} yellow Buzz`)
     );
   });
 });
 
-describe('createCrucible — a charge or write fails after money moved', () => {
-  it('refunds the setup fee and creates no crucible when the seed charge fails', async () => {
+describe('createCrucible — the row is written before any Buzz moves', () => {
+  it('inserts it as upcoming, then records the payment and opens it', async () => {
+    await createCrucible(input({ seededPrizePool: 5_000 }));
+
+    expect(crucibleCreate.mock.calls[0][0].data.status).toBe(CrucibleStatus.Pending);
+    expect(crucibleCreate.mock.invocationCallOrder[0]).toBeLessThan(
+      createMultiAccountBuzzTransaction.mock.invocationCallOrder[0]
+    );
+    expect(crucibleUpdate.mock.calls[0][0].data).toMatchObject({
+      status: CrucibleStatus.Active,
+      buzzTransactionId: expect.stringMatching(/^crucible-setup-4-/),
+      seedTransactionId: expect.stringMatching(/^crucible-seed-4-/),
+    });
+  });
+
+  it('takes no money when the insert fails', async () => {
+    crucibleCreate.mockRejectedValue(new Error('db down'));
+
+    await expect(createCrucible(input({ seededPrizePool: 5_000 }))).rejects.toThrow('db down');
+
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
+  });
+
+  it('refunds the setup fee and deletes the unpaid crucible when the seed charge fails', async () => {
     createMultiAccountBuzzTransaction.mockImplementation(async ({ amount }: { amount: number }) => {
       if (amount === 5_000) throw new Error('buzz down');
       return { transactions: [] };
@@ -174,12 +210,13 @@ describe('createCrucible — a charge or write fails after money moved', () => {
 
     await expect(createCrucible(input({ seededPrizePool: 5_000 }))).rejects.toThrow('buzz down');
 
-    expect(crucibleCreate).not.toHaveBeenCalled();
     expect(refundedPrefixes()).toEqual([expect.stringMatching(/^crucible-setup-4-/)]);
+    expect(crucibleDelete).toHaveBeenCalledWith({ where: { id: 1 } });
+    expect(crucibleUpdate).not.toHaveBeenCalled();
   });
 
-  it('refunds both the setup fee and the seed when the database write fails', async () => {
-    crucibleCreate.mockRejectedValue(new Error('db down'));
+  it('refunds both charges and deletes the crucible when recording the payment fails', async () => {
+    crucibleUpdate.mockRejectedValue(new Error('db down'));
 
     await expect(createCrucible(input({ seededPrizePool: 5_000 }))).rejects.toThrow('db down');
 
@@ -187,13 +224,34 @@ describe('createCrucible — a charge or write fails after money moved', () => {
       expect.stringMatching(/^crucible-setup-4-/),
       expect.stringMatching(/^crucible-seed-4-/),
     ]);
+    expect(crucibleDelete).toHaveBeenCalledWith({ where: { id: 1 } });
   });
 
   it('still surfaces the original failure when the refund itself fails', async () => {
-    crucibleCreate.mockRejectedValue(new Error('db down'));
+    crucibleUpdate.mockRejectedValue(new Error('db down'));
     refundMultiAccountTransaction.mockRejectedValue(new Error('refund down'));
 
     await expect(createCrucible(input({ seededPrizePool: 5_000 }))).rejects.toThrow('db down');
+  });
+});
+
+describe('createCrucible — Buzz type', () => {
+  it("charges and checks the balance in the crucible's own currency only", async () => {
+    await createCrucible(input({ buzzType: 'green', seededPrizePool: 5_000 }));
+
+    expect(getUserBuzzAccount).toHaveBeenCalledWith(
+      expect.objectContaining({ accountTypes: ['green'] })
+    );
+    for (const [charge] of createMultiAccountBuzzTransaction.mock.calls)
+      expect(charge.fromAccountTypes).toEqual(['green']);
+    expect(storedData().buzzType).toBe('green');
+  });
+
+  it('refuses a green crucible that allows mature content, before any money moves', async () => {
+    await expect(createCrucible(input({ buzzType: 'green', nsfwLevel: 1 | 4 }))).rejects.toThrow(
+      /green Buzz crucible/
+    );
+    expect(crucibleCreate).not.toHaveBeenCalled();
   });
 });
 
@@ -248,7 +306,7 @@ describe('createCrucible — start date', () => {
 
     await createCrucible(input({ startAt, duration: 24 }));
 
-    const [{ data }] = crucibleCreate.mock.calls[0];
+    const data = storedData();
     expect(data.status).toBe(CrucibleStatus.Pending);
     expect(data.startAt).toEqual(startAt);
     expect(data.endAt).toEqual(new Date(startAt.getTime() + 24 * HOUR));
@@ -259,7 +317,7 @@ describe('createCrucible — start date', () => {
 
     await createCrucible(input({ startAt: new Date(before - HOUR) }));
 
-    const [{ data }] = crucibleCreate.mock.calls[0];
+    const data = storedData();
     expect(data.status).toBe(CrucibleStatus.Active);
     expect((data.startAt as Date).getTime()).toBeGreaterThanOrEqual(before);
   });
@@ -267,7 +325,7 @@ describe('createCrucible — start date', () => {
   it('starts immediately when no start was given', async () => {
     await createCrucible(input());
 
-    const [{ data }] = crucibleCreate.mock.calls[0];
+    const data = storedData();
     expect(data.status).toBe(CrucibleStatus.Active);
   });
 });
@@ -298,6 +356,42 @@ describe('activateScheduledCrucibles', () => {
     expect(where.status).toBe(CrucibleStatus.Pending);
     expect(where.startAt.lte.getTime()).toBeLessThanOrEqual(Date.now());
     expect(data).toEqual({ status: CrucibleStatus.Active });
+  });
+});
+
+describe('getCrucibles — browsing level', () => {
+  const findMany = dbMock.dbRead.crucible.findMany;
+  const whereFor = async (opts: {
+    browsingLevel?: number;
+    viewerId?: number;
+    isGreen?: boolean;
+  }) => {
+    findMany.mockResolvedValue([]);
+    await getCrucibles({
+      input: { limit: 10, sort: CrucibleSort.Newest, browsingLevel: opts.browsingLevel },
+      select: { id: true },
+      viewerId: opts.viewerId,
+      isGreen: opts.isGreen,
+    });
+    return findMany.mock.calls.at(-1)![0].where;
+  };
+
+  it('requires both the crucible and its cover to fall inside the level', async () => {
+    const where = await whereFor({ browsingLevel: 1 });
+    const [visible] = where.AND;
+    expect(visible.nsfwLevel.in).toContain(31);
+    expect(visible.nsfwLevel.in).not.toContain(4);
+    expect(visible.image.nsfwLevel.in).toEqual(visible.nsfwLevel.in);
+  });
+
+  it('always shows the viewer their own crucibles', async () => {
+    const where = await whereFor({ browsingLevel: 1, viewerId: 4 });
+    expect(where.AND[0].OR[0]).toEqual({ userId: 4 });
+  });
+
+  it('caps the level on green even when the client asks for everything', async () => {
+    const where = await whereFor({ browsingLevel: 31, isGreen: true, viewerId: 4 });
+    expect(where.AND[0].OR[1].nsfwLevel.in).not.toContain(4);
   });
 });
 

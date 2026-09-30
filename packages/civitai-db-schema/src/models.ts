@@ -1549,6 +1549,7 @@ export interface Image {
   appListingCovers?: AppListing[];
   appListingScreenshots?: AppListingScreenshot[];
   crucibles?: Crucible[];
+  crucibleHeroes?: Crucible[];
   crucibleEntries?: CrucibleEntry[];
 }
 
@@ -5678,6 +5679,9 @@ export interface Crucible {
   description: string | null;
   imageId: number | null;
   image?: Image | null;
+  heroImageId: number | null;
+  heroImage?: Image | null;
+  buzzType: string;
   nsfwLevel: number;
   contentType: MediaType;
   entryFee: number;

@@ -10,11 +10,13 @@ export function CruciblePodium({
   prizePositions,
   entryCount,
   totalPrizePool,
+  buzzType,
 }: {
   entries: RouterOutput['crucible']['getEntries']['items'];
   prizePositions: PrizePosition[];
   entryCount: number;
   totalPrizePool: number;
+  buzzType: 'green' | 'yellow';
 }) {
   const winners: WinnerPodiumData[] = entries
     .filter((entry) => entry.position !== null && entry.position <= 3)
@@ -70,7 +72,7 @@ export function CruciblePodium({
                 winner={winner}
                 isFirst={winner.place === 1}
                 className={winner.place === 1 ? 'z-10' : ''}
-                buzzType="yellow"
+                buzzType={buzzType}
               />
             ))}
           </div>
@@ -82,7 +84,7 @@ export function CruciblePodium({
                 winner={winner}
                 isFirst={winner.place === 1}
                 isMobile
-                buzzType="yellow"
+                buzzType={buzzType}
               />
             ))}
           </Stack>

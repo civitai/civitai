@@ -3,6 +3,8 @@ import { simpleUserSelect } from '~/server/selectors/user.selector';
 
 export const crucibleListSelect = Prisma.validator<Prisma.CrucibleSelect>()({
   id: true,
+  buzzType: true,
+  contentType: true,
   userId: true,
   name: true,
   description: true,
@@ -38,6 +40,7 @@ export const crucibleListSelect = Prisma.validator<Prisma.CrucibleSelect>()({
 
 export const crucibleDetailSelect = Prisma.validator<Prisma.CrucibleSelect>()({
   id: true,
+  buzzType: true,
   userId: true,
   name: true,
   description: true,
@@ -60,6 +63,18 @@ export const crucibleDetailSelect = Prisma.validator<Prisma.CrucibleSelect>()({
   updatedAt: true,
   user: { select: simpleUserSelect },
   image: {
+    select: {
+      id: true,
+      name: true,
+      url: true,
+      type: true,
+      metadata: true,
+      nsfwLevel: true,
+      width: true,
+      height: true,
+    },
+  },
+  heroImage: {
     select: {
       id: true,
       name: true,

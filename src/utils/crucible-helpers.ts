@@ -7,12 +7,16 @@ import { slugit } from '~/utils/string-helpers';
 
 // Static routes beside `/crucibles/[id]/[[...slug]]` win over the slug, so a crucible whose name
 // slugs to one of these would link to that page instead of its own.
-const RESERVED_CRUCIBLE_SLUGS = new Set(['judge']);
+const RESERVED_CRUCIBLE_SLUGS = new Set(['judge', 'edit']);
 
 export function getCrucibleSlug(name: string) {
   const slug = slugit(name);
   return RESERVED_CRUCIBLE_SLUGS.has(slug) ? `${slug}-crucible` : slug;
 }
+
+/** The column is free text; anything but green reads as yellow, like challenges. */
+export const toCrucibleBuzzType = (value: string): 'green' | 'yellow' =>
+  value === 'green' ? 'green' : 'yellow';
 
 export const getCrucibleUrl = (id: number, name: string) =>
   `/crucibles/${id}/${getCrucibleSlug(name)}`;

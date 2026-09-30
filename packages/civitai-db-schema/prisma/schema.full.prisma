@@ -1956,7 +1956,8 @@ model Image {
   appListingIcons        AppListing[]           @relation("AppListingIcon")
   appListingCovers       AppListing[]           @relation("AppListingCover")
   appListingScreenshots  AppListingScreenshot[] @relation("AppListingScreenshot")
-  crucibles              Crucible[]
+  crucibles              Crucible[]             @relation("CrucibleImage")
+  crucibleHeroes         Crucible[]             @relation("CrucibleHeroImage")
   crucibleEntries        CrucibleEntry[]
 
   @@index([featuredAt])
@@ -8922,7 +8923,10 @@ model Crucible {
   name              String
   description       String?
   imageId           Int?
-  image             Image?         @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  image             Image?         @relation("CrucibleImage", fields: [imageId], references: [id], onDelete: SetNull)
+  heroImageId       Int?
+  heroImage         Image?         @relation("CrucibleHeroImage", fields: [heroImageId], references: [id], onDelete: SetNull)
+  buzzType          String         @default("yellow")
   nsfwLevel         Int            @default(0)
   contentType       MediaType      @default(image)
   entryFee          Int            @default(0)

@@ -1,27 +1,42 @@
+import { isEqual } from 'lodash-es';
 import * as z from 'zod';
-import { crucibleImageSchema } from '~/server/schema/crucible.schema';
+import { NsfwLevel } from '~/server/common/enums';
+import { crucibleImageSchema, type CrucibleImageSchema } from '~/server/schema/crucible.schema';
+import {
+  nsfwBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import {
   CRUCIBLE_CONTENT_TYPES,
   CRUCIBLE_DEFAULT_DURATION,
   CRUCIBLE_DEFAULT_PRIZE_POSITIONS,
   CRUCIBLE_DESCRIPTION_MAX_LENGTH,
+  CRUCIBLE_DURATION_COSTS,
   CRUCIBLE_MAX_ENTRIES,
   CRUCIBLE_MAX_ENTRY_FEE,
+  CRUCIBLE_MAX_PRIZE_POSITIONS,
   CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
   CRUCIBLE_MAX_TOTAL_ENTRIES,
   CRUCIBLE_MIN_ENTRY_FEE,
   CRUCIBLE_MIN_TOTAL_ENTRIES,
   CRUCIBLE_NAME_MAX_LENGTH,
+  CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
+  CRUCIBLE_RESOURCE_REQUIREMENTS_COST,
+  isCustomPrizeDistribution,
+  type CrucibleContentType,
 } from '~/shared/constants/crucible.constants';
+import { Flags } from '~/shared/utils/flags';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import {
   getCruciblePrizeAmount,
   getCrucibleTotalPrizePool,
+  parsePrizePositions,
   type PrizePosition,
 } from '~/utils/crucible-helpers';
 
 export const CRUCIBLE_CREATE_STEP_COUNT = 4;
 export const CRUCIBLE_CREATE_DRAFT_KEY = 'crucible_new';
+export const CRUCIBLE_NO_DESCRIPTION = 'No description provided';
 
 export const entryFeeRangeLabel = `${CRUCIBLE_MIN_ENTRY_FEE.toLocaleString()}–${CRUCIBLE_MAX_ENTRY_FEE.toLocaleString()} Buzz`;
 
@@ -63,6 +78,7 @@ export const crucibleCreateFormSchema = z.object({
     .max(CRUCIBLE_MAX_SEEDED_PRIZE_POOL),
   prizePositions: z.record(z.string(), z.number()),
   coverImage: crucibleImageSchema.nullish(),
+  heroImage: crucibleImageSchema.nullish(),
   step: z.number().int().min(1).max(CRUCIBLE_CREATE_STEP_COUNT),
 });
 export type CrucibleCreateFormValues = z.infer<typeof crucibleCreateFormSchema>;
@@ -79,6 +95,7 @@ export const crucibleCreateDefaultValues: CrucibleCreateFormValues = {
   seededPrizePool: 0,
   prizePositions: { ...CRUCIBLE_DEFAULT_PRIZE_POSITIONS },
   coverImage: null,
+  heroImage: null,
   step: 1,
 };
 
@@ -101,6 +118,7 @@ export const crucibleCreateDraftSchema = crucibleCreateFormSchema.extend({
   seededPrizePool: shape.seededPrizePool.catch(defaults.seededPrizePool),
   prizePositions: shape.prizePositions.catch({ ...CRUCIBLE_DEFAULT_PRIZE_POSITIONS }),
   coverImage: shape.coverImage.catch(null),
+  heroImage: shape.heroImage.catch(null),
   step: shape.step.catch(1),
 });
 
@@ -140,4 +158,219 @@ export function getPlaceBuzz({
       },
     ])
   );
+}
+
+export type CrucibleBuzzType = 'green' | 'yellow';
+
+/** Mirrors the server's `isNonSfwForGreen`: a green crucible accepts SFW content only. */
+export function restrictContentLevelsToBuzzType(buzzType: CrucibleBuzzType, nsfwLevel: number) {
+  if (buzzType !== 'green' || !Flags.intersects(nsfwLevel, nsfwBrowsingLevelsFlag))
+    return nsfwLevel;
+  return Flags.intersection(nsfwLevel, sfwBrowsingLevelsFlag) || NsfwLevel.PG;
+}
+
+// Blue, green and yellow read as Buzz currencies, and teal/lime/indigo sit too close to them.
+export const PRIZE_PLACE_COLORS = ['violet', 'pink', 'orange', 'cyan', 'grape', 'red'] as const;
+
+export const getPrizePlaceColor = (index: number) =>
+  PRIZE_PLACE_COLORS[index % PRIZE_PLACE_COLORS.length];
+
+/** A place beyond the entry cap could never be filled. `0` is the form's "no cap". */
+export const getPrizePlaceLimit = (maxTotalEntries: number | undefined) =>
+  maxTotalEntries
+    ? Math.min(maxTotalEntries, CRUCIBLE_MAX_PRIZE_POSITIONS)
+    : CRUCIBLE_MAX_PRIZE_POSITIONS;
+
+export function getCrucibleCostBreakdown(
+  values: Pick<
+    CrucibleCreateFormValues,
+    'duration' | 'prizePositions' | 'allowedResources' | 'seededPrizePool'
+  >
+) {
+  const duration = CRUCIBLE_DURATION_COSTS[values.duration] ?? 0;
+  const prizeCustomization = isCustomPrizeDistribution(values.prizePositions)
+    ? CRUCIBLE_PRIZE_CUSTOMIZATION_COST
+    : 0;
+  const resourceRequirements = values.allowedResources?.length
+    ? CRUCIBLE_RESOURCE_REQUIREMENTS_COST
+    : 0;
+  const seed = values.seededPrizePool ?? 0;
+  return {
+    duration,
+    prizeCustomization,
+    resourceRequirements,
+    seed,
+    total: duration + prizeCustomization + resourceRequirements + seed,
+  };
+}
+
+export function toCrucibleSubmitValues(values: CrucibleCreateFormValues) {
+  const isVideo = values.contentType === MediaType.video;
+  return {
+    name: values.name.trim(),
+    description: values.description?.trim() || CRUCIBLE_NO_DESCRIPTION,
+    coverImage: values.coverImage ?? undefined,
+    heroImage: values.heroImage ?? undefined,
+    nsfwLevel: values.nsfwLevel,
+    contentType: values.contentType,
+    entryFee: values.entryFee,
+    entryLimit: values.entryLimit,
+    maxTotalEntries: values.maxTotalEntries || undefined,
+    allowedResources: values.allowedResources?.length ? values.allowedResources : undefined,
+    prizePositions: values.prizePositions,
+    seededPrizePool: values.seededPrizePool,
+    duration: values.duration,
+    startAt: values.startAt ?? undefined,
+    minViewSeconds: (isVideo && values.minViewSeconds) || undefined,
+    maxClipSeconds: (isVideo && values.maxClipSeconds) || undefined,
+  };
+}
+
+type CrucibleImageRow = { url: string; width: number | null; height: number | null } | null;
+
+export type CrucibleEditSource = {
+  name: string;
+  description: string | null;
+  duration: number;
+  startAt: Date | null;
+  nsfwLevel: number;
+  contentType: MediaType;
+  entryFee: number;
+  entryLimit: number;
+  maxTotalEntries: number | null;
+  minViewSeconds: number | null;
+  maxClipSeconds: number | null;
+  seededPrizePool: number;
+  prizePositions: unknown;
+  allowedResources: unknown;
+  image: CrucibleImageRow;
+  heroImage: CrucibleImageRow;
+};
+
+const toFormImage = (image: CrucibleImageRow) =>
+  image ? { url: image.url, width: image.width ?? 0, height: image.height ?? 0 } : null;
+
+// `parsePrizePositions` drops 0% places, which would read a stored custom split as the default.
+function toPrizePositionsRecord(prizePositions: unknown): Record<string, number> {
+  if (prizePositions && typeof prizePositions === 'object' && !Array.isArray(prizePositions))
+    return Object.fromEntries(
+      Object.entries(prizePositions).filter(
+        (entry): entry is [string, number] => typeof entry[1] === 'number'
+      )
+    );
+  return Object.fromEntries(
+    parsePrizePositions(prizePositions).map(({ position, percentage }) => [
+      position.toString(),
+      percentage,
+    ])
+  );
+}
+
+export function crucibleToFormValues(crucible: CrucibleEditSource): CrucibleCreateFormValues {
+  return {
+    name: crucible.name,
+    description: crucible.description ?? '',
+    // Stored in minutes; the form and the API take hours.
+    duration: crucible.duration / 60,
+    startAt: crucible.startAt,
+    nsfwLevel: crucible.nsfwLevel,
+    contentType: crucible.contentType === MediaType.video ? MediaType.video : MediaType.image,
+    entryFee: crucible.entryFee,
+    entryLimit: crucible.entryLimit,
+    maxTotalEntries: crucible.maxTotalEntries ?? undefined,
+    allowedResources: Array.isArray(crucible.allowedResources)
+      ? crucible.allowedResources.filter((id): id is number => typeof id === 'number')
+      : [],
+    minViewSeconds: crucible.minViewSeconds ?? undefined,
+    maxClipSeconds: crucible.maxClipSeconds ?? undefined,
+    seededPrizePool: crucible.seededPrizePool,
+    prizePositions: toPrizePositionsRecord(crucible.prizePositions),
+    coverImage: toFormImage(crucible.image),
+    heroImage: toFormImage(crucible.heroImage),
+    step: 1,
+  };
+}
+
+/** `null` clears a value; an absent key leaves it unchanged. */
+export type CrucibleUpdateChanges = {
+  name?: string;
+  description?: string;
+  coverImage?: CrucibleImageSchema;
+  heroImage?: CrucibleImageSchema | null;
+  nsfwLevel?: number;
+  contentType?: CrucibleContentType;
+  entryFee?: number;
+  entryLimit?: number;
+  maxTotalEntries?: number | null;
+  allowedResources?: number[];
+  prizePositions?: Record<string, number>;
+  seededPrizePool?: number;
+  duration?: number;
+  startAt?: Date | null;
+  minViewSeconds?: number | null;
+  maxClipSeconds?: number | null;
+};
+export type CrucibleEditableField = keyof CrucibleUpdateChanges;
+
+export const CRUCIBLE_EDITABLE_FIELDS = [
+  'name',
+  'description',
+  'coverImage',
+  'heroImage',
+  'nsfwLevel',
+  'contentType',
+  'entryFee',
+  'entryLimit',
+  'maxTotalEntries',
+  'allowedResources',
+  'prizePositions',
+  'seededPrizePool',
+  'duration',
+  'startAt',
+  'minViewSeconds',
+  'maxClipSeconds',
+] as const satisfies readonly CrucibleEditableField[];
+
+export const CRUCIBLE_EDITABLE_WHILE_ACTIVE = [
+  'name',
+  'description',
+  'coverImage',
+  'heroImage',
+] as const satisfies readonly CrucibleEditableField[];
+
+export function getCrucibleEditableFields({
+  canEditAll,
+  isModerator,
+}: {
+  canEditAll: boolean;
+  isModerator: boolean;
+}): readonly CrucibleEditableField[] {
+  if (canEditAll) return CRUCIBLE_EDITABLE_FIELDS;
+  return isModerator
+    ? [...CRUCIBLE_EDITABLE_WHILE_ACTIVE, 'nsfwLevel']
+    : CRUCIBLE_EDITABLE_WHILE_ACTIVE;
+}
+
+const comparable = (field: CrucibleEditableField, value: unknown) =>
+  field === 'coverImage' || field === 'heroImage'
+    ? (value as CrucibleImageSchema | undefined)?.url
+    : value;
+
+export function getCrucibleUpdateChanges({
+  initial,
+  values,
+  editableFields,
+}: {
+  initial: CrucibleCreateFormValues;
+  values: CrucibleCreateFormValues;
+  editableFields: readonly CrucibleEditableField[];
+}): CrucibleUpdateChanges {
+  const before = toCrucibleSubmitValues(initial);
+  const after = toCrucibleSubmitValues(values);
+  const changes: Record<string, unknown> = {};
+  for (const field of editableFields) {
+    if (isEqual(comparable(field, before[field]), comparable(field, after[field]))) continue;
+    changes[field] = after[field] ?? (field === 'allowedResources' ? [] : null);
+  }
+  return changes as CrucibleUpdateChanges;
 }

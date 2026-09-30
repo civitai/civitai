@@ -15,6 +15,7 @@ import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
 import * as z from 'zod';
 import {
+  IconBrush,
   IconGavel,
   IconUpload,
   IconBook,
@@ -28,9 +29,9 @@ import { Page } from '~/components/AppLayout/Page';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import {
-  getCrucibleRatings,
   getCrucibleTotalPrizePool,
   getCrucibleUrl,
+  toCrucibleBuzzType,
   parsePrizePositions,
 } from '~/utils/crucible-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -39,10 +40,10 @@ import { env } from '~/env/client';
 import { getModelUrl } from '~/utils/string-helpers';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { CrucibleContentLevelBadges } from '~/components/Crucible/CrucibleContentLevelBadges';
 import { CrucibleHeader } from '~/components/Crucible/CrucibleHeader';
 import { CrucibleLeaderboard } from '~/components/Crucible/CrucibleLeaderboard';
 import { CrucibleEntryGrid } from '~/components/Crucible/CrucibleEntryGrid';
-import { CrucibleEditModal } from '~/components/Crucible/CrucibleEditModal';
 import { CruciblePodium } from '~/components/Crucible/CruciblePodium';
 import { CruciblePrizeBreakdown } from '~/components/Crucible/CruciblePrizeBreakdown';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
@@ -60,6 +61,8 @@ import { ImageSort } from '~/server/common/enums';
 import type { ImageGetInfinite } from '~/types/router';
 import { isDefined } from '~/utils/type-guards';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
+import { generationGraphPanel } from '~/store/generation-graph.store';
+import { generationFormStore } from '~/store/generation-form.store';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -90,7 +93,6 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
 
   const { data: crucible, isLoading } = trpc.crucible.getById.useQuery({ id });
   const [entriesSeed] = useState(() => Math.floor(Math.random() * 2 ** 31));
-  const [editOpened, setEditOpened] = useState(false);
   const {
     data: entriesData,
     hasNextPage: hasMoreEntries,
@@ -293,9 +295,11 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
             nsfwLevel: crucible.nsfwLevel,
             entryFee: crucible.entryFee,
             seededPrizePool: crucible.seededPrizePool,
+            buzzType: toCrucibleBuzzType(crucible.buzzType),
             endAt: crucible.endAt,
             user: crucible.user,
             image: crucible.image,
+            heroImage: crucible.heroImage,
             _count: crucible._count,
           }}
         />
@@ -306,6 +310,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
             prizePositions={prizePositions}
             entryCount={entryCount}
             totalPrizePool={totalPrizePool}
+            buzzType={toCrucibleBuzzType(crucible.buzzType)}
           />
         )}
 
@@ -391,16 +396,29 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                       You&apos;ve submitted all your entries. Good luck!
                     </Alert>
                   ) : (
-                    <Button
-                      variant="light"
-                      fullWidth
-                      leftSection={<IconUpload size={16} />}
-                      className="mb-4"
-                      onClick={() => openCrucibleSubmitEntryModal(getSubmitEntryProps(crucible))}
-                      disabled={!currentUser}
-                    >
-                      Submit Entry
-                    </Button>
+                    <Stack gap="xs" className="mb-4">
+                      <Button
+                        variant="light"
+                        fullWidth
+                        leftSection={<IconUpload size={16} />}
+                        onClick={() => openCrucibleSubmitEntryModal(getSubmitEntryProps(crucible))}
+                        disabled={!currentUser}
+                      >
+                        Submit Entry
+                      </Button>
+                      {!currentUser?.muted && (
+                        <Button
+                          variant="default"
+                          fullWidth
+                          leftSection={<IconBrush size={16} />}
+                          onClick={() =>
+                            openCrucibleGenerator(crucible.contentType, allowedResources)
+                          }
+                        >
+                          Generate an entry
+                        </Button>
+                      )}
+                    </Stack>
                   )}
 
                   {!allEntriesUsed && (
@@ -410,6 +428,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                       </Text>
                       <CurrencyBadge
                         currency={Currency.BUZZ}
+                        type={toCrucibleBuzzType(crucible.buzzType)}
                         unitAmount={crucible.entryFee}
                         size="md"
                         fw={600}
@@ -452,6 +471,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                   onLoadMore={loadMoreEntries}
                   prizePositions={prizePositions}
                   totalPrizePool={totalPrizePool}
+                  buzzType={toCrucibleBuzzType(crucible.buzzType)}
                   awarded={crucible.status === CrucibleStatus.Completed}
                 />
               ) : (
@@ -460,6 +480,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                     prizePositions={prizePositions}
                     totalPrizePool={totalPrizePool}
                     entryFee={crucible.entryFee}
+                    buzzType={toCrucibleBuzzType(crucible.buzzType)}
                   />
                   <YourStandingPanel entries={userEntries} hasAccount={!!currentUser} />
                 </>
@@ -482,7 +503,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                   },
                   {
                     label: 'Content Levels',
-                    value: <ContentLevelBadges nsfwLevel={crucible.nsfwLevel} />,
+                    value: <CrucibleContentLevelBadges nsfwLevel={crucible.nsfwLevel} />,
                   },
                   {
                     label: 'Starts',
@@ -526,12 +547,13 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                   <Stack gap="sm">
                     {canEdit && (
                       <Button
+                        component={Link}
+                        href={`/crucibles/${crucible.id}/edit`}
                         variant="light"
                         fullWidth
                         leftSection={<IconPencil size={16} />}
-                        onClick={() => setEditOpened(true)}
                       >
-                        Edit name & description
+                        Edit Crucible
                       </Button>
                     )}
                     {canCancel && (
@@ -557,12 +579,6 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                   )}
                 </Paper>
               )}
-
-              <CrucibleEditModal
-                crucible={crucible}
-                opened={editOpened}
-                onClose={() => setEditOpened(false)}
-              />
             </div>
           </div>
         </Container>
@@ -580,6 +596,7 @@ const getSubmitEntryProps = (crucible: CrucibleDetail) => ({
   crucibleId: crucible.id,
   crucibleName: crucible.name,
   entryFee: crucible.entryFee,
+  buzzType: toCrucibleBuzzType(crucible.buzzType),
   entryLimit: getMaxUserEntries(crucible),
   nsfwLevel: crucible.nsfwLevel,
   contentType: crucible.contentType,
@@ -588,6 +605,16 @@ const getSubmitEntryProps = (crucible: CrucibleDetail) => ({
   requiresResources:
     Array.isArray(crucible.allowedResources) && crucible.allowedResources.length > 0,
 });
+
+// Required resources are alternatives ("at least one of"), so only the first is preselected.
+function openCrucibleGenerator(contentType: MediaType, modelVersionIds: number[]) {
+  if (modelVersionIds.length) {
+    generationGraphPanel.open({ type: 'modelVersions', ids: modelVersionIds.slice(0, 1) });
+  } else {
+    generationGraphPanel.open();
+  }
+  generationFormStore.setType(contentType);
+}
 
 const toGridEntry = (entry: CrucibleEntry) => ({
   ...entry,
@@ -689,23 +716,6 @@ function RequiredResources({ versionIds }: { versionIds: number[] }) {
         >
           {version.modelName} — {version.name}
         </Link>
-      ))}
-    </div>
-  );
-}
-
-function ContentLevelBadges({ nsfwLevel }: { nsfwLevel: number }) {
-  const levels = getCrucibleRatings(nsfwLevel);
-
-  return (
-    <div className="flex flex-wrap gap-2">
-      {levels.map((level) => (
-        <span
-          key={level}
-          className="rounded-full border border-blue-500/30 bg-blue-500/20 px-3 py-1 text-xs font-semibold text-blue-400"
-        >
-          {level}
-        </span>
       ))}
     </div>
   );

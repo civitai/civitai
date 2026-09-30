@@ -2433,6 +2433,8 @@ export type Crucible = {
   name: string;
   description: string | null;
   imageId: number | null;
+  heroImageId: number | null;
+  buzzType: Generated<string>;
   nsfwLevel: Generated<number>;
   contentType: Generated<MediaType>;
   entryFee: Generated<number>;

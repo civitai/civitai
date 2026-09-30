@@ -5,12 +5,15 @@ import { trpc } from '~/utils/trpc';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { CrucibleSort } from '~/server/common/enums';
+import { CRUCIBLE_CONTENT_TYPES } from '~/shared/constants/crucible.constants';
 
 const crucibleQueryParamsSchema = z.object({
   status: z.nativeEnum(CrucibleStatus).optional(),
+  contentType: z.enum(CRUCIBLE_CONTENT_TYPES).optional(),
   sort: z.nativeEnum(CrucibleSort).optional(),
 });
 
@@ -27,8 +30,9 @@ export const useQueryCrucibles = (
   filters: Partial<GetCruciblesInfiniteSchema>,
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
+  const browsingLevel = useBrowsingLevelDebounced();
   const { data, isLoading, ...rest } = trpc.crucible.getInfinite.useInfiniteQuery(
-    { ...filters },
+    { ...filters, browsingLevel },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       ...options,

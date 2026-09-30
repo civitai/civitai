@@ -1,9 +1,10 @@
-import { Badge, Paper, Stack, Text, ThemeIcon, Box, Group } from '@mantine/core';
+import { Badge, Stack, Text, ThemeIcon, Box, Group } from '@mantine/core';
 import { IconCrown, IconTrendingUp } from '@tabler/icons-react';
-import clsx from 'clsx';
 import { getBackground, getBorder } from '~/components/Challenge/DynamicPrizeCard/constants';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { SpotlightCard } from '~/components/SpotlightCard/SpotlightCard';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 import type { PrizePosition } from '~/utils/crucible-helpers';
 import classes from './CruciblePrizeBreakdown.module.scss';
@@ -12,29 +13,27 @@ export type CruciblePrizeBreakdownProps = {
   prizePositions: PrizePosition[];
   totalPrizePool: number;
   entryFee: number;
+  buzzType: BuzzSpendType;
   className?: string;
 };
 
-/**
- * CruciblePrizeBreakdown - Visual display of prize distribution
- *
- * Displays:
- * - Total prize pool at the top
- * - Individual prize positions with crown icons for top 3
- * - Percentage and calculated Buzz amounts for each position
- * - Handles variable number of prize positions
- */
 export function CruciblePrizeBreakdown({
   prizePositions,
   totalPrizePool,
   entryFee,
+  buzzType,
   className,
 }: CruciblePrizeBreakdownProps) {
-  // Sort positions by position number to ensure correct order
   const sortedPositions = [...prizePositions].sort((a, b) => a.position - b.position);
 
   return (
-    <Paper className={clsx('overflow-hidden rounded-lg', className)} bg="dark.6">
+    <SpotlightCard
+      borderColor="transparent"
+      bg="transparent"
+      p={0}
+      className={className}
+      style={{ overflow: 'hidden' }}
+    >
       <Stack
         gap="sm"
         align="center"
@@ -53,7 +52,7 @@ export function CruciblePrizeBreakdown({
           </Text>
         </Group>
         <Group gap={6} justify="center" align="baseline">
-          <CurrencyIcon currency={Currency.BUZZ} size={28} />
+          <CurrencyIcon currency={Currency.BUZZ} type={buzzType} size={28} />
           <Text fw={900} className={classes.amount}>
             {totalPrizePool.toLocaleString()}
           </Text>
@@ -71,17 +70,20 @@ export function CruciblePrizeBreakdown({
         )}
       </Stack>
 
-      <Stack gap="sm" p="md">
-        {sortedPositions.map((prize) => (
-          <PrizePositionItem
-            key={prize.position}
-            position={prize.position}
-            percentage={prize.percentage}
-            totalPrizePool={totalPrizePool}
-          />
-        ))}
-      </Stack>
-    </Paper>
+      {sortedPositions.length > 0 && (
+        <Stack gap="sm" p="md" bg="dark.6">
+          {sortedPositions.map((prize) => (
+            <PrizePositionItem
+              key={prize.position}
+              position={prize.position}
+              percentage={prize.percentage}
+              totalPrizePool={totalPrizePool}
+              buzzType={buzzType}
+            />
+          ))}
+        </Stack>
+      )}
+    </SpotlightCard>
   );
 }
 
@@ -89,16 +91,18 @@ type PrizePositionItemProps = {
   position: number;
   percentage: number;
   totalPrizePool: number;
+  buzzType: BuzzSpendType;
 };
 
-/**
- * Individual prize position item with medal styling
- */
-function PrizePositionItem({ position, percentage, totalPrizePool }: PrizePositionItemProps) {
+function PrizePositionItem({
+  position,
+  percentage,
+  totalPrizePool,
+  buzzType,
+}: PrizePositionItemProps) {
   const prizeAmount = Math.floor((percentage / 100) * totalPrizePool);
   const isTopThree = position <= 3;
 
-  // Medal colors based on position
   const getMedalStyle = () => {
     switch (position) {
       case 1:
@@ -139,7 +143,6 @@ function PrizePositionItem({ position, percentage, totalPrizePool }: PrizePositi
     >
       <Group justify="space-between" align="center" wrap="nowrap">
         <Group gap="sm" wrap="nowrap">
-          {/* Medal badge */}
           <Box
             className="flex size-7 items-center justify-center rounded-md font-bold"
             style={{
@@ -159,15 +162,17 @@ function PrizePositionItem({ position, percentage, totalPrizePool }: PrizePositi
           </Text>
         </Group>
 
-        <CurrencyBadge currency={Currency.BUZZ} unitAmount={prizeAmount} size="sm" />
+        <CurrencyBadge
+          currency={Currency.BUZZ}
+          type={buzzType}
+          unitAmount={prizeAmount}
+          size="sm"
+        />
       </Group>
     </Box>
   );
 }
 
-/**
- * Get ordinal suffix for numbers (1st, 2nd, 3rd, 4th, etc.)
- */
 function getOrdinalSuffix(n: number): string {
   const s = ['th', 'st', 'nd', 'rd'];
   const v = n % 100;

@@ -33,6 +33,7 @@ export type CrucibleLeaderboardProps = {
   entries: LeaderboardEntry[];
   prizePositions: PrizePosition[];
   totalPrizePool: number;
+  buzzType: 'green' | 'yellow';
   /**
    * Whether prizes were actually paid. False on a Cancelled crucible, which also reveals its
    * rankings — scores are final there, but every entry fee went back and nobody won anything.
@@ -60,6 +61,7 @@ export function CrucibleLeaderboard({
   entries,
   prizePositions: awardedPrizePositions,
   totalPrizePool,
+  buzzType,
   awarded,
   className,
   pageSize = 10,
@@ -156,6 +158,7 @@ export function CrucibleLeaderboard({
               rank={entry.rank}
               prizeInfo={prizeMap.get(entry.rank)}
               prizeAmount={prizeFor(entry.rank)}
+              buzzType={buzzType}
               isCurrentUser={currentUser?.id === entry.userId}
             />
           ))
@@ -209,6 +212,7 @@ type LeaderboardEntryItemProps = {
   rank: number;
   prizeInfo?: PrizePosition;
   prizeAmount: number;
+  buzzType: 'green' | 'yellow';
   isCurrentUser?: boolean;
 };
 
@@ -220,6 +224,7 @@ function LeaderboardEntryItem({
   rank,
   prizeInfo,
   prizeAmount,
+  buzzType,
   isCurrentUser,
 }: LeaderboardEntryItemProps) {
   const isTopThree = rank <= 3;
@@ -292,7 +297,12 @@ function LeaderboardEntryItem({
               {prizeInfo.percentage}%
             </Text>
           </Group>
-          <CurrencyBadge currency={Currency.BUZZ} unitAmount={prizeAmount} size="sm" />
+          <CurrencyBadge
+            currency={Currency.BUZZ}
+            type={buzzType}
+            unitAmount={prizeAmount}
+            size="sm"
+          />
         </div>
       )}
 

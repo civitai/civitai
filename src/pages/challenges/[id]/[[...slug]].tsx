@@ -12,8 +12,6 @@ import {
   Loader,
   type MantineSize,
   Menu,
-  Paper,
-  type PaperProps,
   ScrollArea,
   Spoiler,
   Stack,
@@ -29,7 +27,7 @@ import {
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import type { InferGetServerSidePropsType } from 'next';
 import type { MouseEvent } from 'react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as z from 'zod';
 
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
@@ -106,6 +104,7 @@ import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { NoContent } from '~/components/NoContent/NoContent';
+import { SpotlightCard } from '~/components/SpotlightCard/SpotlightCard';
 import type { ChallengeDetail } from '~/server/schema/challenge.schema';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { generationFormStore } from '~/store/generation-form.store';
@@ -783,86 +782,6 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
       {/* Entries Section */}
       <ChallengeEntries challenge={challenge} />
     </Gated>
-  );
-}
-
-/** Card with a mouse-tracking white spotlight glow on the border. */
-function SpotlightCard({
-  children,
-  borderColor,
-  bg,
-  ...rest
-}: {
-  children: React.ReactNode;
-  borderColor: string;
-  bg: string;
-} & Omit<PaperProps, 'children'>) {
-  const cardRef = useRef<HTMLDivElement>(null);
-  const [spotlight, setSpotlight] = useState({ x: 0, y: 0, opacity: 0 });
-
-  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    setSpotlight({ x: e.clientX - rect.left, y: e.clientY - rect.top, opacity: 1 });
-  }, []);
-
-  const handleMouseLeave = useCallback(() => {
-    setSpotlight((s) => ({ ...s, opacity: 0 }));
-  }, []);
-
-  return (
-    <div
-      ref={cardRef}
-      onMouseMove={handleMouseMove}
-      onMouseLeave={handleMouseLeave}
-      style={
-        {
-          position: 'relative',
-          borderRadius: 'var(--mantine-radius-md)',
-          '--spotlight-x': `${spotlight.x}px`,
-          '--spotlight-y': `${spotlight.y}px`,
-          '--spotlight-opacity': spotlight.opacity,
-        } as React.CSSProperties
-      }
-    >
-      {/* Border glow — wide, faint white bloom near cursor */}
-      <div
-        style={{
-          position: 'absolute',
-          inset: -1,
-          borderRadius: 'inherit',
-          background: `radial-gradient(400px circle at ${spotlight.x}px ${spotlight.y}px, rgba(255,255,255,0.04), transparent 70%)`,
-          opacity: spotlight.opacity,
-          transition: 'opacity 0.5s ease',
-          pointerEvents: 'none',
-          zIndex: 0,
-        }}
-      />
-      <Paper
-        p="md"
-        radius="md"
-        style={{
-          position: 'relative',
-          zIndex: 1,
-          background: bg,
-          border: `1px solid ${borderColor}`,
-        }}
-        {...rest}
-      >
-        {/* Wide ambient inner wash */}
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            borderRadius: 'inherit',
-            background: `radial-gradient(500px circle at ${spotlight.x}px ${spotlight.y}px, rgba(255,255,255,0.005), transparent 60%)`,
-            opacity: spotlight.opacity,
-            transition: 'opacity 0.5s ease',
-            pointerEvents: 'none',
-          }}
-        />
-        {children}
-      </Paper>
-    </div>
   );
 }
 

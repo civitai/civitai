@@ -1,11 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { CrucibleStatus } from '~/shared/utils/prisma/enums';
+import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks';
+import {
+  CRUCIBLE_DURATION_COSTS,
+  CRUCIBLE_RESOURCE_REQUIREMENTS_COST,
+} from '~/shared/constants/crucible.constants';
 import type * as BlocklistService from '~/server/services/blocklist.service';
+import type * as BuzzService from '~/server/services/buzz.service';
 import type * as CoverImageService from '~/server/services/cover-image.service';
 
 const throwOnBlockedUserContent = vi.fn();
 const resolveCoverImageId = vi.fn();
+const getUserBuzzAccount = vi.fn();
+const createMultiAccountBuzzTransaction = vi.fn();
+const refundMultiAccountTransaction = vi.fn();
 
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BlocklistService>()),
@@ -17,9 +25,17 @@ vi.mock('~/server/services/cover-image.service', async (importOriginal) => ({
   resolveCoverImageId,
 }));
 
+vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof BuzzService>()),
+  getUserBuzzAccount,
+  createMultiAccountBuzzTransaction,
+  refundMultiAccountTransaction,
+}));
+
 const { updateCrucible } = await import('~/server/services/crucible.service');
 
 const OWNER = 4;
+const HOUR = 60 * 60 * 1000;
 const findUnique = dbMock.dbRead.crucible.findUnique;
 const update = dbMock.dbWrite.crucible.update;
 
@@ -27,17 +43,42 @@ const crucible = (overrides: Record<string, unknown> = {}) => ({
   id: 1,
   userId: OWNER,
   status: CrucibleStatus.Active,
-  endAt: new Date(Date.now() + 60 * 60 * 1000),
+  startAt: new Date(Date.now() - HOUR),
+  endAt: new Date(Date.now() + HOUR),
   imageId: 50,
+  heroImageId: null,
+  buzzType: 'yellow',
   nsfwLevel: 1,
   name: 'Old name',
   description: 'Old description',
+  contentType: MediaType.image,
+  entryFee: 100,
+  entryLimit: 1,
+  maxTotalEntries: null,
+  minViewSeconds: null,
+  maxClipSeconds: null,
+  prizePositions: { '1': 50, '2': 30, '3': 20 },
   allowedResources: null,
+  duration: 24 * 60,
+  seededPrizePool: 0,
+  buzzTransactionId: null,
+  seedTransactionId: null,
   ...overrides,
 });
+const upcoming = (overrides: Record<string, unknown> = {}) =>
+  crucible({
+    status: CrucibleStatus.Pending,
+    startAt: new Date(Date.now() + 24 * HOUR),
+    endAt: new Date(Date.now() + 48 * HOUR),
+    ...overrides,
+  });
 
 const edit = (input: Record<string, unknown>, userId = OWNER, isModerator = false) =>
   updateCrucible({ id: 1, ...input, userId, isModerator } as Parameters<typeof updateCrucible>[0]);
+const written = () => update.mock.calls[0][0].data as Record<string, unknown>;
+const charged = () => createMultiAccountBuzzTransaction.mock.calls.map(([c]) => c.amount);
+const refunded = () =>
+  refundMultiAccountTransaction.mock.calls.map(([c]) => c.externalTransactionIdPrefix);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -45,14 +86,15 @@ beforeEach(() => {
   update.mockImplementation(async ({ data }: { data: object }) => ({ id: 1, ...data }));
   throwOnBlockedUserContent.mockResolvedValue(undefined);
   resolveCoverImageId.mockResolvedValue(77);
+  getUserBuzzAccount.mockResolvedValue([{ balance: 1_000_000, type: 'yellow' }]);
+  createMultiAccountBuzzTransaction.mockResolvedValue({ transactions: [] });
+  refundMultiAccountTransaction.mockResolvedValue(undefined);
 });
 
 describe('updateCrucible — who may edit', () => {
   it('lets the owner rename a running crucible', async () => {
     await edit({ name: 'New name' });
-    expect(update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ name: 'New name' }) })
-    );
+    expect(written()).toMatchObject({ name: 'New name' });
   });
 
   it('refuses someone who neither owns nor moderates it', async () => {
@@ -72,29 +114,103 @@ describe('updateCrucible — who may edit', () => {
   });
 });
 
-describe('updateCrucible — what may change', () => {
-  it('only lets moderators change the content levels', async () => {
-    await expect(edit({ nsfwLevel: 31 })).rejects.toThrow(/Only moderators/);
+describe('updateCrucible — once running', () => {
+  it('refuses anything but the presentation from the owner, naming what is locked', async () => {
+    await expect(edit({ entryFee: 200, nsfwLevel: 3 })).rejects.toThrow(/entryFee, nsfwLevel/);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('lets a moderator change the content levels', async () => {
     await edit({ nsfwLevel: 3 }, 1, true);
-    expect(update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ nsfwLevel: 3 }) })
+    expect(written()).toMatchObject({ nsfwLevel: 3 });
+  });
+
+  it('never moves Buzz', async () => {
+    await edit({ name: 'x', description: 'y' });
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
+  });
+});
+
+describe('updateCrucible — while upcoming', () => {
+  it('lets the owner change any setting', async () => {
+    findUnique.mockResolvedValue(upcoming());
+    await edit({ entryFee: 200, nsfwLevel: 3, entryLimit: 3 });
+    expect(written()).toMatchObject({ entryFee: 200, nsfwLevel: 3, entryLimit: 3 });
+  });
+
+  it('charges a new setup fee, then refunds the old one, when a paid option changes', async () => {
+    findUnique.mockResolvedValue(upcoming({ buzzTransactionId: 'crucible-setup-4-old' }));
+
+    await edit({ allowedResources: [10] });
+
+    expect(charged()).toEqual([CRUCIBLE_RESOURCE_REQUIREMENTS_COST]);
+    expect(written().buzzTransactionId).toMatch(/^crucible-setup-4-/);
+    expect(refunded()).toEqual(['crucible-setup-4-old']);
+    expect(update.mock.invocationCallOrder[0]).toBeLessThan(
+      refundMultiAccountTransaction.mock.invocationCallOrder[0]
     );
   });
 
-  it('refuses changing required resources once running', async () => {
-    findUnique.mockResolvedValue(crucible({ allowedResources: [10] }));
-    await expect(edit({ allowedResources: [11] })).rejects.toThrow(/before the crucible starts/);
-  });
-
-  it('lets the owner swap required resources before start, but not add a requirement', async () => {
+  it('re-charges only the seed when only the seed changes', async () => {
     findUnique.mockResolvedValue(
-      crucible({ status: CrucibleStatus.Pending, allowedResources: [10] })
+      upcoming({ seededPrizePool: 1_000, seedTransactionId: 'crucible-seed-4-old' })
     );
-    await edit({ allowedResources: [11, 12] });
-    expect(update).toHaveBeenCalled();
 
-    findUnique.mockResolvedValue(crucible({ status: CrucibleStatus.Pending }));
-    await expect(edit({ allowedResources: [11] })).rejects.toThrow(/not added or removed/);
+    await edit({ seededPrizePool: 3_000 });
+
+    expect(charged()).toEqual([3_000]);
+    expect(written()).toMatchObject({ seededPrizePool: 3_000 });
+    expect(refunded()).toEqual(['crucible-seed-4-old']);
+  });
+
+  it('charges nothing when no paid option changes', async () => {
+    findUnique.mockResolvedValue(upcoming());
+    await edit({ name: 'Renamed', entryFee: 300 });
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('changes nothing when the new charge fails', async () => {
+    findUnique.mockResolvedValue(upcoming({ buzzTransactionId: 'crucible-setup-4-old' }));
+    createMultiAccountBuzzTransaction.mockRejectedValue(new Error('buzz down'));
+
+    await expect(edit({ duration: 168 })).rejects.toThrow('buzz down');
+    expect(update).not.toHaveBeenCalled();
+    expect(refunded()).toEqual([]);
+  });
+
+  it('refunds the new charge, and keeps the old one, when the write fails', async () => {
+    findUnique.mockResolvedValue(upcoming({ buzzTransactionId: 'crucible-setup-4-old' }));
+    update.mockRejectedValue(new Error('db down'));
+
+    await expect(edit({ duration: 168 })).rejects.toThrow('db down');
+    expect(charged()).toEqual([CRUCIBLE_DURATION_COSTS[168]]);
+    expect(refunded()).toEqual([expect.stringMatching(/^crucible-setup-4-(?!old)/)]);
+  });
+
+  it('moves the end with the start', async () => {
+    findUnique.mockResolvedValue(upcoming());
+    const startAt = new Date(Date.now() + 72 * HOUR);
+
+    await edit({ startAt });
+
+    expect(written()).toMatchObject({
+      startAt,
+      endAt: new Date(startAt.getTime() + 24 * HOUR),
+      status: CrucibleStatus.Pending,
+    });
+  });
+
+  it('refuses more prize places than the new entry cap allows', async () => {
+    findUnique.mockResolvedValue(upcoming());
+    await expect(edit({ maxTotalEntries: 2 })).rejects.toThrow(/more prize places/);
+  });
+});
+
+describe('updateCrucible — content and images', () => {
+  it('keeps a green crucible SFW', async () => {
+    findUnique.mockResolvedValue(upcoming({ buzzType: 'green' }));
+    await expect(edit({ nsfwLevel: 1 | 4 })).rejects.toThrow(/green Buzz crucible/);
   });
 
   it('runs the blocked-content guard on the text it will store', async () => {
@@ -112,8 +228,11 @@ describe('updateCrucible — what may change', () => {
     expect(resolveCoverImageId).toHaveBeenCalledWith(
       expect.objectContaining({ userId: OWNER, currentCoverId: 50 })
     );
-    expect(update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ imageId: 77 }) })
-    );
+    expect(written()).toMatchObject({ image: { connect: { id: 77 } } });
+  });
+
+  it('removes the hero image when sent null', async () => {
+    await edit({ heroImage: null });
+    expect(written()).toMatchObject({ heroImage: { disconnect: true } });
   });
 });

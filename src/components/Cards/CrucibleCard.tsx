@@ -9,6 +9,7 @@ import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { Currency, CrucibleStatus } from '~/shared/utils/prisma/enums';
 import {
+  toCrucibleBuzzType,
   getCrucibleStatusBadge,
   getCrucibleTotalPrizePool,
   getCrucibleUrl,
@@ -19,9 +20,11 @@ type CrucibleCardData = {
   id: number;
   name: string;
   status: CrucibleStatus;
+  nsfwLevel: number;
   endAt: Date | null;
   entryFee: number;
   seededPrizePool: number;
+  buzzType: string;
   user: {
     id: number;
     username: string | null;
@@ -44,12 +47,11 @@ type CrucibleCardData = {
 };
 
 export function CrucibleCard({ data }: { data: CrucibleCardData }) {
-  const { id, name, status, endAt, entryFee, seededPrizePool, user, image, _count } = data;
+  const { id, name, status, endAt, entryFee, seededPrizePool, buzzType, user, image, _count } =
+    data;
   const entryCount = _count.entries ?? 0;
   const prizePool = getCrucibleTotalPrizePool({ entryFee, entryCount, seededPrizePool });
 
-  // Memoize current date to avoid creating new Date objects on each helper call
-  // This is stable for the render cycle and avoids unnecessary recalculations
   const now = useMemo(() => new Date(), []);
 
   const statusBadge = getCrucibleStatusBadge(status, endAt, now);
@@ -101,6 +103,7 @@ export function CrucibleCard({ data }: { data: CrucibleCardData }) {
           <div className="flex items-center justify-between gap-2">
             <CurrencyBadge
               currency={Currency.BUZZ}
+              type={toCrucibleBuzzType(buzzType)}
               unitAmount={prizePool}
               radius="xl"
               px={8}

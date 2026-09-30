@@ -2,6 +2,7 @@ import { Badge, Button, Container, Text, Title } from '@mantine/core';
 import { IconArrowLeft, IconUsers } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { NavigateBack } from '~/components/BackButton/BackButton';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CrucibleTimer } from '~/components/Crucible/CrucibleTimer';
@@ -9,14 +10,21 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { Currency, CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
+import { CrucibleContentLevelBadges } from '~/components/Crucible/CrucibleContentLevelBadges';
 import { CrucibleUserLink } from '~/components/Crucible/CrucibleUserLink';
-import {
-  getCrucibleRatingLabel,
-  getCrucibleStatusBadge,
-  getCrucibleTotalPrizePool,
-} from '~/utils/crucible-helpers';
-import { NsfwLevel } from '~/server/common/enums';
+import { getCrucibleStatusBadge, getCrucibleTotalPrizePool } from '~/utils/crucible-helpers';
+import { Flags } from '~/shared/utils/flags';
 import type { SimpleUser } from '~/server/selectors/user.selector';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+
+type CrucibleHeaderImage = {
+  id: number;
+  url: string;
+  name: string | null;
+  nsfwLevel: number;
+  width: number | null;
+  height: number | null;
+};
 
 export type CrucibleHeaderData = {
   id: number;
@@ -26,16 +34,11 @@ export type CrucibleHeaderData = {
   nsfwLevel: number;
   entryFee: number;
   seededPrizePool: number;
+  buzzType: BuzzSpendType;
   endAt: Date | null;
   user: SimpleUser;
-  image: {
-    id: number;
-    url: string;
-    name: string | null;
-    nsfwLevel: number;
-    width: number | null;
-    height: number | null;
-  } | null;
+  image: CrucibleHeaderImage | null;
+  heroImage: CrucibleHeaderImage | null;
   _count: {
     entries: number;
   };
@@ -46,33 +49,28 @@ type CrucibleHeaderProps = {
   className?: string;
 };
 
-/**
- * CrucibleHeader - Hero section for crucible detail page
- *
- * Displays:
- * - Full-width background image with gradient overlay
- * - Crucible name, description, and status
- * - Creator info with avatar
- * - Countdown timer
- * - Prize pool and entry count stats
- * - NSFW level badge if applicable
- */
 export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
   const {
-    id,
     name,
     description,
     status,
     nsfwLevel,
     entryFee,
     seededPrizePool,
+    buzzType,
     endAt,
     user,
     image,
+    heroImage,
     _count,
   } = crucible;
   const entryCount = _count.entries ?? 0;
   const prizePool = getCrucibleTotalPrizePool({ entryFee, entryCount, seededPrizePool });
+  const browsingLevel = useBrowsingLevelDebounced();
+  const candidate = heroImage ?? image;
+  // Drawn without an ImageGuard, so it only shows once scanned and inside the viewer's level.
+  const backgroundImage =
+    candidate && Flags.intersects(candidate.nsfwLevel, browsingLevel) ? candidate : null;
 
   const statusBadge = getCrucibleStatusBadge(status, endAt);
 
@@ -80,15 +78,16 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
     <div
       className={clsx('relative flex min-h-[350px] overflow-hidden sm:min-h-[500px]', className)}
       style={{
-        background: !image ? 'linear-gradient(135deg, #1a1b1e 0%, #25262b 100%)' : undefined,
+        background: !backgroundImage
+          ? 'linear-gradient(135deg, #1a1b1e 0%, #25262b 100%)'
+          : undefined,
       }}
     >
-      {/* Background image (uses crucible cover image) */}
-      {image && (
+      {backgroundImage && (
         <div className="absolute inset-0 overflow-hidden">
           <EdgeMedia
-            src={image.url}
-            name={image.name}
+            src={backgroundImage.url}
+            name={backgroundImage.name}
             type="image"
             width={450}
             className="size-full scale-110 object-cover opacity-40 blur-2xl"
@@ -96,8 +95,8 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
             style={{ maxWidth: 'none' }}
           />
           <EdgeMedia
-            src={image.url}
-            name={image.name}
+            src={backgroundImage.url}
+            name={backgroundImage.name}
             type="image"
             width={1600}
             className="absolute inset-0 size-full object-contain opacity-70"
@@ -106,7 +105,6 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
         </div>
       )}
 
-      {/* Gradient overlay */}
       <div
         className="absolute inset-0"
         style={{
@@ -134,13 +132,12 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
         </NavigateBack>
 
         <div
-          className="mb-8 max-w-xl rounded-xl border border-white/10 p-5 sm:p-8"
+          className="mb-8 max-w-2xl self-start rounded-xl border border-white/10 p-5 sm:p-8"
           style={{
             background: 'rgba(37, 38, 43, 0.95)',
             backdropFilter: 'blur(10px)',
           }}
         >
-          {/* Status badge */}
           <div className="mb-3">
             <Badge
               color={statusBadge.color}
@@ -154,12 +151,10 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
             </Badge>
           </div>
 
-          {/* Title */}
           <Title order={1} className="mb-3 text-white [overflow-wrap:anywhere]" fw={700} size="h2">
             {name}
           </Title>
 
-          {/* Description */}
           {description && (
             <ContentClamp maxHeight={72} className="mb-4">
               <Text size="sm" c="dimmed" lh={1.6} className="[overflow-wrap:anywhere]">
@@ -186,6 +181,7 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
             <div className="flex items-center gap-2">
               <CurrencyBadge
                 currency={Currency.BUZZ}
+                type={buzzType}
                 unitAmount={prizePool}
                 variant="transparent"
                 size="lg"
@@ -202,16 +198,7 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
 
             {status === CrucibleStatus.Active && endAt && <CrucibleTimer endAt={endAt} />}
 
-            {nsfwLevel > NsfwLevel.PG && (
-              <Badge
-                color={nsfwLevel & ~(NsfwLevel.PG | NsfwLevel.PG13) ? 'red' : 'yellow'}
-                variant="filled"
-                radius="xl"
-                size="sm"
-              >
-                {getCrucibleRatingLabel(nsfwLevel)}
-              </Badge>
-            )}
+            <CrucibleContentLevelBadges nsfwLevel={nsfwLevel} />
           </div>
         </div>
       </Container>

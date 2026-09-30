@@ -261,8 +261,21 @@ describe('createCrucibleInputSchema', () => {
       createCrucibleInputSchema.safeParse({
         ...validCreateInput,
         maxTotalEntries: CRUCIBLE_MIN_TOTAL_ENTRIES,
+        prizePositions: { '1': 70, '2': 30 },
       }).success
     ).toBe(true);
+  });
+
+  it('rejects more prize places than the crucible can have entrants', () => {
+    const result = createCrucibleInputSchema.safeParse({
+      ...validCreateInput,
+      maxTotalEntries: 2,
+      prizePositions: { '1': 50, '2': 30, '3': 20 },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.message).toMatch(
+      /more prize places than the maximum total entries/
+    );
   });
 
   it('rejects more entries per user than the whole crucible allows', () => {

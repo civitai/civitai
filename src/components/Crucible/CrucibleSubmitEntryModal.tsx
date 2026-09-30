@@ -18,7 +18,6 @@ import {
   IconCircleX,
   IconCloudUpload,
   IconCube,
-  IconEyeOff,
   IconPhoto,
   IconRefresh,
   IconSend,
@@ -30,6 +29,7 @@ import {
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { CrucibleContentLevelBadges } from '~/components/Crucible/CrucibleContentLevelBadges';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import type { GeneratorMediaCandidate } from '~/components/EntrySubmit/GeneratorMediaPicker';
@@ -52,6 +52,7 @@ import { trpc } from '~/utils/trpc';
 import { getCrucibleRatingLabel } from '~/utils/crucible-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { Flags } from '~/shared/utils/flags';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import clsx from 'clsx';
 
 /**
@@ -61,6 +62,7 @@ export interface CrucibleSubmitEntryModalProps {
   crucibleId: number;
   crucibleName: string;
   entryFee: number;
+  buzzType?: BuzzSpendType;
   entryLimit: number;
   nsfwLevel: number;
   contentType: MediaType;
@@ -314,6 +316,7 @@ export default function CrucibleSubmitEntryModal({
   crucibleId,
   crucibleName,
   entryFee,
+  buzzType,
   entryLimit,
   nsfwLevel,
   contentType,
@@ -807,9 +810,7 @@ export default function CrucibleSubmitEntryModal({
               >
                 {isVideo ? 'Videos only' : 'Images only'}
               </Badge>
-              <Badge {...requirementBadgeProps} leftSection={<IconEyeOff size={12} />}>
-                {getCrucibleRatingLabel(nsfwLevel)} only
-              </Badge>
+              <CrucibleContentLevelBadges nsfwLevel={nsfwLevel} className="contents" />
             </div>
           </div>
 
@@ -1037,6 +1038,7 @@ export default function CrucibleSubmitEntryModal({
                   loading={isSubmitting}
                   disabled={validSelectedCount === 0 || !canSubmitMore}
                   label={submitLabel}
+                  exactAccountTypes={buzzType ? [buzzType] : undefined}
                   showPurchaseModal
                 />
               ) : (
@@ -1054,7 +1056,7 @@ export default function CrucibleSubmitEntryModal({
 
             {entryFee > 0 && (
               <div className="flex items-center justify-end gap-1">
-                <CurrencyIcon currency={Currency.BUZZ} size={14} />
+                <CurrencyIcon currency={Currency.BUZZ} type={buzzType} size={14} />
                 <Text size="xs" c="dimmed">
                   {entryFee.toLocaleString()} Buzz per entry
                 </Text>

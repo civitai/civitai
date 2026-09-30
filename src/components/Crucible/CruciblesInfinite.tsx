@@ -26,7 +26,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 export function CruciblesInfinite({ filters: filterOverrides, showEof = true }: Props) {
   const cruciblesFilters = useCrucibleFilters();
   const currentUser = useCurrentUser();
-  const hasFilters = !!filterOverrides?.status;
+  const hasFilters = !!(filterOverrides?.status || filterOverrides?.contentType);
 
   const filters = removeEmpty({ ...cruciblesFilters, ...filterOverrides });
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);

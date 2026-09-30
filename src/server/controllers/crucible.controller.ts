@@ -1,10 +1,12 @@
 import type { Context, ProtectedContext } from '~/server/createContext';
+import { deriveDomainCurrency } from '~/server/games/daily-challenge/challenge-currency';
 import type {
   CheckCrucibleEntryEligibilitySchema,
   CreateEntryPostSchema,
   GetCrucibleEntriesSchema,
   CancelCrucibleSchema,
   UpdateCrucibleSchema,
+  GetFeaturedCrucibleSchema,
   CreateCrucibleInputSchema,
   GetCrucibleByIdSchema,
   GetCruciblesInfiniteSchema,
@@ -60,6 +62,8 @@ export const getInfiniteCruciblesHandler = async ({
     select: crucibleListSelect,
     excludedUserIds,
     isModerator: ctx.user?.isModerator ?? false,
+    viewerId: ctx.user?.id,
+    isGreen: !!ctx.features?.isGreen,
   });
 };
 
@@ -88,7 +92,12 @@ export const createCrucibleHandler = async ({
   input: CreateCrucibleInputSchema;
   ctx: ProtectedContext;
 }) => {
-  return createCrucible({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator });
+  return createCrucible({
+    ...input,
+    userId: ctx.user.id,
+    isModerator: ctx.user.isModerator,
+    buzzType: deriveDomainCurrency(!!ctx.features?.isGreen),
+  });
 };
 
 export const getCrucibleEntriesHandler = async ({
@@ -185,9 +194,20 @@ export const getUserActiveCruciblesHandler = async ({ ctx }: { ctx: ProtectedCon
   return getUserActiveCrucibles({ userId: ctx.user.id });
 };
 
-export const getFeaturedCrucibleHandler = async ({ ctx }: { ctx: Context }) => {
+export const getFeaturedCrucibleHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetFeaturedCrucibleSchema;
+  ctx: Context;
+}) => {
   const excludedUserIds = await getBlockedByUserIds(ctx.user);
-  return getFeaturedCrucible({ excludedUserIds });
+  return getFeaturedCrucible({
+    excludedUserIds,
+    browsingLevel: input.browsingLevel,
+    isGreen: !!ctx.features?.isGreen,
+    isLoggedIn: !!ctx.user,
+  });
 };
 
 export const getJudgesCountHandler = async ({ input }: { input: GetJudgesCountSchema }) => {

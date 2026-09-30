@@ -3,6 +3,7 @@ import { IconPlus } from '@tabler/icons-react';
 import Link from 'next/link';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
+import { CrucibleFiltersDropdown } from '~/components/Crucible/CrucibleFiltersDropdown';
 import { CruciblesInfinite } from '~/components/Crucible/CruciblesInfinite';
 import { UserCrucibleWelcome } from '~/components/Crucible/UserCrucibleWelcome';
 import { FeaturedCrucibleHero } from '~/components/Crucible/FeaturedCrucibleHero';
@@ -53,7 +54,10 @@ function CruciblesPage() {
             <Text fz="xl" fw={600}>
               Discover Crucibles
             </Text>
-            <SortFilter type="crucibles" />
+            <Group gap={8} wrap="nowrap">
+              <SortFilter type="crucibles" />
+              <CrucibleFiltersDropdown />
+            </Group>
           </Group>
 
           <CruciblesInfinite filters={filters} />
