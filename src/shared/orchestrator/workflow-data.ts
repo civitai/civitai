@@ -226,6 +226,7 @@ export class StepData {
       case 'aceStepAudio':
       case 'miniMaxMusic3':
       case 'yuE2':
+      case 'soniloAudioGen':
         return 'audio';
       default:
         return 'image';
