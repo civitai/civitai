@@ -184,7 +184,8 @@ function storageErrorMessage(err: unknown): string {
  *     destination allowlist; what is refused is other ORIGINS (any scheme,
  *     protocol-relative, backslash, control characters), traversal, and
  *     site-absolute `/api/*`, which is not a page route and whose
- *     `/api/auth/signout` would sign the viewer out. `resolveNavigateRequest` in
+ *     `/api/auth/logout` — a GET with no method gate — would end the viewer's
+ *     session on a block's say-so. `resolveNavigateRequest` in
  *     `pageBlockHostLogic` owns that decision and is unit-tested, so a block
  *     cannot reach another origin in either scope. `target: 'new_tab'` is opened
  *     by the HOST from the parent frame — the destination is host-validated and

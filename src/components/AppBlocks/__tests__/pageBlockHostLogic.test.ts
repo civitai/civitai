@@ -1086,15 +1086,16 @@ describe('resolveNavigateRequest (#5209 — site-absolute vs app-scoped)', () =>
 
   describe('the /api/* exclusion — deliberately narrow, and NOT an allowlist', () => {
     it('refuses a site-absolute /api path', () => {
-      // `router.push('/api/auth/signout')` has no page to render, so Next falls
-      // back to a HARD navigation and the viewer is signed out on a block's say-so.
-      for (const path of ['/api/auth/signout', '/api', '/api/v1/models', '/api/']) {
+      // `router.push('/api/auth/logout')` has no page to render, so Next falls back
+      // to a HARD navigation — and that handler takes a bare GET with no method gate
+      // and no CSRF token, so the viewer's session ends on a block's say-so.
+      for (const path of ['/api/auth/logout', '/api', '/api/v1/models', '/api/']) {
         expect(resolveNavigateRequest({ path }, PAGE), path).toBeNull();
       }
     });
 
     it('refuses it case-insensitively', () => {
-      for (const path of ['/API/auth/signout', '/Api/v1/x', '/aPI']) {
+      for (const path of ['/API/auth/logout', '/Api/v1/x', '/aPI']) {
         expect(resolveNavigateRequest({ path }, PAGE), path).toBeNull();
       }
     });

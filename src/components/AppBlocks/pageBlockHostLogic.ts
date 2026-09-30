@@ -513,10 +513,18 @@ export function resolveGetImagesByIdsRequest(raw: unknown): GetImagesByIdsReques
 //   - The published SDK JSDoc and the developer docs both promise it, and both
 //     use `/models/12345` as the worked example.
 //   So production was the odd one out among host, dev host and documentation.
-//   A block ALREADY renders arbitrary links and arbitrary text; the thing a
-//   site-absolute push adds over `<a href>` is that the destination gets a real
-//   origin instead of the frame's opaque one. It does not widen what a block can
-//   persuade a viewer to visit.
+//   This DOES widen what a block can do, deliberately. `ALLOWED_SANDBOX_TOKENS`
+//   carries no `allow-top-navigation*`, so before this change a block could not
+//   move the TOP frame at all — an `<a href>` it renders navigates its OWN frame,
+//   at an opaque origin. Top-frame same-site navigation is a NEW capability,
+//   granted on purpose and with the blast radius stated.
+//   ⚠️ RETRACTED DRAFT, recorded so it is not re-derived: this comment used to
+//   read "It does not widen what a block can persuade a viewer to visit." That
+//   was false, and false in the direction that made the change look cheaper than
+//   it is. The three-way agreement above establishes site-absolute REACHABILITY;
+//   it does not establish that UNRESTRICTED is the right width — an allowlist
+//   satisfies host, dev host and docs equally. The width is an operator decision
+//   (see the PR), not something this argument derives.
 //
 // WHAT IS STILL REFUSED (fail-closed; a refusal returns `null` and the caller
 // drops the message — NAVIGATE is fire-and-forget with no requestId, so a drop
@@ -530,8 +538,16 @@ export function resolveGetImagesByIdsRequest(raw: unknown): GetImagesByIdsReques
 //   - 🔴 `/api/*`, SITE-ABSOLUTE ONLY. A DELIBERATE NARROW EXCLUSION, and
 //     explicitly NOT a destination allowlist. `/api/*` is not a page route, so a
 //     `router.push` at it does not render anything — Next falls back to a HARD
-//     navigation, which for `/api/auth/signout` would SIGN THE VIEWER OUT on a
-//     block's say-so. Excluding it costs the feature nothing (no page
+//     navigation. The worked case is `/api/auth/logout`, and it is REAL: that
+//     handler takes a bare GET with no `req.method` gate, no 405 and no CSRF
+//     token, so it clears the session, device and legacy cookies and revokes the
+//     token at the hub — on a block's say-so. `window.open` reaches it too, so
+//     the refusal is load-bearing in BOTH targets.
+//     ⚠️ An earlier draft named `/api/auth/signout`, which does NOT exist in this
+//     repo: that is a next-auth name and auth here is `@civitai/auth`, whose
+//     route is `logout.ts`. Do not "fix" this guard by checking the old example
+//     and finding nothing there — the hole it covers is real.
+//     Excluding `/api/*` costs the feature nothing (no page
 //     destination lives there) and is the only content-based refusal here.
 //     App-scoped `api/...` is untouched: it resolves under the block's own route
 //     and reaches no site handler.

@@ -284,8 +284,8 @@ describe('PageBlockHost NAVIGATE bridge (#5209)', () => {
     renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
 
-    postFromBlock('NAVIGATE', { path: '/api/auth/signout' });
-    postFromBlock('NAVIGATE', { path: '/api/auth/signout', target: 'new_tab' });
+    postFromBlock('NAVIGATE', { path: '/api/auth/logout' });
+    postFromBlock('NAVIGATE', { path: '/api/auth/logout', target: 'new_tab' });
 
     await new Promise((r) => setTimeout(r, 150));
     expect(router.push).not.toHaveBeenCalled();
