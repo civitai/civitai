@@ -102,6 +102,7 @@ vi.mock('~/server/services/blocks/private-run-access.service', () => mockAccess)
 // registration of it would be a `no-direct-shared-module-mock` failure. Used here as the
 // discriminator between "the gate decided" and "the gate fell open".
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { trackRouter } from '~/server/routers/track.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -178,8 +179,36 @@ async function viaTrpc(input: unknown, user: SessionUser | undefined): Promise<n
 
 // ── world setup ──────────────────────────────────────────────────────────────
 
+/**
+ * ARM GATE 3.5's COST CEILING TO ALLOW.
+ *
+ * 🔴 NOT OPTIONAL HOUSEKEEPING — without it every case in this file would pass for the wrong
+ * reason. The gate now consults a per-viewer Redis ceiling before the access predicate, and a
+ * bare `sysRedis` hybrid node makes `multi()` return `undefined`, so the limiter throws inside
+ * its own try and FAILS OPEN. The suppression table would then be measuring a gate whose
+ * ceiling is effectively absent, and would stay green if the ceiling were later wired to
+ * refuse everything. An explicit always-under-the-window reply makes the pass a decision.
+ *
+ * The ceiling's own behaviour (the boundary, the key, both fail directions, the refusal
+ * counter) belongs to `src/server/utils/__tests__/private-run-impression-rate-limit.test.ts`
+ * and `blocks/__tests__/private-run-impression.service.test.ts`; this file's subject is the
+ * two writers agreeing, so it holds the ceiling constant rather than exercising it.
+ */
+function allowRateLimiter() {
+  redisMock.sysRedis.ttl.mockResolvedValue(60);
+  redisMock.sysRedis.multi.mockImplementation(() => {
+    const chain: Record<string, unknown> = {
+      set: () => chain,
+      incr: () => chain,
+      exec: async () => ['OK', 1],
+    };
+    return chain;
+  });
+}
+
 /** Non-approved app, flag on — the world in which a private run is possible. */
 function armed() {
+  allowRateLimiter();
   mockKnown.boundAppBlockIdLabel.mockImplementation(async (id: string) =>
     id === APPROVED_APP ? id : 'other'
   );

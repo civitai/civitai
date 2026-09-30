@@ -646,8 +646,10 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  *      it emitted a row like any other view and the reviewer landed as an identifiable
  *      unique viewer. Both writers now consult `blocks/private-run-impression.service`
  *      and skip the insert; the canonical reasoning is at `blocks/app-views.service.ts`.
- *      🔴 BUT IT LEAVES ONE THING FOR WHOEVER WIDENS THIS FLAG, and this is the reason
- *      the item stays here rather than only at the read site:
+ *      ⚠️ ITS TWO CARRY-OVERS ARE BOTH SATISFIED NOW, and they stay here rather than only
+ *      at the read site because each is a CONTROL a later change can remove — a widener
+ *      needs to be able to re-check them, and (b) carries residuals that are live by
+ *      design. Neither is an open item; the only open item is in the summary below:
  *        (a) ✅ SATISFIED. The key EXISTS in `flipt-state`, base-off with no rollout
  *            (`civitai/flipt-state` PR #100, squash `c94c807`; verified present at
  *            `enabled: false`). It had to, because an ABSENT key makes the evaluation
@@ -655,15 +657,33 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  *            that gate sits on the `/api/track/block-render` beacon. Left here as a
  *            SATISFIED entry rather than deleted: the requirement still binds if anyone
  *            ever removes that row, and a deleted line cannot say so.
- *        (b) 🔴 NEITHER OF THE TWO WRITERS IS RATE-LIMITED, and once this flag admits
- *            anyone, each one's gate can reach the private-run access predicate — which
- *            touches the write primary — on a caller-chosen app id. Before that change
- *            the common beacon path did zero Postgres queries. Settle it for BOTH
- *            writers, not one: a rate limit on each, or confirm this flag's rollout
- *            admits only the moderators segment. Both writers are enumerated in
- *            `blocks/__tests__/block-render-writer.call-site-ledger.test.ts`, so "both"
- *            is followable. (Keep this at the level of the missing control — this repo
- *            is public.)
+ *        (b) ✅ SATISFIED. The two writers are rate-limited — by ONE ceiling, inside the
+ *            gate they share, which is why this reads as settled for BOTH rather than for
+ *            one. `blocks/private-run-impression.service.ts` gate 3.5 calls
+ *            `~/server/utils/private-run-impression-rate-limit`, placed AFTER the flag
+ *            check and BEFORE the access predicate: 30 reaching calls per 60 s per VIEWER
+ *            (the key is the viewer alone — an app id is caller-chosen, so including it
+ *            would hand out a fresh bucket per invented id and bound nothing). Bound:
+ *            ≤ 30 × 9 = 270 single-row queries/minute/viewer, ≤ 30 of them on the write
+ *            primary. Because the limiter sits behind the flag it costs ZERO Redis calls
+ *            for anonymous viewers, approved apps and anyone the flag does not admit —
+ *            i.e. nothing at all today. "Both writers" is structural, not asserted twice:
+ *            `blocks/__tests__/block-render-writer.call-site-ledger.test.ts` fails if a
+ *            writer is added, removed, or stops calling that gate. Left here as a
+ *            SATISFIED entry rather than deleted, for the same reason as (a): the
+ *            requirement still binds if anyone removes the control.
+ *            🔴 WHAT IT DOES NOT CLOSE, and a widener should know both:
+ *              · ABOVE THE CEILING the refused call RECORDS the impression (returning
+ *                "suppress" would let a viewer hide their own impressions by exhausting
+ *                their own window — a larger defect than the leak). So past 30/min the
+ *                owner-INVISIBILITY degrades, not the cost bound.
+ *              · DURING A REDIS INCIDENT the limiter fails OPEN, which here means the
+ *                expensive query is paid — the cost bound is simply absent, by design,
+ *                because a cache incident must not start leaking review activity into an
+ *                owner's panel.
+ *            Both are instrumented:
+ *            `civitai_app_block_private_run_impression_rate_limit_refusals_total`.
+ *            (Keep this at the level of the control — this repo is public.)
  *   4. ⚖️ `block_buzz_attribution` (owner-visible `buzzPurchased`) — NOT FILTERED, BY
  *      DECISION, and recorded here so the enumeration is not mistaken for complete at
  *      three. `getMyAppAnalytics` aggregates this table into `buzzPurchased` with no
@@ -683,13 +703,15 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  * refuse before resolving anything, so no private-run row of either kind can exist.
  * It becomes live the moment this value is anything else.
  *
- * So, before widening on THIS count, exactly TWO things remain — item 1's filter has LANDED
- * and item 3's flag-key carry-over is SATISFIED:
- *   · item 3(b): the two unrate-limited `blockRenders` writers.
+ * So, before widening on THIS count, exactly ONE thing remains — item 1's filter has LANDED,
+ * and BOTH of item 3's carry-overs are now SATISFIED (the flag key exists in `flipt-state`,
+ * and the two writers share one rate-limited gate):
  *   · item 1's acceptance check: one real private run, read on the owner's own analytics panel.
  * All three analytics rails now filter, so the void DOES deliver the invisibility at the row
  * level; what it does not deliver on its own is the evidence that it works end to end, which
- * is what the acceptance check buys.
+ * is what the acceptance check buys. That remaining item is DELIBERATELY NOT CLOSEABLE BY
+ * CODE — no test can stand in for an operator reading the owner's panel — so do not expect a
+ * PR to retire it.
  *
  * ⚠️ THIS PARAGRAPH IS A COUNT, AND A COUNT IS THE THING THAT ROTS. It said "item 3's two
  * carry-overs (the flag key existing in `flipt-state`, …)" while that key had ALREADY been

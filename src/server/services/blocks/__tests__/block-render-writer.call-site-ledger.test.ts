@@ -93,20 +93,27 @@ describe('the blockRenders writer set — instrument validation', () => {
     // green the moment somebody writes the gate's name in a doc comment, with the file
     // calling nothing.
     //
-    // ⚠️ THE POPULATION IS EXACTLY ONE FILE — the client beacon emitter.
-    // (`app-views.service.ts` names the module PATH, not the identifier; the two writers
-    // name it in prose AND call it, so they are in CODE and correctly excluded.) With a
-    // mere non-emptiness check the whole control would rest on ONE prose paragraph, and
-    // this repo's comment policy actively encourages deleting paragraphs — so it is
-    // pinned BY NAME. A deletion is then a red test with an obvious fix rather than a
-    // control that silently stops controlling.
+    // ⚠️ THE POPULATION IS EXACTLY TWO FILES — the client beacon emitter, and the gate's
+    // cost ceiling, which names the gate in its own docblock while being called BY it
+    // rather than calling it. (`app-views.service.ts` names the module PATH, not the
+    // identifier; the two writers name it in prose AND call it, so they are in CODE and
+    // correctly excluded.) With a mere non-emptiness check the whole control would rest on
+    // ONE prose paragraph, and this repo's comment policy actively encourages deleting
+    // paragraphs — so it is pinned BY NAME. A deletion is then a red test with an obvious
+    // fix rather than a control that silently stops controlling.
+    //
+    // 🔴 THE SECOND ENTRY IS ALSO A NON-GOAL, ASSERTED: the limiter must never call the
+    // gate. It sits INSIDE it (gate 3.5), so a call in that direction would be a cycle.
     const mentionsInProse = FILES.filter((f) => {
       const text = raw(f);
       return (
         text.includes('isPrivateRunImpression') && !CODE.get(f)!.includes('isPrivateRunImpression')
       );
     });
-    expect(mentionsInProse).toEqual(['src/components/AppBlocks/sendBlockRender.ts']);
+    expect(mentionsInProse).toEqual([
+      'src/components/AppBlocks/sendBlockRender.ts',
+      'src/server/utils/private-run-impression-rate-limit.ts',
+    ]);
     for (const f of mentionsInProse) {
       expect(callersOf('isPrivateRunImpression')).not.toContain(f);
     }
@@ -242,6 +249,7 @@ describe('the blockRenders writer set — the ledger [INV]', () => {
     const gate = CODE.get('src/server/services/blocks/private-run-impression.service.ts')!;
     for (const deferred of [
       '~/server/services/app-blocks-flag',
+      '~/server/utils/private-run-impression-rate-limit',
       '~/server/services/blocks/private-run-access.service',
     ]) {
       // `CODE` has string literals stripped, so the specifier is matched against RAW text;
@@ -251,12 +259,14 @@ describe('the blockRenders writer set — the ledger [INV]', () => {
         `${deferred} must still be referenced`
       ).toContain(deferred);
     }
-    // Two dynamic imports, and no static `import … from` beyond the two cheap ones the
-    // beacon route already pulls in.
+    // THREE dynamic imports, and no static `import … from` beyond the two cheap ones the
+    // beacon route already pulls in. The third is the cost ceiling (gate 3.5), whose module
+    // pulls the Redis client and the prom registry — both exactly the kind of graph this
+    // route exists to keep out of its eager path.
     expect(
       (gate.match(/await import\(/g) ?? []).length,
-      'the flag and the predicate must BOTH stay behind `await import`'
-    ).toBe(2);
+      'the flag, the cost ceiling and the predicate must ALL stay behind `await import`'
+    ).toBe(3);
 
     // 🔴 ENUMERATED EQUALITY, NOT TWO SAMPLES. Asserting that the two cheap specifiers are
     // PRESENT says nothing about a third being ADDED — `import { dbRead } from

@@ -117,11 +117,13 @@ import { logToAxiom } from '~/server/logging/client';
  * merely expensive: there is no single question for it to answer. Recorded, not guarded,
  * and 🔴 do not accept a later proposal to unify them.
  *
- * 🔴 A LOAD PRECONDITION THIS CLOSURE CREATES. Recorded as a gate on widening in
- * `app-blocks-flag.ts`'s own PRECONDITION block — the file an operator opens — so only
- * the shape is here: the gate can reach `resolvePrivateRunAccess` (4–9 statements by
- * audience, one on the WRITE PRIMARY) on a route with no rate limit, and before this
- * change the common beacon path did ZERO Postgres queries.
+ * 🔴 A LOAD COST THIS CLOSURE CREATES. Recorded in `app-blocks-flag.ts`'s own PRECONDITION
+ * block — the file an operator opens — so only the SHAPE is here, and its STATE is not
+ * restated: the gate can reach `resolvePrivateRunAccess` (4–9 statements by audience, one
+ * on the WRITE PRIMARY) on a public route whose app id is body-chosen, where the common
+ * beacon path used to do ZERO Postgres queries. The per-viewer ceiling that bounds it lives
+ * in `~/server/utils/private-run-impression-rate-limit`, and the two residuals it does not
+ * bound are enumerated in that precondition block — read them there.
  *
  * ACCEPTANCE (the condition this arc closes on): one private run against a delisted app,
  * then the operator reads that app's analytics panel and confirms `views.count` and

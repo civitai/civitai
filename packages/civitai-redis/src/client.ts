@@ -1989,6 +1989,26 @@ export const REDIS_SYS_KEYS = {
      */
     PRIVATE_RUN_BUZZ_CAP: 'system:blocks:private-run-buzz-cap',
     /**
+     * PRIVATE-RUN IMPRESSION GATE — fixed-window COST ceiling on how often one viewer
+     * may drive the private-run analytics gate into its expensive leg. Keyed
+     * `${PRIVATE_RUN_IMPRESSION_RATE_LIMIT}:<viewerUserId>`. Same atomic
+     * `MULTI: SET key 0 NX EX <window>` + `INCR key` shape as `APPS_CATALOG_RATE_LIMIT`
+     * (the TTL is armed by the command that CREATES the key), on `sysRedis`, fail-OPEN.
+     *
+     * 🔴 THE KEY CARRIES THE VIEWER AND NOTHING ELSE — in deliberate CONTRAST to
+     * `PRIVATE_RUN_BUZZ_CAP` directly above, which keys on `<viewer>:<appBlockId>`. That
+     * one is a per-app BUDGET, so per-app is what it wants; this one is a COST limiter on
+     * a public write path whose app id comes out of the REQUEST BODY, so adding the app
+     * would let a caller rotate app ids for a fresh bucket per call and the ceiling would
+     * bound nothing. Same rotation defect `block-catalog-rate-limit.ts` records about
+     * keying on a `jti`.
+     *
+     * A distinct prefix, not a sub-namespace of the buzz cap, so the two can never draw
+     * each other down: one bounds how much Buzz a review session may spend, the other how
+     * many single-row queries a beacon may provoke.
+     */
+    PRIVATE_RUN_IMPRESSION_RATE_LIMIT: 'system:blocks:private-run-impression-rate-limit',
+    /**
      * CONSENT BUDGET — the per-(USER, APP BLOCK, UTC-day) Buzz ceiling the VIEWER
      * themselves set at consent time (`app_user_scope_grants.buzz_budget_per_day`).
      * Keyed `${CONSENT_BUDGET}:<userId>:<appBlockId>:<UTC-day>`.

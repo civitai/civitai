@@ -209,6 +209,16 @@ export default PublicEndpoint(
     // reintroduce the leak, and `block-render-writer.call-site-ledger.test.ts` for the
     // guard that keeps the writer set and this call in step.
     //
+    // 🔴 THE COST CEILING LIVES INSIDE THE PREDICATE, NOT HERE, AND THAT IS ON PURPOSE.
+    // This route is public and `appBlockId` is body-chosen, so a signed-in caller could
+    // otherwise drive the predicate's 4–9 single-row queries (one on the WRITE PRIMARY) at
+    // will once the flag admits anyone. One per-viewer ceiling inside the shared predicate
+    // covers BOTH writers by construction — the writer ledger fails if either stops calling
+    // it — where a limiter added here would leave the tRPC writer unbounded. Do not add a
+    // second one on this route: the ceiling's key, its two fail directions and its cost
+    // arithmetic have exactly one home,
+    // `src/server/utils/private-run-impression-rate-limit.ts`.
+    //
     // 🔴 UNWRAPPED ON PURPOSE: `isPrivateRunImpression` swallows everything internally,
     // including a synchronously-throwing logger. Do not move work out of it to here — a
     // telemetry failure would become a 500 AND a silently lost impression.

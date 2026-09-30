@@ -58,6 +58,16 @@ export const trackRouter = router({
     // new ClickHouse column, the over-filtering bound and the acceptance step:
     // `src/server/services/blocks/app-views.service.ts`.
     //
+    // 🔴 THE PREDICATE'S COST CEILING COVERS THIS PROCEDURE TOO, WITHOUT A LINE HERE. It
+    // sits inside the shared predicate (`private-run-impression.service.ts` gate 3.5), keyed
+    // on the viewer, so this writer — reachable by a bearer/API-key caller who never runs
+    // the browser beacon, on an `appBlockId` it chooses — is bounded by the same window as
+    // the beacon rather than by a second copy that could drift from it. ⚠️ Its refusal
+    // counter IS emitted on this path, even though this procedure deliberately emits no
+    // other prom (the asymmetry noted above): the counter grades the shared GATE, not either
+    // writer's traffic. That divergence is intentional — do not "restore symmetry" by
+    // suppressing it here.
+    //
     // 🔴 `secondary` additionally SUPPRESSES the insert, matching the beacon route
     // exactly. `blockRenders` counts IMPRESSIONS (one row per host mount) and its
     // rows carry no status, so a follow-up beacon for an already-reported mount

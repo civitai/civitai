@@ -677,6 +677,7 @@ type Bundle = {
   consentRevocationRefusalsTotal: Counter<string>;
   consentMarkerUnavailableTotal: Counter<string>;
   bridgeRateLimitRefusalsTotal: Counter<string>;
+  privateRunImpressionRateLimitRefusalsTotal: Counter<string>;
   postSubjectRefusalsTotal: Counter<string>;
   stepPriceCheckTotal: Counter<string>;
   launchTotalSeconds: Histogram<string>;
@@ -1132,6 +1133,35 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     ['procedure', 'bucket']
   );
 
+  // ── PRIVATE-RUN IMPRESSION GATE: RATE-LIMIT REFUSAL ──────────────────────────
+  // 🔴 A REFUSAL HERE HAS A CORRECTNESS CONSEQUENCE, NOT MERELY A THROTTLING ONE, and
+  // that is why a silent refusal was not an option. The gate's over-limit arm records the
+  // impression (returning "suppress" would let any viewer hide their own impressions by
+  // exhausting their own window, which is a larger defect than the leak). So past the
+  // ceiling a genuine reviewer's private-run mounts become VISIBLE to the app's owner —
+  // the invisibility guarantee degrades, quietly, on a path nothing else observes.
+  //
+  // NO LABELS AT ALL, DELIBERATELY. The two candidates are both wrong here:
+  //   · a viewer id is unbounded AND identifying — never;
+  //   · an app id carries no information on this path even when bounded, because the gate
+  //     only reaches the limiter for an app CONFIRMED NOT APPROVED, and
+  //     `boundAppBlockIdLabel` clamps exactly those to 'other'/'dev'. A label whose value
+  //     is a constant by construction costs series and answers nothing.
+  // Attribution for a refusal belongs to the gate's own fail-open log line, not here.
+  //
+  // 🔴 WHAT A ZERO MEANS. Zero is the healthy steady state — and while the private-run
+  // flag is base-off the limiter is not even REACHED, so "nobody is being throttled" and
+  // "the emitter is inert" are the same observation from outside. That is why the
+  // registration is pinned by a real-registry test
+  // (`src/server/utils/__tests__/private-run-impression-rate-limit.test.ts` reads the
+  // default registry) rather than left to a mocked caller-level assertion.
+  const privateRunImpressionRateLimitRefusalsTotal = getOrCreateCounter(
+    reg,
+    'civitai_app_block_private_run_impression_rate_limit_refusals_total',
+    "Calls REFUSED by the per-viewer cost ceiling in front of the private-run analytics gate's expensive leg (~/server/utils/private-run-impression-rate-limit). Counts the GATE, which both blockRenders writers share, so it is not attributable to a writer and is not meant to be. READ IT AS A CORRECTNESS SIGNAL, NOT A THROTTLING ONE: a refused call RECORDS the impression, so past the ceiling a reviewer's private-run mounts become visible to the app owner — the owner-invisibility guarantee is what degrades, not the cost bound. Non-zero means either the ceiling is too tight for a real review session or someone is driving the gate deliberately; both want investigating, and the two are not separable from this series alone. Carries NO labels: a viewer id would be identifying and unbounded, and an app id is a constant by construction on this path (the gate only reaches the limiter for an app confirmed NOT approved, which the label clamp maps to 'other'). Zero is also the state where the flag is off and the limiter is never reached, so a flat zero cannot by itself distinguish 'nothing was refused' from 'the emitter is inert'",
+    []
+  );
+
   // ── POST-FROM-APP: UNREADABLE SUBJECT ────────────────────────────────────────
   // 🔴 THIS BRANCH WAS PREVIOUSLY INDISTINGUISHABLE FROM A FLAG DENIAL, AND THAT IS
   // THE DEFECT THIS COUNTER EXISTS TO MAKE READABLE. `authorizeBlockPostRequest`
@@ -1338,6 +1368,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
     consentRevocationRefusalsTotal,
     consentMarkerUnavailableTotal,
     bridgeRateLimitRefusalsTotal,
+    privateRunImpressionRateLimitRefusalsTotal,
     postSubjectRefusalsTotal,
     stepPriceCheckTotal,
     launchTotalSeconds,
@@ -1698,6 +1729,36 @@ export function recordBlockBridgeRateLimitRefusal(
     bridgeRateLimitRefusalsTotal.inc({ procedure, bucket });
   } catch {
     /* instrument-only — never let a metrics error change a refusal into a 500 */
+  }
+}
+
+/**
+ * Fail-soft emit of ONE refusal by the private-run impression gate's cost ceiling. Called
+ * from the refusal branch of `~/server/utils/private-run-impression-rate-limit`.
+ *
+ * 🔴 IT MEASURES THE GATE, NOT A WRITER, AND THAT ASYMMETRY IS DELIBERATE. Both
+ * `blockRenders` writers share one gate, and only one of them (`/api/track/block-render`)
+ * emits prom at all — `track.router.ts`'s `blockRender` deliberately increments no counter
+ * and observes no histogram, which its own docblock records. This counter is nonetheless
+ * emitted for BOTH, because the thing being graded is the ceiling in front of the shared
+ * expensive leg rather than either writer's traffic. Do not "fix" the asymmetry by moving
+ * the emit into the beacon: that would make the tRPC writer's refusals invisible, which is
+ * exactly the one-sided shape the writer ledger exists to prevent.
+ *
+ * 🔴 TOTAL, like every emitter in this module, and here the reason is sharp: the refusal is
+ * already decided and the caller is a fire-and-forget public beacon whose gate is awaited
+ * with no try/catch of its own, so a metrics error would become a 500 AND a lost
+ * impression.
+ *
+ * COST: one in-heap counter increment on a path that should be empty — and that is not
+ * reached AT ALL while the private-run flag is off.
+ */
+export function recordPrivateRunImpressionRateLimitRefusal(): void {
+  try {
+    const { privateRunImpressionRateLimitRefusalsTotal } = ensureRegisterAppBlockRuntimeMetrics();
+    privateRunImpressionRateLimitRefusalsTotal.inc();
+  } catch {
+    /* instrument-only — never let a metrics error change the decision the gate chose */
   }
 }
 

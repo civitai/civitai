@@ -40,12 +40,28 @@ import { isConfirmedNonApprovedAppBlockId } from '~/server/services/blocks/known
  *     in either direction; the predicate re-checks status authoritatively.
  *   · That cache has a 5-MINUTE TTL, so a JUST-APPROVED app falls through gate 2 for up
  *     to that long — precisely its hottest window.
+ *   · Gate 3.5 — the per-viewer cost ceiling — sits AFTER the flag and BEFORE the
+ *     predicate, and both halves of that position are load-bearing. After the flag: the
+ *     limiter then costs ZERO Redis calls for anonymous viewers, for approved apps, and for
+ *     every viewer the flag does not admit — which is every caller in production today,
+ *     since the flag is base-off. Before the predicate: gate 4 is the only expensive gate,
+ *     and bounding it is the entire point. Its own reasoning, its key, both fail directions
+ *     and the cost arithmetic live in `~/server/utils/private-run-impression-rate-limit`.
  *
  * 🔴 WHICH BRANCH RUNS IS CHOSEN BY THE CALLER, NOT BY A MOUNT. `appBlockId` comes out of
  * the request body, so "an app confirmed not approved" is any string a signed-in caller
  * cares to send, and the common beacon path did ZERO Postgres queries before this. That
- * is a COST property, not an authorization one — but it is why the flag's own precondition
- * block carries "this route has no rate limit" as a gate on widening.
+ * is a COST property, not an authorization one — and it is what gate 3.5 below bounds.
+ * ⚠️ The flag's precondition block used to carry "this route has no rate limit" as a gate
+ * on widening; that item is now SATISFIED and the residual it does NOT cover is recorded
+ * there. Read it there, not here — one home for the ledger.
+ *
+ * 🔴 ONE LIMITER FOR BOTH WRITERS, INSIDE THE GATE — NOT ONE PER WRITER. The requirement
+ * was to settle the cost for BOTH `blockRenders` writers, and the shared predicate covers
+ * both BY CONSTRUCTION: `block-render-writer.call-site-ledger.test.ts` fails if a writer is
+ * added, removed, or stops calling this function, so "both" is structural rather than a
+ * claim asserted twice in two files that can drift. Two copies of one cost predicate is the
+ * shape that regenerates the same bug at every site.
  *
  * 🔴 AN ABSENT FLAG KEY THROWS: it bypasses the eval cache (only successful evaluations
  * are cached) and logs on every reaching call. The key must EXIST, base-off, before this
@@ -84,6 +100,34 @@ export async function isPrivateRunImpression(args: {
     const { isAppBlocksPrivateRunEnabled } = await import('~/server/services/app-blocks-flag');
     const privateRunEnabled = await isAppBlocksPrivateRunEnabled({ user: viewer });
     if (!privateRunEnabled) return false;
+
+    // (3.5) THE COST CEILING on the one expensive gate. Deferred like its neighbours so the
+    // beacon route's eager import graph does not pull the Redis client in to do nothing.
+    //
+    // 🔴 REFUSED ⇒ `false` ⇒ THE IMPRESSION IS RECORDED. Never `true`: `true` means
+    // "suppress", so refusing that way would let any viewer hide their own impressions by
+    // deliberately exhausting their own window — a client-settable suppression, which this
+    // file's own docblock calls a LARGER defect than the leak. It also matches the `catch`
+    // below: FAIL TOWARD RECORDING THE IMPRESSION.
+    //
+    // ⚠️ THE COST OF THAT, STATED: above the ceiling a real reviewer's private-run
+    // impressions ARE recorded and therefore become visible to the app's owner, so the
+    // invisibility guarantee — not the cost bound — is what degrades. Hence a ceiling far
+    // above any real review session's mount rate, and a prom counter on the refusal so the
+    // degradation is observable rather than silent.
+    //
+    // A limiter failure FAILS OPEN INSIDE THE LIMITER (it returns `allowed`), so a Redis
+    // incident removes the cost bound rather than the protection — see its docblock. Its
+    // BODY is total: a throwing `multi()`, a rejecting `exec` and a malformed reply all
+    // answer `allowed` rather than reaching the catch below, so none of them can be
+    // mistaken for a gate failure by anything reading the fail-open log. ⚠️ The one thing
+    // that CAN reach that catch is the dynamic import itself failing, which is a gate
+    // failure like any other and is handled as one.
+    const { checkPrivateRunImpressionRateLimit } = await import(
+      '~/server/utils/private-run-impression-rate-limit'
+    );
+    const withinCeiling = await checkPrivateRunImpressionRateLimit(viewer.id);
+    if (!withinCeiling.allowed) return false;
 
     // (4) THE REAL PREDICATE. `db: 'read'` — the default, and the replica is right here:
     // this is not a security gate, and a lag window can only mis-decide ONE impression
