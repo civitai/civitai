@@ -514,18 +514,20 @@ describe('the blockInstanceId MINT-SITE ledger', () => {
       'SUBJECT-SCOPED because the slug is not unique across users.',
     'src/pages/apps/run/[slug]/[[...path]].tsx':
       'CLIENT-SIDE construction of `page_<appBlockId>` for the run surface. Same two ' +
-      'shapes and the same coverage as the dev harness above.',
-    'src/pages/apps/private-run/[slug]/[[...path]].tsx':
-      'CLIENT-SIDE construction of `page_<appBlockId>` for the PRIVATE-RUN surface (a ' +
-      'delisted/suspended app served to its owner, an accepted collaborator, or a ' +
-      'moderator). ONE shape only, and always a real `apb_…` — the private path resolves ' +
-      'exclusively through `resolvePrivateRunPageBlock`, which reads the AppBlock table, ' +
-      'so the `ephemeral-<slug>` variant the run surface and dev harness can produce is ' +
-      'unreachable here. COVERED, and reusing this namespace is the REASON it was chosen ' +
-      'rather than a new one: `revokeBlockInstancesForPublisher` synthesises ' +
-      '`page_<appBlockId>` from the banned publisher’s canonically-owned blocks, so a ' +
-      'private-run token inherits publisher-ban revocation with no new code. ⚠️ That ' +
-      'coverage is TIME-BOXED — the markers expire after ' +
+      'shapes and the same coverage as the dev harness above. ' +
+      '⚠️ THIS ONE FILE NOW SERVES TWO SURFACES — the dedicated ' +
+      '`/apps/private-run/<slug>` route was removed and the PRIVATE RUN of a ' +
+      'delisted/suspended app (served to its owner, an accepted collaborator, or a ' +
+      'moderator) is a FALLBACK inside this resolver, behind the approved-only ' +
+      '`resolvePageBlockBySlug` returning null. On that private branch the id is ONE ' +
+      'shape only and always a real `apb_…`, because it resolves exclusively through ' +
+      '`resolvePrivateRunPageBlock`, which reads the AppBlock table — so the ' +
+      '`ephemeral-<slug>` variant the public branch and the dev harness can produce is ' +
+      'unreachable there. COVERED on both branches, and reusing this namespace is the ' +
+      'REASON it was chosen rather than a new one: `revokeBlockInstancesForPublisher` ' +
+      'synthesises `page_<appBlockId>` from the banned publisher’s canonically-owned ' +
+      'blocks, so a private-run token inherits publisher-ban revocation with no new ' +
+      'code. ⚠️ That coverage is TIME-BOXED — the markers expire after ' +
       'MAX_BLOCK_TOKEN_LIFETIME_SECONDS (14400s) — which is precisely why ' +
       'resolvePrivateRunAccess ALSO refuses on a banned owner at MINT time for the owner ' +
       'and editor audiences; moderators keep access by design.',

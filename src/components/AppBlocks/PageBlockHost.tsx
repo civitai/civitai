@@ -1884,13 +1884,24 @@ export function PageBlockHost({
       if (cleaned.startsWith('/') || cleaned.includes('//') || cleaned.split('/').includes('..')) {
         return;
       }
-      // 🔴 THE ROUTE BASE IS LOOKED UP BY `surface`, NOT HARDCODED — and hardcoding it
-      // was a real dead end, not a tidiness issue. A block's own client router pushes
-      // sub-paths through this handler; on the PRIVATE-RUN surface a hardcoded
-      // `/apps/run/<slug>` sends the viewer to the PUBLIC run route, which requires
-      // `status: 'approved'` and therefore **404s for the very suspended app they are
-      // looking at**. The app would work until the first in-app navigation and then
-      // vanish, which reads as "the private-run feature is broken".
+      // 🔴 THE ROUTE BASE IS LOOKED UP BY `surface`, NOT HARDCODED — the total record is
+      // what makes a NEW surface a compile error rather than a silent inheritance of the
+      // public base.
+      //
+      // ⚠️ THE ARGUMENT THIS COMMENT USED TO MAKE IS NOW FALSE, AND ACTING ON IT WOULD
+      // BREAK THE FEATURE — it is corrected rather than deleted, because the old wording
+      // pointed the reader at a route that no longer exists. It said: on the PRIVATE-RUN
+      // surface a hardcoded `/apps/run/<slug>` "sends the viewer to the PUBLIC run route,
+      // which requires `status: 'approved'` and therefore 404s for the very suspended app
+      // they are looking at". That was true while the private run had its OWN route.
+      //
+      // It does not have one any more. `/apps/run/<slug>` now serves the private run
+      // itself, as a fallback behind the approved-only resolver returning null, and
+      // `BLOCK_HOST_DEEP_LINK_BASE['private-run']` is therefore `/apps/run` BY DESIGN.
+      // 🔴 Do NOT "fix" it back to `/apps/private-run`: that route is DELETED, so the
+      // change would guarantee the 404-on-first-navigation this paragraph warns about,
+      // rather than prevent it. Nothing pins that record's values, so this comment is the
+      // only thing standing between a reader and that edit.
       //
       // `BLOCK_HOST_DEEP_LINK_BASE` is a TOTAL record over `BlockHostSurface`, so a new
       // surface is a compile error there rather than silently inheriting the public
