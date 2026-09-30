@@ -4,6 +4,7 @@ import { useEffect, useMemo } from 'react';
 import { blockPreconnectHint } from '~/components/AppBlocks/blockPreconnect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { recordRecentlyOpenedApp } from '~/components/Apps/recentlyOpenedAppsStore';
+import type { RecentApp } from '~/components/Apps/recentlyOpenedAppsStore';
 import { Meta } from '~/components/Meta/Meta';
 import { PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
 import { useBlockToken } from '~/components/AppBlocks/useBlockToken';
@@ -355,15 +356,63 @@ export function hostSurfaceFor(audience: PrivateRunAudience | null): BlockHostSu
 }
 
 /**
- * Whether this render may write a localStorage "recently opened" entry.
+ * The localStorage "recently opened" entry for this render — or `null` when there must
+ * not be one.
  *
- * 🔴 A PRIVATE RUN MAY NOT. Both link shapes the recents rail builds —
+ * 🔴 A PRIVATE RUN GETS `null`. Both link shapes the recents rail builds —
  * `/apps/run/<slug>` and `/apps/store-preview/<slug>` — 404 for a delisted app once the
  * flag narrows again, so an entry written here is a rail row that breaks later. That is
  * the defect `ownerId` (#4048) was added to stop, arriving by a different route.
+ *
+ * 🔴 IT RETURNS THE ENTRY RATHER THAN A BOOLEAN, AND THAT SHAPE IS THE GUARD. This was
+ * `shouldRecordRecents(audience): boolean` with `if (!shouldRecordRecents(...)) return;`
+ * at the call site — and an audit inverted that `!` and watched **151 tests across 8
+ * files stay green**. The inversion reintroduces the exact defect the extraction was
+ * meant to close (a private run writes an entry) *and* adds a new one (no public run
+ * ever does), and nothing anywhere could see it: the structural pin asserts the call
+ * TEXT, not its polarity, and the component is never rendered by a node test.
+ *
+ * Returning a nullable ENTRY removes the polarity from the call site: there is no `!` to
+ * invert, and the inverted form does not type-check. The wrong thing is unrepresentable
+ * rather than guarded — which is what to reach for when the guard itself cannot be
+ * observed.
+ *
+ * 🔴 THE GUARD IS THE TYPE CHECKER, NOT A TEST, AND THAT DISTINCTION IS THE POINT — it is
+ * why this survives a shape no unit test in this repo can reach. MEASURED, not asserted:
+ * inverting the call site to `if (!entry) recordRecentlyOpenedApp(entry, recentsOwnerId)`
+ * narrows `entry` to `null` and produces
+ *   `error TS2345: Argument of type 'null' is not assignable to parameter of type 'RecentApp'`
+ * at that exact line, under the repo's own `scripts/typecheck.mjs`. The blocking CI job
+ * `App unit tests + typecheck` runs it, so this is enforced pre-merge.
+ *
+ * ⚠️ TWO HONEST LIMITS. (a) The unit suite does NOT catch the inversion — it stays 32/32
+ * green — so if anyone moves this enforcement, the tests will not tell them. (b) An
+ * `as any` at the call site defeats it, as it defeats any type-level guard; that is a
+ * mutant which disables the guard rather than one the guard should catch.
+ *
+ * ⚠️ AND A MEASUREMENT TRAP WORTH KEEPING: a bare `npx tsc --noEmit` reported NO error
+ * here. The repo's own script is what found it — it sets the memory ceiling the bare
+ * invocation lacks. Do not re-derive this claim with a hand-rolled `tsc`.
  */
-export function shouldRecordRecents(audience: PrivateRunAudience | null): boolean {
-  return audience == null;
+export function recentsEntryFor(args: {
+  audience: PrivateRunAudience | null;
+  appBlockId: string;
+  blockId: string;
+  appName: string;
+  iconUrl: string | null;
+}): RecentApp | null {
+  if (args.audience != null) return null;
+  return {
+    id: args.appBlockId,
+    blockId: args.blockId,
+    slug: args.blockId,
+    kind: 'onsite',
+    hasPage: true,
+    name: args.appName,
+    // Spread-when-truthy, matching the shape the store's own writers use, so an absent
+    // icon leaves the key off the persisted object rather than writing `undefined`.
+    ...(args.iconUrl ? { iconUrl: args.iconUrl } : {}),
+  };
 }
 
 /**
@@ -452,39 +501,21 @@ function AppPage(props: PageProps) {
   // effect rather than on the call site so the hook order is unconditional.
   const recentsOwnerId = currentUser?.id ?? null;
   useEffect(() => {
-    if (!shouldRecordRecents(audience)) return;
-    recordRecentlyOpenedApp(
-      {
-        id: appBlockId,
-        blockId,
-        slug: blockId,
-        kind: 'onsite',
-        hasPage: true,
-        name: appName,
-        // Spread-when-truthy, matching the shape the store's own writers use
-        // (`...(entry.iconUrl ? { iconUrl: entry.iconUrl } : {})`) so an absent icon leaves
-        // the key off the persisted object. `RecentApp.iconUrl` is an OPTIONAL string.
-        //
-        // ⚠️ CONSISTENCY, NOT SAFETY — do not restate this as a hazard it is not. Writing
-        // `iconUrl: undefined` here would be harmless: `coerce` in the store keeps the field
-        // only when `typeof === 'string'`, and `JSON.stringify` drops an undefined value
-        // anyway. An earlier version of this comment claimed the explicit-undefined form
-        // would defeat an upgrade in `resolveRecentApp`; it would not, and `resolveRecentApp`
-        // does no such upgrade — the icon preference lives in `upgradeRecentFromCard`, which
-        // is reached only through `reconcileRecentApps` on the store page.
-        //
-        // 🔴 THE REAL SECOND-ORDER, WHICH IS THE OPPOSITE OF WHAT THAT CLAIMED:
-        // `recordRecentlyOpenedApp` REPLACES the entry wholesale and has no icon ratchet, so
-        // a run while the icon read is degraded (`null` → key omitted) DROPS an icon a store
-        // visit had previously recorded, until the next successful run or reconcile. Net this
-        // is still a large improvement — before this change EVERY run cleared a store-written
-        // icon, because the run page never sent one — so it is a residual, not a regression,
-        // and it is recorded here rather than fixed because adding a ratchet would change
-        // `recordRecentlyOpenedApp`'s semantics for all five of its callers.
-        ...(iconUrl ? { iconUrl } : {}),
-      },
-      recentsOwnerId
-    );
+    // 🔴 NO POLARITY HERE TO GET WRONG. `recentsEntryFor` returns the entry, or `null` for
+    // a private run — so this reads "write it if there is one", and the inverted form
+    // (`if (!entry) record(entry, …)`) does not type-check. An audit inverted the boolean
+    // guard this replaced and watched 151 tests across 8 files stay green; that shape is
+    // gone rather than guarded.
+    //
+    // ⚠️ The icon residual that used to be documented at the (now-moved) spread is
+    // unchanged and still real: `recordRecentlyOpenedApp` REPLACES the entry wholesale
+    // with no icon ratchet, so a run while the icon read is degraded drops an icon a store
+    // visit had recorded, until the next successful run or reconcile. It is a residual,
+    // not a regression — before the icon was sent at all, EVERY run cleared it — and it is
+    // not fixed here because a ratchet would change that function's semantics for all five
+    // of its callers.
+    const entry = recentsEntryFor({ audience, appBlockId, blockId, appName, iconUrl });
+    if (entry) recordRecentlyOpenedApp(entry, recentsOwnerId);
   }, [appBlockId, blockId, appName, iconUrl, recentsOwnerId, audience]);
 
   // Synthetic page instance id — the mint resolves `page_<appBlockId>` directly

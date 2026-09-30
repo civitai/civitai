@@ -703,13 +703,22 @@ export async function recordSpendAttribution(
   // Neither is reworded here, because a reworded version would be a fresh rationale for
   // a decision that has been superseded rather than revised.
   //
-  // 🔴 `'manual_review'` IS STILL WRITTEN TO THIS COLUMN BY ANOTHER PRODUCER — do not
-  // read its disappearance from here as the value becoming dead.
-  // `backpay.service.ts` writes `status: 'held', voidedReason: 'manual_review'`, so the
-  // reason remains live and the readers that filter it remain necessary. That is a
-  // second, independent argument for keeping the read-side filters this change did NOT
-  // remove, and it is the one that survives even for a reader who only cares about
-  // rows written from today onward.
+  // ⚠️ RETRACTED CLAIM, KEPT SO IT IS NOT RE-DERIVED. This said: "`'manual_review'` IS
+  // STILL WRITTEN TO THIS COLUMN BY ANOTHER PRODUCER — `backpay.service.ts` writes
+  // `status: 'held', voidedReason: 'manual_review'`", offered as a second reason the
+  // read-side filters stay necessary. 🔴 IT IS FALSE ON BOTH HALVES. `backpay.service.ts`
+  // writes to `blockSubscriptionAttribution` — a DIFFERENT TABLE — and with
+  // `status: 'held'`, not `voided`; the owner-visible filter keys on `status`, so such a
+  // row would not be excluded by it in any case. The sentence refuted itself: a
+  // `status: 'held'` write cannot produce a voided row.
+  //
+  // 🔴 THE HONEST POSITION, which is simpler than the one I reached for: the filters stay
+  // because of `self_spend` and `internal_owner`, which are written HERE, below, and are
+  // the whole live voided population — the ledger's own measurement is 582 of 639 rows,
+  // "every voided row is `self_spend`". A historical private-run population is NOT a
+  // reason either: the flag has been base-off with no rollout for its whole life, so no
+  // private run ever wrote a row. There is one real reason, not three, and reaching for
+  // extra ones is what produced a false claim while correcting other false claims.
   // ── PRIVATE RUN — NOT WRITTEN AT ALL ────────────────────────────────────────────
   // 🔴 WRITE-SIDE EXCLUSION, NOT A VOIDED ROW. This used to write the row with
   // `voidedReason: 'manual_review'` and rely on EVERY reader filtering voided rows back

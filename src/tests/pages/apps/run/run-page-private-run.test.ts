@@ -550,16 +550,37 @@ describe('the audience-keyed client decisions [REG]', () => {
     expect(hostSurfaceFor(null)).toBe('page-run');
   });
 
-  it('🔴 a private run writes NO recents entry, and a public one does', async () => {
+  it('🔴 a private run gets NO recents entry, and a public one gets a usable one', async () => {
     // Both link shapes the recents rail builds 404 for a delisted app once the flag
     // narrows, so an entry written here is a rail row that breaks later.
-    const { shouldRecordRecents } = await import('~/pages/apps/run/[slug]/[[...path]]');
-    expect(shouldRecordRecents('moderator')).toBe(false);
-    expect(shouldRecordRecents('owner')).toBe(false);
-    expect(shouldRecordRecents('editor')).toBe(false);
-    // POSITIVE CONTROL — a function returning `false` always would silently disable the
-    // recents rail for every public run, and the three rows above cannot see that.
-    expect(shouldRecordRecents(null)).toBe(true);
+    //
+    // ⚠️ THIS TESTED A BOOLEAN `shouldRecordRecents` UNTIL AN AUDIT INVERTED THE `!` AT ITS
+    // CALL SITE AND WATCHED 151 TESTS ACROSS 8 FILES STAY GREEN. The boolean was fine; the
+    // POLARITY at the call site was the untested part, and no test of a predicate can see
+    // it. `recentsEntryFor` returns the entry or `null`, so the call site has no `!` to
+    // invert and the inverted form does not type-check.
+    const { recentsEntryFor } = await import('~/pages/apps/run/[slug]/[[...path]]');
+    const args = { appBlockId: 'apb_x', blockId: 'cool-app', appName: 'Cool', iconUrl: null };
+    expect(recentsEntryFor({ ...args, audience: 'moderator' })).toBeNull();
+    expect(recentsEntryFor({ ...args, audience: 'owner' })).toBeNull();
+    expect(recentsEntryFor({ ...args, audience: 'editor' })).toBeNull();
+    // POSITIVE CONTROL — a function returning `null` always would silently disable the
+    // recents rail for every public run, and the three rows above cannot see that. Assert
+    // the entry is USABLE, not merely non-null: a truthy but malformed object would be
+    // dropped by the store's own acceptance gate and read here as coverage.
+    const pub = recentsEntryFor({ ...args, audience: null });
+    expect(pub).toMatchObject({ id: 'apb_x', blockId: 'cool-app', kind: 'onsite', hasPage: true });
+  });
+
+  it('the recents entry carries the listing icon only when there is one', async () => {
+    // `RecentApp.iconUrl` is OPTIONAL and the store keeps the key only when truthy, so an
+    // absent icon must leave the key OFF rather than write `undefined`.
+    const { recentsEntryFor } = await import('~/pages/apps/run/[slug]/[[...path]]');
+    const args = { audience: null, appBlockId: 'apb_x', blockId: 'cool-app', appName: 'Cool' };
+    expect(recentsEntryFor({ ...args, iconUrl: 'https://cdn/i.png' })).toMatchObject({
+      iconUrl: 'https://cdn/i.png',
+    });
+    expect(Object.keys(recentsEntryFor({ ...args, iconUrl: null })!)).not.toContain('iconUrl');
   });
 
   it('🔴 the two decisions are EXACT COMPLEMENTS across the audience domain', async () => {
@@ -567,16 +588,17 @@ describe('the audience-keyed client decisions [REG]', () => {
     // them to agree — but a private render must both take the private surface AND skip
     // recents. Enumerated over the audience tuple rather than a hand-written list, so a
     // FOURTH audience added to `PRIVATE_RUN_AUDIENCES` lands here with no coverage gap.
-    const { hostSurfaceFor, shouldRecordRecents } = await import(
+    const { hostSurfaceFor, recentsEntryFor } = await import(
       '~/pages/apps/run/[slug]/[[...path]]'
     );
+    const args = { appBlockId: 'apb_x', blockId: 'cool-app', appName: 'Cool', iconUrl: null };
     const { PRIVATE_RUN_AUDIENCES } = await import('~/shared/constants/block-scope.constants');
     expect(PRIVATE_RUN_AUDIENCES.length).toBeGreaterThan(0);
     for (const a of PRIVATE_RUN_AUDIENCES) {
       expect(hostSurfaceFor(a)).toBe('private-run');
-      expect(shouldRecordRecents(a)).toBe(false);
+      expect(recentsEntryFor({ ...args, audience: a })).toBeNull();
     }
     expect(hostSurfaceFor(null)).toBe('page-run');
-    expect(shouldRecordRecents(null)).toBe(true);
+    expect(recentsEntryFor({ ...args, audience: null })).not.toBeNull();
   });
 });

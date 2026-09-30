@@ -32,8 +32,11 @@ type InlineAnalytics = {
  * `status = 'voided'`, so the app owner's OWN runs on their own app
  * (`self_spend`) are absent. ⚠️ A moderator's private run is absent too, but NOT via this
  * filter any more: it writes no attribution row at all (the exclusion moved to the write
- * side). This line used to credit `manual_review` for it, which is now only the
- * HISTORICAL private-run rows plus `backpay.service.ts`'s held rows.
+ * side). This line used to credit `manual_review` for it. ⚠️ A correction then claimed
+ * that value's live producers were historical private runs and `backpay.service.ts`;
+ * both are retracted — the flag never shipped, so there are no historical rows, and
+ * backpay writes a DIFFERENT TABLE with `status: 'held'`. What this filter actually
+ * excludes is `self_spend` and `internal_owner`.
  * On the population measured when that filter shipped this was 582 of 639
  * rows, so for an owner who has only self-tested, `runs` is legitimately 0.
  * That zero is MEASURED, not fabricated — do not route it through the

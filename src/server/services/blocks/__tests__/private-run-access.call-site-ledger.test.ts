@@ -230,10 +230,22 @@ describe('the private-run seam — the call-site ledger [INV]', () => {
     // test of the function can see it. Both checks are necessary; neither is sufficient.
     const pub = CODE.get('src/pages/apps/run/[slug]/[[...path]].tsx')!;
     expect(pub).toContain('hostSurfaceFor(audience)');
-    expect(pub).toContain('shouldRecordRecents(audience)');
-    // 🔴 AND THE INLINE FORMS MUST NOT COME BACK. Re-inlining either ternary restores the
-    // exact untestable shape, and would otherwise satisfy nothing above.
-    expect(pub).not.toContain("? 'private-run' : 'page-run'");
+    expect(pub).toContain('recentsEntryFor(');
+    // ⚠️ AN ANTI-RE-INLINE ASSERTION STOOD HERE AND WAS DELETED, NOT REPAIRED. It read
+    // `expect(pub).not.toContain("? 'private-run' : 'page-run'")` and was VACUOUS TWICE
+    // OVER — a guard that could never fail, reading as the thing that stops a regression:
+    //
+    //   1. `CODE` comes from `stripCommentsAndStrings`, which removes string LITERALS as
+    //      well as comments — this file's own header says so, and says a literal "CANNOT
+    //      be asserted against `CODE`". The needle is two string literals. It never matched.
+    //   2. Switching it to `raw()` — the obvious repair — makes it RED against the
+    //      CORRECT implementation, because that exact ternary is the body of
+    //      `hostSurfaceFor` itself. The forbidden pattern IS the implementation.
+    //
+    // Its stated reason was wrong in the other direction too: a plain re-inline that drops
+    // the call is already caught by the two `toContain` rows above. There is no form of
+    // this assertion that both works and means anything, so it is gone rather than
+    // rewritten — reaching for a third spelling is how the previous two were arrived at.
   });
 
   it('EVERY consumer evaluates the flag for the caller and passes it in', () => {

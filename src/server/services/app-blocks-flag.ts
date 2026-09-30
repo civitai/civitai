@@ -668,15 +668,27 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  *            that gate sits on the `/api/track/block-render` beacon. Left here as a
  *            SATISFIED entry rather than deleted: the requirement still binds if anyone
  *            ever removes that row, and a deleted line cannot say so.
- *        (b) 🔴 NEITHER OF THE TWO WRITERS IS RATE-LIMITED, and once this flag admits
- *            anyone, each one's gate can reach the private-run access predicate — which
- *            touches the write primary — on a caller-chosen app id. Before that change
- *            the common beacon path did zero Postgres queries. Settle it for BOTH
- *            writers, not one: a rate limit on each, or confirm this flag's rollout
- *            admits only the moderators segment. Both writers are enumerated in
- *            `blocks/__tests__/block-render-writer.call-site-ledger.test.ts`, so "both"
- *            is followable. (Keep this at the level of the missing control — this repo
- *            is public.)
+ *        (b) 🔴 NOTHING ON THIS SURFACE IS RATE-LIMITED, AND THE POPULATION IS THREE
+ *            DOORS, NOT TWO. Once this flag admits anyone, each door can reach the
+ *            private-run access predicate — which touches the write primary — on a
+ *            caller-chosen app id.
+ *            ⚠️ THIS ITEM READ "NEITHER OF THE TWO WRITERS IS RATE-LIMITED … Settle it
+ *            for BOTH writers, not one … Both writers are enumerated in
+ *            `blocks/__tests__/block-render-writer.call-site-ledger.test.ts`, so 'both'
+ *            is followable." That enumeration is now INCOMPLETE and following it would
+ *            leave a door open: it covers the two `blockRenders` beacon writers, and the
+ *            THIRD door is the SSR run route `src/pages/apps/run/[slug]/[[...path]].tsx`,
+ *            which reaches the same predicate as a fallback and is PUBLIC, linked and
+ *            crawlable. Note the subject also shifts — `blockRenders` WRITERS and callers
+ *            of the ACCESS PREDICATE are different populations; the predicate's own
+ *            enumeration is `blocks/__tests__/private-run-access.call-site-ledger.test.ts`
+ *            (three callers), which is the one to follow for THIS item.
+ *            🔴 SETTLING IT: the rate-limiter PR was closed unmerged — it bounded one of
+ *            the beacon callers while the SSR route drove the same read unbounded — so the
+ *            cost bound today is THE FLAG ITSELF, by decision. That is sound only while
+ *            the flag admits trusted audiences. RE-PRICE BEFORE WIDENING TO ALL APP
+ *            OWNERS: an owner is not an operator.
+ *            (Keep this at the level of the missing control — this repo is public.)
  *   4. ⚖️ `block_buzz_attribution` (owner-visible `buzzPurchased`) — NOT FILTERED, BY
  *      DECISION, and recorded here so the enumeration is not mistaken for complete at
  *      three. `getMyAppAnalytics` aggregates this table into `buzzPurchased` with no
@@ -707,8 +719,13 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  *     rather than any limiter. That is a deliberate operator decision on the grounds that
  *     the flag admits only trusted audiences — and it is only sound while that holds.
  *     🔴 RE-PRICE THIS BEFORE WIDENING TO ALL APP OWNERS: an owner is not an operator,
- *     and `private-run-access.service.ts` does an unconditional `dbWrite.user.findUnique`
- *     (it ignores the `db: 'read'` argument), so every resolve hits the write primary.
+ *     and `private-run-access.service.ts`'s `dbWrite.user.findUnique` ignores the
+ *     `db: 'read'` argument it is passed, so a resolve that REACHES it hits the write
+ *     primary. ⚠️ Not "every resolve": it sits behind the flag check, the session-level
+ *     viewer check and the block resolve, so `flag-off`, anonymous, `no-app`, `approved`
+ *     and `not-a-page` all return before it. The earlier wording overstated the reachable
+ *     population — in the conservative direction, but this figure is the input to the
+ *     re-price decision this paragraph triggers, so it should be the real one.
  *   · item 1's acceptance check: one real private run, read on the owner's own analytics panel.
  * ⚠️ THIS PARAGRAPH SAID "All three analytics rails now filter, so the void DOES deliver
  * the invisibility at the row level." Rail 1 no longer filters and there is no void — a
