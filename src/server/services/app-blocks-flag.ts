@@ -654,9 +654,9 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  *            (`civitai/flipt-state` PR #100, squash `c94c807`; verified present at
  *            `enabled: false`). It had to, because an ABSENT key makes the evaluation
  *            throw — bypassing the eval cache and logging on every reaching call — and
- *            that gate sits on the `/api/track/block-render` beacon. Left here as a
- *            SATISFIED entry rather than deleted: the requirement still binds if anyone
- *            ever removes that row, and a deleted line cannot say so.
+ *            that gate sits on the `/api/track/block-render` beacon. A standing property,
+ *            not history: delete the row and the throw returns. ⚠️ Unlike (b), NO test in
+ *            this repo can see that row — read its live state from Flipt.
  *        (b) ✅ SATISFIED. The two writers are rate-limited — by ONE ceiling, inside the
  *            gate they share, which is why this reads as settled for BOTH rather than for
  *            one. `blocks/private-run-impression.service.ts` gate 3.5 calls
@@ -669,9 +669,14 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  *            for anonymous viewers, approved apps and anyone the flag does not admit —
  *            i.e. nothing at all today. "Both writers" is structural, not asserted twice:
  *            `blocks/__tests__/block-render-writer.call-site-ledger.test.ts` fails if a
- *            writer is added, removed, or stops calling that gate. Left here as a
- *            SATISFIED entry rather than deleted, for the same reason as (a): the
- *            requirement still binds if anyone removes the control.
+ *            writer is added, removed, or stops calling that gate — and the SAME file pins
+ *            the ceiling itself by asserting the gate's `await import` COUNT, so deleting
+ *            gate 3.5 is a RED TEST rather than a silently-reopened item. ⚠️ It is the
+ *            COUNT that carries that, NOT the specifier the same test also lists by name:
+ *            that one reads RAW source, which the gate's own docblock already satisfies in
+ *            prose (measured — removing the call left it green and only the count red), so
+ *            do not weaken the count on the strength of it. 🔴 THE RATE LIMIT IS THE
+ *            CLOSURE: no fact about this flag's rollout shape substitutes for it.
  *            🔴 WHAT IT DOES NOT CLOSE, and a widener should know both:
  *              · ABOVE THE CEILING the refused call RECORDS the impression (returning
  *                "suppress" would let a viewer hide their own impressions by exhausting
