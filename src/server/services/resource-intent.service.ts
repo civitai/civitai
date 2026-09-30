@@ -58,10 +58,30 @@ const DEGRADED_CACHE_TTL_SECONDS = 60;
 
 const DEGRADED_MODEL = 'jev-unavailable';
 
+/**
+ * The effective suggestion ceiling for one request. Single source for the matcher
+ * cap, the cache key and the serve-time truncation, so those three can never
+ * disagree about how wide a response is allowed to be.
+ */
+export function resolveSuggestionLimit(limit: number | undefined): number {
+  return Math.min(limit ?? RESOURCE_INTENT_DEFAULT_LIMIT, RESOURCE_INTENT_MAX_SHORTLIST);
+}
+
+/**
+ * `cap` is part of the key deliberately. It bounds the shortlist, so it bounds
+ * the cached `suggestions` — two requests for the same prompt at different caps
+ * are DIFFERENT responses, and sharing one entry made a narrow request reuse a
+ * wide entry's extra suggestions (and a wide request inherit a narrow entry's
+ * truncation) for the full hour TTL. Fragmentation is bounded in practice: a
+ * block sends one limit for all its requests, so this is one entry per app, not
+ * one per call. `resolveSuggestionLimit` is the second half of the fix — it holds
+ * the contract even when an entry written under an older key shape is read back.
+ */
 export function resourceIntentCacheKey(input: {
   prompt: string;
   baseModel?: string;
   browsingLevel: number;
+  cap: number;
 }) {
   const hash = createHash('sha256')
     .update(
@@ -69,6 +89,7 @@ export function resourceIntentCacheKey(input: {
         input.prompt,
         input.baseModel ?? '',
         String(input.browsingLevel),
+        String(input.cap),
         String(QUESTION_SPEC_VERSION),
       ].join('|')
     )
@@ -212,10 +233,14 @@ export async function getResourceIntent(
   }
 ): Promise<ResourceIntentResponse> {
   const startedAt = Date.now();
+  // Resolved BEFORE the cache read: `cap` is part of the cache key, so it cannot
+  // be computed on the miss path only.
+  const cap = resolveSuggestionLimit(input.limit);
   const cacheInput = {
     prompt: input.prompt,
     baseModel: input.baseModel,
     browsingLevel: ctx.browsingLevel,
+    cap,
   };
 
   let stage1Model = DEGRADED_MODEL;
@@ -241,10 +266,6 @@ export async function getResourceIntent(
 
   if (!response) {
     const baseModel = input.baseModel ?? null;
-    const cap = Math.min(
-      input.limit ?? RESOURCE_INTENT_DEFAULT_LIMIT,
-      RESOURCE_INTENT_MAX_SHORTLIST
-    );
     // Resolved only on a cache miss — the matcher is the sole consumer.
     const coverage = ctx.coverage ?? (await coverageAudience(undefined));
     try {
@@ -355,6 +376,16 @@ export async function getResourceIntent(
         'temp-search'
       ).catch(() => undefined);
     }
+  }
+
+  // The caller's ceiling is enforced on the way OUT, independently of how the
+  // response was produced, and BEFORE the cache write / shortlist count / shadow
+  // event so all three describe the response actually returned. `cap` is in the
+  // cache key and the matcher already capped, so this is a no-op for a fresh
+  // entry; it holds the contract for one written under an older key shape, which
+  // would otherwise over-serve until its TTL expired.
+  if (response.suggestions.length > cap) {
+    response = { ...response, suggestions: response.suggestions.slice(0, cap) };
   }
 
   if (!cachedHit) {

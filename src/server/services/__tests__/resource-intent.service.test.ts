@@ -156,20 +156,73 @@ beforeEach(() => {
 });
 
 describe('cache behavior', () => {
-  it('key is stable per (prompt, baseModel, browsingLevel, spec version) and differs otherwise', () => {
-    const a = resourceIntentCacheKey({ prompt: 'p', baseModel: 'SDXL 1.0', browsingLevel: 3 });
-    const b = resourceIntentCacheKey({ prompt: 'p', baseModel: 'SDXL 1.0', browsingLevel: 3 });
+  it('key is stable per (prompt, baseModel, browsingLevel, cap, spec version) and differs otherwise', () => {
+    const base = { prompt: 'p', baseModel: 'SDXL 1.0', browsingLevel: 3, cap: 50 };
+    const a = resourceIntentCacheKey(base);
+    const b = resourceIntentCacheKey({ ...base });
     expect(a).toBe(b);
     expect(a).toMatch(/^packed:caches:jev-resource-intent:v1:[0-9a-f]{64}$/);
-    expect(resourceIntentCacheKey({ prompt: 'p', baseModel: 'Pony', browsingLevel: 3 })).not.toBe(
-      a
-    );
-    expect(
-      resourceIntentCacheKey({ prompt: 'p', baseModel: 'SDXL 1.0', browsingLevel: 31 })
-    ).not.toBe(a);
-    expect(
-      resourceIntentCacheKey({ prompt: 'different', baseModel: 'SDXL 1.0', browsingLevel: 3 })
-    ).not.toBe(a);
+    expect(resourceIntentCacheKey({ ...base, baseModel: 'Pony' })).not.toBe(a);
+    expect(resourceIntentCacheKey({ ...base, browsingLevel: 31 })).not.toBe(a);
+    expect(resourceIntentCacheKey({ ...base, prompt: 'different' })).not.toBe(a);
+    // 🔴 `cap` bounds the shortlist, so it bounds the cached suggestions. Sharing
+    // one entry across caps made a limit=1 request inherit a limit=50 entry's 50
+    // suggestions for the full hour TTL (and the reverse under-serve). Red before
+    // the fix: `cap` was absent from the key and this call was identical to `a`.
+    expect(resourceIntentCacheKey({ ...base, cap: 1 })).not.toBe(a);
+  });
+
+  it('🔴 never serves more suggestions than the caller asked for, even from a wider entry', async () => {
+    // An entry written under an OLDER key shape (i.e. at a wider cap) landing on
+    // this request's key is the case the key change alone cannot fix — the
+    // serve-time truncation is what holds the contract. Planted directly.
+    const wide = {
+      degraded: false,
+      intent: {
+        needsResource: 0.9,
+        role: { value: 'style' as const, distribution: { style: 1 } },
+        styleFamily: { value: 'anime_manga' as const, distribution: { anime_manga: 1 } },
+        contentType: {
+          value: 'portrait_character' as const,
+          distribution: { portrait_character: 1 },
+        },
+        specificity: 3,
+        injectionPresent: 0,
+      },
+      criteria: {
+        criteriaVersion: 1 as const,
+        specHash: 'abc',
+        role: 'style' as const,
+        modelTypes: ['LORA' as const],
+        baseModel: null,
+      },
+      suggestions: [{ versionId: 11 }, { versionId: 22 }, { versionId: 33 }],
+      noneProbability: 0.1,
+      model: 'typesafe/jev-1.13',
+      criteriaVersion: 1 as const,
+    };
+    redisMock.redis.packed.get.mockResolvedValue(wide);
+
+    const result = await getResourceIntent({ ...INPUT, limit: 2 }, CTX);
+
+    // Pinned literal: the caller asked for 2, so it gets exactly the first 2 in
+    // the cached order — never the third.
+    expect(result.suggestions).toHaveLength(2);
+    expect(result.suggestions.map((s) => s.versionId)).toEqual([11, 22]);
+    // No Jev call: this was a cache hit that was narrowed, not a recompute.
+    expect(mockAskJev).not.toHaveBeenCalled();
+  });
+
+  it('passes the resolved cap to the matcher and honours limit end-to-end', async () => {
+    mockStage1();
+    mockStage3({ '0': 0.6, '1': 0.4, none: 0 });
+    mockFindCandidates.mockResolvedValue(SHORTLIST);
+    mockGetResourceData.mockResolvedValue([genResource(11), genResource(22)]);
+
+    const result = await getResourceIntent({ ...INPUT, limit: 1 }, CTX);
+
+    expect(mockFindCandidates.mock.calls[0][1]).toMatchObject({ cap: 1 });
+    expect(result.suggestions).toHaveLength(1);
   });
 
   it('a cache hit short-circuits both Jev calls and is NOT rewritten', async () => {
