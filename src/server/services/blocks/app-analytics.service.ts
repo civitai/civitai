@@ -90,15 +90,34 @@ const VOIDED_ATTRIBUTION_STATUS = 'voided';
  * 🔴 THE ONE DEFINITION of "exclude voided attribution rows", for every OWNER-VISIBLE read
  * of `block_spend_attribution`. Spread into the `where` of the aggregate below.
  *
- * A private run of a delisted app writes its generation row `voided` /
- * `voidedReason: 'manual_review'`, and the row carries the app's REAL id by design — so it
- * lands squarely in the owner's own `appBlockId IN (ownedIds)` aggregate. Nothing else
- * removes it.
+ * ⚠️ A PRIVATE RUN NO LONGER WRITES A ROW AT ALL — the exclusion moved to the WRITE side
+ * (`recordSpendAttribution` returns before building the row). This paragraph used to read
+ * "A private run of a delisted app writes its generation row `voided` /
+ * `voidedReason: 'manual_review'` … nothing else removes it", which was true when written
+ * and is now false.
+ *
+ * 🔴 THE FILTER BELOW IS NOT DEAD — but for ONE reason, not three. `self_spend` and
+ * `internal_owner` are written unchanged by `recordSpendAttribution` and are the entire
+ * live voided population: measured, 582 of 639 rows, every one of them `self_spend`.
+ * Removing this filter would surface them on owners' own panels.
+ *
+ * ⚠️ TWO FURTHER REASONS WERE CLAIMED HERE AND ARE BOTH RETRACTED — recorded rather than
+ * deleted, so the next reader does not re-derive them. (1) "the historical private-run
+ * rows written BEFORE the write-side change are still in the table": the flag has been
+ * base-off with no rollout for its whole life, so no private run ever wrote a row — that
+ * population is EMPTY. (2) "`'manual_review'` has a SECOND, still-live producer —
+ * `backpay.service.ts`": false on both halves. That writer targets
+ * `blockSubscriptionAttribution`, a DIFFERENT TABLE, with `status: 'held'`, not `voided`
+ * — and this filter keys on `status`, so it would not exclude such a row in any case.
  *
  * ⚠️ THE PREDICATE IS WIDER THAN THE LEAK, DELIBERATELY, AND THAT IS AN OPERATOR DECISION
  * RATHER THAN A DETAIL. `status = 'voided'` covers THREE populations, not one —
- * `manual_review` (the private run), `self_spend` (the owner running their own app), and
- * `internal_owner`. Excluding `self_spend` is the accepted behaviour change: measured on
+ * `manual_review`, `self_spend` (the owner running their own app), and
+ * `internal_owner`. ⚠️ `manual_review` was glossed here as "the private run" and that is no
+ * longer its live meaning — private runs write no row. 🔴 NOR is there any OTHER producer:
+ * an earlier correction here named historical private runs and `backpay.service.ts`, and
+ * BOTH are retracted above. `manual_review` currently has NO live writer on this table.
+ * Excluding `self_spend` is the accepted behaviour change: measured on
  * the live table before shipping, it was 582 of 639 rows, every one of them the app owner
  * spending on their own app, with no row of real third-party usage voided at all.
  *

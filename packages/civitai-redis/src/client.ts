@@ -1799,6 +1799,10 @@ export const REDIS_SYS_KEYS = {
     // Fixed-window submission counter for in-product feedback — `system:feedback:rate-limit:${userId}`.
     RATE_LIMIT: 'system:feedback:rate-limit',
   },
+  COLLECTION_AI_REVIEW: {
+    // Failed review attempts per item — `system:collection-ai-review:attempts:${collectionItemId}`.
+    ATTEMPTS: 'system:collection-ai-review:attempts',
+  },
   BLOCKS: {
     // Emergency kill list — Redis SET of `block_id` strings BlockRegistry excludes from every
     // listForModel response (disable a runaway block without a deploy).

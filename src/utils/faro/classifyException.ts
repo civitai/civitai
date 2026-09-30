@@ -81,12 +81,37 @@ const DROP = (category: ErrorCategory): Classification => ({ drop: true, categor
 // ── DROP allowlist patterns (each an EXPLICIT, narrow match) ──────────────────────────────────
 
 // Request aborts — user/navigation/media aborts, never a bug.
+//
+// 🔴 PHRASING FAMILIES, not one message per cause. Chromium emits a DIFFERENT sentence for each
+// reason a `play()` promise was superseded, and each is enumerated here rather than collapsed to
+// a `The play() request was interrupted` prefix: the module header forbids widening a DROP to a
+// broad substring, and the reason clause is what distinguishes a benign supersede from anything
+// else that might one day share the prefix. Measured live over 6h (bot-filtered, category
+// `real`): `…by a call to pause()` was already listed, while `…because the media was removed
+// from the document` (251, with and without the trailing `https://goo.gl/LdLk22` help URL) and
+// `…because video-only background media was paused to save power` (85) fell through to `real`.
+// Chromium has at least one further reason clause (`…by a new load request`) that did not appear
+// in the window; add phrasings as they are MEASURED rather than pre-emptively.
 const ABORT_VALUE_RES = [
   /\bThe user aborted a request\b/i,
   /\bThe play\(\) request was interrupted by a call to pause\(\)/i,
+  /\bThe play\(\) request was interrupted because the media was removed from the document\b/i,
+  /\bThe play\(\) request was interrupted because video-only background media was paused to save power\b/i,
   /\bThe fetching process for the media resource was aborted\b/i,
   /\bThe operation was aborted\b/i,
   /\bsignal is aborted without reason\b/i,
+];
+
+// Abort phrasings that are too SHORT to be safe as unanchored substrings. `Fetch is aborted`
+// (Firefox, 111 measured) and `BodyStreamBuffer was aborted` (Chromium, 32) are a few words each,
+// so as substrings they could sit inside a genuine app sentence ("Model fetch is aborted by the
+// retry budget"). The abort rule's `!hasProjectSourceFrame` conjunct would not save such an error
+// when its stack carries no project frame at all — a thrown string, or a stack of only dependency
+// frames — so these are matched as the WHOLE message instead. The optional `SomeError: ` prefix
+// covers the message-only form (no separate `type` field), exactly as the network patterns do.
+const ABORT_ANCHORED_VALUE_RES = [
+  /^(?:[A-Za-z]+Error:\s*)?Fetch is aborted\.?$/i,
+  /^(?:[A-Za-z]+Error:\s*)?BodyStreamBuffer was aborted\.?$/i,
 ];
 // UnhandledRejection variants for Next.js route-change aborts.
 const ROUTECHANGE_ABORT_RES = [/\bnextjs route change aborted\b/i, /\brouteChange aborted\b/i];
@@ -105,7 +130,23 @@ const ADBLOCK_HOST_RES = [
 ];
 
 // Autoplay policy — the browser blocked programmatic play(). Not a bug.
+//
+// 🔴 THIS RULE HAS NO SECOND CONJUNCT. Unlike the abort (rule 1) and network (rule 6) DROPs it
+// does not consult the stack at all — a message match alone discards the beacon, app frames and
+// all. So the second phrasing added here is matched as the WHOLE anchored message rather than as
+// a substring: Chromium's `play() can only be initiated by a user gesture.` (222 measured) is a
+// complete sentence, and anchoring means an app error that merely quotes it is still KEPT.
 const AUTOPLAY_RE = /\bThe play method is not allowed by the user agent\b/i;
+const AUTOPLAY_GESTURE_RE =
+  /^(?:[A-Za-z]+Error:\s*)?play\(\) can only be initiated by a user gesture\.?$/i;
+// 🔴 DELIBERATELY NOT MATCHED, and the reason is the whole point of the anchoring above:
+// `NotAllowedError: The request is not allowed by the user agent or the platform in the current
+// context, possibly because the user denied permission.` (30 measured) is the SAME error type and
+// nearly the same sentence, but it is a user PERMISSION denial (camera/microphone/clipboard), not
+// an autoplay block — and a permission prompt our code should not have been showing IS a real
+// bug. `The play method is not allowed…` vs `The request is not allowed…` is the only difference
+// between a drop and a kept bug, so neither pattern may be relaxed toward the other. A test pins
+// that this variant stays `real`.
 
 // Opaque cross-origin script error (no usable message/stack). Exact-ish match only.
 const SCRIPT_ERROR_RE = /^Error:\s*Script error\.?$/i;
@@ -122,11 +163,28 @@ const BARE_NETWORK_VALUE_RES = [
 
 // Expected business-logic user states surfaced as TRPCClientError. NOT bugs, but money-path
 // signal — keep and tag `bizlogic`.
+// 🔴 `Your prompt was flagged` is a PREFIX, not a whole message: the server builds it as
+// `Your prompt was flagged: ${error.blockedFor.join(', ')}` (and a `green`-currency variant
+// appends a two-newline redirect hint after that), so the suffix is an open set of moderation
+// reasons — `breasts` (45) and `Inappropriate minor content` (44) were the top two in the
+// measured window. It is therefore anchored at the START and left open at the end. Anchoring is
+// what makes the prefix safe rather than the wording: an app error that merely CONTAINS the
+// sentence mid-message is kept. The colon is deliberately NOT part of the pattern, because two
+// live components already treat the colon-less sentence as the marker
+// (`message?.startsWith('Your prompt was flagged')`) — matching them keeps one definition of what
+// a flagged-prompt message is, rather than a second, stricter one only this module knows about.
+//
+// `The prompt has been blocked due to mature content…` (21) is the `green`/SFW-model rewrite of
+// the `Prompt requires mature content but workflow does not allow it` message already listed
+// above — same user state, different sentence, and the tail (`…which is not supported by the
+// current model`) is left unmatched so a reworded tail cannot make this pattern go inert.
 const BIZLOGIC_VALUE_RES = [
   /\binsufficientBuzz\b/i,
   /\bGeneration services are temporarily unavailable\b/i,
   /\bPrompt blocked as it may violate TOS\b/i,
   /\bPrompt requires mature content but workflow does not allow it\b/i,
+  /^(?:[A-Za-z]+Error:\s*)?Your prompt was flagged\b/i,
+  /\bThe prompt has been blocked due to mature content\b/i,
 ];
 
 // Browser-extension / page-injected-global errors. Extensions reference globals that only exist
@@ -166,13 +224,34 @@ const EXTENSION_BARE_GLOBAL_RES = [
 // name can be an opaque ≥32-char token that `redact.ts` rewrites to `[redacted-token]` in the
 // shipped beacon (`window.__firefox__.[redacted-token]` is a real Loki value). Classification
 // runs pre-redact and sees the raw segment; keying on the path prefix matches both spellings.
+//
+// 🔴 `window.ethereum` REQUIRES `.selectedAddress`, and the narrowing is not cosmetic. This was
+// the only DROP-or-TAG predicate in the module that was an unanchored substring with NO second
+// conjunct, and it fires BY DESIGN on beacons that carry app frames (rule 7 runs after every DROP
+// and is reached precisely because the stack looks like ours). `viem` and `@coinbase/cdp-sdk` are
+// live dependencies, so the day a wallet connector ships, `window.ethereum.*` becomes APP code
+// and every genuine failure in it would be re-tagged away from `real` — a silently narrowed
+// real-bug stream, which is the direction the header forbids. `.selectedAddress` is the injected
+// read that actually occurs (the extension defines the property, our code would not read it), and
+// requiring it loses NOTHING: measured over the same window, 0 of 364 `window.ethereum` hits
+// referenced any other property.
 const EXTENSION_OBJECT_PATH_RES = [
   /\(evaluating ['"]window\.__firefox__/i,
-  /\(evaluating ['"]window\.ethereum/i,
+  /\(evaluating ['"]window\.ethereum\.selectedAddress\b/i,
   // V8's property-access phrasing omits the base object, so a denylisted READ name is the only
   // message evidence V8 property access can carry.
   /\(reading ['"](?:__firefox__|DarkReader|__alhWeb)['"]\)/i,
 ];
+
+// Extensions that name THEMSELVES in the message rather than throwing on an injected global.
+// `Failed to connect to MetaMask` (206 measured) arrives with a MINIFIED `type` (`i`), so the type
+// field carries no information and the match must be on the VALUE. Anchored at the start and left
+// open at the end: MetaMask appends varying detail, but a mid-message occurrence is not evidence.
+//
+// This is a KEEP+TAG, never a DROP — deliberately, and the asymmetry matters if a first-party
+// wallet connector ever ships. A mis-tag is recoverable (the beacon is still in Loki, queryable
+// by `context_error_category="extension"`); a mis-drop is not, because the beacon was never sent.
+const EXTENSION_MESSAGE_RES = [/^(?:[A-Za-z]+Error:\s*)?Failed to connect to MetaMask\b/i];
 
 function isExtensionInjectedError(value: string, typed: string): boolean {
   for (const re of EXTENSION_BARE_GLOBAL_RES) {
@@ -181,6 +260,7 @@ function isExtensionInjectedError(value: string, typed: string): boolean {
       if (m && EXTENSION_INJECTED_GLOBALS.includes(m[1])) return true;
     }
   }
+  if (anyMatch(EXTENSION_MESSAGE_RES, value) || anyMatch(EXTENSION_MESSAGE_RES, typed)) return true;
   return anyMatch(EXTENSION_OBJECT_PATH_RES, value) || anyMatch(EXTENSION_OBJECT_PATH_RES, typed);
 }
 
@@ -343,6 +423,8 @@ export function classifyException(exc: ClassifiableException | null | undefined)
   const abortMatch =
     anyMatch(ABORT_VALUE_RES, value) ||
     anyMatch(ABORT_VALUE_RES, typed) ||
+    anyMatch(ABORT_ANCHORED_VALUE_RES, value) ||
+    anyMatch(ABORT_ANCHORED_VALUE_RES, typed) ||
     anyMatch(ROUTECHANGE_ABORT_RES, value) ||
     anyMatch(ROUTECHANGE_ABORT_RES, typed);
   if (abortMatch && !hasProjectSourceFrame(exc)) return DROP('abort');
@@ -357,8 +439,10 @@ export function classifyException(exc: ClassifiableException | null | undefined)
     return DROP('adblock');
   }
 
-  // 3) DROP — autoplay policy block.
+  // 3) DROP — autoplay policy block. Both engine phrasings; the second is anchored because this
+  //    rule consults no stack (see the pattern comments).
   if (AUTOPLAY_RE.test(value) || AUTOPLAY_RE.test(typed)) return DROP('autoplay');
+  if (AUTOPLAY_GESTURE_RE.test(value) || AUTOPLAY_GESTURE_RE.test(typed)) return DROP('autoplay');
 
   // 4) DROP — opaque cross-origin `Error: Script error.` (no usable message/stack).
   if (SCRIPT_ERROR_RE.test(value) || SCRIPT_ERROR_RE.test(typed)) return DROP('script_error');

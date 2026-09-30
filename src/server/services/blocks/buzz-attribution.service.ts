@@ -378,25 +378,34 @@ export type RecordSpendAttributionInput = {
   generationPriceIsCap?: boolean | null;
   /**
    * PRIVATE RUN of a delisted / suspended app — from the verified token's
-   * `privateRun` claim. When true the row is written `voided` instead of
-   * `tracked`.
+   * `privateRun` claim. 🔴 When true, **NO ROW IS WRITTEN AT ALL**: the function
+   * returns `{ written: false, row: null }` before the row is built.
    *
-   * 🔴 THE ROW IS STILL WRITTEN, AND THAT IS DELIBERATE. The alternative —
-   * a non-resolving synthetic `appId`, which is how the mod review sandbox
-   * excludes both money rails — would also break per-app storage namespacing,
-   * the `page_<appBlockId>` ban-revocation instance id, and every runtime
-   * metric label. So the real ids are kept and the rail is closed explicitly
-   * here. A voided row preserves the audit trail at zero money cost:
-   * `spendSharePct` and `appOwnerShareCents` are already hardcoded 0 below, so
-   * void-vs-tracked moves no Buzz either way — what it protects is the RUN
-   * COUNT and BUZZ SUM a suspended app's owner can see.
+   * ⚠️ THIS DOCBLOCK DESCRIBED THE OPPOSITE UNTIL THE WRITE-SIDE CHANGE, AND IT IS
+   * THE ONE A CALLER READS WHEN DECIDING WHETHER TO PASS `privateRun` — so the four
+   * claims it made are recorded here rather than silently dropped. It said: "the row
+   * is written `voided` instead of `tracked`"; "🔴 THE ROW IS STILL WRITTEN, AND THAT
+   * IS DELIBERATE"; "a voided row preserves the audit trail at zero money cost"; and
+   * "✅ THE VOID NOW DELIVERS THE PROTECTION". All four are now false. They were
+   * missed by the commit that corrected four sibling claims in other files — the
+   * stale text was three lines above the code that falsified it, which is exactly
+   * where a sweep keyed on the changed hunk does not look.
    *
-   * ✅ THE VOID NOW DELIVERS THE PROTECTION. Both owner-visible reads of this
-   * table -- `app-analytics.service.ts`'s `aggregate` and its raw per-bucket
-   * series -- exclude `status = 'voided'`, so a voided row is neither counted as
-   * a run nor summed into the owner's dashboard. Until that landed, the two
-   * PRE-EXISTING voids (`self_spend`, `internal_owner`) were being counted, which
-   * was the evidence that this marker had no reader; it has one now.
+   * WHAT SURVIVES FROM IT, because it is still true and still load-bearing: the mod
+   * review sandbox's alternative — a non-resolving synthetic `appId` — is deliberately
+   * NOT copied here, because it would also break per-app storage namespacing, the
+   * `page_<appBlockId>` ban-revocation instance id, and every runtime metric label.
+   * The real ids are resolved and the rail is closed by an explicit branch instead.
+   *
+   * NO MONEY MOVES EITHER WAY: `spendSharePct` and `appOwnerShareCents` are hardcoded
+   * 0 below, so this was never a payout decision. What it protects is the RUN COUNT
+   * and BUZZ SUM a suspended app's owner can see.
+   *
+   * ⚠️ ONE OBSERVABILITY CONSEQUENCE, NOT PREVIOUSLY NAMED: the early return precedes
+   * `blockSpendAttributionWriteCounter.inc({ status })`, so a private-run generation
+   * now increments NOTHING on that counter, where it previously landed in
+   * `status="voided"`. Per-generation coverage survives via `block_scope_invocations`
+   * rows carrying `source: 'private-run'`.
    *
    * 🔴 THE FILTER WAS HELD FOR TWO STATED REASONS AND BOTH WERE SETTLED BY
    * MEASUREMENT, NOT BY DECISION — recorded because the reasons read as permanent
@@ -443,8 +452,22 @@ export type RecordSpendAttributionInput = {
 };
 
 export type RecordSpendAttributionResult = {
-  /** False when the (workflow, app) UNIQUE blocked a duplicate write. */
+  /**
+   * False when the (workflow, app) UNIQUE blocked a duplicate write, AND when the call
+   * was a PRIVATE RUN, for which no row is written at all.
+   */
   written: boolean;
+  /**
+   * 🔴 `null` ONLY for a private run, where the write is skipped entirely (see the
+   * write-side exclusion in `recordSpendAttribution`). Every other path — including the
+   * duplicate branch — still returns the row it found or created.
+   *
+   * Nullable rather than synthesised: inventing a zeroed row to keep the type simple
+   * would make "no attribution exists" indistinguishable from "an attribution of zero",
+   * which is exactly the conflation the write-side exclusion is meant to remove. All four
+   * production callers `await` this and discard the result, so the nullability costs them
+   * nothing today and forces a decision on any future reader.
+   */
   row: {
     id: string;
     status: string;
@@ -453,7 +476,7 @@ export type RecordSpendAttributionResult = {
     grossValueCents: number;
     rateCardVersion: string;
     voidedReason: string | null;
-  };
+  } | null;
 };
 
 /**
@@ -660,38 +683,77 @@ export async function recordSpendAttribution(
   const spendSharePct = 0;
   const appOwnerShareCents = 0;
 
-  // Void rows that are zero because of WHO spent/owns, or because the run was not
-  // a USE of the app at all. Otherwise the row is 'tracked'. ⚠️ NOT
-  // "share-pending awaiting a payout-time backpay" — that was the removed spend
-  // bounty. No backpay reads this table; 'tracked' is where a spend row stays. The
-  // void/track distinction is kept because it is the self-spend / internal-owner /
-  // private-run marker the analytics reader and any future rail would both need,
+  // Void rows that are zero because of WHO spent/owns. Otherwise the row is
+  // 'tracked'. ⚠️ NOT "share-pending awaiting a payout-time backpay" — that was the
+  // removed spend bounty. No backpay reads this table; 'tracked' is where a spend row
+  // stays. The void/track distinction is kept because it is the self-spend /
+  // internal-owner marker the analytics reader and any future rail would both need,
   // and voiding costs nothing.
   //
-  // 🔴 PRIVATE RUN IS TESTED FIRST, AND THE ORDER IS A DISCRIMINABILITY CHOICE, NOT
-  // A MONEY ONE. Every arm here produces the same money outcome (the row is voided;
-  // the share columns are already 0), so ordering cannot change what anyone is paid.
-  // What it changes is the LABEL on an owner's own private run, where both this arm
-  // and `isSelfSpend` are true: testing private-run first records WHY the row exists
-  // (a diagnostic run) rather than merely who spent. The audience — owner, editor or
-  // moderator — is deliberately NOT on this row; it rides the mint's audit line
-  // instead, so a money/audit table gains no new column and no new enum value.
+  // ⚠️ TWO PARAGRAPHS THAT STOOD HERE WERE DELETED RATHER THAN REWORDED, AND WHAT THEY
+  // CLAIMED IS WORTH KNOWING BECAUSE IT READS AS STILL-TRUE ELSEWHERE IN THE TREE.
+  // They explained (a) that the private-run arm was TESTED FIRST, as a
+  // "discriminability choice" deciding the LABEL on an owner's own private run where
+  // both that arm and `isSelfSpend` are true, and (b) that `'manual_review'` was REUSED
+  // rather than adding a `'private_run'` value, so the change shipped with no migration.
   //
-  // 🔴 `'manual_review'` IS REUSED RATHER THAN ADDING A `'private_run'` VALUE
-  // (operator decision, 2026-09-27). It is already legal under
-  // `block_spend_attribution_voided_reason_check`, so this ships with NO migration
-  // and no per-environment hand-apply. The cost is that a private run is not
-  // distinguishable from an operator-voided row *in this column* — accepted,
-  // because nothing pays out of this table and the mint audit line carries the
-  // discriminating fields anyway.
-  const voidedReason =
-    privateRun === true
-      ? 'manual_review'
-      : isSelfSpend
-      ? 'self_spend'
-      : isInternal
-      ? 'internal_owner'
-      : null;
+  // Both described the VOIDED-ROW design. A private run now writes NO ROW (see the
+  // exclusion below), so there is no arm to order and no column to carry a value: (a)
+  // describes an ordering that no longer exists and (b) a write that no longer happens.
+  // Neither is reworded here, because a reworded version would be a fresh rationale for
+  // a decision that has been superseded rather than revised.
+  //
+  // ⚠️ RETRACTED CLAIM, KEPT SO IT IS NOT RE-DERIVED. This said: "`'manual_review'` IS
+  // STILL WRITTEN TO THIS COLUMN BY ANOTHER PRODUCER — `backpay.service.ts` writes
+  // `status: 'held', voidedReason: 'manual_review'`", offered as a second reason the
+  // read-side filters stay necessary. 🔴 IT IS FALSE ON BOTH HALVES. `backpay.service.ts`
+  // writes to `blockSubscriptionAttribution` — a DIFFERENT TABLE — and with
+  // `status: 'held'`, not `voided`; the owner-visible filter keys on `status`, so such a
+  // row would not be excluded by it in any case. The sentence refuted itself: a
+  // `status: 'held'` write cannot produce a voided row.
+  //
+  // 🔴 THE HONEST POSITION, which is simpler than the one I reached for: the filters stay
+  // because of `self_spend` and `internal_owner`, which are written HERE, below, and are
+  // the whole live voided population — the ledger's own measurement is 582 of 639 rows,
+  // "every voided row is `self_spend`". A historical private-run population is NOT a
+  // reason either: the flag has been base-off with no rollout for its whole life, so no
+  // private run ever wrote a row. There is one real reason, not three, and reaching for
+  // extra ones is what produced a false claim while correcting other false claims.
+  // ── PRIVATE RUN — NOT WRITTEN AT ALL ────────────────────────────────────────────
+  // 🔴 WRITE-SIDE EXCLUSION, NOT A VOIDED ROW. This used to write the row with
+  // `voidedReason: 'manual_review'` and rely on EVERY reader filtering voided rows back
+  // out. That is the design that generated this rail's worst defects: the nullability
+  // trap (`NOT (voided_reason IN (…))` retains 0 of 639 rows, because `voided_reason` is
+  // nullable and NULL *is* the ordinary tracked population), the latent
+  // `internalAppOwnerUserIds` trap in `rate-card.ts`, and a cross-repo coupling to
+  // talos-infra's `civitai-app-blocks-digest/digest.py`. Read-side exclusion has to be
+  // got right in every reader, in two repos, forever; write-side is got right once.
+  //
+  // 🔴 EQUIVALENT FOR EVERY FILTERED READER, STRICTLY BETTER FOR AN UNFILTERED ONE. A
+  // voided row and an absent row are indistinguishable to any reader that excludes
+  // voided — which is all of the owner-visible ones. For a reader that forgets the
+  // filter, an absent row is the SAFE failure and a voided row is the leak. That
+  // asymmetry is the whole argument.
+  //
+  // ⚠️ WHAT IS GIVEN UP, NAMED RATHER THAN GLOSSED: the voided row was a durable,
+  // queryable record that a private run happened. That record now exists ONLY in the
+  // `app-blocks.private-run.mint` audit line (dual-sinked to Axiom and stdout), which was
+  // already the discriminating record — the operator decision to reuse `'manual_review'`
+  // said so in its own words, because the column could not distinguish a private run from
+  // an operator-voided row anyway. So the queryable-by-SQL property is lost; the audit
+  // property is not.
+  //
+  // NOTHING IS PAID EITHER WAY: `spendSharePct` and `appOwnerShareCents` are hardcoded 0
+  // above, and the AUTHOR FEE — the rail that does move Buzz — is excluded separately and
+  // earlier, by `resolveBlockAuthorFeePayee` refusing with reason `private-run`.
+  //
+  // IDEMPOTENCY IS UNAFFECTED: the dedupe is the `(workflowId, appBlockId)` UNIQUE
+  // constraint, i.e. the row IS the dedupe record. Writing zero rows cannot double-count.
+  if (privateRun === true) {
+    return { written: false, row: null };
+  }
+
+  const voidedReason = isSelfSpend ? 'self_spend' : isInternal ? 'internal_owner' : null;
   const status = voidedReason ? 'voided' : 'tracked';
   const voidedAt = voidedReason ? new Date() : null;
 

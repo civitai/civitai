@@ -521,8 +521,6 @@
   // The fullscreen viewer navigates over `newestFirst` (↑ = newer epoch, matching the in-app trainer).
   let viewer = $state<{ epochIndex: number; sampleIndex: number } | null>(null);
   function openViewer(epoch: TrainingDetailEpoch, sampleIndex: number) {
-    // Audio samples are inline players (the controls are the interaction) — no fullscreen viewer.
-    if (d.media === 'audio') return;
     const epochIndex = newestFirst.indexOf(epoch);
     if (epochIndex !== -1) viewer = { epochIndex, sampleIndex };
   }
@@ -858,7 +856,9 @@
               {/each}
               {#each oldestFirst as epoch (epoch.id)}
                 {@const cellUrl = epoch.samples[r] ?? null}
-                {#if cellUrl}
+                {#if cellUrl && d.media === 'audio'}
+                  <SampleImage isAudio url={cellUrl} alt="Epoch {epoch.number}, prompt {r + 1}" />
+                {:else if cellUrl}
                   <button
                     type="button"
                     onclick={() => openViewer(epoch, r)}
@@ -959,11 +959,18 @@
           {/if}
         </div>
 
-        <div class="grid grid-cols-1 gap-4 {d.media === 'audio' ? '' : 'sm:grid-cols-3'}">
+        <!-- Pin the epoch once something plays: a newly finished epoch becoming `recommended` would
+             otherwise swap the playing sample for a different file. -->
+        <div
+          class="grid grid-cols-1 gap-4 {d.media === 'audio' ? '' : 'sm:grid-cols-3'}"
+          onplaycapture={() => (selectedId ??= featured.id)}
+        >
           {#each promptLabels as prompt, i (i)}
             {@const featuredUrl = featured.samples[i] ?? null}
             <figure class="m-0 flex flex-col gap-2">
-              {#if featuredUrl}
+              {#if featuredUrl && d.media === 'audio'}
+                <SampleImage isAudio url={featuredUrl} alt="Epoch {featured.number} sample {i + 1}" />
+              {:else if featuredUrl}
                 <button
                   type="button"
                   onclick={() => openViewer(featured, i)}
@@ -1036,16 +1043,24 @@
                       </span>
                     {/if}
                   </div>
-                  <div class="grid grid-cols-3 gap-1.5">
-                    {#each promptLabels as _, si (si)}
-                      <SampleImage
-                        isVideo={d.isVideo} isAudio={d.media === 'audio'}
-                        url={epoch.samples[si] ?? null}
-                        pending={samplesPending}
-                        alt="Epoch {epoch.number} preview {si + 1}"
-                      />
-                    {/each}
-                  </div>
+                  {#if d.media === 'audio'}
+                    <!-- A player can't live inside this select button; the featured view plays them. -->
+                    {@const heard = epoch.samples.filter(Boolean).length}
+                    <span class="font-mono text-xs text-dark-2">
+                      {heard} audio sample{heard === 1 ? '' : 's'} · select to listen
+                    </span>
+                  {:else}
+                    <div class="grid grid-cols-3 gap-1.5">
+                      {#each promptLabels as _, si (si)}
+                        <SampleImage
+                          isVideo={d.isVideo}
+                          url={epoch.samples[si] ?? null}
+                          pending={samplesPending}
+                          alt="Epoch {epoch.number} preview {si + 1}"
+                        />
+                      {/each}
+                    </div>
+                  {/if}
                 </button>
                 {#if gen}
                   <span class="absolute right-2 top-2">

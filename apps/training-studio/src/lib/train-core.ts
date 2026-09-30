@@ -5,6 +5,7 @@ import { formatYue2SamplePrompt } from '@civitai/shared/training-audio';
 // its host config and no callbacks.
 import {
   Air,
+  deleteWorkflow,
   getResource,
   getWorkflow,
   submitWorkflow,
@@ -26,12 +27,14 @@ import {
 } from './orchestrator-core';
 import type { ExtraParamField } from '$lib/data/trainingModels';
 import {
+  canDeleteRun,
   CIVITAI_TAG,
   epochModelKey,
   META_VERSION,
   TRAINING_TAG,
   type EpochModelOutput,
   type TrainingStudioMeta,
+  workflowToRow,
 } from '$lib/data/trainingRows';
 import { EXTRA_PARAM_FIELDS, TARGET_STEPS } from '$lib/data/trainingModels';
 import { slugify } from '$lib/slug';
@@ -536,4 +539,35 @@ export async function renameTraining(
     body: { metadata, tags },
   });
   if (error) throw new Error(`rename failed: ${describeSubmitError(error)}`);
+}
+
+export class DeleteRefusedError extends Error {
+  constructor() {
+    super('This training can no longer be deleted — it is running or has a model on Civitai.');
+  }
+}
+
+/** Delete a training, re-checking `canDeleteRun` against the live workflow so a stale list can't
+ *  cancel a run that has since started, or strand a model created since the list loaded. */
+export async function deleteTraining(
+  client: OrchestratorClient,
+  workflowId: string
+): Promise<void> {
+  const {
+    data: current,
+    error: getError,
+    response,
+  } = await getWorkflow({ client, path: { workflowId } });
+  // Already gone (another tab, a double click) is the outcome the caller asked for.
+  if (response?.status === 404) return;
+  if (!current) throw new Error(`delete: workflow not found (${describeSubmitError(getError)})`);
+  const row = workflowToRow(current);
+  if (!row || !canDeleteRun(row)) throw new DeleteRefusedError();
+
+  const { error, response: deleteResponse } = await deleteWorkflow({
+    client,
+    path: { workflowId },
+  });
+  if (error && deleteResponse?.status !== 404)
+    throw new Error(`delete failed: ${describeSubmitError(error)}`);
 }

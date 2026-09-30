@@ -642,6 +642,9 @@ export const MODEL_CARDS: ModelCard[] = [
     description: "Teach it a genre or an artist's sound from a few tracks.",
     released: '2026-04-30',
     flag: 'recommended',
+    // Studio-only key, NOT the old trainer's `audio-training`: ACE-Step is tested here and not there,
+    // so the two trainers' audio rollouts must be switchable independently.
+    flagKey: 'training-studio-audio-training',
     versions: [
       {
         key: 'acestep_15',

@@ -44,6 +44,8 @@ export interface StudioBackend {
   rename(workflowId: string, name: string): Promise<void>;
   /** A signed streaming URL for a zip of every ready checkpoint (weights + samples). */
   epochArchive(workflowId: string): Promise<EpochArchive>;
+  /** Refused unless `canDeleteRun` holds for the run's current state. */
+  deleteTraining(workflowId: string): Promise<void>;
   continueQuote(
     workflowId: string,
     fromEpoch: number,

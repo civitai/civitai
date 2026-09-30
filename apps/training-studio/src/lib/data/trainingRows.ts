@@ -63,6 +63,8 @@ export interface TrainingRow {
   createdAt?: string;
   name: string;
   base: string;
+  /** The model family without the version (`SDXL`, not `SDXL · Pony`), for the base filter. */
+  baseFamily: string;
   code: string;
   state: RunState;
   sub: string;
@@ -77,6 +79,25 @@ export interface TrainingRow {
   media: Media;
   /** Convenience: video-model samples are `<video>`, not `<img>`. */
   isVideo: boolean;
+  /** A Civitai model version reads this run's epoch blobs: a studio draft/published model
+   *  (`meta.modelId`) or a main-app trainer run, which is created from its ModelVersion. */
+  hasModel: boolean;
+}
+
+/** Whether the list offers Delete. A training run is excluded because deleting it is a cancel, and
+ *  the orchestrator only refunds work that hasn't started. */
+export function canDeleteRun(row: Pick<TrainingRow, 'state' | 'hasModel'>): boolean {
+  return (row.state === 'ready' || row.state === 'failed') && !row.hasModel;
+}
+
+function workflowHasModel(w: Workflow, meta: TrainingStudioMeta): boolean {
+  return (
+    typeof meta.modelId === 'number' ||
+    (w.tags ?? []).some((t) => t.startsWith('modelVersion:')) ||
+    (w.steps ?? []).some(
+      (s) => (s.metadata as { modelFileId?: unknown } | null | undefined)?.modelFileId != null
+    )
+  );
 }
 
 /**
@@ -248,6 +269,7 @@ function resolveWorkflow(w: Workflow) {
             : ''
         }`
       : 'Training run',
+    baseFamily: card?.name ?? 'Other',
     code: card?.code ?? '??',
     // TODO(write-path): main-app runs carry no name tag, so we show the trigger word or a fallback. The
     // Start slice should stamp a `name` (and a `name:<slug>` workflow tag) so runs are titled properly.
@@ -294,6 +316,7 @@ export function workflowToRow(w: Workflow): TrainingRow | null {
     input,
     output,
     base,
+    baseFamily,
     code,
     name,
     media,
@@ -325,6 +348,7 @@ export function workflowToRow(w: Workflow): TrainingRow | null {
     createdAt: w.createdAt,
     name,
     base,
+    baseFamily,
     code,
     state,
     sub: parts.join(' · '),
@@ -340,6 +364,7 @@ export function workflowToRow(w: Workflow): TrainingRow | null {
     sampleUrls,
     media,
     isVideo: media === 'video',
+    hasModel: workflowHasModel(w, meta),
   };
 }
 
@@ -606,6 +631,7 @@ export const SAMPLE_ROWS: TrainingRow[] = [
   {
     name: 'my_character',
     base: 'Flux · Dev',
+    baseFamily: 'Flux',
     code: 'FL',
     state: 'ready',
     sub: `${mediaCount(12, 'image')} · character`,
@@ -614,10 +640,12 @@ export const SAMPLE_ROWS: TrainingRow[] = [
     sampleUrls: [],
     media: 'image',
     isVideo: false,
+    hasModel: false,
   },
   {
     name: 'ink_wash_style',
     base: 'SDXL · Standard',
+    baseFamily: 'SDXL',
     code: 'XL',
     state: 'training',
     sub: `${mediaCount(28, 'image')} · style`,
@@ -626,10 +654,12 @@ export const SAMPLE_ROWS: TrainingRow[] = [
     sampleUrls: [],
     media: 'image',
     isVideo: false,
+    hasModel: false,
   },
   {
     name: 'chibi_pack',
     base: 'SDXL · Pony',
+    baseFamily: 'SDXL',
     code: 'XL',
     state: 'published',
     sub: `${mediaCount(40, 'image')} · 1.2k downloads`,
@@ -638,10 +668,12 @@ export const SAMPLE_ROWS: TrainingRow[] = [
     sampleUrls: [],
     media: 'image',
     isVideo: false,
+    hasModel: true,
   },
   {
     name: 'retro_poster',
     base: 'SDXL · Illustrious',
+    baseFamily: 'SDXL',
     code: 'XL',
     state: 'failed',
     sub: 'refunded ⚡ 1,750',
@@ -650,6 +682,7 @@ export const SAMPLE_ROWS: TrainingRow[] = [
     sampleUrls: [],
     media: 'image',
     isVideo: false,
+    hasModel: false,
   },
 ];
 
