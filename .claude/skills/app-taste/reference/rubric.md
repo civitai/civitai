@@ -16,6 +16,11 @@ app — never from the diff.
 - 🔴 Under `brandDepth: skin`, **every** surface/border/text pair is verified in
   **both** themes. Under `accent`, host tokens are unmodified.
 - Nothing hardcodes a colour that a theme is supposed to flip.
+- 🔴 The wheel's ≥40° hue-separation bar binds a hue you **choose**. A hue measured from
+  the app's approved live mark is recorded, not policed: put the pairwise separations in
+  the ledger's `wheelGate` block and ship. Never contort a palette to widen a separation —
+  that desyncs the skin from the approved icon/cover (worked example: custom-generators'
+  yt-thumbnail pass, 11.8° to gen-matrix).
 
 ### Information architecture
 
