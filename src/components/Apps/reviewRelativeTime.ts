@@ -1,12 +1,15 @@
 /**
- * Compact relative age for the moderator review queue.
+ * Compact relative age for the moderator review surfaces.
  *
  * `now` is a parameter, not a `Date.now()` read, so every rung is reachable without faking
  * timers.
  *
- * Not `formatAge` (`~/components/Apps/ActivePreviewsPanel`): that ladder stops at days and
- * reads the clock itself. Not `DaysFromNow`: it renders dayjs's long phrase, which is the
- * width this column exists to give back.
+ * THE ONLY relative-age ladder under `~/components/Apps`. `ActivePreviewsPanel.formatAge`
+ * was a second one in this directory for the same job — it stopped at days (`12d` where this
+ * reads `1w`), said `just now` for the sub-minute rung, and read the clock itself, which is
+ * why it needed faked timers to test. It now delegates here via `compactRelativeAgeOf` and
+ * its ladder is deleted. Not `DaysFromNow`: that renders dayjs's long phrase, which is the
+ * width these columns exist to give back.
  */
 
 /** A timestamp we cannot read at all (an unparseable string reaching the adapter). */
@@ -38,4 +41,24 @@ export function compactRelativeTime(date: Date, now: Date): string {
   const years = Math.floor(days / 365);
   if (years >= 1) return `${years}y`;
   return `${Math.min(11, Math.floor(days / 30))}mo`;
+}
+
+/**
+ * `compactRelativeTime` for a caller holding a NULLABLE or string timestamp.
+ *
+ * Absence is the one thing the ladder itself cannot express — it takes a `Date`, and
+ * `new Date(null)` is the epoch, which would render `56y` instead of "no value". So the
+ * null/undefined/empty check lives here, returning the same em dash the deleted `formatAge`
+ * returned for those inputs.
+ *
+ * `now` stays injectable and only defaults to the clock, so the fold is testable without
+ * faking timers. Prefer the two-argument `compactRelativeTime` where the caller already
+ * holds a `Date`.
+ */
+export function compactRelativeAgeOf(
+  d: string | Date | null | undefined,
+  now: Date = new Date()
+): string {
+  if (!d) return UNKNOWN;
+  return compactRelativeTime(typeof d === 'string' ? new Date(d) : d, now);
 }

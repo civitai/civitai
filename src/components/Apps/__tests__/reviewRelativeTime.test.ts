@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { compactRelativeTime } from '~/components/Apps/reviewRelativeTime';
+import { compactRelativeAgeOf, compactRelativeTime } from '~/components/Apps/reviewRelativeTime';
 
 /**
  * The review queue's compact relative-age ladder.
@@ -81,5 +81,69 @@ describe('compactRelativeTime — an unreadable timestamp', () => {
 
   test('an invalid NOW reads as unknown too', () => {
     expect(compactRelativeTime(at(HOUR), new Date('not-a-date'))).toBe('—');
+  });
+});
+
+describe('compactRelativeAgeOf — the nullable/string wrapper the previews panel folded into', () => {
+  /**
+   * 🔴 THIS IS THE PIN ON THE FOLD. `ActivePreviewsPanel` carried a SECOND relative-age
+   * ladder (`formatAge`) in the same directory for the same job. It is deleted and the panel
+   * delegates here, so these rows are the contract that made the deletion safe — the
+   * null/empty handling the ladder alone cannot express, plus proof the shared rungs are the
+   * ones the caller now gets.
+   *
+   * Three labels MOVED in that fold and are asserted as the new values on purpose:
+   * sub-minute `just now`→`now`, the unbounded day rung →`1w`/`2mo`/`1y`, and a FUTURE
+   * timestamp `—`→`now`.
+   */
+
+  test.each([
+    ['null', null],
+    ['undefined', undefined],
+    ['the empty string', ''],
+  ])('%s reads as unknown, not as the epoch', (_label, input) => {
+    // 🔴 `new Date(null)` is the epoch, so a wrapper that forwarded without this check
+    // would render a ~56-year age for "no value" — a plausible-looking label for absence,
+    // which is worse than an em dash.
+    expect(compactRelativeAgeOf(input, NOW)).toBe('—');
+  });
+
+  test('an unparseable string reads as unknown, not as `now`', () => {
+    expect(compactRelativeAgeOf('not-a-date', NOW)).toBe('—');
+  });
+
+  test('an ISO STRING is coerced and lands on the shared rung', () => {
+    // The panel's `updatedAt` arrives over tRPC, which is where the string form comes from.
+    expect(compactRelativeAgeOf(at(5 * HOUR).toISOString(), NOW)).toBe('5h');
+    expect(compactRelativeAgeOf(at(5 * HOUR), NOW)).toBe('5h');
+  });
+
+  test.each([
+    ['30s', 30 * SECOND, 'now'],
+    ['42m', 42 * MINUTE, '42m'],
+    ['5h', 5 * HOUR, '5h'],
+    ['6d', 6 * DAY, '6d'],
+    ['12d', 12 * DAY, '1w'],
+    ['45d', 45 * DAY, '1mo'],
+    ['400d', 400 * DAY, '1y'],
+  ])('a %s age reads the SHARED ladder, which the deleted one could not produce', (_l, ago, expected) => {
+    // 🔴 The last three rows are unreachable for the deleted ladder: it stopped at days, so
+    // it rendered `12d`/`45d`/`400d`. If a local ladder ever regrows in the panel, the
+    // browser-tier pin in `ActivePreviewsPanel.browser.test.tsx` reds on exactly this.
+    expect(compactRelativeAgeOf(at(ago), NOW)).toBe(expected);
+  });
+
+  test('a FUTURE timestamp reads `now`, the one divergence that is not a strict improvement', () => {
+    // The deleted ladder returned `—` here. DB-written times rendered against a browser
+    // clock run a few seconds ahead routinely, and `—` made that ordinary skew look like
+    // missing data — the same reasoning the two-argument form already documents.
+    expect(compactRelativeAgeOf(at(-30 * SECOND), NOW)).toBe('now');
+  });
+
+  test('it defaults `now` to the clock, so the caller needs no injected date', () => {
+    // The panel calls the one-argument form. A default that did not read the clock would
+    // make every row read `now` forever.
+    expect(compactRelativeAgeOf(new Date(Date.now() - 3 * HOUR))).toBe('3h');
+    expect(compactRelativeAgeOf(new Date(Date.now() - 21 * DAY))).toBe('3w');
   });
 });
