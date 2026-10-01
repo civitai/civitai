@@ -1991,6 +1991,60 @@ export async function recordPendingFromPush(args: {
 }
 
 /**
+ * The store-listing facts the moderator queue shows beside a CODE request: lifetime plays
+ * and the listing's media.
+ *
+ * 🔴 KEYED ON `AppListing.slug`, NOT `appBlockId`. `AppBlockPublishRequest.appBlockId` is
+ * NULL while an app's first request is pending, so an id-keyed join would blank exactly the
+ * rows a moderator reviews most carefully. `AppListing.slug` is `@unique` and equals the
+ * block slug for an on-site listing; a revision SHADOW gets a synthetic `rev-<ulid>` slug
+ * (`beginListingRevision`), so it can never be picked up by accident.
+ *
+ * 🔴 ONE QUERY FOR THE WHOLE PAGE, never one per row. A slug with no listing — the pending
+ * first version whose draft listing has not been created, or an app that never got one —
+ * is simply absent from the map, which the callers project as `null`.
+ */
+type ListingQueueFacts = {
+  playCount: number | null;
+  iconUrl: string | null;
+  coverUrl: string | null;
+};
+
+async function listingFactsBySlug(slugs: string[]): Promise<Map<string, ListingQueueFacts>> {
+  const unique = [...new Set(slugs)];
+  if (unique.length === 0) return new Map();
+  const [{ dbRead }, { listingIconUrl, listingCoverUrl }] = await Promise.all([
+    import('~/server/db/client'),
+    import('./listing-media-url'),
+  ]);
+  const rows = await dbRead.appListing.findMany({
+    where: { slug: { in: unique } },
+    select: {
+      slug: true,
+      icon: { select: { url: true } },
+      cover: { select: { url: true } },
+      metric: { select: { openCount: true } },
+    },
+  });
+  return new Map(
+    rows.map((r: (typeof rows)[number]) => [
+      r.slug,
+      {
+        // `null` (no metric row yet) and `0` are different facts; the row keeps the
+        // distinction even though the queue renders both as an em dash.
+        playCount: r.metric?.openCount ?? null,
+        iconUrl: listingIconUrl(r.icon),
+        // No screenshot fallback: a moderator must see that the listing has no cover, the
+        // same reason the author's own read passes `null` here.
+        coverUrl: listingCoverUrl(r.cover, null),
+      },
+    ])
+  );
+}
+
+const NO_LISTING_FACTS: ListingQueueFacts = { playCount: null, iconUrl: null, coverUrl: null };
+
+/**
  * Mod queue: paginated list of publish requests in status='pending',
  * oldest first (FIFO). Includes the submitter's basic profile so the
  * review UI doesn't round-trip per row.
@@ -2023,9 +2077,11 @@ export async function listPendingRequests(opts: ListPendingRequestsOptions = {})
   });
   const hasNext = rows.length > limit;
   const items = hasNext ? rows.slice(0, limit) : rows;
+  const listings = await listingFactsBySlug(items.map((r: (typeof rows)[number]) => r.slug));
   return {
     items: items.map((r: (typeof rows)[number]) => ({
       ...r,
+      ...(listings.get(r.slug) ?? NO_LISTING_FACTS),
       // BigInt isn't JSON-serializable through tRPC's default transformer;
       // surface as a string. UI can format with Intl.NumberFormat.
       bundleSizeBytes: r.bundleSizeBytes.toString(),
@@ -2090,9 +2146,11 @@ export async function listApprovedRequests(opts: ListPendingRequestsOptions = {}
   });
   const hasNext = rows.length > limit;
   const items = hasNext ? rows.slice(0, limit) : rows;
+  const listings = await listingFactsBySlug(items.map((r: (typeof rows)[number]) => r.slug));
   return {
     items: items.map((r: (typeof rows)[number]) => ({
       ...r,
+      ...(listings.get(r.slug) ?? NO_LISTING_FACTS),
       bundleSizeBytes: r.bundleSizeBytes.toString(),
       reviewRepoUrl: reviewRepoUrl(r.slug),
       // Push rows have empty bundle pointers; bundleSha256 (selected, NOT NULL)
@@ -2141,9 +2199,11 @@ export async function listRejectedRequests(opts: ListPendingRequestsOptions = {}
   });
   const hasNext = rows.length > limit;
   const items = hasNext ? rows.slice(0, limit) : rows;
+  const listings = await listingFactsBySlug(items.map((r: (typeof rows)[number]) => r.slug));
   return {
     items: items.map((r: (typeof rows)[number]) => ({
       ...r,
+      ...(listings.get(r.slug) ?? NO_LISTING_FACTS),
       bundleSizeBytes: r.bundleSizeBytes.toString(),
       reviewRepoUrl: reviewRepoUrl(r.slug),
       // Push rows have empty bundle pointers; bundleSha256 (selected, NOT NULL)
@@ -2153,6 +2213,48 @@ export async function listRejectedRequests(opts: ListPendingRequestsOptions = {}
     })),
     nextCursor: hasNext ? items[items.length - 1].id : null,
   };
+}
+
+/** How many history entries `listVersionHistory` returns. Bounded because an app that has
+ *  been iterated on for months has an unbounded request stream and this is a modal. */
+export const VERSION_HISTORY_LIMIT = 50;
+
+/**
+ * MOD-ONLY: every publish request for ONE app, newest-first.
+ *
+ * 🔴 `slug`-KEYED. `appBlockId` is NULL while a first request is pending, so an id-keyed
+ * read would return nothing for exactly the app a moderator is reviewing for the first
+ * time; the slug carries identity across that lifecycle and is indexed
+ * (`app_block_publish_requests_slug_idx` on `[slug, status]`).
+ *
+ * The CURRENT request is included rather than excluded, so the modal reads as a full
+ * history rather than a gap; which entry is current is decided at render from the row the
+ * moderator opened, because this read is not told which one that is.
+ *
+ * 🔴 `deployDetail` IS NOT PROJECTED. It carries the tenant-influenced build-log excerpt
+ * (sanitized, but author-authored bytes) and no moderator surface renders it — see the
+ * note on `ReviewRowDeploy` in `~/components/Apps/unifiedReviewRow`.
+ */
+export async function listVersionHistory(opts: { slug: string }) {
+  const { dbRead } = await import('~/server/db/client');
+  const rows = await dbRead.appBlockPublishRequest.findMany({
+    where: { slug: opts.slug },
+    orderBy: { submittedAt: 'desc' },
+    take: VERSION_HISTORY_LIMIT + 1,
+    select: {
+      id: true,
+      version: true,
+      status: true,
+      submittedAt: true,
+      reviewedAt: true,
+      rejectionReason: true,
+      deployState: true,
+      submittedBy: { select: { id: true, username: true, image: true } },
+      reviewedBy: { select: { id: true, username: true, image: true } },
+    },
+  });
+  const truncated = rows.length > VERSION_HISTORY_LIMIT;
+  return { items: truncated ? rows.slice(0, VERSION_HISTORY_LIMIT) : rows, truncated };
 }
 
 export type ApproveRequestParams = {
@@ -4388,10 +4490,13 @@ export async function getReviewRequestById(publishRequestId: string): Promise<{
   if (!mode) return null;
 
   // Match the list builders' row mapping exactly (bundle bigint → string,
-  // Forgejo review-repo deep link, push-row canonical-commit link).
+  // Forgejo review-repo deep link, push-row canonical-commit link, and the
+  // slug-joined store-listing facts the review surfaces render).
   const { status, ...rest } = r;
+  const listings = await listingFactsBySlug([r.slug]);
   const request = {
     ...rest,
+    ...(listings.get(r.slug) ?? NO_LISTING_FACTS),
     bundleSizeBytes: r.bundleSizeBytes.toString(),
     reviewRepoUrl: reviewRepoUrl(r.slug),
     pushCommitUrl:

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { OnsiteReviewModalBody, type OnsiteReviewSelection } from '~/components/Apps/OnsiteReviewModal';
 import {
-  ReviewActionBar,
-  type ReviewActionStatus,
-} from '~/components/Apps/ReviewActionBar';
+  OnsiteReviewModalBody,
+  type OnsiteReviewSelection,
+} from '~/components/Apps/OnsiteReviewModal';
+import { ReviewActionBar, type ReviewActionStatus } from '~/components/Apps/ReviewActionBar';
+import { ReviewListingMedia } from '~/components/Apps/ReviewListingMedia';
 import { useReviewNavigationGuard } from '~/components/Apps/useReviewNavigationGuard';
 
 /**
@@ -23,6 +24,13 @@ import { useReviewNavigationGuard } from '~/components/Apps/useReviewNavigationG
  * `selection` is already resolved by the page (SSR gate + client `getPublishRequest`
  * fetch); this component is purely presentational + interaction.
  */
+
+/** The manifest's declared name, when the blob carries one. */
+function manifestName(manifest: unknown): string | null {
+  if (!manifest || typeof manifest !== 'object') return null;
+  const name = (manifest as Record<string, unknown>).name;
+  return typeof name === 'string' && name.length > 0 ? name : null;
+}
 
 const STATUS_MESSAGE: Record<ReviewActionStatus, string> = {
   idle: '',
@@ -93,6 +101,15 @@ export function ReviewDetailView({
         aria-label={`Review of ${selection.request.slug} v${selection.request.version}`}
         style={{ outline: 'none' }}
       >
+        {/* The shared body shows BUNDLE screenshots only; the store icon and cover are
+            listing columns it never reads. Page-only for now — the modal path is
+            deliberately untouched. */}
+        <ReviewListingMedia
+          slug={selection.request.slug}
+          name={manifestName(selection.request.manifest) ?? selection.request.slug}
+          iconUrl={selection.request.iconUrl ?? null}
+          coverUrl={selection.request.coverUrl ?? null}
+        />
         <OnsiteReviewModalBody
           // Route param → keyed remount for a fresh per-submission body (parity
           // with the modal). Actions are hidden here — the sticky bar owns them.

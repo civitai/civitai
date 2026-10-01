@@ -43,6 +43,7 @@ import { page } from 'vitest/browser';
 // same depth as the sibling suites in this directory.
 import { renderWithProviders } from '../../../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
+import type * as UserAvatarMod from '~/components/UserAvatar/UserAvatar';
 // Top-level type imports, not inline `import()` annotations — the latter are banned by
 // `@typescript-eslint/consistent-type-imports`.
 import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
@@ -142,6 +143,17 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
 vi.mock('~/providers/IsClientProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof IsClientMod>()),
   useIsClient: () => true,
+}));
+// The queue's Submitter cell renders the real `UserAvatar`, which calls
+// `trpc.user.getById.useQuery` unconditionally (rules of hooks) — and this file's `trpc`
+// override names only the two queue procs, so the real avatar takes the tab down. The stub
+// keeps the cell's whole contract with it for a file that tests POLL and PAGING behaviour.
+// Precedent: `~/components/Reaction/ImageReactorsPreview.browser.test.tsx`.
+vi.mock('~/components/UserAvatar/UserAvatar', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserAvatarMod>()),
+  UserAvatar: ({ user }: { user: { id: number; username?: string | null } }) => (
+    <span>{user.username ?? `#${user.id}`}</span>
+  ),
 }));
 vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
   ...(await importOriginal<typeof CurrentUserMod>()),

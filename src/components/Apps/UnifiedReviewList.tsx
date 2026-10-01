@@ -1,15 +1,38 @@
-import { Alert, Badge, Button, Card, Code, Group, Stack, Table, Text } from '@mantine/core';
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  Code,
+  Group,
+  Stack,
+  Table,
+  Text,
+  UnstyledButton,
+} from '@mantine/core';
 import {
   IconAlertTriangle,
   IconCheck,
   IconClock,
   IconExternalLink,
+  IconHistory,
   IconRefresh,
 } from '@tabler/icons-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
 import { canRetriggerBuild } from '~/components/Apps/deploy-status';
 import { AppsTableColgroup, APPS_REVIEW_QUEUE_COLUMNS } from '~/components/Apps/appsWideLayout';
+import { getPlayCountLabel } from '~/components/Apps/appListingCardView';
+import {
+  NO_BROKEN_SCREENSHOTS,
+  withBrokenIndex,
+  type BrokenScreenshotIndexes,
+} from '~/components/Apps/appListingScreenshotNav';
+import { AppListingScreenshotViewer } from '~/components/Apps/AppListingScreenshotViewer';
+import { ListingIconThumb } from '~/components/Apps/ListingMediaThumb';
+import { listingMediaIndex, listingMediaShots } from '~/components/Apps/myAppsView';
+import { compactRelativeTime } from '~/components/Apps/reviewRelativeTime';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import {
   mergeReviewRows,
   offsiteRequestToUnifiedRow,
@@ -31,6 +54,37 @@ import {
  * already-accumulated raw items + loading/error/hasMore state and the two
  * page-owned open callbacks. Keep it server-graph-free so it is browser-testable.
  */
+
+/** What the version cell hands the page when a moderator asks for an app's history. */
+export type VersionHistoryTarget = {
+  slug: string;
+  /** The entry in that history the moderator is looking at, so the modal can mark it. */
+  currentRequestId: string | null;
+  /** Display name for the modal title. */
+  title: string;
+};
+
+/**
+ * How often the relative-age column re-renders, in ms.
+ *
+ * 🔴 ONE TIMER FOR THE WHOLE LIST, not one per row. The Pending tab already repaints on its
+ * own 15s poll, but the history tabs do not poll at all, so without this an Approved row
+ * opened in a background tab would keep reading `5h` for a day. `DaysFromNow`'s `live` tick
+ * is the precedent; this is that tick hoisted to the list so a 50-row page has one interval
+ * rather than 50. A minute is the finest granularity the ladder can express past the `now`
+ * rung, so a faster tick could not change a single label.
+ */
+export const REVIEW_RELATIVE_TICK_MS = 60_000;
+
+function useNowTick(intervalMs: number): Date {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+  return now;
+}
+
 export function UnifiedReviewList({
   onsiteItems,
   offsiteItems,
@@ -38,6 +92,7 @@ export function UnifiedReviewList({
   openOnsiteReview,
   openOffsiteReview,
   openCombinedReview,
+  openVersionHistory,
   isLoading,
   errorMessage,
   emptyLabel,
@@ -61,6 +116,9 @@ export function UnifiedReviewList({
    *  BOTH a pending code request AND a pending listing-media revision collapses into
    *  ONE combined row (PENDING tab only). Omitted on history tabs → no combining. */
   openCombinedReview?: (payload: CombinedReviewPayload) => void;
+  /** Opens the PRIOR-VERSIONS modal for a row's app (page-owned, like every other modal
+   *  this list opens). Omitted → the version cell renders without a trigger. */
+  openVersionHistory?: (target: VersionHistoryTarget) => void;
   isLoading: boolean;
   /** Non-empty when EITHER source query errored transiently — surfaced as an Alert
    *  rather than silently blanking the list. */
@@ -87,18 +145,48 @@ export function UnifiedReviewList({
     const onsiteRows = onsiteItems.map((r) => onsiteRequestToUnifiedRow(r, openOnsiteReview));
     const offsiteRows = offsiteItems.map((r) => offsiteRequestToUnifiedRow(r, openOffsiteReview));
     return mergeReviewRows(onsiteRows, offsiteRows, direction, openCombinedReview);
-  }, [onsiteItems, offsiteItems, direction, openOnsiteReview, openOffsiteReview, openCombinedReview]);
+  }, [
+    onsiteItems,
+    offsiteItems,
+    direction,
+    openOnsiteReview,
+    openOffsiteReview,
+    openCombinedReview,
+  ]);
 
   // The Deploy column exists only where a retrigger handler was supplied (the
   // Approved tab). Pending/Rejected render exactly as before.
   const showDeploy = !!onRetriggerBuild;
 
+  /**
+   * 🔴 THE CLOCK IS READ ON THE CLIENT AND THAT CANNOT DIVERGE FROM SSR HERE, so this
+   * deliberately does NOT gate on `useIsClient` the way `DaysFromNow` does. `/apps/review`'s
+   * `getServerSideProps` passes no data and every row arrives from a client tRPC query, so
+   * on the server `rows` is empty and the table — hence every timestamp — never renders at
+   * all. There is no first paint for a tick to disagree with. Gating would instead make the
+   * column render `null` until hydration, which every browser test would then have to wait
+   * out.
+   */
+  const now = useNowTick(REVIEW_RELATIVE_TICK_MS);
+
+  /**
+   * The row whose listing media is open in the viewer, and which image is on screen.
+   *
+   * 🔴 ONE VIEWER FOR THE WHOLE LIST, not one per row — a `<Modal>` per row would put
+   * `rows.length` dialogs in the DOM, each registering its own capture-phase Escape
+   * listener. `broken` is reset on every open because it indexes into THIS row's
+   * `[cover, icon]` list; carrying it across rows would hide a different app's icon.
+   */
+  const [mediaTarget, setMediaTarget] = useState<{ rowKey: string; index: number } | null>(null);
+  const [mediaBroken, setMediaBroken] = useState<BrokenScreenshotIndexes>(NO_BROKEN_SCREENSHOTS);
+  // Resolved from `rows` rather than stored on open, so the 15s poll removing a decided row
+  // cannot leave the viewer framing a dead URL — the viewer's own rescue effect closes it.
+  const mediaRow = mediaTarget ? rows.find((r) => r.key === mediaTarget.rowKey) ?? null : null;
+
   return (
     <Stack gap="md">
       <Text c="dimmed" size="sm" data-testid="apps-unified-review-count">
-        {isLoading && rows.length === 0
-          ? 'Loading…'
-          : `${rows.length}${hasMore ? '+' : ''} shown.`}
+        {isLoading && rows.length === 0 ? 'Loading…' : `${rows.length}${hasMore ? '+' : ''} shown.`}
       </Text>
 
       {errorMessage && (
@@ -142,7 +230,9 @@ export function UnifiedReviewList({
                 {/* The PRIMARY column — no width in the ledger, so it takes the slack.
                     The testid is what `AppsWideLayout.geometry.test.tsx` measures. */}
                 <Table.Th data-testid="apps-unified-review-col-app">App</Table.Th>
+                <Table.Th>Version</Table.Th>
                 <Table.Th>Submitter</Table.Th>
+                <Table.Th>Plays</Table.Th>
                 <Table.Th>{dateLabel}</Table.Th>
                 {showDeploy && <Table.Th>Deploy</Table.Th>}
                 <Table.Th />
@@ -153,10 +243,20 @@ export function UnifiedReviewList({
                 <UnifiedReviewRowView
                   key={row.key}
                   row={row}
+                  now={now}
                   actionLabel={actionLabel}
                   showDeploy={showDeploy}
                   onRetriggerBuild={onRetriggerBuild}
                   retriggeringId={retriggeringId ?? null}
+                  openVersionHistory={openVersionHistory}
+                  onOpenMedia={(target) => {
+                    const index = listingMediaIndex(target, 'icon');
+                    // Unreachable from the UI (a placeholder renders no button at all);
+                    // the structural half of that guarantee.
+                    if (index === null) return;
+                    setMediaBroken(NO_BROKEN_SCREENSHOTS);
+                    setMediaTarget({ rowKey: target.key, index });
+                  }}
                 />
               ))}
             </Table.Tbody>
@@ -177,6 +277,31 @@ export function UnifiedReviewList({
           </Button>
         </Group>
       )}
+
+      {/*
+        REUSED, NOT REBUILT — `ImageViewer`/`ImageDetailModal` are keyed on a numeric
+        civitai `Image` id and driven by a `?imageId=` query param; a row here carries a CDN
+        URL string and no image id exists to hand them. Mounted outside the table so paging
+        cannot unmount it mid-view. `/apps/review/<id>` opens the same viewer, so the two
+        surfaces cannot drift on prev/next or the broken-shot rescue.
+      */}
+      <AppListingScreenshotViewer
+        shots={
+          mediaRow
+            ? listingMediaShots({
+                name: mediaRow.title,
+                iconUrl: mediaRow.iconUrl,
+                coverUrl: mediaRow.coverUrl,
+              })
+            : []
+        }
+        name={mediaRow?.title ?? ''}
+        broken={mediaBroken}
+        index={mediaRow ? mediaTarget?.index ?? null : null}
+        onIndexChange={(index) => setMediaTarget((prev) => (prev ? { ...prev, index } : prev))}
+        onBroken={(index) => setMediaBroken((prev) => withBrokenIndex(prev, index))}
+        onClose={() => setMediaTarget(null)}
+      />
     </Stack>
   );
 }
@@ -274,21 +399,96 @@ function RetriggerBuildButton({
   );
 }
 
+/**
+ * The submitted CODE version, plus the loud `first version` flag, plus the trigger into
+ * that app's prior-version history.
+ *
+ * 🔴 THE BADGE WORDING AND COLOUR ARE `OnsiteReviewModalTitle`'s, to the letter. The queue
+ * and the review surface a moderator opens from it must not spell the same verdict two ways
+ * — a second spelling is how the two come to disagree about what it means.
+ */
+function VersionCell({
+  row,
+  openVersionHistory,
+}: {
+  row: UnifiedReviewRow;
+  openVersionHistory?: (target: VersionHistoryTarget) => void;
+}) {
+  // A listing revision ships no code: `—`, never the badge, and nothing to open.
+  if (!row.version) {
+    return (
+      <Text size="xs" c="dimmed" data-testid={`apps-unified-review-version-${row.key}`}>
+        —
+      </Text>
+    );
+  }
+  const body = (
+    // 🔴 `nowrap` for the same reason as the kind badge: this cell is a semver NEXT TO a
+    // badge, and letting the pair break across lines grows the row.
+    <Group gap={6} wrap="nowrap" data-testid={`apps-unified-review-version-${row.key}`}>
+      <Code>{row.version}</Code>
+      {row.isFirstVersion && (
+        <Badge
+          color="violet"
+          size="sm"
+          style={{ whiteSpace: 'nowrap' }}
+          data-testid={`apps-unified-review-first-version-${row.key}`}
+        >
+          first version
+        </Badge>
+      )}
+    </Group>
+  );
+  if (!openVersionHistory) return body;
+  return (
+    <UnstyledButton
+      data-testid={`apps-unified-review-version-trigger-${row.key}`}
+      aria-label={`Prior versions of ${row.title}`}
+      title="Every submission for this app, newest first."
+      onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+        // Every other cell in this row opens the review; this one must not also do that.
+        e.stopPropagation();
+        openVersionHistory({
+          slug: row.slug ?? '',
+          currentRequestId: row.publishRequestId ?? null,
+          title: row.title,
+        });
+      }}
+    >
+      <Group gap={4} wrap="nowrap">
+        {body}
+        <IconHistory size={12} style={{ opacity: 0.6 }} />
+      </Group>
+    </UnstyledButton>
+  );
+}
+
 function UnifiedReviewRowView({
   row,
+  now,
   actionLabel,
   showDeploy,
   onRetriggerBuild,
   retriggeringId,
+  openVersionHistory,
+  onOpenMedia,
 }: {
   row: UnifiedReviewRow;
+  now: Date;
   actionLabel: string;
   showDeploy: boolean;
   onRetriggerBuild?: (publishRequestId: string) => void;
   retriggeringId: string | null;
+  openVersionHistory?: (target: VersionHistoryTarget) => void;
+  onOpenMedia: (row: UnifiedReviewRow) => void;
 }) {
   const submitter = row.submitter;
   const deploy = row.deploy;
+  const playLabel = getPlayCountLabel(row.playCount);
+  const absolute = row.submittedAt.toLocaleString();
+  const iso = Number.isFinite(row.submittedAt.getTime())
+    ? row.submittedAt.toISOString()
+    : undefined;
   return (
     <Table.Tr style={{ cursor: 'pointer' }} data-testid={`apps-unified-review-row-${row.key}`}>
       <Table.Td onClick={row.onReview}>
@@ -307,26 +507,85 @@ function UnifiedReviewRowView({
         </Badge>
       </Table.Td>
       <Table.Td onClick={row.onReview}>
-        <Group gap={6} wrap="nowrap">
-          {row.slug && <Code>{row.slug}</Code>}
+        {/* The icon lives INSIDE this cell rather than in a column of its own: a 40px
+            image cannot use a column's share, so a sixth fixed column would take width
+            off the primary one to pad a fixed-size box. */}
+        <Group gap="sm" wrap="nowrap">
+          <ListingIconThumb
+            url={row.iconUrl}
+            name={row.title}
+            imgTestId={`apps-unified-review-icon-${row.key}`}
+            placeholderTestId={`apps-unified-review-icon-placeholder-${row.key}`}
+            onOpen={row.iconUrl ? () => onOpenMedia(row) : undefined}
+            buttonTestId={`apps-unified-review-icon-button-${row.key}`}
+          />
+          <Stack gap={0} style={{ minWidth: 0 }}>
+            {row.slug && <Code>{row.slug}</Code>}
+            {row.title && row.title !== row.slug && (
+              <Text size="xs" c="dimmed">
+                {row.title}
+              </Text>
+            )}
+          </Stack>
         </Group>
-        {row.title && row.title !== row.slug && (
-          <Text size="xs" c="dimmed">
-            {row.title}
+      </Table.Td>
+      <Table.Td onClick={row.onReview}>
+        <VersionCell row={row} openVersionHistory={openVersionHistory} />
+      </Table.Td>
+      <Table.Td onClick={row.onReview}>
+        {submitter?.username ? (
+          /*
+            🔴 `stopPropagation` AROUND THE CHIP, not on the cell, because `linkToProfile`
+            renders a real `<a>` inside a cell whose click opens the review: without it one
+            click BOTH navigates to the profile and opens the review surface behind it.
+            Scoped to the chip so the rest of the cell still opens the review, like every
+            other cell in the row.
+          */
+          <span
+            onClick={(e: React.MouseEvent<HTMLSpanElement>) => e.stopPropagation()}
+            data-testid={`apps-unified-review-submitter-${row.key}`}
+          >
+            {/*
+              🔴 `user=`, NOT `userId=`. The row payload already carries
+              `{id, username, image}` (`ReviewSubmitterChip`), and the `userId` form fires
+              `trpc.user.getById` per distinct id — with request batching off in this repo
+              that is one extra HTTP request per submitter on the page. The accepted cost is
+              no cosmetics/decoration frame on the avatar. Do not "fix" this to `userId`.
+            */}
+            <UserAvatar user={submitter} size="sm" withUsername linkToProfile />
+          </span>
+        ) : (
+          /* A submitter with no username is still an identity a moderator can act on, and
+             a deleted one must not render as an empty cell — the same two fallbacks this
+             cell showed as plain text before the avatar. */
+          <Text size="xs" c="dimmed" data-testid={`apps-unified-review-submitter-${row.key}`}>
+            {submitter ? `#${submitter.id}` : '—'}
           </Text>
         )}
       </Table.Td>
       <Table.Td onClick={row.onReview}>
-        <Text size="xs">
-          {submitter?.username ? submitter.username : `#${submitter?.id ?? '?'}`}
+        {/* `getPlayCountLabel` returns null for 0 ON PURPOSE (an absent count and a zero
+            count are both "nothing happened yet" on screen) — honour it rather than
+            rendering "0 plays". See `UnifiedReviewRow.playCount` for what this number
+            does and does not mean. */}
+        <Text size="xs" c={playLabel ? undefined : 'dimmed'} style={{ whiteSpace: 'nowrap' }}>
+          {playLabel ?? '—'}
         </Text>
       </Table.Td>
       <Table.Td onClick={row.onReview}>
-        {/* Same reason as the kind badge: a timestamp is one token and must not wrap. */}
+        {/* Same reason as the kind badge: an age is one token and must not wrap. The exact
+            timestamp stays reachable on hover + to a screen reader via `title`/`dateTime`,
+            which is what makes a relative label safe to show a moderator. */}
         <Group gap={4} wrap="nowrap">
           <IconClock size={14} />
           <Text size="xs" style={{ whiteSpace: 'nowrap' }}>
-            {row.submittedAt.toLocaleString()}
+            <time
+              dateTime={iso}
+              title={absolute}
+              data-testid={`apps-unified-review-age-${row.key}`}
+            >
+              {compactRelativeTime(row.submittedAt, now)}
+            </time>
           </Text>
         </Group>
       </Table.Td>

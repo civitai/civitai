@@ -143,23 +143,45 @@ export function appsTableColumnProblems(label: string, columns: AppsTableColumns
 }
 
 /**
- * The `/apps/review` QUEUE table (`UnifiedReviewList`) — Kind · **App** · Submitter ·
- * date · [Deploy] · action.
+ * The `/apps/review` QUEUE table (`UnifiedReviewList`) — Kind · **App** · Version ·
+ * Submitter · Plays · date · [Deploy] · action.
  *
  * The App column is primary: it is the only cell carrying a variable-length identity
- * (a slug plus an optional title), and it is what a moderator scans down. Everything
- * else is a badge, a username, a formatted date or a button — all of which have a
- * natural width that more space does not improve.
+ * (an icon, a slug and an optional title), and it is what a moderator scans down.
+ * Everything else is a badge, a semver, a user chip, an abbreviated count, a relative
+ * age or a button — all of which have a natural width that more space does not improve.
  *
  * The Deploy column exists on the Approved tab only, so BOTH shapes are enumerated
  * rather than one being patched at the call site. Its presence is decided by whether a
  * retrigger handler was supplied — i.e. by data, never by width.
+ *
+ * 🔴 THE DATE SHARE WENT DOWN WHEN THE COLUMN WENT RELATIVE, AND THAT IS THE DIRECTION
+ * THIS MODULE'S OWN RULE REQUIRES. It was 9 against a `toLocaleString()` stamp; the cell
+ * now renders `5h` / `2mo`, whose max-content is a fraction of that, so 9 would have been
+ * ~130px of padding per row at the wide width — "a share larger than its cell needs is
+ * padding relabelled", which is the defect, not the fix.
+ *
+ * 🔴 AND VERSION IS THE WIDEST FIXED SHARE, which is not where intuition puts it. The cell
+ * is a `<Code>` semver NEXT TO a violet `first version` badge on a nowrap row, so it paints
+ * wider than the kind badge and wider than the submitter chip. Measured at 1440 (table
+ * 1406) on a first-version row: the cell's own content is 165.95px + 32px of table padding
+ * = 198px, which is 14.08% — hence 14. A share sized by "it's just a version number" sits
+ * under that, and a nowrap row does not then get narrower, it paints OUTSIDE its cell: the
+ * `/apps/mine` Status note below is the same defect, measured at 60px.
+ *
+ * 🔴 EVERY OTHER SHARE HERE IS SIZED TO ITS CELL'S OWN MEASURED CONTENT, NOT GUESSED, and
+ * three of them went DOWN from a first draft for the reason this module's header states:
+ * a share above what the cell needs at the WIDE width is padding relabelled. Min-content,
+ * measured in `AppsWideLayout.geometry.test.tsx`: Kind 63.11 · App 166.02 · Version 118.02
+ * · Submitter 130.59 · Plays 92.70 · date 100.45 · action 120.69. Each non-primary share is
+ * the smallest that still clears its cell at 2526 with headroom — a share BELOW its cell's
+ * need there is the case the geometry tier's declared-share arm reds on.
  */
 export const APPS_REVIEW_QUEUE_COLUMNS = {
-  /** Pending / Rejected: Kind · App · Submitter · date · action. */
-  withoutDeploy: [6, null, 6, 9, 6] as AppsTableColumns,
-  /** Approved: Kind · App · Submitter · date · Deploy · action. */
-  withDeploy: [5, null, 5, 8, 8, 5] as AppsTableColumns,
+  /** Pending / Rejected: Kind · App · Version · Submitter · Plays · date · action. */
+  withoutDeploy: [6, null, 14, 7, 5, 5, 6] as AppsTableColumns,
+  /** Approved: Kind · App · Version · Submitter · Plays · date · Deploy · action. */
+  withDeploy: [6, null, 14, 7, 5, 5, 8, 6] as AppsTableColumns,
 } as const;
 
 /**

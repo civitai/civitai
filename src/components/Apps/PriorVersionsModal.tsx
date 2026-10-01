@@ -1,0 +1,191 @@
+import { Alert, Badge, Code, Group, Loader, Modal, Stack, Text } from '@mantine/core';
+import {
+  ListingHistoryEntryRow,
+  type ListingHistoryEntry,
+} from '~/components/Apps/ListingHistoryPanel';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { trpc } from '~/utils/trpc';
+
+/**
+ * MODERATOR view of every submission an app has ever made — opened from the Version cell
+ * of the `/apps/review` queue.
+ *
+ * 🔴 KEYED ON SLUG, NOT ON `appBlockId`. `AppBlockPublishRequest.appBlockId` is NULL while
+ * an app's FIRST request is pending (the FK is written on approve), so an id-keyed read
+ * returns nothing for exactly the rows a moderator is most likely to be looking at. The
+ * slug is what carries identity across that lifecycle, and it has an index
+ * (`app_block_publish_requests_slug_idx`).
+ *
+ * 🔴 NOT `appListings.listingHistory`. That read is author-scoped by design (owner ∪
+ * accepted seat) and keyed on `appListingId`, which does not exist for a pending first
+ * version — widening it would hand a moderator's reach to the author path.
+ */
+
+export type PriorVersionsSelection = {
+  slug: string;
+  /** The entry the moderator is looking at, marked in the list. Null when the row has no
+   *  code request of its own. */
+  currentRequestId: string | null;
+  /** The app's display name, for the modal title. */
+  title: string;
+} | null;
+
+/** One row of `blocks.listVersionHistory`. */
+export type VersionHistoryEntry = {
+  id: string;
+  version: string;
+  status: string;
+  submittedAt: string | Date;
+  reviewedAt: string | Date | null;
+  submittedBy: { id: number; username: string | null; image: string | null } | null;
+  reviewedBy: { id: number; username: string | null; image: string | null } | null;
+  rejectionReason: string | null;
+  deployState: string | null;
+};
+
+/**
+ * Project a version-history entry onto the shared history-row shape.
+ *
+ * `approvalNotes`/`changelog` are null because this read does not carry them, and
+ * `canWithdraw` is omitted so the shared row renders no Withdraw button — both withdraw
+ * procs are submitter-scoped, so offering one to a moderator is a guaranteed red toast.
+ */
+export function toHistoryEntry(entry: VersionHistoryEntry): ListingHistoryEntry {
+  return {
+    id: entry.id,
+    source: 'version',
+    status: entry.status,
+    version: entry.version,
+    submittedAt: entry.submittedAt,
+    reviewedAt: entry.reviewedAt,
+    rejectionReason: entry.rejectionReason,
+    approvalNotes: null,
+    changelog: null,
+    deployState: entry.deployState,
+  };
+}
+
+/** The pure body — every state renderable from props alone, so each has a test. */
+export function PriorVersionsBody({
+  selection,
+  entries,
+  loading = false,
+  errorMessage = null,
+  truncated = false,
+}: {
+  selection: PriorVersionsSelection;
+  entries: VersionHistoryEntry[];
+  loading?: boolean;
+  errorMessage?: string | null;
+  /** The read is bounded; say so rather than presenting a clipped list as complete. */
+  truncated?: boolean;
+}) {
+  return (
+    <>
+      {errorMessage ? (
+        <Alert color="red" variant="light" data-testid="apps-prior-versions-error">
+          {errorMessage}
+        </Alert>
+      ) : loading ? (
+        <Group gap="xs" data-testid="apps-prior-versions-loading">
+          <Loader size="xs" />
+          <Text size="sm" c="dimmed">
+            Loading version history…
+          </Text>
+        </Group>
+      ) : entries.length === 0 ? (
+        <Text size="sm" c="dimmed" data-testid="apps-prior-versions-empty">
+          No submissions recorded for this app.
+        </Text>
+      ) : (
+        <Stack gap={8} data-testid="apps-prior-versions-list">
+          {entries.map((e) => (
+            <ListingHistoryEntryRow key={e.id} entry={toHistoryEntry(e)}>
+              {e.id === selection?.currentRequestId && (
+                <Badge
+                  size="sm"
+                  color="violet"
+                  variant="filled"
+                  data-testid={`apps-prior-versions-current-${e.id}`}
+                >
+                  current
+                </Badge>
+              )}
+              {e.submittedBy && (
+                <Group gap={4} wrap="nowrap">
+                  <Text size="xs" c="dimmed">
+                    by
+                  </Text>
+                  <UserAvatar user={e.submittedBy} size="xs" withUsername />
+                </Group>
+              )}
+              {e.reviewedBy && (
+                <Group gap={4} wrap="nowrap">
+                  <Text size="xs" c="dimmed">
+                    reviewed by
+                  </Text>
+                  <UserAvatar user={e.reviewedBy} size="xs" withUsername />
+                </Group>
+              )}
+            </ListingHistoryEntryRow>
+          ))}
+          {truncated && (
+            <Text size="xs" c="dimmed" data-testid="apps-prior-versions-truncated">
+              Showing the most recent submissions only.
+            </Text>
+          )}
+        </Stack>
+      )}
+    </>
+  );
+}
+
+/**
+ * The modal shell + the mod-only history read.
+ *
+ * The `<Modal>` lives HERE rather than in the body for the same reason
+ * `OnsiteReviewModal` splits that way: the page mounts this as a portaled sibling of the
+ * shared chrome, and `appsPageWidths.test.ts` verifies that an allowlisted sibling really
+ * does render a Mantine portal root at its top level rather than page content.
+ *
+ * The query is `enabled` only while a selection exists, so a closed modal fetches nothing.
+ */
+export function PriorVersionsModal({
+  selection,
+  onClose,
+}: {
+  selection: PriorVersionsSelection;
+  onClose: () => void;
+}) {
+  const query = trpc.blocks.listVersionHistory.useQuery(
+    { slug: selection?.slug ?? '' },
+    { enabled: !!selection?.slug, retry: false }
+  );
+  return (
+    <Modal
+      opened={!!selection}
+      onClose={onClose}
+      size="lg"
+      centered
+      // Mantine's default close button has no accessible name, so a screen-reader user gets
+      // an unlabelled control on a page that already has several dialogs.
+      closeButtonProps={{ 'aria-label': 'Close version history' }}
+      title={
+        selection ? (
+          <Group gap={6}>
+            <Text fw={600}>Prior versions</Text>
+            <Code>{selection.slug}</Code>
+          </Group>
+        ) : null
+      }
+    >
+      <PriorVersionsBody
+        selection={selection}
+        entries={(query.data?.items ?? []) as VersionHistoryEntry[]}
+        loading={query.isLoading && !!selection}
+        errorMessage={query.error?.message ?? null}
+        truncated={!!query.data?.truncated}
+      />
+    </Modal>
+  );
+}

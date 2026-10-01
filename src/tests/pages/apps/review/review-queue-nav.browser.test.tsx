@@ -3,6 +3,7 @@ import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../../test/component-setup';
 import { useRouter } from 'next/router';
+import type * as UserAvatarMod from '~/components/UserAvatar/UserAvatar';
 
 /**
  * REVIEW QUEUE dual-path row selection (Phase 1 migration) — browser mode.
@@ -87,6 +88,17 @@ vi.mock('~/components/Apps/OffsiteReviewQueue', () => ({
   OffsiteReviewModalBody: () => null,
 }));
 vi.mock('~/components/Meta/Meta', () => ({ Meta: () => null }));
+// The queue's Submitter cell renders the real `UserAvatar`, which reaches
+// `useCurrentUser` → CivitaiSessionContext and `useGetEdgeUrl` → content settings — three
+// providers this network-free test does not mount. The stub keeps the one thing this file
+// asserts about the cell: nothing (it tests row SELECTION), so naming the user is enough.
+// Precedent: `~/components/Reaction/ImageReactorsPreview.browser.test.tsx`.
+vi.mock('~/components/UserAvatar/UserAvatar', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserAvatarMod>()),
+  UserAvatar: ({ user }: { user: { id: number; username?: string | null } }) => (
+    <span>{user.username ?? `#${user.id}`}</span>
+  ),
+}));
 
 const PENDING = {
   id: 'onsite-req-1',
@@ -143,6 +155,10 @@ vi.mock('~/utils/trpc', () => ({
       },
       listApprovedRequests: { useQuery: emptyQuery },
       listRejectedRequests: { useQuery: emptyQuery },
+      // The page mounts `PriorVersionsModal`, whose read is `enabled`-gated but whose
+      // HOOK still runs on every render — an absent entry here is `undefined.useQuery`,
+      // which takes the whole page down rather than only the modal.
+      listVersionHistory: { useQuery: emptyQuery },
     },
     // The unified pending queue also reads the OFF-SITE pending source; return an
     // empty page so this test isolates the single on-site row's selection path.

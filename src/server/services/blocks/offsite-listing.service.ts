@@ -6,6 +6,7 @@ import { Prisma } from '@prisma/client';
 
 import { dbRead, dbWrite } from '~/server/db/client';
 import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
+import { listingCoverUrl, listingIconUrl } from '~/server/services/blocks/listing-media-url';
 import {
   listingAssetTooLargeReason,
   MAX_LISTING_ASSET_SIZE_BYTES,
@@ -4074,6 +4075,56 @@ const mySubmissionSelect = {
 
 const submitterChip = { select: { id: true, username: true, image: true } } as const;
 
+/**
+ * `submissionSelect` PLUS the store-listing facts the MODERATOR queue shows beside each
+ * row — lifetime plays and the listing's media.
+ *
+ * 🔴 A THIRD SELECT RATHER THAN THREE MORE KEYS ON `submissionSelect`. That base select is
+ * shared with the author-facing `listMySubmissions`, which renders none of this; widening
+ * it would add two image joins and a metric join to a read that does not use them.
+ *
+ * Keyed off the row's own `appListingId` relation, so there is no slug join here — unlike
+ * the on-site queue, whose request table has no FK while a first version is pending.
+ */
+const modQueueSubmissionSelect = {
+  ...submissionSelect,
+  appListing: {
+    select: {
+      ...submissionSelect.appListing.select,
+      icon: { select: { url: true } },
+      cover: { select: { url: true } },
+      metric: { select: { openCount: true } },
+    },
+  },
+} as const;
+
+/**
+ * Project the mod-queue listing facts onto a row.
+ *
+ * 🔴 AN OFF-SITE LISTING'S PLAY COUNT IS STRUCTURALLY ZERO, NOT "ZERO SO FAR". Its CTA is
+ * an external anchor and nothing on-platform records a click, so the number can only ever
+ * move for the `onsite` media-revision rows in this same queue. `null` (no metric row) and
+ * `0` are kept distinct here; the queue renders both as an em dash.
+ */
+function withModQueueListingFacts<
+  T extends {
+    appListing: {
+      icon?: { url: string | null } | null;
+      cover?: { url: string | null } | null;
+      metric?: { openCount: number } | null;
+    } | null;
+  }
+>(row: T) {
+  const listing = row.appListing;
+  return {
+    ...row,
+    playCount: listing?.metric?.openCount ?? null,
+    iconUrl: listingIconUrl(listing?.icon),
+    // No screenshot fallback: a moderator must see that the listing has no cover.
+    coverUrl: listingCoverUrl(listing?.cover, null),
+  };
+}
+
 export type ListOffsiteRequestsOptions = { limit?: number; cursor?: string };
 
 /**
@@ -4283,10 +4334,10 @@ export async function listPendingOffsiteRequests(opts: ListOffsiteRequestsOption
     orderBy: { submittedAt: 'asc' },
     take: limit + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
-    select: { ...submissionSelect, submittedBy: submitterChip },
+    select: { ...modQueueSubmissionSelect, submittedBy: submitterChip },
   });
   const hasNext = rows.length > limit;
-  const items = hasNext ? rows.slice(0, limit) : rows;
+  const items = (hasNext ? rows.slice(0, limit) : rows).map(withModQueueListingFacts);
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
 }
 
@@ -4299,13 +4350,13 @@ export async function listApprovedOffsiteRequests(opts: ListOffsiteRequestsOptio
     take: limit + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
     select: {
-      ...submissionSelect,
+      ...modQueueSubmissionSelect,
       submittedBy: submitterChip,
       reviewedBy: submitterChip,
     },
   });
   const hasNext = rows.length > limit;
-  const items = hasNext ? rows.slice(0, limit) : rows;
+  const items = (hasNext ? rows.slice(0, limit) : rows).map(withModQueueListingFacts);
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
 }
 
@@ -4318,12 +4369,12 @@ export async function listRejectedOffsiteRequests(opts: ListOffsiteRequestsOptio
     take: limit + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
     select: {
-      ...submissionSelect,
+      ...modQueueSubmissionSelect,
       submittedBy: submitterChip,
       reviewedBy: submitterChip,
     },
   });
   const hasNext = rows.length > limit;
-  const items = hasNext ? rows.slice(0, limit) : rows;
+  const items = (hasNext ? rows.slice(0, limit) : rows).map(withModQueueListingFacts);
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
 }

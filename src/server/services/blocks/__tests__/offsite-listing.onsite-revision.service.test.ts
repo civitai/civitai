@@ -534,6 +534,94 @@ describe('mod queue procs — widened to kind IN (onsite, offsite), each row car
     for (const select of selects) expect(select.revisionOfId).toBe(true);
   });
 
+  it('🔴 every mod queue projects the listing MEDIA + METRIC and the row carries them', async () => {
+    // The Plays and icon columns exist on all three tabs, so the projection has to be on
+    // all three procs: a field present in one payload and absent in another renders an em
+    // dash that reads as data rather than as a missing join.
+    mockRead.appListingPublishRequest.findMany.mockResolvedValue([
+      {
+        id: 'a',
+        kind: 'offsite',
+        slug: 'x',
+        status: 'pending',
+        appListingId: 'apl_s',
+        appListing: {
+          icon: { url: 'icon-uuid' },
+          cover: { url: 'cover-uuid' },
+          metric: { openCount: 318 },
+        },
+      },
+    ]);
+    for (const proc of [
+      listPendingOffsiteRequests,
+      listApprovedOffsiteRequests,
+      listRejectedOffsiteRequests,
+    ]) {
+      const res = await proc({});
+      const row = res.items[0] as {
+        playCount: number | null;
+        iconUrl: string | null;
+        coverUrl: string | null;
+      };
+      expect(row.playCount).toBe(318);
+      // CDN-transformed, not the raw `Image.url` — no raw Image row reaches the client.
+      expect(row.iconUrl).toContain('icon-uuid');
+      expect(row.coverUrl).toContain('cover-uuid');
+    }
+    const selects = mockRead.appListingPublishRequest.findMany.mock.calls.map(
+      (c) =>
+        (c[0] as { select: { appListing: { select: Record<string, unknown> } } }).select.appListing
+          .select
+    );
+    expect(selects).toHaveLength(3);
+    for (const select of selects) {
+      expect(select.icon).toEqual({ select: { url: true } });
+      expect(select.cover).toEqual({ select: { url: true } });
+      expect(select.metric).toEqual({ select: { openCount: true } });
+    }
+  });
+
+  it('a row with NO backing listing projects nulls rather than throwing', async () => {
+    // A rejected/withdrawn row whose listing was deleted has `appListing: null`, and that
+    // is the shape a naive `listing.metric.openCount` would 500 on.
+    mockRead.appListingPublishRequest.findMany.mockResolvedValue([
+      {
+        id: 'a',
+        kind: 'offsite',
+        slug: 'x',
+        status: 'rejected',
+        appListingId: null,
+        appListing: null,
+      },
+    ]);
+    const res = await listRejectedOffsiteRequests({});
+    expect(res.items[0]).toMatchObject({ playCount: null, iconUrl: null, coverUrl: null });
+  });
+
+  it('a listing with no metric row yields null, and a zero stays zero', async () => {
+    mockRead.appListingPublishRequest.findMany.mockResolvedValue([
+      {
+        id: 'a',
+        kind: 'offsite',
+        slug: 'x',
+        status: 'pending',
+        appListingId: 'apl_a',
+        appListing: { metric: null },
+      },
+      {
+        id: 'b',
+        kind: 'offsite',
+        slug: 'y',
+        status: 'pending',
+        appListingId: 'apl_b',
+        appListing: { metric: { openCount: 0 } },
+      },
+    ]);
+    const res = await listPendingOffsiteRequests({});
+    expect(res.items[0].playCount).toBeNull();
+    expect(res.items[1].playCount).toBe(0);
+  });
+
   it('listApprovedOffsiteRequests + listRejectedOffsiteRequests both widen the kind filter', async () => {
     await listApprovedOffsiteRequests({});
     await listRejectedOffsiteRequests({});

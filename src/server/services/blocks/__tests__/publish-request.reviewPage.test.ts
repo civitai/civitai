@@ -26,9 +26,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { mockDbRead, mockReviewRepoUrl, mockRepoCommitUrl } = vi.hoisted(() => ({
   mockDbRead: {
     appBlockPublishRequest: { findUnique: vi.fn() },
+    // The detail read joins the app's store listing (on SLUG) for the Plays + media the
+    // review page renders. Defaults to none → the fields project as null.
+    appListing: { findMany: vi.fn(async () => []) },
   },
   mockReviewRepoUrl: vi.fn((slug: string) => `https://forgejo.example/review/${slug}`),
-  mockRepoCommitUrl: vi.fn((slug: string, ref: string) => `https://forgejo.example/${slug}/commit/${ref}`),
+  mockRepoCommitUrl: vi.fn(
+    (slug: string, ref: string) => `https://forgejo.example/${slug}/commit/${ref}`
+  ),
 }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: {} }));
@@ -68,6 +73,8 @@ function dbRow(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   mockDbRead.appBlockPublishRequest.findUnique.mockReset();
+  mockDbRead.appListing.findMany.mockReset();
+  mockDbRead.appListing.findMany.mockResolvedValue([]);
   mockReviewRepoUrl.mockClear();
   mockRepoCommitUrl.mockClear();
 });
@@ -110,12 +117,8 @@ describe('resolveReviewRequestTarget — SSR status→mode fail-close', () => {
 
 describe('getReviewRequestById — full hydrated single-request fetch', () => {
   it('withdrawn → null (fail-closed; never hydrates a non-reviewable row)', async () => {
-    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
-      dbRow({ status: 'withdrawn' })
-    );
-    await expect(
-      getReviewRequestById('pubreq_0123456789ABCDEFGHJKMNPQRS')
-    ).resolves.toBeNull();
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(dbRow({ status: 'withdrawn' }));
+    await expect(getReviewRequestById('pubreq_0123456789ABCDEFGHJKMNPQRS')).resolves.toBeNull();
   });
 
   it('non-existent id (findUnique → null) → null', async () => {
@@ -127,26 +130,29 @@ describe('getReviewRequestById — full hydrated single-request fetch', () => {
     ['pending', 'pending'],
     ['approved', 'approved'],
     ['rejected', 'rejected'],
-  ])('%s → { mode: %s, request } with the page-body fields (shape parity)', async (dbStatus, expectedMode) => {
-    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(dbRow({ status: dbStatus }));
-    const res = await getReviewRequestById('pubreq_0123456789ABCDEFGHJKMNPQRS');
-    expect(res).not.toBeNull();
-    expect(res!.mode).toBe(expectedMode);
-    // Shape-parity: the fields OnsiteReviewModalBody consumes on the page.
-    expect(res!.request).toMatchObject({
-      id: 'pubreq_0123456789ABCDEFGHJKMNPQRS',
-      slug: 'my-app',
-      version: '1.2.3',
-      approvalNotes: null,
-      rejectionReason: null,
-    });
-    // status is stripped from `request` (mode carries it) — mirrors the list builders.
-    expect((res!.request as Record<string, unknown>).status).toBeUndefined();
-    // bundle bigint is serialized to string for the tRPC/superjson path.
-    expect(res!.request.bundleSizeBytes).toBe('4096');
-    // Forgejo review-repo deep link is derived server-side from the slug.
-    expect(res!.request.reviewRepoUrl).toBe('https://forgejo.example/review/my-app');
-  });
+  ])(
+    '%s → { mode: %s, request } with the page-body fields (shape parity)',
+    async (dbStatus, expectedMode) => {
+      mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(dbRow({ status: dbStatus }));
+      const res = await getReviewRequestById('pubreq_0123456789ABCDEFGHJKMNPQRS');
+      expect(res).not.toBeNull();
+      expect(res!.mode).toBe(expectedMode);
+      // Shape-parity: the fields OnsiteReviewModalBody consumes on the page.
+      expect(res!.request).toMatchObject({
+        id: 'pubreq_0123456789ABCDEFGHJKMNPQRS',
+        slug: 'my-app',
+        version: '1.2.3',
+        approvalNotes: null,
+        rejectionReason: null,
+      });
+      // status is stripped from `request` (mode carries it) — mirrors the list builders.
+      expect((res!.request as Record<string, unknown>).status).toBeUndefined();
+      // bundle bigint is serialized to string for the tRPC/superjson path.
+      expect(res!.request.bundleSizeBytes).toBe('4096');
+      // Forgejo review-repo deep link is derived server-side from the slug.
+      expect(res!.request.reviewRepoUrl).toBe('https://forgejo.example/review/my-app');
+    }
+  );
 
   it('a rejected detail carries the rejectionReason the history view renders', async () => {
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(

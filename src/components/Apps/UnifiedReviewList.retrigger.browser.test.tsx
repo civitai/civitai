@@ -5,6 +5,21 @@ import { renderWithProviders } from '../../../test/component-setup';
 import { DEPLOY_STALE_AFTER_MS } from '~/shared/constants/app-block-deploy.constants';
 import type { OffsitePendingRow } from './OffsiteReviewQueue';
 import type { OnsiteReviewRequest } from './unifiedReviewRow';
+import type * as UserAvatarMod from '~/components/UserAvatar/UserAvatar';
+
+/*
+  The queue's Submitter cell renders the real `UserAvatar`, which reaches
+  `useFeatureFlags`, `useCurrentUser` and `useGetEdgeUrl` → `useBrowsingSettings` — three
+  providers this harness does not mount. The stub keeps its whole contract with this file,
+  which asserts nothing about the submitter cell. Precedent:
+  `~/components/Reaction/ImageReactorsPreview.browser.test.tsx`.
+*/
+vi.mock('~/components/UserAvatar/UserAvatar', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserAvatarMod>()),
+  UserAvatar: ({ user }: { user: { id: number; username?: string | null } }) => (
+    <span>{user.username ?? `#${user.id}`}</span>
+  ),
+}));
 
 /**
  * /apps/review APPROVED tab — the MODERATOR half of the fix.
