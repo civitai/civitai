@@ -12,6 +12,7 @@ import {
   type ResourceIntentStyleFamily,
 } from '~/server/schema/resource-intent.schema';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { Availability } from '~/shared/utils/prisma/enums';
 
 /**
  * ResourceInsight labeling pass (M2) — batch-labels PUBLISHED model versions
@@ -303,8 +304,17 @@ export async function main(): Promise<void> {
       where: {
         id: { gt: cursor },
         status: 'Published',
-        availability: { not: 'Unsearchable' },
-        model: { status: 'Published', availability: { not: 'Unsearchable' } },
+        // Exclude Private, NOT Unsearchable. `Unsearchable` is "public but kept
+        // out of search results" (see the enum's own comment in
+        // packages/civitai-db-schema/prisma/schema.full.prisma), so excluding it
+        // drops public resources while still admitting private ones. The
+        // serving-side matcher gates on the same member — see
+        // src/server/services/resource-intent-matcher.service.ts, which filters
+        // `ne('availability', Availability.Private)`. Both the version's own
+        // availability and its model's are checked: either one being Private
+        // must keep the row out, and the two are independent.
+        availability: { not: Availability.Private },
+        model: { status: 'Published', availability: { not: Availability.Private } },
       },
       orderBy: { id: 'asc' },
       take,
