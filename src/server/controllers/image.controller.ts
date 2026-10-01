@@ -470,7 +470,6 @@ export const getImagesAsPostsInfiniteHandler = async ({
         : undefined;
     const sponsoredLevel = sponsoredPost
       ? sponsoredBrowsingLevel({
-          domainUncapped: !!user && features.canViewNsfw,
           browsingLevel: input.browsingLevel,
           viewerBrowsingLevel: input.viewerBrowsingLevel,
           servingLevel: sponsoredPost.servingLevel,

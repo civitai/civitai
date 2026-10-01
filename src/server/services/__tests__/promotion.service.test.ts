@@ -107,7 +107,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   postImages = [cleanImage(11), cleanImage(12)];
   hostRow = { ...hostModel };
-  dbMock.dbRead.model.findUnique.mockImplementation(async () => hostRow);
+  dbMock.dbRead.model.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) =>
+    where.id === HOST_MODEL ? hostRow : where.id === PROMOTED_MODEL ? promotedModel : null
+  );
   settlePlacement.mockResolvedValue({ settled: true });
   isPlacementEscrowFunded.mockResolvedValue(true);
   holdPlacementEscrow.mockResolvedValue({ fee: 63, principal: 147 });
@@ -330,6 +332,19 @@ describe('createGalleryPromotion', () => {
     await expect(buy()).rejects.toThrow('insufficient funds');
   });
 
+  it('looks for the same post on the same page', async () => {
+    await buy();
+    expect(dbMock.dbWrite.placement.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          surface: 'galleryPromotion',
+          targetId: HOST_MODEL,
+          data: { path: ['postId'], equals: POST },
+        }),
+      })
+    );
+  });
+
   it('refuses a price that moved while the buyer was deciding', async () => {
     resolvePlacementSpaceFor.mockResolvedValue({ ownerId: OWNER, mode: 'review', price: 90 });
     await expect(buy()).rejects.toThrow('price changed');
@@ -453,6 +468,16 @@ describe('getSponsoredGalleryPost', () => {
     });
   });
 
+  it('serves nothing once the host page is gone', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue(null);
+    dbMock.dbRead.placement.findMany.mockResolvedValue([
+      live({ acceptedLevel: CAPPED, endsAt: endsAt() }),
+    ]);
+    await expect(
+      getSponsoredGalleryPost({ modelId: HOST_MODEL, modelVersionId: HOST_VERSION })
+    ).resolves.toBeUndefined();
+  });
+
   it('still applies the minor lock set after accept', async () => {
     hostRow = { ...hostModel, minor: true };
     dbMock.dbRead.placement.findMany.mockResolvedValue([
@@ -480,7 +505,7 @@ describe('getSponsoredGalleryPost', () => {
 });
 
 describe('getSponsoredModel', () => {
-  it('serves a live run at the frozen cap and the platform lock as it is now', async () => {
+  it('serves a live run at the frozen cap and the host page lock as it is now', async () => {
     hostRow = { ...hostModel, sfwOnly: true };
     dbMock.dbRead.placement.findMany.mockResolvedValue([
       {

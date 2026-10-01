@@ -34,27 +34,19 @@ export const sponsoredSlotIndex = (pinnedCount: number, length: number) =>
   pinnedCount || Math.min(1, length);
 
 /**
- * The level a sponsored gallery post is fetched at for this viewer.
- *
- * `viewerBrowsingLevel` is the client's word and nothing clamps it, so only a
- * viewer the domain does not cap at all (signed in, on a domain that serves
- * mature content) may use it to see past the gallery's current cap. Everyone
- * else keeps the middleware-clamped `browsingLevel`.
+ * The level a sponsored gallery post is fetched at: the viewer's level before
+ * the gallery's current cap, held to what the run may be served at. Both
+ * request levels arrive already clamped to the domain by `applyDomainFeature`.
  */
-export function sponsoredBrowsingLevel({
-  domainUncapped,
+export const sponsoredBrowsingLevel = ({
   browsingLevel,
   viewerBrowsingLevel,
   servingLevel,
 }: {
-  domainUncapped: boolean;
   browsingLevel: number;
   viewerBrowsingLevel?: number;
   servingLevel: number;
-}) {
-  const viewer = domainUncapped ? viewerBrowsingLevel ?? browsingLevel : browsingLevel;
-  return Flags.intersection(viewer, servingLevel);
-}
+}) => Flags.intersection(viewerBrowsingLevel ?? browsingLevel, servingLevel);
 
 export const promotionRunLabel = (days: number) => (days === 1 ? '1 day' : `${days} days`);
 

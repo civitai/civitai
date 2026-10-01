@@ -163,30 +163,20 @@ describe('parseHostModelId', () => {
 });
 
 describe('sponsoredBrowsingLevel', () => {
-  const everything = NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R | NsfwLevel.X | NsfwLevel.XXX;
-
-  it('never lets a capped viewer widen their level through the unclamped field', () => {
-    // A signed-out or SFW-domain request whose browsingLevel the middleware
-    // already cut to PG, asking for everything through viewerBrowsingLevel.
+  it("sees past today's gallery cap, up to what the run may be served at", () => {
     expect(
       sponsoredBrowsingLevel({
-        domainUncapped: false,
-        browsingLevel: NsfwLevel.PG,
-        viewerBrowsingLevel: everything,
-        servingLevel: everything,
-      })
-    ).toBe(NsfwLevel.PG);
-  });
-
-  it("lets an uncapped viewer see past today's gallery cap, up to what was sold", () => {
-    expect(
-      sponsoredBrowsingLevel({
-        domainUncapped: true,
         browsingLevel: NsfwLevel.PG,
         viewerBrowsingLevel: NsfwLevel.PG | NsfwLevel.R | NsfwLevel.X,
         servingLevel: NsfwLevel.PG | NsfwLevel.R,
       })
     ).toBe(NsfwLevel.PG | NsfwLevel.R);
+  });
+
+  it('falls back to the gallery-capped level from a client that sends no viewer level', () => {
+    expect(sponsoredBrowsingLevel({ browsingLevel: NsfwLevel.PG, servingLevel: allLevels })).toBe(
+      NsfwLevel.PG
+    );
   });
 });
 

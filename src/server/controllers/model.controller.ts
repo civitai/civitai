@@ -1968,7 +1968,11 @@ export const getAssociatedResourcesCardDataHandler = async ({
             const isSponsored = id === sponsored?.modelId;
             // A buyer who re-rates their model above what the page may show ends
             // their own run.
-            if (isSponsored && !Flags.hasFlag(sponsored.servingLevel, model.nsfwLevel)) return null;
+            if (
+              isSponsored &&
+              (!model.nsfwLevel || !Flags.hasFlag(sponsored.servingLevel, model.nsfwLevel))
+            )
+              return null;
 
             return { resourceType: 'model' as const, ...model, sponsored: isSponsored };
         }
