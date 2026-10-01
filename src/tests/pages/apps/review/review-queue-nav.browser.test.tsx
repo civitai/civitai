@@ -88,10 +88,7 @@ vi.mock('~/components/Apps/OffsiteReviewQueue', () => ({
   OffsiteReviewModalBody: () => null,
 }));
 vi.mock('~/components/Meta/Meta', () => ({ Meta: () => null }));
-// The queue's Submitter cell renders the real `UserAvatar`, which reaches
-// `useCurrentUser` → CivitaiSessionContext and `useGetEdgeUrl` → content settings — three
-// providers this network-free test does not mount. The stub keeps the one thing this file
-// asserts about the cell: nothing (it tests row SELECTION), so naming the user is enough.
+// Stubbed: the real `UserAvatar` reaches providers this network-free test does not mount.
 // Precedent: `~/components/Reaction/ImageReactorsPreview.browser.test.tsx`.
 vi.mock('~/components/UserAvatar/UserAvatar', async (importOriginal) => ({
   ...(await importOriginal<typeof UserAvatarMod>()),

@@ -2252,10 +2252,12 @@ export const blocksRouter = router({
    * Mod-only: every publish request for ONE app, newest-first. Powers the prior-versions
    * modal on the `/apps/review` queue's Version column.
    *
-   * Keyed on the SLUG — `appBlockId` is NULL while a first request is pending, so an
-   * id-keyed read would return nothing for exactly the app being reviewed for the first
-   * time. Deliberately NOT `appListings.listingHistory`, which is author-scoped (owner ∪
-   * accepted seat) and keyed on a listing id a pending first version does not have.
+   * slug-keyed, not `appBlockId` — see `listVersionHistory`.
+   *
+   * 🔴 `enforceAppBlocksFlag` IS NOT A SECOND GATE HERE. For a `query` it falls through
+   * with `_appBlocksDisabled` rather than throwing (see the middleware), and this proc does
+   * not read that marker — so `moderatorProcedure` plus the inner belt carry the whole
+   * gate. Pinned in `__tests__/blocks.router.listVersionHistory.test.ts`.
    */
   listVersionHistory: moderatorProcedure
     .use(enforceAppBlocksFlag)

@@ -5,8 +5,11 @@ import { TRPCError } from '@trpc/server';
 import { Prisma } from '@prisma/client';
 
 import { dbRead, dbWrite } from '~/server/db/client';
-import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
-import { listingCoverUrl, listingIconUrl } from '~/server/services/blocks/listing-media-url';
+import {
+  bustAppListingCatalogCache,
+  listingQueueFacts,
+  NO_LISTING_QUEUE_FACTS,
+} from '~/server/services/blocks/app-listing.service';
 import {
   listingAssetTooLargeReason,
   MAX_LISTING_ASSET_SIZE_BYTES,
@@ -4091,6 +4094,11 @@ const modQueueSubmissionSelect = {
   appListing: {
     select: {
       ...submissionSelect.appListing.select,
+      // 🔴 THE LISTING's kind, not the REQUEST's — `submissionSelect` already carries the
+      // latter and they are different columns on different tables. `cardOpenCount`
+      // discriminates on the listing's, and says in capitals never to substitute
+      // `appBlockId` nullness for it.
+      kind: true,
       icon: { select: { url: true } },
       cover: { select: { url: true } },
       metric: { select: { openCount: true } },
@@ -4099,29 +4107,37 @@ const modQueueSubmissionSelect = {
 } as const;
 
 /**
- * Project the mod-queue listing facts onto a row.
+ * Project the mod-queue listing facts onto a row, through the shared `listingQueueFacts`
+ * so the store card and the review row cannot answer "how many plays" differently.
  *
- * 🔴 AN OFF-SITE LISTING'S PLAY COUNT IS STRUCTURALLY ZERO, NOT "ZERO SO FAR". Its CTA is
- * an external anchor and nothing on-platform records a click, so the number can only ever
- * move for the `onsite` media-revision rows in this same queue. `null` (no metric row) and
- * `0` are kept distinct here; the queue renders both as an em dash.
+ * 🔴 AN OFF-SITE LISTING'S COUNT IS STRUCTURALLY UNMEASURABLE — its CTA is an external
+ * anchor — so `cardOpenCount` returns `null` for it rather than the literal `0` the
+ * `NOT NULL DEFAULT 0` column carries. Only the `onsite` media-revision rows in this queue
+ * can ever show a number.
  */
 function withModQueueListingFacts<
   T extends {
     appListing: {
+      kind?: string | null;
       icon?: { url: string | null } | null;
       cover?: { url: string | null } | null;
       metric?: { openCount: number } | null;
     } | null;
   }
 >(row: T) {
-  const listing = row.appListing;
+  const { appListing, ...rest } = row;
+  // 🔴 THE NESTED RELATION OBJECTS ARE STRIPPED, not spread through. Selected they are
+  // harmless (`url` and `openCount`, both already public), but leaving them on the payload
+  // means the next key added to that select ships to the browser with nothing reading on
+  // it — and the on-site path's "no raw Image row reaches the client" guarantee would then
+  // be true of one queue and not the other.
+  const { icon: _icon, cover: _cover, metric: _metric, ...listingRest } = appListing ?? {};
   return {
-    ...row,
-    playCount: listing?.metric?.openCount ?? null,
-    iconUrl: listingIconUrl(listing?.icon),
-    // No screenshot fallback: a moderator must see that the listing has no cover.
-    coverUrl: listingCoverUrl(listing?.cover, null),
+    ...rest,
+    appListing: appListing
+      ? (listingRest as Omit<NonNullable<T['appListing']>, 'icon' | 'cover' | 'metric'>)
+      : null,
+    ...(appListing ? listingQueueFacts(appListing) : NO_LISTING_QUEUE_FACTS),
   };
 }
 

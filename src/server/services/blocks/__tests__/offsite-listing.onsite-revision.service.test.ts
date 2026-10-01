@@ -541,11 +541,12 @@ describe('mod queue procs — widened to kind IN (onsite, offsite), each row car
     mockRead.appListingPublishRequest.findMany.mockResolvedValue([
       {
         id: 'a',
-        kind: 'offsite',
+        kind: 'onsite',
         slug: 'x',
         status: 'pending',
         appListingId: 'apl_s',
         appListing: {
+          kind: 'onsite',
           icon: { url: 'icon-uuid' },
           cover: { url: 'cover-uuid' },
           metric: { openCount: 318 },
@@ -562,11 +563,18 @@ describe('mod queue procs — widened to kind IN (onsite, offsite), each row car
         playCount: number | null;
         iconUrl: string | null;
         coverUrl: string | null;
+        appListing: Record<string, unknown> | null;
       };
       expect(row.playCount).toBe(318);
-      // CDN-transformed, not the raw `Image.url` — no raw Image row reaches the client.
+      // CDN-transformed, not the raw `Image.url`.
       expect(row.iconUrl).toContain('icon-uuid');
       expect(row.coverUrl).toContain('cover-uuid');
+      // 🔴 AND THE NESTED RELATION OBJECTS ARE GONE. They were spread through unchanged
+      // once; the derived strings are the payload, so the next key added to that select
+      // cannot ride to the browser with nothing reading on it.
+      expect(row.appListing).not.toHaveProperty('icon');
+      expect(row.appListing).not.toHaveProperty('cover');
+      expect(row.appListing).not.toHaveProperty('metric');
     }
     const selects = mockRead.appListingPublishRequest.findMany.mock.calls.map(
       (c) =>
@@ -578,7 +586,42 @@ describe('mod queue procs — widened to kind IN (onsite, offsite), each row car
       expect(select.icon).toEqual({ select: { url: true } });
       expect(select.cover).toEqual({ select: { url: true } });
       expect(select.metric).toEqual({ select: { openCount: true } });
+      // The LISTING's kind — what `cardOpenCount` discriminates on.
+      expect(select.kind).toBe(true);
     }
+  });
+
+  it('🔴 an OFF-SITE listing reads NULL plays, not the literal 0 its column carries', async () => {
+    /**
+     * 🔴 THE CANONICAL RULE, AND THIS QUEUE IS THE ONE PLACE BOTH KINDS MEET.
+     * `app_listing_metrics.open_count` is `NOT NULL DEFAULT 0`, so an off-site listing
+     * carries a literal `0` — and rendering it would claim "nobody has ever used this app"
+     * about an app whose CTA is an external anchor nothing on-platform can count.
+     * `cardOpenCount` returns `null` there; an earlier revision of this projection read the
+     * column directly and shipped the `0`.
+     */
+    mockRead.appListingPublishRequest.findMany.mockResolvedValue([
+      {
+        id: 'off',
+        kind: 'offsite',
+        slug: 'ext',
+        status: 'pending',
+        appListingId: 'apl_o',
+        appListing: { kind: 'offsite', metric: { openCount: 0 } },
+      },
+      {
+        id: 'on',
+        kind: 'onsite',
+        slug: 'hosted',
+        status: 'pending',
+        appListingId: 'apl_h',
+        appListing: { kind: 'onsite', metric: { openCount: 0 } },
+      },
+    ]);
+    const res = await listPendingOffsiteRequests({});
+    expect(res.items[0].playCount, 'an off-site count is UNMEASURABLE, not zero').toBeNull();
+    // POSITIVE CONTROL on the same page: an on-site listing nobody has opened is a real 0.
+    expect(res.items[1].playCount, 'an on-site zero is a genuine zero').toBe(0);
   });
 
   it('a row with NO backing listing projects nulls rather than throwing', async () => {
@@ -596,30 +639,24 @@ describe('mod queue procs — widened to kind IN (onsite, offsite), each row car
     ]);
     const res = await listRejectedOffsiteRequests({});
     expect(res.items[0]).toMatchObject({ playCount: null, iconUrl: null, coverUrl: null });
+    expect(res.items[0].appListing).toBeNull();
   });
 
-  it('a listing with no metric row yields null, and a zero stays zero', async () => {
+  it('an on-site listing with no METRIC ROW is a genuine zero, not unknown', async () => {
+    // The other half of the canonical rule: a missing metric row means "no plays recorded
+    // yet" ⇒ 0. Over-nulling here is what `cardOpenCount` warns about in capitals.
     mockRead.appListingPublishRequest.findMany.mockResolvedValue([
       {
         id: 'a',
-        kind: 'offsite',
+        kind: 'onsite',
         slug: 'x',
         status: 'pending',
         appListingId: 'apl_a',
-        appListing: { metric: null },
-      },
-      {
-        id: 'b',
-        kind: 'offsite',
-        slug: 'y',
-        status: 'pending',
-        appListingId: 'apl_b',
-        appListing: { metric: { openCount: 0 } },
+        appListing: { kind: 'onsite', metric: null },
       },
     ]);
     const res = await listPendingOffsiteRequests({});
-    expect(res.items[0].playCount).toBeNull();
-    expect(res.items[1].playCount).toBe(0);
+    expect(res.items[0].playCount).toBe(0);
   });
 
   it('listApprovedOffsiteRequests + listRejectedOffsiteRequests both widen the kind filter', async () => {

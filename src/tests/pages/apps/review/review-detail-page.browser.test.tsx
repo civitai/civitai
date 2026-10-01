@@ -177,16 +177,13 @@ describe('ReviewDetailPage — route shell', () => {
 
 describe('ReviewDetailPage — the listing-media seam', () => {
   /**
-   * ⚠️ AN INVARIANT GUARD, NOT REGRESSION COVERAGE, AND IT IS LABELLED THAT WAY BECAUSE IT
-   * WAS MEASURED: this arm is GREEN on the commit before the listing-media work, because
-   * the page hands the body the fetched `request` OBJECT WHOLE and never names a field. So
-   * no part of adding `iconUrl`/`coverUrl` could have made it fail, and counting it as
-   * coverage for that change would be a claim about a failure mode that does not exist.
+   * ⚠️ AN INVARIANT GUARD, NOT REGRESSION COVERAGE, AND LABELLED SO BECAUSE IT WAS
+   * MEASURED: green on the commit before the listing-media work, because the page hands the
+   * body the fetched `request` OBJECT WHOLE and never names a field.
    *
-   * What it does pin is the future edit that WOULD break: the page cherry-picking fields
-   * out of `query.data.request` instead of passing it through, which would silently blank
-   * the media section while `ReviewDetailView`'s own tests stayed green. The rendering of
-   * both present and missing states lives there, against the real component.
+   * What it pins is the future edit that WOULD break — the page cherry-picking fields out
+   * of `query.data.request`, which would blank the media section while
+   * `ReviewDetailView`'s own arms stayed green.
    */
   test('the page passes the fetched request through WHOLE (no field cherry-picking)', async () => {
     const request = {

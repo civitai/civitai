@@ -200,12 +200,9 @@ export type ListApprovedRequestsInput = z.infer<typeof listApprovedRequestsSchem
 export const listRejectedRequestsSchema = listPendingRequestsSchema;
 export type ListRejectedRequestsInput = z.infer<typeof listRejectedRequestsSchema>;
 
-/** Mod-only: one app's publish-request history, keyed on the SLUG rather than the block
- *  id, because `appBlockId` is NULL while a first request is pending. Bounds mirror
- *  `getMyPendingForSlugSchema` — the same column, so the same shape. */
-export const listVersionHistorySchema = z.object({
-  slug: z.string().min(3).max(40).regex(SLUG_REGEX),
-});
+/** Mod-only: one app's publish-request history. Same column as `getMyPendingForSlug`, so
+ *  the same schema rather than a second copy of its bounds. */
+export const listVersionHistorySchema = getMyPendingForSlugSchema;
 
 export type ListVersionHistoryInput = z.infer<typeof listVersionHistorySchema>;
 

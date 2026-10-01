@@ -27,8 +27,10 @@ const { mockDbRead, mockReviewRepoUrl, mockRepoCommitUrl } = vi.hoisted(() => ({
   mockDbRead: {
     appBlockPublishRequest: { findUnique: vi.fn() },
     // The detail read joins the app's store listing (on SLUG) for the Plays + media the
-    // review page renders. Defaults to none → the fields project as null.
-    appListing: { findMany: vi.fn(async () => []) },
+    // review page renders. Typed loosely on purpose: `vi.fn(async () => [])` infers
+    // `never[]`, so every `mockResolvedValue` of a real row below becomes a type error the
+    // ordinary `pnpm typecheck` would never report (`src/**/__tests__/**` is excluded).
+    appListing: { findMany: vi.fn<(...a: unknown[]) => Promise<unknown[]>>(async () => []) },
   },
   mockReviewRepoUrl: vi.fn((slug: string) => `https://forgejo.example/review/${slug}`),
   mockRepoCommitUrl: vi.fn(
@@ -74,7 +76,19 @@ function dbRow(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   mockDbRead.appBlockPublishRequest.findUnique.mockReset();
   mockDbRead.appListing.findMany.mockReset();
-  mockDbRead.appListing.findMany.mockResolvedValue([]);
+  // The fixture row's OWN listing — `dbRow()` carries `appBlockId: 'appblk_1'`, so
+  // `listingBelongsToRequest` requires the listing to be keyed on that same block.
+  mockDbRead.appListing.findMany.mockResolvedValue([
+    {
+      slug: 'my-app',
+      kind: 'onsite',
+      appBlockId: 'appblk_1',
+      userId: 7,
+      icon: { url: 'icon-uuid' },
+      cover: { url: 'cover-uuid' },
+      metric: { openCount: 1234 },
+    },
+  ]);
   mockReviewRepoUrl.mockClear();
   mockRepoCommitUrl.mockClear();
 });
@@ -151,8 +165,51 @@ describe('getReviewRequestById — full hydrated single-request fetch', () => {
       expect(res!.request.bundleSizeBytes).toBe('4096');
       // Forgejo review-repo deep link is derived server-side from the slug.
       expect(res!.request.reviewRepoUrl).toBe('https://forgejo.example/review/my-app');
+      /**
+       * 🔴 THE STORE-LISTING JOIN, WHICH THE REVIEW PAGE'S MEDIA SECTION IS ENTIRELY MADE
+       * OF. `ReviewListingMedia` takes these as props, and the page-level browser test is
+       * a labelled invariant guard that names no field — so with this unasserted, deleting
+       * the one spread here renders "No icon" / "No cover" for every app in production
+       * with nothing red.
+       */
+      expect(res!.request.playCount).toBe(1234);
+      expect(res!.request.iconUrl).toContain('icon-uuid');
+      expect(res!.request.coverUrl).toContain('cover-uuid');
+      expect(mockDbRead.appListing.findMany).toHaveBeenCalledTimes(1);
+      const joinArgs = mockDbRead.appListing.findMany.mock.calls[0][0] as {
+        where: { slug: { in: string[] } };
+      };
+      expect(joinArgs.where.slug).toEqual({ in: ['my-app'] });
     }
   );
+
+  it('🔴 a slug-matched listing belonging to ANOTHER app is not shown on this submission', async () => {
+    // The released-slug case: the row survives in the Rejected tab while the slug is free
+    // for a second developer to claim. See `listingBelongsToRequest`.
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+      dbRow({ status: 'rejected', appBlockId: null })
+    );
+    mockDbRead.appListing.findMany.mockResolvedValue([
+      {
+        slug: 'my-app',
+        kind: 'onsite',
+        appBlockId: null,
+        userId: 999,
+        icon: null,
+        cover: null,
+        metric: { openCount: 9 },
+      },
+    ]);
+    const res = await getReviewRequestById('pubreq_0123456789ABCDEFGHJKMNPQRS');
+    expect(res!.request).toMatchObject({ playCount: null, iconUrl: null, coverUrl: null });
+  });
+
+  it('a submission whose app has NO listing projects nulls, not a throw', async () => {
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(dbRow());
+    mockDbRead.appListing.findMany.mockResolvedValue([]);
+    const res = await getReviewRequestById('pubreq_0123456789ABCDEFGHJKMNPQRS');
+    expect(res!.request).toMatchObject({ playCount: null, iconUrl: null, coverUrl: null });
+  });
 
   it('a rejected detail carries the rejectionReason the history view renders', async () => {
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(

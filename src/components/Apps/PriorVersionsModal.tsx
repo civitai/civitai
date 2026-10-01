@@ -8,17 +8,8 @@ import { trpc } from '~/utils/trpc';
 
 /**
  * MODERATOR view of every submission an app has ever made — opened from the Version cell
- * of the `/apps/review` queue.
- *
- * 🔴 KEYED ON SLUG, NOT ON `appBlockId`. `AppBlockPublishRequest.appBlockId` is NULL while
- * an app's FIRST request is pending (the FK is written on approve), so an id-keyed read
- * returns nothing for exactly the rows a moderator is most likely to be looking at. The
- * slug is what carries identity across that lifecycle, and it has an index
- * (`app_block_publish_requests_slug_idx`).
- *
- * 🔴 NOT `appListings.listingHistory`. That read is author-scoped by design (owner ∪
- * accepted seat) and keyed on `appListingId`, which does not exist for a pending first
- * version — widening it would hand a moderator's reach to the author path.
+ * of the `/apps/review` queue. Backed by `blocks.listVersionHistory`, which is slug-keyed
+ * and mod-scoped for the reasons recorded on that service function.
  */
 
 export type PriorVersionsSelection = {
@@ -26,7 +17,9 @@ export type PriorVersionsSelection = {
   /** The entry the moderator is looking at, marked in the list. Null when the row has no
    *  code request of its own. */
   currentRequestId: string | null;
-  /** The app's display name, for the modal title. */
+  /** The app's display name. Rendered beside the slug in the modal title, and only when
+   *  it differs from it — an app whose manifest name IS its slug would otherwise read
+   *  twice. */
   title: string;
 } | null;
 
@@ -65,7 +58,6 @@ export function toHistoryEntry(entry: VersionHistoryEntry): ListingHistoryEntry 
   };
 }
 
-/** The pure body — every state renderable from props alone, so each has a test. */
 export function PriorVersionsBody({
   selection,
   entries,
@@ -175,6 +167,11 @@ export function PriorVersionsModal({
           <Group gap={6}>
             <Text fw={600}>Prior versions</Text>
             <Code>{selection.slug}</Code>
+            {selection.title && selection.title !== selection.slug && (
+              <Text size="sm" c="dimmed" data-testid="apps-prior-versions-title">
+                {selection.title}
+              </Text>
+            )}
           </Group>
         ) : null
       }

@@ -52,7 +52,12 @@ import {
  * Presentational: the two tRPC queries + their keyset pagination live in the
  * per-tab wrapper (in `src/pages/apps/review.tsx`); this component receives the
  * already-accumulated raw items + loading/error/hasMore state and the two
- * page-owned open callbacks. Keep it server-graph-free so it is browser-testable.
+ * page-owned open callbacks. It opens NO query of its own — keep it that way.
+ *
+ * ⚠️ IT IS NO LONGER RENDERABLE FROM `renderWithProviders` ALONE, and that is a real cost
+ * rather than a technicality: the Submitter cell's `UserAvatar` reaches `useFeatureFlags`,
+ * `useCurrentUser` and `useBrowsingSettings`, so every browser suite that mounts this list
+ * has to stub it. Weighed against hand-rolling a second user chip and accepted.
  */
 
 /** What the version cell hands the page when a moderator asks for an app's history. */
@@ -60,7 +65,8 @@ export type VersionHistoryTarget = {
   slug: string;
   /** The entry in that history the moderator is looking at, so the modal can mark it. */
   currentRequestId: string | null;
-  /** Display name for the modal title. */
+  /** The app's display name — the modal shows it beside the slug, and the trigger uses it
+   *  for its own accessible name. */
   title: string;
 };
 
@@ -159,13 +165,9 @@ export function UnifiedReviewList({
   const showDeploy = !!onRetriggerBuild;
 
   /**
-   * 🔴 THE CLOCK IS READ ON THE CLIENT AND THAT CANNOT DIVERGE FROM SSR HERE, so this
-   * deliberately does NOT gate on `useIsClient` the way `DaysFromNow` does. `/apps/review`'s
-   * `getServerSideProps` passes no data and every row arrives from a client tRPC query, so
-   * on the server `rows` is empty and the table — hence every timestamp — never renders at
-   * all. There is no first paint for a tick to disagree with. Gating would instead make the
-   * column render `null` until hydration, which every browser test would then have to wait
-   * out.
+   * 🔴 NO `useIsClient` GATE, unlike `DaysFromNow`. `/apps/review`'s `getServerSideProps`
+   * passes no data and the table sits behind `rows.length > 0`, so nothing renders on the
+   * server — there is no first paint for a tick to disagree with.
    */
   const now = useNowTick(REVIEW_RELATIVE_TICK_MS);
 
@@ -250,12 +252,10 @@ export function UnifiedReviewList({
                   retriggeringId={retriggeringId ?? null}
                   openVersionHistory={openVersionHistory}
                   onOpenMedia={(target) => {
-                    const index = listingMediaIndex(target, 'icon');
-                    // Unreachable from the UI (a placeholder renders no button at all);
-                    // the structural half of that guarantee.
-                    if (index === null) return;
+                    const iconIndex = listingMediaIndex(target, 'icon');
+                    if (iconIndex === null) return;
                     setMediaBroken(NO_BROKEN_SCREENSHOTS);
-                    setMediaTarget({ rowKey: target.key, index });
+                    setMediaTarget({ rowKey: target.key, index: iconIndex });
                   }}
                 />
               ))}
@@ -284,6 +284,12 @@ export function UnifiedReviewList({
         URL string and no image id exists to hand them. Mounted outside the table so paging
         cannot unmount it mid-view. `/apps/review/<id>` opens the same viewer, so the two
         surfaces cannot drift on prev/next or the broken-shot rescue.
+
+        🔴 THE LIST IS `[cover, icon]`, SO THE COVER IS REACHABLE FROM A ROW THAT RENDERS NO
+        COVER THUMBNAIL — deliberate, not an oversight of `listingMediaShots`. A moderator
+        opening an app's icon can arrow to the store card they are about to approve, which
+        is the whole point of putting listing media on this surface; a single-entry list
+        would instead give the viewer permanently-disabled arrows and a `1 / 1` counter.
       */}
       <AppListingScreenshotViewer
         shots={
@@ -546,11 +552,9 @@ function UnifiedReviewRowView({
             data-testid={`apps-unified-review-submitter-${row.key}`}
           >
             {/*
-              🔴 `user=`, NOT `userId=`. The row payload already carries
-              `{id, username, image}` (`ReviewSubmitterChip`), and the `userId` form fires
-              `trpc.user.getById` per distinct id — with request batching off in this repo
-              that is one extra HTTP request per submitter on the page. The accepted cost is
-              no cosmetics/decoration frame on the avatar. Do not "fix" this to `userId`.
+              🔴 `user=`, NOT `userId=`. The row already carries `{id, username, image}`, so
+              the `userId` form's `trpc.user.getById` per distinct submitter is pure waste
+              whether or not request batching is on. Accepted cost: no cosmetics frame.
             */}
             <UserAvatar user={submitter} size="sm" withUsername linkToProfile />
           </span>
@@ -568,7 +572,12 @@ function UnifiedReviewRowView({
             count are both "nothing happened yet" on screen) — honour it rather than
             rendering "0 plays". See `UnifiedReviewRow.playCount` for what this number
             does and does not mean. */}
-        <Text size="xs" c={playLabel ? undefined : 'dimmed'} style={{ whiteSpace: 'nowrap' }}>
+        <Text
+          size="xs"
+          c={playLabel ? undefined : 'dimmed'}
+          style={{ whiteSpace: 'nowrap' }}
+          data-testid={`apps-unified-review-plays-${row.key}`}
+        >
           {playLabel ?? '—'}
         </Text>
       </Table.Td>

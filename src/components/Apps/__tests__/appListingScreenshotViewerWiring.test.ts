@@ -348,12 +348,8 @@ describe('🔴 the screenshot viewer is WIRED to the gallery that owns the list'
    */
   it('🔴 /apps/mine feeds the viewer the SAME row list its index is computed from', () => {
     const MINE = path.resolve(__dirname, '../MyAppsBody.tsx');
-    // 🔴 THE BUTTON + PLACEHOLDER HALVES MOVED FILES, AND THAT IS WHY THIS CONSTANT EXISTS
-    // RATHER THAN A SECOND `MINE`. `MediaButton` / the two thumbnails were page-local to
-    // `MyAppsBody`; the `/apps/review` queue needs the same boxes, so they are now shared
-    // in `ListingMediaThumb.tsx` and BOTH surfaces inherit this guard's properties. The
-    // SEAM half below still reads `MyAppsBody` — that is where the viewer is mounted and
-    // where the shared index space is wired.
+    // MediaButton + both thumbnails now live in `ListingMediaThumb`; the SEAM half below
+    // still reads `MyAppsBody`, where the viewer is mounted.
     const THUMB = path.resolve(__dirname, '../ListingMediaThumb.tsx');
     const src = norm(stripComments(fs.readFileSync(MINE, 'utf8')));
 
@@ -388,23 +384,23 @@ describe('🔴 the screenshot viewer is WIRED to the gallery that owns the list'
     // a click handler is not tab-reachable, not Enter/Space-activatable, and exposes no
     // accessible name.
     const BTN =
-      "MyAppsBody's row media is no longer a real button (UnstyledButton with an " +
-      'aria-label). An <img onClick> renders as a mouse-only affordance that LOOKS ' +
-      'wired up. See MediaButton.';
+      "ListingMediaThumb's MediaButton is no longer a real button (UnstyledButton with an " +
+      'aria-label) whose handler calls onOpen and stops propagation. An <img onClick> is a ' +
+      'mouse-only affordance that LOOKS wired up, and without the stopPropagation one ' +
+      "click on a /apps/review row's icon also opens a review.";
     const btn = norm(fnBody(stripComments(fs.readFileSync(THUMB, 'utf8')), 'MediaButton'));
     expect(btn, BTN).not.toBe('');
     expect(btn, BTN).toContain('<UnstyledButton');
-    // The handler is ON the button and it invokes the opener. Not the literal
-    // `onClick={onOpen}` any more: the handler also has to STOP PROPAGATION, because the
-    // `/apps/review` queue mounts these thumbnails inside whole-row-clickable `<tr>`s —
-    // without it one click on an icon both opens the image and opens a review surface
-    // behind it. `/apps/mine` has no row-level handler, so it is inert there.
+    // The handler is ON the button, invokes the opener, and stops propagation — not the
+    // literal `onClick={onOpen}` any more. `stopPropagation()` without the receiver so
+    // renaming the event parameter cannot red a correct implementation.
     expect(btn, BTN).toContain('onClick={');
     expect(btn, BTN).toContain('onOpen()');
-    expect(btn, BTN).toContain('e.stopPropagation()');
+    expect(btn, BTN).toContain('stopPropagation()');
     expect(btn, BTN).toContain('aria-label={label}');
-    // The handler belongs to the button, and the image is only its child — asserted on the
-    // file the `<img>` now lives in as well as on the consumer.
+    // The handler belongs to the button and the image is only its child. Asserted on the
+    // THUMB file, which is where the `<img>` now lives; kept on `MyAppsBody` too, where it
+    // is now vacuous but costs nothing and would catch a re-inlined copy.
     expect(src, BTN).not.toContain('<img onClick');
     expect(norm(stripComments(fs.readFileSync(THUMB, 'utf8'))), BTN).not.toContain('<img onClick');
 

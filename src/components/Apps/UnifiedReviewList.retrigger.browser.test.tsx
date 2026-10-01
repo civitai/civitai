@@ -8,11 +8,8 @@ import type { OnsiteReviewRequest } from './unifiedReviewRow';
 import type * as UserAvatarMod from '~/components/UserAvatar/UserAvatar';
 
 /*
-  The queue's Submitter cell renders the real `UserAvatar`, which reaches
-  `useFeatureFlags`, `useCurrentUser` and `useGetEdgeUrl` → `useBrowsingSettings` — three
-  providers this harness does not mount. The stub keeps its whole contract with this file,
-  which asserts nothing about the submitter cell. Precedent:
-  `~/components/Reaction/ImageReactorsPreview.browser.test.tsx`.
+  Stubbed: the real `UserAvatar` reaches providers and a tRPC proc this harness does not
+  mount. Precedent: `~/components/Reaction/ImageReactorsPreview.browser.test.tsx`.
 */
 vi.mock('~/components/UserAvatar/UserAvatar', async (importOriginal) => ({
   ...(await importOriginal<typeof UserAvatarMod>()),

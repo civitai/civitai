@@ -374,9 +374,65 @@ function cardKindData(row: HydratedListing): ListingCardKindData {
  * job, not a property of this code — an on-site listing whose row the job has not yet
  * covered reads a truthful-by-the-DTO's-rule `0` until it does.
  */
-function cardOpenCount(row: HydratedListing): number | null {
+/**
+ * The columns `cardOpenCount` actually reads. Widened from `HydratedListing` (which still
+ * satisfies it structurally — a pure relaxation, no behaviour change) so the moderator
+ * review queue can reuse the REAL projection instead of re-deriving it, the same reason
+ * {@link DetailKindDataSource} is relaxed.
+ */
+export type CardOpenCountSource = {
+  // `| null | undefined` so a caller whose select makes the column optional satisfies this
+  // as-is; both are treated as "not on-site", which is the fail-CLOSED direction the
+  // positive `=== 'onsite'` test below exists for.
+  kind?: string | null;
+  metric?: { openCount: number } | null;
+};
+
+export function cardOpenCount(row: CardOpenCountSource): number | null {
   if (row.kind !== 'onsite') return null;
   return row.metric?.openCount ?? 0;
+}
+
+/** What a `/apps/review` queue row shows about the app's store listing. */
+export type ListingQueueFacts = {
+  /** {@link cardOpenCount}'s answer — a number for an on-site listing, `null` otherwise. */
+  playCount: number | null;
+  iconUrl: string | null;
+  coverUrl: string | null;
+};
+
+export type ListingQueueFactsSource = CardOpenCountSource & {
+  icon?: { url: string | null } | null;
+  cover?: { url: string | null } | null;
+};
+
+/** No listing to read — the two moderator queues project this for a row with none. */
+export const NO_LISTING_QUEUE_FACTS: ListingQueueFacts = {
+  playCount: null,
+  iconUrl: null,
+  coverUrl: null,
+};
+
+/**
+ * One projection of a listing → the three facts both moderator review queues show.
+ *
+ * 🔴 IT GOES THROUGH `cardOpenCount` RATHER THAN READING `metric.openCount`, because the
+ * obvious `metric?.openCount ?? null` is wrong in BOTH directions and both were shipped
+ * before this existed: it renders a literal `0` for an off-site listing (the column is
+ * `NOT NULL DEFAULT 0`, so "nobody ever used this" is a false claim about an app whose
+ * CTA is an external anchor), and it over-nulls an on-site listing with no metric row yet,
+ * which is a genuine `0`. The store card and the review row must not answer "how many
+ * plays" differently for one listing.
+ *
+ * 🔴 NO SCREENSHOT COVER FALLBACK. A moderator has to see that the listing has no cover —
+ * the same reason the author's own `listMine` read passes `null` here.
+ */
+export function listingQueueFacts(listing: ListingQueueFactsSource): ListingQueueFacts {
+  return {
+    playCount: cardOpenCount(listing),
+    iconUrl: iconUrl(listing.icon),
+    coverUrl: coverUrl(listing.cover, null),
+  };
 }
 
 /**

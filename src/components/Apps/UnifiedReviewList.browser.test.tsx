@@ -19,11 +19,10 @@ import type { OffsiteReviewRequest, OnsiteReviewRequest } from './unifiedReviewR
  */
 
 /*
-  The real `UserAvatar` needs the feature-flag, browsing-level and content-settings
-  providers this harness does not mount (it reaches `useGetEdgeUrl` → `useBrowsingSettings`).
-  The stub keeps this cell's whole contract with it — WHICH user, and whether it renders a
-  profile LINK — so the propagation guard below is exercised against a real `<a>`.
-  Precedent: `~/components/Reaction/ImageReactorsPreview.browser.test.tsx`.
+  Stubbed: the real `UserAvatar` reaches providers this harness does not mount. The stub
+  keeps this cell's whole contract with it — WHICH user, and whether it renders a profile
+  LINK — so the propagation guard below runs against a real `<a>`. Precedent:
+  `~/components/Reaction/ImageReactorsPreview.browser.test.tsx`.
 */
 vi.mock('~/components/UserAvatar/UserAvatar', async (importOriginal) => ({
   ...(await importOriginal<typeof UserAvatarMod>()),
@@ -229,9 +228,11 @@ describe('UnifiedReviewList — the Plays column', () => {
 
   test('a count of ONE is singular', async () => {
     renderList({ onsiteItems: [{ ...ONSITE, playCount: 1 } as OnsiteReviewRequest] });
-    await expect
-      .element(page.getByTestId('apps-unified-review-row-onsite:or1'))
-      .toHaveTextContent('1 play');
+    const plays = page.getByTestId('apps-unified-review-plays-onsite:or1');
+    await expect.element(plays).toBeInTheDocument();
+    // `toHaveTextContent` is a SUBSTRING match, and "1 plays" contains "1 play" — so the
+    // named property needs the exact read to be observable at all.
+    expect(plays.element().textContent).toBe('1 play');
   });
 
   test('ZERO and UNKNOWN both render an em dash, never "0 plays"', async () => {
@@ -258,9 +259,16 @@ describe('UnifiedReviewList — the relative age cell', () => {
     const age = page.getByTestId('apps-unified-review-age-onsite:or1');
     await expect.element(age).toBeInTheDocument();
     const el = age.element() as HTMLTimeElement;
-    // The ladder's shape, not a specific rung — the fixture's absolute age moves with the
-    // calendar, so pinning "8mo" would rot. What must hold is that it is COMPACT.
-    expect(el.textContent).toMatch(/^(now|\d+(m|h|d|w|mo|y))$/);
+    /**
+     * 🔴 `now` IS EXCLUDED, AND THAT IS THE WHOLE ASSERTION. An earlier revision allowed it
+     * (`/^(now|\d+(m|h|d|w|mo|y))$/`), which admits the defect: pass the WRONG argument —
+     * `compactRelativeTime(now, now)` instead of the row's date — and every row reads
+     * `now` forever while `dateTime`, `title` and the pure ladder test all stay green,
+     * because none of them reads this expression. The fixture date is fixed and in the
+     * past, so it can only ever move further up the ladder; months-or-years is therefore
+     * durable AND discriminating, where a specific rung would rot with the calendar.
+     */
+    expect(el.textContent).toMatch(/^\d+(mo|y)$/);
     expect(el.getAttribute('datetime')).toBe('2026-01-01T00:00:00.000Z');
     // The exact instant stays reachable on hover and to a screen reader.
     expect(el.getAttribute('title')).toBe(new Date('2026-01-01T00:00:00Z').toLocaleString());
@@ -360,13 +368,24 @@ describe('🔴 UnifiedReviewList — the stopPropagation guards', () => {
     expect(openVersionHistory).not.toHaveBeenCalled();
   });
 
-  test('clicking the ICON opens the image viewer and NOT the review', async () => {
+  test('clicking the ICON opens the ICON in the viewer, and NOT the review', async () => {
+    /**
+     * 🔴 THE ROW CARRIES BOTH ASSETS, WHICH IS THE ONLY SHAPE THAT CAN TELL CORRECT FROM
+     * WRONG. `listingMediaShots` builds `[cover, icon]`, so with a cover absent the icon
+     * is index 0 — which is also what a broken positional lookup would return. That is
+     * exactly why `listingMediaIndex` is positional rather than a URL `findIndex`, so the
+     * fixture has to have two distinct assets and the assertion has to name WHICH image.
+     */
     const { openOnsite } = renderList({
-      onsiteItems: [{ ...ONSITE, iconUrl: PIXEL } as OnsiteReviewRequest],
+      onsiteItems: [
+        { ...ONSITE, iconUrl: `${PIXEL}#icon`, coverUrl: `${PIXEL}#cover` } as OnsiteReviewRequest,
+      ],
     });
     await page.getByTestId('apps-unified-review-icon-button-onsite:or1').click();
     expect(openOnsite).not.toHaveBeenCalled();
-    // The shared viewer is now showing that image rather than nothing.
     await expect.element(page.getByRole('dialog')).toBeInTheDocument();
+    // The viewer captions each shot, so the caption is what says which one is framed.
+    await expect.element(page.getByText('Lighthouse icon')).toBeInTheDocument();
+    expect(page.getByText('Lighthouse cover image').elements()).toEqual([]);
   });
 });

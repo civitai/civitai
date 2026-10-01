@@ -144,11 +144,9 @@ vi.mock('~/providers/IsClientProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof IsClientMod>()),
   useIsClient: () => true,
 }));
-// The queue's Submitter cell renders the real `UserAvatar`, which calls
-// `trpc.user.getById.useQuery` unconditionally (rules of hooks) — and this file's `trpc`
-// override names only the two queue procs, so the real avatar takes the tab down. The stub
-// keeps the cell's whole contract with it for a file that tests POLL and PAGING behaviour.
-// Precedent: `~/components/Reaction/ImageReactorsPreview.browser.test.tsx`.
+// Stubbed: `UserAvatar` calls `trpc.user.getById.useQuery` unconditionally, and this
+// file's `trpc` override names only the two queue procs — so the real avatar takes the
+// whole tab down. Precedent: `~/components/Reaction/ImageReactorsPreview.browser.test.tsx`.
 vi.mock('~/components/UserAvatar/UserAvatar', async (importOriginal) => ({
   ...(await importOriginal<typeof UserAvatarMod>()),
   UserAvatar: ({ user }: { user: { id: number; username?: string | null } }) => (

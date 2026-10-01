@@ -77,7 +77,8 @@ import { cleanup } from 'vitest-browser-react';
 import { cascadeEvidence, nextLayout, renderAtViewport } from '../../../test/geometry-setup';
 import { LOADABLE_IMAGE_DATA_URI } from '../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
-import type * as UserAvatarMod from '~/components/UserAvatar/UserAvatar';
+import type * as BrowserSettingsMod from '~/providers/BrowserSettingsProvider';
+import type * as BrowsingLevelMod from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import type { GroupedApp } from '~/components/Apps/groupSubscriptionsByApp';
 import type { SubscriptionRecord } from '~/server/schema/blocks/subscription.schema';
 import type { MyAppRow } from '~/components/Apps/myAppsView';
@@ -183,20 +184,23 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 }));
 vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
 /*
-  The real `UserAvatar` needs the browsing-level + content-settings providers this harness
-  does not mount (it reaches `useGetEdgeUrl` → `useBrowsingSettings`). The stub keeps the
-  one property this tier measures — the cell's WIDTH — by rendering an avatar-sized box
-  plus the username, which is what the submitter column's share has to clear. Precedent:
-  `~/components/Reaction/ImageReactorsPreview.browser.test.tsx`.
+  🔴 THE REAL `UserAvatar` RENDERS IN THIS TIER, AND THE STUB IT REPLACED WAS A MEASUREMENT
+  DEFECT. This file's whole purpose is painted width, and the Submitter column's share is
+  justified in `appsWideLayout.tsx` by a number measured here — so stubbing the component
+  whose width is the quantity under assertion measured the stub. (The behaviour suites
+  elsewhere DO stub it; there the width is not what they assert.) What the real component
+  needs instead is the two viewer-state hooks it reaches through `useGetEdgeUrl`, which no
+  geometry fixture can supply: both are stubbed at the SOURCE rather than the component.
 */
-vi.mock('~/components/UserAvatar/UserAvatar', async (importOriginal) => ({
-  ...(await importOriginal<typeof UserAvatarMod>()),
-  UserAvatar: ({ user }: { user: { username?: string | null } }) => (
-    <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center', whiteSpace: 'nowrap' }}>
-      <span style={{ display: 'inline-block', width: 26, height: 26, borderRadius: '50%' }} />
-      {user.username ?? '[deleted]'}
-    </span>
-  ),
+vi.mock('~/providers/BrowserSettingsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof BrowserSettingsMod>()),
+  // The avatar reads one slice (`autoplayGifs`) through this selector; a geometry fixture
+  // has no settings store, and the value cannot change a rendered width.
+  useBrowsingSettings: () => undefined,
+}));
+vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof BrowsingLevelMod>()),
+  useViewerBrowsingLevelDebounced: () => 1,
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => ({ id: 1, username: 'author', isModerator: false }),
@@ -463,7 +467,10 @@ const ONSITE: OnsiteReviewRequest = {
   iconUrl: PIXEL,
   coverUrl: PIXEL,
   reviewRepoUrl: 'https://forgejo.example/repo',
-  submittedBy: { id: 7, username: 'onsite-dev', image: null },
+  // 🔴 A REALISTIC WORST-CASE USERNAME, not a short one. The Submitter cell has no
+  // `nowrap`, so a long name is the row-growth case this tier's height invariant exists
+  // for — a 10-character fixture is blind to it. 15 chars is the max this site allows.
+  submittedBy: { id: 7, username: 'wwwwwwwwwwwwwww', image: null },
 } as OnsiteReviewRequest;
 
 const OFFSITE: OffsiteReviewRequest = {
@@ -732,10 +739,8 @@ describe('/apps/review — the queue table spends the width on its App column', 
     // The other half of "proportional": the fixed columns are a PERCENTAGE of the table,
     // not a content width that happens to have grown. Asserted at the wide fixture only,
     // because at 1408 a column can legitimately exceed its share (min-content wins).
-    //
-    // 🔴 DERIVED FROM THE LEDGER, NOT A HAND-COPIED PAIR LIST. The pairs used to be
-    // literals, which meant adding a column silently dropped every later column out of
-    // the check while the test still read as covering the table.
+    // Derived from the ledger rather than a hand-copied pair list, so adding a column
+    // cannot drop a later one out of the check.
     await renderRoute(list(), WIDE);
     const widths = headerWidths();
     const table = document.querySelector('table')!.getBoundingClientRect().width;
@@ -763,13 +768,20 @@ describe('/apps/review — the queue table spends the width on its App column', 
     const widths = headerWidths();
     const table = document.querySelector('table')!.getBoundingClientRect().width;
     expect(widths).toHaveLength(APPS_REVIEW_QUEUE_COLUMNS.withDeploy.length);
+    let checked = 0;
     for (const [index, share] of APPS_REVIEW_QUEUE_COLUMNS.withDeploy.entries()) {
       if (share === null) continue;
+      checked += 1;
       expect(
         px(widths[index]),
         `approved-shape column ${index} should be ${share}% of ${px(table)}`
       ).toBeCloseTo((share / 100) * table, 0);
     }
+    // Same counter as the seven-column arm: a second `null` in the ledger would otherwise
+    // drop a column from the check while `toHaveLength` still passed.
+    expect(checked, 'no fixed column was checked').toBe(
+      APPS_REVIEW_QUEUE_COLUMNS.withDeploy.length - 1
+    );
     // Nothing paints outside the table at any of the four widths.
     await cleanup();
     for (const vp of ALL_WIDTHS) {
@@ -796,11 +808,11 @@ describe('/apps/review — the queue table spends the width on its App column', 
      * TWO AXES, MEASURED DIFFERENTLY ON PURPOSE. Overhang is absolute — nothing may paint
      * outside the cell at any width. CLIPPING is measured against the same tree with its
      * `<colgroup>` REMOVED, for the reason the row-height invariant below gives at length:
-     * at 768 this table's min-content sum (792px, the seven figures in
-     * `appsWideLayout.tsx`) exceeds the container's 736, so SOMETHING is under-served
-     * there whatever the split and a literal "never clipped" is a claim no correct ledger
-     * could satisfy. What a ledger must never do is clip the cell WORSE than the browser
-     * does unaided at that width.
+     * at 768 this table's columns want more than the container's 736px between them
+     * whatever the split, so a literal "never clipped" is a claim no correct ledger could
+     * satisfy. What a ledger must never do is clip the cell WORSE than the browser does
+     * unaided at that width — which is a comparison this arm takes rather than a number
+     * either file asserts.
      */
     const offenders: string[] = [];
     for (const vp of ALL_WIDTHS) {
@@ -849,12 +861,15 @@ describe('/apps/review — the queue table spends the width on its App column', 
 
   test('the new cells really render (guards a vacuous measurement)', async () => {
     // Every assertion above is a width comparison, and a cell that rendered nothing
-    // produces two internally-consistent numbers just as happily. These four are the
-    // columns this change added, named individually.
+    // produces two internally-consistent numbers just as happily. One entry per cell this
+    // change added — Plays was missing from this list while the comment claimed it was
+    // covered, and it is the one cell whose emptiness no other arm here can see.
     await renderRoute(list(), NARROW);
     for (const testId of [
       `apps-unified-review-version-${ONSITE_KEY}`,
       `apps-unified-review-first-version-${ONSITE_KEY}`,
+      `apps-unified-review-submitter-${ONSITE_KEY}`,
+      `apps-unified-review-plays-${ONSITE_KEY}`,
       `apps-unified-review-age-${ONSITE_KEY}`,
       `apps-unified-review-icon-${ONSITE_KEY}`,
     ]) {

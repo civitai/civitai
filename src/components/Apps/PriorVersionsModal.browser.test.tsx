@@ -191,6 +191,43 @@ describe('PriorVersionsModal — opening, the read gate, and closing', () => {
     expect(enabled.every((c) => c.input.slug === 'lighthouse')).toBe(true);
   });
 
+  test("the app's NAME renders beside the slug", async () => {
+    /**
+     * 🔴 THIS FIELD WAS SET AND DOCUMENTED BUT DEAD. `VersionHistoryTarget.title` was
+     * populated by the version trigger and its comment said "display name for the modal
+     * title", and nothing rendered it — a comment the code contradicted, and the exact
+     * shape of "a field that exists in a DTO is not a code path".
+     */
+    queryState.current = {
+      data: { items: ENTRIES, truncated: false },
+      error: null,
+      isLoading: false,
+    };
+    renderWithProviders(<PriorVersionsModal selection={SELECTION} onClose={vi.fn()} />);
+    await expect
+      .element(page.getByTestId('apps-prior-versions-title'))
+      .toHaveTextContent('Lighthouse');
+    // Distinct from the slug in the fixture, so this cannot pass by the two coinciding.
+    expect(SELECTION.title).not.toBe(SELECTION.slug);
+  });
+
+  test('…and is SUPPRESSED when the name IS the slug', async () => {
+    // The branch a reader would not guess from the field name: an app whose manifest name
+    // is its slug would otherwise read twice in one title.
+    queryState.current = {
+      data: { items: ENTRIES, truncated: false },
+      error: null,
+      isLoading: false,
+    };
+    renderWithProviders(
+      <PriorVersionsModal selection={{ ...SELECTION, title: SELECTION.slug }} onClose={vi.fn()} />
+    );
+    await expect.element(page.getByRole('dialog')).toBeInTheDocument();
+    expect(page.getByTestId('apps-prior-versions-title').elements()).toEqual([]);
+    // Positive control that the dialog really rendered its title area.
+    expect(page.getByRole('dialog').element().textContent).toContain(SELECTION.slug);
+  });
+
   test('the close control invokes onClose', async () => {
     queryState.current = {
       data: { items: ENTRIES, truncated: false },

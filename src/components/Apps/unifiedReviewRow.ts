@@ -102,26 +102,21 @@ export type UnifiedReviewRow = {
    *  assets without shipping code. Rendered as `—` rather than an empty cell. */
   version: string | null;
   /**
-   * Has NO version of this app ever been APPROVED?
-   *
-   * Read off the server's own `manifestDiffSummary.kind === 'first-version'` discriminator,
-   * which is computed against the previous *approved* version — so a resubmission after a
-   * rejection still reads `first-version`. That is the reviewer-facing meaning: nothing of
-   * this app has ever shipped, so the review is the app's first gate rather than a delta.
+   * Has NO version of this app ever been APPROVED? Read off the server's own
+   * `manifestDiffSummary.kind === 'first-version'`, which is computed against the previous
+   * *approved* version — so a resubmission after a rejection still reads first-version.
    * Always `false` on a listing-revision row.
    */
   isFirstVersion: boolean;
   /**
-   * Lifetime `AppListingMetric.openCount` for this app's store listing, or `null` when
-   * there is no listing row to read (a pending FIRST version whose draft listing has no
-   * metric yet, or an app with no listing at all).
+   * Lifetime `AppListingMetric.openCount`, or `null` when there is no listing row — the
+   * `cardOpenCount` projection in `~/server/services/blocks/app-listing.service` owns the
+   * null-vs-zero rule and this read goes through it.
    *
-   * 🔴 THREE FACTS THE COLUMN CANNOT SHOW. (1) An OFF-SITE listing's count is
-   * STRUCTURALLY zero, not "zero so far" — its CTA is an external anchor and nothing
-   * on-platform records a click. (2) The counter is not read-time deduped (see
-   * `~/server/services/blocks/app-listing-open.service`, which names that as still open),
-   * so crawlers and link unfurlers inflate it; it is not a unique-user figure. (3) `null`
-   * and `0` are different facts and both render `—`.
+   * 🔴 THREE FACTS THE COLUMN CANNOT SHOW. (1) An off-site listing's count is STRUCTURALLY
+   * zero — its CTA is an external anchor. (2) Not read-time deduped
+   * (`~/server/services/blocks/app-listing-open.service`), so crawlers and unfurlers
+   * inflate it; not a unique-user figure. (3) `null` and `0` both render `—`.
    */
   playCount: number | null;
   /** CDN icon URL for the app's store listing (`listingIconUrl`), or null. */

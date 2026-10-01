@@ -313,8 +313,6 @@ function row(key: string, iso: string): UnifiedReviewRow {
     submitter: null,
     submittedAt: new Date(iso),
     onReview: () => undefined,
-    // Spelled rather than omitted: these are never absent from a real adapted row, so the
-    // type says so and the fixture states the "nothing known" value.
     version: null,
     isFirstVersion: false,
     playCount: null,

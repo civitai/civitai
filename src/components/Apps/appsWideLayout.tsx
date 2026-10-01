@@ -161,27 +161,26 @@ export function appsTableColumnProblems(label: string, columns: AppsTableColumns
  * ~130px of padding per row at the wide width — "a share larger than its cell needs is
  * padding relabelled", which is the defect, not the fix.
  *
- * 🔴 AND VERSION IS THE WIDEST FIXED SHARE, which is not where intuition puts it. The cell
- * is a `<Code>` semver NEXT TO a violet `first version` badge on a nowrap row, so it paints
- * wider than the kind badge and wider than the submitter chip. Measured at 1440 (table
- * 1406) on a first-version row: the cell's own content is 165.95px + 32px of table padding
- * = 198px, which is 14.08% — hence 14. A share sized by "it's just a version number" sits
- * under that, and a nowrap row does not then get narrower, it paints OUTSIDE its cell: the
- * `/apps/mine` Status note below is the same defect, measured at 60px.
+ * 🔴 VERSION IS THE WIDEST FIXED SHARE, which is not where intuition puts it: a `<Code>`
+ * semver NEXT TO a violet `first version` badge on a nowrap row paints wider than the kind
+ * badge and wider than the submitter chip. A share under what the cell paints does not make
+ * the row narrower — it paints OUTSIDE the cell, which is the `/apps/mine` Status defect
+ * below. `AppsWideLayout.geometry.test.tsx`'s Version containment arm is what holds it.
  *
- * 🔴 EVERY OTHER SHARE HERE IS SIZED TO ITS CELL'S OWN MEASURED CONTENT, NOT GUESSED, and
- * three of them went DOWN from a first draft for the reason this module's header states:
- * a share above what the cell needs at the WIDE width is padding relabelled. Min-content,
- * measured in `AppsWideLayout.geometry.test.tsx`: Kind 63.11 · App 166.02 · Version 118.02
- * · Submitter 130.59 · Plays 92.70 · date 100.45 · action 120.69. Each non-primary share is
- * the smallest that still clears its cell at 2526 with headroom — a share BELOW its cell's
- * need there is the case the geometry tier's declared-share arm reds on.
+ * ⚠️ NO MEASURED FIGURES HERE ANY MORE, AND THEIR ABSENCE IS DELIBERATE. An earlier
+ * revision justified each share with per-column min-content numbers "measured in
+ * `AppsWideLayout.geometry.test.tsx`" — numbers that appeared nowhere but that comment,
+ * because the tier pins SHARES and containment, never a min-content value. One of them was
+ * also measured against a test STUB of `UserAvatar` rather than the real component, which
+ * is how the Submitter share shipped at 7 when the real chip needs ~8.6% of the wide table:
+ * a figure in prose vouched for a share no test could check. The declared-share arm reds on
+ * a share below its cell's need, so that arm is the record; this paragraph is not.
  */
 export const APPS_REVIEW_QUEUE_COLUMNS = {
   /** Pending / Rejected: Kind · App · Version · Submitter · Plays · date · action. */
-  withoutDeploy: [6, null, 14, 7, 5, 5, 6] as AppsTableColumns,
+  withoutDeploy: [6, null, 14, 9, 5, 5, 6] as AppsTableColumns,
   /** Approved: Kind · App · Version · Submitter · Plays · date · Deploy · action. */
-  withDeploy: [6, null, 14, 7, 5, 5, 8, 6] as AppsTableColumns,
+  withDeploy: [6, null, 14, 9, 5, 5, 8, 6] as AppsTableColumns,
 } as const;
 
 /**

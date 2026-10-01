@@ -1990,59 +1990,100 @@ export async function recordPendingFromPush(args: {
   return { publishRequestId };
 }
 
-/**
- * The store-listing facts the moderator queue shows beside a CODE request: lifetime plays
- * and the listing's media.
- *
- * 🔴 KEYED ON `AppListing.slug`, NOT `appBlockId`. `AppBlockPublishRequest.appBlockId` is
- * NULL while an app's first request is pending, so an id-keyed join would blank exactly the
- * rows a moderator reviews most carefully. `AppListing.slug` is `@unique` and equals the
- * block slug for an on-site listing; a revision SHADOW gets a synthetic `rev-<ulid>` slug
- * (`beginListingRevision`), so it can never be picked up by accident.
- *
- * 🔴 ONE QUERY FOR THE WHOLE PAGE, never one per row. A slug with no listing — the pending
- * first version whose draft listing has not been created, or an app that never got one —
- * is simply absent from the map, which the callers project as `null`.
- */
-type ListingQueueFacts = {
-  playCount: number | null;
-  iconUrl: string | null;
-  coverUrl: string | null;
+// Type-only, so the big store service stays out of this module's runtime graph (the
+// projection itself is reached by dynamic import, like every other cross-service call here).
+import type { ListingQueueFacts } from './app-listing.service';
+
+/** The request columns the listing join needs to decide whether a listing is THIS app's. */
+type ListingJoinSubject = {
+  id: string;
+  slug: string;
+  appBlockId: string | null;
+  submittedBy: { id: number } | null;
 };
 
-async function listingFactsBySlug(slugs: string[]): Promise<Map<string, ListingQueueFacts>> {
-  const unique = [...new Set(slugs)];
-  if (unique.length === 0) return new Map();
-  const [{ dbRead }, { listingIconUrl, listingCoverUrl }] = await Promise.all([
-    import('~/server/db/client'),
-    import('./listing-media-url'),
-  ]);
-  const rows = await dbRead.appListing.findMany({
-    where: { slug: { in: unique } },
+/** A slug-resolved listing, reduced to what the ownership test and the projection read. */
+type JoinedListing = {
+  slug: string;
+  kind: string;
+  appBlockId: string | null;
+  userId: number;
+  icon: { url: string | null } | null;
+  cover: { url: string | null } | null;
+  metric: { openCount: number } | null;
+};
+
+/**
+ * Does this slug-matched listing belong to the app this request is for?
+ *
+ * 🔴 SLUG EQUALITY ALONE IS NOT OWNERSHIP, AND THE GAP IS REACHABLE BY AUTHOR ACTIONS ONLY.
+ * A slug is RELEASED when a first version is withdrawn or its orphan draft purged
+ * (`deleteOnsiteDraftListingForSlug` says so in as many words), while the decided request
+ * row survives in the Rejected tab forever. Nothing then reserves the slug, so a second
+ * developer can claim it — and a slug-only join would print THEIR icon, cover and lifetime
+ * play count on the first developer's row, under the first developer's name, with the icon
+ * a live button into the image viewer.
+ *
+ * The off-site queue has no equivalent hole: its rows carry their own `appListingId`, so it
+ * reads the relation rather than re-resolving a name.
+ */
+function listingBelongsToRequest(listing: JoinedListing, req: ListingJoinSubject): boolean {
+  // An on-site code request's listing is always `kind: 'onsite'`; a revision shadow is
+  // never the app's own listing. Both tests fail CLOSED for a kind added later.
+  if (listing.kind !== 'onsite') return false;
+  // Approved at least once: the listing is keyed on the block, so compare that directly.
+  if (req.appBlockId != null) return listing.appBlockId === req.appBlockId;
+  // Never approved. The only legitimate listing is the pre-approval draft minted for this
+  // submitter at submit time — `appBlockId: null, userId: submittedByUserId` (see the
+  // `createDraftListing` arm of `submitVersion`).
+  return listing.appBlockId === null && listing.userId === req.submittedBy?.id;
+}
+
+/**
+ * The store-listing facts a moderator queue shows beside a CODE request — lifetime plays
+ * and the listing's media — for a whole page of requests.
+ *
+ * 🔴 RESOLVED BY `AppListing.slug`, NOT `appBlockId`, because that FK is NULL while an
+ * app's first request is pending and an id-keyed join would blank exactly the rows a
+ * moderator reviews most carefully. Slug resolution is then NARROWED by
+ * {@link listingBelongsToRequest} — read its note before loosening either.
+ *
+ * 🔴 ONE PARENT QUERY FOR THE WHOLE PAGE, never one per row. (Prisma loads each relation
+ * as its own statement, so it is four round trips, not one — the property that matters is
+ * that the count does not grow with the page.) Keyed on the REQUEST id rather than the
+ * slug: two decided requests can share a slug while disagreeing about which listing is
+ * theirs, so a slug-keyed result cannot hold both verdicts.
+ */
+async function listingFactsForRequests(
+  requests: ListingJoinSubject[]
+): Promise<(requestId: string) => ListingQueueFacts> {
+  const { NO_LISTING_QUEUE_FACTS, listingQueueFacts } = await import('./app-listing.service');
+  const slugs = [...new Set(requests.map((r) => r.slug))];
+  if (slugs.length === 0) return () => NO_LISTING_QUEUE_FACTS;
+  const { dbRead } = await import('~/server/db/client');
+  const rows = (await dbRead.appListing.findMany({
+    where: { slug: { in: slugs }, kind: 'onsite', revisionOfId: null },
     select: {
       slug: true,
+      kind: true,
+      appBlockId: true,
+      userId: true,
       icon: { select: { url: true } },
       cover: { select: { url: true } },
       metric: { select: { openCount: true } },
     },
-  });
-  return new Map(
-    rows.map((r: (typeof rows)[number]) => [
-      r.slug,
-      {
-        // `null` (no metric row yet) and `0` are different facts; the row keeps the
-        // distinction even though the queue renders both as an em dash.
-        playCount: r.metric?.openCount ?? null,
-        iconUrl: listingIconUrl(r.icon),
-        // No screenshot fallback: a moderator must see that the listing has no cover, the
-        // same reason the author's own read passes `null` here.
-        coverUrl: listingCoverUrl(r.cover, null),
-      },
-    ])
-  );
-}
+  })) as JoinedListing[];
 
-const NO_LISTING_FACTS: ListingQueueFacts = { playCount: null, iconUrl: null, coverUrl: null };
+  const bySlug = new Map(rows.map((r) => [r.slug, r]));
+  const out = new Map<string, ListingQueueFacts>();
+  for (const req of requests) {
+    const listing = bySlug.get(req.slug);
+    if (listing && listingBelongsToRequest(listing, req)) {
+      out.set(req.id, listingQueueFacts(listing));
+    }
+  }
+  return (requestId: string) => out.get(requestId) ?? NO_LISTING_QUEUE_FACTS;
+}
 
 /**
  * Mod queue: paginated list of publish requests in status='pending',
@@ -2077,11 +2118,11 @@ export async function listPendingRequests(opts: ListPendingRequestsOptions = {})
   });
   const hasNext = rows.length > limit;
   const items = hasNext ? rows.slice(0, limit) : rows;
-  const listings = await listingFactsBySlug(items.map((r: (typeof rows)[number]) => r.slug));
+  const listingFacts = await listingFactsForRequests(items as ListingJoinSubject[]);
   return {
     items: items.map((r: (typeof rows)[number]) => ({
       ...r,
-      ...(listings.get(r.slug) ?? NO_LISTING_FACTS),
+      ...listingFacts(r.id),
       // BigInt isn't JSON-serializable through tRPC's default transformer;
       // surface as a string. UI can format with Intl.NumberFormat.
       bundleSizeBytes: r.bundleSizeBytes.toString(),
@@ -2146,11 +2187,11 @@ export async function listApprovedRequests(opts: ListPendingRequestsOptions = {}
   });
   const hasNext = rows.length > limit;
   const items = hasNext ? rows.slice(0, limit) : rows;
-  const listings = await listingFactsBySlug(items.map((r: (typeof rows)[number]) => r.slug));
+  const listingFacts = await listingFactsForRequests(items as ListingJoinSubject[]);
   return {
     items: items.map((r: (typeof rows)[number]) => ({
       ...r,
-      ...(listings.get(r.slug) ?? NO_LISTING_FACTS),
+      ...listingFacts(r.id),
       bundleSizeBytes: r.bundleSizeBytes.toString(),
       reviewRepoUrl: reviewRepoUrl(r.slug),
       // Push rows have empty bundle pointers; bundleSha256 (selected, NOT NULL)
@@ -2199,11 +2240,11 @@ export async function listRejectedRequests(opts: ListPendingRequestsOptions = {}
   });
   const hasNext = rows.length > limit;
   const items = hasNext ? rows.slice(0, limit) : rows;
-  const listings = await listingFactsBySlug(items.map((r: (typeof rows)[number]) => r.slug));
+  const listingFacts = await listingFactsForRequests(items as ListingJoinSubject[]);
   return {
     items: items.map((r: (typeof rows)[number]) => ({
       ...r,
-      ...(listings.get(r.slug) ?? NO_LISTING_FACTS),
+      ...listingFacts(r.id),
       bundleSizeBytes: r.bundleSizeBytes.toString(),
       reviewRepoUrl: reviewRepoUrl(r.slug),
       // Push rows have empty bundle pointers; bundleSha256 (selected, NOT NULL)
@@ -2222,18 +2263,18 @@ export const VERSION_HISTORY_LIMIT = 50;
 /**
  * MOD-ONLY: every publish request for ONE app, newest-first.
  *
- * 🔴 `slug`-KEYED. `appBlockId` is NULL while a first request is pending, so an id-keyed
- * read would return nothing for exactly the app a moderator is reviewing for the first
- * time; the slug carries identity across that lifecycle and is indexed
- * (`app_block_publish_requests_slug_idx` on `[slug, status]`).
+ * 🔴 `slug`-KEYED, AND THIS IS WHERE THAT RATIONALE LIVES. `appBlockId` is NULL while a
+ * first request is pending (`schema.prisma` says so at the field), so an id-keyed read
+ * returns nothing for exactly the app a moderator is reviewing for the first time. The
+ * slug carries identity across that lifecycle; `app_block_publish_requests_slug_idx` serves
+ * the equality, and the `submittedAt` sort is unindexed but bounded by submissions-per-app.
  *
  * The CURRENT request is included rather than excluded, so the modal reads as a full
- * history rather than a gap; which entry is current is decided at render from the row the
- * moderator opened, because this read is not told which one that is.
+ * history rather than a gap; which entry is current is decided at render, because this read
+ * is not told which row the moderator opened.
  *
- * 🔴 `deployDetail` IS NOT PROJECTED. It carries the tenant-influenced build-log excerpt
- * (sanitized, but author-authored bytes) and no moderator surface renders it — see the
- * note on `ReviewRowDeploy` in `~/components/Apps/unifiedReviewRow`.
+ * 🔴 `deployDetail` IS NOT PROJECTED — tenant-influenced build-log bytes no moderator
+ * surface renders (`ReviewRowDeploy` in `~/components/Apps/unifiedReviewRow`).
  */
 export async function listVersionHistory(opts: { slug: string }) {
   const { dbRead } = await import('~/server/db/client');
@@ -4493,10 +4534,10 @@ export async function getReviewRequestById(publishRequestId: string): Promise<{
   // Forgejo review-repo deep link, push-row canonical-commit link, and the
   // slug-joined store-listing facts the review surfaces render).
   const { status, ...rest } = r;
-  const listings = await listingFactsBySlug([r.slug]);
+  const listingFacts = await listingFactsForRequests([r as ListingJoinSubject]);
   const request = {
     ...rest,
-    ...(listings.get(r.slug) ?? NO_LISTING_FACTS),
+    ...listingFacts(r.id),
     bundleSizeBytes: r.bundleSizeBytes.toString(),
     reviewRepoUrl: reviewRepoUrl(r.slug),
     pushCommitUrl:

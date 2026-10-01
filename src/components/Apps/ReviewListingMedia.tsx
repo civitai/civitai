@@ -91,8 +91,7 @@ export function ReviewListingMedia({
         </Group>
       </Stack>
 
-      {/* The same viewer the queue opens, so the two surfaces cannot drift on prev/next or
-          on the broken-shot rescue. */}
+      {/* The same viewer the queue opens. */}
       <AppListingScreenshotViewer
         shots={listingMediaShots(row)}
         name={name}

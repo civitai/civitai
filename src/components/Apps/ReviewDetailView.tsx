@@ -102,8 +102,7 @@ export function ReviewDetailView({
         style={{ outline: 'none' }}
       >
         {/* The shared body shows BUNDLE screenshots only; the store icon and cover are
-            listing columns it never reads. Page-only for now — the modal path is
-            deliberately untouched. */}
+            listing columns it never reads. */}
         <ReviewListingMedia
           slug={selection.request.slug}
           name={manifestName(selection.request.manifest) ?? selection.request.slug}
