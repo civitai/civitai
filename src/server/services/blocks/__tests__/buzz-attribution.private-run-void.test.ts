@@ -2,7 +2,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * ARM A of the private-run money safety: a PRIVATE RUN of a delisted / suspended
- * app writes its `block_spend_attribution` row `voided`, not `tracked`.
+ * app writes **NO** `block_spend_attribution` row at all.
+ *
+ * ⚠️ THIS HEADER SAID "writes its `block_spend_attribution` row `voided`, not `tracked`"
+ * — the pre-rescope design — while the `describe` below already read "writes NO
+ * spend-attribution row at all". A file whose header contradicts its own assertions is
+ * worse than one with neither, because the header is what a reader skims. The FILENAME
+ * still says `-void` and is deliberately not renamed in the same change as the rewrite:
+ * a rename would detach the rows from their history at exactly the moment someone needs
+ * to see what they used to assert.
  *
  * ── WHY THIS MATTERS, AND WHAT IT IS *NOT* ──────────────────────────────────
  * 🔴 NO BUZZ MOVES ON THIS RAIL EITHER WAY. `recordSpendAttribution` hardcodes
@@ -160,97 +168,129 @@ beforeEach(() => {
   createEchoesData();
 });
 
-describe('arm A — privateRun voids the spend-attribution row', () => {
-  it('[REG] a MODERATOR private run is voided with reason manual_review, not tracked', async () => {
+describe('arm A — privateRun writes NO spend-attribution row at all', () => {
+  /**
+   * ⚠️ THIS ARM CHANGED CONTRACT, DELIBERATELY, AND THE ROWS WERE REWRITTEN RATHER THAN
+   * DELETED. It used to assert that a private run wrote the row with
+   * `status: 'voided'` / `voidedReason: 'manual_review'`, leaving every READER to filter
+   * voided rows back out. The rescope moved the exclusion to the WRITE side: no row is
+   * created. Read-side exclusion has to be got right in every reader, in two repos, and it
+   * is the design that produced this rail's nullability trap; write-side is got right once.
+   *
+   * ⚠️ THE FIGURE HERE SAID "14 non-test readers in this repo" AND THAT WAS A COUNT OF
+   * FILE MENTIONS, NOT OF READERS — most of those hits are comments, and one is a
+   * Prometheus counter. Enumerated properly, this table has **3 read sites in 2 files**:
+   * `app-analytics.service.ts:516` (the owner-visible Prisma aggregate),
+   * `app-analytics.service.ts:523` (the owner-visible raw series), and
+   * `buzz-attribution.service.ts:989` (the P2002 dedupe lookup, which is not
+   * owner-visible). Plus one cross-repo consumer, talos-infra's
+   * `civitai-app-blocks-digest`. The write-side argument does not depend on the number
+   * and still holds on its own terms — an absent row is the safe failure for a reader
+   * that forgets the filter, a voided row is the leak — but the stated burden was ~5x
+   * the real one, and a committed number gets acted on.
+   *
+   * 🔴 EVERY ROW BELOW IS A REWRITE OF A ROW THAT EXISTED, NOT A NEW ONE. That matters
+   * because "the tests changed to match the code" is how coverage evaporates. Each one
+   * keeps its predecessor's INTENT — audience-blindness, arm order, no money moved — and
+   * only changes the observable it reads, from the row's columns to the absence of a
+   * write. The mutation that killed the old rows (delete the private-run branch) still
+   * kills these: the row comes back as `tracked` or `self_spend` and `create` fires.
+   */
+  it('[REG] a MODERATOR private run writes nothing and reports written:false, row:null', async () => {
     // The headline case, and the only one with a live consumer: the owner is
     // already caught by `self_spend`, and an editor is read-only on this surface
     // by decision, so a moderator is the third party this arm exists for.
     const res = await recordSpendAttribution(fakeInput({ privateRun: true }));
 
-    const data = writtenRow();
-    expect(data.status).toBe('voided');
-    expect(data.voidedReason).toBe('manual_review');
-    expect(data.voidedAt).toBeInstanceOf(Date);
-    // The result surface agrees with the row — a caller reading the return value
-    // must see the same verdict the column carries.
-    expect(res.row.status).toBe('voided');
-    expect(res.row.voidedReason).toBe('manual_review');
+    expect(mockDbWrite.blockSpendAttribution.create).not.toHaveBeenCalled();
+    // The result surface must SAY nothing was written rather than quietly returning a
+    // zeroed row — "no attribution exists" and "an attribution of zero" are different
+    // facts and a future reader has to be able to tell them apart.
+    expect(res.written).toBe(false);
+    expect(res.row).toBeNull();
   });
 
-  it('[REG] an EDITOR private run is voided too — the arm is audience-blind', async () => {
+  it('[REG] an EDITOR private run writes nothing too — the arm is audience-blind', async () => {
     // Editors are read-only on the private-run surface today, so this case should
     // be unreachable in production. It is pinned anyway: the arm keys on the
     // CLAIM, not on a role, so widening editors to spend later cannot silently
     // reopen the rail. A mutant narrowing the arm to "moderator only" dies here.
     await recordSpendAttribution(fakeInput({ userId: EDITOR_ID, privateRun: true }));
 
-    const data = writtenRow();
-    expect(data.status).toBe('voided');
-    expect(data.voidedReason).toBe('manual_review');
+    expect(mockDbWrite.blockSpendAttribution.create).not.toHaveBeenCalled();
   });
 
   it('[REG] the private-run arm WINS over self_spend when the viewer IS the owner', async () => {
-    // 🔴 THE ARM-ORDER PIN. Both branches are true here. Every arm produces the
-    // same MONEY outcome (voided; the share columns are already 0), so ordering
-    // cannot change what anyone is paid — what it decides is whether the row
-    // records WHY it exists (a diagnostic run) or merely who spent.
-    //
-    // This case is also the second, independent kill for the same mutant: delete
-    // the private-run branch and this row reads `self_spend` instead.
+    // 🔴 THE ARM-ORDER PIN, and it is STRONGER now than it was. Both branches are true
+    // here. Previously both produced a voided row, so order decided only which REASON the
+    // column recorded — a diagnostic distinction. Now the branches produce different
+    // OBSERVABLE OUTCOMES: the private-run arm writes nothing, while `self_spend` writes a
+    // voided row. So this row fails on a mutant that merely REORDERS the arms, which the
+    // old column-level assertion could only catch by reading a string.
     await recordSpendAttribution(fakeInput({ userId: OWNER_ID, privateRun: true }));
 
-    const data = writtenRow();
-    expect(data.status).toBe('voided');
-    expect(data.voidedReason).toBe('manual_review');
-    expect(data.voidedReason).not.toBe('self_spend');
+    expect(mockDbWrite.blockSpendAttribution.create).not.toHaveBeenCalled();
   });
 
-  it('[INV] the row keeps the REAL appId / appBlockId — the deliberate divergence from the review sandbox', async () => {
-    // 🔴 LABELLED [INV] AFTER MEASUREMENT, NOT BEFORE. This was written as [REG]
-    // and the base-ref run proved otherwise: the row already carried the real ids at
-    // the base ref, because the arm changes only `status`/`voidedReason`. So it pins
-    // something the bug never violated and is NOT regression coverage — it is here to
-    // stop a future 'fix' reaching for the review sandbox's synthetic-appId trick.
+  it('[INV] the review sandbox’s synthetic-appId trick is still NOT copied', async () => {
+    // 🔴 THE PREDECESSOR OF THIS ROW ASSERTED THE WRITTEN ROW KEPT THE REAL
+    // `appId`/`appBlockId`. There is no row now, so that observable is gone — but the
+    // DECISION it protected is not, and deleting the row would drop it silently.
+    //
     // The mod review sandbox excludes both money rails by signing a NON-RESOLVING
-    // synthetic `appId`, so no row is written at all. That trick is deliberately
-    // NOT copied here: a synthetic id would also break per-app storage
-    // namespacing, the `page_<appBlockId>` ban-revocation instance id, and every
-    // runtime metric label. The real ids are kept and the rail is closed
-    // explicitly instead — so assert the ids actually survived.
+    // synthetic `appId`, so nothing resolves and no row is written as a SIDE EFFECT. That
+    // trick is still deliberately not copied: a synthetic id would also break per-app
+    // storage namespacing, the `page_<appBlockId>` ban-revocation instance id, and every
+    // runtime metric label. The rail is closed by an EXPLICIT branch on the claim instead.
+    //
+    // What is checkable about that today: the real app IS resolved — the owner lookup
+    // still runs and still succeeds — and the write is skipped by decision rather than by
+    // a lookup failing. A synthetic-appId implementation would resolve nothing.
     await recordSpendAttribution(fakeInput({ privateRun: true }));
 
-    const data = writtenRow();
-    expect(data.appId).toBe(APP_ID);
-    expect(data.appBlockId).toBe(APP_BLOCK_ID);
-    expect(data.appOwnerUserId).toBe(OWNER_ID);
-    expect(data.userId).toBe(MODERATOR_ID);
-    // The money basis is still recorded — voiding is not skipping.
-    expect(data.grossValueCents).toBe(EXPECTED_GROSS_CENTS);
+    expect(mockDbRead.oauthClient.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: APP_ID } })
+    );
+    expect(mockDbWrite.blockSpendAttribution.create).not.toHaveBeenCalled();
   });
 
-  it('[INV] voiding moves no money — the share columns stay 0 on a private-run row', async () => {
-    // Also [INV] by measurement: these columns are hardcoded 0 at the base ref too.
-    // Kept because it is the assertion that makes the whole 'arm A moves no money'
-    // claim checkable rather than asserted in prose.
-    // Pinned so a future reader cannot mistake this arm for a payout change. If
-    // these ever become non-zero, voiding a row starts to MEAN something
-    // financially and this arm's reasoning has to be revisited.
-    await recordSpendAttribution(fakeInput({ privateRun: true }));
+  it('[INV] no money moves — and the rail that DOES move money is excluded elsewhere', async () => {
+    // The predecessor asserted `spendSharePct`/`appOwnerShareCents` were 0 on the written
+    // row. With no row those columns cannot be read, and the claim they supported is now
+    // trivially true: an absent row pays nothing.
+    //
+    // 🔴 SO THE IMPORTANT HALF IS RECORDED RATHER THAN ASSERTED HERE, BECAUSE IT LIVES IN
+    // ANOTHER FILE: this table never paid anything (`spendSharePct` and
+    // `appOwnerShareCents` are hardcoded 0 in the writer). The rail that actually moves
+    // Buzz is the AUTHOR FEE, whose only other exclusion is self-dealing, and it is
+    // refused for a private run by `resolveBlockAuthorFeePayee` returning
+    // `{ payee: false, reason: 'private-run' }` — covered by
+    // `author-fee-private-run.test.ts`. If someone reads this arm as "the private run is
+    // free because the spend row is voided/absent", they have the wrong rail.
+    const res = await recordSpendAttribution(fakeInput({ privateRun: true }));
 
-    const data = writtenRow();
-    expect(data.spendSharePct).toBe(0);
-    expect(data.appOwnerShareCents).toBe(0);
+    expect(res.row).toBeNull();
+    expect(mockDbWrite.blockSpendAttribution.create).not.toHaveBeenCalled();
   });
 
   it('[INV][POSITIVE CONTROL] an ORDINARY run still writes tracked / null', async () => {
-    // 🔴 THIS IS THE CONTROL THAT MAKES THE FILE MEAN ANYTHING. A mutant that
-    // voids every row unconditionally passes every [REG] above and dies only
-    // here. Green at base by construction — NOT regression coverage.
+    // 🔴 THIS IS THE CONTROL THAT MAKES THE FILE MEAN ANYTHING, AND ITS JOB GREW WITH THE
+    // REWRITE. It always killed the mutant that voids every row unconditionally. Now it
+    // does something load-bearing as well: every row in arm A asserts
+    // `create` was NOT called, and a zero like that is indistinguishable from a mock
+    // wired to nothing — a broken `beforeEach`, a renamed mock, a factory that stopped
+    // exporting `create`. This row is the paired POSITIVE control proving the same mock,
+    // in the same file, DOES fire on a non-private run. Without it arm A could go green
+    // having measured nothing at all.
     await recordSpendAttribution(fakeInput());
 
+    expect(mockDbWrite.blockSpendAttribution.create).toHaveBeenCalledTimes(1);
     const data = writtenRow();
     expect(data.status).toBe('tracked');
     expect(data.voidedReason ?? null).toBeNull();
+    // The money basis is recorded on a real row — the observable arm A's predecessor
+    // asserted before the write-side exclusion removed the row it read from.
+    expect(data.grossValueCents).toBe(EXPECTED_GROSS_CENTS);
   });
 
   it('[INV][POSITIVE CONTROL] privateRun: false is byte-identical to omitting it', async () => {

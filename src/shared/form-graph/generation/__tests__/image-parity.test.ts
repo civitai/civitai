@@ -47,12 +47,12 @@ const CONTEXTS: [string, GenerationCtx][] = [
           modelVersionIds: [],
         },
         {
-          id: 'test-disable-draft',
-          name: 'disable draft',
+          id: 'test-disable-hires',
+          name: 'disable hires',
           availableTo: 'nobody',
           presentation: 'disabled',
           ecosystems: [],
-          workflows: ['txt2img:draft'],
+          workflows: ['txt2img:hires-fix'],
           modelVersionIds: [],
         },
       ] as GenerationCtx['gateRules'],
@@ -227,7 +227,6 @@ const FLUX2_ONLY_SHAPES: AnyRecord[] = [
 
 const WORKFLOWS = [
   'txt2img',
-  'txt2img:draft',
   'txt2img:face-fix',
   'txt2img:hires-fix',
   'img2img',
@@ -236,8 +235,6 @@ const WORKFLOWS = [
   'img2img:edit',
 ];
 
-// SD2 is in the SD family's discriminator but supports no generation
-// workflows any more, so it can produce no matrix rows.
 const ECOSYSTEMS = [
   'Flux1',
   'FluxKrea',
@@ -371,6 +368,13 @@ describe('image slice: differential parity with generationGraph', () => {
     // every family-specific shape list must be keyed by a REAL matrix
     // ecosystem — a typo here is zero extra shapes, invisibly
     expect(Object.keys(EXTRA_SHAPES).filter((k) => !ECOSYSTEMS.includes(k))).toEqual([]);
+    // and every WORKFLOWS entry must be live for at least one matrix ecosystem — a retired key
+    // contributes zero rows, and the `> 500` floor above stays green while they vanish.
+    expect(
+      WORKFLOWS.filter(
+        (w) => !ECOSYSTEMS.some((e) => isWorkflowAvailable(w, ecosystemByKey.get(e)!.id))
+      )
+    ).toEqual([]);
   });
 
   it.each(COMBOS)('$name', ({ input, ext }) => {
@@ -386,7 +390,7 @@ describe('incompatible workflow x ecosystem combos redirect like the oracle', ()
     { workflow: 'txt2img', ecosystem: 'WanVideo30' },
     { workflow: 'txt2img', ecosystem: 'LTXV23' },
     { workflow: 'txt2img', ecosystem: 'Seedance' },
-    { workflow: 'txt2img:draft', ecosystem: 'WanVideo-25-T2V' },
+    { workflow: 'txt2img:hires-fix', ecosystem: 'WanVideo-25-T2V' },
   ];
   it.each(CROSS_COMBOS)('$workflow x $ecosystem', ({ workflow, ecosystem }) => {
     assertDifferential(

@@ -73,7 +73,11 @@ export function getEcosystemStates(
  * bails on unknown keys), or when a workflow-group override lets the family
  * handle the switch internally (wan's T2V↔I2V variants).
  */
-export function resolveCompatibleEcosystem(workflow: string, value: string): string {
+export function resolveCompatibleEcosystem(
+  workflow: string,
+  value: string,
+  usable?: readonly string[]
+): string {
   const ecosystem = ecosystemByKey.get(value);
   if (!ecosystem) return value;
   if (isWorkflowAvailable(workflow, ecosystem.id)) return value;
@@ -84,11 +88,15 @@ export function resolveCompatibleEcosystem(workflow: string, value: string): str
     if (override?.workflows.includes(workflow)) return value;
   }
 
+  // `usable` is compatible-minus-gated. Without it the fallback can land on a
+  // disabled ecosystem, which the output schema then refuses — turning a
+  // correctable value into an error naming one the user never picked.
   const defaultEcoId = getDefaultEcosystemForWorkflow(workflow);
   if (defaultEcoId) {
     const eco = ecosystemById.get(defaultEcoId);
-    if (eco) return eco.key;
+    if (eco && (!usable || usable.includes(eco.key))) return eco.key;
   }
+  if (usable?.length) return usable[0];
   return 'SDXL'; // v1's ultimate fallback
 }
 

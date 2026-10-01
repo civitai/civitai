@@ -64,7 +64,8 @@ export const imageHub = defineGraph<RootCtx>()
       ...ecosystemFieldSchemas(
         _ext.workflow,
         hiddenEcosystems,
-        ecosystemStates.map((e) => e.key)
+        ecosystemStates.map((e) => e.key),
+        usableEcosystems
       ),
       default: defaultValue,
       // v1 stores the ecosystem selection per OUTPUT type
@@ -81,7 +82,7 @@ export const imageHub = defineGraph<RootCtx>()
     // one entry per family, however many ecosystems it serves — the keys
     // type each arm's `ecosystem` literal
     branch('ecosystem', [
-      [['SD1', 'SD2', 'SDXL', 'Pony', 'Illustrious', 'NoobAI'], sd],
+      [['SD1', 'SDXL', 'Pony', 'Illustrious', 'NoobAI'], sd],
       [['ZImageTurbo', 'ZImageBase'], zimage],
       [['Chroma'], chroma],
       [['Flux1', 'FluxKrea'], flux],
@@ -121,19 +122,17 @@ export const imageHub = defineGraph<RootCtx>()
       : null
   )
   .field('quantity', ({ model, effectiveEcosystem, ecosystem, enhancedCompatibility, _ext }) => {
-    const isDraft = _ext.workflow === 'txt2img:draft';
     const bogoActive =
       !!_ext.flags?.enhancedCompatibilitySdcpp &&
       _ext.workflow === 'txt2img' &&
       supportsSdcpp(effectiveEcosystem ?? ecosystem, model?.id) &&
       enhancedCompatibility !== true;
-    const step = isDraft ? 4 : bogoActive ? 2 : 1;
-    // draft's 4-step quantity gets its own bucket (v1's conditional group);
-    // everywhere else quantity is global — so a stored value below bogo's
-    // step floor must be corrected, or it fails min(step) and dead-submits
+    const step = bogoActive ? 2 : 1;
+    // quantity is global, so a stored value below bogo's step floor must be
+    // corrected, or it fails min(step) and dead-submits
     return {
       ...quantityDef({ max: _ext.limits.maxQuantity, step }),
-      scope: isDraft ? rootScope(_ext.workflow) : rootScope(),
+      scope: rootScope(),
       correct: (v: number) =>
         v < step ? { value: step, reason: 'quantity_step_floor' } : undefined,
     };

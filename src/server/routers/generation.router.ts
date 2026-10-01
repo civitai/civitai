@@ -7,6 +7,7 @@ import {
   getResourceDataByIdsSchema,
   resolveImageMetaSchema,
   resolveWildcardPackSchema,
+  setEvictableSchema,
   // sendFeedbackSchema,
 } from '~/server/schema/generation.schema';
 import {
@@ -27,6 +28,7 @@ import {
   // textToImage,
   // textToImageTestRun,
   toggleGenerationDisabled,
+  setEvictable,
 } from '~/server/services/generation/generation.service';
 import { generatorMessageSchema } from '~/shared/generation/messages';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
@@ -142,6 +144,9 @@ export const generationRouter = router({
     .mutation(({ input, ctx }) =>
       toggleGenerationDisabled({ ...input, isModerator: ctx.user.isModerator })
     ),
+  setEvictable: moderatorProcedure
+    .input(setEvictableSchema)
+    .mutation(({ input, ctx }) => setEvictable({ ...input, isModerator: ctx.user.isModerator })),
   getResourceDataByIds: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(getResourceDataByIdsSchema)

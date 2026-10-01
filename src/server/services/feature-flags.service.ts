@@ -371,7 +371,6 @@ const featureFlags = createFeatureFlags({
   creatorsProgram: ['mod', 'granted'],
   buzzWithdrawalTransfer: ['granted'],
   vault: ['user'],
-  draftMode: ['public'],
   membershipsV2: ['public'],
   cosmeticShop: ['public'],
   // Mods get it by default; unlock testers via the `creator-shop` Flipt flag.
@@ -723,6 +722,12 @@ const featureFlags = createFeatureFlags({
   // `scripts/validate-flag-shape.py` in that repo, and modelled in
   // `feature-flags.early-adopter.seam.test.ts`.
   earlyAdopter: { availability: [], fliptKey: 'early-adopter' },
+  // Jev resource-intent primitive (POST /api/v1/blocks/resource-intent).
+  // DARK by construction: Flipt owns it entirely and the flag must be created
+  // default-OFF in flipt-state (separate, human-reviewed change) before any
+  // cohort is opened. isFliptSync answers false for an unknown flag or an
+  // unreachable Flipt, so an absent flag is deny-by-default.
+  resourceIntentJev: { availability: [], fliptKey: 'resource-intent-jev' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

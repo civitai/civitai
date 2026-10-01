@@ -103,6 +103,7 @@ import {
   tagCache,
   tagIdsForImagesCache,
   thumbnailCache,
+  userImageVideoCountCaches,
 } from '~/server/redis/caches';
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import {
@@ -676,6 +677,7 @@ export const deleteImageById = async ({
       invalidateExistence,
       imageMetaCache.refresh(id),
       imageMetadataCache.refresh(id),
+      userImageVideoCountCaches.bust(image.userId),
       enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'image-delete' }),
     ]);
 
@@ -795,6 +797,7 @@ export async function deleteImages(
       invalidateExistence,
       imageMetaCache.refresh(imageIds),
       imageMetadataCache.refresh(imageIds),
+      userImageVideoCountCaches.bust(uniq(results.map((x) => x.userId))),
       enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'image-delete-bulk' }),
     ]);
 

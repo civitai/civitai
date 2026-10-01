@@ -1,4 +1,5 @@
-import type { Workflow, WorkflowStatus } from '@civitai/client';
+import type { AiToolkitTrainingInput, Workflow, WorkflowStatus } from '@civitai/client';
+import { slugify } from '$lib/slug';
 import {
   cardByAirEcosystem,
   cardByEcosystem,
@@ -139,20 +140,24 @@ const STATE_BY_STATUS: Record<WorkflowStatus, RunState> = {
   expired: 'failed',
 };
 
-/** The fields we read off the workflow's `training` step. Read defensively — @civitai/client types
- * `steps[].input/output` loosely, and a foreign/older workflow may not carry all of them. */
-interface TrainingStepInput {
+/** The training step's input as we read it back: the SDK's ai-toolkit shape, so a field the
+ *  orchestrator renames or retypes fails typecheck here rather than drifting silently, plus the
+ *  ecosystem-specific and per-item fields the generic type leaves out. Read defensively — an older
+ *  or foreign (main-app) workflow may not carry all of them. */
+type TrainingStepInput = Partial<AiToolkitTrainingInput> & {
+  /** Base checkpoint AIR, when the run pinned one. */
   model?: string;
-  ecosystem?: string;
-  epochs?: number;
-  steps?: number;
-  triggerWord?: string;
+  modelVariant?: string;
+  version?: string;
+  resolution?: number | null;
+  /** SD-family only. */
+  minSnrGamma?: number | null;
   /** The fixed sample prompts (usually 3). Each epoch generates one image per prompt, positionally. */
   samples?: { prompts?: string[] };
   /** The dataset the run trained on — blob-backed items (a blob `air`/key + its caption). Older or Flux.2
    *  runs may carry a zip URL instead, in which case there are no per-image items to show. */
   trainingData?: { type?: string; items?: Array<{ air?: string; caption?: string }> };
-}
+};
 /** The weights-blob half of an epoch entry in the training step's output. `id` is the blob's
  *  orchestrator key — the handle continue/generate reference the checkpoint by (as a blob AIR);
  *  `url` is a signed download link. Shared with train-core so "does this epoch have usable weights,
@@ -177,7 +182,7 @@ export const epochModelKey = (model: EpochModelOutput | undefined): string | und
 interface TrainingEpochOutput {
   epochNumber?: number;
   model?: EpochModelOutput;
-  samples?: Array<{ url?: string | null; available?: boolean }>;
+  samples?: Array<{ id?: string; url?: string | null; available?: boolean }>;
   /** Tail-able live trace of this epoch's job (present only when the run requested tracing). */
   traceUrl?: string | null;
   blobUrl?: string | null;
@@ -196,7 +201,7 @@ const epochModel = (e: TrainingEpochOutput): EpochModelOutput | undefined =>
 
 const epochSamples = (
   e: TrainingEpochOutput
-): Array<{ url?: string | null; available?: boolean }> =>
+): Array<{ id?: string; url?: string | null; available?: boolean }> =>
   e.samples ??
   (e.sampleImages ?? [])
     .filter((u): u is string => typeof u === 'string' && u.length > 0)
@@ -347,7 +352,7 @@ export function workflowToRow(w: Workflow): TrainingRow | null {
     code,
     state,
     sub: parts.join(' · '),
-    progressPct: overallProgressPct(completedEpochs, input.epochs, progressRate),
+    progressPct: overallProgressPct(completedEpochs, input.epochs ?? undefined, progressRate),
     // COMPLETED checkpoints, starting at 0/N — the main site's counter shape ("Progress: 0/10"),
     // and what the detail header shows; "epoch N+1" read as one already done.
     progress:
@@ -389,6 +394,64 @@ export interface DatasetItem {
   caption: string;
 }
 
+/** The training-step input keys the settings export carries. `trainingData` (signed blob URLs) and
+ *  anything else on the input stay out. */
+const SETTINGS_INPUT_KEYS = [
+  'engine',
+  'ecosystem',
+  'modelVariant',
+  'version',
+  'model',
+  'steps',
+  'epochs',
+  'batchSize',
+  'lr',
+  'textEncoderLr',
+  'trainTextEncoder',
+  'lrScheduler',
+  'optimizerType',
+  'networkDim',
+  'networkAlpha',
+  'resolution',
+  'shuffleTokens',
+  'keepTokens',
+  'minSnrGamma',
+  'noiseOffset',
+  'flipAugmentation',
+  'triggerWord',
+  'continueFrom',
+] as const satisfies readonly (keyof TrainingStepInput)[];
+
+/** A run's effective configuration, read off the workflow's training step — never rebuilt from UI
+ *  defaults. */
+export interface TrainingSettingsExport {
+  workflowId: string;
+  name: string;
+  createdAt: string;
+  media: Media;
+  /** Our own Select-step choices, when the run was started here (absent on main-app runs). */
+  loraType?: string;
+  cardType?: string;
+  versionKey?: string;
+  imageCount: number;
+  samplePrompts: string[];
+  /** The training step's input, filtered to the run-describing fields. Keys are the orchestrator's
+   *  own names (`lr`, `optimizerType`, …), not the form's. */
+  training: Partial<Pick<TrainingStepInput, (typeof SETTINGS_INPUT_KEYS)[number]>>;
+}
+
+/** One epoch's trace stream. `done` once that epoch's weights have landed, i.e. its trace is complete. */
+export interface EpochTrace {
+  epoch: number;
+  url: string;
+  done: boolean;
+}
+
+/** The epoch training now, or -1 once every epoch is done. The orchestrator pre-creates ALL epoch entries
+ *  up front, each with a traceUrl, and marks them done as weights land — so it's the LOWEST-numbered one
+ *  without finished weights. Later epochs' traces aren't written until their turn. */
+export const liveTraceIndex = (traces: EpochTrace[]) => traces.findIndex((t) => !t.done);
+
 /** A single training run's detail, for the Open screen. */
 export interface TrainingDetail {
   workflowId: string;
@@ -420,6 +483,8 @@ export interface TrainingDetail {
   /** The currently-training epoch's tail-able trace stream (step progress + logs), when tracing is on.
    *  Absent unless a run is mid-epoch. */
   liveTraceUrl?: string;
+  /** Every epoch's trace, in epoch order. Empty when the run didn't request tracing. */
+  traces: EpochTrace[];
   /** Only epochs that have actually produced content (a sample or downloadable weights). A still-training
    *  run's not-yet-produced epochs are excluded, so the page shows a processing state rather than empty cards. */
   epochs: TrainingDetailEpoch[];
@@ -431,6 +496,7 @@ export interface TrainingDetail {
   /** The run's model on Civitai — draft or published (see TrainingStudioMeta.modelId); drives the
    *  model-page link. */
   modelId?: number;
+  settings: TrainingSettingsExport;
 }
 
 /** Map one workflow (fetched by id) to the detail screen's shape. Null if we can't place it. */
@@ -469,19 +535,38 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
       };
     });
 
-  // The live trace is the currently-training epoch's stream. The orchestrator pre-creates ALL epoch entries
-  // up front, each with a traceUrl, and marks them done as weights land — so the epoch training *now* is the
-  // LOWEST-numbered one without finished weights. (Picking the highest tailed the final epoch's stream, which
-  // stays empty until the run is nearly over — the "blank until ~80%" bug.) Absent once every epoch is done.
-  const liveTraceUrl = [...(output.epochs ?? [])]
-    .filter((e) => typeof e.traceUrl === 'string' && !epochModel(e)?.available)
-    .sort((a, b) => (a.epochNumber ?? Infinity) - (b.epochNumber ?? Infinity))[0]?.traceUrl;
+  const traces: EpochTrace[] = [...(output.epochs ?? [])]
+    .sort((a, b) => (a.epochNumber ?? Infinity) - (b.epochNumber ?? Infinity))
+    .flatMap((e) =>
+      typeof e.traceUrl === 'string' && e.traceUrl
+        ? [{ epoch: e.epochNumber ?? -1, url: e.traceUrl, done: !!epochModel(e)?.available }]
+        : []
+    );
+  const liveTraceUrl = traces[liveTraceIndex(traces)]?.url;
 
   const dataset: DatasetItem[] = (input.trainingData?.items ?? [])
     .filter(
       (i): i is { air: string; caption?: string } => typeof i.air === 'string' && i.air.length > 0
     )
     .map((i) => ({ air: i.air, caption: i.caption ?? '' }));
+
+  const training: TrainingSettingsExport['training'] = {};
+  for (const key of SETTINGS_INPUT_KEYS) {
+    const value = input[key];
+    if (value !== undefined && value !== null) (training as Record<string, unknown>)[key] = value;
+  }
+  const settings: TrainingSettingsExport = {
+    workflowId: w.id,
+    name,
+    createdAt: w.createdAt,
+    media,
+    ...(typeof meta.loraType === 'string' ? { loraType: meta.loraType } : {}),
+    ...(typeof meta.cardType === 'string' ? { cardType: meta.cardType } : {}),
+    ...(typeof meta.versionKey === 'string' ? { versionKey: meta.versionKey } : {}),
+    imageCount: dataset.length || (typeof meta.imageCount === 'number' ? meta.imageCount : 0),
+    samplePrompts: prompts,
+    training,
+  };
 
   return {
     workflowId: w.id,
@@ -496,9 +581,10 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
     media,
     isVideo: media === 'video',
     prompts,
-    plannedEpochs: input.epochs,
+    plannedEpochs: input.epochs ?? undefined,
     progress,
-    liveTraceUrl: liveTraceUrl ?? undefined,
+    liveTraceUrl,
+    traces,
     epochs,
     dataset,
     sourceWorkflowId:
@@ -507,7 +593,53 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
         : undefined,
     sourceEpoch: typeof meta.sourceEpoch === 'number' ? meta.sourceEpoch : undefined,
     modelId: typeof meta.modelId === 'number' ? meta.modelId : undefined,
+    settings,
   };
+}
+
+const blobExt = (id: string, fallback: string): string => {
+  const dot = id.lastIndexOf('.');
+  return dot > 0 ? id.slice(dot) : fallback;
+};
+
+/** The orchestrator rejects a blobArchive step with more entries than this. */
+export const MAX_ARCHIVE_ENTRIES = 1000;
+
+/** The blob entries for a run's "download all" archive: every epoch's weights first, then each
+ *  epoch's samples, ascending by epoch — the order decides what survives when a run exceeds
+ *  `MAX_ARCHIVE_ENTRIES`, and the weights are the part a user can't regenerate. Deduped by blob id.
+ *  Legacy runs whose epochs carry only signed URLs (no blob ids) contribute nothing. */
+export function epochArchiveEntries(w: Workflow): {
+  entries: { blobId: string; fileName: string }[];
+  archiveName: string;
+} {
+  const { output, name } = resolveWorkflow(w);
+  // Flat names (`<run>-epoch-03.safetensors`, `<run>-epoch-03-sample-2.png`): the orchestrator
+  // strips path components from entry names.
+  const slug = slugify(name, 'training');
+  const epochs = [...(output.epochs ?? [])].sort(
+    (a, b) => (a.epochNumber ?? 0) - (b.epochNumber ?? 0)
+  );
+  const width = Math.max(2, String(epochs.at(-1)?.epochNumber ?? 0).length);
+  const tag = (e: TrainingEpochOutput) => String(e.epochNumber ?? 0).padStart(width, '0');
+  const entries: { blobId: string; fileName: string }[] = [];
+  const seen = new Set<string>();
+  const add = (blobId: string, fileName: string) => {
+    if (seen.has(blobId) || entries.length >= MAX_ARCHIVE_ENTRIES) return;
+    seen.add(blobId);
+    entries.push({ blobId, fileName });
+  };
+  for (const e of epochs) {
+    const key = epochModelKey(e.model);
+    if (key) add(key, `${slug}-epoch-${tag(e)}${blobExt(key, '.safetensors')}`);
+  }
+  for (const e of epochs) {
+    epochSamples(e).forEach((sample, i) => {
+      if (!sample.available || typeof sample.id !== 'string' || !sample.id) return;
+      add(sample.id, `${slug}-epoch-${tag(e)}-sample-${i + 1}${blobExt(sample.id, '')}`);
+    });
+  }
+  return { entries, archiveName: `${slug}-checkpoints.zip` };
 }
 
 /** Preview rows for the dev-login user (id 0), who has no real orchestrator token. */
@@ -600,9 +732,37 @@ export const SAMPLE_DETAIL: TrainingDetail = {
     modelKey: `preview-epoch-${n}`,
     sizeBytes: 36_000_000 + n * 1024,
   })),
+  traces: [],
   // Preview dataset: picsum stand-ins keyed to bogus airs (the proxy is never hit in dev preview).
   dataset: [0, 1, 2, 3, 4, 5].map((i) => ({
     air: `https://picsum.photos/seed/ts-ds-${i}/300`,
     caption: `1girl, sample tag ${i + 1}, studio lighting`,
   })),
+  settings: {
+    workflowId: 'preview',
+    name: 'my_character',
+    createdAt: '2026-08-21T16:48:19.000Z',
+    media: 'image',
+    loraType: 'character',
+    cardType: 'sdxl',
+    versionKey: 'sdxl',
+    imageCount: 6,
+    samplePrompts: [],
+    training: {
+      engine: 'ai-toolkit',
+      ecosystem: 'sdxl',
+      steps: 2000,
+      epochs: 10,
+      batchSize: 4,
+      lr: 5e-4,
+      textEncoderLr: 5e-5,
+      trainTextEncoder: true,
+      lrScheduler: 'cosine',
+      optimizerType: 'adafactor',
+      networkDim: 32,
+      networkAlpha: 32,
+      resolution: 1024,
+      triggerWord: 'my_character',
+    },
+  },
 };

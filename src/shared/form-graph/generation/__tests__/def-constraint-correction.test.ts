@@ -131,5 +131,30 @@ describe('def constraint correction', () => {
       expectValid(store);
       expect((state(store).aspectRatio as { value: string }).value).toBe(offered.value);
     });
+
+    it('gives SDXL-family the full bucket set without widening the other ~1MP models', () => {
+      const values = (ecosystem: string) =>
+        (
+          makeStore(ecosystem).getField('aspectRatio')?.meta as { options: { value: string }[] }
+        ).options.map((o) => o.value);
+
+      expect(values('SDXL')).toEqual([
+        '9:21',
+        '9:16',
+        '3:4',
+        '2:3',
+        '1:1',
+        '3:2',
+        '4:3',
+        '16:9',
+        '21:9',
+      ]);
+      expect(values('Flux1')).toEqual(['2:3', '1:1', '3:2']);
+
+      const store = makeStore('SDXL');
+      store.set({ aspectRatio: '16:9' });
+      expectValid(store);
+      expect(state(store).aspectRatio).toEqual({ value: '16:9', width: 1344, height: 768 });
+    });
   });
 });

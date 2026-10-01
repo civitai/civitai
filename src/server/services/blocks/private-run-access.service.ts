@@ -34,7 +34,7 @@ import type { PrivateRunAudience } from '~/shared/constants/block-scope.constant
 /**
  * THE ONE ACCESS PREDICATE FOR A PRIVATE RUN OF A DELISTED / SUSPENDED APP.
  *
- * ── WHY THERE IS EXACTLY ONE, AND WHY BOTH CALLERS MUST USE IT ────────────────
+ * ── WHY THERE IS EXACTLY ONE, AND WHY EVERY CALLER MUST USE IT ────────────────
  * 🔴 THE DEFECT THIS FILE EXISTS TO PREVENT IS AN SSR↔MINT ASYMMETRY, AND THAT
  * DEFECT HAS ALREADY HAPPENED ONCE ON THIS EXACT SURFACE. The dev-tunnel SSR route
  * mounts an owned app at ANY status (`resolveDevPageBlockForAuthor`), while the page
@@ -44,10 +44,27 @@ import type { PrivateRunAudience } from '~/shared/constants/block-scope.constant
  * surface with two independently-written gates would regrow it.
  *
  * So: the SSR resolver and the PHASE 3 mint branch call THIS, and nothing else
- * decides who may privately run a delisted app. `private-run-access.call-site-ledger`
- * pins that there are exactly two callers, and a behavioural test drives one fixture
+ * decides who may privately run a delisted app. A behavioural test drives one fixture
  * through both and asserts they agree — because a structural ledger type-checks past
  * a wrong argument.
+ *
+ * ⚠️ THE CALLER COUNT IS **THREE**, NOT TWO, AND THIS LINE SAID TWO FOR LONGER THAN THE
+ * ERROR SURVIVED ANYWHERE ELSE. `private-run-access.call-site-ledger` pins THREE:
+ * the SSR route, the mint, and `private-run-impression.service.ts` — the analytics
+ * impression gate, which takes no access decision and grants nothing (it reads
+ * `allowed` and drops a telemetry row), which is why it cannot reproduce the
+ * SSR↔MINT asymmetry this file exists to prevent and why it is nonetheless required
+ * to share the predicate rather than hand-roll a lookalike.
+ * 🔴 THE RETRACTION ALREADY EXISTED — in `private-run-impression.service.ts`, whose
+ * docblock says in as many words that defining it elsewhere "would have … left the
+ * ledger reporting 'exactly two callers' while being wrong". It was written in the
+ * file the author was looking at, and the two files that ASSERT the count were never
+ * swept. A correction lands where you were looking, not where a reader arrives from:
+ * when you retract a count, grep the whole tree for it before you stop.
+ *
+ * ⚠️ NOT EVERY "two callers" PHRASE BELOW IS WRONG. The ones describing the SSR↔MINT
+ * SEAM — the two surfaces that take an access decision and could DISAGREE — are
+ * correct and deliberately unchanged; only claims about the LEDGER'S COUNT were.
  *
  * ── IT CALLS THE REAL ROLE RESOLVER, NOT A COPY ───────────────────────────────
  * 🔴 `resolveAppAccess` IS INVOKED, NEVER RE-IMPLEMENTED. The precedent is exact:

@@ -468,7 +468,7 @@ export const defaultSamplerPresets = [
 
 // --- quantity -------------------------------------------------------------------
 
-/** common.ts `quantityNode`: min and default both equal the step (draft = 4s). */
+/** common.ts `quantityNode`: min and default both equal the step. */
 export const quantityDef = cachedFactory(function quantityDef(opts: {
   max: number;
   step?: number;

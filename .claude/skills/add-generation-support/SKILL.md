@@ -105,7 +105,7 @@ Graph: src/shared/data-graph/generation/<name>-graph.ts
 
 Handler: src/server/services/orchestrator/ecosystems/<name>.handler.ts
 - Types: <from @civitai/orchestration-client, or generic>
-- Step type: <imageGen | videoGen | textToImage>
+- Step type: <imageGen | videoGen>
 - Fixed params: sampler=<x>, scheduler=<y> (if applicable)
 
 Wiring:
@@ -178,7 +178,7 @@ Template:
 ```ts
 import type {
   <EcosystemSpecificInputType>, // e.g., SeedanceVideoGenInput
-  <StepTemplateType>,            // ImageGenStepTemplate | VideoGenStepTemplate | TextToImageStepTemplate
+  <StepTemplateType>,            // ImageGenStepTemplate | VideoGenStepTemplate
 } from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
@@ -195,12 +195,11 @@ export const create<Name>Input = defineHandler<<Name>Ctx, [<StepTemplateType>]>(
   // Branch by model version if multiple variants produce different input types
   // For LoRA support: map resources to the format the type expects
   //   - Record<string, number> for comfy-based ecosystems (AIR → strength)
-  //   - Record<string, ImageJobNetworkParams> for textToImage
   //   - Array of { air, strength } for some video types
 
   return [
     {
-      $type: '<imageGen | videoGen | textToImage>',
+      $type: '<imageGen | videoGen>',
       input: removeEmpty({
         engine: '<engine>',
         // ecosystem: '<name>',  // only for comfy engine
