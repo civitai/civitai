@@ -204,17 +204,39 @@
     <FeedbackAttachments {context} />
   </section>
 
-  <!-- `FeedbackContextPanel` renders several sibling sections, so the wrapper supplies the column
-       and the gap they sit in. -->
-  <div class="flex min-w-0 flex-col gap-4 border-t border-dark-4 pt-5">
-    <FeedbackContextPanel
-      area={row.area}
-      {context}
-      createdAt={row.createdAt}
-      {civitaiUrl}
-      {grafanaUrl}
-    />
-  </div>
+  <!-- 🔴 COLLAPSED BY DEFAULT, AND IT IS `<details>` RATHER THAN `{#if}` FOR A REASON THIS PANEL HAS
+       ALREADY PAID FOR. `<details>` hides its content; it does not UNMOUNT it. The tab strip this
+       panel used to carry destroyed the inactive sections' markup, which is why every operator-typed
+       box here is bound to parent-owned state — a collapse built out of `{#if}` reintroduces exactly
+       that, and the one tripwire that would notice (`renders every section unconditionally`) reads
+       `activeTab` by name and would not. Nothing inside this block is operator-typed today, so the
+       cost would not be visible until something is.
+
+       Native `<details>` over `@civitai/ui`'s `Collapsible`, and the split is not stylistic: ten
+       other panels in this app use `<details>`, and the two that reach for `Collapsible` — the nav in
+       `+layout.svelte` and `AnnouncementPanel.svelte` — both DRIVE the open state from outside the
+       markup (`open=`/`onOpenChange`, `bind:open`). Nothing outside this component needs to drive
+       this one. `theme.css` already styles `summary` including the pointer cursor, so do NOT add
+       `cursor-pointer`; and `<details>` keeps working with no JS, which the rest of this panel is
+       careful about.
+
+       The summary wears the same class as the `<h3>` of every open section, so the stack reads as one
+       list of headings rather than a control bolted onto it.
+
+       `FeedbackContextPanel` renders several sibling sections, so the inner wrapper supplies the
+       column and the gap they sit in. -->
+  <details class="min-w-0 border-t border-dark-4 pt-5">
+    <summary class="text-xs tracking-wide text-dark-2 uppercase">Technical details</summary>
+    <div class="mt-4 flex min-w-0 flex-col gap-4">
+      <FeedbackContextPanel
+        area={row.area}
+        {context}
+        createdAt={row.createdAt}
+        {civitaiUrl}
+        {grafanaUrl}
+      />
+    </div>
+  </details>
 
   <div class="min-w-0 border-t border-dark-4 pt-5">
     <FeedbackPromote

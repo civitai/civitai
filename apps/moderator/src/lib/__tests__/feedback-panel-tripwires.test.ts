@@ -210,6 +210,11 @@ describe('typed text outlives the reload every write issues', () => {
    * section at a time behind `{#if activeTab === …}`, which DESTROYED the other sections' markup —
    * the reason every box below is bound to parent-owned state in the first place. A conditional
    * section reintroduces that without reintroducing anything that says so.
+   *
+   * ⚠️ "UNCONDITIONALLY" IS ABOUT MOUNTING, NOT ABOUT BEING ON SCREEN. The context block ships
+   * inside a default-closed `<details>`, which hides its content and keeps it mounted — the next
+   * test is the one that pins that distinction, and this one would pass just as happily over an
+   * `{#if}` that unmounted it.
    */
   it('renders every section unconditionally', () => {
     const detail = source('FeedbackDetail.svelte');
@@ -217,6 +222,47 @@ describe('typed text outlives the reload every write issues', () => {
     expect(detail).toContain('<FeedbackAttachments {context} />');
     expect(detail).toContain('<FeedbackContextPanel');
     expect(detail).toContain('<FeedbackPromote');
+  });
+
+  /**
+   * 🔴 THE CONTEXT BLOCK IS COLLAPSED, AND WHAT THIS PINS IS THE UNMOUNT — NOT THE CHEVRON. The
+   * sibling test above forbids `{#if}` around a section because the tab strip's conditionals
+   * DESTROYED the inactive sections' markup; a collapse is a conditional-shaped change, so it is
+   * exactly the back door that test was written against. `<details>` HIDES its content and keeps it
+   * mounted, which is the whole reason it is allowed here — pinning that the context panel sits
+   * INSIDE the `<details>` is what makes a later `{#if}` rewrite fail rather than pass.
+   *
+   * 🔴 DEFAULT-CLOSED IS THE ABSENCE OF AN ATTRIBUTE, so a `toContain('<details')` pin is satisfied
+   * by `<details open>` and asserts nothing about it. The opening tag is extracted and tested for
+   * `open` directly — with a control proving the test CAN see one, because a negative assertion
+   * whose matcher never fires is green for the wrong reason.
+   *
+   * ⚠️ The class strings are deliberately NOT pinned. They are the half a Tailwind reorder changes
+   * without changing anything true, and this file is brittle enough where brittleness buys something.
+   */
+  it('collapses the technical-details block with <details>, closed by default', () => {
+    const detail = source('FeedbackDetail.svelte');
+
+    // Exactly one, so every assertion below is about the block the reader has in mind. This also
+    // catches a `stripComments` regression: the docstring in `FeedbackDetail.svelte` names
+    // `<details>` in prose, and a stripper that stopped working would push this count to 2.
+    expect(count(detail, '<details')).toBe(1);
+
+    const block = detail.match(/<details\b[^>]*>.*?<\/details>/)?.[0];
+    // Positive control on the extraction: without it, a regex that stopped matching would make
+    // every assertion below a claim about `undefined`.
+    expect(block, 'no <details>…</details> block in FeedbackDetail.svelte').toBeDefined();
+
+    expect(block).toContain('>Technical details</summary>');
+    // 🔴 THE LOAD-BEARING ONE. Inside the block, not merely present in the file.
+    expect(block).toContain('<FeedbackContextPanel');
+
+    const openTag = block!.match(/<details\b[^>]*>/)![0];
+    const hasOpenAttr = /<details\b[^>]*\sopen(?=[\s=>])/;
+    // Instrument check before the negative: the matcher must be able to fire at all.
+    expect(hasOpenAttr.test('<details open class="x">')).toBe(true);
+    expect(hasOpenAttr.test('<details class="x" open>')).toBe(true);
+    expect(openTag).not.toMatch(hasOpenAttr);
   });
 
   /**
