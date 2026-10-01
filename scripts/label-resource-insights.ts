@@ -24,6 +24,7 @@ import { Availability } from '~/shared/utils/prisma/enums';
  *   pnpm run tsscript scripts/label-resource-insights.ts --execute      # write rows
  *   pnpm run tsscript scripts/label-resource-insights.ts --limit 1000   # cap versions
  *   pnpm run tsscript scripts/label-resource-insights.ts --cursor 12345 # resume after id
+ *   pnpm run tsscript scripts/label-resource-insights.ts --top 10000    # highest-usage N only
  *
  * `dry run` IS NOT A NO-OP, and it is NOT RUNNABLE BEFORE THE MIGRATION IS
  * APPLIED. Two independent facts, both load-bearing:
@@ -49,9 +50,18 @@ import { Availability } from '~/shared/utils/prisma/enums';
  * stable `r<idx>.<question>` ids). The fleet run is a gated follow-up — apply
  * the migration to the target environment first (nothing auto-applies it).
  *
- * Cursoring is keyset (`id > cursor ORDER BY id`): a version created mid-run
- * cannot shift a page out from under the scan. Resume by re-running with the
- * last `cursor=N` value this script prints.
+ * TWO SELECTION PATHS, and the default one is the fleet run:
+ *
+ *   DEFAULT (no `--top`) — keyset over the whole corpus (`id > cursor ORDER BY
+ *   id`): a version created mid-run cannot shift a page out from under the scan,
+ *   because the ordering is immutable. Resume with the last `cursor=N` printed.
+ *
+ *   `--top N` — only the N highest-usage versions, for bounding vendor spend
+ *   during a validation phase. Opt-in and off by default; omitting it leaves
+ *   the keyset path untouched. The ids are materialised ONCE up front (see
+ *   `topUsageVersionIds` for why pagination over a mutable metric is unsafe),
+ *   so here `--cursor` is an INDEX into that fixed list rather than a version
+ *   id, and the script prints `index=N` instead of `cursor=N` to match.
  *
  * KNOWN LIMITATION — `parseLabelAnswers` isolates per-resource failures, but
  * `askJev` cannot currently reach that path, so the isolation does not hold
@@ -105,6 +115,39 @@ export const LABEL_QUESTION_SPEC = [
 export const LABEL_SPEC_HASH = createHash('sha256')
   .update(JSON.stringify(LABEL_QUESTION_SPEC))
   .digest('hex');
+
+/**
+ * The corpus predicate — WHICH model versions this pass is allowed to label.
+ *
+ * 🔴 ONE DEFINITION, USED BY EVERY SELECTION PATH. This rule is spelled in
+ * three places across the feature (here, and in the serving-side matcher at
+ * src/server/services/resource-intent-matcher.service.ts), and it is exactly
+ * how the two came to disagree: this pass had drifted to excluding
+ * `Unsearchable`, which means "public but kept out of search results" (see the
+ * enum's own comment in packages/civitai-db-schema/prisma/schema.full.prisma),
+ * so it dropped public resources while still admitting private ones. Do not
+ * open-code these clauses at a call site; spread this object instead, and do
+ * not add a narrowing clause AFTER the spread, which would silently override it.
+ *
+ * Both the version's own availability and its parent model's are checked:
+ * either one being Private must keep the row out, and the two are independent
+ * columns, so both mixed combinations occur in practice.
+ */
+export const LABELABLE_VERSION_FILTER = {
+  status: 'Published',
+  availability: { not: Availability.Private },
+  model: { status: 'Published', availability: { not: Availability.Private } },
+} as const;
+
+/** The columns a label judgment is derived from. Shared by both selection paths. */
+export const LABELABLE_VERSION_SELECT = {
+  id: true,
+  name: true,
+  baseModel: true,
+  trainedWords: true,
+  description: true,
+  model: { select: { type: true, nsfw: true } },
+} as const;
 
 export type LabelableVersion = {
   id: number;
@@ -277,6 +320,55 @@ async function labelBatch(
   return result;
 }
 
+/**
+ * `--top N` selection: the N highest-usage versions, materialised ONCE.
+ *
+ * 🔴 DO NOT PAGINATE OVER THE ORDERED METRIC, however natural keyset feels
+ * here. `generationCount` is mutable and moves while a run is in flight, so a
+ * keyset or OFFSET walk over `ORDER BY generationCount` is a walk over an
+ * ordering that changes underneath it: rows cross page boundaries in both
+ * directions and the run silently skips some and labels others twice. The ids
+ * are therefore fetched in one ordered query and the run walks that fixed
+ * array, which also makes resume an index into a stable list rather than a
+ * cursor into a moving ordering.
+ *
+ * Usage is `generationCount` — how often a resource is actually used in a
+ * generation. Deliberately not `downloadCount` (acquisition, not use) and not
+ * `thumbsUpCount` (approval, not use). `ModelVersionMetric` is 1:1 with
+ * `ModelVersion` (`@@id(modelVersionId)`, and it carries NO `timeframe`
+ * column, unlike the User/Post/Collection/Tag metric tables), so there is one
+ * row per version and no cross-timeframe double counting to guard against.
+ *
+ * The tiebreak is not decoration: `generationCount DESC` alone is not a total
+ * order, so without it the slice at a given N is not reproducible run to run
+ * and no validation conclusion drawn from it would be either.
+ *
+ * Selecting FROM the metric table means a version with no metric row at all is
+ * not a candidate. That is correct at any N whose floor is above zero — such a
+ * version has no recorded generations — and it is the reason this reads the
+ * metric rather than left-joining it.
+ */
+export async function topUsageVersionIds(n: number): Promise<number[]> {
+  const rows = await dbRead.modelVersionMetric.findMany({
+    where: { modelVersion: LABELABLE_VERSION_FILTER },
+    orderBy: [{ generationCount: 'desc' }, { modelVersionId: 'asc' }],
+    take: n,
+    select: { modelVersionId: true },
+  });
+  return rows.map((row) => row.modelVersionId);
+}
+
+/** Fetch one chunk of the materialised id list, re-applying the shared predicate. */
+async function fetchVersionsByIds(ids: number[]): Promise<LabelableVersion[]> {
+  const versions: LabelableVersion[] = await dbRead.modelVersion.findMany({
+    where: { id: { in: ids }, ...LABELABLE_VERSION_FILTER },
+    select: LABELABLE_VERSION_SELECT,
+  });
+  // Restore the ranked order: `findMany` does not promise the order of an `in`.
+  const byId = new Map(versions.map((version) => [version.id, version]));
+  return ids.map((id) => byId.get(id)).filter((v): v is LabelableVersion => v !== undefined);
+}
+
 export async function main(): Promise<void> {
   const { values } = parseArgs({
     options: {
@@ -286,12 +378,39 @@ export async function main(): Promise<void> {
       // Re-label rows that are already current under the live spec (e.g. to
       // refresh confidence under an improved model pin). Default is to skip them.
       force: { type: 'boolean', default: false },
+      // Opt-in, OFF by default: label only the N highest-usage versions instead
+      // of sweeping the whole corpus by id. Bounds vendor spend for a validation
+      // phase. Omitting it leaves the full keyset sweep exactly as it was.
+      top: { type: 'string' },
     },
     strict: true,
   });
   const dryRun = !values.execute;
   const limit = values.limit ? Number.parseInt(values.limit, 10) : Infinity;
   let cursor = values.cursor ? Number.parseInt(values.cursor, 10) : 0;
+
+  // Guarded because this flag is new. A bad value here would otherwise take the
+  // `0 labeled` silent-success path that `--limit`/`--cursor` still have, and
+  // adding a second instance of a defect this branch has already documented is
+  // not something a new flag should do.
+  let topIds: number[] | null = null;
+  if (values.top !== undefined) {
+    const n = Number.parseInt(values.top, 10);
+    if (!Number.isInteger(n) || n <= 0) {
+      throw new Error(`--top expects a positive integer, received "${values.top}"`);
+    }
+    topIds = await topUsageVersionIds(n);
+    console.log(
+      `[label-resource-insights] --top ${n}: materialised ${topIds.length} ids by generationCount`
+    );
+  }
+  // In --top mode `--cursor` is an INDEX into the materialised list, not a
+  // version id, because the list — not the id ordering — is what resume walks.
+  let index = topIds ? cursor : 0;
+  // Renders `cursor=<id>` in the default path — byte-identical to what this
+  // script has always printed — and `index=<n>` under --top, where a version id
+  // is not a resume token and printing one as if it were would mislead.
+  const progress = () => (topIds ? `index=${index}` : `cursor=${cursor}`);
 
   let labeled = 0;
   let failed = 0;
@@ -300,34 +419,29 @@ export async function main(): Promise<void> {
 
   while (labeled + failed < limit) {
     const take = Math.min(LABEL_BATCH_SIZE, limit - labeled - failed);
-    const versions: LabelableVersion[] = await dbRead.modelVersion.findMany({
-      where: {
-        id: { gt: cursor },
-        status: 'Published',
-        // Exclude Private, NOT Unsearchable. `Unsearchable` is "public but kept
-        // out of search results" (see the enum's own comment in
-        // packages/civitai-db-schema/prisma/schema.full.prisma), so excluding it
-        // drops public resources while still admitting private ones. The
-        // serving-side matcher gates on the same member — see
-        // src/server/services/resource-intent-matcher.service.ts, which filters
-        // `ne('availability', Availability.Private)`. Both the version's own
-        // availability and its model's are checked: either one being Private
-        // must keep the row out, and the two are independent.
-        availability: { not: Availability.Private },
-        model: { status: 'Published', availability: { not: Availability.Private } },
-      },
-      orderBy: { id: 'asc' },
-      take,
-      select: {
-        id: true,
-        name: true,
-        baseModel: true,
-        trainedWords: true,
-        description: true,
-        model: { select: { type: true, nsfw: true } },
-      },
-    });
-    if (versions.length === 0) break;
+    let versions: LabelableVersion[];
+    if (topIds) {
+      const chunk = topIds.slice(index, index + take);
+      if (chunk.length === 0) break;
+      index += chunk.length;
+      versions = await fetchVersionsByIds(chunk);
+    } else {
+      versions = await dbRead.modelVersion.findMany({
+        where: { id: { gt: cursor }, ...LABELABLE_VERSION_FILTER },
+        orderBy: { id: 'asc' },
+        take,
+        select: LABELABLE_VERSION_SELECT,
+      });
+    }
+    if (versions.length === 0) {
+      // Default path: an empty page means the corpus is exhausted, so stop. In
+      // --top mode the terminator is the exhausted id list, checked above; an
+      // empty fetch here only means every id in THIS chunk stopped being
+      // labelable since the list was materialised, so advance rather than
+      // mistake one dead chunk for the end of the run.
+      if (topIds) continue;
+      break;
+    }
 
     let batchVersions = versions;
     if (!values.force) {
@@ -344,7 +458,7 @@ export async function main(): Promise<void> {
         console.log(
           `[label-resource-insights] ${
             dryRun ? 'DRY RUN ' : ''
-          }skipped ${skipped} current rows, cursor=${cursor}`
+          }skipped ${skipped} current rows, ${progress()}`
         );
         continue;
       }
@@ -379,15 +493,14 @@ export async function main(): Promise<void> {
     console.log(
       `[label-resource-insights] ${dryRun ? 'DRY RUN ' : ''}labeled ${
         batch.labels.length
-      }, failed ${batch.failedVersionIds.length}, cursor=${cursor}`
+      }, failed ${batch.failedVersionIds.length}, ${progress()}`
     );
   }
 
   console.log(
-    `[label-resource-insights] done: ${labeled} labeled, ${failed} failed, ${skippedTotal} skipped-current, lastId=${lastId}, labelSpec=${LABEL_SPEC_HASH.slice(
-      0,
-      12
-    )}` + (dryRun ? ' (dry run — nothing written)' : '')
+    `[label-resource-insights] done: ${labeled} labeled, ${failed} failed, ${skippedTotal} skipped-current, ${
+      topIds ? `index=${index}` : `lastId=${lastId}`
+    }, labelSpec=${LABEL_SPEC_HASH.slice(0, 12)}` + (dryRun ? ' (dry run — nothing written)' : '')
   );
 }
 
