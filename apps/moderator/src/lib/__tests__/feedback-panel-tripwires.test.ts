@@ -244,14 +244,18 @@ describe('typed text outlives the reload every write issues', () => {
    *     matched nothing and a block shipping EXPANDED passed 37/37. A partial regex over a tag is
    *     satisfied by the inverted tag; the attribute NAMES are enumerated and compared as a set.
    *
-   * 🔴 WHAT THE UNMOUNT PIN DOES NOT COVER, SO NOBODY READS IT AS THE WHOLE PROPERTY — an earlier
-   * draft of this docstring called it "the unmount property itself", and that was an overclaim. The
-   * region starts at `</summary>`, so it constrains the block's DESCENDANTS and says nothing about
-   * its ANCESTORS: wrapping the whole `<details>` in `{#if …}` unmounts everything inside it and
-   * passes. That hole predates this guard. What makes it worth naming now is that the badge below
-   * returns `null` when a report has no console errors and no failed requests, which makes
-   * "then hide the block entirely" the obvious next edit — and it would take the reconstructed URL,
-   * the filters, the session id and the Grafana link with it, on the ORDINARY report.
+   * 🔴 WHAT THE UNMOUNT PIN DOES NOT COVER, STATED EXACTLY, BECAUSE THIS IS THE ONE PARAGRAPH WHOSE
+   * JOB IS SCOPE. The region runs from `</summary>` to `</details>`, so it covers the block's
+   * descendants BELOW the summary and nothing else. Two things are outside it:
+   *   - ANCESTORS — wrapping the whole `<details>` in `{#if …}` unmounts everything inside it and
+   *     passes. That hole predates this guard. What makes it worth naming is that the badge below
+   *     returns `null` when a report has no console errors and no failed requests, which makes
+   *     "then hide the block entirely" the obvious next edit — and it would take the reconstructed
+   *     URL, the filters, the session id and the Grafana link with it, on the ORDINARY report.
+   *   - THE SUMMARY'S OWN DESCENDANTS — there is a live `{#if technicalSummary}` in there, which is
+   *     exactly why the slice starts at `</summary>` rather than at the opening tag. Summary content
+   *     is never hidden, so unmounting it costs nothing; a reader expecting "no `{#if}` anywhere
+   *     inside `<details>`" would be wrong about the guard and about what it should assert.
    *
    * ⚠️ The class VALUES are deliberately not pinned — a Tailwind reorder changes them without
    * changing anything true. The attribute-name set is what carries the claim.
@@ -321,10 +325,11 @@ describe('typed text outlives the reload every write issues', () => {
       'class',
       'bind:open',
     ]);
-    // The two the name scan is BLIND to — these are what the brace check exists for.
+    // The spelling the name scan is BLIND to, documented by exercising it: `{open}` yields only
+    // `class`, so the name set alone would pass a tag that ships expanded. (No control is written
+    // for the brace check itself — a literal asserted to contain a character visible in it cannot
+    // fail and establishes nothing. What establishes it is the mutation run recorded in the commit.)
     expect(attrNames('<details class="x" {open}>')).toEqual(['class']);
-    expect('<details class="x" {open}>').toContain('{');
-    expect('<details class="x" {...rest}>').toContain('{');
 
     expect(attrNames(openTag)).toEqual(['class']);
   });

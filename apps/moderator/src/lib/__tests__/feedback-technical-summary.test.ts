@@ -58,14 +58,23 @@ describe('feedbackTechnicalSummary', () => {
     ).toBe('3 distinct console errors · 1 failed request');
   });
 
-  it('formats a four-figure count rather than printing raw digits', () => {
-    // Asserted as "not the raw number", never as a literal `1,000`: `plural` routes through `num`,
-    // which is `toLocaleString()` with no locale, so a literal pins this suite to one machine's —
-    // measured, `LC_ALL=de_DE.UTF-8` turns it into `1.000`. `format.test.ts` already ruled on this
-    // and this borrows its form. Restating `toLocaleString()` in the expectation would be worse
-    // still: that derives the answer from the implementation and then passes whatever it does.
-    const out = feedbackTechnicalSummary({ consoleErrors: consoleErrors(1000), networkErrors: [] });
-    expect(out).not.toBe('1000 distinct console errors');
+  it('formats a five-figure count rather than printing raw digits', () => {
+    // Asserted as "not the raw number", never as a literal `12,345`: `plural` routes through `num`,
+    // which is `toLocaleString()` with no locale, so a literal pins this suite to one machine's.
+    // `format.test.ts` already ruled on this and this borrows its form — including its MAGNITUDE.
+    //
+    // 🔴 FIVE FIGURES, NOT FOUR, AND THAT IS THE WHOLE POINT OF THE NUMBER. CLDR
+    // `minimumGroupingDigits` is 2 in a large minority of locales, so `1000` legitimately renders
+    // UNGROUPED there and `not.toBe('1000 …')` is false — measured, the whole suite went
+    // 1 failed / 1253 passed under `LC_ALL=es_ES.UTF-8`, and es/pl/it/pt/bg/hu/lv all do it.
+    // At five figures every locale sampled groups, which is why `format.test.ts` picked 12345.
+    // 🔴 A `de_DE` control CANNOT see this: German groups at four figures, so the locale the
+    // previous round controlled against was structurally blind to the defect it was checking for.
+    const out = feedbackTechnicalSummary({
+      consoleErrors: consoleErrors(12345),
+      networkErrors: [],
+    });
+    expect(out).not.toBe('12345 distinct console errors');
     expect(out).toMatch(/^\d[\d\s,. ]*\d distinct console errors$/);
   });
 });

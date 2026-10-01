@@ -11,8 +11,9 @@ import type { FeedbackContext } from './feedback';
  * data does not support.
  *
  * ⚠️ That heading is NOT formatted — it prints the raw length, while `plural` here routes through
- * `num`. At four figures the two disagree in their separators and only the badge groups. Live but
- * cosmetic, and recorded because an earlier draft of this docstring asserted the opposite.
+ * `num`. Where the viewer's locale groups, the badge groups and the heading does not. Four figures
+ * is NOT enough to demonstrate that — CLDR `minimumGroupingDigits` is 2 in a large minority of
+ * locales, where `1000` renders ungrouped on both sides. Live but cosmetic.
  *
  * `null` rather than an empty string when there is nothing to report: the caller renders no element
  * at all, so an empty badge cannot take up space or inherit a margin.
