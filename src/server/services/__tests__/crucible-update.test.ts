@@ -67,6 +67,7 @@ const crucible = (overrides: Record<string, unknown> = {}) => ({
   contentType: MediaType.image,
   entryFee: 100,
   entryLimit: 1,
+  freeEntriesPerUser: 0,
   maxTotalEntries: null,
   minViewSeconds: null,
   maxClipSeconds: null,
@@ -341,6 +342,50 @@ describe('updateCrucible — while upcoming', () => {
   it('refuses more prize places than the new entry cap allows', async () => {
     findUnique.mockResolvedValue(upcoming());
     await expect(edit({ maxTotalEntries: 2 })).rejects.toThrow(/more prize places/);
+  });
+});
+
+describe('updateCrucible — free entries', () => {
+  it('lets a moderator who owns an upcoming crucible set them', async () => {
+    findUnique.mockResolvedValue(upcoming({ entryLimit: 3 }));
+
+    await edit({ freeEntriesPerUser: 1 }, OWNER, true);
+
+    expect(written().freeEntriesPerUser).toBe(1);
+  });
+
+  it('refuses them from an owner who is not a moderator', async () => {
+    findUnique.mockResolvedValue(upcoming({ entryLimit: 3 }));
+
+    await expect(edit({ freeEntriesPerUser: 1 })).rejects.toThrow(
+      'Only moderators can offer free entries'
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("still lets that owner save other changes alongside free entries they didn't change", async () => {
+    findUnique.mockResolvedValue(upcoming({ entryLimit: 3, freeEntriesPerUser: 1 }));
+
+    await edit({ entryFee: 200 });
+
+    expect(written()).toMatchObject({ entryFee: 200, freeEntriesPerUser: 1 });
+  });
+
+  it('refuses an entry limit lowered below the free entries already set', async () => {
+    findUnique.mockResolvedValue(upcoming({ entryLimit: 3, freeEntriesPerUser: 2 }));
+
+    await expect(edit({ entryLimit: 1 }, OWNER, true)).rejects.toThrow(
+      'Free entries cannot exceed the entry limit per user'
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('locks them once the crucible has started', async () => {
+    findUnique.mockResolvedValue(crucible({ entryLimit: 3 }));
+
+    await expect(edit({ freeEntriesPerUser: 1 }, OWNER, true)).rejects.toThrow(
+      /only its name, description and images can change/
+    );
   });
 });
 

@@ -37,6 +37,8 @@ import {
   getCrucibleRatingLabel,
   getCrucibleTotalPrizePool,
   getCrucibleUrl,
+  getFreeEntriesLabel,
+  isFreeCrucibleEntry,
   toCrucibleBuzzType,
   parsePrizePositions,
 } from '~/utils/crucible-helpers';
@@ -187,10 +189,11 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
 
   const prizePositions = parsePrizePositions(crucible.prizePositions);
   const entryCount = crucible._count?.entries ?? 0;
-  const entryFeePool = crucible.entryFee * entryCount;
+  const { paidEntryCount } = crucible;
+  const entryFeePool = crucible.entryFee * paidEntryCount;
   const totalPrizePool = getCrucibleTotalPrizePool({
     entryFee: crucible.entryFee,
-    entryCount,
+    paidEntryCount,
     seededPrizePool: crucible.seededPrizePool,
   });
   const isActive = crucible.status === CrucibleStatus.Active;
@@ -238,6 +241,14 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
   const maxUserEntries = getMaxUserEntries(crucible);
   const userEntryProgress = (userEntryCount / maxUserEntries) * 100;
   const allEntriesUsed = !!currentUser && userEntryCount >= maxUserEntries;
+  const freeEntriesLabel = getFreeEntriesLabel({
+    freeEntriesPerUser: crucible.freeEntriesPerUser,
+    entryLimit: maxUserEntries,
+  });
+  const nextEntryFree = isFreeCrucibleEntry({
+    entriesSoFar: userEntryCount,
+    freeEntriesPerUser: crucible.freeEntriesPerUser,
+  });
 
   const allowedResources = Array.isArray(crucible.allowedResources)
     ? (crucible.allowedResources as number[])
@@ -263,8 +274,9 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
             Are you sure you want to cancel this crucible? This action cannot be undone.
           </Text>
           <Text size="sm" c="dimmed">
-            All entry fees ({entryCount} entries × {crucible.entryFee.toLocaleString()} Buzz ={' '}
-            {entryFeePool.toLocaleString()} Buzz total) will be refunded to participants.
+            All entry fees ({paidEntryCount} paid {paidEntryCount === 1 ? 'entry' : 'entries'} ×{' '}
+            {crucible.entryFee.toLocaleString()} Buzz = {entryFeePool.toLocaleString()} Buzz total)
+            will be refunded to participants.
           </Text>
           {crucible.seededPrizePool > 0 && (
             <Text size="sm" c="dimmed">
@@ -319,6 +331,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
             image: crucible.image,
             heroImage: crucible.heroImage,
             _count: crucible._count,
+            paidEntryCount,
           }}
         />
 
@@ -437,13 +450,26 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                       <Text size="xs" c="dimmed" tt="uppercase" mb={4}>
                         Entry Fee
                       </Text>
-                      <CurrencyBadge
-                        currency={Currency.BUZZ}
-                        type={toCrucibleBuzzType(crucible.buzzType)}
-                        unitAmount={crucible.entryFee}
-                        size="md"
-                        fw={600}
-                      />
+                      {nextEntryFree ? (
+                        <Text size="md" fw={600} c="green.4">
+                          Free
+                        </Text>
+                      ) : (
+                        <CurrencyBadge
+                          currency={Currency.BUZZ}
+                          type={toCrucibleBuzzType(crucible.buzzType)}
+                          unitAmount={crucible.entryFee}
+                          size="md"
+                          fw={600}
+                        />
+                      )}
+                      {freeEntriesLabel && (
+                        <Text size="xs" c="dimmed" mt={4}>
+                          {crucible.freeEntriesPerUser < maxUserEntries
+                            ? `${freeEntriesLabel}, then ${crucible.entryFee.toLocaleString()} Buzz each`
+                            : freeEntriesLabel}
+                        </Text>
+                      )}
                     </div>
                   )}
 
@@ -504,6 +530,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                     prizePositions={prizePositions}
                     totalPrizePool={totalPrizePool}
                     entryFee={crucible.entryFee}
+                    hasFreeEntries={crucible.freeEntriesPerUser > 0}
                     buzzType={toCrucibleBuzzType(crucible.buzzType)}
                   />
                   <YourStandingPanel entries={userEntries} hasAccount={!!currentUser} />
@@ -515,6 +542,11 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                   {
                     label: 'Entries Per Person',
                     value: `${maxUserEntries} ${maxUserEntries === 1 ? 'entry' : 'entries'}`,
+                  },
+                  {
+                    label: 'Free Entries',
+                    value: freeEntriesLabel ?? '',
+                    visible: !!freeEntriesLabel,
                   },
                   {
                     label: 'Total Entry Cap',
@@ -603,6 +635,7 @@ const getSubmitEntryProps = (crucible: CrucibleDetail) => ({
   entryFee: crucible.entryFee,
   buzzType: toCrucibleBuzzType(crucible.buzzType),
   entryLimit: getMaxUserEntries(crucible),
+  freeEntriesPerUser: crucible.freeEntriesPerUser,
   nsfwLevel: crucible.nsfwLevel,
   contentType: crucible.contentType,
   currentEntryCount: crucible.viewerEntries.length,

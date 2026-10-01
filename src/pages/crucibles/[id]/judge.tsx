@@ -22,7 +22,7 @@ import {
   IconAlertCircle,
   IconInfoCircle,
 } from '@tabler/icons-react';
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { Page } from '~/components/AppLayout/Page';
@@ -168,7 +168,8 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
         setVoteError('Network error. Please check your connection and try again.');
       } else if (
         error.message.includes('already voted') ||
-        error.message.includes('already being processed')
+        error.message.includes('already being processed') ||
+        error.message.includes('no longer available')
       ) {
         // Race condition - silently fetch next pair
         setVoteError(null);
@@ -210,11 +211,13 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
       }
     : null;
 
-  // Handle vote
+  // State lags a render behind, and a vote that lands meanwhile claims an already-claimed pair.
+  const votingRef = useRef(false);
   const handleVote = useCallback(
     async (winnerId: number, loserId: number, watched: WatchedMs) => {
-      if (isVoting || !pair) return;
+      if (votingRef.current || !pair) return;
 
+      votingRef.current = true;
       setIsVoting(true);
       setVoteError(null);
       setLastVoteAttempt({ winnerId, loserId, watched });
@@ -241,12 +244,14 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
             setAllPairsJudged(true);
           }
         }
-        setIsVoting(false);
       } catch {
+        // Reported by the mutation's onError.
+      } finally {
+        votingRef.current = false;
         setIsVoting(false);
       }
     },
-    [isVoting, pair, id, submitVoteMutation, refetchPair, refetchProgress, skippedEntryIds]
+    [pair, id, submitVoteMutation, refetchPair, refetchProgress, skippedEntryIds]
   );
 
   // Retry last vote attempt
@@ -259,14 +264,19 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
   // Changing the excluded ids changes the query input, which fetches the next pair on its own.
   // Awaiting a `refetch()` here instead resolved with the NEW input's still-empty result, which
   // read as "no pairs left" and ended the session on every skip.
-  const handleSkip = useCallback(() => {
-    if (isVoting || isLoadingPair || !pair) return;
+  const handleSkip = useCallback(
+    ({ unavailable }: { unavailable: boolean }) => {
+      if (isVoting || isLoadingPair || !pair) return;
 
-    setSessionSkips((prev) => prev + 1);
-    setCurrentStreak(0);
-    // The last 20 entries (~10 pairs); the server brings them back once nothing else is left.
-    setSkippedEntryIds((prev) => [...prev, pair.left.id, pair.right.id].slice(-20));
-  }, [isVoting, isLoadingPair, pair]);
+      if (!unavailable) {
+        setSessionSkips((prev) => prev + 1);
+        setCurrentStreak(0);
+      }
+      // The last 20 entries (~10 pairs); the server brings them back once nothing else is left.
+      setSkippedEntryIds((prev) => [...prev, pair.left.id, pair.right.id].slice(-20));
+    },
+    [isVoting, isLoadingPair, pair]
+  );
 
   // Check if all pairs judged on initial load
   useEffect(() => {

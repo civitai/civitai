@@ -122,6 +122,7 @@ export const createCrucibleInputBaseSchema = z.object({
   entryFee: z.number().int().min(CRUCIBLE_MIN_ENTRY_FEE).max(CRUCIBLE_MAX_ENTRY_FEE),
   seededPrizePool: z.number().int().min(0).max(CRUCIBLE_MAX_SEEDED_PRIZE_POOL).default(0),
   entryLimit: z.number().int().min(1).max(CRUCIBLE_MAX_ENTRIES),
+  freeEntriesPerUser: z.number().int().min(0).max(CRUCIBLE_MAX_ENTRIES).default(0),
   maxTotalEntries: z
     .number()
     .int()
@@ -160,6 +161,7 @@ type CrucibleSettings = {
   minViewSeconds?: number | null;
   maxClipSeconds?: number | null;
   entryLimit: number;
+  freeEntriesPerUser?: number;
   maxTotalEntries?: number | null;
   prizePositions: Record<string, number>;
 };
@@ -177,6 +179,11 @@ export function checkCrucibleSettings(settings: CrucibleSettings) {
     return {
       message: 'Minimum view time cannot exceed the maximum clip length',
       path: 'minViewSeconds',
+    };
+  if ((settings.freeEntriesPerUser ?? 0) > entryLimit)
+    return {
+      message: 'Free entries cannot exceed the entry limit per user',
+      path: 'freeEntriesPerUser',
     };
   if (maxTotalEntries != null && entryLimit > maxTotalEntries)
     return {
@@ -277,6 +284,7 @@ export const updateCrucibleSchema = z.object({
   entryFee: z.number().int().min(CRUCIBLE_MIN_ENTRY_FEE).max(CRUCIBLE_MAX_ENTRY_FEE).optional(),
   seededPrizePool: z.number().int().min(0).max(CRUCIBLE_MAX_SEEDED_PRIZE_POOL).optional(),
   entryLimit: z.number().int().min(1).max(CRUCIBLE_MAX_ENTRIES).optional(),
+  freeEntriesPerUser: z.number().int().min(0).max(CRUCIBLE_MAX_ENTRIES).optional(),
   maxTotalEntries: z
     .number()
     .int()

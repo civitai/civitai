@@ -603,6 +603,29 @@ describe('createCrucible — prize customization fee', () => {
   });
 });
 
+describe('createCrucible — free entries', () => {
+  it('stores the free entries a moderator sets', async () => {
+    await createCrucible(input({ isModerator: true, entryLimit: 3, freeEntriesPerUser: 1 }));
+
+    expect(storedData().freeEntriesPerUser).toBe(1);
+  });
+
+  it('refuses free entries from anyone else, before anything is written or charged', async () => {
+    await expect(createCrucible(input({ entryLimit: 3, freeEntriesPerUser: 1 }))).rejects.toThrow(
+      'Only moderators can offer free entries'
+    );
+
+    expect(crucibleCreate).not.toHaveBeenCalled();
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('stores none when none are asked for', async () => {
+    await createCrucible(input());
+
+    expect(storedData().freeEntriesPerUser).toBe(0);
+  });
+});
+
 describe('createCrucible — who may create one', () => {
   it('checks the creation limits before any money moves', async () => {
     assertCanCreateCrucible.mockRejectedValue(new Error('limit reached'));

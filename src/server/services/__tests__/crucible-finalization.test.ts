@@ -88,6 +88,9 @@ const setupCrucible = ({
     _count: { entries: entries.length },
   });
   pageEntries([entries]);
+  dbMock.dbRead.crucibleEntry.groupBy.mockResolvedValue([
+    { crucibleId: 1, _count: { _all: entries.length } },
+  ]);
   getAllEntryElos.mockResolvedValue(elos);
   getAllVoteCounts.mockResolvedValue(voteCounts);
 };
@@ -300,6 +303,7 @@ describe('finalizeCrucible — empty crucible', () => {
       endAt: new Date(Date.now() - 1000),
       _count: { entries: 0 },
     });
+    dbMock.dbRead.crucibleEntry.groupBy.mockResolvedValue([]);
   };
 
   it('completes with no entries and no prize pool', async () => {

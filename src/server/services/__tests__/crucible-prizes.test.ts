@@ -64,8 +64,13 @@ const pageEntries = (entries: ReturnType<typeof dbEntry>[]) => {
   });
 };
 
+const groupBy = dbMock.dbRead.crucibleEntry.groupBy;
+const paidEntries = (count: number) =>
+  groupBy.mockResolvedValue(count ? [{ crucibleId: 1, _count: { _all: count } }] : []);
+
 const setupCrucible = ({
   entryFee = 100,
+  freeEntriesPerUser = 0,
   seededPrizePool = 0,
   seedTransactionId = null as string | null,
   prizePositions = { '1': 50, '2': 30, '3': 20 } as unknown,
@@ -78,6 +83,7 @@ const setupCrucible = ({
     userId: 4,
     status: CrucibleStatus.Active,
     entryFee,
+    freeEntriesPerUser,
     seededPrizePool,
     seedTransactionId,
     prizePositions,
@@ -85,6 +91,7 @@ const setupCrucible = ({
     _count: { entries: entries.length },
   });
   pageEntries(entries);
+  paidEntries(entries.length);
   getAllEntryElos.mockResolvedValue(elos);
 };
 
@@ -297,6 +304,55 @@ describe('seeded prize pool', () => {
   });
 });
 
+describe('free entries', () => {
+  it('pays out only what paid entries brought in, plus the seed', async () => {
+    // 3 entries, 1 of them paid: 100 + the 500 seed. Counting every entry would pay 800 from a
+    // bank that took in 600.
+    setupCrucible({ freeEntriesPerUser: 1, seededPrizePool: 500, prizePositions: { '1': 100 } });
+    paidEntries(1);
+
+    const result = await finalizeCrucible(1);
+
+    expect(result.totalPrizePool).toBe(600);
+    const [transactions] = createBuzzTransactionMany.mock.calls[0];
+    expect(transactions.map((t: { amount: number }) => t.amount)).toEqual([600]);
+  });
+
+  it('asks only for entries that carry a fee transaction', async () => {
+    setupCrucible({ freeEntriesPerUser: 1 });
+    paidEntries(0);
+
+    await finalizeCrucible(1);
+
+    expect(groupBy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { crucibleId: { in: [1] }, buzzTransactionId: { not: null } },
+      })
+    );
+  });
+
+  it('moves no Buzz when every entry was free and nothing was seeded', async () => {
+    setupCrucible({ freeEntriesPerUser: 1 });
+    paidEntries(0);
+
+    const result = await finalizeCrucible(1);
+
+    expect(result.totalPrizePool).toBe(0);
+    expect(result.finalEntries.map((e) => e.position)).toEqual([1, 2, 3]);
+    expect(createBuzzTransactionMany).not.toHaveBeenCalled();
+  });
+
+  it('counts only paid entries even when the crucible offers no free ones', async () => {
+    // Free entries switched off again, or rows written without a fee: still only what was paid.
+    setupCrucible();
+    paidEntries(1);
+
+    const result = await finalizeCrucible(1);
+
+    expect(result.totalPrizePool).toBe(100);
+  });
+});
+
 describe('seeded prize pool — entries but no prize awarded', () => {
   it('returns the seed when every floored share rounds to zero', async () => {
     // 1 Buzz seed, no entry fee, split three ways: floor() takes every share to 0, so the pool is
@@ -360,6 +416,7 @@ describe('seeded prize pool — nobody entered', () => {
       _count: { entries: 0 },
       ...overrides,
     });
+    paidEntries(0);
   };
 
   it('reports the seed as the pool rather than zero', async () => {

@@ -50,7 +50,12 @@ import { downloadGeneratorImages } from '~/utils/generator-import';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { getMimeTypesFromMediaTypes } from '~/shared/constants/mime-types';
 import { trpc } from '~/utils/trpc';
-import { getCrucibleRatingLabel, isCrucibleFinalStretch } from '~/utils/crucible-helpers';
+import {
+  getCrucibleEntriesCost,
+  getCrucibleRatingLabel,
+  getFreeEntriesLabel,
+  isCrucibleFinalStretch,
+} from '~/utils/crucible-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { Flags } from '~/shared/utils/flags';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
@@ -65,6 +70,8 @@ export interface CrucibleSubmitEntryModalProps {
   entryFee: number;
   buzzType?: BuzzSpendType;
   entryLimit: number;
+  /** Each person's first entries that skip the fee. */
+  freeEntriesPerUser?: number;
   nsfwLevel: number;
   contentType: MediaType;
   currentEntryCount: number;
@@ -321,6 +328,7 @@ export default function CrucibleSubmitEntryModal({
   entryFee,
   buzzType,
   entryLimit,
+  freeEntriesPerUser = 0,
   nsfwLevel,
   contentType,
   currentEntryCount,
@@ -648,8 +656,13 @@ export default function CrucibleSubmitEntryModal({
     return isValid;
   }).length;
 
-  // Total cost for selected images
-  const totalCost = validSelectedCount * entryFee;
+  const totalCost = getCrucibleEntriesCost({
+    entriesSoFar: currentEntryCount,
+    count: validSelectedCount,
+    freeEntriesPerUser,
+    entryFee,
+  });
+  const freeEntriesLabel = getFreeEntriesLabel({ freeEntriesPerUser, entryLimit });
   const submitLabel = `Submit ${validSelectedCount} ${
     validSelectedCount === 1 ? 'Entry' : 'Entries'
   }`;
@@ -1075,13 +1088,19 @@ export default function CrucibleSubmitEntryModal({
               )}
             </div>
 
-            {entryFee > 0 && (
+            {entryFee > 0 && freeEntriesPerUser < entryLimit && (
               <div className="flex items-center justify-end gap-1">
                 <CurrencyIcon currency={Currency.BUZZ} type={buzzType} size={14} />
                 <Text size="xs" c="dimmed">
+                  {freeEntriesLabel ? `${freeEntriesLabel}, then ` : ''}
                   {entryFee.toLocaleString()} Buzz per entry
                 </Text>
               </div>
+            )}
+            {freeEntriesPerUser >= entryLimit && (
+              <Text size="xs" c="dimmed" ta="right">
+                {freeEntriesLabel}
+              </Text>
             )}
           </div>
         </div>

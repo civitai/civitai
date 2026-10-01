@@ -50,6 +50,7 @@ export const crucibleDetailSelect = Prisma.validator<Prisma.CrucibleSelect>()({
   seededPrizePool: true,
   entryFee: true,
   entryLimit: true,
+  freeEntriesPerUser: true,
   maxTotalEntries: true,
   minViewSeconds: true,
   maxClipSeconds: true,

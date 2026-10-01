@@ -63,7 +63,8 @@ export type CrucibleJudgingUIProps = {
   /** Playback each clip needs before either vote unlocks. Null or absent means no rule. */
   minViewSeconds?: number | null;
   onVote: (winnerId: number, loserId: number, watched: WatchedMs) => void;
-  onSkip: () => void;
+  /** `unavailable`: an entry in the pair didn't load, so skipping wasn't the judge's choice. */
+  onSkip: (skip: { unavailable: boolean }) => void;
   className?: string;
 };
 
@@ -114,14 +115,18 @@ export function CrucibleJudgingUI({
     setWatchedMs((prev) => (ms > prev[side] ? { ...prev, [side]: ms } : prev));
   }, []);
 
+  // The parent locks only once `onVote` runs, so clicks inside the feedback delay would each vote.
+  const voteQueued = useRef(false);
   const handleVote = useCallback(
     (side: Side) => {
-      if (voteLocked || !pair) return;
+      if (voteLocked || !pair || voteQueued.current) return;
 
+      voteQueued.current = true;
       setSelectedSide(side);
 
       // Small delay for visual feedback, then call onVote
       setTimeout(() => {
+        voteQueued.current = false;
         const winnerId = side === 'left' ? pair.left.id : pair.right.id;
         const loserId = side === 'left' ? pair.right.id : pair.left.id;
         onVote(winnerId, loserId, {
@@ -134,11 +139,12 @@ export function CrucibleJudgingUI({
     [voteLocked, pair, onVote, watchedMs]
   );
 
+  const anyUnavailable = media.left === 'error' || media.right === 'error';
   const handleSkip = useCallback(() => {
     if (isDisabled) return;
     setSelectedSide(null);
-    onSkip();
-  }, [isDisabled, onSkip]);
+    onSkip({ unavailable: anyUnavailable });
+  }, [isDisabled, onSkip, anyUnavailable]);
 
   // Keyboard shortcuts
   useHotkeys(

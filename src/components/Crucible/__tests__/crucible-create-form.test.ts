@@ -180,6 +180,17 @@ describe('getPlaceBuzz', () => {
 
     expect(amounts['1']).toEqual({ fromSeed: 500, whenFull: 600 });
   });
+
+  it('marks the full-crucible amount as a ceiling once entries can be free', () => {
+    const args = { prizePositions, seededPrizePool: 1000, entryFee: 100, maxTotalEntries: 10 };
+
+    expect(getPlaceBuzz({ ...args, freeEntriesPerUser: 1 })['1']).toEqual({
+      fromSeed: 500,
+      whenFull: 1000,
+      whenFullIsCeiling: true,
+    });
+    expect(getPlaceBuzz(args)['1'].whenFullIsCeiling).toBeFalsy();
+  });
 });
 
 describe('restrictContentLevelsToBuzzType', () => {
@@ -254,6 +265,7 @@ describe('crucible edit', () => {
     contentType: MediaType.video,
     entryFee: 50,
     entryLimit: 2,
+    freeEntriesPerUser: 1,
     maxTotalEntries: 40,
     minViewSeconds: 6,
     maxClipSeconds: null,
@@ -268,6 +280,17 @@ describe('crucible edit', () => {
 
   it('reads the stored minutes as hours', () => {
     expect(initial.duration).toBe(72);
+  });
+
+  it('carries the free entries into the form and sends them back only when changed', () => {
+    expect(initial.freeEntriesPerUser).toBe(1);
+    expect(
+      getCrucibleUpdateChanges({
+        initial,
+        values: { ...initial, freeEntriesPerUser: 2 },
+        editableFields: allFields,
+      })
+    ).toEqual({ freeEntriesPerUser: 2 });
   });
 
   it('keeps a 0% place, so a stored custom split does not read as the default', () => {

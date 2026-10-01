@@ -2445,6 +2445,7 @@ export type Crucible = {
   entryFee: Generated<number>;
   seededPrizePool: Generated<number>;
   entryLimit: Generated<number>;
+  freeEntriesPerUser: Generated<number>;
   maxTotalEntries: number | null;
   minViewSeconds: number | null;
   maxClipSeconds: number | null;

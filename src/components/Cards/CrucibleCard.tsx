@@ -46,6 +46,7 @@ type CrucibleCardData = {
   _count: {
     entries: number;
   };
+  paidEntryCount: number;
 };
 
 export function CrucibleCard({ data }: { data: CrucibleCardData }) {
@@ -61,9 +62,10 @@ export function CrucibleCard({ data }: { data: CrucibleCardData }) {
     user,
     image,
     _count,
+    paidEntryCount,
   } = data;
   const entryCount = _count.entries ?? 0;
-  const prizePool = getCrucibleTotalPrizePool({ entryFee, entryCount, seededPrizePool });
+  const prizePool = getCrucibleTotalPrizePool({ entryFee, paidEntryCount, seededPrizePool });
 
   const now = useMemo(() => new Date(), []);
 

@@ -48,6 +48,7 @@ import {
   submitEntry,
   submitVote,
   withoutEntryScores,
+  withPaidEntryCount,
 } from '~/server/services/crucible.service';
 
 const getBlockedByUserIds = async (user: Context['user']) => {
@@ -64,7 +65,7 @@ export const getInfiniteCruciblesHandler = async ({
   ctx: Context;
 }) => {
   const excludedUserIds = await getBlockedByUserIds(ctx.user);
-  return getCrucibles({
+  const { items, nextCursor } = await getCrucibles({
     input,
     select: crucibleListSelect,
     excludedUserIds,
@@ -72,6 +73,7 @@ export const getInfiniteCruciblesHandler = async ({
     viewerId: ctx.user?.id,
     isGreen: !!ctx.features?.isGreen,
   });
+  return { items: await withPaidEntryCount(items), nextCursor };
 };
 
 export const getCrucibleByIdHandler = async ({

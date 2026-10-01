@@ -76,22 +76,63 @@ export function getCrucibleStatusBadge(
 
 /**
  * The single derivation of a crucible's prize pool: the creator's seed plus every entry fee
- * collected. Server and client both read it from here — `getFeaturedCrucible` restates it in raw
- * SQL because it sorts on the value, and that copy has to move with this one.
+ * collected. Free entries pay nothing, so counting them would pay out Buzz nobody put in.
+ * Server and client both read it from here — `getFeaturedCrucible` restates it in raw SQL because
+ * it sorts on the value, and that copy has to move with this one.
  *
  * Every field is required so a select that forgets `seededPrizePool` fails typecheck instead of
  * quietly under-reporting the pool.
  */
 export function getCrucibleTotalPrizePool({
   entryFee,
-  entryCount,
+  paidEntryCount,
   seededPrizePool,
 }: {
   entryFee: number;
-  entryCount: number;
+  paidEntryCount: number;
   seededPrizePool: number;
 }): number {
-  return seededPrizePool + entryFee * entryCount;
+  return seededPrizePool + entryFee * paidEntryCount;
+}
+
+/** How free entries read to an entrant; `null` when there are none. */
+export function getFreeEntriesLabel({
+  freeEntriesPerUser,
+  entryLimit,
+}: {
+  freeEntriesPerUser: number;
+  entryLimit: number;
+}) {
+  if (freeEntriesPerUser <= 0) return null;
+  if (freeEntriesPerUser >= entryLimit) return 'Free to enter';
+  return freeEntriesPerUser === 1 ? 'First entry free' : `First ${freeEntriesPerUser} entries free`;
+}
+
+/** Buzz charged for someone's next `count` entries, given how many they've already made. */
+export function getCrucibleEntriesCost({
+  entriesSoFar,
+  count,
+  freeEntriesPerUser,
+  entryFee,
+}: {
+  entriesSoFar: number;
+  count: number;
+  freeEntriesPerUser: number;
+  entryFee: number;
+}) {
+  const freeLeft = Math.max(0, freeEntriesPerUser - entriesSoFar);
+  return Math.max(0, count - freeLeft) * entryFee;
+}
+
+/** Whether a person's next entry is free, given how many they've already made. */
+export function isFreeCrucibleEntry({
+  entriesSoFar,
+  freeEntriesPerUser,
+}: {
+  entriesSoFar: number;
+  freeEntriesPerUser: number;
+}) {
+  return entriesSoFar < freeEntriesPerUser;
 }
 
 const formatDuration = (ms: number) => {

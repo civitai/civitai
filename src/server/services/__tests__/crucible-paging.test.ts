@@ -49,7 +49,10 @@ const drain = async (sort = CrucibleSort.Newest) => {
   return { pages, seen, terminated: false };
 };
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  dbMock.dbRead.crucibleEntry.groupBy.mockResolvedValue([]);
+});
 
 describe('crucible feed paging', () => {
   it('terminates instead of serving the same crucible forever', async () => {

@@ -215,6 +215,63 @@ describe('CrucibleJudgingUI — minimum view time', () => {
   });
 });
 
+const skipPairButton = () =>
+  [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) =>
+    b.textContent?.includes('Skip Pair')
+  );
+
+describe('CrucibleJudgingUI — skipping', () => {
+  test("a skip with both entries showing is the judge's own", async () => {
+    const onSkip = vi.fn();
+    renderWithProviders(<CrucibleJudgingUI pair={pairOf(1, 2)} onVote={vi.fn()} onSkip={onSkip} />);
+    await expectBothCardsRendered();
+
+    skipPairButton()!.click();
+
+    expect(onSkip).toHaveBeenCalledWith({ unavailable: false });
+  });
+
+  test("any skip while an entry didn't load is reported as unavailable", async () => {
+    mediaOutcome.set(srcOf(2), 'error');
+    const onSkip = vi.fn();
+    renderWithProviders(<CrucibleJudgingUI pair={pairOf(1, 2)} onVote={vi.fn()} onSkip={onSkip} />);
+    await vi.waitFor(() => expect(mediaStatus('right')).toBe('error'));
+
+    skipPairButton()!.click();
+
+    expect(onSkip).toHaveBeenCalledWith({ unavailable: true });
+  });
+});
+
+describe('CrucibleJudgingUI — repeated clicks', () => {
+  // Past the 200ms feedback delay, so any second vote still queued would have landed by now.
+  const pastFeedbackDelay = () => new Promise((resolve) => setTimeout(resolve, 400));
+
+  test('a burst of clicks before the vote lands casts one vote', async () => {
+    const onVote = vi.fn();
+    renderWithProviders(<CrucibleJudgingUI pair={pairOf(1, 2)} onVote={onVote} onSkip={vi.fn()} />);
+    await expectBothCardsRendered();
+
+    for (let i = 0; i < 5; i++) voteButton('right')!.click();
+    await pastFeedbackDelay();
+
+    expect(onVote).toHaveBeenCalledTimes(1);
+  });
+
+  test('takes the next vote once the first has landed', async () => {
+    // Control for the test above: a lock that never released would also cast exactly one vote.
+    const onVote = vi.fn();
+    renderWithProviders(<CrucibleJudgingUI pair={pairOf(1, 2)} onVote={onVote} onSkip={vi.fn()} />);
+    await expectBothCardsRendered();
+
+    voteButton('right')!.click();
+    await vi.waitFor(() => expect(onVote).toHaveBeenCalledTimes(1));
+    voteButton('left')!.click();
+
+    await vi.waitFor(() => expect(onVote).toHaveBeenCalledTimes(2));
+  });
+});
+
 describe('CrucibleJudgingUI — media loading', () => {
   test('keeps voting locked while one side has not loaded', async () => {
     // "votes immediately when the crucible sets no minimum" is the control: same props, both load.
@@ -244,6 +301,8 @@ describe('CrucibleJudgingUI — media loading', () => {
       );
     overlayButton('Skip pair')!.click();
     expect(onSkip).toHaveBeenCalledTimes(1);
+    // Not the judge's choice, so the page keeps their streak.
+    expect(onSkip).toHaveBeenCalledWith({ unavailable: true });
 
     mediaOutcome.set(srcOf(2), 'loadedmetadata');
     overlayButton('Retry')!.click();

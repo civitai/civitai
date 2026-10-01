@@ -56,6 +56,7 @@ export const crucibleCreateFormSchema = z.object({
     .min(CRUCIBLE_MIN_ENTRY_FEE, `Entry fee must be ${entryFeeRangeLabel}`)
     .max(CRUCIBLE_MAX_ENTRY_FEE, `Entry fee must be ${entryFeeRangeLabel}`),
   entryLimit: z.number().int().min(1).max(CRUCIBLE_MAX_ENTRIES),
+  freeEntriesPerUser: z.number().int().min(0).max(CRUCIBLE_MAX_ENTRIES),
   maxTotalEntries: z
     .number()
     .int()
@@ -92,6 +93,7 @@ export const crucibleCreateDefaultValues: CrucibleCreateFormValues = {
   contentType: MediaType.image,
   entryFee: 100,
   entryLimit: 1,
+  freeEntriesPerUser: 0,
   allowedResources: [],
   seededPrizePool: 0,
   prizePositions: { ...CRUCIBLE_DEFAULT_PRIZE_POSITIONS },
@@ -116,6 +118,7 @@ export const crucibleCreateDraftSchema = crucibleCreateFormSchema.extend({
   buzzType: shape.buzzType.catch(undefined),
   entryFee: shape.entryFee.catch(defaults.entryFee),
   entryLimit: shape.entryLimit.catch(defaults.entryLimit),
+  freeEntriesPerUser: shape.freeEntriesPerUser.catch(defaults.freeEntriesPerUser),
   maxTotalEntries: shape.maxTotalEntries.catch(undefined),
   seededPrizePool: shape.seededPrizePool.catch(defaults.seededPrizePool),
   prizePositions: shape.prizePositions.catch({ ...CRUCIBLE_DEFAULT_PRIZE_POSITIONS }),
@@ -124,7 +127,8 @@ export const crucibleCreateDraftSchema = crucibleCreateFormSchema.extend({
   step: shape.step.catch(1),
 });
 
-export type PlaceBuzz = { fromSeed?: number; whenFull?: number };
+/** `whenFullIsCeiling`: with free entries a full crucible may hold fewer paid ones. */
+export type PlaceBuzz = { fromSeed?: number; whenFull?: number; whenFullIsCeiling?: boolean };
 
 // Entry fees make the pool unknown at creation, so only the seed alone and a full crucible (every
 // allowed entry paid) have amounts to show.
@@ -133,11 +137,13 @@ export function getPlaceBuzz({
   seededPrizePool,
   entryFee,
   maxTotalEntries,
+  freeEntriesPerUser = 0,
 }: {
   prizePositions: Record<string, number>;
   seededPrizePool: number;
   entryFee: number;
   maxTotalEntries?: number;
+  freeEntriesPerUser?: number;
 }): Record<string, PlaceBuzz> {
   const positions: PrizePosition[] = Object.entries(prizePositions).map(
     ([position, percentage]) => ({ position: Number(position), percentage })
@@ -145,7 +151,7 @@ export function getPlaceBuzz({
   const amountFor = (position: number, entryCount: number, totalPrizePool: number) =>
     getCruciblePrizeAmount({ position, prizePositions: positions, entryCount, totalPrizePool });
   const fullPool = maxTotalEntries
-    ? getCrucibleTotalPrizePool({ entryFee, entryCount: maxTotalEntries, seededPrizePool })
+    ? getCrucibleTotalPrizePool({ entryFee, paidEntryCount: maxTotalEntries, seededPrizePool })
     : 0;
 
   return Object.fromEntries(
@@ -157,6 +163,7 @@ export function getPlaceBuzz({
             ? amountFor(position, maxTotalEntries ?? positions.length, seededPrizePool)
             : undefined,
         whenFull: maxTotalEntries ? amountFor(position, maxTotalEntries, fullPool) : undefined,
+        whenFullIsCeiling: freeEntriesPerUser > 0 || undefined,
       },
     ])
   );
@@ -228,6 +235,7 @@ export function toCrucibleSubmitValues(values: CrucibleCreateFormValues) {
     contentType: values.contentType,
     entryFee: values.entryFee,
     entryLimit: values.entryLimit,
+    freeEntriesPerUser: values.freeEntriesPerUser,
     maxTotalEntries: values.maxTotalEntries || undefined,
     allowedResources: values.allowedResources?.length ? values.allowedResources : undefined,
     prizePositions: values.prizePositions,
@@ -250,6 +258,7 @@ export type CrucibleEditSource = {
   contentType: MediaType;
   entryFee: number;
   entryLimit: number;
+  freeEntriesPerUser: number;
   maxTotalEntries: number | null;
   minViewSeconds: number | null;
   maxClipSeconds: number | null;
@@ -290,6 +299,7 @@ export function crucibleToFormValues(crucible: CrucibleEditSource): CrucibleCrea
     contentType: crucible.contentType === MediaType.video ? MediaType.video : MediaType.image,
     entryFee: crucible.entryFee,
     entryLimit: crucible.entryLimit,
+    freeEntriesPerUser: crucible.freeEntriesPerUser,
     maxTotalEntries: crucible.maxTotalEntries ?? undefined,
     allowedResources: Array.isArray(crucible.allowedResources)
       ? crucible.allowedResources.filter((id): id is number => typeof id === 'number')
@@ -314,6 +324,7 @@ export type CrucibleUpdateChanges = {
   contentType?: CrucibleContentType;
   entryFee?: number;
   entryLimit?: number;
+  freeEntriesPerUser?: number;
   maxTotalEntries?: number | null;
   allowedResources?: number[];
   prizePositions?: Record<string, number>;
@@ -334,6 +345,7 @@ export const CRUCIBLE_EDITABLE_FIELDS = [
   'contentType',
   'entryFee',
   'entryLimit',
+  'freeEntriesPerUser',
   'maxTotalEntries',
   'allowedResources',
   'prizePositions',

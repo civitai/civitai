@@ -88,6 +88,7 @@ import {
   getCruciblePrizeAmount,
   getCrucibleTotalPrizePool,
   getCrucibleTransactionDescription,
+  isFreeCrucibleEntry,
   parsePrizePositions,
   toCrucibleBuzzType,
 } from '~/utils/crucible-helpers';
@@ -222,6 +223,7 @@ export const createCrucible = async ({
   contentType,
   entryFee,
   entryLimit,
+  freeEntriesPerUser = 0,
   maxTotalEntries,
   prizePositions,
   allowedResources,
@@ -238,6 +240,7 @@ export const createCrucible = async ({
   isModerator?: boolean;
 }) => {
   if (!isModerator) await assertCanCreateCrucible(userId);
+  if (freeEntriesPerUser > 0 && !isModerator) throw throwAuthorizationError(FREE_ENTRIES_MODS_ONLY);
   if (isNonSfwForGreen(buzzType, nsfwLevel))
     throw throwBadRequestError('A green Buzz crucible can only allow PG and PG-13 content.');
 
@@ -283,6 +286,7 @@ export const createCrucible = async ({
       entryFee,
       seededPrizePool: seedAmount,
       entryLimit,
+      freeEntriesPerUser,
       maxTotalEntries: maxTotalEntries ?? null,
       minViewSeconds: isVideoCrucible ? minViewSeconds ?? null : null,
       maxClipSeconds: isVideoCrucible ? maxClipSeconds ?? null : null,
@@ -472,6 +476,8 @@ async function assertRequiredModelsMakeContentType(versionIds: number[], content
 
 const PRESENTATION_FIELDS = ['name', 'description', 'coverImage', 'heroImage'] as const;
 
+const FREE_ENTRIES_MODS_ONLY = 'Only moderators can offer free entries';
+
 /**
  * An upcoming crucible has no entries, so everything can change and any cost difference is
  * settled; once running only the presentation can, so the outcome stays fair.
@@ -499,6 +505,7 @@ export const updateCrucible = async ({
       contentType: true,
       entryFee: true,
       entryLimit: true,
+      freeEntriesPerUser: true,
       maxTotalEntries: true,
       minViewSeconds: true,
       maxClipSeconds: true,
@@ -546,6 +553,7 @@ export const updateCrucible = async ({
     contentType: crucible.contentType as CreateCrucibleInputSchema['contentType'],
     entryFee: crucible.entryFee,
     entryLimit: crucible.entryLimit,
+    freeEntriesPerUser: crucible.freeEntriesPerUser,
     maxTotalEntries: crucible.maxTotalEntries ?? undefined,
     minViewSeconds: crucible.minViewSeconds,
     maxClipSeconds: crucible.maxClipSeconds,
@@ -565,6 +573,12 @@ export const updateCrucible = async ({
   if (isNonSfwForGreen(buzzType, next.nsfwLevel))
     throw throwBadRequestError('A green Buzz crucible can only allow PG and PG-13 content.');
   assertCrucibleSettings(next);
+  if (
+    !isModerator &&
+    next.freeEntriesPerUser > 0 &&
+    next.freeEntriesPerUser !== current.freeEntriesPerUser
+  )
+    throw throwAuthorizationError(FREE_ENTRIES_MODS_ONLY);
 
   const nextName = changes.name ?? crucible.name;
   const nextDescription = changes.description ?? crucible.description ?? '';
@@ -625,6 +639,7 @@ export const updateCrucible = async ({
       contentType: next.contentType,
       entryFee: next.entryFee,
       entryLimit: next.entryLimit,
+      freeEntriesPerUser: next.freeEntriesPerUser,
       maxTotalEntries: next.maxTotalEntries ?? null,
       minViewSeconds: isVideo ? next.minViewSeconds ?? null : null,
       maxClipSeconds: isVideo ? next.maxClipSeconds ?? null : null,
@@ -792,12 +807,35 @@ function assertCrucibleSettings(settings: Parameters<typeof checkCrucibleSetting
   if (issue) throw throwBadRequestError(issue.message);
 }
 
+/**
+ * Entries that paid the fee, by crucible: the ones holding a fee transaction. Read from the rows,
+ * not from `freeEntriesPerUser`, so the pool can never count an entry the bank was not paid for.
+ */
+export async function getPaidEntryCounts(crucibleIds: number[]) {
+  const counts = new Map(crucibleIds.map((id) => [id, 0]));
+  if (!crucibleIds.length) return counts;
+
+  const paid = await dbRead.crucibleEntry.groupBy({
+    by: ['crucibleId'],
+    where: { crucibleId: { in: crucibleIds }, buzzTransactionId: { not: null } },
+    _count: { _all: true },
+  });
+  for (const { crucibleId, _count } of paid) counts.set(crucibleId, _count._all);
+  return counts;
+}
+
+export async function withPaidEntryCount<T extends { id: number }>(rows: T[]) {
+  const counts = await getPaidEntryCounts(rows.map(({ id }) => id));
+  return rows.map((row) => ({ ...row, paidEntryCount: counts.get(row.id) ?? 0 }));
+}
+
 export type CrucibleDetailEntry = Omit<CrucibleEntryRow, 'score' | 'position'> & {
   score: number | null;
   position: number | null;
 };
 
 export type CrucibleDetail = CrucibleDetailRow & {
+  paidEntryCount: number;
   /** The caller's own entries; everyone else's are paged through `getCrucibleEntries`. */
   viewerEntries: CrucibleEntryRow[];
   /** Entries that got enough votes to place, once completed; prizes split among these. */
@@ -815,7 +853,8 @@ export const getCrucibleDetail = async ({
 
   if (!crucible) return null;
 
-  const [viewerEntries, placedEntryCount] = await Promise.all([
+  const [paidEntryCounts, viewerEntries, placedEntryCount] = await Promise.all([
+    getPaidEntryCounts([id]),
     userId
       ? dbRead.crucibleEntry.findMany({
           where: { crucibleId: id, userId },
@@ -828,7 +867,12 @@ export const getCrucibleDetail = async ({
       : null,
   ]);
 
-  return { ...crucible, viewerEntries, placedEntryCount };
+  return {
+    ...crucible,
+    paidEntryCount: paidEntryCounts.get(id) ?? 0,
+    viewerEntries,
+    placedEntryCount,
+  };
 };
 
 export const getCrucibleEntries = async ({
@@ -1288,6 +1332,7 @@ export const submitEntry = async ({
         contentType: true,
         entryFee: true,
         entryLimit: true,
+        freeEntriesPerUser: true,
         maxTotalEntries: true,
         maxClipSeconds: true,
         allowedResources: true,
@@ -1332,8 +1377,9 @@ export const submitEntry = async ({
       return throwBadRequestError('This crucible has reached its maximum number of entries');
     }
 
-    // Check user's entry count for this crucible
-    const userEntryCount = await dbRead.crucibleEntry.count({
+    // The primary, under the lock: a replica that has not seen this user's last entry would
+    // hand out a free slot they already used.
+    const userEntryCount = await dbWrite.crucibleEntry.count({
       where: {
         crucibleId,
         userId,
@@ -1427,10 +1473,13 @@ export const submitEntry = async ({
       return throwBadRequestError(entryIneligibleMessages[ineligibleReason]);
     }
 
-    // Handle entry fee collection (if entryFee > 0)
     let buzzTransactionId: string | null = null;
+    const isFreeEntry = isFreeCrucibleEntry({
+      entriesSoFar: userEntryCount,
+      freeEntriesPerUser: crucible.freeEntriesPerUser,
+    });
 
-    if (crucible.entryFee > 0) {
+    if (crucible.entryFee > 0 && !isFreeEntry) {
       // Check if user has sufficient Buzz
       const userAccount = await getUserBuzzAccount({
         accountId: userId,
@@ -2443,9 +2492,10 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
   // Get entry count from aggregation (no memory impact)
   const entryCount = crucible._count.entries;
 
+  const paidEntryCounts = await getPaidEntryCounts([crucibleId]);
   const totalPrizePool = getCrucibleTotalPrizePool({
     entryFee: crucible.entryFee,
-    entryCount,
+    paidEntryCount: paidEntryCounts.get(crucibleId) ?? 0,
     seededPrizePool: crucible.seededPrizePool,
   });
 
@@ -3407,6 +3457,10 @@ export const getUserActiveCrucibles = async ({
     return [];
   }
 
+  const paidEntryCounts = await getPaidEntryCounts([
+    ...new Set(entries.map(({ crucibleId }) => crucibleId)),
+  ]);
+
   // Group entries by crucible and find best position
   const crucibleMap = new Map<
     number,
@@ -3439,7 +3493,7 @@ export const getUserActiveCrucibles = async ({
     if (!existing || newBestPosition !== currentBestPosition) {
       const prizePool = getCrucibleTotalPrizePool({
         entryFee: entry.crucible.entryFee,
-        entryCount: entry.crucible._count.entries,
+        paidEntryCount: paidEntryCounts.get(crucibleId) ?? 0,
         seededPrizePool: entry.crucible.seededPrizePool,
       });
       const timeRemaining = entry.crucible.endAt
@@ -3528,7 +3582,7 @@ export const getFeaturedCrucible = async ({
       c."buzzType",
       i.url as "imageUrl",
       COUNT(ce.id) as "entriesCount",
-      c."seededPrizePool" + c."entryFee" * COUNT(ce.id) as "prizePool"
+      c."seededPrizePool" + c."entryFee" * COUNT(ce.id) FILTER (WHERE ce."buzzTransactionId" IS NOT NULL) as "prizePool"
     FROM "Crucible" c
     LEFT JOIN "Image" i ON c."imageId" = i.id
     LEFT JOIN "CrucibleEntry" ce ON c.id = ce."crucibleId"
@@ -3674,9 +3728,11 @@ export const getJudgingSuggestions = async ({
   `;
   if (!rows.length) return [];
 
-  return dbRead.crucible.findMany({
-    where: { id: { in: rows.map(({ id }) => id) } },
-    select: crucibleListSelect,
-    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-  });
+  return withPaidEntryCount(
+    await dbRead.crucible.findMany({
+      where: { id: { in: rows.map(({ id }) => id) } },
+      select: crucibleListSelect,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    })
+  );
 };

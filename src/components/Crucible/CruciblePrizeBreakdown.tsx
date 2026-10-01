@@ -13,6 +13,8 @@ export type CruciblePrizeBreakdownProps = {
   prizePositions: PrizePosition[];
   totalPrizePool: number;
   entryFee: number;
+  /** Free entries add nothing, so only paid ones grow the pool. */
+  hasFreeEntries?: boolean;
   buzzType: BuzzSpendType;
   className?: string;
 };
@@ -21,6 +23,7 @@ export function CruciblePrizeBreakdown({
   prizePositions,
   totalPrizePool,
   entryFee,
+  hasFreeEntries = false,
   buzzType,
   className,
 }: CruciblePrizeBreakdownProps) {
@@ -65,7 +68,7 @@ export function CruciblePrizeBreakdown({
             leftSection={<IconTrendingUp size={14} />}
             className={classes.pulse}
           >
-            +{entryFee.toLocaleString()} Buzz per entry
+            +{entryFee.toLocaleString()} Buzz per {hasFreeEntries ? 'paid entry' : 'entry'}
           </Badge>
         )}
       </Stack>

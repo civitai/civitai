@@ -10,7 +10,11 @@ import {
   getCrucibleStatusBadge,
   getCrucibleTransactionDescription,
   getCrucibleUrl,
+  getCrucibleEntriesCost,
+  getCrucibleTotalPrizePool,
+  getFreeEntriesLabel,
   isCrucibleFinalStretch,
+  isFreeCrucibleEntry,
   parsePrizePositions,
   rankCrucibleEntries,
 } from '~/utils/crucible-helpers';
@@ -397,5 +401,45 @@ describe('baseModelMakesMediaType', () => {
     ['Some Unknown Base', MediaType.video, true],
   ])('%s makes %s: %s', (baseModel, mediaType, expected) => {
     expect(baseModelMakesMediaType(baseModel, mediaType)).toBe(expected);
+  });
+});
+
+describe('free entries', () => {
+  it('the prize pool grows with paid entries only', () => {
+    expect(
+      getCrucibleTotalPrizePool({ entryFee: 100, paidEntryCount: 2, seededPrizePool: 500 })
+    ).toBe(700);
+  });
+
+  it("a person's entries are free until they've used their free ones", () => {
+    expect(isFreeCrucibleEntry({ entriesSoFar: 0, freeEntriesPerUser: 1 })).toBe(true);
+    expect(isFreeCrucibleEntry({ entriesSoFar: 1, freeEntriesPerUser: 1 })).toBe(false);
+    expect(isFreeCrucibleEntry({ entriesSoFar: 0, freeEntriesPerUser: 0 })).toBe(false);
+  });
+
+  it.each([
+    ['nothing used, one selected', 0, 1, 0],
+    ['nothing used, three selected: one free, two paid', 0, 3, 200],
+    ['the free one used, two selected', 1, 2, 200],
+    ['more used than free', 3, 1, 100],
+  ])('charges for the paid ones only — %s', (_, entriesSoFar, count, cost) => {
+    expect(
+      getCrucibleEntriesCost({ entriesSoFar, count, freeEntriesPerUser: 1, entryFee: 100 })
+    ).toBe(cost);
+  });
+
+  it('charges every entry when none are free', () => {
+    expect(
+      getCrucibleEntriesCost({ entriesSoFar: 0, count: 2, freeEntriesPerUser: 0, entryFee: 100 })
+    ).toBe(200);
+  });
+
+  it.each([
+    [0, 3, null],
+    [1, 3, 'First entry free'],
+    [2, 3, 'First 2 entries free'],
+    [3, 3, 'Free to enter'],
+  ])('labels %i free of %i as %s', (freeEntriesPerUser, entryLimit, label) => {
+    expect(getFreeEntriesLabel({ freeEntriesPerUser, entryLimit })).toBe(label);
   });
 });

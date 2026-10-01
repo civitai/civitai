@@ -97,7 +97,7 @@ import {
 import { getBuzzCurrencyConfig } from '~/shared/constants/currency.constants';
 import { CrucibleStatus, Currency, MediaType } from '~/shared/utils/prisma/enums';
 import type { RouterOutput } from '~/types/router';
-import { getCrucibleUrl, toCrucibleBuzzType } from '~/utils/crucible-helpers';
+import { getCrucibleUrl, getFreeEntriesLabel, toCrucibleBuzzType } from '~/utils/crucible-helpers';
 import { capitalize } from '~/utils/string-helpers';
 
 const InputContentRatingSelect = withController(ContentRatingSelect);
@@ -145,6 +145,7 @@ const stepFields: Record<number, (keyof CrucibleCreateFormValues)[]> = {
     'contentType',
     'entryFee',
     'entryLimit',
+    'freeEntriesPerUser',
     'maxTotalEntries',
     'minViewSeconds',
     'maxClipSeconds',
@@ -225,6 +226,17 @@ export function CrucibleUpsertWizard(props: Props) {
     totalEntriesCap != null && values.entryLimit > totalEntriesCap
       ? 'Entries per user cannot exceed the maximum total entries'
       : null;
+  const freeEntriesPerUser = values.freeEntriesPerUser ?? 0;
+  const freeEntriesError =
+    freeEntriesPerUser > values.entryLimit
+      ? 'Free entries cannot exceed the entry limit per user'
+      : null;
+  // Moderators only (official contests); anyone else sees it just to read a value already set.
+  const showFreeEntries = isModerator || freeEntriesPerUser > 0;
+  const freeEntriesLabel = getFreeEntriesLabel({
+    freeEntriesPerUser,
+    entryLimit: values.entryLimit,
+  });
 
   const isStep2Valid = () =>
     rulesLocked ||
@@ -234,6 +246,7 @@ export function CrucibleUpsertWizard(props: Props) {
       values.entryLimit >= 1 &&
       values.entryLimit <= CRUCIBLE_MAX_ENTRIES &&
       !entryLimitError &&
+      !freeEntriesError &&
       !videoSettingsError);
 
   const totalPrizePercentage = getPrizeDistributionTotal(values.prizePositions);
@@ -308,11 +321,16 @@ export function CrucibleUpsertWizard(props: Props) {
     seededPrizePool: values.seededPrizePool ?? 0,
     entryFee: values.entryFee ?? 0,
     maxTotalEntries: totalEntriesCap,
+    freeEntriesPerUser,
   });
   const prizePoolNote = (
     <Text size="xs" c="dimmed" mt="xs">
-      The prize pool is your seed plus every entry fee, so what each place wins grows with the
-      number of entries.
+      {freeEntriesPerUser > 0
+        ? 'The prize pool is your seed plus every paid entry fee; free entries add nothing.'
+        : 'The prize pool is your seed plus every entry fee, so what each place wins grows with the number of entries.'}
+      {freeEntriesPerUser > 0 &&
+        !values.seededPrizePool &&
+        ' With no seed, winners only share what paid entries bring in.'}
     </Text>
   );
 
@@ -379,7 +397,7 @@ export function CrucibleUpsertWizard(props: Props) {
       <InputCrucibleImage
         name="coverImage"
         label="Cover Image"
-        description="This image appears on discovery cards (16:9 aspect ratio recommended)"
+        description="This image appears on discovery cards, which are portrait, so a tall image works best (about 7:9, e.g. 1400×1800)"
         dropzoneLabel="Drag & drop cover image here or click to browse"
         onUploadingChange={(uploading) => setUploadingImage('coverImage', uploading)}
         withAsterisk
@@ -568,6 +586,22 @@ export function CrucibleUpsertWizard(props: Props) {
         disabled={rulesLocked}
         withAsterisk
       />
+
+      {showFreeEntries && (
+        <InputNumber
+          name="freeEntriesPerUser"
+          label="Free Entries per User"
+          description="Each user's first entries skip the fee and add nothing to the prize pool. Official contests only."
+          min={0}
+          max={values.entryLimit}
+          clampToMax
+          allowNegative={false}
+          allowDecimal={false}
+          clampBehavior="blur"
+          error={freeEntriesError}
+          disabled={rulesLocked || !isModerator}
+        />
+      )}
 
       <div>
         <InputNumber
@@ -974,6 +1008,12 @@ export function CrucibleUpsertWizard(props: Props) {
               {values.entryLimit} {values.entryLimit === 1 ? 'entry' : 'entries'}
             </Text>
           </Group>
+          {freeEntriesLabel && (
+            <Group justify="space-between">
+              <Text c="dimmed">Free Entries</Text>
+              <Text fw={500}>{freeEntriesLabel}</Text>
+            </Group>
+          )}
           <Group justify="space-between">
             <Text c="dimmed">Max Total Entries</Text>
             <Text fw={500}>{values.maxTotalEntries || 'Unlimited'}</Text>
@@ -1081,6 +1121,7 @@ export function CrucibleUpsertWizard(props: Props) {
           }
         : null,
     _count: { entries: crucible?._count.entries ?? 0 },
+    paidEntryCount: crucible?.paidEntryCount ?? 0,
   };
 
   const submitLabel = crucible ? 'Save Changes' : 'Create Crucible';
@@ -1339,8 +1380,12 @@ function CostDifferenceText({
 function PlaceBuzzText({ amount, buzzType }: { amount?: PlaceBuzz; buzzType: CrucibleBuzzType }) {
   const parts = [
     amount?.fromSeed != null && { value: amount.fromSeed, label: 'from your seed' },
-    amount?.whenFull != null && { value: amount.whenFull, label: 'if full' },
-  ].filter((part): part is { value: number; label: string } => !!part);
+    amount?.whenFull != null && {
+      value: amount.whenFull,
+      label: 'if full',
+      prefix: amount.whenFullIsCeiling ? 'up to ' : '',
+    },
+  ].filter((part): part is { value: number; label: string; prefix?: string } => !!part);
   if (!parts.length) return null;
 
   return (
@@ -1349,6 +1394,7 @@ function PlaceBuzzText({ amount, buzzType }: { amount?: PlaceBuzz; buzzType: Cru
         <Group key={part.label} gap={2} wrap="nowrap">
           <CurrencyIcon currency={Currency.BUZZ} type={buzzType} size={12} />
           <Text size="xs" c="dimmed">
+            {part.prefix}
             {part.value.toLocaleString()} {part.label}
           </Text>
         </Group>

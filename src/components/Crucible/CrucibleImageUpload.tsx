@@ -100,7 +100,9 @@ export function CrucibleImageUpload({
         <ImageDropzone
           mt={8}
           onDrop={handleDrop}
-          count={files.length}
+          // A drop replaces the file, so a failed upload must not use up the one slot.
+          count={0}
+          max={1}
           accept={IMAGE_MIME_TYPE}
           label={dropzoneLabel}
         />

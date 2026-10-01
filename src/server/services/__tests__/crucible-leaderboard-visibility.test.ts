@@ -157,6 +157,7 @@ beforeEach(() => {
   findUnique.mockResolvedValue({ ...scanned, status: CrucibleStatus.Active });
   findEntries.mockImplementation(async () => [...rows]);
   queryRaw.mockResolvedValue(ids(rows).map((id) => ({ id })));
+  dbMock.dbRead.crucibleEntry.groupBy.mockResolvedValue([]);
 });
 
 describe('crucible.getEntries — while the crucible is still running', () => {

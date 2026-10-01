@@ -188,6 +188,26 @@ describe('createCrucibleInputSchema', () => {
     ).toBe(false);
   });
 
+  it('allows free entries up to the entry limit and no further', () => {
+    const parse = (freeEntriesPerUser: number) =>
+      createCrucibleInputSchema.safeParse({
+        ...validCreateInput,
+        entryLimit: 3,
+        freeEntriesPerUser,
+      });
+
+    expect(parse(0).success).toBe(true);
+    expect(parse(3).success).toBe(true);
+    expect(parse(4).success).toBe(false);
+    expect(parse(-1).success).toBe(false);
+  });
+
+  it('defaults to no free entries', () => {
+    const result = createCrucibleInputSchema.safeParse(validCreateInput);
+
+    expect(result.success && result.data.freeEntriesPerUser).toBe(0);
+  });
+
   it('rejects prize percentages summing above 100', () => {
     expect(
       createCrucibleInputSchema.safeParse({
@@ -512,6 +532,7 @@ const crucibleRow = (contentType: MediaType, maxClipSeconds: number | null = nul
   contentType,
   entryFee: 0,
   entryLimit: 1,
+  freeEntriesPerUser: 0,
   maxTotalEntries: null,
   minViewSeconds: null,
   maxClipSeconds,
@@ -542,7 +563,7 @@ describe('submitEntry — content type', () => {
     vi.clearAllMocks();
     createNotification.mockResolvedValue(undefined);
     dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucibleRow(MediaType.image));
-    dbMock.dbRead.crucibleEntry.count.mockResolvedValue(0);
+    dbMock.dbWrite.crucibleEntry.count.mockResolvedValue(0);
     dbMock.dbRead.crucibleEntry.findFirst.mockResolvedValue(null);
     dbMock.dbRead.image.findUnique.mockResolvedValue(imageRow(MediaType.image));
     dbMock.dbRead.image.count.mockResolvedValue(1);
@@ -754,7 +775,7 @@ describe('submitEntry — maximum clip length', () => {
     vi.clearAllMocks();
     createNotification.mockResolvedValue(undefined);
     dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucibleRow(MediaType.video, 120));
-    dbMock.dbRead.crucibleEntry.count.mockResolvedValue(0);
+    dbMock.dbWrite.crucibleEntry.count.mockResolvedValue(0);
     dbMock.dbRead.crucibleEntry.findFirst.mockResolvedValue(null);
     dbMock.dbRead.image.findUnique.mockResolvedValue(
       imageRow(MediaType.video, { duration: 6.592 })
@@ -816,7 +837,7 @@ describe('submitEntry — entry fee', () => {
       ...crucibleRow(MediaType.image),
       entryFee: 50,
     });
-    dbMock.dbRead.crucibleEntry.count.mockResolvedValue(0);
+    dbMock.dbWrite.crucibleEntry.count.mockResolvedValue(0);
     dbMock.dbRead.crucibleEntry.findFirst.mockResolvedValue(null);
     dbMock.dbRead.image.findUnique.mockResolvedValue(imageRow(MediaType.image));
     dbMock.dbRead.image.count.mockResolvedValue(1);
@@ -835,6 +856,57 @@ describe('submitEntry — entry fee', () => {
         details: { entityId: 1, entityType: 'Crucible' },
       })
     );
+  });
+});
+
+describe('submitEntry — free entries', () => {
+  const entryData = () => dbMock.dbWrite.crucibleEntry.create.mock.calls[0][0].data;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    createNotification.mockResolvedValue(undefined);
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.image),
+      entryFee: 50,
+      entryLimit: 3,
+      freeEntriesPerUser: 1,
+    });
+    dbMock.dbWrite.crucibleEntry.count.mockResolvedValue(0);
+    dbMock.dbRead.crucibleEntry.findFirst.mockResolvedValue(null);
+    dbMock.dbRead.image.findUnique.mockResolvedValue(imageRow(MediaType.image));
+    dbMock.dbRead.image.count.mockResolvedValue(1);
+    dbMock.dbWrite.crucibleEntry.create.mockResolvedValue({ id: 5, user: { username: 'tester' } });
+    getUserBuzzAccount.mockResolvedValue([{ balance: 500 }]);
+    createMultiAccountBuzzTransaction.mockResolvedValue(undefined);
+  });
+
+  it("takes a person's first entry without charging, even with no Buzz", async () => {
+    getUserBuzzAccount.mockResolvedValue([{ balance: 0 }]);
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    // No transaction is what keeps it out of the prize pool and out of a cancel's refunds.
+    expect(entryData().buzzTransactionId).toBeNull();
+  });
+
+  it('charges the entry after the free ones', async () => {
+    dbMock.dbWrite.crucibleEntry.count.mockResolvedValue(1);
+
+    await submit();
+
+    expect(createMultiAccountBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 50 })
+    );
+    expect(entryData().buzzTransactionId).toMatch(/^crucible-entry-1-42-/);
+  });
+
+  it("counts the entrant's own entries on the primary, so a replica can't miss the last one", async () => {
+    await submit();
+
+    expect(dbMock.dbWrite.crucibleEntry.count).toHaveBeenCalledWith({
+      where: { crucibleId: 1, userId: 42 },
+    });
   });
 });
 
@@ -900,7 +972,7 @@ describe('submitEntry — who and what may enter', () => {
     vi.clearAllMocks();
     createNotification.mockResolvedValue(undefined);
     dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucibleRow(MediaType.image));
-    dbMock.dbRead.crucibleEntry.count.mockResolvedValue(0);
+    dbMock.dbWrite.crucibleEntry.count.mockResolvedValue(0);
     dbMock.dbRead.crucibleEntry.findFirst.mockResolvedValue(null);
     dbMock.dbRead.image.findUnique.mockResolvedValue(imageRow(MediaType.image));
     dbMock.dbRead.image.count.mockResolvedValue(1);

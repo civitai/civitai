@@ -8942,6 +8942,8 @@ model Crucible {
   entryFee          Int            @default(0)
   seededPrizePool   Int            @default(0)
   entryLimit        Int            @default(1)
+  // Each person's first N entries skip the fee and add nothing to the pool. Moderators only.
+  freeEntriesPerUser Int           @default(0)
   maxTotalEntries   Int?
   minViewSeconds    Int?
   maxClipSeconds    Int?

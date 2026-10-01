@@ -5691,6 +5691,7 @@ export interface Crucible {
   entryFee: number;
   seededPrizePool: number;
   entryLimit: number;
+  freeEntriesPerUser: number;
   maxTotalEntries: number | null;
   minViewSeconds: number | null;
   maxClipSeconds: number | null;

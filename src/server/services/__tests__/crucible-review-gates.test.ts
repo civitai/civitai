@@ -230,6 +230,15 @@ describe('list surfaces — featured and judging suggestions', () => {
     }
   );
 
+  it('featured: ranks by a pool that counts only paid entries', async () => {
+    await getFeaturedCrucible({ browsingLevel: 1 });
+
+    const pool = sqlText(queryRaw.mock.calls[0])
+      .split('as "prizePool"')[0]
+      .split('as "entriesCount"')[1];
+    expect(pool).toContain('FILTER (WHERE ce."buzzTransactionId" IS NOT NULL)');
+  });
+
   it('suggestions count only entries this judge could be shown', async () => {
     await getJudgingSuggestions({ userId: 7, browsingLevel: 1, limit: 4 });
 
