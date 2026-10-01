@@ -38,6 +38,19 @@ export const CIVITAI_IMAGE_HOSTS: readonly string[] = [
   // hold MORE hosts than that one origin (an old host kept fetchable across a migration, the image
   // CDN); it may not hold fewer.
   'orchestration.civitai.com',
+  // The LIVE orchestrator's public origin — note `-new`, NOT `-next`. This is the host production
+  // actually mints consumer-blob URLs on (`/v2/consumer/blobs/<uuid>-<n>.jpg?sig=…&exp=…`), so
+  // every App Block output a viewer pays for arrives on it. Omitting it made
+  // `isAllowedSaveImageUrl` return false for all of them and the host reply `image url is not
+  // allowed` (PageBlockHost.tsx:3609) — the viewer's ONLY save route, since `<a download>` is inert
+  // in the block's sandbox. Not the default of `NEXT_PUBLIC_ORCHESTRATOR_ENDPOINT` (that is still
+  // `orchestration.civitai.com`), so the one-directional assertion in
+  // src/__tests__/pages/training-studio-embed-orchestrator-origin.test.ts does not require it; it is
+  // here because the blobs are here. Already trusted by the sibling allowlist
+  // `KNOWN_ORCHESTRATOR_HOSTS` (src/server/services/orchestrator/trusted-blob-url.ts), which is
+  // where to look if either list changes. Resolves and serves today (verified 2026-10-01); per that
+  // file's rule, drop it if it ever stops resolving.
+  'orchestration-new.civitai.com',
   // The "next" orchestrator's public origin. Not the default of
   // `NEXT_PUBLIC_ORCHESTRATOR_ENDPOINT`, so the one-directional assertion in the
   // test above does not require it — but a preview opted onto that orchestrator
