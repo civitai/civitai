@@ -9,6 +9,7 @@ import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
 import {
   aspectRatioNode,
+  sdxlFullAspectRatioNode,
   controlNetsNode,
   CONTROLNET_LIMIT,
   createCheckpointGraph,
@@ -23,11 +24,7 @@ import {
   sliderNode,
   triggerWordsGraph,
 } from './common';
-import {
-  sdxlFamilyAspectRatioBuckets,
-  sdxlFamilyPriorityAspectRatios,
-  sd1AspectRatioBuckets,
-} from '~/shared/constants/generation.constants';
+import { sd1AspectRatioBuckets } from '~/shared/constants/generation.constants';
 import {
   sd1ControlNetPreprocessors,
   sdxlControlNetPreprocessors,
@@ -82,14 +79,9 @@ export const stableDiffusionGraph = new DataGraph<
       const isSD1 = ctx.ecosystem === 'SD1';
       const hasImages = Array.isArray(ctx.images) && ctx.images.length > 0;
       return {
-        ...aspectRatioNode(
-          isSD1
-            ? { options: sd1AspectRatioBuckets }
-            : {
-                options: sdxlFamilyAspectRatioBuckets,
-                priorityOptions: sdxlFamilyPriorityAspectRatios,
-              }
-        ),
+        ...(isSD1
+          ? aspectRatioNode({ options: sd1AspectRatioBuckets })
+          : sdxlFullAspectRatioNode()),
         when: !hasImages,
       };
     },

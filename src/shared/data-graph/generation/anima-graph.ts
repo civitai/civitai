@@ -17,7 +17,7 @@ import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
 import type { ResourceData } from './common';
 import {
-  aspectRatioNode,
+  sdxlFullAspectRatioNode,
   controlNetsNode,
   CONTROLNET_LIMIT,
   createCheckpointGraph,
@@ -31,7 +31,6 @@ import {
   snippetsGraph,
   triggerWordsGraph,
 } from './common';
-import { sdxlAspectRatioBuckets } from '~/shared/constants/generation.constants';
 import { animaControlNetPreprocessors } from '~/shared/constants/controlnets.constants';
 
 // =============================================================================
@@ -114,7 +113,7 @@ export const animaGraph = new DataGraph<
   )
   .merge(createResourcesGraph())
   .node('seed', seedNode())
-  .node('aspectRatio', aspectRatioNode({ options: sdxlAspectRatioBuckets, defaultValue: '1:1' }))
+  .node('aspectRatio', sdxlFullAspectRatioNode())
   .computed(
     'animaVariant',
     (ctx) => (ctx.model?.id ? versionIdToVariant.get(ctx.model.id) : undefined) ?? 'base',

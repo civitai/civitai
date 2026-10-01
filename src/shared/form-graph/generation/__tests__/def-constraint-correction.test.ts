@@ -132,27 +132,58 @@ describe('def constraint correction', () => {
       expect((state(store).aspectRatio as { value: string }).value).toBe(offered.value);
     });
 
-    it('gives SDXL-family the full bucket set without widening the other ~1MP models', () => {
-      const values = (ecosystem: string) =>
-        (
-          makeStore(ecosystem).getField('aspectRatio')?.meta as { options: { value: string }[] }
-        ).options.map((o) => o.value);
+    const FULL = ['21:9', '16:9', '3:2', '4:3', '1:1', '3:4', '2:3', '9:16', '9:21'];
+    const values = (store: Store) =>
+      (store.getField('aspectRatio')?.meta as { options: { value: string }[] }).options.map(
+        (o) => o.value
+      );
 
-      expect(values('SDXL')).toEqual([
-        '9:21',
-        '9:16',
-        '3:4',
-        '2:3',
-        '1:1',
-        '3:2',
-        '4:3',
-        '16:9',
-        '21:9',
-      ]);
-      expect(values('Flux1')).toEqual(['2:3', '1:1', '3:2']);
+    it.each([
+      'SDXL',
+      'Anima',
+      'Flux1',
+      'FluxKrea',
+      'Flux2',
+      'Flux2Klein_9B',
+      'Flux2Klein_4B_base',
+      'ZImageTurbo',
+      'ZImageBase',
+      'Chroma',
+      'HiDream',
+      'PonyV7',
+      'Boogu',
+      'Ideogram',
+    ])('gives %s the full bucket set', (ecosystem) => {
+      const store = makeStore(ecosystem);
+      expect(values(store)).toEqual(FULL);
 
-      const store = makeStore('SDXL');
-      store.set({ aspectRatio: '16:9' });
+      store.set({ aspectRatio: '21:9' });
+      expectValid(store);
+      expect(state(store).aspectRatio).toEqual({ value: '21:9', width: 1536, height: 640 });
+    });
+
+    // BFL's flux1-pro takes 256–1440 per side, so the 1536-long buckets would be refused.
+    it('drops 21:9 and 9:21 for Flux.1 Pro, moving a carried-over one to the closest', () => {
+      const store = makeStore('Flux1');
+      store.set({ aspectRatio: '21:9' });
+      store.set({ model: { id: 922358, model: { type: 'Checkpoint' } } });
+
+      expect(values(store)).toEqual(['16:9', '3:2', '4:3', '1:1', '3:4', '2:3', '9:16']);
+      expectValid(store);
+      expect(state(store).aspectRatio).toEqual({ value: '16:9', width: 1344, height: 768 });
+    });
+
+    // Ultra's 16:9 is 2752×1536; the label exists in Standard and Pro too, so a
+    // label-only check kept Ultra's size in state after the switch.
+    it.each([
+      ['Standard', 691639],
+      ['Pro', 922358],
+    ])("resizes Flux Ultra's 16:9 on a switch to %s", (_, id) => {
+      const store = makeStore('Flux1');
+      store.set({ model: { id: 1088507, model: { type: 'Checkpoint' } } });
+      store.set({ aspectRatio: { value: '16:9', width: 2752, height: 1536 } });
+      store.set({ model: { id, model: { type: 'Checkpoint' } } });
+
       expectValid(store);
       expect(state(store).aspectRatio).toEqual({ value: '16:9', width: 1344, height: 768 });
     });

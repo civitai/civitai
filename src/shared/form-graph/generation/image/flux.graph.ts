@@ -2,7 +2,8 @@ import { branch, defineGraph } from 'form-graph';
 import { fluxControlNetPreprocessors } from '~/shared/constants/controlnets.constants';
 import { checkpointDef } from '../checkpoint';
 import {
-  SDXL_SQUARE_AR,
+  FLUX1_PRO_AR,
+  SDXL_FULL_AR,
   SEED,
   aspectRatioDef,
   boolDef,
@@ -61,7 +62,7 @@ const fluxUltraAspectRatios = [
 /** One lookup for the graph AND the handler — the lanes cannot drift. */
 export const fluxModeOf = versionModeOf(fluxVersionIds, 'standard');
 
-const AR = SDXL_SQUARE_AR;
+const AR = SDXL_FULL_AR;
 const AR_ULTRA = aspectRatioDef({ options: fluxUltraAspectRatios, default: '1:1' });
 const CFG = sliderDef({
   min: 2,
@@ -78,7 +79,7 @@ type FluxModeExt = FamilyExt & { model?: ResourceData | number };
 const draft = defineGraph<FluxModeExt>().field('aspectRatio', AR).field('seed', SEED);
 
 const pro = defineGraph<FluxModeExt>()
-  .field('aspectRatio', AR)
+  .field('aspectRatio', FLUX1_PRO_AR)
   .field('cfgScale', CFG)
   .field('steps', STEPS)
   .field('seed', SEED);

@@ -21,6 +21,8 @@ import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
 import {
   aspectRatioNode,
+  flux1ProAspectRatioNode,
+  sdxlFullAspectRatioNode,
   controlNetsNode,
   CONTROLNET_LIMIT,
   createCheckpointGraph,
@@ -32,7 +34,6 @@ import {
   triggerWordsGraph,
   type ResourceData,
 } from './common';
-import { sdxlAspectRatioBuckets } from '~/shared/constants/generation.constants';
 import { fluxControlNetPreprocessors } from '~/shared/constants/controlnets.constants';
 
 // =============================================================================
@@ -108,7 +109,7 @@ type FluxModeCtx = {
  * Contains: aspectRatio, cfgScale, steps, seed
  */
 const standardModeBaseGraph = new DataGraph<FluxModeCtx, GenerationCtx>()
-  .node('aspectRatio', aspectRatioNode({ options: sdxlAspectRatioBuckets, defaultValue: '1:1' }))
+  .node('aspectRatio', sdxlFullAspectRatioNode())
   .node(
     'cfgScale',
     sliderNode({ min: 2, max: 20, defaultValue: 3.5, step: 0.5, presets: fluxGuidancePresets })
@@ -129,7 +130,7 @@ const standardModeBaseGraph = new DataGraph<FluxModeCtx, GenerationCtx>()
  * Pro mode subgraph: aspectRatio, cfgScale, steps, seed (no resources)
  */
 const proModeGraph = new DataGraph<FluxModeCtx, GenerationCtx>()
-  .node('aspectRatio', aspectRatioNode({ options: sdxlAspectRatioBuckets, defaultValue: '1:1' }))
+  .node('aspectRatio', flux1ProAspectRatioNode())
   .node(
     'cfgScale',
     sliderNode({ min: 2, max: 20, defaultValue: 3.5, step: 0.5, presets: fluxGuidancePresets })
@@ -146,7 +147,7 @@ const standardModeWithResourcesGraph = new DataGraph<FluxModeCtx, GenerationCtx>
 
 /** Draft mode subgraph: aspectRatio, seed */
 const draftModeGraph = new DataGraph<FluxModeCtx, GenerationCtx>()
-  .node('aspectRatio', aspectRatioNode({ options: sdxlAspectRatioBuckets, defaultValue: '1:1' }))
+  .node('aspectRatio', sdxlFullAspectRatioNode())
   .node('seed', seedNode());
 
 /** Ultra mode subgraph: aspectRatio (different options), fluxUltraRaw, seed */

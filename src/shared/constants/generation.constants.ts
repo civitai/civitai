@@ -706,31 +706,33 @@ export const aspectRatioDimensions: Record<
  * scaling a clean ratio.
  */
 
-/** SDXL/Flux training buckets (~1024² area, /64 aligned). Used by SDXL, Pony v7,
- * Chroma, Flux v1/v2, Hi-Dream, Z-Image, Anima, and any other ~1M-pixel
- * diffusion model that follows SDXL's bucketing convention. */
-export const sdxlAspectRatioBuckets = [
-  { label: '2:3', value: '2:3', width: 832, height: 1216 },
-  { label: '1:1', value: '1:1', width: 1024, height: 1024 },
-  { label: '3:2', value: '3:2', width: 1216, height: 832 },
-];
-
-/** The full SDXL training bucket set, portrait to landscape. SDXL-family
- * ecosystems only (SDXL, Pony, Illustrious, NoobAI) — the other ~1M-pixel
- * models above keep the three-bucket list. Labels are approximate, the same
- * way 832×1216 is called 2:3. */
-export const sdxlFamilyAspectRatioBuckets = [
-  { label: '9:21', value: '9:21', width: 640, height: 1536 },
-  { label: '9:16', value: '9:16', width: 768, height: 1344 },
-  { label: '3:4', value: '3:4', width: 896, height: 1152 },
-  ...sdxlAspectRatioBuckets,
-  { label: '4:3', value: '4:3', width: 1152, height: 896 },
-  { label: '16:9', value: '16:9', width: 1344, height: 768 },
+/** The SDXL training bucket set (~1024² area, /64 aligned), widest to tallest —
+ * the order AspectRatioInput displays in. Used by every ~1M-pixel diffusion
+ * ecosystem: SDXL, Pony, Illustrious, NoobAI, Pony v7, Anima, Chroma, Flux.1
+ * (comfy modes), Flux.2, Flux.2 Klein, Hi-Dream, Z-Image, Boogu and Ideogram.
+ * Each of those inputs takes any width/height up to 2048 divisible by 16
+ * (Flux.2 and Klein from 512), so all nine fit. Labels are approximate, the
+ * same way 832×1216 is called 2:3. */
+export const sdxlFullAspectRatioBuckets = [
   { label: '21:9', value: '21:9', width: 1536, height: 640 },
+  { label: '16:9', value: '16:9', width: 1344, height: 768 },
+  { label: '3:2', value: '3:2', width: 1216, height: 832 },
+  { label: '4:3', value: '4:3', width: 1152, height: 896 },
+  { label: '1:1', value: '1:1', width: 1024, height: 1024 },
+  { label: '3:4', value: '3:4', width: 896, height: 1152 },
+  { label: '2:3', value: '2:3', width: 832, height: 1216 },
+  { label: '9:16', value: '9:16', width: 768, height: 1344 },
+  { label: '9:21', value: '9:21', width: 640, height: 1536 },
 ];
 
-/** Shown before the picker's "More" button, so the SDXL picker's first row is unchanged. */
-export const sdxlFamilyPriorityAspectRatios = ['2:3', '1:1', '3:2'];
+/** Flux.1 Pro (BFL `flux1-pro`) caps each side at 1440 (/32), so the 1536-long
+ * 21:9 and 9:21 buckets are out. */
+export const flux1ProAspectRatioBuckets = sdxlFullAspectRatioBuckets.filter(
+  (b) => b.width <= 1440 && b.height <= 1440
+);
+
+/** Shown before the picker's "More" button: the three buckets these pickers offered before. */
+export const sdxlFullPriorityAspectRatios = ['3:2', '1:1', '2:3'];
 
 /** SD1 training buckets (~512² area, /64 aligned). */
 export const sd1AspectRatioBuckets = [

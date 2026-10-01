@@ -16,7 +16,7 @@
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
 import {
-  aspectRatioNode,
+  sdxlFullAspectRatioNode,
   createCheckpointGraph,
   createResourcesGraph,
   imagesNode,
@@ -27,7 +27,6 @@ import {
   triggerWordsGraph,
   type ResourceData,
 } from './common';
-import { sdxlAspectRatioBuckets } from '~/shared/constants/generation.constants';
 
 // =============================================================================
 // Flux.2 Mode Constants
@@ -85,7 +84,7 @@ type Flux2ModeCtx = {
  * Contains: aspectRatio, cfgScale, steps, seed
  */
 const baseModeGraph = new DataGraph<Flux2ModeCtx, GenerationCtx>()
-  .node('aspectRatio', aspectRatioNode({ options: sdxlAspectRatioBuckets, defaultValue: '1:1' }))
+  .node('aspectRatio', sdxlFullAspectRatioNode())
   .node(
     'cfgScale',
     sliderNode({ min: 2, max: 20, defaultValue: 3.5, step: 0.5, presets: flux2GuidancePresets })

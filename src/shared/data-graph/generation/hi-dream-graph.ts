@@ -19,7 +19,7 @@
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
 import {
-  aspectRatioNode,
+  sdxlFullAspectRatioNode,
   createCheckpointGraph,
   createResourcesGraph,
   negativePromptGraph,
@@ -32,7 +32,6 @@ import {
   type VersionGroup,
   type ResourceData,
 } from './common';
-import { sdxlAspectRatioBuckets } from '~/shared/constants/generation.constants';
 
 // =============================================================================
 // HiDream Variant/Precision Constants
@@ -61,7 +60,7 @@ type HiDreamVariantCtx = {
  * Controls are mostly locked in these modes
  */
 const fastDevModeGraph = new DataGraph<HiDreamVariantCtx, GenerationCtx>()
-  .node('aspectRatio', aspectRatioNode({ options: sdxlAspectRatioBuckets, defaultValue: '1:1' }))
+  .node('aspectRatio', sdxlFullAspectRatioNode())
   .node('seed', seedNode());
 
 /**
@@ -69,7 +68,7 @@ const fastDevModeGraph = new DataGraph<HiDreamVariantCtx, GenerationCtx>()
  */
 const fullModeGraph = new DataGraph<HiDreamVariantCtx, GenerationCtx>()
   .merge(createResourcesGraph())
-  .node('aspectRatio', aspectRatioNode({ options: sdxlAspectRatioBuckets, defaultValue: '1:1' }))
+  .node('aspectRatio', sdxlFullAspectRatioNode())
   .merge(negativePromptGraph)
   .node(
     'sampler',

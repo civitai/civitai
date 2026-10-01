@@ -1,6 +1,6 @@
 import { branch, defineGraph } from 'form-graph';
 import { checkpointDef, type VersionGroup } from '../checkpoint';
-import { SDXL_SQUARE_AR, SEED, selectDef, sliderDef } from '../defs';
+import { SDXL_FULL_AR, SEED, selectDef, sliderDef } from '../defs';
 import { familyResources, familyScope, makeTextBlock, modelIdOf, type FamilyExt } from '../shared';
 
 /**
@@ -61,12 +61,12 @@ const variantOf = (ext: HiDreamModeExt): HiDreamVariant => {
 };
 
 const fastDev = defineGraph<HiDreamModeExt>()
-  .field('aspectRatio', SDXL_SQUARE_AR)
+  .field('aspectRatio', SDXL_FULL_AR)
   .field('seed', SEED);
 
 const full = defineGraph<HiDreamModeExt>()
   .field('resources', familyResources)
-  .field('aspectRatio', SDXL_SQUARE_AR)
+  .field('aspectRatio', SDXL_FULL_AR)
   .field('sampler', selectDef({ options: ['UniPC'], default: 'UniPC' }))
   .field('cfgScale', sliderDef({ min: 1, max: 20, default: 5, step: 0.5 }))
   .field('steps', sliderDef({ min: 20, max: 100, default: 50 }))
