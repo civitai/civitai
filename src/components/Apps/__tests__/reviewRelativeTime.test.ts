@@ -126,12 +126,15 @@ describe('compactRelativeAgeOf — the nullable/string wrapper the previews pane
     ['12d', 12 * DAY, '1w'],
     ['45d', 45 * DAY, '1mo'],
     ['400d', 400 * DAY, '1y'],
-  ])('a %s age reads the SHARED ladder, which the deleted one could not produce', (_l, ago, expected) => {
-    // 🔴 The last three rows are unreachable for the deleted ladder: it stopped at days, so
-    // it rendered `12d`/`45d`/`400d`. If a local ladder ever regrows in the panel, the
-    // browser-tier pin in `ActivePreviewsPanel.browser.test.tsx` reds on exactly this.
-    expect(compactRelativeAgeOf(at(ago), NOW)).toBe(expected);
-  });
+  ])(
+    'a %s age reads the SHARED ladder, which the deleted one could not produce',
+    (_l, ago, expected) => {
+      // 🔴 The last three rows are unreachable for the deleted ladder: it stopped at days, so
+      // it rendered `12d`/`45d`/`400d`. If a local ladder ever regrows in the panel, the
+      // browser-tier pin in `ActivePreviewsPanel.browser.test.tsx` reds on exactly this.
+      expect(compactRelativeAgeOf(at(ago), NOW)).toBe(expected);
+    }
+  );
 
   test('a FUTURE timestamp reads `now`, the one divergence that is not a strict improvement', () => {
     // The deleted ladder returned `—` here. DB-written times rendered against a browser
