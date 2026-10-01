@@ -2012,6 +2012,10 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'me',
   'models',
   'poll',
+  // `/api/v1/blocks/resource-intent` — the Jev resource-intent primitive. Static:
+  // the prompt and every parameter ride the POST body, so there is no `:seg`
+  // position on this route and nothing that could fragment the `endpoint` column.
+  'resource-intent',
   // The second segment of `/api/v1/blocks/goods/purchase`. See `goods` above.
   'purchase',
   // `/api/v1/blocks/workflows/query` — the app-subqueue read. Static: the paging

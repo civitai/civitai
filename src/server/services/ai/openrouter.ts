@@ -32,6 +32,9 @@ export const AI_MODELS = {
   QWEN_FLASH: 'qwen/qwen3.7-flash',
   GPT_5_6_LUNA: 'openai/gpt-5.6-luna',
   QWEN_35B: 'urn:air:qwen3:repository:huggingface:Civitai/Qwen3.6-35B-A3B-Abliterated-AWQ@main.tar',
+  // Bounded-judgment vendor model (Choice/Score/Noul only — see services/ai/jev.ts).
+  // Numbered pin on purpose: `jev-latest` is scratch-only and must never ship here.
+  JEV: 'typesafe/jev-1.13',
 
   // Fallback chains
   VISION_PRIMARY: 'openai/gpt-4o',
