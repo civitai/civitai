@@ -263,7 +263,15 @@ describe('typed text outlives the reload every write issues', () => {
     // every assertion below a claim about `undefined`.
     expect(block, 'no <details>…</details> block in FeedbackDetail.svelte').toBeDefined();
 
-    expect(block).toContain('>Technical details</summary>');
+    // The summary carries the operator-specified title AND the badge. The badge is the only thing
+    // that survives the collapse — without it, a report whose session threw forty console errors
+    // looks exactly like a clean one at every level the operator can see. Its WORDING is asserted
+    // behaviourally in `feedback-technical-summary.test.ts`; this only pins that it is rendered.
+    const summary = block!.slice(block!.indexOf('<summary'), block!.indexOf('</summary>'));
+    expect(summary, 'no <summary> in the <details> block').toContain('<summary');
+    expect(summary).toContain('Technical details');
+    expect(summary).toContain('{technicalSummary}');
+
     expect(block).toContain('<FeedbackContextPanel');
 
     // 🔴 THE UNMOUNT PIN. Everything the collapse hides must be mounted unconditionally, so the
