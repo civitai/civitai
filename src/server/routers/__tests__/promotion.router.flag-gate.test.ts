@@ -130,6 +130,16 @@ describe('creator promotions are closed with the flag absent', () => {
     expect(services.getPlacementSpaces).not.toHaveBeenCalled();
   });
 
+  // GATED is written by hand, so this is what makes a new promotion procedure
+  // show up here: it fails until the procedure is in the table above.
+  it('lists every promotion procedure', () => {
+    const listed = GATED.map(([name]) => name)
+      .filter((name) => name.startsWith('promotion.'))
+      .map((name) => name.slice('promotion.'.length))
+      .sort();
+    expect(Object.keys(promotionRouter._def.procedures).sort()).toEqual(listed);
+  });
+
   // The shared space endpoints stay open for the surfaces that are not promotions.
   it('leaves the sticker space readable', async () => {
     await expect(off.placement.getMySpaces({ surface: 'sticker' })).resolves.toEqual([]);
@@ -140,7 +150,8 @@ describe('the same calls with the flag on', () => {
   const on = callersFor({ creatorPromotions: true });
 
   // They may still fail further in, against an empty test database; what they
-  // must not do is fail at the gate.
+  // must not do is fail at the gate. The flag-off row for the same call is what
+  // shows this negative assertion is reached at all, so keep the two together.
   it.each(GATED)('%s passes the gate', async (_name, call) => {
     const outcome = await call(on).then(
       () => undefined,

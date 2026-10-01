@@ -546,12 +546,15 @@ describe('getSponsoredModel', () => {
 
 describe('serving with the flag absent', () => {
   it('serves no sponsored post or model, and reads nothing', async () => {
+    // Rows each getter would serve with the flag on, so an empty result means the gate.
+    const resolvedAt = new Date(Date.now() - 60_000);
     dbMock.dbRead.placement.findMany.mockResolvedValue([
+      { id: PLACEMENT, placerId: PLACER, resolvedAt, data: { modelId: PROMOTED_MODEL, days: 1 } },
       {
         id: PLACEMENT,
         placerId: PLACER,
-        resolvedAt: new Date(Date.now() - 60_000),
-        data: { modelId: PROMOTED_MODEL, days: 1 },
+        resolvedAt,
+        data: { postId: POST, days: 1, modelVersionIds: [HOST_VERSION], imageIds: [11] },
       },
     ]);
     await expect(
