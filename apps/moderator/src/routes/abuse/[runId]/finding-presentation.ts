@@ -154,17 +154,27 @@ export function moreMembersLabel(others: number, named: number): string {
  * reason that describes the evidence in detail, which reads as self-contradictory unless it is
  * labelled.
  *
- * ⚠️ THE EVIDENCE IS THE FORWARD IMPLICATION AND THE STRING ASSERTS THE REVERSE. What was measured is
- * that every finding whose reason begins "Judged and deliberately NOT actioned" carries exactly 0.00;
- * what this prints is that 0.00 MEANS judged-not-abuse, which does not follow from it. Nothing in this
- * repo supports the reverse: no in-repo producer emits a literal 0 (`bot-account-detection` reports a
- * blend, `reaction-withdrawal-detection` is bounded at ≥ 0.90), so the whole `confidence = 0`
- * population comes from the two producers whose code lives elsewhere — the same two this board
- * otherwise refuses to depend on the prose of. 🔴 THE CLAIM IS LOAD-BEARING AND UNVERIFIED AT THIS
- * REF: if some producer ever emits 0.00 meaning "unscored", this hands a moderator a false input. It
- * is kept because the user-lookup panel has said it about these rows since it was built and the two
- * screens must not disagree — not because it was checked. Settle it against those producers before
- * relying on it any harder than this.
+ * ⚠️ THE BICONDITIONAL IS MEASURED OVER THE LIVE DATA, BUT IT IS NOT ENFORCED. Measured 2026-10-01
+ * against the whole finding table (n=4,929): a 2x2 of `(confidence = 0)` against
+ * `(reason LIKE 'Judged and deliberately NOT actioned%')` returns 903 rows in true/true, 4,026 in
+ * false/false, and ZERO in either cross-cell. So BOTH directions hold today — every 0.00 row carries
+ * that reason and every row carrying it is 0.00 — and the string this prints is a true statement
+ * about every row that exists.
+ *
+ * 🔴 WHAT IS UNVERIFIED IS THAT IT STAYS TRUE, AND THE REASON IS WHOSE CODE WRITES IT. No in-repo
+ * producer emits a literal 0 (`bot-account-detection` reports a blend, `reaction-withdrawal-detection`
+ * is bounded at >= 0.90), so the entire `confidence = 0` population is written by the two producers
+ * whose code lives elsewhere — the same two this board otherwise refuses to depend on the prose of.
+ * Nothing constrains them to keep the pairing, and a producer that someday emits 0.00 meaning
+ * "unscored" would hand a moderator a false input with nothing here to notice. A grep of THIS repo
+ * cannot settle that either way: it is the wrong population, which is how an earlier draft of this
+ * comment concluded the claim was never checked at all.
+ *
+ * Re-measure rather than trusting this paragraph — it is a reading of one day's rows:
+ *   SELECT (confidence = 0), (reason LIKE 'Judged and deliberately NOT actioned%'), count(*)
+ *     FROM abuse_detection_finding GROUP BY 1, 2;
+ * Two populated cells on the diagonal means it still holds; anything in a cross-cell means this
+ * label is now lying on that population and the string has to change.
  *
  * `AbuseFindingsPanel.svelte` says the same thing about the same rows on the user-lookup page;
  * this board showed the bare number, so the two screens gave a moderator different readings of one
