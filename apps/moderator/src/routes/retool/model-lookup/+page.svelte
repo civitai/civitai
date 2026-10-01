@@ -5,6 +5,7 @@
   import ActivityPanel from './ActivityPanel.svelte';
   import EngagementPanel from './EngagementPanel.svelte';
   import ModelDetailPanel from './ModelDetailPanel.svelte';
+  import ModelNotesPanel from './ModelNotesPanel.svelte';
   import ScanFlagPanel from './ScanFlagPanel.svelte';
   import VersionsPanel from './VersionsPanel.svelte';
 
@@ -46,6 +47,7 @@
   {#key result.model.id}
     <ModelDetailPanel model={result.model} actors={result.actors} civitaiUrl={data.civitaiUrl} />
     <ScanFlagPanel flag={result.flag} model={result.model} />
+    <ModelNotesPanel modelId={result.model.id} />
     <VersionsPanel
       modelId={result.model.id}
       versions={result.versions}

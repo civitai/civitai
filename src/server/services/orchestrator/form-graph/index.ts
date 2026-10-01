@@ -10,7 +10,6 @@
  */
 
 import { maxRandomSeed } from '~/server/common/constants';
-import { usesComfyEngine } from '~/shared/constants/generation.constants';
 import { isWanEcosystem } from '~/shared/form-graph/generation/video/wan.graph';
 import type { GenerationHandlerCtx, StepInput } from '../ecosystems';
 import { createChromaInput } from './chroma.handler';
@@ -51,6 +50,7 @@ import { createKlingInput } from './kling.handler';
 import { createAceAudioInput } from './ace.handler';
 import { createMiniMaxMusicInput } from './minimax-music.handler';
 import { createYuE2Input } from './yue2.handler';
+import { createSoniloInput } from './sonilo.handler';
 import {
   createPolyGenInput,
   createTripoInput,
@@ -64,7 +64,7 @@ import { createStableDiffusionInput } from './stable-diffusion.handler';
 import { createWanSteps } from './wan.handler';
 import type { WanGenerationData } from './wan.handler';
 import { createZImageInput } from './z-image.handler';
-import type { EcosystemGenerationData, LooseGenerationData } from './types';
+import type { EcosystemGenerationData } from './types';
 
 export type { EcosystemGenerationData, GenerationData, LooseGenerationData } from './types';
 export { createChromaInput } from './chroma.handler';
@@ -105,6 +105,7 @@ export { createKlingInput } from './kling.handler';
 export { createAceAudioInput } from './ace.handler';
 export { createMiniMaxMusicInput } from './minimax-music.handler';
 export { createYuE2Input } from './yue2.handler';
+export { createSoniloInput } from './sonilo.handler';
 export {
   createPolyGenInput,
   createTripoInput,
@@ -123,25 +124,8 @@ export async function createFormGraphStepInput(
   handlerCtx: GenerationHandlerCtx
 ): Promise<StepInput[]> {
   const normalizedData = withSeed(data);
-  const loose = normalizedData as LooseGenerationData;
 
-  const steps = await createStep(normalizedData, handlerCtx);
-
-  if (
-    usesComfyEngine({
-      ecosystem: loose.ecosystem ?? '',
-      modelId: loose.model?.id,
-      enhancedCompatibility: loose.enhancedCompatibility,
-    })
-  ) {
-    for (const step of steps) {
-      if (step.$type === 'textToImage') {
-        (step as { input: Record<string, unknown> }).input.engine = 'comfyui';
-      }
-    }
-  }
-
-  return steps;
+  return createStep(normalizedData, handlerCtx);
 }
 
 /**
@@ -163,7 +147,6 @@ function createStep(
 
   switch (data.ecosystem) {
     case 'SD1':
-    case 'SD2':
     case 'SDXL':
     case 'Pony':
     case 'Illustrious':
@@ -307,6 +290,9 @@ function createStep(
 
     case 'YuE2':
       return createYuE2Input(data, handlerCtx);
+
+    case 'Sonilo':
+      return createSoniloInput(data, handlerCtx);
 
     case 'PolyGen':
       return createPolyGenInput(data, handlerCtx);

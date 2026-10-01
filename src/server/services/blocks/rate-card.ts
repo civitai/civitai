@@ -41,6 +41,36 @@ export type RateCard = {
    * Apps owned by these userIds always pay 0% to publisher — internal
    * civitai apps where the "share" is meaningless because the same
    * legal entity owns both sides of the transaction.
+   *
+   * 🔴 POPULATING THIS NOW HAS A SECOND, NON-MONEY CONSEQUENCE: IT BLANKS THE
+   * OWNER-VISIBLE RUN COUNT FOR EVERY APP LISTED. `recordSpendAttribution`
+   * writes `voided` / `internal_owner` on any spend row whose APP OWNER is in
+   * this list — keyed on `app.userId`, NOT on the spender — and since
+   * 2026-09-29 the two owner-visible reads in
+   * `blocks/app-analytics.service.ts` exclude `status = 'voided'`. So a
+   * team-owned app's analytics panel would report 0 runs / 0 Buzz even for
+   * GENUINE third-party usage, silently.
+   *
+   * That is almost certainly not what you want when you populate this to make
+   * the publisher share 0%. Those are two unrelated intentions riding one
+   * list. Before adding an id here, either confirm that blanking the run count
+   * is intended, or narrow that read's predicate to exclude by `voidedReason`
+   * (`manual_review` + `self_spend`) instead of all of `voided`.
+   *
+   * 🔴 IF YOU NARROW IT, DO NOT USE THE OBVIOUS SPELLING. `voided_reason` is
+   * NULLABLE and NULL *is* the ordinary `tracked` population, so
+   * `voidedReason: { notIn: [...] }`, `{ not: ... }` AND a top-level `NOT` all
+   * drop EVERY real row and zero the dashboard — the same silent-deletion
+   * failure, in the other direction. Measured 2026-09-29:
+   * `NOT (voided_reason IN (…))` retains 0 of 639 rows. Use the explicit
+   * `OR`-with-`null` form. The full reasoning and the measurements are on
+   * `VOIDED_ATTRIBUTION_STATUS` in `blocks/app-analytics.service.ts`; read it
+   * there before editing the read.
+   *
+   * ⚠️ The stale "none of the load-bearing paths read this list yet" comment is
+   * on the **V2** list below, not V4/V5 — corrected here because an earlier
+   * revision of this warning sent the reader to the wrong card. It is out of
+   * date in exactly this way: a READ now depends on this list.
    */
   internalAppOwnerUserIds: number[];
   effectiveFrom: string; // ISO date — informational, not enforced
@@ -138,8 +168,14 @@ export const RATE_CARD_V2: RateCard = {
   subscriptionSharePct: 0,
   internalAppOwnerUserIds: [
     // Populate with civitai team userIds before going live. Empty for
-    // now — none of the load-bearing paths read this list yet, but the
-    // service plumbing checks it. Belt-and-suspenders: platform_default
+    // now. ⚠️ "none of the load-bearing paths read this list yet" was true
+    // when written, and is still true OF THIS CARD — V2 is referenced only by
+    // `rate-card.test.ts`; every production read goes through
+    // `ACTIVE_RATE_CARD`. An earlier revision of this annotation claimed an
+    // owner-visible read depends on THIS list, which is false: the hazard is
+    // on the ACTIVE card, and the warning lives on the `RateCard` type's own
+    // `internalAppOwnerUserIds` docblock. Read it there before populating any
+    // card. The service plumbing checks it. Belt-and-suspenders: platform_default
     // is already 0% so the dominant team-app path doesn't need this
     // list, but per_model_install / publisher_all_my_models for a
     // team-owned app would.
@@ -294,6 +330,16 @@ export const RATE_CARD_V5: RateCard = {
   subscriptionSharePct: 15,
   internalAppOwnerUserIds: [
     // Same as V4 — populate with civitai team userIds before going live.
+    //
+    // 🔴 THIS IS THE ACTIVE CARD (`ACTIVE_RATE_CARD` below), SO THIS IS THE LIST
+    // THAT BITES. Populating it does TWO things, and only one of them is the one
+    // you want: it zeroes the publisher share (intended), and it also blanks the
+    // owner-visible RUN COUNT for every app listed, because `recordSpendAttribution`
+    // writes `voided`/`internal_owner` keyed on the APP OWNER and the owner-visible
+    // reads exclude `voided`. Read the `internalAppOwnerUserIds` docblock on the
+    // `RateCard` type above before adding an id here — it has the mechanism and the
+    // NULL-safe narrowing form. The identical "same as …" comment on V2/V3/V4 is
+    // harmless because nothing in production reads those cards.
   ],
   effectiveFrom: '2026-06-18',
 };

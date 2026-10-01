@@ -577,7 +577,7 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
 
 /**
  * Dedicated kill-switch for the PRIVATE RUN of a DELISTED / SUSPENDED app — the
- * `/apps/private-run/<slug>` SSR route plus the PHASE 3 page-token mint branch, which
+ * `/apps/run/<slug>` SSR route's private-run fallback plus the PHASE 3 page-token mint branch, which
  * together serve a taken-down app's ALREADY-DEPLOYED bundle to its owner, an accepted
  * listing collaborator, or a moderator. Never publicly: the public run route and the
  * public page mint keep their `status: 'approved'` requirement untouched.
@@ -610,20 +610,103 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  * An operator decision on this feature is that a moderator's private run is FULLY
  * INVISIBLE TO THE APP'S OWNER — no moderation event, no play count, and nothing in
  * the owner's analytics. The first two are delivered (the private route deliberately
- * calls neither `recordAppListingOpen` nor any moderation-event writer). THE THIRD IS
- * NOT, in two places, and both are visible in the publisher's own dashboard:
+ * calls neither `recordAppListingOpen` nor any moderation-event writer). THE THIRD is
+ * now delivered on all three rails a private run can WRITE to. Read the ✅/open marks,
+ * not the count — and note item 4, which is a fourth owner-visible read with a stated
+ * decision rather than a filter, so "three rails" is a claim about writers and not about
+ * how many aggregates the owner's panel serves:
  *
- *   1. `block_spend_attribution` — a private run's row is correctly VOIDED, but the
- *      two owner-visible reads in `app-analytics.service.ts` carry no `status`
- *      predicate, so a voided row still counts as a run and its Buzz still sums.
- *      The `status <> 'voided'` filter was deliberately HELD (it drops the large
- *      majority of existing rows at once, and a second consumer of that table lives
- *      outside this repo) — a product decision, not an oversight.
- *   2. `block_scope_invocations` — written by `withBlockScope` for every scoped call
- *      with the real `app_block_id` and the VIEWER's `user_id`, and read into the
- *      owner's panel by five unfiltered queries including a `count(DISTINCT
- *      user_id)`. There is no marker on those rows to filter on, so closing this
- *      half needs a migration.
+ *   1. ✅ `block_spend_attribution` — CLOSED, BY A DIFFERENT MECHANISM THAN THIS ITEM
+ *      ORIGINALLY DESCRIBED. A private run now writes **NO ROW AT ALL**: the exclusion is
+ *      WRITE-side, an early return in `recordSpendAttribution` before the row is built.
+ *      ⚠️ THIS LINE PREVIOUSLY READ "A private run's row is written VOIDED", which was
+ *      true when written and was falsified by the write-side change. It is corrected
+ *      here rather than in a later sweep because this ledger's own 🔴 rule below says to
+ *      fix THIS summary in the same commit that satisfies an item — and the rot it
+ *      warns about is exactly what happened: the mechanism changed and the description
+ *      did not, in the one file the Flipt description points a widener at.
+ *      The owner-visible reads in `app-analytics.service.ts` still exclude
+ *      `status = 'voided'` (the aggregate spreads `OWNER_VISIBLE_SPEND_FILTER`; the raw
+ *      series binds the same constant as a parameter), measured both directions in
+ *      `blocks/__tests__/app-analytics.void-exclusion.test.ts`. 🔴 THOSE FILTERS WERE
+ *      DELIBERATELY KEPT and are NOT dead code — but for ONE reason, not three: they
+ *      exclude `self_spend` and `internal_owner`, which are the entire live voided
+ *      population (the 582 rows below, every one `self_spend`).
+ *      ⚠️ THIS SENTENCE CLAIMED THREE REASONS AND TWO WERE FALSE. It said the filters
+ *      "still exclude the historical private-run rows written before the change" and that
+ *      "`'manual_review'` has a SECOND live producer in `backpay.service.ts` (held rows)".
+ *      There are no historical rows — the flag never shipped, so no private run ever wrote
+ *      one. And `backpay.service.ts` writes `blockSubscriptionAttribution`, a DIFFERENT
+ *      TABLE, with `status: 'held'`, which a `status = 'voided'` filter does not exclude
+ *      in any case. 🔴 THIS COPY SURVIVED THE SWEEP THAT RETRACTED THE OTHER FOUR — in
+ *      the one file this ledger itself calls the one a widener opens. A retraction is a
+ *      tree-wide sweep or it is nothing.
+ *      ⚠️ IT SHIPPED AS A DELIBERATE CHANGE TO EXISTING DISPLAYED NUMBERS, which is the
+ *      part an operator should know rather than discover: 639 rows to 57 (91.08%), 4,738
+ *      Buzz to 268 (94.34%). The two reasons it had been HELD were both settled by
+ *      measurement — the drop is entirely owners' own self-testing (every voided row is
+ *      `self_spend` with `app_owner_user_id = user_id`, and no real third-party usage row
+ *      is voided at all), and the unnamed "second consumer outside this repo" turned out to
+ *      be an OPERATOR-facing analytics digest job outside this repo, which is not
+ *      owner-facing and was fixed in the same sweep, as an independent change in that
+ *      repo. No money moved: `spendSharePct` and `appOwnerShareCents` are hardcoded 0.
+ *      (Kept unspecific on purpose — this repo is public.)
+ *      🔴 STILL OWED, AND NOT CLOSED BY THE CODE: the acceptance check. One private run
+ *      against a delisted app, then read that app's own analytics panel and confirm `runs`
+ *      / `runs.buzzSpent` did not move. A unit test is not that claim.
+ *   2. ✅ `block_scope_invocations` — CLOSED. Written by `withBlockScope` for every
+ *      scoped call with the real `app_block_id` and the VIEWER's `user_id`. The rows
+ *      now carry a `source` marker on an EXISTING column — no migration was needed — and
+ *      all five owner-visible reads exclude it: four Prisma reads spread
+ *      `OWNER_VISIBLE_INVOCATION_FILTER`, and the raw `count(DISTINCT user_id)` spells the
+ *      same constant as `"source" <> $n`. ⚠️ Editing that filter moves FOUR of the five;
+ *      the distinct-user count is the one that does not follow.
+ *   3. ✅ `blockRenders` (owner-visible IMPRESSIONS: `views.count` /
+ *      `views.uniqueViewers`) — CLOSED AT THE WRITERS. A private run mounts the host, so
+ *      it emitted a row like any other view and the reviewer landed as an identifiable
+ *      unique viewer. Both writers now consult `blocks/private-run-impression.service`
+ *      and skip the insert; the canonical reasoning is at `blocks/app-views.service.ts`.
+ *      🔴 BUT IT LEAVES ONE THING FOR WHOEVER WIDENS THIS FLAG, and this is the reason
+ *      the item stays here rather than only at the read site:
+ *        (a) ✅ SATISFIED. The key EXISTS in `flipt-state`, base-off with no rollout
+ *            (`civitai/flipt-state` PR #100, squash `c94c807`; verified present at
+ *            `enabled: false`). It had to, because an ABSENT key makes the evaluation
+ *            throw — bypassing the eval cache and logging on every reaching call — and
+ *            that gate sits on the `/api/track/block-render` beacon. Left here as a
+ *            SATISFIED entry rather than deleted: the requirement still binds if anyone
+ *            ever removes that row, and a deleted line cannot say so.
+ *        (b) 🔴 NOTHING ON THIS SURFACE IS RATE-LIMITED, AND THE POPULATION IS THREE
+ *            DOORS, NOT TWO. Once this flag admits anyone, each door can reach the
+ *            private-run access predicate — which touches the write primary — on a
+ *            caller-chosen app id.
+ *            ⚠️ THIS ITEM READ "NEITHER OF THE TWO WRITERS IS RATE-LIMITED … Settle it
+ *            for BOTH writers, not one … Both writers are enumerated in
+ *            `blocks/__tests__/block-render-writer.call-site-ledger.test.ts`, so 'both'
+ *            is followable." That enumeration is now INCOMPLETE and following it would
+ *            leave a door open: it covers the two `blockRenders` beacon writers, and the
+ *            THIRD door is the SSR run route `src/pages/apps/run/[slug]/[[...path]].tsx`,
+ *            which reaches the same predicate as a fallback and is PUBLIC, linked and
+ *            crawlable. Note the subject also shifts — `blockRenders` WRITERS and callers
+ *            of the ACCESS PREDICATE are different populations; the predicate's own
+ *            enumeration is `blocks/__tests__/private-run-access.call-site-ledger.test.ts`
+ *            (three callers), which is the one to follow for THIS item.
+ *            🔴 SETTLING IT: the rate-limiter PR was closed unmerged — it bounded one of
+ *            the beacon callers while the SSR route drove the same read unbounded — so the
+ *            cost bound today is THE FLAG ITSELF, by decision. That is sound only while
+ *            the flag admits trusted audiences. RE-PRICE BEFORE WIDENING TO ALL APP
+ *            OWNERS: an owner is not an operator.
+ *            (Keep this at the level of the missing control — this repo is public.)
+ *   4. ⚖️ `block_buzz_attribution` (owner-visible `buzzPurchased`) — NOT FILTERED, BY
+ *      DECISION, and recorded here so the enumeration is not mistaken for complete at
+ *      three. `getMyAppAnalytics` aggregates this table into `buzzPurchased` with no
+ *      private-run predicate, and its writer has no `privateRun` arm — its only void is
+ *      `isSelfPurchase`. So a reviewer who completed a real CARD PURCHASE inside a
+ *      delisted app during a private run would land in that owner's `buzzPurchased`.
+ *      Left open because it costs the reviewer real money, which makes it a path nobody
+ *      takes by accident rather than a leak a review run produces incidentally — every
+ *      other rail here fires on an ordinary review with no spend at all. Revisit if a
+ *      private run ever gets a test-mode or granted-Buzz purchase path, because that
+ *      removes the only thing keeping it shut.
  *
  * 🔴 WHY THIS PARAGRAPH IS IN THIS FILE. The dependency was previously recorded only
  * in a docblock on the attribution arm and in a merged PR body — neither of which is
@@ -632,9 +715,37 @@ export async function isAppBlocksDevTunnelUnsubmittedSpendEnabled(opts?: {
  * refuse before resolving anything, so no private-run row of either kind can exist.
  * It becomes live the moment this value is anything else.
  *
- * So, before widening on THIS count: either land both filters, or record the operator
- * decision that owner-visible analytics should keep counting private runs. Do not widen on
- * the assumption that the void alone delivers the invisibility — it does not.
+ * So, before widening on THIS count, exactly TWO things remain — item 1's filter has LANDED
+ * and item 3's flag-key carry-over is SATISFIED:
+ *   · item 3(b): 🔴 RESTATED — it is no longer "the two unrate-limited `blockRenders`
+ *     writers". NOTHING on this surface is rate-limited: the limiter PR was closed
+ *     unmerged (its limiter covered one of two callers of the access predicate while the
+ *     SSR route drove the same read unbounded), and the rescope then wired the PUBLIC,
+ *     linked, crawlable `/apps/run/<slug>` into that same predicate as a fallback. So the
+ *     enumeration is THREE doors, not two, and the cost bound is now THE FLAG ITSELF
+ *     rather than any limiter. That is a deliberate operator decision on the grounds that
+ *     the flag admits only trusted audiences — and it is only sound while that holds.
+ *     🔴 RE-PRICE THIS BEFORE WIDENING TO ALL APP OWNERS: an owner is not an operator,
+ *     and `private-run-access.service.ts`'s `dbWrite.user.findUnique` ignores the
+ *     `db: 'read'` argument it is passed, so a resolve that REACHES it hits the write
+ *     primary. ⚠️ Not "every resolve": it sits behind the flag check, the session-level
+ *     viewer check and the block resolve, so `flag-off`, anonymous, `no-app`, `approved`
+ *     and `not-a-page` all return before it. The earlier wording overstated the reachable
+ *     population — in the conservative direction, but this figure is the input to the
+ *     re-price decision this paragraph triggers, so it should be the real one.
+ *   · item 1's acceptance check: one real private run, read on the owner's own analytics panel.
+ * ⚠️ THIS PARAGRAPH SAID "All three analytics rails now filter, so the void DOES deliver
+ * the invisibility at the row level." Rail 1 no longer filters and there is no void — a
+ * private run writes NO spend-attribution row at all. The other rails are unchanged. What
+ * is still true is the part that mattered: none of it delivers the evidence that the
+ * feature works end to end, which is what the acceptance check buys.
+ *
+ * ⚠️ THIS PARAGRAPH IS A COUNT, AND A COUNT IS THE THING THAT ROTS. It said "item 3's two
+ * carry-overs (the flag key existing in `flipt-state`, …)" while that key had ALREADY been
+ * created hours earlier — the same shape that has now bitten this feature four times: a
+ * precondition true when written, satisfied by work that landed since, still reading as open
+ * in the one file a widener opens. If you satisfy an item, fix THIS summary in the same commit,
+ * not only the item above. Do not restate the count anywhere else; point here.
  *
  * ────────────────────────────────────────────────────────────────────────────────
  * 🔴 SECOND PRECONDITION, AND IT IS A PRODUCT QUESTION RATHER THAN A DELIVERY GAP:

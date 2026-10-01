@@ -105,7 +105,7 @@ Graph: src/shared/data-graph/generation/<name>-graph.ts
 
 Handler: src/server/services/orchestrator/ecosystems/<name>.handler.ts
 - Types: <from @civitai/orchestration-client, or generic>
-- Step type: <imageGen | videoGen | textToImage>
+- Step type: <imageGen | videoGen>
 - Fixed params: sampler=<x>, scheduler=<y> (if applicable)
 
 Wiring:
@@ -178,7 +178,7 @@ Template:
 ```ts
 import type {
   <EcosystemSpecificInputType>, // e.g., SeedanceVideoGenInput
-  <StepTemplateType>,            // ImageGenStepTemplate | VideoGenStepTemplate | TextToImageStepTemplate
+  <StepTemplateType>,            // ImageGenStepTemplate | VideoGenStepTemplate
 } from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
@@ -195,12 +195,11 @@ export const create<Name>Input = defineHandler<<Name>Ctx, [<StepTemplateType>]>(
   // Branch by model version if multiple variants produce different input types
   // For LoRA support: map resources to the format the type expects
   //   - Record<string, number> for comfy-based ecosystems (AIR → strength)
-  //   - Record<string, ImageJobNetworkParams> for textToImage
   //   - Array of { air, strength } for some video types
 
   return [
     {
-      $type: '<imageGen | videoGen | textToImage>',
+      $type: '<imageGen | videoGen>',
       input: removeEmpty({
         engine: '<engine>',
         // ecosystem: '<name>',  // only for comfy engine
@@ -311,6 +310,8 @@ See [docs/features/featured-auction-ecosystem-sync.md](docs/features/featured-au
 | 3 | files + `allowCommercialUse` + `baseModel IN "GenerationBaseModel"` (or `type = 'Upscaler'`); a **Checkpoint** qualifies differently per rule — see below | downloadable weights |
 
 Branch 3 is where the two rules part. Under `coveredNext` a checkpoint needs a scanned **SafeTensor** weight file, because the loader serves nothing else; under `covered` it needs a `CoveredCheckpoint` row instead. The file-format test differs too: `covered` excludes Diffusers for every type, `coveredNext` accepts it for everything but checkpoints. Branches 1 and 2 are identical under both.
+
+⚠️ **The view does not know about `modelLocked`, and a covered checkpoint there is still not generatable.** `isGenerationEligible` holds a Checkpoint on a `modelLocked` ecosystem to the LIVE column whichever rule is live, because `createCheckpointGraph` rewrites any foreign checkpoint id back to the workflow default — server parse included — so it could never reach the orchestrator. Branch 2 — an `EcosystemCheckpoints` row — is on the live column, so an ecosystem's own default checkpoints are unaffected however locked it is, as is an auction winner (branch 3 under the live rule). Do not add a coverage row expecting it to make a community checkpoint generatable on such an ecosystem.
 
 `GenerationBaseModel` is consulted by **branch 3 only**. For a file-less API model the row is inert — correct to add for the future, but it is not what makes the model generatable, so don't stop there and assume you're done.
 
@@ -486,6 +487,6 @@ Skip this if the variants share the same slider ranges (e.g. version bumps with 
 - **Always check `@civitai/orchestration-client` first.** Skipping this step leads to hand-rolled types that drift from the orchestrator API.
 - **`engine` string conventions**: `'comfy'` uses a separate `ecosystem` field; most other engines (`'sdcpp'`, `'seedance'`, `'vidu'`, etc.) use the engine string directly.
 - **Sampler/scheduler**: if the provider recommends a single fixed sampler+scheduler, hardcode them in the handler rather than creating UI controls. Simpler UX and avoids bad user choices.
-- **Model-locked ecosystems**: set `modelLocked: true` in `ecosystemSettings.defaults` unless the ecosystem has multiple user-selectable checkpoints.
+- **Model-locked ecosystems**: set `modelLocked: true` in `ecosystemSettings.defaults` unless the ecosystem has multiple user-selectable checkpoints. This is **not** only a form setting — `isGenerationEligible` reads the same flag through `isModelLockedBaseModel` and holds every Checkpoint on the ecosystem to the LIVE coverage column, so the staged expansion stops making community checkpoints there generatable or loadable (an `EcosystemCheckpoints` row or an auction win still does). Clearing the flag restores them on the next request. Nothing else to update: no migration, no view change, no backfill.
 - **Aspect ratio source**: prefer HuggingFace model card recommended resolutions over round-number guesses. They affect output quality significantly.
 - **Aspect ratio `priorityOptions`**: when an ecosystem exposes more than ~5 aspect ratios, pass `priorityOptions` to `aspectRatioNode` so the UI shows a standard preferred subset up front and tucks the rest behind the "More" overflow. Use the standard preferred set `['16:9', '4:3', '1:1', '3:4', '9:16']` (as Lens and NanoBanana do) when the ecosystem supports those ratios; substitute the nearest available ratio for any it lacks (e.g. Krea2 uses `4:5` in place of `3:4`). Without `priorityOptions`, every ratio renders inline, which is noisy for wide ratio sets.

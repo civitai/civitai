@@ -35,11 +35,7 @@ import {
 } from '~/server/db/db-lag-helpers';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { logToAxiom } from '~/server/logging/client';
-import {
-  dataForModelsCache,
-  modelVersionAccessCache,
-  modelVersionResourceCache,
-} from '~/server/redis/caches';
+import { dataForModelsCache, modelVersionAccessCache } from '~/server/redis/caches';
 import type { DonationGoalWithTotal } from '~/server/redis/caches';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -57,7 +53,6 @@ import type {
   DeleteExplorationPromptInput,
   EarlyAccessModelVersionsOnTimeframeSchema,
   GetModelVersionByModelTypeProps,
-  GetModelVersionsPopularityInput,
   ModelVersionPaidAccessInputSchema,
   ModelVersionMeta,
   ModelVersionsGeneratedImagesOnTimeframeSchema,
@@ -1791,8 +1786,7 @@ export const publishModelVersionById = async ({
     select: { id: true },
   });
 
-  if (!republishing && !meta?.unpublishedBy)
-    await updateModelLastVersionAt({ id: version.modelId });
+  await updateModelLastVersionAt({ id: version.modelId, onlyForward: republishing });
   await bustMvCache(version.id, version.modelId);
 
   // Best-effort: evict any cached by-hash 404 for this version's hashes so a
@@ -2896,10 +2890,6 @@ export const createModelVersionPostFromTraining = async ({
   // Returned so request handlers can emit the post-create ClickHouse event
   // (track.post) — the service-level createPost above doesn't track on its own.
   return post;
-};
-
-export const getModelVersionsPopularity = async ({ ids }: GetModelVersionsPopularityInput) => {
-  return await modelVersionResourceCache.fetch(ids);
 };
 
 /**

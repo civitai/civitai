@@ -79,7 +79,11 @@ import {
   TrialAccessWarning,
   TrialBlockedAlert,
 } from '~/components/Generate/GenerationPaidAccessAlerts';
-import { parseTrialMessage } from '~/components/Generate/paid-access-gate';
+import {
+  parseTrialMessage,
+  selectedResourceIds,
+  type SelectedResources,
+} from '~/components/Generate/paid-access-gate';
 import { useResourceDataContext } from './inputs/ResourceDataProvider';
 import { useWhatIfContext } from './WhatIfProvider';
 import { filterSnapshotForSubmit } from './utils';
@@ -533,6 +537,15 @@ function PriorityAlertSpace({
   const totalCost = useTotalGenerationCost();
   const featureFlags = useFeatureFlags();
   const graph = useGraph<GenerationGraphTypes>();
+  const { model, resources, vae } = useGraphSubscriptions(graph, [
+    'model',
+    'resources',
+    'vae',
+  ] as const) as SelectedResources;
+  const selectedIds = useMemo(
+    () => selectedResourceIds({ model, resources, vae }),
+    [model, resources, vae]
+  );
 
   // Check if user has insufficient buzz of the selected type
   // Don't show insufficient buzz until the buzz query has resolved
@@ -587,6 +600,7 @@ function PriorityAlertSpace({
     showingTrialAlert = true;
     priorityAlert = (
       <TrialBlockedAlert
+        selectedIds={selectedIds}
         message={blockingTrialMessage}
         remaining={trialRemaining}
         onClose={blockingTrialMessage === submitError ? onClearSubmitError : undefined}
@@ -713,7 +727,9 @@ function PriorityAlertSpace({
       <GeneratorMessageWarnings />
       <BaseModelWarnings />
       <DownloadWarning />
-      {whatIfSettled && !showingTrialAlert && <TrialAccessWarning remaining={trialRemaining} />}
+      {whatIfSettled && !showingTrialAlert && (
+        <TrialAccessWarning selectedIds={selectedIds} remaining={trialRemaining} />
+      )}
       {priorityAlert}
     </>
   );

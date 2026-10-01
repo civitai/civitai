@@ -73,6 +73,21 @@ vi.mock('~/server/services/blocks/known-app-blocks.service', () => ({
   boundAppBlockIdLabel: vi.fn(async (id: string) => (id === 'apb_test' ? id : 'other')),
 }));
 
+// Private-run gate: pinned to "not a private run" so every case in THIS file stays a
+// statement about the path it names (origin guard, parse, isAnon, prom labels,
+// `secondary`) rather than about an access predicate.
+//
+// 🔴 MOCKED EXPLICITLY, AND THAT MATTERS. With the real gate and this file's partial
+// `known-app-blocks` mock above, its internal lookup is `undefined`, it throws, and the
+// gate's fail-open catch returns "not a private run" — so every assertion here would pass
+// for a reason unrelated to what it claims, and would keep passing if the gate were
+// deleted. The real gate is exercised, with its own leaves mocked, in
+// `src/tests/api/track/block-render.private-run.test.ts` (behaviour, both writers) and
+// `src/server/services/blocks/__tests__/private-run-impression.service.test.ts` (decision).
+vi.mock('~/server/services/blocks/private-run-impression.service', () => ({
+  isPrivateRunImpression: vi.fn(async () => false),
+}));
+
 function makeRes() {
   const res = {} as NextApiResponse & { _status?: number; _body?: unknown };
   res.status = vi.fn((code: number) => {

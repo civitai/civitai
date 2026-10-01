@@ -285,7 +285,7 @@ The workflows endpoint supports these query parameters:
 
 ### Step Types (Recipes)
 
-Image/Video generation steps you might encounter:
+Generation steps you might encounter:
 - `textToImage` - Text to image generation
 - `imageGen` - General image generation
 - `videoGen` - Video generation
@@ -299,6 +299,8 @@ Image/Video generation steps you might encounter:
 - `preprocessVideo` - ControlNet preprocessor over a video (output is a `blob`, a VideoBlob)
 - `aceStepAudio` - Audio generation; blob is AudioBlob, or VideoBlob in cover-image mode
 - `miniMaxMusic3` - Music generation
+- `yuE2` - Music generation
+- `soniloAudioGen` - Music or sound-effect generation (`input.operation`)
 
 ## Examples
 

@@ -1,4 +1,4 @@
-import { type ModelVersionTerms, generationPrice } from '@civitai/buzz';
+import { type ModelVersionTerms, acceptsBlueBuzz, generationPrice } from '@civitai/buzz';
 import { generatorReadiness } from '~/shared/generation/generator-readiness';
 import { formatLicensingFee } from '~/utils/licensing-fee-display';
 import {
@@ -314,6 +314,8 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   // same reason the tier cap is never folded into it. That rule protects an editor, not a button: an
   // owner reading their own model page should see the price a buyer is quoted, like everyone else.
   const displayTerms = saleForViewer?.buyerTerms ?? paidAccessTerms;
+  // Which Buzz the price chips advertise — a sale that takes Blue must not read as Yellow-only.
+  const paidAccessAcceptsBlue = acceptsBlueBuzz(paidAccessTerms);
   const isDraft = version?.status === ModelStatus.Draft;
 
   // const shouldOmit = [1562709, 1672021, 1669468].includes(model.id) && !user?.isModerator;
@@ -577,6 +579,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               ? displayTerms.download.price
               : undefined
           }
+          acceptsBlueBuzz={paidAccessAcceptsBlue}
           isLoadingAccess={isLoadingAccess}
           archived={archived}
           onPurchase={() => onPurchase('download')}
@@ -751,6 +754,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                             ? generationPrice(displayTerms) || undefined
                             : undefined
                         }
+                        acceptsBlueBuzz={paidAccessAcceptsBlue}
                         onPurchase={() => onPurchase('generation')}
                         fullWidth
                       />
@@ -1168,6 +1172,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       ? paidAccessTerms.download.price
                       : undefined
                   }
+                  acceptsBlueBuzz={paidAccessAcceptsBlue}
                   isLoadingAccess={isLoadingAccess}
                   archived={archived}
                   onPurchase={() => onPurchase('download')}

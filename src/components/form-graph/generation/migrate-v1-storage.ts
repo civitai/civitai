@@ -53,9 +53,6 @@ export function buildV1MigrationIntent(
   take(preferences, 'outputFormat');
   take(preferences, 'priority');
 
-  const draft = readRecord(read, `${V1_KEY}.workflow.txt2img:draft`);
-  take(draft, 'quantity', scopedAddress('quantity', 'txt2img:draft'));
-
   for (const output of OUTPUT_TYPES) {
     const record = readRecord(read, `${V1_KEY}.output.${output}`);
     take(record, 'ecosystem', scopedAddress('ecosystem', output));

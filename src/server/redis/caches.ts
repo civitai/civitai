@@ -17,9 +17,7 @@
  *
  * Delete this disable once the caches below are lazy — the rule then guards them.
  */
-import type { ResourceInfo } from '@civitai/client';
 import { Prisma } from '@prisma/client';
-import { env } from '~/env/server';
 import type { BaseModelType } from '~/server/common/constants';
 import { CacheTTL } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
@@ -43,14 +41,12 @@ import {
   modelTagCompositeSelect,
 } from '~/server/selectors/tag.selector';
 import type { EntityAccessDataType } from '~/server/services/common.service';
-import { getModelClient } from '~/server/services/orchestrator/models';
 import type { CachedObject } from '~/server/utils/cache-helpers';
 import { createCachedObject } from '~/server/utils/cache-helpers';
 import { L1_CACHE_BYTE_BUDGETS } from '~/server/redis/l1-cache-budget';
 import type { UserMultiplierRow, UserMultipliers } from '~/server/redis/user-multipliers';
 import { foldUserMultipliers } from '~/server/redis/user-multipliers';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
-import { modelVersionToAir } from '~/server/utils/resource-air';
 import {
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
@@ -229,6 +225,8 @@ type CosmeticLookup = {
   type: CosmeticType;
   data: Prisma.JsonValue;
   source: CosmeticSource;
+  /** Absent on entries written before the column existed; read as no flags. */
+  flags?: number;
 };
 export const cosmeticCache = createCachedObject<CosmeticLookup>({
   key: REDIS_KEYS.CACHES.COSMETICS,
@@ -239,7 +237,7 @@ export const cosmeticCache = createCachedObject<CosmeticLookup>({
     const db = fromWrite ? dbWrite : dbRead;
     const cosmetics = await db.cosmetic.findMany({
       where: { id: { in: goodIds } },
-      select: { id: true, name: true, type: true, data: true, source: true },
+      select: { id: true, name: true, type: true, data: true, source: true, flags: true },
     });
     return Object.fromEntries(cosmetics.map((x) => [x.id, x]));
   },
@@ -1781,12 +1779,6 @@ export const modelTagCache = createCachedObject<ModelTagCacheItem>({
   ttl: CacheTTL.day,
 });
 
-export type ModelVersionResourceCacheItem = {
-  versionId: number;
-  popularityRank: number | null;
-  isFeatured: boolean;
-  isNew: boolean;
-};
 export type ImageResourceCacheItem = {
   imageId: number;
   modelVersionId: number;
@@ -1874,77 +1866,6 @@ export function getBaseModelFromResources(
   const checkpoint = resources.find((r) => r.modelType === 'Checkpoint');
   return checkpoint?.baseModel ?? null;
 }
-
-export const modelVersionResourceCache = createCachedObject<ModelVersionResourceCacheItem>({
-  key: REDIS_KEYS.CACHES.MODEL_VERSION_RESOURCE_INFO,
-  idKey: 'versionId',
-  ttl: CacheTTL.day,
-  lookupFn: async (ids, fromWrite) => {
-    const db = fromWrite ? dbWrite : dbRead;
-    const mvInfo = await db.modelVersion.findMany({
-      where: { id: { in: ids } },
-      select: {
-        id: true,
-        baseModel: true,
-        model: { select: { id: true, type: true } },
-        files: { select: { type: true, metadata: true } },
-      },
-    });
-
-    const versionInfo = await Promise.all(
-      mvInfo.map(async (v) => {
-        try {
-          const md = await getModelClient({
-            token: env.ORCHESTRATOR_ACCESS_TOKEN,
-            air: modelVersionToAir({
-              ...v,
-              files: v.files as { type: string; metadata: BasicFileMetadata }[],
-            }),
-          });
-          if (!md || !!md.error)
-            return {
-              popularityRank: 0,
-              isFeatured: false,
-              isNew: false,
-              id: v.id,
-            };
-
-          const data: ResourceInfo = md.data;
-          const isNew = !!data.publishedAt
-            ? dayjs(data.publishedAt).isAfter(dayjs().subtract(7, 'day'))
-            : false;
-
-          return {
-            popularityRank: data.popularityRank ?? 0,
-            isFeatured: data.isFeatured ?? false,
-            isNew,
-            id: v.id,
-          };
-        } catch (e) {
-          console.error(e);
-          return {
-            popularityRank: 0,
-            isFeatured: false,
-            isNew: false,
-            id: v.id,
-          };
-        }
-      })
-    );
-
-    return Object.fromEntries(
-      versionInfo.map((vi) => [
-        vi.id,
-        {
-          versionId: vi.id,
-          popularityRank: vi.popularityRank ?? 0,
-          isFeatured: vi.isFeatured ?? false,
-          isNew: vi.isNew ?? false,
-        },
-      ])
-    );
-  },
-});
 
 type UserDownloadItem = {
   modelVersionId: number;

@@ -269,6 +269,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
       const eligible = (x: (typeof modelVersions)[number], covered: boolean | undefined) =>
         isGenerationEligible({
           covered,
+          coveredLive: x.generationCoverage?.covered,
           baseModel: x.baseModel,
           modelType: model.type,
           flags: x.flags,
@@ -340,12 +341,14 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
             hashData: hashes.map((hash) => ({ hash: hash.hash, type: hash.hashType })),
             canGenerate: isGenerationEligible({
               covered: generationCoverage?.covered,
+              coveredLive: generationCoverage?.covered,
               baseModel: x.baseModel,
               modelType: model.type,
               flags: x.flags,
             }),
             canGenerateNext: isGenerationEligible({
               covered: generationCoverage?.coveredNext,
+              coveredLive: generationCoverage?.covered,
               baseModel: x.baseModel,
               modelType: model.type,
               flags: x.flags,

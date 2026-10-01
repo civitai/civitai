@@ -1,9 +1,9 @@
 import { Prisma } from '@prisma/client';
 import {
   coverageAudience,
-  coveredByForUser,
+  coveragePair,
+  coveragePairForUser,
   nextCoverageEnabled,
-  pickCovered,
 } from '~/server/services/generation/coverage-source';
 import { TRPCError } from '@trpc/server';
 import { isPaidAccessActive } from '@civitai/buzz';
@@ -268,9 +268,7 @@ export const getModelHandler = async ({
         availability: v.availability,
         usageControl: v.usageControl,
         baseModel: v.baseModel,
-        covered:
-          coveredByForUser(v, useNext, { member, isCheckpoint: model.type === 'Checkpoint' }) ??
-          false,
+        ...coveragePairForUser(v, useNext, { member, isCheckpoint: model.type === 'Checkpoint' }),
         modelUserId: model.user.id,
         modelType: model.type,
         flags: v.flags,
@@ -832,7 +830,7 @@ export const publishModelHandler = async ({
     const modelMeta = model.meta as ModelMeta | null;
     const republishing =
       model.status !== ModelStatus.Draft && model.status !== ModelStatus.Scheduled;
-    const { needsReview, unpublishedReason, unpublishedAt, customMessage, ...meta } =
+    const { needsReview, unpublishedReason, unpublishedAt, unpublishedBy, customMessage, ...meta } =
       modelMeta || {};
     const updatedModel = await publishModelById({ ...input, meta, republishing });
 
@@ -1842,7 +1840,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
                 status: v.status,
                 availability: v.availability,
                 baseModel: v.baseModel,
-                covered: pickCovered(v, useNext),
+                ...coveragePair(v, useNext),
                 modelUserId: m.user.id,
                 modelType: m.type,
                 flags: v.flags,

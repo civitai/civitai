@@ -495,7 +495,11 @@ export function ImageDetail2() {
                             <ImageDetailReactions image={image} />
                             {/* Inside the provider, not beside it: the bar reads
                                 the same `buttonStyling` the reactions do. */}
-                            <StickerPlacementBar imageId={image.id} className="ml-2" />
+                            <StickerPlacementBar
+                              imageId={image.id}
+                              imageNsfwLevel={image.nsfwLevel}
+                              className="ml-2"
+                            />
                           </ReactionSettingsProvider>
                         </div>
                         <CarouselIndicators {...carouselNavigation} />

@@ -665,8 +665,10 @@ describe('resolvePrivateRunAccess — the pool is threaded, not defaulted [REG]'
 describe('resolvePrivateRunAccess — the resolver is queried by the key it was GIVEN', () => {
   it('a slug lookup filters on blockId; an appBlockId lookup filters on id', async () => {
     // Small, but it is the difference between a moderator opening
-    // `/apps/private-run/<slug>` and getting the right app versus a bare 404 — and a
+    // `/apps/run/<slug>` and getting the right app versus a bare 404 — and a
     // swapped key is invisible in a fixture where both values are the same string.
+    // (This said `/apps/private-run/<slug>` until that route was deleted and the private
+    // run became a fallback inside the public one.)
     // SLUG and APP_BLOCK are deliberately different strings for exactly this test.
     wire({});
     await resolvePrivateRunAccess({

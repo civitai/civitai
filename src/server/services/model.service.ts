@@ -1,6 +1,7 @@
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import {
   coverageColumn,
+  coveragePair,
   pickCovered,
   nextCoverageEnabled,
 } from '~/server/services/generation/coverage-source';
@@ -553,7 +554,11 @@ export const getModelsRaw = async ({
     AND.push(Prisma.sql`(${pSql}."poi" = false OR mm."userId" = ${userId})`);
   }
   if (disableMinor) {
-    AND.push(Prisma.sql`${pSql}."minor" = false`);
+    AND.push(
+      userId
+        ? Prisma.sql`(${pSql}."minor" = false OR mm."userId" = ${userId})`
+        : Prisma.sql`${pSql}."minor" = false`
+    );
   }
   if (input.excludedTagIds?.length) {
     const notExcluded = Prisma.sql`NOT EXISTS (
@@ -1650,7 +1655,7 @@ export const getModelsWithImagesAndModelVersions = async ({
         if (!filteredImages.length && !showImageless) return null;
 
         const canGenerate = isGenerationEligible({
-          covered: pickCovered(version, next),
+          ...coveragePair(version, next),
           baseModel: version?.baseModel ?? '',
           modelType: model.type,
           flags: version?.flags ?? 0,
@@ -3364,7 +3369,7 @@ export const publishModelById = async ({
             AND (p."publishedAt" IS NULL OR p."publishedAt" > NOW())
         `;
       }
-      if (!republishing && !meta?.unpublishedBy) await updateModelLastVersionAt({ id, tx });
+      await updateModelLastVersionAt({ id, tx, onlyForward: republishing });
 
       return model;
     },
@@ -3931,10 +3936,10 @@ export const queueModelEarlyAccessReindex = async ({ id }: GetByIdInput) => {
  * as a follow-up; the current fan-out side-effect is acceptable for Phase 1.
  */
 export async function bumpModel({ id }: { id: number }) {
-  // DB clock for the same reason as process-scheduled-publishing: a value ahead of the DB's
-  // NOW() is dropped by sync_model_to_metric, and the bump never reaches the feed.
+  // Truncated DB clock for the same reason as process-scheduled-publishing: a value ahead of the
+  // DB's NOW() is dropped by sync_model_to_metric, and the bump never reaches the feed.
   const [updated] = await dbWrite.$queryRaw<{ id: number; userId: number; lastVersionAt: Date }[]>`
-    UPDATE "Model" SET "lastVersionAt" = NOW(), "updatedAt" = NOW()
+    UPDATE "Model" SET "lastVersionAt" = date_trunc('milliseconds', NOW()), "updatedAt" = NOW()
     WHERE id = ${id}
     RETURNING id, "userId", "lastVersionAt"
   `;
@@ -3949,12 +3954,18 @@ export async function bumpModel({ id }: { id: number }) {
   return updated;
 }
 
+/**
+ * `onlyForward` never lowers the stored value, so a republish can restore the date a version
+ * already had without undoing a moderator bump (`bumpModel`) that sits above every version's date.
+ */
 export async function updateModelLastVersionAt({
   id,
   tx,
+  onlyForward = false,
 }: {
   id: number;
   tx?: Prisma.TransactionClient;
+  onlyForward?: boolean;
 }) {
   const dbClient = tx ?? dbWrite;
 
@@ -3969,12 +3980,31 @@ export async function updateModelLastVersionAt({
     select: { publishedAt: true },
     orderBy: { publishedAt: 'desc' },
   });
-  if (!modelVersion) return;
+  const publishedAt = modelVersion?.publishedAt;
+  if (!publishedAt) return;
 
   try {
+    if (onlyForward) {
+      const { count } = await dbClient.model.updateMany({
+        where: {
+          id,
+          OR: [{ lastVersionAt: null }, { lastVersionAt: { lt: publishedAt } }],
+        },
+        data: { lastVersionAt: publishedAt },
+      });
+      if (!count) return;
+
+      const model = await dbClient.model.findUniqueOrThrow({
+        where: { id },
+        select: { userId: true },
+      });
+      await userModelCountCache.refresh(model.userId);
+      return;
+    }
+
     const model = await dbClient.model.update({
       where: { id },
-      data: { lastVersionAt: modelVersion.publishedAt },
+      data: { lastVersionAt: publishedAt },
     });
 
     await userModelCountCache.refresh(model.userId);

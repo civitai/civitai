@@ -11,6 +11,8 @@ depend on ClickUp access.
   subtasks carry the app exports**, one per app.
 - **868kn67aq** — *ReTool Database Migration*: which tables to move. (A subtask of the above.)
 - **868kn8aa0** — *Misc Mod Asks*: deferred requests that are not Retool ports.
+- **868mb8h0y** — *Model notes on Model Lookup*: the 868kn8aa0 model-notes ask, **re-sited** from
+  civitai.com to `/retool/model-lookup` and shipped 2026-09-29.
 
 App-by-app progress lives in [MIGRATIONS.md](MIGRATIONS.md). This file is the higher-level scope.
 
@@ -40,9 +42,10 @@ which is derived from the live schema and the exports rather than from memory.
 - [ ] **`UserNotes`** — 56,339 rows. Moderator notes. Attribution by name; needs
       [the id mapping](../../../docs/moderator-app/retool-exports/moderator-id-mapping.md).
 - [ ] **`UserStrikes`** — 12,771 rows. Strike history. Same attribution problem.
-- [ ] **`ModelNotes`** — 930 rows. `(modelId, createdBy, createdAt, content)`. **Keep — do not drop.**
-      No Retool app writes it; the data was exported *into* Retool for safekeeping. Ticket 868kn8aa0
-      ("Misc Mod Asks") wants it surfaced, which is deferred — see below.
+- [ ] **`ModelNotes`** — 938 rows. `(modelId, createdBy, createdAt, content)`. **Keep — do not drop.**
+      No Retool app ever wrote it; the data was exported *into* Retool for safekeeping. Since
+      `868mb8h0y` (2026-09-29) the moderator app both reads and writes it, so it is the only writer —
+      and local ids are now being spent. See the cutover note below.
 - [ ] **`RatingChanges`** — 363,465 rows, the largest table. `(imageId, rating, originalRating,
       updatedBy, createdAt)` — an audit trail of image-rating changes. No export we hold reads it;
       Moderation Status has rating-review queries, so the app that writes this is plausibly one we have
@@ -122,7 +125,8 @@ The conventions that apply to every page:
 
 - [ ] **§2.1 Bulk Ban** — restricted tool.
 - [ ] **§2.2 Moderation Rules** — low priority, "not used much".
-- [ ] **§2.3 Model notes** — free text on models. `ModelNotes` above is the existing data.
+- [x] **§2.3 Model notes** — free text on models, shipped 2026-09-29 as Model Lookup's "Moderator
+      notes" panel over the existing `ModelNotes` data (`868mb8h0y`).
 
 ### Workflows
 
@@ -139,18 +143,18 @@ The conventions that apply to every page:
 
 ## 868kn8aa0 — Misc Mod Asks (deferred)
 
-Not Retool ports; requests that happen to depend on migrated data. **Deferred — the reason it is
+Not Retool ports; requests that happen to depend on migrated data. **Mostly deferred — the reason it is
 recorded here is that it settles what happens to `ModelNotes`.**
 
-- [ ] **Model notes on model pages** — surface the exported `ModelNotes` on
-      `civitai.com/models/<id>`, and let moderators add notes and edit their own.
-      This is a **main-app** feature, not a moderator-app page: the notes appear on the public model
-      page for moderators, so it lands in `src/`, not `apps/moderator`.
-      Overlaps ticket 868kkxqpn §2.3, and matches the add/edit-own pattern already built for user notes
-      in `moderation-memory.service.ts`.
-      **Consequence for the database migration: `ModelNotes` must be kept.** The 930 rows are the whole
-      point of the ask — nothing writes them today because they were exported *into* Retool for
-      safekeeping.
+- [x] **Model notes** — **built on the moderator app, not the main app** (`868mb8h0y`, 2026-09-29).
+      The ask named `civitai.com/models/<id>`; the answer is a "Moderator notes" panel on
+      `/retool/model-lookup`, reading `/api/model-notes/<modelId>` with add and edit-own
+      (`model-notes.service.ts`). **Do not re-derive the earlier conclusion that this lands in `src/`** —
+      it did not. The civitai.com surface is still open and would call this service and endpoint.
+      Also closes 868kkxqpn §2.3.
+      Edit-own is a **name** comparison (`ModelNotes.createdBy` is a `String`), which is the same rule
+      `UserNotes` runs; both writes record `addNote`/`editNote` to `ModActivity` against the model.
+      Detail: [post-migration-backlog.md](../../../docs/moderator-app/post-migration-backlog.md).
 
 ### Open questions blocking scope
 

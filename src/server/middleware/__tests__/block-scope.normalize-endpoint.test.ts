@@ -367,6 +367,10 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       'query',
       'quota',
       'report',
+      // `v1/blocks/resource-intent.ts` — the Jev resource-intent primitive. The
+      // prompt and every parameter ride the POST body, so there is no `:seg`
+      // position to lose. Added deliberately with the route.
+      'resource-intent',
       'set',
       'shared-storage',
       'submit',

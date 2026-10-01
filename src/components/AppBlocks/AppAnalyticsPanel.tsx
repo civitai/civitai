@@ -357,7 +357,7 @@ export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: str
               label="Runs (range)"
               value={analytics.runs.count.toLocaleString()}
               sub={`${analytics.runs.buzzSpent.toLocaleString()} Buzz spent`}
-              tooltip="Generations run through your app within the selected range, and the viewer Buzz burned doing so."
+              tooltip="Generations run through your app by other people within the selected range, and the viewer Buzz burned doing so. Your own test runs on your own app are not counted."
             />
             <MetricCard
               label="Buzz purchased"

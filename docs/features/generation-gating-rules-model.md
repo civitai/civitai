@@ -320,7 +320,7 @@ and can be deleted.
 The self-hosted toggle (`selfHostedMode` + `SELF_HOSTED_ECOSYSTEM_KEYS` +
 `getSelfHostedDisabledEcosystems` + `SelfHostedGenerationStatusCard`) is kept as
 its own feature. It's expressible as one rule
-(`{ availableTo: 'members', presentation: 'disabled', ecosystems: [<the 26>] }`),
+(`{ availableTo: 'members', presentation: 'disabled', ecosystems: SELF_HOSTED_ECOSYSTEM_KEYS }`),
 but the set is **code** knowledge (orchestrator engine routing), not a mod
 opinion — so folding it in cleanly wants a `@self-hosted` target-group reference
 that expands at resolve time, rather than a hand-maintained list. Out of scope

@@ -55,9 +55,11 @@ const readDismissedDay = () => {
  */
 export function StickerPlacementBar({
   imageId,
+  imageNsfwLevel,
   className,
 }: {
   imageId: number;
+  imageNsfwLevel: number;
   className?: string;
 }) {
   const features = useFeatureFlags();
@@ -319,7 +321,7 @@ export function StickerPlacementBar({
       {/* Told which image this bar is for, so a session left open on another
           slide cannot keep the panel on screen bound to an image nobody is
           looking at. */}
-      <StickerPlacementTray imageId={imageId} />
+      <StickerPlacementTray imageId={imageId} imageNsfwLevel={imageNsfwLevel} />
     </>
   );
 }

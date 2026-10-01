@@ -30,6 +30,14 @@ const formGraphFooter = readFileSync(
   path.join(COMPONENTS, 'form-graph', 'generation', 'FormFooter.tsx'),
   'utf-8'
 );
+const formGraphImageBody = readFileSync(
+  path.join(COMPONENTS, 'form-graph', 'generation', 'ImageGenerationForm.tsx'),
+  'utf-8'
+);
+const formGraphAudioBody = readFileSync(
+  path.join(COMPONENTS, 'form-graph', 'generation', 'AudioGenerationForm.tsx'),
+  'utf-8'
+);
 
 describe('both generation lanes', () => {
   it('start the content-generation tour', () => {
@@ -49,6 +57,24 @@ describe('both generation lanes', () => {
     for (const source of [dataGraphFooter, formGraphFooter]) {
       expect(source).toContain('<DownloadWarning />');
       expect(source).toContain('DownloadReadyAlert');
+    }
+  });
+
+  // Sweep finding 6. The alert takes no props and self-gates on isModerator, so absence is the
+  // whole defect — a moderator on the form-graph lane simply never learns a preprocessor is failing.
+  it('flag preprocessors missing examples', () => {
+    expect(dataGraphLane).toContain('<MissingPreprocessorExamplesAlert />');
+    expect(formGraphImageBody).toContain('<MissingPreprocessorExamplesAlert />');
+  });
+
+  // Sweep finding 5. v2 has one body so it mounts ResourceAlerts once; the form-graph lane needs it
+  // per output type. Audio declares `model` and no `resources`/`vae`, so it reports on the
+  // checkpoint alone. model3d declares none of the three, so there is nothing for it to report and
+  // no mount is expected there.
+  it('warn about unstable and restricted resources on every output type that has any', () => {
+    expect(dataGraphLane).toContain('<ResourceAlerts');
+    for (const body of [formGraphImageBody, formGraphAudioBody]) {
+      expect(body).toContain('<ResourceAlerts');
     }
   });
 

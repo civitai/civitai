@@ -113,7 +113,7 @@ describe('both generation footers offer purchase on a spent trial', () => {
       sources[lane],
       `${FOOTERS[lane]} renders <TrialAccessWarning /> unguarded. Once the trial is spent that warning ` +
         `("you get a limited number of free generations") is both stale and a second alert for one state.`
-    ).toMatch(/\{whatIfSettled && !showingTrialAlert && <TrialAccessWarning\b/);
+    ).toMatch(/\{whatIfSettled && !showingTrialAlert && \(?\s*<TrialAccessWarning\b/);
     expect(
       sources[lane],
       `${FOOTERS[lane]} never sets \`showingTrialAlert\`, so the warning is suppressed unconditionally ` +

@@ -2930,6 +2930,7 @@ export interface Cosmetic {
   pHashHex: string | null;
   pHashVersion: string | null;
   pHashFailedAt: Date | null;
+  flags: number;
   creator?: User | null;
   UserCosmetic?: UserCosmetic[];
   purchases?: UserCosmeticShopPurchases[];

@@ -98,6 +98,30 @@ describe('publishModelVersionHandler — publishable state', () => {
   });
 });
 
+describe('publishModelVersionHandler — unpublish stamp', () => {
+  it('drops the whole unpublish stamp from the meta it republishes with', async () => {
+    mockGetVersionById.mockResolvedValue({
+      id: VERSION_ID,
+      status: 'Unpublished',
+      meta: { unpublishedAt: '2026-09-27T23:22:37.000Z', unpublishedBy: OWNER_ID, hideBuzz: true },
+      baseModel: 'SDXL 1.0',
+      model: { userId: OWNER_ID, nsfw: false, status: 'Published' },
+    });
+
+    await publishModelVersionHandler({
+      input: { id: VERSION_ID },
+      ctx: {
+        user: { id: OWNER_ID, isModerator: false },
+        track: { modelVersionEvent: vi.fn().mockResolvedValue(undefined) },
+      },
+    } as never);
+
+    expect(mockPublishModelVersionById).toHaveBeenCalledWith(
+      expect.objectContaining({ meta: { hideBuzz: true } })
+    );
+  });
+});
+
 describe('publishPrivateModelVersionHandler — the same publishable state', () => {
   const callPrivate = (versionStatus: string, modelStatus: string, isModerator = false) => {
     mockGetVersionById.mockResolvedValue({

@@ -34,6 +34,10 @@ import {
 } from '~/components/Search/useCarriedSearchText';
 import { BrowsingLevelFilter } from './CustomSearchComponents';
 import { withSearchBrowsingScope } from '~/components/Search/SearchBrowsingScope';
+import { buildMinorExclusionFilter } from '~/components/Search/search-filters';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
+import { isDefined } from '~/utils/type-guards';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 import { ComicsSearchItem } from '~/components/AutocompleteSearch/renderItems/comics';
 import { emptySearchClient } from '~/components/Search/emptySearchClient';
@@ -166,6 +170,8 @@ const QuickSearchDropdownInner = ({
   ...props
 }: QuickSearchDropdownProps) => {
   const features = useFeatureFlags();
+  const { settings: addons } = useBrowsingSettingsAddons();
+  const currentUser = useCurrentUser();
   // The target is clamped to `supportedIndexes` — the set the CALLER declared, which is not
   // necessarily the set the selector offers: the offered list below narrows it further by feature
   // flag, and this fallback does not. A bare `models` fallback would leave the component searching
@@ -187,6 +193,10 @@ const QuickSearchDropdownInner = ({
   const carriedSearchText = useRef('');
 
   const indexName = searchIndexMap[targetIndex];
+  const indexFilters = [
+    filters,
+    buildMinorExclusionFilter({ targetIndex, addons, currentUser }),
+  ].filter(isDefined);
 
   // Images stays selectable while image search is retired, but the images_v6 index is gone — so
   // swap to a client that returns nothing (no request to the deleted index) and show a notice.
@@ -280,7 +290,7 @@ const QuickSearchDropdownInner = ({
       >
         <BrowsingLevelFilter
           indexKey={targetIndex}
-          filters={filters}
+          filters={indexFilters}
           hitsPerPage={dropdownItemLimit}
         />
 

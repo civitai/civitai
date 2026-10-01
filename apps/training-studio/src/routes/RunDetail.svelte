@@ -26,6 +26,8 @@
     IconAlertTriangle,
     IconStarFilled,
     IconDownload,
+    IconFileDownload,
+    IconPackages,
     IconPhoto,
     IconArchive,
     IconRepeat,
@@ -39,6 +41,7 @@
   import { ToggleGroup, ToggleGroupItem } from '@civitai/ui/components/ui/toggle-group/index.js';
   import { Toggle } from '@civitai/ui/components/ui/toggle/index.js';
   import TrainingTrace from '$lib/components/TrainingTrace.svelte';
+  import LossGraph from '$lib/components/LossGraph.svelte';
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
   import SampleImage from '$lib/components/SampleImage.svelte';
   import SampleViewer from '$lib/components/SampleViewer.svelte';
@@ -50,6 +53,7 @@
   import { mediaCount } from '$lib/data/trainingModels';
   import { directDatasetUrl, handoffReuse, toReuseItems } from '$lib/reuse';
   import { extOfAir, extOfMime } from '$lib/media';
+  import { slugify } from '$lib/slug';
   import { RETENTION_DAYS } from '$lib/orchestrator-core';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
   import { buzzMode } from '$lib/buzz-mode.svelte';
@@ -279,8 +283,13 @@
     if (fromAir && fromAir.length <= 4) return fromAir;
     return extOfMime(mime) ?? 'png';
   }
-  function slug(s: string): string {
-    return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'dataset';
+  function saveBlob(blob: Blob, fileName: string) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   async function fetchDatasetBlob(air: string): Promise<Blob> {
@@ -322,16 +331,41 @@
         downloadError = "Couldn't fetch the dataset images — nothing to download.";
         return;
       }
-      const out = await zip.generateAsync({ type: 'blob' });
-      const url = URL.createObjectURL(out);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${slug(d.name)}-dataset.zip`;
-      a.click();
-      URL.revokeObjectURL(url);
+      saveBlob(await zip.generateAsync({ type: 'blob' }), `${slugify(d.name, 'dataset')}-dataset.zip`);
     } finally {
       downloading = false;
     }
+  }
+
+  let archiving = $state(false);
+  let archiveError = $state('');
+  // A blob KEY, not a URL: a legacy run's epochs download one by one from signed URLs but name no
+  // blob the archive could include.
+  const archivableEpochs = $derived(d.epochs.filter((e) => e.modelKey).length);
+  async function downloadAllCheckpoints() {
+    if (archiving) return;
+    archiving = true;
+    archiveError = '';
+    try {
+      const { url } = await backend().epochArchive(d.workflowId);
+      const a = document.createElement('a');
+      a.href = url;
+      // New tab: an attachment response downloads there; a failed one can't replace the run page.
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.click();
+    } catch (e) {
+      archiveError = e instanceof Error ? e.message : "Couldn't build the archive.";
+    } finally {
+      archiving = false;
+    }
+  }
+
+  function downloadSettings() {
+    saveBlob(
+      new Blob([JSON.stringify(d.settings, null, 2)], { type: 'application/json' }),
+      `${slugify(d.name, 'training')}-training-settings.json`
+    );
   }
 
   // Reuse this run's already-scanned dataset blobs as-is (no re-upload) to seed a new training.
@@ -488,8 +522,6 @@
   // The fullscreen viewer navigates over `newestFirst` (↑ = newer epoch, matching the in-app trainer).
   let viewer = $state<{ epochIndex: number; sampleIndex: number } | null>(null);
   function openViewer(epoch: TrainingDetailEpoch, sampleIndex: number) {
-    // Audio samples are inline players (the controls are the interaction) — no fullscreen viewer.
-    if (d.media === 'audio') return;
     const epochIndex = newestFirst.indexOf(epoch);
     if (epochIndex !== -1) viewer = { epochIndex, sampleIndex };
   }
@@ -659,6 +691,24 @@
         </dd>
       </div>
     </dl>
+    <div class="mt-3 flex flex-wrap items-center gap-2 border-t border-dark-4 pt-3">
+      <span class="font-mono text-xs uppercase tracking-wider text-dark-2">Download</span>
+      {#if archivableEpochs > 0}
+        <Button size="sm" variant="outline" disabled={archiving} onclick={downloadAllCheckpoints}
+          title="One zip with every ready checkpoint's weights and sample images">
+          <IconPackages size={14} stroke={2} />
+          {archiving
+            ? 'Building archive…'
+            : `All ${archivableEpochs} checkpoint${archivableEpochs === 1 ? '' : 's'} (.zip)`}
+        </Button>
+      {/if}
+      <Button size="sm" variant="ghost" onclick={downloadSettings} title="The run's effective training configuration as JSON">
+        <IconFileDownload size={14} stroke={2} />Settings (.json)
+      </Button>
+      {#if archiveError}
+        <span class="font-mono text-xs text-red-400">{archiveError}</span>
+      {/if}
+    </div>
   </header>
 
   {#if d.state === 'training'}
@@ -689,6 +739,12 @@
          resets cleanly when navigating to a different training. -->
     {#key d.workflowId}
       <TrainingTrace traceUrl={d.liveTraceUrl} plannedEpochs={d.plannedEpochs ?? null} {currentEpoch} />
+    {/key}
+  {/if}
+
+  {#if d.traces.length}
+    {#key d.workflowId}
+      <LossGraph traces={d.traces} training={d.state === 'training'} />
     {/key}
   {/if}
 
@@ -807,7 +863,9 @@
               {/each}
               {#each oldestFirst as epoch (epoch.id)}
                 {@const cellUrl = epoch.samples[r] ?? null}
-                {#if cellUrl}
+                {#if cellUrl && d.media === 'audio'}
+                  <SampleImage isAudio url={cellUrl} alt="Epoch {epoch.number}, prompt {r + 1}" />
+                {:else if cellUrl}
                   <button
                     type="button"
                     onclick={() => openViewer(epoch, r)}
@@ -908,11 +966,18 @@
           {/if}
         </div>
 
-        <div class="grid grid-cols-1 gap-4 {d.media === 'audio' ? '' : 'sm:grid-cols-3'}">
+        <!-- Pin the epoch once something plays: a newly finished epoch becoming `recommended` would
+             otherwise swap the playing sample for a different file. -->
+        <div
+          class="grid grid-cols-1 gap-4 {d.media === 'audio' ? '' : 'sm:grid-cols-3'}"
+          onplaycapture={() => (selectedId ??= featured.id)}
+        >
           {#each promptLabels as prompt, i (i)}
             {@const featuredUrl = featured.samples[i] ?? null}
             <figure class="m-0 flex flex-col gap-2">
-              {#if featuredUrl}
+              {#if featuredUrl && d.media === 'audio'}
+                <SampleImage isAudio url={featuredUrl} alt="Epoch {featured.number} sample {i + 1}" />
+              {:else if featuredUrl}
                 <button
                   type="button"
                   onclick={() => openViewer(featured, i)}
@@ -985,16 +1050,24 @@
                       </span>
                     {/if}
                   </div>
-                  <div class="grid grid-cols-3 gap-1.5">
-                    {#each promptLabels as _, si (si)}
-                      <SampleImage
-                        isVideo={d.isVideo} isAudio={d.media === 'audio'}
-                        url={epoch.samples[si] ?? null}
-                        pending={samplesPending}
-                        alt="Epoch {epoch.number} preview {si + 1}"
-                      />
-                    {/each}
-                  </div>
+                  {#if d.media === 'audio'}
+                    <!-- A player can't live inside this select button; the featured view plays them. -->
+                    {@const heard = epoch.samples.filter(Boolean).length}
+                    <span class="font-mono text-xs text-dark-2">
+                      {heard} audio sample{heard === 1 ? '' : 's'} · select to listen
+                    </span>
+                  {:else}
+                    <div class="grid grid-cols-3 gap-1.5">
+                      {#each promptLabels as _, si (si)}
+                        <SampleImage
+                          isVideo={d.isVideo}
+                          url={epoch.samples[si] ?? null}
+                          pending={samplesPending}
+                          alt="Epoch {epoch.number} preview {si + 1}"
+                        />
+                      {/each}
+                    </div>
+                  {/if}
                 </button>
                 {#if gen}
                   <span class="absolute right-2 top-2">

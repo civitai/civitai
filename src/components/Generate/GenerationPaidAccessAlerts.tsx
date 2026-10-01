@@ -55,17 +55,19 @@ const priceLabel = (gate: PurchaseGate) =>
  * bare message, which named the model and offered nothing (CU 868maecz9).
  */
 export function TrialBlockedAlert({
+  selectedIds,
   message,
   remaining,
   onClose,
 }: {
+  selectedIds: readonly number[];
   message: string;
   /** From the message itself. Undefined means the count was not stated, which only happens at zero. */
   remaining?: number;
   /** Absent when the message came from the whatIf rather than a submit — there is no error to clear. */
   onClose?: () => void;
 }) {
-  const { gates } = useGenerationPurchaseGates();
+  const { gates } = useGenerationPurchaseGates(selectedIds);
   const gate = pickGateForMessage(gates, message);
   const offered = gate ? [gate] : gates;
   // A blocking message with trials LEFT is the quantity case: the allowance covers fewer images than were
@@ -111,8 +113,14 @@ export function TrialBlockedAlert({
  * a count is known: that number changes with every generation, so a dismissal taken at 5 left would hide
  * the one reading that matters at 1.
  */
-export function TrialAccessWarning({ remaining }: { remaining?: number } = {}) {
-  const { gates } = useGenerationPurchaseGates();
+export function TrialAccessWarning({
+  selectedIds,
+  remaining,
+}: {
+  selectedIds: readonly number[];
+  remaining?: number;
+}) {
+  const { gates } = useGenerationPurchaseGates(selectedIds);
   if (!gates.length) return null;
 
   return (

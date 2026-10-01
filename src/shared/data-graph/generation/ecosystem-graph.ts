@@ -82,6 +82,7 @@ import { happyHorseGraph } from './happy-horse-graph';
 import { aceAudioGraph } from './ace-audio-graph';
 import { minimaxMusicGraph } from './minimax-music-graph';
 import { yue2Graph } from './yue2-graph';
+import { soniloGraph } from './sonilo-graph';
 import { polyGenGraph } from './polygen-graph';
 import { tripoGraph } from './tripo-graph';
 import { hunyuan3dGraph } from './hunyuan3d-graph';
@@ -341,7 +342,7 @@ export const ecosystemGraph = new DataGraph<
   .groupedDiscriminator('ecosystem', [
     // Image ecosystems - Stable Diffusion family (ONE type branch)
     {
-      values: ['SD1', 'SD2', 'SDXL', 'Pony', 'Illustrious', 'NoobAI'] as const,
+      values: ['SD1', 'SDXL', 'Pony', 'Illustrious', 'NoobAI'] as const,
       graph: stableDiffusionGraph,
     },
     // Image ecosystems - Flux family (ONE type branch)
@@ -419,6 +420,7 @@ export const ecosystemGraph = new DataGraph<
     { values: ['Ace'] as const, graph: aceAudioGraph },
     { values: ['MiniMaxMusic3'] as const, graph: minimaxMusicGraph },
     { values: ['YuE2'] as const, graph: yue2Graph },
+    { values: ['Sonilo'] as const, graph: soniloGraph },
     // 3D Model ecosystems — PolyGen (Meshy via Fal). Field rendering for the
     // PolyGen graph lives in `GenerationForm.tsx`, auto-hidden via Controller
     // when the active ecosystem isn't PolyGen (same pattern as ACE audio).
@@ -447,20 +449,17 @@ export const ecosystemGraph = new DataGraph<
   // ecosystems that batch multiple outputs in a single job (see
   // VID_QUANTITY_ECOSYSTEMS — they generate extra videos via Seed + slotIndex).
   //
-  // Step: draft=4, BOGO-enabled w/ enhancedCompatibility off=2, else=1.
-  // The step=2 path is gated by the `enhancedCompatibilitySdcpp` feature flag and
-  // limited to txt2img (matches the `enhancedCompatibility` toggle's visibility).
+  // step=2 is limited to txt2img so it matches the enhancedCompatibility toggle's own visibility.
   .node(
     'quantity',
     (ctx, ext) => {
-      const isDraft = ctx.workflow === 'txt2img:draft';
       const modelId = 'model' in ctx ? ctx.model?.id : undefined;
       const bogoActive =
         !!ext.flags?.enhancedCompatibilitySdcpp &&
         ctx.workflow === 'txt2img' &&
         supportsSdcpp(ctx.ecosystem, modelId) &&
         ctx.enhancedCompatibility !== true;
-      const step = isDraft ? 4 : bogoActive ? 2 : 1;
+      const step = bogoActive ? 2 : 1;
       const batchesVideos = VID_QUANTITY_ECOSYSTEMS.has(ctx.ecosystem);
       const supportsVideoQuantity = ctx.output === 'video' && batchesVideos;
       // These use tier-gated vidQuantity (free=1, bronze=2, silver=3, gold=4)

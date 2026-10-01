@@ -58,15 +58,21 @@ export const PERMISSIONS = [
   // `feedback.read` id, because a permission duplicating a page grant is the weld this file's
   // header records. These two are the writes.
   //
-  // Two ids rather than one because the blast radius differs: a status and an internal note are
-  // moderator-only and reversible, while promoting mints a row in `Bug`, the table behind the
-  // public Known Issues board. Same split, same reason, as `audit.ban.execute`.
+  // Two ids rather than one because the blast radius differs: a status is moderator-only and
+  // reversible, while promoting mints a row in `Bug`, the table behind the public Known Issues
+  // board. Same split, same reason, as `audit.ban.execute`.
+  //
+  // ⚠️ THE ID STILL READS `status.set` AND THE NOTE IS GONE, and that mismatch is deliberate: an id
+  // is a stored value (rows are keyed `grant:<id>`), so renaming it orphans every grant already
+  // ticked on `/admin`. Only the LABEL moved. It used to say "and triage notes", which was true
+  // while the panel carried a note box; no UI writes `triageNote` any more, and this label is what
+  // an admin reads when deciding to grant and what the panel quotes back when refusing.
   //
   // They launch granted to the SAME roles — a promoted Bug lands with `publishedAt` NULL and is
   // invisible without the `bugsEdit` flag, so the thing that would justify a narrower grant does
   // not exist. Keeping the ids separate is what makes narrowing it later one tick on `/admin`
   // instead of a rename, and a rename orphans stored grant rows.
-  { id: 'feedback.status.set', label: 'Set feedback status and triage notes' },
+  { id: 'feedback.status.set', label: 'Set feedback status' },
   { id: 'feedback.bug.promote', label: 'Promote feedback to a Known Issue' },
 ] as const satisfies readonly { id: string; label: string }[];
 
