@@ -3,6 +3,7 @@ import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import { MediaType } from '~/shared/utils/prisma/enums';
+import type * as TrpcModule from '~/utils/trpc';
 
 type Version = { id: number; name: string; baseModel: string; modelId: number; modelName: string };
 
@@ -11,7 +12,8 @@ const mocks = vi.hoisted(() => ({
   openResourceSelectModal: vi.fn(),
 }));
 
-vi.mock('~/utils/trpc', () => ({
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcModule>()),
   trpc: {
     modelVersion: {
       getVersionsByIds: { useQuery: () => ({ data: mocks.versions, isLoading: false }) },
