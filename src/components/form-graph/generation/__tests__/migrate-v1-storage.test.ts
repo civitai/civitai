@@ -40,7 +40,7 @@ describe('buildV1MigrationIntent', () => {
       workflow: 'txt2img',
       prompt: 'a fox in the snow',
       negativePrompt: 'blurry',
-      quantity: 3,
+      'quantity@image': 3,
       outputFormat: 'png',
       priority: 'high',
       'ecosystem@image': 'SDXL',
