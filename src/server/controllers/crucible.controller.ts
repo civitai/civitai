@@ -22,6 +22,7 @@ import type {
 import { crucibleListSelect } from '~/server/selectors/crucible.selector';
 import { getCrucibleCreateEligibility } from '~/server/services/crucible-eligibility.service';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
+import { logToAxiom } from '~/server/logging/client';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
@@ -263,7 +264,21 @@ export const cancelCrucibleHandler = async ({
   input: CancelCrucibleSchema;
   ctx: ProtectedContext;
 }) => {
-  return cancelCrucible({ ...input, userId: ctx.user.id, isModerator: !!ctx.user.isModerator });
+  const result = await cancelCrucible({
+    ...input,
+    userId: ctx.user.id,
+    isModerator: !!ctx.user.isModerator,
+  });
+  if (result.failedRefunds.length)
+    logToAxiom({
+      type: 'error',
+      name: 'crucible-cancel-refund-failed',
+      message: `Crucible ${input.id} was cancelled but ${result.failedRefunds.length} refund(s) failed; cancel it again to finish.`,
+      crucibleId: input.id,
+      userId: ctx.user.id,
+      failedRefunds: result.failedRefunds,
+    });
+  return result;
 };
 
 export const updateCrucibleHandler = async ({

@@ -7,8 +7,8 @@ import { dbMock } from '~/__tests__/mocks';
 
 // `~/server/db/client` and `~/server/redis/client` are registered globally by the setup file
 // and reset per test file — see docs/testing/shared-module-mocks.md.
-const findUnique = dbMock.dbRead.crucible.findUnique;
-const update = dbMock.dbWrite.crucible.update;
+const findUnique = dbMock.dbWrite.crucible.findUnique;
+const claim = dbMock.dbWrite.crucible.updateMany;
 const refundMultiAccountTransaction = vi.fn();
 const setTTL = vi.fn();
 
@@ -24,6 +24,7 @@ vi.mock('~/server/redis/crucible-elo.redis', async (importOriginal) => ({
 
 const {
   cancelCrucible,
+  claimCrucibleCancellation,
   getCrucibleSetupTransactionPrefix,
   getCrucibleSeedTransactionPrefix,
   getCrucibleEntryTransactionPrefix,
@@ -54,22 +55,73 @@ const crucible = (overrides: Record<string, unknown> = {}) => ({
 beforeEach(() => {
   vi.clearAllMocks();
   findUnique.mockResolvedValue(crucible());
-  update.mockResolvedValue({});
+  claim.mockResolvedValue({ count: 1 });
   setTTL.mockResolvedValue(undefined);
   refundMultiAccountTransaction.mockResolvedValue(undefined);
 });
 
+const MODERATOR_CLAIM = {
+  where: {
+    id: 1,
+    OR: [
+      { status: CrucibleStatus.Pending },
+      {
+        status: CrucibleStatus.Active,
+        OR: [{ endAt: null }, { endAt: { gt: expect.any(Date) } }, { entries: { none: {} } }],
+      },
+    ],
+  },
+  data: { status: CrucibleStatus.Cancelled },
+};
+
+describe('claimCrucibleCancellation', () => {
+  // Past its end an Active crucible with entries is finalize's: cancelling it then would refund
+  // the pool finalize pays prizes from.
+  it('claims Pending, or Active only before its end or with nobody entered', async () => {
+    await claimCrucibleCancellation(1);
+    expect(claim).toHaveBeenCalledWith(MODERATOR_CLAIM);
+  });
+
+  it("claims only the owner's crucible, and only before it starts, for an owner", async () => {
+    await claimCrucibleCancellation(1, { ownerId: 4 });
+    expect(claim).toHaveBeenCalledWith({
+      where: { id: 1, userId: 4, status: CrucibleStatus.Pending },
+      data: { status: CrucibleStatus.Cancelled },
+    });
+  });
+
+  it('reports whether it claimed', async () => {
+    claim.mockResolvedValue({ count: 0 });
+    await expect(claimCrucibleCancellation(1)).resolves.toBe(false);
+    claim.mockResolvedValue({ count: 1 });
+    await expect(claimCrucibleCancellation(1)).resolves.toBe(true);
+  });
+});
+
 describe('cancelCrucible — authorization', () => {
   it('refuses someone who neither moderates nor owns it', async () => {
+    claim.mockResolvedValue({ count: 0 });
     await expect(cancelCrucible({ id: 1, userId: 99, isModerator: false })).rejects.toThrow(
       /Only moderators/
     );
   });
 
   it('refuses the owner once the crucible has started', async () => {
+    claim.mockResolvedValue({ count: 0 });
     await expect(cancelCrucible({ id: 1, userId: 4, isModerator: false })).rejects.toThrow(
       /Only moderators/
     );
+  });
+
+  it("claims through the owner's narrower predicate for a non-moderator", async () => {
+    findUnique.mockResolvedValue(crucible({ status: CrucibleStatus.Pending, entries: [] }));
+
+    await cancelCrucible({ id: 1, userId: 4, isModerator: false });
+
+    expect(claim).toHaveBeenCalledWith({
+      where: { id: 1, userId: 4, status: CrucibleStatus.Pending },
+      data: { status: CrucibleStatus.Cancelled },
+    });
   });
 
   it('lets the owner cancel before it starts, and returns their setup fee', async () => {
@@ -83,9 +135,9 @@ describe('cancelCrucible — authorization', () => {
   });
 
   it('refunds nothing when authorization fails', async () => {
+    claim.mockResolvedValue({ count: 0 });
     await cancelCrucible({ id: 1, userId: 99, isModerator: false }).catch(() => undefined);
     expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
-    expect(update).not.toHaveBeenCalled();
   });
 });
 
@@ -96,17 +148,31 @@ describe('cancelCrucible — state guards', () => {
   });
 
   it('refuses to cancel a Completed crucible', async () => {
+    claim.mockResolvedValue({ count: 0 });
     findUnique.mockResolvedValue(crucible({ status: CrucibleStatus.Completed }));
-    await expect(cancelCrucible({ id: 1, userId: 4, isModerator: true })).rejects.toThrow();
+    await expect(cancelCrucible({ id: 1, userId: 4, isModerator: true })).rejects.toThrow(
+      /completed/
+    );
   });
 
   it('does not refund a completed crucible — its prizes are already paid out', async () => {
+    claim.mockResolvedValue({ count: 0 });
     findUnique.mockResolvedValue(crucible({ status: CrucibleStatus.Completed }));
     await cancelCrucible({ id: 1, userId: 4, isModerator: true }).catch(() => undefined);
     expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
   });
 
+  it('refuses, and refunds nothing, once an Active crucible with entries has ended', async () => {
+    claim.mockResolvedValue({ count: 0 });
+
+    await expect(cancelCrucible({ id: 1, userId: 4, isModerator: true })).rejects.toThrow(
+      /being finalized/
+    );
+    expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
+  });
+
   it('re-runs on an already-Cancelled crucible instead of refusing, so owed refunds can retry', async () => {
+    claim.mockResolvedValue({ count: 0 });
     findUnique.mockResolvedValue(crucible({ status: CrucibleStatus.Cancelled }));
 
     const result = await cancelCrucible({ id: 1, userId: 4, isModerator: true });
@@ -114,23 +180,27 @@ describe('cancelCrucible — state guards', () => {
     expect(result.crucibleId).toBe(1);
     expect(refundMultiAccountTransaction).toHaveBeenCalled();
   });
+
+  it('refunds the entries the primary holds after the claim', async () => {
+    await cancelCrucible({ id: 1, userId: 4, isModerator: true });
+
+    expect(claim.mock.invocationCallOrder[0]).toBeLessThan(findUnique.mock.invocationCallOrder[0]);
+    expect(dbMock.dbRead.crucible.findUnique).not.toHaveBeenCalled();
+  });
 });
 
 describe('cancelCrucible — ordering', () => {
-  it('writes the Cancelled status before any money moves', async () => {
+  it('claims Cancelled before any money moves', async () => {
     await cancelCrucible({ id: 1, userId: 4, isModerator: true });
 
-    expect(update).toHaveBeenCalledWith({
-      where: { id: 1 },
-      data: { status: CrucibleStatus.Cancelled },
-    });
-    expect(update.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(claim).toHaveBeenCalledWith(MODERATOR_CLAIM);
+    expect(claim.mock.invocationCallOrder[0]).toBeLessThan(
       refundMultiAccountTransaction.mock.invocationCallOrder[0]
     );
   });
 
   it('moves no money at all when the status write fails', async () => {
-    update.mockRejectedValue(new Error('Server has closed the connection'));
+    claim.mockRejectedValue(new Error('Server has closed the connection'));
 
     await expect(cancelCrucible({ id: 1, userId: 4, isModerator: true })).rejects.toThrow();
     expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
@@ -245,10 +315,7 @@ describe('cancelCrucible — entry refunds', () => {
     // Two entrants plus the creator's setup fee — crucible-level refunds carry `entryId: null`.
     expect(result.failedRefunds.filter((f) => f.entryId !== null)).toHaveLength(2);
     expect(result.failedRefunds.filter((f) => f.entryId === null)).toHaveLength(1);
-    expect(update).toHaveBeenCalledWith({
-      where: { id: 1 },
-      data: { status: CrucibleStatus.Cancelled },
-    });
+    expect(claim).toHaveBeenCalledWith(MODERATOR_CLAIM);
   });
 
   it('handles a crucible with no entries', async () => {
@@ -292,7 +359,7 @@ describe('cancelCrucible — creator setup fee', () => {
     const result = await cancelCrucible({ id: 1, userId: 4, isModerator: true });
 
     expect(result.failedRefunds).toEqual([{ entryId: null, userId: 4, error: 'nope' }]);
-    expect(update).toHaveBeenCalled();
+    expect(claim).toHaveBeenCalled();
   });
 });
 
@@ -342,10 +409,7 @@ describe('cancelCrucible — seeded prize pool', () => {
 
     expect(result.refundedSeed).toBe(0);
     expect(result.failedRefunds).toEqual([{ entryId: null, userId: 4, error: 'buzz down' }]);
-    expect(update).toHaveBeenCalledWith({
-      where: { id: 1 },
-      data: { status: CrucibleStatus.Cancelled },
-    });
+    expect(claim).toHaveBeenCalledWith(MODERATOR_CLAIM);
   });
 });
 

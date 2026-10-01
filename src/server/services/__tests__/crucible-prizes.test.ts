@@ -1,16 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { BuzzApiError } from '@civitai/buzz';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as CrucibleEloRedis from '~/server/redis/crucible-elo.redis';
 import type * as EloService from '~/server/services/crucible-elo.service';
-import { dbMock } from '~/__tests__/mocks';
+import { dbMock, loggingMock } from '~/__tests__/mocks';
 
 // `~/server/db/client` and `~/server/redis/client` are registered globally by the setup file
 // and reset per test file — see docs/testing/shared-module-mocks.md.
-const findUnique = dbMock.dbRead.crucible.findUnique;
+const findUnique = dbMock.dbWrite.crucible.findUnique;
 const findMany = dbMock.dbRead.crucibleEntry.findMany;
-const update = dbMock.dbWrite.crucible.update;
+const claim = dbMock.dbWrite.crucible.updateMany;
 const executeRaw = dbMock.dbWrite.$executeRaw;
 const createBuzzTransactionMany = vi.fn();
 const refundMultiAccountTransaction = vi.fn();
@@ -99,7 +100,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   getAllVoteCounts.mockResolvedValue({});
   setTTL.mockResolvedValue(undefined);
-  update.mockResolvedValue({});
+  claim.mockResolvedValue({ count: 1 });
   executeRaw.mockResolvedValue(1);
   createBuzzTransactionMany.mockImplementation(async (transactions: unknown[]) => ({
     transactions,
@@ -451,9 +452,28 @@ describe('seeded prize pool — nobody entered', () => {
     refundMultiAccountTransaction.mockRejectedValue(new Error('buzz down'));
 
     await expect(finalizeCrucible(1)).resolves.toMatchObject({ totalPrizesDistributed: 0 });
-    expect(update).toHaveBeenCalledWith({
-      where: { id: 1 },
+    expect(claim).toHaveBeenCalledWith({
+      where: { id: 1, status: CrucibleStatus.Active },
       data: { status: CrucibleStatus.Completed },
     });
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        name: 'crucible-seed-refund-failed',
+        crucibleId: 1,
+        seedTransactionId: 'crucible-seed-4-abc',
+      })
+    );
+  });
+
+  it('treats a seed a retry finds already refunded as settled, not failed', async () => {
+    setupUnentered();
+    refundMultiAccountTransaction.mockRejectedValue(new BuzzApiError(409, 'duplicate'));
+
+    await finalizeCrucible(1);
+
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'crucible-seed-refund-failed' })
+    );
   });
 });

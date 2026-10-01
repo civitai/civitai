@@ -67,8 +67,8 @@ describe('isCrucibleHiddenByScan', () => {
 
 describe('voidUnscannedCrucibles', () => {
   const findMany = dbMock.dbRead.crucible.findMany;
-  const findUnique = dbMock.dbRead.crucible.findUnique;
-  const update = dbMock.dbWrite.crucible.update;
+  const findUnique = dbMock.dbWrite.crucible.findUnique;
+  const claim = dbMock.dbWrite.crucible.updateMany;
   const now = new Date('2026-10-01T12:00:00Z');
   const hoursAgo = (hours: number) => new Date(now.getTime() - hours * HOUR);
 
@@ -89,7 +89,7 @@ describe('voidUnscannedCrucibles', () => {
     image: cover ? { ingestion: cover } : null,
   });
   const cancelledIds = () =>
-    update.mock.calls
+    claim.mock.calls
       .filter(([arg]) => arg.data.status === CrucibleStatus.Cancelled)
       .map(([arg]) => arg.where.id);
 
@@ -105,7 +105,7 @@ describe('voidUnscannedCrucibles', () => {
       seedTransactionId: null,
       entries: [],
     }));
-    update.mockResolvedValue({});
+    claim.mockResolvedValue({ count: 1 });
     refundMultiAccountTransaction.mockResolvedValue(undefined);
     createNotification.mockResolvedValue(undefined);
   });

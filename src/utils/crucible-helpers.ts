@@ -32,15 +32,20 @@ export function baseModelMakesMediaType(baseModel: string, mediaType: MediaType)
 // `buzzTransactionSchema` caps a description at 100 characters, and a crucible name alone can be 100.
 const BUZZ_DESCRIPTION_MAX_LENGTH = 100;
 
+type CrucibleNameScan = { name: string; ingestion: CrucibleIngestionStatus; textNsfw: boolean };
+
 /**
- * A ledger row can't be edited or retracted, and it shows on both sites, so the name goes in only
- * once its text has passed the scan as safe for everyone. Otherwise the row's link names the crucible.
+ * Ledger rows and notifications can't be edited or retracted, and they show on both sites, so they
+ * carry the name only once its text has passed the scan as safe for everyone.
  */
-export function getCrucibleTransactionDescription(
-  text: string,
-  crucible: { name: string; ingestion: CrucibleIngestionStatus; textNsfw: boolean }
-) {
-  if (crucible.ingestion !== CrucibleIngestionStatus.Scanned || crucible.textNsfw) return text;
+export const getCruciblePublishableName = (crucible: CrucibleNameScan) =>
+  crucible.ingestion === CrucibleIngestionStatus.Scanned && !crucible.textNsfw
+    ? crucible.name
+    : null;
+
+/** Without a publishable name, the row's link names the crucible. */
+export function getCrucibleTransactionDescription(text: string, crucible: CrucibleNameScan) {
+  if (getCruciblePublishableName(crucible) === null) return text;
   const room = BUZZ_DESCRIPTION_MAX_LENGTH - text.length - 2;
   if (crucible.name.length <= room) return `${text}: ${crucible.name}`;
   const cut = crucible.name.slice(0, room - 1).replace(/[\uD800-\uDBFF]$/, '');

@@ -12,9 +12,9 @@ import { loggingMock, dbMock } from '~/__tests__/mocks';
 
 // `~/server/db/client` and `~/server/redis/client` are registered globally by the setup file
 // and reset per test file — see docs/testing/shared-module-mocks.md.
-const findUnique = dbMock.dbRead.crucible.findUnique;
+const findUnique = dbMock.dbWrite.crucible.findUnique;
 const findMany = dbMock.dbRead.crucibleEntry.findMany;
-const update = dbMock.dbWrite.crucible.update;
+const claim = dbMock.dbWrite.crucible.updateMany;
 const executeRaw = dbMock.dbWrite.$executeRaw;
 const createBuzzTransactionMany = vi.fn();
 const createNotification = vi.fn();
@@ -97,7 +97,7 @@ const setupCrucible = ({
 
 beforeEach(() => {
   vi.clearAllMocks();
-  update.mockResolvedValue({});
+  claim.mockResolvedValue({ count: 1 });
   executeRaw.mockResolvedValue(1);
   createBuzzTransactionMany.mockImplementation(async (transactions: unknown[]) => ({
     transactions,
@@ -131,13 +131,16 @@ describe('finalizeCrucible — guards', () => {
 });
 
 describe('finalizeCrucible — positions', () => {
-  it("ranks every entry except a blocked one or one re-rated outside the crucible's levels", async () => {
+  it("ranks every entry except a blocked, held, flagged or unpublished one, or one re-rated outside the crucible's levels", async () => {
     await finalizeCrucible(1);
 
     const { where } = dbMock.dbRead.crucibleEntry.findMany.mock.calls[0][0];
     expect(where).toEqual({
       crucibleId: 1,
       image: {
+        needsReview: null,
+        tosViolation: false,
+        post: { publishedAt: { lte: expect.any(Date) } },
         ingestion: { not: ImageIngestionStatus.Blocked },
         nsfwLevel: { in: expect.arrayContaining([1, 3]) },
       },
@@ -245,13 +248,71 @@ describe('finalizeCrucible — entry paging', () => {
 });
 
 describe('finalizeCrucible — completion', () => {
-  it('marks the crucible Completed', async () => {
+  it('marks the crucible Completed only while it is still Active', async () => {
     await finalizeCrucible(1);
 
-    expect(update).toHaveBeenCalledWith({
-      where: { id: 1 },
+    expect(claim).toHaveBeenCalledWith({
+      where: { id: 1, status: CrucibleStatus.Active },
       data: { status: CrucibleStatus.Completed },
     });
+  });
+
+  it('pays the prizes before it claims Completed', async () => {
+    setupCrucible({ entryFee: 100 });
+    await finalizeCrucible(1);
+
+    expect(createBuzzTransactionMany).toHaveBeenCalled();
+    expect(createBuzzTransactionMany.mock.invocationCallOrder[0]).toBeLessThan(
+      claim.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('leaves it Active for the next run when the payout fails, and says so', async () => {
+    setupCrucible({ entryFee: 100 });
+    createBuzzTransactionMany.mockRejectedValue(new Error('buzz down'));
+
+    await expect(finalizeCrucible(1)).rejects.toThrow('buzz down');
+
+    expect(claim).not.toHaveBeenCalled();
+    expect(setTTL).not.toHaveBeenCalled();
+    expect(createNotification).not.toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        name: 'crucible-prize-payout-failed',
+        crucibleId: 1,
+      })
+    );
+  });
+
+  it('pays the same transaction ids on a retry, so the ledger rejects a second payment', async () => {
+    setupCrucible({ entryFee: 100 });
+    await finalizeCrucible(1);
+    setupCrucible({ entryFee: 100 });
+    await finalizeCrucible(1);
+
+    const ids = createBuzzTransactionMany.mock.calls.map(([txs]) =>
+      (txs as { externalTransactionId: string }[]).map((tx) => tx.externalTransactionId)
+    );
+    expect(ids[0]).toEqual(ids[1]);
+    expect(ids[0]).toEqual([
+      'crucible-prize-1-1-1',
+      'crucible-prize-1-2-2',
+      'crucible-prize-1-3-3',
+    ]);
+  });
+
+  it('notifies nobody and logs when it lost the claim after paying', async () => {
+    setupCrucible({ entryFee: 100 });
+    claim.mockResolvedValue({ count: 0 });
+
+    await finalizeCrucible(1);
+
+    expect(createNotification).not.toHaveBeenCalled();
+    expect(setTTL).not.toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'crucible-finalize-claim-lost', prizesPaid: true })
+    );
   });
 
   it('clears earlier positions first, so a retry leaves none on an entry that no longer ranks', async () => {
@@ -321,8 +382,8 @@ describe('finalizeCrucible — empty crucible', () => {
 
     await finalizeCrucible(1);
 
-    expect(update).toHaveBeenCalledWith({
-      where: { id: 1 },
+    expect(claim).toHaveBeenCalledWith({
+      where: { id: 1, status: CrucibleStatus.Active },
       data: { status: CrucibleStatus.Completed },
     });
   });
@@ -375,6 +436,31 @@ describe('finalizeCrucible — single entry', () => {
     expect(createBuzzTransactionMany).toHaveBeenCalledWith([
       expect.objectContaining({ description: 'Crucible prize - 1st place' }),
     ]);
+  });
+
+  it.each([
+    ['still under review', { ingestion: CrucibleIngestionStatus.Pending }],
+    ['flagged as adult text', { textNsfw: true }],
+  ])('leaves a name %s out of the notifications', async (_, scan) => {
+    setupCrucible({ entries: [dbEntry(1, 10, 1_000)], elos: { 1: 1500 } });
+    findUnique.mockResolvedValue({ ...(await findUnique()), ...scan });
+
+    await finalizeCrucible(1);
+
+    const sent = createNotification.mock.calls.map(([arg]) => arg);
+    expect(sent.map((n) => n.type).sort()).toEqual(['crucible-ended', 'crucible-won']);
+    for (const notification of sent) expect(notification.details.crucibleName).toBeNull();
+  });
+
+  it('names a crucible whose text passed in the notifications', async () => {
+    setupCrucible({ entries: [dbEntry(1, 10, 1_000)], elos: { 1: 1500 } });
+
+    await finalizeCrucible(1);
+
+    const sent = createNotification.mock.calls.map(([arg]) => arg);
+    expect(sent).toHaveLength(2);
+    for (const notification of sent)
+      expect(notification.details.crucibleName).toBe('Test Crucible');
   });
 });
 

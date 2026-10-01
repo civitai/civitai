@@ -6,7 +6,11 @@ import {
   isChallengeTextNsfw,
 } from '~/server/games/daily-challenge/challenge-text-scan';
 import { logToAxiom } from '~/server/logging/client';
-import { buildCrucibleModerationText, cancelCrucible } from '~/server/services/crucible.service';
+import {
+  buildCrucibleModerationText,
+  cancelCrucible,
+  claimCrucibleCancellation,
+} from '~/server/services/crucible.service';
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
 import { createNotification } from '~/server/services/notification.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
@@ -151,16 +155,9 @@ export async function applyCrucibleNsfwEscalation({
     return;
   }
 
-  // A conditional claim, since cancelCrucible's own status write isn't one: finalization picks up
-  // an Active crucible once endAt passes, and refunding a pool it's paying out would double-spend.
-  const { count: claimed } = await dbWrite.crucible.updateMany({
-    where: {
-      id: entityId,
-      status: { in: [CrucibleStatus.Pending, CrucibleStatus.Active] },
-      OR: [{ endAt: null }, { endAt: { gt: new Date() } }],
-    },
-    data: { status: CrucibleStatus.Cancelled },
-  });
+  // Claimed here rather than by cancelCrucible, so `claimed` tells our cancel apart from an
+  // earlier moderator's.
+  const claimed = await claimCrucibleCancellation(entityId);
 
   // Already Cancelled: our own claim from an earlier delivery that died before its refunds, or a
   // moderator's cancel. Re-running is safe either way: cancelCrucible's refunds are idempotent.

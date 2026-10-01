@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
-import { dbMock } from '~/__tests__/mocks';
+import { dbMock, loggingMock } from '~/__tests__/mocks';
 import {
   CRUCIBLE_DURATION_COSTS,
   CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
@@ -324,6 +324,23 @@ describe('updateCrucible — while upcoming', () => {
       'crucible-seed-4-old',
       expect.stringMatching(/^crucible-seed-4-(?!old)/),
     ]);
+  });
+
+  it('logs an original charge it could not put back', async () => {
+    findUnique.mockResolvedValue(
+      upcoming({ seededPrizePool: 1_000, seedTransactionId: 'crucible-seed-4-old' })
+    );
+    createMultiAccountBuzzTransaction.mockRejectedValue(new Error('buzz down'));
+
+    await expect(edit({ seededPrizePool: 2_000 })).rejects.toThrow('buzz down');
+
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        name: 'crucible-edit-restore-failed',
+        refunded: ['seed'],
+      })
+    );
   });
 
   it('moves the end with the start', async () => {

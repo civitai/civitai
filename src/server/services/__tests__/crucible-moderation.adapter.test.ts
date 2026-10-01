@@ -263,7 +263,7 @@ describe('applyResult — green crucible with NSFW text, Pending', () => {
 });
 
 describe('applyResult — green crucible with NSFW text, still running', () => {
-  it('claims it as Cancelled only while it is Pending, or Active before its end', async () => {
+  it('claims it as Cancelled only while it is Pending, or Active before its end or unentered', async () => {
     findUnique.mockResolvedValue(crucible({ status: CrucibleStatus.Active }));
 
     await scanNsfw();
@@ -271,8 +271,13 @@ describe('applyResult — green crucible with NSFW text, still running', () => {
     expect(updateMany).toHaveBeenCalledWith({
       where: {
         id: ID,
-        status: { in: [CrucibleStatus.Pending, CrucibleStatus.Active] },
-        OR: [{ endAt: null }, { endAt: { gt: expect.any(Date) } }],
+        OR: [
+          { status: CrucibleStatus.Pending },
+          {
+            status: CrucibleStatus.Active,
+            OR: [{ endAt: null }, { endAt: { gt: expect.any(Date) } }, { entries: { none: {} } }],
+          },
+        ],
       },
       data: { status: CrucibleStatus.Cancelled },
     });

@@ -15,7 +15,7 @@ import type * as BlocklistService from '~/server/services/blocklist.service';
 import type * as CrucibleEligibilityService from '~/server/services/crucible-eligibility.service';
 import type * as CoverImageService from '~/server/services/cover-image.service';
 import type * as TextModerationService from '~/server/services/text-moderation.service';
-import { dbMock } from '~/__tests__/mocks';
+import { dbMock, loggingMock } from '~/__tests__/mocks';
 import { CrucibleSort } from '~/server/common/enums';
 
 // `~/server/db/client` and `~/server/redis/client` are registered globally by the setup file
@@ -248,11 +248,33 @@ describe('createCrucible — the row is written before any Buzz moves', () => {
     expect(crucibleDelete).toHaveBeenCalledWith({ where: { id: 1 } });
   });
 
-  it('still surfaces the original failure when the refund itself fails', async () => {
+  it('still surfaces the original failure when the refund itself fails, and logs the refund', async () => {
     crucibleUpdate.mockRejectedValue(new Error('db down'));
     refundMultiAccountTransaction.mockRejectedValue(new Error('refund down'));
 
     await expect(createCrucible(input({ seededPrizePool: 5_000 }))).rejects.toThrow('db down');
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        name: 'crucible-charge-refund-failed',
+        prefix: expect.stringMatching(/^crucible-setup-4-/),
+        entityId: 1,
+      })
+    );
+  });
+
+  it('logs an unpaid crucible it could not delete', async () => {
+    createMultiAccountBuzzTransaction.mockRejectedValue(new Error('buzz down'));
+    crucibleDelete.mockRejectedValue(new Error('db down'));
+
+    await expect(createCrucible(input())).rejects.toThrow('buzz down');
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        name: 'crucible-unpaid-delete-failed',
+        crucibleId: 1,
+      })
+    );
   });
 });
 

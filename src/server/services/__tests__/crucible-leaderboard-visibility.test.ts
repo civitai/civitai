@@ -143,6 +143,15 @@ const lastRawQuery = () => {
   };
 };
 
+/** A review hold, a ToS flag or an unpublished post after submission takes the entry out. */
+const expectPublishedEntryImage = (sql: string) => {
+  expect(sql).toContain('i."needsReview" IS NULL');
+  expect(sql).toContain('NOT i."tosViolation"');
+  expect(sql).toMatch(
+    /EXISTS \( ?SELECT 1 FROM "Post" ep WHERE ep\.id = i\."postId" AND ep\."publishedAt" <= now\(\) ?\)/
+  );
+};
+
 /** A crucible that passed its scans, on this (non-green) site. */
 const scanned = {
   userId: 555,
@@ -429,7 +438,12 @@ describe('crucible.getMinVotesToPlace', () => {
     expect(result).toEqual({ minVotes: 11 });
     expect(aggregate.mock.calls[0][0].where).toMatchObject({
       crucibleId: CRUCIBLE_ID,
-      image: { ingestion: { not: 'Blocked' } },
+      image: {
+        ingestion: { not: 'Blocked' },
+        needsReview: null,
+        tosViolation: false,
+        post: { publishedAt: { lte: expect.any(Date) } },
+      },
     });
   });
 
@@ -578,13 +592,14 @@ describe('crucible.getJudgingPair', () => {
 });
 
 describe('crucible.getEntries — what a viewer may see', () => {
-  it("while running, keeps the caller's own entries and others' only when scanned and in range", async () => {
+  it("while running, keeps the caller's own entries and others' only when scanned, published and in range", async () => {
     await caller(signedIn(STRANGER_ID)).getEntries({ crucibleId: CRUCIBLE_ID, browsingLevel: 1 });
 
-    const { text } = lastRawQuery();
-    expect(text).toContain('JOIN "Image" i');
-    expect(text).toContain('ce."userId" =');
-    expect(text).toContain('i.ingestion =');
+    const sql = lastRenderedSql();
+    expect(sql).toContain('JOIN "Image" i');
+    expect(sql).toContain('ce."userId" =');
+    expect(sql).toContain('i.ingestion =');
+    expectPublishedEntryImage(sql);
   });
 
   it('once over, applies the same rule in the entries query', async () => {
@@ -597,6 +612,7 @@ describe('crucible.getEntries — what a viewer may see', () => {
     expect(sql).toContain('JOIN "Image" i');
     expect(sql).toContain('ce."userId" =');
     expect(sql).toContain('i.ingestion =');
+    expectPublishedEntryImage(sql);
   });
 
   it('is not found for others while the crucible is under review', async () => {

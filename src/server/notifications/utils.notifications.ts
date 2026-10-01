@@ -66,6 +66,7 @@ export const notificationProcessors = {
   ...generationMuteNotifications,
   ...cosmeticShopNotifications,
   ...challengeNotifications,
+  ...crucibleNotifications,
   ...auctionNotifications,
   ...knightsNewOrderNotifications,
   ...comicNotifications,

@@ -87,6 +87,7 @@ import {
   baseModelMakesMediaType,
   getCruciblePrizeAmount,
   getCrucibleTotalPrizePool,
+  getCruciblePublishableName,
   getCrucibleTransactionDescription,
   isFreeCrucibleEntry,
   parsePrizePositions,
@@ -108,6 +109,18 @@ import { logToAxiom } from '~/server/logging/client';
 import { removeTags } from '~/utils/string-helpers';
 
 const log = createLogger('crucible-service', 'cyan');
+
+const sendCrucibleNotification = (notification: Parameters<typeof createNotification>[0]) => {
+  createNotification(notification).catch((error) =>
+    logToAxiom({
+      type: 'error',
+      name: 'crucible-notification-failed',
+      message: error instanceof Error ? error.message : String(error),
+      notificationType: notification.type,
+      key: notification.key,
+    })
+  );
+};
 
 /**
  * Generate a unique transaction prefix for crucible setup fees
@@ -139,8 +152,16 @@ const refundCrucibleCharges = async (prefixes: string[], reason: string, details
       });
       log(`Refunded ${prefix} (${reason})`);
     } catch (refundError) {
-      const refundErrorMsg = refundError instanceof Error ? refundError.message : 'Unknown error';
-      log(`CRITICAL: Failed to refund ${prefix}: ${refundErrorMsg}`);
+      logToAxiom({
+        type: 'error',
+        name: 'crucible-charge-refund-failed',
+        message: `Failed to refund ${prefix} (${reason}): ${
+          refundError instanceof Error ? refundError.message : String(refundError)
+        }`,
+        prefix,
+        reason,
+        ...details,
+      });
     }
   }
 };
@@ -312,7 +333,12 @@ export const createCrucible = async ({
     });
   } catch (error) {
     await dbWrite.crucible.delete({ where: { id: created.id } }).catch((deleteError) => {
-      log(`CRITICAL: Failed to delete unpaid crucible ${created.id}: ${String(deleteError)}`);
+      logToAxiom({
+        type: 'error',
+        name: 'crucible-unpaid-delete-failed',
+        message: `Failed to delete unpaid crucible ${created.id}: ${String(deleteError)}`,
+        crucibleId: created.id,
+      });
     });
     throw error;
   }
@@ -424,15 +450,24 @@ const crucibleListedSql = (viewerLevel: number) => Prisma.sql`
   }
 `;
 
+/** `publishedImageWhere` for entry image `i`. */
+const publishedEntryImageSql = Prisma.sql`
+  i."needsReview" IS NULL
+  AND NOT i."tosViolation"
+  AND EXISTS (SELECT 1 FROM "Post" ep WHERE ep.id = i."postId" AND ep."publishedAt" <= now())
+`;
+
 /**
- * Entry image `i` as someone else may see it: still scanned, still inside the crucible's levels (a
- * re-rating can move it out), and inside the viewer's level.
+ * Entry image `i` as someone else may see it: still scanned and published as `submitEntry` required
+ * (a review hold, a ToS flag or an unpublished post can come later), still inside the crucible's
+ * levels (a re-rating can move it out), and inside the viewer's level.
  */
 const visibleEntryImageSql = (
   crucibleLevel: number | Prisma.Sql,
   viewerLevel: number
 ) => Prisma.sql`
   i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
+  AND ${publishedEntryImageSql}
   AND (i."nsfwLevel" & ${crucibleLevel}) <> 0
   ${viewerLevel > 0 ? Prisma.sql`AND (i."nsfwLevel" & ${viewerLevel}) <> 0` : Prisma.empty}
 `;
@@ -761,11 +796,16 @@ async function settleCrucibleCostChange({
         data: legTransactionIds(refunded, restored),
       });
     } catch (error) {
-      log(
-        `CRITICAL: Failed to restore the original charges on crucible ${crucibleId}: ${String(
+      logToAxiom({
+        type: 'error',
+        name: 'crucible-edit-restore-failed',
+        message: `Failed to restore the original charges on crucible ${crucibleId}: ${String(
           error
-        )}`
-      );
+        )}`,
+        crucibleId,
+        userId,
+        refunded,
+      });
     }
   };
 
@@ -1542,25 +1582,17 @@ export const submitEntry = async ({
         },
       });
 
-      // Send notification to crucible creator (don't notify if creator is submitting to their own crucible)
       if (crucible.userId !== userId) {
-        // Fire-and-forget notification
-        createNotification({
+        sendCrucibleNotification({
           userId: crucible.userId,
           type: 'crucible-entry-submitted',
           category: NotificationCategory.Update,
           key: `crucible-entry-submitted:${crucibleId}:${entry.id}`,
           details: {
             crucibleId,
-            crucibleName: crucible.name,
+            crucibleName: getCruciblePublishableName(crucible),
             entrantUsername: entry.user.username ?? 'Anonymous',
           },
-        }).catch((err) => {
-          log(
-            `Failed to send entry notification: ${
-              err instanceof Error ? err.message : 'Unknown error'
-            }`
-          );
         });
       }
 
@@ -1584,12 +1616,16 @@ export const submitEntry = async ({
             `Refunded entry fee for user ${userId} after database failure (transaction: ${buzzTransactionId})`
           );
         } catch (refundError) {
-          const refundErrorMsg =
-            refundError instanceof Error ? refundError.message : 'Unknown error';
-          log(
-            `CRITICAL: Failed to refund entry fee for user ${userId} after database failure: ${refundErrorMsg}`
-          );
-          // Re-throw original error even if refund fails so user is aware of the failure
+          logToAxiom({
+            type: 'error',
+            name: 'crucible-entry-fee-refund-failed',
+            message: `Failed to refund entry fee ${buzzTransactionId} after the entry write failed: ${
+              refundError instanceof Error ? refundError.message : String(refundError)
+            }`,
+            crucibleId,
+            userId,
+            buzzTransactionId,
+          });
         }
       }
       // Re-throw the original error
@@ -2351,8 +2387,9 @@ function getOrdinalPosition(position: number): string {
 }
 
 /**
- * An entry whose image was blocked, or re-rated outside the crucible's levels, can't place; its fee
- * stays in the pool. A scan still in progress doesn't disqualify.
+ * An entry whose image was blocked, held for review, flagged, unpublished, or re-rated outside the
+ * crucible's levels can't place; its fee stays in the pool. A scan still in progress doesn't
+ * disqualify.
  */
 const rankableEntryWhere = (
   crucibleId: number,
@@ -2360,6 +2397,7 @@ const rankableEntryWhere = (
 ): Prisma.CrucibleEntryWhereInput => ({
   crucibleId,
   image: {
+    ...publishedImageWhere(),
     ingestion: { not: ImageIngestionStatus.Blocked },
     nsfwLevel: { in: levelsIntersecting(nsfwLevel) },
   },
@@ -2453,8 +2491,8 @@ export const getCrucibleMinVotesToPlace = async ({
  * @returns Finalization results including final standings and prize amounts
  */
 export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCrucibleResult> => {
-  // Fetch the crucible metadata (without loading all entries into memory)
-  const crucible = await dbRead.crucible.findUnique({
+  // The primary: a replica can still show a crucible a moderator just cancelled as Active.
+  const crucible = await dbWrite.crucible.findUnique({
     where: { id: crucibleId },
     select: {
       id: true,
@@ -2506,58 +2544,26 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
   // Edge Case: 0 entries
   // ============================================================================
   if (entryCount === 0) {
-    log(`Edge case: Crucible ${crucibleId} has 0 entries - finalizing without prizes`);
-
     // Nobody entered, so the seed has no winner to go to. Hand it back rather than stranding it in
     // the bank; fail-soft, because a stuck refund must not block the crucible from completing.
-    if (crucible.seedTransactionId) {
-      try {
-        await refundMultiAccountTransaction({
-          externalTransactionIdPrefix: crucible.seedTransactionId,
-          description: 'Crucible seeded prize pool refund - no entries',
-          details: {
-            entityId: crucibleId,
-            entityType: 'Crucible',
-            reason: 'no-entries',
-          },
-        });
-        log(`Refunded seeded prize pool for crucible ${crucibleId} (no entries)`);
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        log(`Failed to refund seeded prize pool for crucible ${crucibleId}: ${errorMessage}`);
-      }
+    if (crucible.seedTransactionId)
+      await refundUnawardedSeed(crucibleId, crucible.seedTransactionId, 'no-entries');
+
+    if (await claimCrucibleCompletion(crucibleId, { prizesPaid: false })) {
+      await crucibleEloRedis.setTTL(crucibleId, 7 * 24 * 60 * 60);
+      sendCrucibleNotification({
+        userId: crucible.userId,
+        type: 'crucible-ended',
+        category: NotificationCategory.Update,
+        key: `crucible-ended:${crucibleId}`,
+        details: {
+          crucibleId,
+          crucibleName: getCruciblePublishableName(crucible),
+          totalEntries: 0,
+          prizePool: totalPrizePool,
+        },
+      });
     }
-
-    // Update crucible status to completed
-    await dbWrite.crucible.update({
-      where: { id: crucibleId },
-      data: {
-        status: CrucibleStatus.Completed,
-      },
-    });
-
-    // Clean up Redis ELO data (set TTL for eventual cleanup)
-    await crucibleEloRedis.setTTL(crucibleId, 7 * 24 * 60 * 60);
-
-    // Send 'crucible-ended' notification to the crucible creator
-    createNotification({
-      userId: crucible.userId,
-      type: 'crucible-ended',
-      category: NotificationCategory.Update,
-      key: `crucible-ended:${crucibleId}`,
-      details: {
-        crucibleId,
-        crucibleName: crucible.name,
-        totalEntries: 0,
-        prizePool: totalPrizePool,
-      },
-    }).catch((err) => {
-      log(
-        `Failed to send crucible-ended notification: ${
-          err instanceof Error ? err.message : 'Unknown error'
-        }`
-      );
-    });
 
     return {
       crucibleId,
@@ -2718,14 +2724,6 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
     );
   }
 
-  // Update crucible status to completed (separate transaction after all entries)
-  await dbWrite.crucible.update({
-    where: { id: crucibleId },
-    data: {
-      status: CrucibleStatus.Completed,
-    },
-  });
-
   // Distribute prizes to winners
   // Filter entries that have a prize amount > 0
   const prizeWinners = finalizedEntries.filter(
@@ -2770,13 +2768,17 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
         )
       );
     } catch (error) {
-      // Log the error but don't fail finalization - prizes can be manually distributed
-      log(
-        `Failed to distribute prizes for crucible ${crucibleId}: ${
-          error instanceof Error ? error.message : 'Unknown error'
-        }`
-      );
-      // Re-throw to ensure the finalization job knows about the failure
+      // Still Active, so the next run retries; prize ids are keyed per entry and place, so a payout
+      // that partly landed is not paid twice.
+      logToAxiom({
+        type: 'error',
+        name: 'crucible-prize-payout-failed',
+        message: `Failed to pay prizes for crucible ${crucibleId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        crucibleId,
+        winners: prizeWinners.length,
+      });
       throw error;
     }
   } else {
@@ -2784,53 +2786,38 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
 
     // Entries exist but nothing was paid out — an empty prizePositions map, or a seed small enough
     // that every floored share is 0. Same stranding as the 0-entry case above, so same remedy.
-    if (crucible.seedTransactionId) {
-      try {
-        await refundMultiAccountTransaction({
-          externalTransactionIdPrefix: crucible.seedTransactionId,
-          description: 'Crucible seeded prize pool refund - no prizes awarded',
-          details: {
-            entityId: crucibleId,
-            entityType: 'Crucible',
-            reason: 'no-prizes-awarded',
-          },
-        });
-        log(`Refunded seeded prize pool for crucible ${crucibleId} (no prizes awarded)`);
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        log(`Failed to refund seeded prize pool for crucible ${crucibleId}: ${errorMessage}`);
-      }
-    }
+    if (crucible.seedTransactionId)
+      await refundUnawardedSeed(crucibleId, crucible.seedTransactionId, 'no-prizes-awarded');
   }
 
-  // Set TTL on Redis ELO hash for cleanup (7 days)
-  // This keeps data available for a while in case of issues
+  const result = {
+    crucibleId,
+    totalPrizePool,
+    finalEntries: finalizedEntries,
+    totalPrizesDistributed,
+  };
+  if (!(await claimCrucibleCompletion(crucibleId, { prizesPaid: prizeWinners.length > 0 })))
+    return result;
+
+  // Kept a week in case the results need checking against the votes.
   await crucibleEloRedis.setTTL(crucibleId, 7 * 24 * 60 * 60);
 
   log(
     `Finalized crucible ${crucibleId}: ${finalizedEntries.length} entries, ${totalPrizesDistributed} Buzz in prizes`
   );
 
-  // Send notifications (fire-and-forget, don't block finalization)
-
-  // 1. Send 'crucible-ended' notification to the crucible creator
-  createNotification({
+  const crucibleName = getCruciblePublishableName(crucible);
+  sendCrucibleNotification({
     userId: crucible.userId,
     type: 'crucible-ended',
     category: NotificationCategory.Update,
     key: `crucible-ended:${crucibleId}`,
     details: {
       crucibleId,
-      crucibleName: crucible.name,
+      crucibleName,
       totalEntries: finalizedEntries.length,
       prizePool: totalPrizePool,
     },
-  }).catch((err) => {
-    log(
-      `Failed to send crucible-ended notification: ${
-        err instanceof Error ? err.message : 'Unknown error'
-      }`
-    );
   });
 
   // 2. Send 'crucible-won' notifications to all participants with their final position
@@ -2853,32 +2840,76 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
     // Skip notifying the crucible creator about their own entries (they already got crucible-ended)
     if (participantUserId === crucible.userId) continue;
 
-    createNotification({
+    sendCrucibleNotification({
       userId: participantUserId,
       type: 'crucible-won',
       category: NotificationCategory.System,
       key: `crucible-won:${crucibleId}:${participantUserId}`,
       details: {
         crucibleId,
-        crucibleName: crucible.name,
+        crucibleName,
         position: bestEntry.position,
         prizeAmount: bestEntry.prizeAmount,
       },
-    }).catch((err) => {
-      log(
-        `Failed to send crucible-won notification to user ${participantUserId}: ${
-          err instanceof Error ? err.message : 'Unknown error'
-        }`
-      );
     });
   }
 
-  return {
-    crucibleId,
-    totalPrizePool,
-    finalEntries: finalizedEntries,
-    totalPrizesDistributed,
-  };
+  return result;
+};
+
+/**
+ * Completed only from Active: past its end nothing else may move it, so a lost claim means a
+ * cancel got there first and anything this run paid is now owed back to the bank.
+ */
+const claimCrucibleCompletion = async (
+  crucibleId: number,
+  { prizesPaid }: { prizesPaid: boolean }
+) => {
+  const { count } = await dbWrite.crucible.updateMany({
+    where: { id: crucibleId, status: CrucibleStatus.Active },
+    data: { status: CrucibleStatus.Completed },
+  });
+  if (!count)
+    logToAxiom({
+      type: 'error',
+      name: 'crucible-finalize-claim-lost',
+      message: `Crucible ${crucibleId} left Active while it was being finalized${
+        prizesPaid ? ' after its prizes were paid; check for refunds of the same pool' : ''
+      }.`,
+      crucibleId,
+      prizesPaid,
+    });
+  return count > 0;
+};
+
+const refundUnawardedSeed = async (
+  crucibleId: number,
+  seedTransactionId: string,
+  reason: 'no-entries' | 'no-prizes-awarded'
+) => {
+  try {
+    await refundCrucibleTransactionOnce({
+      externalTransactionIdPrefix: seedTransactionId,
+      description:
+        reason === 'no-entries'
+          ? 'Crucible seeded prize pool refund - no entries'
+          : 'Crucible seeded prize pool refund - no prizes awarded',
+      crucibleId,
+      label: `seeded prize pool for crucible ${crucibleId}`,
+      reason,
+    });
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'crucible-seed-refund-failed',
+      message: `Failed to refund the seeded prize pool of crucible ${crucibleId} (${reason}): ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      crucibleId,
+      seedTransactionId,
+      reason,
+    });
+  }
 };
 
 /**
@@ -3038,11 +3069,13 @@ async function refundCrucibleTransactionOnce({
   description,
   crucibleId,
   label,
+  reason = 'cancellation',
 }: {
   externalTransactionIdPrefix: string;
   description: string;
   crucibleId: number;
   label: string;
+  reason?: string;
 }): Promise<'refunded' | 'already-settled'> {
   try {
     await refundMultiAccountTransaction({
@@ -3051,7 +3084,7 @@ async function refundCrucibleTransactionOnce({
       details: {
         entityId: crucibleId,
         entityType: 'Crucible',
-        reason: 'cancellation',
+        reason,
       },
     });
     return 'refunded';
@@ -3066,8 +3099,37 @@ async function refundCrucibleTransactionOnce({
 }
 
 /**
+ * Pending, or Active while it can't be paying out: before its end, or with nobody entered. Past its
+ * end an Active crucible belongs to finalize, and cancelling it then would refund the pool it pays
+ * prizes from. `ownerId` limits the claim to that owner's crucible before it starts.
+ */
+export const claimCrucibleCancellation = async (
+  id: number,
+  { ownerId }: { ownerId?: number } = {}
+) => {
+  const { count } = await dbWrite.crucible.updateMany({
+    where: {
+      id,
+      ...(ownerId !== undefined
+        ? { userId: ownerId, status: CrucibleStatus.Pending }
+        : {
+            OR: [
+              { status: CrucibleStatus.Pending },
+              {
+                status: CrucibleStatus.Active,
+                OR: [{ endAt: null }, { endAt: { gt: new Date() } }, { entries: { none: {} } }],
+              },
+            ],
+          }),
+    },
+    data: { status: CrucibleStatus.Cancelled },
+  });
+  return count > 0;
+};
+
+/**
  * Cancel a crucible and return every payment it took. Safe to re-run, and re-running is the
- * supported way to finish a cancel whose refunds did not all land: the status write happens first,
+ * supported way to finish a cancel whose refunds did not all land: the status claim happens first,
  * and each refund is keyed so the ledger rejects a duplicate rather than paying twice.
  */
 export const cancelCrucible = async ({
@@ -3078,8 +3140,13 @@ export const cancelCrucible = async ({
   userId: number;
   isModerator: boolean;
 }): Promise<CancelCrucibleResult> => {
-  // Fetch the crucible with all entries that have transaction IDs
-  const crucible = await dbRead.crucible.findUnique({
+  // Claimed before any money moves. An interrupted cancel then leaves a stopped crucible with
+  // refunds owed (listed in `failedRefunds`, fixed by calling again) rather than an Active one still
+  // taking entries from people who were just refunded.
+  const claimed = await claimCrucibleCancellation(id, isModerator ? {} : { ownerId: userId });
+
+  // The primary, after the claim: the entries to refund include any that landed just before it.
+  const crucible = await dbWrite.crucible.findUnique({
     where: { id },
     select: {
       id: true,
@@ -3106,29 +3173,19 @@ export const cancelCrucible = async ({
     throw throwNotFoundError('Crucible not found');
   }
 
-  // Before start nobody can have entered, so an owner's cancel only returns their own Buzz.
-  const ownerBeforeStart = crucible.userId === userId && crucible.status === CrucibleStatus.Pending;
-  if (!isModerator && !ownerBeforeStart) {
-    throw throwAuthorizationError('Only moderators can cancel a crucible once it has started');
+  // A moderator may re-run an already Cancelled one: the refunds below are idempotent, and that
+  // is how a partly refunded cancel gets finished.
+  if (!claimed) {
+    // Before start nobody can have entered, so an owner's cancel only returns their own Buzz.
+    if (!isModerator)
+      throw throwAuthorizationError('Only moderators can cancel a crucible once it has started');
+    if (crucible.status === CrucibleStatus.Completed)
+      throw throwBadRequestError('Cannot cancel a completed crucible');
+    if (crucible.status !== CrucibleStatus.Cancelled)
+      throw throwBadRequestError(
+        'This crucible has ended and its results are being finalized, so it can no longer be cancelled'
+      );
   }
-
-  // Prizes have already been paid out, so there is nothing to give back.
-  if (crucible.status === CrucibleStatus.Completed) {
-    throw throwBadRequestError('Cannot cancel a completed crucible');
-  }
-
-  // No guard on Cancelled: the refunds below are idempotent, and re-running is how a partly
-  // refunded cancel gets finished.
-
-  // Status first, before any money moves. An interrupted cancel then leaves a stopped crucible
-  // with refunds owed (listed in `failedRefunds`, fixed by calling again) rather than an Active
-  // one still taking entries from people who were just refunded.
-  await dbWrite.crucible.update({
-    where: { id },
-    data: {
-      status: CrucibleStatus.Cancelled,
-    },
-  });
 
   let refundedEntries = 0;
   let totalRefunded = 0;

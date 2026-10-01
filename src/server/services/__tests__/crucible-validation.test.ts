@@ -12,7 +12,7 @@ import {
 import { constants } from '~/server/common/constants';
 import { CrucibleSort } from '~/server/common/enums';
 import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
-import { dbMock } from '~/__tests__/mocks';
+import { dbMock, loggingMock } from '~/__tests__/mocks';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as PostService from '~/server/services/post.service';
@@ -41,11 +41,13 @@ const createPost = vi.fn();
 const fetchImageResources = vi.fn();
 const getUserBuzzAccount = vi.fn();
 const createMultiAccountBuzzTransaction = vi.fn();
+const refundMultiAccountTransaction = vi.fn();
 
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzService>()),
   getUserBuzzAccount,
   createMultiAccountBuzzTransaction,
+  refundMultiAccountTransaction,
 }));
 
 vi.mock('~/server/services/notification.service', async (importOriginal) => ({
@@ -855,6 +857,77 @@ describe('submitEntry — entry fee', () => {
         description: 'Crucible entry fee: Test Crucible',
         details: { entityId: 1, entityType: 'Crucible' },
       })
+    );
+  });
+
+  it('refunds the fee when the entry write fails, and logs a refund that also fails', async () => {
+    dbMock.dbWrite.crucibleEntry.create.mockRejectedValue(new Error('db down'));
+    refundMultiAccountTransaction.mockRejectedValue(new Error('buzz down'));
+
+    await expect(submit()).rejects.toThrow('db down');
+
+    expect(refundMultiAccountTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        externalTransactionIdPrefix: expect.stringMatching(/^crucible-entry-1-42-/),
+      })
+    );
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        name: 'crucible-entry-fee-refund-failed',
+        crucibleId: 1,
+        userId: 42,
+      })
+    );
+  });
+});
+
+describe('submitEntry — creator notification', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    createNotification.mockResolvedValue(undefined);
+    dbMock.dbWrite.crucibleEntry.count.mockResolvedValue(0);
+    dbMock.dbRead.crucibleEntry.findFirst.mockResolvedValue(null);
+    dbMock.dbRead.image.findUnique.mockResolvedValue(imageRow(MediaType.image));
+    dbMock.dbRead.image.count.mockResolvedValue(1);
+    dbMock.dbWrite.crucibleEntry.create.mockResolvedValue({ id: 5, user: { username: 'tester' } });
+  });
+
+  const sentDetails = () =>
+    createNotification.mock.calls.find(([n]) => n.type === 'crucible-entry-submitted')?.[0].details;
+
+  it('names a crucible whose text passed its scan', async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucibleRow(MediaType.image));
+
+    await submit();
+
+    expect(sentDetails()).toMatchObject({ crucibleId: 1, crucibleName: 'Test Crucible' });
+  });
+
+  it('leaves out a name flagged as adult text', async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.image),
+      textNsfw: true,
+    });
+
+    await submit();
+
+    expect(sentDetails()).toMatchObject({ crucibleId: 1, crucibleName: null });
+  });
+
+  it('logs a notification it could not send without failing the entry', async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucibleRow(MediaType.image));
+    createNotification.mockRejectedValue(new Error('notifications down'));
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+    await vi.waitFor(() =>
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'error',
+          name: 'crucible-notification-failed',
+          notificationType: 'crucible-entry-submitted',
+        })
+      )
     );
   });
 });
