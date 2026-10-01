@@ -39,9 +39,17 @@
  * `OauthClient` carries `secret`, `redirectUris` and `allowedOrigins` alongside
  * `name`. This chip is rendered on an anon-capable public read, so a careless
  * projection is a credential leak. Both halves are pinned: the SELECT names only
- * allowlisted columns ({@link postAppChipQuery}) and the PROJECTOR emits only
- * {@link POST_APP_CHIP_KEYS} ({@link projectPostAppChip}). Same posture as
- * `public-owner.ts`: adding a field in either place is a deliberate act.
+ * allowlisted columns ({@link postAppChipQuery}) and the PROJECTOR emits only the
+ * three fields of {@link PostAppChip} ({@link projectPostAppChip}). Same posture
+ * as `public-owner.ts`: adding a field in either place is a deliberate act.
+ *
+ * 🔴 THE EXPECTED KEY LIST IS NOT EXPORTED FROM HERE, DELIBERATELY. It is written
+ * out as a literal in the test — `EXPECTED_CHIP_KEYS` in
+ * `__tests__/post-app-chip.projection.test.ts` — so the assertion is a SECOND,
+ * INDEPENDENT statement of the shape. A constant exported from this module and
+ * asserted against would be self-referencing: a widening that edited the
+ * projector and the constant together would pass. (An earlier revision did export
+ * one, which is why this is spelled out rather than left implicit.)
  *
  * ## 3. RESOLVE-OR-OMIT. A marker that resolves to NOTHING is REACHABLE BY DESIGN.
  *
