@@ -34,7 +34,7 @@ import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../../test/component-setup';
 import { PostPublishedWithApp } from '~/components/Post/Detail/PostPublishedWithApp';
-import type { PostAppChip } from '~/server/services/blocks/post-app-chip';
+import type { PostAppChip } from '~/server/services/blocks/post-app-chip.logic';
 
 const CHIP = '[data-testid="post-published-with-app"]';
 

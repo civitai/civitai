@@ -559,17 +559,27 @@ export const getPostHandler = async ({ input, ctx }: { input: GetByIdInput; ctx:
 
     // "Published with <app>" chip. Resolved HERE rather than inside
     // `getPostDetail` for two reasons: this is the single tRPC read the post
-    // page actually renders from, and the chip needs the REQUEST's viewer to
-    // resolve a store-visibility scope — a request-scoped concern, like the
-    // block check above. `getPostDetail` has two other callers (the page's SSR
-    // gating read, which throws its result away, and `getPostEditDetail`) that
-    // would each pay for a resolution nothing renders.
+    // page actually renders from, and the chip needs the REQUEST's viewer and
+    // host to resolve a store-visibility scope and a maturity gate — both
+    // request-scoped concerns, like the block check above. `getPostDetail` has
+    // two other callers (the page's SSR gating read, which throws its result
+    // away, and `getPostEditDetail`) that would each pay for a resolution
+    // nothing renders.
     //
-    // 🔴 AFTER the authorisation above, never before: the resolver takes the
-    // post as already-admitted for this viewer and does not re-derive its
-    // visibility. Fail-open by construction (`null` on any error), so it cannot
-    // take the post page down.
-    const publishedWithApp = await readPostAppChip({ postId: post.id, user: ctx.user });
+    // 🔴 AFTER the authorisation above, never before, and keyed on `post.id` —
+    // the id of the row that was actually RETURNED — never on `input.id`. The
+    // resolver takes the post as already-admitted for this viewer and does not
+    // re-derive its visibility, so handing it an unvetted id would disclose
+    // whether that post was app-published. Fail-open by construction (`null` on
+    // any error), so it cannot take the post page down.
+    //
+    // `host` drives the store's maturity gate and is fail-closed on absence: a
+    // missing host refuses a mature app, i.e. under-links rather than over-links.
+    const publishedWithApp = await readPostAppChip({
+      postId: post.id,
+      user: ctx.user,
+      host: ctx.req?.headers?.host ?? '',
+    });
 
     return { ...post, publishedWithApp };
   } catch (error) {

@@ -146,7 +146,19 @@ export type StoreScopeEntrypoint =
   | 'trpc-review-write'
   | 'trpc-my-review'
   | 'rest-list'
-  | 'rest-detail';
+  | 'rest-detail'
+  // 🔴 NOT A STORE SURFACE, and the first entry here that isn't. The post-detail
+  // "Published with <app>" chip branches on this same scope to decide whether an
+  // on-site app may be named on a public post page, so it belongs in the pair —
+  // but it is a NON-STORE read, and a high-traffic anon-capable one, so it
+  // changes how the resolution counter reads: `{principal="anon", scope="none"}`
+  // is now dominated by post views rather than store visits. That is why this
+  // label exists rather than folding into `trpc-detail`: without it post-detail
+  // would appear on the RESOLUTION side of the pair and nowhere on the APPLIED
+  // side, which is precisely the "scope lost in transit" signature the two
+  // counters exist to distinguish. Slice by this label before reading either as
+  // a statement about the store.
+  | 'post-detail';
 
 /**
  * Record the scope an entry point actually branched on.

@@ -93,8 +93,11 @@
  * component test so a reword cannot reintroduce it.
  */
 import { sanitizeAppChromeName } from '~/components/AppBlocks/appChromeName';
+import { BLOCK_POST_APP_ID_META_KEY } from '~/server/services/blocks/block-post.logic';
 import { listingIconUrl } from '~/server/services/blocks/listing-media-url';
+import { ratingAllowedOnHost } from '~/server/utils/server-domain';
 import type { StoreVisibilityScope } from '~/shared/utils/store-visibility-scope';
+import { scopeAdmitsListingKind } from '~/shared/utils/store-visibility-scope';
 
 /**
  * The ONE shape that reaches the client.
@@ -111,16 +114,42 @@ export type PostAppChip = {
 };
 
 /**
- * The chip's complete key set, sorted. Exported so the projection test asserts
- * the emitted object against a literal rather than against the type (a type
- * declaration is not a runtime guard).
+ * Which branch one resolution took.
+ *
+ * 🔴 IT EXISTS BECAUSE FOUR OF THESE FIVE BRANCHES PUT THE SAME `null` ON THE
+ * WIRE. The feature fails open — decoration must never take a post page down —
+ * so a dropped replica, a renamed column or a Prisma client that cannot see the
+ * relation all return exactly what an ordinary hand-made post returns. Without a
+ * discriminator the chip could stop existing site-wide with no signal anywhere.
+ * `~/server/prom/post-app-chip.metrics.ts` is the counter; the union is declared
+ * HERE, beside the decision, so the label domain cannot drift from the branches.
+ *
+ * `degraded` is not produced by {@link resolvePostAppChip} — only the I/O wiring
+ * can know a read threw — which is why {@link PostAppChipResolution} excludes it.
  */
-export const POST_APP_CHIP_KEYS = ['iconUrl', 'name', 'slug'] as const;
+export type PostAppChipOutcome = 'chip' | 'no-marker' | 'unresolved' | 'gated' | 'degraded';
 
-/** The `Post.metadata` key the publish path writes the app's `OauthClient.id` into. */
-export const POST_APP_MARKER_KEY = 'blockPublishedAppId';
+/** One resolution: the chip (or `null`) plus the branch that produced it. */
+export type PostAppChipResolution = {
+  chip: PostAppChip | null;
+  outcome: Exclude<PostAppChipOutcome, 'degraded'>;
+};
 
-/** The status both `app_listings` and `app_blocks` must hold to be publicly viewable. */
+/**
+ * The status both `app_listings` and `app_blocks` must hold to be publicly
+ * viewable.
+ *
+ * 🔴 VIEWABILITY IS SPELLED AS `=== APPROVED_STATUS`, NEVER AS "not delisted".
+ * Both columns default to a NON-approved value (`app_listings.status` defaults
+ * to `draft` over the domain `draft|pending|approved|rejected|removed`;
+ * `app_blocks.status` defaults to `pending`), so a denylist — `!== 'removed'`,
+ * `!== 'suspended'` — admits the DEFAULT STATE of both tables and would put a
+ * draft listing's slug and icon on a public post page. The allowlist is the only
+ * spelling that fails closed. `post-app-chip.projection.test.ts` iterates the
+ * whole status domain rather than sampling one rejected value, because a fixture
+ * that only ever uses `removed`/`suspended` cannot tell the two spellings apart —
+ * three such denylist rewrites survived a fully green suite before it did.
+ */
 export const APPROVED_STATUS = 'approved';
 
 /**
@@ -147,8 +176,13 @@ export function postAppMarkerQuery(postId: number) {
  * treated as absent: it is not addressable and must not trigger a lookup.
  */
 export function readBlockPublishedAppId(metadata: unknown): string | null {
-  if (typeof metadata !== 'object' || metadata === null || Array.isArray(metadata)) return null;
-  const raw = (metadata as Record<string, unknown>)[POST_APP_MARKER_KEY];
+  if (typeof metadata !== 'object' || metadata === null) return null;
+  // 🔴 The key comes from the WRITER's own constant, never a re-spelled literal —
+  // see its declaration in `block-post.logic.ts`. An `Array.isArray` guard used
+  // to sit above this and was removed as dead: indexing an array with a string
+  // key yields `undefined`, which the `typeof` check below already rejects, so
+  // the branch could not be reached and a test over it could not fail.
+  const raw = (metadata as Record<string, unknown>)[BLOCK_POST_APP_ID_META_KEY];
   if (typeof raw !== 'string') return null;
   const trimmed = raw.trim();
   return trimmed.length > 0 ? trimmed : null;
@@ -165,11 +199,33 @@ export function readBlockPublishedAppId(metadata: unknown): string | null {
  *
  * `appBlocks` is a LIST because one `OauthClient` may own several blocks
  * (`@@unique([appId, blockId])`); the marker identifies the APP, not a block.
- * `appListing` is a to-one (`AppListing.appBlockId` is `@unique`). `status` is
- * selected on BOTH sides because viewability needs both, and `revisionOfId` is
- * selected so the projector can reject a shadow revision rather than trusting
- * that a revision can never hold the unique `appBlockId` — defence in depth on
- * a public read, matching `approvedListingSlugQuery`.
+ * `appListing` is a to-one (`AppListing.appBlockId` is `@unique`). `revisionOfId`
+ * is selected so the projector can reject a shadow revision rather than trusting
+ * that a revision can never hold the unique `appBlockId` — defence in depth on a
+ * public read, matching `approvedListingSlugQuery`.
+ *
+ * 🔴 EVERY OTHER COLUMN HERE IS A TERM OF THE VIEWABILITY PREDICATE, AND THE
+ * PREDICATE HAS TO MATCH THE DESTINATION'S OR THE LINK IS A 404. The chip's link
+ * goes to the store detail, whose own read (`getListingDetail` in
+ * `app-listing.service.ts`) rejects a row on THREE grounds beyond the listing
+ * status, and a chip that links a row that read refuses is exactly the "404
+ * dressed as a working link" this feature was supposed to avoid:
+ *
+ *   - `status` on BOTH sides — the listing's, plus the block's, which is this
+ *     chip's own additional requirement (strictly narrower than the store's, so
+ *     it can only ever under-link);
+ *   - `kind` + `currentVersionDeployedAt` — the DEPLOY gate. An `onsite` listing
+ *     whose block has never successfully deployed has no origin to serve, so the
+ *     store treats it as missing. `kind` is the discriminator because an
+ *     `offsite` row has no deploy concept at all — and an `appBlockId` is NOT a
+ *     kind discriminator (off-site backfilled rows carry one), so it must be
+ *     read rather than assumed;
+ *   - `contentRating` — the MATURITY gate, resolved against the request host by
+ *     the shared `ratingAllowedOnHost`.
+ *
+ * Those three were "STILL OWED" at `approvedListingSlugQuery`, which is the
+ * sibling precedent; they are closed here instead of inherited, because unlike
+ * that resolver this one already has the host threaded to it.
  */
 export function postAppChipQuery(appId: string) {
   return {
@@ -179,11 +235,14 @@ export function postAppChipQuery(appId: string) {
       appBlocks: {
         select: {
           status: true,
+          currentVersionDeployedAt: true,
           appListing: {
             select: {
               slug: true,
               name: true,
               status: true,
+              kind: true,
+              contentRating: true,
               revisionOfId: true,
               icon: { select: { url: true } },
             },
@@ -202,7 +261,16 @@ export type PostAppChipRow = {
 
 type ListingCandidate = { slug: string; name: string; iconUrl: string | null; viewable: boolean };
 
-function readListingCandidate(block: unknown): ListingCandidate | null {
+/**
+ * One `AppBlock` row → a candidate, or `null` when the block carries no store row
+ * this chip could ever name.
+ *
+ * `host` is the REQUEST's host, and it is required: it is the only input to the
+ * maturity term, and a default would silently decide it. An empty host fails
+ * closed for a mature rating (`ratingAllowedOnHost`), which is the safe
+ * direction.
+ */
+function readListingCandidate(block: unknown, host: string): ListingCandidate | null {
   if (typeof block !== 'object' || block === null) return null;
   const b = block as Record<string, unknown>;
   const listing = b.appListing;
@@ -213,6 +281,16 @@ function readListingCandidate(block: unknown): ListingCandidate | null {
   const slug = typeof l.slug === 'string' ? l.slug.trim() : '';
   if (!slug) return null;
   const icon = l.icon;
+  // 🔴 ALL FOUR TERMS, and every one an ALLOWLIST — see APPROVED_STATUS on why a
+  // denylist admits both tables' default state, and postAppChipQuery on why the
+  // last two exist at all (they are the destination's own gates; without them a
+  // "viewable" chip can link a page that 404s).
+  const deployed = l.kind !== 'onsite' || b.currentVersionDeployedAt != null;
+  const viewable =
+    b.status === APPROVED_STATUS &&
+    l.status === APPROVED_STATUS &&
+    deployed &&
+    ratingAllowedOnHost(typeof l.contentRating === 'string' ? l.contentRating : null, host);
   return {
     slug,
     // Publisher-controlled — sanitized at the projection, see projectPostAppChip.
@@ -227,7 +305,7 @@ function readListingCandidate(block: unknown): ListingCandidate | null {
           }
         : null
     ),
-    viewable: b.status === APPROVED_STATUS && l.status === APPROVED_STATUS,
+    viewable,
   };
 }
 
@@ -253,6 +331,17 @@ function readListingCandidate(block: unknown): ListingCandidate | null {
  * the link; the client name is the fallback for an app with no listing row at
  * all.
  *
+ * 🔴 A NON-VIEWABLE APP GETS NEITHER A SLUG NOR AN ICON, AND THE ICON HALF IS
+ * DELIBERATE RATHER THAN A SIDE EFFECT OF WRITING THE TERNARY TWICE. Suppressing
+ * the slug is the stated requirement (render the name unlinked). Suppressing the
+ * icon as well is this module's own decision: `viewable` is false precisely when
+ * the app is a draft, rejected, delisted, suspended, never-deployed, or
+ * mature-on-a-non-red-host, and in every one of those states the store itself
+ * refuses to serve that listing's media. Publishing its icon onto a public post
+ * page would route the asset around the gate that is withholding the page. The
+ * name is kept because the viewer needs to know what made the post — that is the
+ * whole feature — and the name is sanitised; the icon carries no such need.
+ *
  * 🔴 BOTH NAMES ARE PUBLISHER-CONTROLLED, so both go through
  * `sanitizeAppChromeName` HERE — on the server, at the one place that builds the
  * wire value — rather than at the render site. The post page would otherwise
@@ -263,12 +352,20 @@ function readListingCandidate(block: unknown): ListingCandidate | null {
  * can forget to. A name with nothing legible left is treated as no name at all:
  * the chip is dropped rather than rendered as a bare "Published with".
  */
-export function projectPostAppChip(row: PostAppChipRow | null | undefined): PostAppChip | null {
+export function projectPostAppChip(
+  row: PostAppChipRow | null | undefined,
+  /**
+   * The REQUEST's host, for the maturity term. Required — it is the only input
+   * that decides whether a mature app is viewable here, and a default would make
+   * that decision silently. See {@link readListingCandidate}.
+   */
+  opts: { host: string }
+): PostAppChip | null {
   if (!row) return null;
   const clientName = typeof row.name === 'string' ? sanitizeAppChromeName(row.name) ?? '' : '';
   const blocks = Array.isArray(row.appBlocks) ? row.appBlocks : [];
   const candidates = blocks
-    .map(readListingCandidate)
+    .map((b) => readListingCandidate(b, opts.host))
     .filter((c): c is ListingCandidate => c !== null)
     .sort((a, b) => (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
 
@@ -304,11 +401,23 @@ export function projectPostAppChip(row: PostAppChipRow | null | undefined): Post
  * Blocks — onto public post pages ahead of the store launch, and would hand a
  * `/apps/store-preview/<slug>` link to viewers the destination refuses to serve.
  *
- * So the chip renders only at scope `full`. That cohort sees it linked today;
- * everyone sees it automatically when the store flag widens, with no second
- * change. It is an ALLOWLIST (`!== 'full'`), not a denylist on the other scopes,
- * because a denylist fails OPEN the moment a fourth scope is added — and the
- * scope union is exactly the kind of thing that grows.
+ * So the chip renders only where an ON-SITE listing is admissible, which today
+ * is scope `full` alone (mods + app-dev-testers). That cohort sees it linked
+ * now; everyone sees it when the store flag widens, with no second change.
+ *
+ * 🔴 THE GATE IS THE SHARED `scopeAdmitsListingKind(scope, 'onsite')`, NOT A
+ * HAND-SPELLED `!== 'full'`. The two agree today, and the shared one is what
+ * keeps them agreeing: it is a `switch` over the closed scope union, so adding a
+ * fourth scope is a COMPILE ERROR there rather than a silent open or a silent
+ * stay-dark here. Its own header exists because a surface that re-derived this
+ * question disagreed with the read path and shipped a cohort an affordance the
+ * data layer then refused.
+ *
+ * `'onsite'` is passed unconditionally and that is the conservative reading, not
+ * an assumption: the gate runs BEFORE any read, so the listing's real `kind` is
+ * unknown here, and an `appBlockId` is not a kind discriminator anyway. Asking
+ * "may this viewer learn that an on-site app exists" is the question the
+ * operator's decision was made about.
  *
  * 🔴 `storeScope` is REQUIRED and must come from the SERVER resolver
  * (`resolveStoreVisibilityScope({ user })`), never re-derived from the client
@@ -316,25 +425,33 @@ export function projectPostAppChip(row: PostAppChipRow | null | undefined): Post
  * disagree — a Flipt outage makes the client fall back to each flag's static
  * `availability` while the server has no such fallback. This is a disclosure
  * gate, so it must key off the same value the DATA layer keys off. A default
- * would let a new caller silently re-open the disclosure, so there isn't one.
+ * would let a new caller silently re-open the disclosure, so there isn't one —
+ * and `post-app-chip.service.test.ts` pins that the wiring actually passes the
+ * resolver's answer through, because a literal `'full'` substituted at the call
+ * site defeats this entire gate without failing anything in THIS module's tests.
  */
 export async function resolvePostAppChip(args: {
   postId: number;
   storeScope: StoreVisibilityScope;
+  /** The request's host, for the maturity term. See {@link projectPostAppChip}. */
+  host: string;
   /** Narrow marker read. Build its args with {@link postAppMarkerQuery}. */
   readPostMetadata: (postId: number) => Promise<unknown>;
   /** Allowlisted app read. Build its args with {@link postAppChipQuery}. */
   readApp: (appId: string) => Promise<PostAppChipRow | null | undefined>;
-}): Promise<PostAppChip | null> {
+}): Promise<PostAppChipResolution> {
   // 🔒 GATE FIRST — before the marker is read, before anything is queried.
-  if (args.storeScope !== 'full') return null;
+  if (!scopeAdmitsListingKind(args.storeScope, 'onsite')) {
+    return { chip: null, outcome: 'gated' };
+  }
 
   const metadata = await args.readPostMetadata(args.postId);
   const appId = readBlockPublishedAppId(metadata);
   // No marker ⇒ an ordinary hand-made post. NO app lookup: this is the common
   // path and it must cost nothing extra.
-  if (!appId) return null;
+  if (!appId) return { chip: null, outcome: 'no-marker' };
 
   const row = await args.readApp(appId);
-  return projectPostAppChip(row ?? null);
+  const chip = projectPostAppChip(row ?? null, { host: args.host });
+  return { chip, outcome: chip ? 'chip' : 'unresolved' };
 }

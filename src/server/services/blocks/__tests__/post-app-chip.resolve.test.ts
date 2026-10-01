@@ -12,25 +12,37 @@
  *    overwhelming majority of posts carry no marker and must pay no extra query).
  *
  * Both are asserted with spies and call COUNTS, not by inspecting output: a post
- * with no marker and a post whose app does not resolve produce the same `null`,
- * so output cannot distinguish "took no query" from "took one and threw it away".
+ * with no marker and a post whose app does not resolve both produce a `null`
+ * chip, so output cannot distinguish "took no query" from "took one and threw it
+ * away". The `outcome` discriminator makes them tellable apart on the wire too —
+ * it is what the fail-open counter labels, so each branch is asserted here.
+ *
+ * ⚠️ WHAT THIS FILE CANNOT SEE, stated so it is not mistaken for complete: every
+ * test here injects `storeScope` and both reads directly. Replacing the real
+ * `resolveStoreVisibilityScope({ user })` with the literal `'full'` at the CALL
+ * SITE, or dropping the allowlisted `select`, leaves all of this green —
+ * measured. `post-app-chip.service.test.ts` is the file that covers the wiring.
  */
 import { describe, expect, it, vi } from 'vitest';
 import type { StoreVisibilityScope } from '~/shared/utils/store-visibility-scope';
-import { resolvePostAppChip } from '~/server/services/blocks/post-app-chip';
+import { resolvePostAppChip } from '~/server/services/blocks/post-app-chip.logic';
 
 const POST_ID = 31107522;
 const MARKER = 'appblk-custom-generators';
+const HOST = 'civitai.com';
 
 const approvedRow = {
   name: 'Custom Generators Client',
   appBlocks: [
     {
       status: 'approved',
+      currentVersionDeployedAt: new Date('2026-09-01T00:00:00.000Z'),
       appListing: {
         slug: 'custom-generators',
         name: 'Custom Generators',
         status: 'approved',
+        kind: 'onsite',
+        contentRating: 'pg',
         revisionOfId: null,
         icon: null,
       },
@@ -48,6 +60,7 @@ function harness(opts: { storeScope: StoreVisibilityScope; metadata?: unknown; a
       resolvePostAppChip({
         postId: POST_ID,
         storeScope: opts.storeScope,
+        host: HOST,
         readPostMetadata,
         readApp,
       }),
@@ -65,7 +78,7 @@ describe('the store-visibility gate runs first and short-circuits both reads', (
         metadata: { blockPublishedAppId: MARKER },
         app: approvedRow,
       });
-      await expect(h.run()).resolves.toBeNull();
+      await expect(h.run()).resolves.toEqual({ chip: null, outcome: 'gated' });
       // 🔴 Not "returns null" — returns null WITHOUT READING ANYTHING. Move the
       // gate below the marker read and this is the assertion that fails.
       expect(h.readPostMetadata).toHaveBeenCalledTimes(0);
@@ -74,14 +87,18 @@ describe('the store-visibility gate runs first and short-circuits both reads', (
   }
 
   it('is an allowlist, so an unrecognised scope is refused rather than admitted', async () => {
-    // A denylist on the known non-`full` scopes fails OPEN the moment a fourth
-    // scope is added, and the scope union is exactly the kind of thing that grows.
+    // 🔴 The cast is load-bearing, not a smell. The scope union is CLOSED at
+    // compile time, so a denylist (`scope === 'none' || scope === 'public-external'`)
+    // type-checks and passes every other test in this file — measured, it kills
+    // only this one. A fourth scope is exactly the thing that grows, and the
+    // shared `scopeAdmitsListingKind` switch is what makes adding one a compile
+    // error rather than a silent open.
     const h = harness({
       storeScope: 'partner-preview' as StoreVisibilityScope,
       metadata: { blockPublishedAppId: MARKER },
       app: approvedRow,
     });
-    await expect(h.run()).resolves.toBeNull();
+    await expect(h.run()).resolves.toEqual({ chip: null, outcome: 'gated' });
     expect(h.readPostMetadata).toHaveBeenCalledTimes(0);
   });
 
@@ -94,9 +111,8 @@ describe('the store-visibility gate runs first and short-circuits both reads', (
       app: approvedRow,
     });
     await expect(h.run()).resolves.toEqual({
-      slug: 'custom-generators',
-      name: 'Custom Generators',
-      iconUrl: null,
+      chip: { slug: 'custom-generators', name: 'Custom Generators', iconUrl: null },
+      outcome: 'chip',
     });
     expect(h.readPostMetadata).toHaveBeenCalledTimes(1);
     expect(h.readPostMetadata).toHaveBeenCalledWith(POST_ID);
@@ -110,20 +126,20 @@ describe('a post with no marker costs no app lookup', () => {
     // 🔴 Criterion 4. This is the common path — almost every post on the site —
     // so the assertion that matters is the call count, not the output.
     const h = harness({ storeScope: 'full', metadata: { imageNsfwLevel: 1, imageNsfw: false } });
-    await expect(h.run()).resolves.toBeNull();
+    await expect(h.run()).resolves.toEqual({ chip: null, outcome: 'no-marker' });
     expect(h.readPostMetadata).toHaveBeenCalledTimes(1);
     expect(h.readApp).toHaveBeenCalledTimes(0);
   });
 
   it('takes the same path when metadata is absent entirely', async () => {
     const h = harness({ storeScope: 'full', metadata: null });
-    await expect(h.run()).resolves.toBeNull();
+    await expect(h.run()).resolves.toEqual({ chip: null, outcome: 'no-marker' });
     expect(h.readApp).toHaveBeenCalledTimes(0);
   });
 
   it('takes the same path for a blank marker', async () => {
     const h = harness({ storeScope: 'full', metadata: { blockPublishedAppId: '  ' } });
-    await expect(h.run()).resolves.toBeNull();
+    await expect(h.run()).resolves.toEqual({ chip: null, outcome: 'no-marker' });
     expect(h.readApp).toHaveBeenCalledTimes(0);
   });
 });
@@ -138,7 +154,9 @@ describe('the three resolve branches', () => {
       metadata: { blockPublishedAppId: 'devblk-synthetic-nonresolving' },
       app: null,
     });
-    await expect(h.run()).resolves.toBeNull();
+    // 🔴 `unresolved`, NOT `no-marker` — the two are the same `null` on the wire
+    // and the counter is the only thing that can tell them apart in production.
+    await expect(h.run()).resolves.toEqual({ chip: null, outcome: 'unresolved' });
     // It still LOOKED the app up — the marker is never string-munged into a link.
     expect(h.readApp).toHaveBeenCalledTimes(1);
     expect(h.readApp).toHaveBeenCalledWith('devblk-synthetic-nonresolving');
@@ -153,10 +171,13 @@ describe('the three resolve branches', () => {
         appBlocks: [
           {
             status: 'suspended',
+            currentVersionDeployedAt: null,
             appListing: {
               slug: 'ab-img-poster',
               name: 'Ab Img Poster',
               status: 'removed',
+              kind: 'onsite',
+              contentRating: 'pg',
               revisionOfId: null,
               icon: null,
             },
@@ -165,9 +186,9 @@ describe('the three resolve branches', () => {
       },
     });
     await expect(h.run()).resolves.toEqual({
-      slug: null,
-      name: 'Ab Img Poster',
-      iconUrl: null,
+      chip: { slug: null, name: 'Ab Img Poster', iconUrl: null },
+      // A chip WAS produced — the name is the chip. Only the link is withheld.
+      outcome: 'chip',
     });
   });
 
@@ -177,6 +198,8 @@ describe('the three resolve branches', () => {
       metadata: { blockPublishedAppId: MARKER },
       app: approvedRow,
     });
-    await expect(h.run()).resolves.toMatchObject({ slug: 'custom-generators' });
+    const { chip, outcome } = await h.run();
+    expect(chip).toMatchObject({ slug: 'custom-generators' });
+    expect(outcome).toBe('chip');
   });
 });
