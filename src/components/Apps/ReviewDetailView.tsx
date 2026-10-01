@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { OnsiteReviewModalBody, type OnsiteReviewSelection } from '~/components/Apps/OnsiteReviewModal';
 import {
-  ReviewActionBar,
-  type ReviewActionStatus,
-} from '~/components/Apps/ReviewActionBar';
+  OnsiteReviewModalBody,
+  type OnsiteReviewSelection,
+} from '~/components/Apps/OnsiteReviewModal';
+import { ReviewActionBar, type ReviewActionStatus } from '~/components/Apps/ReviewActionBar';
+import { ReviewListingMedia } from '~/components/Apps/ReviewListingMedia';
 import { useReviewNavigationGuard } from '~/components/Apps/useReviewNavigationGuard';
+import { appDisplayName } from '~/shared/utils/app-display-name';
 
 /**
  * The per-submission review PAGE body (`/apps/review/<id>`), factored OUT of the
@@ -93,6 +95,14 @@ export function ReviewDetailView({
         aria-label={`Review of ${selection.request.slug} v${selection.request.version}`}
         style={{ outline: 'none' }}
       >
+        {/* The shared body shows BUNDLE screenshots only; the store icon and cover are
+            listing columns it never reads. */}
+        <ReviewListingMedia
+          slug={selection.request.slug}
+          name={appDisplayName(selection.request.manifest, selection.request.slug)}
+          iconUrl={selection.request.iconUrl ?? null}
+          coverUrl={selection.request.coverUrl ?? null}
+        />
         <OnsiteReviewModalBody
           // Route param → keyed remount for a fresh per-submission body (parity
           // with the modal). Actions are hidden here — the sticky bar owns them.

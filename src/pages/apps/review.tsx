@@ -26,7 +26,11 @@ import {
   CombinedReviewModal,
   type CombinedReviewSelection,
 } from '~/components/Apps/CombinedReviewModal';
-import { UnifiedReviewList } from '~/components/Apps/UnifiedReviewList';
+import {
+  PriorVersionsModal,
+  type PriorVersionsSelection,
+} from '~/components/Apps/PriorVersionsModal';
+import { UnifiedReviewList, type VersionHistoryTarget } from '~/components/Apps/UnifiedReviewList';
 import type {
   CombinedReviewPayload,
   OffsiteReviewRequest,
@@ -245,6 +249,12 @@ export default function ReviewQueuePage() {
   // BOTH a pending code request AND a pending listing-media revision (page-owned, one
   // instance). Each stacked section keeps its own independent approve/reject.
   const [combinedReview, setCombinedReview] = useState<CombinedReviewSelection>(null);
+  /**
+   * PRIOR-VERSIONS modal — page-owned for the same reason as the three above, and here the
+   * reason is sharper: the Pending queue refetches every 15s and its rows are
+   * whole-row-clickable, so row-local state would be torn down under a moderator mid-read.
+   */
+  const [priorVersions, setPriorVersions] = useState<PriorVersionsSelection>(null);
 
   // DUAL-PATH on-site row selection: under the `appReviewPage` flag a row NAVIGATES
   // to the deep-linkable detail page `/apps/review/<id>`; with the flag off it opens
@@ -275,6 +285,10 @@ export default function ReviewQueuePage() {
     },
     []
   );
+
+  const openVersionHistory = useCallback((target: VersionHistoryTarget) => {
+    setPriorVersions(target);
+  }, []);
 
   if (!features?.appBlocks) return <NotFound />;
 
@@ -326,6 +340,7 @@ export default function ReviewQueuePage() {
               openOnsiteReview={openOnsiteReview}
               openOffsiteReview={openOffsiteReview}
               openCombinedReview={openCombinedReview}
+              openVersionHistory={openVersionHistory}
             />
           </Tabs.Panel>
 
@@ -334,6 +349,7 @@ export default function ReviewQueuePage() {
               kind="approved"
               openOnsiteReview={openOnsiteReview}
               openOffsiteReview={openOffsiteReview}
+              openVersionHistory={openVersionHistory}
             />
           </Tabs.Panel>
 
@@ -342,6 +358,7 @@ export default function ReviewQueuePage() {
               kind="rejected"
               openOnsiteReview={openOnsiteReview}
               openOffsiteReview={openOffsiteReview}
+              openVersionHistory={openVersionHistory}
             />
           </Tabs.Panel>
 
@@ -371,6 +388,7 @@ export default function ReviewQueuePage() {
         readOnly={offsiteReview?.readOnly}
       />
       <CombinedReviewModal selection={combinedReview} onClose={() => setCombinedReview(null)} />
+      <PriorVersionsModal selection={priorVersions} onClose={() => setPriorVersions(null)} />
     </>
   );
 }
@@ -397,6 +415,7 @@ export function UnifiedPendingTab({
   openOnsiteReview,
   openOffsiteReview,
   openCombinedReview,
+  openVersionHistory,
 }: {
   openOnsiteReview: (
     req: AnyRequest,
@@ -412,6 +431,9 @@ export function UnifiedPendingTab({
     payload: CombinedReviewPayload,
     onActioned?: () => void | Promise<void>
   ) => void;
+  /** Opens the page-owned prior-versions modal. Optional so the poll harness can mount
+   *  this tab without it. */
+  openVersionHistory?: (target: VersionHistoryTarget) => void;
 }) {
   const features = useFeatureFlags();
   const enabled = !!features?.appBlocks;
@@ -619,6 +641,7 @@ export function UnifiedPendingTab({
       openOnsiteReview={boundOnsite}
       openOffsiteReview={boundOffsite}
       openCombinedReview={boundCombined}
+      openVersionHistory={openVersionHistory}
       isLoading={onsiteQuery.isLoading || offsiteQuery.isLoading}
       errorMessage={onsiteQuery.error?.message ?? offsiteQuery.error?.message}
       emptyLabel="Queue is empty. Nothing waiting for review."
@@ -644,8 +667,10 @@ function UnifiedHistoryTab({
   kind,
   openOnsiteReview,
   openOffsiteReview,
+  openVersionHistory,
 }: {
   kind: 'approved' | 'rejected';
+  openVersionHistory?: (target: VersionHistoryTarget) => void;
   openOnsiteReview: (
     req: AnyRequest,
     mode: OnsiteReviewMode,
@@ -766,6 +791,7 @@ function UnifiedHistoryTab({
       direction="desc"
       openOnsiteReview={boundOnsite}
       openOffsiteReview={boundOffsite}
+      openVersionHistory={openVersionHistory}
       isLoading={onsiteQuery.isLoading || offsiteQuery.isLoading}
       errorMessage={onsiteQuery.error?.message ?? offsiteQuery.error?.message}
       emptyLabel={isApproved ? 'No approved requests yet.' : 'No rejected requests yet.'}
