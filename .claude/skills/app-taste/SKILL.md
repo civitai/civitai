@@ -66,6 +66,11 @@ The hue and mark come from the brand system, never invented here — read the li
 values as `listing-media` instructs, and treat any hue table you find in prose as
 a snapshot.
 
+🔴 **The wheel's ≥40° separation bar binds hue CHOICE, not inheritance** — a hue
+measured from the app's approved live mark is recorded in the ledger's `wheelGate`
+block and ships as-is. Never contort a palette to satisfy the bar; the skin must
+stay in sync with the icon and cover already approved on the store.
+
 **Decide brand DEPTH explicitly and record it** (`taste.json` → `brandDepth`):
 
 | depth | surfaces | who owns light/dark |
