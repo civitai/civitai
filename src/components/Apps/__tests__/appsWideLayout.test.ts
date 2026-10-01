@@ -164,39 +164,6 @@ describe('every shipped ledger is valid', () => {
     expect(APPS_AGENT_REPORT_SCOPE_COLUMNS).toHaveLength(6); // Scope Used Justified Sensitive Evidence Notes
   });
 
-  test('🔴 the geometry fixture uses the LONGEST username the schema allows', async () => {
-    /**
-     * The fixture decides whether the declared-share arm can see anything, and
-     * `usernameInputSchema`'s bound is the only thing that says what the worst case is.
-     *
-     * Probed rather than read as a number, so it holds whatever shape the bound takes: the
-     * fixture length must parse and one more character must not.
-     */
-    const { usernameInputSchema } = await import('~/server/schema/user.schema');
-    /**
-     * 🔴 ANCHORED, BECAUSE THE LOOSE FORM WAS WALKABLE BY A LINE COMMENT. `codeOf` is
-     * `stripBlockComments`, which strips `/* … *\/` only, and `.exec` takes the FIRST
-     * match — so a `// const SUBMITTER_USERNAME = 'w'.repeat(25);` above a real
-     * `repeat(15)` read 25 and this arm passed green over the exact understatement it
-     * exists to stop. `^…;$` with `m` cannot match a commented or trailing copy.
-     * (`prettier --write` over the geometry file is a zero-byte diff, so the anchor is
-     * format-stable rather than merely tighter.)
-     */
-    const src = codeOf('src/components/Apps/AppsWideLayout.geometry.test.tsx');
-    const declared = /^const SUBMITTER_USERNAME = 'w'\.repeat\((\d+)\);$/m.exec(src);
-    expect(declared, 'the geometry fixture no longer declares SUBMITTER_USERNAME').not.toBeNull();
-    const length = Number(declared![1]);
-    expect(
-      usernameInputSchema.safeParse('w'.repeat(length)).success,
-      `the fixture's ${length}-character username is not valid — it cannot be the worst case`
-    ).toBe(true);
-    expect(
-      usernameInputSchema.safeParse('w'.repeat(length + 1)).success,
-      `a ${length + 1}-character username IS valid, so the fixture understates the bound and ` +
-        'the declared-share arm is measuring a cell narrower than production can render'
-    ).toBe(false);
-  });
-
   test('🔴 the two-shape ledgers differ by exactly one column', () => {
     // Both pairs exist because ONE optional column exists. A pair that differed by two
     // would mean a width-conditional column set had crept in, which is the thing the

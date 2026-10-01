@@ -76,6 +76,7 @@ import { cleanup } from 'vitest-browser-react';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { cascadeEvidence, nextLayout, renderAtViewport } from '../../../test/geometry-setup';
 import { LOADABLE_IMAGE_DATA_URI } from '../../../test/component-setup';
+import { USERNAME_MAX_LENGTH } from '~/shared/zod/username.schema';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as BrowserSettingsMod from '~/providers/BrowserSettingsProvider';
 import type * as BrowsingLevelMod from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -449,13 +450,18 @@ const PIXEL = LOADABLE_IMAGE_DATA_URI;
 const ONSITE_KEY = 'onsite:or1';
 
 /**
- * 🔴 THE LONGEST USERNAME THE SCHEMA ALLOWS, because the Submitter cell's MIN-CONTENT is
- * what the declared-share arm reads and a long name is what sets it. The chip is
- * `wrap="nowrap"`, so this does NOT change the row height.
+ * 🔴 THE LONGEST USERNAME THE SCHEMA ALLOWS, DERIVED FROM THE BOUND ITSELF. The Submitter
+ * cell's MIN-CONTENT is what the declared-share arm reads, and a long name is what sets it
+ * — so a fixture shorter than the bound measures a cell narrower than production can
+ * render, which is how that share shipped two sizes too small, twice.
  *
- * Its length is pinned against `usernameInputSchema` in `__tests__/appsWideLayout.test.ts`.
+ * Derived rather than pinned: an earlier revision hardcoded 25 and a sibling unit test
+ * regex-grepped THIS FILE AS A STRING to check the number. That mechanism was itself the
+ * defect — the loose regex was walkable by a `//`-commented decoy — and importing the
+ * constant makes the whole class unreachable. The chip is `wrap="nowrap"`, so this moves
+ * min-content, not row height.
  */
-const SUBMITTER_USERNAME = 'w'.repeat(25);
+const SUBMITTER_USERNAME = 'w'.repeat(USERNAME_MAX_LENGTH);
 
 const ONSITE: OnsiteReviewRequest = {
   id: 'or1',

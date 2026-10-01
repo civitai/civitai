@@ -6,6 +6,7 @@ import {
 import { ReviewActionBar, type ReviewActionStatus } from '~/components/Apps/ReviewActionBar';
 import { ReviewListingMedia } from '~/components/Apps/ReviewListingMedia';
 import { useReviewNavigationGuard } from '~/components/Apps/useReviewNavigationGuard';
+import { appDisplayName } from '~/shared/utils/app-display-name';
 
 /**
  * The per-submission review PAGE body (`/apps/review/<id>`), factored OUT of the
@@ -24,13 +25,6 @@ import { useReviewNavigationGuard } from '~/components/Apps/useReviewNavigationG
  * `selection` is already resolved by the page (SSR gate + client `getPublishRequest`
  * fetch); this component is purely presentational + interaction.
  */
-
-/** The manifest's declared name, when the blob carries one. */
-function manifestName(manifest: unknown): string | null {
-  if (!manifest || typeof manifest !== 'object') return null;
-  const name = (manifest as Record<string, unknown>).name;
-  return typeof name === 'string' && name.length > 0 ? name : null;
-}
 
 const STATUS_MESSAGE: Record<ReviewActionStatus, string> = {
   idle: '',
@@ -105,7 +99,7 @@ export function ReviewDetailView({
             listing columns it never reads. */}
         <ReviewListingMedia
           slug={selection.request.slug}
-          name={manifestName(selection.request.manifest) ?? selection.request.slug}
+          name={appDisplayName(selection.request.manifest, selection.request.slug)}
           iconUrl={selection.request.iconUrl ?? null}
           coverUrl={selection.request.coverUrl ?? null}
         />

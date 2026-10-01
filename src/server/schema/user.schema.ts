@@ -14,7 +14,11 @@ import {
   ModelEngagementType,
   TagEngagementType,
 } from '~/shared/utils/prisma/enums';
-import { usernameSchema } from '~/shared/zod/username.schema';
+import {
+  usernameSchema,
+  USERNAME_MAX_LENGTH,
+  USERNAME_MIN_LENGTH,
+} from '~/shared/zod/username.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import {
@@ -55,8 +59,8 @@ export const userPageQuerySchema = z
   });
 
 export const usernameInputSchema = usernameSchema
-  .min(3, 'Your username must be at least 3 characters long')
-  .max(25, 'Your username must be at most 25 characters long')
+  .min(USERNAME_MIN_LENGTH, `Your username must be at least ${USERNAME_MIN_LENGTH} characters long`)
+  .max(USERNAME_MAX_LENGTH, `Your username must be at most ${USERNAME_MAX_LENGTH} characters long`)
   .transform((v) => v.trim());
 
 export const getUserByUsernameSchema = z.object({

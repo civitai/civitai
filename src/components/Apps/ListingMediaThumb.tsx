@@ -37,6 +37,12 @@ export const LISTING_COVER_H = 54; // 16:9
  * 🔴 A PLACEHOLDER IS INERT — no button, no `tabIndex`, no pointer cursor. There is nothing to
  * view, and a focusable control that opens an empty modal adds a tab stop to every row of a
  * table whose rows are mostly incomplete listings.
+ *
+ * ⚠️ NO `stopPropagation` HERE, DELIBERATELY. One was added for the `/apps/review` queue,
+ * whose rows are whole-row-clickable — but that queue no longer makes its icon clickable,
+ * and neither remaining caller (`/apps/mine`'s rows, the review page's media card) sits
+ * inside a clickable ancestor, so it guarded no reachable case. Re-add it with the caller
+ * that needs it, not in advance.
  */
 function MediaButton({
   label,
@@ -51,12 +57,7 @@ function MediaButton({
 }) {
   return (
     <UnstyledButton
-      onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
-        // The review queue's rows are whole-row-clickable; opening the image must not also
-        // open the review. Inert on `/apps/mine`, whose rows have no row-level handler.
-        e.stopPropagation();
-        onOpen();
-      }}
+      onClick={onOpen}
       aria-label={label}
       data-testid={testId}
       // `display: flex` so the button box is exactly the image box — a default

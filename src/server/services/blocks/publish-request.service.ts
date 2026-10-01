@@ -1,3 +1,4 @@
+import { appDisplayName } from '~/shared/utils/app-display-name';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import type { Prisma } from '@prisma/client';
 import { createHash } from 'crypto';
@@ -4704,7 +4705,7 @@ export async function mintReviewBlockToken(opts: {
   const manifestScopes: string[] = Array.isArray(manifest.scopes)
     ? manifest.scopes.filter((s): s is string => typeof s === 'string')
     : [];
-  const manifestName = typeof manifest.name === 'string' ? manifest.name : row.slug;
+  const manifestName = appDisplayName(manifest, row.slug);
   // 🔴 Carried so the MODERATOR reviews the presentation a user will get. The
   // review preview mounts the real PageBlockHost; without this it rendered the
   // host veil while the approved app will not, i.e. the one person deciding

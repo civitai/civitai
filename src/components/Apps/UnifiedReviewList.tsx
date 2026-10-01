@@ -16,6 +16,7 @@ import {
   IconClock,
   IconExternalLink,
   IconHistory,
+  IconInfoCircle,
   IconRefresh,
 } from '@tabler/icons-react';
 import { useEffect, useMemo, useState } from 'react';
@@ -23,14 +24,8 @@ import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
 import { canRetriggerBuild } from '~/components/Apps/deploy-status';
 import { AppsTableColgroup, APPS_REVIEW_QUEUE_COLUMNS } from '~/components/Apps/appsWideLayout';
 import { getPlayCountLabel } from '~/components/Apps/appListingCardView';
-import {
-  NO_BROKEN_SCREENSHOTS,
-  withBrokenIndex,
-  type BrokenScreenshotIndexes,
-} from '~/components/Apps/appListingScreenshotNav';
-import { AppListingScreenshotViewer } from '~/components/Apps/AppListingScreenshotViewer';
+import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import { ListingIconThumb } from '~/components/Apps/ListingMediaThumb';
-import { listingMediaIndex, listingMediaShots } from '~/components/Apps/myAppsView';
 import { compactRelativeTime } from '~/components/Apps/reviewRelativeTime';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import {
@@ -82,6 +77,30 @@ export type VersionHistoryTarget = {
  * rung, so a faster tick could not change a single label.
  */
 export const REVIEW_RELATIVE_TICK_MS = 60_000;
+
+/**
+ * What the Plays column does and does not mean.
+ *
+ * 🔴 THE KIND WORD IS INTERPOLATED FROM `STANDALONE_KIND_LABEL`, never spelled. A literal
+ * here is precisely what `__tests__/standaloneWordingCallSites.test.ts` reds on, and it
+ * caught this string carrying the retired wording.
+ *
+ * 🔴 THE NUMBER IS NOT PUBLIC USAGE AND NOTHING ELSE ON SCREEN SAYS SO. The cell's wording
+ * comes from `getPlayCountLabel`, shared with the public store card, so it cannot be
+ * reworded here without the two surfaces disagreeing about one listing — the caveats go
+ * here instead.
+ *
+ * 🔴 IT DESCRIBES THE COUNTER, NEVER ITS AUDIENCE. The run page is gated by
+ * `app-blocks-pages-enabled`; naming who is in that segment would be false the day it
+ * widens, with nothing to tell you. Read that flag's current rollout to interpret the
+ * figure — this string stays true either way.
+ */
+export const PLAYS_CAVEAT =
+  "Store opens of this app's run page. NOT deduplicated — crawlers and link unfurlers are " +
+  'counted too, so read it as an upper bound rather than unique users. The run page is ' +
+  `still flag-limited, so this reflects internal opens rather than public traffic. A ` +
+  `${STANDALONE_KIND_LABEL} listing can never record one: its CTA leaves the site, so an ` +
+  'em dash there means unmeasurable, not zero.';
 
 function useNowTick(intervalMs: number): Date {
   const [now, setNow] = useState(() => new Date());
@@ -172,20 +191,6 @@ export function UnifiedReviewList({
    */
   const now = useNowTick(REVIEW_RELATIVE_TICK_MS);
 
-  /**
-   * The row whose listing media is open in the viewer, and which image is on screen.
-   *
-   * 🔴 ONE VIEWER FOR THE WHOLE LIST, not one per row — a `<Modal>` per row would put
-   * `rows.length` dialogs in the DOM, each registering its own capture-phase Escape
-   * listener. `broken` is reset on every open because it indexes into THIS row's
-   * `[cover, icon]` list; carrying it across rows would hide a different app's icon.
-   */
-  const [mediaTarget, setMediaTarget] = useState<{ rowKey: string; index: number } | null>(null);
-  const [mediaBroken, setMediaBroken] = useState<BrokenScreenshotIndexes>(NO_BROKEN_SCREENSHOTS);
-  // Resolved from `rows` rather than stored on open, so the 15s poll removing a decided row
-  // cannot leave the viewer framing a dead URL — the viewer's own rescue effect closes it.
-  const mediaRow = mediaTarget ? rows.find((r) => r.key === mediaTarget.rowKey) ?? null : null;
-
   return (
     <Stack gap="md">
       <Text c="dimmed" size="sm" data-testid="apps-unified-review-count">
@@ -235,7 +240,18 @@ export function UnifiedReviewList({
                 <Table.Th data-testid="apps-unified-review-col-app">App</Table.Th>
                 <Table.Th>Version</Table.Th>
                 <Table.Th>Submitter</Table.Th>
-                <Table.Th>Plays</Table.Th>
+                {/* 🔴 THE CAVEATS RIDE A NATIVE `title`, NOT A POPOVER. An
+                    `InfoPopover` renders a real button, and this list's own poll suite
+                    asserts that every button inside the tab is one the LIST emitted with an
+                    `apps-unified-review-` testid — which `InfoPopover` has no typed way to
+                    pass. A `title` needs no control, is announced by screen readers, and
+                    survives with no JS. */}
+                <Table.Th title={PLAYS_CAVEAT}>
+                  <Group gap={4} wrap="nowrap" style={{ cursor: 'help' }}>
+                    Plays
+                    <IconInfoCircle size={13} style={{ opacity: 0.6 }} aria-hidden />
+                  </Group>
+                </Table.Th>
                 <Table.Th>{dateLabel}</Table.Th>
                 {showDeploy && <Table.Th>Deploy</Table.Th>}
                 <Table.Th />
@@ -252,12 +268,6 @@ export function UnifiedReviewList({
                   onRetriggerBuild={onRetriggerBuild}
                   retriggeringId={retriggeringId ?? null}
                   openVersionHistory={openVersionHistory}
-                  onOpenMedia={(target) => {
-                    const iconIndex = listingMediaIndex(target, 'icon');
-                    if (iconIndex === null) return;
-                    setMediaBroken(NO_BROKEN_SCREENSHOTS);
-                    setMediaTarget({ rowKey: target.key, index: iconIndex });
-                  }}
                 />
               ))}
             </Table.Tbody>
@@ -278,34 +288,6 @@ export function UnifiedReviewList({
           </Button>
         </Group>
       )}
-
-      {/*
-        REUSED, NOT REBUILT — `ImageViewer`/`ImageDetailModal` are keyed on a numeric
-        civitai `Image` id and driven by a `?imageId=` query param; a row here carries a CDN
-        URL string and no image id exists to hand them. Mounted outside the table so paging
-        cannot unmount it mid-view. `/apps/review/<id>` opens the same viewer, so the two
-        surfaces cannot drift on prev/next or the broken-shot rescue.
-
-        `[cover, icon]` deliberately, so a moderator can arrow from an icon to the store
-        card they are about to approve.
-      */}
-      <AppListingScreenshotViewer
-        shots={
-          mediaRow
-            ? listingMediaShots({
-                name: mediaRow.title,
-                iconUrl: mediaRow.iconUrl,
-                coverUrl: mediaRow.coverUrl,
-              })
-            : []
-        }
-        name={mediaRow?.title ?? ''}
-        broken={mediaBroken}
-        index={mediaRow ? mediaTarget?.index ?? null : null}
-        onIndexChange={(index) => setMediaTarget((prev) => (prev ? { ...prev, index } : prev))}
-        onBroken={(index) => setMediaBroken((prev) => withBrokenIndex(prev, index))}
-        onClose={() => setMediaTarget(null)}
-      />
     </Stack>
   );
 }
@@ -475,7 +457,6 @@ function UnifiedReviewRowView({
   onRetriggerBuild,
   retriggeringId,
   openVersionHistory,
-  onOpenMedia,
 }: {
   row: UnifiedReviewRow;
   now: Date;
@@ -484,7 +465,6 @@ function UnifiedReviewRowView({
   onRetriggerBuild?: (publishRequestId: string) => void;
   retriggeringId: string | null;
   openVersionHistory?: (target: VersionHistoryTarget) => void;
-  onOpenMedia: (row: UnifiedReviewRow) => void;
 }) {
   const submitter = row.submitter;
   const deploy = row.deploy;
@@ -513,15 +493,20 @@ function UnifiedReviewRowView({
       <Table.Td onClick={row.onReview}>
         {/* The icon lives INSIDE this cell rather than in a column of its own: a 40px
             image cannot use a column's share, so a sixth fixed column would take width
-            off the primary one to pad a fixed-size box. */}
+            off the primary one to pad a fixed-size box.
+
+            🔴 NOT CLICKABLE, AND THAT IS THE DECISION RATHER THAN AN OMISSION. Passing no
+            `onOpen` leaves it a plain `<img>`: judging store media at 40px is worse than
+            opening the submission, which is one click away and shows the icon AND the cover
+            at full size (`ReviewListingMedia`). A lightbox here would also be the only
+            interactive child in a whole-row-clickable cell, i.e. a second thing one click
+            could do. */}
         <Group gap="sm" wrap="nowrap">
           <ListingIconThumb
             url={row.iconUrl}
             name={row.title}
             imgTestId={`apps-unified-review-icon-${row.key}`}
             placeholderTestId={`apps-unified-review-icon-placeholder-${row.key}`}
-            onOpen={row.iconUrl ? () => onOpenMedia(row) : undefined}
-            buttonTestId={`apps-unified-review-icon-button-${row.key}`}
           />
           <Stack gap={0} style={{ minWidth: 0 }}>
             {row.slug && <Code>{row.slug}</Code>}

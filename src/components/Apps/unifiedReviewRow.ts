@@ -1,4 +1,5 @@
 import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
+import { appDisplayName } from '~/shared/utils/app-display-name';
 import type { AnyRequest, ManifestDiffSummary } from '~/components/Apps/OnsiteReviewModal';
 import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
 
@@ -166,12 +167,7 @@ export function onsiteRequestToUnifiedRow(
   openOnsiteReview: (req: OnsiteReviewRequest) => void
 ): UnifiedReviewRow {
   const reviewedAt = 'reviewedAt' in req && req.reviewedAt != null ? req.reviewedAt : null;
-  const manifestName =
-    req.manifest && typeof req.manifest === 'object'
-      ? (req.manifest as Record<string, unknown>).name
-      : undefined;
-  const title =
-    typeof manifestName === 'string' && manifestName.length > 0 ? manifestName : req.slug;
+  const title = appDisplayName(req.manifest, req.slug);
   // Approved rows carry the deploy lifecycle (added to `listApprovedRequests`);
   // pending/rejected rows do not, so `deploy` stays undefined and every existing
   // caller/fixture is unaffected.

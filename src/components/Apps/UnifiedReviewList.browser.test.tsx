@@ -253,6 +253,35 @@ describe('UnifiedReviewList — the Plays column', () => {
   });
 });
 
+describe('🔴 UnifiedReviewList — the Plays header carries its caveats', () => {
+  /**
+   * The figure is not public usage and the cell's own wording ("12.4k plays", shared with
+   * the public store card) reads exactly as if it were. The header is the only place that
+   * can say otherwise, so what it says is pinned — all four properties, because a header
+   * carrying three of them is the misreading this exists to stop.
+   *
+   * 🔴 NO AUDIENCE WORDING ASSERTED, AND THAT IS THE POINT. Copy naming who can reach the
+   * run page would be false the day `app-blocks-pages-enabled` widens, with nothing to
+   * tell you — so the copy describes the COUNTER, and this test refuses the other shape.
+   */
+  test('the header states all four properties of the counter', async () => {
+    renderList({ onsiteItems: [{ ...ONSITE, playCount: 12_400 } as OnsiteReviewRequest] });
+    await expect.element(page.getByTestId('apps-unified-review-count')).toBeInTheDocument();
+    const th = [...document.querySelectorAll('th')].find((h) =>
+      (h.textContent ?? '').includes('Plays')
+    );
+    expect(th, 'no Plays header rendered').toBeTruthy();
+    const caveat = th!.getAttribute('title') ?? '';
+    // (1) what it counts, (2) not deduped, (3) flag-limited, (4) off-site is unmeasurable.
+    expect(caveat).toMatch(/run page/i);
+    expect(caveat).toMatch(/not deduplicated/i);
+    expect(caveat).toMatch(/flag-limited/i);
+    expect(caveat).toMatch(/unmeasurable, not zero/i);
+    // …and it does NOT describe an audience, which is the half that would go stale.
+    expect(caveat).not.toMatch(/moderator|dev.?tester|internal team|staff/i);
+  });
+});
+
 describe('UnifiedReviewList — the relative age cell', () => {
   test('renders a compact age and keeps the exact timestamp in title + dateTime', async () => {
     renderList();
@@ -291,8 +320,33 @@ describe('UnifiedReviewList — the listing icon in the App cell', () => {
     await expect.element(placeholder).toBeInTheDocument();
     expect(placeholder.element().tagName).toBe('DIV');
     expect(page.getByTestId('apps-unified-review-icon-onsite:or1').elements()).toEqual([]);
-    // Nothing to view → no button, so no tab stop on a row with no icon.
-    expect(page.getByTestId('apps-unified-review-icon-button-onsite:or1').elements()).toEqual([]);
+  });
+
+  test('🔴 the icon is NEVER a control in the queue — present or absent', async () => {
+    /**
+     * The queue shows the icon for identity and does not open it: judging store media at
+     * 40px is worse than opening the submission, which shows icon AND cover at full size.
+     * Asserted STRUCTURALLY rather than by the absence of a testid — a `data-testid` the
+     * code no longer emits is a vacuous check, where "no ancestor button" stays true
+     * however the thumbnail is re-wired.
+     */
+    renderList({ onsiteItems: [{ ...ONSITE, iconUrl: PIXEL } as OnsiteReviewRequest] });
+    const img = page.getByTestId('apps-unified-review-icon-onsite:or1');
+    await expect.element(img).toBeInTheDocument();
+    expect(img.element().closest('button'), 'the queue icon is wrapped in a button').toBeNull();
+    // …and the cell it sits in still opens the review, so the row is not inert.
+    const { openOnsite } = renderList({
+      onsiteItems: [{ ...ONSITE, id: 'ctl', iconUrl: PIXEL } as OnsiteReviewRequest],
+      offsiteItems: [],
+    });
+    await expect
+      .element(page.getByTestId('apps-unified-review-row-onsite:ctl'))
+      .toBeInTheDocument();
+    const cell = document
+      .querySelector('[data-testid="apps-unified-review-row-onsite:ctl"]')!
+      .querySelectorAll('td')[1] as HTMLElement;
+    cell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    expect(openOnsite).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -360,21 +414,5 @@ describe('🔴 UnifiedReviewList — the stopPropagation guards', () => {
     cell.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     expect(openOnsite).toHaveBeenCalledTimes(1);
     expect(openVersionHistory).not.toHaveBeenCalled();
-  });
-
-  test('clicking the ICON opens the ICON in the viewer, and NOT the review', async () => {
-    // 🔴 BOTH ASSETS, because `listingMediaShots` builds `[cover, icon]`: with no cover the
-    // icon is index 0, which a lookup hardcoded to 0 also returns. Two assets put the icon
-    // at index 1, so the caption is what says which image is framed.
-    const { openOnsite } = renderList({
-      onsiteItems: [
-        { ...ONSITE, iconUrl: `${PIXEL}#icon`, coverUrl: `${PIXEL}#cover` } as OnsiteReviewRequest,
-      ],
-    });
-    await page.getByTestId('apps-unified-review-icon-button-onsite:or1').click();
-    expect(openOnsite).not.toHaveBeenCalled();
-    await expect.element(page.getByRole('dialog')).toBeInTheDocument();
-    await expect.element(page.getByText('Lighthouse icon')).toBeInTheDocument();
-    expect(page.getByText('Lighthouse cover image').elements()).toEqual([]);
   });
 });

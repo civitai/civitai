@@ -389,18 +389,13 @@ describe('🔴 the screenshot viewer is WIRED to the gallery that owns the list'
     // `UnifiedReviewList.browser.test.tsx`'s "clicking the ICON" arm; the message says only
     // what the substrings support.
     const BTN =
-      "ListingMediaThumb's MediaButton no longer contains all of: UnstyledButton, an " +
-      'aria-label, an onClick, an onOpen() call and a stopPropagation(). An <img onClick> ' +
-      'is a mouse-only affordance that LOOKS wired up.';
+      "ListingMediaThumb's MediaButton is no longer a real button (UnstyledButton with an " +
+      'aria-label) whose onClick is the opener. An <img onClick> is a mouse-only ' +
+      'affordance that LOOKS wired up.';
     const btn = norm(fnBody(stripComments(fs.readFileSync(THUMB, 'utf8')), 'MediaButton'));
     expect(btn, BTN).not.toBe('');
     expect(btn, BTN).toContain('<UnstyledButton');
-    // The handler is ON the button, invokes the opener, and stops propagation — not the
-    // literal `onClick={onOpen}` any more. `stopPropagation()` without the receiver so
-    // renaming the event parameter cannot red a correct implementation.
-    expect(btn, BTN).toContain('onClick={');
-    expect(btn, BTN).toContain('onOpen()');
-    expect(btn, BTN).toContain('stopPropagation()');
+    expect(btn, BTN).toContain('onClick={onOpen}');
     expect(btn, BTN).toContain('aria-label={label}');
     // The handler belongs to the button and the image is only its child. Asserted on the
     // THUMB file, which is where the `<img>` now lives; kept on `MyAppsBody` too, where it
