@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
+import { NsfwLevel } from '~/server/common/enums';
 import { getInfiniteImagesSchema } from '~/server/schema/image.schema';
 import { publicProcedure, router } from '~/server/trpc';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
-const PG = 1;
-const SFW = 1 | 2;
-const EVERYTHING = 1 | 2 | 4 | 8 | 16;
+const PG = NsfwLevel.PG;
+const SFW = NsfwLevel.PG | NsfwLevel.PG13;
+const EVERYTHING = allBrowsingLevelsFlag;
 
 /**
  * A model gallery's sponsored post is fetched at `preCapBrowsingLevel`, which
