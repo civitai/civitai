@@ -403,6 +403,10 @@ const featureFlags = createFeatureFlags({
   // gate rendering a gallery that already has entries, or an owner declining
   // what is already waiting on their work.
   remixGallery: { availability: ['mod'], fliptKey: 'remix-gallery' },
+  // Paid "Sponsored" slots on someone else's model page: a post in its gallery
+  // or a model in its Suggested Resources. Gates buying and serving; a host can
+  // still answer what is already waiting on them.
+  creatorPromotions: { availability: ['mod'], fliptKey: 'creator-promotions' },
   // The three entry points below are gated SEPARATELY from `remixGallery` so they
   // can be released one at a time, and each one is checked TOGETHER with it
   // rather than instead of it. `remixGallery` gates the submit mutation, so a

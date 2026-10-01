@@ -49,6 +49,7 @@ export const appRouter = router({
   partner: lazy(() => import('./partner.router').then((m) => m.partnerRouter)),
   placement: lazy(() => import('./placement.router').then((m) => m.placementRouter)),
   post: lazy(() => import('./post.router').then((m) => m.postRouter)),
+  promotion: lazy(() => import('./promotion.router').then((m) => m.promotionRouter)),
   question: lazy(() => import('./question.router').then((m) => m.questionRouter)),
   reaction: lazy(() => import('./reaction.router').then((m) => m.reactionRouter)),
   report: lazy(() => import('./report.router').then((m) => m.reportRouter)),

@@ -71,3 +71,34 @@ export const viewerBrowsingLevel = (ctx: Context, requested: number) =>
  */
 export const domainServableLevels = (ctx: Context) =>
   ctx.features.isGreen ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
+
+/**
+ * The most a request may be served, by who is asking and where: signed out (or a
+ * crawler on the SFW domain) PG, signed in on the SFW domain PG/PG-13, and
+ * `undefined` where the domain caps nothing. `applyDomainFeature` applies it
+ * to every procedure.
+ */
+export const domainBrowsingLevelCap = ({
+  isAuthorized,
+  canViewNsfw,
+}: {
+  isAuthorized: boolean;
+  canViewNsfw: boolean;
+}) => (!isAuthorized ? publicBrowsingLevelsFlag : !canViewNsfw ? sfwBrowsingLevelsFlag : undefined);
+
+/** A requested level held to a cap. Unset, or with nothing in common with it, becomes the cap. */
+export const clampToDomainCap = (requested: number | undefined, cap: number) =>
+  (requested ?? 0) & cap || cap;
+
+export type RequestBrowsingLevels = { browsingLevel?: number; preCapBrowsingLevel?: number };
+
+/**
+ * Clamps a request's levels to the domain cap, in place. `preCapBrowsingLevel`
+ * (a model gallery's level before its own cap, which a sponsored post is served
+ * at) takes the same rule, or it would be a way around this one.
+ */
+export function clampRequestBrowsingLevels(input: RequestBrowsingLevels, cap: number) {
+  input.browsingLevel = clampToDomainCap(input.browsingLevel, cap);
+  if (input.preCapBrowsingLevel !== undefined)
+    input.preCapBrowsingLevel = clampToDomainCap(input.preCapBrowsingLevel, cap);
+}

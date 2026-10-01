@@ -8,6 +8,7 @@ import type {
   PlacementSpaceSetting,
   PlacementSpaceSettings,
   PlacementSurface,
+  PlacementTargetType,
 } from '~/shared/utils/placement';
 import {
   effectiveFreeSlots,
@@ -43,6 +44,20 @@ async function resolveImageTarget(imageId: number) {
     ownerUsername: image.user?.username ?? null,
   };
 }
+
+/** A model's space is configured on its owner's account only; there is no model or post level. */
+async function resolveModelTarget(modelId: number) {
+  const model = await dbWrite.model.findUnique({
+    where: { id: modelId },
+    select: { userId: true, user: { select: { username: true } } },
+  });
+  if (!model) throw throwBadRequestError('placement: that model no longer exists');
+
+  return { ownerId: model.userId, postId: null, ownerUsername: model.user?.username ?? null };
+}
+
+const resolveTarget = (targetType: PlacementTargetType, targetId: number) =>
+  targetType === 'model' ? resolveModelTarget(targetId) : resolveImageTarget(targetId);
 
 export type ResolvedPlacementSpace = {
   ownerId: number;
@@ -127,7 +142,7 @@ export const reservedFreeSlots = (
     surface,
     targetType,
     targetId,
-  }: { surface: PlacementSurface; targetType: PlacementSpaceEntity; targetId: number }
+  }: { surface: PlacementSurface; targetType: PlacementTargetType; targetId: number }
 ) =>
   client.placement.count({
     where: {
@@ -152,19 +167,19 @@ export async function resolvePlacementSpaceFor({
   targetId,
 }: {
   surface: PlacementSurface;
-  targetType: PlacementSpaceEntity;
+  targetType: PlacementTargetType;
   targetId: number;
 }): Promise<ResolvedPlacementSpace> {
   if (!surfaceAcceptsTarget(surface, targetType))
     throw throwBadRequestError(`placement: ${surface} cannot be placed on a ${targetType}`);
 
-  const { ownerId, postId, ownerUsername } = await resolveImageTarget(targetId);
+  const { ownerId, postId, ownerUsername } = await resolveTarget(targetType, targetId);
 
   const rows = await dbWrite.placementSpace.findMany({
     where: {
       surface,
       OR: [
-        { entityType: 'image', entityId: targetId },
+        ...(targetType === 'image' ? [{ entityType: 'image', entityId: targetId }] : []),
         ...(postId ? [{ entityType: 'post', entityId: postId }] : []),
         { entityType: 'user', entityId: ownerId },
       ],
