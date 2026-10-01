@@ -158,6 +158,8 @@ type PromotedPostImage = {
   nsfwLevel: number;
   ingestion: ImageIngestionStatus;
   nsfwLevelLocked: boolean;
+  nsfwLevelReason: string | null;
+  scanFailureClass: string | null;
   needsReview: string | null;
   minor: boolean;
   acceptableMinor: boolean;
@@ -174,6 +176,8 @@ async function loadPromotedPost(postId: number) {
 
   const images = await dbWrite.$queryRaw<PromotedPostImage[]>`
     SELECT i.id, i."nsfwLevel", i.ingestion::text AS ingestion, i."nsfwLevelLocked",
+           i.metadata->>'nsfwLevelReason' AS "nsfwLevelReason",
+           i."scanJobs"->'error'->>'failureClass' AS "scanFailureClass",
            i."needsReview", i.minor, i."acceptableMinor", i.poi, i."tosViolation"
     FROM "Image" i
     WHERE i."postId" = ${postId}

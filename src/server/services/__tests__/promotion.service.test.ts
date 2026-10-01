@@ -297,6 +297,10 @@ describe('createGalleryPromotion', () => {
     ['marked an acceptable minor', { acceptableMinor: true }],
     ['a real person', { poi: true }],
     ['a ToS violation', { tosViolation: true }],
+    [
+      'an errored scan only Knights rated',
+      { ingestion: 'Error', nsfwLevelLocked: true, nsfwLevelReason: 'Knights Vote' },
+    ],
   ])('refuses a post with an image that is %s', async (_label, change) => {
     postImages = [cleanImage(11), { ...cleanImage(12), ...change }];
     await expect(buy()).rejects.toThrow('cannot be promoted');
