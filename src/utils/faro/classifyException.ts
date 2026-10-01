@@ -9,7 +9,14 @@
  * exception-rate alerting flap. This module classifies each exception at INGEST (`beforeSend`) so:
  *   - KNOWN-benign noise is DROPPED (never sent), and
  *   - the rest is TAGGED (`error_category`) so the dashboard/alerts can split
- *     bizlogic / chunkload / meili / extension from the real-app-bug stream (`real`).
+ *     bizlogic / chunkload / meili / extension / ad_initiated from the real-app-bug stream
+ *     (`real`).
+ *
+ * 🔴 PREFER TAGGING TO DROPPING for anything still under investigation. A dropped beacon is never
+ * sent, so no later question can be asked of it — the saving is ingest volume, and the cost is
+ * permanent. Every consumer selects `context_error_category="real"`, so a non-`real` tag already
+ * cleans the real-app-bug stream without giving up the data. `ad_initiated` (rule 6b) is the
+ * worked example: it was built as a DROP and deliberately changed to a tag.
  *
  * This is PURE and unit-tested (`__tests__/classifyException.test.ts`) and is composed INTO the
  * Faro `beforeSend` pipeline AFTER `deepRedact` (redaction still runs on every beacon).
@@ -54,8 +61,13 @@ export interface ClassifiableException {
  *   - noise subtypes (only present WITH `drop:true`): `abort`, `adblock`, `autoplay`,
  *     `script_error`, `injected`, `network` — the reason it was dropped (useful if you ever want
  *     to TAG-instead-of-DROP by flipping the caller; not sent to Loki while dropped).
- *   - keep-and-tag: `bizlogic`, `chunkload`, `meili`, `extension`.
+ *   - keep-and-tag: `bizlogic`, `chunkload`, `meili`, `extension`, `ad_initiated`.
  *   - default keep: `real`.
+ *
+ * 🔴 `adblock` and `ad_initiated` are BOTH about ad/analytics traffic and are NOT the same thing.
+ * `adblock` is a DROP category (rule 2: an ad script failed to LOAD). `ad_initiated` is a KEEP
+ * category (rule 6b: an ad script's own fetch failed). Deliberately two names, because one name
+ * meaning both "never sent" and "sent and queryable" would wreck a reader's model of this module.
  */
 export type ErrorCategory =
   | 'abort'
@@ -68,6 +80,7 @@ export type ErrorCategory =
   | 'chunkload'
   | 'meili'
   | 'extension'
+  | 'ad_initiated'
   | 'real';
 
 export interface Classification {
@@ -362,8 +375,7 @@ const GLOBAL_FETCH_WRAPPER_PATH_RES = [
 //    or analytics bundle (`…/pubads_impl.js`) used to read as project source. An ABSOLUTE
 //    http(s) frame is judged purely on its PATH: Next's `/_next/` bundles, or the hand-built
 //    workers generated into `public/workers/`. Non-absolute filenames (bundler schemes, bare
-//    source paths)
-//    are unaffected and still match on extension below.
+//    source paths) are unaffected and still match on extension below.
 // Protocol-relative (`//host/path`) counts as absolute too: a frame spelled that way is still a
 // fetch from some host, and without it a `//securepubads…/pubads_impl.js` frame falls through to
 // the bare extension test and reads as project source — exactly the traffic this guard excludes.
@@ -441,9 +453,15 @@ function isProjectSourceFrame(frame: ClassifiableStackFrame): boolean {
 //     genuinely are `<our-host>/_next/…` and one sibling first-party frame satisfies
 //     `hasProjectSourceFrame` for the whole stack.
 // Net effect: the rule 6 DROP cannot fire on any bare-network beacon that CARRIES A STACK.
-// MEASURED (see the test block for the same figures): of 4,000 `Failed to fetch` beacons
-// sampled from two 6h windows on 2026-09-30 (2,000 from each, `client_class!="bot"`,
-// `context_error_category="real"`), 4,000 carried a project-source frame under that guard.
+//
+// 🔴 THAT CLAIM RESTS ON FIRST PRINCIPLES AND ON #4994's OWN TEST, NOT ON A MEASUREMENT, and the
+// distinction matters because the obvious measurement CANNOT DISCRIMINATE. A browser does not
+// consult source maps to build `error.stack`, so a browser-produced frame cannot carry a
+// post-resolution path — and #4994 already pinned exactly this, with a test asserting that an
+// all-minified-bundle stack satisfies the guard. Counting stored beacons looks like confirmation
+// and is not: storage holds the POST-resolution spelling, so "almost every stored line carries
+// `turbopack:`/`node_modules`" is what you would observe whether this thesis or its negation were
+// true. Do not add such a count here as support.
 //
 // What IS visible on a browser stack is the HOST of a foreign frame. A browser builds a
 // fetch-rejection stack from the synchronous call stack at `fetch()`, innermost frame first, so
@@ -454,9 +472,9 @@ function isProjectSourceFrame(frame: ClassifiableStackFrame): boolean {
 // (`@grafana/faro-web-sdk`, `getStackFramesFromError`) DISCARDS any stack line longer than its
 // `MAX_STACK_LINE_LENGTH` (1024) rather than truncating it, so `frames[frames.length - 1]` is
 // the outermost SURVIVING frame, not necessarily the outermost frame the browser produced. Both
-// directions of that loss are safe for THIS rule — a discarded ad frame means no drop, and a
+// directions of that loss are safe for THIS rule — a discarded ad frame means no re-tag, and a
 // discarded frame further out than an ad frame is the shape rule 6b is deliberately willing to
-// drop (see the ad-callback note below) — but the rule reads one slot and that slot can move.
+// re-tag (see the ad-callback note below) — but the rule reads one slot and that slot can move.
 //
 // 🔴 THE `OUTERMOST` CONJUNCT IS LOAD-BEARING, NOT DECORATION. The simpler rule — "an ad-host
 // frame appears ANYWHERE on the stack" — selects the same beacons today (MEASURED: over the same
@@ -465,8 +483,8 @@ function isProjectSourceFrame(frame: ClassifiableStackFrame): boolean {
 // `window.fetch` — over one of those two windows, 1,175 of that window's 1,727 sampled
 // `TypeError: Failed to fetch` beacons carried a `chrome-extension://…` frame, our own requests
 // included — so the day an ad script does the same, its frame joins every fetch rejection as one
-// more unconditional layer and an anywhere-rule would drop the ENTIRE bare-network stream,
-// genuine first-party bugs with it. Requiring the ad frame to be OUTERMOST turns "ad scripts do
+// more unconditional layer and an anywhere-rule would re-tag the ENTIRE bare-network stream out
+// of `real`, genuine first-party bugs with it. Requiring the ad frame to be OUTERMOST turns "ad scripts do
 // not wrap fetch" from an assumption into a precondition checked per beacon: a wrapper's frame
 // is never outermost for a request it did not initiate. If the frame order this rests on ever
 // changed, the rule goes inert rather than wrong.
@@ -474,7 +492,8 @@ function isProjectSourceFrame(frame: ClassifiableStackFrame): boolean {
 // 🔴 ACCEPTED LOSS, with an enforced ledger. Three call sites run OUR callback synchronously
 // beneath an ad-SDK frame (`src/components/Ads/AdsProvider.tsx`,
 // `src/components/Ads/AdUnitFactory.tsx`). If such a callback ever issues a first-party `fetch`,
-// its outermost frame is the ad SDK's and this rule drops a first-party failure — and the stack
+// its outermost frame is the ad SDK's and this rule tags a first-party failure out of `real` —
+// and the stack
 // is genuinely indistinguishable from an ad-initiated one, because every frame of ours on it is
 // the same minified chunk path. No callback at those sites fetches today. That is a precondition
 // nothing in the type system enforces, so `__tests__/adCallbackLedger.test.ts` asserts the set of
@@ -501,15 +520,21 @@ function isProjectSourceFrame(frame: ClassifiableStackFrame): boolean {
 // only `http(s)` and protocol-relative frames, and that exclusion is deliberate (see the
 // `window.fetch` measurement above).
 //
+// SIZE OF THE POPULATION THIS RETAGS, carried with its population because the figure is not a
+// constant: roughly 8–25% of the NON-BOT `context_error_category="real"` exception stream, on the
+// four 6h windows measured on 2026-09-30 (24.5% / 14.8% / 8.3% / 21.9%). It swings about 3×
+// diurnally with ad composition, so treat any single number as a window reading rather than an
+// effect size, and re-measure before quoting one.
+//
 // 🔴 THIS IS A MAINTAINED DENYLIST WITH NO STALENESS DETECTOR. Nothing tells you when an ad
-// vendor changes domain or a new one appears; the rule simply stops dropping. Add a host only
+// vendor changes domain or a new one appears; the rule simply stops re-tagging. Add a host only
 // after MEASURING it on this stream, exactly as the abort phrasings earlier in this file are
 // added, and state the window you measured over.
 //
 // ASSUMPTION, stated because it is the one case where "the outermost frame is third-party" and
 // "the request was ours" can both be true without an ad callback: `googletagmanager.com` serves a
 // container whose CONTENTS we configure, so a first-party tag fetching our own endpoint would
-// drop here. There is no first-party GTM loader in this repo today, so it is theoretical.
+// be re-tagged here. There is no first-party GTM loader in this repo today, so it is theoretical.
 //
 // 🔴 NOT the same list as `ADBLOCK_HOST_RES` (rule 2), and the two are not interchangeable: that
 // one is matched as an unanchored substring against a MESSAGE and contains JS globals
@@ -638,29 +663,44 @@ export function classifyException(exc: ClassifiableException | null | undefined)
     return DROP('network');
   }
 
-  // 6b) DROP — a bare network failure whose OUTERMOST stack frame (the request's initiator) is a
-  //     script on an enumerated ad/analytics domain. This is the rule that actually fires on a
-  //     real browser stack, where rule 6's `!hasProjectSourceFrame` guard structurally cannot —
-  //     see the note above `AD_NETWORK_FRAME_HOST_RES` for the mechanism, the measurement, the
-  //     parser limit on "outermost", and why the OUTERMOST conjunct is load-bearing.
+  // 6b) KEEP+TAG `ad_initiated` — a bare network failure whose OUTERMOST stack frame (the
+  //     request's initiator) is a script on an enumerated ad/analytics domain. This is the rule
+  //     that actually fires on a real browser stack, where rule 6's `!hasProjectSourceFrame`
+  //     guard structurally cannot — see the note above `AD_NETWORK_FRAME_HOST_RES` for the
+  //     mechanism, the parser limit on "outermost", and why the OUTERMOST conjunct is
+  //     load-bearing.
+  //
+  //     🔴 TAG, NOT DROP, AND THE TRADE IS THE WHOLE POINT. Dropping this population would buy
+  //     roughly 0.01% of ingest volume and cost PERMANENT UNQUERYABILITY of the one bucket still
+  //     under active investigation — a dropped beacon is never sent, so no later question can be
+  //     asked of it. That is the same trade rejected on #5233. Tagging gets both properties: the
+  //     real-app-bug stream is cleaned (every consumer selects `context_error_category="real"`,
+  //     so a non-`real` tag is excluded by construction) and the beacons stay auditable.
+  //
+  //     🔴 AND IT KEEPS THIS MODULE THE SINGLE SOURCE OF TRUTH. The alternative considered was
+  //     moving the host denylist downstream into the observability repo. Rejected: that
+  //     re-introduces a hand-maintained predicate at five consumer sites, and deleting exactly
+  //     that duplication from four dashboard targets is what made those consumers key on this
+  //     tag in the first place. One definition here, no duplication there.
   //
   //     🔴 IT SITS AFTER RULE 6 DELIBERATELY, and the reason is about TESTS, not behaviour. Four
   //     existing tests cover stacks that BOTH rules accept (an ad-initiated fetch with no
   //     project-source frame) and each asserts `category === 'network'`. With this rule earlier
-  //     they would get `adblock`, so they would go RED — and the only way to green them again is
-  //     to assert `adblock`, at which point they no longer distinguish WHICH rule decided and
-  //     stop observing the rule 6 exclusions they were written to pin. Ordering is also what
-  //     makes the two rules disjoint: rule 6 takes every stack where no frame looks like ours,
-  //     leaving this one the stacks where some frame does but the initiator is a third party.
+  //     they would be tagged instead of dropped, so they would go RED — and the only way to green
+  //     them again stops them distinguishing WHICH rule decided, so they stop observing the rule 6
+  //     exclusions they were written to pin. Ordering is also what makes the two rules disjoint:
+  //     rule 6 takes every stack where no frame looks like ours, leaving this one the stacks where
+  //     some frame does but the initiator is a third party. Note the consequence of that order —
+  //     an ad-initiated fetch whose stack carries NO project-source frame is still DROPPED as
+  //     `network` by rule 6 and never reaches this tag. This rule's population is specifically
+  //     the one rule 6 cannot see.
   //
   //     Both conjuncts are required. The message must be the WHOLE anchored network message, so
   //     an app error that merely names an ad host stays `real`; and the ad frame must be the
   //     OUTERMOST one, so a third party that wraps `window.fetch` cannot drag our own failures
-  //     down with it. Categorised `adblock` — the label rule 2 already uses for third-party
-  //     ad/analytics traffic. A dropped beacon's category is never shipped to storage, so it is
-  //     a triage label only.
+  //     out of the real stream with it.
   if (isBareNetworkMessage && isAdNetworkInitiatedRequest(exc)) {
-    return DROP('adblock');
+    return KEEP('ad_initiated');
   }
 
   // 7) KEEP+TAG — browser-extension / injected-global errors (patterns above). AFTER every DROP

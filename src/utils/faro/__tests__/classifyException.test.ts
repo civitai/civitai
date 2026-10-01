@@ -476,14 +476,14 @@ describe('classifyException — project-source frame edges', () => {
   // so every one of our chunks arrives as `/_next/static/chunks/<hash>.js` —
   // `hasProjectSourceFrame` answers TRUE and rule 6 cannot fire. Rule 6b decides it on the
   // OUTERMOST frame: the ad network asked for the request, so it is theirs.
-  it('drops a minified-bundle stack whose OUTERMOST frame is an ad network (the production shape)', () => {
+  it('tags a minified-bundle stack whose OUTERMOST frame is an ad network (the production shape)', () => {
     const r = classifyException(
       exc('TypeError', 'Failed to fetch', {
         frames: [MINIFIED_CHUNK_FRAME, MINIFIED_CHUNK_FRAME_2, AD_SCRIPT_FRAME],
       })
     );
-    expect(r.drop).toBe(true);
-    expect(r.category).toBe('adblock');
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('ad_initiated');
   });
 
   // The abort rule shares this guard and matches its phrases as UNANCHORED substrings, so
@@ -1492,9 +1492,13 @@ describe('classifyException — no-regression sweep across every category', () =
 // `webpack://…` paths used by the fixtures above are a source-map `sources` spelling, produced by
 // the collector after `beforeSend` has returned — so the rule 6 conjunct those fixtures exercise
 // cannot fire on a real browser stack, and rule 6b is the only rule in this file with
-// production-shaped coverage. MEASURED: of 4,000 `Failed to fetch` beacons sampled from two 6h
-// windows on 2026-09-30 (2,000 from each; `client_class!="bot"`, `context_error_category="real"`),
-// 4,000 carried a project-source frame under that guard.
+// production-shaped coverage.
+//
+// That rests on first principles, not a count: a browser does not consult source maps to build
+// `error.stack`, so a browser-produced frame cannot carry a post-resolution path. The test
+// `tags a minified-bundle stack whose OUTERMOST frame is an ad network` is what pins it here.
+// A tally of STORED beacons cannot support it either way — storage holds the post-resolution
+// spelling, so such a count reads the same whether the claim is true or false.
 // ──────────────────────────────────────────────────────────────────────────────────────────────
 
 /** Build the production stack shape: minified first-party plumbing, then the initiator outermost. */
@@ -1502,7 +1506,7 @@ const prodStack = (initiator: { filename: string }) => ({
   frames: [MINIFIED_CHUNK_FRAME, MINIFIED_CHUNK_FRAME_2, initiator],
 });
 
-describe('classifyException — rule 6b: DROP a bare network failure an ad network initiated', () => {
+describe('classifyException — rule 6b: TAG a bare network failure an ad network initiated', () => {
   // One case per enumerated domain, each spelled with the subdomain it was MEASURED under (which
   // is why the patterns are domain-anchored rather than hostname-exact). Deleting any one pattern
   // flips exactly the matching row.
@@ -1510,20 +1514,20 @@ describe('classifyException — rule 6b: DROP a bare network failure an ad netwo
     ['https://securepubads.g.doubleclick.net/pagead/managed/js/gpt/m202609250101/pubads_impl.js'],
     ['https://www.googletagmanager.com/gtag/js?id=G-TESTID001'],
     ['https://cdn.snigelweb.com/prebid/11.29.0-snpbjs/prebid.js?v=20389'],
-  ])('drops a `Failed to fetch` whose outermost frame is %s', (filename) => {
+  ])('tags a `Failed to fetch` whose outermost frame is %s', (filename) => {
     const r = classifyException(exc('TypeError', 'Failed to fetch', prodStack({ filename })));
-    expect(r.drop).toBe(true);
-    expect(r.category).toBe('adblock');
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('ad_initiated');
   });
 
   // The `(?:^|\.)` alternation, both halves. Without the `^` an apex-only host stops matching;
   // without the alternation being an alternation, `notdoubleclick.net` starts matching.
-  it('drops on the bare apex domain', () => {
+  it('tags on the bare apex domain', () => {
     const r = classifyException(
       exc('TypeError', 'Failed to fetch', prodStack({ filename: 'https://doubleclick.net/gpt.js' }))
     );
-    expect(r.drop).toBe(true);
-    expect(r.category).toBe('adblock');
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('ad_initiated');
   });
   it('does NOT drop a host that merely ENDS with the domain text', () => {
     const r = classifyException(
@@ -1581,18 +1585,18 @@ describe('classifyException — rule 6b: DROP a bare network failure an ad netwo
     ['HTTPS://WWW.GOOGLETAGMANAGER.COM/gtag/js?id=G-TESTID002'],
     ['  https://securepubads.g.doubleclick.net/gpt/pubads_impl.js  '],
   ])(
-    'drops regardless of userinfo / port / root label / scheme / case / padding: %s',
+    'tags regardless of userinfo / port / root label / scheme / case / padding: %s',
     (filename) => {
       const r = classifyException(exc('TypeError', 'Failed to fetch', prodStack({ filename })));
-      expect(r.drop).toBe(true);
-      expect(r.category).toBe('adblock');
+      expect(r.drop).toBe(false);
+      expect(r.category).toBe('ad_initiated');
     }
   );
 
   // `lastIndexOf('@')`, not `indexOf`. With two `@` the first-index variant leaves
   // `b@doubleclick.net`, whose `@` defeats the `(?:^|\.)` — so this row flips to KEEP under that
   // mutant and is its only observer.
-  it('drops when the authority carries more than one @', () => {
+  it('tags when the authority carries more than one @', () => {
     const r = classifyException(
       exc(
         'TypeError',
@@ -1600,18 +1604,18 @@ describe('classifyException — rule 6b: DROP a bare network failure an ad netwo
         prodStack({ filename: 'https://a@b@doubleclick.net/x.js' })
       )
     );
-    expect(r.drop).toBe(true);
-    expect(r.category).toBe('adblock');
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('ad_initiated');
   });
 });
 
-describe('classifyException — rule 6b: deliberate negatives (a false drop hides a real bug)', () => {
+describe('classifyException — rule 6b: deliberate negatives (a false tag hides a real bug)', () => {
   // 🔴 THE SAFETY TEST THIS RULE EXISTS AROUND. Browser extensions demonstrably patch
   // `window.fetch` — over one measured 6h window, 1,175 of that window's 1,727 sampled
   // `TypeError: Failed to fetch` beacons carried a `chrome-extension://…` frame, our own requests
   // included. If an ad script ever does the same, its frame joins every fetch rejection as one
-  // more unconditional layer, and an "ad-host frame anywhere on the stack" rule would drop the
-  // WHOLE bare-network stream, genuine first-party bugs included. Requiring the ad frame to be
+  // more unconditional layer, and an "ad-host frame anywhere on the stack" rule would re-tag the
+  // WHOLE bare-network stream out of `real`, genuine first-party bugs included. Requiring the ad frame to be
   // OUTERMOST is what makes that impossible: replace `frames[length - 1]` with a `.some(...)` and
   // only this test fails.
   it('KEEPS our own fetch failure when an ad script merely WRAPPED fetch (frame not outermost)', () => {
@@ -1634,7 +1638,7 @@ describe('classifyException — rule 6b: deliberate negatives (a false drop hide
 
   // The message conjunct, in both directions. A real app bug whose message merely NAMES an ad
   // network, or carries the network phrase inside a larger sentence, is kept even though its
-  // stack is identical to the dropped population's.
+  // stack is identical to the re-tagged population's.
   it.each([
     ['TypeError', "Cannot read properties of undefined (reading 'googletag')"],
     ['TypeError', 'Failed to fetch the ad slot configuration'],
@@ -1649,7 +1653,7 @@ describe('classifyException — rule 6b: deliberate negatives (a false drop hide
   // of that are safety properties with their own observer here. An extension-scheme frame is not
   // initiator evidence (extensions wrap fetch — see the safety test above), and `blob:` is a real
   // frame spelling for worker code whose host is merely the origin that CREATED the blob. Each
-  // row carries an ad domain as its host, so it flips to DROP the moment the scheme restriction
+  // row carries an ad domain as its host, so it flips to `ad_initiated` the moment the scheme
   // or the `^` anchor is relaxed — varying the scheme against a matching host, rather than the
   // host against a fixed scheme, is what makes them observe anything.
   it.each([
@@ -1730,11 +1734,11 @@ describe('classifyException — rule 6b: deliberate negatives (a false drop hide
     expect(r.drop).toBe(false);
     expect(r.category).toBe('real');
   });
-  it('drops a TRPCClientError `Failed to fetch` that an ad network initiated', () => {
+  it('tags a TRPCClientError `Failed to fetch` that an ad network initiated', () => {
     const r = classifyException(
       exc('TRPCClientError', 'Failed to fetch', prodStack(AD_SCRIPT_FRAME))
     );
-    expect(r.drop).toBe(true);
-    expect(r.category).toBe('adblock');
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('ad_initiated');
   });
 });
