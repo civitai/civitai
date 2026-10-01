@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { dbMock, loggingMock } from '~/__tests__/mocks';
@@ -307,8 +308,34 @@ describe('updateCrucible — while upcoming', () => {
       CRUCIBLE_DURATION_COSTS[168] + CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
       CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
     ]);
-    expect(update).toHaveBeenCalledTimes(1);
-    expect(Object.keys(written())).toEqual(['buzzTransactionId']);
+    const restoreWrite = dbMock.dbWrite.crucible.updateMany.mock.calls[0][0];
+    expect(restoreWrite.where).toEqual({ id: 1, status: { not: CrucibleStatus.Cancelled } });
+    expect(Object.keys(restoreWrite.data)).toEqual(['buzzTransactionId']);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('refunds the restored charge when a cancel landed mid-edit', async () => {
+    findUnique.mockResolvedValue(
+      upcoming({ seededPrizePool: 1_000, seedTransactionId: 'crucible-seed-4-old' })
+    );
+    update.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('No record was found for an update.', {
+        code: 'P2025',
+        clientVersion: 'test',
+      })
+    );
+    dbMock.dbWrite.crucible.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    await expect(edit({ seededPrizePool: 2_000 })).rejects.toThrow(
+      /changed while you were editing/
+    );
+
+    // Old seed refunded, new one charged, new one refunded, old one charged back, then refunded.
+    expect(charged()).toEqual([2_000, 1_000]);
+    expect(refunded()).toHaveLength(3);
+    expect(refunded()[2]).toBe(
+      createMultiAccountBuzzTransaction.mock.calls[1][0].externalTransactionIdPrefix
+    );
   });
 
   it('refunds the new charge and charges the original back when the write fails', async () => {
@@ -341,6 +368,33 @@ describe('updateCrucible — while upcoming', () => {
         refunded: ['seed'],
       })
     );
+  });
+
+  it('writes only over the status it read, so a cancel since then is not revived', async () => {
+    findUnique.mockResolvedValue(upcoming());
+
+    await edit({ name: 'Renamed' });
+
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 1, status: CrucibleStatus.Pending } })
+    );
+  });
+
+  it('puts the charges back and says so when the crucible changed mid-edit', async () => {
+    findUnique.mockResolvedValue(
+      upcoming({ seededPrizePool: 1_000, seedTransactionId: 'crucible-seed-4-old' })
+    );
+    update.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('No record was found for an update.', {
+        code: 'P2025',
+        clientVersion: 'test',
+      })
+    );
+
+    await expect(edit({ seededPrizePool: 2_000 })).rejects.toThrow(
+      /changed while you were editing/
+    );
+    expect(charged()).toEqual([2_000, 1_000]);
   });
 
   it('moves the end with the start', async () => {

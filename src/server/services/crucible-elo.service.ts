@@ -1,3 +1,4 @@
+import type { StoredEntryRating } from '~/server/redis/crucible-elo.redis';
 import { crucibleEloRedis, CRUCIBLE_DEFAULT_ELO } from '~/server/redis/crucible-elo.redis';
 import { createLogger } from '~/utils/logging';
 
@@ -15,13 +16,20 @@ const PROVISIONAL_VOTE_THRESHOLD = 10;
 export const processVote = async (
   crucibleId: number,
   winnerEntryId: number,
-  loserEntryId: number
+  loserEntryId: number,
+  stored?: { winner: StoredEntryRating; loser: StoredEntryRating }
 ): Promise<{ winnerElo: number; loserElo: number }> => {
-  const result = await crucibleEloRedis.processVoteAtomic(crucibleId, winnerEntryId, loserEntryId, {
-    provisionalK: K_FACTOR_PROVISIONAL,
-    establishedK: K_FACTOR_ESTABLISHED,
-    provisionalVotes: PROVISIONAL_VOTE_THRESHOLD,
-  });
+  const result = await crucibleEloRedis.processVoteAtomic(
+    crucibleId,
+    winnerEntryId,
+    loserEntryId,
+    {
+      provisionalK: K_FACTOR_PROVISIONAL,
+      establishedK: K_FACTOR_ESTABLISHED,
+      provisionalVotes: PROVISIONAL_VOTE_THRESHOLD,
+    },
+    stored
+  );
 
   log(
     `Vote processed: crucible ${crucibleId}, winner ${winnerEntryId} (${result.winnerOldElo} + ${result.winnerChange} = ${result.winnerElo}), loser ${loserEntryId} (${result.loserOldElo} + ${result.loserChange} = ${result.loserElo})`

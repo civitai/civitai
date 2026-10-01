@@ -139,9 +139,10 @@ describe('the Lua script itself', () => {
   });
 
   it('reads and bumps both vote counts inside the script, so two votes cannot both use the new-entry K', () => {
-    expect(source).toContain("redis.call('HGET', votesKey, field)");
-    expect(source).toContain("redis.call('HINCRBY', votesKey, winnerField, 1)");
-    expect(source).toContain("redis.call('HINCRBY', votesKey, loserField, 1)");
+    expect(source).toContain("redis.call('HGET', votesKey, winnerField)");
+    expect(source).toContain("redis.call('HGET', votesKey, loserField)");
+    expect(source).toContain("redis.call('HSET', votesKey, winnerField, winnerVotes + 1)");
+    expect(source).toContain("redis.call('HSET', votesKey, loserField, loserVotes + 1)");
   });
 
   it('reads and writes both scores inside the script rather than round-tripping to node', () => {

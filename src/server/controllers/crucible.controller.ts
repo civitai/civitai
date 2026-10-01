@@ -52,11 +52,13 @@ import {
   withPaidEntryCount,
 } from '~/server/services/crucible.service';
 
-const getBlockedByUserIds = async (user: Context['user']) => {
+const getAllBlockedByUserIds = async (user: Context['user']) => {
   if (!user || user.isModerator) return [];
-  const blockedByUsers = (await BlockedByUsers.getCached({ userId: user.id })).map((u) => u.id);
-  return boundExcludedUserIds([], blockedByUsers, []);
+  return (await BlockedByUsers.getCached({ userId: user.id })).map((u) => u.id);
 };
+
+const getBlockedByUserIds = async (user: Context['user']) =>
+  boundExcludedUserIds([], await getAllBlockedByUserIds(user), []);
 
 export const getInfiniteCruciblesHandler = async ({
   input,
@@ -145,6 +147,7 @@ export const getCrucibleEntriesHandler = async ({
     userId: ctx.user?.id,
     isGreen: !!ctx.features?.isGreen,
     isModerator: !!ctx.user?.isModerator,
+    blockedByUserIds: await getAllBlockedByUserIds(ctx.user),
   });
 };
 
@@ -188,7 +191,13 @@ export const createEntryPostHandler = async ({
   input: CreateEntryPostSchema;
   ctx: ProtectedContext;
 }) => {
-  return createCrucibleEntryPost({ ...input, userId: ctx.user.id });
+  return createCrucibleEntryPost({
+    ...input,
+    userId: ctx.user.id,
+    isGreen: !!ctx.features?.isGreen,
+    isModerator: ctx.user.isModerator,
+    blockedByUserIds: await getAllBlockedByUserIds(ctx.user),
+  });
 };
 
 export const checkEntryEligibilityHandler = async ({
@@ -213,6 +222,7 @@ export const submitEntryHandler = async ({
     userId: ctx.user.id,
     isGreen: !!ctx.features?.isGreen,
     isModerator: ctx.user.isModerator,
+    blockedByUserIds: await getAllBlockedByUserIds(ctx.user),
   });
 };
 
@@ -228,6 +238,7 @@ export const getJudgingPairHandler = async ({
     userId: ctx.user.id,
     isGreen: !!ctx.features?.isGreen,
     isModerator: ctx.user.isModerator,
+    blockedByUserIds: await getAllBlockedByUserIds(ctx.user),
   });
 
   return withoutEntryScores(pair);
@@ -245,6 +256,7 @@ export const getJudgingProgressHandler = async ({
     userId: ctx.user.id,
     isGreen: !!ctx.features?.isGreen,
     isModerator: ctx.user.isModerator,
+    blockedByUserIds: await getAllBlockedByUserIds(ctx.user),
   });
 
 export const submitVoteHandler = async ({
@@ -254,7 +266,11 @@ export const submitVoteHandler = async ({
   input: SubmitVoteSchema;
   ctx: ProtectedContext;
 }) => {
-  return submitVote({ ...input, userId: ctx.user.id });
+  return submitVote({
+    ...input,
+    userId: ctx.user.id,
+    blockedByUserIds: await getAllBlockedByUserIds(ctx.user),
+  });
 };
 
 export const cancelCrucibleHandler = async ({

@@ -110,7 +110,7 @@ describe('voidUnscannedCrucibles', () => {
     createNotification.mockResolvedValue(undefined);
   });
 
-  it('only looks at crucibles past their start with no entries whose text or cover is unreviewed', async () => {
+  it('only asks for crucibles it will void: blocked, or unreviewed past the grace, so ones in their grace cannot starve the rest', async () => {
     findMany.mockResolvedValue([]);
 
     await voidUnscannedCrucibles(now);
@@ -122,9 +122,17 @@ describe('voidUnscannedCrucibles', () => {
           startAt: { lte: now },
           entries: { none: {} },
           OR: [
-            { ingestion: { not: CrucibleIngestionStatus.Scanned } },
-            { image: { is: null } },
-            { image: { ingestion: { not: ImageIngestionStatus.Scanned } } },
+            { ingestion: CrucibleIngestionStatus.Blocked },
+            { image: { ingestion: ImageIngestionStatus.Blocked } },
+            {
+              startAt: { lt: hoursAgo(24) },
+              updatedAt: { lt: hoursAgo(24) },
+              OR: [
+                { ingestion: { not: CrucibleIngestionStatus.Scanned } },
+                { image: { is: null } },
+                { image: { ingestion: { not: ImageIngestionStatus.Scanned } } },
+              ],
+            },
           ],
         },
       })

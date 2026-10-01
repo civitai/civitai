@@ -10,7 +10,7 @@ import { dbMock, loggingMock } from '~/__tests__/mocks';
 // `~/server/db/client` and `~/server/redis/client` are registered globally by the setup file
 // and reset per test file — see docs/testing/shared-module-mocks.md.
 const findUnique = dbMock.dbWrite.crucible.findUnique;
-const findMany = dbMock.dbRead.crucibleEntry.findMany;
+const findMany = dbMock.dbWrite.crucibleEntry.findMany;
 const claim = dbMock.dbWrite.crucible.updateMany;
 const executeRaw = dbMock.dbWrite.$executeRaw;
 const createBuzzTransactionMany = vi.fn();
@@ -48,6 +48,7 @@ const dbEntry = (id: number, userId: number, createdAtMs: number) => ({
   userId,
   score: 1500,
   voteCount: 0,
+  position: null as number | null,
   createdAt: new Date(createdAtMs),
 });
 
@@ -58,16 +59,34 @@ const dbEntry = (id: number, userId: number, createdAtMs: number) => ({
  */
 const pageEntries = (entries: ReturnType<typeof dbEntry>[]) => {
   let served = false;
-  findMany.mockImplementation(async () => {
+  findMany.mockImplementation(async (args: { where: { position?: unknown } }) => {
+    if (args.where.position) return storedPlaces(entries);
     if (served) return [];
     served = true;
     return entries;
   });
 };
 
-const groupBy = dbMock.dbRead.crucibleEntry.groupBy;
-const paidEntries = (count: number) =>
-  groupBy.mockResolvedValue(count ? [{ crucibleId: 1, _count: { _all: count } }] : []);
+/** The places query reads back what the ranking write stored. */
+const storedPlaces = (entries: ReturnType<typeof dbEntry>[]) => {
+  const values = executeRaw.mock.calls
+    .filter(([strings]) =>
+      (strings as TemplateStringsArray).join('').includes('UPDATE "CrucibleEntry"')
+    )
+    .flatMap(([, rows]) => (rows as { values: (number | null)[] }).values);
+  return Array.from({ length: values.length / 4 }, (_, i) => {
+    const [id, score, position, voteCount] = values.slice(i * 4, i * 4 + 4) as number[];
+    return { ...entries.find((e) => e.id === id)!, score, position, voteCount };
+  })
+    .filter((entry) => entry.position !== null)
+    .sort((a, b) => a.position - b.position);
+};
+
+const paidEntries = (count: number) => {
+  const rows = count ? [{ crucibleId: 1, _count: { _all: count } }] : [];
+  dbMock.dbRead.crucibleEntry.groupBy.mockResolvedValue(rows);
+  dbMock.dbWrite.crucibleEntry.groupBy.mockResolvedValue(rows);
+};
 
 const setupCrucible = ({
   entryFee = 100,
@@ -101,9 +120,11 @@ beforeEach(() => {
   getAllVoteCounts.mockResolvedValue({});
   setTTL.mockResolvedValue(undefined);
   claim.mockResolvedValue({ count: 1 });
+  dbMock.dbWrite.crucibleEntry.count.mockResolvedValue(0);
   executeRaw.mockResolvedValue(1);
   createBuzzTransactionMany.mockImplementation(async (transactions: unknown[]) => ({
     transactions,
+    conflicts: [],
   }));
   createNotification.mockResolvedValue(undefined);
   refundMultiAccountTransaction.mockResolvedValue(undefined);
@@ -325,11 +346,13 @@ describe('free entries', () => {
 
     await finalizeCrucible(1);
 
-    expect(groupBy).toHaveBeenCalledWith(
+    // The primary: a fee paid just before the end may not be on the replica yet.
+    expect(dbMock.dbWrite.crucibleEntry.groupBy).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { crucibleId: { in: [1] }, buzzTransactionId: { not: null } },
       })
     );
+    expect(dbMock.dbRead.crucibleEntry.groupBy).not.toHaveBeenCalled();
   });
 
   it('moves no Buzz when every entry was free and nothing was seeded', async () => {
@@ -437,6 +460,25 @@ describe('seeded prize pool — nobody entered', () => {
     expect(refundMultiAccountTransaction).toHaveBeenCalledWith(
       expect.objectContaining({ externalTransactionIdPrefix: 'crucible-seed-4-abc' })
     );
+  });
+
+  it('tells the creator the seed came back', async () => {
+    setupUnentered();
+
+    await finalizeCrucible(1);
+
+    const ended = createNotification.mock.calls.find(([n]) => n.type === 'crucible-ended')?.[0];
+    expect(ended?.details).toMatchObject({ totalEntries: 0, seedRefunded: 5_000 });
+  });
+
+  it('does not claim a seed refund that failed', async () => {
+    setupUnentered();
+    refundMultiAccountTransaction.mockRejectedValue(new Error('buzz down'));
+
+    await finalizeCrucible(1);
+
+    const ended = createNotification.mock.calls.find(([n]) => n.type === 'crucible-ended')?.[0];
+    expect(ended?.details).toMatchObject({ seedRefunded: 0 });
   });
 
   it('refunds nothing when there was no seed', async () => {

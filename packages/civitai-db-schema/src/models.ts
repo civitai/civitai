@@ -5725,8 +5725,8 @@ export interface CrucibleEntry {
   crucible?: Crucible;
   userId: number;
   user?: User;
-  imageId: number;
-  image?: Image;
+  imageId: number | null;
+  image?: Image | null;
   score: number;
   voteCount: number;
   position: number | null;

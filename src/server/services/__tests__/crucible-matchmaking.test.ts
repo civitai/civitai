@@ -88,6 +88,18 @@ describe('getJudgingPair — crucible state', () => {
     }
   );
 
+  it('is not found for a judge the creator blocked, unless a moderator', async () => {
+    queryRaw.mockResolvedValue([rawEntry(1, 99), rawEntry(2, 98)]);
+    const blockedByUserIds = [activeCrucible.userId];
+
+    await expect(getJudgingPair({ crucibleId: 1, userId: 1, blockedByUserIds })).rejects.toThrow(
+      'Crucible not found'
+    );
+    await expect(
+      getJudgingPair({ crucibleId: 1, userId: 1, blockedByUserIds, isModerator: true })
+    ).resolves.not.toBeNull();
+  });
+
   it('refuses once the end time has passed, even while still marked Active', async () => {
     findUnique.mockResolvedValue({
       ...activeCrucible,

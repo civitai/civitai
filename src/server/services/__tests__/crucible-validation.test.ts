@@ -1,3 +1,4 @@
+import { BuzzApiError } from '@civitai/buzz';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   calculateCrucibleSetupCost,
@@ -12,7 +13,7 @@ import {
 import { constants } from '~/server/common/constants';
 import { CrucibleSort } from '~/server/common/enums';
 import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
-import { dbMock, loggingMock } from '~/__tests__/mocks';
+import { dbMock, loggingMock, redisMock } from '~/__tests__/mocks';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as PostService from '~/server/services/post.service';
@@ -560,6 +561,12 @@ const imageRow = (type: MediaType, metadata: Record<string, unknown> | null = nu
 
 const submit = () => submitEntry({ crucibleId: 1, imageId: 7, userId: 42 });
 
+beforeEach(() => {
+  // The insert's locked check that the crucible is still open.
+  dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 1 }]);
+  redisMock.sysRedis.set.mockResolvedValue('OK');
+});
+
 describe('submitEntry — content type', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -866,6 +873,7 @@ describe('submitEntry — entry fee', () => {
 
     await expect(submit()).rejects.toThrow('db down');
 
+    expect(refundMultiAccountTransaction).toHaveBeenCalledTimes(3);
     expect(refundMultiAccountTransaction).toHaveBeenCalledWith(
       expect.objectContaining({
         externalTransactionIdPrefix: expect.stringMatching(/^crucible-entry-1-42-/),
@@ -877,6 +885,118 @@ describe('submitEntry — entry fee', () => {
         name: 'crucible-entry-fee-refund-failed',
         crucibleId: 1,
         userId: 42,
+      })
+    );
+  });
+});
+
+describe('submitEntry — one submit at a time per user', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    createNotification.mockResolvedValue(undefined);
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucibleRow(MediaType.image));
+    dbMock.dbWrite.crucibleEntry.count.mockResolvedValue(0);
+    dbMock.dbRead.crucibleEntry.findFirst.mockResolvedValue(null);
+    dbMock.dbRead.image.findUnique.mockResolvedValue(imageRow(MediaType.image));
+    dbMock.dbRead.image.count.mockResolvedValue(1);
+    dbMock.dbWrite.crucibleEntry.create.mockResolvedValue({ id: 5, user: { username: 'tester' } });
+    redisMock.sysRedis.set.mockResolvedValue('OK');
+  });
+
+  it('takes a lock that outlives a slow charge, under a token of its own', async () => {
+    await submit();
+
+    expect(redisMock.sysRedis.set).toHaveBeenCalledWith(
+      'lock:crucible-entry:1:42',
+      expect.stringMatching(/^[0-9a-f-]{36}$/),
+      { PX: 30_000, NX: true }
+    );
+  });
+
+  it('releases only the lock it took, so an expired submit cannot free a later one', async () => {
+    await submit();
+
+    const token = redisMock.sysRedis.set.mock.calls[0][1];
+    expect(redisMock.sysRedis.eval).toHaveBeenCalledWith(
+      expect.stringContaining("redis.call('GET', KEYS[1]) == ARGV[1]"),
+      { keys: ['lock:crucible-entry:1:42'], arguments: [token] }
+    );
+    expect(redisMock.sysRedis.del).not.toHaveBeenCalledWith('lock:crucible-entry:1:42');
+  });
+
+  it('refuses a second submit while the first holds the lock', async () => {
+    redisMock.sysRedis.set.mockResolvedValue(null);
+
+    await expect(submit()).rejects.toThrow('in progress');
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when Redis is unavailable, rather than letting overlapping submits through', async () => {
+    redisMock.sysRedis.set.mockRejectedValue(new Error('redis down'));
+
+    await expect(submit()).rejects.toThrow('redis down');
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('submitEntry — a cancel or the end landing mid-submit', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    createNotification.mockResolvedValue(undefined);
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.image),
+      entryFee: 50,
+    });
+    dbMock.dbWrite.crucibleEntry.count.mockResolvedValue(0);
+    dbMock.dbRead.crucibleEntry.findFirst.mockResolvedValue(null);
+    dbMock.dbRead.image.findUnique.mockResolvedValue(imageRow(MediaType.image));
+    dbMock.dbRead.image.count.mockResolvedValue(1);
+    dbMock.dbWrite.crucibleEntry.create.mockResolvedValue({ id: 5, user: { username: 'tester' } });
+    getUserBuzzAccount.mockResolvedValue([{ balance: 500 }]);
+    createMultiAccountBuzzTransaction.mockResolvedValue(undefined);
+    refundMultiAccountTransaction.mockResolvedValue(undefined);
+  });
+
+  const lockedCheck = () => {
+    const call = dbMock.dbWrite.$queryRaw.mock.calls.at(-1) as [TemplateStringsArray, ...unknown[]];
+    return call[0].join('?').replace(/\s+/g, ' ');
+  };
+
+  it('inserts only after a shared lock confirms the crucible is still open', async () => {
+    await submit();
+
+    expect(lockedCheck()).toContain(
+      'SELECT id FROM "Crucible" WHERE id = ? AND status = ?::"CrucibleStatus" AND ("endAt" IS NULL OR "endAt" > statement_timestamp()) FOR SHARE'
+    );
+    expect(dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      dbMock.dbWrite.crucibleEntry.create.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('retries the refund of a refused entry, and counts a duplicate as refunded', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
+    refundMultiAccountTransaction
+      .mockRejectedValueOnce(new Error('buzz blip'))
+      .mockRejectedValueOnce(new BuzzApiError(409, 'duplicate'));
+
+    await expect(submit()).rejects.toThrow('not accepting entries');
+
+    expect(refundMultiAccountTransaction).toHaveBeenCalledTimes(2);
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'crucible-entry-fee-refund-failed' })
+    );
+  });
+
+  it('refuses the entry and refunds its fee when the crucible closed after the checks', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
+
+    await expect(submit()).rejects.toThrow('not accepting entries');
+
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+    expect(refundMultiAccountTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        externalTransactionIdPrefix: expect.stringMatching(/^crucible-entry-1-42-/),
       })
     );
   });
@@ -984,16 +1104,24 @@ describe('submitEntry — free entries', () => {
 });
 
 describe('createCrucibleEntryPost', () => {
-  const create = () => createCrucibleEntryPost({ crucibleId: 1, userId: 42 });
+  const create = (viewer: { isGreen?: boolean; blockedByUserIds?: number[] } = {}) =>
+    createCrucibleEntryPost({ crucibleId: 1, userId: 42, ...viewer });
+  const arena = (overrides: Record<string, unknown> = {}) => ({
+    name: 'Open Arena',
+    status: CrucibleStatus.Active,
+    endAt: new Date(Date.now() + 60_000),
+    userId: 99,
+    buzzType: 'yellow',
+    ingestion: 'Scanned',
+    textNsfw: false,
+    image: { ingestion: 'Scanned' },
+    ...overrides,
+  });
 
   beforeEach(() => {
     vi.clearAllMocks();
     createPost.mockResolvedValue({ id: 900 });
-    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
-      name: 'Open Arena',
-      status: CrucibleStatus.Active,
-      endAt: new Date(Date.now() + 60_000),
-    });
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue(arena());
   });
 
   it('creates a published post for the caller, so what they add can be entered', async () => {
@@ -1006,37 +1134,49 @@ describe('createCrucibleEntryPost', () => {
   });
 
   it('refuses a crucible that is no longer active', async () => {
-    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
-      name: 'Open Arena',
-      status: CrucibleStatus.Completed,
-      endAt: new Date(Date.now() - 60_000),
-    });
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue(
+      arena({ status: CrucibleStatus.Completed, endAt: new Date(Date.now() - 60_000) })
+    );
 
     await expect(create()).rejects.toThrow(/not accepting entries/);
     expect(createPost).not.toHaveBeenCalled();
   });
 
   it('refuses an active crucible whose end time has passed', async () => {
-    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
-      name: 'Open Arena',
-      status: CrucibleStatus.Active,
-      endAt: new Date(Date.now() - 60_000),
-    });
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue(
+      arena({ status: CrucibleStatus.Active, endAt: new Date(Date.now() - 60_000) })
+    );
 
     await expect(create()).rejects.toThrow(/not accepting entries/);
     expect(createPost).not.toHaveBeenCalled();
   });
 
   it("refuses the crucible's own creator", async () => {
-    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
-      name: 'Open Arena',
-      status: CrucibleStatus.Active,
-      endAt: new Date(Date.now() + 60_000),
-      userId: 42,
-    });
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue(
+      arena({ status: CrucibleStatus.Active, endAt: new Date(Date.now() + 60_000), userId: 42 })
+    );
 
     await expect(create()).rejects.toThrow(/can't enter a crucible you created/);
     expect(createPost).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['still under review', { ingestion: 'Pending' }, {}],
+    ['on the other site', { buzzType: 'green' }, {}],
+    ['whose creator blocked the caller', {}, { blockedByUserIds: [99] }],
+  ])('is not found for a crucible %s, and creates no post', async (_, crucible, viewer) => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue(arena(crucible));
+
+    await expect(create(viewer)).rejects.toThrow('Crucible not found');
+    expect(createPost).not.toHaveBeenCalled();
+  });
+
+  it('leaves a name flagged as adult text off the post', async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue(arena({ textNsfw: true }));
+
+    await create();
+
+    expect(createPost).toHaveBeenCalledWith(expect.objectContaining({ title: undefined }));
   });
 });
 

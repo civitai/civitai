@@ -11,10 +11,40 @@ export const crucibleNotifications = createNotificationProcessor({
     displayName: 'Crucible Ended',
     category: NotificationCategory.Update,
     toggleable: true,
+    prepareMessage: ({ details }) => {
+      const crucible = `Your crucible${quotedName(details.crucibleName)}`;
+      const seedNote = details.seedRefunded
+        ? ` Your seeded prize pool of ${numberWithCommas(details.seedRefunded)} Buzz was refunded.`
+        : '';
+      const url = `/crucibles/${details.crucibleId}`;
+      if (!details.totalEntries)
+        return {
+          message: details.disqualifiedEntries
+            ? `${crucible} has ended, but none of its entries could place, so no prizes were awarded.${seedNote}`
+            : `${crucible} has ended with no entries.${seedNote}`,
+          url,
+        };
+      return {
+        message: `${crucible} has ended! ${numberWithCommas(
+          details.totalEntries
+        )} entries competed for a prize pool of ${numberWithCommas(
+          details.prizePool
+        )} Buzz.${seedNote}`,
+        url,
+      };
+    },
+  },
+  // Sent to each entrant when a crucible they entered is cancelled
+  'crucible-cancelled': {
+    displayName: 'Crucible Cancelled',
+    category: NotificationCategory.System,
+    toggleable: false,
     prepareMessage: ({ details }) => ({
-      message: `Your crucible${quotedName(details.crucibleName)} has ended! ${
-        details.totalEntries
-      } entries competed for a prize pool of ${numberWithCommas(details.prizePool)} Buzz.`,
+      message: `The crucible${quotedName(details.crucibleName)} you entered was cancelled. ${
+        details.refundPending
+          ? 'Your entry fee refund is being processed.'
+          : 'Any entry fees you paid have been refunded.'
+      }`,
       url: `/crucibles/${details.crucibleId}`,
     }),
   },

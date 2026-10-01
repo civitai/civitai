@@ -1,3 +1,5 @@
+import { randomUUID } from 'crypto';
+import { chunk } from 'lodash-es';
 import { Prisma } from '@prisma/client';
 import { isDefined } from '~/utils/type-guards';
 import dayjs from '~/shared/utils/dayjs';
@@ -57,6 +59,7 @@ import {
   crucibleEntrySelect,
   type CrucibleEntryRow,
   crucibleListSelect,
+  hasEntryImage,
 } from '~/server/selectors/crucible.selector';
 import { publishedImageWhere } from '~/server/selectors/image.selector';
 import type { RedisKeyTemplateSys, RedisKeyTemplateCache } from '~/server/redis/client';
@@ -88,9 +91,11 @@ import {
   getCruciblePrizeAmount,
   getCrucibleTotalPrizePool,
   getCruciblePublishableName,
+  type CrucibleNameScan,
   getCrucibleTransactionDescription,
   isFreeCrucibleEntry,
   parsePrizePositions,
+  type PrizePosition,
   toCrucibleBuzzType,
 } from '~/utils/crucible-helpers';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
@@ -412,7 +417,12 @@ export async function scanCrucible(crucibleId: number, { forceRescan = false } =
 const levelsIntersecting = (level: number) =>
   Array.from({ length: 63 }, (_, i) => i + 1).filter((mask) => (mask & level) !== 0);
 
-type CrucibleViewer = { viewerId?: number; isModerator?: boolean; isGreen?: boolean };
+type CrucibleViewer = {
+  viewerId?: number;
+  isModerator?: boolean;
+  isGreen?: boolean;
+  blockedByUserIds?: number[];
+};
 type CrucibleVisibilityRow = {
   userId: number;
   buzzType: string;
@@ -429,6 +439,12 @@ export const isCrucibleHiddenByScan = (
   crucible.userId !== viewerId &&
   (crucible.ingestion !== CrucibleIngestionStatus.Scanned ||
     crucible.image?.ingestion !== ImageIngestionStatus.Scanned);
+
+/** As on its detail page, a creator who blocked the viewer hides the crucible from them. */
+const isCrucibleBlockedForViewer = (
+  crucible: Pick<CrucibleVisibilityRow, 'userId'>,
+  { isModerator, blockedByUserIds = [] }: CrucibleViewer
+) => !isModerator && blockedByUserIds.includes(crucible.userId);
 
 /** As user challenges: a crucible exists only on the site whose currency it runs on. */
 const isCrucibleOffDomain = (
@@ -728,9 +744,15 @@ export const updateCrucible = async ({
 
   let updated: Awaited<ReturnType<typeof dbWrite.crucible.update>>;
   try {
-    updated = await dbWrite.crucible.update({ where: { id }, data });
+    // On the status read above: a cancel since then has already refunded the creator, and writing
+    // the status back would revive a crucible whose seed is gone.
+    updated = await dbWrite.crucible.update({ where: { id, status: crucible.status }, data });
   } catch (error) {
     await settlement?.rollback();
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025')
+      throw throwBadRequestError(
+        'This crucible changed while you were editing it. Reload the page and try again.'
+      );
     throw error;
   }
 
@@ -791,10 +813,18 @@ async function settleCrucibleCostChange({
         seedAmount: refunded.includes('seed') ? before.seedAmount : 0,
         details,
       });
-      await dbWrite.crucible.update({
-        where: { id: crucibleId },
+      // A cancel that landed mid-edit found the original charges already refunded, so charging
+      // them back onto a cancelled crucible would leave the creator paying for nothing.
+      const { count } = await dbWrite.crucible.updateMany({
+        where: { id: crucibleId, status: { not: CrucibleStatus.Cancelled } },
         data: legTransactionIds(refunded, restored),
       });
+      if (!count)
+        await refundCrucibleCharges(
+          [restored.buzzTransactionId, restored.seedTransactionId].filter(isDefined),
+          'crucible cancelled during edit',
+          details
+        );
     } catch (error) {
       logToAxiom({
         type: 'error',
@@ -851,11 +881,11 @@ function assertCrucibleSettings(settings: Parameters<typeof checkCrucibleSetting
  * Entries that paid the fee, by crucible: the ones holding a fee transaction. Read from the rows,
  * not from `freeEntriesPerUser`, so the pool can never count an entry the bank was not paid for.
  */
-export async function getPaidEntryCounts(crucibleIds: number[]) {
+export async function getPaidEntryCounts(crucibleIds: number[], db: typeof dbRead = dbRead) {
   const counts = new Map(crucibleIds.map((id) => [id, 0]));
   if (!crucibleIds.length) return counts;
 
-  const paid = await dbRead.crucibleEntry.groupBy({
+  const paid = await db.crucibleEntry.groupBy({
     by: ['crucibleId'],
     where: { crucibleId: { in: crucibleIds }, buzzTransactionId: { not: null } },
     _count: { _all: true },
@@ -896,11 +926,13 @@ export const getCrucibleDetail = async ({
   const [paidEntryCounts, viewerEntries, placedEntryCount] = await Promise.all([
     getPaidEntryCounts([id]),
     userId
-      ? dbRead.crucibleEntry.findMany({
-          where: { crucibleId: id, userId },
-          select: crucibleEntrySelect,
-          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-        })
+      ? dbRead.crucibleEntry
+          .findMany({
+            where: { crucibleId: id, userId },
+            select: crucibleEntrySelect,
+            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+          })
+          .then((entries) => entries.filter(hasEntryImage))
       : [],
     crucible.status === CrucibleStatus.Completed
       ? dbRead.crucibleEntry.count({ where: { crucibleId: id, position: { not: null } } })
@@ -924,7 +956,13 @@ export const getCrucibleEntries = async ({
   browsingLevel,
   isGreen = false,
   isModerator = false,
-}: GetCrucibleEntriesSchema & { userId?: number; isGreen?: boolean; isModerator?: boolean }) => {
+  blockedByUserIds,
+}: GetCrucibleEntriesSchema & {
+  userId?: number;
+  isGreen?: boolean;
+  isModerator?: boolean;
+  blockedByUserIds?: number[];
+}) => {
   const crucible = await dbRead.crucible.findUnique({
     where: { id: crucibleId },
     select: {
@@ -936,11 +974,12 @@ export const getCrucibleEntries = async ({
       image: { select: { ingestion: true } },
     },
   });
-  const viewer = { viewerId: userId, isModerator, isGreen };
+  const viewer = { viewerId: userId, isModerator, isGreen, blockedByUserIds };
   if (
     !crucible ||
     isCrucibleHiddenByScan(crucible, viewer) ||
-    isCrucibleOffDomain(crucible, viewer)
+    isCrucibleOffDomain(crucible, viewer) ||
+    isCrucibleBlockedForViewer(crucible, viewer)
   )
     throw throwNotFoundError('Crucible not found');
 
@@ -990,7 +1029,10 @@ const loadEntriesInOrder = async (ids: { id: number }[]) => {
       })
     ).map((entry) => [entry.id, entry])
   );
-  return ids.map(({ id }) => byId.get(id)).filter(isDefined);
+  return ids
+    .map(({ id }) => byId.get(id))
+    .filter(isDefined)
+    .filter(hasEntryImage);
 };
 
 const UNPLACED_SORT_POSITION = 2147483647;
@@ -1174,17 +1216,45 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
 export const createCrucibleEntryPost = async ({
   crucibleId,
   userId,
-}: CreateEntryPostSchema & { userId: number }) => {
+  isGreen = false,
+  isModerator = false,
+  blockedByUserIds,
+}: CreateEntryPostSchema & {
+  userId: number;
+  isGreen?: boolean;
+  isModerator?: boolean;
+  blockedByUserIds?: number[];
+}) => {
   const crucible = await dbRead.crucible.findUnique({
     where: { id: crucibleId },
-    select: { name: true, status: true, endAt: true, userId: true },
+    select: {
+      name: true,
+      status: true,
+      endAt: true,
+      userId: true,
+      buzzType: true,
+      ingestion: true,
+      textNsfw: true,
+      image: { select: { ingestion: true } },
+    },
   });
-  if (!crucible) throw throwNotFoundError('Crucible not found');
+  const viewer = { viewerId: userId, isGreen, isModerator, blockedByUserIds };
+  if (
+    !crucible ||
+    isCrucibleHiddenByScan(crucible, viewer) ||
+    isCrucibleOffDomain(crucible, viewer) ||
+    isCrucibleBlockedForViewer(crucible, viewer)
+  )
+    throw throwNotFoundError('Crucible not found');
   if (crucible.status !== CrucibleStatus.Active || (crucible.endAt && new Date() > crucible.endAt))
     throw throwBadRequestError('This crucible is not accepting entries');
   if (crucible.userId === userId) throw throwBadRequestError(CANNOT_ENTER_OWN_CRUCIBLE);
 
-  const post = await createPost({ userId, title: crucible.name, publishedAt: new Date() });
+  const post = await createPost({
+    userId,
+    title: getCruciblePublishableName(crucible) ?? undefined,
+    publishedAt: new Date(),
+  });
   return { id: post.id };
 };
 
@@ -1294,50 +1364,37 @@ function getEntryLockKey(crucibleId: number, userId: number): RedisKeyTemplateSy
   return `lock:crucible-entry:${crucibleId}:${userId}` as RedisKeyTemplateSys;
 }
 
+// Long enough to cover a submit's charge and insert; the token stops an expired holder's release
+// from deleting the lock a later submit took.
+const ENTRY_LOCK_TTL_MS = 30_000;
+const ENTRY_REFUND_ATTEMPTS = 3;
+
 /**
- * Acquire a distributed lock for entry submission
- * Uses SET NX with short TTL to prevent race conditions
- * @returns true if lock acquired, false if already locked
+ * One submit per user per crucible at a time, so two can't both read the same entry count. Throws
+ * when Redis is unavailable rather than letting overlapping submits through.
+ * @returns the lock token, or null if another submit holds it
  */
-async function acquireEntryLock(crucibleId: number, userId: number): Promise<boolean> {
-  const lockKey = getEntryLockKey(crucibleId, userId);
-  const lockValue = `${Date.now()}-${Math.random()}`;
-
-  try {
-    // SET NX with 5 second TTL to prevent deadlocks
-    const result = await sysRedis.set(lockKey, lockValue, {
-      PX: 5000, // 5 second TTL in milliseconds
-      NX: true, // Only set if not exists
-    });
-
-    return result === 'OK';
-  } catch (error) {
-    log(
-      `Failed to acquire entry lock for crucible ${crucibleId}, user ${userId}: ${
-        error instanceof Error ? error.message : 'Unknown error'
-      }`
-    );
-    // On Redis failure, allow the operation to proceed (fail-open)
-    // The database transaction will still provide some protection
-    return true;
-  }
+async function acquireEntryLock(crucibleId: number, userId: number): Promise<string | null> {
+  const token: string = randomUUID();
+  const result = await sysRedis.set(getEntryLockKey(crucibleId, userId), token, {
+    PX: ENTRY_LOCK_TTL_MS,
+    NX: true,
+  });
+  return result === 'OK' ? token : null;
 }
 
-/**
- * Release a distributed lock for entry submission
- */
-async function releaseEntryLock(crucibleId: number, userId: number): Promise<void> {
-  const lockKey = getEntryLockKey(crucibleId, userId);
-
+async function releaseEntryLock(crucibleId: number, userId: number, token: string) {
   try {
-    await sysRedis.del(lockKey);
+    await sysRedis.eval(
+      "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0",
+      { keys: [getEntryLockKey(crucibleId, userId)], arguments: [token] }
+    );
   } catch (error) {
     log(
       `Failed to release entry lock for crucible ${crucibleId}, user ${userId}: ${
         error instanceof Error ? error.message : 'Unknown error'
       }`
     );
-    // Lock will auto-expire due to TTL, so failure is not critical
   }
 }
 
@@ -1350,10 +1407,15 @@ export const submitEntry = async ({
   userId,
   isGreen = false,
   isModerator = false,
-}: SubmitEntrySchema & { userId: number; isGreen?: boolean; isModerator?: boolean }) => {
-  // Acquire distributed lock to prevent race conditions on entry limit
-  const lockAcquired = await acquireEntryLock(crucibleId, userId);
-  if (!lockAcquired) {
+  blockedByUserIds,
+}: SubmitEntrySchema & {
+  userId: number;
+  isGreen?: boolean;
+  isModerator?: boolean;
+  blockedByUserIds?: number[];
+}) => {
+  const lockToken = await acquireEntryLock(crucibleId, userId);
+  if (!lockToken) {
     return throwBadRequestError(
       'Entry submission in progress. Please wait a moment and try again.'
     );
@@ -1389,11 +1451,12 @@ export const submitEntry = async ({
       },
     });
 
-    const viewer = { viewerId: userId, isGreen, isModerator };
+    const viewer = { viewerId: userId, isGreen, isModerator, blockedByUserIds };
     if (
       !crucible ||
       isCrucibleHiddenByScan(crucible, viewer) ||
-      isCrucibleOffDomain(crucible, viewer)
+      isCrucibleOffDomain(crucible, viewer) ||
+      isCrucibleBlockedForViewer(crucible, viewer)
     ) {
       return throwNotFoundError('Crucible not found');
     }
@@ -1557,29 +1620,41 @@ export const submitEntry = async ({
     // Create the entry with default ELO score (1500)
     // Wrap in try/catch to refund entry fee if database write fails
     try {
-      const entry = await dbWrite.crucibleEntry.create({
-        data: {
-          crucibleId,
-          userId,
-          imageId,
-          score: 1500, // Default ELO score
-          buzzTransactionId,
-        },
-        select: {
-          id: true,
-          crucibleId: true,
-          userId: true,
-          imageId: true,
-          score: true,
-          position: true,
-          buzzTransactionId: true,
-          createdAt: true,
-          user: {
-            select: {
-              username: true,
+      const entry = await dbWrite.$transaction(async (tx) => {
+        // The shared row lock makes a cancel's or finalize's claim wait for this insert, so they
+        // read the entry; once they've claimed, the status check here refuses it instead.
+        const [open] = await tx.$queryRaw<{ id: number }[]>`
+          SELECT id FROM "Crucible"
+          WHERE id = ${crucibleId}
+            AND status = ${CrucibleStatus.Active}::"CrucibleStatus"
+            AND ("endAt" IS NULL OR "endAt" > statement_timestamp())
+          FOR SHARE
+        `;
+        if (!open) throw throwBadRequestError('This crucible is not accepting entries');
+        return tx.crucibleEntry.create({
+          data: {
+            crucibleId,
+            userId,
+            imageId,
+            score: 1500, // Default ELO score
+            buzzTransactionId,
+          },
+          select: {
+            id: true,
+            crucibleId: true,
+            userId: true,
+            imageId: true,
+            score: true,
+            position: true,
+            buzzTransactionId: true,
+            createdAt: true,
+            user: {
+              select: {
+                username: true,
+              },
             },
           },
-        },
+        });
       });
 
       if (crucible.userId !== userId) {
@@ -1598,42 +1673,47 @@ export const submitEntry = async ({
 
       return entry;
     } catch (error) {
-      // Database write failed - refund entry fee if it was charged
+      // The entry wasn't saved — refused at the deadline or a failed write — so return its fee.
+      // Retried, since a refusal near the end is routine rather than a rare failure.
       if (buzzTransactionId) {
-        try {
-          await refundMultiAccountTransaction({
-            externalTransactionIdPrefix: buzzTransactionId,
-            description: getCrucibleTransactionDescription(
-              'Crucible entry fee refund - database write failed',
-              crucible
-            ),
-            details: {
-              entityId: crucibleId,
-              entityType: 'Crucible',
-            },
-          });
-          log(
-            `Refunded entry fee for user ${userId} after database failure (transaction: ${buzzTransactionId})`
-          );
-        } catch (refundError) {
+        let lastError: unknown;
+        for (let attempt = 1; attempt <= ENTRY_REFUND_ATTEMPTS; attempt++) {
+          try {
+            await refundCrucibleTransactionOnce({
+              externalTransactionIdPrefix: buzzTransactionId,
+              description: getCrucibleTransactionDescription(
+                'Crucible entry fee refund - entry not saved',
+                crucible
+              ),
+              crucibleId,
+              label: `entry fee ${buzzTransactionId}`,
+              reason: 'entry-not-saved',
+            });
+            lastError = undefined;
+            break;
+          } catch (refundError) {
+            lastError = refundError;
+            if (attempt < ENTRY_REFUND_ATTEMPTS)
+              await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+          }
+        }
+        if (lastError)
           logToAxiom({
             type: 'error',
             name: 'crucible-entry-fee-refund-failed',
-            message: `Failed to refund entry fee ${buzzTransactionId} after the entry write failed: ${
-              refundError instanceof Error ? refundError.message : String(refundError)
+            message: `Failed to refund entry fee ${buzzTransactionId} for an entry that wasn't saved: ${
+              lastError instanceof Error ? lastError.message : String(lastError)
             }`,
             crucibleId,
             userId,
             buzzTransactionId,
           });
-        }
       }
       // Re-throw the original error
       throw error;
     }
   } finally {
-    // Always release the lock, even if an error occurs
-    await releaseEntryLock(crucibleId, userId);
+    await releaseEntryLock(crucibleId, userId, lockToken);
   }
 };
 
@@ -1993,7 +2073,13 @@ export const getJudgingProgress = async ({
   browsingLevel,
   isGreen = false,
   isModerator = false,
-}: GetJudgingProgressSchema & { userId: number; isGreen?: boolean; isModerator?: boolean }) => {
+  blockedByUserIds,
+}: GetJudgingProgressSchema & {
+  userId: number;
+  isGreen?: boolean;
+  isModerator?: boolean;
+  blockedByUserIds?: number[];
+}) => {
   const crucible = await dbRead.crucible.findUnique({
     where: { id: crucibleId },
     select: {
@@ -2006,11 +2092,12 @@ export const getJudgingProgress = async ({
       image: { select: { ingestion: true } },
     },
   });
-  const viewer = { viewerId: userId, isModerator, isGreen };
+  const viewer = { viewerId: userId, isModerator, isGreen, blockedByUserIds };
   if (
     !crucible ||
     isCrucibleHiddenByScan(crucible, viewer) ||
-    isCrucibleOffDomain(crucible, viewer)
+    isCrucibleOffDomain(crucible, viewer) ||
+    isCrucibleBlockedForViewer(crucible, viewer)
   )
     throw throwNotFoundError('Crucible not found');
   if (crucible.status !== CrucibleStatus.Active || (crucible.endAt && crucible.endAt <= new Date()))
@@ -2078,10 +2165,12 @@ export const getJudgingPair = async ({
   browsingLevel,
   isGreen = false,
   isModerator = false,
+  blockedByUserIds,
 }: GetJudgingPairSchema & {
   userId: number;
   isGreen?: boolean;
   isModerator?: boolean;
+  blockedByUserIds?: number[];
 }): Promise<JudgingPair> => {
   const crucible = await dbRead.crucible.findUnique({
     where: { id: crucibleId },
@@ -2096,12 +2185,13 @@ export const getJudgingPair = async ({
       image: { select: { ingestion: true } },
     },
   });
-  const viewer = { viewerId: userId, isModerator, isGreen };
+  const viewer = { viewerId: userId, isModerator, isGreen, blockedByUserIds };
 
   if (
     !crucible ||
     isCrucibleHiddenByScan(crucible, viewer) ||
-    isCrucibleOffDomain(crucible, viewer)
+    isCrucibleOffDomain(crucible, viewer) ||
+    isCrucibleBlockedForViewer(crucible, viewer)
   ) {
     throwNotFoundError('Crucible not found');
     return null; // TypeScript flow - never reached
@@ -2197,7 +2287,11 @@ export const submitVote = async ({
   winnerWatchedMs,
   loserWatchedMs,
   userId,
-}: SubmitVoteSchema & { userId: number }): Promise<SubmitVoteResult> => {
+  blockedByUserIds,
+}: SubmitVoteSchema & {
+  userId: number;
+  blockedByUserIds?: number[];
+}): Promise<SubmitVoteResult> => {
   log(
     `Vote submission started: user ${userId}, crucible ${crucibleId}, winner ${winnerEntryId}, loser ${loserEntryId}`
   );
@@ -2211,13 +2305,14 @@ export const submitVote = async ({
     where: { id: crucibleId },
     select: {
       id: true,
+      userId: true,
       status: true,
       endAt: true,
       minViewSeconds: true,
     },
   });
 
-  if (!crucible) {
+  if (!crucible || isCrucibleBlockedForViewer(crucible, { blockedByUserIds })) {
     throw throwNotFoundError('Crucible not found');
   }
 
@@ -2244,17 +2339,10 @@ export const submitVote = async ({
     }
   }
 
-  // Validate entries exist and belong to this crucible
-  // Note: voteCount is now read from Redis, not DB
+  const entrySelect = { id: true, crucibleId: true, userId: true, score: true, voteCount: true };
   const [winnerEntry, loserEntry] = await Promise.all([
-    dbRead.crucibleEntry.findUnique({
-      where: { id: winnerEntryId },
-      select: { id: true, crucibleId: true, userId: true },
-    }),
-    dbRead.crucibleEntry.findUnique({
-      where: { id: loserEntryId },
-      select: { id: true, crucibleId: true, userId: true },
-    }),
+    dbRead.crucibleEntry.findUnique({ where: { id: winnerEntryId }, select: entrySelect }),
+    dbRead.crucibleEntry.findUnique({ where: { id: loserEntryId }, select: entrySelect }),
   ]);
 
   if (!winnerEntry) {
@@ -2315,7 +2403,10 @@ export const submitVote = async ({
     );
   }
 
-  const { winnerElo, loserElo } = await processEloVote(crucibleId, winnerEntryId, loserEntryId);
+  const { winnerElo, loserElo } = await processEloVote(crucibleId, winnerEntryId, loserEntryId, {
+    winner: winnerEntry,
+    loser: loserEntry,
+  });
 
   await Promise.all([
     sysRedis.hIncrBy(judgeEntryVotesKey, winnerEntryId.toString(), 1),
@@ -2491,7 +2582,15 @@ export const getCrucibleMinVotesToPlace = async ({
  * @returns Finalization results including final standings and prize amounts
  */
 export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCrucibleResult> => {
-  // The primary: a replica can still show a crucible a moderator just cancelled as Active.
+  // A row lock granted only once it has ended by the database's clock: it waits for an entry insert
+  // or cancel still holding the row, and neither can start after it. Everything below reads the
+  // primary, so it sees what they wrote.
+  const ended = await dbWrite.$executeRaw`
+    UPDATE "Crucible" SET status = status
+    WHERE id = ${crucibleId}
+      AND status = ${CrucibleStatus.Active}::"CrucibleStatus"
+      AND "endAt" <= now()
+  `;
   const crucible = await dbWrite.crucible.findUnique({
     where: { id: crucibleId },
     select: {
@@ -2527,10 +2626,12 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
     throw throwBadRequestError('Cannot finalize a cancelled crucible');
   }
 
+  if (!ended) throw throwBadRequestError('This crucible has not ended yet');
+
   // Get entry count from aggregation (no memory impact)
   const entryCount = crucible._count.entries;
 
-  const paidEntryCounts = await getPaidEntryCounts([crucibleId]);
+  const paidEntryCounts = await getPaidEntryCounts([crucibleId], dbWrite);
   const totalPrizePool = getCrucibleTotalPrizePool({
     entryFee: crucible.entryFee,
     paidEntryCount: paidEntryCounts.get(crucibleId) ?? 0,
@@ -2546,8 +2647,9 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
   if (entryCount === 0) {
     // Nobody entered, so the seed has no winner to go to. Hand it back rather than stranding it in
     // the bank; fail-soft, because a stuck refund must not block the crucible from completing.
-    if (crucible.seedTransactionId)
-      await refundUnawardedSeed(crucibleId, crucible.seedTransactionId, 'no-entries');
+    const seedRefunded =
+      !!crucible.seedTransactionId &&
+      (await refundUnawardedSeed(crucibleId, crucible.seedTransactionId, 'no-entries'));
 
     if (await claimCrucibleCompletion(crucibleId, { prizesPaid: false })) {
       await crucibleEloRedis.setTTL(crucibleId, 7 * 24 * 60 * 60);
@@ -2561,6 +2663,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
           crucibleName: getCruciblePublishableName(crucible),
           totalEntries: 0,
           prizePool: totalPrizePool,
+          seedRefunded: seedRefunded ? crucible.seededPrizePool : 0,
         },
       });
     }
@@ -2587,18 +2690,20 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
     userId: number;
     score: number;
     voteCount: number;
+    position: number | null;
     createdAt: Date;
   }> = [];
 
   let cursor: number | undefined;
   while (true) {
-    const batch = await dbRead.crucibleEntry.findMany({
+    const batch = await dbWrite.crucibleEntry.findMany({
       where: rankableEntryWhere(crucibleId, crucible.nsfwLevel),
       select: {
         id: true,
         userId: true,
         score: true,
         voteCount: true,
+        position: true,
         createdAt: true,
       },
       take: FETCH_BATCH_SIZE,
@@ -2621,7 +2726,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
     logToAxiom({
       type: 'error',
       name: 'crucible-finalize-all-disqualified',
-      message: `Crucible ${crucibleId} has ${entryCount} entries but none can place; its seed and entry fees are held for moderator review.`,
+      message: `Crucible ${crucibleId} has ${entryCount} entries but none can place; no prizes are paid, the seed is refunded and the entry fees are kept.`,
       crucibleId,
     });
   }
@@ -2633,96 +2738,50 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
     log(`Edge case: Crucible ${crucibleId} has 1 entry - auto-win for entry ${allEntries[0].id}`);
   }
 
-  // Redis can lose a crucible's hashes (a reset or redeploy); the last sync is the fallback.
-  const entriesWithElo = allEntries.map((entry) => ({
-    entryId: entry.id,
-    userId: entry.userId,
-    finalScore: redisElos[entry.id] ?? entry.score,
-    voteCount: redisVoteCounts[entry.id] ?? entry.voteCount,
-    createdAt: entry.createdAt,
-  }));
-
-  const minVotes = getCrucibleMinVotes({
-    totalVotes: entriesWithElo.reduce((sum, entry) => sum + entry.voteCount, 0),
-    entryCount: entriesWithElo.length,
+  const ranking = rankEntries(allEntries, {
+    redisElos,
+    redisVoteCounts,
+    prizePositions,
+    totalPrizePool,
   });
-  const byScoreThenEntryTime = (a: (typeof entriesWithElo)[number], b: typeof a) =>
-    b.finalScore - a.finalScore || a.createdAt.getTime() - b.createdAt.getTime();
-  const placedEntries = entriesWithElo
-    .filter((entry) => entry.voteCount >= minVotes)
-    .sort(byScoreThenEntryTime);
-  const unplacedEntries = entriesWithElo
-    .filter((entry) => entry.voteCount < minVotes)
-    .sort(byScoreThenEntryTime);
+  // Written only if no run has written one, under the crucible's row lock: an earlier attempt may
+  // have paid part of its ranking before failing, and an overlapping run would pay a second one.
+  await dbWrite.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "Crucible" WHERE id = ${crucibleId} FOR UPDATE`;
+    const written = await tx.crucibleEntry.count({
+      where: { crucibleId, position: { not: null } },
+    });
+    if (written) return;
+    for (const batch of chunk(ranking, 500))
+      await tx.$executeRaw`
+        UPDATE "CrucibleEntry" AS ce
+        SET
+          score = v.score,
+          position = v.position,
+          "voteCount" = v."voteCount"
+        FROM (VALUES ${Prisma.join(
+          batch.map(
+            (entry) =>
+              Prisma.sql`(${entry.entryId}::int, ${entry.finalScore}::int, ${entry.position}::int, ${entry.voteCount}::int)`
+          )
+        )}) AS v(id, score, position, "voteCount")
+        WHERE ce.id = v.id
+      `;
+  });
 
-  const finalizedEntries: FinalizedEntry[] = [
-    ...placedEntries.map((entry, index) => ({
-      entryId: entry.entryId,
-      userId: entry.userId,
-      finalScore: entry.finalScore,
-      voteCount: entry.voteCount,
-      position: index + 1,
-      prizeAmount: getCruciblePrizeAmount({
-        position: index + 1,
-        prizePositions,
-        entryCount: placedEntries.length,
-        totalPrizePool,
-      }),
-    })),
-    ...unplacedEntries.map((entry) => ({
-      entryId: entry.entryId,
-      userId: entry.userId,
-      finalScore: entry.finalScore,
-      voteCount: entry.voteCount,
-      position: null,
-      prizeAmount: 0,
-    })),
-  ];
+  // Paid from the stored places, whichever run wrote them and whether or not they still rank.
+  const places = await dbWrite.crucibleEntry.findMany({
+    where: { crucibleId, position: { not: null } },
+    select: { id: true, userId: true, score: true, voteCount: true, position: true },
+    orderBy: { position: 'asc' },
+  });
+  const finalizedEntries = withStoredPlaces(ranking, places, { prizePositions, totalPrizePool });
 
   // Calculate total prizes distributed (for verification)
   const totalPrizesDistributed = finalizedEntries.reduce(
     (sum, entry) => sum + entry.prizeAmount,
     0
   );
-
-  // Update all entries using raw SQL bulk update for performance
-  // This syncs vote counts from Redis to PostgreSQL for persistence
-  // Uses Postgres UPDATE ... FROM (VALUES ...) pattern for bulk updates
-  // Batch size of 500 balances query complexity with DB round trips
-  const UPDATE_BATCH_SIZE = 500;
-
-  // A retry must not leave an earlier attempt's position on an entry that no longer ranks.
-  await dbWrite.crucibleEntry.updateMany({
-    where: { crucibleId, position: { not: null } },
-    data: { position: null },
-  });
-
-  for (let i = 0; i < finalizedEntries.length; i += UPDATE_BATCH_SIZE) {
-    const batch = finalizedEntries.slice(i, i + UPDATE_BATCH_SIZE);
-
-    // Build VALUES list for bulk update: (entryId, finalScore, position, voteCount)
-    // Use Prisma.sql for safe parameter binding
-    const valuesList = batch.map(
-      (entry) =>
-        Prisma.sql`(${entry.entryId}::int, ${entry.finalScore}::int, ${entry.position}::int, ${entry.voteCount}::int)`
-    );
-
-    // Execute bulk update using UPDATE ... FROM (VALUES ...) pattern
-    // This reduces N queries to 1 query per batch
-    await dbWrite.$executeRaw`
-      UPDATE "CrucibleEntry" AS ce
-      SET
-        score = v.score,
-        position = v.position,
-        "voteCount" = v."voteCount"
-      FROM (VALUES ${Prisma.join(valuesList)}) AS v(id, score, position, "voteCount")
-      WHERE ce.id = v.id
-    `;
-
-    log(
-      `Updated batch of ${batch.length} entries (${i + batch.length}/${finalizedEntries.length})`
-    );
-  }
 
   // Distribute prizes to winners
   // Filter entries that have a prize amount > 0
@@ -2754,8 +2813,14 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
     }));
 
     try {
-      // Execute all prize transactions in a single batch
       const result = await createBuzzTransactionMany(prizeTransactions);
+      // A transfer the ledger dropped (neither made nor a duplicate) is still owed: stay Active.
+      const unaccounted =
+        prizeTransactions.length - result.transactions.length - result.conflicts.length;
+      if (unaccounted > 0)
+        throw new Error(
+          `${unaccounted} of ${prizeTransactions.length} prize transfers were not made`
+        );
       log(
         `Distributed prizes for crucible ${crucibleId}: ${prizeWinners.length} winners, ${result.transactions.length} transactions`
       );
@@ -2781,14 +2846,14 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
       });
       throw error;
     }
-  } else {
-    log(`No prizes to distribute for crucible ${crucibleId} (no winners or 0 prize pool)`);
-
-    // Entries exist but nothing was paid out — an empty prizePositions map, or a seed small enough
-    // that every floored share is 0. Same stranding as the 0-entry case above, so same remedy.
-    if (crucible.seedTransactionId)
-      await refundUnawardedSeed(crucibleId, crucible.seedTransactionId, 'no-prizes-awarded');
   }
+
+  // Entries exist but nothing was paid out — none could place, an empty prizePositions map, or a
+  // seed small enough that every floored share is 0. Same stranding as the 0-entry case above.
+  const seedRefunded =
+    !prizeWinners.length &&
+    !!crucible.seedTransactionId &&
+    (await refundUnawardedSeed(crucibleId, crucible.seedTransactionId, 'no-prizes-awarded'));
 
   const result = {
     crucibleId,
@@ -2816,7 +2881,9 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
       crucibleId,
       crucibleName,
       totalEntries: finalizedEntries.length,
+      disqualifiedEntries: entryCount - finalizedEntries.length,
       prizePool: totalPrizePool,
+      seedRefunded: seedRefunded ? crucible.seededPrizePool : 0,
     },
   });
 
@@ -2856,6 +2923,100 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
 
   return result;
 };
+
+type RankableEntry = {
+  id: number;
+  userId: number;
+  score: number;
+  voteCount: number;
+  position: number | null;
+  createdAt: Date;
+};
+type PrizeContext = { prizePositions: PrizePosition[]; totalPrizePool: number };
+
+/** Places entries with enough votes by ELO (entry time breaks ties); the rest stay unplaced. */
+function rankEntries(
+  entries: RankableEntry[],
+  {
+    redisElos,
+    redisVoteCounts,
+    prizePositions,
+    totalPrizePool,
+  }: PrizeContext & { redisElos: Record<number, number>; redisVoteCounts: Record<number, number> }
+): FinalizedEntry[] {
+  // Redis can lose a crucible's hashes (a reset or redeploy); the last sync is the fallback.
+  const entriesWithElo = entries.map((entry) => ({
+    entryId: entry.id,
+    userId: entry.userId,
+    finalScore: redisElos[entry.id] ?? entry.score,
+    voteCount: redisVoteCounts[entry.id] ?? entry.voteCount,
+    createdAt: entry.createdAt,
+  }));
+
+  const minVotes = getCrucibleMinVotes({
+    totalVotes: entriesWithElo.reduce((sum, entry) => sum + entry.voteCount, 0),
+    entryCount: entriesWithElo.length,
+  });
+  const byScoreThenEntryTime = (a: (typeof entriesWithElo)[number], b: typeof a) =>
+    b.finalScore - a.finalScore || a.createdAt.getTime() - b.createdAt.getTime();
+  const placedEntries = entriesWithElo
+    .filter((entry) => entry.voteCount >= minVotes)
+    .sort(byScoreThenEntryTime);
+  const unplacedEntries = entriesWithElo
+    .filter((entry) => entry.voteCount < minVotes)
+    .sort(byScoreThenEntryTime);
+
+  return [
+    ...placedEntries.map(({ createdAt, ...entry }, index) => ({
+      ...entry,
+      position: index + 1,
+      prizeAmount: getCruciblePrizeAmount({
+        position: index + 1,
+        prizePositions,
+        entryCount: placedEntries.length,
+        totalPrizePool,
+      }),
+    })),
+    ...unplacedEntries.map(({ createdAt, ...entry }) => ({
+      ...entry,
+      position: null,
+      prizeAmount: 0,
+    })),
+  ];
+}
+
+/** The stored places, paid as stored; this run's ranking supplies only the unplaced rest. */
+function withStoredPlaces(
+  ranking: FinalizedEntry[],
+  places: {
+    id: number;
+    userId: number;
+    score: number;
+    voteCount: number;
+    position: number | null;
+  }[],
+  { prizePositions, totalPrizePool }: PrizeContext
+): FinalizedEntry[] {
+  const placed = new Set(places.map((place) => place.id));
+  return [
+    ...places.map((place) => ({
+      entryId: place.id,
+      userId: place.userId,
+      finalScore: place.score,
+      voteCount: place.voteCount,
+      position: place.position,
+      prizeAmount: getCruciblePrizeAmount({
+        position: place.position ?? 0,
+        prizePositions,
+        entryCount: places.length,
+        totalPrizePool,
+      }),
+    })),
+    ...ranking
+      .filter((entry) => !placed.has(entry.entryId))
+      .map((entry) => ({ ...entry, position: null, prizeAmount: 0 })),
+  ];
+}
 
 /**
  * Completed only from Active: past its end nothing else may move it, so a lost claim means a
@@ -2898,6 +3059,7 @@ const refundUnawardedSeed = async (
       label: `seeded prize pool for crucible ${crucibleId}`,
       reason,
     });
+    return true;
   } catch (error) {
     logToAxiom({
       type: 'error',
@@ -2909,6 +3071,7 @@ const refundUnawardedSeed = async (
       seedTransactionId,
       reason,
     });
+    return false;
   }
 };
 
@@ -2941,16 +3104,26 @@ const UNSCANNED_VOID_GRACE_MS = 24 * 60 * 60 * 1000;
  * entries passed review before an edit and runs to the end hidden, as user challenges do.
  */
 export const voidUnscannedCrucibles = async (now = new Date()): Promise<number[]> => {
-  const notScanned = { not: CrucibleIngestionStatus.Scanned };
+  const graceEnded = new Date(now.getTime() - UNSCANNED_VOID_GRACE_MS);
+  // The grace is in the query, not only the loop: otherwise a page of crucibles still in their
+  // grace would fill the `take` every run and starve the ones past it.
   const unscanned = await dbRead.crucible.findMany({
     where: {
       status: { in: [CrucibleStatus.Pending, CrucibleStatus.Active] },
       startAt: { lte: now },
       entries: { none: {} },
       OR: [
-        { ingestion: notScanned },
-        { image: { is: null } },
-        { image: { ingestion: { not: ImageIngestionStatus.Scanned } } },
+        { ingestion: CrucibleIngestionStatus.Blocked },
+        { image: { ingestion: ImageIngestionStatus.Blocked } },
+        {
+          startAt: { lt: graceEnded },
+          updatedAt: { lt: graceEnded },
+          OR: [
+            { ingestion: { not: CrucibleIngestionStatus.Scanned } },
+            { image: { is: null } },
+            { image: { ingestion: { not: ImageIngestionStatus.Scanned } } },
+          ],
+        },
       ],
     },
     select: {
@@ -3097,6 +3270,36 @@ async function refundCrucibleTransactionOnce({
     throw error;
   }
 }
+
+/** Keyed per crucible, so a re-run reaches only entrants whose refund was still pending. */
+const notifyEntrantsOfCancellation = (
+  crucible: CrucibleNameScan & { id: number; userId: number; entries: { userId: number }[] },
+  failedRefunds: CancelCrucibleResult['failedRefunds']
+) => {
+  const pending = new Set(failedRefunds.filter((f) => f.entryId !== null).map((f) => f.userId));
+  const entrants = [...new Set(crucible.entries.map((e) => e.userId))].filter(
+    (userId) => userId !== crucible.userId
+  );
+  const details = { crucibleId: crucible.id, crucibleName: getCruciblePublishableName(crucible) };
+  const settled = entrants.filter((userId) => !pending.has(userId));
+  const owed = entrants.filter((userId) => pending.has(userId));
+  if (settled.length)
+    sendCrucibleNotification({
+      userIds: settled,
+      type: 'crucible-cancelled',
+      category: NotificationCategory.System,
+      key: `crucible-cancelled:${crucible.id}`,
+      details: { ...details, refundPending: false },
+    });
+  if (owed.length)
+    sendCrucibleNotification({
+      userIds: owed,
+      type: 'crucible-cancelled',
+      category: NotificationCategory.System,
+      key: `crucible-cancelled-pending:${crucible.id}`,
+      details: { ...details, refundPending: true },
+    });
+};
 
 /**
  * Pending, or Active while it can't be paying out: before its end, or with nobody entered. Past its
@@ -3289,6 +3492,8 @@ export const cancelCrucible = async ({
 
   // Clean up Redis ELO data (set short TTL for eventual cleanup)
   await crucibleEloRedis.setTTL(id, 24 * 60 * 60); // 24 hours
+
+  notifyEntrantsOfCancellation(crucible, failedRefunds);
 
   log(
     `Cancelled crucible ${id}: ${refundedEntries} entries refunded, ${totalRefunded} Buzz total, ${failedRefunds.length} failed, setup fee refunded: ${creatorSetupFeeRefunded}`

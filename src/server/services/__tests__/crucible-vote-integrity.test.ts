@@ -32,6 +32,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   dbMock.dbRead.crucible.findUnique.mockResolvedValue({
     id: 1,
+    userId: 500,
     status: CrucibleStatus.Active,
     endAt: new Date(Date.now() + 60_000),
     contentType: MediaType.image,
@@ -41,6 +42,8 @@ beforeEach(() => {
     id: where.id,
     crucibleId: 1,
     userId: where.id + 1000,
+    score: 1500 + where.id,
+    voteCount: where.id,
   }));
   processVote.mockResolvedValue({ winnerElo: 1516, loserElo: 1484 });
   redisMock.sysRedis.sRem.mockResolvedValue(1);
@@ -60,6 +63,33 @@ describe('submitVote — a vote needs two different entries', () => {
   it('is refused by the service before any rating moves', async () => {
     await expect(vote(10, 10)).rejects.toThrow('two different entries');
     expect(processVote).not.toHaveBeenCalled();
+  });
+});
+
+describe('submitVote — a creator who blocked the judge', () => {
+  it('refuses the vote before any rating moves', async () => {
+    await expect(
+      submitVote({
+        crucibleId: 1,
+        winnerEntryId: 10,
+        loserEntryId: 20,
+        userId: JUDGE,
+        blockedByUserIds: [500],
+      })
+    ).rejects.toThrow('Crucible not found');
+    expect(processVote).not.toHaveBeenCalled();
+    expect(redisMock.sysRedis.sRem).not.toHaveBeenCalled();
+  });
+});
+
+describe('submitVote — after a Redis wipe', () => {
+  it("gives the rating script each entry's last synced score and vote count", async () => {
+    await vote(20, 10);
+
+    expect(processVote).toHaveBeenCalledWith(1, 20, 10, {
+      winner: expect.objectContaining({ score: 1520, voteCount: 20 }),
+      loser: expect.objectContaining({ score: 1510, voteCount: 10 }),
+    });
   });
 });
 
@@ -89,7 +119,7 @@ describe('submitVote — rating update', () => {
 
     await vote(10, 20);
 
-    expect(processVote).toHaveBeenCalledWith(1, 10, 20);
+    expect(processVote).toHaveBeenCalledWith(1, 10, 20, expect.any(Object));
     expect(crucibleEloRedis.getVoteCount).not.toHaveBeenCalled();
     expect(crucibleEloRedis.incrementVoteCount).not.toHaveBeenCalled();
   });

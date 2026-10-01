@@ -57,11 +57,29 @@ describe('processVote', () => {
 
     await processVote(7, 101, 102);
 
-    expect(processVoteAtomic).toHaveBeenCalledWith(7, 101, 102, {
-      provisionalK: K_FACTOR_PROVISIONAL,
-      establishedK: K_FACTOR_ESTABLISHED,
-      provisionalVotes: PROVISIONAL_VOTE_THRESHOLD,
-    });
+    expect(processVoteAtomic).toHaveBeenCalledWith(
+      7,
+      101,
+      102,
+      {
+        provisionalK: K_FACTOR_PROVISIONAL,
+        establishedK: K_FACTOR_ESTABLISHED,
+        provisionalVotes: PROVISIONAL_VOTE_THRESHOLD,
+      },
+      undefined
+    );
+  });
+
+  it('hands the script the last synced ratings to fall back on', async () => {
+    processVoteAtomic.mockResolvedValue(atomicResult);
+    const stored = {
+      winner: { score: 1700, voteCount: 25 },
+      loser: { score: 1400, voteCount: 12 },
+    };
+
+    await processVote(7, 101, 102, stored);
+
+    expect(processVoteAtomic).toHaveBeenCalledWith(7, 101, 102, expect.any(Object), stored);
   });
 
   it('returns the ELO the Lua script computed, not its own recomputation', async () => {
@@ -106,5 +124,44 @@ describe('initializeEntryElo and getAllEntryElos', () => {
   it('passes the whole crucible map back unchanged', async () => {
     getAllElos.mockResolvedValue({ 1: 1520, 2: 1480 });
     expect(await getAllEntryElos(4)).toEqual({ 1: 1520, 2: 1480 });
+  });
+});
+
+describe('CrucibleEloRedisClient.processVoteAtomic', () => {
+  const k = { provisionalK: 64, establishedK: 32, provisionalVotes: 10 };
+  const run = async (...stored: [] | [Parameters<typeof client.processVoteAtomic>[4]]) => {
+    evalScript.mockResolvedValue([1700, 1400, 1705, 1395, 5, -5]);
+    await client.processVoteAtomic(9, 1, 2, k, ...stored);
+    return evalScript.mock.calls[0] as [string, { keys: string[]; arguments: string[] }];
+  };
+  const evalScript = vi.fn();
+  let client: InstanceType<typeof CrucibleEloRedis.CrucibleEloRedisClient>;
+
+  beforeEach(async () => {
+    const { CrucibleEloRedisClient } = await vi.importActual<typeof CrucibleEloRedis>(
+      '~/server/redis/crucible-elo.redis'
+    );
+    client = new CrucibleEloRedisClient({ eval: evalScript } as never);
+  });
+
+  // Verified against a live Redis: with both hashes wiped, a vote continues from these values
+  // (1700/25 -> 1705/26) instead of restarting at 1500/0. A unit test can't run the Lua, so the
+  // arguments and the fallbacks the script reads are what's pinned here.
+  it("passes each entry's stored score and vote count to the script", async () => {
+    const [script, { arguments: args }] = await run({
+      winner: { score: 1700, voteCount: 25 },
+      loser: { score: 1400, voteCount: 12 },
+    });
+
+    expect(args.slice(5)).toEqual(['1700', '25', '1400', '12']);
+    expect(script).toContain("redis.call('HGET', eloKey, winnerField)) or winnerStoredElo");
+    expect(script).toContain("redis.call('HGET', votesKey, loserField)) or loserStoredVotes");
+    expect(script).toContain("redis.call('HSET', votesKey, winnerField, winnerVotes + 1)");
+    expect(script).not.toContain('HINCRBY');
+  });
+
+  it("falls back to a new entry's rating when given none", async () => {
+    const [, { arguments: args }] = await run();
+    expect(args.slice(5)).toEqual(['1500', '0', '1500', '0']);
   });
 });

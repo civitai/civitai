@@ -2467,7 +2467,7 @@ export type CrucibleEntry = {
   id: Generated<number>;
   crucibleId: number;
   userId: number;
-  imageId: number;
+  imageId: number | null;
   score: Generated<number>;
   voteCount: Generated<number>;
   position: number | null;

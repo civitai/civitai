@@ -6,6 +6,9 @@ const log = createLogger('crucible-elo-redis', 'magenta');
 
 const DEFAULT_ELO = 1500;
 
+export type StoredEntryRating = { score: number; voteCount: number };
+const UNRATED: StoredEntryRating = { score: DEFAULT_ELO, voteCount: 0 };
+
 /**
  * Redis client for Crucible ELO scores
  * Uses a hash per crucible where keys are entry IDs and values are ELO scores
@@ -80,12 +83,19 @@ export class CrucibleEloRedisClient {
    * Applies one vote in a single Lua script, so concurrent votes can't lose updates or both read a
    * pre-vote count. Each side moves by its own K (provisional until `provisionalVotes`), which lets
    * a new entry find its level without pushing an established one as far.
+   *
+   * `stored` is each entry's last synced score and vote count, used for a field Redis no longer has:
+   * after a wipe, starting again from the default would let the next sync overwrite Postgres.
    */
   async processVoteAtomic(
     crucibleId: number,
     winnerEntryId: number,
     loserEntryId: number,
-    k: { provisionalK: number; establishedK: number; provisionalVotes: number }
+    k: { provisionalK: number; establishedK: number; provisionalVotes: number },
+    stored: { winner: StoredEntryRating; loser: StoredEntryRating } = {
+      winner: UNRATED,
+      loser: UNRATED,
+    }
   ): Promise<{
     winnerElo: number;
     loserElo: number;
@@ -102,18 +112,22 @@ export class CrucibleEloRedisClient {
       local provisionalK = tonumber(ARGV[3])
       local establishedK = tonumber(ARGV[4])
       local provisionalVotes = tonumber(ARGV[5])
-      local defaultElo = tonumber(ARGV[6])
+      local winnerStoredElo = tonumber(ARGV[6])
+      local winnerStoredVotes = tonumber(ARGV[7])
+      local loserStoredElo = tonumber(ARGV[8])
+      local loserStoredVotes = tonumber(ARGV[9])
 
-      local function kFor(field)
-        local votes = tonumber(redis.call('HGET', votesKey, field)) or 0
+      local winnerVotes = tonumber(redis.call('HGET', votesKey, winnerField)) or winnerStoredVotes
+      local loserVotes = tonumber(redis.call('HGET', votesKey, loserField)) or loserStoredVotes
+      local function kFor(votes)
         if votes < provisionalVotes then return provisionalK end
         return establishedK
       end
-      local winnerK = kFor(winnerField)
-      local loserK = kFor(loserField)
+      local winnerK = kFor(winnerVotes)
+      local loserK = kFor(loserVotes)
 
-      local winnerElo = tonumber(redis.call('HGET', eloKey, winnerField)) or defaultElo
-      local loserElo = tonumber(redis.call('HGET', eloKey, loserField)) or defaultElo
+      local winnerElo = tonumber(redis.call('HGET', eloKey, winnerField)) or winnerStoredElo
+      local loserElo = tonumber(redis.call('HGET', eloKey, loserField)) or loserStoredElo
 
       local expectedWinner = 1 / (1 + math.pow(10, (loserElo - winnerElo) / 400))
       local winnerChange = math.floor(winnerK * (1 - expectedWinner) + 0.5)
@@ -124,8 +138,8 @@ export class CrucibleEloRedisClient {
 
       redis.call('HSET', eloKey, winnerField, newWinnerElo)
       redis.call('HSET', eloKey, loserField, newLoserElo)
-      redis.call('HINCRBY', votesKey, winnerField, 1)
-      redis.call('HINCRBY', votesKey, loserField, 1)
+      redis.call('HSET', votesKey, winnerField, winnerVotes + 1)
+      redis.call('HSET', votesKey, loserField, loserVotes + 1)
 
       return {winnerElo, loserElo, newWinnerElo, newLoserElo, winnerChange, loserChange}
     `;
@@ -138,7 +152,10 @@ export class CrucibleEloRedisClient {
         k.provisionalK.toString(),
         k.establishedK.toString(),
         k.provisionalVotes.toString(),
-        DEFAULT_ELO.toString(),
+        stored.winner.score.toString(),
+        stored.winner.voteCount.toString(),
+        stored.loser.score.toString(),
+        stored.loser.voteCount.toString(),
       ],
     })) as number[];
 

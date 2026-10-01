@@ -55,7 +55,7 @@ export const crucibleModerationAdapter: ModerationAdapter = {
       priority: 'low',
     }),
 
-  applyResult: async ({ entityId, blocked, triggeredLabels, output }) => {
+  applyResult: async ({ entityId, workflowId, blocked, triggeredLabels, output }) => {
     if (blocked) {
       const crucible = await dbRead.crucible.findUnique({
         where: { id: entityId },
@@ -70,7 +70,8 @@ export const crucibleModerationAdapter: ModerationAdapter = {
       await notifyCreator({
         userId: crucible.userId,
         crucibleId: entityId,
-        key: 'crucible-text-blocked',
+        // Per scan: a block after a later edit is a new notice, a redelivery of this one isn't.
+        key: `crucible-text-blocked-${workflowId}`,
         message: 'Your crucible was hidden because its text violates our Terms of Service.',
       });
       return;

@@ -13,7 +13,7 @@ import { loggingMock, dbMock } from '~/__tests__/mocks';
 // `~/server/db/client` and `~/server/redis/client` are registered globally by the setup file
 // and reset per test file — see docs/testing/shared-module-mocks.md.
 const findUnique = dbMock.dbWrite.crucible.findUnique;
-const findMany = dbMock.dbRead.crucibleEntry.findMany;
+const findMany = dbMock.dbWrite.crucibleEntry.findMany;
 const claim = dbMock.dbWrite.crucible.updateMany;
 const executeRaw = dbMock.dbWrite.$executeRaw;
 const createBuzzTransactionMany = vi.fn();
@@ -44,13 +44,24 @@ vi.mock('~/server/services/crucible-elo.service', async (importOriginal) => ({
 
 const { finalizeCrucible } = await import('~/server/services/crucible.service');
 
-const dbEntry = (id: number, userId: number, createdAtMs: number) => ({
+const dbEntry = (
+  id: number,
+  userId: number,
+  createdAtMs: number,
+  { position = null as number | null, score = 1500, voteCount = 0 } = {}
+) => ({
   id,
   userId,
-  score: 1500,
-  voteCount: 0,
+  score,
+  voteCount,
+  position,
   createdAt: new Date(createdAtMs),
 });
+
+const entryWrites = () =>
+  executeRaw.mock.calls.filter(([strings]) =>
+    (strings as TemplateStringsArray).join('').includes('UPDATE "CrucibleEntry"')
+  );
 
 /**
  * The entry loader is a `while (true)` cursor loop that stops on an empty batch. A fake that keeps
@@ -60,8 +71,30 @@ const dbEntry = (id: number, userId: number, createdAtMs: number) => ({
  */
 const pageEntries = (batches: ReturnType<typeof dbEntry>[][]) => {
   let call = 0;
-  findMany.mockImplementation(async () => batches[call++] ?? []);
+  const entries = batches.flat();
+  findMany.mockImplementation(async (args: { where: { position?: unknown } }) =>
+    args.where.position ? storedPlaces(entries) : batches[call++] ?? []
+  );
 };
+
+/** The places query reads back what the ranking write stored, else what the fixture holds. */
+const storedPlaces = (entries: ReturnType<typeof dbEntry>[]) => {
+  const values = entryWrites().flatMap(
+    ([, rows]) => (rows as { values: (number | null)[] }).values
+  );
+  const written = Array.from({ length: values.length / 4 }, (_, i) => {
+    const [id, score, position, voteCount] = values.slice(i * 4, i * 4 + 4) as number[];
+    return { ...entries.find((e) => e.id === id)!, score, position, voteCount };
+  });
+  return (written.length ? written : entries)
+    .filter((entry) => entry.position !== null)
+    .sort((a, b) => a.position! - b.position!);
+};
+
+const rankableLoads = () =>
+  findMany.mock.calls.filter(
+    ([args]) => !(args as { where: { position?: unknown } }).where.position
+  );
 
 const setupCrucible = ({
   status = CrucibleStatus.Active,
@@ -88,7 +121,7 @@ const setupCrucible = ({
     _count: { entries: entries.length },
   });
   pageEntries([entries]);
-  dbMock.dbRead.crucibleEntry.groupBy.mockResolvedValue([
+  dbMock.dbWrite.crucibleEntry.groupBy.mockResolvedValue([
     { crucibleId: 1, _count: { _all: entries.length } },
   ]);
   getAllEntryElos.mockResolvedValue(elos);
@@ -98,9 +131,11 @@ const setupCrucible = ({
 beforeEach(() => {
   vi.clearAllMocks();
   claim.mockResolvedValue({ count: 1 });
+  dbMock.dbWrite.crucibleEntry.count.mockResolvedValue(0);
   executeRaw.mockResolvedValue(1);
   createBuzzTransactionMany.mockImplementation(async (transactions: unknown[]) => ({
     transactions,
+    conflicts: [],
   }));
   createNotification.mockResolvedValue(undefined);
   setTTL.mockResolvedValue(undefined);
@@ -134,7 +169,7 @@ describe('finalizeCrucible — positions', () => {
   it("ranks every entry except a blocked, held, flagged or unpublished one, or one re-rated outside the crucible's levels", async () => {
     await finalizeCrucible(1);
 
-    const { where } = dbMock.dbRead.crucibleEntry.findMany.mock.calls[0][0];
+    const { where } = findMany.mock.calls[0][0];
     expect(where).toEqual({
       crucibleId: 1,
       image: {
@@ -157,6 +192,8 @@ describe('finalizeCrucible — positions', () => {
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'error', name: 'crucible-finalize-all-disqualified' })
     );
+    const ended = createNotification.mock.calls.find(([n]) => n.type === 'crucible-ended')?.[0];
+    expect(ended?.details).toMatchObject({ totalEntries: 0, disqualifiedEntries: 3 });
   });
 
   it('ranks by ELO descending', async () => {
@@ -235,7 +272,7 @@ describe('finalizeCrucible — entry paging', () => {
 
     expect(result.finalEntries).toHaveLength(3);
     // Two pages of rows, then the empty page that ends the loop.
-    expect(findMany).toHaveBeenCalledTimes(3);
+    expect(rankableLoads()).toHaveLength(3);
   });
 
   it('advances the cursor rather than refetching the first page forever', async () => {
@@ -288,7 +325,9 @@ describe('finalizeCrucible — completion', () => {
   it('pays the same transaction ids on a retry, so the ledger rejects a second payment', async () => {
     setupCrucible({ entryFee: 100 });
     await finalizeCrucible(1);
-    setupCrucible({ entryFee: 100 });
+    // The retry finds the first attempt's ranking stored, with the scores moved since.
+    setupCrucible({ entryFee: 100, elos: { 1: 1400, 2: 1500, 3: 1700 } });
+    dbMock.dbWrite.crucibleEntry.count.mockResolvedValue(3);
     await finalizeCrucible(1);
 
     const ids = createBuzzTransactionMany.mock.calls.map(([txs]) =>
@@ -315,22 +354,142 @@ describe('finalizeCrucible — completion', () => {
     );
   });
 
-  it('clears earlier positions first, so a retry leaves none on an entry that no longer ranks', async () => {
-    const clear = dbMock.dbWrite.crucibleEntry.updateMany;
-    clear.mockResolvedValue({ count: 0 });
+  it('on a retry, pays the ranking the earlier attempt wrote rather than ranking again', async () => {
+    // Today's scores would put entry 1 first; the earlier attempt placed entry 2 first.
+    setupCrucible({
+      entryFee: 100,
+      entries: [
+        dbEntry(1, 10, 1_000, { position: 2, score: 1490 }),
+        dbEntry(2, 11, 2_000, { position: 1, score: 1510 }),
+        dbEntry(3, 12, 3_000),
+      ],
+      elos: { 1: 1700, 2: 1400, 3: 1500 },
+    });
+    dbMock.dbWrite.crucibleEntry.count.mockResolvedValue(2);
+
+    const result = await finalizeCrucible(1);
+
+    const [transactions] = createBuzzTransactionMany.mock.calls[0] as [
+      { externalTransactionId: string; toAccountId: number }[]
+    ];
+    expect(transactions.map((tx) => tx.externalTransactionId)).toEqual([
+      'crucible-prize-1-2-1',
+      'crucible-prize-1-1-2',
+    ]);
+    expect(result.finalEntries.find((e) => e.entryId === 3)).toMatchObject({ position: null });
+    expect(entryWrites()).toHaveLength(0);
+  });
+
+  it('writes the ranking in one transaction holding the crucible row, so runs cannot both rank', async () => {
+    await finalizeCrucible(1);
+
+    expect(entryWrites()).toHaveLength(1);
+    const [lock] = dbMock.dbWrite.$queryRaw.mock.calls.map(([strings]) =>
+      (strings as TemplateStringsArray).join('?').replace(/\s+/g, ' ')
+    );
+    expect(lock).toBe('SELECT id FROM "Crucible" WHERE id = ? FOR UPDATE');
+    expect(dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      executeRaw.mock.invocationCallOrder.at(-1)!
+    );
+  });
+
+  it('pays the ranking another run already wrote instead of writing its own', async () => {
+    setupCrucible({
+      entryFee: 100,
+      entries: [
+        dbEntry(1, 10, 1_000, { position: 1 }),
+        dbEntry(2, 11, 2_000),
+        dbEntry(3, 12, 3_000),
+      ],
+      elos: { 1: 1400, 2: 1700, 3: 1600 },
+    });
+    dbMock.dbWrite.crucibleEntry.count.mockResolvedValue(1);
 
     await finalizeCrucible(1);
 
-    expect(clear).toHaveBeenCalledWith({
-      where: { crucibleId: 1, position: { not: null } },
-      data: { position: null },
+    expect(entryWrites()).toHaveLength(0);
+    const [transactions] = createBuzzTransactionMany.mock.calls[0] as [
+      { externalTransactionId: string }[]
+    ];
+    expect(transactions.map((tx) => tx.externalTransactionId)).toEqual(['crucible-prize-1-1-1']);
+  });
+
+  it("pays a stored winner whose image stopped ranking, and doesn't hand the seed back", async () => {
+    setupCrucible({ entryFee: 100, entries: [dbEntry(2, 11, 2_000), dbEntry(3, 12, 3_000)] });
+    findUnique.mockResolvedValue({
+      ...(await findUnique()),
+      seededPrizePool: 500,
+      seedTransactionId: 'crucible-seed-4-abc',
     });
-    expect(clear.mock.invocationCallOrder[0]).toBeLessThan(executeRaw.mock.invocationCallOrder[0]);
+    dbMock.dbWrite.crucibleEntry.count.mockResolvedValue(1);
+    // Entry 1 placed first in the earlier attempt, then its image was deleted.
+    findMany.mockImplementation(async (args: { where: { position?: unknown } }) =>
+      args.where.position ? [dbEntry(1, 10, 1_000, { position: 1 })] : []
+    );
+
+    await finalizeCrucible(1);
+
+    const [transactions] = createBuzzTransactionMany.mock.calls[0] as [
+      { externalTransactionId: string; toAccountId: number }[]
+    ];
+    expect(transactions).toEqual([
+      expect.objectContaining({ externalTransactionId: 'crucible-prize-1-1-1', toAccountId: 10 }),
+    ]);
+  });
+
+  it('leaves it Active when the ledger dropped a transfer, so the next run pays it', async () => {
+    setupCrucible({ entryFee: 100 });
+    createBuzzTransactionMany.mockImplementation(async (transactions: unknown[]) => ({
+      transactions: transactions.slice(1),
+      conflicts: [],
+    }));
+
+    await expect(finalizeCrucible(1)).rejects.toThrow('1 of 3 prize transfers were not made');
+
+    expect(claim).not.toHaveBeenCalled();
+    expect(createNotification).not.toHaveBeenCalled();
+  });
+
+  it('counts a duplicate the ledger rejected as paid', async () => {
+    setupCrucible({ entryFee: 100 });
+    createBuzzTransactionMany.mockImplementation(async (transactions: unknown[]) => ({
+      transactions: transactions.slice(1),
+      conflicts: transactions.slice(0, 1),
+    }));
+
+    await finalizeCrucible(1);
+
+    expect(claim).toHaveBeenCalled();
+  });
+
+  it('refuses before the crucible has ended by the database clock, paying nothing', async () => {
+    setupCrucible({ entryFee: 100 });
+    executeRaw.mockResolvedValueOnce(0);
+
+    await expect(finalizeCrucible(1)).rejects.toThrow('not ended');
+
+    expect(createBuzzTransactionMany).not.toHaveBeenCalled();
+    expect(claim).not.toHaveBeenCalled();
+  });
+
+  it('takes the row lock before it reads the crucible or its entries', async () => {
+    await finalizeCrucible(1);
+
+    const [strings] = executeRaw.mock.calls[0] as [TemplateStringsArray];
+    expect(strings.join('?').replace(/\s+/g, ' ')).toContain(
+      'UPDATE "Crucible" SET status = status WHERE id = ? AND status = ?::"CrucibleStatus" AND "endAt" <= now()'
+    );
+    expect(executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      findUnique.mock.invocationCallOrder[0]
+    );
+    expect(executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      findMany.mock.invocationCallOrder[0]
+    );
   });
 
   it('writes the final scores and positions back to Postgres', async () => {
     await finalizeCrucible(1);
-    expect(executeRaw).toHaveBeenCalled();
+    expect(entryWrites()).toHaveLength(1);
   });
 
   it('expires the Redis ELO data instead of leaving it indefinitely', async () => {
@@ -364,7 +523,7 @@ describe('finalizeCrucible — empty crucible', () => {
       endAt: new Date(Date.now() - 1000),
       _count: { entries: 0 },
     });
-    dbMock.dbRead.crucibleEntry.groupBy.mockResolvedValue([]);
+    dbMock.dbWrite.crucibleEntry.groupBy.mockResolvedValue([]);
   };
 
   it('completes with no entries and no prize pool', async () => {
@@ -530,9 +689,7 @@ describe('finalizeCrucible — minimum votes to place', () => {
 
     await finalizeCrucible(1);
 
-    const values = executeRaw.mock.calls.flatMap(
-      ([, rows]) => (rows as { values: unknown[] }).values
-    );
+    const values = entryWrites().flatMap(([, rows]) => (rows as { values: unknown[] }).values);
     // (entryId, score, position, voteCount) for entry 4.
     expect(values.slice(12, 16)).toEqual([4, 1560, null, 2]);
   });

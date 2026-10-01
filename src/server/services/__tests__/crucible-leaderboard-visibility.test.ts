@@ -6,6 +6,7 @@ import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import type * as ImageService from '~/server/services/image.service';
 import type * as CrucibleService from '~/server/services/crucible.service';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
+import type * as UserPreferencesService from '~/server/services/user-preferences.service';
 
 /**
  * A crucible's ranking is secret until it ends: a live leaderboard tells judges which entry is
@@ -16,9 +17,15 @@ import type * as FeatureFlagsService from '~/server/services/feature-flags.servi
  * own id into the service is part of the behaviour under test.
  */
 
-const { mockGetJudgingPair, imagesFetch } = vi.hoisted(() => ({
+const { mockGetJudgingPair, imagesFetch, blockedBy } = vi.hoisted(() => ({
   mockGetJudgingPair: vi.fn(),
   imagesFetch: vi.fn(),
+  blockedBy: vi.fn(),
+}));
+
+vi.mock('~/server/services/user-preferences.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserPreferencesService>()),
+  BlockedByUsers: { getCached: blockedBy },
 }));
 
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
@@ -163,6 +170,7 @@ const scanned = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  blockedBy.mockResolvedValue([]);
   findUnique.mockResolvedValue({ ...scanned, status: CrucibleStatus.Active });
   findEntries.mockImplementation(async () => [...rows]);
   queryRaw.mockResolvedValue(ids(rows).map((id) => ({ id })));
@@ -525,6 +533,15 @@ describe('crucible.getById', () => {
     );
   });
 
+  it('leaves out an own entry whose image was deleted', async () => {
+    const imageGone = { ...latestAndSecond, userId: OWNER_ID, imageId: null, image: null };
+    findEntries.mockResolvedValue([ownedAndFirst, imageGone]);
+
+    const crucible = await caller(signedIn(OWNER_ID)).getById({ id: CRUCIBLE_ID });
+
+    expect(crucible!.viewerEntries).toEqual([ownedAndFirst]);
+  });
+
   it('gives an anonymous caller no entries without querying for any', async () => {
     const crucible = await caller(undefined).getById({ id: CRUCIBLE_ID });
 
@@ -588,6 +605,61 @@ describe('crucible.getJudgingPair', () => {
       caller(undefined).getJudgingPair({ crucibleId: CRUCIBLE_ID })
     ).rejects.toBeInstanceOf(TRPCError);
     expect(mockGetJudgingPair).not.toHaveBeenCalled();
+  });
+});
+
+describe('a creator who blocked the caller', () => {
+  beforeEach(() => {
+    blockedBy.mockResolvedValue([{ id: scanned.userId }]);
+  });
+
+  it('hides the entries from them, as the detail page does', async () => {
+    await expect(
+      caller(signedIn(STRANGER_ID)).getEntries({ crucibleId: CRUCIBLE_ID })
+    ).rejects.toThrow('Crucible not found');
+  });
+
+  it('still shows the entries to a moderator', async () => {
+    await expect(
+      caller({ ...signedIn(STRANGER_ID), isModerator: true }).getEntries({
+        crucibleId: CRUCIBLE_ID,
+      })
+    ).resolves.toBeDefined();
+  });
+
+  it('hands judging the list of creators who blocked the caller', async () => {
+    mockGetJudgingPair.mockResolvedValue(null);
+
+    await caller(signedIn(STRANGER_ID)).getJudgingPair({ crucibleId: CRUCIBLE_ID });
+
+    expect(mockGetJudgingPair).toHaveBeenCalledWith(
+      expect.objectContaining({ blockedByUserIds: [scanned.userId] })
+    );
+  });
+
+  it('hides their judging progress', async () => {
+    await expect(
+      caller(signedIn(STRANGER_ID)).getJudgingProgress({ crucibleId: CRUCIBLE_ID })
+    ).rejects.toThrow('Crucible not found');
+  });
+
+  it('refuses their vote', async () => {
+    await expect(
+      caller(signedIn(STRANGER_ID)).submitVote({
+        crucibleId: CRUCIBLE_ID,
+        winnerEntryId: 1,
+        loserEntryId: 3,
+      })
+    ).rejects.toThrow('Crucible not found');
+  });
+
+  it('refuses their entry', async () => {
+    redisMock.sysRedis.set.mockResolvedValue('OK');
+
+    await expect(
+      caller(signedIn(STRANGER_ID)).submitEntry({ crucibleId: CRUCIBLE_ID, imageId: 1 })
+    ).rejects.toThrow('Crucible not found');
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
   });
 });
 

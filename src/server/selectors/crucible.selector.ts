@@ -122,6 +122,14 @@ export const crucibleEntrySelect = Prisma.validator<Prisma.CrucibleEntrySelect>(
   },
 });
 
-export type CrucibleEntryRow = Prisma.CrucibleEntryGetPayload<{
+type CrucibleEntryPayload = Prisma.CrucibleEntryGetPayload<{
   select: typeof crucibleEntrySelect;
 }>;
+export type CrucibleEntryRow = CrucibleEntryPayload & {
+  imageId: number;
+  image: NonNullable<CrucibleEntryPayload['image']>;
+};
+
+/** An entry whose image was deleted has nothing to show. */
+export const hasEntryImage = (entry: CrucibleEntryPayload): entry is CrucibleEntryRow =>
+  entry.image !== null;

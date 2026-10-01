@@ -3,6 +3,7 @@ import { BuzzApiError } from '@civitai/buzz';
 import { CrucibleIngestionStatus, CrucibleStatus } from '~/shared/utils/prisma/enums';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as CrucibleEloRedis from '~/server/redis/crucible-elo.redis';
+import type * as NotificationService from '~/server/services/notification.service';
 import { dbMock } from '~/__tests__/mocks';
 
 // `~/server/db/client` and `~/server/redis/client` are registered globally by the setup file
@@ -11,6 +12,12 @@ const findUnique = dbMock.dbWrite.crucible.findUnique;
 const claim = dbMock.dbWrite.crucible.updateMany;
 const refundMultiAccountTransaction = vi.fn();
 const setTTL = vi.fn();
+const createNotification = vi.fn();
+
+vi.mock('~/server/services/notification.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationService>()),
+  createNotification,
+}));
 
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzService>()),
@@ -58,6 +65,7 @@ beforeEach(() => {
   claim.mockResolvedValue({ count: 1 });
   setTTL.mockResolvedValue(undefined);
   refundMultiAccountTransaction.mockResolvedValue(undefined);
+  createNotification.mockResolvedValue(undefined);
 });
 
 const MODERATOR_CLAIM = {
@@ -417,6 +425,68 @@ describe('cancelCrucible — cleanup', () => {
   it('expires the Redis ELO data rather than leaving it forever', async () => {
     await cancelCrucible({ id: 1, userId: 4, isModerator: true });
     expect(setTTL).toHaveBeenCalledWith(1, 24 * 60 * 60);
+  });
+});
+
+describe('cancelCrucible — entrants are told', () => {
+  const sent = () => createNotification.mock.calls.map(([n]) => n);
+
+  it('tells each entrant once, not the creator, that their fees were refunded', async () => {
+    findUnique.mockResolvedValue(
+      crucible({
+        entries: [entry(1, 10, 'entry-1-10'), entry(2, 10, 'entry-2-10'), entry(3, 11, null)],
+      })
+    );
+
+    await cancelCrucible({ id: 1, userId: 3, isModerator: true });
+
+    expect(sent()).toEqual([
+      expect.objectContaining({
+        type: 'crucible-cancelled',
+        userIds: [10, 11],
+        key: 'crucible-cancelled:1',
+        details: { crucibleId: 1, crucibleName: 'Liminal Stuff', refundPending: false },
+      }),
+    ]);
+  });
+
+  it('tells an entrant whose refund failed that it is still being processed', async () => {
+    refundMultiAccountTransaction.mockImplementation(({ externalTransactionIdPrefix }) => {
+      if (externalTransactionIdPrefix === 'entry-1-10') throw new Error('buzz unavailable');
+      return Promise.resolve(undefined);
+    });
+
+    await cancelCrucible({ id: 1, userId: 3, isModerator: true });
+
+    expect(sent()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          userIds: [11],
+          details: expect.objectContaining({ refundPending: false }),
+        }),
+        expect.objectContaining({
+          userIds: [10],
+          key: 'crucible-cancelled-pending:1',
+          details: expect.objectContaining({ refundPending: true }),
+        }),
+      ])
+    );
+  });
+
+  it('leaves a name flagged as adult text out of the notice', async () => {
+    findUnique.mockResolvedValue(crucible({ textNsfw: true }));
+
+    await cancelCrucible({ id: 1, userId: 3, isModerator: true });
+
+    expect(sent()[0].details.crucibleName).toBeNull();
+  });
+
+  it('sends nothing when nobody entered', async () => {
+    findUnique.mockResolvedValue(crucible({ entries: [] }));
+
+    await cancelCrucible({ id: 1, userId: 3, isModerator: true });
+
+    expect(createNotification).not.toHaveBeenCalled();
   });
 });
 

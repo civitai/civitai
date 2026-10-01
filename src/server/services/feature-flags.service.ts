@@ -732,9 +732,9 @@ const featureFlags = createFeatureFlags({
   // NOT `availability: []`. That shape exists for flags whose server half calls the async
   // `isFlipt` directly — an absent flag answers `false` there while the client's
   // `isEnabledSync` answers `null` and falls through to static, so the two disagree. Every
-  // crucible gate goes through `getFeatureFlags` instead (`isFlagProtected` on all twelve
-  // procedures, `features.crucible` in the four pages and the nav registry), so both sides
-  // read one value and `[]` would only strip mods of the access they have today.
+  // crucible gate goes through `getFeatureFlags` instead (`isFlagProtected` on every
+  // procedure, `features.crucible` in every page and the nav registry), so both sides read one
+  // value and `[]` would only strip mods of the access they have today.
   //
   // Local dev: `FEATURE_FLAG_CRUCIBLE=public` in `.env`, which bypasses Flipt entirely.
   crucible: { availability: ['mod', 'granted'], fliptKey: 'crucible' },

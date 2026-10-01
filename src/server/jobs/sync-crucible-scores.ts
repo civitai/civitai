@@ -88,14 +88,14 @@ export const syncCrucibleScoresJob = createJob(
             const values = batch
               .map((entryId) => {
                 const score = eloScores[entryId];
-                const voteCount = voteCounts[entryId] || 0;
+                const voteCount = voteCounts[entryId] ?? 0;
                 return `(${entryId}, ${score}, ${voteCount})`;
               })
               .join(', ');
 
             await dbWrite.$executeRaw`
               UPDATE "CrucibleEntry" AS e
-              SET score = v.score, "voteCount" = v.vote_count
+              SET score = v.score, "voteCount" = GREATEST(e."voteCount", v.vote_count)
               FROM (VALUES ${Prisma.raw(values)}) AS v(id, score, vote_count)
               WHERE e.id = v.id AND e."crucibleId" = ${crucible.id}
             `;

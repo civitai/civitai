@@ -32,7 +32,11 @@ export function baseModelMakesMediaType(baseModel: string, mediaType: MediaType)
 // `buzzTransactionSchema` caps a description at 100 characters, and a crucible name alone can be 100.
 const BUZZ_DESCRIPTION_MAX_LENGTH = 100;
 
-type CrucibleNameScan = { name: string; ingestion: CrucibleIngestionStatus; textNsfw: boolean };
+export type CrucibleNameScan = {
+  name: string;
+  ingestion: CrucibleIngestionStatus;
+  textNsfw: boolean;
+};
 
 /**
  * Ledger rows and notifications can't be edited or retracted, and they show on both sites, so they

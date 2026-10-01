@@ -109,13 +109,31 @@ describe('applyResult — blocked', () => {
       userId: CREATOR,
       category: 'System',
       type: 'system-message',
-      key: `crucible-text-blocked-${ID}`,
+      key: `crucible-text-blocked-wf-1-${ID}`,
       details: {
         message: 'Your crucible was hidden because its text violates our Terms of Service.',
         url: `/crucibles/${ID}`,
       },
     });
     expect(cancelCrucible).not.toHaveBeenCalled();
+  });
+
+  it('tells the creator again when a later scan blocks it again', async () => {
+    findUnique.mockResolvedValue({ userId: CREATOR });
+    const block = (workflowId: string) =>
+      crucibleModerationAdapter.applyResult!({
+        entityId: ID,
+        workflowId,
+        blocked: true,
+        triggeredLabels: ['hate'],
+        output: output(0),
+      });
+
+    await block('wf-1');
+    await block('wf-2');
+
+    const keys = createNotification.mock.calls.map(([n]) => n.key);
+    expect(new Set(keys).size).toBe(2);
   });
 });
 
