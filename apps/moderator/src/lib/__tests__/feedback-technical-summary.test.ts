@@ -58,11 +58,14 @@ describe('feedbackTechnicalSummary', () => {
     ).toBe('3 distinct console errors · 1 failed request');
   });
 
-  it('groups a four-figure count, so it cannot sit beside a grouped number unread', () => {
-    // `plural` routes through `num`; pinned here because the badge is the one place these counts
-    // appear next to the panel's own grouped totals.
-    expect(feedbackTechnicalSummary({ consoleErrors: consoleErrors(1000), networkErrors: [] })).toBe(
-      '1,000 distinct console errors'
-    );
+  it('formats a four-figure count rather than printing raw digits', () => {
+    // Asserted as "not the raw number", never as a literal `1,000`: `plural` routes through `num`,
+    // which is `toLocaleString()` with no locale, so a literal pins this suite to one machine's —
+    // measured, `LC_ALL=de_DE.UTF-8` turns it into `1.000`. `format.test.ts` already ruled on this
+    // and this borrows its form. Restating `toLocaleString()` in the expectation would be worse
+    // still: that derives the answer from the implementation and then passes whatever it does.
+    const out = feedbackTechnicalSummary({ consoleErrors: consoleErrors(1000), networkErrors: [] });
+    expect(out).not.toBe('1000 distinct console errors');
+    expect(out).toMatch(/^\d[\d\s,. ]*\d distinct console errors$/);
   });
 });

@@ -238,15 +238,22 @@ describe('typed text outlives the reload every write issues', () => {
    *     `{#if contextOpen}` nested INSIDE the `<details>` and driven by `ontoggle` keeps that
    *     substring inside the extracted block, so the lazy-render this test exists to forbid passed
    *     37/37. The only `{#if}` it ever caught was one that also deleted `<details>` — which the
-   *     count above already catches. So the pin now reads the REGION between `</summary>` and
-   *     `</details>` and forbids any `{#…}` block opener in it: that is the unmount property
-   *     itself, not a proxy for it.
-   *   - The default-closed pin was a regex requiring whitespace before `open`, so `bind:open=` —
-   *     the spelling `apps/moderator/CLAUDE.md` pushes you toward — matched nothing and a block
-   *     shipping EXPANDED passed 37/37. A partial regex over a tag is satisfied by the inverted
-   *     tag; the attribute NAMES are now enumerated and compared as a set instead.
+   *     count above already catches. The pin now reads the REGION between `</summary>` and
+   *     `</details>` and forbids any `{#…}` block opener in it.
+   *   - The default-closed pin was a regex requiring whitespace before `open`, so `bind:open=`
+   *     matched nothing and a block shipping EXPANDED passed 37/37. A partial regex over a tag is
+   *     satisfied by the inverted tag; the attribute NAMES are enumerated and compared as a set.
    *
-   * ⚠️ The class VALUES are still deliberately not pinned — a Tailwind reorder changes them without
+   * 🔴 WHAT THE UNMOUNT PIN DOES NOT COVER, SO NOBODY READS IT AS THE WHOLE PROPERTY — an earlier
+   * draft of this docstring called it "the unmount property itself", and that was an overclaim. The
+   * region starts at `</summary>`, so it constrains the block's DESCENDANTS and says nothing about
+   * its ANCESTORS: wrapping the whole `<details>` in `{#if …}` unmounts everything inside it and
+   * passes. That hole predates this guard. What makes it worth naming now is that the badge below
+   * returns `null` when a report has no console errors and no failed requests, which makes
+   * "then hide the block entirely" the obvious next edit — and it would take the reconstructed URL,
+   * the filters, the session id and the Grafana link with it, on the ORDINARY report.
+   *
+   * ⚠️ The class VALUES are deliberately not pinned — a Tailwind reorder changes them without
    * changing anything true. The attribute-name set is what carries the claim.
    */
   it('collapses the technical-details block with <details>, closed by default', () => {
@@ -283,11 +290,21 @@ describe('typed text outlives the reload every write issues', () => {
     expect(body).not.toMatch(/\{#\w+/);
 
     // 🔴 DEFAULT-CLOSED IS THE ABSENCE OF AN ATTRIBUTE, and `toContain('<details')` is satisfied by
-    // every spelling that adds one. Enumerate the names and compare the SET: `open`, `bind:open`,
-    // `open={…}` and anything added later all fail, without pinning a single class value.
+    // every spelling that adds one. The tag is required to carry exactly one attribute, `class`,
+    // with a literal value — so `open`, `bind:open`, `open={…}`, `{open}` and `{...spread}` all
+    // fail, without pinning a single class value.
     const openTag = block!.match(/<details\b[^>]*>/)![0];
-    // Quoted values and `{…}` expressions are blanked FIRST: a Tailwind class list is
-    // space-separated words, so a bare name scan over the raw tag reads `border-t` as an attribute.
+
+    // 🔴 THE BRACE CHECK IS NOT BELT-AND-BRACES — IT IS THE HALF THE NAME SCAN CANNOT SEE, AND THE
+    // NAME SCAN'S OWN BLANKING STEP IS WHY. Quoted values are blanked so a Tailwind class list is
+    // not read as attributes (`border-t` would be a name), and `{…}` is blanked with it — which
+    // ERASES Svelte's shorthand `{open}`, an attribute spelled entirely inside braces and exactly
+    // equivalent to `open={open}`. Measured: with only the name scan, `{open}` yielded `['class']`
+    // and a block shipping EXPANDED passed 37/37 — the defect this assertion replaced, in a second
+    // spelling, reintroduced by the fix for the first. No brace belongs in this tag at all, so the
+    // cheap whole-token rule is also the correct one.
+    expect(openTag).not.toContain('{');
+
     const attrNames = (tag: string): string[] =>
       [
         ...tag
@@ -296,14 +313,18 @@ describe('typed text outlives the reload every write issues', () => {
           .matchAll(/\s([A-Za-z_:][-\w:.]*)(?==|[\s/>])/g),
       ].map((m) => m[1]);
 
-    // Instrument control: the extractor must see the names it is about to be trusted on, in every
-    // spelling the mutants use. A negative assertion over a parser wired to nothing is green.
+    // Instrument controls: both halves must be shown able to fire on the spellings they are trusted
+    // against. A negative assertion over a matcher wired to nothing is green for the wrong reason.
     expect(attrNames('<details open class="x">')).toEqual(['open', 'class']);
     expect(attrNames('<details class="x" open>')).toEqual(['class', 'open']);
     expect(attrNames('<details class="x" bind:open={contextOpen}>')).toEqual([
       'class',
       'bind:open',
     ]);
+    // The two the name scan is BLIND to — these are what the brace check exists for.
+    expect(attrNames('<details class="x" {open}>')).toEqual(['class']);
+    expect('<details class="x" {open}>').toContain('{');
+    expect('<details class="x" {...rest}>').toContain('{');
 
     expect(attrNames(openTag)).toEqual(['class']);
   });
