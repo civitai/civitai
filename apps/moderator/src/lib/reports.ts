@@ -21,6 +21,7 @@ export const ReportEntity = {
   Model3DReview: 'model3dReview',
   Announcement: 'announcement',
   Crucible: 'crucible',
+  Challenge: 'challenge',
 } as const;
 export type ReportEntity = (typeof ReportEntity)[keyof typeof ReportEntity];
 
@@ -93,6 +94,7 @@ export const reportEntityLabels: Record<ReportEntity, string> = {
   model3dReview: '3D Review',
   announcement: 'Announcement',
   crucible: 'Crucible',
+  challenge: 'Challenge',
 };
 
 // URL segment for each entity's report page. Part of shareable URLs and of the nav paths that grants match
@@ -115,6 +117,7 @@ export const reportEntitySlugs: Record<ReportEntity, string> = {
   model3dReview: '3d-review',
   announcement: 'announcement',
   crucible: 'crucible',
+  challenge: 'challenge',
 };
 
 const entityBySlug = new Map(

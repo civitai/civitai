@@ -22,6 +22,7 @@ const ENTITY_PATH: Record<string, string> = {
   comicproject: 'comics',
   model3d: '3d-models',
   crucible: 'crucibles',
+  challenge: 'challenges',
 };
 
 // Callers disagree on casing — ModActivity stores 'image', the report joins label rows 'Image', and
