@@ -358,36 +358,125 @@ describe('projectPostAppChip emits exactly the chip', () => {
       ).toBe('custom-generators');
     });
 
-    it('withholds the slug for a mature app on a non-red host', () => {
-      expect(
-        project(
-          row({ appBlocks: [block({ appListing: listing({ contentRating: 'r' }) })] }),
-          SFW_HOST
-        )?.slug
-      ).toBeNull();
-    });
-
-    it('links the same mature app on a red-capable host', () => {
-      // The control: the maturity term is a property of the HOST, so the same row
-      // must link on red. A hardcoded `false` for the maturity gate passes the
-      // test above and fails this one.
-      expect(
-        project(
-          row({ appBlocks: [block({ appListing: listing({ contentRating: 'r' }) })] }),
-          RED_HOST
-        )?.slug
-      ).toBe('custom-generators');
-    });
-
-    it('fails closed on an empty host for a mature app', () => {
-      expect(
-        project(row({ appBlocks: [block({ appListing: listing({ contentRating: 'r' }) })] }), '')
-          ?.slug
-      ).toBeNull();
-    });
-
     it('links an SFW app on any host, including an empty one', () => {
       expect(project(row(), '')?.slug).toBe('custom-generators');
+    });
+  });
+
+  describe('a MATURITY refusal suppresses the whole chip, not just the link', () => {
+    /**
+     * 🔴 THIS IS NOT THE LIFECYCLE NON-VIEWABLE BRANCH, AND THE DIFFERENCE IS THE
+     * POINT. A draft / rejected / delisted / suspended / never-deployed app keeps
+     * its name UNLINKED: it exists, the store just will not give it a page. A
+     * MATURE app on a non-red host is different in kind — `listingMatureFilter`
+     * hides the card and `getListingDetail` returns null, so on that host the
+     * store behaves as though the listing does not exist at all. The faithful
+     * mirror of "does not exist" is silence, not an unlinked title.
+     *
+     * 🔴 EVERY ASSERTION HERE IS ON THE WHOLE RETURNED OBJECT. The previous
+     * revision of these tests asserted only `?.slug`, and nothing anywhere
+     * asserted `name` on this branch — which is exactly why the leak shipped: the
+     * slug and the icon were withheld while the app's store TITLE rendered. A
+     * single-field assertion cannot see that.
+     */
+    const matureRow = (rating = 'r') =>
+      row({ appBlocks: [block({ appListing: listing({ contentRating: rating }) })] });
+
+    for (const rating of ['r', 'x'] as const) {
+      it(`renders NOTHING for a mature ("${rating}") app on a non-red host`, () => {
+        expect(project(matureRow(rating), SFW_HOST)).toBeNull();
+      });
+    }
+
+    it('fails closed on an empty host', () => {
+      expect(project(matureRow(), '')).toBeNull();
+    });
+
+    it('suppresses the OauthClient-name fallback too, not only the listing name', () => {
+      // 🔴 THE MUTANT-TRAP. Nulling the candidate's own `name` is a NO-OP here,
+      // because it falls through to `clientName` — and for an `appblk-` client
+      // that is the same string the listing carries. So this fixture gives the
+      // client a DISTINCT name: if the fix only gagged the listing name, the chip
+      // would come back carrying this one and the assertion would name it.
+      expect(
+        project(
+          {
+            name: 'A Distinct Client Name',
+            appBlocks: [block({ appListing: listing({ contentRating: 'x' }) })],
+          },
+          SFW_HOST
+        )
+      ).toBeNull();
+    });
+
+    it('still renders the full linked chip for the same app on a red-capable host', () => {
+      // The control: maturity is a property of the HOST, so the identical row must
+      // come back whole on red. A hardcoded `false` for the maturity term passes
+      // every assertion above and fails this one.
+      expect(project(matureRow(), RED_HOST)).toEqual({
+        slug: 'custom-generators',
+        name: 'Custom Generators',
+        iconUrl: listingIconUrl({ url: ICON_UUID }),
+      });
+    });
+
+    it('is PER-CANDIDATE: a maturity-refused sibling does not suppress a fine one', () => {
+      // Only suppress when every candidate is gone. One mature block plus one SFW
+      // block must still render the SFW one, linked.
+      const mature = block({ appListing: listing({ slug: 'aaa-mature', contentRating: 'x' }) });
+      const sfw = block({ appListing: listing({ slug: 'zzz-sfw', contentRating: 'pg' }) });
+      // Both orders, because the maturity-refused one sorts FIRST by slug here —
+      // so a fix that reads `candidates[0]` rather than filtering would fail one.
+      expect(project(row({ appBlocks: [mature, sfw] }), SFW_HOST)?.slug).toBe('zzz-sfw');
+      expect(project(row({ appBlocks: [sfw, mature] }), SFW_HOST)?.slug).toBe('zzz-sfw');
+    });
+
+    it('prefers a LIFECYCLE-refused sibling (unlinked name) over suppressing', () => {
+      // A mature candidate and a draft candidate. The draft one is not lost to
+      // maturity, so the chip survives as the documented unlinked-name branch
+      // rather than disappearing.
+      const mature = block({ appListing: listing({ slug: 'aaa-mature', contentRating: 'x' }) });
+      const draft = block({
+        appListing: listing({ slug: 'zzz-draft', name: 'Draft App', status: 'draft' }),
+      });
+      expect(project(row({ appBlocks: [mature, draft] }), SFW_HOST)).toEqual({
+        slug: null,
+        name: 'Draft App',
+        iconUrl: null,
+      });
+    });
+
+    it('does NOT catch the no-listing-at-all case', () => {
+      // 🔴 Branch (b) is unchanged: a block with no `AppListing` row still falls
+      // back to `OauthClient.name`. There is no `contentRating` to gate on, so
+      // nothing was lost to maturity and the suppression must not reach it. A fix
+      // that suppressed whenever no candidate survived would break this.
+      expect(
+        project(
+          { name: 'Ab Img Poster', appBlocks: [{ status: 'approved', appListing: null }] },
+          SFW_HOST
+        )
+      ).toEqual({ slug: null, name: 'Ab Img Poster', iconUrl: null });
+      expect(project({ name: 'Ab Img Poster', appBlocks: [] }, SFW_HOST)).toEqual({
+        slug: null,
+        name: 'Ab Img Poster',
+        iconUrl: null,
+      });
+    });
+
+    it('does NOT catch a shadow revision, which contributes no candidate', () => {
+      // Same reasoning: a revision is filtered out before any gate runs, so it is
+      // not "lost to maturity" and the client-name fallback still applies.
+      expect(
+        project(
+          row({
+            appBlocks: [
+              block({ appListing: listing({ revisionOfId: 'apl_parent', contentRating: 'x' }) }),
+            ],
+          }),
+          SFW_HOST
+        )
+      ).toEqual({ slug: null, name: 'Custom Generators Client', iconUrl: null });
     });
   });
 

@@ -207,8 +207,18 @@ describe('both reads use the exact builders, on the right client', () => {
     dbMock.dbRead.oauthClient.findUnique.mockResolvedValue(mature);
     const onRed = await readPostAppChip({ postId: POST_ID, user: USER, host: 'civitai.red' });
 
-    expect(onSfw?.slug).toBeNull();
-    expect(onRed?.slug).toBe('custom-generators');
+    // 🔴 WHOLE OBJECT, not `?.slug`. This assertion used to read
+    // `expect(onSfw?.slug).toBeNull()`, which passed both when the chip was null
+    // AND when it came back carrying the app's store title with a null slug — the
+    // optional chain makes those two indistinguishable. That is the same
+    // single-field blind spot that let a mature app's name render on a non-red
+    // host, and it was this test that went red when the projection was fixed.
+    expect(onSfw).toBeNull();
+    expect(onRed).toEqual({
+      slug: 'custom-generators',
+      name: 'Custom Generators',
+      iconUrl: null,
+    });
   });
 
   it('does not look up an app for a post with no marker', async () => {

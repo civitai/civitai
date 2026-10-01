@@ -62,22 +62,34 @@
  * a normal state, not corruption.
  *
  * Consequence: the app is always LOOKED UP, never string-munged out of the
- * marker, and there are THREE branches, not two:
+ * marker, and there are FOUR outcomes, not two:
  *
  *   a. marker resolves to no `OauthClient`  → NO CHIP (`null`).
- *   b. resolves, but not publicly viewable → chip with `slug: null` (name
- *      rendered UNLINKED).
- *   c. resolves and is publicly viewable   → chip with a `slug` (name linked).
+ *   b. resolves, refused on LIFECYCLE       → chip with `slug: null` (name
+ *      rendered UNLINKED). Draft, pending, rejected, delisted, suspended, or
+ *      never-deployed: the app exists, the store just has no page for it.
+ *   c. resolves and is publicly viewable    → chip with a `slug` (name linked).
+ *   d. resolves, refused on MATURITY        → NO CHIP (`null`), the client-name
+ *      fallback included. On a non-red host the store hides a mature listing
+ *      outright, so the faithful mirror is silence rather than an unlinked
+ *      title. See {@link projectPostAppChip} — this one is easy to collapse into
+ *      (b) by accident, and doing so leaked an app's store title.
  *
  * ## The viewability predicate, and the link target
  *
- * VIEWABLE = `app_listings.status = 'approved'` AND `app_blocks.status =
- * 'approved'`, reached as `OauthClient.id → app_blocks.app_id →
- * app_listings.app_block_id`. All three tables are in the MAIN database (
- * `AppBlock` is an ordinary Prisma model, `@@map("app_blocks")`), so this is one
- * same-DB read and NOT a cross-database query on a public page load.
- * `requireAppsDb()` is an unrelated mechanism (the per-app storage schemas) and
- * is deliberately not involved.
+ * VIEWABLE is FOUR terms, and the last two are the destination's own gates —
+ * `postAppChipQuery` documents why each is selected, and `readListingCandidate`
+ * why they are grouped as lifecycle-vs-maturity rather than one conjunction:
+ *
+ *   `app_listings.status = 'approved'` AND `app_blocks.status = 'approved'`
+ *   AND (the listing is not `onsite` OR its block has deployed at least once)
+ *   AND the rating is allowed on the request host.
+ *
+ * The join is `OauthClient.id → app_blocks.app_id → app_listings.app_block_id`.
+ * All three tables are in the MAIN database (`AppBlock` is an ordinary Prisma
+ * model, `@@map("app_blocks")`), so this is one same-DB read and NOT a
+ * cross-database query on a public page load. `requireAppsDb()` is an unrelated
+ * mechanism (the per-app storage schemas) and is deliberately not involved.
  *
  * The link target is `/apps/store-preview/<AppListing.slug>`, built by the
  * CALLER from the chip's `slug`. It is NOT `/apps/<marker>`: that legacy route
@@ -277,7 +289,24 @@ export type PostAppChipRow = {
   appBlocks?: unknown;
 };
 
-type ListingCandidate = { slug: string; name: string; iconUrl: string | null; viewable: boolean };
+type ListingCandidate = {
+  slug: string;
+  name: string;
+  iconUrl: string | null;
+  /** Every term passed: the chip may be LINKED. */
+  viewable: boolean;
+  /**
+   * The MATURITY term specifically refused this candidate on this host.
+   *
+   * 🔴 TRACKED SEPARATELY FROM `viewable`, WHICH IS THE WHOLE FIX FOR A REAL LEAK.
+   * Folded into one boolean, a maturity refusal was indistinguishable from a
+   * lifecycle refusal — so it took the lifecycle branch, which withholds the slug
+   * and the icon but KEEPS THE NAME, and a mature app's store title rendered on a
+   * host where the store hides the card entirely. The two refusals differ in kind
+   * and have to be answered differently; see {@link projectPostAppChip}.
+   */
+  maturityRefused: boolean;
+};
 
 /**
  * One `AppBlock` row → a candidate, or `null` when the block carries no store row
@@ -287,6 +316,11 @@ type ListingCandidate = { slug: string; name: string; iconUrl: string | null; vi
  * maturity term, and a default would silently decide it. An empty host fails
  * closed for a mature rating (`ratingAllowedOnHost`), which is the safe
  * direction.
+ *
+ * 🔴 Returning `null` and being REFUSED are different outcomes. `null` means the
+ * block carries nothing nameable (no listing, a shadow revision, a blank slug) —
+ * it contributes no candidate at all, and so it can never be "lost to maturity".
+ * A refused candidate is a real store row this host may not acknowledge.
  */
 function readListingCandidate(block: unknown, host: string): ListingCandidate | null {
   if (typeof block !== 'object' || block === null) return null;
@@ -303,12 +337,19 @@ function readListingCandidate(block: unknown, host: string): ListingCandidate | 
   // denylist admits both tables' default state, and postAppChipQuery on why the
   // last two exist at all (they are the destination's own gates; without them a
   // "viewable" chip can link a page that 404s).
+  //
+  // 🔴 SPLIT INTO TWO GROUPS, NOT ONE CONJUNCTION. The LIFECYCLE terms answer
+  // "does the store have a page for this?"; the MATURITY term answers "may this
+  // host acknowledge it at all?". They are computed independently — note the
+  // maturity term is evaluated even when lifecycle already failed, so a draft
+  // mature app is still recorded as maturity-refused and still disappears on a
+  // non-red host, which is what that host's store does with it.
   const deployed = l.kind !== 'onsite' || b.currentVersionDeployedAt != null;
-  const viewable =
-    b.status === APPROVED_STATUS &&
-    l.status === APPROVED_STATUS &&
-    deployed &&
-    ratingAllowedOnHost(typeof l.contentRating === 'string' ? l.contentRating : null, host);
+  const lifecycleOk = b.status === APPROVED_STATUS && l.status === APPROVED_STATUS && deployed;
+  const maturityOk = ratingAllowedOnHost(
+    typeof l.contentRating === 'string' ? l.contentRating : null,
+    host
+  );
   return {
     slug,
     // Publisher-controlled — sanitized at the projection, see projectPostAppChip.
@@ -323,7 +364,8 @@ function readListingCandidate(block: unknown, host: string): ListingCandidate | 
           }
         : null
     ),
-    viewable,
+    viewable: lifecycleOk && maturityOk,
+    maturityRefused: !maturityOk,
   };
 }
 
@@ -349,16 +391,41 @@ function readListingCandidate(block: unknown, host: string): ListingCandidate | 
  * the link; the client name is the fallback for an app with no listing row at
  * all.
  *
- * 🔴 A NON-VIEWABLE APP GETS NEITHER A SLUG NOR AN ICON, AND THE ICON HALF IS
- * DELIBERATE RATHER THAN A SIDE EFFECT OF WRITING THE TERNARY TWICE. Suppressing
- * the slug is the stated requirement (render the name unlinked). Suppressing the
- * icon as well is this module's own decision: `viewable` is false precisely when
- * the app is a draft, rejected, delisted, suspended, never-deployed, or
- * mature-on-a-non-red-host, and in every one of those states the store itself
- * refuses to serve that listing's media. Publishing its icon onto a public post
- * page would route the asset around the gate that is withholding the page. The
- * name is kept because the viewer needs to know what made the post — that is the
- * whole feature — and the name is sanitised; the icon carries no such need.
+ * 🔴 A LIFECYCLE-REFUSED APP GETS NEITHER A SLUG NOR AN ICON, AND THE ICON HALF
+ * IS DELIBERATE RATHER THAN A SIDE EFFECT OF WRITING THE TERNARY TWICE.
+ * Suppressing the slug is the stated requirement (render the name unlinked).
+ * Suppressing the icon as well is this module's own decision: the app is a draft,
+ * rejected, delisted, suspended or never-deployed, and in every one of those
+ * states the store refuses to serve that listing's media. Publishing its icon
+ * onto a public post page would route the asset around the gate that is
+ * withholding the page. The NAME is kept because the viewer needs to know what
+ * made the post — that is the whole feature — and the name is sanitised; the icon
+ * carries no such need.
+ *
+ * 🔴 A MATURITY REFUSAL IS DIFFERENT IN KIND AND SUPPRESSES THE CHIP ENTIRELY.
+ * This is the one case where the reasoning above does NOT extend to the name, and
+ * getting that wrong was a real leak: a mature-rated app's store TITLE rendered on
+ * a non-red host, because a maturity refusal took the lifecycle branch, which
+ * keeps the name. A lifecycle-refused app EXISTS and the store merely has no page
+ * for it; a mature app on a non-red host is hidden outright — `listingMatureFilter`
+ * drops the card and `getListingDetail` returns null — so on that host the store
+ * behaves as though the listing does not exist. The faithful mirror of "does not
+ * exist" is SILENCE, not an unlinked title.
+ *
+ * Three things that fix had to get right, each pinned by a test:
+ *
+ *   - 🔴 **Nulling the candidate's own name is a NO-OP.** It falls through to
+ *     `clientName`, and for an `appblk-` client `OauthClient.name` is the same
+ *     string the listing carries — so the title would still render. The
+ *     suppression has to return `null` for the whole chip, `clientName` included.
+ *   - **It is PER-CANDIDATE, not global.** A maturity-refused sibling must not
+ *     suppress a candidate that is fine, and a LIFECYCLE-refused sibling is still
+ *     preferred over suppressing (it keeps its unlinked name). Only when every
+ *     candidate is gone AND at least one was lost to maturity does the chip go.
+ *   - **It must not reach the no-listing case.** A block with no `AppListing`
+ *     contributes no candidate, so nothing was lost to maturity and the
+ *     `clientName` fallback — the documented branch (b) — still applies. Same for
+ *     a shadow revision, which is filtered out before any gate runs.
  *
  * 🔴 BOTH NAMES ARE PUBLISHER-CONTROLLED, so both go through
  * `sanitizeAppChromeName` HERE — on the server, at the one place that builds the
@@ -387,7 +454,25 @@ export function projectPostAppChip(
     .filter((c): c is ListingCandidate => c !== null)
     .sort((a, b) => (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
 
-  const chosen = candidates.find((c) => c.viewable) ?? candidates[0] ?? null;
+  // Preference order, and each fallback is a decision rather than a default:
+  //   1. a fully VIEWABLE candidate            → the linked chip;
+  //   2. else one refused only on LIFECYCLE    → its name, unlinked;
+  //   3. else, if anything was lost to MATURITY → nothing at all (below);
+  //   4. else no candidates existed            → the `clientName` fallback.
+  // Step 2 deliberately excludes maturity-refused candidates instead of taking
+  // `candidates[0]`: with the maturity-refused one sorting first, `[0]` would
+  // hand back the very name this host must not acknowledge.
+  const chosen =
+    candidates.find((c) => c.viewable) ?? candidates.find((c) => !c.maturityRefused) ?? null;
+
+  // 🔴 EVERY remaining candidate was refused on MATURITY — so this host does not
+  // acknowledge this app at all, and that includes refusing the `clientName`
+  // fallback (which is the same string anyway for an `appblk-` client, the reason
+  // gagging only the listing name would have been a no-op). Guarded on
+  // `candidates.length` so it cannot reach the no-listing / shadow-revision
+  // cases, which produce no candidates and lost nothing to maturity.
+  if (!chosen && candidates.length > 0) return null;
+
   const name = chosen?.name || clientName;
   // No name from either side ⇒ nothing nameable to render. A chip reading
   // "Published with" and then nothing is worse than no chip.
