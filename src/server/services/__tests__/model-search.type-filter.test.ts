@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+import { ModelSort } from '~/server/common/enums';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 /**
- * Non-mocked test for the type filter INSIDE `resolveModelSearchIds`. The
+ * Non-mocked test for the type filter and sort INSIDE `resolveModelSearchIds`. The
  * endpoint tests mock the whole service, so they only prove `types` is
  * forwarded — this proves it lands in the actual Meili filter expression.
  * Without the in-query filter, `query` + `types` intersected the top-N
@@ -71,5 +72,31 @@ describe('resolveModelSearchIds type filter', () => {
   it('keeps the nsfwLevel filter alongside the type filter', async () => {
     await resolveModelSearchIds({ ...baseOpts, types: ['Wildcards'] });
     expect(searchFilter().some((f) => f.startsWith('nsfwLevel IN ['))).toBe(true);
+  });
+});
+
+describe('resolveModelSearchIds sort', () => {
+  beforeEach(() => {
+    mockSearch.mockReset();
+    mockSearch.mockResolvedValue({ hits: [] });
+  });
+
+  function searchOptions(): Record<string, unknown> {
+    return mockSearch.mock.calls[0][1];
+  }
+
+  it('sends a caller-named sort to Meili, so the sort applies before the page is cut', async () => {
+    await resolveModelSearchIds({ ...baseOpts, sort: ModelSort.MostDownloaded });
+    expect(searchOptions().sort).toEqual(['metrics.downloadCount:desc', 'id:desc']);
+  });
+
+  it('CONTROL — no sort named means no sort key at all (relevance ranking unchanged)', async () => {
+    await resolveModelSearchIds(baseOpts);
+    expect(searchOptions()).not.toHaveProperty('sort');
+  });
+
+  it('a sort with no sortable attribute sends none rather than a bad one', async () => {
+    await resolveModelSearchIds({ ...baseOpts, sort: ModelSort.ImageCount });
+    expect(searchOptions()).not.toHaveProperty('sort');
   });
 });

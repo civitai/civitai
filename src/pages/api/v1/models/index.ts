@@ -84,11 +84,8 @@ export default MixedAuthEndpoint(async function handler(
       .json({ error: 'Cannot use page param with query search. Use cursor-based pagination.' });
   }
 
-  // Offset-based pagination for relevance-ranked text search. The query cursor
-  // is an opaque numeric OFFSET, not a model id (the models index puts 'sort'
-  // first in its rankingRules, so forcing an id sort would rank by recency
-  // instead of text relevance). resolveModelSearchIds wraps the Meili call
-  // under withMeili so a backend brownout is bounded by MEILI_CALL_TIMEOUT_MS.
+  // The query cursor is an opaque numeric OFFSET, not a model id: Meili's order
+  // (relevance, or the caller's sort) is not monotonic in id.
   let searchIds: number[] = [];
   let meiliNextCursor: string | undefined;
   if (query) {
@@ -99,6 +96,10 @@ export default MixedAuthEndpoint(async function handler(
         limit,
         browsingLevel,
         types: data.types,
+        // Only a sort the caller named: the schema defaults `sort` to HighestRated,
+        // and `sort` is the first ranking rule, so forwarding the default would
+        // rank every text search by thumbs-up instead of relevance.
+        sort: 'sort' in req.query ? data.sort : undefined,
       });
       searchIds = meili.searchIds;
       meiliNextCursor = meili.nextCursor;
