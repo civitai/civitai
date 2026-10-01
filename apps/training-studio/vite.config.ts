@@ -23,6 +23,7 @@ export default defineConfig(({ mode }) => {
     ssr: {
       noExternal: [
         '@civitai/auth',
+        '@civitai/axiom',
         '@civitai/brand',
         '@civitai/client',
         '@civitai/db',

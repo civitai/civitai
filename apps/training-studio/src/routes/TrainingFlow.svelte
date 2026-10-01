@@ -3,6 +3,7 @@
   import { IconCheck, IconArrowLeft } from '@tabler/icons-svelte';
   import { backend, navigate } from '$lib/host';
   import { isMatureNsfwLevel } from '$lib/buzz-balance.svelte';
+  import { submitNotice } from '$lib/submit-notice.svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import SelectStep from './SelectStep.svelte';
   import DataStep from './DataStep.svelte';
@@ -155,7 +156,11 @@
       currencies,
       labelMode
     );
-    const ids = await backend().submitTraining(runs);
+    const { workflowIds: ids, failure } = await backend().submitTraining(runs);
+    if (failure)
+      submitNotice.set(
+        `Started ${ids.length} of ${runs.length} runs. The rest did not start: ${failure}`
+      );
     // A single run opens its detail; a sweep (or a partial submit) goes to the list, where every run that
     // landed appears — so a partial failure never re-submits the successful, already-charged runs.
     await navigate(

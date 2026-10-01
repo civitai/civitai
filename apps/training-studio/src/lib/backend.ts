@@ -4,11 +4,11 @@
 import type { FromPrices, Media } from '$lib/data/trainingModels';
 import type { GenerationItem, TrainingDetail, TrainingRow } from '$lib/data/trainingRows';
 import type { TrainingWhatIfInput } from '$lib/orchestrator-core';
-import type { TrainingRunInput } from '$lib/train-core';
+import type { SubmittedBatch, TrainingRunInput } from '$lib/train-core';
 
 export type { TrainingWhatIfInput } from '$lib/orchestrator-core';
 
-export type { TrainingItem } from '$lib/train-core';
+export type { SubmittedBatch, TrainingItem } from '$lib/train-core';
 export type { AutoLabelItem, AutoLabelMode, AutoLabelResult } from '$lib/autolabel-core';
 import type { AutoLabelItem, AutoLabelMode, AutoLabelResult } from '$lib/autolabel-core';
 
@@ -40,7 +40,7 @@ export interface StudioBackend {
     workflowId: string,
     signal: AbortSignal
   ): Promise<{ done: boolean; results: AutoLabelResult[] }>;
-  submitTraining(runs: TrainingRunPayload[]): Promise<string[]>;
+  submitTraining(runs: TrainingRunPayload[]): Promise<SubmittedBatch>;
   rename(workflowId: string, name: string): Promise<void>;
   /** Refused unless `canDeleteRun` holds for the run's current state. */
   deleteTraining(workflowId: string): Promise<void>;
