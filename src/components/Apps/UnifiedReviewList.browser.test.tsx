@@ -374,7 +374,6 @@ describe('🔴 UnifiedReviewList — the stopPropagation guards', () => {
     await page.getByTestId('apps-unified-review-icon-button-onsite:or1').click();
     expect(openOnsite).not.toHaveBeenCalled();
     await expect.element(page.getByRole('dialog')).toBeInTheDocument();
-    // The viewer captions each shot, so the caption is what says which one is framed.
     await expect.element(page.getByText('Lighthouse icon')).toBeInTheDocument();
     expect(page.getByText('Lighthouse cover image').elements()).toEqual([]);
   });

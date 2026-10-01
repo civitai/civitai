@@ -17,8 +17,7 @@ import type * as FeatureFlagsService from '~/server/services/feature-flags.servi
  *      The belt is the house idiom on this router and is genuinely redundant, so it is
  *      kept; this note exists so the arms are not read as covering it.
  *   2. THE APP-BLOCKS FLAG DOES NOT GATE IT — `enforceAppBlocksFlag` throws only for a
- *      MUTATION, so the mod gate carries this read alone. Pinned below, and stated here
- *      because an earlier draft of this header claimed the opposite of its own test.
+ *      MUTATION, so the mod gate carries this read alone. Pinned below.
  *   3. SLUG BOUNDS — the zod input is slug-shaped, so a caller cannot pass a pattern, an
  *      over-long string or extra fields through to the query.
  *
@@ -85,11 +84,6 @@ vi.mock('~/server/middleware.trpc', async () => {
 
 import { blocksRouter } from '../blocks.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
-import { dbMock } from '~/__tests__/mocks/db.mock';
-import { redisMock } from '~/__tests__/mocks/redis.mock';
-import { loggingMock } from '~/__tests__/mocks/logging.mock';
-// `dbMock` / `redisMock` / `loggingMock` are imported for their mock REGISTRATION side
-// effect — this suite never reads them, and dropping the imports breaks the router import.
 
 function fakeCtx(user: unknown) {
   return {

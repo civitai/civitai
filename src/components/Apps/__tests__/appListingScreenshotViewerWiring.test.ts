@@ -405,8 +405,11 @@ describe('🔴 the screenshot viewer is WIRED to the gallery that owns the list'
     // The handler belongs to the button and the image is only its child. Asserted on the
     // THUMB file, which is where the `<img>` now lives; kept on `MyAppsBody` too, where it
     // is now vacuous but costs nothing and would catch a re-inlined copy.
-    expect(src, BTN).not.toContain('<img onClick');
-    expect(norm(stripComments(fs.readFileSync(THUMB, 'utf8'))), BTN).not.toContain('<img onClick');
+    const IMG =
+      'an <img onClick> has come back — a mouse-only affordance with no accessible ' +
+      'name, where the click belongs on the wrapping button.';
+    expect(src, IMG).not.toContain('<img onClick');
+    expect(norm(stripComments(fs.readFileSync(THUMB, 'utf8'))), IMG).not.toContain('<img onClick');
 
     /**
      * 🔴 THE PLACEHOLDER MUST STAY INERT, and this is the half that is easy to lose in

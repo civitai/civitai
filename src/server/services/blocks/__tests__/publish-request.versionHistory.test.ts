@@ -376,8 +376,7 @@ describe('the mod queue rows carry the app store listing, joined on SLUG', () =>
       await listPendingRequests({ limit: 10 });
       const where = mockDbRead.appListing.findMany.mock.calls[0][0].where;
       expect(where).toMatchObject({ kind: 'onsite', revisionOfId: null });
-      // EXACT key set, so a fourth term cannot be added without a decision — the property
-      // an earlier `toMatchObject`-only revision of this arm stopped holding.
+      // EXACT key set, so a fourth term cannot be added without a decision.
       expect(Object.keys(where).sort()).toEqual(['kind', 'revisionOfId', 'slug']);
     });
   });
@@ -457,8 +456,7 @@ describe('the mod queue rows carry the app store listing, joined on SLUG', () =>
   });
 
   it('🔴 ALL THREE list procs carry the projection, not just the two somebody tested', async () => {
-    // Looped over the real exports: deleting the spread from any one proc blanks that
-    // tab's Plays and icon columns, and only this arm would notice.
+    // Looped over the real exports rather than naming the two somebody remembered.
     const procs = [
       ['pending', listPendingRequests],
       ['approved', listApprovedRequests],

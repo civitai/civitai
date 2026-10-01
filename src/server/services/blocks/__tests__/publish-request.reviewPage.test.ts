@@ -168,7 +168,7 @@ describe('getReviewRequestById — full hydrated single-request fetch', () => {
        * 🔴 THE STORE-LISTING JOIN, WHICH THE REVIEW PAGE'S MEDIA SECTION IS ENTIRELY MADE
        * OF. `ReviewListingMedia` takes these as props, and the page-level browser test is
        * a labelled invariant guard that names no field — so with this unasserted, deleting
-       * the one spread here renders "No icon" / "No cover" on every row with nothing red.
+       * the one spread here renders "No icon" / "No cover" on the review page, nothing red.
        */
       expect(res!.request.playCount).toBe(1234);
       expect(res!.request.iconUrl).toContain('icon-uuid');

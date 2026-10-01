@@ -188,11 +188,9 @@ vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
   DEFECT. This file's whole purpose is painted width, and the Submitter column's share is
   justified in `appsWideLayout.tsx` by a number measured here — so stubbing the component
   whose width is the quantity under assertion measured the stub. (The behaviour suites
-  elsewhere DO stub it; there the width is not what they assert.) ⚠️ The stub was not
-  reporting a WRONG width — measured, it matched the real component — so this is about what
-  the tier can see in future, not a number it got wrong. What the real component needs is
-  two viewer-state hooks no geometry fixture can supply: `useBrowsingSettings` (via
-  `useGetEdgeUrl`) and `useViewerBrowsingLevelDebounced` (called directly). Both are
+  elsewhere DO stub it; there the width is not what they assert.) What the real component
+  needs is two viewer-state hooks no geometry fixture can supply: `useBrowsingSettings`
+  (via `useGetEdgeUrl`) and `useViewerBrowsingLevelDebounced` (called directly) — both
   stubbed at the SOURCE rather than the component.
 */
 vi.mock('~/providers/BrowserSettingsProvider', async (importOriginal) => ({
@@ -450,6 +448,17 @@ const PIXEL = LOADABLE_IMAGE_DATA_URI;
 /** The dedup key the adapter builds for `ONSITE` — the suffix of every row-scoped testid. */
 const ONSITE_KEY = 'onsite:or1';
 
+/**
+ * 🔴 THE LONGEST USERNAME THE SCHEMA ALLOWS, because the Submitter cell's MIN-CONTENT is
+ * what the declared-share arm reads and a long name is what sets it. The chip is
+ * `wrap="nowrap"`, so this does NOT change the row height.
+ *
+ * Its length is pinned against `usernameInputSchema` in `__tests__/appsWideLayout.test.ts`
+ * — the share has already been raised twice because a fixture understated this bound, and
+ * a bare literal here is how that happens a third time.
+ */
+const SUBMITTER_USERNAME = 'w'.repeat(25);
+
 const ONSITE: OnsiteReviewRequest = {
   id: 'or1',
   appBlockId: null,
@@ -470,11 +479,7 @@ const ONSITE: OnsiteReviewRequest = {
   iconUrl: PIXEL,
   coverUrl: PIXEL,
   reviewRepoUrl: 'https://forgejo.example/repo',
-  // 🔴 THE WORST CASE THE SCHEMA ALLOWS (`usernameInputSchema.max(25)`), because the
-  // Submitter cell's MIN-CONTENT is what the declared-share arm reads and a long name is
-  // what sets it: 15 chars measured 217.66px against 318.77 here. It does not change the
-  // ROW HEIGHT — the chip is `wrap="nowrap"` and never breaks.
-  submittedBy: { id: 7, username: 'wwwwwwwwwwwwwwwwwwwwwwwww', image: null },
+  submittedBy: { id: 7, username: SUBMITTER_USERNAME, image: null },
 } as OnsiteReviewRequest;
 
 const OFFSITE: OffsiteReviewRequest = {
@@ -781,8 +786,8 @@ describe('/apps/review — the queue table spends the width on its App column', 
         `approved-shape column ${index} should be ${share}% of ${px(table)}`
       ).toBeCloseTo((share / 100) * table, 0);
     }
-    // Same counter as the seven-column arm, so an empty offender list cannot mean the loop
-    // resolved nothing.
+    // Same counter as the seven-column arm: a second `null` in the ledger would otherwise
+    // drop a column from the check while `toHaveLength` still passed.
     expect(checked, 'no fixed column was checked').toBe(
       APPS_REVIEW_QUEUE_COLUMNS.withDeploy.length - 1
     );
@@ -867,34 +872,31 @@ describe('/apps/review — the queue table spends the width on its App column', 
     // Every assertion above is a width comparison, and a cell that rendered nothing
     // produces two internally-consistent numbers just as happily. One entry per cell this
     // change added — Plays was missing from this list while the comment claimed it was
-    // covered, and it is the one cell whose emptiness no other arm here can see.
+    // covered.
     await renderRoute(list(), NARROW);
 
-    /**
-     * 🔴 NON-EMPTY, NOT MERELY PRESENT, for the testids that sit on a WRAPPER. The
-     * submitter span and the plays `Text` both wrap their content, so a child that rendered
-     * nothing — a `UserAvatar` returning null on its `id === -1` or loading branch — leaves
-     * the wrapper in the DOM and a presence-only check passes over an empty cell. That is
-     * the exact failure this arm exists to catch, on the tier whose thesis is that the real
-     * component renders.
-     */
-    for (const testId of [
-      `apps-unified-review-version-${ONSITE_KEY}`,
-      `apps-unified-review-first-version-${ONSITE_KEY}`,
-      `apps-unified-review-submitter-${ONSITE_KEY}`,
-      `apps-unified-review-plays-${ONSITE_KEY}`,
-      `apps-unified-review-age-${ONSITE_KEY}`,
-    ]) {
+    const text = (testId: string) => {
       const el = document.querySelector(`[data-testid="${testId}"]`) as HTMLElement | null;
       expect(
         el,
         `${testId} did not render — the measurement above covered an empty cell`
       ).not.toBeNull();
-      expect(
-        el!.textContent?.trim() || el!.childElementCount,
-        `${testId} rendered an EMPTY element`
-      ).toBeTruthy();
-    }
+      return (el!.textContent ?? '').trim();
+    };
+
+    /**
+     * 🔴 THE VALUE, NOT MERELY A NON-EMPTY ELEMENT. Three of these cells render `'—'` on
+     * their OWN testid when the datum is missing, so "present" and even "non-empty" pass
+     * over a placeholder — which is the shape this arm exists to catch. Asserting the
+     * fixture's own values makes each one load-bearing, and it covers the submitter span's
+     * empty-child case (a `UserAvatar` returning null for `id === -1` leaves the span in
+     * the DOM) without naming a mechanism this check does not actually test for.
+     */
+    expect(text(`apps-unified-review-version-${ONSITE_KEY}`)).toContain('1.0.0');
+    expect(text(`apps-unified-review-first-version-${ONSITE_KEY}`)).toBe('first version');
+    expect(text(`apps-unified-review-submitter-${ONSITE_KEY}`)).toContain(SUBMITTER_USERNAME);
+    expect(text(`apps-unified-review-plays-${ONSITE_KEY}`)).toContain('plays');
+    expect(text(`apps-unified-review-age-${ONSITE_KEY}`)).not.toBe('—');
 
     // The icon is a LEAF `<img>` — no text, no children — so presence plus a `src` is what
     // "it rendered" means there.

@@ -163,26 +163,17 @@ export function appsTableColumnProblems(label: string, columns: AppsTableColumns
  *
  * 🔴 VERSION AND SUBMITTER ARE THE TWO BIG FIXED SHARES, which is not where intuition puts
  * them. Version is a `<Code>` semver NEXT TO a violet `first version` badge on a nowrap
- * row; Submitter is an avatar plus a username, and `usernameInputSchema` allows 25
- * characters with no word break in them. Neither is sized by eye — see the two geometry
- * arms below, which are the record.
+ * row. Submitter is an avatar plus a username, sized to the longest the schema allows
+ * (`usernameInputSchema.max(25)`): `UserAvatar`'s own row is `wrap="nowrap"`, so a long
+ * name moves the cell's MIN-CONTENT rather than the row height, and a share under that
+ * simply stops binding — automatic table layout hands the column its min-content anyway and
+ * the primary absorbs less.
  *
- * 🔴 SUBMITTER IS SIZED TO THE LONGEST LEGAL USERNAME, and the reason is min-content
- * rather than wrapping. `UserAvatar`'s own row is `wrap="nowrap"`, so the chip never
- * breaks — measured at the 25-char bound (`usernameInputSchema.max(25)`), the cell is 26px
- * tall and the row 73px at all four fixture widths. What a long name moves is the cell's
- * MIN-CONTENT, and a share below that simply stops binding: automatic table layout hands
- * the column its min-content anyway and the primary absorbs less. That is what the
- * declared-share arm reds on.
- *
- * 🔴 A FIGURE IN THIS COMMENT IS NOT ALLOWED TO JUSTIFY A SHARE, and the history is why.
- * An earlier revision carried per-column min-contents here, and the Submitter share was
- * raised twice — 7 → 9 → 13 — each time because the FIXTURE understated the worst case,
- * first with a stub of `UserAvatar` and then with a 15-character name against a 25-char
- * bound. ⚠️ The stub was NOT what made the number wrong: measured, it reported the same
- * 217.66px the real component does at 15 chars. It was replaced because a tier that
- * asserts painted width must render the real component, not because it had lied. The
- * fixture's realism was the defect both times, and only the geometry arm can see that.
+ * 🔴 NEITHER IS SIZED BY EYE, AND NEITHER MAY BE JUSTIFIED BY A FIGURE WRITTEN HERE. The
+ * declared-share and Version-containment arms in `AppsWideLayout.geometry.test.tsx` render
+ * the real components at the real bound and red on a share below its cell; that is the
+ * record. A pixel value in this comment is not — it moves with any font, padding or `size`
+ * change, with nothing asserting it.
  */
 export const APPS_REVIEW_QUEUE_COLUMNS = {
   /** Pending / Rejected: Kind · App · Version · Submitter · Plays · date · action. */

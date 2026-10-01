@@ -569,12 +569,14 @@ describe('mod queue procs — widened to kind IN (onsite, offsite), each row car
       // CDN-transformed, not the raw `Image.url`.
       expect(row.iconUrl).toContain('icon-uuid');
       expect(row.coverUrl).toContain('cover-uuid');
-      // 🔴 AND THE NESTED RELATION OBJECTS ARE GONE. They were spread through unchanged
-      // once; the derived strings are the payload, so the next key added to that select
-      // cannot ride to the browser with nothing reading on it.
-      expect(row.appListing).not.toHaveProperty('icon');
-      expect(row.appListing).not.toHaveProperty('cover');
-      expect(row.appListing).not.toHaveProperty('metric');
+      // The three derived relations are stripped. ⚠️ A DENYLIST, so this pair of
+      // assertions cannot see a FOURTH key added to the select — that is what the exact
+      // select key-set assertion below is for.
+      for (const stripped of ['icon', 'cover', 'metric']) {
+        expect(row.appListing, `appListing.${stripped} must not ship`).not.toHaveProperty(
+          stripped
+        );
+      }
     }
     const selects = mockRead.appListingPublishRequest.findMany.mock.calls.map(
       (c) =>
@@ -588,6 +590,30 @@ describe('mod queue procs — widened to kind IN (onsite, offsite), each row car
       expect(select.metric).toEqual({ select: { openCount: true } });
       // The LISTING's kind — what `cardOpenCount` discriminates on.
       expect(select.kind).toBe(true);
+      /**
+       * 🔴 THE EXACT KEY SET, BECAUSE THE PAYLOAD STRIP IS A DENYLIST. The row-level
+       * assertions above name the three relations that are removed, which a select gaining
+       * a FOURTH key satisfies — measured: adding `userId: true` ships it to the browser
+       * with nothing reading on it and the whole blocks suite stays green. Pinning the
+       * select is what turns a widening into a decision; `icon`/`cover`/`metric` are the
+       * three this queue adds, and everything else is `submissionSelect`'s.
+       */
+      expect(Object.keys(select).sort()).toEqual([
+        'category',
+        'connectClient',
+        'connectClientId',
+        'connectRequestedScopes',
+        'connectScopeJustifications',
+        'contentRating',
+        'cover',
+        'externalUrl',
+        'icon',
+        'kind',
+        'metric',
+        'name',
+        'revisionOfId',
+        'status',
+      ]);
     }
   });
 

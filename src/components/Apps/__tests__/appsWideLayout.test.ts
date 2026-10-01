@@ -164,6 +164,35 @@ describe('every shipped ledger is valid', () => {
     expect(APPS_AGENT_REPORT_SCOPE_COLUMNS).toHaveLength(6); // Scope Used Justified Sensitive Evidence Notes
   });
 
+  test('🔴 the geometry fixture uses the LONGEST username the schema allows', async () => {
+    /**
+     * 🔴 THIS ENDS A SERIES RATHER THAN RECORDING ONE. The review queue's Submitter share
+     * was raised twice — 7 → 9 → 13 — and neither cause was arithmetic: both times the
+     * geometry fixture understated the worst case, so the declared-share arm measured a
+     * cell narrower than production can render and passed. The fixture is the input that
+     * decides whether that arm can see anything, and `usernameInputSchema`'s bound is the
+     * only thing that says what the worst case IS.
+     *
+     * Asserted by PROBING the schema rather than by reading a number out of it, so it holds
+     * whatever shape the bound is expressed in: the fixture length must parse and one more
+     * character must not.
+     */
+    const { usernameInputSchema } = await import('~/server/schema/user.schema');
+    const src = codeOf('src/components/Apps/AppsWideLayout.geometry.test.tsx');
+    const declared = /const SUBMITTER_USERNAME = 'w'\.repeat\((\d+)\)/.exec(src);
+    expect(declared, 'the geometry fixture no longer declares SUBMITTER_USERNAME').not.toBeNull();
+    const length = Number(declared![1]);
+    expect(
+      usernameInputSchema.safeParse('w'.repeat(length)).success,
+      `the fixture's ${length}-character username is not valid — it cannot be the worst case`
+    ).toBe(true);
+    expect(
+      usernameInputSchema.safeParse('w'.repeat(length + 1)).success,
+      `a ${length + 1}-character username IS valid, so the fixture understates the bound and ` +
+        'the declared-share arm is measuring a cell narrower than production can render'
+    ).toBe(false);
+  });
+
   test('🔴 the two-shape ledgers differ by exactly one column', () => {
     // Both pairs exist because ONE optional column exists. A pair that differed by two
     // would mean a width-conditional column set had crept in, which is the thing the
