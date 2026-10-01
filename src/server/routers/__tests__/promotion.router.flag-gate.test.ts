@@ -48,49 +48,110 @@ function ctxWith(features: Record<string, boolean>) {
 
 beforeEach(() => vi.clearAllMocks());
 
-describe('creator promotions are closed with the flag absent', () => {
-  const promotion = promotionRouter.createCaller(ctxWith({}));
-  const placement = placementRouter.createCaller(ctxWith({}));
+type Callers = {
+  promotion: ReturnType<typeof promotionRouter.createCaller>;
+  placement: ReturnType<typeof placementRouter.createCaller>;
+};
+const callersFor = (features: Record<string, boolean>): Callers => ({
+  promotion: promotionRouter.createCaller(ctxWith(features)),
+  placement: placementRouter.createCaller(ctxWith(features)),
+});
 
-  it.each([
-    [
-      'promotion.createGalleryPromotion',
-      () => promotion.createGalleryPromotion({ modelId: 1, postId: 2, days: 1 }),
-    ],
-    [
-      'promotion.createModelPromotion',
-      () => promotion.createModelPromotion({ modelId: 1, promotedModelId: 2, days: 1 }),
-    ],
-    ['promotion.act', () => promotion.act({ placementId: 1, action: 'approve' })],
-    ['promotion.getHostsForPost', () => promotion.getHostsForPost({ postId: 2 })],
-    ['promotion.getModelOffer', () => promotion.getModelOffer({ modelId: 1 })],
-    ['promotion.getPending', () => promotion.getPending({ surface: 'galleryPromotion' })],
-    ['promotion.getMine', () => promotion.getMine({ surface: 'modelPromotion' })],
-    ['placement.getMySpaces', () => placement.getMySpaces({ surface: 'galleryPromotion' })],
-    ['placement.getPriceRange', () => placement.getPriceRange({ surface: 'modelPromotion' })],
-  ])('%s refuses', async (_name, call) => {
-    await expect(call()).rejects.toThrow(OFF);
+/** Every promotion procedure, and the promotion surfaces of the shared space endpoints. */
+const GATED: [string, (c: Callers) => Promise<unknown>][] = [
+  [
+    'promotion.createGalleryPromotion',
+    ({ promotion }) => promotion.createGalleryPromotion({ modelId: 1, postId: 2, days: 1 }),
+  ],
+  [
+    'promotion.createModelPromotion',
+    ({ promotion }) => promotion.createModelPromotion({ modelId: 1, promotedModelId: 2, days: 1 }),
+  ],
+  ['promotion.act', ({ promotion }) => promotion.act({ placementId: 1, action: 'approve' })],
+  ['promotion.getHostsForPost', ({ promotion }) => promotion.getHostsForPost({ postId: 2 })],
+  ['promotion.getModelOffer', ({ promotion }) => promotion.getModelOffer({ modelId: 1 })],
+  [
+    'promotion.getPending',
+    ({ promotion }) => promotion.getPending({ surface: 'galleryPromotion' }),
+  ],
+  ['promotion.getMine', ({ promotion }) => promotion.getMine({ surface: 'modelPromotion' })],
+  [
+    'placement.getMySpaces',
+    ({ placement }) => placement.getMySpaces({ surface: 'galleryPromotion' }),
+  ],
+  [
+    'placement.getPriceRange',
+    ({ placement }) => placement.getPriceRange({ surface: 'modelPromotion' }),
+  ],
+  [
+    'placement.getSpace',
+    ({ placement }) =>
+      placement.getSpace({ surface: 'galleryPromotion', targetType: 'model', targetId: 1 }),
+  ],
+  [
+    'placement.getSpaceRow',
+    ({ placement }) =>
+      placement.getSpaceRow({ surface: 'modelPromotion', entityType: 'user', entityId: 41 }),
+  ],
+  [
+    'placement.getFreeStanding',
+    ({ placement }) =>
+      placement.getFreeStanding({ surface: 'galleryPromotion', targetType: 'model', targetId: 1 }),
+  ],
+  [
+    'placement.clearSpace',
+    ({ placement }) =>
+      placement.clearSpace({ surface: 'galleryPromotion', entityType: 'user', entityId: 41 }),
+  ],
+  [
+    'placement.setSpace',
+    ({ placement }) =>
+      placement.setSpace({
+        surface: 'modelPromotion',
+        entityType: 'user',
+        entityId: 41,
+        mode: 'review',
+        price: 100,
+      }),
+  ],
+];
+
+describe('creator promotions are closed with the flag absent', () => {
+  const off = callersFor({});
+
+  it.each(GATED)('%s refuses', async (_name, call) => {
+    await expect(call(off)).rejects.toThrow(OFF);
   });
 
   it('reaches no promotion service', async () => {
-    await promotion.getPending({ surface: 'galleryPromotion' }).catch(() => undefined);
-    await placement.getMySpaces({ surface: 'galleryPromotion' }).catch(() => undefined);
+    await off.promotion.getPending({ surface: 'galleryPromotion' }).catch(() => undefined);
+    await off.placement.getMySpaces({ surface: 'galleryPromotion' }).catch(() => undefined);
     expect(services.getPendingPromotions).not.toHaveBeenCalled();
     expect(services.getPlacementSpaces).not.toHaveBeenCalled();
   });
 
   // The shared space endpoints stay open for the surfaces that are not promotions.
   it('leaves the sticker space readable', async () => {
-    await expect(placement.getMySpaces({ surface: 'sticker' })).resolves.toEqual([]);
+    await expect(off.placement.getMySpaces({ surface: 'sticker' })).resolves.toEqual([]);
   });
 });
 
 describe('the same calls with the flag on', () => {
-  const on = ctxWith({ creatorPromotions: true });
+  const on = callersFor({ creatorPromotions: true });
+
+  // They may still fail further in, against an empty test database; what they
+  // must not do is fail at the gate.
+  it.each(GATED)('%s passes the gate', async (_name, call) => {
+    const outcome = await call(on).then(
+      () => undefined,
+      (error: Error) => error.message
+    );
+    expect(outcome ?? '').not.toContain(OFF);
+  });
 
   it('reach their service', async () => {
-    await promotionRouter.createCaller(on).getPending({ surface: 'galleryPromotion' });
-    await placementRouter.createCaller(on).getMySpaces({ surface: 'galleryPromotion' });
+    await on.promotion.getPending({ surface: 'galleryPromotion' });
+    await on.placement.getMySpaces({ surface: 'galleryPromotion' });
     expect(services.getPendingPromotions).toHaveBeenCalledTimes(1);
     expect(services.getPlacementSpaces).toHaveBeenCalledTimes(1);
   });

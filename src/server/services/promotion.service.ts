@@ -3,6 +3,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import type { ModelGallerySettingsSchema } from '~/server/schema/model.schema';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { isImageReviewed } from '~/server/common/image-visibility';
 import { getCreatorGalleryHiddenUserIds } from '~/server/services/creator-gallery-hidden-users.service';
 import {
@@ -603,10 +604,14 @@ const pickOne = <T>(items: T[]) =>
 export async function getSponsoredGalleryPost({
   modelId,
   modelVersionId,
+  features,
 }: {
   modelId: number;
   modelVersionId: number;
+  /** The viewer's flags. Taken here so no caller can serve a promotion without the gate. */
+  features: Pick<FeatureAccess, 'creatorPromotions'>;
 }) {
+  if (!features.creatorPromotions) return undefined;
   const rows = await liveApprovedPromotions({ surface: 'galleryPromotion', modelId });
   const live = rows.flatMap((row) => {
     const data = parseGalleryPromotionData(row.data);
@@ -629,7 +634,14 @@ export async function getSponsoredGalleryPost({
 }
 
 /** The sponsored model card for a model page's Suggested Resources, if any is running. */
-export async function getSponsoredModel({ modelId }: { modelId: number }) {
+export async function getSponsoredModel({
+  modelId,
+  features,
+}: {
+  modelId: number;
+  features: Pick<FeatureAccess, 'creatorPromotions'>;
+}) {
+  if (!features.creatorPromotions) return undefined;
   const rows = await liveApprovedPromotions({ surface: 'modelPromotion', modelId });
   const live = rows.flatMap((row) => {
     const data = parseModelPromotionData(row.data);

@@ -76,6 +76,8 @@ let hostRow: typeof hostModel & Record<string, unknown> = { ...hostModel };
 /** A host that capped its gallery at PG and R, so a default level cannot pass for it. */
 const CAPPED = NsfwLevel.PG | NsfwLevel.R;
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** The viewer's flags. Sparse, as at runtime, so `{}` is the flag absent. */
+const ON = { creatorPromotions: true };
 
 const cleanImage = (id: number) => ({
   id,
@@ -440,7 +442,11 @@ describe('getSponsoredGalleryPost', () => {
   const endsAt = () => new Date(Date.now() + 60_000).toISOString();
 
   it('reads only approved runs on this page', async () => {
-    await getSponsoredGalleryPost({ modelId: HOST_MODEL, modelVersionId: HOST_VERSION });
+    await getSponsoredGalleryPost({
+      modelId: HOST_MODEL,
+      modelVersionId: HOST_VERSION,
+      features: ON,
+    });
     expect(dbMock.dbRead.placement.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
@@ -459,7 +465,7 @@ describe('getSponsoredGalleryPost', () => {
       live({ acceptedLevel: CAPPED, endsAt: endsAt() }),
     ]);
     await expect(
-      getSponsoredGalleryPost({ modelId: HOST_MODEL, modelVersionId: HOST_VERSION })
+      getSponsoredGalleryPost({ modelId: HOST_MODEL, modelVersionId: HOST_VERSION, features: ON })
     ).resolves.toEqual({
       placementId: PLACEMENT,
       postId: POST,
@@ -474,7 +480,7 @@ describe('getSponsoredGalleryPost', () => {
       live({ acceptedLevel: CAPPED, endsAt: endsAt() }),
     ]);
     await expect(
-      getSponsoredGalleryPost({ modelId: HOST_MODEL, modelVersionId: HOST_VERSION })
+      getSponsoredGalleryPost({ modelId: HOST_MODEL, modelVersionId: HOST_VERSION, features: ON })
     ).resolves.toBeUndefined();
   });
 
@@ -486,6 +492,7 @@ describe('getSponsoredGalleryPost', () => {
     const served = await getSponsoredGalleryPost({
       modelId: HOST_MODEL,
       modelVersionId: HOST_VERSION,
+      features: ON,
     });
     expect(served?.servingLevel).toBe(sfwBrowsingLevelsFlag);
   });
@@ -494,12 +501,16 @@ describe('getSponsoredGalleryPost', () => {
     const ended = new Date(Date.now() - 1).toISOString();
     dbMock.dbRead.placement.findMany.mockResolvedValue([live({ acceptedLevel: 3, endsAt: ended })]);
     await expect(
-      getSponsoredGalleryPost({ modelId: HOST_MODEL, modelVersionId: HOST_VERSION })
+      getSponsoredGalleryPost({ modelId: HOST_MODEL, modelVersionId: HOST_VERSION, features: ON })
     ).resolves.toBeUndefined();
 
     dbMock.dbRead.placement.findMany.mockResolvedValue([live({})]);
     await expect(
-      getSponsoredGalleryPost({ modelId: HOST_MODEL, modelVersionId: HOST_VERSION + 1 })
+      getSponsoredGalleryPost({
+        modelId: HOST_MODEL,
+        modelVersionId: HOST_VERSION + 1,
+        features: ON,
+      })
     ).resolves.toBeUndefined();
   });
 });
@@ -520,7 +531,7 @@ describe('getSponsoredModel', () => {
         },
       },
     ]);
-    await expect(getSponsoredModel({ modelId: HOST_MODEL })).resolves.toEqual({
+    await expect(getSponsoredModel({ modelId: HOST_MODEL, features: ON })).resolves.toEqual({
       placementId: PLACEMENT,
       modelId: PROMOTED_MODEL,
       servingLevel: CAPPED & sfwBrowsingLevelsFlag,
@@ -530,5 +541,23 @@ describe('getSponsoredModel', () => {
         where: expect.objectContaining({ surface: 'modelPromotion', status: 'approved' }),
       })
     );
+  });
+});
+
+describe('serving with the flag absent', () => {
+  it('serves no sponsored post or model, and reads nothing', async () => {
+    dbMock.dbRead.placement.findMany.mockResolvedValue([
+      {
+        id: PLACEMENT,
+        placerId: PLACER,
+        resolvedAt: new Date(Date.now() - 60_000),
+        data: { modelId: PROMOTED_MODEL, days: 1 },
+      },
+    ]);
+    await expect(
+      getSponsoredGalleryPost({ modelId: HOST_MODEL, modelVersionId: HOST_VERSION, features: {} })
+    ).resolves.toBeUndefined();
+    await expect(getSponsoredModel({ modelId: HOST_MODEL, features: {} })).resolves.toBeUndefined();
+    expect(dbMock.dbRead.placement.findMany).not.toHaveBeenCalled();
   });
 });

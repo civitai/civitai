@@ -192,6 +192,7 @@ export const placementRouter = router({
   getFreeStanding: protectedProcedure
     .input(getPlacementSpaceSchema)
     .query(async ({ input, ctx }) => {
+      assertPromotionSurfaceReadable(ctx, input.surface);
       const [allowance, usedHere] = await Promise.all([
         getFreePlacementAllowance({ placerId: ctx.user.id }),
         hasUsedFreePlacementOn({ ...input, placerId: ctx.user.id }),

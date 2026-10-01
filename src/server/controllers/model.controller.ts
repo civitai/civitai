@@ -1784,8 +1784,10 @@ export const getAssociatedResourcesCardDataHandler = async ({
     // A paid, host-accepted model promotion takes the second slot. The viewer's
     // own level and hidden lists still apply to it below, like any other card.
     const sponsored =
-      type === 'Suggested' && ctx.features.creatorPromotions
-        ? await getSponsoredModel({ modelId: fromId }).catch(() => undefined)
+      type === 'Suggested'
+        ? await getSponsoredModel({ modelId: fromId, features: ctx.features }).catch(
+            () => undefined
+          )
         : undefined;
     if (sponsored) {
       // Its organic copy is dropped, as in the gallery, so the card the buyer paid

@@ -462,10 +462,11 @@ export const getImagesAsPostsInfiniteHandler = async ({
     // still apply to it.
     const sponsored: ResultType[] = [];
     const sponsoredPost =
-      !cursor && features.creatorPromotions && input.modelId && input.modelVersionId
+      !cursor && input.modelId && input.modelVersionId
         ? await getSponsoredGalleryPost({
             modelId: input.modelId,
             modelVersionId: input.modelVersionId,
+            features,
           }).catch(() => undefined)
         : undefined;
     const sponsoredLevel = sponsoredPost

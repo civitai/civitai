@@ -41,9 +41,12 @@ export function PlacementsPanel() {
   const features = useFeatureFlags();
   const { pendingStickerPlacements, pendingRemixSubmissions } = useQueryNotificationsCount();
 
-  const requested = isPlacementSurfaceTab(router.query.type) ? router.query.type : 'sticker';
+  const tabs = PLACEMENT_SURFACE_TABS.filter(
+    (option) => option.value !== 'promotion' || features.creatorPromotions
+  );
+  // A link to a tab this viewer cannot see lands on stickers.
   const surface: PlacementSurfaceTab =
-    requested === 'promotion' && !features.creatorPromotions ? 'sticker' : requested;
+    tabs.find((option) => option.value === router.query.type)?.value ?? 'sticker';
 
   const setSurface = (value: string) =>
     router.replace(
@@ -95,9 +98,7 @@ export function PlacementsPanel() {
             <SegmentedControl
               value={surface}
               onChange={setSurface}
-              data={PLACEMENT_SURFACE_TABS.filter(
-                (option) => option.value !== 'promotion' || features.creatorPromotions
-              ).map((option) => ({
+              data={tabs.map((option) => ({
                 value: option.value,
                 label: (
                   <span className="flex items-center gap-1.5">
