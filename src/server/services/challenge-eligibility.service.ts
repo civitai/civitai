@@ -14,7 +14,7 @@ function forbidden(message: string) {
   return new TRPCError({ code: 'FORBIDDEN', message });
 }
 
-type UserChallengeStanding = {
+export type UserChallengeStanding = {
   scoreTotal: number;
   bannedAt: Date | null;
   muted: boolean;
@@ -158,7 +158,22 @@ export async function getUserChallengeCreateEligibility(
     getHighestTierSubscription(userId),
   ]);
 
-  const activeLimit = getChallengeActiveLimit(subscription?.tier);
+  return buildCreateEligibility({ standing, recentCount, activeCount, tier: subscription?.tier });
+}
+
+/** Crucibles reuse this, so the CHALLENGE_* limits it applies gate crucible creation too. */
+export function buildCreateEligibility({
+  standing,
+  recentCount,
+  activeCount,
+  tier,
+}: {
+  standing: UserChallengeStanding;
+  recentCount: number;
+  activeCount: number;
+  tier?: string | null;
+}): ChallengeCreateEligibility {
+  const activeLimit = getChallengeActiveLimit(tier);
   const banned = !!(standing.bannedAt || standing.deletedAt);
 
   const requirements: ChallengeCreateRequirement[] = [

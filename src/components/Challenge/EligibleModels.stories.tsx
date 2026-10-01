@@ -1,14 +1,5 @@
-import {
-  Accordion,
-  ActionIcon,
-  Badge,
-  Group,
-  ScrollArea,
-  Text,
-  useComputedColorScheme,
-  useMantineTheme,
-} from '@mantine/core';
-import { IconBrush, IconCube } from '@tabler/icons-react';
+import { Accordion, Group, useComputedColorScheme, useMantineTheme } from '@mantine/core';
+import { EligibleModelsList } from '~/components/EligibleModels/EligibleModelsList';
 
 // Mock model data representing what the API returns
 const mockModels = [
@@ -62,7 +53,7 @@ const mockModels = [
   },
 ];
 
-function EligibleModelsList({ models }: { models: typeof mockModels }) {
+function EligibleModelsAccordion({ models }: { models: typeof mockModels }) {
   const colorScheme = useComputedColorScheme('dark');
   const theme = useMantineTheme();
 
@@ -89,36 +80,7 @@ function EligibleModelsList({ models }: { models: typeof mockModels }) {
             <Group justify="space-between">Eligible Models</Group>
           </Accordion.Control>
           <Accordion.Panel>
-            <ScrollArea.Autosize mah={300}>
-              {models.map((m) => (
-                <div
-                  key={m.versionId}
-                  className="flex items-center gap-3 px-3 py-2 hover:bg-gray-1 dark:hover:bg-dark-5"
-                >
-                  <div className="flex min-w-0 flex-1 items-center gap-3 no-underline">
-                    <div className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-gray-2 dark:bg-dark-3">
-                      <IconCube size={20} className="text-dimmed" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <Text size="sm" fw={500} lineClamp={1}>
-                        {m.name}
-                      </Text>
-                      <Group gap={4} wrap="nowrap">
-                        <Badge size="xs" variant="light">
-                          {m.baseModel}
-                        </Badge>
-                        <Text size="xs" c="dimmed" lineClamp={1}>
-                          {m.versionName}
-                        </Text>
-                      </Group>
-                    </div>
-                  </div>
-                  <ActionIcon variant="subtle" color="blue" size="md" aria-label="Generate">
-                    <IconBrush size={16} />
-                  </ActionIcon>
-                </div>
-              ))}
-            </ScrollArea.Autosize>
+            <EligibleModelsList models={models} onGenerate={() => undefined} />
           </Accordion.Panel>
         </Accordion.Item>
       </Accordion>
@@ -127,14 +89,14 @@ function EligibleModelsList({ models }: { models: typeof mockModels }) {
 }
 
 /** Default view with all mock models */
-export const Default = () => <EligibleModelsList models={mockModels} />;
+export const Default = () => <EligibleModelsAccordion models={mockModels} />;
 
 /** Single model */
-export const SingleModel = () => <EligibleModelsList models={[mockModels[0]]} />;
+export const SingleModel = () => <EligibleModelsAccordion models={[mockModels[0]]} />;
 
 /** Long list to test scroll */
 export const LongList = () => (
-  <EligibleModelsList
+  <EligibleModelsAccordion
     models={[
       ...mockModels,
       ...mockModels.map((m, i) => ({

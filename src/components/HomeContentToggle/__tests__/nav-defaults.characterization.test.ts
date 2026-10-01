@@ -43,6 +43,8 @@ describe('sub-nav default layout', () => {
       'articles',
       'comics',
       'challenges',
+      // Gated on `features.crucible`, so it is absent from the all-flags-off vector below.
+      'crucibles',
       'apps',
       'updates',
       'shop',

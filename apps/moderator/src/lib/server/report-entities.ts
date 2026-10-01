@@ -90,6 +90,12 @@ const TABLES: Record<ReportEntity, Omit<ReportEntityMeta, 'type' | 'label'>> = {
     table: 'Announcement',
     ownerColumn: 'userId',
   },
+  crucible: {
+    reportTable: 'CrucibleReport',
+    fk: 'crucibleId',
+    table: 'Crucible',
+    ownerColumn: 'userId',
+  },
   // `ownerId` is who OPENED the conversation, which is not who was reported — see
   // `chatReportSubject`. Null keeps it out of the owner-column loop; both call sites add it back with
   // that predicate.

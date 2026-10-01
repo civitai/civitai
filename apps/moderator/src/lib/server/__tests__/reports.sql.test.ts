@@ -56,6 +56,7 @@ const EXPECTED: [string, string, string][] = [
   ['model3d', 'Model3DReport', 'model3dId'],
   ['model3dReview', 'Model3DReviewReport', 'model3dReviewId'],
   ['announcement', 'AnnouncementReport', 'announcementId'],
+  ['crucible', 'CrucibleReport', 'crucibleId'],
   ['chat', 'ChatReport', 'chatId'],
   ['reportedUser', 'UserReport', 'userId'],
 ];

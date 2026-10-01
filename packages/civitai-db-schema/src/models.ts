@@ -256,6 +256,10 @@ export type OutboxEntity = "Article" | "Image" | "Model" | "Post" | "ModelVersio
 
 export type UserHubSourceType = "User" | "Model" | "ModelVersion" | "Collection" | "Tag";
 
+export type CrucibleStatus = "Pending" | "Active" | "Completed" | "Cancelled";
+
+export type CrucibleIngestionStatus = "Pending" | "Scanned" | "Blocked" | "Error";
+
 export interface Account {
   id: number;
   userId: number;
@@ -701,6 +705,8 @@ export interface User {
   placementsMade?: Placement[];
   placementsSold?: Placement[];
   pricingSlots?: PricingSlot[];
+  crucibles?: Crucible[];
+  crucibleEntries?: CrucibleEntry[];
 }
 
 export interface CustomerSubscription {
@@ -1282,6 +1288,7 @@ export interface Report {
   model3d?: Model3DReport | null;
   model3dReview?: Model3DReviewReport | null;
   announcement?: AnnouncementReport | null;
+  crucible?: CrucibleReport | null;
 }
 
 export interface ResourceReviewReport {
@@ -1544,6 +1551,9 @@ export interface Image {
   appListingIcons?: AppListing[];
   appListingCovers?: AppListing[];
   appListingScreenshots?: AppListingScreenshot[];
+  crucibles?: Crucible[];
+  crucibleHeroes?: Crucible[];
+  crucibleEntries?: CrucibleEntry[];
 }
 
 export interface ImageTagForReview {
@@ -5663,6 +5673,66 @@ export interface BlurbReference {
   materializedHash: string;
   materializedAt: Date;
   pendingSince: Date | null;
+}
+
+export interface Crucible {
+  id: number;
+  userId: number;
+  user?: User;
+  name: string;
+  description: string | null;
+  imageId: number | null;
+  image?: Image | null;
+  heroImageId: number | null;
+  heroImage?: Image | null;
+  buzzType: string;
+  nsfwLevel: number;
+  contentType: MediaType;
+  entryFee: number;
+  seededPrizePool: number;
+  prizePool: number;
+  entryLimit: number;
+  freeEntriesPerUser: number;
+  maxTotalEntries: number | null;
+  minViewSeconds: number | null;
+  maxClipSeconds: number | null;
+  prizePositions: JsonValue;
+  allowedResources: JsonValue | null;
+  duration: number;
+  startAt: Date | null;
+  endAt: Date | null;
+  status: CrucibleStatus;
+  createdAt: Date;
+  updatedAt: Date;
+  buzzTransactionId: string | null;
+  seedTransactionId: string | null;
+  ingestion: CrucibleIngestionStatus;
+  scannedAt: Date | null;
+  textNsfw: boolean;
+  entries?: CrucibleEntry[];
+  reports?: CrucibleReport[];
+}
+
+export interface CrucibleReport {
+  crucibleId: number;
+  crucible?: Crucible;
+  reportId: number;
+  report?: Report;
+}
+
+export interface CrucibleEntry {
+  id: number;
+  crucibleId: number;
+  crucible?: Crucible;
+  userId: number;
+  user?: User;
+  imageId: number | null;
+  image?: Image | null;
+  score: number;
+  voteCount: number;
+  position: number | null;
+  buzzTransactionId: string | null;
+  createdAt: Date;
 }
 
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;

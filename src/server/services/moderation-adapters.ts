@@ -1,5 +1,6 @@
 import { articleModerationAdapter } from '~/server/services/article-moderation.adapter';
 import { challengeModerationAdapter } from '~/server/services/challenge-moderation.adapter';
+import { crucibleModerationAdapter } from '~/server/services/crucible-moderation.adapter';
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
 import { modelModerationAdapter } from '~/server/services/model-moderation.adapter';
 import { wildcardCategoryModerationAdapter } from '~/server/services/wildcard-category-audit.service';
@@ -15,6 +16,7 @@ import { wildcardCategoryModerationAdapter } from '~/server/services/wildcard-ca
 const moderationAdapters: Record<string, ModerationAdapter> = {
   Article: articleModerationAdapter,
   Challenge: challengeModerationAdapter,
+  Crucible: crucibleModerationAdapter,
   Model: modelModerationAdapter,
   WildcardSetCategory: wildcardCategoryModerationAdapter,
 };

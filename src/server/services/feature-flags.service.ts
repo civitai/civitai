@@ -726,6 +726,22 @@ const featureFlags = createFeatureFlags({
   // `scripts/validate-flag-shape.py` in that repo, and modelled in
   // `feature-flags.early-adopter.seam.test.ts`.
   earlyAdopter: { availability: [], fliptKey: 'early-adopter' },
+  // Flipt-backed so the whole feature has a runtime kill switch — it moves Buzz, and
+  // `['mod', 'granted']` alone could only be changed by a deploy.
+  //
+  // `['mod', 'granted']` is the FLIPT-DOWN fallback, not the cohort: it reproduces exactly
+  // who had access before this flag was wired, so an outage cannot widen the audience. Flipt
+  // overrides it in both directions once the flag exists.
+  //
+  // NOT `availability: []`. That shape exists for flags whose server half calls the async
+  // `isFlipt` directly — an absent flag answers `false` there while the client's
+  // `isEnabledSync` answers `null` and falls through to static, so the two disagree. Every
+  // crucible gate goes through `getFeatureFlags` instead (`isFlagProtected` on every
+  // procedure, `features.crucible` in every page and the nav registry), so both sides read one
+  // value and `[]` would only strip mods of the access they have today.
+  //
+  // Local dev: `FEATURE_FLAG_CRUCIBLE=public` in `.env`, which bypasses Flipt entirely.
+  crucible: { availability: ['mod', 'granted'], fliptKey: 'crucible' },
   // Jev resource-intent primitive (POST /api/v1/blocks/resource-intent).
   // DARK by construction: Flipt owns it entirely and the flag must be created
   // default-OFF in flipt-state (separate, human-reviewed change) before any
