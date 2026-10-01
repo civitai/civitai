@@ -15,7 +15,7 @@
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
 import {
-  aspectRatioNode,
+  sdxlFullAspectRatioNode,
   createCheckpointGraph,
   createResourcesGraph,
   imagesNode,
@@ -27,7 +27,6 @@ import {
   triggerWordsGraph,
   type ResourceData,
 } from './common';
-import { sdxlAspectRatioBuckets } from '~/shared/constants/generation.constants';
 
 // =============================================================================
 // Boogu Constants
@@ -94,14 +93,14 @@ type BooguModeCtx = {
 const baseModeGraph = new DataGraph<BooguModeCtx, GenerationCtx>()
   .merge(createResourcesGraph())
   .merge(negativePromptGraph)
-  .node('aspectRatio', aspectRatioNode({ options: sdxlAspectRatioBuckets, defaultValue: '1:1' }))
+  .node('aspectRatio', sdxlFullAspectRatioNode())
   .node('cfgScale', sliderNode({ min: 1, max: 8, step: 0.5, defaultValue: 4 }))
   .node('steps', sliderNode({ min: 1, max: 50, defaultValue: 35 }));
 
 /** Turbo mode subgraph: distilled — few steps, low cfg. */
 const turboModeGraph = new DataGraph<BooguModeCtx, GenerationCtx>()
   .merge(createResourcesGraph())
-  .node('aspectRatio', aspectRatioNode({ options: sdxlAspectRatioBuckets, defaultValue: '1:1' }))
+  .node('aspectRatio', sdxlFullAspectRatioNode())
   .node('cfgScale', sliderNode({ min: 1, max: 2, step: 0.1, defaultValue: 1 }))
   .node('steps', sliderNode({ min: 1, max: 12, defaultValue: 4 }));
 
@@ -109,14 +108,14 @@ const turboModeGraph = new DataGraph<BooguModeCtx, GenerationCtx>()
 const editModeGraph = new DataGraph<BooguModeCtx, GenerationCtx>()
   .merge(createResourcesGraph())
   .merge(negativePromptGraph)
-  .node('aspectRatio', aspectRatioNode({ options: sdxlAspectRatioBuckets, defaultValue: '1:1' }))
+  .node('aspectRatio', sdxlFullAspectRatioNode())
   .node('cfgScale', sliderNode({ min: 1, max: 8, step: 0.5, defaultValue: 5 }))
   .node('steps', sliderNode({ min: 1, max: 50, defaultValue: 35 }));
 
 /** Edit Turbo mode subgraph: distilled edit — few steps, low cfg; source image via root images node. */
 const editTurboModeGraph = new DataGraph<BooguModeCtx, GenerationCtx>()
   .merge(createResourcesGraph())
-  .node('aspectRatio', aspectRatioNode({ options: sdxlAspectRatioBuckets, defaultValue: '1:1' }))
+  .node('aspectRatio', sdxlFullAspectRatioNode())
   .node('cfgScale', sliderNode({ min: 1, max: 2, step: 0.1, defaultValue: 1 }))
   .node('steps', sliderNode({ min: 1, max: 12, defaultValue: 4 }));
 

@@ -12,7 +12,7 @@
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
 import {
-  aspectRatioNode,
+  sdxlFullAspectRatioNode,
   createCheckpointGraph,
   createResourcesGraph,
   promptGraph,
@@ -21,7 +21,6 @@ import {
   snippetsGraph,
   triggerWordsGraph,
 } from './common';
-import { sdxlAspectRatioBuckets } from '~/shared/constants/generation.constants';
 
 // =============================================================================
 // Constants
@@ -65,7 +64,7 @@ export const ponyV7Graph = new DataGraph<{ ecosystem: string; workflow: string }
   .merge(triggerWordsGraph)
   .merge(snippetsGraph)
   .merge(promptGraph)
-  .node('aspectRatio', aspectRatioNode({ options: sdxlAspectRatioBuckets, defaultValue: '1:1' }))
+  .node('aspectRatio', sdxlFullAspectRatioNode())
   .node(
     'cfgScale',
     sliderNode({ min: 2, max: 20, defaultValue: 3.5, step: 0.5, presets: ponyV7GuidancePresets })

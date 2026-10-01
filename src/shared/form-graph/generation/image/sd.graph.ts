@@ -1,10 +1,5 @@
 import { defineGraph } from 'form-graph';
-import {
-  sd1AspectRatioBuckets,
-  sdxlFamilyAspectRatioBuckets,
-  sdxlFamilyPriorityAspectRatios,
-  samplers,
-} from '~/shared/constants/generation.constants';
+import { sd1AspectRatioBuckets, samplers } from '~/shared/constants/generation.constants';
 import {
   sd1ControlNetPreprocessors,
   sdxlControlNetPreprocessors,
@@ -14,6 +9,7 @@ import { effectiveEcosystemOf } from '../reconcile';
 import {
   SEED,
   defaultSamplerPresets,
+  SDXL_FULL_AR,
   aspectRatioDef,
   controlNetsDef,
   imagesDef,
@@ -115,14 +111,9 @@ export const sd = defineGraph<FamilyExt>({ scope: familyScope })
   .field('aspectRatio', ({ images, effectiveEcosystem }) =>
     hasImages(images)
       ? null
-      : aspectRatioDef(
-          effectiveEcosystem === 'SD1'
-            ? { options: sd1AspectRatioBuckets }
-            : {
-                options: sdxlFamilyAspectRatioBuckets,
-                priorityOptions: sdxlFamilyPriorityAspectRatios,
-              }
-        )
+      : effectiveEcosystem === 'SD1'
+      ? aspectRatioDef({ options: sd1AspectRatioBuckets })
+      : SDXL_FULL_AR
   )
   .use(textBlock)
   .field('sampler', SAMPLER)

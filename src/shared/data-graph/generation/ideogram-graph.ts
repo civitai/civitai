@@ -9,7 +9,7 @@
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
 import {
-  aspectRatioNode,
+  sdxlFullAspectRatioNode,
   createCheckpointGraph,
   createResourcesGraph,
   promptGraph,
@@ -18,7 +18,6 @@ import {
   snippetsGraph,
   triggerWordsGraph,
 } from './common';
-import { sdxlAspectRatioBuckets } from '~/shared/constants/generation.constants';
 
 /** Ideogram 4 model version ID (CivitaiOfficial) */
 export const ideogramVersionId = 3246186;
@@ -33,7 +32,7 @@ export const ideogramGraph = new DataGraph<{ ecosystem: string; workflow: string
     []
   )
   .merge(createResourcesGraph())
-  .node('aspectRatio', aspectRatioNode({ options: sdxlAspectRatioBuckets, defaultValue: '1:1' }))
+  .node('aspectRatio', sdxlFullAspectRatioNode())
   .node('cfgScale', sliderNode({ min: 1, max: 10, defaultValue: 4, step: 0.5 }))
   .node('steps', sliderNode({ min: 1, max: 50, defaultValue: 25 }))
   .merge(triggerWordsGraph)

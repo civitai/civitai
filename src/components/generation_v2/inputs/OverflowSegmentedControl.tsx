@@ -8,13 +8,15 @@
  * Features:
  * - Uses ResizeObserver to dynamically adjust visible items based on container width
  * - Shows options in priority order (via priorityOptions) or natural order
- * - When selected item is hidden, it replaces the last visible option
- * - Built-in popover for selecting from all options
+ * - When selected item is hidden, it replaces its nearest visible neighbour, in order
+ * - Built-in popover for selecting from all options; a bottom sheet on a phone
  */
 
-import { Popover, SegmentedControl } from '@mantine/core';
+import { Popover, SegmentedControl, Text } from '@mantine/core';
 import { IconDots } from '@tabler/icons-react';
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { MobileMenuDrawer } from '~/components/Drawer/MobileMenuDrawer';
+import { useIsMobile } from '~/hooks/useIsMobile';
 
 // =============================================================================
 // Types
@@ -44,13 +46,20 @@ export interface OverflowSegmentedControlProps<T extends string = string> {
    * If not provided, uses a default card-style rendering with the option's label.
    * @param option - The option to render
    * @param selected - Whether this option is currently selected
+   * @param inSheet - True in the phone bottom sheet, where rows want bigger touch targets
    */
-  renderOption?: (option: OverflowSegmentedControlOption<T>, selected: boolean) => ReactNode;
+  renderOption?: (
+    option: OverflowSegmentedControlOption<T>,
+    selected: boolean,
+    inSheet: boolean
+  ) => ReactNode;
   /**
    * Number of columns in the grid layout for the popover.
    * If not provided, defaults to 1 (single column).
    */
   gridColumns?: number;
+  /** Title of the bottom sheet "More" opens on a phone, where the popover is replaced. */
+  drawerTitle?: ReactNode;
   className?: string;
 }
 
@@ -84,11 +93,18 @@ function DefaultMoreButton() {
 interface DefaultModalOptionProps {
   label: ReactNode;
   selected: boolean;
+  inSheet: boolean;
 }
 
-function DefaultModalOption({ label }: DefaultModalOptionProps) {
+function DefaultModalOption({ label, inSheet }: DefaultModalOptionProps) {
   return (
-    <div className="flex items-center justify-center px-3 py-2 text-sm font-medium">{label}</div>
+    <div
+      className={`flex items-center justify-center px-3 font-medium ${
+        inSheet ? 'py-3.5 text-base' : 'py-2 text-sm'
+      }`}
+    >
+      {label}
+    </div>
   );
 }
 
@@ -101,8 +117,9 @@ interface OptionGridProps<T extends string> {
   value?: T;
   disabled?: boolean;
   onSelect: (value: T) => void;
-  renderOption?: (option: OverflowSegmentedControlOption<T>, selected: boolean) => ReactNode;
+  renderOption?: OverflowSegmentedControlProps<T>['renderOption'];
   gridColumns?: number;
+  inSheet?: boolean;
 }
 
 function OptionGrid<T extends string>({
@@ -112,6 +129,7 @@ function OptionGrid<T extends string>({
   onSelect,
   renderOption,
   gridColumns = 1,
+  inSheet = false,
 }: OptionGridProps<T>) {
   const totalItems = options.length;
   const rowCount = Math.ceil(totalItems / gridColumns);
@@ -153,9 +171,9 @@ function OptionGrid<T extends string>({
               }`}
             >
               {renderOption ? (
-                renderOption(option, selected)
+                renderOption(option, selected, inSheet)
               ) : (
-                <DefaultModalOption label={option.label} selected={selected} />
+                <DefaultModalOption label={option.label} selected={selected} inSheet={inSheet} />
               )}
             </div>
           </div>
@@ -179,8 +197,10 @@ export function OverflowSegmentedControl<T extends string = string>({
   renderMoreButton,
   renderOption,
   gridColumns = 1,
+  drawerTitle,
   className,
 }: OverflowSegmentedControlProps<T>) {
+  const mobile = useIsMobile({ type: 'media' });
   // Default maxVisible to the number of options
   const maxVisible = maxVisibleProp ?? options.length;
 
@@ -229,15 +249,29 @@ export function OverflowSegmentedControl<T extends string = string>({
     // Take first N options
     let visible = baseOptions.slice(0, Math.max(1, availableSlots));
 
-    // If selected value is not in visible options, replace the last one with it
+    // If the selected value is not visible, swap it in for its nearest visible
+    // neighbour in `options` order and keep the row in that order — replacing the
+    // LAST slot put a tall pick at the wide end of the row.
     if (needsMoreButton && value) {
       const isSelectedInVisible = visible.some((opt) => opt.value === value);
-      if (!isSelectedInVisible) {
-        const selectedOption = options.find((opt) => opt.value === value);
-        if (selectedOption && visible.length > 0) {
-          // Replace the last visible option with the selected one
-          visible = [...visible.slice(0, -1), selectedOption];
-        }
+      const selectedIndex = options.findIndex((opt) => opt.value === value);
+      if (!isSelectedInVisible && selectedIndex !== -1 && visible.length > 0) {
+        const indexOf = (opt: OverflowSegmentedControlOption<T>) => options.indexOf(opt);
+        // On a tie, give up the slot nearer the row's END: the middle of a
+        // widest-first aspect row is 1:1, which a 3:4 pick must not evict.
+        const centre = (visible.length - 1) / 2;
+        const rank = (opt: OverflowSegmentedControlOption<T>) => [
+          Math.abs(indexOf(opt) - selectedIndex),
+          -Math.abs(visible.indexOf(opt) - centre),
+        ];
+        const nearest = visible.reduce((best, opt) => {
+          const [d, edge] = rank(opt);
+          const [bestD, bestEdge] = rank(best);
+          return d < bestD || (d === bestD && edge < bestEdge) ? opt : best;
+        });
+        visible = [...visible.filter((opt) => opt !== nearest), options[selectedIndex]!].sort(
+          (a, b) => indexOf(a) - indexOf(b)
+        );
       }
     }
 
@@ -296,7 +330,24 @@ export function OverflowSegmentedControl<T extends string = string>({
         fullWidth
         classNames={{ label: 'relative', innerLabel: 'static' }}
       />
-      {showMoreButton && (
+      {showMoreButton && mobile && (
+        <MobileMenuDrawer
+          opened={popoverOpened}
+          onClose={() => setPopoverOpened(false)}
+          title={drawerTitle && <Text fw={600}>{drawerTitle}</Text>}
+        >
+          <OptionGrid
+            options={options}
+            value={value}
+            disabled={disabled}
+            onSelect={handlePopoverSelect}
+            renderOption={renderOption}
+            gridColumns={gridColumns}
+            inSheet
+          />
+        </MobileMenuDrawer>
+      )}
+      {showMoreButton && !mobile && (
         <Popover
           opened={popoverOpened}
           onChange={setPopoverOpened}

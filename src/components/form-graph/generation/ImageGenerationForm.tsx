@@ -308,23 +308,16 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
       <Controller
         graph={imageHub}
         name="aspectRatio"
-        render={({ value, meta, onChange }) => {
-          const priorityOptions =
-            meta?.priorityOptions ??
-            (meta && meta.options.length > 5
-              ? meta.options.slice(1, 6).map((o) => o.value)
-              : undefined);
-          return (
-            <AspectRatioInput
-              value={value}
-              onChange={onChange}
-              label="Aspect Ratio"
-              options={meta?.options ?? []}
-              priorityOptions={priorityOptions}
-              maxVisible={5}
-            />
-          );
-        }}
+        render={({ value, meta, onChange }) => (
+          <AspectRatioInput
+            value={value}
+            onChange={onChange}
+            label="Aspect Ratio"
+            options={meta?.options ?? []}
+            priorityOptions={meta?.priorityOptions}
+            maxVisible={5}
+          />
+        )}
       />
       <Controller
         graph={imageHub}

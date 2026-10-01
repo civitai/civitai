@@ -1,6 +1,6 @@
 import { defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
-import { SDXL_SQUARE_AR, SEED } from '../defs';
+import { SDXL_FULL_AR, SEED } from '../defs';
 import {
   familyResources,
   familyScope,
@@ -31,7 +31,7 @@ export const ideogram = defineGraph<FamilyExt>({ scope: familyScope })
     })
   )
   .field('resources', familyResources)
-  .field('aspectRatio', SDXL_SQUARE_AR)
+  .field('aspectRatio', SDXL_FULL_AR)
   .field('cfgScale', perModelSlider({ min: 1, max: 10, step: 0.5, default: 4 }))
   .field('steps', perModelSlider({ min: 1, max: 50, default: 25 }))
   .use(promptOnlyTextBlock)

@@ -1741,26 +1741,16 @@ export function GenerationForm() {
             <Controller
               graph={graph}
               name="aspectRatio"
-              render={({ value, meta, onChange }) => {
-                // Prefer explicit priorityOptions from the node meta; otherwise
-                // fall back to the middle 5 items when there are more than 5.
-                const priorityOptions =
-                  (meta as { priorityOptions?: string[] }).priorityOptions ??
-                  (meta.options.length > 5
-                    ? meta.options.slice(1, 6).map((o) => o.value)
-                    : undefined);
-
-                return (
-                  <AspectRatioInput
-                    value={value}
-                    onChange={onChange}
-                    label="Aspect Ratio"
-                    options={meta.options}
-                    priorityOptions={priorityOptions}
-                    maxVisible={5}
-                  />
-                );
-              }}
+              render={({ value, meta, onChange }) => (
+                <AspectRatioInput
+                  value={value}
+                  onChange={onChange}
+                  label="Aspect Ratio"
+                  options={meta.options}
+                  priorityOptions={(meta as { priorityOptions?: string[] }).priorityOptions}
+                  maxVisible={5}
+                />
+              )}
             />
 
             {/* Duration (video ecosystems) */}
