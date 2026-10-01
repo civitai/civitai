@@ -275,6 +275,7 @@ export function PanelDetailDrawer({
                         openSetBrowsingLevelModal({
                           imageId: detailPanel.imageId!,
                           nsfwLevel: detailPanel.image!.nsfwLevel as NsfwLevel,
+                          isOwner: true,
                           onSubmit: () => {
                             // Rating change shifts the panel's nsfwLevel,
                             // which feeds both the chapter NSFW aggregate

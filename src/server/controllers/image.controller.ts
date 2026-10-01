@@ -31,6 +31,7 @@ import {
   queueImageSearchIndexUpdate,
   setVideoThumbnail,
   updateImageAcceptableMinor,
+  raiseOwnImageNsfwLevel,
   updateImageNsfwLevel,
   updateImageReportStatusByReason,
 } from '~/server/services/image.service';
@@ -852,6 +853,10 @@ export async function handleUpdateImageNsfwLevel({
 }) {
   try {
     const { id: userId, isModerator } = ctx.user;
+    // The vote below is still recorded, so Knights and moderators still review a raise.
+    const applied =
+      !isModerator &&
+      (await raiseOwnImageNsfwLevel({ id: input.id, nsfwLevel: input.nsfwLevel, userId }));
     const updatedNsfwLevel = await updateImageNsfwLevel({ ...input, userId, isModerator });
 
     if (isModerator) {
@@ -864,7 +869,7 @@ export async function handleUpdateImageNsfwLevel({
       if (valueInQueue) valueInQueue.pool.reset({ id: input.id });
     }
 
-    return updatedNsfwLevel;
+    return { nsfwLevel: updatedNsfwLevel, applied: isModerator || applied };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
