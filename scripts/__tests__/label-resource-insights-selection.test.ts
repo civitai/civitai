@@ -47,8 +47,27 @@ vi.mock('~/server/db/client', async (importOriginal) => ({
   dbWrite: { resourceInsight: { upsert: (...a: unknown[]) => upsert(...a) } },
 }));
 
+/**
+ * A Prisma `findMany` argument, as far as these assertions need to see it.
+ *
+ * `where` is an index signature rather than named fields on purpose: every
+ * assertion below reads it either whole (so a stray clause is a failure) or by
+ * one key, and both work without a cast. The point is that the captured
+ * arguments are typed ONCE here — typing them as `Record<string, never>`, which
+ * an earlier revision did, makes every read at a call site a non-overlapping
+ * conversion that only a cast can silence, and `tsconfig.json` excludes this
+ * directory, so nothing in either CI tier would have reported it.
+ * `node scripts/ci/typecheck-scripts-gate.mjs` is what sees this file.
+ */
+type IssuedQuery = {
+  where: Record<string, unknown>;
+  orderBy?: unknown;
+  take?: unknown;
+  select?: unknown;
+};
+
 /** Runs `main()` with the given CLI args and returns the queries it issued. */
-async function run(...args: string[]) {
+async function run(...args: string[]): Promise<{ version: IssuedQuery[]; metric: IssuedQuery[] }> {
   const { main } = await import('../label-resource-insights');
   // 🔴 argv[1] must NOT end with the script's filename — the script's tail guard
   // self-executes `main()` when it does, which double-runs the pass. Only
@@ -56,8 +75,8 @@ async function run(...args: string[]) {
   process.argv = ['node', 'vitest', ...args];
   await main();
   return {
-    version: versionFindMany.mock.calls.map((c) => c[0] as Record<string, never>),
-    metric: metricFindMany.mock.calls.map((c) => c[0] as Record<string, never>),
+    version: versionFindMany.mock.calls.map((c) => c[0] as IssuedQuery),
+    metric: metricFindMany.mock.calls.map((c) => c[0] as IssuedQuery),
   };
 }
 
@@ -116,7 +135,7 @@ describe('label-resource-insights selection paths', () => {
 
     it('treats --cursor as a version id, resuming the keyset after it', async () => {
       const { version } = await run('--cursor', '12345');
-      expect((version[0] as { where: { id: unknown } }).where.id).toEqual({ gt: 12345 });
+      expect(version[0].where.id).toEqual({ gt: 12345 });
     });
   });
 
@@ -126,10 +145,7 @@ describe('label-resource-insights selection paths', () => {
       expect(metric).toHaveLength(1);
       // Asserted as the exact array: the column, the direction and the tiebreak
       // are three separate things that can each be wrong on their own.
-      expect((metric[0] as { orderBy: unknown }).orderBy).toEqual([
-        { generationCount: 'desc' },
-        { modelVersionId: 'asc' },
-      ]);
+      expect(metric[0].orderBy).toEqual([{ generationCount: 'desc' }, { modelVersionId: 'asc' }]);
     });
 
     it('materialises the id list ONCE rather than paginating the mutable metric', async () => {
@@ -137,13 +153,13 @@ describe('label-resource-insights selection paths', () => {
       // `generationCount` moves while a run is in flight, so a second ordered
       // read would be a second walk over a changed ordering. One read only.
       expect(metric).toHaveLength(1);
-      expect((metric[0] as { take: unknown }).take).toBe(3);
+      expect(metric[0].take).toBe(3);
     });
 
     it('fetches the materialised ids by id, not by a re-ordered usage query', async () => {
       const { version } = await run('--top', '3');
       expect(version).toHaveLength(1);
-      expect((version[0] as { where: { id: unknown } }).where.id).toEqual({ in: [11, 22, 33] });
+      expect(version[0].where.id).toEqual({ in: [11, 22, 33] });
     });
 
     it('rejects a non-numeric --top instead of silently labeling nothing', async () => {
@@ -165,20 +181,18 @@ describe('label-resource-insights selection paths', () => {
 
     it('the default path applies it to the version query', async () => {
       const { version } = await run();
-      const { id: _id, ...predicate } = (version[0] as { where: Record<string, unknown> }).where;
+      const { id: _id, ...predicate } = version[0].where;
       expect(predicate).toEqual(expected);
     });
 
     it('--top applies it to the usage query, through the version relation', async () => {
       const { metric } = await run('--top', '3');
-      expect((metric[0] as { where: { modelVersion: unknown } }).where.modelVersion).toEqual(
-        expected
-      );
+      expect(metric[0].where.modelVersion).toEqual(expected);
     });
 
     it('--top applies it again to the chunk fetch, so neither query can widen alone', async () => {
       const { version } = await run('--top', '3');
-      const { id: _id, ...predicate } = (version[0] as { where: Record<string, unknown> }).where;
+      const { id: _id, ...predicate } = version[0].where;
       expect(predicate).toEqual(expected);
     });
 
