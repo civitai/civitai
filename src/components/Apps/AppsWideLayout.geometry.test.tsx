@@ -896,7 +896,12 @@ describe('/apps/review — the queue table spends the width on its App column', 
     expect(text(`apps-unified-review-first-version-${ONSITE_KEY}`)).toBe('first version');
     expect(text(`apps-unified-review-submitter-${ONSITE_KEY}`)).toContain(SUBMITTER_USERNAME);
     expect(text(`apps-unified-review-plays-${ONSITE_KEY}`)).toContain('plays');
-    expect(text(`apps-unified-review-age-${ONSITE_KEY}`)).not.toBe('—');
+    // 🔴 A SHAPE, NOT `not.toBe('—')`. That form is dead on this arm: `compactRelativeTime`
+    // returns either the dash or a label, so it discriminates the production placeholder but
+    // NOT the emptiness this arm is named for — rendering `{''}` passed it. The value itself
+    // is pinned in `UnifiedReviewList.browser.test.tsx`; `now` here is the real clock, so a
+    // shape is what this tier can assert.
+    expect(text(`apps-unified-review-age-${ONSITE_KEY}`)).toMatch(/^(now|\d+(m|h|d|w|mo|y))$/);
 
     // The icon is a LEAF `<img>` — no text, no children — so presence plus a `src` is what
     // "it rendered" means there.

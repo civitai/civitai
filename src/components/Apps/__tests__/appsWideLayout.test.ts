@@ -178,8 +178,17 @@ describe('every shipped ledger is valid', () => {
      * character must not.
      */
     const { usernameInputSchema } = await import('~/server/schema/user.schema');
+    /**
+     * 🔴 ANCHORED, BECAUSE THE LOOSE FORM WAS WALKABLE BY A LINE COMMENT. `codeOf` is
+     * `stripBlockComments`, which strips `/* … *\/` only, and `.exec` takes the FIRST
+     * match — so a `// const SUBMITTER_USERNAME = 'w'.repeat(25);` above a real
+     * `repeat(15)` read 25 and this arm passed green over the exact understatement it
+     * exists to stop. `^…;$` with `m` cannot match a commented or trailing copy.
+     * (`prettier --write` over the geometry file is a zero-byte diff, so the anchor is
+     * format-stable rather than merely tighter.)
+     */
     const src = codeOf('src/components/Apps/AppsWideLayout.geometry.test.tsx');
-    const declared = /const SUBMITTER_USERNAME = 'w'\.repeat\((\d+)\)/.exec(src);
+    const declared = /^const SUBMITTER_USERNAME = 'w'\.repeat\((\d+)\);$/m.exec(src);
     expect(declared, 'the geometry fixture no longer declares SUBMITTER_USERNAME').not.toBeNull();
     const length = Number(declared![1]);
     expect(

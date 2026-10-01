@@ -573,9 +573,7 @@ describe('mod queue procs — widened to kind IN (onsite, offsite), each row car
       // assertions cannot see a FOURTH key added to the select — that is what the exact
       // select key-set assertion below is for.
       for (const stripped of ['icon', 'cover', 'metric']) {
-        expect(row.appListing, `appListing.${stripped} must not ship`).not.toHaveProperty(
-          stripped
-        );
+        expect(row.appListing, `appListing.${stripped} must not ship`).not.toHaveProperty(stripped);
       }
     }
     const selects = mockRead.appListingPublishRequest.findMany.mock.calls.map(
@@ -597,6 +595,10 @@ describe('mod queue procs — widened to kind IN (onsite, offsite), each row car
        * with nothing reading on it and the whole blocks suite stays green. Pinning the
        * select is what turns a widening into a decision; `icon`/`cover`/`metric` are the
        * three this queue adds, and everything else is `submissionSelect`'s.
+       *
+       * ⚠️ SCOPED TO THE NESTED `appListing` SELECT. A column added to `submissionSelect`'s
+       * TOP level (beside `id`, `slug`, `changelog`) also ships with nothing reading on it,
+       * and no arm here sees that half.
        */
       expect(Object.keys(select).sort()).toEqual([
         'category',
