@@ -120,7 +120,8 @@ main-app procedure deleted. Everything else stays spoke-owned (no endpoint).
   *could* repoint to a spoke endpoint later, but the modal can't.)
 - **`upsertTagsOnImageNew`** — used by the scan webhook + `apply-voted-tags` job. It's a low-level tagging
   **utility**, not a moderator action; the pipeline can't call a mod endpoint. Not an endpoint candidate.
-  The spoke's copy is a faithful port; accept the duplication or extract a shared package later.
+  The spoke's copy follows the main app but recomputes on every write rather than only on moderated-tag
+  changes; keep `queueBlockedTagReviews` in step in both.
 
 ### No endpoint (page-only — spoke already owns, main-app version orphaned)
 `resolveIngestionError`, `resolveArticleRatingReview`, article `restore`/`delete`, blocklist, cosmetics grant,

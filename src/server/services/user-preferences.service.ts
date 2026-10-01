@@ -1040,12 +1040,14 @@ export async function getHiddenImagesForUser({
             type: true,
             postId: true,
             userId: true,
+            ingestion: true,
+            nsfwLevelLocked: true,
+            metadata: true,
+            scanJobs: true,
             // `ImageGuard2` reads these off the image it is handed (`useImageStore`
             // spreads it), and swaps the tile for the ToS notice on `tosViolation`.
             tosViolation: true,
             needsReview: true,
-            ingestion: true,
-            nsfwLevelLocked: true,
             post: { select: { publishedAt: true, availability: true, userId: true } },
           },
         },
@@ -1069,7 +1071,7 @@ export async function getHiddenImagesForUser({
 
   return {
     items: engagements.slice(0, limit).map(({ image, createdAt }) => {
-      const { post, ingestion, nsfwLevelLocked, ...rest } = image;
+      const { post, ingestion, nsfwLevelLocked, metadata, scanJobs, ...rest } = image;
       const isProfileCover = coverImageIds.has(image.id);
       const isOwner = image.userId === userId;
 
@@ -1080,9 +1082,17 @@ export async function getHiddenImagesForUser({
       // stop a revoked image from being handed back to the browser.
       const canViewMedia =
         isOwner ||
-        (isImageReviewed({ ingestion, nsfwLevelLocked }) &&
+        (isImageReviewed({
+          ingestion,
+          nsfwLevelLocked,
+          nsfwLevelReason: (metadata as { nsfwLevelReason?: string | null } | null)
+            ?.nsfwLevelReason,
+          scanFailureClass: (scanJobs as { error?: { failureClass?: string } } | null)?.error
+            ?.failureClass,
+        }) &&
           rest.nsfwLevel !== NsfwLevel.Blocked &&
           !rest.tosViolation &&
+          !rest.needsReview &&
           (post
             ? !!post.publishedAt &&
               post.publishedAt <= now &&

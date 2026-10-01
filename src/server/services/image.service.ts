@@ -38,7 +38,7 @@ import {
   METRICS_IMAGES_SEARCH_INDEX,
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
-import { imageReviewedSql } from '~/server/common/image-visibility';
+import { imageReviewedSql, KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '~/server/common/image-visibility';
 import {
   BlockedReason,
   ImageSort,
@@ -2291,11 +2291,9 @@ const getAllImagesUncaptured = async (
     AND.push(Prisma.sql`i."needsReview" IS NULL`);
     // Acceptable in collections, need to check for contest collection only
     if (!collectionId) AND.push(Prisma.sql`i."acceptableMinor" = FALSE`);
-    AND.push(
-      browsingLevel
-        ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`
-        : Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
-    );
+    if (browsingLevel)
+      AND.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`);
+    AND.push(imageReviewedSql());
   }
 
   // TODO: Adjust ImageMetric
@@ -5616,6 +5614,7 @@ export const getImagesForModelVersion = async ({
         ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
         : Prisma.sql`i."nsfwLevel" != 0`
     );
+    imageWhere.push(imageReviewedSql());
   }
 
   const query = Prisma.sql`
@@ -6980,7 +6979,7 @@ export async function updateImageNsfwLevel({
     if (!image) throw throwNotFoundError('Image not found');
 
     const metadata = (image.metadata as ImageMetadata) ?? undefined;
-    if (activity === 'setNsfwLevelKono' && !reason) reason = 'Knights Vote';
+    if (activity === 'setNsfwLevelKono' && !reason) reason = KNIGHTS_VOTE_NSFW_LEVEL_REASON;
     const updatedMetadata = { ...metadata, nsfwLevelReason: reason ?? null };
 
     await dbWrite.image.update({

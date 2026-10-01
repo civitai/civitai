@@ -912,6 +912,7 @@ Operational runbooks, security reviews, incident handoffs, and content-policy re
 |--------|--------------|
 | Image Resources | [docs/features/image-resources.md](docs/features/image-resources.md) |
 | NSFW Filtering | [docs/features/nsfw-filtering.md](docs/features/nsfw-filtering.md) |
+| Image Rating and Visibility | [docs/features/image-rating.md](docs/features/image-rating.md) |
 | Buzz Accounts | [docs/features/buzz-accounts.md](docs/features/buzz-accounts.md) |
 | Monetization rules (paid access / fees / donation goals) | [docs/features/monetization-rules.md](docs/features/monetization-rules.md) |
 | Notifications | [docs/features/notifications.md](docs/features/notifications.md) |
