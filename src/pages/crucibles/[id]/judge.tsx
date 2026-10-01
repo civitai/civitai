@@ -41,7 +41,7 @@ import { CrucibleJudgingUI } from '~/components/Crucible/CrucibleJudgingUI';
 import type { JudgingPairData, WatchedMs } from '~/components/Crucible/CrucibleJudgingUI';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { getCrucibleUrl } from '~/utils/crucible-helpers';
-import { abbreviateNumber } from '~/utils/number-helpers';
+import { numberWithCommas } from '~/utils/number-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 
@@ -433,17 +433,19 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
               <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-3 lg:grid-cols-5">
                 <StatItem
                   label="Pairs Left"
-                  value={progress ? abbreviateNumber(progress.remainingPairs) : '-'}
+                  value={progress ? numberWithCommas(progress.remainingPairs) : '-'}
                   secondary="For you to judge here"
                 />
                 <StatItem
                   label="Pairs Rated This Session"
-                  value={sessionVotes.toString()}
-                  secondary={sessionSkips > 0 ? `${sessionSkips} skipped` : undefined}
+                  value={numberWithCommas(sessionVotes)}
+                  secondary={
+                    sessionSkips > 0 ? `${numberWithCommas(sessionSkips)} skipped` : undefined
+                  }
                 />
                 <StatItem
                   label="Total Pairs Rated"
-                  value={abbreviateNumber((judgeStats?.totalPairsRated ?? 0) + sessionVotes)}
+                  value={numberWithCommas((judgeStats?.totalPairsRated ?? 0) + sessionVotes)}
                   secondary={
                     judgeStats?.percentileRank
                       ? `Top ${judgeStats.percentileRank}% of judges`
@@ -452,14 +454,14 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
                 />
                 <StatItem
                   label="Current Streak"
-                  value={currentStreak > 0 ? `${currentStreak} pairs` : '0'}
+                  value={currentStreak > 0 ? `${numberWithCommas(currentStreak)} pairs` : '0'}
                   secondary={
                     currentStreak > 0 ? 'Votes in a row, no skips' : 'Vote to build streak'
                   }
                 />
                 <StatItem
                   label="Your Influence"
-                  value={influenceScore.toString()}
+                  value={numberWithCommas(influenceScore)}
                   secondary="Doesn't weight your votes"
                   info={
                     <>
@@ -630,7 +632,7 @@ function EndCrucibleState({
         {onlyOwnEntries
           ? "You're never shown your own entries, so judging opens for you once at least 2 other creators have entered."
           : sessionVotes > 0
-          ? `Great judging session! You rated ${sessionVotes} pairs.`
+          ? `Great judging session! You rated ${numberWithCommas(sessionVotes)} pairs.`
           : 'Check back soon for new pairs to judge.'}
       </Text>
 

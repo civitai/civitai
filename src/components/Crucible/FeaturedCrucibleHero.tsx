@@ -3,7 +3,7 @@ import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLe
 import { IconFlame, IconLogin, IconInfoCircle, IconStar } from '@tabler/icons-react';
 import Link from 'next/link';
 import { trpc } from '~/utils/trpc';
-import { abbreviateNumber } from '~/utils/number-helpers';
+import { numberWithCommas } from '~/utils/number-helpers';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { getBuzzCurrencyConfig } from '~/shared/constants/currency.constants';
@@ -119,11 +119,11 @@ function FeaturedCrucibleHeroContent({ featured }: { featured: FeaturedCrucibleD
           <div className="my-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
             <StatItem
               label="Prize Pool"
-              value={`${abbreviateNumber(featured.prizePool)} Buzz`}
+              value={`${numberWithCommas(featured.prizePool)} Buzz`}
               color={getBuzzCurrencyConfig(featured.buzzType).color}
             />
             <StatItem label="Time Remaining" value={featured.timeRemaining} />
-            <StatItem label="Entries" value={String(featured.entriesCount)} />
+            <StatItem label="Entries" value={numberWithCommas(featured.entriesCount)} />
           </div>
 
           {/* Action buttons */}

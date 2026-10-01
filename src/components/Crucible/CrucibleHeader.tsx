@@ -10,7 +10,7 @@ import { CrucibleTimer } from '~/components/Crucible/CrucibleTimer';
 import { Username } from '~/components/User/Username';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { Currency, CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
-import { abbreviateNumber } from '~/utils/number-helpers';
+import { numberWithCommas } from '~/utils/number-helpers';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { CrucibleContentLevelBadges } from '~/components/Crucible/CrucibleContentLevelBadges';
 import { CrucibleUserLink } from '~/components/Crucible/CrucibleUserLink';
@@ -212,7 +212,7 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
             <div className="flex items-center gap-2">
               <IconUsers size={18} className="text-dimmed" />
               <Text size="sm" fw={600} c="white">
-                {abbreviateNumber(entryCount)} {entryCount === 1 ? 'entry' : 'entries'}
+                {numberWithCommas(entryCount)} {entryCount === 1 ? 'entry' : 'entries'}
               </Text>
             </div>
 

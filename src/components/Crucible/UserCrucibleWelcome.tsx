@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { IconTrophy, IconCoin, IconMedal, IconChartBar } from '@tabler/icons-react';
 import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { abbreviateNumber } from '~/utils/number-helpers';
+import { numberWithCommas } from '~/utils/number-helpers';
 import type { RouterOutput } from '~/types/router';
 import { ActiveCruciblesCarousel } from './ActiveCruciblesCarousel';
 import { CrucibleIntro } from './CrucibleIntro';
@@ -92,7 +92,7 @@ function UserCrucibleWelcomeContent({
           label="Buzz Won"
           value={stats?.buzzWon ?? 0}
           isLoading={isLoading}
-          formatValue={(v) => abbreviateNumber(v ?? 0)}
+          formatValue={(v) => numberWithCommas(v ?? 0)}
         />
         <StatCard
           icon={<IconMedal size={24} />}
@@ -135,7 +135,7 @@ const iconColorMap = {
 };
 
 function StatCard({ icon, iconColor, label, value, isLoading, formatValue }: StatCardProps) {
-  const displayValue = formatValue ? formatValue(value) : String(value ?? 0);
+  const displayValue = formatValue ? formatValue(value) : numberWithCommas(value ?? 0);
 
   return (
     <Card

@@ -43,7 +43,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useMediaUpload } from '~/hooks/useMediaUpload';
 import { clipLengthAllowed } from '~/shared/constants/crucible.constants';
 import type { VideoMetadata } from '~/server/schema/media.schema';
-import { formatDuration } from '~/utils/number-helpers';
+import { formatDuration, numberWithCommas } from '~/utils/number-helpers';
 import { Currency, ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { addPostImageSchema } from '~/server/schema/post.schema';
 import { downloadGeneratorImages } from '~/utils/generator-import';
@@ -869,7 +869,7 @@ export default function CrucibleSubmitEntryModal({
         <div className="flex-1 overflow-y-auto px-5 pb-5">
           {minVotes > 0 && (
             <Alert color="yellow" radius="md" mb="md" icon={<IconAlertCircle size={16} />}>
-              This crucible is close to ending. An entry needs about {minVotes}{' '}
+              This crucible is close to ending. An entry needs about {numberWithCommas(minVotes)}{' '}
               {minVotes === 1 ? 'vote' : 'votes'} to place and win a prize, and a new one may not
               get there in time.
             </Alert>

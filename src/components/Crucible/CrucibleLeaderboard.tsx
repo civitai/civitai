@@ -1,7 +1,7 @@
 import { Paper, Stack, Text, Title, Box, Group, Skeleton, Button } from '@mantine/core';
 import { IconChevronLeft, IconChevronRight, IconCrown, IconTrophy } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { abbreviateNumber } from '~/utils/number-helpers';
+import { numberWithCommas } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { Currency } from '~/shared/utils/prisma/enums';
@@ -129,7 +129,7 @@ export function CrucibleLeaderboard({
         {awarded ? (
           <Box className="rounded-lg bg-[#1a1b1e] p-3 text-center">
             <Text className="text-2xl font-bold text-yellow-500">
-              {abbreviateNumber(totalPrizePool)} Buzz
+              {numberWithCommas(totalPrizePool)} Buzz
             </Text>
             <Text size="xs" c="dimmed" mt={4}>
               Total Prize Pool
@@ -172,7 +172,7 @@ export function CrucibleLeaderboard({
             {remainingPosLabel}
           </Text>
           <Text size="xs" c="dimmed">
-            {abbreviateNumber(remainingPrizeAmount)} Buzz
+            {numberWithCommas(remainingPrizeAmount)} Buzz
           </Text>
         </Box>
       )}
@@ -343,7 +343,7 @@ function LeaderboardEntryItem({
 
         {/* Score */}
         <Text size="sm" fw={600} className="text-blue-400">
-          {Math.round(entry.score)} pts
+          {numberWithCommas(Math.round(entry.score))} pts
         </Text>
       </div>
     </Box>

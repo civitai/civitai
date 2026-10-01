@@ -63,7 +63,7 @@ import {
   ImageIngestionStatus,
   MediaType,
 } from '~/shared/utils/prisma/enums';
-import { abbreviateNumber } from '~/utils/number-helpers';
+import { numberWithCommas } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Gated } from '~/components/Gated/Gated';
 import { formatDate } from '~/utils/date-helpers';
@@ -274,9 +274,9 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
             Are you sure you want to cancel this crucible? This action cannot be undone.
           </Text>
           <Text size="sm" c="dimmed">
-            All entry fees ({paidEntryCount} paid {paidEntryCount === 1 ? 'entry' : 'entries'} ×{' '}
-            {crucible.entryFee.toLocaleString()} Buzz = {entryFeePool.toLocaleString()} Buzz total)
-            will be refunded to participants.
+            All entry fees ({numberWithCommas(paidEntryCount)} paid{' '}
+            {paidEntryCount === 1 ? 'entry' : 'entries'} × {crucible.entryFee.toLocaleString()} Buzz
+            = {entryFeePool.toLocaleString()} Buzz total) will be refunded to participants.
           </Text>
           {crucible.seededPrizePool > 0 && (
             <Text size="sm" c="dimmed">
@@ -353,8 +353,8 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
             <div>
               {/* Stats Grid */}
               <div className="mb-6 grid grid-cols-3 gap-4">
-                <StatBox value={entryCount.toString()} label="Entries" />
-                <StatBox value={abbreviateNumber(judgesCount)} label="Judges" />
+                <StatBox value={numberWithCommas(entryCount)} label="Entries" />
+                <StatBox value={numberWithCommas(judgesCount)} label="Judges" />
                 <StatBox {...countdownStat(crucible)} />
               </div>
 
@@ -550,7 +550,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                   },
                   {
                     label: 'Total Entry Cap',
-                    value: `${crucible.maxTotalEntries} entries`,
+                    value: `${numberWithCommas(crucible.maxTotalEntries ?? 0)} entries`,
                     visible: !!crucible.maxTotalEntries,
                   },
                   {

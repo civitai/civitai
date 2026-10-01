@@ -98,6 +98,7 @@ import { getBuzzCurrencyConfig } from '~/shared/constants/currency.constants';
 import { CrucibleStatus, Currency, MediaType } from '~/shared/utils/prisma/enums';
 import type { RouterOutput } from '~/types/router';
 import { getCrucibleUrl, getFreeEntriesLabel, toCrucibleBuzzType } from '~/utils/crucible-helpers';
+import { numberWithCommas } from '~/utils/number-helpers';
 import { capitalize } from '~/utils/string-helpers';
 
 const InputContentRatingSelect = withController(ContentRatingSelect);
@@ -1016,7 +1017,9 @@ export function CrucibleUpsertWizard(props: Props) {
           )}
           <Group justify="space-between">
             <Text c="dimmed">Max Total Entries</Text>
-            <Text fw={500}>{values.maxTotalEntries || 'Unlimited'}</Text>
+            <Text fw={500}>
+              {values.maxTotalEntries ? numberWithCommas(values.maxTotalEntries) : 'Unlimited'}
+            </Text>
           </Group>
           <Group justify="space-between">
             <Text c="dimmed">Required Resources</Text>

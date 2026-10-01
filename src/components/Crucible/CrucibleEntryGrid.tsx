@@ -20,6 +20,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { rankCrucibleEntries } from '~/utils/crucible-helpers';
+import { numberWithCommas } from '~/utils/number-helpers';
 
 export type CrucibleEntryData = {
   id: number;
@@ -152,7 +153,7 @@ export function CrucibleEntryGrid({
             <IconUsers size={20} className="text-gray-500" />
             {title}
             <Text component="span" size="sm" c="dimmed" fw="normal">
-              ({displayCount})
+              ({numberWithCommas(displayCount)})
             </Text>
           </Title>
         )}
