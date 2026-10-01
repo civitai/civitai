@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as PromptModule from '~/server/services/text-scan/prompt';
 // Side-effect imports: the canonical mocks the handler's graph reaches at import time.
 import '~/__tests__/mocks/logging.mock';
@@ -18,8 +19,14 @@ vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
 const { default: handler } = await import('~/pages/api/testing/chat-completion-scan');
 const { registerTextScanProfile } = await import('~/server/services/text-scan/profiles');
 const { submitWorkflow } = await import('@civitai/client');
-const { getActiveTextScanPrompts, getTextScanConfig, insertTextScanPrompt, setTextScanConfig } =
-  await import('~/server/services/text-scan/prompt');
+const {
+  composeUserMessage,
+  getActiveTextScanPrompts,
+  getTextScanConfig,
+  insertTextScanPrompt,
+  setTextScanConfig,
+} = await import('~/server/services/text-scan/prompt');
+const { textScanContentHash } = await import('~/server/services/text-scan/submit');
 
 registerTextScanProfile({
   entityType: 'Post',
@@ -57,6 +64,7 @@ function run({
 
   let statusCode = 0;
   let payload: unknown;
+  let headers: Record<string, string> = {};
   const res = {
     status(code: number) {
       statusCode = code;
@@ -66,11 +74,18 @@ function run({
       payload = data;
       return res;
     },
-    send: () => res,
-    setHeader: () => res,
+    send(data: unknown) {
+      payload = data;
+      return res;
+    },
+    setHeader(k: string, v: string) {
+      headers = { ...headers, [k]: v };
+      return res;
+    },
     end: () => res,
     _status: () => statusCode,
     _body: () => payload as Record<string, unknown>,
+    _headers: () => headers,
   };
 
   return handler(req as never, res as never).then(() => res);
@@ -264,5 +279,173 @@ describe('chat-completion-scan text-scan actions', () => {
     expect(
       (await call({ action: 'scanEntity', entityType: 'Bounty', entityId: 1 }))._status()
     ).toBe(400);
+  });
+});
+
+const entrySubjects = new Map([
+  [
+    1,
+    {
+      fields: [{ heading: 'Description', text: 'plain text' }],
+      declared: { nsfwLevel: 1 },
+      userId: 10,
+    },
+  ],
+  [
+    2,
+    {
+      fields: [{ heading: 'Description', text: 'line1\nsays "hi"' }],
+      declared: { nsfwLevel: 1 },
+      userId: 20,
+    },
+  ],
+]);
+registerTextScanProfile({
+  entityType: 'BountyEntry',
+  labels: ['nsfw'],
+  load: async (ids) =>
+    new Map(ids.filter((id) => entrySubjects.has(id)).map((id) => [id, entrySubjects.get(id)!])),
+});
+
+const PROMPT_IDS = { base: 1, nsfw: 2 };
+const scanRow = (entityId: number, contentHash: string, reason = 'reason "quoted"') => ({
+  entityId,
+  workflowId: `wf-${entityId}`,
+  triggeredLabels: ['nsfw'],
+  nsfwLevel: 8,
+  result: {
+    version: 1,
+    labels: { nsfw: { level: 'x', reason } },
+    promptIds: PROMPT_IDS,
+    model: 'air:test',
+  },
+  contentHash,
+  updatedAt: new Date('2026-09-20T00:00:00Z'),
+});
+const hashOf = (id: number) =>
+  textScanContentHash({
+    user: composeUserMessage(entrySubjects.get(id)!, 1000),
+    promptIds: PROMPT_IDS,
+    model: 'air:test',
+    thinking: false,
+  });
+const queryValues = (call: number) => vi.mocked(dbMock.dbRead.$queryRaw).mock.calls[call].slice(1);
+
+describe('sampleShadow', () => {
+  it('rejects a label the profile does not scan', async () => {
+    const res = await call({ action: 'sampleShadow', entityType: 'BountyEntry', label: 'scam' });
+    expect(res._status()).toBe(400);
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('flags changed and deleted entities', async () => {
+    vi.mocked(dbMock.dbRead.$queryRaw).mockResolvedValue([
+      scanRow(1, hashOf(1)),
+      scanRow(2, 'hash-from-older-text'),
+      scanRow(99, 'whatever'),
+    ] as never);
+    const res = await call({ action: 'sampleShadow', entityType: 'BountyEntry', label: 'nsfw' });
+    expect(res._status()).toBe(200);
+    const items = (res._body() as { items: Array<Record<string, unknown>> }).items;
+    expect(queryValues(0)).toContain('BountyEntry:shadow');
+    expect(queryValues(0)).not.toContain('BountyEntry');
+    expect(items.map((i) => [i.entityId, i.textChangedSinceScan])).toEqual([
+      [1, false],
+      [2, true],
+      [99, null],
+    ]);
+    expect(items[2]).toMatchObject({
+      text: null,
+      userId: null,
+      verdict: 'x',
+      reason: 'reason "quoted"',
+    });
+    expect(items[0]).toMatchObject({ userId: 10, triggered: true, declared: { nsfwLevel: 1 } });
+  });
+
+  it('filters to the active prompt ids unless asked for any', async () => {
+    vi.mocked(dbMock.dbRead.$queryRaw).mockResolvedValue([] as never);
+    await call({ action: 'sampleShadow', entityType: 'BountyEntry', label: 'nsfw' });
+    await call({
+      action: 'sampleShadow',
+      entityType: 'BountyEntry',
+      label: 'nsfw',
+      promptScope: 'any',
+    });
+    expect(queryValues(0)).toContain(JSON.stringify(PROMPT_IDS));
+    expect(queryValues(1)).not.toContain(JSON.stringify(PROMPT_IDS));
+  });
+
+  it('csv neutralises formulas and escapes quotes/newlines', async () => {
+    vi.mocked(dbMock.dbRead.$queryRaw).mockResolvedValue([
+      scanRow(1, hashOf(1)),
+      scanRow(2, hashOf(2), '=HYPERLINK("x")'),
+    ] as never);
+    const res = await call({
+      action: 'sampleShadow',
+      entityType: 'BountyEntry',
+      label: 'nsfw',
+      format: 'csv',
+    });
+    expect(res._status()).toBe(200);
+    expect(res._headers()['Content-Type']).toBe('text/csv; charset=utf-8');
+    const csv = res._body() as unknown as string;
+    expect(csv.split('\r\n')[0]).toBe(
+      '"entityType","entityId","userId","scannedAt","triggered","verdict","reason","declared","textChangedSinceScan","text","grade","note"'
+    );
+    expect(csv).toContain('"reason ""quoted"""');
+    expect(csv).toContain(`"'=HYPERLINK(""x"")"`);
+    expect(csv).not.toContain('"=HYPERLINK');
+    expect(csv).toContain('line1\nsays ""hi""');
+  });
+});
+
+describe('quoteEntities', () => {
+  it('prices the production composition with whatif and no callbacks', async () => {
+    vi.mocked(submitWorkflow)
+      .mockResolvedValueOnce({ data: { id: 'q1', cost: { total: 4 } } } as never)
+      .mockResolvedValueOnce({ data: { id: 'q2', cost: { total: 6 } } } as never);
+    const res = await call({
+      action: 'quoteEntities',
+      entityType: 'Post',
+      entityIds: [1, 2],
+      concurrency: 1,
+    });
+    expect(res._status()).toBe(200);
+    const sent = vi.mocked(submitWorkflow).mock.calls[0][0];
+    expect(sent.query).toEqual({ whatif: true });
+    expect(sent.body!.callbacks ?? []).toEqual([]);
+    expect(res._body()).toMatchObject({ count: 2, quoted: 2, meanCostTotal: 5, maxCostTotal: 6 });
+  });
+
+  it('passes a thinking override into the step', async () => {
+    vi.mocked(submitWorkflow).mockResolvedValue({ data: { id: 'q', cost: { total: 1 } } } as never);
+    await call({ action: 'quoteEntities', entityType: 'Post', entityIds: [1] });
+    await call({ action: 'quoteEntities', entityType: 'Post', entityIds: [1], thinking: true });
+    const [off, on] = vi
+      .mocked(submitWorkflow)
+      .mock.calls.map((c) => (c[0].body!.steps[0] as any).input.chatTemplateKwargs);
+    expect(off).toEqual({ enable_thinking: false });
+    expect(on).toEqual({ enable_thinking: true });
+  });
+
+  it('reports a missing entity and text below minChars without failing the batch', async () => {
+    vi.mocked(submitWorkflow).mockResolvedValue({ data: { id: 'q', cost: { total: 1 } } } as never);
+    const missing = await call({
+      action: 'quoteEntities',
+      entityType: 'BountyEntry',
+      entityIds: [99],
+    });
+    expect(missing._body()).toMatchObject({
+      count: 1,
+      quoted: 0,
+      results: [{ entityId: 99, ok: false, error: 'entity not found' }],
+    });
+    const short = await call({ action: 'quoteEntities', entityType: 'Post', entityIds: [99] });
+    expect(short._body()).toMatchObject({
+      quoted: 0,
+      results: [{ entityId: 99, ok: false, error: 'too-short' }],
+    });
+    expect(submitWorkflow).not.toHaveBeenCalled();
   });
 });

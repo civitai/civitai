@@ -64,6 +64,16 @@
  *     `scanEntity` over up to 50 ids, with outcome counts, refusal rate and
  *     per-label firing counts. Text below the profile's minChars is not sent.
  *
+ *   { "action": "sampleShadow", "entityType": "Post", "label": "nsfw", "verdict"?: "triggered",
+ *     "n"?: 100, "sinceDays"?: 14, "seed"?: "shadow", "promptScope"?: "active" | "any",
+ *     "format"?: "json" | "csv" }
+ *     A reproducible random sample of SHADOW verdicts (`<Entity>:shadow` rows) for moderator
+ *     grading, with the entity's current text. Only verdicts made with the active prompts
+ *     unless `promptScope` is "any". `textChangedSinceScan` marks rows edited after the scan.
+ *
+ *   { "action": "quoteEntities", "entityType": "Post", "entityIds": [...], "model"?, "thinking"? }
+ *     `whatif`-prices the production composition for up to 50 real entities. Submits nothing.
+ *
  * Label definitions and policy text are INPUTS, never defaults in this file.
  * `labels` are bare names; pass any definitions via `labelDefinitions` or
  * `systemPrompt` at call time.
