@@ -2443,6 +2443,12 @@ const REDIS_KEYS_UNPREFIXED = {
   CACHES: {
     ECOSYSTEM_SEO: 'packed:caches:ecosystem-seo',
     RESOURCE_LOAD_RESIDENCY: 'packed:caches:resource-load-residency',
+    // Full resource-intent responses (degraded ones under a short TTL). The v1
+    // segment pins the response shape; see resource-intent.service.ts for the
+    // rest of the key (…:<sha256> of prompt|baseModel|browsingLevel|cap|specVersion).
+    // `cap` is in there because it bounds the shortlist and so bounds the cached
+    // suggestions — omitting it let one prompt's entry be reused across limits.
+    JEV_RESOURCE_INTENT: 'packed:caches:jev-resource-intent:v1',
     METRIC_EXCLUDED_USERS: 'packed:caches:metric-excluded-users',
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',

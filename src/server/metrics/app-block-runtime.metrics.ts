@@ -223,6 +223,13 @@ export type AppBlockEndpoint =
   // catalog searches. Same bucket, different question when it fails.
   | 'gated_images'
   | 'generation_resources'
+  // The resource-intent primitive (`POST /api/v1/blocks/resource-intent`). Its
+  // OWN label rather than folding into 'generation_resources': that route is a
+  // bounded id-keyed rehydrate, this one is up to TWO vendor LLM round trips
+  // plus a Meili search, so its latency is dominated by an external service —
+  // merging them would bury the only block route that can be slow for a
+  // vendor-billing reason inside a constant-time read's p95.
+  | 'resource_intent'
   // The read-only chat-tool surface (#398 AC5). It is a model-shaped view of
   // the SAME clamped catalog path 'models' serves, and it shares that
   // endpoint's per-token rate-limit budget deliberately — so it gets its own

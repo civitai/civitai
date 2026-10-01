@@ -190,6 +190,10 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
     exposure: 'READ_PUBLIC',
     why: 'The public, maturity-clamped model catalog. No requiredScope.',
   },
+  'src/pages/api/v1/blocks/resource-intent.ts': {
+    exposure: 'READ_PUBLIC',
+    why: 'Jev resource-intent suggestions: public, maturity-clamped resource data projected through projectSafeGenerationResource — no requiredScope, nothing viewer-scoped, nothing written. It costs vendor LLM spend per call (the reason it keeps the default fail-closed 503 on an approval-lookup failure, unlike its READ_PUBLIC siblings), but the RESPONSE discloses only what the catalog routes disclose.',
+  },
   'src/pages/api/v1/blocks/shared-storage/append.ts': {
     exposure: 'WRITE',
     why: 'Creates a cross-user shared_kv row: PUBLIC, moderated, user-authored text that every other user of the app reads. The highest-consequence of the six shared writes — a takedown that left it reachable would let a suspended app keep publishing into a community feed on a signed-in viewer’s behalf, and every row published would outlive the suspension. It also spends that viewer’s per-user row cap and the app’s byte quota. ALREADY refused before this gate, incidentally, for the same delegation reason as increment.ts: it goes through resolveSharedContext, which reads app_blocks.status itself.',
@@ -1832,6 +1836,7 @@ describe('the approval predicate is not open-coded a second time', () => {
     'src/pages/api/v1/blocks/generation-resources.ts',
     'src/pages/api/v1/blocks/images.ts',
     'src/pages/api/v1/blocks/models.ts',
+    'src/pages/api/v1/blocks/resource-intent.ts',
     'src/pages/api/v1/blocks/tools.ts',
     'src/pages/api/v1/blocks/user-checkpoint/set.ts',
   ];
