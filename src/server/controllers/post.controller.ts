@@ -22,6 +22,7 @@ import {
   validateContestCollectionEntry,
 } from '~/server/services/collection.service';
 import { sendMessagesToCollaborators } from '~/server/services/entity-collaborator.service';
+import { readPostAppChip } from '~/server/services/blocks/post-app-chip.service';
 import { publishModel3D } from '~/server/services/model3d.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import {
@@ -556,7 +557,21 @@ export const getPostHandler = async ({ input, ctx }: { input: GetByIdInput; ctx:
       if (blocked) throw throwNotFoundError();
     }
 
-    return post;
+    // "Published with <app>" chip. Resolved HERE rather than inside
+    // `getPostDetail` for two reasons: this is the single tRPC read the post
+    // page actually renders from, and the chip needs the REQUEST's viewer to
+    // resolve a store-visibility scope — a request-scoped concern, like the
+    // block check above. `getPostDetail` has two other callers (the page's SSR
+    // gating read, which throws its result away, and `getPostEditDetail`) that
+    // would each pay for a resolution nothing renders.
+    //
+    // 🔴 AFTER the authorisation above, never before: the resolver takes the
+    // post as already-admitted for this viewer and does not re-derive its
+    // visibility. Fail-open by construction (`null` on any error), so it cannot
+    // take the post page down.
+    const publishedWithApp = await readPostAppChip({ postId: post.id, user: ctx.user });
+
+    return { ...post, publishedWithApp };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
