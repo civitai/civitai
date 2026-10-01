@@ -229,16 +229,25 @@ describe('typed text outlives the reload every write issues', () => {
    * sibling test above forbids `{#if}` around a section because the tab strip's conditionals
    * DESTROYED the inactive sections' markup; a collapse is a conditional-shaped change, so it is
    * exactly the back door that test was written against. `<details>` HIDES its content and keeps it
-   * mounted, which is the whole reason it is allowed here — pinning that the context panel sits
-   * INSIDE the `<details>` is what makes a later `{#if}` rewrite fail rather than pass.
+   * mounted, which is the whole reason it is allowed here.
    *
-   * 🔴 DEFAULT-CLOSED IS THE ABSENCE OF AN ATTRIBUTE, so a `toContain('<details')` pin is satisfied
-   * by `<details open>` and asserts nothing about it. The opening tag is extracted and tested for
-   * `open` directly — with a control proving the test CAN see one, because a negative assertion
-   * whose matcher never fires is green for the wrong reason.
+   * 🔴 BOTH ASSERTIONS BELOW REPLACE ONES THAT READ AS COVERAGE AND PROVIDED NONE. Recorded rather
+   * than quietly fixed, because the shapes that walked them are the shapes a maintainer writes:
    *
-   * ⚠️ The class strings are deliberately NOT pinned. They are the half a Tailwind reorder changes
-   * without changing anything true, and this file is brittle enough where brittleness buys something.
+   *   - `toContain('<FeedbackContextPanel')` was supposed to pin the unmount. It does not: an
+   *     `{#if contextOpen}` nested INSIDE the `<details>` and driven by `ontoggle` keeps that
+   *     substring inside the extracted block, so the lazy-render this test exists to forbid passed
+   *     37/37. The only `{#if}` it ever caught was one that also deleted `<details>` — which the
+   *     count above already catches. So the pin now reads the REGION between `</summary>` and
+   *     `</details>` and forbids any `{#…}` block opener in it: that is the unmount property
+   *     itself, not a proxy for it.
+   *   - The default-closed pin was a regex requiring whitespace before `open`, so `bind:open=` —
+   *     the spelling `apps/moderator/CLAUDE.md` pushes you toward — matched nothing and a block
+   *     shipping EXPANDED passed 37/37. A partial regex over a tag is satisfied by the inverted
+   *     tag; the attribute NAMES are now enumerated and compared as a set instead.
+   *
+   * ⚠️ The class VALUES are still deliberately not pinned — a Tailwind reorder changes them without
+   * changing anything true. The attribute-name set is what carries the claim.
    */
   it('collapses the technical-details block with <details>, closed by default', () => {
     const detail = source('FeedbackDetail.svelte');
@@ -255,15 +264,40 @@ describe('typed text outlives the reload every write issues', () => {
     expect(block, 'no <details>…</details> block in FeedbackDetail.svelte').toBeDefined();
 
     expect(block).toContain('>Technical details</summary>');
-    // 🔴 THE LOAD-BEARING ONE. Inside the block, not merely present in the file.
     expect(block).toContain('<FeedbackContextPanel');
 
+    // 🔴 THE UNMOUNT PIN. Everything the collapse hides must be mounted unconditionally, so the
+    // region it wraps carries no block opener at all — `{#if}`, `{#each}`, `{#await}`, `{#key}`.
+    const body = block!.slice(block!.indexOf('</summary>'));
+    expect(body, 'the <details> body does not start at </summary>').toContain(
+      '<FeedbackContextPanel'
+    );
+    expect(body).not.toMatch(/\{#\w+/);
+
+    // 🔴 DEFAULT-CLOSED IS THE ABSENCE OF AN ATTRIBUTE, and `toContain('<details')` is satisfied by
+    // every spelling that adds one. Enumerate the names and compare the SET: `open`, `bind:open`,
+    // `open={…}` and anything added later all fail, without pinning a single class value.
     const openTag = block!.match(/<details\b[^>]*>/)![0];
-    const hasOpenAttr = /<details\b[^>]*\sopen(?=[\s=>])/;
-    // Instrument check before the negative: the matcher must be able to fire at all.
-    expect(hasOpenAttr.test('<details open class="x">')).toBe(true);
-    expect(hasOpenAttr.test('<details class="x" open>')).toBe(true);
-    expect(openTag).not.toMatch(hasOpenAttr);
+    // Quoted values and `{…}` expressions are blanked FIRST: a Tailwind class list is
+    // space-separated words, so a bare name scan over the raw tag reads `border-t` as an attribute.
+    const attrNames = (tag: string): string[] =>
+      [
+        ...tag
+          .replace(/"[^"]*"/g, '""')
+          .replace(/\{[^}]*\}/g, '{}')
+          .matchAll(/\s([A-Za-z_:][-\w:.]*)(?==|[\s/>])/g),
+      ].map((m) => m[1]);
+
+    // Instrument control: the extractor must see the names it is about to be trusted on, in every
+    // spelling the mutants use. A negative assertion over a parser wired to nothing is green.
+    expect(attrNames('<details open class="x">')).toEqual(['open', 'class']);
+    expect(attrNames('<details class="x" open>')).toEqual(['class', 'open']);
+    expect(attrNames('<details class="x" bind:open={contextOpen}>')).toEqual([
+      'class',
+      'bind:open',
+    ]);
+
+    expect(attrNames(openTag)).toEqual(['class']);
   });
 
   /**
