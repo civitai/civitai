@@ -44,6 +44,7 @@ const {
   mockPubReqUpdateMany,
   mockNewUlid,
   mockTriggerBuild,
+  mockFetch,
   state,
 } = vi.hoisted(() => {
   const state = {
@@ -81,13 +82,18 @@ const {
     mockPubReqUpdateMany: vi.fn(async () => ({ count: 0 })),
     mockNewUlid: vi.fn(() => '0123456789ABCDEFGHJKMNPQRS'),
     mockTriggerBuild: vi.fn(async () => ({ name: 'pr-1' })),
+    mockFetch: vi.fn(async () => ({ ok: true, status: 204 })),
   };
 });
 
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
 vi.mock('~/env/server', () => ({
   env: new Proxy(
-    { FORGEJO_WEBHOOK_SECRET: SECRET, APPS_DOMAIN: 'civit.ai' } as Record<string, unknown>,
+    {
+      FORGEJO_WEBHOOK_SECRET: SECRET,
+      APPS_DOMAIN: 'civit.ai',
+      DISCORD_WEBHOOK_MOD_ALERTS: 'https://discord.test/webhook',
+    } as Record<string, unknown>,
     {
       get(t, p: string) {
         if (p in t) return t[p];
@@ -207,6 +213,7 @@ const flush = () => new Promise((r) => setTimeout(r, 10));
 describe('git-push webhook — no-trust-on-push gate', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubGlobal('fetch', mockFetch);
     state.flagEnabled = true;
     state.appBlock = {
       id: APP_BLOCK_ID,
@@ -223,6 +230,42 @@ describe('git-push webhook — no-trust-on-push gate', () => {
 
   afterEach(async () => {
     await flush();
+    vi.unstubAllGlobals();
+  });
+
+  // ---- the mod-alerts Discord ping ----------------------------------------
+  // The park path (202) is the SUCCESS path of the "Author via git" flow and
+  // already has two review surfaces: the /apps/review queue and the Forgejo
+  // commit status. It must NOT ping the shared mod-alerts webhook (that ping
+  // was the noisy red "Apps build-chain rejected" alarm, ~1/day from fleet
+  // automation). The genuine failure stages keep the ping.
+
+  it('a parked unreviewed push does NOT ping the mod-alerts webhook', async () => {
+    const res = makeRes();
+    await invoke(signedReq(pushBody({ after: NEW_SHA })), res);
+    expect(res._status).toBe(202);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('a re-delivery of the same parked sha does NOT ping the mod-alerts webhook either', async () => {
+    state.pendingPubReqForSha = { id: 'pubreq_existing' };
+    const res = makeRes();
+    await invoke(signedReq(pushBody({ after: NEW_SHA })), res);
+    expect(res._status).toBe(202);
+    expect(mockPubReqCreate).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('a manifest-validation failure stage STILL pings the mod-alerts webhook', async () => {
+    state.validation = { valid: false, errors: ['scopes: forbidden'] };
+    const res = makeRes();
+    await invoke(signedReq(pushBody({ after: NEW_SHA })), res);
+    expect(res._status).toBe(400);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = mockFetch.mock.calls[0] as unknown as [string, { body: string }];
+    expect(url).toBe('https://discord.test/webhook');
+    const payload = JSON.parse(init.body) as { embeds: Array<{ title: string }> };
+    expect(payload.embeds[0].title).toContain('Apps build-chain rejected');
   });
 
   // ---- the core fix --------------------------------------------------------
