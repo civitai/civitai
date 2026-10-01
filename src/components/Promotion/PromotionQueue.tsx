@@ -16,6 +16,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Currency } from '~/shared/utils/prisma/enums';
 import type { PromotionSurface } from '~/shared/utils/promotion';
 import {
@@ -89,8 +90,10 @@ export function PromotionQueue() {
       { shallow: true }
     );
 
-  const received = trpc.promotion.getPending.useQuery({ surface });
-  const sent = trpc.promotion.getMine.useQuery({ surface });
+  const features = useFeatureFlags();
+  const enabled = !!features.creatorPromotions;
+  const received = trpc.promotion.getPending.useQuery({ surface }, { enabled });
+  const sent = trpc.promotion.getMine.useQuery({ surface }, { enabled });
   const waiting = received.data?.length ?? 0;
 
   return (

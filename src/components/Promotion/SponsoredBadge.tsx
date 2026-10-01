@@ -1,6 +1,7 @@
 import { Badge, Popover, Text, UnstyledButton } from '@mantine/core';
 import type { MouseEvent } from 'react';
 import clsx from 'clsx';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 /**
  * The label on every paid promotion. A tap target rather than a hover card, so
@@ -13,6 +14,9 @@ export function SponsoredBadge({
   className?: string;
   kind: 'post' | 'model';
 }) {
+  const features = useFeatureFlags();
+  if (!features.creatorPromotions) return null;
+
   return (
     <Popover width={260} withArrow withinPortal position="bottom-start">
       <Popover.Target>

@@ -134,29 +134,38 @@ function assertSurfaceEnabled(ctx: Context, surface: PlacementSurface) {
   return assertPlacementEnabled(ctx);
 }
 
+/** Reads of a space are open for stickers and remixes; a promotion space is not. */
+function assertPromotionSurfaceReadable(ctx: Context, surface: PlacementSurface) {
+  if (isPromotionSurface(surface)) assertPromotionsEnabled(ctx);
+}
+
 export const placementRouter = router({
-  getSpace: publicProcedure
-    .input(getPlacementSpaceSchema)
-    .query(({ input }) => resolvePlacementSpaceFor(input)),
+  getSpace: publicProcedure.input(getPlacementSpaceSchema).query(({ input, ctx }) => {
+    assertPromotionSurfaceReadable(ctx, input.surface);
+    return resolvePlacementSpaceFor(input);
+  }),
 
   // The row for one level, so a toggle shows what that level is set to rather
   // than what it inherits.
-  getSpaceRow: protectedProcedure
-    .input(getPlacementSpaceRowSchema)
-    .query(({ input, ctx }) => getPlacementSpaceRow({ ...input, userId: ctx.user.id })),
+  getSpaceRow: protectedProcedure.input(getPlacementSpaceRowSchema).query(({ input, ctx }) => {
+    assertPromotionSurfaceReadable(ctx, input.surface);
+    return getPlacementSpaceRow({ ...input, userId: ctx.user.id });
+  }),
 
   clearSpace: protectedProcedure.input(getPlacementSpaceRowSchema).mutation(({ input, ctx }) => {
     assertSurfaceEnabled(ctx, input.surface);
     return clearPlacementSpace({ ...input, userId: ctx.user.id });
   }),
 
-  getMySpaces: protectedProcedure
-    .input(placementPriceRangeSchema)
-    .query(({ input, ctx }) => getPlacementSpaces({ surface: input.surface, userId: ctx.user.id })),
+  getMySpaces: protectedProcedure.input(placementPriceRangeSchema).query(({ input, ctx }) => {
+    assertPromotionSurfaceReadable(ctx, input.surface);
+    return getPlacementSpaces({ surface: input.surface, userId: ctx.user.id });
+  }),
 
-  getPriceRange: protectedProcedure
-    .input(placementPriceRangeSchema)
-    .query(({ input, ctx }) => placementPriceRange(ctx.user.id, input.surface)),
+  getPriceRange: protectedProcedure.input(placementPriceRangeSchema).query(({ input, ctx }) => {
+    assertPromotionSurfaceReadable(ctx, input.surface);
+    return placementPriceRange(ctx.user.id, input.surface);
+  }),
 
   setSpace: protectedProcedure.input(placementSpaceSchema).mutation(({ input, ctx }) => {
     assertSurfaceEnabled(ctx, input.surface);

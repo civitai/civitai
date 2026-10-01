@@ -43,10 +43,10 @@ export const promotionRouter = router({
       });
     }),
 
-  // Ungated: a host must always be able to answer what is waiting on them.
-  act: protectedProcedure
-    .input(actOnPromotionSchema)
-    .mutation(({ input, ctx }) => actOnPromotion({ ...input, userId: ctx.user.id })),
+  act: protectedProcedure.input(actOnPromotionSchema).mutation(({ input, ctx }) => {
+    assertPromotionsEnabled(ctx);
+    return actOnPromotion({ ...input, userId: ctx.user.id });
+  }),
 
   getHostsForPost: protectedProcedure
     .input(getPromotionHostsForPostSchema)
@@ -60,11 +60,13 @@ export const promotionRouter = router({
     return getModelPromotionOffer({ ...input, placerId: ctx.user.id });
   }),
 
-  getPending: protectedProcedure
-    .input(getPromotionQueueSchema)
-    .query(({ input, ctx }) => getPendingPromotions({ ...input, ownerId: ctx.user.id })),
+  getPending: protectedProcedure.input(getPromotionQueueSchema).query(({ input, ctx }) => {
+    assertPromotionsEnabled(ctx);
+    return getPendingPromotions({ ...input, ownerId: ctx.user.id });
+  }),
 
-  getMine: protectedProcedure
-    .input(getPromotionQueueSchema)
-    .query(({ input, ctx }) => getMyPromotions({ ...input, placerId: ctx.user.id })),
+  getMine: protectedProcedure.input(getPromotionQueueSchema).query(({ input, ctx }) => {
+    assertPromotionsEnabled(ctx);
+    return getMyPromotions({ ...input, placerId: ctx.user.id });
+  }),
 });

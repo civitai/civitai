@@ -41,9 +41,9 @@ export function PlacementsPanel() {
   const features = useFeatureFlags();
   const { pendingStickerPlacements, pendingRemixSubmissions } = useQueryNotificationsCount();
 
-  const surface: PlacementSurfaceTab = isPlacementSurfaceTab(router.query.type)
-    ? router.query.type
-    : 'sticker';
+  const requested = isPlacementSurfaceTab(router.query.type) ? router.query.type : 'sticker';
+  const surface: PlacementSurfaceTab =
+    requested === 'promotion' && !features.creatorPromotions ? 'sticker' : requested;
 
   const setSurface = (value: string) =>
     router.replace(
