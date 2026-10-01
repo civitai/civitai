@@ -2814,15 +2814,16 @@ export const getAllImagesIndex = async (
     );
     if (feedPrimary) {
       const started = Date.now();
-      const [followedUserIds, newCreatorUserIds] = await Promise.all([
+      const [followedUserIds, newCreatorUserIds, hub] = await Promise.all([
         input.followed && currentUserId ? getUserFollows(currentUserId) : undefined,
         input.newCreators
           ? getNewCreatorUserIds({ entity: 'images', domain: input.domain })
           : undefined,
+        input.hubId ? resolveHubForFeed(searchInput, currentUserId) : undefined,
       ]);
       const served = await withSpan('image:feedPrimary', () =>
         serveFromFeed(
-          { ...searchInput, followedUserIds, newCreatorUserIds },
+          { ...searchInput, followedUserIds, newCreatorUserIds, ...hub },
           {
             fetchFeed: fetchFeedPrimary,
             hydrate: async (ids) =>
@@ -3489,6 +3490,27 @@ async function resolvedHubSources(input: ImageSearchInput) {
     isModerator: input.isModerator,
     excludedSources: input.hubExcludedSources,
   });
+}
+
+/**
+ * A hub as the feed service is asked for it: its sources, and the browsing level under the hub's
+ * own cap. `hubSources: null` wherever the index path would return an empty page (no such hub
+ * for this viewer, no source left, a cap that leaves the viewer nothing), so the same requests
+ * are empty on both paths. Undefined while hubs are not switched over: the hub is then not
+ * servable by the feed and the request takes the index path.
+ */
+async function resolveHubForFeed(input: ImageSearchInput, viewerId: number | undefined) {
+  const enabled = await getFliptBoolean(
+    FLIPT_FEATURE_FLAGS.FEED_SERVICE_HUBS,
+    viewerId?.toString() || 'anonymous',
+    feedFliptContext(input)
+  );
+  if (!enabled) return undefined;
+  const sources = await resolvedHubSources(input);
+  if (!sources || !hubFilterArms(sources, input)) return { hubSources: null };
+  const browsingLevel = hubBrowsingLevel(input.browsingLevel, sources);
+  if (browsingLevel !== undefined && !browsingLevel) return { hubSources: null };
+  return { hubSources: sources, browsingLevel };
 }
 
 type HubFilterClause = { field: MetricsImageFilterableAttribute; ids: number[] };

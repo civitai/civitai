@@ -46,7 +46,9 @@ describe('fetchFeedAnswer', () => {
   it('sends the active trace context so the feed joins the request trace', async () => {
     const provider = new NodeTracerProvider();
     provider.register();
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ items: [] }), { status: 200 }));
+    const fetchMock = vi.fn(
+      async () => new Response(JSON.stringify({ items: [] }), { status: 200 })
+    );
     vi.stubGlobal('fetch', fetchMock);
     const span = provider.getTracer('t').startSpan('page');
     try {
@@ -60,8 +62,11 @@ describe('fetchFeedAnswer', () => {
       trace.disable();
       propagation.disable();
     }
-    const headers = (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].headers as Record<string, string>;
-    expect(headers.traceparent).toBe(`00-${span.spanContext().traceId}-${span.spanContext().spanId}-01`);
+    const headers = (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1]
+      .headers as Record<string, string>;
+    expect(headers.traceparent).toBe(
+      `00-${span.spanContext().traceId}-${span.spanContext().spanId}-01`
+    );
     expect(headers['x-request-source']).toBe('primary');
   });
 });
@@ -129,7 +134,10 @@ describe('mapSearchInputToFeedQuery', () => {
 
   it('names any cursor it cannot read, after every other reason', () => {
     for (const cursor of ['feed', 'meili', -1, new Date(0), 'abc|1'])
-      expect(mapSearchInputToFeedQuery({ ...base, cursor })).toEqual({ ok: false, reason: 'cursor:unparsed' });
+      expect(mapSearchInputToFeedQuery({ ...base, cursor })).toEqual({
+        ok: false,
+        reason: 'cursor:unparsed',
+      });
     expect(mapSearchInputToFeedQuery({ ...base, cursor: 'feed', sort: 'Random' })).toEqual({
       ok: false,
       reason: 'sort:Random',
@@ -200,6 +208,113 @@ describe('mapSearchInputToFeedQuery', () => {
     expect(q.has('offset')).toBe(false);
     expect(encodeFeedCursor('1788000012345|42')).toBe('feed:1788000012345:42');
     expect(parseFeedCursor('400|1788000012345')).toBeUndefined();
+  });
+});
+
+describe('hub feeds', () => {
+  const sources = {
+    userIds: [7, 9],
+    modelVersionIds: [290640, 297100],
+    collectionIds: [],
+    tagGroups: [[5132], [5133, 4855]],
+    excluded: { userIds: [3], modelVersionIds: [298112], tagGroups: [[2539, 66], [111]] },
+  };
+  const hub = { ...base, sort: 'Newest', period: 'AllTime', hubId: 12 };
+  const query = (i: Record<string, unknown>) => {
+    const m = mapSearchInputToFeedQuery({ ...hub, ...i });
+    return m.ok ? new URLSearchParams(m.query) : undefined;
+  };
+  const reason = (i: Record<string, unknown>) => {
+    const m = mapSearchInputToFeedQuery({ ...hub, ...i });
+    return m.ok ? 'ok' : m.reason;
+  };
+
+  it('sends a resolved hub as any-of sources and keep-out lists', () => {
+    const q = query({ hubSources: sources });
+    expect(q?.get('anyUserIds')).toBe('7,9');
+    expect(q?.get('anyVersionIds')).toBe('290640,297100');
+    expect(q?.get('anyTagGroups')).toBe('5132;5133,4855');
+    expect(q?.get('excludedUserIds')).toBe('3');
+    expect(q?.get('excludedVersionIds')).toBe('298112');
+    expect(q?.get('excludedTagGroups')).toBe('2539,66;111');
+    // The sources are a union: sent as a creator or version filter they would be an AND.
+    expect(q?.has('userIds')).toBe(false);
+    expect(q?.has('versionIds')).toBe(false);
+  });
+
+  it('never sends a hub without a source', () => {
+    // Unresolved is the shadow hook; without a source the query is the open feed.
+    expect(reason({})).toBe('input:hubId');
+    expect(reason({ hubSources: null })).toBe('input:hubId');
+    const none = { ...sources, userIds: [], modelVersionIds: [], tagGroups: [] };
+    expect(reason({ hubSources: none })).toBe('hub:none');
+    // Collections are not served on either path yet, so a hub of only those has no source.
+    expect(reason({ hubSources: { ...none, collectionIds: [4] } })).toBe('hub:none');
+  });
+
+  it('refuses a hub whose ids it would have to trim', () => {
+    // Dropping the 0 would widen "5133 and 0" to "5133", and shorten a keep-out list.
+    expect(reason({ hubSources: { ...sources, tagGroups: [[5133, 0]] } })).toBe('hub:ids');
+    expect(reason({ hubSources: { ...sources, tagGroups: [[]] } })).toBe('hub:ids');
+    const excluded = { ...sources.excluded, modelVersionIds: [0] };
+    expect(reason({ hubSources: { ...sources, excluded } })).toBe('hub:ids');
+  });
+
+  it('keeps the hub exclusions when the hidden-creator list is cut at the limit', () => {
+    const hidden = Array.from({ length: 1000 }, (_, i) => i + 100);
+    const q = query({ hubSources: sources, excludedUserIds: hidden });
+    const sent = q?.get('excludedUserIds')?.split(',') ?? [];
+    expect(sent).toHaveLength(1000);
+    expect(sent[0]).toBe('3');
+  });
+
+  it('refuses a hub past the limits of the feed instead of sending part of it', () => {
+    const many = (n: number) => Array.from({ length: n }, (_, i) => i + 1);
+    expect(reason({ hubSources: { ...sources, userIds: many(51) } })).toBe('hub:users>50');
+    expect(reason({ hubSources: { ...sources, modelVersionIds: many(751) } })).toBe(
+      'hub:versions>750'
+    );
+    expect(reason({ hubSources: { ...sources, modelVersionIds: many(750) } })).toBe('ok');
+    const excluded = { ...sources.excluded, modelVersionIds: many(751) };
+    expect(reason({ hubSources: { ...sources, excluded } })).toBe('hub:excludedVersions>750');
+    const groups = { ...sources.excluded, tagGroups: many(21).map((t) => [t]) };
+    expect(reason({ hubSources: { ...sources, excluded: groups } })).toBe(
+      'hub:excludedTagGroups>20'
+    );
+  });
+
+  it('leaves the resource filters to Meilisearch only when the hub has versions to narrow', () => {
+    expect(reason({ hubSources: sources, hideAutoResources: true })).toBe('flag:hideAutoResources');
+    expect(reason({ hubSources: sources, hideManualResources: true })).toBe(
+      'flag:hideManualResources'
+    );
+    const noVersions = { ...sources, modelVersionIds: [] };
+    expect(reason({ hubSources: noVersions, hideAutoResources: true })).toBe('ok');
+  });
+
+  it('refuses a second driver next to the hub', () => {
+    expect(reason({ hubSources: sources, userId: 4 })).toBe('hub:driver');
+    expect(reason({ hubSources: sources, ids: [4] })).toBe('hub:driver');
+    expect(reason({ hubSources: sources, newCreators: true, newCreatorUserIds: [4] })).toBe(
+      'hub:driver'
+    );
+  });
+
+  it('still applies the filters a hub remembers', () => {
+    const q = query({
+      hubSources: sources,
+      sort: 'Most Comments',
+      period: 'Month',
+      baseModels: ['Pony'],
+      types: ['video'],
+      excludedTagIds: [77],
+    });
+    expect(q?.get('sort')).toBe('comments');
+    expect(q?.get('periodDays')).toBe('30');
+    expect(q?.get('baseModels')).toBe('Pony');
+    expect(q?.get('types')).toBe('video');
+    expect(q?.get('excludedTags')).toBe('77');
+    expect(reason({ hubSources: sources, remixesOnly: true })).toBe('flag:remixesOnly');
   });
 });
 
