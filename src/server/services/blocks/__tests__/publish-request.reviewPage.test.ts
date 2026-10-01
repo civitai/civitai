@@ -26,10 +26,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { mockDbRead, mockReviewRepoUrl, mockRepoCommitUrl } = vi.hoisted(() => ({
   mockDbRead: {
     appBlockPublishRequest: { findUnique: vi.fn() },
-    // The detail read joins the app's store listing (on SLUG) for the Plays + media the
-    // review page renders. Typed loosely on purpose: `vi.fn(async () => [])` infers
-    // `never[]`, so every `mockResolvedValue` of a real row below becomes a type error the
-    // ordinary `pnpm typecheck` would never report (`src/**/__tests__/**` is excluded).
+    // Loosely typed: `vi.fn(async () => [])` infers `never[]`, which reds every
+    // `mockResolvedValue` below — and `src/**/__tests__/**` is outside `pnpm typecheck`, so
+    // nothing else would tell you.
     appListing: { findMany: vi.fn<(...a: unknown[]) => Promise<unknown[]>>(async () => []) },
   },
   mockReviewRepoUrl: vi.fn((slug: string) => `https://forgejo.example/review/${slug}`),
@@ -169,8 +168,7 @@ describe('getReviewRequestById — full hydrated single-request fetch', () => {
        * 🔴 THE STORE-LISTING JOIN, WHICH THE REVIEW PAGE'S MEDIA SECTION IS ENTIRELY MADE
        * OF. `ReviewListingMedia` takes these as props, and the page-level browser test is
        * a labelled invariant guard that names no field — so with this unasserted, deleting
-       * the one spread here renders "No icon" / "No cover" for every app in production
-       * with nothing red.
+       * the one spread here renders "No icon" / "No cover" on every row with nothing red.
        */
       expect(res!.request.playCount).toBe(1234);
       expect(res!.request.iconUrl).toContain('icon-uuid');

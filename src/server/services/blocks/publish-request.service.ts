@@ -2016,27 +2016,39 @@ type JoinedListing = {
 /**
  * Does this slug-matched listing belong to the app this request is for?
  *
- * 🔴 SLUG EQUALITY ALONE IS NOT OWNERSHIP, AND THE GAP IS REACHABLE BY AUTHOR ACTIONS ONLY.
- * A slug is RELEASED when a first version is withdrawn or its orphan draft purged
- * (`deleteOnsiteDraftListingForSlug` says so in as many words), while the decided request
- * row survives in the Rejected tab forever. Nothing then reserves the slug, so a second
- * developer can claim it — and a slug-only join would print THEIR icon, cover and lifetime
- * play count on the first developer's row, under the first developer's name, with the icon
- * a live button into the image viewer.
+ * 🔴 SLUG EQUALITY ALONE IS NOT OWNERSHIP. A rejected first-version row survives in the
+ * Rejected tab forever, and a moderator purge of its orphan draft (`purgeListing`) releases
+ * the slug for a second developer to claim — so a slug-only join prints THEIR icon, cover
+ * and play count on the first developer's row, under the first developer's name.
  *
  * The off-site queue has no equivalent hole: its rows carry their own `appListingId`, so it
  * reads the relation rather than re-resolving a name.
  */
 function listingBelongsToRequest(listing: JoinedListing, req: ListingJoinSubject): boolean {
-  // An on-site code request's listing is always `kind: 'onsite'`; a revision shadow is
-  // never the app's own listing. Both tests fail CLOSED for a kind added later.
+  // An on-site code request's listing is always `kind: 'onsite'`, and the positive test
+  // fails CLOSED for a kind added later.
   if (listing.kind !== 'onsite') return false;
-  // Approved at least once: the listing is keyed on the block, so compare that directly.
-  if (req.appBlockId != null) return listing.appBlockId === req.appBlockId;
-  // Never approved. The only legitimate listing is the pre-approval draft minted for this
-  // submitter at submit time — `appBlockId: null, userId: submittedByUserId` (see the
-  // `createDraftListing` arm of `submitVersion`).
-  return listing.appBlockId === null && listing.userId === req.submittedBy?.id;
+  // 🔴 ONLY WHEN **BOTH** SIDES CARRY A BLOCK ID, and an earlier revision keyed on the
+  // REQUEST's alone — which silently blanked the app's own listing in two ordinary
+  // sequences, because the two columns are stamped by different writes at different times:
+  //   · reject → re-submit → approve. `rejectRequest` deliberately keeps the draft listing,
+  //     and the approve stamps `appBlockId` onto the APPROVED request row and the listing —
+  //     never the earlier rejected one. So the rejected row has none while the listing has
+  //     one, and the Rejected tab lost the app's media under its own developer's name.
+  //   · an approve whose draft→approved listing transition did not run (a still-scanning
+  //     asset is the designed case, left `draft` for re-review). Request has the id,
+  //     listing does not — and that is the moment the moderator most needs to see the media.
+  // Disagreeing ids still lose, so a listing keyed to a DIFFERENT app is never adopted.
+  if (listing.appBlockId != null && req.appBlockId != null) {
+    return listing.appBlockId === req.appBlockId;
+  }
+  // Otherwise the owner decides. A second developer's claimed listing carries THEIR userId,
+  // so it fails here; the app's own pre-approval draft carries the submitter's
+  // (`createDraftListing` in `submitVersion`). Kept as the fallback rather than the primary
+  // test because `AppListing.userId` is the APP OWNER (`app-listing-mapper` sets
+  // `ab.app.userId`), which a seated collaborator's `submittedByUserId` legitimately is not
+  // — that population is served by the id comparison above.
+  return listing.userId === req.submittedBy?.id;
 }
 
 /**
@@ -2048,9 +2060,12 @@ function listingBelongsToRequest(listing: JoinedListing, req: ListingJoinSubject
  * moderator reviews most carefully. Slug resolution is then NARROWED by
  * {@link listingBelongsToRequest} — read its note before loosening either.
  *
- * 🔴 ONE PARENT QUERY FOR THE WHOLE PAGE, never one per row. (Prisma loads each relation
- * as its own statement, so it is four round trips, not one — the property that matters is
- * that the count does not grow with the page.) Keyed on the REQUEST id rather than the
+ * A revision SHADOW needs no guard of its own: `beginListingRevision` gives it a synthetic
+ * `rev-<ulid>` slug, so it can never match an app slug. The `revisionOfId: null` term is
+ * belt only.
+ *
+ * 🔴 A FIXED NUMBER OF QUERIES FOR THE WHOLE PAGE, never one per row — one parent plus one
+ * per relation, since Prisma loads each separately. Keyed on the REQUEST id rather than the
  * slug: two decided requests can share a slug while disagreeing about which listing is
  * theirs, so a slug-keyed result cannot hold both verdicts.
  */
@@ -2275,6 +2290,12 @@ export const VERSION_HISTORY_LIMIT = 50;
  *
  * 🔴 `deployDetail` IS NOT PROJECTED — tenant-influenced build-log bytes no moderator
  * surface renders (`ReviewRowDeploy` in `~/components/Apps/unifiedReviewRow`).
+ *
+ * 🔴 AND IT IS A SEPARATE PROC RATHER THAN A WIDENING OF `appListings.listingHistory`.
+ * That read authorizes through `resolveListingAccess` (owner ∪ accepted seat) and is keyed
+ * on an `appListingId` a pending first version does not have — so admitting moderators
+ * there would hand a mod audience to the author path to serve a surface that needs neither
+ * its scoping nor its key.
  */
 export async function listVersionHistory(opts: { slug: string }) {
   const { dbRead } = await import('~/server/db/client');

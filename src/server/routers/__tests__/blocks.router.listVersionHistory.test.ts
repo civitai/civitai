@@ -3,20 +3,22 @@ import { TRPCError } from '@trpc/server';
 // Type-only imports (erased at runtime, so they are safe above the hoisted
 // `vi.mock` calls) — the lint rule forbids inline `import()` type annotations.
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
-import type * as RedisClient from '@civitai/redis/client';
 
 /**
  * `blocks.listVersionHistory` — router AUTHZ + input surface.
  *
  * Drives the REAL `blocksRouter` through `createCaller` so the MIDDLEWARE WIRING is what
- * decides, not a hand-rolled stand-in. This read returns every submitter, reviewer and
- * rejection reason an app has ever accumulated, for any slug, so the gate is the point:
+ * decides, not a hand-rolled stand-in. The gate is the point:
  *
- *   1. MODERATOR-ONLY — `moderatorProcedure` plus the same redundant inner
- *      `ctx.user?.isModerator` belt its sibling mod procs carry. A non-mod, an anonymous
- *      caller, and a caller who merely CLAIMS elevation in the payload are all rejected
- *      and the SERVICE IS NEVER REACHED.
- *   2. THE APP-BLOCKS FLAG still gates it (`enforceAppBlocksFlag`), even for a moderator.
+ *   1. MODERATOR-ONLY. A non-mod, an anonymous caller, and a caller who merely CLAIMS
+ *      elevation in the payload are all rejected, and the SERVICE IS NEVER REACHED.
+ *      ⚠️ `moderatorProcedure` ALONE satisfies every one of those arms — measured by
+ *      deleting the proc's inner `ctx.user?.isModerator` belt, which left all four green.
+ *      The belt is the house idiom on this router and is genuinely redundant, so it is
+ *      kept; this note exists so the arms are not read as covering it.
+ *   2. THE APP-BLOCKS FLAG DOES NOT GATE IT — `enforceAppBlocksFlag` throws only for a
+ *      MUTATION, so the mod gate carries this read alone. Pinned below, and stated here
+ *      because an earlier draft of this header claimed the opposite of its own test.
  *   3. SLUG BOUNDS — the zod input is slug-shaped, so a caller cannot pass a pattern, an
  *      over-long string or extra fields through to the query.
  *
@@ -86,7 +88,8 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
-const mockDbRead = dbMock.dbRead;
+// `dbMock` / `redisMock` / `loggingMock` are imported for their mock REGISTRATION side
+// effect — this suite never reads them, and dropping the imports breaks the router import.
 
 function fakeCtx(user: unknown) {
   return {
@@ -165,13 +168,16 @@ describe('blocks.listVersionHistory — moderator gate', () => {
 });
 
 describe('blocks.listVersionHistory — input surface', () => {
-  it('forwards ONLY the slug — exact equality, so any extra field fails', async () => {
+  it('forwards ONLY the slug — the proc projects it explicitly, asserted by exact equality', async () => {
     const caller = blocksRouter.createCaller(fakeCtx(mod) as never);
     await caller.listVersionHistory({
       slug: SLUG,
       limit: 9999,
       appBlockId: 'apb_other',
     } as never);
+    // What drops the extras is the proc's own `{ slug: input.slug }` projection, not schema
+    // strictness — `listVersionHistorySchema` is a plain `z.object`, which STRIPS unknown
+    // keys silently rather than rejecting them.
     expect(mockListVersionHistory).toHaveBeenCalledWith({ slug: SLUG });
   });
 

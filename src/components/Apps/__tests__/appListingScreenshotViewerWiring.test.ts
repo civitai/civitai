@@ -383,11 +383,15 @@ describe('🔴 the screenshot viewer is WIRED to the gallery that owns the list'
     // the screenshot tile follows two tests up, applied to this consumer. An image with
     // a click handler is not tab-reachable, not Enter/Space-activatable, and exposes no
     // accessible name.
+    // ⚠️ A SUBSTRING CHECK OVER ONE FUNCTION BODY — it proves each token is PRESENT, not
+    // that they are wired to each other. The relationship (a click opens the image and does
+    // NOT open the review) is behavioural and lives in
+    // `UnifiedReviewList.browser.test.tsx`'s "clicking the ICON" arm; the message says only
+    // what the substrings support.
     const BTN =
-      "ListingMediaThumb's MediaButton is no longer a real button (UnstyledButton with an " +
-      'aria-label) whose handler calls onOpen and stops propagation. An <img onClick> is a ' +
-      'mouse-only affordance that LOOKS wired up, and without the stopPropagation one ' +
-      "click on a /apps/review row's icon also opens a review.";
+      "ListingMediaThumb's MediaButton no longer contains all of: UnstyledButton, an " +
+      'aria-label, an onClick, an onOpen() call and a stopPropagation(). An <img onClick> ' +
+      'is a mouse-only affordance that LOOKS wired up.';
     const btn = norm(fnBody(stripComments(fs.readFileSync(THUMB, 'utf8')), 'MediaButton'));
     expect(btn, BTN).not.toBe('');
     expect(btn, BTN).toContain('<UnstyledButton');

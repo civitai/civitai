@@ -54,10 +54,11 @@ import {
  * already-accumulated raw items + loading/error/hasMore state and the two
  * page-owned open callbacks. It opens NO query of its own — keep it that way.
  *
- * ⚠️ IT IS NO LONGER RENDERABLE FROM `renderWithProviders` ALONE, and that is a real cost
- * rather than a technicality: the Submitter cell's `UserAvatar` reaches `useFeatureFlags`,
- * `useCurrentUser` and `useBrowsingSettings`, so every browser suite that mounts this list
- * has to stub it. Weighed against hand-rolling a second user chip and accepted.
+ * ⚠️ IT IS NO LONGER RENDERABLE FROM `renderWithProviders` ALONE: the Submitter cell's
+ * `UserAvatar` reaches `useFeatureFlags`, `useCurrentUser`,
+ * `useViewerBrowsingLevelDebounced` and `useBrowsingSettings`, so a browser suite that
+ * mounts this list has to supply those — by stubbing the avatar, or (where the painted
+ * width is the thing under test) by stubbing the hooks and keeping the real component.
  */
 
 /** What the version cell hands the page when a moderator asks for an app's history. */
@@ -285,11 +286,8 @@ export function UnifiedReviewList({
         cannot unmount it mid-view. `/apps/review/<id>` opens the same viewer, so the two
         surfaces cannot drift on prev/next or the broken-shot rescue.
 
-        🔴 THE LIST IS `[cover, icon]`, SO THE COVER IS REACHABLE FROM A ROW THAT RENDERS NO
-        COVER THUMBNAIL — deliberate, not an oversight of `listingMediaShots`. A moderator
-        opening an app's icon can arrow to the store card they are about to approve, which
-        is the whole point of putting listing media on this surface; a single-entry list
-        would instead give the viewer permanently-disabled arrows and a `1 / 1` counter.
+        `[cover, icon]` deliberately, so a moderator can arrow from an icon to the store
+        card they are about to approve.
       */}
       <AppListingScreenshotViewer
         shots={
@@ -553,8 +551,9 @@ function UnifiedReviewRowView({
           >
             {/*
               🔴 `user=`, NOT `userId=`. The row already carries `{id, username, image}`, so
-              the `userId` form's `trpc.user.getById` per distinct submitter is pure waste
-              whether or not request batching is on. Accepted cost: no cosmetics frame.
+              the `userId` form's `trpc.user.getById` per distinct submitter is pure waste.
+              It buys nothing either: that path hardcodes `cosmetics: []`, so neither form
+              renders a decoration frame.
             */}
             <UserAvatar user={submitter} size="sm" withUsername linkToProfile />
           </span>

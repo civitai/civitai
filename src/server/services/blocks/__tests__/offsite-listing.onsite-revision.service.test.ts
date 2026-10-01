@@ -597,8 +597,7 @@ describe('mod queue procs — widened to kind IN (onsite, offsite), each row car
      * `app_listing_metrics.open_count` is `NOT NULL DEFAULT 0`, so an off-site listing
      * carries a literal `0` — and rendering it would claim "nobody has ever used this app"
      * about an app whose CTA is an external anchor nothing on-platform can count.
-     * `cardOpenCount` returns `null` there; an earlier revision of this projection read the
-     * column directly and shipped the `0`.
+     * `cardOpenCount` returns `null` there.
      */
     mockRead.appListingPublishRequest.findMany.mockResolvedValue([
       {

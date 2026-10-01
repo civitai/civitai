@@ -317,6 +317,22 @@ function cardKindData(row: HydratedListing): ListingCardKindData {
 }
 
 /**
+ * The columns `cardOpenCount` reads. Widened from `HydratedListing` (which still satisfies
+ * it structurally — a pure relaxation, no behaviour change) so the moderator review queue
+ * can reuse the REAL projection instead of re-deriving it, the same reason
+ * {@link DetailKindDataSource} is relaxed.
+ *
+ * ⚠️ `kind` IS OPTIONAL FOR THE CALLER'S CONVENIENCE AND THAT COSTS THE COMPILER'S HELP:
+ * a select that omits the column no longer fails to typecheck, it silently reads as
+ * not-on-site. The off-site mod queue therefore has to name `kind: true` deliberately, and
+ * a test pins that it does.
+ */
+export type CardOpenCountSource = {
+  kind?: string | null;
+  metric?: { openCount: number } | null;
+};
+
+/**
  * The card's play count: a NUMBER for an on-site listing, `null` for an off-site one.
  *
  * 🔴 THE DISCRIMINATION IS THE WHOLE POINT, and `row.metric?.openCount ?? 0` alone —
@@ -374,20 +390,6 @@ function cardKindData(row: HydratedListing): ListingCardKindData {
  * job, not a property of this code — an on-site listing whose row the job has not yet
  * covered reads a truthful-by-the-DTO's-rule `0` until it does.
  */
-/**
- * The columns `cardOpenCount` actually reads. Widened from `HydratedListing` (which still
- * satisfies it structurally — a pure relaxation, no behaviour change) so the moderator
- * review queue can reuse the REAL projection instead of re-deriving it, the same reason
- * {@link DetailKindDataSource} is relaxed.
- */
-export type CardOpenCountSource = {
-  // `| null | undefined` so a caller whose select makes the column optional satisfies this
-  // as-is; both are treated as "not on-site", which is the fail-CLOSED direction the
-  // positive `=== 'onsite'` test below exists for.
-  kind?: string | null;
-  metric?: { openCount: number } | null;
-};
-
 export function cardOpenCount(row: CardOpenCountSource): number | null {
   if (row.kind !== 'onsite') return null;
   return row.metric?.openCount ?? 0;
@@ -417,12 +419,10 @@ export const NO_LISTING_QUEUE_FACTS: ListingQueueFacts = {
  * One projection of a listing → the three facts both moderator review queues show.
  *
  * 🔴 IT GOES THROUGH `cardOpenCount` RATHER THAN READING `metric.openCount`, because the
- * obvious `metric?.openCount ?? null` is wrong in BOTH directions and both were shipped
- * before this existed: it renders a literal `0` for an off-site listing (the column is
- * `NOT NULL DEFAULT 0`, so "nobody ever used this" is a false claim about an app whose
- * CTA is an external anchor), and it over-nulls an on-site listing with no metric row yet,
- * which is a genuine `0`. The store card and the review row must not answer "how many
- * plays" differently for one listing.
+ * obvious `metric?.openCount ?? null` is wrong in BOTH directions: it renders the literal
+ * `0` an off-site listing's `NOT NULL DEFAULT 0` column carries, and it over-nulls an
+ * on-site listing with no metric row yet, which is a genuine `0`. The store card and the
+ * review row must not answer "how many plays" differently for one listing.
  *
  * 🔴 NO SCREENSHOT COVER FALLBACK. A moderator has to see that the listing has no cover —
  * the same reason the author's own `listMine` read passes `null` here.

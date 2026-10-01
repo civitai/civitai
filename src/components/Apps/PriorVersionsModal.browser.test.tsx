@@ -192,12 +192,6 @@ describe('PriorVersionsModal — opening, the read gate, and closing', () => {
   });
 
   test("the app's NAME renders beside the slug", async () => {
-    /**
-     * 🔴 THIS FIELD WAS SET AND DOCUMENTED BUT DEAD. `VersionHistoryTarget.title` was
-     * populated by the version trigger and its comment said "display name for the modal
-     * title", and nothing rendered it — a comment the code contradicted, and the exact
-     * shape of "a field that exists in a DTO is not a code path".
-     */
     queryState.current = {
       data: { items: ENTRIES, truncated: false },
       error: null,

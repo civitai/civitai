@@ -8,8 +8,9 @@ import { trpc } from '~/utils/trpc';
 
 /**
  * MODERATOR view of every submission an app has ever made — opened from the Version cell
- * of the `/apps/review` queue. Backed by `blocks.listVersionHistory`, which is slug-keyed
- * and mod-scoped for the reasons recorded on that service function.
+ * of the `/apps/review` queue. Backed by `blocks.listVersionHistory` — see
+ * `~/server/services/blocks/publish-request.service` for why it is slug-keyed and why it
+ * is a mod proc rather than a widening of the author-facing listing history.
  */
 
 export type PriorVersionsSelection = {

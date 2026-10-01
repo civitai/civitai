@@ -6,7 +6,7 @@
  *
  * Not `formatAge` (`~/components/Apps/ActivePreviewsPanel`): that ladder stops at days and
  * reads the clock itself. Not `DaysFromNow`: it renders dayjs's long phrase, which is the
- * width this column exists to give back. Someone will try to consolidate these three.
+ * width this column exists to give back.
  */
 
 /** A timestamp we cannot read at all (an unparseable string reaching the adapter). */

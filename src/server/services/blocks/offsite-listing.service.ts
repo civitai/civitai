@@ -4126,11 +4126,10 @@ function withModQueueListingFacts<
   }
 >(row: T) {
   const { appListing, ...rest } = row;
-  // 🔴 THE NESTED RELATION OBJECTS ARE STRIPPED, not spread through. Selected they are
-  // harmless (`url` and `openCount`, both already public), but leaving them on the payload
-  // means the next key added to that select ships to the browser with nothing reading on
-  // it — and the on-site path's "no raw Image row reaches the client" guarantee would then
-  // be true of one queue and not the other.
+  // The three relation objects are stripped so the derived strings are the payload, which
+  // is the on-site path's shape. ⚠️ A DENYLIST, so it is not a guarantee about keys added
+  // later: everything else in `modQueueSubmissionSelect.appListing.select` still rides
+  // through, `kind` included.
   const { icon: _icon, cover: _cover, metric: _metric, ...listingRest } = appListing ?? {};
   return {
     ...rest,

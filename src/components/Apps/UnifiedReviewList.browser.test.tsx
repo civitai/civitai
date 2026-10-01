@@ -259,15 +259,9 @@ describe('UnifiedReviewList — the relative age cell', () => {
     const age = page.getByTestId('apps-unified-review-age-onsite:or1');
     await expect.element(age).toBeInTheDocument();
     const el = age.element() as HTMLTimeElement;
-    /**
-     * 🔴 `now` IS EXCLUDED, AND THAT IS THE WHOLE ASSERTION. An earlier revision allowed it
-     * (`/^(now|\d+(m|h|d|w|mo|y))$/`), which admits the defect: pass the WRONG argument —
-     * `compactRelativeTime(now, now)` instead of the row's date — and every row reads
-     * `now` forever while `dateTime`, `title` and the pure ladder test all stay green,
-     * because none of them reads this expression. The fixture date is fixed and in the
-     * past, so it can only ever move further up the ladder; months-or-years is therefore
-     * durable AND discriminating, where a specific rung would rot with the calendar.
-     */
+    // 🔴 `now` MUST STAY EXCLUDED: `compactRelativeTime(now, now)` instead of the row's
+    // date reads `now` on every row while `dateTime`, `title` and the pure ladder test all
+    // stay green. The fixture date is fixed and in the past, so months-or-years is durable.
     expect(el.textContent).toMatch(/^\d+(mo|y)$/);
     expect(el.getAttribute('datetime')).toBe('2026-01-01T00:00:00.000Z');
     // The exact instant stays reachable on hover and to a screen reader.
@@ -369,13 +363,9 @@ describe('🔴 UnifiedReviewList — the stopPropagation guards', () => {
   });
 
   test('clicking the ICON opens the ICON in the viewer, and NOT the review', async () => {
-    /**
-     * 🔴 THE ROW CARRIES BOTH ASSETS, WHICH IS THE ONLY SHAPE THAT CAN TELL CORRECT FROM
-     * WRONG. `listingMediaShots` builds `[cover, icon]`, so with a cover absent the icon
-     * is index 0 — which is also what a broken positional lookup would return. That is
-     * exactly why `listingMediaIndex` is positional rather than a URL `findIndex`, so the
-     * fixture has to have two distinct assets and the assertion has to name WHICH image.
-     */
+    // 🔴 BOTH ASSETS, because `listingMediaShots` builds `[cover, icon]`: with no cover the
+    // icon is index 0, which a lookup hardcoded to 0 also returns. Two assets put the icon
+    // at index 1, so the caption is what says which image is framed.
     const { openOnsite } = renderList({
       onsiteItems: [
         { ...ONSITE, iconUrl: `${PIXEL}#icon`, coverUrl: `${PIXEL}#cover` } as OnsiteReviewRequest,

@@ -161,26 +161,34 @@ export function appsTableColumnProblems(label: string, columns: AppsTableColumns
  * ~130px of padding per row at the wide width — "a share larger than its cell needs is
  * padding relabelled", which is the defect, not the fix.
  *
- * 🔴 VERSION IS THE WIDEST FIXED SHARE, which is not where intuition puts it: a `<Code>`
- * semver NEXT TO a violet `first version` badge on a nowrap row paints wider than the kind
- * badge and wider than the submitter chip. A share under what the cell paints does not make
- * the row narrower — it paints OUTSIDE the cell, which is the `/apps/mine` Status defect
- * below. `AppsWideLayout.geometry.test.tsx`'s Version containment arm is what holds it.
+ * 🔴 VERSION AND SUBMITTER ARE THE TWO BIG FIXED SHARES, which is not where intuition puts
+ * them. Version is a `<Code>` semver NEXT TO a violet `first version` badge on a nowrap
+ * row; Submitter is an avatar plus a username, and `usernameInputSchema` allows 25
+ * characters with no word break in them. Neither is sized by eye — see the two geometry
+ * arms below, which are the record.
  *
- * ⚠️ NO MEASURED FIGURES HERE ANY MORE, AND THEIR ABSENCE IS DELIBERATE. An earlier
- * revision justified each share with per-column min-content numbers "measured in
- * `AppsWideLayout.geometry.test.tsx`" — numbers that appeared nowhere but that comment,
- * because the tier pins SHARES and containment, never a min-content value. One of them was
- * also measured against a test STUB of `UserAvatar` rather than the real component, which
- * is how the Submitter share shipped at 7 when the real chip needs ~8.6% of the wide table:
- * a figure in prose vouched for a share no test could check. The declared-share arm reds on
- * a share below its cell's need, so that arm is the record; this paragraph is not.
+ * 🔴 SUBMITTER IS SIZED TO THE LONGEST LEGAL USERNAME, and the reason is min-content
+ * rather than wrapping. `UserAvatar`'s own row is `wrap="nowrap"`, so the chip never
+ * breaks — measured at the 25-char bound (`usernameInputSchema.max(25)`), the cell is 26px
+ * tall and the row 73px at all four fixture widths. What a long name moves is the cell's
+ * MIN-CONTENT, and a share below that simply stops binding: automatic table layout hands
+ * the column its min-content anyway and the primary absorbs less. That is what the
+ * declared-share arm reds on.
+ *
+ * 🔴 A FIGURE IN THIS COMMENT IS NOT ALLOWED TO JUSTIFY A SHARE, and the history is why.
+ * An earlier revision carried per-column min-contents here, and the Submitter share was
+ * raised twice — 7 → 9 → 13 — each time because the FIXTURE understated the worst case,
+ * first with a stub of `UserAvatar` and then with a 15-character name against a 25-char
+ * bound. ⚠️ The stub was NOT what made the number wrong: measured, it reported the same
+ * 217.66px the real component does at 15 chars. It was replaced because a tier that
+ * asserts painted width must render the real component, not because it had lied. The
+ * fixture's realism was the defect both times, and only the geometry arm can see that.
  */
 export const APPS_REVIEW_QUEUE_COLUMNS = {
   /** Pending / Rejected: Kind · App · Version · Submitter · Plays · date · action. */
-  withoutDeploy: [6, null, 14, 9, 5, 5, 6] as AppsTableColumns,
+  withoutDeploy: [6, null, 14, 13, 5, 5, 6] as AppsTableColumns,
   /** Approved: Kind · App · Version · Submitter · Plays · date · Deploy · action. */
-  withDeploy: [6, null, 14, 9, 5, 5, 8, 6] as AppsTableColumns,
+  withDeploy: [6, null, 14, 13, 5, 5, 8, 6] as AppsTableColumns,
 } as const;
 
 /**

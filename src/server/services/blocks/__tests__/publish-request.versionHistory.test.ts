@@ -214,12 +214,17 @@ describe('the mod queue rows carry the app store listing, joined on SLUG', () =>
      */
     const SLUG = 'contested';
 
-    it('the OFF-SITE listing a second developer claimed on the released slug is ignored', async () => {
+    it('an OFF-SITE listing on the slug is ignored — ONLY the kind differs here', async () => {
+      // 🔴 THE FIXTURE OVERRIDES `kind` AND NOTHING ELSE, and that is the assertion. An
+      // earlier revision also set `userId: 999`, so the owner conjunct rejected the row and
+      // the kind test never executed — deleting the kind test left this arm GREEN. The
+      // listing keeps `queueRow`'s own submitter, so kind is the only thing that can
+      // decide it.
       mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
-        queueRow({ id: 'pubreq_a', slug: SLUG, appBlockId: null }),
+        queueRow({ id: 'pubreq_a', slug: SLUG, appBlockId: null, submittedBy: { id: 7 } }),
       ]);
       mockDbRead.appListing.findMany.mockResolvedValue([
-        listingRow({ slug: SLUG, kind: 'offsite', userId: 999 }),
+        listingRow({ slug: SLUG, kind: 'offsite' }),
       ]);
       const result = await listRejectedRequests({ limit: 10 });
       expect(result.items[0]).toMatchObject({ playCount: null, iconUrl: null, coverUrl: null });
@@ -249,15 +254,63 @@ describe('the mod queue rows carry the app store listing, joined on SLUG', () =>
       expect(result.items[0].playCount).toBeNull();
     });
 
-    it("a DIFFERENT app block's listing is ignored for an approved request", async () => {
+    it("a DIFFERENT app block's listing is ignored when BOTH sides are keyed", async () => {
+      // Two ids that disagree is the one shape that loses outright — the owner fallback
+      // does not get a say, which is what stops a keyed listing being adopted by a keyed
+      // request for another app.
       mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
-        queueRow({ id: 'pubreq_a', slug: SLUG, appBlockId: 'apb_mine' }),
+        queueRow({ id: 'pubreq_a', slug: SLUG, appBlockId: 'apb_mine', submittedBy: { id: 7 } }),
       ]);
       mockDbRead.appListing.findMany.mockResolvedValue([
-        listingRow({ slug: SLUG, appBlockId: 'apb_theirs' }),
+        listingRow({ slug: SLUG, appBlockId: 'apb_theirs', userId: 7 }),
       ]);
       const result = await listApprovedRequests({ limit: 10 });
       expect(result.items[0].playCount).toBeNull();
+    });
+
+    it("🔴 a REJECTED row still shows its app's listing after a later version was approved", async () => {
+      /**
+       * 🔴 THE FALSE NEGATIVE AN EARLIER REVISION OF THE PREDICATE SHIPPED, found by
+       * auditing the fix rather than the feature. Three ordinary steps:
+       *   1. dev submits v1 → request R1, `appBlockId: null`, plus a draft listing;
+       *   2. a moderator REJECTS R1 — which deliberately KEEPS the draft listing, because
+       *      reject is the only "please fix this" signal this path has;
+       *   3. dev re-submits, that version is approved → the approve stamps `appBlockId`
+       *      onto the APPROVED request and onto the listing, and never touches R1.
+       * R1 therefore has no block id while the listing has one. Keying on the REQUEST's id
+       * alone blanked the Plays and media columns on the Rejected tab for the app's own
+       * developer — correct before the ownership fix, broken by it, with nothing red.
+       */
+      mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+        queueRow({ id: 'pubreq_r1', slug: SLUG, appBlockId: null, submittedBy: { id: 7 } }),
+      ]);
+      mockDbRead.appListing.findMany.mockResolvedValue([
+        listingRow({
+          slug: SLUG,
+          appBlockId: 'apb_approved_later',
+          userId: 7,
+          metric: { openCount: 44 },
+        }),
+      ]);
+      const result = await listRejectedRequests({ limit: 10 });
+      expect(result.items[0].playCount).toBe(44);
+      expect(result.items[0].iconUrl).toContain('icon-uuid');
+    });
+
+    it('🔴 an APPROVED row still shows its listing when the listing transition did not run', async () => {
+      // The mirror image, and the moment it matters most: an approve whose draft→approved
+      // listing transition was skipped (a still-scanning asset is the DESIGNED case, left
+      // `draft` for re-review) leaves the request carrying the block id and the listing
+      // not. The moderator looking at that row is the person who has to judge the pending
+      // media, and the surface told them there was none.
+      mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+        queueRow({ id: 'pubreq_a1', slug: SLUG, appBlockId: 'apb_mine', submittedBy: { id: 7 } }),
+      ]);
+      mockDbRead.appListing.findMany.mockResolvedValue([
+        listingRow({ slug: SLUG, appBlockId: null, userId: 7, metric: { openCount: 3 } }),
+      ]);
+      const result = await listApprovedRequests({ limit: 10 });
+      expect(result.items[0].playCount).toBe(3);
     });
 
     it('🔴 POSITIVE CONTROL — the SAME shape with the ownership column matching DOES project', async () => {
@@ -273,7 +326,7 @@ describe('the mod queue rows carry the app store listing, joined on SLUG', () =>
       expect(result.items[0].playCount).toBe(31);
     });
 
-    it('the never-approved OWNER case projects — the pre-approval draft is the app`s own', async () => {
+    it("the never-approved OWNER case projects — the pre-approval draft is the app's own", async () => {
       mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
         queueRow({ id: 'pubreq_a', slug: SLUG, appBlockId: null, submittedBy: { id: 7 } }),
       ]);
@@ -284,18 +337,65 @@ describe('the mod queue rows carry the app store listing, joined on SLUG', () =>
       expect(result.items[0].playCount).toBe(12);
     });
 
+    it('🔴 TWO decided rows on ONE released slug get their OWN verdicts, not a shared one', async () => {
+      /**
+       * 🔴 THE RESULT MAP IS KEYED ON THE REQUEST ID, AND ONLY THIS ARM CAN SEE IT. Every
+       * other arm renders one row per page, so a slug-keyed map — which cannot hold two
+       * verdicts for one slug — passes all of them. This is the released-slug shape the
+       * whole predicate exists for: a freed slug puts two developers' decided rows on the
+       * Rejected tab at once, and the stranger's row must not borrow the owner's listing.
+       */
+      mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+        queueRow({ id: 'pubreq_owner', slug: SLUG, appBlockId: null, submittedBy: { id: 7 } }),
+        queueRow({ id: 'pubreq_stranger', slug: SLUG, appBlockId: null, submittedBy: { id: 999 } }),
+      ]);
+      mockDbRead.appListing.findMany.mockResolvedValue([
+        listingRow({ slug: SLUG, appBlockId: null, userId: 7, metric: { openCount: 77 } }),
+      ]);
+      const result = await listRejectedRequests({ limit: 10 });
+      const byId = new Map(
+        (result.items as { id: string; playCount: number | null; iconUrl: string | null }[]).map(
+          (r) => [r.id, r]
+        )
+      );
+      expect(byId.get('pubreq_owner')?.playCount, 'the OWNER row must show its listing').toBe(77);
+      expect(
+        byId.get('pubreq_stranger')?.playCount,
+        "the STRANGER row must show nothing — it is another developer's listing"
+      ).toBeNull();
+      expect(byId.get('pubreq_stranger')?.iconUrl).toBeNull();
+    });
+
     it('the query itself excludes non-onsite listings and revision shadows', async () => {
-      // Belt on top of the in-memory predicate: the two terms that can be pushed into SQL
-      // are, so the page does not carry rows it will discard.
+      // Belt only — a shadow's synthetic `rev-<ulid>` slug already cannot match an app
+      // slug, and the kind term is re-tested in memory. Pinned so neither is dropped as
+      // redundant without the other being checked.
       mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
         queueRow({ id: 'pubreq_a', slug: SLUG }),
       ]);
       await listPendingRequests({ limit: 10 });
-      expect(mockDbRead.appListing.findMany.mock.calls[0][0].where).toMatchObject({
-        kind: 'onsite',
-        revisionOfId: null,
-      });
+      const where = mockDbRead.appListing.findMany.mock.calls[0][0].where;
+      expect(where).toMatchObject({ kind: 'onsite', revisionOfId: null });
+      // EXACT key set, so a fourth term cannot be added without a decision — the property
+      // an earlier `toMatchObject`-only revision of this arm stopped holding.
+      expect(Object.keys(where).sort()).toEqual(['kind', 'revisionOfId', 'slug']);
     });
+  });
+
+  it('🔴 a present ICON is never substituted for a missing COVER', async () => {
+    // `listingCoverUrl` takes a fallback argument and the shared projection passes `null`
+    // deliberately: a moderator has to SEE that the listing has no cover. Nothing else in
+    // these suites has an icon without a cover, so without this arm the fallback argument
+    // could be changed to anything.
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      queueRow({ id: 'pubreq_nocover', slug: 'no-cover', submittedBy: { id: 7 } }),
+    ]);
+    mockDbRead.appListing.findMany.mockResolvedValue([
+      listingRow({ slug: 'no-cover', icon: { url: 'icon-uuid' }, cover: null }),
+    ]);
+    const result = await listPendingRequests({ limit: 10 });
+    expect(result.items[0].iconUrl).toContain('icon-uuid');
+    expect(result.items[0].coverUrl).toBeNull();
   });
 
   it('a slug with NO listing yields nulls rather than throwing', async () => {
@@ -308,10 +408,9 @@ describe('the mod queue rows carry the app store listing, joined on SLUG', () =>
   });
 
   it('🔴 a listing with no METRIC row is a genuine ZERO, not unknown', async () => {
-    // The canonical rule, which this read now goes through rather than re-deriving:
-    // `cardOpenCount` says a missing metric row means "no plays recorded yet" ⇒ 0, and
-    // reserves `null` for a listing whose count is UNMEASURABLE. An earlier revision of
-    // this join had both halves inverted.
+    // The canonical rule this read goes through rather than re-deriving: `cardOpenCount`
+    // says a missing metric row means "no plays recorded yet" ⇒ 0, and reserves `null` for
+    // a listing whose count is UNMEASURABLE.
     mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
       queueRow({ id: 'pubreq_c', slug: 'new-listing' }),
     ]);
@@ -358,11 +457,8 @@ describe('the mod queue rows carry the app store listing, joined on SLUG', () =>
   });
 
   it('🔴 ALL THREE list procs carry the projection, not just the two somebody tested', async () => {
-    /**
-     * 🔴 THE REJECTED TAB WAS THE UNCOVERED ONE. Two procs were exercised while the
-     * docstring claimed three, so deleting the spread from `listRejectedRequests` alone
-     * would have blanked that tab with nothing red.
-     */
+    // Looped over the real exports: deleting the spread from any one proc blanks that
+    // tab's Plays and icon columns, and only this arm would notice.
     const procs = [
       ['pending', listPendingRequests],
       ['approved', listApprovedRequests],

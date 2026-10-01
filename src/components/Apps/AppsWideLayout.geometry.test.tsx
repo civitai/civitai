@@ -188,9 +188,12 @@ vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
   DEFECT. This file's whole purpose is painted width, and the Submitter column's share is
   justified in `appsWideLayout.tsx` by a number measured here — so stubbing the component
   whose width is the quantity under assertion measured the stub. (The behaviour suites
-  elsewhere DO stub it; there the width is not what they assert.) What the real component
-  needs instead is the two viewer-state hooks it reaches through `useGetEdgeUrl`, which no
-  geometry fixture can supply: both are stubbed at the SOURCE rather than the component.
+  elsewhere DO stub it; there the width is not what they assert.) ⚠️ The stub was not
+  reporting a WRONG width — measured, it matched the real component — so this is about what
+  the tier can see in future, not a number it got wrong. What the real component needs is
+  two viewer-state hooks no geometry fixture can supply: `useBrowsingSettings` (via
+  `useGetEdgeUrl`) and `useViewerBrowsingLevelDebounced` (called directly). Both are
+  stubbed at the SOURCE rather than the component.
 */
 vi.mock('~/providers/BrowserSettingsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof BrowserSettingsMod>()),
@@ -467,10 +470,11 @@ const ONSITE: OnsiteReviewRequest = {
   iconUrl: PIXEL,
   coverUrl: PIXEL,
   reviewRepoUrl: 'https://forgejo.example/repo',
-  // 🔴 A REALISTIC WORST-CASE USERNAME, not a short one. The Submitter cell has no
-  // `nowrap`, so a long name is the row-growth case this tier's height invariant exists
-  // for — a 10-character fixture is blind to it. 15 chars is the max this site allows.
-  submittedBy: { id: 7, username: 'wwwwwwwwwwwwwww', image: null },
+  // 🔴 THE WORST CASE THE SCHEMA ALLOWS (`usernameInputSchema.max(25)`), because the
+  // Submitter cell's MIN-CONTENT is what the declared-share arm reads and a long name is
+  // what sets it: 15 chars measured 217.66px against 318.77 here. It does not change the
+  // ROW HEIGHT — the chip is `wrap="nowrap"` and never breaks.
+  submittedBy: { id: 7, username: 'wwwwwwwwwwwwwwwwwwwwwwwww', image: null },
 } as OnsiteReviewRequest;
 
 const OFFSITE: OffsiteReviewRequest = {
@@ -777,8 +781,8 @@ describe('/apps/review — the queue table spends the width on its App column', 
         `approved-shape column ${index} should be ${share}% of ${px(table)}`
       ).toBeCloseTo((share / 100) * table, 0);
     }
-    // Same counter as the seven-column arm: a second `null` in the ledger would otherwise
-    // drop a column from the check while `toHaveLength` still passed.
+    // Same counter as the seven-column arm, so an empty offender list cannot mean the loop
+    // resolved nothing.
     expect(checked, 'no fixed column was checked').toBe(
       APPS_REVIEW_QUEUE_COLUMNS.withDeploy.length - 1
     );
@@ -865,19 +869,40 @@ describe('/apps/review — the queue table spends the width on its App column', 
     // change added — Plays was missing from this list while the comment claimed it was
     // covered, and it is the one cell whose emptiness no other arm here can see.
     await renderRoute(list(), NARROW);
+
+    /**
+     * 🔴 NON-EMPTY, NOT MERELY PRESENT, for the testids that sit on a WRAPPER. The
+     * submitter span and the plays `Text` both wrap their content, so a child that rendered
+     * nothing — a `UserAvatar` returning null on its `id === -1` or loading branch — leaves
+     * the wrapper in the DOM and a presence-only check passes over an empty cell. That is
+     * the exact failure this arm exists to catch, on the tier whose thesis is that the real
+     * component renders.
+     */
     for (const testId of [
       `apps-unified-review-version-${ONSITE_KEY}`,
       `apps-unified-review-first-version-${ONSITE_KEY}`,
       `apps-unified-review-submitter-${ONSITE_KEY}`,
       `apps-unified-review-plays-${ONSITE_KEY}`,
       `apps-unified-review-age-${ONSITE_KEY}`,
-      `apps-unified-review-icon-${ONSITE_KEY}`,
     ]) {
+      const el = document.querySelector(`[data-testid="${testId}"]`) as HTMLElement | null;
       expect(
-        document.querySelector(`[data-testid="${testId}"]`),
+        el,
         `${testId} did not render — the measurement above covered an empty cell`
       ).not.toBeNull();
+      expect(
+        el!.textContent?.trim() || el!.childElementCount,
+        `${testId} rendered an EMPTY element`
+      ).toBeTruthy();
     }
+
+    // The icon is a LEAF `<img>` — no text, no children — so presence plus a `src` is what
+    // "it rendered" means there.
+    const icon = document.querySelector(
+      `[data-testid="apps-unified-review-icon-${ONSITE_KEY}"]`
+    ) as HTMLImageElement | null;
+    expect(icon, 'the row icon did not render').not.toBeNull();
+    expect(icon!.getAttribute('src'), 'the row icon rendered with no src').toBeTruthy();
     await cleanup();
   });
 });
