@@ -1,21 +1,48 @@
 /**
- * The ASSEMBLED post-detail payload — criterion 5's remaining route, and the
- * controller→component seam.
+ * The controller→component SEAM, and the DTO's key-count ledger.
  *
- * 🔴 WHY HERE RATHER THAN ON THE SELECTOR. `postSelect`'s key ledger stops
- * `metadata` entering the Prisma projection, and that is the main door. But since
- * this change the CONTROLLER also constructs the DTO (`{ ...post,
- * publishedWithApp }`), which is a second, unguarded door into the same public,
- * anon-capable payload: adding `metadata` to that spread ships every
- * `Post.metadata` key — `unpublishedBy` (a moderator id), `unpublishedAt`,
- * `reviewId` — with the selector ledger still green. Measured: that mutant
- * survived every other test in this change.
+ * 🔴 WHAT THIS FILE DOES NOT GUARD — read this before adding a metadata
+ * assertion to it, because an earlier revision had three and all three were
+ * UNFALSIFIABLE.
  *
- * It also pins the SEAM. The chip's decision module and its React component are
- * each hermetically tested, and both stay green if the controller never attaches
- * the field — the feature would simply be inert, with 40-odd passing tests. And
- * it pins criterion 7 by VALUE for the first time: nothing in the repo asserted
- * `unpublishedBy === null` for a published post, before or after this change.
+ * `getPostDetail` is MOCKED here. So no `Post.metadata` ever enters the system
+ * under test, and no assertion in this file can observe a metadata leak: the
+ * three `not.toContain('reviewId' | 'imageNsfwLevel' | <moderator id>)` checks
+ * and an `unpublishedBy === null` check were all passing vacuously, and would
+ * have passed against any controller mutation. Worse, widening `postSelect` to
+ * `metadata: true` — the ACTUAL hazard — changes nothing here, because the
+ * selector is mocked out of the picture. The header used to claim this file
+ * guarded "a second, unguarded door" into the public payload. It did not guard it
+ * at all, and reading as defence-in-depth while providing none is worse than
+ * providing none, because it stops the next reader looking.
+ *
+ * ✅ THE REAL GUARD EXISTS AND IS GENUINELY TESTED, one layer down:
+ * `postSelect` carries no `metadata` key, pinned by `__tests__/
+ * post-app-chip.projection.test.ts` both as a negative (`not.toContain`) and as a
+ * SORTED KEY LEDGER over the whole projection — so the field cannot be added
+ * under any spelling, and the set cannot be widened by anything else either. That
+ * is where a metadata assertion belongs. `unpublishedBy`'s forced `null` for a
+ * published post is likewise a property of `getPostDetail`, which this change
+ * does not touch and which this file cannot see.
+ *
+ * ⚠️ A controller-level metadata strip was considered and deliberately NOT added:
+ * it would be a new runtime guard, the card's non-goals forbid one beyond the two
+ * named criteria, and the guard that matters already exists.
+ *
+ * WHAT IT DOES GUARD, and both are falsifiable — each was watched to fail:
+ *
+ *  - THE SEAM. The chip's decision module and its React component are each
+ *    hermetically tested, and both stay green if the controller never attaches
+ *    the field — the feature would be inert with 40-odd passing tests. Mutant:
+ *    drop `publishedWithApp` from the returned spread → 3 failed.
+ *  - THE KEY-COUNT LEDGER. Exactly one key may be added to this public,
+ *    anon-capable payload. This one IS falsifiable even against metadata, because
+ *    it counts KEYS rather than inspecting values: spreading `metadata` in adds
+ *    the key whatever its value, including `undefined`. Mutant: add it → 1 failed,
+ *    `expected [ 'publishedWithApp', 'metadata' ] to deeply equal
+ *    [ 'publishedWithApp' ]`.
+ *  - The chip is resolved with the RETURNED post's id, the session user and the
+ *    request host, and only AFTER the authorisation and blocked-user checks.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -52,12 +79,15 @@ const CHIP = { slug: 'custom-generators', name: 'Custom Generators', iconUrl: nu
  * A published post exactly as `getPostDetail` returns one: the `postSelect`
  * fields, its two transforms, and the `PostUnpublishContext` it appends.
  *
- * 🔴 `metadata` IS PRESENT ON THIS FIXTURE, carrying the real moderator-id keys.
- * That is the point: `getPostDetail` does not return it today, but the fixture
- * supplies it so a controller that starts spreading it has somewhere to get it
- * from. A fixture without it could not fail.
+ * ⚠️ NO `metadata` KEY, DELIBERATELY — and an earlier revision's note claiming the
+ * opposite ("`metadata` IS PRESENT ON THIS FIXTURE… a fixture without it could not
+ * fail") was wrong in a way worth recording. It carried the real moderator-id
+ * keys, but the mock was only ever handed a copy with `metadata` destructured
+ * OUT, so the blob never entered the system under test and every assertion over
+ * it was vacuous. The honest fixture is the shape `getPostDetail` actually
+ * returns; the metadata guard lives at the selector, as the header explains.
  */
-const publishedPost = () => ({
+const selected = () => ({
   id: POST_ID,
   nsfw: false,
   nsfwLevel: 1,
@@ -75,21 +105,7 @@ const publishedPost = () => ({
   unpublishedAt: null,
   unpublishedBy: null,
   parentModelId: null,
-  // Not returned by the real selector — see above.
-  metadata: {
-    blockPublishedAppId: 'appblk-custom-generators',
-    unpublishedBy: 318,
-    unpublishedAt: '2026-04-02T00:00:00.000Z',
-    reviewId: 8812,
-    imageNsfwLevel: 1,
-  },
 });
-
-/** What `getPostDetail` actually hands back — the fixture minus `metadata`. */
-const selected = () => {
-  const { metadata: _omitted, ...rest } = publishedPost();
-  return rest;
-};
 
 const ctx = (over: Record<string, unknown> = {}) =>
   ({ user: VIEWER, req: { headers: { host: HOST } }, ...over } as never);
@@ -116,42 +132,21 @@ describe('the assembled payload carries the chip and nothing else new', () => {
   });
 
   it('adds EXACTLY one key to the payload', async () => {
-    // A ledger over the whole DTO. It fails if `metadata` is spread in, and
-    // equally if some later change quietly widens this public read by anything
-    // else. `getPostDetail`'s own output is the baseline, so this test does not
-    // restate the selector's field list and cannot drift from it.
+    // A ledger over the whole DTO. `getPostDetail`'s own output is the baseline,
+    // so this does not restate the selector's field list and cannot drift from it.
+    //
+    // 🔴 THE ONE ASSERTION HERE THAT CAN SEE A METADATA SPREAD, and only because
+    // it counts KEYS rather than inspecting values: spreading `metadata` in adds
+    // the key whatever its value, `undefined` included. Everything value-based
+    // about metadata is unfalsifiable in this file — see the header — and the
+    // three assertions that tried were removed rather than left reading as
+    // coverage.
     const result = (await getPostHandler({ input: { id: POST_ID }, ctx: ctx() })) as Record<
       string,
       unknown
     >;
     const added = Object.keys(result).filter((k) => !(k in selected()));
     expect(added).toEqual(['publishedWithApp']);
-  });
-
-  it('puts no raw Post.metadata key on the wire', async () => {
-    // The behavioural form of the same property, against the VALUES rather than
-    // the key set — so it also catches a spread that flattens the blob in.
-    const result = await getPostHandler({ input: { id: POST_ID }, ctx: ctx() });
-    const serialized = JSON.stringify(result);
-    expect(serialized).not.toContain('reviewId');
-    expect(serialized).not.toContain('imageNsfwLevel');
-    expect(serialized).not.toContain('8812');
-    // 318 is the moderator id in the fixture's metadata. `unpublishedBy` itself
-    // IS a legitimate DTO key (forced null below), so the VALUE is what matters.
-    expect(serialized).not.toContain('318');
-  });
-
-  it('keeps `unpublishedBy` null for a published post — criterion 7, by value', async () => {
-    // Nothing in the repo asserted this before, in either direction. Widening
-    // `postSelect` to `metadata: true` would have routed the real moderator id
-    // (318, in the fixture) to the client by a second path that nothing guards;
-    // this is the assertion that would have caught it on the DTO.
-    const result = (await getPostHandler({ input: { id: POST_ID }, ctx: ctx() })) as Record<
-      string,
-      unknown
-    >;
-    expect(result.unpublishedBy).toBeNull();
-    expect(result.unpublishedAt).toBeNull();
   });
 });
 
