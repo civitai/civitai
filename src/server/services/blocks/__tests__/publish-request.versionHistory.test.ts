@@ -456,7 +456,7 @@ describe('the mod queue rows carry the app store listing, joined on SLUG', () =>
   });
 
   it('🔴 ALL THREE list procs carry the projection, not just the two somebody tested', async () => {
-    // Looped over the real exports rather than naming the two somebody remembered.
+    // Looped over the real exports.
     const procs = [
       ['pending', listPendingRequests],
       ['approved', listApprovedRequests],

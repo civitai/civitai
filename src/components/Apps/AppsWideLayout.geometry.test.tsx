@@ -186,7 +186,7 @@ vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
 /*
   🔴 THE REAL `UserAvatar` RENDERS IN THIS TIER, AND THE STUB IT REPLACED WAS A MEASUREMENT
   DEFECT. This file's whole purpose is painted width, and the Submitter column's share is
-  justified in `appsWideLayout.tsx` by a number measured here — so stubbing the component
+  what the declared-share arm below reads — so stubbing the component
   whose width is the quantity under assertion measured the stub. (The behaviour suites
   elsewhere DO stub it; there the width is not what they assert.) What the real component
   needs is two viewer-state hooks no geometry fixture can supply: `useBrowsingSettings`
@@ -453,9 +453,7 @@ const ONSITE_KEY = 'onsite:or1';
  * what the declared-share arm reads and a long name is what sets it. The chip is
  * `wrap="nowrap"`, so this does NOT change the row height.
  *
- * Its length is pinned against `usernameInputSchema` in `__tests__/appsWideLayout.test.ts`
- * — the share has already been raised twice because a fixture understated this bound, and
- * a bare literal here is how that happens a third time.
+ * Its length is pinned against `usernameInputSchema` in `__tests__/appsWideLayout.test.ts`.
  */
 const SUBMITTER_USERNAME = 'w'.repeat(25);
 
@@ -885,12 +883,15 @@ describe('/apps/review — the queue table spends the width on its App column', 
     };
 
     /**
-     * 🔴 THE VALUE, NOT MERELY A NON-EMPTY ELEMENT. Three of these cells render `'—'` on
-     * their OWN testid when the datum is missing, so "present" and even "non-empty" pass
-     * over a placeholder — which is the shape this arm exists to catch. Asserting the
-     * fixture's own values makes each one load-bearing, and it covers the submitter span's
-     * empty-child case (a `UserAvatar` returning null for `id === -1` leaves the span in
-     * the DOM) without naming a mechanism this check does not actually test for.
+     * 🔴 THE VALUE, NOT MERELY A NON-EMPTY ELEMENT. THREE of these five cells — Version,
+     * Submitter, Plays — render `'—'` on their OWN testid when the datum is missing, so
+     * "present" and even "non-empty" pass over a placeholder, which is the shape this arm
+     * exists to catch. Asserting the fixture's own values is what makes those three
+     * load-bearing, and it covers the submitter span's empty-child case (a `UserAvatar`
+     * returning null for `id === -1` leaves the span in the DOM). The other two carry no
+     * placeholder branch: `first-version` renders no testid at all when absent, and the age
+     * cell has no `'—'` arm — which is why that one is a SHAPE matcher, the only form there
+     * that also excludes an empty render.
      */
     expect(text(`apps-unified-review-version-${ONSITE_KEY}`)).toContain('1.0.0');
     expect(text(`apps-unified-review-first-version-${ONSITE_KEY}`)).toBe('first version');

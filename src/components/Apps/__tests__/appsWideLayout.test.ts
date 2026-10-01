@@ -166,16 +166,11 @@ describe('every shipped ledger is valid', () => {
 
   test('🔴 the geometry fixture uses the LONGEST username the schema allows', async () => {
     /**
-     * 🔴 THIS ENDS A SERIES RATHER THAN RECORDING ONE. The review queue's Submitter share
-     * was raised twice — 7 → 9 → 13 — and neither cause was arithmetic: both times the
-     * geometry fixture understated the worst case, so the declared-share arm measured a
-     * cell narrower than production can render and passed. The fixture is the input that
-     * decides whether that arm can see anything, and `usernameInputSchema`'s bound is the
-     * only thing that says what the worst case IS.
+     * The fixture decides whether the declared-share arm can see anything, and
+     * `usernameInputSchema`'s bound is the only thing that says what the worst case is.
      *
-     * Asserted by PROBING the schema rather than by reading a number out of it, so it holds
-     * whatever shape the bound is expressed in: the fixture length must parse and one more
-     * character must not.
+     * Probed rather than read as a number, so it holds whatever shape the bound takes: the
+     * fixture length must parse and one more character must not.
      */
     const { usernameInputSchema } = await import('~/server/schema/user.schema');
     /**

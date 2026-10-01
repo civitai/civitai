@@ -569,9 +569,9 @@ describe('mod queue procs — widened to kind IN (onsite, offsite), each row car
       // CDN-transformed, not the raw `Image.url`.
       expect(row.iconUrl).toContain('icon-uuid');
       expect(row.coverUrl).toContain('cover-uuid');
-      // The three derived relations are stripped. ⚠️ A DENYLIST, so this pair of
-      // assertions cannot see a FOURTH key added to the select — that is what the exact
-      // select key-set assertion below is for.
+      // The three derived relations are stripped. ⚠️ A DENYLIST, so these assertions cannot
+      // see another key added to the select — that is what the exact select key-set
+      // assertion below is for.
       for (const stripped of ['icon', 'cover', 'metric']) {
         expect(row.appListing, `appListing.${stripped} must not ship`).not.toHaveProperty(stripped);
       }
@@ -591,10 +591,10 @@ describe('mod queue procs — widened to kind IN (onsite, offsite), each row car
       /**
        * 🔴 THE EXACT KEY SET, BECAUSE THE PAYLOAD STRIP IS A DENYLIST. The row-level
        * assertions above name the three relations that are removed, which a select gaining
-       * a FOURTH key satisfies — measured: adding `userId: true` ships it to the browser
-       * with nothing reading on it and the whole blocks suite stays green. Pinning the
-       * select is what turns a widening into a decision; `icon`/`cover`/`metric` are the
-       * three this queue adds, and everything else is `submissionSelect`'s.
+       * another key satisfies — that key would then ship to the browser with nothing
+       * reading on it. Pinning the
+       * select is what turns a widening into a decision. This queue adds `kind`, `icon`,
+       * `cover` and `metric`; the rest is `submissionSelect`'s.
        *
        * ⚠️ SCOPED TO THE NESTED `appListing` SELECT. A column added to `submissionSelect`'s
        * TOP level (beside `id`, `slug`, `changelog`) also ships with nothing reading on it,

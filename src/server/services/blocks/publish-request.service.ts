@@ -2020,9 +2020,8 @@ type JoinedListing = {
  * first-version row survives in the Rejected tab forever (that queue filters
  * `status: 'rejected'`, so a later withdrawn row hides while the earlier rejected one
  * stays). The slug is released either by the author withdrawing a LATER submission —
- * `withdrawRequest` → `deleteOnsiteDraftListingForSlug`, whose own comment is "Release the
- * slug + drop unreviewed media", with no owner predicate — or by a mod `purgeListing` of
- * the orphan draft. A second developer can then claim it, and a slug-only join prints THEIR
+ * `withdrawRequest` → `deleteOnsiteDraftListingForSlug`, which carries no owner predicate —
+ * or by a mod `purgeListing` of the orphan draft. A second developer can then claim it, and a slug-only join prints THEIR
  * icon, cover and play count on the first developer's row, under the first developer's
  * name.
  *
@@ -2046,32 +2045,30 @@ function listingBelongsToRequest(listing: JoinedListing, req: ListingJoinSubject
   // Disagreeing ids lose outright, so a keyed listing is never adopted by a keyed request
   // for another app.
   //
-  // ⚠️ THAT IS NOT THE SAME AS "a listing keyed to a different app is never adopted", and
-  // an earlier revision of this comment claimed the stronger thing. In the ASYMMETRIC case
-  // — request unkeyed, listing keyed — this falls through to the owner test and WILL adopt
-  // a listing whose `appBlockId` is some other app's, if the owner matches. What makes that
-  // unreachable is not here: an on-site listing's `slug` IS its block's `blockId`
-  // (`app-listing-mapper`), `AppBlock.blockId` carries a GLOBAL unique, nothing in `src/`
-  // deletes an `AppBlock`, and both slug-release paths require `appBlockId: null` — so a
-  // slug can only be freed while no app has ever existed on it, and a slug-matched listing
-  // is always this request's own app. 🔴 IF ANY OF THOSE FOUR CHANGES — an AppBlock delete
-  // path, or `blockId`'s unique narrowed to `(appId, blockId)` — this fallback becomes the
-  // hole the function was written to close, and nothing in the predicate would notice.
+  // ⚠️ THAT IS NOT THE SAME AS "a listing keyed to a different app is never adopted". In
+  // the ASYMMETRIC case — request unkeyed, listing keyed — this falls through to the owner
+  // test and WILL adopt a listing whose `appBlockId` is another app's, if the owner matches.
+  // What makes that unreachable is UPSTREAM, not here: `submitVersion` stamps
+  // `appBlockId: existingApp?.id ?? null` from `appBlock.findFirst({ blockId: slug })`, so a
+  // request is unkeyed only while NO `AppBlock` holds its slug — and a keyed on-site listing
+  // implies one does (`app-listing-mapper` sets `slug: ab.blockId`). 🔴 If a request can ever
+  // be minted unkeyed on a slug an `AppBlock` already holds, this fallback becomes the hole
+  // the function was written to close, and nothing in the predicate would notice.
   if (listing.appBlockId != null && req.appBlockId != null) {
     return listing.appBlockId === req.appBlockId;
   }
   // Otherwise the owner decides. A second developer's claimed listing carries THEIR userId,
-  // so it fails here; the app's own pre-approval draft carries the submitter's
-  // (`createDraftListing` in `submitVersion`).
+  // so it fails here; the app's own pre-approval draft carries the submitter's — the
+  // `appListing.create` in `submitVersion` sets `userId: submittedByUserId`.
   //
   // ⚠️ IT IS A FALLBACK, NOT THE PRIMARY TEST, because `AppListing.userId` is the APP OWNER
   // (`app-listing-mapper` sets `ab.app.userId`) and a seated collaborator's
-  // `submittedByUserId` legitimately is not. Where BOTH sides carry an id that population
-  // is served by the comparison above — but where neither does (a collaborator submitting a
-  // version of an app that has never been approved, or a first version whose app was
-  // transferred before the request was decided) this blanks the media. It fails CLOSED on a
-  // mod-only surface, and for an unkeyed request "my app, transferred" and "someone else's
-  // app on my released slug" are indistinguishable from the columns this join has.
+  // `submittedByUserId` legitimately is not. Where BOTH sides carry an id that population is
+  // served by the comparison above; where neither does, an earlier UNKEYED request (rejected
+  // or withdrawn) whose listing has since been transferred to a new owner blanks the media.
+  // It fails CLOSED on a mod-only surface, and for an unkeyed request "my app, transferred"
+  // and "someone else's app on my released slug" are indistinguishable from the columns this
+  // join has.
   return listing.userId === req.submittedBy?.id;
 }
 
