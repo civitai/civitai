@@ -43,6 +43,7 @@ describe('crucible notifications without a name', () => {
     ['crucible-won', { crucibleId: 7, crucibleName: null, position: null, prizeAmount: 0 }],
     ['crucible-entry-submitted', { crucibleId: 7, crucibleName: null, entrantUsername: 'kai' }],
     ['crucible-cancelled', { crucibleId: 7, crucibleName: null, refundPending: false }],
+    ['crucible-entry-removed', { crucibleId: 7, crucibleName: null, refundedAmount: 0 }],
   ] as const)('%s reads cleanly with the name withheld', (type, details) => {
     const def = crucibleNotifications[type];
     const msg = def.prepareMessage({ details } as Parameters<typeof def.prepareMessage>[0]);
@@ -104,6 +105,25 @@ describe('crucible-cancelled copy', () => {
   it('tells an entrant whose refund failed that it is being processed', () => {
     expect(cancelled(true).message).toBe(
       'The crucible "Neon" you entered was cancelled. Your entry fee refund is being processed.'
+    );
+  });
+});
+
+describe('crucible-entry-removed copy', () => {
+  const removed = (details: Record<string, unknown>) =>
+    crucibleNotifications['crucible-entry-removed'].prepareMessage({
+      details: { crucibleId: 7, crucibleName: 'Neon', ...details },
+    } as never)!.message;
+
+  it('names the refund', () => {
+    expect(removed({ refundedAmount: 1500 })).toBe(
+      'A moderator removed your entry from the crucible "Neon". Your 1,500 Buzz entry fee was refunded.'
+    );
+  });
+
+  it('mentions no refund for a free entry', () => {
+    expect(removed({ refundedAmount: 0 })).toBe(
+      'A moderator removed your entry from the crucible "Neon".'
     );
   });
 });

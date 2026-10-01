@@ -5690,6 +5690,7 @@ export interface Crucible {
   contentType: MediaType;
   entryFee: number;
   seededPrizePool: number;
+  prizePool: number;
   entryLimit: number;
   freeEntriesPerUser: number;
   maxTotalEntries: number | null;

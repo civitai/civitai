@@ -8941,6 +8941,9 @@ model Crucible {
   contentType       MediaType      @default(image)
   entryFee          Int            @default(0)
   seededPrizePool   Int            @default(0)
+  // Sort key for the feed, kept in step with seed + paid entries. Payouts and every shown pool
+  // derive from the entries instead (getCrucibleTotalPrizePool).
+  prizePool         Int            @default(0)
   entryLimit        Int            @default(1)
   // Each person's first N entries skip the fee and add nothing to the pool. Moderators only.
   freeEntriesPerUser Int           @default(0)

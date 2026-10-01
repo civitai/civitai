@@ -397,6 +397,16 @@ describe('updateCrucible — while upcoming', () => {
     expect(charged()).toEqual([2_000, 1_000]);
   });
 
+  it('keeps the stored prize pool equal to a changed seed, since nobody has paid in yet', async () => {
+    findUnique.mockResolvedValue(
+      upcoming({ seededPrizePool: 1_000, seedTransactionId: 'crucible-seed-4-old' })
+    );
+
+    await edit({ seededPrizePool: 2_000 });
+
+    expect(written()).toMatchObject({ seededPrizePool: 2_000, prizePool: 2_000 });
+  });
+
   it('moves the end with the start', async () => {
     findUnique.mockResolvedValue(upcoming());
     const startAt = new Date(Date.now() + 72 * HOUR);

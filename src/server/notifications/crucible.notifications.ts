@@ -34,6 +34,22 @@ export const crucibleNotifications = createNotificationProcessor({
       };
     },
   },
+  // Sent to the entrant when a moderator removes their entry
+  'crucible-entry-removed': {
+    displayName: 'Crucible Entry Removed',
+    category: NotificationCategory.System,
+    toggleable: false,
+    prepareMessage: ({ details }) => ({
+      message: `A moderator removed your entry from the crucible${quotedName(
+        details.crucibleName
+      )}.${
+        details.refundedAmount
+          ? ` Your ${numberWithCommas(details.refundedAmount)} Buzz entry fee was refunded.`
+          : ''
+      }`,
+      url: `/crucibles/${details.crucibleId}`,
+    }),
+  },
   // Sent to each entrant when a crucible they entered is cancelled
   'crucible-cancelled': {
     displayName: 'Crucible Cancelled',

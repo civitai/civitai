@@ -5,6 +5,7 @@ import type {
   CreateEntryPostSchema,
   GetCrucibleEntriesSchema,
   CancelCrucibleSchema,
+  RemoveCrucibleEntrySchema,
   UpdateCrucibleSchema,
   GetFeaturedCrucibleSchema,
   CreateCrucibleInputSchema,
@@ -30,6 +31,7 @@ import {
   checkCrucibleEntryEligibility,
   createCrucibleEntryPost,
   cancelCrucible,
+  removeCrucibleEntry,
   updateCrucible,
   createCrucible,
   getCrucibleDetail,
@@ -296,6 +298,14 @@ export const cancelCrucibleHandler = async ({
     });
   return result;
 };
+
+export const removeCrucibleEntryHandler = ({
+  input,
+  ctx,
+}: {
+  input: RemoveCrucibleEntrySchema;
+  ctx: ProtectedContext;
+}) => removeCrucibleEntry({ ...input, moderatorId: ctx.user.id });
 
 export const updateCrucibleHandler = async ({
   input,

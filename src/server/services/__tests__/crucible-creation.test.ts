@@ -156,6 +156,7 @@ describe('createCrucible — seeded prize pool', () => {
 
     const data = storedData();
     expect(data.seededPrizePool).toBe(5_000);
+    expect(data.prizePool).toBe(5_000);
     expect(data.seedTransactionId).toMatch(/^crucible-seed-4-/);
     expect(data.seedTransactionId).not.toBe(data.buzzTransactionId);
   });

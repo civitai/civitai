@@ -2444,6 +2444,7 @@ export type Crucible = {
   contentType: Generated<MediaType>;
   entryFee: Generated<number>;
   seededPrizePool: Generated<number>;
+  prizePool: Generated<number>;
   entryLimit: Generated<number>;
   freeEntriesPerUser: Generated<number>;
   maxTotalEntries: number | null;

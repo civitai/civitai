@@ -51,7 +51,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CrucibleHeader } from '~/components/Crucible/CrucibleHeader';
 import { CrucibleLeaderboard } from '~/components/Crucible/CrucibleLeaderboard';
-import { CrucibleEntryGrid } from '~/components/Crucible/CrucibleEntryGrid';
+import { CrucibleEntryGrid, type CrucibleEntryData } from '~/components/Crucible/CrucibleEntryGrid';
 import { CruciblePodium } from '~/components/Crucible/CruciblePodium';
 import { CruciblePrizeBreakdown } from '~/components/Crucible/CruciblePrizeBreakdown';
 import { EligibleModelsList } from '~/components/EligibleModels/EligibleModelsList';
@@ -182,6 +182,22 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
     },
   });
 
+  const removeEntryMutation = trpc.crucible.removeEntry.useMutation({
+    onSuccess: (result) => {
+      showSuccessNotification({
+        title: 'Entry removed',
+        message: result.refundedAmount
+          ? `${result.refundedAmount.toLocaleString()} Buzz refunded to the entrant.`
+          : 'It was a free entry, so there was nothing to refund.',
+      });
+      queryUtils.crucible.getById.invalidate({ id });
+      queryUtils.crucible.getEntries.invalidate({ crucibleId: id });
+    },
+    onError: (error) => {
+      showErrorNotification({ title: 'Could not remove entry', error: new Error(error.message) });
+    },
+  });
+
   if (isLoading) return <PageLoader />;
   if (!crucible) return <NotFound />;
 
@@ -257,12 +273,29 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
   const isModerator = currentUser?.isModerator ?? false;
   const isOffDomain =
     !!features.isGreen && crucible.buzzType !== 'green' && !isCreator && !isModerator;
-  const { canEdit, canCancel } = getCrucibleManageActions({
+  const { canEdit, canCancel, canRemoveEntries } = getCrucibleManageActions({
     status: crucible.status,
     endAt: crucible.endAt,
     isCreator,
     isModerator,
   });
+
+  const handleRemoveEntry = (entry: CrucibleEntryData) => {
+    openConfirmModal({
+      title: 'Remove entry',
+      children: (
+        <Text size="sm">
+          Remove {entry.user.username ? `${entry.user.username}'s` : 'this'} entry? Any entry fee
+          they paid is refunded, and they&apos;re told a moderator removed it. This can&apos;t be
+          undone.
+        </Text>
+      ),
+      centered: true,
+      labels: { cancel: 'Keep it', confirm: 'Remove entry' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => removeEntryMutation.mutate({ entryId: entry.id }),
+    });
+  };
 
   // Handle cancel action with confirmation dialog
   const handleCancelCrucible = () => {
@@ -395,6 +428,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                 isLoadingMore={isLoadingMoreEntries}
                 onLoadMore={loadMoreEntries}
                 onEntryClick={openEntry}
+                onRemoveEntry={canRemoveEntries ? handleRemoveEntry : undefined}
                 title="All Entries"
                 showRanks={rankingsVisible}
                 completed={crucible.status === CrucibleStatus.Completed}

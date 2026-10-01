@@ -608,6 +608,29 @@ describe('crucible.getJudgingPair', () => {
   });
 });
 
+describe('crucible.removeEntry', () => {
+  it('is for moderators only, and touches nothing for anyone else', async () => {
+    await expect(caller(signedIn(OWNER_ID)).removeEntry({ entryId: 1 })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(dbMock.dbWrite.crucibleEntry.findUnique).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.crucibleEntry.delete).not.toHaveBeenCalled();
+  });
+
+  it("passes the moderator through, so one can't remove their own entry", async () => {
+    dbMock.dbWrite.crucibleEntry.findUnique.mockResolvedValue({
+      crucibleId: CRUCIBLE_ID,
+      userId: STRANGER_ID,
+      buzzTransactionId: null,
+      crucible: { ...scanned, status: CrucibleStatus.Active, endAt: null, entryFee: 0 },
+    });
+
+    await expect(
+      caller({ ...signedIn(STRANGER_ID), isModerator: true }).removeEntry({ entryId: 1 })
+    ).rejects.toThrow("You can't remove your own entry");
+  });
+});
+
 describe('a creator who blocked the caller', () => {
   beforeEach(() => {
     blockedBy.mockResolvedValue([{ id: scanned.userId }]);

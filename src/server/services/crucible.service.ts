@@ -42,6 +42,7 @@ import type {
   GetJudgingSuggestionsSchema,
   SubmitVoteSchema,
   CancelCrucibleSchema,
+  RemoveCrucibleEntrySchema,
 } from '../schema/crucible.schema';
 import { calculateCrucibleSetupCost } from '../schema/crucible.schema';
 import {
@@ -311,6 +312,7 @@ export const createCrucible = async ({
       contentType,
       entryFee,
       seededPrizePool: seedAmount,
+      prizePool: seedAmount,
       entryLimit,
       freeEntriesPerUser,
       maxTotalEntries: maxTotalEntries ?? null,
@@ -700,6 +702,8 @@ export const updateCrucible = async ({
         : Prisma.JsonNull,
       duration: next.duration * 60,
       seededPrizePool: next.seededPrizePool,
+      // Settings change only before start, when nobody has paid in yet.
+      prizePool: next.seededPrizePool,
     });
 
     if (changes.startAt !== undefined || changes.duration !== undefined) {
@@ -1169,9 +1173,8 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
   const orderBy: Prisma.CrucibleFindManyArgs['orderBy'] = [];
 
   if (sort === CrucibleSort.PrizePool) {
-    // Sort by entry fee (proxy for prize pool size)
-    orderBy.push({ entryFee: 'desc' });
-    orderBy.push({ createdAt: 'desc' }); // Secondary sort
+    orderBy.push({ prizePool: 'desc' });
+    orderBy.push({ createdAt: 'desc' });
   } else if (sort === CrucibleSort.EndingSoon) {
     // Sort by end date ascending (soonest first)
     orderBy.push({ endAt: 'asc' });
@@ -1621,14 +1624,14 @@ export const submitEntry = async ({
     // Wrap in try/catch to refund entry fee if database write fails
     try {
       const entry = await dbWrite.$transaction(async (tx) => {
-        // The shared row lock makes a cancel's or finalize's claim wait for this insert, so they
-        // read the entry; once they've claimed, the status check here refuses it instead.
-        const [open] = await tx.$queryRaw<{ id: number }[]>`
-          SELECT id FROM "Crucible"
+        // Holding the crucible row makes a cancel's or finalize's claim wait for this insert, so
+        // they read the entry; once they've claimed, the status check here refuses it instead.
+        const open = await tx.$executeRaw`
+          UPDATE "Crucible"
+          SET "prizePool" = "prizePool" + ${buzzTransactionId ? crucible.entryFee : 0}
           WHERE id = ${crucibleId}
             AND status = ${CrucibleStatus.Active}::"CrucibleStatus"
             AND ("endAt" IS NULL OR "endAt" > statement_timestamp())
-          FOR SHARE
         `;
         if (!open) throw throwBadRequestError('This crucible is not accepting entries');
         return tx.crucibleEntry.create({
@@ -3270,6 +3273,131 @@ async function refundCrucibleTransactionOnce({
     throw error;
   }
 }
+
+const NOT_RUNNING = 'Entries can only be removed while the crucible is running';
+
+/**
+ * A moderator takes an entry out of a running crucible and returns its fee. Only while it runs:
+ * from its end, finalize owns the pool. The fee goes back before the entry is deleted, so a
+ * refund that fails leaves the entry, and its record of what was paid, in place to try again.
+ */
+export const removeCrucibleEntry = async ({
+  entryId,
+  moderatorId,
+}: RemoveCrucibleEntrySchema & { moderatorId: number }) => {
+  const entry = await dbWrite.crucibleEntry.findUnique({
+    where: { id: entryId },
+    select: {
+      crucibleId: true,
+      userId: true,
+      buzzTransactionId: true,
+      crucible: {
+        select: {
+          status: true,
+          endAt: true,
+          entryFee: true,
+          name: true,
+          ingestion: true,
+          textNsfw: true,
+        },
+      },
+    },
+  });
+  if (!entry) throw throwNotFoundError('Entry not found');
+  if (entry.userId === moderatorId) throw throwBadRequestError("You can't remove your own entry");
+  const { crucible, crucibleId } = entry;
+  if (crucible.status !== CrucibleStatus.Active || (crucible.endAt && crucible.endAt <= new Date()))
+    throw throwBadRequestError(NOT_RUNNING);
+  const fee = entry.buzzTransactionId ? crucible.entryFee : 0;
+
+  if (entry.buzzTransactionId) {
+    try {
+      await refundCrucibleTransactionOnce({
+        externalTransactionIdPrefix: entry.buzzTransactionId,
+        description: getCrucibleTransactionDescription(
+          'Crucible entry fee refund - entry removed',
+          crucible
+        ),
+        crucibleId,
+        label: `removed entry ${entryId}`,
+        reason: 'entry-removed',
+      });
+    } catch (error) {
+      logToAxiom({
+        type: 'error',
+        name: 'crucible-entry-removal-refund-failed',
+        message: `Entry ${entryId} was kept because its fee ${
+          entry.buzzTransactionId
+        } could not be refunded: ${error instanceof Error ? error.message : String(error)}`,
+        crucibleId,
+        entryId,
+        moderatorId,
+        buzzTransactionId: entry.buzzTransactionId,
+      });
+      throw throwBadRequestError(
+        "The entry fee couldn't be refunded, so the entry was kept. Try again in a moment."
+      );
+    }
+  }
+
+  let ended = false;
+  try {
+    await dbWrite.$transaction(async (tx) => {
+      // Holds the crucible row, so finalize can't rank the entry while it's being removed.
+      const running = await tx.$executeRaw`
+        UPDATE "Crucible"
+        SET "prizePool" = "prizePool" - ${fee}
+        WHERE id = ${crucibleId}
+          AND status = ${CrucibleStatus.Active}::"CrucibleStatus"
+          AND ("endAt" IS NULL OR "endAt" > statement_timestamp())
+      `;
+      if (!running) {
+        ended = true;
+        throw throwBadRequestError(NOT_RUNNING);
+      }
+      await tx.crucibleEntry.delete({ where: { id: entryId } });
+    });
+  } catch (error) {
+    // Ended between the check above and here: the fee is back with the entrant, but the entry
+    // still counts toward the pool finalize pays out.
+    if (ended && fee)
+      logToAxiom({
+        type: 'error',
+        name: 'crucible-entry-removal-raced-end',
+        message: `Entry ${entryId}'s fee was refunded but the crucible ended before it was removed, so the pool still counts it.`,
+        crucibleId,
+        entryId,
+        moderatorId,
+        buzzTransactionId: entry.buzzTransactionId,
+      });
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025')
+      throw throwNotFoundError('Entry not found');
+    throw error;
+  }
+
+  logToAxiom({
+    type: 'info',
+    name: 'crucible-entry-removed',
+    crucibleId,
+    entryId,
+    entrantId: entry.userId,
+    moderatorId,
+    refundedAmount: fee,
+  });
+  sendCrucibleNotification({
+    userId: entry.userId,
+    type: 'crucible-entry-removed',
+    category: NotificationCategory.System,
+    key: `crucible-entry-removed:${entryId}`,
+    details: {
+      crucibleId,
+      crucibleName: getCruciblePublishableName(crucible),
+      refundedAmount: fee,
+    },
+  });
+
+  return { entryId, crucibleId, refundedAmount: fee };
+};
 
 /** Keyed per crucible, so a re-run reaches only entrants whose refund was still pending. */
 const notifyEntrantsOfCancellation = (

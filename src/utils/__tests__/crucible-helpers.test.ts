@@ -264,10 +264,12 @@ describe('getCrucibleManageActions', () => {
     expect(actions(CrucibleStatus.Active, past, { isModerator: true })).toEqual({
       canEdit: false,
       canCancel: false,
+      canRemoveEntries: false,
     });
     expect(actions(CrucibleStatus.Active, past, { isCreator: true })).toEqual({
       canEdit: false,
       canCancel: false,
+      canRemoveEntries: false,
     });
   });
 
@@ -275,13 +277,15 @@ describe('getCrucibleManageActions', () => {
     expect(actions(CrucibleStatus.Completed, past, { isModerator: true })).toEqual({
       canEdit: false,
       canCancel: false,
+      canRemoveEntries: false,
     });
   });
 
-  it('lets a moderator edit and cancel a running crucible', () => {
+  it('lets a moderator edit, cancel and remove entries from a running crucible', () => {
     expect(actions(CrucibleStatus.Active, future, { isModerator: true })).toEqual({
       canEdit: true,
       canCancel: true,
+      canRemoveEntries: true,
     });
   });
 
@@ -289,10 +293,12 @@ describe('getCrucibleManageActions', () => {
     expect(actions(CrucibleStatus.Active, future, { isCreator: true })).toEqual({
       canEdit: true,
       canCancel: false,
+      canRemoveEntries: false,
     });
     expect(actions(CrucibleStatus.Pending, future, { isCreator: true })).toEqual({
       canEdit: true,
       canCancel: true,
+      canRemoveEntries: false,
     });
   });
 
@@ -300,7 +306,14 @@ describe('getCrucibleManageActions', () => {
     expect(actions(CrucibleStatus.Active, future, {})).toEqual({
       canEdit: false,
       canCancel: false,
+      canRemoveEntries: false,
     });
+  });
+
+  it('offers removing entries only while it runs, since an upcoming one has none', () => {
+    expect(actions(CrucibleStatus.Pending, future, { isModerator: true }).canRemoveEntries).toBe(
+      false
+    );
   });
 });
 

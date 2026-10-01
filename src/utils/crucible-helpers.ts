@@ -205,6 +205,7 @@ export function getCrucibleManageActions({
     canEdit:
       !ended && (isModerator || (isCreator && (isPending || status === CrucibleStatus.Active))),
     canCancel: !ended && (isModerator || (isCreator && isPending)),
+    canRemoveEntries: !ended && isModerator && status === CrucibleStatus.Active,
   };
 }
 

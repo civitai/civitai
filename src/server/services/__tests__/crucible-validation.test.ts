@@ -563,7 +563,7 @@ const submit = () => submitEntry({ crucibleId: 1, imageId: 7, userId: 42 });
 
 beforeEach(() => {
   // The insert's locked check that the crucible is still open.
-  dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 1 }]);
+  dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
   redisMock.sysRedis.set.mockResolvedValue('OK');
 });
 
@@ -959,23 +959,44 @@ describe('submitEntry — a cancel or the end landing mid-submit', () => {
   });
 
   const lockedCheck = () => {
-    const call = dbMock.dbWrite.$queryRaw.mock.calls.at(-1) as [TemplateStringsArray, ...unknown[]];
-    return call[0].join('?').replace(/\s+/g, ' ');
+    const [strings, ...values] = dbMock.dbWrite.$executeRaw.mock.calls.at(-1) as [
+      TemplateStringsArray,
+      ...unknown[]
+    ];
+    return { sql: strings.join('?').replace(/\s+/g, ' '), values };
   };
 
-  it('inserts only after a shared lock confirms the crucible is still open', async () => {
+  it('inserts only after locking the crucible row and confirming it is still open', async () => {
     await submit();
 
-    expect(lockedCheck()).toContain(
-      'SELECT id FROM "Crucible" WHERE id = ? AND status = ?::"CrucibleStatus" AND ("endAt" IS NULL OR "endAt" > statement_timestamp()) FOR SHARE'
+    expect(lockedCheck().sql).toContain(
+      'UPDATE "Crucible" SET "prizePool" = "prizePool" + ? WHERE id = ? AND status = ?::"CrucibleStatus" AND ("endAt" IS NULL OR "endAt" > statement_timestamp())'
     );
-    expect(dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
       dbMock.dbWrite.crucibleEntry.create.mock.invocationCallOrder[0]
     );
   });
 
+  it("raises the stored prize pool by a paid entry's fee", async () => {
+    await submit();
+    expect(lockedCheck().values[0]).toBe(50);
+  });
+
+  it('leaves the stored prize pool alone for a free entry', async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.image),
+      entryFee: 50,
+      freeEntriesPerUser: 1,
+    });
+
+    await submit();
+
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    expect(lockedCheck().values[0]).toBe(0);
+  });
+
   it('retries the refund of a refused entry, and counts a duplicate as refunded', async () => {
-    dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(0);
     refundMultiAccountTransaction
       .mockRejectedValueOnce(new Error('buzz blip'))
       .mockRejectedValueOnce(new BuzzApiError(409, 'duplicate'));
@@ -989,7 +1010,7 @@ describe('submitEntry — a cancel or the end landing mid-submit', () => {
   });
 
   it('refuses the entry and refunds its fee when the crucible closed after the checks', async () => {
-    dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(0);
 
     await expect(submit()).rejects.toThrow('not accepting entries');
 

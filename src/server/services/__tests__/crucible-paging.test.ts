@@ -130,7 +130,7 @@ describe('crucible feed paging', () => {
     ['PrizePool', CrucibleSort.PrizePool],
     ['MostEntries', CrucibleSort.MostEntries],
   ])('orders by a unique tiebreaker under %s, so a cursor has one position', async (_l, sort) => {
-    // Every sort here is on a non-unique column. Without `id` last, two rows sharing an entryFee
+    // Every sort here is on a non-unique column. Without `id` last, two rows sharing a pool
     // have no defined order, and a cursor into that ordering can skip or repeat rows.
     fakeTable(3);
 
@@ -138,5 +138,17 @@ describe('crucible feed paging', () => {
 
     const [{ orderBy }] = dbMock.dbRead.crucible.findMany.mock.calls[0];
     expect(orderBy[orderBy.length - 1]).toEqual({ id: 'desc' });
+  });
+
+  it('sorts Prize Pool by the stored pool, as the cards show it, not by the entry fee', async () => {
+    fakeTable(3);
+
+    await getInfiniteCruciblesHandler({
+      input: { limit: 2, sort: CrucibleSort.PrizePool } as never,
+      ctx: anonymous,
+    });
+
+    const [{ orderBy }] = dbMock.dbRead.crucible.findMany.mock.calls[0];
+    expect(orderBy[0]).toEqual({ prizePool: 'desc' });
   });
 });

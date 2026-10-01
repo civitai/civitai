@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   Box,
   Button,
   Center,
@@ -9,8 +10,9 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import { IconCrown, IconPhoto, IconPlus, IconUsers } from '@tabler/icons-react';
+import { IconCrown, IconPhoto, IconPlus, IconTrash, IconUsers } from '@tabler/icons-react';
 import clsx from 'clsx';
+import type { MouseEvent } from 'react';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { CrucibleUserLink } from '~/components/Crucible/CrucibleUserLink';
@@ -67,6 +69,8 @@ export type CrucibleEntryGridProps = {
   className?: string;
   emptyMessage?: string;
   onEntryClick?: (entry: CrucibleEntryData) => void;
+  /** Moderators only, while the crucible runs. */
+  onRemoveEntry?: (entry: CrucibleEntryData) => void;
 };
 
 /**
@@ -95,6 +99,7 @@ export function CrucibleEntryGrid({
   className,
   emptyMessage = 'No entries yet',
   onEntryClick,
+  onRemoveEntry,
 }: CrucibleEntryGridProps) {
   const currentUser = useCurrentUser();
   const userId = currentUserId ?? currentUser?.id;
@@ -140,6 +145,7 @@ export function CrucibleEntryGrid({
                 rank={entry.rank}
                 isUserEntry
                 onClick={() => onEntryClick?.(entry)}
+                onRemove={onRemoveEntry && (() => onRemoveEntry(entry))}
               />
             ))}
           </SimpleGrid>
@@ -169,6 +175,7 @@ export function CrucibleEntryGrid({
                 entry={entry}
                 rank={entry.rank}
                 onClick={() => onEntryClick?.(entry)}
+                onRemove={onRemoveEntry && (() => onRemoveEntry(entry))}
               />
             ))}
           </SimpleGrid>
@@ -195,12 +202,13 @@ type EntryCardProps = {
   rank: number | null;
   isUserEntry?: boolean;
   onClick?: () => void;
+  onRemove?: () => void;
 };
 
 /**
  * Individual entry card with image, overlay, and position badge
  */
-function EntryCard({ entry, rank, isUserEntry, onClick }: EntryCardProps) {
+function EntryCard({ entry, rank, isUserEntry, onClick, onRemove }: EntryCardProps) {
   return (
     <Box
       className="group cursor-pointer overflow-hidden rounded-lg bg-[#25262b] transition-colors hover:bg-[#2c2e33]"
@@ -236,6 +244,24 @@ function EntryCard({ entry, rank, isUserEntry, onClick }: EntryCardProps) {
         )}
 
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent from-50% to-black/80" />
+
+        {onRemove && (
+          <ActionIcon
+            variant="filled"
+            color="red"
+            size="sm"
+            radius="xl"
+            className="absolute left-2 top-2"
+            aria-label="Remove entry"
+            title="Remove entry"
+            onClick={(event: MouseEvent) => {
+              event.stopPropagation();
+              onRemove();
+            }}
+          >
+            <IconTrash size={14} />
+          </ActionIcon>
+        )}
 
         <div className="absolute inset-x-0 bottom-0 flex flex-col gap-1 p-3 text-white">
           <CrucibleUserLink user={entry.user}>
