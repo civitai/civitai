@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { branch, defFamily, defineGraph } from 'form-graph';
+import { branch, defFamily, defineGraph, rootScope } from 'form-graph';
 import { VID_QUANTITY_ECOSYSTEMS } from '~/shared/constants/generation.constants';
 import { getEcosystemStates } from '../ecosystem-gates';
 import { modelSelectorRules } from '../reconcile';
@@ -76,7 +76,10 @@ export const videoHub = defineGraph<RootCtx>()
   })
   .field('quantity', ({ ecosystem, _ext }) => {
     if (!VID_QUANTITY_ECOSYSTEMS.has(ecosystem)) return null;
-    return QUANTITY(_ext.limits.vidQuantity);
+    // Scoped per output, like the image hub's quantity: vidQuantity can equal
+    // maxQuantity (gold: 4), so clamping alone doesn't stop an image count of 4
+    // carrying into LTXV and queueing 4 videos.
+    return { ...QUANTITY(_ext.limits.vidQuantity), scope: rootScope('video') };
   })
   .use(
     // one entry per family, however many ecosystems it serves — the keys

@@ -128,11 +128,14 @@ export const imageHub = defineGraph<RootCtx>()
       supportsSdcpp(effectiveEcosystem ?? ecosystem, model?.id) &&
       enhancedCompatibility !== true;
     const step = bogoActive ? 2 : 1;
-    // quantity is global, so a stored value below bogo's step floor must be
-    // corrected, or it fails min(step) and dead-submits
+    // quantity is shared across image families, so a stored value below bogo's
+    // step floor must be corrected, or it fails min(step) and dead-submits.
+    // Scoped to image rather than bare: video keeps its own (see video/hub.graph.ts),
+    // and a scoped read falls back to the bare key, so a bare image value
+    // would leak into video.
     return {
       ...quantityDef({ max: _ext.limits.maxQuantity, step }),
-      scope: rootScope(),
+      scope: rootScope('image'),
       correct: (v: number) =>
         v < step ? { value: step, reason: 'quantity_step_floor' } : undefined,
     };
