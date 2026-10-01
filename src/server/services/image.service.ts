@@ -275,6 +275,7 @@ import {
   ImageIngestionUrlBlockedError,
   isAllowedImageScanUrl,
 } from '~/server/utils/image-scan-url';
+import { probeVideoDimensions } from '~/server/services/video-dimensions';
 import { getGenerationDisplayKeys } from '~/server/services/orchestrator/legacy-metadata-mapper';
 import {
   sanitizeProvenance,
@@ -6391,6 +6392,13 @@ export async function createImage({
     select: { id: true },
   });
 
+  // The upload page reads these in the browser; API and script uploads arrive without them, and
+  // the grid then renders the video as a cropped square. Not awaited: an ffprobe round-trip
+  // must not sit on the create request.
+  if (image.type === MediaType.video && (!image.width || !image.height)) {
+    void fillVideoDimensions({ id: result.id, url: image.url }).catch(() => null);
+  }
+
   if (!skipIngestion) {
     await upsertImageFlag({ imageId: result.id, prompt: image.meta?.prompt });
     await ingestImage({
@@ -6412,6 +6420,36 @@ export async function createImage({
   // publish and scan completion.
 
   return result;
+}
+
+/**
+ * Probes a stored video and writes its width/height (and duration, unless one is recorded) onto
+ * the row. Returns the dimensions written, or null when the probe had no answer or the row
+ * already had dimensions.
+ */
+export async function fillVideoDimensions({ id, url }: { id: number; url: string }) {
+  const dimensions = await probeVideoDimensions(url);
+  if (!dimensions) return null;
+
+  const { width, height, duration } = dimensions;
+  const written = await dbWrite.$executeRaw`
+    UPDATE "Image"
+    SET
+      width = ${width},
+      height = ${height},
+      metadata = COALESCE(metadata, '{}'::jsonb)
+        || jsonb_build_object('width', ${width}::int, 'height', ${height}::int)
+        || CASE
+             WHEN metadata ? 'duration' OR ${duration ?? null}::float8 IS NULL THEN '{}'::jsonb
+             ELSE jsonb_build_object('duration', ${duration ?? null}::float8)
+           END
+    WHERE id = ${id} AND (width IS NULL OR height IS NULL)
+  `;
+  if (!written) return null;
+
+  await imageMetadataCache.bust(id);
+  await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Update });
+  return dimensions;
 }
 
 export const createEntityImages = async ({
