@@ -91,6 +91,16 @@
  * AUTHOR slot showed the APP TITLE. The author is a person. This chip reads
  * "Published with X", never "by X" — pinned as a whole normalised string by the
  * component test so a reword cannot reintroduce it.
+ *
+ * ## 🔴 DO NOT PUT THIS ON A FEED / CARD SURFACE WITHOUT RESHAPING IT FIRST
+ *
+ * One of the most important properties of this module is what it does NOT touch:
+ * `publishedWithApp` is added to `post.get`'s return ONLY — not to `postSelect`,
+ * not to `getInfiniteImages` / `getAllImages`, not to `/api/v1/images`. Every
+ * cost note here is priced PER PAGE. Surface the chip on a card in a list and all
+ * of it becomes PER ROW, multiplied by the page size: the marker read would have
+ * to become a batched `IN (…)` and the app row a `createCachedObject` by id array
+ * BEFORE that is viable. Say so wherever the chip's reuse is next proposed.
  */
 import { sanitizeAppChromeName } from '~/components/AppBlocks/appChromeName';
 import { BLOCK_POST_APP_ID_META_KEY } from '~/server/services/blocks/block-post.logic';
@@ -404,6 +414,31 @@ export function projectPostAppChip(
  * So the chip renders only where an ON-SITE listing is admissible, which today
  * is scope `full` alone (mods + app-dev-testers). That cohort sees it linked
  * now; everyone sees it when the store flag widens, with no second change.
+ *
+ * 🔴 "NO SECOND CHANGE" IS TRUE OF BEHAVIOUR AND FALSE OF COST — the single most
+ * important fact about this module's production footprint, and one that is
+ * invisible to every measurement anyone can take before the flip. Today the gate
+ * below is false for essentially all traffic, so the whole I/O half of this
+ * function is dead code in production and the feature measures as free. The
+ * moment the store scope admits the public, EVERY post-detail read starts paying,
+ * per view: one Redis GET plus one `Post.findUnique` by primary key on a very
+ * large hot table (and, inside the replication-lag window, against the write
+ * primary) — plus, for an app-published post, four more replica queries for the
+ * app row.
+ *
+ * `post_app_chip_reads_total{outcome="gated"}` is the tripwire: while it
+ * dominates, none of the above is happening. When it stops dominating, it all
+ * is — and `readApp`'s cache note in `post-app-chip.service.ts` is the lever to
+ * reach for first.
+ *
+ * ⚠️ AND THE CHIP MAKES POST DETAIL DEPEND ON THREE FLIPT KEYS CONTINUING TO
+ * EXIST: `app-listings`, `app-blocks-enabled`, `app-listings-public-external`.
+ * All three exist today. If one is deleted or renamed, `evaluateBoolean` THROWS,
+ * and the throw bypasses the boolean eval cache so the result is never memoised —
+ * so the default `onEvalError` would `console.error` on EVERY post-detail read,
+ * indefinitely. That failure mode is recorded twice elsewhere in this repo; what
+ * changed here is its blast radius, which used to be the `/apps` store and is now
+ * the busiest public page on the site. Nothing enforces the dependency.
  *
  * 🔴 THE GATE IS THE SHARED `scopeAdmitsListingKind(scope, 'onsite')`, NOT A
  * HAND-SPELLED `!== 'full'`. The two agree today, and the shared one is what

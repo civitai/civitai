@@ -90,13 +90,23 @@ export async function readPostAppChip({
     // whether or not we record here — the resolver instruments itself at its own
     // choke point, by design — so NOT recording the applied half is what would
     // break the documented comparison, by making post-detail visible on one side
-    // of it only. ⚠️ Two consequences of that volume, recorded here because the
-    // counters' own docs predate this caller: the `{principal="anon", scope="none"}`
-    // series is now dominated by post views rather than store visits, so read it
-    // sliced by the applied `entrypoint`; and `store_scope_divergence_total` can be
-    // driven by page views rather than store reads, so an alert threshold on it
-    // wants re-checking against post-detail traffic. The divergence STATE it
-    // reports is unchanged — only the rate at which it is observed.
+    // of it only.
+    //
+    // ⚠️ ONE consequence of that volume, recorded here because the counters' own
+    // docs predate this caller: `{principal="anon", scope="none"}` is now dominated
+    // by post views rather than store visits, so slice by the applied `entrypoint`
+    // before reading either counter as a statement about the store.
+    //
+    // ⚠️ AND ONE NON-CONSEQUENCE, written down because this comment asserted it as
+    // a hazard and that was WRONG — do not re-derive it. `store_scope_divergence_total`
+    // is NOT driven at page-view rate by this caller, so no alert threshold on it
+    // needs re-checking. `reportSilentStoreGate` does run on every logged-in
+    // post-detail read that resolves `none`, but it re-reads the same three flags
+    // with the SAME (flag, entityId, context) triple the async path just evaluated
+    // — so the same eval-cache key, a hit, the same `false` — and returns before
+    // touching the counter or Axiom. A real divergence needs the 10s eval-cache
+    // entry to lapse BETWEEN the async and sync reads and the 60s config poll to
+    // have flipped the answer inside that window.
     recordStoreScopeApplied(storeScope, 'post-detail');
 
     const { chip, outcome } = await resolvePostAppChip({
@@ -110,6 +120,16 @@ export async function readPostAppChip({
         // author's first view of their own post can miss the marker and show no
         // chip, which is the one view most likely to be looked at. The helper
         // routes to the primary while this post id is inside its lag window.
+        //
+        // ⚠️ KNOWN DUPLICATE, accepted while the gate is narrow. `getPostDetail`
+        // already called `getDbWithoutLag('post', id)` for this same id earlier in
+        // the same request, and nothing memoises the ANSWER (the helper memoises
+        // the store, not the result) — so a scope-`full` post view makes two Redis
+        // GETs on one key, and two primary reads inside the lag window. Trivial
+        // today because only mods + app-dev-testers reach it; the fix, if the gate
+        // widens, is to thread one db handle down from the handler rather than to
+        // drop to bare `dbRead`, which would reintroduce the read-your-writes bug
+        // above.
         const db = await getDbWithoutLag('post', id);
         const row = await db.post.findUnique(postAppMarkerQuery(id));
         return row?.metadata ?? null;
@@ -118,6 +138,15 @@ export async function readPostAppChip({
       // written inside the post's own transaction — an
       // `OauthClient`/`AppBlock`/`AppListing` is approved long before any post is
       // published through it — so there is no lag window to route around.
+      //
+      // 🔴 NOT CACHED, AND THAT IS A DECISION WITH A NAMED TRIGGER. This row is
+      // near-static and shared across every post the app made, so it is the
+      // obvious `createCachedObject` (`~/server/redis/caches.ts`, fetch-by-id-array)
+      // candidate. It is deliberately not cached YET: the read fires only for a
+      // scope-`full` viewer on an app-published post, which is a near-zero rate, so
+      // a cache would add invalidation surface for no measured saving. The trigger
+      // is `post_app_chip_reads_total{outcome="chip"}` — when that stops being
+      // near-zero, build it.
       readApp: async (appId) =>
         (await dbRead.oauthClient.findUnique(postAppChipQuery(appId))) as PostAppChipRow | null,
     });
