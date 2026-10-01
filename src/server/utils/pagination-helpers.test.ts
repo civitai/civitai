@@ -296,3 +296,299 @@ describe('getPagingData', () => {
     });
   });
 });
+
+/**
+ * Every caller hands out the LOOKAHEAD row (`LIMIT n + 1`, then popped) as `nextCursor`, so the
+ * next page's predicate must include that row. Pinned per operator because the ASC and DESC
+ * halves were changed independently before (ee26de5d5e made ASC `>=`; DESC stayed `<`, which
+ * with a lookahead cursor skipped a model per page on `sort=Newest` — issue #1372).
+ */
+describe('cursor operators — inclusive last field, strict head fields', () => {
+  const NEWEST = 'mm."lastVersionAt" DESC NULLS LAST, mm."modelId" DESC';
+  const OLDEST = 'mm."lastVersionAt" ASC, mm."modelId"';
+  const HIGHEST_RATED = 'mm."thumbsUpCount" DESC, mm."downloadCount" DESC, mm."modelId"';
+
+  it('Newest (DESC, DESC): the split equality branch is `<=` on modelId, the tuple branch stays `<`', () => {
+    const { strict, equality, splittable } = getCursorClauses(NEWEST, '2024-01-15|100');
+    expect(splittable).toBe(true);
+    expect(equality?.sql).toBe('(mm."lastVersionAt" = ? AND mm."modelId" <= ?)');
+    expect(strict?.sql).toBe('((mm."lastVersionAt") < (?))');
+  });
+
+  it('Newest via the legacy getCursor: same inclusive tail', () => {
+    const { where } = getCursor(NEWEST, '2024-01-15|100');
+    expect(where?.sql).toBe(
+      '((mm."lastVersionAt" < ?) OR (mm."lastVersionAt" = ? AND mm."modelId" <= ?))'
+    );
+  });
+
+  it('single-field DESC (RecentlyAdded `ci."id"`, image feed `i."id"`): `<=`', () => {
+    expect(getCursor('ci."id" DESC', 100).where?.sql).toBe('((ci."id" <= ?))');
+    expect(getCursor('i."id" DESC', 100).where?.sql).toBe('((i."id" <= ?))');
+    expect(getCursorClauses('i."id" DESC', 100).strict?.sql).toBe('((i."id" <= ?))');
+  });
+
+  it('CONTROL — ASC-tailed metric sorts are unchanged: heads `<`, tail `>=`', () => {
+    const { where } = getCursor(HIGHEST_RATED, '5|7|100');
+    expect(where?.sql).toBe(
+      '((mm."thumbsUpCount" < ?) OR (mm."thumbsUpCount" = ? AND mm."downloadCount" < ?) OR (mm."thumbsUpCount" = ? AND mm."downloadCount" = ? AND mm."modelId" >= ?))'
+    );
+    const { equality, strict } = getCursorClauses(HIGHEST_RATED, '5|7|100');
+    expect(equality?.sql).toBe(
+      '(mm."thumbsUpCount" = ? AND mm."downloadCount" = ? AND mm."modelId" >= ?)'
+    );
+    expect(strict?.sql).toBe('((mm."thumbsUpCount", mm."downloadCount") < (?, ?))');
+  });
+
+  it('CONTROL — single-field ASC is unchanged: `>=`', () => {
+    expect(getCursor('i."id" ASC', 100).where?.sql).toBe('((i."id" >= ?))');
+  });
+
+  it('Oldest (ASC, ASC): the head field is strict, so rows tied on it are not re-emitted', () => {
+    const { where } = getCursor(OLDEST, '2024-01-15|100');
+    expect(where?.sql).toBe(
+      '((mm."lastVersionAt" > ?) OR (mm."lastVersionAt" = ? AND mm."modelId" >= ?))'
+    );
+    expect(getCursorClauses(OLDEST, '2024-01-15|100').splittable).toBe(false);
+  });
+});
+
+/**
+ * `walk` is capped at rows + 2 pages: an inclusive head operator makes the cursor cycle, and an
+ * uncapped walk would hang the runner instead of failing on the page count.
+ */
+describe('keyset paging round-trip — no row skipped, no row repeated', () => {
+  type Row = Record<string, number | Date>;
+  type Tok =
+    | { t: 'lp' }
+    | { t: 'rp' }
+    | { t: 'comma' }
+    | { t: 'op'; v: string }
+    | { t: 'and' }
+    | { t: 'or' }
+    | { t: 'ident'; v: string }
+    | { t: 'val'; v: unknown };
+
+  function tokenize(sql: string, values: unknown[]): Tok[] {
+    const out: Tok[] = [];
+    let vi = 0;
+    let i = 0;
+    while (i < sql.length) {
+      const c = sql[i];
+      if (c === ' ') i++;
+      else if (c === '(') out.push({ t: 'lp' }), i++;
+      else if (c === ')') out.push({ t: 'rp' }), i++;
+      else if (c === ',') out.push({ t: 'comma' }), i++;
+      else if (c === '?') out.push({ t: 'val', v: values[vi++] }), i++;
+      else if (/[<>=]/.test(c)) {
+        const two = sql.slice(i, i + 2);
+        if (two === '<=' || two === '>=') out.push({ t: 'op', v: two }), (i += 2);
+        else out.push({ t: 'op', v: c }), i++;
+      } else if (sql.startsWith('AND', i)) out.push({ t: 'and' }), (i += 3);
+      else if (sql.startsWith('OR', i)) out.push({ t: 'or' }), (i += 2);
+      else {
+        let j = i;
+        while (j < sql.length && !/[ (),<>=]/.test(sql[j])) j++;
+        out.push({ t: 'ident', v: sql.slice(i, j) });
+        i = j;
+      }
+    }
+    return out;
+  }
+
+  const num = (v: unknown) => (v instanceof Date ? v.getTime() : (v as number));
+  const cmp = (a: unknown, b: unknown) => Math.sign(num(a) - num(b));
+  const cmpTuple = (a: unknown[], b: unknown[]) => {
+    for (let i = 0; i < a.length; i++) {
+      const c = cmp(a[i], b[i]);
+      if (c !== 0) return c;
+    }
+    return 0;
+  };
+  const apply = (op: string, c: number) =>
+    op === '<' ? c < 0 : op === '<=' ? c <= 0 : op === '>' ? c > 0 : op === '>=' ? c >= 0 : c === 0;
+
+  /** OR-of-ANDs over comparisons; an operand is an identifier, a bound value, or a tuple of them. */
+  function evaluate(sql: string, values: unknown[], row: Row): boolean {
+    const toks = tokenize(sql, values);
+    let p = 0;
+    const peek = () => toks[p];
+    const next = () => toks[p++];
+    const operandValue = (t: Tok): unknown => {
+      if (t.t === 'ident') {
+        if (!(t.v in row)) throw new Error(`fixture has no column ${t.v}`);
+        return row[t.v];
+      }
+      if (t.t === 'val') return t.v;
+      throw new Error(`unexpected token ${JSON.stringify(t)}`);
+    };
+    const operand = (): unknown[] => {
+      if (peek().t === 'lp') {
+        next();
+        const items = [operandValue(next())];
+        while (peek().t === 'comma') next(), items.push(operandValue(next()));
+        if (next().t !== 'rp') throw new Error('unterminated tuple');
+        return items;
+      }
+      return [operandValue(next())];
+    };
+    const tryComparison = (): boolean | undefined => {
+      const save = p;
+      try {
+        const left = operand();
+        const op = next();
+        if (op.t !== 'op') throw new Error('not a comparison');
+        const right = operand();
+        return apply(op.v, cmpTuple(left, right));
+      } catch {
+        p = save;
+        return undefined;
+      }
+    };
+    const expr = (): boolean => {
+      let v = term();
+      while (peek()?.t === 'or') next(), (v = term() || v);
+      return v;
+    };
+    const term = (): boolean => {
+      let v = factor();
+      while (peek()?.t === 'and') next(), (v = factor() && v);
+      return v;
+    };
+    const factor = (): boolean => {
+      const asComparison = tryComparison();
+      if (asComparison !== undefined) return asComparison;
+      if (next().t !== 'lp') throw new Error('expected (');
+      const v = expr();
+      if (next().t !== 'rp') throw new Error('expected )');
+      return v;
+    };
+    const result = expr();
+    if (p !== toks.length) throw new Error(`trailing tokens at ${p}`);
+    return result;
+  }
+
+  function sortRows(sortString: string, rows: Row[]) {
+    const fields = sortString.split(',').map((part) => {
+      const [field, order = 'ASC'] = part.trim().split(' ').filter(Boolean);
+      return { field, desc: order.toUpperCase() === 'DESC' };
+    });
+    return [...rows].sort((a, b) => {
+      for (const { field, desc } of fields) {
+        const c = cmp(a[field], b[field]);
+        if (c !== 0) return desc ? -c : c;
+      }
+      return 0;
+    });
+  }
+
+  /** What `CONCAT(col, '|', …)` yields, in the shape `parseCursor` reads back. */
+  function cursorFor(sortString: string, row: Row) {
+    const fields = sortString.split(',').map((part) => part.trim().split(' ')[0]);
+    const render = (v: number | Date) => (v instanceof Date ? v.toISOString() : String(v));
+    return fields.length === 1 ? row[fields[0]] : fields.map((f) => render(row[f])).join('|');
+  }
+
+  function walk(
+    sortString: string,
+    rows: Row[],
+    pageSize: number,
+    build: (cursor: string | number | Date | undefined) => { sql: string; values: unknown[] }[]
+  ) {
+    const sorted = sortRows(sortString, rows);
+    const seen: number[] = [];
+    let cursor: string | number | Date | undefined;
+    let pages = 0;
+    const cap = rows.length + 2;
+    do {
+      pages++;
+      const clauses = build(cursor);
+      const matching = clauses.length
+        ? sorted.filter((row) => clauses.some((c) => evaluate(c.sql, c.values, row)))
+        : sorted;
+      const page = matching.slice(0, pageSize + 1);
+      seen.push(...page.slice(0, pageSize).map((r) => r.id as number));
+      cursor = page.length > pageSize ? cursorFor(sortString, page[pageSize]) : undefined;
+    } while (cursor !== undefined && pages < cap);
+    expect(pages, 'walk did not terminate on its own').toBeLessThan(cap);
+    return { seen, expected: sorted.map((r) => r.id as number), pages };
+  }
+
+  const viaGetCursor = (sortString: string) => (cursor: Parameters<typeof getCursor>[1]) => {
+    const { where } = getCursor(sortString, cursor);
+    return where ? [where] : [];
+  };
+  const viaGetCursorClauses =
+    (sortString: string) => (cursor: Parameters<typeof getCursorClauses>[1]) => {
+      const { strict, equality } = getCursorClauses(sortString, cursor);
+      return [strict, equality].filter((c): c is NonNullable<typeof c> => !!c);
+    };
+
+  const day = (n: number) => new Date(Date.UTC(2024, 0, n));
+  // Three-way head-field tie so that, across pageSize 2 and 3, a boundary falls inside a tie
+  // (cursor row with tie-mates after it), at the end of a tie, and between distinct heads.
+  const NEWEST = 'mm."lastVersionAt" DESC NULLS LAST, mm."modelId" DESC';
+  const newestRows: Row[] = [
+    { id: 1, 'mm."lastVersionAt"': day(9), 'mm."modelId"': 1 },
+    { id: 2, 'mm."lastVersionAt"': day(8), 'mm."modelId"': 2 },
+    { id: 3, 'mm."lastVersionAt"': day(8), 'mm."modelId"': 3 },
+    { id: 4, 'mm."lastVersionAt"': day(8), 'mm."modelId"': 4 },
+    { id: 5, 'mm."lastVersionAt"': day(7), 'mm."modelId"': 5 },
+    { id: 6, 'mm."lastVersionAt"': day(6), 'mm."modelId"': 6 },
+    { id: 7, 'mm."lastVersionAt"': day(6), 'mm."modelId"': 7 },
+    { id: 8, 'mm."lastVersionAt"': day(5), 'mm."modelId"': 8 },
+    { id: 9, 'mm."lastVersionAt"': day(4), 'mm."modelId"': 9 },
+    { id: 10, 'mm."lastVersionAt"': day(4), 'mm."modelId"': 10 },
+    { id: 11, 'mm."lastVersionAt"': day(3), 'mm."modelId"': 11 },
+  ];
+
+  it('Newest through getCursorClauses (the getModelsRaw path)', () => {
+    const { seen, expected } = walk(NEWEST, newestRows, 3, viaGetCursorClauses(NEWEST));
+    expect(seen).toEqual(expected);
+  });
+
+  it('Newest at pageSize 2: the boundary lands inside the tie, with tie-mates after the cursor row', () => {
+    const { seen, expected } = walk(NEWEST, newestRows, 2, viaGetCursorClauses(NEWEST));
+    expect(seen).toEqual(expected);
+    expect(walk(NEWEST, newestRows, 2, viaGetCursor(NEWEST)).seen).toEqual(expected);
+  });
+
+  it('Newest through the legacy getCursor', () => {
+    const { seen, expected } = walk(NEWEST, newestRows, 3, viaGetCursor(NEWEST));
+    expect(seen).toEqual(expected);
+  });
+
+  it('Oldest (ASC, ASC) with ties on the head field', () => {
+    const OLDEST = 'mm."lastVersionAt" ASC, mm."modelId"';
+    const { seen, expected } = walk(OLDEST, newestRows, 3, viaGetCursor(OLDEST));
+    expect(seen).toEqual(expected);
+  });
+
+  it('HighestRated (DESC, DESC, ASC) with ties on both head fields', () => {
+    const HR = 'mm."thumbsUpCount" DESC, mm."downloadCount" DESC, mm."modelId"';
+    const rows: Row[] = [
+      { id: 1, 'mm."thumbsUpCount"': 9, 'mm."downloadCount"': 5, 'mm."modelId"': 1 },
+      { id: 2, 'mm."thumbsUpCount"': 9, 'mm."downloadCount"': 5, 'mm."modelId"': 2 },
+      { id: 3, 'mm."thumbsUpCount"': 9, 'mm."downloadCount"': 5, 'mm."modelId"': 3 },
+      { id: 4, 'mm."thumbsUpCount"': 9, 'mm."downloadCount"': 4, 'mm."modelId"': 4 },
+      { id: 5, 'mm."thumbsUpCount"': 8, 'mm."downloadCount"': 9, 'mm."modelId"': 5 },
+      { id: 6, 'mm."thumbsUpCount"': 8, 'mm."downloadCount"': 9, 'mm."modelId"': 6 },
+      { id: 7, 'mm."thumbsUpCount"': 8, 'mm."downloadCount"': 1, 'mm."modelId"': 7 },
+      { id: 8, 'mm."thumbsUpCount"': 2, 'mm."downloadCount"': 1, 'mm."modelId"': 8 },
+    ];
+    expect(walk(HR, rows, 3, viaGetCursorClauses(HR)).seen).toEqual(
+      sortRows(HR, rows).map((r) => r.id)
+    );
+    expect(walk(HR, rows, 3, viaGetCursor(HR)).seen).toEqual(sortRows(HR, rows).map((r) => r.id));
+  });
+
+  it('single-field DESC (RecentlyAdded, image feed) and single-field ASC', () => {
+    const rows: Row[] = Array.from({ length: 10 }, (_, i) => ({ id: i + 1, 'i."id"': i + 1 }));
+    expect(walk('i."id" DESC', rows, 4, viaGetCursor('i."id" DESC')).seen).toEqual([
+      10, 9, 8, 7, 6, 5, 4, 3, 2, 1,
+    ]);
+    expect(walk('i."id" ASC', rows, 4, viaGetCursor('i."id" ASC')).seen).toEqual([
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+    ]);
+  });
+});
