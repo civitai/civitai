@@ -19,8 +19,9 @@ app — never from the diff.
 - 🔴 The wheel's ≥40° hue-separation bar binds a hue you **choose**. A hue measured from
   the app's approved live mark is recorded, not policed: put the pairwise separations in
   the ledger's `wheelGate` block and ship. Never contort a palette to widen a separation —
-  that desyncs the skin from the approved icon/cover (worked example: custom-generators'
-  yt-thumbnail pass, 11.8° to gen-matrix).
+  that desyncs the skin from the approved icon/cover (worked example: the yt-thumbnail
+  pass, 11.8° to gen-matrix — gen-matrix and custom-generators are two of the seven
+  peers its mark-derived hue was measured against, not its own app).
 
 ### Information architecture
 
