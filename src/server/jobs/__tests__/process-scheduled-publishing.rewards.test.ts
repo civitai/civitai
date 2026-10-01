@@ -334,7 +334,9 @@ describe('processScheduledPublishing :: standalone sweep window', () => {
   // To whoever is about to give the sweep its own, larger offset: post.controller skips the
   // inline reward for any post scheduled at least POST_MINIMUM_SCHEDULE_MINUTES out, and this
   // sweep is then its only reward. A post created and scheduled the same minimum ahead sits
-  // exactly that far past createdAt, so an offset above the minimum never pays it at all.
+  // only about that far past createdAt, so an offset above the minimum never pays it at all.
+  // Model and version publishes also stamp Post.publishedAt with no inline reward, so this
+  // offset decides which of their gallery posts earn it too.
   it('offsets the sweep by no more than the schedule minimum', async () => {
     await runJob();
     const interval = standaloneCall().find(
