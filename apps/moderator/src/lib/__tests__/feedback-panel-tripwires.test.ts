@@ -243,9 +243,10 @@ describe('typed text outlives the reload every write issues', () => {
   it('collapses the technical-details block with <details>, closed by default', () => {
     const detail = source('FeedbackDetail.svelte');
 
-    // Exactly one, so every assertion below is about the block the reader has in mind. This also
-    // catches a `stripComments` regression: the docstring in `FeedbackDetail.svelte` names
-    // `<details>` in prose, and a stripper that stopped working would push this count to 2.
+    // Exactly one, so every assertion below is about the block the reader has in mind. It doubles
+    // as a `stripComments` tripwire: `FeedbackDetail.svelte`'s own comment names `<details>` in
+    // prose, so a stripper that stopped working pushes this count above 1. How far above is
+    // deliberately not written down — that is a property of prose nobody will keep in step.
     expect(count(detail, '<details')).toBe(1);
 
     const block = detail.match(/<details\b[^>]*>.*?<\/details>/)?.[0];
