@@ -167,7 +167,7 @@ describe('sponsoredBrowsingLevel', () => {
     expect(
       sponsoredBrowsingLevel({
         browsingLevel: NsfwLevel.PG,
-        viewerBrowsingLevel: NsfwLevel.PG | NsfwLevel.R | NsfwLevel.X,
+        preCapBrowsingLevel: NsfwLevel.PG | NsfwLevel.R | NsfwLevel.X,
         servingLevel: NsfwLevel.PG | NsfwLevel.R,
       })
     ).toBe(NsfwLevel.PG | NsfwLevel.R);

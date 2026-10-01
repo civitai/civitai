@@ -90,15 +90,15 @@ export const domainBrowsingLevelCap = ({
 export const clampToDomainCap = (requested: number | undefined, cap: number) =>
   (requested ?? 0) & cap || cap;
 
-export type RequestBrowsingLevels = { browsingLevel?: number; viewerBrowsingLevel?: number };
+export type RequestBrowsingLevels = { browsingLevel?: number; preCapBrowsingLevel?: number };
 
 /**
- * Clamps a request's levels to the domain cap, in place. `viewerBrowsingLevel`
+ * Clamps a request's levels to the domain cap, in place. `preCapBrowsingLevel`
  * (a model gallery's level before its own cap, which a sponsored post is served
  * at) takes the same rule, or it would be a way around this one.
  */
 export function clampRequestBrowsingLevels(input: RequestBrowsingLevels, cap: number) {
   input.browsingLevel = clampToDomainCap(input.browsingLevel, cap);
-  if (input.viewerBrowsingLevel !== undefined)
-    input.viewerBrowsingLevel = clampToDomainCap(input.viewerBrowsingLevel, cap);
+  if (input.preCapBrowsingLevel !== undefined)
+    input.preCapBrowsingLevel = clampToDomainCap(input.preCapBrowsingLevel, cap);
 }

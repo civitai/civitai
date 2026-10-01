@@ -434,7 +434,7 @@ export const getInfiniteImagesSchema = baseQuerySchema
     modelId: z.number().optional(),
     // The viewer's level before a model gallery's cap narrows `browsingLevel`. A
     // sponsored post is served at this and the cap frozen when its host accepted.
-    viewerBrowsingLevel: z.number().int().min(0).optional(),
+    preCapBrowsingLevel: z.number().int().min(0).optional(),
     modelVersionId: z.number().optional(),
     // Filter the gallery to posts linked to a single Model3D
     // (Post.model3dId). Resolved server-side into a postIds prefilter so the

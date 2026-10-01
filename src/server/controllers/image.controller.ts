@@ -471,7 +471,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
     const sponsoredLevel = sponsoredPost
       ? sponsoredBrowsingLevel({
           browsingLevel: input.browsingLevel,
-          viewerBrowsingLevel: input.viewerBrowsingLevel,
+          preCapBrowsingLevel: input.preCapBrowsingLevel,
           servingLevel: sponsoredPost.servingLevel,
         })
       : 0;

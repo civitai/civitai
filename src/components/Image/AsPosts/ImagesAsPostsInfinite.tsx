@@ -149,7 +149,7 @@ export function ImagesAsPostsInfinite({
       : true);
   const { data, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
     trpc.image.getImagesAsPostsInfinite.useInfiniteQuery(
-      { ...filters, limit, browsingLevel: intersection, viewerBrowsingLevel: browsingLevel },
+      { ...filters, limit, browsingLevel: intersection, preCapBrowsingLevel: browsingLevel },
       {
         getNextPageParam: (lastPage) => lastPage.nextCursor,
         trpc: { context: { skipBatch: true } },

@@ -18,6 +18,10 @@ describe('domainBrowsingLevelCap', () => {
     expect(domainBrowsingLevelCap({ isAuthorized: false, canViewNsfw: true })).toBe(
       publicBrowsingLevelsFlag
     );
+    // The default audience on the SFW domain: signed out there is PG, not PG/PG-13.
+    expect(domainBrowsingLevelCap({ isAuthorized: false, canViewNsfw: false })).toBe(
+      publicBrowsingLevelsFlag
+    );
     expect(domainBrowsingLevelCap({ isAuthorized: true, canViewNsfw: false })).toBe(
       sfwBrowsingLevelsFlag
     );
@@ -34,21 +38,22 @@ describe('clampToDomainCap', () => {
 });
 
 /**
- * The sponsored gallery post is fetched at `viewerBrowsingLevel`, a field the
+ * The sponsored gallery post is fetched at `preCapBrowsingLevel`, a field the
  * client sets. It is safe only because `applyDomainFeature` clamps it through
  * `clampRequestBrowsingLevels`; this pins what that yields for each audience.
  */
 describe('a sponsored post asked for at every level', () => {
   const served = (isAuthorized: boolean, canViewNsfw: boolean) => {
     // What the client sends: the gallery-capped level, and everything before it.
-    const input = { browsingLevel: NsfwLevel.PG, viewerBrowsingLevel: EVERYTHING };
+    const input = { browsingLevel: NsfwLevel.PG, preCapBrowsingLevel: EVERYTHING };
     const cap = domainBrowsingLevelCap({ isAuthorized, canViewNsfw });
     if (cap !== undefined) clampRequestBrowsingLevels(input, cap);
     return sponsoredBrowsingLevel({ ...input, servingLevel: EVERYTHING });
   };
 
-  it('is PG for a signed-out viewer', () => {
+  it('is PG for a signed-out viewer, on either domain', () => {
     expect(served(false, true)).toBe(publicBrowsingLevelsFlag);
+    expect(served(false, false)).toBe(publicBrowsingLevelsFlag);
   });
 
   it('is PG/PG-13 for a signed-in viewer on the SFW domain', () => {

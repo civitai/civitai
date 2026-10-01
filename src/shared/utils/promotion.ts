@@ -40,13 +40,13 @@ export const sponsoredSlotIndex = (pinnedCount: number, length: number) =>
  */
 export const sponsoredBrowsingLevel = ({
   browsingLevel,
-  viewerBrowsingLevel,
+  preCapBrowsingLevel,
   servingLevel,
 }: {
   browsingLevel: number;
-  viewerBrowsingLevel?: number;
+  preCapBrowsingLevel?: number;
   servingLevel: number;
-}) => Flags.intersection(viewerBrowsingLevel ?? browsingLevel, servingLevel);
+}) => Flags.intersection(preCapBrowsingLevel ?? browsingLevel, servingLevel);
 
 export const promotionRunLabel = (days: number) => (days === 1 ? '1 day' : `${days} days`);
 
