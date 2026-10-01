@@ -169,3 +169,40 @@ describe('resolveModelFileName', () => {
     ).toBe(jobIdName);
   });
 });
+
+// Characterises a caller trap, not a requirement: the helper does not recover a file's own
+// `metadata` from `versionFiles`, so a caller that destructures it off first gets the id fallback.
+describe('resolveModelFileName — file handed over without its metadata', () => {
+  it('cannot use the variant suffix and falls back to the id', () => {
+    const version = { name: 'v1' };
+    const full = {
+      id: 7,
+      name: 'a.safetensors',
+      type: 'Model',
+      metadata: { size: 'full', fp: 'fp16' },
+    };
+    const pruned = {
+      id: 8,
+      name: 'a.safetensors',
+      type: 'Model',
+      metadata: { size: 'pruned', fp: 'fp16' },
+    };
+    const { metadata: _dropped, ...fullWithoutMetadata } = full;
+
+    const intact = resolveModelFileName({
+      model: checkpoint,
+      modelVersion: version,
+      file: full,
+      versionFiles: [full, pruned],
+    });
+    const gutted = resolveModelFileName({
+      model: checkpoint,
+      modelVersion: version,
+      file: fullWithoutMetadata,
+      versionFiles: [full, pruned],
+    });
+
+    expect(intact).toContain('_full_fp16.');
+    expect(gutted).toContain('_7.');
+  });
+});
