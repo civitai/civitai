@@ -276,7 +276,7 @@ describe('the sold count is the purchase rows, not the meta counter', () => {
       availableQuantity: 20,
       // The two disagree, and by more than an off-by-one: a fixture where they
       // agree passes under either derivation and tests nothing.
-      meta: { purchases: 0 },
+      meta: { purchases: 0, packMemberCount: memberRows.length },
       addedById: LISTER,
       members: memberRows.map(({ cosmeticId, floorAmount }) => ({ cosmeticId, floorAmount })),
       _count: { purchases: 20 },
@@ -316,7 +316,7 @@ describe('the sold count is the purchase rows, not the meta counter', () => {
       status: CosmeticShopItemStatus.Published,
       listed: true,
       availableQuantity: 20,
-      meta: { purchases: 13 },
+      meta: { purchases: 13, packMemberCount: memberRows.length },
       addedById: LISTER,
       members: memberRows.map(({ cosmeticId, floorAmount }) => ({ cosmeticId, floorAmount })),
       _count: { purchases: 4 },
@@ -400,24 +400,37 @@ describe('a pack that lost members since it was built', () => {
   it.each([
     { name: 'an emptied pack', survivors: [] as typeof memberRows, missing: memberRows.length },
     { name: 'a partly emptied pack', survivors: foreignOnly, missing: 1 },
-  ])('disables the Buy button on $name, which the purchase refuses', async (c) => {
+  ])('blocks purchase of $name in the detail, as the purchase refuses it', async (c) => {
     lostMembers({ survivors: c.survivors, packMemberCount: memberRows.length });
     const detail = await getPackDetail({ shopItemId: PACK_ID, userId: BUYER });
     expect(detail.unavailableCount).toBe(c.missing);
     expect(getPackPurchaseBlockers(detail)).toMatchObject({ unavailable: true, blocked: true });
-    await expect(buy()).rejects.toThrow();
+    await expect(buy()).rejects.toThrow(/^This pack contains an item that is no longer available$/);
     expect(spend).not.toHaveBeenCalled();
   });
 
-  it('disables the Buy button on a pack with no recorded count', async () => {
+  it('blocks purchase of a pack with no recorded count in the detail too', async () => {
     lostMembers({ survivors: memberRows, packMemberCount: undefined });
     const detail = await getPackDetail({ shopItemId: PACK_ID, userId: BUYER });
     expect(getPackPurchaseBlockers(detail).blocked).toBe(true);
-    await expect(buy()).rejects.toThrow();
+    await expect(buy()).rejects.toThrow(/^This pack contains an item that is no longer available$/);
     expect(spend).not.toHaveBeenCalled();
   });
 
-  it('leaves the Buy button enabled on a whole pack', async () => {
+  // TO WHOEVER IS SIMPLIFYING packMembersMissing TO `count - deliverable`: a
+  // recorded count BELOW what resolves is a stale meta write-back (the purchases
+  // bump re-writes meta it read before a concurrent membership edit). It must
+  // refuse like a short pack; a one-sided difference goes negative and sells it.
+  it('refuses a pack that resolves more members than it recorded', async () => {
+    lostMembers({ survivors: memberRows, packMemberCount: 1 });
+    const detail = await getPackDetail({ shopItemId: PACK_ID, userId: BUYER });
+    expect(detail.unavailableCount).toBe(1);
+    expect(getPackPurchaseBlockers(detail).blocked).toBe(true);
+    await expect(buy()).rejects.toThrow(/^This pack contains an item that is no longer available$/);
+    expect(spend).not.toHaveBeenCalled();
+  });
+
+  it('leaves purchase of a whole pack unblocked', async () => {
     lostMembers({ survivors: memberRows, packMemberCount: memberRows.length });
     const detail = await getPackDetail({ shopItemId: PACK_ID, userId: BUYER });
     expect(detail.unavailableCount).toBe(0);
