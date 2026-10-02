@@ -297,6 +297,17 @@ const CASES: Record<string, unknown>[] = [
     quality: 'low',
     images: [IMAGE],
   },
+  // Flux.3
+  { workflow: 'txt2img', ecosystem: 'Flux3', prompt: 'a cat' },
+  {
+    workflow: 'txt2img',
+    ecosystem: 'Flux3',
+    prompt: 'a cat',
+    resolution: '4k',
+    aspectRatio: '16:9',
+    enablePromptExpansion: true,
+  },
+  { workflow: 'img2img:edit', ecosystem: 'Flux3', prompt: 'a cat', images: [IMAGE] },
   { workflow: 'txt2img', ecosystem: 'Seedream', prompt: 'a cat', seed: 42 },
   {
     workflow: 'txt2img',
@@ -875,6 +886,49 @@ const firstInput = (steps: unknown[]) => (steps[0] as { input: unknown }).input;
 const IMAGE2 = { url: 'https://example.com/b.png', width: 1216, height: 832 };
 
 describe('form-graph handlers emit the same steps as the data-graph handlers', () => {
+  it('flux3: create and edit reach fal with the expected inputs', async () => {
+    const create = await bothLanes({
+      workflow: 'txt2img',
+      ecosystem: 'Flux3',
+      prompt: 'a cat',
+      resolution: '2k',
+      aspectRatio: '16:9',
+    });
+    expect(create.v2).toEqual(create.v1);
+    expect(firstInput(create.v2)).toMatchObject({
+      engine: 'fal',
+      model: 'flux3',
+      operation: 'createImage',
+      resolution: '2k',
+      aspectRatio: '16:9',
+      enablePromptExpansion: false,
+    });
+
+    const expanded = await bothLanes({
+      workflow: 'txt2img',
+      ecosystem: 'Flux3',
+      prompt: 'a cat',
+      enablePromptExpansion: true,
+    });
+    expect(firstInput(expanded.v2)).toMatchObject({ enablePromptExpansion: true });
+
+    const edit = await bothLanes({
+      workflow: 'img2img:edit',
+      ecosystem: 'Flux3',
+      prompt: 'a cat',
+      images: [IMAGE, IMAGE2],
+    });
+    expect(edit.v2).toEqual(edit.v1);
+    expect(firstInput(edit.v2)).toMatchObject({
+      engine: 'fal',
+      model: 'flux3',
+      operation: 'editImage',
+      aspectRatio: 'auto',
+      resolution: '1k',
+      images: [IMAGE.url, IMAGE2.url],
+    });
+  });
+
   it('ideogram: the 4.5 version routes to fal, 4.0 stays on comfy', async () => {
     const v45 = await bothLanes({
       workflow: 'txt2img',

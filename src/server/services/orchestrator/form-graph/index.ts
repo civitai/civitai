@@ -16,6 +16,7 @@ import { createChromaInput } from './chroma.handler';
 import { createFluxInput } from './flux.handler';
 import { createFluxKontextInput } from './flux-kontext.handler';
 import { createFlux2Input } from './flux2.handler';
+import { createFlux3Input } from './flux3.handler';
 import { createFlux2KleinInput } from './flux2-klein.handler';
 import { createBooguInput } from './boogu.handler';
 import { createKrea2Input } from './krea2.handler';
@@ -71,6 +72,7 @@ export { createChromaInput } from './chroma.handler';
 export { createFluxInput } from './flux.handler';
 export { createFluxKontextInput } from './flux-kontext.handler';
 export { createFlux2Input } from './flux2.handler';
+export { createFlux3Input } from './flux3.handler';
 export { createFlux2KleinInput } from './flux2-klein.handler';
 export { createBooguInput } from './boogu.handler';
 export { createKrea2Input } from './krea2.handler';
@@ -169,6 +171,8 @@ function createStep(
 
     case 'Flux2':
       return createFlux2Input(data, handlerCtx);
+    case 'Flux3':
+      return createFlux3Input(data, handlerCtx);
 
     case 'Flux2Klein_9B':
     case 'Flux2Klein_9B_base':

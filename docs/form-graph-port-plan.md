@@ -464,6 +464,7 @@ home); full suite + typecheck + lint green; Briant reviews the final diff.
 | image: qwen (Qwen/Qwen2/Qwen3) | DONE | DONE | one graph, untagged sub-branch on ecosystem; Qwen's workflow-scoped versions hit the LOCK (cross-workflow version substitutes to the current workflow's default — probed, a third semantics next to boogu/mageflow) |
 | image: nano-banana (standard/pro/v2/v2lite) | DONE | DONE | resolution-multiplied AR dims; negativePrompt only in pro, not a snippet target |
 | image: muse-image (Meta, fal) | DONE | DONE | ported 2026-09-03 with the main merge that introduced it — reve-shaped (locked model, prompt-only block, txt-only aspectRatio, edit images 1-4, NO seed); in the image-parity matrix |
+| image: flux3 (FLUX 3 Image, BFL, fal) | DONE | DONE | ported with the change that introduced it — locked model; txt2img takes resolution (1k/2k/4k) and aspectRatio, img2img:edit sends aspectRatio 'auto' so the output follows the first reference (1-10 images); in the image-parity matrix and the handler differential |
 | image: grok (+ video arm) | DONE | DONE | spans BOTH output types: grokImage + grokVideo share `grokHead` (flag-gated version list) and a promptAlwaysRequired text block; the dispatcher routes Grok by workflow prefix. Image hub COMPLETE |
 | image: wan-image (v2.7) | DONE | DONE | tagged v2.7 branch; negativePrompt max length 500, not a snippet target; AR hidden when edit images staged |
 | video: mochi | DONE | DONE | locked model, promptOnly; NO live workflows — excluded from the parity matrix like legacy WanVideo/SD2 |

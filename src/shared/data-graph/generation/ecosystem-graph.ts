@@ -46,6 +46,7 @@ import { nanoBananaGraph } from './nano-banana-graph';
 import { seedreamGraph } from './seedream-graph';
 import { imagen4Graph } from './imagen4-graph';
 import { flux2Graph } from './flux2-graph';
+import { flux3Graph } from './flux3-graph';
 import { flux2KleinGraph } from './flux2-klein-graph';
 import { fluxKontextGraph } from './flux-kontext-graph';
 import { zImageGraph } from './z-image-graph';
@@ -356,6 +357,7 @@ export const ecosystemGraph = new DataGraph<
     { values: ['Seedream'] as const, graph: seedreamGraph },
     { values: ['Imagen4'] as const, graph: imagen4Graph },
     { values: ['Flux2'] as const, graph: flux2Graph },
+    { values: ['Flux3'] as const, graph: flux3Graph },
     {
       values: [
         'Flux2Klein_9B',
