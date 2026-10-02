@@ -87,3 +87,12 @@ describe('partially hydrated resources', () => {
     );
   });
 });
+
+describe('denoise whatIf fingerprint', () => {
+  // Denoise changes the price, so a new value must re-fire the estimate.
+  it('treats a denoise change as cost-relevant', () => {
+    expect(applyWhatIfFingerprints({ denoise: 0.4 })).not.toEqual(
+      applyWhatIfFingerprints({ denoise: 0.75 })
+    );
+  });
+});
