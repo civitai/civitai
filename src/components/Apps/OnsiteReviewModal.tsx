@@ -45,6 +45,7 @@ import {
 } from '~/components/Apps/reviewDiffPanels';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { parseManifestGoods } from '~/shared/constants/block-goods.constants';
+import { numberWithCommas } from '~/utils/number-helpers';
 import { isSensitiveBlockScope } from '~/shared/constants/block-scope.constants';
 import {
   MARKETPLACE_CATEGORIES,
@@ -995,10 +996,11 @@ function ManifestView({ manifest }: { manifest: Record<string, unknown> }) {
     <Stack gap="sm">
       <ManifestIdentity manifest={manifest} />
       {/* ABOVE the permissions panel deliberately. "This app now charges for
-          access" is a product decision the moderator is the only gate on, and it
-          is NOT visible in the permissions panel — an app unlock does not require
-          the sensitive `goods:purchase:self` scope. Renders nothing at all when
-          the manifest declares no `goods`, which is every app approved to date. */}
+          access" is a product decision the moderator is the only gate on, and the
+          permissions panel cannot show it for an app that already sells goods —
+          adding an unlock changes no scopes (see ManifestGoods' docblock). Renders
+          nothing at all when the manifest declares no `goods`, which is every app
+          approved to date. */}
       <ManifestGoods manifest={manifest} />
       <ManifestScopes manifest={manifest} />
       <ManifestTargets manifest={manifest} />
@@ -1319,11 +1321,18 @@ function ManifestScopes({ manifest }: { manifest: Record<string, unknown> }) {
  * 🔴 IT IS INLINE, NOT IN THE "Other manifest fields" DISCLOSURE, AND THAT IS THE
  * WHOLE POINT. `goods` used to land in that collapsed raw-JSON block, which is
  * the same mistake `tagline` and `repository` above record: a manifest-governed
- * fact the moderator is the only gate on, rendered somewhere nobody opens. An
- * `app_unlock` good is the strongest instance of it — adding one flips a FREE app
- * to a PAID one, and because an app unlock is designed not to require the
- * sensitive `goods:purchase:self` scope, the sensitive-permissions panel above
- * will not mention it. If this card does not say so, nothing on the screen does.
+ * fact the moderator is the only gate on, rendered somewhere nobody opens.
+ *
+ * What the sensitive-permissions panel above already covers, and what it does not:
+ * a FREE app declaring its first catalog must add `goods:purchase:self`, which IS
+ * a sensitive scope and so already demands a justification the mod reads. The case
+ * that panel CANNOT show is an app that ALREADY SELLS ordinary goods and adds an
+ * access unlock in v2 — its scope set does not change, so nothing new is justified
+ * and nothing new is flagged, while the product goes from "sells an item" to
+ * "charges for admission". That is the gap this card closes today. (The approved
+ * design also drops the scope requirement for an unlock; once that lands the
+ * free→paid case stops tripping the scope gate too, and this card already covers
+ * it because it keys on the KIND rather than on a scope.)
  *
  * 🔴 `goods` IS DELIBERATELY *NOT* ADDED TO `HANDLED_MANIFEST_KEYS`, so it still
  * appears in the raw disclosure as well. That differs from how `tagline` and
@@ -1365,8 +1374,13 @@ function ManifestGoods({ manifest }: { manifest: Record<string, unknown> }) {
               {unlocks.map((unlock) => (
                 <Stack key={unlock.id} gap={2}>
                   <Group gap={8} wrap="nowrap">
+                    {/* `numberWithCommas`, not `toLocaleString()`: this is MONEY, and
+                        the repo's money formatter is regex-based and therefore
+                        locale-STABLE. `toLocaleString()` renders 3100 as "3.100"
+                        under de-DE, which would also make the browser test's literal
+                        assertion depend on the runner's locale. */}
                     <Badge color="red" variant="filled">
-                      {unlock.priceBuzz.toLocaleString()} Buzz
+                      {numberWithCommas(unlock.priceBuzz)} Buzz
                     </Badge>
                     <Text size="xs" fw={600}>
                       {unlock.title}
@@ -1382,9 +1396,15 @@ function ManifestGoods({ manifest }: { manifest: Record<string, unknown> }) {
                     <Text span fw={600}>
                       Why this app charges:{' '}
                     </Text>
-                    {/* The parser REQUIRES a justification on an app_unlock good, so
-                        this is only ever empty for a catalog that already failed
-                        validation — the errors block below reports that case. */}
+                    {/* 🔴 THE FALLBACK IS UNREACHABLE BY CONSTRUCTION, and is kept only
+                        so a missing rationale can never render as the literal
+                        "undefined" to a moderator. `unlocks` is derived from the
+                        ACCEPTED goods, and the parser rejects an `app_unlock` with no
+                        justification — so an unlock that reaches this line always has
+                        one. It is NOT the "invalid catalog" path: that manifest
+                        produces zero accepted unlocks and renders the errors card
+                        below instead, with no alert at all. Do not "fix" this by
+                        asserting the fallback in a test; it cannot be reached. */}
                     {unlock.justification ?? '— none provided —'}
                   </Text>
                 </Stack>
@@ -1414,7 +1434,7 @@ function ManifestGoods({ manifest }: { manifest: Record<string, unknown> }) {
             {items.map((good) => (
               <Group key={good.id} gap={8} align="flex-start" wrap="nowrap">
                 <Badge variant="light" color="yellow">
-                  {good.priceBuzz.toLocaleString()} Buzz
+                  {numberWithCommas(good.priceBuzz)} Buzz
                 </Badge>
                 <Stack gap={0}>
                   <Group gap={6} wrap="nowrap">

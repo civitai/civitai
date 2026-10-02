@@ -72,8 +72,14 @@ export const config = { api: { bodyParser: { sizeLimit: '4kb' } } };
 
 const bodySchema = z.object({
   goodId: z.string().regex(BLOCK_GOOD_ID_RE),
-  // Confirm-the-price guard. Bounded by the same ceiling the catalog is, so a
-  // nonsense value is a 400 rather than a comparison that can never match.
+  // Confirm-the-price guard. Bounded by the WIDEST ceiling any kind of good may
+  // carry, so a nonsense value is a 400 rather than a comparison that can never
+  // match. Deliberately NOT narrowed per-kind: the body is parsed before the good
+  // is resolved, so the kind is not yet known, and narrowing to the `app_unlock`
+  // ceiling here would reject legal ordinary goods. For an unlock that leaves the
+  // range (5000, 50000] accepted by zod and then refused downstream as
+  // `price_changed` (409) — a correct outcome by a different route, since this
+  // field can only ever cause a refusal, never a charge.
   expectedPriceBuzz: z.number().int().positive().max(BLOCK_GOOD_MAX_PRICE_BUZZ).optional(),
   // Charset-restricted so no control characters flow into a redis key.
   idempotencyKey: z.string().regex(BLOCK_IDEMPOTENCY_KEY_REGEX).optional(),

@@ -375,6 +375,25 @@ describe('OnsiteReviewModal — a PAID app is announced to the mod', () => {
       )
       .toBeInTheDocument();
     await expect.element(page.getByText('Digital goods (1)')).toBeInTheDocument();
+
+    // 🔴 THE PLACEMENT, NOT JUST THE PRESENCE — the claim the panel's docblock makes
+    // in capitals ("INLINE, NOT IN THE 'Other manifest fields' DISCLOSURE") and the
+    // one every `toBeInTheDocument()` above is blind to. Mantine keeps a COLLAPSED
+    // Accordion panel's content MOUNTED but hidden (this file already records that at
+    // the iframe-disclosure test), so moving the card inside that panel keeps every
+    // assertion above green while the moderator sees nothing without clicking.
+    //
+    // `aria-hidden` is the discriminator rather than `toBeVisible()`: Mantine's
+    // collapsed style is `height: 0; overflow: hidden` plus `aria-hidden`, and
+    // jest-dom's visibility check inspects display/visibility/opacity — none of which
+    // move — so `toBeVisible()` can pass in BOTH placements. Watched to fail with the
+    // card relocated into the disclosure.
+    const alert = page.getByText('This app is becoming PAID').element();
+    expect(alert.closest('[aria-hidden="true"]')).toBeNull();
+    // Belt: the disclosure itself is still present and still CLOSED, so the assertion
+    // above is about a card outside it rather than about a panel that failed to mount.
+    const otherCtrl = page.getByRole('button', { name: /^Other manifest fields/ });
+    await expect.element(otherCtrl).toHaveAttribute('aria-expanded', 'false');
   });
 
   test('an ORDINARY goods catalog renders the goods card but NOT the paid-app alert', async () => {

@@ -100,8 +100,13 @@ export const BLOCK_GOOD_MAX_PRICE_BUZZ = 50_000;
  * review. Independent knobs that currently agree.
  *
  * Enforced in `parseManifestGoods`, which is also what the purchase path reaches
- * through `findManifestGood` — so an over-ceiling unlock is unsellable as well
- * as unapprovable, with no second copy of the bound. The JSON Schema's outer
+ * through `findManifestGood` — so an over-ceiling unlock is unsellable as well as
+ * unapprovable. ⚠️ There are TWO call sites, not one, and they must stay in
+ * agreement: `purchaseBlockGood` re-checks the price independently (deliberately,
+ * for the drift case where the parser is not the gate). Both now go through
+ * `maxPriceBuzzForKind`, so there is one DEFINITION with two readers rather than
+ * two copies — that check previously hardcoded the general ceiling and so admitted
+ * an unlock at 10x its real cap. The JSON Schema's outer
  * `priceBuzz` bound stays 2..50000 on purpose: the schema declares the
  * imperative validator authoritative, and a conditional `if/then` on `kind`
  * there is more surface than this one property is worth. The narrower bound is
@@ -115,9 +120,22 @@ export const BLOCK_APP_UNLOCK_MAX_PRICE_BUZZ = 5_000;
  * `kind === 'app_unlock'` branch — a predicate open-coded at N sites is wrong at
  * N−1 of them, which is the defect shape `requestConsentGate.ts` records for the
  * host-side consent backstop.
+ *
+ * 🔴 AN EXHAUSTIVE RECORD, NOT A TERNARY WITH A DEFAULT, AND THAT IS THE POINT.
+ * A `kind === 'app_unlock' ? … : GENERAL` form silently hands any FUTURE kind the
+ * general 50,000 ceiling — a new way to charge, admitted at the loosest bound,
+ * with nobody having decided that. Keyed on `BlockGoodKind`, adding a kind fails
+ * TYPECHECK until someone writes its ceiling down. (A test asserting "every kind
+ * has a sane ceiling" cannot buy this: the default satisfies it, which is exactly
+ * how that assertion was measured to pass for an unreviewed third kind.)
  */
+const MAX_PRICE_BUZZ_BY_KIND: Record<BlockGoodKind, number> = {
+  good: BLOCK_GOOD_MAX_PRICE_BUZZ,
+  app_unlock: BLOCK_APP_UNLOCK_MAX_PRICE_BUZZ,
+};
+
 export function maxPriceBuzzForKind(kind: BlockGoodKind): number {
-  return kind === 'app_unlock' ? BLOCK_APP_UNLOCK_MAX_PRICE_BUZZ : BLOCK_GOOD_MAX_PRICE_BUZZ;
+  return MAX_PRICE_BUZZ_BY_KIND[kind];
 }
 
 /** Most goods one manifest may declare. */
@@ -141,8 +159,16 @@ export const BLOCK_APP_UNLOCK_MAX_PER_MANIFEST = 1;
  * Length bound on a good's review `justification`. Agrees with
  * `SCOPE_JUSTIFICATION_MAX_LENGTH` (the per-scope rationale bound) by POLICY
  * rather than by construction — same independent-knobs reasoning as the share
- * constant above, and it keeps this module free of an auth-package import it
- * otherwise has no need for.
+ * constant above: a repricing of one rationale surface should not silently
+ * reprice the other. Pinned by an agreement guard in the test file, so the
+ * divergence is noticed rather than merely permitted.
+ *
+ * 🔴 THE NUMBER AGREES; THE RULE DOES NOT. This bound is measured against the
+ * TRIMMED string, while the per-scope bound measures the RAW one — so a 500-char
+ * rationale padded with whitespace is rejected as a scope justification and
+ * accepted here. Deliberate (the published schema's `maxLength` counts raw, so
+ * trimming keeps this side never MORE permissive than the schema promises), but
+ * do not read "same 500" as "same rule".
  */
 export const BLOCK_GOOD_JUSTIFICATION_MAX_LENGTH = 500;
 
@@ -311,21 +337,43 @@ export function parseManifestGoods(manifest: GoodsManifestInput): {
       priceBuzz < BLOCK_GOOD_MIN_PRICE_BUZZ ||
       priceBuzz > maxPriceBuzz
     ) {
+      // 🔴 THE MESSAGE MUST NAME THE KIND'S OWN CEILING, not the general one. The
+      // published JSON Schema's `priceBuzz.maximum` is deliberately still 50000 and
+      // the narrow bound lives only in a prose `description`, so for an `app_unlock`
+      // THIS STRING IS THE ONLY MACHINE-DELIVERED STATEMENT OF THE REAL LIMIT. Get it
+      // wrong and a developer at 5001 is told to stay "between 2 and 50000" — the
+      // bound they just satisfied. Asserted in the tests against both constants.
       errors.push(
         `${at}.priceBuzz must be a whole number between ${BLOCK_GOOD_MIN_PRICE_BUZZ} and ${maxPriceBuzz} Buzz` +
-          (resolvedKind === 'app_unlock' ? ` for a ${resolvedKind} good` : '')
+          (resolvedKind === 'app_unlock' ? ` for an ${resolvedKind} good` : '')
       );
       return;
     }
 
-    // THE FREE→PAID REVIEW TRIGGER. An `app_unlock` good is what turns a free app
-    // into a paid one, and the existing sensitive-scope gate does not catch it:
-    // that gate fires on a declared SENSITIVE scope, and an app unlock is designed
-    // not to require `goods:purchase:self`. Without this rule a v2 could add an
-    // unlock and flip a free app to paid with nothing for a moderator to read.
-    // Requiring the rationale HERE — in the one parser both the submit gate and
-    // the purchase path call — is what makes "becoming paid" an explicit,
-    // reviewed claim rather than a diff nobody was pointed at.
+    // THE FREE→PAID REVIEW TRIGGER. An `app_unlock` good is what turns an app into
+    // one you must pay to enter, and it is keyed on the KIND rather than on a
+    // declared scope. That is the whole point, and it is worth being precise about
+    // what the existing sensitive-scope gate does and does not already cover:
+    //
+    // - A FREE app declaring its FIRST catalog is ALREADY caught today. Any
+    //   non-empty `goods` requires `goods:purchase:self`
+    //   (`src/server/services/block-manifest-validator.service.ts`), that scope IS
+    //   in `SENSITIVE_BLOCK_SCOPES`, and a declared sensitive scope must carry a
+    //   `scopeJustifications` entry. So the mod already sees something.
+    // - THE GAP THIS CLOSES TODAY is an app that ALREADY SELLS ordinary goods and
+    //   adds an unlock in v2. Its scope set does not change, so no new sensitive
+    //   scope is declared, so no new justification is demanded — and an app going
+    //   from "sells an item" to "charges for admission" is a different product
+    //   decision that nothing on the review screen would have mentioned.
+    // - AND IT IS ROBUST TO THE PLANNED CHANGE. The approved design drops the
+    //   `goods:purchase:self` requirement for an unlock; the moment that lands, the
+    //   free→paid case stops tripping the scope gate too. Because this rule keys on
+    //   the kind and not on a scope, it already covers that and will not need to be
+    //   rediscovered.
+    //
+    // Requiring the rationale HERE — in the one parser both the submit gate and the
+    // purchase path call — is what makes "becoming paid" an explicit, reviewed
+    // claim rather than a diff nobody was pointed at.
     //
     // Shape-checked for ANY good so a developer who explains an ordinary item is
     // not rejected for it; REQUIRED only for `app_unlock`.
@@ -385,9 +433,24 @@ export function parseManifestGoods(manifest: GoodsManifestInput): {
   });
 
   // ARITY OF THE UNLOCK, checked across the whole catalog rather than per entry.
-  // Counted over the ACCEPTED declarations: an entry that already failed above has
-  // its own error and the manifest is rejected either way, so counting rejects too
-  // would only produce a second message about the same bad entry.
+  //
+  // Counted over the ACCEPTED declarations, not the raw entries: an entry that
+  // already failed above has its own error and the manifest is rejected either way,
+  // so counting rejects too would only add a second, confusing message about the
+  // same bad entry. Two measured consequences, both pinned by tests: two unlocks
+  // where one is over-cap reports ONLY the price error, and two unlocks sharing an
+  // id report ONLY the duplicate error (the duplicate is dropped before the count,
+  // so it never reaches the arity rule at all).
+  //
+  // ⚠️ This is the FIRST catalog-level error that leaves `goods` POPULATED — the
+  // per-entry rules all `return` before pushing, and `BLOCK_GOOD_MAX_PER_MANIFEST`
+  // returns `goods: []`. Deliberate: the review modal renders the offending unlocks
+  // so a moderator can see WHAT was declared, which an empty array would hide. Both
+  // current consumers are all-or-nothing on `errors` (`findManifestGood` refuses on
+  // any error; the submit validator reads only `.errors`), so the populated array is
+  // safe — but a future consumer that reads `goods` WITHOUT checking `errors` would
+  // receive the two-unlock catalog this bound exists to make impossible. Check
+  // `errors` first; that is the contract, not a suggestion.
   const appUnlockCount = goods.filter((good) => good.kind === 'app_unlock').length;
   if (appUnlockCount > BLOCK_APP_UNLOCK_MAX_PER_MANIFEST) {
     errors.push(
