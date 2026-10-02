@@ -98,6 +98,16 @@ export type TokenUsage = { promptTokens: number; completionTokens: number; costU
  *  - `input_tokens` / `output_tokens` / `cost` — `POST /api/alpha/decisions`
  *    (see `services/ai/jev.ts`). Added here rather than as a second parser in
  *    that module: a sibling copy is how the next field lands in one of the two.
+ *    (A fourth exists upstream and has no caller yet: the SDK's
+ *    `OpenResponsesUsage` spells them `inputTokens` / `outputTokens` + `cost`.)
+ *
+ * ⚠️ READING `cost` APPLIES TO EVERY CALLER, chat paths included, and the reason that is
+ * currently inert is worth keeping written down because it is one vendor flag from false:
+ * the SDK's `chat.send` usage is a plain zod object with no `passthrough`, so it STRIPS an
+ * unknown `cost` before `extractUsage` ever sees it. OpenRouter's chat API can report one.
+ * The moment it survives the parse, `getJsonCompletionWithUsage`'s retry path starts
+ * discarding the first call's cost in `sumUsage` — see `TokenUsage` above. A caller that
+ * hands this a RAW REST payload instead of an SDK response arms the same thing today.
  *
  * `cost` is the vendor's OWN reported spend for the call and becomes `costUsd`.
  * 🔴 `>= 0` and finite, because it is a money input by construction — the same

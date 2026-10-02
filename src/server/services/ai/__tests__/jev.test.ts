@@ -520,7 +520,7 @@ describe('🔴 score mapping: index space → the declared range', () => {
   });
 
   it('🔴 refuses a criteria count that disagrees with the range, before any call', async () => {
-    // EXACTLY the probe that produced RECORDED_200: a 1–10 question answered
+    // EXACTLY the probe that produced RECORDED_200: a 1-10 question answered
     // over 3 criteria. It returned 1.94, which reads as "terrible" on a 1–10
     // scale and is actually "mid" on a 3-point one. Nothing about that rescale
     // can fail on its own, so it fails here.
@@ -596,6 +596,41 @@ describe('🔴 score mapping: index space → the declared range', () => {
     });
   });
 
+  it('🔴 CLAMPS the LOWER arm too — rounding hides that one as well', async () => {
+    // The mirror of the upper-arm survivor. `quality` is [1,3] with slack 0.04, and
+    // -0.03 is inside it. Correct code clamps to index 0 and yields min = 1;
+    // dropping `Math.max(score, 0)` yields 0.97 — below the range the question
+    // declared, handed to a caller that trusts it. (-0.03 and not -0.04: `0.02*2`
+    // is exact in doubles, so -0.04 sits exactly on the reject boundary.)
+    respondAnswers({ quality: { type: 'score', score: -0.03 } });
+    const result = await askJev({ state: {}, questions: [qualityQuestion] });
+    expect((result.answers[0] as { value: number }).value).toBe(1);
+  });
+
+  it('🔴 ROUNDS to nearest — not ceil, not floor', async () => {
+    // Every integer fixture in this file was 0, 1.94, 4, 4.03 or -0.05, and `ceil`
+    // agrees with `round` on all five. Unpinned, `Math.ceil` is a systematic +1
+    // bias on the one score the resource-intent decision is recorded against.
+    // 1.2 separates them; 1.94 above already separates floor/trunc.
+    respond({
+      model: RECORDED_200.model,
+      answers: { specificity: { type: 'score', score: 1.2 } },
+      usage: {},
+    });
+    await expect(askJev({ state: {}, questions: [specificityQuestion] })).resolves.toMatchObject({
+      answers: [{ value: 2 }],
+    });
+  });
+
+  it('refuses `integer: true` over a fractional range', async () => {
+    const fractional = { ...specificityQuestion, min: 0.5, max: 4.5 };
+    await expect(askJev({ state: {}, questions: [fractional] })).rejects.toMatchObject({
+      kind: 'malformed',
+      message: expect.stringContaining('fractional range'),
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('🔴 the slack SCALES with the index arm and is not open-ended', async () => {
     // lastIndex 4 ⇒ slack 0.08. 4.5 is outside it and must still fail closed.
     respond({
@@ -642,7 +677,12 @@ describe('🔴 score mapping: index space → the declared range', () => {
     const answers: Record<string, unknown> = {};
     for (const q of RESOURCE_INTENT_QUESTIONS) {
       if (q.type === 'noul') answers[q.id] = { type: 'noul', noul: 0.5 };
-      else if (q.type === 'score') answers[q.id] = { type: 'score', score: 0 };
+      // 🔴 A FRACTION, not 0. `score: 0` maps to `min` with or without
+      // `integer: true` — `Math.round(0)` is `0` — so deleting the flag from the
+      // production spec left this very test green while production started
+      // returning a fraction into a `z.number().int()` consumer. The fixture for
+      // a seam must not be the one value for which the property is vacuous.
+      else if (q.type === 'score') answers[q.id] = { type: 'score', score: 1.94 };
       else
         answers[q.id] = {
           type: 'choice',
@@ -658,7 +698,8 @@ describe('🔴 score mapping: index space → the declared range', () => {
     expect(result.answers.map((a) => a.id)).toEqual(RESOURCE_INTENT_QUESTIONS.map((q) => q.id));
     // And the one score question still lands where its consumer's schema needs it.
     const specificity = result.answers.find((a) => a.id === 'specificity')!;
-    expect(specificity).toMatchObject({ type: 'score', value: 1 });
+    // round(1.94) + min 1 = 3. Without `integer: true` it would be 2.94.
+    expect(specificity).toMatchObject({ type: 'score', value: 3 });
     expect(Number.isInteger((specificity as { value: number }).value)).toBe(true);
   });
 });
@@ -750,10 +791,88 @@ describe('askJev — fail-closed on the response', () => {
       (e: Error) => e
     );
     expect(err.message).not.toContain(prompt);
-    expect(err.message).toContain('[redacted]');
+    expect(err.message).toContain('<redacted>');
     // The diagnosis itself must survive the redaction.
     expect(err.message).toContain('state.prompt');
     expect(err.message).toContain('400');
+  });
+
+  it('🔴 redacts BEFORE the excerpt is sliced — the straddle is the dominant case', async () => {
+    // The prompt cap is 6000 chars against a 400-char excerpt, and the vendor
+    // answers a malformed request by echoing the submitted body. So an echoed
+    // prompt almost always straddles the cut: slicing first would leak a
+    // 300-plus-character prefix of user text on MOST real 400s.
+    const prompt = 'SECRETPROMPTTEXT about a red sports car';
+    respond(`${'x'.repeat(390)} received "${prompt}" at state.prompt`, {
+      ok: false,
+      status: 400,
+    });
+    const err = await askJev({ state: { prompt }, questions: recordedQuestions }).then(
+      () => {
+        throw new Error('expected askJev to reject on a 400');
+      },
+      (e: Error) => e
+    );
+    expect(err.message).not.toContain('SECRETPROMPT');
+  });
+
+  it('🔴 redacts EVERY state value and EVERY occurrence of each', async () => {
+    // The helper's docstring says "every value"; a fixture with one value
+    // appearing once observes neither half. `replace` instead of `split`/`join`
+    // leaks occurrence two onwards, and iterating only the first value leaks
+    // `baseModel` — which production always sends alongside `prompt`.
+    const prompt = 'AAAdistinctivepromptAAA';
+    const baseModel = 'BBBdistinctivemodelBBB';
+    respond(`invalid: "${prompt}" and "${baseModel}" and again "${prompt}"`, {
+      ok: false,
+      status: 400,
+    });
+    const err = await askJev({ state: { prompt, baseModel }, questions: recordedQuestions }).then(
+      () => {
+        throw new Error('expected askJev to reject on a 400');
+      },
+      (e: Error) => e
+    );
+    expect(err.message).not.toContain('AAAdistinctive');
+    expect(err.message).not.toContain('BBBdistinctive');
+    expect(err.message).toContain('<redacted>');
+  });
+
+  it('🔴 redacts a JSON-ESCAPED echo, which is the only form a JSON body carries', async () => {
+    // The body is `await response.text()` — raw JSON bytes. A prompt containing a
+    // quote or a newline never appears raw there, so a raw-only split silently
+    // redacts nothing. On a free-text prompt surface that is the common case.
+    const prompt = 'a "cute" cat\nwith a hat';
+    const body = JSON.stringify({ error: `expected string, received ${prompt}` });
+    expect(body).not.toContain(prompt); // the fixture's own premise
+    respond(body, { ok: false, status: 400 });
+    const err = await askJev({ state: { prompt }, questions: recordedQuestions }).then(
+      () => {
+        throw new Error('expected askJev to reject on a 400');
+      },
+      (e: Error) => e
+    );
+    expect(err.message).not.toContain('cute');
+    expect(err.message).toContain('<redacted>');
+  });
+
+  it('🔴 has NO minimum-length floor — a short prompt is still user text', async () => {
+    // An earlier version of this fix had a 4-character floor, on the reasoning
+    // that redacting a short value would shred the vendor's message. That trades a
+    // safety cost for a diagnostic one in the wrong direction, and `prompt` is
+    // `z.string().min(1)`. Both of these must go.
+    respond('invalid value "abcd" and "xyz" in state', { ok: false, status: 400 });
+    const err = await askJev({
+      state: { prompt: 'abcd', baseModel: 'xyz' },
+      questions: recordedQuestions,
+    }).then(
+      () => {
+        throw new Error('expected askJev to reject on a 400');
+      },
+      (e: Error) => e
+    );
+    expect(err.message).not.toContain('abcd');
+    expect(err.message).not.toContain('xyz');
   });
 
   it('rejects an absurdly long model string before it reaches any sink', async () => {
@@ -762,6 +881,37 @@ describe('askJev — fail-closed on the response', () => {
       kind: 'malformed',
       message: expect.stringContaining('over 64'),
     });
+  });
+
+  it('🔴 caps the model BEFORE the pin check, so a non-pin value cannot ride into a log', async () => {
+    // The existing cap fixture starts with the pin, so the prefix check passes and
+    // only the length check can fire — swapping the two blocks keeps it green. A
+    // long NON-pin model separates them: with the order reversed, the whole 5000
+    // characters are interpolated into the `not the pinned ...` message.
+    respond({ ...RECORDED_200, model: 'z'.repeat(5000) });
+    const err = await askJev({ state: {}, questions: recordedQuestions }).then(
+      () => {
+        throw new Error('expected askJev to reject');
+      },
+      (e: Error) => e
+    );
+    expect(err.message).toContain('over 64');
+    expect(err.message.length).toBeLessThan(200);
+  });
+
+  it('caps any OTHER vendor-controlled string that reaches an error message', async () => {
+    respond({
+      ...RECORDED_200,
+      answers: { ...RECORDED_200.answers, ['q'.repeat(4000)]: { type: 'noul', noul: 1 } },
+    });
+    const err = await askJev({ state: {}, questions: recordedQuestions }).then(
+      () => {
+        throw new Error('expected askJev to reject');
+      },
+      (e: Error) => e
+    );
+    expect(err.message).toContain('unknown answer key');
+    expect(err.message.length).toBeLessThan(300);
   });
 
   it('🔴 a response from a DIFFERENT model fails closed', async () => {

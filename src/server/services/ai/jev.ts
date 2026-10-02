@@ -1,4 +1,5 @@
 import { env } from '~/env/server';
+import { redactKnownValues } from '~/server/utils/redact-known-values';
 import { AI_MODELS, extractUsage, type TokenUsage } from '~/server/services/ai/openrouter';
 
 /**
@@ -167,33 +168,49 @@ const ERROR_BODY_EXCERPT = 400;
 // used as a payload.
 const JEV_MODEL_MAX_LENGTH = 64;
 
-// Shortest state value worth redacting out of an error body. Below this, a
-// `split`/`join` would shred the vendor's message without protecting anything a
-// 3-character prompt could plausibly leak.
-const MIN_REDACTABLE_STATE_VALUE = 4;
+// Budget for any OTHER vendor-controlled string that lands in an error message. The model id
+// has its own cap above because a response from the wrong model is rejected outright; these
+// are interpolated on the way to a `malformed`.
+const VENDOR_STRING_EXCERPT = 120;
 
 /**
- * Strip every `state` VALUE out of a vendor error body before it can become log
- * content.
+ * Strip every `state` VALUE out of a vendor error body before it can become log content.
  *
- * 🔴 `state` is USER PROMPT TEXT, and this endpoint answers a malformed request
- * with a schema error DESCRIBING the submitted body — that is literally how its
- * contract was recovered. Meanwhile the consumer writes a `JevError`'s message
- * verbatim to Axiom, while the ClickHouse shadow row deliberately stores only
- * `sha256(prompt)` and its length so the table cannot become a prompt corpus. An
- * echoed body would route around that decision into a different sink, on every
- * request, for as long as a request-shape drift lasted. Redacting here keeps the
- * whole diagnostic value of the body and closes that path.
+ * 🔴 `state` is USER PROMPT TEXT, and this endpoint answers a malformed request with a
+ * schema error DESCRIBING the submitted body — that is literally how its contract was
+ * recovered. Meanwhile the consumer writes a `JevError`'s message verbatim to Axiom, while
+ * the ClickHouse shadow row deliberately stores only `sha256(prompt)` and its length so the
+ * table cannot become a prompt corpus. An echoed body would route around that decision into
+ * a different sink, on every request, for as long as a request-shape drift lasted.
  *
- * Runs BEFORE the excerpt is taken, so a prompt straddling the cut is still hit.
+ * 🔴 `redactKnownValues` rather than a local `split`/`join`, and both of its mechanics are
+ * load-bearing HERE specifically — this is the caller its docstring was written for:
+ *  - the body is `await response.text()`, i.e. raw JSON bytes, so an echoed prompt is
+ *    JSON-ESCAPED there. A prompt containing a quote, a backslash or a newline — the common
+ *    case on a free-text prompt surface — never appears raw, so a raw-only split silently
+ *    redacts nothing.
+ *  - `state` carries `prompt` AND `baseModel`, and a `baseModel` of `pony` is a substring of
+ *    `a pony in a field`. Unsorted, the short needle fires first and the long one then
+ *    matches nothing.
+ *
+ * ⚠️ There is deliberately NO minimum-length floor. An earlier version of this had one, on the
+ * reasoning that redacting a 1-3 character value would shred the vendor's message. That trades
+ * a SAFETY cost for a DIAGNOSTIC one in the wrong direction: a short prompt is still user text,
+ * and a shredded error message is merely annoying. `prompt` is `z.string().min(1)`.
+ *
+ * Runs BEFORE the excerpt is sliced, so a prompt straddling the cut is still hit — with a
+ * 6000-char prompt cap against a 400-char excerpt, straddling is the DOMINANT case.
  */
 function redactStateValues(body: string, state: Record<string, string>): string {
-  let out = body;
-  for (const value of Object.values(state)) {
-    if (typeof value !== 'string' || value.length < MIN_REDACTABLE_STATE_VALUE) continue;
-    out = out.split(value).join('[redacted]');
-  }
-  return out;
+  return redactKnownValues(body, Object.values(state));
+}
+
+/**
+ * Vendor-controlled strings reach an Axiom line through several error messages, not just the
+ * model id. Capped at the same budget, for the same reason.
+ */
+function excerpt(value: unknown): string {
+  return String(value).slice(0, VENDOR_STRING_EXCERPT);
 }
 
 // Per-kind wire key whitelists. `legend` (score) is the vendor's index→criterion
@@ -251,13 +268,13 @@ function parseAnswer(question: JevQuestionSpec, raw: unknown, idPath: string): J
   if (record.type !== question.type) {
     fail(
       'malformed',
-      `answer for "${idPath}" has type "${String(record.type)}", expected "${question.type}"`
+      `answer for "${idPath}" has type "${excerpt(record.type)}", expected "${question.type}"`
     );
   }
   const allowed = WIRE_KEYS[question.type];
   for (const key of Object.keys(record)) {
     if (!allowed.has(key)) {
-      fail('malformed', `unknown answer key "${key}" for question "${idPath}"`);
+      fail('malformed', `unknown answer key "${excerpt(key)}" for question "${idPath}"`);
     }
   }
 
@@ -287,7 +304,10 @@ function parseAnswer(question: JevQuestionSpec, raw: unknown, idPath: string): J
         // keeps a `__proto__`-shaped key out of the assignment below: it is not
         // in any caller's option set, so it never reaches `distribution[option]`.
         if (!options.has(option)) {
-          fail('malformed', `distribution for "${idPath}" names unknown option "${option}"`);
+          fail(
+            'malformed',
+            `distribution for "${idPath}" names unknown option "${excerpt(option)}"`
+          );
         }
         if (
           typeof probability !== 'number' ||
@@ -409,9 +429,20 @@ export function buildDecisionsQuestions(
           type: 'choice',
           instructions: question.prompt,
           // The vendor chooses among the KEYS, so the key set is the option set
-          // and that is the load-bearing half. Each option describes itself
-          // until a caller has something better to say about it; the semantics
-          // live in `instructions`.
+          // and that is the load-bearing half. Each option describes itself; the
+          // semantics live in `instructions`.
+          //
+          // ⚠️ `buildStage3Question` (`services/resource-intent.service.ts`) ALREADY
+          // computes exactly the per-option descriptions this slot wants — model
+          // name, version, type, base model — and smuggles them through `prompt` as
+          // numbered lines, because the old chat transport had only one text field.
+          // So the option→description map ships TWICE in one request, and at the
+          // 255-option cap the degenerate copy is a measurable fraction of the body.
+          // Moving them here is deliberately NOT done in this change: it alters what
+          // the model sees, so it alters ranking quality, and that is not gradeable
+          // from a recorded fixture. **Closing condition: do it when the study can
+          // A/B it against live calls**, and delete the numbered lines in the same
+          // edit or the vendor sees both.
           criteria: Object.fromEntries(question.options.map((option) => [option, option])),
         };
         break;
@@ -420,6 +451,8 @@ export function buildDecisionsQuestions(
           type: 'score',
           instructions: question.prompt,
           // 🔴 Strings, never numbers — `[1, 10]` is rejected by the endpoint.
+          // The coercion is not redundant with the `readonly string[]` type: a
+          // caller reaching this from untyped data is the case it exists for.
           criteria: question.criteria.map(String),
         };
         break;
@@ -482,6 +515,20 @@ export async function askJev(
       }
     }
     if (question.type === 'score') {
+      // 🔴 `integer` must mean "an integer", so the endpoints have to be integers too. The
+      // criteria-count guard only forces `max - min` to be a whole number, so a `min` of 0.5
+      // would make `Math.round(index) + min` fractional and the consumer's `z.number().int()`
+      // would reject every answer as a degrade. No caller does this; the guard is here so
+      // none can.
+      if (
+        question.integer &&
+        (!Number.isInteger(question.min) || !Number.isInteger(question.max))
+      ) {
+        fail(
+          'malformed',
+          `score "${question.id}" declares integer: true but a fractional range [${question.min},${question.max}]`
+        );
+      }
       const expected = scoreCriteriaCount(question);
       if (expected < 2) {
         fail(
@@ -585,7 +632,7 @@ export async function askJev(
   const answersById = answersRaw as Record<string, unknown>;
   for (const key of Object.keys(answersById)) {
     if (!ids.has(key)) {
-      fail('malformed', `unknown answer key "${key}" in Jev response`);
+      fail('malformed', `unknown answer key "${excerpt(key)}" in Jev response`);
     }
   }
   // Ordered by the REQUEST's questions, so a caller may index positionally.

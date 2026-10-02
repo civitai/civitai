@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -174,6 +175,30 @@ describe('cache behavior', () => {
     // suggestions for the full hour TTL (and the reverse under-serve). Red before
     // the fix: `cap` was absent from the key and this call was identical to `a`.
     expect(resourceIntentCacheKey({ ...base, cap: 1 })).not.toBe(a);
+  });
+
+  it('🔴 the spec term in the key is the spec HASH, not the hand-maintained version', async () => {
+    // Recomputed independently, so swapping the term back to
+    // `String(QUESTION_SPEC_VERSION)` goes red. The hash moves on ANY question-spec
+    // edit; the integer only moves when someone remembers. Measured once: rewording
+    // the `specificity` prompt moved the hash and left the version at 1, so a
+    // pre-edit cache entry would have been served for its full hour under the new
+    // spec and then stamped into the shadow table with the NEW hash.
+    const { RESOURCE_INTENT_SPEC_HASH, QUESTION_SPEC_VERSION } = await import(
+      '~/server/schema/resource-intent.schema'
+    );
+    const base = { prompt: 'p', baseModel: 'SDXL 1.0', browsingLevel: 3, cap: 50 };
+    const expected = createHash('sha256')
+      .update(['p', 'SDXL 1.0', '3', '50', RESOURCE_INTENT_SPEC_HASH].join('|'))
+      .digest('hex');
+    expect(resourceIntentCacheKey(base)).toBe(`packed:caches:jev-resource-intent:v1:${expected}`);
+    // And the control: the version integer is NOT what the key carries.
+    const withVersion = createHash('sha256')
+      .update(['p', 'SDXL 1.0', '3', '50', String(QUESTION_SPEC_VERSION)].join('|'))
+      .digest('hex');
+    expect(resourceIntentCacheKey(base)).not.toBe(
+      `packed:caches:jev-resource-intent:v1:${withVersion}`
+    );
   });
 
   it('🔴 never serves more suggestions than the caller asked for, even from a wider entry', async () => {

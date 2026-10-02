@@ -52,6 +52,18 @@ describe('extractUsage', () => {
       }
     });
 
+    it('🔴 pins the full three-way precedence, not just one pair', () => {
+      // The existing case separates `prompt_tokens` from `input_tokens` only, so
+      // swapping the 2nd and 3rd terms of the `??` chain survives it. Two points
+      // pin the whole order.
+      expect(
+        extractUsage({ usage: { prompt_tokens: 1, promptTokens: 2, input_tokens: 3 } })
+      ).toMatchObject({ promptTokens: 1 });
+      expect(extractUsage({ usage: { promptTokens: 2, input_tokens: 3 } })).toMatchObject({
+        promptTokens: 2,
+      });
+    });
+
     it('prefers the OpenAI spelling when a payload somehow carries both', () => {
       expect(
         extractUsage({
