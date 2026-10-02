@@ -7,6 +7,7 @@
   import { FEEDBACK_STATUSES, handledByLabel, type FeedbackContext } from '$lib/feedback';
   import { feedbackRefusal, type FeedbackFormName } from '$lib/feedback-refusal';
   import { feedbackPanelHasUnsavedDraft, makeFeedbackPromoteDraft } from '$lib/feedback-drafts';
+  import { feedbackTechnicalSummary } from '$lib/feedback-technical-summary';
   import FeedbackContextPanel from './FeedbackContextPanel.svelte';
   import FeedbackAttachments from './FeedbackAttachments.svelte';
   import FeedbackPromote from './FeedbackPromote.svelte';
@@ -81,6 +82,9 @@
      */
     draftDirty?: boolean;
   } = $props();
+
+  /** The `<summary>` badge — what the collapsed block holds, without opening it. */
+  const technicalSummary = $derived(feedbackTechnicalSummary(context));
 
   /**
    * 🔴 `let`, NOT `const`, AND HANDED DOWN WITH `bind:draft=`. `FeedbackPromote` mutates this object
@@ -204,17 +208,38 @@
     <FeedbackAttachments {context} />
   </section>
 
-  <!-- `FeedbackContextPanel` renders several sibling sections, so the wrapper supplies the column
-       and the gap they sit in. -->
-  <div class="flex min-w-0 flex-col gap-4 border-t border-dark-4 pt-5">
-    <FeedbackContextPanel
-      area={row.area}
-      {context}
-      createdAt={row.createdAt}
-      {civitaiUrl}
-      {grafanaUrl}
-    />
-  </div>
+  <!-- 🔴 NOT `{#if}`. `<details>` hides its content; it does not UNMOUNT it. The tab strip this panel
+       used to carry destroyed the inactive sections' markup — the reason every operator-typed box
+       here is bound to parent-owned state — and the tripwire written against that
+       (`renders every section unconditionally`) matches on `activeTab` by name, so an `{#if}`
+       collapse walks straight past it. Nothing in this block is operator-typed today, so the cost
+       would not surface until something is.
+
+       🔴 `theme.css` styles `summary { cursor: pointer }` already — do NOT add `cursor-pointer`.
+       Several summaries in this app add it anyway.
+
+       The inner wrapper supplies the column and gap `FeedbackContextPanel`'s sibling sections sit
+       in. -->
+  <details class="min-w-0 border-t border-dark-4 pt-5">
+    <!-- 🔴 The badge is the only thing that survives the collapse, so it must not become a second
+         place the counts are spelled: `feedbackTechnicalSummary` owns the wording, and "distinct"
+         in it is load-bearing — see its docstring. -->
+    <summary class="text-xs tracking-wide text-dark-2 uppercase">
+      Technical details
+      {#if technicalSummary}
+        <span class="ml-2 font-normal normal-case">{technicalSummary}</span>
+      {/if}
+    </summary>
+    <div class="mt-4 flex min-w-0 flex-col gap-4">
+      <FeedbackContextPanel
+        area={row.area}
+        {context}
+        createdAt={row.createdAt}
+        {civitaiUrl}
+        {grafanaUrl}
+      />
+    </div>
+  </details>
 
   <div class="min-w-0 border-t border-dark-4 pt-5">
     <FeedbackPromote
