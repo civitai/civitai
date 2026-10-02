@@ -112,7 +112,7 @@ async function applyVisibility(args: {
   // caught below and reported as "not available on this environment" — the honest answer for
   // a write, and the reason this function may name the column at all.
   let columnAvailable = true;
-  let listing = await dbWrite.appListing
+  const listing = await dbWrite.appListing
     .findUnique({
       where: { id: appListingId },
       select: {
