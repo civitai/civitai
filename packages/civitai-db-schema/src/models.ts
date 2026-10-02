@@ -650,6 +650,7 @@ export interface User {
   issuedStrikes?: UserStrike[];
   voidedStrikes?: UserStrike[];
   generationPresets?: GenerationPreset[];
+  generationSizePresets?: GenerationSizePreset[];
   ownedWildcardSets?: WildcardSet[];
   blurbs?: Blurb[];
   model3ds?: Model3D[];
@@ -5314,6 +5315,15 @@ export interface GenerationPreset {
   sortOrder: number;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface GenerationSizePreset {
+  id: number;
+  userId: number;
+  user?: User;
+  width: number;
+  height: number;
+  createdAt: Date;
 }
 
 export interface WildcardSet {

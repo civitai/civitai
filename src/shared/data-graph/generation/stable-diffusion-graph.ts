@@ -24,7 +24,10 @@ import {
   sliderNode,
   triggerWordsGraph,
 } from './common';
-import { sd1AspectRatioBuckets } from '~/shared/constants/generation.constants';
+import {
+  sd1AspectRatioBuckets,
+  sd1CustomDimensionLimits,
+} from '~/shared/constants/generation.constants';
 import {
   sd1ControlNetPreprocessors,
   sdxlControlNetPreprocessors,
@@ -80,7 +83,7 @@ export const stableDiffusionGraph = new DataGraph<
       const hasImages = Array.isArray(ctx.images) && ctx.images.length > 0;
       return {
         ...(isSD1
-          ? aspectRatioNode({ options: sd1AspectRatioBuckets })
+          ? aspectRatioNode({ options: sd1AspectRatioBuckets, custom: sd1CustomDimensionLimits })
           : sdxlFullAspectRatioNode()),
         when: !hasImages,
       };

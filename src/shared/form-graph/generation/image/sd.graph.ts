@@ -1,5 +1,9 @@
 import { defineGraph } from 'form-graph';
-import { sd1AspectRatioBuckets, samplers } from '~/shared/constants/generation.constants';
+import {
+  sd1AspectRatioBuckets,
+  sd1CustomDimensionLimits,
+  samplers,
+} from '~/shared/constants/generation.constants';
 import {
   sd1ControlNetPreprocessors,
   sdxlControlNetPreprocessors,
@@ -112,7 +116,7 @@ export const sd = defineGraph<FamilyExt>({ scope: familyScope })
     hasImages(images)
       ? null
       : effectiveEcosystem === 'SD1'
-      ? aspectRatioDef({ options: sd1AspectRatioBuckets })
+      ? aspectRatioDef({ options: sd1AspectRatioBuckets, custom: sd1CustomDimensionLimits })
       : SDXL_FULL_AR
   )
   .use(textBlock)

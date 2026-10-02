@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { branch, defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
 import {
-  SDXL_FULL_AR,
+  SDXL_FULL_AR_4MP,
   SEED,
   aspectRatioDef,
   boolDef,
@@ -67,7 +67,7 @@ type IdeogramVersionExt = FamilyExt & { model?: ResourceData | number };
 
 const ideogram4 = defineGraph<IdeogramVersionExt>()
   .field('resources', familyResources)
-  .field('aspectRatio', SDXL_FULL_AR)
+  .field('aspectRatio', SDXL_FULL_AR_4MP)
   .field('cfgScale', perModelSlider({ min: 1, max: 10, step: 0.5, default: 4 }))
   .field('steps', perModelSlider({ min: 1, max: 50, default: 25 }));
 

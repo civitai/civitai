@@ -2691,6 +2691,13 @@ export type GenerationServiceProvider = {
   name: string;
   schedulers: GenerationSchedulers[];
 };
+export type GenerationSizePreset = {
+  id: Generated<number>;
+  userId: number;
+  width: number;
+  height: number;
+  createdAt: Generated<Timestamp>;
+};
 export type HomeBlock = {
   id: Generated<number>;
   createdAt: Generated<Timestamp | null>;
@@ -4924,6 +4931,7 @@ export type DB = {
   GenerationCoverage: GenerationCoverage;
   GenerationPreset: GenerationPreset;
   GenerationServiceProvider: GenerationServiceProvider;
+  GenerationSizePreset: GenerationSizePreset;
   HomeBlock: HomeBlock;
   HuggingFaceImport: HuggingFaceImport;
   Image: Image;

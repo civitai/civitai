@@ -1,6 +1,6 @@
 import { branch, defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
-import { img2imgImages, SDXL_FULL_AR, SEED } from '../defs';
+import { img2imgImages, SDXL_FULL_AR_2MP, SEED } from '../defs';
 import {
   versionModeOf,
   familyResources,
@@ -56,25 +56,25 @@ const TURBO_STEPS = { min: 1, max: 12, default: 4 };
 
 const base = defineGraph<BooguModeExt>()
   .field('resources', familyResources)
-  .field('aspectRatio', SDXL_FULL_AR)
+  .field('aspectRatio', SDXL_FULL_AR_2MP)
   .field('cfgScale', perModelSlider({ ...FULL_CFG, default: 4 }))
   .field('steps', perModelSlider({ min: 1, max: 50, default: 35 }));
 
 const turbo = defineGraph<BooguModeExt>()
   .field('resources', familyResources)
-  .field('aspectRatio', SDXL_FULL_AR)
+  .field('aspectRatio', SDXL_FULL_AR_2MP)
   .field('cfgScale', perModelSlider(TURBO_CFG))
   .field('steps', perModelSlider(TURBO_STEPS));
 
 const edit = defineGraph<BooguModeExt>()
   .field('resources', familyResources)
-  .field('aspectRatio', SDXL_FULL_AR)
+  .field('aspectRatio', SDXL_FULL_AR_2MP)
   .field('cfgScale', perModelSlider({ ...FULL_CFG, default: 5 }))
   .field('steps', perModelSlider({ min: 1, max: 50, default: 35 }));
 
 const editTurbo = defineGraph<BooguModeExt>()
   .field('resources', familyResources)
-  .field('aspectRatio', SDXL_FULL_AR)
+  .field('aspectRatio', SDXL_FULL_AR_2MP)
   .field('cfgScale', perModelSlider(TURBO_CFG))
   .field('steps', perModelSlider(TURBO_STEPS));
 
