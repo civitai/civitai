@@ -110,7 +110,9 @@ export const BLOCK_GOOD_MAX_PRICE_BUZZ = 50_000;
  * `priceBuzz` bound stays 2..50000 on purpose: the schema declares the
  * imperative validator authoritative, and a conditional `if/then` on `kind`
  * there is more surface than this one property is worth. The narrower bound is
- * STATED in the schema's `kind` description so the published docs do not lie.
+ * STATED in BOTH the schema's `kind` and `priceBuzz` descriptions so the
+ * published docs do not lie — those are the two places 5,000 is written down on
+ * the published side, and a drift-guard test pins each of them.
  */
 export const BLOCK_APP_UNLOCK_MAX_PRICE_BUZZ = 5_000;
 
