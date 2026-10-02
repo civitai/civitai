@@ -44,7 +44,7 @@ async function call(
   let body: Record<string, unknown> | undefined;
   const json = res.json.bind(res);
   res.json = ((b: unknown) => {
-    body = b;
+    body = b as Record<string, unknown>;
     return json(b);
   }) as typeof res.json;
 
@@ -158,7 +158,7 @@ describe('GET /api/v1/posts/[id]', () => {
 
     const { body } = await call({ id: '55288' });
 
-    expect(body.modelVersionId).toBeNull();
+    expect(body?.modelVersionId).toBeNull();
   });
 
   it('404s a private post', async () => {
