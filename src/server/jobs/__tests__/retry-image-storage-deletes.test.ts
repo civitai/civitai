@@ -203,6 +203,10 @@ describe('retry-image-storage-deletes', () => {
     });
 
     expect(await runJob()).toMatchObject({ deleted: 10, unattempted: 0 });
+    // One deadline for the whole run: a fresh one per batch would let a late batch outlive the lock.
+    expect(timeoutSpy).toHaveBeenCalledTimes(1);
+    const deadline = timeoutSpy.mock.results[0].value;
+    for (const [call] of mockDeleteImageFromS3.mock.calls) expect(call.abortSignal).toBe(deadline);
   });
 
   it.each([
