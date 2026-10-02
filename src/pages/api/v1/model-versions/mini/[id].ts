@@ -397,6 +397,7 @@ export default MixedAuthEndpoint(async function handler(
       modelType: modelVersion.type,
       modelId: modelVersion.modelId,
       fileSizeKB: targetFile.sizeKB,
+      versionFlags: modelVersion.versionFlags,
     },
   ]);
 

@@ -365,3 +365,8 @@ export const resolveWildcardPackSchema = z.object({
 
 export const setEvictableSchema = getByIdSchema.extend({ evictable: z.boolean() });
 export type SetEvictableInput = z.infer<typeof setEvictableSchema>;
+
+export const setAdditionalResourceFeeWaivedSchema = getByIdSchema.extend({ waived: z.boolean() });
+export type SetAdditionalResourceFeeWaivedInput = z.infer<
+  typeof setAdditionalResourceFeeWaivedSchema
+>;
