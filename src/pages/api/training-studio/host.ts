@@ -37,8 +37,8 @@ export default AuthedEndpoint(async (req, res, user) => {
       .json({ error: 'You cannot perform this action because your account has been restricted' });
   if (requiresEmailVerification(user))
     return res.status(403).json({ error: 'Verify your email address to do this' });
-  // Flipt decides eligibility, the user's settings toggle decides opt-in — same merge the client
-  // provider performs (overlay over host flags; the overlay withholds the key when Flipt denies).
+  // Same merge the client provider performs (overlay over host flags) — keep them in step, or the
+  // page renders for a user this endpoint refuses.
   const hostFlags = getFeatureFlagsLazy({ user, req });
   const { features: userFeatures } = await getUserSettings(user.id);
   const overlay = computeUserFeatureFlagsOverlay(

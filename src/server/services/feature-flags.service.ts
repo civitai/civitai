@@ -269,16 +269,15 @@ const featureFlags = createFeatureFlags({
   // Steps-based training pricing + QOL inputs (steps/batchSize/sample params/continue-training).
   // Public availability so it can be rolled out to a tester segment via Flipt; default off.
   trainingStepsPricing: { availability: ['mod'], fliptKey: 'training-steps-pricing' },
-  // The embedded Training Studio (/training-studio). Flipt segments own WHO can use it; within
-  // that population it's an opt-in settings toggle (default off). The overlay withholds the key
-  // from users Flipt hasn't granted (see fliptGatedToggleableKeys), so a toggle can't override
-  // the gate; the mod static fallback keeps a missing Flipt flag from opening it to everyone.
+  // The embedded Training Studio (/training-studio), the default trainer for whoever Flipt grants.
+  // Keep `availability: ['mod']`: it is the static fallback when the Flipt flag is missing or
+  // unreachable, and with `default: true` anything wider makes the Studio everyone's trainer.
   trainingStudioUi: {
     toggleable: true,
-    default: false,
+    default: true,
     displayName: 'Training Studio',
     badge: 'Beta',
-    description: `Try the new Training Studio experience for LoRA training — you can switch back at any time.`,
+    description: `Use the new Training Studio for LoRA training. Turn this off to go back to the classic trainer, which will be phased out gradually as Training Studio matures.`,
     availability: ['mod'],
     fliptKey: 'training-studio-ui',
   },
@@ -1189,12 +1188,9 @@ export const fliptGatedToggleableKeys = new Set(
     .map(([key]) => key as FeatureFlagKey)
 );
 
-/** Host-level ELIGIBILITY for the Flipt-gated toggleable keys. These keys are toggleable with
- *  `default: false`, so `isFeatureFlagKeyPresent` keeps them out of every FeatureAccess payload
- *  (the base layer must stay off for users who haven't opted in) — which means PRESENCE in host
- *  flags can never answer "may this user opt in": it reads false for eligible users too, and an
- *  overlay gated on it withholds the toggle from everyone. Evaluate `hasFeature` directly (Flipt
- *  gate, or the static fallback when the flag is missing) for exactly these keys. */
+/** Host-level ELIGIBILITY for the Flipt-gated toggleable keys. Presence in host flags cannot
+ *  stand in for it: a Flipt segment miss drops the key for a moderator this keeps eligible, and
+ *  `isFeatureFlagKeyPresent` drops a `default: false` toggleable for everyone. */
 export function getFliptGatedEligibility(
   ctx: FeatureAccessContext
 ): Partial<Record<FeatureFlagKey, boolean>> {
@@ -1232,7 +1228,7 @@ export function computeUserFeatureFlagsOverlay(
   userFeatures: Record<string, boolean> | undefined,
   hostFeatures: FeatureAccess,
   /** From `getFliptGatedEligibility` — presence in `hostFeatures` cannot stand in for it (see that
-   *  helper). Without it the Flipt-gated keys fall back to presence and are withheld from everyone. */
+   *  helper). */
   gatedEligibility?: Partial<Record<FeatureFlagKey, boolean>>
 ): FeatureAccess {
   const features = userFeatures ?? {};
