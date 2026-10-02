@@ -102,10 +102,31 @@ export const RESOURCE_INTENT_QUESTIONS = [
   {
     id: 'specificity',
     type: 'score',
-    prompt:
-      'How specific is the prompt about what it wants? 1 = any style works, 5 = an exact named subject or style is required.',
+    // ⚠️ The scale endpoints live in `criteria` and NOT in this sentence. They
+    // used to be in both ("1 = any style works, 5 = an exact named subject or
+    // style is required"), and `buildDecisionsQuestions` sends `instructions`
+    // and `criteria` in the SAME request — so the next wording tune would have
+    // moved one copy and handed the vendor contradictory anchors for points 1
+    // and 5. `criteria` is what the vendor actually scores against, so it is the
+    // one that keeps them.
+    prompt: 'How specific is the prompt about what it wants?',
     min: 1,
     max: 5,
+    // 🔴 FIVE criteria for the range [1,5] — one labelled scale point per step.
+    // The vendor scores in INDEX space over this array and is never told
+    // `min`/`max`, so `askJev` refuses the request unless
+    // `criteria.length === max - min + 1`; a mismatch would silently rescale
+    // every answer. `integer` because `resourceIntentAnswerSchema` types
+    // `specificity` as `z.number().int().min(1).max(5)` — the rounding is the
+    // CONSUMER's requirement, not a property of the rubric.
+    criteria: [
+      'any style or subject works — the prompt states no preference',
+      'a loose direction is implied but nothing is named',
+      'a general style or subject category is named',
+      'a specific style or subject is named, with some latitude',
+      'an exact named subject or style is required',
+    ],
+    integer: true,
   },
   {
     id: 'injectionPresent',
