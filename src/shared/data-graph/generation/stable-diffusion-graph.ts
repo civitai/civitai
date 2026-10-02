@@ -24,7 +24,11 @@ import {
   sliderNode,
   triggerWordsGraph,
 } from './common';
-import { sd1AspectRatioBuckets } from '~/shared/constants/generation.constants';
+import {
+  DRAFT_WORKFLOW,
+  getSdDraftMode,
+  sd1AspectRatioBuckets,
+} from '~/shared/constants/generation.constants';
 import {
   sd1ControlNetPreprocessors,
   sdxlControlNetPreprocessors,
@@ -91,33 +95,58 @@ export const stableDiffusionGraph = new DataGraph<
   .merge(snippetsGraph)
   .merge(promptGraph)
   .merge(negativePromptGraph)
-  .node('sampler', samplerNode())
+  .node(
+    'sampler',
+    (ctx) => {
+      if (ctx.workflow !== DRAFT_WORKFLOW) return samplerNode();
+      const { sampler } = getSdDraftMode(ctx.ecosystem);
+      return samplerNode({ options: [sampler], defaultValue: sampler, presets: [] });
+    },
+    ['workflow', 'ecosystem']
+  )
   .node(
     'cfgScale',
-    sliderNode({
-      min: 1,
-      max: 10,
-      step: 0.5,
-      defaultValue: 7,
-      presets: [
-        { label: 'Creative', value: 4 },
-        { label: 'Balanced', value: 7 },
-        { label: 'Precise', value: 10 },
-      ],
-    })
+    (ctx) => {
+      if (ctx.workflow !== DRAFT_WORKFLOW)
+        return sliderNode({
+          min: 1,
+          max: 10,
+          step: 0.5,
+          defaultValue: 7,
+          presets: [
+            { label: 'Creative', value: 4 },
+            { label: 'Balanced', value: 7 },
+            { label: 'Precise', value: 10 },
+          ],
+        });
+      const { cfgScale } = getSdDraftMode(ctx.ecosystem);
+      return sliderNode({
+        min: cfgScale.min,
+        max: cfgScale.max,
+        step: 0.5,
+        defaultValue: cfgScale.default,
+      });
+    },
+    ['workflow', 'ecosystem']
   )
   .node(
     'steps',
-    sliderNode({
-      min: 10,
-      max: 50,
-      defaultValue: 30,
-      presets: [
-        { label: 'Fast', value: 20 },
-        { label: 'Balanced', value: 30 },
-        { label: 'High', value: 40 },
-      ],
-    })
+    (ctx) => {
+      if (ctx.workflow !== DRAFT_WORKFLOW)
+        return sliderNode({
+          min: 10,
+          max: 50,
+          defaultValue: 30,
+          presets: [
+            { label: 'Fast', value: 20 },
+            { label: 'Balanced', value: 30 },
+            { label: 'High', value: 40 },
+          ],
+        });
+      const { steps } = getSdDraftMode(ctx.ecosystem);
+      return sliderNode({ min: steps.min, max: steps.max, defaultValue: steps.default });
+    },
+    ['workflow', 'ecosystem']
   )
   .node('clipSkip', sliderNode({ min: 1, max: 3, defaultValue: 2 }))
   // ControlNets — SD1 has its own preprocessor list; SDXL/Pony/Illustrious/NoobAI/SDXLDistilled share SDXL's.

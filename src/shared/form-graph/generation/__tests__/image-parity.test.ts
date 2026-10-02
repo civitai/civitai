@@ -104,10 +104,10 @@ const CROSS_MODEL_SHAPES: AnyRecord[] = [
 
 /**
  * Flux-family only: mode selection by version id, and both directions of the
- * draft workflow<->model coupling (the workflow wins at parse — probed).
+ * draft workflow<->model coupling (either draft signal resolves to draft at parse).
  */
 const FLUX_ONLY_SHAPES: AnyRecord[] = [
-  { prompt: 'a cat', model: 699279 }, // draft model on txt2img -> snapped to standard
+  { prompt: 'a cat', model: 699279 }, // draft model on txt2img -> moves to the draft workflow
   { prompt: 'a cat', model: 922358 }, // pro
   { prompt: 'a cat', model: 1088507, aspectRatio: '21:9' }, // ultra + its AR table
   { prompt: 'a cat', model: 2068000 }, // krea
@@ -409,6 +409,71 @@ describe('image slice: differential parity with generationGraph', () => {
 });
 
 // Absolute, per lane: a change made identically in both lanes passes every differential row.
+describe('draft workflow, per lane', () => {
+  const lanes: [string, (input: AnyRecord) => { success: boolean; data: AnyRecord }][] = [
+    ['data-graph', (input) => runOracle(input, BASE)],
+    ['form-graph', (input) => runPort(port, input, BASE)],
+  ];
+
+  it.each(lanes)('%s: narrows steps, CFG and sampler to the draft LoRA range', (_, run) => {
+    const draft = (ecosystem: string) =>
+      run({
+        workflow: 'txt2img:draft',
+        ecosystem,
+        prompt: 'a cat',
+        steps: 30,
+        cfgScale: 7,
+        sampler: 'DPM++ 2M',
+      });
+
+    const sdxl = draft('SDXL');
+    expect(sdxl.success).toBe(true);
+    expect(sdxl.data).toMatchObject({ steps: 12, cfgScale: 2, sampler: 'Euler' });
+
+    expect(draft('SD1').data).toMatchObject({ steps: 8, cfgScale: 2, sampler: 'LCM' });
+  });
+
+  it.each(lanes)('%s: flux in the draft workflow runs on the draft version', (_, run) => {
+    const out = run({
+      workflow: 'txt2img:draft',
+      ecosystem: 'Flux1',
+      prompt: 'a cat',
+      model: { id: 691639 }, // Standard
+    });
+    expect(out.success).toBe(true);
+    expect((out.data.model as { id: number }).id).toBe(699279);
+    expect(out.data.fluxMode).toBe('draft');
+  });
+
+  // Not snapped to standard: a submit naming the draft build must not be billed for another.
+  it.each(lanes)('%s: a draft build on txt2img moves to the draft workflow', (_, run) => {
+    const out = run({
+      workflow: 'txt2img',
+      ecosystem: 'Flux1',
+      prompt: 'a cat',
+      model: { id: 699279 },
+    });
+    expect(out.success).toBe(true);
+    expect(out.data.workflow).toBe('txt2img:draft');
+    expect((out.data.model as { id: number }).id).toBe(699279);
+  });
+
+  it.each(lanes)('%s: flux txt2img keeps an explicit standard pick', (_, run) => {
+    const out = run({
+      workflow: 'txt2img',
+      ecosystem: 'Flux1',
+      prompt: 'a cat',
+      model: { id: 691639 },
+    });
+    expect((out.data.model as { id: number }).id).toBe(691639);
+  });
+
+  it.each(lanes)('%s: txt2img keeps the ordinary range', (_, run) => {
+    const plain = run({ workflow: 'txt2img', ecosystem: 'SDXL', prompt: 'a cat', steps: 30 });
+    expect(plain.data.steps).toBe(30);
+  });
+});
+
 describe('flux3 field limits, per lane', () => {
   const lanes: [string, (input: AnyRecord) => { success: boolean; data: AnyRecord }][] = [
     ['data-graph', (input) => runOracle(input, BASE)],

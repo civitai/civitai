@@ -35,6 +35,7 @@ import {
   type ResourceData,
 } from './common';
 import { fluxControlNetPreprocessors } from '~/shared/constants/controlnets.constants';
+import { DRAFT_WORKFLOW } from '~/shared/constants/generation.constants';
 
 // =============================================================================
 // Flux Mode Constants
@@ -183,7 +184,44 @@ export const fluxGraph = new DataGraph<
   { ecosystem: string; workflow: string; model: ResourceData | undefined },
   GenerationCtx
 >()
-  .merge(() => createCheckpointGraph({ versions: { options: fluxModeVersionOptions } }), [])
+  .merge(
+    (ctx) =>
+      createCheckpointGraph({
+        versions: { options: fluxModeVersionOptions },
+        modelLocked: ctx.workflow === DRAFT_WORKFLOW,
+      }),
+    ['workflow']
+  )
+  // The draft build and the draft workflow move together. Order matters: on init every dep counts
+  // as changed, so the draft build pulling the workflow INTO draft must run before the workflow
+  // effect could swap the build out — otherwise a non-interactive submit naming the draft build
+  // on txt2img is silently billed for standard.
+  .effect(
+    (ctx, _ext, set) => {
+      if (ctx.model?.id === fluxVersionIds.draft && ctx.workflow !== DRAFT_WORKFLOW)
+        set('workflow', DRAFT_WORKFLOW);
+    },
+    ['model']
+  )
+  .effect(
+    (ctx, _ext, set) => {
+      const isDraftModel = ctx.model?.id === fluxVersionIds.draft;
+      const isDraftWorkflow = ctx.workflow === DRAFT_WORKFLOW;
+      if (isDraftWorkflow && !isDraftModel)
+        set('model', { id: fluxVersionIds.draft } as ResourceData);
+      else if (!isDraftWorkflow && isDraftModel)
+        set('model', { id: fluxVersionIds.standard } as ResourceData);
+    },
+    ['workflow']
+  )
+  .effect(
+    (ctx, _ext, set) => {
+      const id = ctx.model?.id;
+      if (id && id !== fluxVersionIds.draft && ctx.workflow === DRAFT_WORKFLOW)
+        set('workflow', 'txt2img');
+    },
+    ['model']
+  )
   // Computed: derive flux mode from model.id (version ID)
   .computed(
     'fluxMode',

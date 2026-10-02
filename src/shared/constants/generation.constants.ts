@@ -158,46 +158,50 @@ export const orchestratorPendingStatuses: WorkflowStatus[] = [
 ];
 // #endregion
 
-// #region [injectable resources]
-export type InjectableResource = {
-  id: number;
-  triggerWord?: string;
-  triggerType?: 'negative' | 'positive';
-  baseModelSetType?: BaseModelGroup;
-  sanitize?: (params: TextToImageParams) => Partial<TextToImageParams>;
+// #region [draft mode]
+export const DRAFT_WORKFLOW = 'txt2img:draft';
+
+type SliderRange = { min: number; max: number; default: number };
+
+/**
+ * SD's `txt2img:draft`: an accelerator LoRA the server adds unseen, and the steps/CFG range and
+ * sampler it is trained for.
+ */
+export type SdDraftMode = {
+  loraVersionId: number;
+  /** Pre-computed: the LoRA is never one of the user's resources, so it has no resolved AIR. */
+  air: string;
+  sampler: Sampler;
+  steps: SliderRange;
+  cfgScale: SliderRange;
 };
 
-export const draftInjectableResources = [
-  {
-    id: 391999,
-    baseModelSetType: 'SDXL',
-    sanitize: () => ({
-      steps: 8,
-      cfgScale: 1,
-      sampler: 'Euler',
-    }),
-  } as InjectableResource,
-  {
-    id: 424706,
-    baseModelSetType: 'SD1',
-    sanitize: () => ({
-      steps: 6,
-      cfgScale: 1,
-      sampler: 'LCM',
-    }),
-  } as InjectableResource,
-];
+const sdxlDraftMode: SdDraftMode = {
+  loraVersionId: 391999, // SDXL Lightning LoRAs — 8 Steps
+  air: 'urn:air:sdxl:lora:civitai:350450@391999',
+  sampler: 'Euler',
+  steps: { min: 4, max: 12, default: 8 },
+  cfgScale: { min: 1, max: 2, default: 1 },
+};
 
-export const allInjectableResourceIds = [...draftInjectableResources].map((x) => x.id);
+const sd1DraftMode: SdDraftMode = {
+  loraVersionId: 424706, // LCM-LoRA for SD 1.5
+  air: 'urn:air:sd1:lora:civitai:195519@424706',
+  sampler: 'LCM',
+  steps: { min: 4, max: 8, default: 6 },
+  cfgScale: { min: 1, max: 2, default: 1 },
+};
 
-export function getInjectableResources(baseModelSetType: BaseModelGroup) {
-  const isSdxl = getIsSdxl(baseModelSetType);
-  let value = baseModelSetType;
-  if (isSdxl) value = 'SDXL';
-  return {
-    draft: draftInjectableResources.find((x) => x.baseModelSetType === value),
-  };
+/** SD1 has its own LoRA; every other SD-family ecosystem uses SDXL's. */
+export function getSdDraftMode(ecosystem: string | undefined): SdDraftMode {
+  return ecosystem === 'SD1' ? sd1DraftMode : sdxlDraftMode;
 }
+
+export const clampToRange = (value: number | undefined, range: SliderRange) =>
+  Math.min(range.max, Math.max(range.min, value ?? range.default));
+
+/** Kept out of model metrics and stripped from remixes: the user never chose these LoRAs. */
+export const allInjectableResourceIds = [sdxlDraftMode, sd1DraftMode].map((x) => x.loraVersionId);
 // #endregion
 
 export const whatIfQueryOverrides = {

@@ -1,5 +1,6 @@
 import { branch, defineGraph } from 'form-graph';
 import { fluxControlNetPreprocessors } from '~/shared/constants/controlnets.constants';
+import { DRAFT_WORKFLOW } from '~/shared/constants/generation.constants';
 import { checkpointDef } from '../checkpoint';
 import {
   FLUX1_PRO_AR,
@@ -108,14 +109,35 @@ const modes = branch('fluxMode', (ext: FluxModeExt) => fluxModeOf(ext.model), {
 });
 
 export const flux = defineGraph<FamilyExt>({ scope: familyScope })
-  .field('model', ({ _ext }) =>
-    checkpointDef({
+  // reconcile.ts has already moved a draft build into the draft workflow, so the second branch only
+  // catches a parse that skipped reconcile.
+  .field('model', ({ _ext }) => {
+    const isDraftWorkflow = _ext.workflow === DRAFT_WORKFLOW;
+    const base = checkpointDef({
       ecosystem: _ext.ecosystem,
       workflow: _ext.workflow,
       ext: _ext,
       versions: { options: fluxModeVersionOptions },
-    })
-  )
+      modelLocked: isDraftWorkflow,
+    });
+    return {
+      ...base,
+      correct: (value: ResourceData | undefined) => {
+        const isDraftModel = value?.id === fluxVersionIds.draft;
+        if (isDraftWorkflow && !isDraftModel)
+          return {
+            value: { id: fluxVersionIds.draft, model: { type: 'Checkpoint' } } as ResourceData,
+            reason: 'draft_workflow_forces_draft_model',
+          };
+        if (!isDraftWorkflow && isDraftModel)
+          return {
+            value: { id: fluxVersionIds.standard, model: { type: 'Checkpoint' } } as ResourceData,
+            reason: 'draft_model_needs_draft_workflow',
+          };
+        return base.correct?.(value);
+      },
+    };
+  })
   .use(modes)
   .use(promptOnlyTextBlock);
 
