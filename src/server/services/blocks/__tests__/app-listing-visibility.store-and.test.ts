@@ -53,7 +53,11 @@ import {
   listAvailableListings,
   listingLevelVisibilityFilter,
 } from '../app-listing.service';
-import type { AppListingVisibility } from '~/shared/utils/app-listing-visibility';
+import type {
+  AppListingVisibility,
+  ListingAudienceFloor,
+} from '~/shared/utils/app-listing-visibility';
+import { listingVisibleInStore } from '~/shared/utils/app-listing-visibility';
 
 /** The `appListing` delegate on the shared mock — this file's only fake. */
 const listing = dbMock.dbRead.appListing;
@@ -276,6 +280,90 @@ describe('listingLevelVisibilityFilter — the SQL drift guard', () => {
     for (const f of ['moderators', 'testers', 'public'] as const) {
       expect(listingLevelVisibilityFilter(f, true).values).not.toContain('private');
     }
+  });
+});
+
+describe('the SQL predicate and the app-layer predicate AGREE', () => {
+  /**
+   * 🔴 TWO INDEPENDENT IMPLEMENTATIONS OF ONE RULE, AND THIS IS THE SEAM BETWEEN THEM. The
+   * list path decides in SQL (`listingLevelVisibilityFilter`); the detail path decides in
+   * TypeScript (`listingVisibleInStore`). Nothing else compares them, and a disagreement is
+   * invisible from either side: each surface would be self-consistently wrong, which is the
+   * "verified in isolation" shape — the defect lives in the seam neither owns.
+   *
+   * The SQL side is evaluated here by interpreting the fragment's OWN emitted structure and
+   * bound parameters rather than by restating the predicate: the eligible statuses and the
+   * admitted levels are read back out of `frag.values`, so a change to either list moves
+   * this check with it. What is hand-written is only the SHAPE of the disjunction — and that
+   * shape is independently pinned, whole, by the `toBe` case above, so a mutation to it
+   * cannot pass both.
+   */
+  const SQL_SHAPE = (
+    status: string,
+    visibility: AppListingVisibility | null,
+    floor: ListingAudienceFloor
+  ): boolean => {
+    const frag = listingLevelVisibilityFilter(floor, true);
+    const vals = frag.values.filter((v): v is string => typeof v === 'string');
+    // The fragment binds the eligible statuses first, then the admitted levels.
+    const eligible = vals.filter((v) => ['draft', 'pending', 'approved'].includes(v));
+    const levels = vals.filter((v) => !['draft', 'pending', 'approved'].includes(v));
+    // (al.visibility IS NULL AND al.status = 'approved')
+    if (visibility === null) return status === 'approved';
+    // OR (al.visibility IS NOT NULL AND al.status IN (...) AND al.visibility IN (...))
+    return eligible.includes(status) && levels.includes(visibility);
+  };
+
+  it('[INV] the two predicates agree on EVERY (status, level, floor) combination', () => {
+    const statuses = ['draft', 'pending', 'approved', 'rejected', 'removed'];
+    const levels: (AppListingVisibility | null)[] = [
+      null,
+      'private',
+      'moderators',
+      'testers',
+      'public',
+    ];
+    const floors: ListingAudienceFloor[] = ['moderators', 'testers', 'public'];
+    const disagreements: string[] = [];
+    let compared = 0;
+    for (const status of statuses) {
+      for (const visibility of levels) {
+        for (const floor of floors) {
+          compared += 1;
+          const app = listingVisibleInStore({ status, visibility, floor });
+          const sql = SQL_SHAPE(status, visibility, floor);
+          if (app !== sql) {
+            disagreements.push(`${status}/${visibility ?? 'NULL'}/${floor}: app=${app} sql=${sql}`);
+          }
+        }
+      }
+    }
+    // POSITIVE CONTROL for the loop itself — without it an empty matrix passes vacuously.
+    expect(compared).toBe(statuses.length * levels.length * floors.length);
+    expect(disagreements, 'the list path and the detail path would show different rows').toEqual(
+      []
+    );
+  });
+
+  it('[INV][CONTROL] the comparison can distinguish them — it is not comparing a value to itself', () => {
+    // The agreement case above would be vacuous if both sides were the same expression.
+    // These are the combinations where the rule is non-trivial, asserted as literals so the
+    // matrix is anchored to stated behaviour rather than to either implementation.
+    expect(listingVisibleInStore({ status: 'approved', visibility: null, floor: 'public' })).toBe(
+      true
+    );
+    expect(
+      listingVisibleInStore({ status: 'approved', visibility: 'private', floor: 'moderators' })
+    ).toBe(false);
+    expect(listingVisibleInStore({ status: 'draft', visibility: null, floor: 'moderators' })).toBe(
+      false
+    );
+    expect(
+      listingVisibleInStore({ status: 'draft', visibility: 'moderators', floor: 'moderators' })
+    ).toBe(true);
+    expect(
+      listingVisibleInStore({ status: 'removed', visibility: 'public', floor: 'moderators' })
+    ).toBe(false);
   });
 });
 
