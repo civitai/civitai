@@ -19,6 +19,8 @@ import { renderWithProviders } from '../../../test/component-setup';
 const playheads = vi.hoisted(() => new Map<string, number>());
 const mediaOutcome = vi.hoisted(() => new Map<string, 'loadedmetadata' | 'error' | 'pending'>());
 const lastVideoProps = vi.hoisted(() => new Map<string, Record<string, unknown>>());
+// A clip's decoded length. Unset means long enough never to loop within a test.
+const clipDurations = vi.hoisted(() => new Map<string, number>());
 
 vi.mock('~/components/EdgeMedia/EdgeMedia', async () => {
   const { useEffect, useRef } = await import('react');
@@ -28,7 +30,9 @@ vi.mock('~/components/EdgeMedia/EdgeMedia', async () => {
       videoProps,
     }: {
       src: string;
-      videoProps?: { onTimeUpdate?: (e: { currentTarget: { currentTime: number } }) => void };
+      videoProps?: {
+        onTimeUpdate?: (e: { currentTarget: { currentTime: number; duration: number } }) => void;
+      };
     }) {
       const videoRef = useRef<HTMLVideoElement>(null);
       lastVideoProps.set(src, videoProps ?? {});
@@ -46,10 +50,12 @@ vi.mock('~/components/EdgeMedia/EdgeMedia', async () => {
             onClick={() => {
               // Four ordinary 250ms samples per click. The first sample of a clip only establishes
               // the baseline, so N clicks are worth (4N - 1) × 250ms of counted playback.
+              const duration = clipDurations.get(src) ?? 600;
               for (let i = 0; i < 4; i++) {
-                const currentTime = (playheads.get(src) ?? 0) + 0.25;
+                // The real player loops, so a short clip's playhead wraps back to the start.
+                const currentTime = ((playheads.get(src) ?? 0) + 0.25) % duration;
                 playheads.set(src, currentTime);
-                videoProps?.onTimeUpdate?.({ currentTarget: { currentTime } });
+                videoProps?.onTimeUpdate?.({ currentTarget: { currentTime, duration } });
               }
             }}
           >
@@ -124,6 +130,7 @@ const expectBothCardsRendered = async () =>
 
 beforeEach(() => {
   playheads.clear();
+  clipDurations.clear();
   mediaOutcome.clear();
   lastVideoProps.clear();
 });
@@ -345,20 +352,89 @@ describe('CrucibleJudgingUI — media loading', () => {
 });
 
 describe('CrucibleJudgingUI — video playback', () => {
-  test('clips start muted, and the sound toggle unmutes them', async () => {
+  test('clips start with sound on, and the sound toggle mutes them', async () => {
     renderWithProviders(
       <CrucibleJudgingUI pair={pairOf(1, 2)} onVote={vi.fn()} onSkip={vi.fn()} />
     );
     await expectBothCardsRendered();
 
-    expect(video('left').muted).toBe(true);
-    expect(video('right').muted).toBe(true);
+    expect(video('left').muted).toBe(false);
+    expect(video('right').muted).toBe(false);
 
-    card('left')!.querySelector<HTMLButtonElement>('[aria-label="Unmute clips"]')!.click();
+    card('left')!.querySelector<HTMLButtonElement>('[aria-label="Mute clips"]')!.click();
     await vi.waitFor(() => {
-      expect(video('left').muted).toBe(false);
-      expect(video('right').muted).toBe(false);
+      expect(video('left').muted).toBe(true);
+      expect(video('right').muted).toBe(true);
     });
+  });
+
+  test('a clip the browser refuses to play with sound plays muted instead', async () => {
+    const mutedPlays: HTMLMediaElement[] = [];
+    const play = vi
+      .spyOn(HTMLMediaElement.prototype, 'play')
+      .mockImplementation(function (this: HTMLMediaElement) {
+        if (!this.muted) return Promise.reject(new DOMException('needs a gesture', 'NotAllowedError'));
+        mutedPlays.push(this);
+        return Promise.resolve();
+      });
+    renderWithProviders(
+      <CrucibleJudgingUI pair={pairOf(1, 2)} minViewSeconds={3} onVote={vi.fn()} onSkip={vi.fn()} />
+    );
+    await expectBothCardsRendered();
+
+    await vi.waitFor(() => expect(mutedPlays).toContain(video('left')));
+    expect(video('left').muted).toBe(true);
+    // The toggle reflects what the judge actually hears, and the other clip follows it.
+    await vi.waitFor(() =>
+      expect(card('left')!.querySelector('[aria-label="Unmute clips"]')).toBeTruthy()
+    );
+    expect(video('right').muted).toBe(true);
+    play.mockRestore();
+  });
+
+  test('sound refused on one pair is tried again on the next', async () => {
+    let refuseSound = true;
+    const soundPlays: HTMLMediaElement[] = [];
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(function (
+      this: HTMLMediaElement
+    ) {
+      if (this.muted) return Promise.resolve();
+      if (refuseSound)
+        return Promise.reject(new DOMException('needs a gesture', 'NotAllowedError'));
+      soundPlays.push(this);
+      return Promise.resolve();
+    });
+    renderWithProviders(<PairSwitchingHarness onVote={vi.fn()} />);
+    await expectBothCardsRendered();
+    await vi.waitFor(() =>
+      expect(card('left')!.querySelector('[aria-label="Unmute clips"]')).toBeTruthy()
+    );
+
+    // By the next pair the judge has clicked something, so the browser now allows sound.
+    refuseSound = false;
+    document.querySelector<HTMLButtonElement>('[data-testid="next-pair"]')!.click();
+
+    await vi.waitFor(() => expect(soundPlays).toContain(video('left')));
+    expect(card('left')!.querySelector('[aria-label="Mute clips"]')).toBeTruthy();
+    vi.restoreAllMocks();
+  });
+
+  test("the judge's own mute carries over to the next pair", async () => {
+    // Control for the test above: only a browser refusal is retried, never the judge's choice.
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+    renderWithProviders(<PairSwitchingHarness onVote={vi.fn()} />);
+    await expectBothCardsRendered();
+
+    card('left')!.querySelector<HTMLButtonElement>('[aria-label="Mute clips"]')!.click();
+    await vi.waitFor(() => expect(video('left').muted).toBe(true));
+    const firstPairVideo = video('left');
+    document.querySelector<HTMLButtonElement>('[data-testid="next-pair"]')!.click();
+    await vi.waitFor(() => {
+      expect(video('left')).not.toBe(firstPairVideo);
+      expect(card('left')!.querySelector('[aria-label="Unmute clips"]')).toBeTruthy();
+    });
+    expect(video('left').muted).toBe(true);
+    vi.restoreAllMocks();
   });
 
   test('a clip that starts playing pauses the other one', async () => {
@@ -383,6 +459,103 @@ describe('CrucibleJudgingUI — video playback', () => {
 
     expect(lastVideoProps.get(srcOf(1))).toMatchObject({ hoverPlay: false });
     expect(lastVideoProps.get(srcOf(2))).toMatchObject({ hoverPlay: false });
+  });
+});
+
+describe('CrucibleJudgingUI — sequenced preview', () => {
+  const spies = () => ({
+    play: vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined),
+    pause: vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined),
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  test('plays the left clip, then the right, then leaves the judge on their own', async () => {
+    const { play, pause } = spies();
+    renderWithProviders(
+      <CrucibleJudgingUI pair={pairOf(1, 2)} minViewSeconds={3} onVote={vi.fn()} onSkip={vi.fn()} />
+    );
+    await expectBothCardsRendered();
+
+    await vi.waitFor(() => expect(play.mock.contexts).toContain(video('left')));
+    expect(play.mock.contexts).not.toContain(video('right'));
+
+    await advance(0, 4);
+
+    await vi.waitFor(() => expect(pause.mock.contexts).toContain(video('left')));
+    await vi.waitFor(() => expect(play.mock.contexts).toContain(video('right')));
+    expect(voteButton('left')!.disabled).toBe(true);
+
+    await advance(1, 4);
+
+    await vi.waitFor(() => expect(voteButton('left')!.disabled).toBe(false));
+    await vi.waitFor(() => expect(pause.mock.contexts).toContain(video('right')));
+  });
+
+  test('does not start without a minimum view time', async () => {
+    // Negative control: the sequence is driven by the rule, not by every video pair.
+    const { play } = spies();
+    renderWithProviders(<CrucibleJudgingUI pair={pairOf(1, 2)} onVote={vi.fn()} onSkip={vi.fn()} />);
+    await expectBothCardsRendered();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    expect(play).not.toHaveBeenCalled();
+  });
+
+  test('a clip shorter than the rule only has to play to its own end', async () => {
+    spies();
+    // 1.5s: the first click plays to 1.0s, the second wraps the playhead back to the start.
+    clipDurations.set(srcOf(1), 1.5);
+    const onVote = vi.fn();
+    renderWithProviders(
+      <CrucibleJudgingUI pair={pairOf(1, 2)} minViewSeconds={3} onVote={onVote} onSkip={vi.fn()} />
+    );
+    await expectBothCardsRendered();
+
+    await advance(0, 1);
+    await advance(1, 4);
+    // Not yet: a 1s clip whose playhead has not wrapped has not been seen to its end.
+    expect(voteButton('left')!.disabled).toBe(true);
+
+    await advance(0, 1);
+
+    await vi.waitFor(() => expect(voteButton('left')!.disabled).toBe(false));
+    voteButton('left')!.click();
+    await vi.waitFor(() => expect(onVote).toHaveBeenCalledTimes(1));
+    // The server gate checks the rule, not the clip's length.
+    expect(onVote.mock.calls[0][2].winnerWatchedMs).toBeGreaterThanOrEqual(3000);
+  });
+
+  test('a sub-second clip stays locked until it has actually played', async () => {
+    spies();
+    clipDurations.set(srcOf(1), 0.3);
+    clipDurations.set(srcOf(2), 0.3);
+    renderWithProviders(
+      <CrucibleJudgingUI pair={pairOf(1, 2)} minViewSeconds={3} onVote={vi.fn()} onSkip={vi.fn()} />
+    );
+    await expectBothCardsRendered();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(voteButton('left')!.disabled).toBe(true);
+
+    await advance(0, 1);
+    await advance(1, 1);
+
+    await vi.waitFor(() => expect(voteButton('left')!.disabled).toBe(false));
+  });
+
+  test('a wrapping playhead does not count for a clip longer than the rule', async () => {
+    // Negative control: on a long clip, a wrap is a skip to the end, not a finished viewing.
+    spies();
+    clipDurations.set(srcOf(1), 10);
+    playheads.set(srcOf(1), 9.6);
+    renderWithProviders(
+      <CrucibleJudgingUI pair={pairOf(1, 2)} minViewSeconds={6} onVote={vi.fn()} onSkip={vi.fn()} />
+    );
+    await expectBothCardsRendered();
+
+    await advance(0, 1);
+
+    await vi.waitFor(() => expect(playheads.get(srcOf(1))).toBeLessThan(1));
+    expect(label('left')).toMatch(/^Watch \d+s more/);
   });
 });
 
