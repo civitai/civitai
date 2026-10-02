@@ -206,6 +206,18 @@ export const useDumbImageFilters = (defaultFilters?: Partial<GetInfiniteImagesIn
   };
 };
 
+export function isViewingOwnImages(
+  currentUser: { id: number; username?: string | null } | null | undefined,
+  filters: { username?: string; userId?: number }
+) {
+  return (
+    (!!currentUser &&
+      !!filters.username &&
+      filters.username.toLowerCase() === currentUser.username?.toLowerCase()) ||
+    isViewer(currentUser, filters.userId)
+  );
+}
+
 export const useQueryImages = (
   filters?: GetInfiniteImagesInput,
   options?: { keepPreviousData?: boolean; enabled?: boolean; applyHiddenPreferences?: boolean }
@@ -221,11 +233,7 @@ export const useQueryImages = (
   // this is the forced level, which is what those queries should be asking for.
   const contextBrowsingLevel = useBrowsingLevelDebounced();
 
-  const isOwnImages =
-    (!!currentUser &&
-      !!filters.username &&
-      filters.username.toLowerCase() === currentUser.username?.toLowerCase()) ||
-    isViewer(currentUser, filters.userId);
+  const isOwnImages = isViewingOwnImages(currentUser, filters);
   const excludedTagIds = [
     ...(filters.excludedTagIds ?? []),
     ...(isOwnImages ? [] : browsingSettingsAddons.settings.excludedTagIds ?? []),

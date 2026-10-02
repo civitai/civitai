@@ -8,11 +8,13 @@ import { createRoot } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type * as BrowsingLevelProvider from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import type * as CommentsProvider from '~/components/CommentsV2/CommentsProvider';
+import type * as UseCurrentUser from '~/hooks/useCurrentUser';
 import {
   CommentProvider,
   useCommentV2Context,
 } from '~/components/CommentsV2/Comment/CommentProvider';
 import { ImageProvider, useImageContext } from '~/components/Image/ImageProvider';
+import { isViewingOwnImages } from '~/components/Image/image.utils';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { isViewer } from '~/utils/is-viewer';
@@ -23,7 +25,10 @@ const act = (React as unknown as { act: typeof actType }).act;
 const OWNER = { id: 7, isModerator: false };
 let currentUser: { id: number; isModerator: boolean } | null = null;
 
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => currentUser }));
+vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
+  ...(await importOriginal<typeof UseCurrentUser>()),
+  useCurrentUser: () => currentUser,
+}));
 vi.mock('~/components/CommentsV2/CommentsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof CommentsProvider>()),
   useCommentsContext: () => ({ isLocked: false, isMuted: false, forceLocked: false, badges: [] }),
@@ -57,7 +62,7 @@ describe('isViewer', () => {
     ['signed in, no owner id', OWNER, undefined, false],
     ['signed in, someone else', OWNER, 8, false],
     ['signed in, own row', OWNER, 7, true],
-  ] as const)('%s -> %s', (_, viewer, userId, expected) => {
+  ] as const)('%s', (_, viewer, userId, expected) => {
     expect(isViewer(viewer, userId)).toBe(expected);
   });
 });
@@ -125,23 +130,56 @@ describe('a signed-out viewer is not the owner of an entity missing its owner id
   });
 });
 
-// These sites sit inside page-sized components with no harness here, so each is pinned on the exact
-// expression it replaced. That catches a revert and nothing else; the files keep other comparisons
-// whose left side is a required id.
-describe('sites without a behavioural case keep their owner check on isViewer', () => {
+describe('own-images feed: excluded tags are dropped only for the signed-in owner', () => {
+  it.each([
+    ['signed out, no user filter', null, {}, false],
+    ['signed out, filtered to a user', null, { userId: 7 }, false],
+    ['signed in, someone else', { id: 7, username: 'me' }, { userId: 8, username: 'you' }, false],
+    ['signed in, own id', { id: 7, username: 'me' }, { userId: 7 }, true],
+    [
+      'signed in, own username in another case',
+      { id: 7, username: 'me' },
+      { username: 'ME' },
+      true,
+    ],
+  ] as const)('%s', (_, viewer, filters, expected) => {
+    expect(isViewingOwnImages(viewer, filters)).toBe(expected);
+  });
+});
+
+// These sites sit inside page-sized components with no harness here, so each is pinned on source:
+// the removed expression stays gone and the isViewer call is present. A text pin cannot see the
+// value in use, so it catches a revert or a deleted check, not every way to get the owner wrong.
+describe('sites without a behavioural case: the removed comparison stays removed', () => {
   it.each([
     [
       'src/components/Collections/Collection.tsx',
       'currentUser?.id === (image.userId ?? image.user?.id)',
+      'isViewer(currentUser, image.userId ?? image.user?.id)',
     ],
     [
       'src/components/Collections/Collection.tsx',
       'currentUser?.id === image.collectionItemAddedById',
+      'isViewer(currentUser, image.collectionItemAddedById)',
     ],
-    ['src/components/Bounty/BountyContextMenu.tsx', 'currentUser?.id === bounty.user?.id'],
-    ['src/pages/bounties/[id]/[[...slug]].tsx', 'currentUser?.id === bounty?.user?.id'],
-    ['src/pages/articles/[id]/[[...slug]].tsx', 'currentUser?.id === article?.user?.id'],
-  ])('%s: %s', (file, unguarded) => {
-    expect(readFileSync(join(process.cwd(), file), 'utf8')).not.toContain(unguarded);
+    [
+      'src/components/Bounty/BountyContextMenu.tsx',
+      'currentUser?.id === bounty.user?.id',
+      'isOwner = isViewer(currentUser, bounty.user?.id)',
+    ],
+    [
+      'src/pages/bounties/[id]/[[...slug]].tsx',
+      'currentUser?.id === bounty?.user?.id',
+      'isViewer(currentUser, bounty?.user?.id)',
+    ],
+    [
+      'src/pages/articles/[id]/[[...slug]].tsx',
+      'currentUser?.id === article?.user?.id',
+      'isActualOwner = isViewer(currentUser, article?.user?.id)',
+    ],
+  ])('%s: %s', (file, unguarded, guarded) => {
+    const source = readFileSync(join(process.cwd(), file), 'utf8');
+    expect(source).not.toContain(unguarded);
+    expect(source).toContain(guarded);
   });
 });
