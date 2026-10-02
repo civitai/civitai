@@ -941,13 +941,20 @@ describe('askJev — fail-closed on the response', () => {
 
   it('🔴 rejects a NEGATIVE probability, which the sum check cannot see', async () => {
     // Only the upper bound was exercised, so `probability < 0` survived its
-    // deletion: these two sum to exactly 1.0 and every other check passes, so a
-    // negative probability would have been recorded and then re-ranked on.
+    // deletion: a negative probability would have been recorded and then
+    // re-ranked on.
+    //
+    // 🔴 ISOLATED, which took a second attempt. The obvious fixture
+    // `{character: 1.25, none: -0.25}` sums to 1.0 but trips the UPPER bound on
+    // 1.25, so it kills the mutant for the wrong reason and leaves the lower
+    // bound unobserved — a mutant that dies for the wrong reason proves nothing
+    // about the guard. Every value here is <= 1, exactly one is negative, and the
+    // sum is exactly 1.0, so the lower bound is the only check that can fire.
     respondAnswers({
       role: {
         type: 'choice',
         choice: 'character',
-        probabilities: { character: 1.25, none: -0.25 },
+        probabilities: { character: 1, style: 0.25, none: -0.25 },
       },
     });
     await expect(askJev({ state: {}, questions: [roleQuestion] })).rejects.toMatchObject({
