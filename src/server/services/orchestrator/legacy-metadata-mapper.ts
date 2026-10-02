@@ -22,7 +22,7 @@ import type { WorkflowStep } from '@civitai/client';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import type { GeneratedImageStepMetadata } from '~/server/schema/orchestrator/textToImage.schema';
 import type { ResourceData } from '~/shared/data-graph/generation/common';
-import { getBaseModelFromResources } from '~/shared/constants/generation.constants';
+import { DRAFT_WORKFLOW, getBaseModelFromResources } from '~/shared/constants/generation.constants';
 import { splitResourcesByType } from '~/shared/utils/resource.utils';
 import { parseAIRSafe } from '~/shared/utils/air';
 import type { GenerationGraphCtx } from '~/shared/data-graph/generation';
@@ -283,8 +283,7 @@ function resolveWorkflowFromParams(
     const NEW_TO_OLD: Record<string, string> = {
       'image:create': 'txt2img',
       'image:edit': 'img2img:edit',
-      // Draft was retired; an old key remixes as an ordinary create.
-      'image:draft': 'txt2img',
+      'image:draft': 'txt2img:draft',
       'image:face-fix': 'txt2img:face-fix',
       'image:hires-fix': 'txt2img:hires-fix',
       'image:upscale': 'img2img:upscale',
@@ -600,7 +599,7 @@ export function mapDataToGraphInput(
     process: _process,
     engine: _engine,
     fluxMode: _fluxMode,
-    draft: _draft, // Retired for images; re-applied below for video only
+    draft: _draft, // Images name draft by workflow key; re-applied below for video only
     turbo: _turbo, // Legacy Wan field — now mapped to 'draft' node
     // Legacy field names that map to different graph node keys
     openAITransparentBackground,
@@ -625,16 +624,15 @@ export function mapDataToGraphInput(
     ['txt2vid', 'img2vid', 'vid2vid'].some((prefix) => workflow.startsWith(prefix));
   const videoDraft = isVideoWorkflow ? _draft ?? _turbo ?? undefined : undefined;
 
-  // Draft pinned steps/cfgScale/sampler to values that only cohere with the draft LoRA, which
-  // a remix strips (allInjectableResourceIds) — carried over, they bill the ordinary rate for
-  // an image that cannot come out right. An image draft is named by its WORKFLOW KEY and stores
-  // no `draft` field; only video stores the flag.
+  // Draft's steps/cfgScale/sampler only cohere with its accelerator (SD's injected LoRA, Flux's
+  // draft build): kept when the remix lands back on the draft workflow, dropped anywhere else. An
+  // image draft is named by its WORKFLOW KEY with no `draft` field; only video stores the flag.
   const incomingWorkflow =
     typeof _wf === 'string' ? _wf : typeof _process === 'string' ? _process : '';
   const wasImageDraft = !isVideoWorkflow && (incomingWorkflow.endsWith(':draft') || !!_draft);
 
   const passthrough: Record<string, unknown> = { ...rest };
-  if (wasImageDraft) {
+  if (wasImageDraft && workflow !== DRAFT_WORKFLOW) {
     delete passthrough.steps;
     delete passthrough.cfgScale;
     delete passthrough.sampler;

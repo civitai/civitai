@@ -93,6 +93,7 @@ export type OutputFormat = (typeof outputFormatOptions)[number];
 const NEW_TO_OLD: Record<string, string> = {
   'image:create': 'txt2img',
   'image:edit': 'img2img:edit',
+  'image:draft': 'txt2img:draft',
   'image:face-fix': 'txt2img:face-fix',
   'image:hires-fix': 'txt2img:hires-fix',
   'image:upscale': 'img2img:upscale',
@@ -248,6 +249,7 @@ export const generationGraph = new DataGraph<Record<never, never>, GenerationCtx
       values: [
         // Image creation workflows
         'txt2img',
+        'txt2img:draft',
         'img2img',
         'img2img:edit',
         'txt2img:face-fix',
