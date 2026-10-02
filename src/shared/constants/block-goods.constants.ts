@@ -78,8 +78,73 @@ export const BLOCK_GOOD_MIN_PRICE_BUZZ = Math.ceil(1 / BLOCK_GOOD_APP_OWNER_SHAR
  */
 export const BLOCK_GOOD_MAX_PRICE_BUZZ = 50_000;
 
+/**
+ * Ceiling on an `app_unlock` good specifically — the price of ADMISSION to an
+ * app, which is a different question from the price of an item inside one.
+ *
+ * 🔴 WHY 5,000 AND NOT THE GENERAL 50,000. An app unlock is the one purchase a
+ * viewer is asked to make BEFORE they have used the app, so they are paying
+ * against a store listing rather than against experience. 5,000 Buzz is the
+ * platform's existing answer to "how much Buzz may one click move out of a
+ * wallet on an App Blocks surface?" — it is exactly `BLOCK_TIP_MAX_PER_TIP`
+ * (`src/server/utils/block-tip-rate-limit.ts`), the per-single-tip ceiling that
+ * made `social:tip:self` safe enough to come off `PAGE_FORBIDDEN_SCOPES`. It is
+ * also $5 at `buzzConstants.buzzDollarRatio` (1,000 Buzz = $1), which is
+ * `buzzConstants.minStripeChargeAmount` — the smallest top-up a viewer can
+ * actually buy — so the ceiling never exceeds what one Buzz purchase funds.
+ *
+ * 🔴 Deliberately NOT an alias of `BLOCK_TIP_MAX_PER_TIP`. Same reasoning as
+ * `BLOCK_GOOD_APP_OWNER_SHARE` vs the creator shop's share: the two are the same
+ * number by POLICY, not by construction, and aliasing would make a tipping
+ * repricing silently reprice every paid app in a different product with no
+ * review. Independent knobs that currently agree.
+ *
+ * Enforced in `parseManifestGoods`, which is also what the purchase path reaches
+ * through `findManifestGood` — so an over-ceiling unlock is unsellable as well
+ * as unapprovable, with no second copy of the bound. The JSON Schema's outer
+ * `priceBuzz` bound stays 2..50000 on purpose: the schema declares the
+ * imperative validator authoritative, and a conditional `if/then` on `kind`
+ * there is more surface than this one property is worth. The narrower bound is
+ * STATED in the schema's `kind` description so the published docs do not lie.
+ */
+export const BLOCK_APP_UNLOCK_MAX_PRICE_BUZZ = 5_000;
+
+/**
+ * THE per-kind price ceiling, in ONE place. Every caller that needs to know what
+ * a good of a given kind may cost reads this rather than re-deriving the
+ * `kind === 'app_unlock'` branch — a predicate open-coded at N sites is wrong at
+ * N−1 of them, which is the defect shape `requestConsentGate.ts` records for the
+ * host-side consent backstop.
+ */
+export function maxPriceBuzzForKind(kind: BlockGoodKind): number {
+  return kind === 'app_unlock' ? BLOCK_APP_UNLOCK_MAX_PRICE_BUZZ : BLOCK_GOOD_MAX_PRICE_BUZZ;
+}
+
 /** Most goods one manifest may declare. */
 export const BLOCK_GOOD_MAX_PER_MANIFEST = 32;
+
+/**
+ * Most `app_unlock` goods one manifest may declare.
+ *
+ * 🔴 ONE, SO A FUTURE GATE'S PREDICATE IS TOTAL. "Is this viewer allowed into
+ * this app?" has a single answer, so the question "which unlock did they buy?"
+ * must not exist. At the general `BLOCK_GOOD_MAX_PER_MANIFEST` an app could
+ * declare 32 unlocks and the access gate would have to pick one, or hold them
+ * all, or decide what a partial set means — three branches with no right answer,
+ * none of which any reviewer would have been shown. Bounding the arity here
+ * means the later gate is `exists(entitlement where kind='app_unlock')` and
+ * nothing more.
+ */
+export const BLOCK_APP_UNLOCK_MAX_PER_MANIFEST = 1;
+
+/**
+ * Length bound on a good's review `justification`. Agrees with
+ * `SCOPE_JUSTIFICATION_MAX_LENGTH` (the per-scope rationale bound) by POLICY
+ * rather than by construction — same independent-knobs reasoning as the share
+ * constant above, and it keeps this module free of an auth-package import it
+ * otherwise has no need for.
+ */
+export const BLOCK_GOOD_JUSTIFICATION_MAX_LENGTH = 500;
 
 /**
  * `id` charset — lowercase, URL- and log-safe, and colon-free so it can be
@@ -111,6 +176,14 @@ export const BLOCK_GOOD_PAYLOAD_MAX_BYTES = 2048;
  * - `app_unlock` — a one-time unlock of the app itself. Recorded identically;
  *   the platform does NOT act on it yet. Declaring the value now is what lets
  *   the paid-app gate land later without a migration.
+ *
+ * 🔴 `app_unlock` IS NOT MERELY A LABEL ANY MORE, even though no access gate reads
+ * it yet. It carries three manifest-time rules the ordinary kind does not: a lower
+ * price ceiling (`BLOCK_APP_UNLOCK_MAX_PRICE_BUZZ`), an arity of
+ * `BLOCK_APP_UNLOCK_MAX_PER_MANIFEST`, and a mandatory `justification`. All three
+ * exist so the later gate inherits a catalog it can reason about — bounded price,
+ * one answer, and a reviewed reason — rather than having to defend itself against
+ * one.
  */
 export const BLOCK_GOOD_KINDS = ['good', 'app_unlock'] as const;
 export type BlockGoodKind = (typeof BLOCK_GOOD_KINDS)[number];
@@ -128,6 +201,13 @@ export type BlockGoodDeclaration = {
   priceBuzz: number;
   kind: BlockGoodKind;
   payload: Record<string, unknown>;
+  /**
+   * The developer's stated reason this good exists, shown to the moderator at
+   * review. REQUIRED for `app_unlock` (see `parseManifestGoods`), optional for an
+   * ordinary good. Review metadata only — unlike `payload` it is never copied
+   * onto an entitlement, and the platform does not verify the claim.
+   */
+  justification?: string;
 };
 
 /** Manifest-shaped input for the goods rules. Only the field they read. */
@@ -171,7 +251,7 @@ export function parseManifestGoods(manifest: GoodsManifestInput): {
       return;
     }
 
-    const { id, title, description, priceBuzz, kind, payload } = entry;
+    const { id, title, description, priceBuzz, kind, payload, justification } = entry;
 
     if (
       typeof id !== 'string' ||
@@ -214,20 +294,56 @@ export function parseManifestGoods(manifest: GoodsManifestInput): {
       }
     }
 
+    // KIND IS RESOLVED BEFORE THE PRICE, because the price ceiling DEPENDS on it
+    // (`maxPriceBuzzForKind`). Reading them in the other order is how a per-kind
+    // bound ends up checked against the general ceiling and silently admits an
+    // over-priced unlock.
+    if (kind !== undefined && !isBlockGoodKind(kind)) {
+      errors.push(`${at}.kind must be one of ${BLOCK_GOOD_KINDS.join(', ')}`);
+      return;
+    }
+    const resolvedKind: BlockGoodKind = isBlockGoodKind(kind) ? kind : BLOCK_GOOD_DEFAULT_KIND;
+    const maxPriceBuzz = maxPriceBuzzForKind(resolvedKind);
+
     if (
       typeof priceBuzz !== 'number' ||
       !Number.isSafeInteger(priceBuzz) ||
       priceBuzz < BLOCK_GOOD_MIN_PRICE_BUZZ ||
-      priceBuzz > BLOCK_GOOD_MAX_PRICE_BUZZ
+      priceBuzz > maxPriceBuzz
     ) {
       errors.push(
-        `${at}.priceBuzz must be a whole number between ${BLOCK_GOOD_MIN_PRICE_BUZZ} and ${BLOCK_GOOD_MAX_PRICE_BUZZ} Buzz`
+        `${at}.priceBuzz must be a whole number between ${BLOCK_GOOD_MIN_PRICE_BUZZ} and ${maxPriceBuzz} Buzz` +
+          (resolvedKind === 'app_unlock' ? ` for a ${resolvedKind} good` : '')
       );
       return;
     }
 
-    if (kind !== undefined && !isBlockGoodKind(kind)) {
-      errors.push(`${at}.kind must be one of ${BLOCK_GOOD_KINDS.join(', ')}`);
+    // THE FREE→PAID REVIEW TRIGGER. An `app_unlock` good is what turns a free app
+    // into a paid one, and the existing sensitive-scope gate does not catch it:
+    // that gate fires on a declared SENSITIVE scope, and an app unlock is designed
+    // not to require `goods:purchase:self`. Without this rule a v2 could add an
+    // unlock and flip a free app to paid with nothing for a moderator to read.
+    // Requiring the rationale HERE — in the one parser both the submit gate and
+    // the purchase path call — is what makes "becoming paid" an explicit,
+    // reviewed claim rather than a diff nobody was pointed at.
+    //
+    // Shape-checked for ANY good so a developer who explains an ordinary item is
+    // not rejected for it; REQUIRED only for `app_unlock`.
+    if (justification !== undefined) {
+      if (typeof justification !== 'string' || justification.trim().length === 0) {
+        errors.push(`${at}.justification must be a non-empty string`);
+        return;
+      }
+      if (justification.trim().length > BLOCK_GOOD_JUSTIFICATION_MAX_LENGTH) {
+        errors.push(
+          `${at}.justification must be at most ${BLOCK_GOOD_JUSTIFICATION_MAX_LENGTH} characters`
+        );
+        return;
+      }
+    } else if (resolvedKind === 'app_unlock') {
+      errors.push(
+        `${at}.justification is required for an ${resolvedKind} good — it makes the app paid, so a moderator must be told why`
+      );
       return;
     }
 
@@ -260,10 +376,24 @@ export function parseManifestGoods(manifest: GoodsManifestInput): {
         ? { description: description.trim() }
         : {}),
       priceBuzz,
-      kind: isBlockGoodKind(kind) ? kind : BLOCK_GOOD_DEFAULT_KIND,
+      kind: resolvedKind,
+      ...(typeof justification === 'string' && justification.trim().length > 0
+        ? { justification: justification.trim() }
+        : {}),
       payload: isPlainObject(payload) ? payload : {},
     });
   });
+
+  // ARITY OF THE UNLOCK, checked across the whole catalog rather than per entry.
+  // Counted over the ACCEPTED declarations: an entry that already failed above has
+  // its own error and the manifest is rejected either way, so counting rejects too
+  // would only produce a second message about the same bad entry.
+  const appUnlockCount = goods.filter((good) => good.kind === 'app_unlock').length;
+  if (appUnlockCount > BLOCK_APP_UNLOCK_MAX_PER_MANIFEST) {
+    errors.push(
+      `goods may declare at most ${BLOCK_APP_UNLOCK_MAX_PER_MANIFEST} app_unlock good (found ${appUnlockCount}) — app access is one question with one answer`
+    );
+  }
 
   return { goods, errors };
 }

@@ -316,6 +316,136 @@ describe('OnsiteReviewModal — store-visible copy is surfaced INLINE for the mo
   });
 });
 
+describe('OnsiteReviewModal — a PAID app is announced to the mod', () => {
+  /**
+   * 🔴 WHY THIS SUITE EXISTS. An `app_unlock` good is what flips a free app to a
+   * paid one, and it does NOT require the sensitive `goods:purchase:self` scope —
+   * so the sensitive-permissions panel cannot announce it. If the goods card fails
+   * to render, nothing on the moderator's screen says the app now charges, and the
+   * approve button still works. A review signal that silently does not render is
+   * the entire failure mode, which is why presence is asserted rather than assumed.
+   */
+  const UNLOCK_GOOD = {
+    id: 'full-access',
+    title: 'Unlock the whole app',
+    priceBuzz: 3100,
+    kind: 'app_unlock',
+    justification: 'Each session runs a paid model; this covers it once per viewer.',
+  };
+
+  test('an app_unlock good renders the "becoming PAID" alert with its price and stated reason', async () => {
+    renderWithProviders(
+      <OnsiteReviewModal
+        selection={{
+          request: {
+            ...ONSITE_PENDING,
+            manifest: { ...ONSITE_PENDING.manifest, goods: [UNLOCK_GOOD] },
+          },
+          mode: 'pending',
+        }}
+        onClose={vi.fn()}
+      />
+    );
+    await expect.element(page.getByText('This app is becoming PAID')).toBeInTheDocument();
+    // The PRICE, formatted as the mod sees it — this is the number being approved.
+    // Thousands-separated, so it cannot accidentally match the raw `3100` in the
+    // JSON disclosure.
+    await expect.element(page.getByText('3,100 Buzz')).toBeInTheDocument();
+    // 🔴 `exact: true` IS LOAD-BEARING ON EVERY FIELD ALSO PRESENT IN THE RAW JSON.
+    // `goods` is deliberately left in the "Other manifest fields" disclosure as well
+    // (it carries an opaque `payload` this card does not render), so each of these
+    // strings legitimately appears TWICE — once in the card, once inside the
+    // collapsed `<pre>`. A non-exact query matches the `<pre>` too and fails strict
+    // mode. The duplication is the intended trade-off, not a defect.
+    await expect
+      .element(page.getByText('Unlock the whole app', { exact: true }))
+      .toBeInTheDocument();
+    // The developer's stated reason — the free→paid review trigger's whole payload.
+    // Asserted as the LABEL + the reason together: the card renders the label in a
+    // nested span, so the reason alone is not any single element's full text, and a
+    // non-exact match would also hit the raw-JSON `<pre>`. Pinning the whole string
+    // fixes both, and additionally proves the reason is LABELLED for the mod rather
+    // than floating unexplained.
+    await expect
+      .element(
+        page.getByText(
+          'Why this app charges: Each session runs a paid model; this covers it once per viewer.',
+          { exact: true }
+        )
+      )
+      .toBeInTheDocument();
+    await expect.element(page.getByText('Digital goods (1)')).toBeInTheDocument();
+  });
+
+  test('an ORDINARY goods catalog renders the goods card but NOT the paid-app alert', async () => {
+    // The discriminating control. Without it, an alert hardcoded to render whenever
+    // `goods` exists would pass the case above — and would cry "becoming PAID" at
+    // every app that merely sells an in-app item.
+    renderWithProviders(
+      <OnsiteReviewModal
+        selection={{
+          request: {
+            ...ONSITE_PENDING,
+            manifest: {
+              ...ONSITE_PENDING.manifest,
+              goods: [{ id: 'extra-slots', title: 'Extra slots', priceBuzz: 1300 }],
+            },
+          },
+          mode: 'pending',
+        }}
+        onClose={vi.fn()}
+      />
+    );
+    await expect.element(page.getByText('Digital goods (1)')).toBeInTheDocument();
+    // `exact: true` for the same reason as above — the title is also in the raw JSON.
+    await expect.element(page.getByText('Extra slots', { exact: true })).toBeInTheDocument();
+    expect(page.getByText('This app is becoming PAID').elements()).toHaveLength(0);
+  });
+
+  test('a manifest with NO goods renders NEITHER the goods card nor the paid alert', async () => {
+    // 🔴 THE INERTNESS PROOF ON THE REVIEW SURFACE. Every app approved to date
+    // declares no `goods`, so this change must add nothing at all to their review
+    // screens — an empty panel on every review would be pure noise.
+    renderWithProviders(
+      <OnsiteReviewModal
+        selection={{ request: ONSITE_PENDING, mode: 'pending' }}
+        onClose={vi.fn()}
+      />
+    );
+    // Positive control: the modal DID render, so the two zeros below mean "absent",
+    // not "nothing mounted".
+    await expect.element(page.getByText('Permissions (1)')).toBeInTheDocument();
+    expect(page.getByText('This app is becoming PAID').elements()).toHaveLength(0);
+    expect(page.getByText(/^Digital goods/).elements()).toHaveLength(0);
+  });
+
+  test('an INVALID goods catalog is reported in words, not left as odd-looking JSON', async () => {
+    // An app_unlock with no justification: rejected by the parser, so the catalog
+    // sells nothing. The mod must be told why rather than inferring it.
+    renderWithProviders(
+      <OnsiteReviewModal
+        selection={{
+          request: {
+            ...ONSITE_PENDING,
+            manifest: {
+              ...ONSITE_PENDING.manifest,
+              goods: [
+                { id: 'full-access', title: 'Full access', priceBuzz: 3100, kind: 'app_unlock' },
+              ],
+            },
+          },
+          mode: 'pending',
+        }}
+        onClose={vi.fn()}
+      />
+    );
+    await expect.element(page.getByText(/Goods catalog does not validate/)).toBeInTheDocument();
+    await expect.element(page.getByText(/justification is required/)).toBeInTheDocument();
+    // …and it must NOT be announced as a working paid app, because it cannot sell.
+    expect(page.getByText('This app is becoming PAID').elements()).toHaveLength(0);
+  });
+});
+
 describe('OnsiteReviewModal — per-scope justifications shown to the mod', () => {
   test('renders each declared permission with its dev-supplied justification, and a "No justification provided" fallback when absent', async () => {
     const withJustifications = {

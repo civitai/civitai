@@ -3,8 +3,11 @@ import path from 'path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  BLOCK_APP_UNLOCK_MAX_PER_MANIFEST,
+  BLOCK_APP_UNLOCK_MAX_PRICE_BUZZ,
   BLOCK_GOOD_APP_OWNER_SHARE,
   BLOCK_GOOD_DEFAULT_KIND,
+  BLOCK_GOOD_JUSTIFICATION_MAX_LENGTH,
   BLOCK_GOOD_KINDS,
   BLOCK_GOOD_MAX_PER_MANIFEST,
   BLOCK_GOOD_ID_MAX_LENGTH,
@@ -15,12 +18,19 @@ import {
   computeBlockGoodSplit,
   findManifestGood,
   isBlockGoodKind,
+  maxPriceBuzzForKind,
   parseManifestGoods,
 } from '../block-goods.constants';
 import {
   computeCreatorShopSplit,
   CREATOR_SHOP_CREATOR_SHARE,
 } from '~/server/schema/creator-shop.schema';
+import { buzzConstants } from '~/shared/constants/buzz.constants';
+// Read as TEXT rather than imported: `block-tip-rate-limit` pulls in the redis
+// client at module scope, and this suite is a pure client-safe constants test.
+// The read is asserted (see the guard) so a failed parse fails LOUDLY instead of
+// yielding undefined and quietly passing.
+import { readFileSync as readTipSource } from 'fs';
 
 /**
  * The DIGITAL GOODS contract: the split arithmetic, the manifest catalog rules,
@@ -42,7 +52,15 @@ type GoodsSchema = {
     additionalProperties: boolean;
     properties: Record<
       string,
-      { type?: string; enum?: string[]; minimum?: number; maximum?: number; maxLength?: number }
+      {
+        type?: string;
+        enum?: string[];
+        minimum?: number;
+        maximum?: number;
+        minLength?: number;
+        maxLength?: number;
+        description?: string;
+      }
     >;
   };
   type: string;
@@ -262,7 +280,18 @@ describe('parseManifestGoods — the review-gated catalog rules', () => {
       parseManifestGoods(manifestWith([{ ...VALID_GOOD, kind: 'subscription' }])).errors
     ).toHaveLength(1);
     for (const kind of BLOCK_GOOD_KINDS) {
-      const { goods, errors } = parseManifestGoods(manifestWith([{ ...VALID_GOOD, kind }]));
+      // 🔴 A KIND MAY CARRY RULES OF ITS OWN, so the fixture supplies what each
+      // kind requires rather than asserting one shape satisfies all of them.
+      // `app_unlock` requires a `justification` (it turns the app paid) and is
+      // capped at BLOCK_APP_UNLOCK_MAX_PRICE_BUZZ — see the dedicated describe
+      // block below, which is where those rules are actually pinned. This case
+      // remains about the KIND VOCABULARY only: every declared kind is accepted,
+      // every undeclared one is not.
+      const extras =
+        kind === 'app_unlock' ? { justification: 'Covers the per-session GPU cost.' } : {};
+      const { goods, errors } = parseManifestGoods(
+        manifestWith([{ ...VALID_GOOD, kind, ...extras }])
+      );
       expect(errors, kind).toEqual([]);
       expect(goods[0].kind).toBe(kind);
     }
@@ -325,6 +354,301 @@ describe('findManifestGood — what the purchase path may sell', () => {
     const broken = manifestWith([VALID_GOOD, { ...VALID_GOOD, id: 'over', priceBuzz: 10_000_000 }]);
     expect(findManifestGood(broken, 'extra-slots')).toBeNull();
     expect(findManifestGood(broken, 'over')).toBeNull();
+  });
+});
+
+describe('app_unlock — the paid-app bounds, arity and review trigger', () => {
+  /**
+   * 🔴 FIXTURE NOTE. The unlock price here (3,100) is PAIRWISE DISTINCT from every
+   * constant an assertion in this file names — the general cap (50,000), the unlock
+   * cap (5,000), the floor (2), `VALID_GOOD`'s 1,300 — so a mutant that hardcodes
+   * any one of them cannot survive by coincidence. It is also strictly between the
+   * floor and the unlock cap, so it is legal under the narrow bound and says
+   * nothing about either boundary on its own; the boundaries get their own cases.
+   */
+  const VALID_UNLOCK = {
+    id: 'full-access',
+    title: 'Full access',
+    priceBuzz: 3_100,
+    kind: 'app_unlock' as const,
+    justification: 'The app costs us GPU time per session; this covers it once per user.',
+  };
+
+  it('accepts a well-formed app_unlock good', () => {
+    const { goods, errors } = parseManifestGoods(manifestWith([VALID_UNLOCK]));
+    expect(errors).toEqual([]);
+    expect(goods).toHaveLength(1);
+    expect(goods[0].kind).toBe('app_unlock');
+    expect(goods[0].justification).toBe(VALID_UNLOCK.justification);
+  });
+
+  it('REJECTS an app_unlock good ABOVE the unlock cap and ACCEPTS the cap itself', () => {
+    // The headline bound. 5,001 is rejected even though it is far BELOW the general
+    // BLOCK_GOOD_MAX_PRICE_BUZZ — which is the whole point: before this rule the
+    // same entry was accepted at anything up to 50,000.
+    const over = parseManifestGoods(
+      manifestWith([{ ...VALID_UNLOCK, priceBuzz: BLOCK_APP_UNLOCK_MAX_PRICE_BUZZ + 1 }])
+    );
+    expect(over.errors).toHaveLength(1);
+    expect(over.errors[0]).toContain('priceBuzz');
+    expect(over.goods).toHaveLength(0);
+    expect(
+      parseManifestGoods(
+        manifestWith([{ ...VALID_UNLOCK, priceBuzz: BLOCK_APP_UNLOCK_MAX_PRICE_BUZZ }])
+      ).errors
+    ).toEqual([]);
+  });
+
+  it('applies the unlock cap ONLY to app_unlock — an ordinary good keeps the general cap', () => {
+    // 🔴 THE DISCRIMINATING CONTROL, and the reason the previous case proves
+    // anything. A mutant that simply lowered BLOCK_GOOD_MAX_PRICE_BUZZ to 5,000 for
+    // EVERY kind would pass the case above; it dies here. Same price, same
+    // manifest, different `kind` — the only variable is the one under test.
+    const price = BLOCK_APP_UNLOCK_MAX_PRICE_BUZZ + 1;
+    expect(
+      parseManifestGoods(manifestWith([{ ...VALID_GOOD, priceBuzz: price }])).errors
+    ).toEqual([]);
+    expect(
+      parseManifestGoods(manifestWith([{ ...VALID_UNLOCK, priceBuzz: price }])).errors
+    ).toHaveLength(1);
+  });
+
+  it('REJECTS more than one app_unlock good, and accepts exactly one', () => {
+    // Two individually-VALID unlocks. The rejection is about the ARITY, so neither
+    // entry may carry a defect of its own or the test would pass for the wrong
+    // reason — distinct ids and distinct prices, both legal.
+    const two = parseManifestGoods(
+      manifestWith([
+        VALID_UNLOCK,
+        { ...VALID_UNLOCK, id: 'full-access-2', title: 'Full access 2', priceBuzz: 4_200 },
+      ])
+    );
+    expect(two.errors).toHaveLength(1);
+    expect(two.errors[0]).toContain('app_unlock');
+    expect(parseManifestGoods(manifestWith([VALID_UNLOCK])).errors).toEqual([]);
+  });
+
+  it('counts the unlock arity per MANIFEST, not per adjacent ordinary good', () => {
+    // One unlock alongside several ordinary goods is legal — the bound is on the
+    // unlock kind alone, not on catalog size (that is BLOCK_GOOD_MAX_PER_MANIFEST).
+    const mixed = parseManifestGoods(
+      manifestWith([
+        VALID_UNLOCK,
+        { ...VALID_GOOD, id: 'item-a', priceBuzz: 700 },
+        { ...VALID_GOOD, id: 'item-b', priceBuzz: 900 },
+      ])
+    );
+    expect(mixed.errors).toEqual([]);
+    expect(mixed.goods).toHaveLength(3);
+  });
+
+  it('REJECTS an app_unlock good with NO justification — the free→paid review trigger', () => {
+    // 🔴 WHY THIS RULE EXISTS. An app unlock is designed NOT to require the
+    // sensitive `goods:purchase:self` scope, so the sensitive-scope justification
+    // gate cannot see it: without this, a v2 could flip a free app to paid with
+    // nothing for a moderator to read.
+    const { errors, goods } = parseManifestGoods(
+      manifestWith([{ id: 'full-access', title: 'Full access', priceBuzz: 3_100, kind: 'app_unlock' }])
+    );
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('justification');
+    expect(goods).toHaveLength(0);
+  });
+
+  it('REJECTS an app_unlock justification that is empty or whitespace-only', () => {
+    // A present-but-blank string must not satisfy the gate — "a guard can be
+    // SPELLED rather than structural"; the moderator needs words, not a key.
+    for (const justification of ['', '   ', '\n\t ']) {
+      const { errors } = parseManifestGoods(
+        manifestWith([{ ...VALID_UNLOCK, justification }])
+      );
+      expect(errors, JSON.stringify(justification)).toHaveLength(1);
+      expect(errors[0]).toContain('justification');
+    }
+  });
+
+  it('REJECTS an over-long justification and ACCEPTS one at exactly the bound', () => {
+    expect(
+      parseManifestGoods(
+        manifestWith([
+          { ...VALID_UNLOCK, justification: 'x'.repeat(BLOCK_GOOD_JUSTIFICATION_MAX_LENGTH + 1) },
+        ])
+      ).errors
+    ).toHaveLength(1);
+    expect(
+      parseManifestGoods(
+        manifestWith([
+          { ...VALID_UNLOCK, justification: 'x'.repeat(BLOCK_GOOD_JUSTIFICATION_MAX_LENGTH) },
+        ])
+      ).errors
+    ).toEqual([]);
+  });
+
+  it('does NOT require a justification on an ORDINARY good, but accepts and trims one', () => {
+    // The requirement is keyed on the KIND, not on the field existing. An ordinary
+    // good without a justification stays valid — otherwise this change would
+    // retroactively invalidate any future non-unlock catalog.
+    expect(parseManifestGoods(manifestWith([VALID_GOOD])).errors).toEqual([]);
+    const { goods, errors } = parseManifestGoods(
+      manifestWith([{ ...VALID_GOOD, justification: '  because slots cost storage  ' }])
+    );
+    expect(errors).toEqual([]);
+    expect(goods[0].justification).toBe('because slots cost storage');
+  });
+
+  it('makes an over-cap or unjustified unlock UNSELLABLE, not merely unapprovable', () => {
+    // 🔴 THE SEAM. `findManifestGood` is what the purchase path resolves through,
+    // and it returns null when the catalog has ANY error — so these bounds reach
+    // the money path with no second copy of either rule. A manifest approved
+    // before this shipped cannot keep selling on the old terms.
+    const overCap = manifestWith([
+      { ...VALID_UNLOCK, priceBuzz: BLOCK_APP_UNLOCK_MAX_PRICE_BUZZ + 1 },
+    ]);
+    expect(findManifestGood(overCap, 'full-access')).toBeNull();
+    const unjustified = manifestWith([
+      { id: 'full-access', title: 'Full access', priceBuzz: 3_100, kind: 'app_unlock' },
+    ]);
+    expect(findManifestGood(unjustified, 'full-access')).toBeNull();
+    // Positive control on the read: the SAME id IS resolvable once both rules pass,
+    // so the nulls above are the rules firing and not a broken lookup.
+    expect(findManifestGood(manifestWith([VALID_UNLOCK]), 'full-access')?.priceBuzz).toBe(3_100);
+  });
+});
+
+describe('INERTNESS — the app_unlock rules change nothing for a manifest without one', () => {
+  /**
+   * 🔴 THE NO-OP PROOF, not an assertion of it. Every app approved to date declares
+   * no `goods` at all, and none declares an `app_unlock` good, so this PR must be
+   * observably inert for them. These cases pin the three shapes a live manifest can
+   * have — and each is a BEHAVIOURAL check (the exact returned value, or the exact
+   * error count), not a "does not throw".
+   *
+   * The risk being pinned is specific and real: the parser was RESTRUCTURED to read
+   * `kind` before `priceBuzz` so the ceiling could depend on it, and the
+   * justification branch was inserted into the same per-entry walk. Either could
+   * have changed the result for a manifest that has nothing to do with unlocks.
+   */
+  it('a manifest with NO goods key short-circuits to the empty result', () => {
+    // The exact value, so a mutant returning `{goods:[],errors:['…']}` dies.
+    expect(parseManifestGoods({})).toEqual({ goods: [], errors: [] });
+    expect(parseManifestGoods({ goods: undefined })).toEqual({ goods: [], errors: [] });
+    expect(parseManifestGoods({ goods: null })).toEqual({ goods: [], errors: [] });
+  });
+
+  it('a manifest with an EMPTY goods array still parses clean', () => {
+    expect(parseManifestGoods(manifestWith([]))).toEqual({ goods: [], errors: [] });
+  });
+
+  it("a kind:'good' catalog is accepted with its kind and price untouched", () => {
+    // Explicit `kind: 'good'` — the value a dev may write out — must behave exactly
+    // like the default, and must NOT pick up the unlock ceiling or need a
+    // justification.
+    const explicit = parseManifestGoods(manifestWith([{ ...VALID_GOOD, kind: 'good' }]));
+    expect(explicit.errors).toEqual([]);
+    expect(explicit.goods).toHaveLength(1);
+    expect(explicit.goods[0].kind).toBe('good');
+    expect(explicit.goods[0].priceBuzz).toBe(1300);
+    // And no `justification` key is invented on a good that did not declare one.
+    expect(explicit.goods[0].justification).toBeUndefined();
+    expect('justification' in explicit.goods[0]).toBe(false);
+  });
+
+  it('an ordinary good priced ABOVE the unlock cap is still accepted', () => {
+    // The single most likely way this PR could have broken a live catalog. 40,000 is
+    // legal for an ordinary good and 8x the unlock cap.
+    const { errors, goods } = parseManifestGoods(
+      manifestWith([{ ...VALID_GOOD, priceBuzz: 40_000 }])
+    );
+    expect(errors).toEqual([]);
+    expect(goods[0].priceBuzz).toBe(40_000);
+  });
+
+  it('a catalog with a PARSE ERROR reports the SAME single error it always did', () => {
+    // Not merely "still invalid" — still invalid for the SAME ONE REASON. A second
+    // error appearing here would mean the new branches fire on an ordinary good.
+    const { errors, goods } = parseManifestGoods(
+      manifestWith([{ ...VALID_GOOD, priceBuzz: BLOCK_GOOD_MAX_PRICE_BUZZ + 1 }])
+    );
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('priceBuzz');
+    expect(errors[0]).not.toContain('justification');
+    expect(errors[0]).not.toContain('app_unlock');
+    expect(goods).toHaveLength(0);
+  });
+
+  it('the general per-manifest cap is unchanged for ordinary goods', () => {
+    // BLOCK_APP_UNLOCK_MAX_PER_MANIFEST must not have narrowed the catalog size for
+    // everyone — the two bounds are about different things.
+    const make = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({ ...VALID_GOOD, id: `good-${i}` }));
+    expect(parseManifestGoods(manifestWith(make(BLOCK_GOOD_MAX_PER_MANIFEST))).errors).toEqual([]);
+    expect(BLOCK_APP_UNLOCK_MAX_PER_MANIFEST).toBeLessThan(BLOCK_GOOD_MAX_PER_MANIFEST);
+  });
+});
+
+describe('maxPriceBuzzForKind — the per-kind ceiling, in one place', () => {
+  it('returns the unlock cap for app_unlock and the general cap for an ordinary good', () => {
+    expect(maxPriceBuzzForKind('app_unlock')).toBe(BLOCK_APP_UNLOCK_MAX_PRICE_BUZZ);
+    expect(maxPriceBuzzForKind('good')).toBe(BLOCK_GOOD_MAX_PRICE_BUZZ);
+  });
+
+  it('covers EVERY declared kind, so a new kind cannot be added without a decision here', () => {
+    // Enumerates BLOCK_GOOD_KINDS rather than naming the two we have: adding a
+    // third kind makes this fail unless its ceiling is deliberately chosen.
+    for (const kind of BLOCK_GOOD_KINDS) {
+      const max = maxPriceBuzzForKind(kind);
+      expect(Number.isSafeInteger(max), kind).toBe(true);
+      expect(max, kind).toBeGreaterThanOrEqual(BLOCK_GOOD_MIN_PRICE_BUZZ);
+      expect(max, kind).toBeLessThanOrEqual(BLOCK_GOOD_MAX_PRICE_BUZZ);
+    }
+  });
+
+  it('the unlock cap is STRICTLY below the general cap and above the floor', () => {
+    // The bound is only meaningful if it actually narrows something.
+    expect(BLOCK_APP_UNLOCK_MAX_PRICE_BUZZ).toBeLessThan(BLOCK_GOOD_MAX_PRICE_BUZZ);
+    expect(BLOCK_APP_UNLOCK_MAX_PRICE_BUZZ).toBeGreaterThan(BLOCK_GOOD_MIN_PRICE_BUZZ);
+  });
+});
+
+describe('the tip-ceiling and Stripe-minimum agreement guard', () => {
+  /**
+   * The per-tip ceiling, read out of its own source file. `BLOCK_TIP_MAX_PER_TIP`
+   * cannot simply be imported here: its module imports the redis client at module
+   * scope, and this suite is deliberately a pure client-safe constants test.
+   */
+  function tipMaxPerTip(): number {
+    const source = readTipSource(
+      path.join(REPO_ROOT, 'src/server/utils/block-tip-rate-limit.ts'),
+      'utf8'
+    );
+    const match = /export const BLOCK_TIP_MAX_PER_TIP\s*=\s*([0-9_]+)\s*;/.exec(source);
+    // POSITIVE CONTROL ON THE READ. A renamed constant, a moved file or a
+    // reformatted literal must fail HERE — loudly, naming the cause — rather than
+    // returning NaN and letting the comparison below pass or fail by accident.
+    expect(match, 'BLOCK_TIP_MAX_PER_TIP not found in block-tip-rate-limit.ts').not.toBeNull();
+    const value = Number(match![1].replace(/_/g, ''));
+    expect(Number.isSafeInteger(value), `parsed ${match![1]}`).toBe(true);
+    return value;
+  }
+
+  it('the unlock cap EQUALS the per-tip ceiling today', () => {
+    // 🔴 WHY THIS ASSERTION EXISTS AND WHY IT IS NOT AN ALIAS — same reasoning as
+    // the cosmetic-shop guard below. The two are independent knobs that currently
+    // agree, and "an app unlock may move no more Buzz in one click than a tip" is
+    // the claim the constant's rationale rests on. Asserted against the sibling
+    // constant, not a literal, so a tipping repricing fails HERE — where the
+    // comment explaining the choice lives — instead of drifting silently.
+    expect(BLOCK_APP_UNLOCK_MAX_PRICE_BUZZ).toBe(tipMaxPerTip());
+  });
+
+  it('the unlock cap EQUALS the smallest Buzz top-up a viewer can actually buy', () => {
+    // $5 at 1,000 Buzz = $1. If the minimum Stripe charge or the Buzz/dollar ratio
+    // moves, the ceiling stops being "one top-up buys at most one unlock" and this
+    // is where that is noticed. Derived from both constants rather than asserting
+    // 5_000 twice, so neither can move without failing.
+    expect(BLOCK_APP_UNLOCK_MAX_PRICE_BUZZ).toBe(
+      (buzzConstants.minStripeChargeAmount / 100) * buzzConstants.buzzDollarRatio
+    );
   });
 });
 
@@ -425,6 +749,58 @@ describe('published schema ⇄ constants drift guard', () => {
     expect(props.id.maxLength).toBe(BLOCK_GOOD_ID_MAX_LENGTH);
     expect(props.title.maxLength).toBe(80);
     expect(props.description.maxLength).toBe(500);
+  });
+
+  it('the schema declares `justification` as a bounded string matching the parser', () => {
+    // The field must EXIST in the schema: `items.additionalProperties` is false, so
+    // an undeclared `justification` would be rejected by every local validator
+    // (the CLI and the SDK both Ajv-validate the vendored copy) while the server
+    // required it — local green, submit red.
+    const justification = goodsProperty().items.properties.justification;
+    expect(justification).toBeDefined();
+    expect(justification.type).toBe('string');
+    expect(justification.maxLength).toBe(BLOCK_GOOD_JUSTIFICATION_MAX_LENGTH);
+  });
+
+  it('`justification` is NOT in `required` — the parser keys it on kind, not presence', () => {
+    // 🔴 The bound that CANNOT move into the schema. "Required when kind is
+    // app_unlock" is a conditional the schema deliberately does not express (an
+    // `if/then` on `kind` was judged more surface than the property is worth), so
+    // the imperative parser is the only enforcement. Pinning its ABSENCE here is
+    // what stops someone "tidying up" by marking it required and rejecting every
+    // ordinary good that omits it.
+    expect(goodsProperty().items.required).not.toContain('justification');
+  });
+
+  it('the outer priceBuzz bound stays the GENERAL cap, not the unlock cap', () => {
+    // 🔴 DELIBERATE, AND THE REASON THE PARSER IS AUTHORITATIVE. The per-kind
+    // ceiling is NOT expressed in the schema; narrowing `maximum` to the unlock cap
+    // here would reject legal ordinary goods in every offline validator. If this
+    // assertion ever fails, the schema has quietly taken over a rule it cannot
+    // express correctly.
+    expect(goodsProperty().items.properties.priceBuzz.maximum).toBe(BLOCK_GOOD_MAX_PRICE_BUZZ);
+    expect(BLOCK_APP_UNLOCK_MAX_PRICE_BUZZ).toBeLessThan(BLOCK_GOOD_MAX_PRICE_BUZZ);
+  });
+
+  it('the kind DESCRIPTION states the narrower unlock bounds, so the published docs do not lie', () => {
+    // The schema is the published developer contract (served at
+    // /schemas/app-block/v1.json and mirrored into the CLI + SDK). Since the
+    // narrower rules are enforced only by the server, the description is the ONLY
+    // place a developer can learn them before a submit fails. Asserted against the
+    // CONSTANTS so a repricing cannot leave the prose behind.
+    const description = goodsProperty().items.properties.kind.description ?? '';
+    // 🔴 THE WHOLE PHRASE, NOT THE BARE NUMBER. A naked
+    // `toContain(String(BLOCK_APP_UNLOCK_MAX_PRICE_BUZZ))` SURVIVED a mutation that
+    // rewrote the sentence to "at most 50000 Buzz" — because "50000" contains the
+    // substring "5000". The digits of a wrong number can spell the right one, so the
+    // assertion pins the surrounding words too, and both are built from the constant
+    // rather than typed as literals.
+    expect(description).toContain(`at most ${BLOCK_APP_UNLOCK_MAX_PRICE_BUZZ} Buzz`);
+    // …and must NOT state the GENERAL cap as the unlock bound, which is the exact
+    // wrong-but-plausible sentence the surviving mutant produced.
+    expect(description).not.toContain(`at most ${BLOCK_GOOD_MAX_PRICE_BUZZ} Buzz`);
+    expect(description).toContain('justification');
+    expect(description.toLowerCase()).toContain('one app_unlock');
   });
 
   it('the schema requires exactly the fields the parser requires', () => {

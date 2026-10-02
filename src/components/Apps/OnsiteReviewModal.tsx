@@ -22,10 +22,12 @@ import {
   IconAdjustmentsAlt,
   IconAlertTriangle,
   IconCheck,
+  IconCoin,
   IconExternalLink,
   IconInfoCircle,
   IconKey,
   IconLayoutGrid,
+  IconLock,
   IconShieldLock,
   IconWindow,
   IconX,
@@ -42,6 +44,7 @@ import {
   type FileLineDiff,
 } from '~/components/Apps/reviewDiffPanels';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { parseManifestGoods } from '~/shared/constants/block-goods.constants';
 import { isSensitiveBlockScope } from '~/shared/constants/block-scope.constants';
 import {
   MARKETPLACE_CATEGORIES,
@@ -991,6 +994,12 @@ function ManifestView({ manifest }: { manifest: Record<string, unknown> }) {
   return (
     <Stack gap="sm">
       <ManifestIdentity manifest={manifest} />
+      {/* ABOVE the permissions panel deliberately. "This app now charges for
+          access" is a product decision the moderator is the only gate on, and it
+          is NOT visible in the permissions panel — an app unlock does not require
+          the sensitive `goods:purchase:self` scope. Renders nothing at all when
+          the manifest declares no `goods`, which is every app approved to date. */}
+      <ManifestGoods manifest={manifest} />
       <ManifestScopes manifest={manifest} />
       <ManifestTargets manifest={manifest} />
       <ManifestSettings manifest={manifest} />
@@ -1298,6 +1307,160 @@ function ManifestScopes({ manifest }: { manifest: Record<string, unknown> }) {
               </Stack>
             )}
           </>
+        )}
+      </Stack>
+    </Card>
+  );
+}
+
+/**
+ * THE "THIS APP IS BECOMING PAID" PANEL.
+ *
+ * 🔴 IT IS INLINE, NOT IN THE "Other manifest fields" DISCLOSURE, AND THAT IS THE
+ * WHOLE POINT. `goods` used to land in that collapsed raw-JSON block, which is
+ * the same mistake `tagline` and `repository` above record: a manifest-governed
+ * fact the moderator is the only gate on, rendered somewhere nobody opens. An
+ * `app_unlock` good is the strongest instance of it — adding one flips a FREE app
+ * to a PAID one, and because an app unlock is designed not to require the
+ * sensitive `goods:purchase:self` scope, the sensitive-permissions panel above
+ * will not mention it. If this card does not say so, nothing on the screen does.
+ *
+ * 🔴 `goods` IS DELIBERATELY *NOT* ADDED TO `HANDLED_MANIFEST_KEYS`, so it still
+ * appears in the raw disclosure as well. That differs from how `tagline` and
+ * `repository` were handled, and the reason is fidelity: those are scalars this
+ * view renders completely, whereas a good carries an opaque `payload` that this
+ * card does NOT render (the platform never interprets it, but a moderator may
+ * well want to read it). Suppressing the raw copy would trade a complete view for
+ * a partial one. The duplication is the cheaper mistake.
+ *
+ * Renders the parser's ERRORS too, so an invalid catalog is reported in words
+ * rather than leaving the moderator to infer it from JSON that merely looks odd.
+ */
+function ManifestGoods({ manifest }: { manifest: Record<string, unknown> }) {
+  const { goods, errors } = parseManifestGoods(manifest as { goods?: unknown });
+  // Nothing declared and nothing malformed ⇒ no card. Every app approved to date
+  // is in this state, so an empty panel on every review would be pure noise.
+  if (manifest.goods === undefined || manifest.goods === null) return null;
+  if (goods.length === 0 && errors.length === 0) return null;
+
+  const unlocks = goods.filter((good) => good.kind === 'app_unlock');
+  const items = goods.filter((good) => good.kind !== 'app_unlock');
+
+  return (
+    <Card withBorder p="sm">
+      <Stack gap="xs">
+        {unlocks.length > 0 && (
+          <Alert
+            icon={<IconLock size={16} />}
+            color="red"
+            variant="light"
+            title="This app is becoming PAID"
+          >
+            <Stack gap={4}>
+              <Text size="xs">
+                It declares an <Code>app_unlock</Code> good, so a viewer must buy access before
+                using it. Approving this version is what makes that true — check the price and the
+                stated reason below against the listing the viewer will see.
+              </Text>
+              {unlocks.map((unlock) => (
+                <Stack key={unlock.id} gap={2}>
+                  <Group gap={8} wrap="nowrap">
+                    <Badge color="red" variant="filled">
+                      {unlock.priceBuzz.toLocaleString()} Buzz
+                    </Badge>
+                    <Text size="xs" fw={600}>
+                      {unlock.title}
+                    </Text>
+                    <Code>{unlock.id}</Code>
+                  </Group>
+                  {unlock.description && (
+                    <Text size="xs" c="dimmed">
+                      {unlock.description}
+                    </Text>
+                  )}
+                  <Text size="xs" style={{ whiteSpace: 'pre-wrap' }}>
+                    <Text span fw={600}>
+                      Why this app charges:{' '}
+                    </Text>
+                    {/* The parser REQUIRES a justification on an app_unlock good, so
+                        this is only ever empty for a catalog that already failed
+                        validation — the errors block below reports that case. */}
+                    {unlock.justification ?? '— none provided —'}
+                  </Text>
+                </Stack>
+              ))}
+            </Stack>
+          </Alert>
+        )}
+
+        <Group gap={6}>
+          <IconCoin size={14} />
+          <Text size="sm" fw={600}>
+            Digital goods ({goods.length})
+          </Text>
+          <Tooltip
+            multiline
+            w={280}
+            label="Entitlements the platform sells to a viewer for Buzz on this app's behalf. The catalog you approve is the catalog that can be sold — a price change needs a new version and another review. Sales split platform 30% / app owner 70%."
+          >
+            <ThemeIcon size="xs" variant="subtle" color="gray">
+              <IconInfoCircle size={13} />
+            </ThemeIcon>
+          </Tooltip>
+        </Group>
+
+        {items.length > 0 && (
+          <Stack gap={6}>
+            {items.map((good) => (
+              <Group key={good.id} gap={8} align="flex-start" wrap="nowrap">
+                <Badge variant="light" color="yellow">
+                  {good.priceBuzz.toLocaleString()} Buzz
+                </Badge>
+                <Stack gap={0}>
+                  <Group gap={6} wrap="nowrap">
+                    <Text size="xs" fw={600}>
+                      {good.title}
+                    </Text>
+                    <Code>{good.id}</Code>
+                  </Group>
+                  {good.description && (
+                    <Text size="xs" c="dimmed">
+                      {good.description}
+                    </Text>
+                  )}
+                  {good.justification && (
+                    <Text size="xs" c="dimmed" style={{ whiteSpace: 'pre-wrap' }}>
+                      <Text span fw={600} c="dimmed">
+                        Why:{' '}
+                      </Text>
+                      {good.justification}
+                    </Text>
+                  )}
+                </Stack>
+              </Group>
+            ))}
+          </Stack>
+        )}
+
+        {errors.length > 0 && (
+          <Alert
+            icon={<IconAlertTriangle size={16} />}
+            color="orange"
+            variant="light"
+            title={`Goods catalog does not validate (${errors.length})`}
+          >
+            <Stack gap={2}>
+              <Text size="xs">
+                Nothing in this catalog can be sold while any entry is invalid — the purchase path
+                refuses the whole catalog, not just the bad entry.
+              </Text>
+              {errors.map((error) => (
+                <Text key={error} size="xs" c="orange" style={{ whiteSpace: 'pre-wrap' }}>
+                  {error}
+                </Text>
+              ))}
+            </Stack>
+          </Alert>
         )}
       </Stack>
     </Card>

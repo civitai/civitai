@@ -258,8 +258,14 @@
           },
           "kind": {
             "type": "string",
-            "description": "What the entitlement grants, from the platform's point of view. \"good\" (the default) is an ordinary in-app purchase the platform records and does not interpret. \"app_unlock\" marks a one-time unlock of the app itself; it is RECORDED IDENTICALLY today and the platform does NOT yet act on it — the paid-app access gate is a later change that reads this value. Declaring it now buys nothing, so leave it unset unless you intend that later behaviour.",
+            "description": "What the entitlement grants, from the platform's point of view. \"good\" (the default) is an ordinary in-app purchase the platform records and does not interpret. \"app_unlock\" marks a one-time unlock of the app itself; it is RECORDED IDENTICALLY today and the platform does NOT yet act on it — the paid-app access gate is a later change that reads this value. Declaring it now buys nothing, so leave it unset unless you intend that later behaviour. THREE EXTRA RULES APPLY TO \"app_unlock\" AND ARE ENFORCED BY THE PLATFORM VALIDATOR, NOT BY THIS SCHEMA (which declares that validator authoritative): priceBuzz may be at most 5000 Buzz, not the 50000 the priceBuzz bound below allows — an unlock is bought before the viewer has used the app, so it is capped at the same ceiling as a single Buzz tip and at the smallest Buzz top-up ($5); at most ONE app_unlock good may be declared per manifest, so \"is this viewer admitted?\" has exactly one answer; and the good MUST carry a `justification`, because adding one turns a free app into a paid app and a moderator has to be told why.",
             "enum": ["good", "app_unlock"]
+          },
+          "justification": {
+            "type": "string",
+            "description": "Why this good exists, shown to the moderator at review and never to the viewer. REQUIRED when kind is \"app_unlock\" — that is the free→paid review trigger: an app unlock does not require the sensitive `goods:purchase:self` scope, so this is what makes a version that starts charging for access something a moderator is shown rather than a diff nobody was pointed at. Optional for an ordinary good. Review metadata only: unlike `payload` it is never copied onto an entitlement, and the platform records your claim without verifying it. The server measures the TRIMMED length, so this maxLength is never more permissive than the server.",
+            "minLength": 1,
+            "maxLength": 500
           },
           "payload": {
             "type": "object",
