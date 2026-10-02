@@ -134,8 +134,33 @@ const MAX_PRICE_BUZZ_BY_KIND: Record<BlockGoodKind, number> = {
   app_unlock: BLOCK_APP_UNLOCK_MAX_PRICE_BUZZ,
 };
 
+/**
+ * The tightest ceiling any declared kind carries, DERIVED so it cannot go stale
+ * when a kind is added or repriced. The fail-closed fallback below.
+ */
+const STRICTEST_MAX_PRICE_BUZZ = Math.min(...Object.values(MAX_PRICE_BUZZ_BY_KIND));
+
+/**
+ * 🔴 FAIL-CLOSED ON AN UNRECOGNISED KIND, AND THIS IS NOT DEFENSIVE PADDING — the
+ * bare record lookup was a LIVE HAZARD on a money path. A missing key yields
+ * `undefined`, and `priceBuzz > undefined` is `false` in JS, so the one caller that
+ * matters — the purchase-time ceiling in `block-goods.service.ts` — would have had
+ * its guard SILENTLY DISABLED rather than merely loosened. That is strictly worse
+ * than the kind-blind check it replaced, which at least bounded at 50,000.
+ *
+ * TypeScript stops a well-typed caller (`BlockGoodDeclaration.kind` is required and
+ * the parser always populates it), so this is unreachable today. It is here because
+ * `purchaseBlockGood` takes its resolved good as a CALLER-SUPPLIED input by design,
+ * a cast or a rehydrated JSON blob bypasses the type, and the cost of being wrong is
+ * an unbounded charge. Falling back to the STRICTEST ceiling means an unrecognised
+ * kind refuses rather than overcharges.
+ *
+ * It does NOT weaken the exhaustiveness above: adding a kind to `BLOCK_GOOD_KINDS`
+ * still fails typecheck on the record, because this only guards values that reached
+ * runtime without passing the type system at all.
+ */
 export function maxPriceBuzzForKind(kind: BlockGoodKind): number {
-  return MAX_PRICE_BUZZ_BY_KIND[kind];
+  return MAX_PRICE_BUZZ_BY_KIND[kind] ?? STRICTEST_MAX_PRICE_BUZZ;
 }
 
 /** Most goods one manifest may declare. */

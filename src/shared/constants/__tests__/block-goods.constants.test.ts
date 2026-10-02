@@ -684,6 +684,26 @@ describe('maxPriceBuzzForKind — the per-kind ceiling, in one place', () => {
     }
   });
 
+  it('FAILS CLOSED on an unrecognised kind rather than returning undefined', () => {
+    // 🔴 THE HAZARD THIS PINS, MEASURED: a bare `RECORD[kind]` returns `undefined`
+    // for a key it does not hold, and `priceBuzz > undefined` is FALSE in JS — so the
+    // purchase-time ceiling would have been silently DISABLED, not merely loosened.
+    // That is strictly worse than the kind-blind check it replaced, which at least
+    // bounded at 50,000.
+    //
+    // The cast is the point: it reproduces what a cast, a rehydrated JSON blob, or a
+    // future caller supplying its own resolved good can do, none of which the type
+    // system sees. Asserting a NUMBER (not just "not undefined") is what makes the
+    // comparison downstream meaningful.
+    const rogue = maxPriceBuzzForKind('bundle' as unknown as (typeof BLOCK_GOOD_KINDS)[number]);
+    expect(typeof rogue).toBe('number');
+    expect(Number.isSafeInteger(rogue)).toBe(true);
+    // Strictest, so an unknown kind REFUSES rather than overcharges.
+    expect(rogue).toBe(Math.min(...BLOCK_GOOD_KINDS.map((k) => maxPriceBuzzForKind(k))));
+    // And the comparison the money path actually makes behaves as a guard.
+    expect(rogue + 1 > rogue).toBe(true);
+  });
+
   it('is reached THROUGH parseManifestGoods, not only when called directly', () => {
     // A helper only ever exercised by its own unit test is not demonstrably wired in.
     // Same price, same manifest, different kind — the only thing that can explain the
