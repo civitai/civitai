@@ -19,7 +19,9 @@ import { ModelType } from '~/shared/utils/prisma/enums';
  */
 
 export const QUESTION_SPEC_VERSION = 1;
-export const RESOURCE_INTENT_CRITERIA_VERSION = 1;
+// 2 adds `styleFamily`, which the matcher reads to order the shortlist against
+// the ResourceInsight labels; a v1 shadow row was produced without that axis.
+export const RESOURCE_INTENT_CRITERIA_VERSION = 2;
 
 // The number of shortlist entries stage 3 can actually rank: the vendor's
 // option budget minus the `none` fallback. `RESOURCE_INTENT_MAX_SHORTLIST`
@@ -200,6 +202,7 @@ export const resourceIntentCriteriaSchema = z
     criteriaVersion: z.literal(RESOURCE_INTENT_CRITERIA_VERSION),
     specHash: z.string().min(1),
     role: roleSchema,
+    styleFamily: styleFamilySchema,
     modelTypes: z.array(z.enum(ModelType)).nullable(),
     baseModel: z.string().nullable(),
   })

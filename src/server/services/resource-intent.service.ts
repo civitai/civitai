@@ -136,6 +136,7 @@ function compileCriteria(
     criteriaVersion: RESOURCE_INTENT_CRITERIA_VERSION,
     specHash: RESOURCE_INTENT_SPEC_HASH,
     role,
+    styleFamily: answer.styleFamily.value,
     modelTypes: ROLE_MODEL_TYPES[role] ? [...ROLE_MODEL_TYPES[role]!] : null,
     baseModel,
   };

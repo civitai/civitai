@@ -219,16 +219,17 @@ describe('cache behavior', () => {
         injectionPresent: 0,
       },
       criteria: {
-        criteriaVersion: 1 as const,
+        criteriaVersion: 2 as const,
         specHash: 'abc',
         role: 'style' as const,
+        styleFamily: 'anime_manga' as const,
         modelTypes: ['LORA' as const],
         baseModel: null,
       },
       suggestions: [{ versionId: 11 }, { versionId: 22 }, { versionId: 33 }],
       noneProbability: 0.1,
       model: 'typesafe/jev-1.13-20260917',
-      criteriaVersion: 1 as const,
+      criteriaVersion: 2 as const,
     };
     redisMock.redis.packed.get.mockResolvedValue(wide);
 
@@ -266,16 +267,17 @@ describe('cache behavior', () => {
         injectionPresent: 0,
       },
       criteria: {
-        criteriaVersion: 1,
+        criteriaVersion: 2,
         specHash: 'abc',
         role: 'style',
+        styleFamily: 'anime_manga',
         modelTypes: ['LORA'],
         baseModel: null,
       },
       suggestions: [],
       noneProbability: 0.1,
       model: 'typesafe/jev-1.13-20260917',
-      criteriaVersion: 1,
+      criteriaVersion: 2,
     };
     redisMock.redis.packed.get.mockResolvedValue(cached);
 
@@ -373,9 +375,10 @@ describe('stage flow', () => {
     mockFindCandidates.mockResolvedValue([]);
     const result = await getResourceIntent({ ...INPUT, baseModel: 'SDXL 1.0' }, CTX);
     expect(result.criteria).toEqual({
-      criteriaVersion: 1,
+      criteriaVersion: 2,
       specHash: expect.stringMatching(/^[0-9a-f]{64}$/),
       role: 'style',
+      styleFamily: 'anime_manga',
       modelTypes: [
         'LORA',
         'TextualInversion',
@@ -534,7 +537,7 @@ describe('shadow event', () => {
       suggestions: [],
       noneProbability: null,
       model: 'jev-unavailable',
-      criteriaVersion: 1,
+      criteriaVersion: 2,
     });
 
     await getResourceIntent(INPUT, { ...CTX, now: () => new Date('2026-09-29T00:00:00.000Z') });
@@ -586,7 +589,7 @@ describe('shadow event', () => {
       noneProbability: 0.1,
       browsingLevel: 3,
       specVersion: 1,
-      criteriaVersion: 1,
+      criteriaVersion: 2,
     });
     expect(row.specHash).toMatch(/^[0-9a-f]{64}$/);
     expect(row.promptHash).toMatch(/^[0-9a-f]{64}$/);
@@ -632,9 +635,10 @@ describe('shadow event', () => {
         injectionPresent: 0,
       },
       criteria: {
-        criteriaVersion: 1,
+        criteriaVersion: 2,
         specHash: 'a'.repeat(64),
         role: 'style',
+        styleFamily: 'anime_manga',
         modelTypes: ['LORA'],
         baseModel: null,
       },
@@ -655,7 +659,7 @@ describe('shadow event', () => {
       ],
       noneProbability: 0.1,
       model: 'typesafe/jev-1.13-20260917',
-      criteriaVersion: 1,
+      criteriaVersion: 2,
     };
     redisMock.redis.packed.get.mockResolvedValue(cached);
     await getResourceIntent(INPUT, CTX);
@@ -721,7 +725,7 @@ describe('coverage resolution', () => {
       suggestions: [],
       noneProbability: null,
       model: 'typesafe/jev-1.13-20260917',
-      criteriaVersion: 1,
+      criteriaVersion: 2,
     });
     await getResourceIntent(INPUT, { browsingLevel: 3 });
     expect(coverageSource.coverageAudience).not.toHaveBeenCalled();

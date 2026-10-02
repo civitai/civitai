@@ -1,0 +1,185 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import type * as CoverageSource from '~/server/services/generation/coverage-source';
+import type * as JevModule from '~/server/services/ai/jev';
+import type * as MeiliClient from '~/server/meilisearch/client';
+
+/**
+ * The insight seam ACROSS both modules: prompt → stage-1 intent → the real matcher
+ * (real Meilisearch filter + expansion + label ordering) → stage 3 → hydration.
+ *
+ * `resource-intent.service.test.ts` mocks the matcher and
+ * `resource-intent-matcher.service.test.ts` never runs the service, so neither can
+ * see a response whose order is decided by a label. Only the vendor, the search
+ * client and resource hydration are mocked here.
+ */
+
+const mockAskJev = vi.fn();
+const mockGetResourceData = vi.fn();
+const searchWithSignal = vi.fn();
+
+vi.mock('~/server/services/ai/jev', async (importOriginal) => ({
+  ...(await importOriginal<typeof JevModule>()),
+  askJev: (...args: unknown[]) => mockAskJev(...(args as [])),
+}));
+
+vi.mock('~/server/meilisearch/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof MeiliClient>()),
+  searchClient: { index: () => ({}) },
+  searchWithSignal: (...args: unknown[]) => searchWithSignal(...args),
+  withMeiliResourceSelect: (fn: (signal?: AbortSignal) => unknown) => fn(undefined),
+  isTransientMeiliError: () => false,
+}));
+
+// Hand-listed for the same reason resource-intent.service.test.ts hand-lists it:
+// generation.service is a hub whose transitive graph this suite does not want.
+vi.mock('~/server/services/generation/generation.service', () => ({
+  getResourceData: (...args: unknown[]) => mockGetResourceData(...(args as [])),
+}));
+
+vi.mock('~/server/clickhouse/client', () => ({ clickhouse: undefined }));
+
+vi.mock('~/server/services/generation/coverage-source', async (importOriginal) => ({
+  ...(await importOriginal<typeof CoverageSource>()),
+  coverageAudience: vi.fn(async () => ({ next: false, member: false })),
+}));
+
+const { getResourceIntent } = await import('~/server/services/resource-intent.service');
+
+const INPUT = { prompt: 'an anime portrait of a swordswoman', baseModel: 'SDXL 1.0' } as const;
+const CTX = { browsingLevel: 3, coverage: { next: false, member: false } };
+
+const STAGE1_ANSWERS = [
+  { id: 'needsResource', type: 'noul' as const, value: 0.9 },
+  { id: 'role', type: 'choice' as const, value: 'style', distribution: { style: 1 } },
+  {
+    id: 'styleFamily',
+    type: 'choice' as const,
+    value: 'anime_manga',
+    distribution: { anime_manga: 1 },
+  },
+  {
+    id: 'contentType',
+    type: 'choice' as const,
+    value: 'portrait_character',
+    distribution: { portrait_character: 1 },
+  },
+  { id: 'specificity', type: 'score' as const, value: 4 },
+  { id: 'injectionPresent', type: 'noul' as const, value: 0 },
+];
+
+const hitFor = (modelId: number, versionId: number, thumbsUpCount: number) =>
+  ({
+    id: modelId,
+    name: `model-${modelId}`,
+    type: 'LORA',
+    metrics: { thumbsUpCount },
+    versions: [{ id: versionId, name: 'v1', baseModel: 'SDXL 1.0', canGenerate: true }],
+  } as never);
+
+const genResource = (id: number) => ({
+  id,
+  name: `version-${id}`,
+  baseModel: 'SDXL 1.0',
+  strength: 0.8,
+  minStrength: -1,
+  maxStrength: 2,
+  trainedWords: ['trigger1'],
+  clipSkip: 2,
+  hasAccess: true,
+  canGenerate: true,
+  model: { id: 100 + id, name: `model-${id}`, type: 'LORA', nsfw: false, poi: false, userId: 1 },
+  image: { url: 'https://example.com/x.jpeg', type: 'image/jpeg', nsfwLevel: 1 },
+  air: `air:${id}`,
+});
+
+// Popularity-descending, which is the order the index sort produces.
+const SEED_HITS = [hitFor(8801, 81001, 94), hitFor(8802, 82002, 57), hitFor(8803, 83003, 19)];
+
+beforeEach(() => {
+  mockAskJev.mockReset();
+  mockAskJev.mockImplementationOnce(async () => ({
+    answers: STAGE1_ANSWERS,
+    usage: { promptTokens: 100, completionTokens: 50 },
+    model: 'typesafe/jev-1.13-20260917',
+  }));
+  // A FLAT stage-3 distribution, so stage 3 reorders nothing and what the response
+  // carries is the order the matcher produced.
+  mockAskJev.mockImplementationOnce(async () => ({
+    answers: [
+      {
+        id: 'resourceVersion',
+        type: 'choice' as const,
+        value: '0',
+        distribution: { '0': 0.25, '1': 0.25, '2': 0.25 },
+      },
+    ],
+    usage: { promptTokens: 200, completionTokens: 20 },
+    model: 'typesafe/jev-1.13-20260917',
+  }));
+
+  mockGetResourceData.mockReset();
+  mockGetResourceData.mockImplementation(async (ids: number[]) => ids.map(genResource));
+
+  searchWithSignal.mockReset();
+  searchWithSignal.mockResolvedValue({ hits: SEED_HITS, estimatedTotalHits: 3 });
+
+  dbMock.dbRead.resourceInsight.findMany.mockReset();
+  dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([]);
+
+  redisMock.redis.packed.get.mockReset();
+  redisMock.redis.packed.get.mockResolvedValue(null);
+  redisMock.redis.packed.set.mockReset();
+  redisMock.redis.packed.set.mockResolvedValue('OK');
+
+  loggingMock.logToAxiom.mockReset();
+  loggingMock.logToAxiom.mockResolvedValue(undefined);
+});
+
+describe('resource-intent — a label changes the served response', () => {
+  it('🔴 serves the least popular candidate first when its label agrees with the prompt', async () => {
+    dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([
+      // The most popular candidate is a confident disagreement, and carries the best
+      // qualityScore of the three, so neither popularity nor quality can produce the
+      // asserted order.
+      {
+        modelVersionId: 81001,
+        role: 'quality_enhancer',
+        styleFamily: 'pixel_retro',
+        confidence: 0.72,
+        qualityScore: 0.91,
+      },
+      // 82002 carries no row — the ~99% case — and sorts between the two.
+      {
+        modelVersionId: 83003,
+        role: 'style',
+        styleFamily: 'anime_manga',
+        confidence: 0.55,
+        qualityScore: 0.29,
+      },
+    ]);
+
+    const result = await getResourceIntent(INPUT, CTX);
+
+    expect(result.degraded).toBe(false);
+    expect(result.suggestions.map((s) => s.versionId)).toEqual([83003, 82002, 81001]);
+    // And the order reached hydration, not just the response projection.
+    expect(mockGetResourceData.mock.calls[0][0]).toEqual([83003, 82002, 81001]);
+  });
+
+  it('invariant guard: with no labels at all the response keeps the popularity order', async () => {
+    const result = await getResourceIntent(INPUT, CTX);
+
+    expect(result.degraded).toBe(false);
+    expect(result.suggestions.map((s) => s.versionId)).toEqual([81001, 82002, 83003]);
+  });
+
+  it('🔴 compiles the style family the ordering reads into the versioned criteria', async () => {
+    const result = await getResourceIntent(INPUT, CTX);
+
+    expect(result.criteria).toMatchObject({ role: 'style', styleFamily: 'anime_manga' });
+  });
+});

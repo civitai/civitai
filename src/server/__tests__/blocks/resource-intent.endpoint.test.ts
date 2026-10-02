@@ -78,7 +78,7 @@ const SERVICE_RESULT = {
   suggestions: [],
   noneProbability: null,
   model: 'typesafe/jev-1.13-20260917',
-  criteriaVersion: 1,
+  criteriaVersion: 2,
 };
 
 function makeRes() {
