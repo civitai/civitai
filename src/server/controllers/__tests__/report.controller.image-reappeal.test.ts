@@ -1,7 +1,10 @@
 import { Prisma } from '@prisma/client';
+import { readFileSync } from 'fs';
+import path from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as BuzzService from '~/server/services/buzz.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * A second appeal on an image, end to end through the fee: the real handler, the real
@@ -24,6 +27,7 @@ vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
 }));
 
 import { createEntityAppealHandler } from '../report.controller';
+import { isSafeToRetry } from '@civitai/buzz';
 import { APPEAL_ALREADY_PENDING } from '~/server/services/report.service';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
@@ -42,9 +46,10 @@ type AppealRow = {
 
 let appeals: AppealRow[];
 
-// Read from the generated client rather than restated, so the fake enforces whatever unique
-// index schema.full.prisma declares. The Pending-only index exists only in the migration SQL,
-// because Prisma cannot express a partial index, so that one is restated here.
+// Read from the generated client rather than restated, so the fake enforces whatever composite
+// @@unique schema.full.prisma declares on Appeal (single-field @unique is not read; Appeal has
+// none). The Pending-only index exists only in the migration SQL, because Prisma cannot express a
+// partial index, so that one is restated here and pinned against the SQL below.
 const declaredUniques = Prisma.dmmf.datamodel.models.find((m) => m.name === 'Appeal')!
   .uniqueFields as (keyof AppealRow)[][];
 
@@ -76,13 +81,29 @@ beforeEach(() => {
   vi.clearAllMocks();
   seed();
 
-  dbMock.dbRead.image.findUnique.mockResolvedValue({ id: IMAGE_ID, userId: OWNER });
+  dbMock.dbRead.image.findUnique.mockResolvedValue({
+    id: IMAGE_ID,
+    userId: OWNER,
+    ingestion: 'Blocked',
+  });
   // Past the free allowance, so every appeal here carries the fee.
   dbMock.dbRead.appeal.count.mockResolvedValue(3);
   dbMock.dbRead.appeal.findFirst.mockImplementation(
-    async ({ where }: { where: Partial<AppealRow> }) =>
-      appeals.filter((a) => KEY.every((k) => a[k] === where[k])).sort((a, b) => b.id - a.id)[0] ??
-      null
+    async ({
+      where,
+      orderBy,
+    }: {
+      where: Partial<AppealRow>;
+      orderBy?: { id?: 'asc' | 'desc' };
+    }) => {
+      if (!orderBy?.id) throw new Error('fake findFirst: expected an orderBy on id');
+      const direction = orderBy.id === 'desc' ? -1 : 1;
+      return (
+        appeals
+          .filter((a) => KEY.every((k) => a[k] === where[k]))
+          .sort((a, b) => direction * (a.id - b.id))[0] ?? null
+      );
+    }
   );
   dbMock.dbWrite.appeal.create.mockImplementation(
     async ({ data }: { data: Omit<AppealRow, 'id' | 'status'> }) => {
@@ -151,9 +172,71 @@ describe('a second appeal on the same image', () => {
 
     expect(mockCharge).toHaveBeenCalledTimes(1);
     expect(mockRefund).toHaveBeenCalledTimes(1);
+    // Deliberate: the client retries every failure by default, and retrying a refund that timed
+    // out can refund twice. Do not drop this to the default; a refund that did not land is logged.
+    expect(mockRefund.mock.calls[0][1]).toEqual({ shouldRetry: isSafeToRetry });
     expect(mockRefund.mock.calls[0][0].externalTransactionIdPrefix).toBe(
       mockCharge.mock.calls[0][0].externalTransactionIdPrefix
     );
     expect(appeals).toHaveLength(2);
   });
+
+  it('refuses an image that is not blocked, without charging', async () => {
+    seed(AppealStatus.Approved);
+    dbMock.dbRead.image.findUnique.mockResolvedValue({
+      id: IMAGE_ID,
+      userId: OWNER,
+      ingestion: 'Scanned',
+    });
+
+    await expect(appeal()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+
+    expect(mockCharge).not.toHaveBeenCalled();
+    expect(appeals).toHaveLength(1);
+  });
+
+  it('still refunds and reports the original error when the create fails for another reason', async () => {
+    dbMock.dbWrite.appeal.create.mockRejectedValueOnce(new Error('connection reset'));
+
+    await expect(appeal()).rejects.not.toMatchObject({ message: APPEAL_ALREADY_PENDING });
+
+    expect(mockCharge).toHaveBeenCalledTimes(1);
+    expect(mockRefund).toHaveBeenCalledTimes(1);
+  });
+
+  it('logs the fee as owed, and keeps the original error, when the refund itself fails', async () => {
+    seed(AppealStatus.Approved, AppealStatus.Pending);
+    dbMock.dbRead.appeal.findFirst.mockResolvedValueOnce(null);
+    mockRefund.mockRejectedValue(new Error('buzz unavailable'));
+
+    await expect(appeal()).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: APPEAL_ALREADY_PENDING,
+    });
+
+    expect(mockRefund).toHaveBeenCalledTimes(1);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'create-entity-appeal',
+        userId: OWNER,
+        buzzTransactionId: mockCharge.mock.calls[0][0].externalTransactionIdPrefix,
+      })
+    );
+  });
+});
+
+// The race test above relies on the fake's restatement of this index; this ties it to the SQL.
+it('the migration makes only Pending appeals unique per entity and user', () => {
+  const sql = readFileSync(
+    path.join(
+      __dirname,
+      '../../../../packages/civitai-db-schema/prisma/migrations/20261002200000_appeal_one_pending_per_entity/migration.sql'
+    ),
+    'utf8'
+  );
+
+  expect(sql).toMatch(
+    /^CREATE UNIQUE INDEX "Appeal_entityType_entityId_userId_pending_key" ON "Appeal"\("entityType", "entityId", "userId"\) WHERE status = 'Pending';$/m
+  );
+  expect(sql).toMatch(/^DROP INDEX "Appeal_entityType_entityId_userId_key";$/m);
 });

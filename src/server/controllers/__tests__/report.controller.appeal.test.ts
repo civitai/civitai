@@ -148,7 +148,8 @@ describe.each([
   {
     entityType: EntityType.Image,
     entityId: 99,
-    owned: () => mockGetImageById.mockResolvedValue({ id: 99, userId: 602767 }),
+    owned: () =>
+      mockGetImageById.mockResolvedValue({ id: 99, userId: 602767, ingestion: 'Blocked' }),
   },
   {
     entityType: EntityType.Model3D,

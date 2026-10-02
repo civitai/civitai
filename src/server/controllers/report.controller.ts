@@ -26,7 +26,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
+import { AppealStatus, EntityType, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 
 export async function createReportHandler({
@@ -101,6 +101,8 @@ export async function createEntityAppealHandler({
         const image = await getImageById({ id: input.entityId });
         if (!image) throw throwNotFoundError('Image not found');
         if (image.userId !== userId) throw throwAuthorizationError();
+        if (image.ingestion !== ImageIngestionStatus.Blocked)
+          throw throwBadRequestError('Only a blocked image can be appealed');
 
         await assertNotAlreadyAppealed({ ...input, userId });
         break;

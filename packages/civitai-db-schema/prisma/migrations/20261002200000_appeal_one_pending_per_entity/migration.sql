@@ -3,4 +3,6 @@
 -- partial unique index, so it lives only here.
 CREATE INDEX "Appeal_entityType_entityId_userId_idx" ON "Appeal"("entityType", "entityId", "userId");
 CREATE UNIQUE INDEX "Appeal_entityType_entityId_userId_pending_key" ON "Appeal"("entityType", "entityId", "userId") WHERE status = 'Pending';
+-- Fail fast instead of queueing every Appeal query behind a lock held by a long transaction.
+SET lock_timeout = '3s';
 DROP INDEX "Appeal_entityType_entityId_userId_key";

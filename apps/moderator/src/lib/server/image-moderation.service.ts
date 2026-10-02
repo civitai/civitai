@@ -214,6 +214,7 @@ async function runAppealCascade(
       entityId: imageId,
     });
   await notifyAppealResolved({
+    appealId: appeal.id,
     userId: appeal.userId,
     entityId: imageId,
     status: approved ? 'Approved' : 'Rejected',

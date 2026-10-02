@@ -61,6 +61,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import type { Report } from '~/shared/utils/prisma/models';
 import { withRetries } from '~/utils/errorHandling';
+import { isSafeToRetry } from '@civitai/buzz';
 import { getModeratedTags } from '~/server/services/system-cache';
 
 export const getReportById = <TSelect extends Prisma.ReportSelect>({
@@ -757,11 +758,14 @@ export async function createEntityAppeal({
     if (buzzTransactionId) {
       const prefix = buzzTransactionId;
       try {
-        await withRetries(() =>
-          refundMultiAccountTransaction({
+        // Retries only when the request provably never landed: retrying a timed-out refund can
+        // refund twice, and the log below covers the case where it did not land.
+        await refundMultiAccountTransaction(
+          {
             externalTransactionIdPrefix: prefix,
-            description: 'Refund appeal fee',
-          })
+            description: `Refund appeal fee for ${entityType} ${entityId}`,
+          },
+          { shouldRetry: isSafeToRetry }
         );
       } catch (refundError) {
         // No appeal row was written, so nothing else records that this user is owed the fee.
@@ -977,7 +981,9 @@ export async function resolveEntityAppeal({
       userId: appeal.userId,
       type: 'entity-appeal-resolved',
       category: NotificationCategory.Other,
-      key: `entity-appeal-resolved:${appeal.entityType}:${appeal.entityId}`,
+      // Per appeal, not per entity: an entity can be appealed again after a re-block, and the
+      // notification service reuses the row for a repeated key, so the second decision would vanish.
+      key: `entity-appeal-resolved:${appeal.entityType}:${appeal.entityId}:${appeal.id}`,
       details: {
         entityType: appeal.entityType,
         entityId: appeal.entityId,

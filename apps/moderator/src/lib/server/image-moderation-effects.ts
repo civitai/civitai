@@ -383,6 +383,7 @@ export async function refundAppealFee(appeal: {
 }
 
 export async function notifyAppealResolved(input: {
+  appealId: number;
   userId: number;
   entityId: number;
   status: 'Approved' | 'Rejected';
@@ -393,7 +394,8 @@ export async function notifyAppealResolved(input: {
       userId: input.userId,
       type: 'entity-appeal-resolved',
       category: NotificationCategory.Other,
-      key: `entity-appeal-resolved:Image:${input.entityId}`,
+      // Per appeal, matching the main app: a repeated key reuses the first decision's notification.
+      key: `entity-appeal-resolved:Image:${input.entityId}:${input.appealId}`,
       details: {
         entityType: 'Image',
         entityId: input.entityId,

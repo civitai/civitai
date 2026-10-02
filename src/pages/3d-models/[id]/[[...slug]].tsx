@@ -52,7 +52,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Gated } from '~/components/Gated/Gated';
 import { Model3DPermissionIndicator } from '~/components/PermissionIndicator/Model3DPermissionIndicator';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { AppealDialog } from '~/components/Dialog/Common/AppealDialog';
+import { AppealRemovalPrompt } from '~/components/Dialog/Common/AppealRemovalPrompt';
 import { Model3DComments } from '~/components/Model3D/Comments/Model3DComments';
 import { Model3DActionsMenu } from '~/components/Model3D/Actions/Model3DActionsMenu';
 import { Model3DThumbsUpButton } from '~/components/Model3D/ThumbsUp/Model3DThumbsUpButton';
@@ -392,20 +392,8 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               title="Removed by moderators"
               radius="md"
             >
-              This 3D model has been {isUnpublished ? 'unpublished' : 'removed'} by our moderators.
-              We can make mistakes — if you believe this was done in error,{' '}
-              <Anchor
-                type="button"
-                onClick={() =>
-                  dialogStore.trigger({
-                    component: AppealDialog,
-                    props: { entityId: model3d.id, entityType: EntityType.Model3D },
-                  })
-                }
-              >
-                appeal this removal
-              </Anchor>
-              .
+              This 3D model has been {isUnpublished ? 'unpublished' : 'removed'} by our moderators.{' '}
+              <AppealRemovalPrompt entityId={model3d.id} entityType={EntityType.Model3D} />
             </AlertWithIcon>
           )}
 
