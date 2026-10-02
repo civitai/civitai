@@ -390,14 +390,19 @@ describe('🔴 the RECORDED 200 adapts to the JevAnswer contract', () => {
       role: { type: 'choice', choice: 'character', probabilities: { character: 1 } },
     });
     const result = await askJev({ state: {}, questions: [roleQuestion] });
-    expect(Object.keys(result.answers[0]).sort()).toEqual([
+    const [answer] = result.answers;
+    expect(Object.keys(answer).sort()).toEqual([
       'confidence',
       'distribution',
       'id',
       'type',
       'value',
     ]);
-    expect(result.answers[0].confidence).toBeUndefined();
+    // The narrowing is the point, not boilerplate: `JevAnswer`'s noul variant has
+    // no `confidence` at all, so reading it off the union is a type error. That
+    // is the guard working.
+    if (answer.type === 'noul') throw new Error('expected a choice answer');
+    expect(answer.confidence).toBeUndefined();
     expect(jevConfidenceFloor(result.answers)).toBeNull();
   });
 
@@ -738,8 +743,11 @@ describe('askJev — fail-closed on the response', () => {
       ok: false,
       status: 400,
     });
-    const err = await askJev({ state: { prompt }, questions: recordedQuestions }).catch(
-      (e) => e as Error
+    const err = await askJev({ state: { prompt }, questions: recordedQuestions }).then(
+      () => {
+        throw new Error('expected askJev to reject on a 400');
+      },
+      (e: Error) => e
     );
     expect(err.message).not.toContain(prompt);
     expect(err.message).toContain('[redacted]');
