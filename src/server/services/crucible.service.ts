@@ -1886,7 +1886,6 @@ type EntryForJudging = {
     width: number | null;
     height: number | null;
     nsfwLevel: number;
-    metadata: { duration: number } | null;
   };
   user: {
     id: number;
@@ -1941,7 +1940,6 @@ type RawEntrySample = {
   image_width: number | null;
   image_height: number | null;
   image_nsfwLevel: number;
-  image_duration: string | null;
   user_id: number;
   user_username: string | null;
   user_deletedAt: Date | null;
@@ -1978,7 +1976,6 @@ async function fetchEntrySample(
           i.width as image_width,
           i.height as image_height,
           i."nsfwLevel" as "image_nsfwLevel",
-          i.metadata->>'duration' as image_duration,
           u.id as user_id,
           u.username as user_username,
           u."deletedAt" as "user_deletedAt",
@@ -2005,7 +2002,6 @@ async function fetchEntrySample(
           i.width as image_width,
           i.height as image_height,
           i."nsfwLevel" as "image_nsfwLevel",
-          i.metadata->>'duration' as image_duration,
           u.id as user_id,
           u.username as user_username,
           u."deletedAt" as "user_deletedAt",
@@ -2033,7 +2029,6 @@ async function fetchEntrySample(
       width: raw.image_width,
       height: raw.image_height,
       nsfwLevel: raw.image_nsfwLevel,
-      metadata: raw.image_duration ? { duration: Number(raw.image_duration) } : null,
     },
     user: {
       id: raw.user_id,
