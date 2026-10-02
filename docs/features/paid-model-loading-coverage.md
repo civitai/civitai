@@ -229,7 +229,7 @@ not loadable under the rule above. Decided (Justin, 2026-09-08): loading support
 | --- | --- | --- |
 | `Other` — the catch-all | 785 | Architecture unknown |
 | Legacy SD 2.x (2.1 768, 2.1, 2.0, 2.0 768, Unclip) | 537 | Deliberately retired |
-| API-only (Veo 3, Sora 2, Kling, Seedance, Seedream, Imagen4, OpenAI, Vidu Q1, Grok, Ideogram 4.0, Reve, MAI, Wan 2.5/2.7/3.0, MiniMax Music 3) | ~35 | Nothing to load, ever |
+| API-only (Veo 3, Sora 2, Kling, Seedance, Seedream, Imagen4, OpenAI, Vidu Q1, Grok, Ideogram 4.5, Reve, MAI, Wan 2.5/2.7/3.0, MiniMax Music 3) | ~35 | Nothing to load, ever |
 | Open architectures the generator does not support yet (PixArt E 95, Lumina 39, Flux.1 Kontext 26, Kolors 19, ACE Audio 10, HiDream-O1 8, AuraFlow 7, Hunyuan 1 7, Mochi 5, MageFlow 5, Qwen 2 4, …) | ~240 | The generator cannot run the architecture |
 
 Every one would fail at generation time even if loaded perfectly, so the gate is right. ⚠️ But all
