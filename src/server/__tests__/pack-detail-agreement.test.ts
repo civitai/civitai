@@ -60,6 +60,10 @@ const { getPackDetail } = await import('~/server/services/creator-shop-pack.serv
 const { getPackMembers, purchaseCosmeticPack } = await import(
   '~/server/services/cosmetic-pack.service'
 );
+const { purchaseCosmeticShopItem } = await import('~/server/services/cosmetic-shop.service');
+const { getPackPurchaseBlockers } = await import(
+  '~/components/CosmeticShop/pack-purchase-blockers'
+);
 
 const PACK_ID = 6001;
 const LISTER = 701;
@@ -96,7 +100,7 @@ beforeEach(() => {
     status: CosmeticShopItemStatus.Published,
     listed: true,
     availableQuantity: null,
-    meta: { purchases: 0 },
+    meta: { purchases: 0, packMemberCount: memberRows.length },
     addedById: LISTER,
     members: memberRows.map(({ cosmeticId, floorAmount }) => ({ cosmeticId, floorAmount })),
     _count: { purchases: 0 },
@@ -319,5 +323,104 @@ describe('the sold count is the purchase rows, not the meta counter', () => {
     });
     const detail = await getPackDetail({ shopItemId: PACK_ID, userId: BUYER });
     expect(detail.meta.purchases).toBe(4);
+  });
+});
+
+/**
+ * Deleting a member Cosmetic cascades its join row away, so the pack's own rows
+ * shrink with it and only `meta.packMemberCount` still says what was sold. Each
+ * case drives the shop entry point, `purchaseCosmeticShopItem`, because the
+ * caller is where the build-time count is read.
+ */
+describe('a pack that lost members since it was built', () => {
+  const lostMembers = ({
+    survivors,
+    packMemberCount,
+  }: {
+    survivors: typeof memberRows;
+    packMemberCount: number | undefined;
+  }) => {
+    shopItemFindUnique.mockResolvedValue({
+      id: PACK_ID,
+      cosmeticId: null,
+      cosmetic: null,
+      title: 'A pack',
+      description: null,
+      unitAmount: PRICE,
+      status: CosmeticShopItemStatus.Published,
+      listed: true,
+      availableQuantity: null,
+      availableFrom: null,
+      availableTo: null,
+      meta: packMemberCount === undefined ? { purchases: 0 } : { purchases: 0, packMemberCount },
+      addedById: LISTER,
+      members: survivors.map(({ cosmeticId, floorAmount }) => ({ cosmeticId, floorAmount })),
+      _count: { purchases: 0, members: survivors.length },
+    });
+    packMemberFindMany.mockResolvedValue(
+      survivors.map((row) => ({ ...row, cosmetic: cosmeticFor(row.cosmeticId) }))
+    );
+  };
+  const buy = () =>
+    purchaseCosmeticShopItem({
+      userId: BUYER,
+      shopItemId: PACK_ID,
+      packsEnabled: true,
+      stickersEnabled: true,
+    });
+  const foreignOnly = memberRows.filter((m) => m.cosmeticId === FOREIGN_MEMBER);
+
+  // 868m87aqu. With the count gone the old caller fell back to the join rows,
+  // which agree with the shrunken pack: the buyer was charged the full PRICE for
+  // one member of two.
+  it('refuses a short pack with no recorded count instead of charging full price', async () => {
+    lostMembers({ survivors: foreignOnly, packMemberCount: undefined });
+    await expect(buy()).rejects.toThrow(/^This pack contains an item that is no longer available$/);
+    expect(spend).not.toHaveBeenCalled();
+  });
+
+  it('refuses a short pack against its recorded count', async () => {
+    lostMembers({ survivors: foreignOnly, packMemberCount: memberRows.length });
+    await expect(buy()).rejects.toThrow(/^This pack contains an item that is no longer available$/);
+    expect(spend).not.toHaveBeenCalled();
+  });
+
+  // The positive control for the two above: the same entry point, fixture and
+  // buyer do reach the charge when nothing is missing.
+  it('charges a whole pack through the same entry point', async () => {
+    lostMembers({ survivors: memberRows, packMemberCount: memberRows.length });
+    await buy();
+    expect(spend).toHaveBeenCalledTimes(1);
+    expect(spend.mock.calls[0][0].amount).toBe(PRICE);
+  });
+
+  // 868m87ay0, and its partial form: the detail counted the missing members
+  // from the join rows too, so it reported none missing and the button stayed
+  // priced and enabled on a purchase the server refuses.
+  it.each([
+    { name: 'an emptied pack', survivors: [] as typeof memberRows, missing: memberRows.length },
+    { name: 'a partly emptied pack', survivors: foreignOnly, missing: 1 },
+  ])('disables the Buy button on $name, which the purchase refuses', async (c) => {
+    lostMembers({ survivors: c.survivors, packMemberCount: memberRows.length });
+    const detail = await getPackDetail({ shopItemId: PACK_ID, userId: BUYER });
+    expect(detail.unavailableCount).toBe(c.missing);
+    expect(getPackPurchaseBlockers(detail)).toMatchObject({ unavailable: true, blocked: true });
+    await expect(buy()).rejects.toThrow();
+    expect(spend).not.toHaveBeenCalled();
+  });
+
+  it('disables the Buy button on a pack with no recorded count', async () => {
+    lostMembers({ survivors: memberRows, packMemberCount: undefined });
+    const detail = await getPackDetail({ shopItemId: PACK_ID, userId: BUYER });
+    expect(getPackPurchaseBlockers(detail).blocked).toBe(true);
+    await expect(buy()).rejects.toThrow();
+    expect(spend).not.toHaveBeenCalled();
+  });
+
+  it('leaves the Buy button enabled on a whole pack', async () => {
+    lostMembers({ survivors: memberRows, packMemberCount: memberRows.length });
+    const detail = await getPackDetail({ shopItemId: PACK_ID, userId: BUYER });
+    expect(detail.unavailableCount).toBe(0);
+    expect(getPackPurchaseBlockers(detail).blocked).toBe(false);
   });
 });

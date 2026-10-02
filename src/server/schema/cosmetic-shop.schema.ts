@@ -82,13 +82,15 @@ export const cosmeticShopItemMeta = z.object({
   // sha256 of the submitted artwork bytes — used to block duplicate submissions.
   imageHash: z.string().optional(),
   // Packs only. A pack has no Cosmetic of its own, so its cover art and size
-  // live here rather than in `Cosmetic.data`. `packMemberCount` is a render
-  // convenience; the join table stays authoritative for what's in the pack.
+  // live here rather than in `Cosmetic.data`.
   coverUrl: z.string().optional(),
   // Artwork of the first few members, for packs with no cover of their own.
   // Snapshotted rather than joined so a storefront card can render it from meta
   // alone; re-taken whenever the contents change.
   coverTiles: z.array(z.string()).optional(),
+  // Authoritative, not a render convenience: the build-time member count a sale
+  // is checked against (`packMembersMissing`). The join rows can't serve, since
+  // deleting a member Cosmetic deletes its row. A pack without it can't be sold.
   packMemberCount: z.number().optional(),
   // Cross-creator selling: whether other creators may resell this item, and the %
   // of price (0-70, out of the creator's 70% pool) the reseller keeps.
