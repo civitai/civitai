@@ -1419,6 +1419,8 @@ export const imageMetadataCache = createCachedObject<ImageWithMetadata>({
 export const thumbnailCache = createCachedObject<{
   id: number;
   url: string;
+  width: number | null;
+  height: number | null;
   nsfwLevel: NsfwLevel;
   parentId?: number;
 }>({
@@ -1440,11 +1442,20 @@ export const thumbnailCache = createCachedObject<{
     if (thumbnailIds.length === 0) return {};
 
     const thumbnails = await db.$queryRaw<
-      { id: number; url: string; nsfwLevel: NsfwLevel; parentId: number }[]
+      {
+        id: number;
+        url: string;
+        width: number | null;
+        height: number | null;
+        nsfwLevel: NsfwLevel;
+        parentId: number;
+      }[]
     >`
         SELECT
           id,
           url,
+          width,
+          height,
           "nsfwLevel",
           cast(metadata->'parentId' as int) as "parentId"
         FROM "Image"
