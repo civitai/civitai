@@ -112,6 +112,7 @@ import { Gated } from '~/components/Gated/Gated';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 import classes from './Collection.module.scss';
+import { isViewer } from '~/utils/is-viewer';
 
 const AddUserContentModal = dynamic(() =>
   import('~/components/Collections/AddUserContentModal').then((x) => x.AddUserContentModal)
@@ -297,8 +298,8 @@ const ImageCollection = ({
           permissions?.manage ||
           currentUser?.id === collection.user.id ||
           currentUser?.isModerator ||
-          currentUser?.id === (image.userId ?? image.user?.id) ||
-          currentUser?.id === image.collectionItemAddedById;
+          isViewer(currentUser, image.userId ?? image.user?.id) ||
+          isViewer(currentUser, image.collectionItemAddedById);
         return (
           <>
             {canRemove && (

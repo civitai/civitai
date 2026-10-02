@@ -3,6 +3,7 @@ import { useCommentsContext } from '~/components/CommentsV2/CommentsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createContext, useContext } from 'react';
 import type { Comment } from '~/server/services/commentsv2.service';
+import { isViewer } from '~/utils/is-viewer';
 
 type CommentV2State = {
   canReport?: boolean;
@@ -41,8 +42,8 @@ export function CommentProvider({
   const canEdit = (!isLocked && !isMuted) || isMod;
   const canReply =
     (currentUser && !isLocked && !isMuted && !forceLocked && !comment.hidden) ?? undefined;
-  const canHide = currentUser?.id === resourcerOwnerId || isMod;
-  const canPin = currentUser?.id === resourcerOwnerId || isMod;
+  const canHide = isViewer(currentUser, resourcerOwnerId) || isMod;
+  const canPin = isViewer(currentUser, resourcerOwnerId) || isMod;
   const badge = badges?.find((x) => x.userId === comment.user.id);
   return (
     <CommentV2Context.Provider
