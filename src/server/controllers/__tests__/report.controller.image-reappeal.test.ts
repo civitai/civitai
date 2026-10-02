@@ -139,7 +139,7 @@ describe('a second appeal on the same image', () => {
     expect(appeals[1].buzzTransactionId).toMatch(/^appeal-602767-/);
   });
 
-  // Justin's decision (2026-10-02): one appeal per block. A rejection upheld the block that is
+  // Product decision (2026-10-02): one appeal per block. A rejection upheld the block that is
   // still in place, so asking again is refused, and refused before the fee is charged.
   it('refuses an appeal of a block that was already upheld on appeal, without charging', async () => {
     seed(AppealStatus.Rejected);
@@ -223,7 +223,8 @@ describe('a second appeal on the same image', () => {
       ([input]) => input.externalTransactionIdPrefix
     );
     expect(first).toMatch(/^appeal-602767-1790000000000-/);
-    expect(second).not.toBe(first);
+    // Refunds look transactions up by prefix, so neither may be a prefix of the other.
+    expect(second.startsWith(first) || first.startsWith(second)).toBe(false);
   });
 
   // Older rows carry blockedFor 'moderated' with ingestion 'Scanned'; the page offers them an appeal.

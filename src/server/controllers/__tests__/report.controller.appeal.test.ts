@@ -126,13 +126,15 @@ describe('createEntityAppealHandler — Model re-request', () => {
 
     const result = await createEntityAppealHandler({ input: baseInput, ctx: ctxUser(602767) });
 
+    expect(mockGetLatestAppeal).toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: EntityType.Model, entityId: 2186217, userId: 602767 })
+    );
     expect(mockReopenModelAppeal).toHaveBeenCalledWith({ id: 7, message: baseInput.message });
     expect(mockCreateEntityAppeal).not.toHaveBeenCalled();
     expect(result).toMatchObject({ status: 'Pending' });
   });
 
-  // An approved appeal unflags the model, but a later re-upload can flag it again —
-  // and the row from the first round still blocks the create.
+  // An approved appeal unflags the model, but a later re-upload can flag it again.
   it('reopens an approved request when the model has been flagged again', async () => {
     mockGetLatestAppeal.mockResolvedValue({ id: 7, status: 'Approved', resolvedAt: new Date() });
 

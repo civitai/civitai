@@ -5,7 +5,7 @@ export const APPEAL_ALREADY_PENDING = 'Your appeal of this removal is already un
 export const APPEAL_ALREADY_DECIDED =
   'Your appeal of this removal was reviewed and the decision stands.';
 
-// One appeal per block (Justin, 2026-10-02). An approved image appeal lifted the block, so a later
+// One appeal per block (product decision, 2026-10-02). An approved image appeal lifted the block, so a later
 // block is a new decision to contest; a rejected one upheld the block that is still in place. An
 // approved 3D model appeal restores nothing, so the model is still under the same removal and any
 // decided appeal is final. The server refuses on this before charging the fee, and the page hides
