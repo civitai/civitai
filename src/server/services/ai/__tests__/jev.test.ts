@@ -209,6 +209,20 @@ describe('🔴 askJev talks to the DECISIONS endpoint', () => {
     }
   });
 
+  it('🔴 the `questions` that go ON THE WIRE are a record keyed by id, not an array', async () => {
+    // Found by a mutation sweep: every id/record assertion in this file read
+    // `buildDecisionsQuestions`'s RETURN VALUE, so wrapping the call site in
+    // `Object.values(...)` — mismatch #1, an array instead of a record, the
+    // exact shape the endpoint rejects — survived the whole suite. The claim
+    // has to be made about the serialised body.
+    respond(RECORDED_200);
+    await askJev({ state: { prompt: 'p' }, questions: recordedQuestions });
+    const { questions } = lastRequestBody();
+    expect(Array.isArray(questions)).toBe(false);
+    expect(Object.keys(questions as object).sort()).toEqual(['needsResource', 'quality', 'role']);
+    expect(questions).toEqual(buildDecisionsQuestions(recordedQuestions));
+  });
+
   it('sends the numbered pin and never `jev-latest`', async () => {
     respond(RECORDED_200);
     await askJev({ state: {}, questions: recordedQuestions });
@@ -450,6 +464,20 @@ describe('🔴 jevConfidenceFloor — the weakest judgment bounds the row', () =
   it('🔴 a noul does NOT contribute — a 0-floor would otherwise pin every row', () => {
     const floor = jevConfidenceFloor([
       { id: 'a', type: 'noul', value: 0 },
+      { id: 'b', type: 'score', value: 4, confidence: 0.8 },
+    ]);
+    expect(floor).toBe(0.8);
+  });
+
+  it('🔴 excludes a noul BY KIND, even if one ever arrives carrying a confidence', () => {
+    // The case above cannot reach the kind check: the `JevAnswer` noul variant
+    // has no `confidence` field, so the later `undefined` test skips it anyway
+    // and deleting the kind check survives a mutation sweep. This cast builds
+    // the state the TYPE currently forbids but an alpha vendor could start
+    // sending, which is what makes the kind check reachable and the OPERATOR
+    // DECISION — "the min is over non-noul answers" — actually pinned.
+    const floor = jevConfidenceFloor([
+      { id: 'a', type: 'noul', value: 0.28, confidence: 0.01 } as never,
       { id: 'b', type: 'score', value: 4, confidence: 0.8 },
     ]);
     expect(floor).toBe(0.8);
