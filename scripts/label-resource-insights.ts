@@ -2,7 +2,12 @@ import { createHash } from 'crypto';
 import { parseArgs } from 'util';
 
 import { dbRead, dbWrite } from '~/server/db/client';
-import { askJev, JEV_TIMEOUT_MS, type JevQuestionSpec } from '~/server/services/ai/jev';
+import {
+  askJev,
+  JEV_TIMEOUT_MS,
+  jevConfidenceFloor,
+  type JevQuestionSpec,
+} from '~/server/services/ai/jev';
 import {
   RESOURCE_INTENT_CONTENT_TYPE_OPTIONS,
   RESOURCE_INTENT_ROLE_OPTIONS,
@@ -44,6 +49,11 @@ import { Availability } from '~/shared/utils/prisma/enums';
  * Apply the migration to the target environment first (nothing auto-applies
  * it); treat any invocation, dry run included, as a spend decision.
  *
+ * Spend is REPORTED, not estimated: each progress line and the final summary
+ * carry `spent=$…`, accumulated from the vendor's own per-request cost. A batch
+ * whose response carried no cost is counted as `unreported` rather than folded
+ * in as zero, so the total always says how much of the run it covers.
+ *
  * The corpus is ~975k published versions; the binding constraint is the vendor
  * throughput cap, so resources are labeled in SHARED REQUESTS of
  * LABEL_BATCH_SIZE versions each (one round trip, per-resource questions with
@@ -83,6 +93,34 @@ export const LABEL_TRAINED_WORDS_MAX = 8;
 // The labeling instrument is its OWN question set (resource-side wording), so
 // it carries its own spec hash — a label row's specHash says which LABEL spec
 // judged it, not which stage-1 spec did. IDs stable once shipped.
+
+/**
+ * The `quality` rubric: one labelled point per step of the declared 1–10 range.
+ *
+ * These strings are the only thing the vendor is told about the scale — the wire
+ * carries `criteria` and nothing else, and the score comes back in index space —
+ * so they are not documentation, they ARE the definition of what the number
+ * means. Written as a graded progression rather than ten rephrasings of "good",
+ * because an undifferentiated rubric gives the model no basis to separate
+ * adjacent points and the resulting score carries correspondingly less signal.
+ *
+ * The axis is deliberately "how well does the metadata evidence this resource
+ * serving the role it was just assigned" — not popularity, not aesthetics,
+ * neither of which is visible in what the batch sends.
+ */
+export const LABEL_QUALITY_CRITERIA = [
+  'Unusable for this role: the metadata describes something unrelated to it, or is too sparse to support any judgment.',
+  'Barely relevant: generic or boilerplate description, with nothing indicating the resource was built for this role.',
+  'Weak fit: the resource touches the role only incidentally, and nothing suggests it performs it well.',
+  'Below average: plausibly usable for the role, but the metadata leaves its scope or its output vague.',
+  'Adequate: clearly intended for the role, with enough detail to use it, and no indication of particular strength.',
+  'Solid: purpose-built for the role, with a stated scope and trigger words consistent with it.',
+  'Good: specific and well scoped, and the metadata gives concrete guidance on when the resource applies.',
+  'Strong: focused, with a clear range of application, documented triggers, and an unambiguous intended output.',
+  'Excellent: precise scope, a base model suited to the role, and documentation detailed enough to use it correctly first time.',
+  'Exemplary: the reference standard for this role — unmistakable purpose, complete and specific metadata, nothing left for the user to guess.',
+] as const;
+
 export const LABEL_QUESTION_SPEC = [
   {
     id: 'role',
@@ -105,10 +143,23 @@ export const LABEL_QUESTION_SPEC = [
   {
     id: 'quality',
     type: 'score',
-    prompt:
-      'Judging only from this metadata, how well does this resource serve that role? 1 = poor fit, 10 = exemplary.',
+    // No numeric scale in the wording: the vendor is sent ONLY `criteria` and
+    // answers in index space, so a prompt asserting "1 = poor, 10 = exemplary"
+    // would describe a numbering it never sees. The rubric below IS the scale.
+    prompt: 'Judging only from this metadata, how well does this resource serve that role?',
     min: 1,
     max: 10,
+    // One labelled scale point per step from `min` to `max` inclusive, so
+    // exactly 10. `askJev` refuses the request when `criteria.length` and
+    // `max - min + 1` disagree, because the vendor scores in index space and is
+    // never told the range — a mismatch silently rescales every answer rather
+    // than failing. Pinned by a test; see LABEL_QUALITY_CRITERIA below.
+    criteria: LABEL_QUALITY_CRITERIA,
+    // 🔴 Deliberately NOT `integer: true`. `ResourceInsight.qualityScore` is
+    // DOUBLE PRECISION, so the model's fractional confidence-weighted score is
+    // worth keeping — rounding it here would throw away precision the column
+    // can hold. (Contrast stage-1's `specificity`, whose consumer is a
+    // `z.number().int()` schema and which therefore does round.)
   },
 ] as const satisfies readonly JevQuestionSpec[];
 
@@ -172,6 +223,18 @@ export type ResourceInsightLabel = {
 export type LabelBatchResult = {
   labels: ResourceInsightLabel[];
   failedVersionIds: number[];
+  /**
+   * The VENDOR'S OWN reported spend for this batch's one request, straight from
+   * the decisions response — never derived from a token count and a price
+   * table, which is how a cost report drifts from the invoice.
+   *
+   * `undefined` means the response carried no `cost`, which is why the run
+   * counts unreported batches separately instead of folding them in as zero: a
+   * total that silently treats "not reported" as "free" understates spend, and
+   * understating is the direction that matters when the number exists to bound
+   * a budget.
+   */
+  costUsd?: number;
 };
 
 function resourceQuestionId(versionIndex: number, questionId: string): string {
@@ -200,6 +263,10 @@ export function buildLabelQuestions(versions: LabelableVersion[]): {
         prompt,
         min: question.min,
         max: question.max,
+        // Carried through per resource, not rebuilt: `criteria.length` must keep
+        // matching `max - min + 1` here too, and the spec is the one place that
+        // pairing is declared. `integer` is intentionally not set — see the spec.
+        criteria: [...question.criteria],
       };
     })
   );
@@ -241,6 +308,27 @@ export function parseLabelAnswers(
       failedVersionIds.push(version.id);
       return;
     }
+    // The row's confidence is the WEAKEST of its four judgments, because the
+    // weakest one bounds what the row as a whole is worth: a confident role
+    // paired with a coin-flip style family is not a confident label.
+    //
+    // 🔴 Via the shared helper, never open-coded. It skips `noul` answers,
+    // which carry no confidence at all, and skips a missing one rather than
+    // defaulting it — an earlier revision here read `role.confidence ?? 0`,
+    // which both ignored three of the four answers AND would pin the column to
+    // 0 for any answer set the vendor returned without a confidence. This is
+    // the third place in this feature that would have spelled the same rule,
+    // and the previous two disagreed with each other.
+    const confidence = jevConfidenceFloor([role, styleFamily, contentType, quality]);
+    if (confidence === null) {
+      // No answer carried a confidence, so there is no floor to record.
+      // `ResourceInsight.confidence` is NOT NULL, and inventing a number for a
+      // column whose entire purpose is to say how much to trust the row is
+      // worse than declining the resource — so it fails, like any other
+      // unmappable answer set, and stays available for a later re-label.
+      failedVersionIds.push(version.id);
+      return;
+    }
     // askJev already validated each value against the question it was asked;
     // these casts carry that proof into the typed columns.
     labels.push({
@@ -251,7 +339,7 @@ export function parseLabelAnswers(
       // future spec can ask for the full set without a migration.
       contentTypes: [contentType.value as ResourceIntentContentType],
       qualityScore: quality.value / 10,
-      confidence: role.confidence ?? 0,
+      confidence,
       specHash: LABEL_SPEC_HASH,
       model: 'typesafe/jev-1.13',
     });
@@ -303,7 +391,10 @@ async function labelBatch(
     // Ten resources x four questions in one request: allow ~3x the single-judgment budget.
     { timeoutMs: Math.max(JEV_TIMEOUT_MS * 3, 6000) }
   );
-  const result = parseLabelAnswers(versions, response.answers);
+  const result: LabelBatchResult = {
+    ...parseLabelAnswers(versions, response.answers),
+    ...(response.usage.costUsd !== undefined ? { costUsd: response.usage.costUsd } : {}),
+  };
   if (!dryRun && result.labels.length > 0) {
     await limitConcurrency(
       result.labels.map(
@@ -415,6 +506,18 @@ export async function main(): Promise<void> {
   let labeled = 0;
   let failed = 0;
   let skippedTotal = 0;
+  // Measured spend, accumulated from what the vendor reports per request.
+  // `costUnreportedBatches` is tracked alongside rather than folded in as zero,
+  // so the printed total can say how much of the run it actually covers — an
+  // unqualified total that hid unreported batches would read as complete, and
+  // understating spend is the direction that matters for a number whose job is
+  // to bound a budget.
+  let spentUsd = 0;
+  let costedBatches = 0;
+  let costUnreportedBatches = 0;
+  const spend = () =>
+    `spent=$${spentUsd.toFixed(6)} over ${costedBatches} batch(es)` +
+    (costUnreportedBatches > 0 ? `, ${costUnreportedBatches} unreported` : '');
   let lastId = cursor;
 
   while (labeled + failed < limit) {
@@ -488,17 +591,23 @@ export async function main(): Promise<void> {
 
     labeled += batch.labels.length;
     failed += batch.failedVersionIds.length;
+    if (batch.costUsd === undefined) {
+      costUnreportedBatches += 1;
+    } else {
+      spentUsd += batch.costUsd;
+      costedBatches += 1;
+    }
     cursor = versions[versions.length - 1].id;
     lastId = cursor;
     console.log(
       `[label-resource-insights] ${dryRun ? 'DRY RUN ' : ''}labeled ${
         batch.labels.length
-      }, failed ${batch.failedVersionIds.length}, ${progress()}`
+      }, failed ${batch.failedVersionIds.length}, ${progress()}, ${spend()}`
     );
   }
 
   console.log(
-    `[label-resource-insights] done: ${labeled} labeled, ${failed} failed, ${skippedTotal} skipped-current, ${
+    `[label-resource-insights] done: ${labeled} labeled, ${failed} failed, ${skippedTotal} skipped-current, ${spend()}, ${
       topIds ? `index=${index}` : `lastId=${lastId}`
     }, labelSpec=${LABEL_SPEC_HASH.slice(0, 12)}` + (dryRun ? ' (dry run — nothing written)' : '')
   );
