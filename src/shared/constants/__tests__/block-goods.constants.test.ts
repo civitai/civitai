@@ -1004,6 +1004,20 @@ describe('published schema ⇄ constants drift guard', () => {
     );
   });
 
+  it('the priceBuzz DESCRIPTION warns that its maximum is not the per-kind limit', () => {
+    // 🔴 THE FIELD BEING CONSTRAINED MUST STATE ITS OWN CONSTRAINT. `priceBuzz.maximum`
+    // is deliberately left at the general 50,000, and the narrow unlock ceiling lived
+    // ONLY in the `kind` description — so a developer reading the field they are
+    // actually setting saw "minimum 2, maximum 50000" and nothing else. The cross
+    // reference existed one way (`kind` mentions priceBuzz) and not the other, which is
+    // how a schema stays technically true and still misleads.
+    const price = goodsProperty().items.properties.priceBuzz.description ?? '';
+    expect(price).toContain(`capped at ${BLOCK_APP_UNLOCK_MAX_PRICE_BUZZ} Buzz`);
+    expect(price).toContain('app_unlock');
+    // And it must not imply its own maximum is the binding limit for every kind.
+    expect(price).toMatch(/NOT THE LIMIT FOR YOUR GOOD|not the limit for your good/);
+  });
+
   it('the justification DESCRIPTION does not deny the scope requirement', () => {
     // 🔴 THIS FIELD'S PROSE WAS UNPINNED, AND IT IS WHERE A FALSE PUBLISHED CLAIM
     // SURVIVED THE FEATURE COMMIT PLUS TWO FIX ROUNDS. It said an app unlock "does not
