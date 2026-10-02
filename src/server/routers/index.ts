@@ -50,6 +50,7 @@ export const appRouter = router({
   placement: lazy(() => import('./placement.router').then((m) => m.placementRouter)),
   post: lazy(() => import('./post.router').then((m) => m.postRouter)),
   question: lazy(() => import('./question.router').then((m) => m.questionRouter)),
+  ratingReview: lazy(() => import('./rating-review.router').then((m) => m.ratingReviewRouter)),
   reaction: lazy(() => import('./reaction.router').then((m) => m.reactionRouter)),
   report: lazy(() => import('./report.router').then((m) => m.reportRouter)),
   resourceReview: lazy(() => import('./resourceReview.router').then((m) => m.resourceReviewRouter)),
