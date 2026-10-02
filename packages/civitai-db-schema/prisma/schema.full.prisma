@@ -6383,7 +6383,7 @@ model Appeal {
   internalNotes     String?
   buzzTransactionId String?
 
-  @@unique([entityType, entityId, userId])
+  @@index([entityType, entityId, userId])
   @@index([userId])
   @@index([status])
 }

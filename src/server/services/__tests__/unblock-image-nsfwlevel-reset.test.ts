@@ -158,6 +158,7 @@ vi.mock('~/server/search-index', async (importOriginal) => ({
 
 const { handleUnblockImages } = await import('../image.service');
 const { resolveEntityAppeal } = await import('../report.service');
+const { createNotification } = await import('../notification.service');
 
 const BLOCKED = 32;
 // Prisma string enums (member === value); literals avoid a vitest/tsserver alias artifact.
@@ -266,5 +267,57 @@ describe('resolveEntityAppeal — reset+unlock on appeal approval (ClickUp 868kf
     } as any);
 
     expect(capturedClickhouse.some((sql) => sql.includes('blocked_images'))).toBe(false);
+  });
+
+  // An image can be appealed again after a re-block. The notification service reuses the row for
+  // a repeated key, so a per-entity key would show the second decision as the first one.
+  it('keys the resolution notification by appeal, not only by image', async () => {
+    await resolveEntityAppeal({
+      ids: [128489949],
+      entityType: ENTITY_IMAGE,
+      status: 'Rejected',
+      userId: 2023372,
+    } as any);
+
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'entity-appeal-resolved:Image:128489949:555' })
+    );
+  });
+
+  // With several appeals per image, only the pending one may be closed, refunded and notified.
+  it('resolves only the pending appeal when the image also has an earlier, decided one', async () => {
+    const rows = [
+      {
+        id: 554,
+        entityId: 128489949,
+        entityType: ENTITY_IMAGE,
+        userId: 1,
+        status: 'Approved',
+        buzzTransactionId: null,
+      },
+      {
+        id: 555,
+        entityId: 128489949,
+        entityType: ENTITY_IMAGE,
+        userId: 1,
+        status: 'Pending',
+        buzzTransactionId: null,
+      },
+    ];
+    mockAppealFindMany.mockImplementation(async ({ where }: { where: { status?: string } }) =>
+      rows.filter((r) => !where.status || r.status === where.status)
+    );
+
+    await resolveEntityAppeal({
+      ids: [128489949],
+      entityType: ENTITY_IMAGE,
+      status: 'Rejected',
+      userId: 2023372,
+    } as any);
+
+    expect(dbWrite.appeal.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: [555] } } })
+    );
+    expect(createNotification).toHaveBeenCalledTimes(1);
   });
 });
