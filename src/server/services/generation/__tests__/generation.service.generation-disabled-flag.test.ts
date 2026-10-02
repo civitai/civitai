@@ -139,6 +139,40 @@ describe('getShouldChargeForResources — NoAdditionalResourceFee flag', () => {
     ).toBe(false);
   });
 
+  // These go through the call site, not the predicate: it builds the predicate's arguments.
+  const chargedWith = async (override: { modelType?: 'LORA' | 'VAE'; fileSizeKB?: number }) =>
+    (
+      await getShouldChargeForResources([
+        {
+          modelType: 'LORA',
+          modelId: MODEL_ID,
+          fileSizeKB: 200 * 1024,
+          versionFlags: ModelVersionFlag.None,
+          ...override,
+        },
+      ])
+    )[MODEL_ID];
+
+  it('does not charge a featured model, but does charge beside a different featured one', async () => {
+    vi.mocked(getFeaturedModels).mockResolvedValue([{ modelId: MODEL_ID }] as never);
+    expect(await chargedWith({})).toBe(false);
+    vi.mocked(getFeaturedModels).mockResolvedValue([{ modelId: MODEL_ID + 1 }] as never);
+    expect(await chargedWith({})).toBe(true);
+  });
+
+  it('does not charge a free resource type', async () => {
+    expect(await chargedWith({ modelType: 'VAE' })).toBe(false);
+  });
+
+  it('does not charge a file of 10 MB or less', async () => {
+    expect(await chargedWith({ fileSizeKB: 10 * 1024 })).toBe(false);
+  });
+
+  // The generator's cost badge treats an unknown size as charged; the orchestrator's charge never has.
+  it('does not charge when the file size is unknown', async () => {
+    expect(await chargedWith({ fileSizeKB: undefined })).toBe(false);
+  });
+
   it('still charges a version carrying only other flags (bit-confusion guard)', async () => {
     expect(
       await charged(
