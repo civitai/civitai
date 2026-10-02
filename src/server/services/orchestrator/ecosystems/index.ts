@@ -444,7 +444,7 @@ async function createEcosystemStep(
     case 'Ernie':
       return createErnieInput(normalizedData, handlerCtx);
 
-    // Ideogram 4 (comfy)
+    // Ideogram 4.0 (comfy) and 4.5 (fal)
     case 'Ideogram':
       return createIdeogramInput(normalizedData, handlerCtx);
 

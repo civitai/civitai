@@ -695,7 +695,7 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.Ideogram,
     key: 'Ideogram',
-    displayName: 'Ideogram 4.0',
+    displayName: 'Ideogram',
     familyId: 22,
     sortOrder: 170,
   },
@@ -2319,6 +2319,7 @@ export const BM = {
   Ming: 108,
   MingLayer: 109,
   Sonilo: 110,
+  Ideogram45: 111,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2646,6 +2647,12 @@ export const licenses: LicenseRecord[] = [
     id: 46,
     name: 'Sonilo Terms of Service',
     url: 'https://sonilo.com/terms',
+  },
+  {
+    id: 47,
+    name: 'Ideogram Terms of Service',
+    url: 'https://ideogram.ai/legal/tos',
+    disableMature: true,
   },
 ];
 
@@ -3004,6 +3011,15 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.Ideogram,
     licenseId: 37,
+  },
+  {
+    id: BM.Ideogram45,
+    name: 'Ideogram 4.5',
+    description: "Ideogram, Inc.'s text-to-image and image editing model with strong typography",
+    type: 'image',
+    ecosystemId: ECO.Ideogram,
+    hidden: true,
+    licenseId: 47,
   },
 
   // Boogu

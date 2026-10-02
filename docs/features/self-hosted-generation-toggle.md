@@ -79,6 +79,7 @@ Mapping each input type to the ecosystem(s) whose handler produces it (router: `
 - **`Flux2`** (plain) → external (`flux2` engine). Only **`Flux2Klein*`** is self-hosted.
 - **`Qwen2`** → external (`fal`). Only **`Qwen`** (comfy) is self-hosted.
 - **All `Wan*` ecosystems** → external (FAL) today. Out of scope.
+- **`Ideogram`** → mixed by version: 4.0 is comfy (self-hosted), 4.5 is `fal` (external). It is not in `SELF_HOSTED_ECOSYSTEM_KEYS`, so the toggle reaches neither, and adding the key would block 4.5 too — the one exception to Decision 1.
 
 > **Decision 1 — RESOLVED: clean ecosystem-key granularity.** Every self-hosted ecosystem is all-or-nothing at the ecosystem-key level. No flag-conditional cases, no version-level lists. The static `selfHosted: true` flag fully describes the set.
 

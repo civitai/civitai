@@ -794,6 +794,12 @@ const baseLicenses: Record<string, LicenseDetails> = {
     // Ideogram Non-Commercial Model Agreement forbids commercial use.
     nonCommercial: true,
   },
+  'ideogram tos': {
+    url: 'https://ideogram.ai/legal/tos',
+    name: 'Ideogram Terms of Service',
+    // The ToS bars sexually explicit output.
+    disableMature: true,
+  },
   'qwen research': {
     url: 'https://huggingface.co/Qwen/Qwen-Image-2.1/blob/main/LICENSE',
     name: 'Qwen Research License Agreement',
@@ -907,6 +913,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Vidu Q1': baseLicenses['vidu'],
   Seedance: baseLicenses['seedream'],
   'Ideogram 4.0': baseLicenses['ideogram nc'],
+  'Ideogram 4.5': baseLicenses['ideogram tos'],
   'MiniMax H3': baseLicenses['minimax h3'],
   'MiniMax Music 3': baseLicenses['minimax music 3'],
 };

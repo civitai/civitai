@@ -66,6 +66,7 @@ const EDIT_IMG_IDS = [
   ECO.MAI,
   ECO.Boogu,
   ECO.Reve,
+  ECO.Ideogram,
   ECO.MuseImage,
   ECO.MageFlow,
   ECO.Krea2,
