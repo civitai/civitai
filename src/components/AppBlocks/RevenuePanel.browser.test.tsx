@@ -365,4 +365,57 @@ describe('RevenuePanel — digital goods sales', () => {
     await expect.element(page.getByText('Recent attributions')).toBeInTheDocument();
     expect(page.getByText('Revenue unavailable').elements()).toHaveLength(0);
   });
+
+  test('ABSENT goods key: an older API process omitting it degrades, it does not crash', async () => {
+    // 🔴 THIS IS THE TEST FOR `data.goods ?? GOODS_ABSENT`, AND WITHOUT IT THAT
+    // GUARD HAD NO COVERAGE AT ALL. `mocks.revenue.current` is this component's only
+    // data-injection point; the `ZEROED` base fixture always carries `goods`, and
+    // every other case in this file OVERRIDES that key rather than omitting it. So
+    // deleting `?? GOODS_ABSENT` was green across the whole suite: `tsc` cannot
+    // object because `goods` is declared non-optional on the payload type, and
+    // `@typescript-eslint/no-unnecessary-condition` is not enabled in this repo.
+    //
+    // 🔴 THE SCENARIO IS REAL, WHICH IS WHY THE GUARD IS NOT DECORATION. `data` is
+    // an `as`-cast of a wire payload, and SSR and the API are separate deployments
+    // here — so during a rollout an API process older than this bundle can answer
+    // the revenue bundle without the key at all. `GoodsSalesCard` destructures its
+    // prop (`const { sales, refunded, unavailable } = goods`), so an unchecked
+    // `data.goods` threw and took the whole page down, card figures included.
+    //
+    // 🔴 AND IT DEGRADES TO THE UNREADABLE SHAPE, NOT TO ZEROS. "Absent from the
+    // payload" is not a measurement of zero sales; rendering a clean $0.00 goods
+    // card here is the fabricated zero the discriminator in the describe header
+    // exists to prevent.
+    //
+    // The key is DELETED rather than set to `undefined`: that is the shape the wire
+    // actually produces, and the assertion below pins that the fixture really omits
+    // it — a fixture that merely set `goods: undefined` would be testing a different
+    // payload than the one this guard is for.
+    const payload: Record<string, unknown> = { ...ZEROED };
+    delete payload.goods;
+    expect('goods' in payload).toBe(false);
+    mocks.revenue.current = payload;
+
+    renderWithProviders(<RevenuePanel />);
+
+    // The flagged state renders, with the same copy the server-side unreadable
+    // bucket produces — the reader cannot tell the two apart, and should not.
+    await expect.element(page.getByTestId('goods-unavailable')).toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('goods-unavailable'))
+      .toHaveTextContent(/not a report of zero sales/i);
+
+    // 🔴 NOT ZEROS, AND NOT THE "no sales" SENTENCE. Both would report a figure for
+    // a rail that was never in the payload.
+    expect(page.getByTestId('goods-share-buzz').elements()).toHaveLength(0);
+    expect(page.getByTestId('goods-gross-buzz').elements()).toHaveLength(0);
+    expect(page.getByText(/No digital goods sales attributed to you/i).elements()).toHaveLength(0);
+
+    // 🔴 AND THE REST OF THE DASHBOARD SURVIVES — the property the guard exists for.
+    // A page-wide crash is what the missing key used to cause, so these are the
+    // assertions that separate "degraded one rail" from "took the page down".
+    await expect.element(page.getByText('Confirmed (unpaid)')).toBeInTheDocument();
+    await expect.element(page.getByText('Recent attributions')).toBeInTheDocument();
+    expect(page.getByText('Revenue unavailable').elements()).toHaveLength(0);
+  });
 });

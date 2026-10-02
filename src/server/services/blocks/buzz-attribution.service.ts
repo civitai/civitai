@@ -19,6 +19,9 @@ import {
 // not an import of `block-goods.service` — that would make the two services
 // mutually aware and pull the Buzz-transaction graph into the reporting layer.
 import { BLOCK_GOOD_PURCHASE_STATUS } from '~/shared/constants/block-goods.constants';
+// The missing-table predicate, imported rather than re-spelled. See
+// `isMissingGoodsTableError` below for why a local copy of it was a live outage.
+import { isMissingTableError } from '~/server/services/blocks/app-access.service';
 import { observeBlockAuthorFee } from './author-fee';
 import { isBlockGenerationType, type BlockGenerationType } from './generation-type';
 import {
@@ -1826,17 +1829,32 @@ export function unreadableGoodsSales(): GoodsSalesSummary {
  * hand per environment — and it does not generalise to anything else that can go
  * wrong in there.
  *
- * Matched by CODE, not `instanceof`: the branch has to stay reachable under a
- * mocked Prisma client, which does not construct the real error class. Mirrors
- * `isUniqueViolation` in `block-goods.service.ts`.
+ * Matched by CODE OR MESSAGE, not `instanceof`: the branch has to stay reachable
+ * under a mocked Prisma client, which does not construct the real error class.
  *   - `P2021` — Prisma's "table does not exist in the current database".
  *   - `42P01` — Postgres `undefined_table`, which is what surfaces if the read
  *     ever goes through a raw query instead.
+ *   - the same SQLSTATE in the MESSAGE, because Prisma wraps the driver error and
+ *     leaves the code unclassified on some paths.
+ *
+ * 🔴 DELEGATES, AND THE OPEN-CODED COPY THAT USED TO LIVE HERE WAS THE NARROWER
+ * SPELLING OF THE TWO. It required `'code' in error` before anything else, so an
+ * error carrying the SQLSTATE only in its message was rejected on the first line.
+ * On such a path this returned false, the caller's `.catch` rethrew, `Promise.all`
+ * rejected and `getMyRevenue` 500'd — taking BOTH owner revenue pages down,
+ * including the card-purchase figures that were perfectly readable. Precisely the
+ * outage the bounded catch exists to prevent, reached through the bound itself.
+ *
+ * {@link isMissingTableError} is the MEASURED version: its docblock records that
+ * "a check on P2021 alone let a raw-path failure through in local testing", and its
+ * message branch is deliberately narrower than "does not exist" — it requires the
+ * missing object to be named as a RELATION or TABLE and refuses anything mentioning
+ * a column, because a column error is a HALF-APPLIED manual migration and must
+ * surface rather than degrade to a silent zero. That nuance is the reason to reuse
+ * it rather than re-derive it; do not re-widen it here.
  */
 export function isMissingGoodsTableError(error: unknown): boolean {
-  if (typeof error !== 'object' || error === null || !('code' in error)) return false;
-  const code = (error as { code?: unknown }).code;
-  return code === 'P2021' || code === '42P01';
+  return isMissingTableError(error);
 }
 
 /**

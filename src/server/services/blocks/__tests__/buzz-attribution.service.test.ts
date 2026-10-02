@@ -799,19 +799,83 @@ describe('getGoodsSalesForOwner — the goods → earnings bridge', () => {
     ).toBe(true);
 
     // Negative: everything else, including the shapes that are easy to get wrong.
-    // `P2010` is a RAW-QUERY failure whose message can even quote 42P01; it is
-    // deliberately NOT matched, because this read is not a raw query and widening to
-    // it would start swallowing genuine query bugs.
+    // A BARE `P2010`/`P2009` — a code with no message naming a missing relation — is
+    // not matched: on its own it is an unclassified query failure, and swallowing it
+    // would start hiding genuine query bugs. (A `P2010` whose MESSAGE does name the
+    // missing relation IS matched; that is the raw-path shape, pinned in the
+    // message-path test below.)
     expect(isMissingGoodsTableError({ code: 'P2010' })).toBe(false);
     expect(isMissingGoodsTableError({ code: 'P2009' })).toBe(false);
     expect(isMissingGoodsTableError(new TypeError('cannot read _sum'))).toBe(false);
-    // The message ALONE must not be enough — this is the exact shape an earlier
-    // version of the router test used while the catch swallowed everything.
+    // 🔴 THIS ASSERTION USED TO READ `.toBe(false)` FOR A NAMED RELATION, AND THAT
+    // PINNED THE DEFECT. The predicate was code-only, so an error carrying the
+    // SQLSTATE in its MESSAGE — which Prisma produces on some driver paths — was
+    // rejected, the router's `.catch` rethrew, and `Promise.all` 500'd both revenue
+    // pages. The message path is now matched; see the dedicated test below for the
+    // full direction set, including the column-error nuance it must NOT swallow.
+    expect(
+      isMissingGoodsTableError(new Error('relation "block_good_purchase" does not exist'))
+    ).toBe(true);
+    // The relation still has to be NAMED. "relation does not exist" with no object
+    // named is not a Postgres message shape, and matching bare prose is how a
+    // predicate starts swallowing unrelated failures.
     expect(isMissingGoodsTableError(new Error('relation does not exist'))).toBe(false);
     expect(isMissingGoodsTableError({ code: 42101 })).toBe(false);
     expect(isMissingGoodsTableError(undefined)).toBe(false);
     expect(isMissingGoodsTableError(null)).toBe(false);
     expect(isMissingGoodsTableError('P2021')).toBe(false);
+  });
+
+  it('isMissingGoodsTableError matches the MESSAGE path, and still refuses a column error', () => {
+    // 🔴 REGRESSION TEST FOR A 500 ON BOTH REVENUE PAGES. The goods predicate used
+    // to open-code a code-only check that began `if (!('code' in error)) return
+    // false`, so every error below whose SQLSTATE lives only in the message was
+    // rejected on the first line. The router catches ONLY this predicate, so a
+    // rejection means rethrow → `Promise.all` rejects → `getMyRevenue` 500s → the
+    // owner loses the card-purchase figures too, which were readable. It now
+    // delegates to `isMissingTableError` in `app-access.service.ts`, whose docblock
+    // records the measurement: "a check on P2021 alone let a raw-path failure
+    // through in local testing".
+    //
+    // Prisma wraps the driver error and leaves `code` unclassified on some paths, so
+    // these are the shapes that actually reach the catch.
+    expect(
+      isMissingGoodsTableError(new Error('relation "block_good_purchase" does not exist'))
+    ).toBe(true);
+    expect(isMissingGoodsTableError(new Error('table "block_good_purchase" does not exist'))).toBe(
+      true
+    );
+    expect(
+      isMissingGoodsTableError(
+        new Error('ERROR: relation "block_good_purchase" does not exist (SQLSTATE 42P01)')
+      )
+    ).toBe(true);
+    // The raw-query wrap: a `P2010` code whose message carries both the SQLSTATE and
+    // the named relation. The table is genuinely absent here, so degrading is right.
+    expect(
+      isMissingGoodsTableError(
+        Object.assign(
+          new Error(
+            'Raw query failed. Code: `42P01`. Message: `relation "block_good_purchase" does not exist`'
+          ),
+          { code: 'P2010' }
+        )
+      )
+    ).toBe(true);
+
+    // 🔴 AND THE NUANCE THAT MUST SURVIVE THE WIDENING: a COLUMN error is a
+    // HALF-APPLIED manual migration, not an absent table — and this repo applies the
+    // goods migration BY HAND per environment, so it is the likely half-failure.
+    // Swallowing it would degrade a genuinely broken schema to a permanent, polite
+    // "sales could not be loaded" — the invisible-revenue defect this rail's bounded
+    // catch exists to prevent. The substring "does not exist" appears in both, which
+    // is exactly why the shared predicate refuses any message mentioning a column.
+    expect(
+      isMissingGoodsTableError(
+        new Error('column "x" of relation "block_good_purchase" does not exist')
+      )
+    ).toBe(false);
+    expect(isMissingGoodsTableError(new Error('column "displayed" does not exist'))).toBe(false);
   });
 
   it('the UNREADABLE bucket is zeros PLUS a discriminator, never bare zeros', async () => {

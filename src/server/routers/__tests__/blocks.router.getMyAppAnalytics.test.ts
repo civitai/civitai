@@ -380,12 +380,16 @@ describe('getMyRevenue — dark-flag short-circuit', () => {
     // run against a database without it. Unguarded, the new branch took the whole
     // of `getMyRevenue` down — including the attribution figures, which were
     // readable — so both revenue pages failed outright.
-    // 🔴 THE CODE IS LOAD-BEARING, NOT THE MESSAGE. The router degrades only on
-    // `isMissingGoodsTableError`, which matches Prisma's `P2021` / Postgres `42P01`
-    // by CODE. An earlier version of this test rejected with a bare
-    // `new Error('relation does not exist')` while the catch took every rejection —
-    // so the fixture implied a specificity the code did not have, and the
-    // rethrow-everything-else case below could not even be written.
+    // 🔴 THE CLASSIFICATION IS LOAD-BEARING, AND IT IS CODE **OR** MESSAGE. The
+    // router degrades only on `isMissingGoodsTableError`, which now delegates to the
+    // measured `isMissingTableError` in `app-access.service.ts`: Prisma's `P2021` /
+    // Postgres `42P01` by CODE, or a message that NAMES the missing relation or
+    // table. Both halves are needed — Prisma leaves the SQLSTATE in the message only
+    // on some driver paths, and the code-only version of this predicate rethrew
+    // there, 500ing both revenue pages. What it still refuses is a COLUMN error
+    // (a half-applied manual migration) and anything it cannot classify; the
+    // rethrow-everything-else cases below are what pin that.
+    // This fixture carries both signals, as the real Prisma error does.
     mockGetGoodsSalesForOwner.mockRejectedValue(
       Object.assign(new Error('The table `block_good_purchase` does not exist'), { code: 'P2021' })
     );
@@ -442,9 +446,12 @@ describe('getMyRevenue — dark-flag short-circuit', () => {
   });
 
   it('...and so does an error carrying no code at all', async () => {
-    // A plain `TypeError` from inside the aggregate. `isMissingGoodsTableError`
-    // requires a `code` property, so this is the shape that proves the predicate
-    // fails CLOSED rather than treating "I cannot classify this" as the table case.
+    // A plain `TypeError` from inside the aggregate — no `code`, and a message that
+    // names no relation or table. `isMissingGoodsTableError` matches on either
+    // signal, so this is the shape that proves it fails CLOSED on BOTH: an error it
+    // cannot classify is rethrown, never treated as the table case. (The predicate
+    // no longer requires a `code` property — the message path is matched too — which
+    // is why the message here must be one that carries no missing-relation signal.)
     mockGetGoodsSalesForOwner.mockRejectedValue(
       new TypeError("Cannot read properties of undefined (reading '_sum')")
     );
