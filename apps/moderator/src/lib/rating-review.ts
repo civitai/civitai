@@ -1,4 +1,8 @@
 import { ReportStatus } from '@civitai/db-schema/enums';
+import {
+  RATING_REVIEW_ENTITY_TYPES,
+  ratingReviewEntityLabels,
+} from '@civitai/shared/rating-review';
 
 export { ReportStatus };
 
@@ -17,3 +21,8 @@ export const ratingReviewStatusBadge: Record<string, { label: string; class: str
   Unactioned: { label: 'Rejected', class: 'bg-red-500/15 text-red-300' },
   Processing: { label: 'Processing', class: 'bg-orange-500/15 text-orange-300' },
 };
+
+export const ratingReviewTypeFilters: { value: string; label: string }[] = [
+  { value: 'all', label: 'All types' },
+  ...RATING_REVIEW_ENTITY_TYPES.map((t) => ({ value: t, label: ratingReviewEntityLabels[t] })),
+];

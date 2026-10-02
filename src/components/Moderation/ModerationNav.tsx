@@ -45,7 +45,7 @@ export function ModerationNav() {
         { label: 'Metadata Tester', href: '/testing/metadata-test' },
         { label: 'Ratings Review', href: '/moderator/image-rating-review' },
         // Migrated to the moderator app (redirects via the moderator catchall page).
-        { label: 'Article Ratings Review', href: '/moderator/article-rating-review' },
+        { label: 'Rating Disputes', href: '/moderator/article-rating-review' },
         { label: 'Downleveled Review', href: '/moderator/downleveled-review' },
         { label: 'Ingestion Errors', href: '/moderator/ingestion-error-review' },
         { label: 'Minor Hash Matches', href: '/moderator/minor-hash-matches' },

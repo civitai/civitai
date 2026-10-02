@@ -198,8 +198,9 @@ export type ModEndpoint =
 // the same registrable domain as the hub, so the session cookie the browser sent here is one the hub
 // already accepts, and relaying it server-side attributes the audit row to a person rather than to a
 // shared key. This app therefore needs no moderator API key at all.
-/** One `/api/mod/*` endpoint per action, called as the acting moderator. The ONLY place `auth`
- *  becomes `'session'` — a call site that picks its own scheme is how one gets the wrong one. */
+/** One `/api/mod/*` endpoint per action, called as the acting moderator. With `bustModelVersionCache`,
+ *  the only places `auth` becomes `'session'` — a call site that picks its own scheme is how one gets
+ *  the wrong one. */
 export const callModEndpoint = (
   path: ModEndpoint,
   body: Record<string, unknown>,
@@ -207,6 +208,16 @@ export const callModEndpoint = (
   timeoutMs = 30_000
 ): Promise<JsonResult> =>
   postJson({ path: `/api/mod/${path}`, body, label, auth: 'session', timeoutMs });
+
+// Best-effort: the resolve already committed, and a missed bust is a stale read that expires with the cache.
+export const bustModelVersionCache = (versionIds: number[]): Promise<JsonResult> =>
+  postJson({
+    path: '/api/v1/model-versions/bust-cache',
+    body: { versionIds },
+    label: 'Refresh model caches',
+    auth: 'session',
+    timeoutMs: 3000,
+  });
 
 /**
  * Retool's `UpdateUserDeets`, behind the Enable Edits toggle. The endpoint already carries this and

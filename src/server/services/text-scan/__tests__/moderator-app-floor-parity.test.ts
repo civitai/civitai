@@ -24,7 +24,7 @@ describe('the moderator app renders the shared Article floor', () => {
   it.each([
     ['apps/moderator/src/lib/server/article-moderation.ts', 'async function restoreArticle('],
     [
-      'apps/moderator/src/lib/server/article-rating-reviews.service.ts',
+      'apps/moderator/src/lib/server/rated-entity-derivation.ts',
       'export async function computeArticleDerivedNsfwLevel(',
     ],
   ])('%s', (file, start) => {
