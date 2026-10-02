@@ -131,6 +131,8 @@ describe('retry-image-storage-deletes', () => {
 
     const select = reads()[1];
     expect(select.values).toEqual(['ImageStorageDelete', 'Image', RETRY_BATCH_SIZE]);
+    // The column the probe checks must be the one read, under the names the row handler uses.
+    expect(select.sql).toMatch(/SELECT "entityId" AS id, data\s+FROM "JobQueue"/);
     expect(select.sql).toMatch(
       /WHERE type = \?::"JobQueueType"\s+AND "entityType" = \?::"EntityType"/
     );
@@ -170,9 +172,15 @@ describe('retry-image-storage-deletes', () => {
       EMPTY_URL_ID,
     ]);
     expect(result).toEqual({ deleted: 1, skipped: 1, failed: 2, malformed: 2, unattempted: 0 });
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'warning', imageIds: [NULL_DATA_ID, EMPTY_URL_ID] })
-    );
+    const warnings = mockLogToAxiom.mock.calls
+      .map(([event]) => event as Record<string, unknown>)
+      .filter((event) => event.type === 'warning');
+    expect(warnings).toEqual([
+      expect.objectContaining({
+        name: 'retry-image-storage-deletes',
+        imageIds: [NULL_DATA_ID, EMPTY_URL_ID],
+      }),
+    ]);
   });
 
   // The job issues no write against a failed row. The service's re-enqueue is the other writer;

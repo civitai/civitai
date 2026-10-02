@@ -451,8 +451,8 @@ describe('deleteImageFromS3', () => {
     expect(retryInserts()).toHaveLength(0);
   });
 
-  // The migration follows the deploy, so for a while the label and column do not exist and the
-  // insert throws. That must cost a log line, never the caller's delete flow.
+  // The enum label is added after the deploy, so for a while it does not exist and the insert
+  // throws. That must cost a log line, never the caller's delete flow.
   it('logs and carries on when the queue insert fails', async () => {
     mockFindFirst.mockResolvedValue(null);
     mockB2Send.mockRejectedValue(new Error('b2 refused'));
