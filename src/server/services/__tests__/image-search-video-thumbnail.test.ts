@@ -80,7 +80,7 @@ describe('runImageSearch: video thumbnails', () => {
 
     expect(thumbnailFetch).toHaveBeenCalledWith([2]);
     expect(video.thumbnail).toEqual({
-      url: expect.stringMatching(/(^|\/)thumb-uuid\/original=false\/thumb-uuid\.jpeg$/),
+      url: expect.stringMatching(/(^|\/)thumb-uuid\/original=false,optimized=true\/thumb-uuid\.jpeg$/),
       width: 832,
       height: 1216,
     });
@@ -94,7 +94,7 @@ describe('runImageSearch: video thumbnails', () => {
     const [video] = await search([item(2, 'video')], 1);
 
     expect(video.thumbnail).toEqual({
-      url: expect.stringMatching(/(^|\/)uuid-2\/anim=false,transcode=true,original=false\//),
+      url: expect.stringMatching(/(^|\/)uuid-2\/anim=false,transcode=true,original=false,optimized=true\//),
       width: 1280,
       height: 704,
     });

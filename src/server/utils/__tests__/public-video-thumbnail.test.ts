@@ -19,17 +19,16 @@ describe('getPublicVideoThumbnail', () => {
     ).toBeNull();
   });
 
-  it('falls back to an extracted JPEG frame at the video’s own dimensions', () => {
+  it('falls back to an extracted frame at the video’s own dimensions', () => {
     const thumbnail = getPublicVideoThumbnail({ image: video, browsingLevel: 1 });
 
     expect(thumbnail).toEqual({ url: expect.any(String), width: 1280, height: 704 });
     expect(thumbnail!.url).toMatch(
-      /(^|\/)video-uuid\/anim=false,transcode=true,original=false\/video-uuid\.jpeg$/
+      /(^|\/)video-uuid\/anim=false,transcode=true,original=false,optimized=true\/video-uuid\.jpeg$/
     );
   });
 
-  it('never asks for the original or an optimized variant — both serve a non-JPEG', () => {
-    // original=true serves the MP4; optimized=true serves WebP for image thumbnails.
+  it('never asks for the original, which serves the MP4', () => {
     const frame = getPublicVideoThumbnail({ image: video, browsingLevel: 1 })!.url;
     const custom = getPublicVideoThumbnail({
       image: video,
@@ -39,7 +38,6 @@ describe('getPublicVideoThumbnail', () => {
 
     for (const url of [frame, custom]) {
       expect(url).not.toContain('original=true');
-      expect(url).not.toContain('optimized');
     }
   });
 
@@ -56,7 +54,7 @@ describe('getPublicVideoThumbnail', () => {
     const thumbnail = getPublicVideoThumbnail({ image: video, customThumbnail, browsingLevel: 1 });
 
     expect(thumbnail).toEqual({ url: expect.any(String), width: 832, height: 1216 });
-    expect(thumbnail!.url).toMatch(/(^|\/)thumb-uuid\/original=false\/thumb-uuid\.jpeg$/);
+    expect(thumbnail!.url).toMatch(/(^|\/)thumb-uuid\/original=false,optimized=true\/thumb-uuid\.jpeg$/);
   });
 
   it('serves the frame instead of a custom thumbnail rated above the browsing level', () => {
