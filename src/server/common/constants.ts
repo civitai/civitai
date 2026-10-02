@@ -794,6 +794,10 @@ const baseLicenses: Record<string, LicenseDetails> = {
     // Ideogram Non-Commercial Model Agreement forbids commercial use.
     nonCommercial: true,
   },
+  'bfl tos': {
+    url: 'https://bfl.ai/legal/terms-of-service',
+    name: 'Black Forest Labs Terms of Service',
+  },
   'ideogram tos': {
     url: 'https://ideogram.ai/legal/tos',
     name: 'Ideogram Terms of Service',
@@ -872,6 +876,8 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Flux.1 D': baseLicenses['flux1D'],
   'Flux.1 Krea': baseLicenses['flux1D'],
   'Flux.1 Kontext': baseLicenses['flux1D'],
+  'Flux.3': baseLicenses['bfl tos'],
+  'Flux 3 Video': baseLicenses['bfl tos'],
   'Flux.2 D': baseLicenses['flux1D'],
   'Flux.2 Klein 9B': baseLicenses['flux1D'],
   'Flux.2 Klein 9B-base': baseLicenses['flux1D'],

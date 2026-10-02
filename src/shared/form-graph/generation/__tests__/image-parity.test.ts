@@ -248,6 +248,7 @@ const ECOSYSTEMS = [
   'Chroma',
   'Flux1Kontext',
   'Flux2',
+  'Flux3',
   'Flux2Klein_9B',
   'Flux2Klein_9B_base',
   'Flux2Klein_4B',
@@ -282,6 +283,13 @@ const ECOSYSTEMS = [
 const port = {
   parse: (raw: AnyRecord, ext: never) => generationHub.parse(reconcileSelectors(raw).raw, ext),
 };
+
+/** Flux.3: resolution, prompt expansion, cfg/steps/seed that must drop, and a 10-reference edit. */
+const FLUX3_ONLY_SHAPES: AnyRecord[] = [
+  { prompt: 'a poster', resolution: '4k', aspectRatio: '21:9', enablePromptExpansion: true },
+  { prompt: 'a poster', aspectRatio: '1:2', cfgScale: 7, steps: 30, seed: 5 },
+  { prompt: 'an edit', images: Array.from({ length: 10 }, () => IMG), resolution: '2k' },
+];
 
 /** Ideogram: 4.5 (3375798) on txt2img, with 4.0-only keys that must drop, and a stale 4.0 id on edit. */
 const IDEOGRAM_ONLY_SHAPES: AnyRecord[] = [
@@ -346,6 +354,7 @@ const EXTRA_SHAPES: Record<string, AnyRecord[]> = {
   WanImage27: WANIMAGE_ONLY_SHAPES,
   Grok: GROK_ONLY_SHAPES,
   Ideogram: IDEOGRAM_ONLY_SHAPES,
+  Flux3: FLUX3_ONLY_SHAPES,
 };
 
 type Combo = { name: string; input: AnyRecord; ext: GenerationCtx };
@@ -400,6 +409,50 @@ describe('image slice: differential parity with generationGraph', () => {
 });
 
 // Absolute, per lane: a change made identically in both lanes passes every differential row.
+describe('flux3 field limits, per lane', () => {
+  const lanes: [string, (input: AnyRecord) => { success: boolean; data: AnyRecord }][] = [
+    ['data-graph', (input) => runOracle(input, BASE)],
+    ['form-graph', (input) => runPort(port, input, BASE)],
+  ];
+  const edit = (images: number) => ({
+    workflow: 'img2img:edit',
+    ecosystem: 'Flux3',
+    prompt: 'a cat',
+    images: Array.from({ length: images }, () => IMG),
+  });
+
+  // The images input truncates to its max rather than refusing.
+  it.each(lanes)('%s: edit takes at most 10 references', (_, run) => {
+    const ten = run(edit(10));
+    expect(ten.success).toBe(true);
+    expect(ten.data.images).toHaveLength(10);
+    const eleven = run(edit(11));
+    expect(eleven.success).toBe(true);
+    expect(eleven.data.images).toHaveLength(10);
+  });
+
+  it.each(lanes)('%s: txt2img keeps 4k and 21:9, and never resolves 768sq', (_, run) => {
+    const wide = run({
+      workflow: 'txt2img',
+      ecosystem: 'Flux3',
+      prompt: 'a cat',
+      resolution: '4k',
+      aspectRatio: '21:9',
+    });
+    expect(wide.success).toBe(true);
+    expect(wide.data.resolution).toBe('4k');
+    expect((wide.data.aspectRatio as { value: string }).value).toBe('21:9');
+
+    const square = run({
+      workflow: 'txt2img',
+      ecosystem: 'Flux3',
+      prompt: 'a cat',
+      resolution: '768sq',
+    });
+    expect(square.data.resolution).not.toBe('768sq');
+  });
+});
+
 describe('ideogram version selection, per lane', () => {
   const lanes: [string, (input: AnyRecord) => { success: boolean; data: AnyRecord }][] = [
     ['data-graph', (input) => runOracle(input, BASE)],

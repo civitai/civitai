@@ -37,6 +37,7 @@ import type { GenerationHandlerCtx } from '../orchestration-new.service';
 import { createStableDiffusionInput } from './stable-diffusion.handler';
 import { createFluxInput } from './flux.handler';
 import { createFlux2Input } from './flux2.handler';
+import { createFlux3Input } from './flux3.handler';
 import { createFlux2KleinInput } from './flux2-klein.handler';
 import { createFluxKontextInput } from './flux-kontext.handler';
 import { createQwenInput } from './qwen.handler';
@@ -125,6 +126,8 @@ export type FluxCtx = EcosystemGraphOutput & {
 
 /** Flux2 context */
 export type Flux2Ctx = EcosystemGraphOutput & { ecosystem: 'Flux2' };
+/** Flux.3 (FLUX 3 Image) context */
+export type Flux3Ctx = EcosystemGraphOutput & { ecosystem: 'Flux3' };
 
 /** Flux2 Klein context */
 export type Flux2KleinCtx = EcosystemGraphOutput & {
@@ -262,6 +265,7 @@ export type MiniMaxMusic3Ctx = EcosystemGraphOutput & { ecosystem: 'MiniMaxMusic
 export { createStableDiffusionInput } from './stable-diffusion.handler';
 export { createFluxInput } from './flux.handler';
 export { createFlux2Input } from './flux2.handler';
+export { createFlux3Input } from './flux3.handler';
 export { createFlux2KleinInput } from './flux2-klein.handler';
 export { createFluxKontextInput } from './flux-kontext.handler';
 export { createQwenInput } from './qwen.handler';
@@ -405,6 +409,10 @@ async function createEcosystemStep(
     // Flux2
     case 'Flux2':
       return createFlux2Input(normalizedData, handlerCtx);
+
+    // Flux.3 (FLUX 3 Image, fal)
+    case 'Flux3':
+      return createFlux3Input(normalizedData, handlerCtx);
 
     // Flux2 Klein Family
     case 'Flux2Klein_9B':
