@@ -118,6 +118,7 @@ import { sendWebhooksJob } from '~/server/jobs/send-webhooks';
 import { tempSetMissingNsfwLevel } from '~/server/jobs/temp-set-missing-nsfw-level';
 import { retryFailedTextModeration } from '~/server/jobs/text-moderation-retry';
 import { textScanRetention } from '~/server/jobs/text-scan-retention';
+import { textScanChatWindowsJob, textScanNewUsersJob } from '~/server/jobs/text-scan-sweeps';
 import { articleIngestionReconcile } from '~/server/jobs/article-ingestion-reconcile';
 import { metricJobs } from '~/server/jobs/update-metrics';
 import { updateModelVersionNsfwLevelsJob } from '~/server/jobs/update-model-version-nsfw-levels';
@@ -247,6 +248,8 @@ export const jobs: Job[] = [
   ...placementJobs,
   retryFailedTextModeration,
   textScanRetention,
+  textScanChatWindowsJob,
+  textScanNewUsersJob,
   articleIngestionReconcile,
   expireStrikesJob,
   processTimedUnmutesJob,

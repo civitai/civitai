@@ -6,7 +6,7 @@
   import BanConfirmForm from '$lib/components/BanConfirmForm.svelte';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import { FormState } from '$lib/form-state.svelte';
-  import { LINK_CLASS, dateTime } from '$lib/format';
+  import { LINK_CLASS, dateTime, plural } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
   import type { RestrictionRow } from '$lib/server/user-restriction.service';
   import { unwiredRulingReason } from '$lib/restriction-types';
@@ -43,6 +43,7 @@
   const unwiredReason = $derived(unwiredRulingReason(restriction.type));
 
   let banning = $state(false);
+  let ruling: 'Upheld' | 'Overturned' | null = $state(null);
 
   // `onSubmit` picks the successor row while the current list still holds it — the reload that follows
   // replaces it, and under the Pending filter the row just ruled on is gone by then.
@@ -100,13 +101,28 @@
         <input type="hidden" name="userRestrictionId" value={restriction.id} />
         <input type="hidden" name="userId" value={restriction.userId} />
         <input type="hidden" name="status" value="Upheld" />
-        <Button type="submit" size="sm" variant="destructive" disabled={rule.submitting || !!unwiredReason}>Uphold mute</Button>
+        <Button
+          type="submit"
+          size="sm"
+          variant="destructive"
+          disabled={rule.submitting || !!unwiredReason}
+          onclick={() => (ruling = 'Upheld')}
+        >
+          {rule.submitting && ruling === 'Upheld' ? 'Upholding…' : 'Uphold mute'}
+        </Button>
       </form>
       <form method="POST" action="?/resolve" use:enhance={rule.enhance}>
         <input type="hidden" name="userRestrictionId" value={restriction.id} />
         <input type="hidden" name="userId" value={restriction.userId} />
         <input type="hidden" name="status" value="Overturned" />
-        <Button type="submit" size="sm" disabled={rule.submitting || !!unwiredReason}>Remove mute</Button>
+        <Button
+          type="submit"
+          size="sm"
+          disabled={rule.submitting || !!unwiredReason}
+          onclick={() => (ruling = 'Overturned')}
+        >
+          {rule.submitting && ruling === 'Overturned' ? 'Removing…' : 'Remove mute'}
+        </Button>
       </form>
       {#if canBan}
         <!-- Disabled for the same reason, and it is the sharper case: this action bans and THEN rules,
@@ -153,7 +169,7 @@
   </div>
 
   <div class="mb-2 flex items-center gap-2">
-    <Badge variant="secondary">{restriction.triggers.length} triggers</Badge>
+    <Badge variant="secondary">{plural(restriction.triggers.length, 'trigger')}</Badge>
   </div>
 
   <div class="flex flex-col gap-3">

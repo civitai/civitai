@@ -705,6 +705,12 @@
                 {#if !u.muted}<Badge variant="secondary">already unmuted</Badge>{/if}
                 {ago(u.createdAt)}
               </span>
+              {#if u.scanReason}
+                <p class="w-full text-xs text-dark-2">
+                  {u.scanEntityType} #{u.scanEntityId}: {u.scanReason}
+                  {#if u.restrictionStatus}· {u.restrictionStatus}{/if}
+                </p>
+              {/if}
             </li>
           {/each}
         </ul>

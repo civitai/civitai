@@ -4,29 +4,65 @@ import { dbWrite } from '~/server/db/client';
 import { moderationActionEmail } from '~/server/email/templates';
 import { logToAxiom } from '~/server/logging/client';
 import { createNotification } from '~/server/services/notification.service';
+import { userUpdateCounter } from '~/server/prom/client';
 import { resetProhibitedRequestCount } from '~/server/services/orchestrator/promptAuditing';
 import { cancelSubscription, reinstateSubscription } from '~/server/services/stripe.service';
 import { updateUserById } from '~/server/services/user.service';
 import { clearedMuteFields } from '~/server/services/mute-provenance';
-import { dbRead } from '~/server/db/client';
+import { restoreScamCase } from '~/server/services/scam-cleanup.service';
 import type { UserMeta } from '~/server/schema/user.schema';
 import {
+  hasOtherPendingRestriction,
   PROTECTED_USER_IDS,
   unwiredRulingReason,
+  type UserRestrictionType,
 } from '~/server/services/user-restriction.service';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { UserRestrictionStatus } from '~/shared/utils/prisma/enums';
 
+export type RulingEffects = {
+  upheldNotification: string;
+  overturnedNotification: string;
+  upheldSource: string;
+  overturnedSource: string;
+  afterOverturn?: (restriction: { id: number; userId: number }) => Promise<unknown>;
+};
+
+export const RULING_EFFECTS: Partial<Record<UserRestrictionType, RulingEffects>> = {
+  generation: {
+    upheldNotification: 'generation-restriction-upheld',
+    overturnedNotification: 'generation-restriction-overturned',
+    upheldSource: 'moderator:generationRestrictionUpheld',
+    overturnedSource: 'moderator:generationRestrictionOverturned',
+    afterOverturn: ({ userId }) => resetProhibitedRequestCount(userId),
+  },
+  scam: {
+    upheldNotification: 'review-restriction-upheld',
+    overturnedNotification: 'review-restriction-overturned',
+    upheldSource: 'moderator:scamRestrictionUpheld',
+    overturnedSource: 'moderator:scamRestrictionOverturned',
+    afterOverturn: ({ id }) =>
+      restoreScamCase(id).catch((error) =>
+        logToAxiom({
+          name: 'scam-restore-failed',
+          type: 'error',
+          message: (error as Error).message,
+          details: { userRestrictionId: id },
+        })
+      ),
+  },
+};
+
 /**
- * Uphold or overturn a generation restriction. The single write path for a
+ * Uphold or overturn a restriction. The single write path for a
  * verdict — the moderator router and the service-facing overturn endpoint both
  * go through here so the membership and violation-count side effects can't drift.
  *
  * 🔴 Being the single write path is also why the type refusal lives here rather than at the routes.
- * Everything below this line is generation-shaped — the notification types, the update source, the
- * email wording, and `resetProhibitedRequestCount`, which wipes the account's real prompt-violation
- * counter. Five callers reach it (the tRPC router, `/api/mod/restriction/resolve`, and
- * `overturnPendingReviewMute`), and only one of them used to check. See `unwiredRulingReason`.
+ * Everything type-specific — notices, update sources and the overturn effect — comes from
+ * `RULING_EFFECTS`; a type without an entry is refused. Every caller reaches it (the tRPC router,
+ * `/api/mod/restriction/resolve`, `overturnPendingReviewMute`), and only one of them used to check.
+ * See `unwiredRulingReason`.
  */
 export async function resolveUserRestriction({
   userRestrictionId,
@@ -65,6 +101,9 @@ export async function resolveUserRestriction({
   // not a row whose status is worth arguing about.
   const unwired = unwiredRulingReason(restriction.type);
   if (unwired) throw throwBadRequestError(unwired);
+  const effects = RULING_EFFECTS[restriction.type as UserRestrictionType];
+  if (!effects)
+    throw throwBadRequestError(`No verdict effects are defined for "${restriction.type}".`);
   if (restriction.status !== UserRestrictionStatus.Pending)
     throw throwBadRequestError('Restriction has already been resolved');
 
@@ -73,11 +112,12 @@ export async function resolveUserRestriction({
     data: { status, resolvedAt: new Date(), resolvedBy: moderatorId, resolvedMessage },
   });
 
+  let stillHeld = false;
   if (status === UserRestrictionStatus.Upheld) {
     await updateUserById({
       id: restriction.userId,
       data: { mutedAt: new Date() },
-      updateSource: 'moderator:generationRestrictionUpheld',
+      updateSource: effects.upheldSource,
     });
     // Cancel at period end (reversible) rather than waiting for the daily
     // confirm-mutes safety-net job.
@@ -90,33 +130,54 @@ export async function resolveUserRestriction({
     );
     await refreshSession(restriction.userId, { caller: 'moderation' });
   } else if (status === UserRestrictionStatus.Overturned) {
-    // Overturning clears the whole mute, not just the flag: an uphold sets `mutedAt` (line above), and
-    // leaving it behind on an overturn keeps the account off every leaderboard and makes the next
-    // automatic mute read as a moderator's.
-    const existing = await dbRead.user.findUnique({
-      where: { id: restriction.userId },
-      select: { meta: true },
+    // Under the account row lock a scam verdict also takes, so a case filed concurrently is either
+    // seen here or files after the unmute and mutes again on its own.
+    stillHeld = await dbWrite.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT 1 FROM "User" WHERE id = ${restriction.userId} FOR UPDATE`;
+      if (await hasOtherPendingRestriction(tx, restriction.userId, restriction.id)) return true;
+      // Overturning clears the whole mute, not just the flag: an uphold sets `mutedAt`, and leaving
+      // it behind on an overturn keeps the account off every leaderboard and makes the next
+      // automatic mute read as a moderator's.
+      const current = await tx.user.findUnique({
+        where: { id: restriction.userId },
+        select: { meta: true },
+      });
+      await tx.user.update({
+        where: { id: restriction.userId },
+        data: clearedMuteFields(current?.meta as UserMeta | null),
+      });
+      return false;
     });
-    await updateUserById({
-      id: restriction.userId,
-      data: clearedMuteFields(existing?.meta as UserMeta | null),
-      updateSource: 'moderator:generationRestrictionOverturned',
-    });
-    await reinstateSubscription({ userId: restriction.userId }).catch((error) =>
-      logToAxiom({
-        name: 'reinstate-stripe-subscription-restriction-overturned',
-        type: 'error',
-        message: (error as Error).message,
-      })
-    );
-    await resetProhibitedRequestCount(restriction.userId);
+    if (!stillHeld) {
+      userUpdateCounter?.inc({
+        location: `user.service:updateUserById:${effects.overturnedSource}`,
+      });
+      await reinstateSubscription({ userId: restriction.userId }).catch((error) =>
+        logToAxiom({
+          name: 'reinstate-stripe-subscription-restriction-overturned',
+          type: 'error',
+          message: (error as Error).message,
+        })
+      );
+    }
+    await effects.afterOverturn?.(restriction);
     await refreshSession(restriction.userId, { caller: 'moderation' });
+  }
+
+  // The account is still muted by another open case, so telling the user it was lifted would be false.
+  if (stillHeld) {
+    logToAxiom({
+      name: 'user-restriction-resolved',
+      type: 'info',
+      details: { userRestrictionId, status, moderatorId, userId: restriction.userId, stillHeld },
+    });
+    return { userId: restriction.userId };
   }
 
   const notifType =
     status === UserRestrictionStatus.Upheld
-      ? 'generation-restriction-upheld'
-      : 'generation-restriction-overturned';
+      ? effects.upheldNotification
+      : effects.overturnedNotification;
 
   await createNotification({
     type: notifType,
@@ -165,7 +226,12 @@ export type OverturnPendingReviewMuteResult =
   | { unmuted: true; userRestrictionId: number }
   | {
       unmuted: false;
-      skipped: 'protected' | 'moderator' | 'manually-muted' | 'no-pending-restriction';
+      skipped:
+        | 'protected'
+        | 'moderator'
+        | 'manually-muted'
+        | 'no-pending-restriction'
+        | 'other-pending-restriction';
     };
 
 /**
@@ -200,6 +266,10 @@ export async function overturnPendingReviewMute({
     select: { id: true },
   });
   if (!restriction) return { unmuted: false, skipped: 'no-pending-restriction' };
+
+  // Overturning this one would leave the account muted by the other case, which is not "unmuted".
+  if (await hasOtherPendingRestriction(dbWrite, userId, restriction.id))
+    return { unmuted: false, skipped: 'other-pending-restriction' };
 
   await resolveUserRestriction({
     userRestrictionId: restriction.id,

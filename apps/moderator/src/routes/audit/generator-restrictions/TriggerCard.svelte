@@ -26,14 +26,17 @@
 >
   <div class="grid gap-4 md:grid-cols-[16rem_1fr]">
     <div class="flex flex-col gap-2">
-      <div class="flex items-center gap-2">
-        <!-- The parent owns the selection set, so a plain prop would latch on the primitive's own write. -->
-        <Checkbox
-          id="flag-{trigger.key}"
-          bind:checked={() => selected, () => onToggle(trigger.key)}
-        />
-        <Label for="flag-{trigger.key}" class="font-normal text-dark-0">Flag as suspicious</Label>
-      </div>
+      <!-- Flagging feeds the generation prompt list, which a scam verdict has no place in. -->
+      {#if trigger.category !== 'scam'}
+        <div class="flex items-center gap-2">
+          <!-- The parent owns the selection set, so a plain prop would latch on the primitive's own write. -->
+          <Checkbox
+            id="flag-{trigger.key}"
+            bind:checked={() => selected, () => onToggle(trigger.key)}
+          />
+          <Label for="flag-{trigger.key}" class="font-normal text-dark-0">Flag as suspicious</Label>
+        </div>
+      {/if}
 
       <div class="flex flex-wrap items-center gap-2">
         {#if trigger.source}<Badge variant="outline">{trigger.source}</Badge>{/if}
@@ -58,9 +61,35 @@
           <p class="text-xs text-dark-0">{dateTime(trigger.time)}</p>
         </div>
       {/if}
+      {#if trigger.entityType}
+        <div>
+          <p class="text-xs text-dark-2">Entity</p>
+          <p class="text-xs text-dark-0">{trigger.entityType} #{trigger.entityId}</p>
+        </div>
+      {/if}
+      {#if trigger.cleanup}
+        <div>
+          <p class="text-xs text-dark-2">Hidden by the auto-mute</p>
+          <p class="text-xs text-dark-0">
+            {trigger.cleanup.count} ({trigger.cleanup.kind}){trigger.cleanup.truncated
+              ? ', ids truncated'
+              : ''}
+          </p>
+        </div>
+      {/if}
     </div>
 
     <div class="min-w-0">
+      {#if trigger.reason}
+        <p class="mb-1 text-xs font-semibold tracking-wide text-dark-2 uppercase">Verdict</p>
+        <p class="mb-2 text-sm text-dark-0">{trigger.reason}</p>
+      {/if}
+      {#if trigger.text}
+        <p class="mb-1 text-xs font-semibold tracking-wide text-dark-2 uppercase">Scanned text</p>
+        <div class="max-h-48 overflow-auto rounded-md border border-dark-4 bg-dark-7 p-2">
+          <p class="text-sm break-words whitespace-pre-wrap text-dark-0">{trigger.text}</p>
+        </div>
+      {/if}
       {#if trigger.prompt}
         <p class="mb-1 text-xs font-semibold tracking-wide text-dark-2 uppercase">Prompt</p>
         <div class="max-h-48 overflow-auto rounded-md border border-dark-4 bg-dark-7 p-2">

@@ -109,6 +109,7 @@ import { env } from '~/env/server';
 import { randomUUID } from 'crypto';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { Prisma } from '@prisma/client';
+import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
 
 // Feature flag gate — all procedures require the comicCreator flag
 // ALL comic counters come from `ComicProjectMetric` — a Postgres rollup
@@ -6343,6 +6344,7 @@ export const comicsRouter = router({
           threadId: thread.id,
         },
       });
+      queueScamScan({ entityType: 'CommentV2', entityId: comment.id });
 
       // Increment comment count
       await dbWrite.thread.update({

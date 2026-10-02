@@ -133,11 +133,9 @@ describe('generator-restrictions load — type', () => {
 
 describe('generator-restrictions actions — ruling scope', () => {
   /**
-   * 🔴 A verdict is still generation-shaped. `resolveUserRestriction` in the main app hardcodes the
-   * `generation-restriction-upheld` / `-overturned` notification types, a `moderator:generationRestriction*`
-   * update source and a generation-worded email, and on an overturn it resets the PROMPT violation
-   * counter. Ruling on a bot-account row through it would tell the user their generation access was
-   * restored over something that has nothing to do with generation.
+   * 🔴 Only some types have a verdict path. `resolveUserRestriction` in the main app takes each type's
+   * notices, update sources and overturn effect from a per-type table and refuses a type without one;
+   * bot-account has none, so ruling on it would fail after the moderator had already acted.
    *
    * Enforced server-side rather than by hiding a button, because the check has to hold against a posted
    * id and not merely against what the page chose to render.
@@ -155,6 +153,19 @@ describe('generator-restrictions actions — ruling scope', () => {
     expect(result.status).toBe(400);
     expect(result.data.error).toMatch(/not yet available for "bot-account"/);
     expect(resolveRestriction).not.toHaveBeenCalled();
+  });
+
+  it('resolves a scam restriction', async () => {
+    getGenerationRestrictions.mockResolvedValue({ items: [row({ type: 'scam' })], totalCount: 1 });
+
+    const result = await actions.resolve(
+      formEvent({ userRestrictionId: '5', status: 'Overturned' })
+    );
+
+    expect(result).toEqual({ success: true });
+    expect(resolveRestriction).toHaveBeenCalledWith(
+      expect.objectContaining({ userRestrictionId: 5, status: 'Overturned', userId: 42 })
+    );
   });
 
   it('still resolves a generation restriction', async () => {
@@ -240,5 +251,49 @@ describe('generator-restrictions actions — ruling scope', () => {
     expect(getGenerationRestrictions).toHaveBeenCalledWith(
       expect.objectContaining({ restrictionId: 5, type: 'any' })
     );
+  });
+});
+
+describe('generator-restrictions actions — flagSuspicious', () => {
+  const triggersRow = () =>
+    row({
+      type: 'scam',
+      triggers: [
+        { key: '5-0', category: 'scam', reason: 'Fake support', text: 'claim your prize' },
+        { key: '5-1', category: 'prohibited', prompt: 'a prompt', matchedWord: 'x' },
+      ],
+    });
+
+  it('never copies a scam trigger into the prompt list, even when its key is posted', async () => {
+    getGenerationRestrictions.mockResolvedValue({ items: [triggersRow()], totalCount: 1 });
+    saveSuspiciousMatches.mockResolvedValue(1);
+
+    const data = new FormData();
+    data.append('userRestrictionId', '5');
+    data.append('key', '5-0');
+    data.append('key', '5-1');
+    await actions.flagSuspicious({
+      request: { formData: async () => data },
+      locals: { user: { id: 7 } },
+    } as unknown as Parameters<(typeof actions)['flagSuspicious']>[0]);
+
+    const [matches] = saveSuspiciousMatches.mock.calls[0];
+    expect(matches).toHaveLength(1);
+    expect(matches[0]).toMatchObject({ prompt: 'a prompt', check: 'prohibited' });
+  });
+
+  it('refuses a selection of only scam triggers', async () => {
+    getGenerationRestrictions.mockResolvedValue({ items: [triggersRow()], totalCount: 1 });
+
+    const data = new FormData();
+    data.append('userRestrictionId', '5');
+    data.append('key', '5-0');
+    const result = (await actions.flagSuspicious({
+      request: { formData: async () => data },
+      locals: { user: { id: 7 } },
+    } as unknown as Parameters<(typeof actions)['flagSuspicious']>[0])) as { status: number };
+
+    expect(result.status).toBe(400);
+    expect(saveSuspiciousMatches).not.toHaveBeenCalled();
   });
 });

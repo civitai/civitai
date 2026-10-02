@@ -70,9 +70,10 @@ export const load: PageServerLoad = async ({ url }) => {
 //
 // Each action decides that for itself, and they do NOT all decide the same way — so this helper deliberately
 // makes no such decision. `resolve` and `ban` call `unwiredRuling` because they hand the row to a verdict
-// path that is still generation-shaped. `flagSuspicious` does not, and should not: it copies selected
+// path that only some types have. `flagSuspicious` does not, and should not: it copies selected
 // triggers into the shared suspicious-match list, writes nothing to the account, and tells the user
-// nothing. A prompt worth flagging is worth flagging whatever queue it was raised in.
+// nothing. A prompt worth flagging is worth flagging whatever queue it was raised in; scam triggers
+// are excluded because they are not prompts.
 async function restrictionById(id: number): Promise<RestrictionRow | null> {
   const { items } = await getGenerationRestrictions({
     page: 1,
@@ -84,18 +85,14 @@ async function restrictionById(id: number): Promise<RestrictionRow | null> {
 }
 
 /**
- * 🔴 Verdicts are still generation-shaped, so only generation rows may be ruled on.
+ * 🔴 Only types with verdict effects may be ruled on.
  *
- * The main app's `resolveUserRestriction` — the single write path for a verdict — hardcodes the
- * `generation-restriction-upheld` / `-overturned` notification types, a `moderator:generationRestriction*`
- * update source, and a `restriction-upheld` / `-overturned` email, and on an overturn it resets the
- * *prompt* violation counter. Ruling on a non-generation row through it would tell the user their
- * generation access was restored over something unrelated to generation.
+ * The main app's `resolveUserRestriction` — the single write path for a verdict — takes its notices,
+ * update sources and overturn effect from a per-type table, and refuses a type without an entry.
  *
  * This is a refusal rather than a hidden button because the check has to hold against a posted id, not
- * just against what the page chose to render. Lifting it means parameterising that verdict path first.
- * (The buttons are disabled as well now — see `RestrictionDetail.svelte`. That is an addition to this
- * check, never a substitute for it.)
+ * just against what the page chose to render. (The buttons are disabled as well — see
+ * `RestrictionDetail.svelte`. That is an addition to this check, never a substitute for it.)
  *
  * 🔴 KEPT even though the refusal is now enforced by `resolveUserRestriction` itself — which is what
  * closes the surfaces this check could never reach: the retool User Lookup panel, the tRPC router and
@@ -205,7 +202,7 @@ export const actions: Actions = {
     if (!row) return fail(404, { error: 'Restriction not found.' });
 
     const matches = row.triggers
-      .filter((t) => keys.has(t.key))
+      .filter((t) => keys.has(t.key) && t.category !== 'scam')
       .map((t) => ({
         odometer: row.id,
         userId: row.userId,
