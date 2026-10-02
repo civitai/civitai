@@ -60,11 +60,7 @@ async function call(query: Record<string, unknown>) {
   return { statusCode, body };
 }
 
-/**
- * Not obsolete if these go red: a blank configured secret must refuse the request rather than be
- * compared against an equally blank presented token.
- */
-describe('early-access permanent paid access, shared-token requirement', () => {
+describe('early-access shared token', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAssertMonetizationWrite.mockRejectedValue(

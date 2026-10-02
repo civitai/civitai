@@ -211,6 +211,7 @@ describe('POST /api/v1/developer/block-manifests', () => {
 
 describe('POST /api/v1/developer/block-manifests — JOB_TOKEN not configured', () => {
   it.each([
+    ['unset', undefined],
     ['empty', ''],
     ['whitespace-only', '  '],
   ])(
