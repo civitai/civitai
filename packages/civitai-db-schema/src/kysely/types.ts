@@ -3721,6 +3721,22 @@ export type QuestionReaction = {
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
+export type RatingReview = {
+  id: Generated<number>;
+  entityType: string;
+  entityId: number;
+  userId: number;
+  currentLevel: number;
+  suggestedLevel: number;
+  appliedLevel: number | null;
+  userComment: string | null;
+  modComment: string | null;
+  status: Generated<ReportStatus>;
+  resolvedBy: number | null;
+  resolvedAt: Timestamp | null;
+  resolvedTextHash: string | null;
+  createdAt: Generated<Timestamp>;
+};
 export type RecommendedResource = {
   id: Generated<number>;
   resourceId: number;
@@ -4820,6 +4836,7 @@ export type DB = {
   QuestionMetric: QuestionMetric;
   QuestionRank: QuestionRank;
   QuestionReaction: QuestionReaction;
+  RatingReview: RatingReview;
   RecommendedResource: RecommendedResource;
   RedeemableCode: RedeemableCode;
   ReferralAttribution: ReferralAttribution;
