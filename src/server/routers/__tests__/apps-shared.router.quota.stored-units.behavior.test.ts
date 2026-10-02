@@ -254,10 +254,10 @@ const rowCount = () => scalar(`SELECT count(*) FROM ${SCHEMA}.shared_kv`);
 
 /** Seed the app counter directly, the way a nearly-full app arrives in production. */
 async function seedUsedBytes(value: number) {
-  await holder.db.query(
-    `UPDATE ${SCHEMA}.quota SET used_bytes = $2 WHERE app_block_id = $1`,
-    [APP_BLOCK_ID, value]
-  );
+  await holder.db.query(`UPDATE ${SCHEMA}.quota SET used_bytes = $2 WHERE app_block_id = $1`, [
+    APP_BLOCK_ID,
+    value,
+  ]);
 }
 
 /**

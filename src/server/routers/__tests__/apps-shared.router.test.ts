@@ -1374,9 +1374,7 @@ describe('apps.shared.update (author-scoped in-place edit)', () => {
         return { rows: [{ author_user_id: author, size_bytes: sizeBytes }], rowCount: 1 };
       if (sql.includes('.quota'))
         return {
-          rows: [
-            { used_bytes: String(usedBytes), stored_size_bytes: fixtureStoredSize(params) },
-          ],
+          rows: [{ used_bytes: String(usedBytes), stored_size_bytes: fixtureStoredSize(params) }],
           rowCount: 1,
         };
       return { rows: [], rowCount: 0 };
