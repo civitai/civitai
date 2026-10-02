@@ -225,6 +225,16 @@ export function isVisibilityEligibleListingStatus(status: string): boolean {
  *     row can carry a level set before it was withdrawn for re-review.
  *
  * Returns `null` for a status no level may reach at all.
+ *
+ * 🔴 THE CEILING IS ALSO WHERE D4'S GUARANTEE ENDS — OPERATOR RULING, 2026-10-01: D4 binds
+ * PRE-APPROVAL ONLY. Below the ceiling (`draft`/`pending`) a `moderators`-level run reaches
+ * the private-run predicate and inherits every owner-invisibility rail. At `approved` it
+ * does not, so a moderator's review run there IS debited Buzz and DOES pay the publisher the
+ * author fee. That is a decision, not a gap; the full reasoning and the rejected
+ * alternatives are at gate (3) of
+ * `src/server/services/blocks/private-run-access.service.ts`, and
+ * `src/server/services/blocks/__tests__/app-listing-visibility.d4-ruling.test.ts` fails if
+ * someone completes the exclusion without revisiting it.
  */
 export function maxVisibilityForStatus(status: string): AppListingVisibility | null {
   if (!isVisibilityEligibleListingStatus(status)) return null;
