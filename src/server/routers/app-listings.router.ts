@@ -32,6 +32,7 @@ import {
   listOffsiteRequestsSchema,
   persistListingAssetImageSchema,
   rejectExternalRequestSchema,
+  setListingVisibilitySchema,
   submitExternalListingSchema,
   submitListingRevisionSchema,
   updateListingSchema,
@@ -67,9 +68,14 @@ import {
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { narrowStoreScope } from '~/shared/utils/store-visibility-scope';
 import {
+  isListingAudienceFloor,
+  type ListingAudienceFloor,
+} from '~/shared/utils/app-listing-visibility';
+import {
   isAppBlocksAuthorEnabled,
   isAppBlocksEnabled,
   resolveStoreVisibilityScope,
+  resolveViewerAudienceFloor,
   type StoreVisibilityScope,
 } from '~/server/services/app-blocks-flag';
 import {
@@ -235,8 +241,16 @@ const listingMediaCliScope = { requiredScope: TokenScope.AppBlocksSubmit } as co
  * same kind rule — see that gate's own header.
  */
 const enforceAppListingsReadFlag = middleware(async ({ ctx, next }) => {
-  const _storeScope = await resolveStoreVisibilityScope({ user: ctx.user });
-  return next({ ctx: { _storeScope } });
+  // 🔴 TWO INDEPENDENT AXES, RESOLVED TOGETHER AND ANDed BY THE DATA LAYER. The scope is
+  // the SURFACE question (may this viewer see the store, and which kinds); the floor is the
+  // per-listing COHORT question (which visibility levels admit them). Resolving them in one
+  // middleware is what stops a proc from applying one and forgetting the other — the
+  // "sees the affordance, 403s on submit" class this file's write gate records.
+  const [_storeScope, _audienceFloor] = await Promise.all([
+    resolveStoreVisibilityScope({ user: ctx.user }),
+    resolveViewerAudienceFloor({ user: ctx.user }),
+  ]);
+  return next({ ctx: { _storeScope, _audienceFloor } });
 });
 
 /**
@@ -325,6 +339,21 @@ function applyStoreScope(ctx: unknown, entrypoint: StoreScopeEntrypoint): StoreV
   // this branch and the two REST handlers apply the SAME rule instead of three
   // independently-written defaults that disagreed (civitai#3983).
   return narrowStoreScope(raw);
+}
+
+/**
+ * Read the audience floor `enforceAppListingsReadFlag` put on ctx, FAILING CLOSED.
+ *
+ * 🔴 THE FAIL-CLOSED VALUE IS `public`, WHICH READS BACKWARDS. The floor is the NARROWEST
+ * level that admits the viewer, so the WIDEST level is the weakest grant: a floor of
+ * `public` admits only listings whose owner marked them public, which is the least a cohort
+ * can see. An absent or uninterpretable value therefore narrows to `public`, exactly as an
+ * absent scope narrows to `none` — a default is an authorization decision, and this is the
+ * only safe one.
+ */
+function applyAudienceFloor(ctx: unknown): ListingAudienceFloor {
+  const raw = (ctx as { _audienceFloor?: unknown })._audienceFloor;
+  return isListingAudienceFloor(raw) ? raw : 'public';
 }
 
 /**
@@ -1769,7 +1798,77 @@ export const appListingsRouter = router({
       const { listAvailableListings } = await import(
         '~/server/services/blocks/app-listing.service'
       );
-      return listAvailableListings(input, { redCapable: isRedCapableRequest(ctx), scope });
+      const floor = applyAudienceFloor(ctx);
+      return listAvailableListings(input, {
+        redCapable: isRedCapableRequest(ctx),
+        scope,
+        floor,
+      });
+    }),
+
+  /**
+   * OWNER/EDITOR: set the per-listing VISIBILITY LEVEL on a listing they hold a role on.
+   *
+   * `appDeveloperProcedure` is the same gate `updateListing` uses, and like that proc the
+   * ROLE proof happens in the service (`resolveListingAccess`), not here — the router only
+   * establishes that the caller is an authenticated app developer. D1's status gate is in
+   * the service too, because the role resolver is deliberately not status-aware.
+   *
+   * Rate-limited on the same budget as `updateListing`: this is an authored edit, and a
+   * level change busts the store catalog cache, so it is not free to repeat.
+   */
+  setListingVisibility: appDeveloperProcedure
+    .use(
+      rateLimit({
+        limit: 30,
+        period: 3600,
+        errorMessage: 'Too many visibility changes — slow down.',
+      })
+    )
+    .input(setListingVisibilitySchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { setListingVisibilityAsOwner } = await import(
+        '~/server/services/blocks/app-listing-visibility-write.service'
+      );
+      return setListingVisibilityAsOwner({
+        appListingId: input.listingId,
+        visibility: input.visibility,
+        userId: ctx.user.id,
+      });
+    }),
+
+  /**
+   * MODERATOR: set the per-listing VISIBILITY LEVEL on ANY listing, with an audit event.
+   *
+   * 🔴 A SEPARATE PROC RATHER THAN A MODERATOR BYPASS INSIDE THE OWNER ONE. The owner
+   * path's resolver has no moderator override (deliberately — see its service docblock),
+   * and a moderator acting on someone else's listing must leave an
+   * `AppListingModerationEvent` behind. Two procs is what makes the audit row
+   * unskippable rather than conditional on an argument.
+   *
+   * `moderatorProcedure` + the redundant inner `isModerator` recheck + `moderatorUserId`
+   * bound from `ctx.user.id` — the triple every moderator mutation in this file uses, and
+   * the reason the actor on the audit row can never be client-supplied.
+   *
+   * Deliberately NOT behind `enforceAppListingsWriteFlag`: that gate darkens the store UI
+   * and moderators resolve `full` through it anyway, so it would be inert here — the same
+   * reasoning `setReviewExclude` records.
+   */
+  setListingVisibilityAsModerator: moderatorProcedure
+    .input(setListingVisibilitySchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Changing listing visibility is restricted to civitai team');
+      }
+      const { setListingVisibilityAsModerator } = await import(
+        '~/server/services/blocks/app-listing-visibility-write.service'
+      );
+      return setListingVisibilityAsModerator({
+        appListingId: input.listingId,
+        visibility: input.visibility,
+        moderatorUserId: ctx.user.id,
+      });
     }),
 
   /** Per-listing public detail, by EXACTLY ONE of slug or id (approved only). */
@@ -1789,7 +1888,11 @@ export const appListingsRouter = router({
         throw throwNotFoundError('Listing not found');
       }
       const { getListingDetail } = await import('~/server/services/blocks/app-listing.service');
-      const detail = await getListingDetail(input, { redCapable: isRedCapableRequest(ctx), scope });
+      const detail = await getListingDetail(input, {
+        redCapable: isRedCapableRequest(ctx),
+        scope,
+        floor: applyAudienceFloor(ctx),
+      });
       if (!detail) throw throwNotFoundError('Listing not found');
       return detail;
     }),

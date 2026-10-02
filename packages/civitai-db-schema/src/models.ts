@@ -2100,6 +2100,7 @@ export interface AppListing {
   cover?: Image | null;
   category: string | null;
   status: string;
+  visibility: string;
   contentRating: string | null;
   externalUrl: string | null;
   sourceRepoUrl: string | null;

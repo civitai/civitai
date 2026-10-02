@@ -27,6 +27,12 @@ const { mockResolveStoreVisibilityScope, recordStoreScopeApplied } = vi.hoisted(
 
 vi.mock('~/server/services/app-blocks-flag', () => ({
   resolveStoreVisibilityScope: mockResolveStoreVisibilityScope,
+  // 🔴 THE READ MIDDLEWARE NOW RESOLVES TWO AXES. A one-key factory here makes the WHOLE
+  // file fail to import (`No "resolveViewerAudienceFloor" export is defined on the … mock`)
+  // rather than failing one case, which is why it is stubbed rather than left out.
+  // `public` is the least-privileged floor, so these scope cases keep asserting the SURFACE
+  // gate in isolation — exactly what they were written to cover.
+  resolveViewerAudienceFloor: vi.fn(async () => 'public'),
 }));
 vi.mock('~/server/prom/store-scope.metrics', () => ({ recordStoreScopeApplied }));
 vi.mock('~/server/services/blocks/app-listing.service', () => ({

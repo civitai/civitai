@@ -8,6 +8,18 @@ import { toPublicBlockManifest } from '~/server/schema/blocks/subscription.schem
 import { isMatureContentRating } from '~/server/utils/server-domain';
 import type { StoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import { narrowStoreScope } from '~/shared/utils/store-visibility-scope';
+import type { ListingAudienceFloor } from '~/shared/utils/app-listing-visibility';
+import {
+  listingVisibleInStore,
+  VISIBILITY_ELIGIBLE_LISTING_STATUSES,
+  visibilitiesVisibleTo,
+} from '~/shared/utils/app-listing-visibility';
+// The MANUAL-APPLY `visibility` column is read ONLY through this guard — never via
+// `listingHydrateSelect`, which the public `/apps` GRID shares. See its module header.
+import {
+  isListingVisibilityColumnAvailable,
+  readListingVisibility,
+} from '~/server/services/blocks/app-listing-visibility.service';
 import { tokenScopeMaskToList } from '~/shared/constants/token-scope.constants';
 import type {
   GetAppListingDetailInput,
@@ -900,6 +912,52 @@ export function listingPublicVisibilityFilter(scope: StoreVisibilityScope): Pris
   return Prisma.sql`FALSE`;
 }
 
+/**
+ * The per-listing LEVEL gate — the status predicate this read has always had, WIDENED by
+ * the viewer's audience floor.
+ *
+ * It replaces the bare `al.status = 'approved'` rather than being ANDed beside it, because
+ * the whole point is that a level lets a NON-approved listing into the store for the cohort
+ * it names. Three properties, each load-bearing:
+ *
+ * 🔴 `approved` IS NEVER REVOKED BY A LEVEL. The first disjunct is the pre-feature
+ * predicate, unchanged. An approved listing stays in the store whatever its level says —
+ * otherwise a newly approved row, whose column carries the `private` default, would
+ * silently vanish from the grid. Narrowing an approved listing is a different feature
+ * (owner unpublish) and is deliberately not expressible here.
+ *
+ * 🔴 THE WIDENING IS BOUNDED BY AN ALLOWLIST OF STATUSES, NOT BY THE LEVEL ALONE. Only
+ * `draft` and `pending` can be widened. `removed` and `rejected` are negative moderation
+ * outcomes, and a level that reached them would be a partial un-takedown of the owner's own
+ * app — so they are excluded here as well as at the mutation, because a row can carry a
+ * level set BEFORE it was taken down.
+ *
+ * 🔴 AND IT EMITS THE PRE-FEATURE PREDICATE WHEN THE COLUMN IS NOT THERE. This is raw SQL
+ * inside a cached statement: a missing column is a PARSE error, not something a per-column
+ * guard can swallow, so the statement must not NAME `al.visibility` until the manual-apply
+ * migration has run. `available` comes from
+ * `isListingVisibilityColumnAvailable`; `false` makes this byte-identical to the predicate
+ * that shipped before this feature.
+ *
+ * Exported so the drift-guard unit test can assert the exact SQL each (floor, available)
+ * pair emits.
+ */
+export function listingLevelVisibilityFilter(
+  floor: ListingAudienceFloor,
+  available: boolean
+): Prisma.Sql {
+  if (!available) return Prisma.sql`al.status = 'approved'`;
+  const widenable = VISIBILITY_ELIGIBLE_LISTING_STATUSES.filter((s) => s !== 'approved');
+  const levels = visibilitiesVisibleTo(floor);
+  return Prisma.sql`(
+        al.status = 'approved'
+        OR (
+          al.status IN (${Prisma.join(widenable)})
+          AND al.visibility IN (${Prisma.join(levels)})
+        )
+      )`;
+}
+
 // ---------------------------------------------------------------------------
 // Global recommend mean (the Bayesian prior mean `m`, 1h-cached scalar).
 // ---------------------------------------------------------------------------
@@ -1017,13 +1075,24 @@ export async function getGlobalRecommendMean(): Promise<number> {
  *   instead of reclaiming it. The tag set holds the exact keys to delete.
  *
  * ⚠️ `key` is also the `cache_name` label on the hit/miss counters. Its cardinality
- * is bounded at 6 (3 scopes × 2 capabilities) — every component is a closed enum,
- * never a request-controlled string.
+ * is bounded at 18 (3 scopes × 3 audience floors × 2 capabilities) — every component
+ * is a closed enum, never a request-controlled string.
+ *
+ * 🔴 THE AUDIENCE FLOOR IS A LITERAL KEY SEGMENT FOR THE SAME REASON `scope` IS, and it
+ * had to be: it changes which ROWS the cached statement returns. Folding it into
+ * `hashifyObject` would put a security-boundary axis behind a 32-bit non-injective hash,
+ * and leaving it out entirely would serve one cohort's id page to another — a moderator's
+ * page, including `draft` listings, to a general viewer. It is a closed 3-value enum, so
+ * it triples a keyspace that was bounded at 6 rather than opening it.
  */
-function catalogPageCache(scope: StoreVisibilityScope, redCapable: boolean) {
+function catalogPageCache(
+  scope: StoreVisibilityScope,
+  floor: ListingAudienceFloor,
+  redCapable: boolean
+) {
   return queryCache(
     dbRead,
-    `listAvailableAppListings:${scope}:${redCapable ? 'red' : 'sfw'}`,
+    `listAvailableAppListings:${scope}:${floor}:${redCapable ? 'red' : 'sfw'}`,
     'v1'
   );
 }
@@ -1087,10 +1156,22 @@ export async function bustAppListingCatalogCache(): Promise<void> {
  */
 export async function listAvailableListings(
   input: ListAppListingsInput,
-  opts: { redCapable?: boolean; scope?: StoreVisibilityScope } = {}
+  opts: {
+    redCapable?: boolean;
+    scope?: StoreVisibilityScope;
+    /**
+     * The viewer's audience floor. 🔴 DEFAULTS TO `public`, THE LEAST-PRIVILEGED VALUE —
+     * the floor is the NARROWEST level that admits the viewer, so the widest level is the
+     * weakest grant. An omitted floor therefore admits only what an anonymous viewer could
+     * already see, which is the same fail-closed posture `narrowStoreScope` applies to
+     * `scope` and for the same reason: a default is an authorization decision.
+     */
+    floor?: ListingAudienceFloor;
+  } = {}
 ): Promise<{ items: ListingCard[]; nextCursor?: string }> {
   const { kind, category, sort, cursor, limit } = input;
   const redCapable = opts.redCapable ?? false;
+  const floor: ListingAudienceFloor = opts.floor ?? 'public';
   // 🔴 FAIL CLOSED on an absent / unrecognized scope (civitai#3983). This used to be
   // `opts.scope ?? 'full'`, on the reasoning that every caller passes an explicit
   // scope. Every caller does — and production still reached here with `undefined`,
@@ -1106,7 +1187,17 @@ export async function listAvailableListings(
   // Only `top-rated` needs the global mean. PIN it into the cursor across a
   // paging session (page 1 reads the 1h cache + encodes it; pages 2..N reuse
   // the pinned value, NOT a fresh read) so the sort key can't shift mid-scan.
-  const globalMean = sort === 'top-rated' ? cursorMean ?? (await getGlobalRecommendMean()) : 0;
+  // 🔴 CONCURRENT WITH THE MEAN, AND IT MUST PRECEDE THE STATEMENT. The level filter is raw
+  // SQL, so whether it may NAME `al.visibility` has to be decided before the statement is
+  // built — a missing column is a parse error no per-column guard can swallow. One
+  // primary-key probe that matches nothing, issued alongside the only other pre-statement
+  // read so it costs no extra round trip on the `top-rated` path. Deliberately not memoised:
+  // the column appears partway through a deploy's life. The router short-circuits
+  // `scope === 'none'` before reaching here, so the probe never runs for dark traffic.
+  const [globalMean, visibilityAvailable] = await Promise.all([
+    sort === 'top-rated' ? cursorMean ?? getGlobalRecommendMean() : 0,
+    isListingVisibilityColumnAvailable(dbRead),
+  ]);
 
   const { expr: sortKeyExpr, descending } = listingSortKeyExpr(sort, globalMean);
   const dir = descending ? Prisma.sql`DESC` : Prisma.sql`ASC`;
@@ -1136,7 +1227,7 @@ export async function listAvailableListings(
   // change accepts; the TTL does nothing about it. What 180s does buy is collapsing the
   // burst of identical cold reads a `/apps` page load produces, at a staleness a missed
   // bust cannot stretch past.
-  const cacheable = catalogPageCache(scope, redCapable);
+  const cacheable = catalogPageCache(scope, floor, redCapable);
   const idRows = await cacheable<{ id: string; sort_key: string }[]>(
     Prisma.sql`
     SELECT al.id, ${sortKeyExpr} AS sort_key
@@ -1145,9 +1236,14 @@ export async function listAvailableListings(
     -- DEPLOY-GATE: join the backing AppBlock (onsite only) so we can require it
     -- has actually deployed its slug origin before listing it.
     LEFT JOIN app_blocks ab ON ab.id = al.app_block_id
-    WHERE al.status = 'approved'
-      -- Never surface a SHADOW revision draft. Shadows are status='draft' so the
-      -- approved-only filter already hides them; this is defense-in-depth.
+    -- LEVEL GATE: the approved-only predicate, widened by the viewer's audience floor.
+    -- Emits exactly the bare approved-only test while the manual-apply column is absent.
+    WHERE ${listingLevelVisibilityFilter(floor, visibilityAvailable)}
+      -- 🔴 NOW LOAD-BEARING RATHER THAN DEFENCE-IN-DEPTH. A shadow revision is
+      -- status='draft', and the level gate above can admit a draft — so this is the only
+      -- thing keeping a shadow's staged, un-reviewed content out of the store for a
+      -- cohort whose floor admits its parent's level. Do not demote it to a comment
+      -- about redundancy again.
       AND al.revision_of_id IS NULL
       -- DEPLOY-GATE (generic, all app-blocks): an ONSITE (block-backed) listing
       -- only appears once its backing AppBlock has SUCCESSFULLY deployed at least
@@ -1219,9 +1315,16 @@ export async function listAvailableListings(
  */
 export async function getListingDetail(
   input: GetAppListingDetailInput,
-  opts: { redCapable?: boolean; scope?: StoreVisibilityScope } = {}
+  opts: {
+    redCapable?: boolean;
+    scope?: StoreVisibilityScope;
+    /** The viewer's audience floor. Defaults to `public` — see `listAvailableListings`
+     *  for why the widest level is the least-privileged default. */
+    floor?: ListingAudienceFloor;
+  } = {}
 ): Promise<ListingDetail | null> {
   const redCapable = opts.redCapable ?? false;
+  const floor: ListingAudienceFloor = opts.floor ?? 'public';
   // 🔴 FAIL CLOSED on an absent / unrecognized scope — see listAvailableListings
   // (civitai#3983). Previously `opts.scope ?? 'full'`, which let an absent scope
   // reach a listing's full detail through the public REST endpoint.
@@ -1250,10 +1353,25 @@ export async function getListingDetail(
     // `listingHydrateSelect` for why it must not live in the grid-shared select.
     select: { ...listingHydrateSelect, status: true, connectRequestedScopes: true },
   });
-  // Status check in the app layer (like the AppBlock path) so a future caller
-  // can't reuse this for a non-public path: a non-approved row returns null
-  // exactly like a missing one — never its data.
-  if (!row || row.status !== 'approved') return null;
+  if (!row) return null;
+  // LEVEL GATE, in the app layer (like the AppBlock path) so a future caller can't reuse
+  // this for a non-public path: a row this viewer's cohort may not see returns null
+  // exactly like a missing one — never its data, and never a distinguishable refusal.
+  //
+  // 🔴 THE LEVEL IS READ SEPARATELY, NOT VIA THE SHARED `select` ABOVE. `visibility` is a
+  // manual-apply column and `listingHydrateSelect` is shared with the public GRID, so
+  // naming it there would 500 the whole store until a human runs the SQL.
+  //
+  // 🔴 AND AN UNAVAILABLE COLUMN FALLS BACK TO THE PRE-FEATURE PREDICATE, not to `private`.
+  // Degrading to `private` would make an unapplied migration hide every approved listing's
+  // detail page — an outage dressed as fail-closed. `listingVisibleInStore` never revokes
+  // `approved`, so for an approved row the two agree anyway; the fallback matters only for
+  // the widened statuses, which simply stay hidden as they are today.
+  const level = await readListingVisibility(row.id, dbRead);
+  const visible = level.available
+    ? listingVisibleInStore({ status: row.status, visibility: level.visibility, floor })
+    : row.status === 'approved';
+  if (!visible) return null;
   // STORE-SCOPE kind gate (the public/onsite security boundary): under
   // `public-external` an ONSITE listing is indistinguishable from a missing one —
   // return null so no crafted id/slug can reach an onsite listing's detail. EVERY

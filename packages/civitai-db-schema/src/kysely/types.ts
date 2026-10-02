@@ -413,6 +413,20 @@ export type AppListing = {
   cover_id: number | null;
   category: string | null;
   status: Generated<string>;
+  /**
+   * Per-listing cohort gate: private|moderators|testers|public. Free-text `text`
+   * like `status`; the allowed set is a DB CHECK that lives ONLY in the migration
+   * .sql (canonical code set = APP_LISTING_VISIBILITIES). It only ever WIDENS who
+   * reaches the store — an `approved` listing is visible regardless, so a newly
+   * approved row carrying the `private` default cannot vanish — and it is always an
+   * AND with the surface flags, never an override.
+   *
+   * MANUAL-APPLY, like every migration here. Read it ONLY through
+   * `app-listing-visibility.service.ts` and never add it to a shared `select`: a
+   * `select` naming a missing column throws P2022 for the WHOLE query, which on the
+   * grid's shared select is a public-store outage.
+   */
+  visibility: Generated<string>;
   content_rating: string | null;
   external_url: string | null;
   source_repo_url: string | null;

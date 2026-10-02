@@ -127,6 +127,12 @@ export const APP_LISTING_MODERATION_ACTIONS = [
   // enumerates every `after` state. Do not re-describe them here — this comment
   // has been falsified by a later commit of the same change twice already.
   'purge-user-storage',
+  // W14 per-listing VISIBILITY LEVEL. Like `message-owner` and `purge-user-storage` it
+  // changes NO listing status — it records that a moderator moved a listing's audience
+  // (`before.visibility` / `after.visibility`), so a level change on someone else's
+  // listing is attributable and reviewable. The OWNER path writes no event; see the
+  // migration header for why.
+  'set-visibility',
 ] as const;
 export type AppListingModerationAction = (typeof APP_LISTING_MODERATION_ACTIONS)[number];
 

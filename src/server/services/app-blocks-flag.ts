@@ -6,6 +6,7 @@ import {
   recordStoreScopeResolution,
 } from '~/server/prom/store-scope.metrics';
 import { buildFliptContext } from '~/server/services/feature-flags.service';
+import type { ListingAudienceFloor } from '~/shared/utils/app-listing-visibility';
 import {
   narrowStoreScope,
   type StoreVisibilityScope as StoreVisibilityScopeValue,
@@ -1233,6 +1234,57 @@ async function resolveStoreVisibilityScopeUninstrumented(opts?: {
   if (await isExternalListingsPublicEnabled(opts)) return 'public-external';
   // Fail-closed: neither flag → dark.
   return 'none';
+}
+
+/**
+ * Resolve the viewer's LISTING AUDIENCE FLOOR — the narrowest per-listing visibility level
+ * that still admits them.
+ *
+ * 🔴 THIS IS A SECOND AXIS, NOT A REPLACEMENT FOR {@link resolveStoreVisibilityScope}, and
+ * the two are ANDed by the caller. The scope answers "may this viewer see the store at
+ * all, and which KINDS" — a surface question. This answers "which per-listing levels admit
+ * this viewer" — a cohort question. A listing at `public` is still invisible to a viewer
+ * whose scope is `none`; nothing here can lift that.
+ *
+ * 🔴 THE TESTER COHORT IS READ OFF `app-blocks-enabled`, AND THAT CHOICE IS THE WHOLE
+ * REASON THIS FEATURE NEEDS NO NEW FLAG. A level stores an ENUM and is mapped to a cohort
+ * here, server-side, so no flag state is created, widened or referenced by key from the
+ * database. The two existing flags already partition the population the way the levels
+ * need:
+ *   · `app-listings` is the SURFACE flag and is the one that widens to public at GA;
+ *   · `app-blocks-enabled` is the runtime gate and stays mods + `app-dev-testers`
+ *     segmented — this file says so where that flag is declared.
+ * So post-GA a general viewer fails `app-blocks-enabled` and floors at `public`, while a
+ * tester passes it and floors at `testers`, which is exactly the distinction the enum
+ * draws.
+ *
+ * ⚠️ PRE-GA THE `testers` AND `public` LEVELS ADMIT THE SAME POPULATION, and that is
+ * harmless rather than a defect: the surface flag is NARROWER than either cohort today, so
+ * the AND is decided by the surface and the level cannot widen anything. It becomes a real
+ * distinction the moment `app-listings` widens past `app-blocks-enabled` — which is the
+ * transition the OR-fallback on {@link isAppListingsEnabled} already exists to manage.
+ *
+ * 🔴 FAIL-CLOSED IS `public`, WHICH READS BACKWARDS AND IS CORRECT. The floor is the
+ * NARROWEST level that admits the viewer, so the least-privileged answer is the WIDEST
+ * level — `public`, which admits them to nothing a level has restricted. An absent flag or
+ * an unreachable Flipt makes `isFlipt` return `false`, so an unknown viewer floors at
+ * `public` and sees only listings their owner marked public.
+ *
+ * Moderators short-circuit on the server-stamped session flag rather than on a flag eval,
+ * for the same reason the private-run predicate does: a moderator is typically outside
+ * every cohort segment, and requiring a flag for them would refuse the audience the
+ * `moderators` level exists for.
+ */
+export async function resolveViewerAudienceFloor(opts?: {
+  user?: SessionUser;
+}): Promise<ListingAudienceFloor> {
+  const user = opts?.user;
+  if (user?.isModerator === true) return 'moderators';
+  // Anonymous: no cohort to resolve, and a no-user eval would return the flag's BASE value
+  // rather than denying (see GLOBAL-EVAL SEMANTICS at the top of this file). Answer the
+  // least-privileged floor directly instead of asking a question that cannot refuse.
+  if (!user) return 'public';
+  return (await isAppBlocksEnabled({ user })) ? 'testers' : 'public';
 }
 
 /** The three flags a `full` / `public-external` scope can come from. */

@@ -101,7 +101,9 @@ export default MixedAuthEndpoint(async function handler(req, res, user) {
 
     const detail = await getListingDetail(
       { slug: parsed.data.slug },
-      { redCapable: isRedCapableRequest(req.headers.host), scope }
+      // `floor: 'public'` — the public catalog grant lifts the SURFACE scope, never the
+      // per-listing audience. See the sibling list endpoint for the full reasoning.
+      { redCapable: isRedCapableRequest(req.headers.host), scope, floor: 'public' }
     );
     if (!detail) {
       return res.status(404).json(restErrorBody(REST_ERROR_CODE.NOT_FOUND, 'App not found'));

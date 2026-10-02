@@ -197,8 +197,18 @@ describe('🔴 getListingDetail degrades rather than 500ing when source_repo_url
     // Without this, a read hardcoded to `null` would satisfy the degradation case below
     // and the guard would look tested while providing nothing.
     mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...onsiteRow(), status: 'approved' });
-    mockDbRead.appListing.findUnique.mockResolvedValueOnce({
-      sourceRepoUrl: 'https://github.com/civitai/cool-app',
+    // 🔴 KEYED ON THE REQUESTED `select`, NOT ON CALL ORDER. The `findUnique` delegate now
+    // serves THREE guarded manual-apply readers on this path (`source_repo_url`, the beta
+    // columns, and `visibility`), so a `mockResolvedValueOnce` answers whichever one happens
+    // to be issued first — and the detail read's level gate runs before the source-repo
+    // read. A call-order mock here silently handed the source-repo answer to the visibility
+    // reader and this positive control reported `null`, i.e. it would have gone green for a
+    // feature that was working and red for one that was.
+    mockDbRead.appListing.findUnique.mockImplementation(async (args: unknown) => {
+      const select = (args as { select?: Record<string, unknown> } | undefined)?.select ?? {};
+      if ('sourceRepoUrl' in select)
+        return { sourceRepoUrl: 'https://github.com/civitai/cool-app' };
+      return {};
     });
     const detail = await getListingDetail({ slug: 'cool-app' }, { scope: 'full' });
     expect(detail?.sourceRepoUrl).toBe('https://github.com/civitai/cool-app');
@@ -252,7 +262,23 @@ describe('🔴 getListingDetail degrades rather than 500ing when source_repo_url
     mockDbRead.$queryRaw.mockResolvedValueOnce([{ id: 'apl_1', sort_key: 'k' }]);
     mockDbRead.appListing.findMany.mockResolvedValueOnce([onsiteRow()]);
     await listAvailableListings({ kind: 'all', sort: 'newest', limit: 20 });
-    expect(mockDbRead.appListing.findUnique).not.toHaveBeenCalled();
+    // 🔴 NARROWED FROM "never called" TO "never called FOR THIS COLUMN", and the property
+    // is unchanged. The list path now issues exactly ONE `findUnique` — a single
+    // primary-key probe that matches nothing, asking whether the `visibility` column
+    // exists before the statement may name it. That is neither this column nor a per-row
+    // probe, so the N+1 and manual-apply-dependency claims this case makes still hold;
+    // `not.toHaveBeenCalled()` had stopped being a statement about `source_repo_url` at
+    // all. The per-row half is pinned explicitly below.
+    const repoProbes = mockDbRead.appListing.findUnique.mock.calls.filter((c) =>
+      Object.prototype.hasOwnProperty.call(
+        (c[0] as { select?: Record<string, unknown> })?.select ?? {},
+        'sourceRepoUrl'
+      )
+    );
+    expect(repoProbes).toEqual([]);
+    // And whatever the list path DOES probe, it probes a bounded number of times — never
+    // once per row, which is the N+1 this case exists to prevent.
+    expect(mockDbRead.appListing.findUnique.mock.calls.length).toBeLessThanOrEqual(1);
     const select = (
       mockDbRead.appListing.findMany.mock.calls.at(-1)?.[0] as {
         select?: Record<string, unknown>;

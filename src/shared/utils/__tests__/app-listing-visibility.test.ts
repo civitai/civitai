@@ -1,0 +1,242 @@
+import { describe, expect, it } from 'vitest';
+
+import { APP_LISTING_STATUSES } from '~/server/services/blocks/app-listing-status.constants';
+import {
+  APP_LISTING_VISIBILITIES,
+  APP_LISTING_VISIBILITY_RANK,
+  isAppListingVisibility,
+  isListingAudienceFloor,
+  isVisibilityEligibleListingStatus,
+  listingVisibilityCountsAsUsage,
+  listingVisibilityRank,
+  listingVisibleInStore,
+  narrowListingVisibility,
+  VISIBILITY_ELIGIBLE_LISTING_STATUSES,
+  viewerSeesListingVisibility,
+  visibilitiesVisibleTo,
+  type AppListingVisibility,
+  type ListingAudienceFloor,
+} from '~/shared/utils/app-listing-visibility';
+
+/**
+ * The per-listing visibility VALUE MODEL.
+ *
+ * 🔴 EVERY CASE HERE IS LABELLED [NEW] OR [INV], AND NONE IS REGRESSION COVERAGE. The
+ * module is introduced by this change, so there is no base ref at which any of these can be
+ * watched to fail — a test of a symbol that does not exist does not go red, it fails to
+ * IMPORT, and reporting that as "red at base" would be laundering a vacuous green. What
+ * stands behind these instead is a mutation sweep over the implementation, recorded in the
+ * PR body: each assertion below was confirmed to die on a specific, named mutation of the
+ * code it covers.
+ *
+ * [NEW] — pins behaviour this change introduces.
+ * [INV] — pins a property of the value set that a LATER edit could break (a rank collision,
+ *         a widened eligibility allowlist, a second literal list drifting from the enum).
+ */
+
+const FLOORS: ListingAudienceFloor[] = ['moderators', 'testers', 'public'];
+
+describe('the visibility value set', () => {
+  it('[INV] is exactly the four decided levels, in widening order', () => {
+    // The enum is operator-decided. A fifth value, a rename, or a reorder is a product
+    // decision and must be loud here rather than inferred from a rank map.
+    expect([...APP_LISTING_VISIBILITIES]).toEqual(['private', 'moderators', 'testers', 'public']);
+  });
+
+  it('[INV] every rank is DISTINCT, so the comparison is well-defined', () => {
+    // 🔴 THE PROPERTY `viewerSeesListingVisibility` RESTS ON. Two levels sharing a rank
+    // would make `>=` admit a cohort to a level it is not in, in whichever direction the
+    // collision fell — and nothing else in the module would notice.
+    const ranks = APP_LISTING_VISIBILITIES.map(listingVisibilityRank);
+    expect(new Set(ranks).size).toBe(APP_LISTING_VISIBILITIES.length);
+    // And the order is the WIDENING order, not an arbitrary numbering: each level must
+    // outrank the one before it.
+    for (let i = 1; i < ranks.length; i += 1) expect(ranks[i]).toBeGreaterThan(ranks[i - 1]);
+  });
+
+  it('[INV] the rank map covers the set and nothing else', () => {
+    expect(Object.keys(APP_LISTING_VISIBILITY_RANK).sort()).toEqual(
+      [...APP_LISTING_VISIBILITIES].sort()
+    );
+  });
+
+  it('[NEW] the membership test accepts every member and rejects everything else', () => {
+    for (const v of APP_LISTING_VISIBILITIES) expect(isAppListingVisibility(v)).toBe(true);
+    for (const bad of [undefined, null, '', 'PUBLIC', 'moderator', 'everyone', 0, {}, []])
+      expect(isAppListingVisibility(bad)).toBe(false);
+  });
+});
+
+describe('narrowListingVisibility — fail-closed', () => {
+  it('[NEW] passes a real level through unchanged', () => {
+    for (const v of APP_LISTING_VISIBILITIES) expect(narrowListingVisibility(v)).toBe(v);
+  });
+
+  it('[NEW] maps EVERY uninterpretable value to `private`, never to an admitting level', () => {
+    // The populations this covers are not hypothetical: `undefined` is the column absent
+    // while the manual-apply migration is outstanding, and a string outside the set is a
+    // level written by a newer branch than this build.
+    for (const bad of [undefined, null, '', 'PUBLIC', 'testers ', 'everyone', 7, {}, []]) {
+      expect(narrowListingVisibility(bad)).toBe('private');
+    }
+  });
+});
+
+describe('the audience floor', () => {
+  it('[INV] is the level set MINUS `private`, derived rather than re-listed', () => {
+    // A hand-written floor tuple would be a closed set that cannot grow with the enum, and
+    // the member it would most likely miss is a newly added cohort — which would then
+    // narrow to the fail-closed default and lock that cohort out of its own listings.
+    for (const f of FLOORS) expect(isListingAudienceFloor(f)).toBe(true);
+    expect(isListingAudienceFloor('private')).toBe(false);
+    for (const bad of [undefined, null, '', 'mods', 0])
+      expect(isListingAudienceFloor(bad)).toBe(false);
+  });
+});
+
+describe('viewerSeesListingVisibility — the cohort matrix', () => {
+  /**
+   * 🔴 THE WHOLE MATRIX, ENUMERATED, not a sample. Every (floor, level) pair, with the
+   * expected answer written out rather than computed from the ranks — deriving the
+   * expectation from the implementation it tests is how a wrong rank map passes.
+   */
+  const EXPECTED: Record<ListingAudienceFloor, Record<AppListingVisibility, boolean>> = {
+    moderators: { private: false, moderators: true, testers: true, public: true },
+    testers: { private: false, moderators: false, testers: true, public: true },
+    public: { private: false, moderators: false, testers: false, public: true },
+  };
+
+  for (const floor of FLOORS) {
+    for (const visibility of APP_LISTING_VISIBILITIES) {
+      it(`[NEW] floor=${floor} level=${visibility} → ${EXPECTED[floor][visibility]}`, () => {
+        expect(viewerSeesListingVisibility(floor, visibility)).toBe(EXPECTED[floor][visibility]);
+      });
+    }
+  }
+
+  it('[INV] `private` admits NOBODY, including a moderator', () => {
+    // A moderator reaching a `private` listing does so through a moderation surface, never
+    // through a level. If this ever returned true for the `moderators` floor, `private`
+    // would silently mean "moderators only" and the enum would have three values.
+    for (const floor of FLOORS) expect(viewerSeesListingVisibility(floor, 'private')).toBe(false);
+  });
+
+  it('[INV] a wider floor sees a SUPERSET of what a narrower one sees', () => {
+    // The subset lattice, asserted as a lattice. This is what makes a single `>=` correct
+    // and would fail on any non-monotonic rank map even if every rank stayed distinct.
+    const mods = new Set(visibilitiesVisibleTo('moderators'));
+    const testers = new Set(visibilitiesVisibleTo('testers'));
+    const pub = new Set(visibilitiesVisibleTo('public'));
+    for (const v of pub) expect(testers.has(v)).toBe(true);
+    for (const v of testers) expect(mods.has(v)).toBe(true);
+    // And strictly — each floor must see something the next one does not, or the three
+    // cohorts are not distinguishable and the enum is doing nothing.
+    expect(mods.size).toBeGreaterThan(testers.size);
+    expect(testers.size).toBeGreaterThan(pub.size);
+  });
+
+  it('[INV] visibilitiesVisibleTo agrees with the predicate for EVERY pair', () => {
+    // The data-layer `IN (...)` list and the app-layer predicate are the two halves of the
+    // same rule applied at two layers. The sibling store-scope module records what happens
+    // when a read path and a write path each derive their own answer; this makes it
+    // impossible by construction and then checks the construction.
+    for (const floor of FLOORS) {
+      const admitted = new Set(visibilitiesVisibleTo(floor));
+      for (const v of APP_LISTING_VISIBILITIES) {
+        expect(admitted.has(v)).toBe(viewerSeesListingVisibility(floor, v));
+      }
+    }
+  });
+});
+
+describe('the eligible-status allowlist', () => {
+  it('[INV] is an ALLOWLIST that excludes every negative moderation outcome', () => {
+    // 🔴 THE H1 GUARD. A level that reached `removed` or `rejected` would let an owner
+    // partially un-take-down their own app — the owner may RUN a delisted app to diagnose
+    // it, never make it VISIBLE.
+    expect([...VISIBILITY_ELIGIBLE_LISTING_STATUSES]).toEqual(['draft', 'pending', 'approved']);
+    expect(isVisibilityEligibleListingStatus('removed')).toBe(false);
+    expect(isVisibilityEligibleListingStatus('rejected')).toBe(false);
+  });
+
+  it('[INV] every member is a real listing status', () => {
+    // `satisfies` pins this at compile time; asserted at runtime too, because a type
+    // declaration is not a code path and a stale member would be a silently inert entry.
+    for (const s of VISIBILITY_ELIGIBLE_LISTING_STATUSES) {
+      expect(APP_LISTING_STATUSES as readonly string[]).toContain(s);
+    }
+  });
+
+  it('[INV] an UNKNOWN status is refused — fail-closed, not filtered-out', () => {
+    // This is the reason the set is a literal allowlist and not
+    // `APP_LISTING_STATUSES.filter(not removed/rejected)`: a sixth lifecycle value must be
+    // excluded by DEFAULT, so adding one cannot silently grant it an audience.
+    for (const bad of ['suspended', 'archived', '', 'APPROVED'])
+      expect(isVisibilityEligibleListingStatus(bad)).toBe(false);
+  });
+});
+
+describe('listingVisibleInStore — the level WIDENS, never revokes', () => {
+  it('[INV] an `approved` listing is visible at EVERY level, including `private`', () => {
+    // 🔴 THE REGRESSION THIS EXISTS TO PREVENT, and it is the one a careless
+    // implementation ships: the column defaults to `private`, so if an approved row's
+    // level were authoritative, every newly approved listing would vanish from the store
+    // the moment it went live. The backfill sets approved rows to `public`, but the
+    // predicate must not DEPEND on the backfill having run.
+    for (const floor of FLOORS) {
+      for (const visibility of APP_LISTING_VISIBILITIES) {
+        expect(listingVisibleInStore({ status: 'approved', visibility, floor })).toBe(true);
+      }
+    }
+  });
+
+  it('[NEW] a `draft`/`pending` listing is visible exactly to the cohorts its level names', () => {
+    for (const status of ['draft', 'pending']) {
+      for (const floor of FLOORS) {
+        for (const visibility of APP_LISTING_VISIBILITIES) {
+          expect(
+            listingVisibleInStore({ status, visibility, floor }),
+            `${status} @ ${visibility} for ${floor}`
+          ).toBe(viewerSeesListingVisibility(floor, visibility));
+        }
+      }
+    }
+  });
+
+  it('[INV] a `removed`/`rejected` listing is invisible at EVERY level to EVERY cohort', () => {
+    // The status allowlist is checked FIRST, so a row still carrying a level set before it
+    // was taken down cannot grant anything. Pinned at the predicate as well as the
+    // mutation, because the two are different surfaces and a row can outlive a write gate.
+    for (const status of ['removed', 'rejected']) {
+      for (const floor of FLOORS) {
+        for (const visibility of APP_LISTING_VISIBILITIES) {
+          expect(
+            listingVisibleInStore({ status, visibility, floor }),
+            `${status} @ ${visibility} for ${floor}`
+          ).toBe(false);
+        }
+      }
+    }
+  });
+});
+
+describe('listingVisibilityCountsAsUsage — D4', () => {
+  it('[NEW] `public` and `testers` count; `moderators` does not', () => {
+    expect(listingVisibilityCountsAsUsage('public')).toBe(true);
+    expect(listingVisibilityCountsAsUsage('testers')).toBe(true);
+    expect(listingVisibilityCountsAsUsage('moderators')).toBe(false);
+  });
+
+  it('[INV] `private` does not count, because it can produce no run', () => {
+    // Not an exclusion — an unreachable audience has no usage. Stated so a future reader
+    // does not read this `false` as a third exclusion rail alongside the private-run ones.
+    expect(listingVisibilityCountsAsUsage('private')).toBe(false);
+  });
+
+  it('[INV] the predicate covers every level — a new level must be classified out loud', () => {
+    // A level nobody classified would silently fall into "does not count", which is the
+    // direction that silently deletes an owner's real usage data.
+    const counted = APP_LISTING_VISIBILITIES.filter(listingVisibilityCountsAsUsage);
+    expect([...counted].sort()).toEqual(['public', 'testers']);
+  });
+});

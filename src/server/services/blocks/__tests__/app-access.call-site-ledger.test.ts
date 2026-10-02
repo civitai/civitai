@@ -96,6 +96,18 @@ const GATE_LEDGER: Record<string, string> = {
     'invitee does not. NO mod bypass — preserved exactly as it was (D1). getMyApps is ' +
     'widened to owned+seated via getMyAppsEarnings; getMyRevenue is deliberately NOT ' +
     'widened (D4).',
+  'src/server/services/blocks/app-listing-visibility-write.service.ts':
+    'setListingVisibilityAsOwner is THE gate on the owner path for the per-listing ' +
+    'VISIBILITY LEVEL: owner | ACCEPTED collaborator, resolved by resolveListingAccess ' +
+    'through dbWrite so a seat accepted moments ago is visible. NO mod bypass, ' +
+    'deliberately — a moderator uses the separate setListingVisibilityAsModerator proc, ' +
+    'which writes an AppListingModerationEvent; admitting them here would be an ' +
+    "unaudited moderator write on someone else's listing. A missing row and a caller " +
+    'with no role produce the SAME refusal, so the proc is not an existence oracle over ' +
+    'listing ids. The resolver is NOT status-aware (its own header says so), so D1 ' +
+    '("levels apply to non-suspended listings only") is enforced separately in ' +
+    'applyVisibility against VISIBILITY_ELIGIBLE_LISTING_STATUSES plus the backing ' +
+    "block's own suspension, and re-asserted in the CAS write's WHERE clause.",
   'src/server/services/blocks/app-listing-assets.service.ts':
     'loadOwnedListing is THE gate: owner | ACCEPTED collaborator | moderator, with BOTH ' +
     'the owner half and the seat half resolved by resolveListingAccess — never the ' +
