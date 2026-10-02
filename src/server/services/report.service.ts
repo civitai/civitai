@@ -642,9 +642,31 @@ function getAppealById({ id, select }: GetByIdInput & { select?: Prisma.AppealSe
   return dbRead.appeal.findUnique({ where: { id }, select });
 }
 
-export async function getAppealDetails({ id }: GetByIdInput) {
-  const appeal = await getAppealById({ id });
-  if (!appeal) throw throwNotFoundError('Appeal not found');
+export async function getAppealDetails({
+  id,
+  userId,
+  isModerator,
+}: GetByIdInput & { userId: number; isModerator?: boolean }) {
+  const appeal = await getAppealById({
+    id,
+    select: {
+      id: true,
+      userId: true,
+      entityType: true,
+      entityId: true,
+      status: true,
+      appealMessage: true,
+      createdAt: true,
+      updatedAt: true,
+      resolvedAt: true,
+      resolvedMessage: true,
+      resolvedBy: isModerator,
+      internalNotes: isModerator,
+    },
+  });
+  // Not found for someone else's appeal too, so ids can't be probed.
+  if (!appeal || (!isModerator && appeal.userId !== userId))
+    throw throwNotFoundError('Appeal not found');
 
   // Get details based on entityType
   let entityDetails: MixedObject | null = null;
