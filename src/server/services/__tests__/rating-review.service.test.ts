@@ -10,16 +10,17 @@ import type * as JobQueue from '~/server/services/job-queue.service';
 import type * as Notifications from '~/server/services/notification.service';
 import type * as Flipt from '~/server/flipt/client';
 
-const { loadSubject, getScan, tryAutoApprove, staleSignal, overrideGate, enqueue, notify, flipt } = vi.hoisted(() => ({
-  loadSubject: vi.fn(),
-  getScan: vi.fn(),
-  tryAutoApprove: vi.fn(),
-  staleSignal: vi.fn(),
-  overrideGate: vi.fn(),
-  enqueue: vi.fn(),
-  notify: vi.fn(),
-  flipt: vi.fn(),
-}));
+const { loadSubject, getScan, tryAutoApprove, staleSignal, overrideGate, enqueue, notify, flipt } =
+  vi.hoisted(() => ({
+    loadSubject: vi.fn(),
+    getScan: vi.fn(),
+    tryAutoApprove: vi.fn(),
+    staleSignal: vi.fn(),
+    overrideGate: vi.fn(),
+    enqueue: vi.fn(),
+    notify: vi.fn(),
+    flipt: vi.fn(),
+  }));
 
 vi.mock('~/server/services/rating-review.entities', async (importOriginal) => ({
   ...(await importOriginal<typeof Entities>()),
@@ -61,7 +62,9 @@ const {
 
 const OWNER = 3;
 const edited = new Date('2026-09-10T00:00:00Z');
-const subject = (over: Partial<Entities.RatingReviewSubject> = {}): Entities.RatingReviewSubject => ({
+const subject = (
+  over: Partial<Entities.RatingReviewSubject> = {}
+): Entities.RatingReviewSubject => ({
   ownerId: OWNER,
   currentLevel: 4,
   updatedAt: edited,
@@ -80,12 +83,19 @@ const scan = (over: Partial<Entities.RatingReviewScan> = {}): Entities.RatingRev
   ...over,
 });
 const lastResolved = (row: { resolvedAt: Date; resolvedTextHash: string | null }) =>
-  dbMock.dbRead.ratingReview.findFirst.mockImplementation(async (args: { where: { status: unknown } }) =>
-    typeof args.where.status === 'object' ? row : null
+  dbMock.dbRead.ratingReview.findFirst.mockImplementation(
+    async (args: { where: { status: unknown } }) =>
+      typeof args.where.status === 'object' ? row : null
   );
 
 const file = (over: Partial<Parameters<typeof createRatingReview>[0]> = {}) =>
-  createRatingReview({ entityType: 'Post', entityId: 7, suggestedLevel: 2, userId: OWNER, ...over });
+  createRatingReview({
+    entityType: 'Post',
+    entityId: 7,
+    suggestedLevel: 2,
+    userId: OWNER,
+    ...over,
+  });
 
 const scanRow = (textHash: string) => ({ result: { version: 1, textHash, labels: {} } });
 
@@ -100,8 +110,13 @@ beforeEach(() => {
   notify.mockResolvedValue(undefined);
   redisMock.redis.incr.mockResolvedValue(1);
   dbMock.dbRead.ratingReview.findFirst.mockResolvedValue(null);
-  dbMock.dbWrite.ratingReview.create.mockImplementation(async ({ data }: { data: object }) => ({ id: 1, ...data }));
-  dbMock.dbWrite.$transaction.mockImplementation(async (fn: (tx: typeof dbMock.dbWrite) => unknown) => fn(dbMock.dbWrite));
+  dbMock.dbWrite.ratingReview.create.mockImplementation(async ({ data }: { data: object }) => ({
+    id: 1,
+    ...data,
+  }));
+  dbMock.dbWrite.$transaction.mockImplementation(
+    async (fn: (tx: typeof dbMock.dbWrite) => unknown) => fn(dbMock.dbWrite)
+  );
   dbMock.dbWrite.entityModeration.findUnique.mockResolvedValue(scanRow('h-now'));
   dbMock.dbWrite.ratingReview.updateMany.mockResolvedValue({ count: 1 });
   dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
@@ -111,14 +126,24 @@ beforeEach(() => {
 describe('textChangedSinceResolution', () => {
   const at = new Date('2026-09-05T00:00:00Z');
   it('compares the scan text hash when the resolution recorded one, ignoring updatedAt', () => {
-    expect(textChangedSinceResolution({ resolvedAt: at, resolvedTextHash: 'h1' }, edited, 'h2')).toBe(true);
-    expect(textChangedSinceResolution({ resolvedAt: at, resolvedTextHash: 'h1' }, edited, 'h1')).toBe(false);
-    expect(textChangedSinceResolution({ resolvedAt: at, resolvedTextHash: 'h1' }, edited, null)).toBe(false);
+    expect(
+      textChangedSinceResolution({ resolvedAt: at, resolvedTextHash: 'h1' }, edited, 'h2')
+    ).toBe(true);
+    expect(
+      textChangedSinceResolution({ resolvedAt: at, resolvedTextHash: 'h1' }, edited, 'h1')
+    ).toBe(false);
+    expect(
+      textChangedSinceResolution({ resolvedAt: at, resolvedTextHash: 'h1' }, edited, null)
+    ).toBe(false);
   });
 
   it('falls back to updatedAt for a hashless (copied) resolution', () => {
-    expect(textChangedSinceResolution({ resolvedAt: at, resolvedTextHash: null }, edited, 'h')).toBe(true);
-    expect(textChangedSinceResolution({ resolvedAt: edited, resolvedTextHash: null }, edited, 'h')).toBe(false);
+    expect(
+      textChangedSinceResolution({ resolvedAt: at, resolvedTextHash: null }, edited, 'h')
+    ).toBe(true);
+    expect(
+      textChangedSinceResolution({ resolvedAt: edited, resolvedTextHash: null }, edited, 'h')
+    ).toBe(false);
     expect(textChangedSinceResolution(null, null, null)).toBe(true);
   });
 });
@@ -142,7 +167,9 @@ describe('createRatingReview', () => {
   it('refuses a non-owner and an ownerless system challenge', async () => {
     await expect(file({ userId: 99 })).rejects.toMatchObject({ code: 'FORBIDDEN' });
     loadSubject.mockResolvedValue(subject({ ownerId: null }));
-    await expect(file({ entityType: 'Challenge', suggestedLevel: 1 })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(file({ entityType: 'Challenge', suggestedLevel: 1 })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
   });
 
   it('refuses a non-Article rating the scan never raised, unless it was disputed before', async () => {
@@ -157,7 +184,9 @@ describe('createRatingReview', () => {
     getScan.mockResolvedValue(null);
     await expect(file({ entityType: 'Article' })).resolves.toMatchObject({ status: 'Pending' });
     loadSubject.mockResolvedValueOnce(subject({ currentLevel: 0 }));
-    await expect(file({ entityType: 'Article', suggestedLevel: 1 })).resolves.toMatchObject({ currentLevel: 0 });
+    await expect(file({ entityType: 'Article', suggestedLevel: 1 })).resolves.toMatchObject({
+      currentLevel: 0,
+    });
   });
 
   it('refuses a non-Article unrated, a no-op, a Model half-level and an upward challenge', async () => {
@@ -165,14 +194,19 @@ describe('createRatingReview', () => {
     await expect(file()).rejects.toThrow(/no rating/);
     await expect(file({ suggestedLevel: 4 })).rejects.toThrow(/matches the current rating/);
     loadSubject.mockResolvedValueOnce(subject({ currentLevel: 4 }));
-    await expect(file({ entityType: 'Model', suggestedLevel: 2 })).rejects.toThrow(/offered ratings/);
+    await expect(file({ entityType: 'Model', suggestedLevel: 2 })).rejects.toThrow(
+      /offered ratings/
+    );
     loadSubject.mockResolvedValueOnce(subject({ currentLevel: 4 }));
-    await expect(file({ entityType: 'Challenge', suggestedLevel: 8 })).rejects.toThrow(/offered ratings/);
+    await expect(file({ entityType: 'Challenge', suggestedLevel: 8 })).rejects.toThrow(
+      /offered ratings/
+    );
   });
 
   it('refuses a second Pending review and translates the unique-index race', async () => {
-    dbMock.dbRead.ratingReview.findFirst.mockImplementation(async (args: { where: { status: unknown } }) =>
-      args.where.status === 'Pending' ? { id: 5 } : null
+    dbMock.dbRead.ratingReview.findFirst.mockImplementation(
+      async (args: { where: { status: unknown } }) =>
+        args.where.status === 'Pending' ? { id: 5 } : null
     );
     await expect(file()).rejects.toThrow(/already pending/);
 
@@ -199,8 +233,12 @@ describe('createRatingReview', () => {
 
   it('shares one 3-per-day budget across entity types, and moderators bypass it', async () => {
     redisMock.redis.incr.mockResolvedValue(4);
-    await expect(file({ entityType: 'Model', suggestedLevel: 1 })).rejects.toMatchObject({ code: 'TOO_MANY_REQUESTS' });
-    expect(redisMock.redis.incr).toHaveBeenCalledWith(expect.stringMatching(new RegExp(`rating-review:rate:${OWNER}$`)));
+    await expect(file({ entityType: 'Model', suggestedLevel: 1 })).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+    });
+    expect(redisMock.redis.incr).toHaveBeenCalledWith(
+      expect.stringMatching(new RegExp(`rating-review:rate:${OWNER}$`))
+    );
     redisMock.redis.incr.mockClear();
     await expect(file({ isModerator: true })).resolves.toBeDefined();
     expect(redisMock.redis.incr).not.toHaveBeenCalled();
@@ -208,7 +246,10 @@ describe('createRatingReview', () => {
 
   it('returns the auto-approved Article review without inserting another', async () => {
     tryAutoApprove.mockResolvedValue({ id: 9, status: 'Actioned' });
-    await expect(file({ entityType: 'Article' })).resolves.toMatchObject({ id: 9, status: 'Actioned' });
+    await expect(file({ entityType: 'Article' })).resolves.toMatchObject({
+      id: 9,
+      status: 'Actioned',
+    });
     expect(dbMock.dbWrite.ratingReview.create).not.toHaveBeenCalled();
   });
 
@@ -216,19 +257,53 @@ describe('createRatingReview', () => {
     loadSubject.mockResolvedValue(subject({ currentLevel: 8, override: 8, overrideBasis: 8 }));
     overrideGate.mockResolvedValue({ eligible: true, derivedLevel: 2 });
     dbMock.dbWrite.ratingReview.create.mockResolvedValue({ id: 21 });
-    dbMock.dbWrite.ratingReview.findUniqueOrThrow.mockResolvedValue({ id: 21, status: 'Actioned', appliedLevel: 2 });
+    dbMock.dbWrite.ratingReview.findUniqueOrThrow.mockResolvedValue({
+      id: 21,
+      status: 'Actioned',
+      appliedLevel: 2,
+    });
 
-    await expect(file({ suggestedLevel: 2 })).resolves.toMatchObject({ id: 21, status: 'Actioned' });
+    await expect(file({ suggestedLevel: 2 })).resolves.toMatchObject({
+      id: 21,
+      status: 'Actioned',
+    });
 
     expect(dbMock.dbWrite.ratingReview.updateMany).toHaveBeenCalledWith({
       where: { id: 21, status: 'Pending' },
-      data: expect.objectContaining({ status: 'Actioned', appliedLevel: 2, resolvedBy: -1, resolvedTextHash: 'h-now' }),
+      data: expect.objectContaining({
+        status: 'Actioned',
+        appliedLevel: 2,
+        resolvedBy: -1,
+        resolvedTextHash: 'h-now',
+      }),
     });
     const sqlAt = (i: number) => (dbMock.dbWrite.$executeRaw.mock.calls[i][0] as Prisma.Sql).sql;
-    expect(sqlAt(0)).toMatch(/UPDATE "Post" SET "moderatorNsfwLevel" = NULL, "moderatorNsfwLevelBasis" = NULL/);
+    expect(sqlAt(0)).toMatch(
+      /UPDATE "Post" SET "moderatorNsfwLevel" = NULL, "moderatorNsfwLevelBasis" = NULL/
+    );
     expect(sqlAt(1)).toMatch(/UPDATE "Post" e SET "nsfwLevel" = /);
-    expect(enqueue).toHaveBeenCalledWith([{ entityId: 7, entityType: 'Post', type: 'UpdateNsfwLevel' }]);
-    expect(notify).toHaveBeenCalledWith(expect.objectContaining({ type: 'rating-review-approved', key: 'rating-review-approved:21' }));
+    expect(enqueue).toHaveBeenCalledWith([
+      { entityId: 7, entityType: 'Post', type: 'UpdateNsfwLevel' },
+    ]);
+    expect(notify).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'rating-review-approved', key: 'rating-review-approved:21' })
+    );
+  });
+
+  it('locks a bounty nsfw flag the auto-approve sets, so the owner cannot untick a system rating', async () => {
+    loadSubject.mockResolvedValue(subject({ currentLevel: 8, override: 8, overrideBasis: 8 }));
+    overrideGate.mockResolvedValue({ eligible: true, derivedLevel: 4 });
+    dbMock.dbWrite.ratingReview.create.mockResolvedValue({ id: 23 });
+    dbMock.dbWrite.ratingReview.findUniqueOrThrow.mockResolvedValue({ id: 23, status: 'Actioned' });
+
+    await file({ entityType: 'Bounty', suggestedLevel: 4 });
+
+    const clear = dbMock.dbWrite.$executeRaw.mock.calls[0][0] as Prisma.Sql;
+    expect(clear.sql).toMatch(
+      /UPDATE "Bounty" SET .*"nsfw" = \?,\s+"lockedProperties" = ARRAY\(/s
+    );
+    expect(clear.sql).toMatch(/ARRAY\['nsfw'\]::text\[\]/);
+    expect(clear.values).toContain(true);
   });
 
   it('rolls an auto-approve back when the entity row is gone, leaving the review Pending', async () => {
@@ -245,7 +320,9 @@ describe('createRatingReview', () => {
   it('sends a challenge dispute to a moderator without asking the gate', async () => {
     loadSubject.mockResolvedValue(subject({ currentLevel: 8, override: 8, overrideBasis: 8 }));
     overrideGate.mockResolvedValue({ eligible: true, derivedLevel: 2 });
-    await expect(file({ entityType: 'Challenge', suggestedLevel: 2 })).resolves.toMatchObject({ status: 'Pending' });
+    await expect(file({ entityType: 'Challenge', suggestedLevel: 2 })).resolves.toMatchObject({
+      status: 'Pending',
+    });
     expect(overrideGate).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.ratingReview.updateMany).not.toHaveBeenCalled();
   });
@@ -264,10 +341,16 @@ describe('maybeAutoResolveRatingDisputeAfterScan', () => {
   it('resolves the pending dispute the scan made eligible, notifying with the level it was filed at', async () => {
     await maybeAutoResolveRatingDisputeAfterScan('BountyEntry', 7);
 
-    expect(overrideGate).toHaveBeenCalledWith(expect.objectContaining({ entityType: 'BountyEntry', suggestedLevel: 2 }));
+    expect(overrideGate).toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: 'BountyEntry', suggestedLevel: 2 })
+    );
     expect(dbMock.dbWrite.ratingReview.updateMany).toHaveBeenCalledWith({
       where: { id: 31, status: 'Pending' },
-      data: expect.objectContaining({ status: 'Actioned', appliedLevel: 2, resolvedTextHash: 'h-now' }),
+      data: expect.objectContaining({
+        status: 'Actioned',
+        appliedLevel: 2,
+        resolvedTextHash: 'h-now',
+      }),
     });
     expect(dbMock.dbWrite.ratingReview.create).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledWith(
@@ -276,6 +359,12 @@ describe('maybeAutoResolveRatingDisputeAfterScan', () => {
         details: expect.objectContaining({ previousLevel: 'X', appliedLevel: 'PG-13' }),
       })
     );
+  });
+
+  it('reads the subject and scan from the primary, which the scan callback just wrote', async () => {
+    await maybeAutoResolveRatingDisputeAfterScan('Post', 7);
+    expect(loadSubject).toHaveBeenCalledWith('Post', 7, dbMock.dbWrite);
+    expect(getScan).toHaveBeenCalledWith('Post', 7, dbMock.dbWrite);
   });
 
   it('leaves a challenge dispute for a moderator without reading anything', async () => {
@@ -289,7 +378,11 @@ describe('maybeAutoResolveRatingDisputeAfterScan', () => {
     await maybeAutoResolveRatingDisputeAfterScan('Post', 7);
     flipt.mockResolvedValueOnce(false);
     await maybeAutoResolveRatingDisputeAfterScan('Post', 7);
-    overrideGate.mockResolvedValueOnce({ eligible: false, reason: 'images-not-clean', derivedLevel: null });
+    overrideGate.mockResolvedValueOnce({
+      eligible: false,
+      reason: 'images-not-clean',
+      derivedLevel: null,
+    });
     await maybeAutoResolveRatingDisputeAfterScan('Post', 7);
 
     expect(flipt).toHaveBeenCalledWith('rating-dispute', String(OWNER));
@@ -319,22 +412,41 @@ describe('getRatingReviewForOwner', () => {
       resolvedTextHash: 'h-then',
     });
     const res = await getRatingReviewForOwner({ entityType: 'Post', entityId: 7, userId: OWNER });
-    expect(res).toMatchObject({ canResubmit: true, canDispute: true, currentLevel: 4, scanReason: 'fake reason' });
+    expect(res).toMatchObject({
+      canResubmit: true,
+      canDispute: true,
+      currentLevel: 4,
+      scanReason: 'fake reason',
+    });
     expect(res.review).not.toHaveProperty('resolvedTextHash');
 
-    dbMock.dbRead.ratingReview.findFirst.mockResolvedValue({ id: 1, status: 'Unactioned', resolvedAt: edited, resolvedTextHash: 'h-now' });
-    expect((await getRatingReviewForOwner({ entityType: 'Post', entityId: 7, userId: OWNER })).canResubmit).toBe(false);
+    dbMock.dbRead.ratingReview.findFirst.mockResolvedValue({
+      id: 1,
+      status: 'Unactioned',
+      resolvedAt: edited,
+      resolvedTextHash: 'h-now',
+    });
+    expect(
+      (await getRatingReviewForOwner({ entityType: 'Post', entityId: 7, userId: OWNER }))
+        .canResubmit
+    ).toBe(false);
   });
 
   it('asks for the stale-override signal for any overridable entity, and never for Model', async () => {
     loadSubject.mockResolvedValue(subject({ override: 8, overrideBasis: 8 }));
     staleSignal.mockResolvedValue({ derivedLevel: 2, derivedRatingDroppedBelowOverride: true });
-    expect((await getRatingReviewForOwner({ entityType: 'Bounty', entityId: 7, userId: OWNER })).staleOverride).toEqual({
+    expect(
+      (await getRatingReviewForOwner({ entityType: 'Bounty', entityId: 7, userId: OWNER }))
+        .staleOverride
+    ).toEqual({
       derivedLevel: 2,
       derivedRatingDroppedBelowOverride: true,
     });
     staleSignal.mockClear();
-    expect((await getRatingReviewForOwner({ entityType: 'Model', entityId: 7, userId: OWNER })).staleOverride).toBeNull();
+    expect(
+      (await getRatingReviewForOwner({ entityType: 'Model', entityId: 7, userId: OWNER }))
+        .staleOverride
+    ).toBeNull();
     expect(staleSignal).not.toHaveBeenCalled();
   });
 
@@ -345,7 +457,9 @@ describe('getRatingReviewForOwner', () => {
   });
 
   it('refuses a non-owner', async () => {
-    await expect(getRatingReviewForOwner({ entityType: 'Post', entityId: 7, userId: 99 })).rejects.toMatchObject({
+    await expect(
+      getRatingReviewForOwner({ entityType: 'Post', entityId: 7, userId: 99 })
+    ).rejects.toMatchObject({
       code: 'FORBIDDEN',
     });
   });

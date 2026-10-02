@@ -6,7 +6,7 @@ import {
   type RatingReviewEntityType,
 } from '@civitai/shared/rating-review';
 import { isTextScanRaised } from '@civitai/shared/rated-entity-sql';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { ChallengeSource, EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
 export type RatingReviewSubject = {
@@ -19,7 +19,8 @@ export type RatingReviewSubject = {
   overrideBasis: number | null;
 };
 
-type Loader = (id: number) => Promise<RatingReviewSubject | null>;
+type Db = typeof dbRead | typeof dbWrite;
+type Loader = (id: number, db: Db) => Promise<RatingReviewSubject | null>;
 
 const overrideSelect = { moderatorNsfwLevel: true, moderatorNsfwLevelBasis: true } as const;
 const overridePair = (r: { moderatorNsfwLevel: number | null; moderatorNsfwLevelBasis: number | null }) => ({
@@ -28,8 +29,8 @@ const overridePair = (r: { moderatorNsfwLevel: number | null; moderatorNsfwLevel
 });
 
 const loaders: Record<RatingReviewEntityType, Loader> = {
-  Article: async (id) => {
-    const a = await dbRead.article.findUnique({
+  Article: async (id, db) => {
+    const a = await db.article.findUnique({
       where: { id },
       select: { userId: true, nsfwLevel: true, updatedAt: true, title: true, ...overrideSelect },
     });
@@ -44,8 +45,8 @@ const loaders: Record<RatingReviewEntityType, Loader> = {
       }
     );
   },
-  Model: async (id) => {
-    const m = await dbRead.model.findUnique({
+  Model: async (id, db) => {
+    const m = await db.model.findUnique({
       where: { id },
       select: { userId: true, nsfw: true, updatedAt: true, name: true, deletedAt: true },
     });
@@ -60,8 +61,8 @@ const loaders: Record<RatingReviewEntityType, Loader> = {
       overrideBasis: null,
     };
   },
-  Post: async (id) => {
-    const p = await dbRead.post.findUnique({
+  Post: async (id, db) => {
+    const p = await db.post.findUnique({
       where: { id },
       select: { userId: true, nsfwLevel: true, updatedAt: true, title: true, ...overrideSelect },
     });
@@ -76,8 +77,8 @@ const loaders: Record<RatingReviewEntityType, Loader> = {
       }
     );
   },
-  Bounty: async (id) => {
-    const b = await dbRead.bounty.findUnique({
+  Bounty: async (id, db) => {
+    const b = await db.bounty.findUnique({
       where: { id },
       select: { userId: true, nsfwLevel: true, updatedAt: true, name: true, ...overrideSelect },
     });
@@ -92,8 +93,8 @@ const loaders: Record<RatingReviewEntityType, Loader> = {
       }
     );
   },
-  BountyEntry: async (id) => {
-    const e = await dbRead.bountyEntry.findUnique({
+  BountyEntry: async (id, db) => {
+    const e = await db.bountyEntry.findUnique({
       where: { id },
       select: { userId: true, bountyId: true, nsfwLevel: true, updatedAt: true, ...overrideSelect },
     });
@@ -108,8 +109,8 @@ const loaders: Record<RatingReviewEntityType, Loader> = {
       }
     );
   },
-  Challenge: async (id) => {
-    const c = await dbRead.challenge.findUnique({
+  Challenge: async (id, db) => {
+    const c = await db.challenge.findUnique({
       where: { id },
       select: { createdById: true, source: true, nsfwLevel: true, updatedAt: true, title: true, ...overrideSelect },
     });
@@ -128,9 +129,10 @@ const loaders: Record<RatingReviewEntityType, Loader> = {
 
 export function loadRatingReviewSubject(
   entityType: RatingReviewEntityType,
-  entityId: number
+  entityId: number,
+  db: Db = dbRead
 ): Promise<RatingReviewSubject | null> {
-  return loaders[entityType](entityId);
+  return loaders[entityType](entityId, db);
 }
 
 export type RatingReviewScan = {
@@ -143,9 +145,10 @@ export type RatingReviewScan = {
 
 export async function getRatingReviewScan(
   entityType: RatingReviewEntityType,
-  entityId: number
+  entityId: number,
+  db: Db = dbRead
 ): Promise<RatingReviewScan | null> {
-  const em = await dbRead.entityModeration.findUnique({
+  const em = await db.entityModeration.findUnique({
     where: { entityType_entityId: { entityType, entityId } },
     select: { status: true, nsfwLevel: true, result: true },
   });

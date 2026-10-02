@@ -146,7 +146,10 @@ async function resolveOverrideReview(args: {
 
     const bountyNsfw =
       entityType === 'Bounty'
-        ? Prisma.sql`, "nsfw" = ${(args.suggestedLevel & nsfwBrowsingLevelsFlag) !== 0}`
+        ? Prisma.sql`, "nsfw" = ${(args.suggestedLevel & nsfwBrowsingLevelsFlag) !== 0},
+            "lockedProperties" = ARRAY(
+              SELECT DISTINCT unnest(COALESCE("lockedProperties", ARRAY[]::text[]) || ARRAY['nsfw']::text[])
+            )`
         : Prisma.empty;
     const cleared = await tx.$executeRaw(
       Prisma.sql`UPDATE ${table} SET "moderatorNsfwLevel" = NULL, "moderatorNsfwLevelBasis" = NULL${bountyNsfw} WHERE "id" = ${entityId}`
@@ -262,9 +265,11 @@ export async function maybeAutoResolveRatingDisputeAfterScan(
     if (!pending) return;
     if (!(await isFlipt(FLIPT_FEATURE_FLAGS.RATING_DISPUTE, String(pending.userId)))) return;
 
+    // Primary: this runs right after the scan callback wrote the row, and a lagging replica would
+    // still show the scan in flight, so the gate would skip until the next scan.
     const [subject, scan] = await Promise.all([
-      loadRatingReviewSubject(entityType, entityId),
-      getRatingReviewScan(entityType, entityId),
+      loadRatingReviewSubject(entityType, entityId, dbWrite),
+      getRatingReviewScan(entityType, entityId, dbWrite),
     ]);
     if (!subject) return;
     const gate = await evaluateOverrideAutoApprove({
