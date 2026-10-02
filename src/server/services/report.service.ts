@@ -587,29 +587,25 @@ export function getRecentAppealsByUserId({ userId }: GetRecentAppealsInput) {
   });
 }
 
-export function getLatestModelAppeal(modelId: number, userId: number) {
+export function getLatestAppeal({
+  entityType,
+  entityId,
+  userId,
+}: {
+  entityType: EntityType;
+  entityId: number;
+  userId: number;
+}) {
   return dbRead.appeal.findFirst({
-    where: { entityType: EntityType.Model, entityId: modelId, userId },
-    orderBy: { createdAt: 'desc' },
-    select: { status: true, resolvedAt: true },
+    where: { entityType, entityId, userId },
+    orderBy: { id: 'desc' },
+    select: { id: true, status: true, resolvedAt: true },
   });
 }
 
-// `Appeal` is unique on (entityType, entityId, userId), so an owner asking for
-// review a second time can only ever be an update of the row they already have.
-export function reopenModelAppeal({
-  entityId,
-  userId,
-  message,
-}: {
-  entityId: number;
-  userId: number;
-  message: string;
-}) {
+export function reopenModelAppeal({ id, message }: { id: number; message: string }) {
   return dbWrite.appeal.update({
-    where: {
-      entityType_entityId_userId: { entityType: EntityType.Model, entityId, userId },
-    },
+    where: { id },
     data: {
       status: AppealStatus.Pending,
       appealMessage: message,
@@ -691,6 +687,8 @@ export async function getAppealDetails({
   return { ...appeal, entityDetails };
 }
 
+export const APPEAL_ALREADY_PENDING = 'Your appeal for this content is already under review';
+
 const getAppealPrefix = (userId: number) => `appeal-${userId}-${new Date().getTime()}`;
 const isAppealPrefix = (prefix: string) => prefix.startsWith('appeal-');
 
@@ -757,11 +755,30 @@ export async function createEntityAppeal({
     return appeal;
   } catch (error) {
     if (buzzTransactionId) {
-      await refundMultiAccountTransaction({
-        externalTransactionIdPrefix: buzzTransactionId ?? '',
-        description: 'Refund appeal fee',
-      });
+      const prefix = buzzTransactionId;
+      try {
+        await withRetries(() =>
+          refundMultiAccountTransaction({
+            externalTransactionIdPrefix: prefix,
+            description: 'Refund appeal fee',
+          })
+        );
+      } catch (refundError) {
+        // No appeal row was written, so nothing else records that this user is owed the fee.
+        logToAxiom({
+          type: 'error',
+          name: 'create-entity-appeal',
+          message: 'Failed to refund appeal fee',
+          userId,
+          entityType,
+          entityId,
+          buzzTransactionId: prefix,
+          error: (refundError as Error).message,
+        });
+      }
     }
+    // Lost the race on the one-Pending-appeal-per-entity index to a concurrent submit.
+    if (isPrismaUniqueViolation(error)) throw throwBadRequestError(APPEAL_ALREADY_PENDING);
     throw error;
   }
 }

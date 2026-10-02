@@ -50,10 +50,9 @@ import { contestCollectionReactionsHidden } from '~/components/Collections/colle
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { AppealDialog } from '~/components/Dialog/Common/AppealDialog';
+import { ModeratedImageAlert } from '~/components/Image/DetailV2/ModeratedImageAlert';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
 import { openReportModal } from '~/components/Dialog/triggers/report';
-import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { EntityCollaboratorList } from '~/components/EntityCollaborator/EntityCollaboratorList';
 import { PostingToModel3DCard } from '~/components/Model3D/Posting/PostingToModel3DCard';
@@ -627,30 +626,7 @@ export function ImageDetail2() {
                     )}
                     {['Moderated', 'moderated'].includes(image.blockedFor ?? '') &&
                       !image.needsReview &&
-                      isOwner && (
-                        <AlertWithIcon
-                          icon={<IconAlertTriangle />}
-                          color="yellow"
-                          iconColor="yellow"
-                          title="Blocked by moderators"
-                          radius={0}
-                          px="md"
-                        >
-                          This image has been blocked by our moderators. We can make mistakes, if
-                          you believe this was done in error,{' '}
-                          <Anchor
-                            type="button"
-                            onClick={() =>
-                              dialogStore.trigger({
-                                component: AppealDialog,
-                                props: { entityId: image.id, entityType: EntityType.Image },
-                              })
-                            }
-                          >
-                            appeal this removal
-                          </Anchor>
-                        </AlertWithIcon>
-                      )}
+                      isOwner && <ModeratedImageAlert imageId={image.id} />}
                     {image.poi && (
                       <AlertWithIcon icon={<IconInfoCircle />} color="blue" iconColor="blue">
                         <Text>

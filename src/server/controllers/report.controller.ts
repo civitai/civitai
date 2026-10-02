@@ -14,7 +14,8 @@ import {
   createEntityAppeal,
   createReport,
   getAppealCount,
-  getLatestModelAppeal,
+  APPEAL_ALREADY_PENDING,
+  getLatestAppeal,
   reopenModelAppeal,
 } from '~/server/services/report.service';
 import {
@@ -64,6 +65,26 @@ export async function createReportHandler({
   }
 }
 
+// One appeal per block. An approved appeal unblocked the content, so a later block is a new
+// decision to contest; a rejected one upheld the block that is still in place. Runs before the
+// fee is charged.
+async function assertNotAlreadyAppealed({
+  entityType,
+  entityId,
+  userId,
+}: {
+  entityType: EntityType;
+  entityId: number;
+  userId: number;
+}) {
+  const latest = await getLatestAppeal({ entityType, entityId, userId });
+  if (latest?.status === AppealStatus.Pending) throw throwBadRequestError(APPEAL_ALREADY_PENDING);
+  if (latest?.status === AppealStatus.Rejected)
+    throw throwBadRequestError(
+      'This removal has already been reviewed on appeal and the decision stands'
+    );
+}
+
 export async function createEntityAppealHandler({
   input,
   ctx,
@@ -76,12 +97,14 @@ export async function createEntityAppealHandler({
   try {
     // Check ownership before creating the appeal
     switch (input.entityType) {
-      case EntityType.Image:
+      case EntityType.Image: {
         const image = await getImageById({ id: input.entityId });
         if (!image) throw throwNotFoundError('Image not found');
         if (image.userId !== userId) throw throwAuthorizationError();
 
+        await assertNotAlreadyAppealed({ ...input, userId });
         break;
+      }
       case EntityType.Model3D:
         const m3d = await dbRead.model3D.findUnique({
           where: { id: input.entityId },
@@ -89,6 +112,7 @@ export async function createEntityAppealHandler({
         });
         if (!m3d) throw throwNotFoundError('3D model not found');
         if (m3d.userId !== userId) throw throwAuthorizationError();
+        await assertNotAlreadyAppealed({ ...input, userId });
         break;
       case EntityType.Model: {
         const model = await dbRead.model.findUnique({
@@ -103,18 +127,11 @@ export async function createEntityAppealHandler({
         if (!model.minor || !meta?.minorFlagSnapshot)
           throw throwBadRequestError('This model is not flagged as depicting a minor');
 
-        // `Appeal` is unique on (entityType, entityId, userId): creating a second
-        // row raises P2002, which is not a TRPCError and reaches the owner as a
-        // raw 500. Asking again after a denial is intended, so reuse the row.
-        const existing = await getLatestModelAppeal(input.entityId, userId);
+        // Asking again after a denial is intended for a minor flag, so reuse the row.
+        const existing = await getLatestAppeal({ ...input, userId });
         if (existing?.status === AppealStatus.Pending)
           throw throwBadRequestError('Your review request for this model is already under review');
-        if (existing)
-          return await reopenModelAppeal({
-            entityId: input.entityId,
-            userId,
-            message: input.message,
-          });
+        if (existing) return await reopenModelAppeal({ id: existing.id, message: input.message });
 
         skipFee = true;
         break;
