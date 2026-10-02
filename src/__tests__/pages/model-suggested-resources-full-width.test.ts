@@ -17,11 +17,16 @@ const source = ts.createSourceFile(
 function jsxAncestries(tag: string) {
   const found: string[][] = [];
   const visit = (node: ts.Node, chain: string[]) => {
-    if (ts.isJsxSelfClosingElement(node) || ts.isJsxOpeningElement(node)) {
-      if (node.tagName.getText() === tag) found.push(chain);
+    const element = ts.isJsxElement(node) ? node.openingElement : node;
+    if (!ts.isJsxOpeningElement(element) && !ts.isJsxSelfClosingElement(element)) {
+      ts.forEachChild(node, (child) => visit(child, chain));
+      return;
     }
-    const next = ts.isJsxElement(node) ? [...chain, node.openingElement.tagName.getText()] : chain;
-    ts.forEachChild(node, (child) => visit(child, next));
+    const name = element.tagName.getText();
+    if (name === tag) found.push(chain);
+    const inside = [...chain, name];
+    visit(element.attributes, inside);
+    if (ts.isJsxElement(node)) node.children.forEach((child) => visit(child, inside));
   };
   visit(source, []);
   return found;
