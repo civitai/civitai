@@ -86,22 +86,25 @@ describe('AppListing visibility: code const ⟺ DB CHECK agreement', () => {
     expect(fromSql.length).toBe(new Set(fromSql).size);
   });
 
-  it('[INV] the column default is the fail-closed level', () => {
-    // 🔴 THE DEFAULT IS A SECURITY DECISION, and it is the one statement in the migration
-    // that decides what a row created by a build that does not know about this feature
-    // carries. `private` is the only safe answer: a `public` default would admit every new
-    // draft listing to the store for every cohort.
-    expect(sql).toMatch(/ADD COLUMN IF NOT EXISTS "visibility" TEXT NOT NULL DEFAULT 'private'/);
+  it('[INV] the column is NULLABLE with NO DEFAULT', () => {
+    // 🔴 THE COLUMN SHAPE IS THE SECURITY DECISION HERE, and both NOT NULL defaults are
+    // wrong in opposite directions: `DEFAULT 'private'` makes every FUTURE approval mint a
+    // row the store hides (eight scattered `status='approved'` writes, no chokepoint),
+    // while `DEFAULT 'public'` makes every new draft publicly visible. NULL means "no
+    // choice expressed" and resolves to the pre-feature rule for the row's status, which
+    // is correct for every status at once.
+    expect(sql).toMatch(/ADD COLUMN IF NOT EXISTS "visibility" TEXT;/);
+    // Loudly NOT either default — a later "tidy-up" adding one reintroduces the problem.
+    expect(sql).not.toMatch(/"visibility" TEXT NOT NULL/);
+    expect(sql).not.toMatch(/"visibility" TEXT DEFAULT/);
   });
 
-  it('[INV] the backfill promotes APPROVED rows and nothing else', () => {
-    // The per-status backfill choice, pinned so a later edit cannot quietly widen it to a
-    // blanket `SET visibility = 'public'` — which would mark every draft and every
-    // taken-down listing public.
-    expect(sql).toMatch(
-      /UPDATE "app_listings" SET "visibility" = 'public' WHERE "status" = 'approved';/
-    );
-    // And no other UPDATE of the column exists in the file.
-    expect(sql.match(/UPDATE "app_listings"/g)).toHaveLength(1);
+  it('[INV] there is NO backfill — the per-status decision is that NULL is already right', () => {
+    // Pinned as an ABSENCE, because the absence is the decision. Writing 'public' onto
+    // approved rows would be behaviour-identical (NULL already resolves to the approved
+    // baseline) while fabricating an owner intent nobody expressed, and the enum has no way
+    // back to "unset". A blanket `SET visibility = 'public'` would be far worse: it would
+    // mark every draft and every taken-down listing public.
+    expect(sql).not.toMatch(/UPDATE "app_listings"/);
   });
 });

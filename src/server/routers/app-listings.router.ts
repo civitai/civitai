@@ -357,6 +357,36 @@ function applyAudienceFloor(ctx: unknown): ListingAudienceFloor {
 }
 
 /**
+ * Read BOTH store gates for one entry point, and record what it actually branched on.
+ *
+ * 🔴 ONE READER FOR TWO GATES, AND THE CONSOLIDATION IS THE GUARD. A proc that applies the
+ * surface scope and forgets the audience floor is the "sees the affordance, 403s on submit"
+ * class this file's write gate already records — and it would be invisible, because an
+ * omitted floor defaults to `public` and simply returns a shorter grid. Returning them
+ * together means a caller cannot take one without the other.
+ *
+ * 🔴 AND THE FLOOR IS INSTRUMENTED, not just defaulted. `store-scope.metrics` exists
+ * because this gate class is SILENT: for the whole of civitai#3983, "resolved `none`" and
+ * "no scope ever arrived" produced byte-identical responses. The floor reproduces that
+ * ambiguity exactly — `public` is both the fail-closed default and a legitimate answer — so
+ * it rides the SAME `applied` counter as a third label rather than a parallel pair, and is
+ * recorded BEFORE the `?? 'public'` narrowing that would erase the distinction.
+ */
+function applyStoreGates(
+  ctx: unknown,
+  entrypoint: StoreScopeEntrypoint
+): { scope: StoreVisibilityScope; floor: ListingAudienceFloor } {
+  const rawScope = (ctx as { _storeScope?: unknown })._storeScope;
+  const rawFloor = (ctx as { _audienceFloor?: unknown })._audienceFloor;
+  recordStoreScopeApplied(
+    rawScope as string | undefined,
+    entrypoint,
+    rawFloor as string | undefined
+  );
+  return { scope: narrowStoreScope(rawScope), floor: applyAudienceFloor(ctx) };
+}
+
+/**
  * Map a thrown off-site SERVICE error to the correct TRPC error for the mod client.
  *
  *   - A `TRPCError` the service already shaped (BAD_REQUEST: assets-incomplete /
@@ -1791,14 +1821,13 @@ export const appListingsRouter = router({
     )
     .input(listAppListingsSchema)
     .query(async ({ ctx, input }) => {
-      const scope = applyStoreScope(ctx, 'trpc-list');
+      const { scope, floor } = applyStoreGates(ctx, 'trpc-list');
       if (scope === 'none') {
         return { items: [], nextCursor: undefined };
       }
       const { listAvailableListings } = await import(
         '~/server/services/blocks/app-listing.service'
       );
-      const floor = applyAudienceFloor(ctx);
       return listAvailableListings(input, {
         redCapable: isRedCapableRequest(ctx),
         scope,
@@ -1883,7 +1912,7 @@ export const appListingsRouter = router({
     )
     .input(getAppListingDetailSchema)
     .query(async ({ ctx, input }) => {
-      const scope = applyStoreScope(ctx, 'trpc-detail');
+      const { scope, floor } = applyStoreGates(ctx, 'trpc-detail');
       if (scope === 'none') {
         throw throwNotFoundError('Listing not found');
       }
@@ -1891,7 +1920,7 @@ export const appListingsRouter = router({
       const detail = await getListingDetail(input, {
         redCapable: isRedCapableRequest(ctx),
         scope,
-        floor: applyAudienceFloor(ctx),
+        floor,
       });
       if (!detail) throw throwNotFoundError('Listing not found');
       return detail;

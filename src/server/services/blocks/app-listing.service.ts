@@ -917,20 +917,23 @@ export function listingPublicVisibilityFilter(scope: StoreVisibilityScope): Pris
  * the viewer's audience floor.
  *
  * It replaces the bare `al.status = 'approved'` rather than being ANDed beside it, because
- * the whole point is that a level lets a NON-approved listing into the store for the cohort
- * it names. Three properties, each load-bearing:
+ * the whole point is that the level decides. Three properties, each load-bearing:
  *
- * 🔴 `approved` IS NEVER REVOKED BY A LEVEL. The first disjunct is the pre-feature
- * predicate, unchanged. An approved listing stays in the store whatever its level says —
- * otherwise a newly approved row, whose column carries the `private` default, would
- * silently vanish from the grid. Narrowing an approved listing is a different feature
- * (owner unpublish) and is deliberately not expressible here.
+ * 🔴 AN UNSET LEVEL (NULL) FALLS BACK TO THE PRE-FEATURE PREDICATE. The first disjunct IS
+ * the old `al.status = 'approved'`, scoped to rows nobody has set a level on. That is what
+ * makes this inert on every existing row and on every row a future approval mints — eight
+ * scattered writes set `status='approved'` across four services with no chokepoint, and
+ * none of them has to learn about this column.
  *
- * 🔴 THE WIDENING IS BOUNDED BY AN ALLOWLIST OF STATUSES, NOT BY THE LEVEL ALONE. Only
- * `draft` and `pending` can be widened. `removed` and `rejected` are negative moderation
- * outcomes, and a level that reached them would be a partial un-takedown of the owner's own
- * app — so they are excluded here as well as at the mutation, because a row can carry a
- * level set BEFORE it was taken down.
+ * 🔴 A LEVEL THAT IS SET IS AUTHORITATIVE, INCLUDING ON AN `approved` LISTING. The second
+ * disjunct admits only rows whose level the viewer's floor sees, so an owner can RESTRICT a
+ * live listing as well as widen a draft. A stored value this build does not recognise is in
+ * NO floor's level list, so it is excluded — fail closed.
+ *
+ * 🔴 THE WHOLE THING IS BOUNDED BY A STATUS ALLOWLIST, NOT BY THE LEVEL ALONE. `removed`
+ * and `rejected` are negative moderation outcomes, and a level that reached them would be a
+ * partial un-takedown of the owner's own app — so they are excluded here as well as at the
+ * mutation, because a row can carry a level set BEFORE it was taken down.
  *
  * 🔴 AND IT EMITS THE PRE-FEATURE PREDICATE WHEN THE COLUMN IS NOT THERE. This is raw SQL
  * inside a cached statement: a missing column is a PARSE error, not something a per-column
@@ -947,12 +950,13 @@ export function listingLevelVisibilityFilter(
   available: boolean
 ): Prisma.Sql {
   if (!available) return Prisma.sql`al.status = 'approved'`;
-  const widenable = VISIBILITY_ELIGIBLE_LISTING_STATUSES.filter((s) => s !== 'approved');
+  const eligible = VISIBILITY_ELIGIBLE_LISTING_STATUSES;
   const levels = visibilitiesVisibleTo(floor);
   return Prisma.sql`(
-        al.status = 'approved'
+        (al.visibility IS NULL AND al.status = 'approved')
         OR (
-          al.status IN (${Prisma.join(widenable)})
+          al.visibility IS NOT NULL
+          AND al.status IN (${Prisma.join(eligible)})
           AND al.visibility IN (${Prisma.join(levels)})
         )
       )`;
@@ -1364,9 +1368,9 @@ export async function getListingDetail(
   //
   // 🔴 AND AN UNAVAILABLE COLUMN FALLS BACK TO THE PRE-FEATURE PREDICATE, not to `private`.
   // Degrading to `private` would make an unapplied migration hide every approved listing's
-  // detail page — an outage dressed as fail-closed. `listingVisibleInStore` never revokes
-  // `approved`, so for an approved row the two agree anyway; the fallback matters only for
-  // the widened statuses, which simply stay hidden as they are today.
+  // detail page — an outage dressed as fail-closed. An UNSET level (`null`) reaches the
+  // same answer through `listingVisibleInStore`, but by a different route and for a
+  // different reason, so the two are written separately rather than collapsed.
   const level = await readListingVisibility(row.id, dbRead);
   const visible = level.available
     ? listingVisibleInStore({ status: row.status, visibility: level.visibility, floor })

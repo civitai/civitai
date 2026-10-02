@@ -221,16 +221,41 @@ describe('listingLevelVisibilityFilter — the SQL drift guard', () => {
     }
   });
 
-  it('[NEW] widens ONLY `draft`/`pending`, and binds the levels as parameters', () => {
+  it('[NEW] pins the WHOLE predicate, normalised — not three substrings of it', () => {
+    // 🔴 `toBe` ON THE NORMALISED STRING, AND THE CHANGE FROM `toContain` IS THE WHOLE
+    // POINT. Three `toContain` checks over `al.status = 'approved'`, `al.status IN` and
+    // `al.visibility IN` are satisfied by predicates that mean completely different
+    // things, and a mutation sweep proved it: flipping the inner `AND` to `OR` SURVIVED,
+    // which admits a `removed` or `rejected` listing whose level is `public` into the
+    // public grid with no status restriction at all — fail-open on the exact un-takedown
+    // property this feature is built around. Dropping the fragment's outer parentheses
+    // survived too, which lets an approved row escape the statement's
+    // `al.revision_of_id IS NULL` and surface a shadow revision.
+    //
+    // A cosmetic reformat of the SQL now fails this test. That is the price, and it is
+    // worth paying for a machine-readable claim about a security predicate — the
+    // `available === false` case below was already pinned this way, and that asymmetry was
+    // the tell that this one was under-specified.
+    const norm = (frag: { sql: string }) => frag.sql.replace(/\s+/g, ' ').trim();
+    expect(norm(listingLevelVisibilityFilter('moderators', true))).toBe(
+      "( (al.visibility IS NULL AND al.status = 'approved') OR ( al.visibility IS NOT NULL " +
+        'AND al.status IN (?,?,?) AND al.visibility IN (?,?,?) ) )'
+    );
+  });
+
+  it('[NEW] binds the statuses and levels as PARAMETERS, allowlisted', () => {
     const frag = listingLevelVisibilityFilter('moderators', true);
-    // The approved baseline is the first disjunct.
-    expect(frag.sql).toContain("al.status = 'approved'");
-    expect(frag.sql).toContain('al.status IN');
-    expect(frag.sql).toContain('al.visibility IN');
-    // 🔴 PARAMETERISED, NOT INTERPOLATED. The statuses and levels ride as bound values, so
-    // the predicate cannot be built by splicing a string into SQL source.
-    expect(frag.values).toEqual(['draft', 'pending', 'moderators', 'testers', 'public']);
-    // `removed` and `rejected` appear nowhere — the widening is an allowlist.
+    // Parameterised, not interpolated: the predicate cannot be built by splicing a string
+    // into SQL source.
+    expect(frag.values).toEqual([
+      'draft',
+      'pending',
+      'approved',
+      'moderators',
+      'testers',
+      'public',
+    ]);
+    // `removed` and `rejected` appear nowhere — the status set is an allowlist.
     expect(frag.values).not.toContain('removed');
     expect(frag.values).not.toContain('rejected');
   });
@@ -239,9 +264,10 @@ describe('listingLevelVisibilityFilter — the SQL drift guard', () => {
     // The cohort distinction, visible in the bound parameters. If every floor bound the
     // same list, the enum would be inert in the data layer while every unit test of the
     // value model stayed green.
+    const STATUSES = new Set(['draft', 'pending', 'approved']);
     const levels = (floor: 'moderators' | 'testers' | 'public') =>
       listingLevelVisibilityFilter(floor, true).values.filter(
-        (v) => v !== 'draft' && v !== 'pending'
+        (v) => typeof v === 'string' && !STATUSES.has(v)
       );
     expect(levels('moderators')).toEqual(['moderators', 'testers', 'public']);
     expect(levels('testers')).toEqual(['testers', 'public']);
@@ -250,6 +276,41 @@ describe('listingLevelVisibilityFilter — the SQL drift guard', () => {
     for (const f of ['moderators', 'testers', 'public'] as const) {
       expect(listingLevelVisibilityFilter(f, true).values).not.toContain('private');
     }
+  });
+});
+
+describe('the probe is WIRED to the statement, not merely available', () => {
+  it('[INV] a P2022 on the probe makes the LIST statement omit the column entirely', async () => {
+    // 🔴 THE OUTAGE THE GUARDED READER EXISTS TO PREVENT, pinned at the SEAM rather than at
+    // the filter. Hardwiring `isListingVisibilityColumnAvailable` to `true` was a surviving
+    // mutant: the `available === false` branch was only ever exercised by calling the
+    // filter directly, so nothing proved the probe's answer actually reached it. With the
+    // column absent, a statement naming `al.visibility` is a P2022 on the public grid.
+    listing.findUnique.mockImplementation(async (args: unknown) => {
+      const select = (args as { select?: Record<string, unknown> } | undefined)?.select ?? {};
+      if ('visibility' in select) {
+        throw Object.assign(new Error('column does not exist'), { code: 'P2022' });
+      }
+      if ('sourceRepoUrl' in select) return { sourceRepoUrl: null };
+      return { isBeta: false, betaMessage: null };
+    });
+    await listAvailableListings({ kind: 'all', sort: 'newest', limit: 10 } as never, {
+      scope: 'full',
+      floor: 'moderators',
+    });
+    const sql = capturedPredicateSql();
+    expect(sql).not.toContain('al.visibility');
+    expect(sql).toContain("al.status = 'approved'");
+  });
+
+  it('[INV][POSITIVE CONTROL] with the column present the statement DOES name it', async () => {
+    // Without the pair, the `not.toContain` above is indistinguishable from a statement
+    // that never names the column under any condition.
+    await listAvailableListings({ kind: 'all', sort: 'newest', limit: 10 } as never, {
+      scope: 'full',
+      floor: 'moderators',
+    });
+    expect(capturedPredicateSql()).toContain('al.visibility');
   });
 });
 
@@ -270,13 +331,32 @@ describe('the detail read falls back to the pre-feature predicate, not to `priva
     expect(detail).not.toBeNull();
   });
 
-  it('[INV] an APPROVED listing is shown even at the `private` level', async () => {
-    // The newly-approved-vanishes regression, at the service layer. The column defaults to
-    // `private`, so an approve that ran before the backfill — or any row the backfill
-    // missed — must not be hidden.
-    seededVisibility = 'private';
+  it('[INV] an APPROVED listing with an UNSET level is shown', async () => {
+    // The newly-approved-vanishes regression, at the service layer. Every existing row and
+    // every row a future approval mints carries NULL, so an unset level on an approved
+    // listing must resolve to the pre-feature baseline rather than to `private`.
+    seededVisibility = null;
     const detail = await getListingDetail({ slug: 'and-app' }, { scope: 'full', floor: 'public' });
     expect(detail).not.toBeNull();
+  });
+
+  it('[NEW] an APPROVED listing is HIDDEN once its level is set below the viewer', async () => {
+    // 🔴 THE RESTRICT CAPABILITY, at the service layer. A set level binds on an approved
+    // listing, so an owner can pull a live listing back to a cohort or out of the store
+    // entirely. DISCOVERY-ONLY — the run route never reads this column.
+    seededVisibility = 'private';
+    await expect(
+      getListingDetail({ slug: 'and-app' }, { scope: 'full', floor: 'public' })
+    ).resolves.toBeNull();
+    seededVisibility = 'testers';
+    await expect(
+      getListingDetail({ slug: 'and-app' }, { scope: 'full', floor: 'public' })
+    ).resolves.toBeNull();
+    // POSITIVE CONTROL: the cohort the level names still sees it, so the nulls above are
+    // the level binding rather than the fixture failing to resolve a row at all.
+    await expect(
+      getListingDetail({ slug: 'and-app' }, { scope: 'full', floor: 'testers' })
+    ).resolves.not.toBeNull();
   });
 
   it('[INV] an OMITTED floor behaves as `public` — the least-privileged default', async () => {

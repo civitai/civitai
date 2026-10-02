@@ -220,9 +220,19 @@ describe('🔴 getListingDetail degrades rather than 500ing when source_repo_url
     // moment the code deploys until a human runs the SQL. Here the column is read
     // separately and its absence costs exactly one field.
     mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...onsiteRow(), status: 'approved' });
-    mockDbRead.appListing.findUnique.mockRejectedValueOnce(
-      Object.assign(new Error('The column `source_repo_url` does not exist'), { code: 'P2022' })
-    );
+    // 🔴 SELECT-AWARE, NOT CALL-ORDERED. A `mockRejectedValueOnce` here rejected the FIRST
+    // `findUnique` on this path, which is now the visibility reader — so the case exercised
+    // the wrong guard's degradation while still passing, and would have gone green with the
+    // source-repo guard deleted. Reject only for the column this case is about.
+    mockDbRead.appListing.findUnique.mockImplementation(async (args: unknown) => {
+      const select = (args as { select?: Record<string, unknown> } | undefined)?.select ?? {};
+      if ('sourceRepoUrl' in select) {
+        throw Object.assign(new Error('The column `source_repo_url` does not exist'), {
+          code: 'P2022',
+        });
+      }
+      return {};
+    });
 
     const detail = await getListingDetail({ slug: 'cool-app' }, { scope: 'full' });
 
@@ -240,14 +250,27 @@ describe('🔴 getListingDetail degrades rather than 500ing when source_repo_url
     // real outage into a quietly missing field, which is the opposite of the point.
     mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...onsiteRow(), status: 'approved' });
     const boom = Object.assign(new Error('Can’t reach database server'), { code: 'P1001' });
-    mockDbRead.appListing.findUnique.mockRejectedValueOnce(boom);
+    // Select-aware for the same reason as above: this case is about the SOURCE-REPO read
+    // propagating a non-column error, so only that read may throw.
+    mockDbRead.appListing.findUnique.mockImplementation(async (args: unknown) => {
+      const select = (args as { select?: Record<string, unknown> } | undefined)?.select ?? {};
+      if ('sourceRepoUrl' in select) throw boom;
+      return {};
+    });
 
     await expect(getListingDetail({ slug: 'cool-app' }, { scope: 'full' })).rejects.toBe(boom);
   });
 
   it('the guarded read asks for THAT COLUMN ONLY, keyed on the row being projected', async () => {
     mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...onsiteRow(), status: 'approved' });
-    mockDbRead.appListing.findUnique.mockResolvedValueOnce({ sourceRepoUrl: null });
+    // Select-aware: the assertion below is about the ARGUMENTS of the source-repo read, so
+    // a call-ordered fake would answer the visibility read instead and leave this checking
+    // nothing about the column it names.
+    mockDbRead.appListing.findUnique.mockImplementation(async (args: unknown) => {
+      const select = (args as { select?: Record<string, unknown> } | undefined)?.select ?? {};
+      if ('sourceRepoUrl' in select) return { sourceRepoUrl: null };
+      return {};
+    });
     await getListingDetail({ slug: 'cool-app' }, { scope: 'full' });
     expect(mockDbRead.appListing.findUnique).toHaveBeenCalledWith({
       where: { id: 'apl_1' },

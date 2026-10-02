@@ -41,7 +41,7 @@
 -- already applied part of this, is a no-op rather than an error.
 --
 -- ------------------------------------------------------------
--- THE BACKFILL IS PER STATUS, NOT ONE BLANKET DEFAULT
+-- THE BACKFILL, PER STATUS -- AND THE CHOICE IS **NO BACKFILL**
 -- ------------------------------------------------------------
 -- NO POPULATION FIGURE IS QUOTED HERE, AND THAT IS DELIBERATE TWICE OVER — the same two
 -- reasons `blocks.router.ts` gives for refusing to quote its own. It is a count of a
@@ -51,37 +51,59 @@
 -- something to publish for the sake of a comment. The per-status RULE below is what
 -- matters and it holds at any population; derive the counts when you need them.
 --
---   * `approved`                    -> 'public'.  These rows are ALREADY reachable by
---     everyone the surface flags admit, so `public` is the only value that truthfully
---     describes them. Leaving them at the `private` default would make the column assert
---     the opposite of the live behaviour — which the owner-facing editor reads back, and
---     which any future change that lets a level NARROW an approved listing would act on.
---   * `draft` / `pending`           -> 'private' (the column default). Not reachable in
---     the store today; `private` preserves that exactly, so the merge is a no-op.
---   * `rejected` / `removed`        -> 'private' (the column default). Both are negative
---     moderation outcomes. `private` is truthful AND fail-closed, and the code's
---     eligibility allowlist (`VISIBILITY_ELIGIBLE_LISTING_STATUSES`) refuses them anyway,
---     so neither a level nor a backfill can partially un-take-down an app.
+--   * `approved`             — NULL ⇒ visible to everyone the surface admits. Byte-identical
+--     to today, because that is literally the predicate this migration leaves in place for
+--     an unset row. Writing 'public' here would be behaviour-IDENTICAL, so it buys nothing
+--     and costs something: it fabricates an owner intent nobody expressed, and the enum has
+--     no way back to "unset".
+--   * `draft` / `pending`     — NULL ⇒ not reachable in the store. Also byte-identical to
+--     today. An owner who wants a cohort opts in explicitly, which is the feature.
+--   * `rejected` / `removed`  — NULL ⇒ not reachable, and the code's eligibility allowlist
+--     (`VISIBILITY_ELIGIBLE_LISTING_STATUSES`) refuses those two statuses outright at the
+--     READ as well as the write, so neither a level nor a backfill could partially
+--     un-take-down an app even if a row carried one.
 --
--- Only the `approved` rows therefore need statement 2; every other status is already
--- correct by virtue of the default.
+-- So every existing row is already correct at NULL, for a DIFFERENT reason per status, and
+-- the merge is a no-op on the store until an owner or a moderator sets something.
+--
+-- 🔴 NULLABLE WITH NO DEFAULT IS THE WHOLE DESIGN. NULL = "no choice expressed", which is
+-- NOT the `private` LEVEL. A level must be authoritative on an `approved` listing (an owner
+-- has to be able to pull a live listing back to a cohort) AND must not leak a `draft`, and
+-- with a NOT NULL column no default does both:
+--
+--   * DEFAULT 'private' breaks approved rows. Every FUTURE approval — eight scattered
+--     writes set `status='approved'` across four services, with no chokepoint — would mint
+--     a row at `private`, and the listing would vanish from the store the moment it went
+--     live. Closing that needs `visibility='public'` at all eight sites, each guarded on
+--     this column existing; miss one and that path ships the outage.
+--   * DEFAULT 'public' breaks drafts: a brand-new draft would be born publicly visible.
+--
+-- NULL dissolves it. An unset level means "apply the pre-feature rule for this status", so
+-- a new row of ANY status behaves exactly as it does today with no write at the approve
+-- sites, while a row that DOES carry a level has it respected at every eligible status,
+-- `approved` included. The code half is `parseStoredVisibility` (NULL stays NULL) and
+-- `listingVisibleInStore` (NULL ⇒ the status baseline). A NULL can never ADMIT anything the
+-- store does not already show, so the unset case fails closed by construction.
 --
 -- The CHECK's IN-list is kept in lockstep with the code constant
 -- `APP_LISTING_VISIBILITIES` by the migration-agreement test
 -- `src/server/services/blocks/__tests__/app-listing-visibility.constants.test.ts`, which
 -- parses THIS file. That catches code/DDL drift in CI; it does NOT apply the DDL.
 
--- 1. The column. Catalog-only on PG 11+.
+-- 1. The column. NULLABLE, no default — see above. `ADD COLUMN` with no default is a
+--    catalog-only update on PG 11+, so it is O(1) regardless of row count.
 ALTER TABLE "app_listings"
-  ADD COLUMN IF NOT EXISTS "visibility" TEXT NOT NULL DEFAULT 'private';
+  ADD COLUMN IF NOT EXISTS "visibility" TEXT;
 
--- 2. Per-status backfill. Only `approved` diverges from the default; see above.
-UPDATE "app_listings" SET "visibility" = 'public' WHERE "status" = 'approved';
-
--- 3. The allowed set. Postgres cannot modify a CHECK in place, so DROP then ADD, wrapped
---    in one transaction: without it there is a sub-ms window with no CHECK at all through
---    which a concurrent bad write could slip. Mirrors
+-- 2. The allowed set. Postgres cannot modify a CHECK in place, so DROP then ADD, wrapped in
+--    one transaction: without it there is a sub-ms window with no CHECK at all through which
+--    a concurrent bad write could slip. Mirrors
 --    `20260706120200_w13_p3b_app_listing_status_add_removed`.
+--
+--    🔴 NULL PASSES THIS CHECK BY DESIGN, and that is standard SQL rather than an oversight:
+--    `NULL IN (...)` evaluates to NULL and a CHECK is violated only by FALSE. So the
+--    constraint bounds the LEVELS without forbidding "no level set". Do not "fix" it by
+--    adding `"visibility" IS NOT NULL` — that reintroduces the defaulting problem above.
 BEGIN;
 ALTER TABLE "app_listings" DROP CONSTRAINT IF EXISTS "app_listings_visibility_check";
 ALTER TABLE "app_listings" ADD  CONSTRAINT "app_listings_visibility_check"

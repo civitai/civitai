@@ -414,19 +414,27 @@ export type AppListing = {
   category: string | null;
   status: Generated<string>;
   /**
-   * Per-listing cohort gate: private|moderators|testers|public. Free-text `text`
-   * like `status`; the allowed set is a DB CHECK that lives ONLY in the migration
-   * .sql (canonical code set = APP_LISTING_VISIBILITIES). It only ever WIDENS who
-   * reaches the store — an `approved` listing is visible regardless, so a newly
-   * approved row carrying the `private` default cannot vanish — and it is always an
-   * AND with the surface flags, never an override.
+   * Per-listing cohort gate: private|moderators|testers|public, or NULL.
+   *
+   * NULLABLE WITH NO DEFAULT, and NULL is NOT the `private` level — it means the owner
+   * has expressed no choice, so the pre-feature rule for the row's `status` applies
+   * (approved is visible, non-approved is not). That is what lets a level be
+   * authoritative on an `approved` listing without a new approval -- of which there are
+   * eight scattered writes and no chokepoint -- minting a row that vanishes from the
+   * store. A level that IS set binds at every eligible status, `approved` included, so
+   * an owner can restrict a live listing (discovery-only: hidden from the store, still
+   * runnable by slug).
+   *
+   * Free-text `text` like `status`; the allowed set is a DB CHECK that lives ONLY in the
+   * migration .sql (canonical code set = APP_LISTING_VISIBILITIES), and NULL passes that
+   * CHECK by design. Always an AND with the surface flags, never an override.
    *
    * MANUAL-APPLY, like every migration here. Read it ONLY through
    * `app-listing-visibility.service.ts` and never add it to a shared `select`: a
    * `select` naming a missing column throws P2022 for the WHOLE query, which on the
    * grid's shared select is a public-store outage.
    */
-  visibility: Generated<string>;
+  visibility: string | null;
   content_rating: string | null;
   external_url: string | null;
   source_repo_url: string | null;

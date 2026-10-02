@@ -30,7 +30,10 @@ import {
   readListingVisibility,
 } from '~/server/services/blocks/app-listing-visibility.service';
 import type { AppListingVisibility } from '~/shared/utils/app-listing-visibility';
-import { isVisibilityEligibleListingStatus } from '~/shared/utils/app-listing-visibility';
+import {
+  isVisibilityEligibleListingStatus,
+  VISIBILITY_ELIGIBLE_LISTING_STATUSES,
+} from '~/shared/utils/app-listing-visibility';
 
 /** What a level change reports back. `changed: false` is a successful no-op, not a
  *  failure — the caller asked for a state the listing is already in. */
@@ -125,8 +128,12 @@ async function applyVisibility(args: {
     const flipped = await tx.appListing.updateMany({
       where: {
         id: appListingId,
-        // Re-assert the gate inside the write so a concurrent takedown wins the race.
-        status: { in: ['draft', 'pending', 'approved'] },
+        // 🔴 DERIVED, NOT A SECOND LITERAL. This re-asserts the gate inside the write so a
+        // concurrent takedown wins the race — but a hardcoded list would silently fall out
+        // of step with the allowlist the READ uses, and the failure mode is a misdiagnosis:
+        // `updateMany` would match zero rows and the refusal would surface from the
+        // CONCURRENCY branch below, reporting a stale allowlist as a race.
+        status: { in: [...VISIBILITY_ELIGIBLE_LISTING_STATUSES] },
       },
       data: { visibility },
     });
@@ -152,10 +159,15 @@ async function applyVisibility(args: {
   // The cached store catalog keys on which rows a cohort sees, and this write moves
   // exactly that. Fire-and-forget by this module's convention: a cache-bus outage must
   // never fail a mutation that already committed.
+  // 🔴 AWAITED AND CAUGHT, matching all 21 other call sites. A bare `void` here would be
+  // the only unhandled one: `bustCacheTag` can reject on a cache-bus fault, and with
+  // nothing awaiting it that rejection has nowhere to go but `unhandledRejection`. Catching
+  // rather than propagating is the same trade every sibling makes — a stale grid for at
+  // most the TTL beats a mutation that reports failure after having committed.
   const { bustAppListingCatalogCache } = await import(
     '~/server/services/blocks/app-listing.service'
   );
-  void bustAppListingCatalogCache();
+  await bustAppListingCatalogCache().catch(() => undefined);
 
   return { appListingId, visibility, changed: true };
 }
@@ -184,11 +196,11 @@ export async function setListingVisibilityAsOwner(args: {
   const { resolveListingAccess } = await import('~/server/services/blocks/app-access.service');
   // `dbWrite` so a seat accepted moments ago is visible — the same reason the status read
   // below uses the primary.
-  const access = await resolveListingAccess(
-    args.appListingId,
-    args.userId,
-    dbWrite as unknown as Parameters<typeof resolveListingAccess>[2]
-  );
+  // 🔴 NO CAST. `dbWrite` assigns to this parameter cleanly (`app-listing-assets.service`
+  // passes it the same way), and the double cast this line used to carry would have
+  // defeated the only compile-time check on a SECURITY argument — the one that says this
+  // is the role resolver's db handle and not some other client.
+  const access = await resolveListingAccess(args.appListingId, args.userId, dbWrite);
   // A missing row and a caller with no role produce the SAME refusal. Distinguishing them
   // would turn this proc into an existence oracle over listing ids.
   if (!access || access.role == null) {

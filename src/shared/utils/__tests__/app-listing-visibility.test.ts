@@ -11,6 +11,7 @@ import {
   listingVisibilityRank,
   listingVisibleInStore,
   narrowListingVisibility,
+  parseStoredVisibility,
   VISIBILITY_ELIGIBLE_LISTING_STATUSES,
   viewerSeesListingVisibility,
   visibilitiesVisibleTo,
@@ -135,11 +136,15 @@ describe('viewerSeesListingVisibility — the cohort matrix', () => {
     expect(testers.size).toBeGreaterThan(pub.size);
   });
 
-  it('[INV] visibilitiesVisibleTo agrees with the predicate for EVERY pair', () => {
-    // The data-layer `IN (...)` list and the app-layer predicate are the two halves of the
-    // same rule applied at two layers. The sibling store-scope module records what happens
-    // when a read path and a write path each derive their own answer; this makes it
-    // impossible by construction and then checks the construction.
+  it('[INV][TAUTOLOGY BY CONSTRUCTION — not cross-layer coverage] visibilitiesVisibleTo is a filter over the predicate', () => {
+    // ⚠️ THIS CANNOT FAIL, AND THE NAME SAYS SO. `visibilitiesVisibleTo` is literally
+    // `APP_LISTING_VISIBILITIES.filter(v => viewerSeesListingVisibility(floor, v))`, so both
+    // sides of the comparison are the same function and no mutation can redden it. It is
+    // kept because it DOCUMENTS the construction that makes the data-layer `IN (...)` list
+    // and the app-layer predicate one rule rather than two — but it must not be read as
+    // evidence that they agree, which is what the old name implied. The claim that CAN fail
+    // is the SQL pin in `app-listing-visibility.store-and.test.ts`, which compares the
+    // emitted parameter list against the levels.
     for (const floor of FLOORS) {
       const admitted = new Set(visibilitiesVisibleTo(floor));
       for (const v of APP_LISTING_VISIBILITIES) {
@@ -176,21 +181,76 @@ describe('the eligible-status allowlist', () => {
   });
 });
 
-describe('listingVisibleInStore — the level WIDENS, never revokes', () => {
-  it('[INV] an `approved` listing is visible at EVERY level, including `private`', () => {
-    // 🔴 THE REGRESSION THIS EXISTS TO PREVENT, and it is the one a careless
-    // implementation ships: the column defaults to `private`, so if an approved row's
-    // level were authoritative, every newly approved listing would vanish from the store
-    // the moment it went live. The backfill sets approved rows to `public`, but the
-    // predicate must not DEPEND on the backfill having run.
+describe('parseStoredVisibility — `null` is NOT the `private` level', () => {
+  it('[INV] an UNSET column stays `null`, never becomes `private`', () => {
+    // 🔴 THE DISTINCTION THE WHOLE COLUMN SHAPE RESTS ON. If NULL collapsed to `private`,
+    // every future approval would mint a row the store hides — eight scattered writes set
+    // `status='approved'` and none of them knows about this column.
+    expect(parseStoredVisibility(null)).toBeNull();
+    expect(parseStoredVisibility(undefined)).toBeNull();
+  });
+
+  it('[NEW] a real stored level passes through', () => {
+    for (const v of APP_LISTING_VISIBILITIES) expect(parseStoredVisibility(v)).toBe(v);
+  });
+
+  it('[INV] an UNKNOWN stored string fails CLOSED to `private`, not to `null`', () => {
+    // The asymmetry is deliberate: absence is a known state, an uninterpretable value is
+    // not. A level written by a newer deploy must hide the listing, not fall back to the
+    // approved baseline.
+    for (const bad of ['PUBLIC', 'everyone', 'moderator', '', 7, {}])
+      expect(parseStoredVisibility(bad)).toBe('private');
+  });
+});
+
+describe('listingVisibleInStore — unset falls back, a set level BINDS', () => {
+  it('[INV] an UNSET level on an `approved` listing is visible to every cohort', () => {
+    // 🔴 THE REGRESSION THIS EXISTS TO PREVENT. Every existing row, and every row a future
+    // approval mints, carries NULL — so if NULL hid an approved listing, the merge would
+    // empty the store and each new approval would vanish on go-live.
     for (const floor of FLOORS) {
-      for (const visibility of APP_LISTING_VISIBILITIES) {
-        expect(listingVisibleInStore({ status: 'approved', visibility, floor })).toBe(true);
+      expect(listingVisibleInStore({ status: 'approved', visibility: null, floor })).toBe(true);
+    }
+  });
+
+  it('[INV] an UNSET level on a non-approved listing is visible to NOBODY', () => {
+    // The other half of the fallback: NULL means "the pre-feature rule for this status",
+    // and that rule hides a draft. NULL can therefore only ever grant the approved
+    // baseline — it never admits anything the store does not already show.
+    for (const status of ['draft', 'pending']) {
+      for (const floor of FLOORS) {
+        expect(listingVisibleInStore({ status, visibility: null, floor })).toBe(false);
       }
     }
   });
 
-  it('[NEW] a `draft`/`pending` listing is visible exactly to the cohorts its level names', () => {
+  it('[NEW] a SET level BINDS on an `approved` listing — an owner can RESTRICT a live one', () => {
+    // 🔴 THE CAPABILITY D1 PUTS IN SCOPE, and the one a widen-only predicate silently drops.
+    // `private` on an approved listing takes it out of the store entirely (unlisting);
+    // `moderators`/`testers` pull it back to that cohort. All DISCOVERY-ONLY — the run route
+    // never consults this column — which is why the UI copy must not promise access control.
+    for (const floor of FLOORS) {
+      for (const visibility of APP_LISTING_VISIBILITIES) {
+        expect(
+          listingVisibleInStore({ status: 'approved', visibility, floor }),
+          `approved @ ${visibility} for ${floor}`
+        ).toBe(viewerSeesListingVisibility(floor, visibility));
+      }
+    }
+    // Spelled out for the two cases that carry the capability, so a reader does not have to
+    // re-derive them from the rank map.
+    expect(
+      listingVisibleInStore({ status: 'approved', visibility: 'private', floor: 'public' })
+    ).toBe(false);
+    expect(
+      listingVisibleInStore({ status: 'approved', visibility: 'testers', floor: 'public' })
+    ).toBe(false);
+    expect(
+      listingVisibleInStore({ status: 'approved', visibility: 'testers', floor: 'testers' })
+    ).toBe(true);
+  });
+
+  it('[NEW] a SET level BINDS on `draft`/`pending` — an owner can WIDEN', () => {
     for (const status of ['draft', 'pending']) {
       for (const floor of FLOORS) {
         for (const visibility of APP_LISTING_VISIBILITIES) {
@@ -203,13 +263,13 @@ describe('listingVisibleInStore — the level WIDENS, never revokes', () => {
     }
   });
 
-  it('[INV] a `removed`/`rejected` listing is invisible at EVERY level to EVERY cohort', () => {
+  it('[INV] a `removed`/`rejected` listing is invisible at EVERY level, set or unset', () => {
     // The status allowlist is checked FIRST, so a row still carrying a level set before it
     // was taken down cannot grant anything. Pinned at the predicate as well as the
     // mutation, because the two are different surfaces and a row can outlive a write gate.
     for (const status of ['removed', 'rejected']) {
       for (const floor of FLOORS) {
-        for (const visibility of APP_LISTING_VISIBILITIES) {
+        for (const visibility of [...APP_LISTING_VISIBILITIES, null]) {
           expect(
             listingVisibleInStore({ status, visibility, floor }),
             `${status} @ ${visibility} for ${floor}`

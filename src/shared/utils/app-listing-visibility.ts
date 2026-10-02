@@ -57,6 +57,28 @@ export function narrowListingVisibility(value: unknown): AppListingVisibility {
 }
 
 /**
+ * Parse a STORED column value into a level, preserving "no choice expressed".
+ *
+ * 🔴 `null` IS NOT THE `private` LEVEL, AND CONFLATING THEM IS THE ONE MISTAKE THIS WHOLE
+ * SHAPE EXISTS TO PREVENT. The column is nullable with no default because a NOT NULL
+ * column has no safe default: `private` would make every FUTURE approval mint a row that
+ * vanishes from the store (eight scattered writes set `status='approved'`, with no
+ * chokepoint), and `public` would make every new draft publicly visible. `null` means
+ * "apply the pre-feature rule for this row's status", which is correct for every status at
+ * once and needs no write at any approve site.
+ *
+ * So: `null` / `undefined` ⇒ `null`. Anything else goes through
+ * {@link narrowListingVisibility}, i.e. an UNKNOWN string — a level written by a newer
+ * deploy than this build — still fails closed to `private` rather than being treated as
+ * unset. That asymmetry is deliberate: absence is a known state, an uninterpretable value
+ * is not.
+ */
+export function parseStoredVisibility(value: unknown): AppListingVisibility | null {
+  if (value === null || value === undefined) return null;
+  return narrowListingVisibility(value);
+}
+
+/**
  * The levels RANKED BY BREADTH — a subset lattice, not a preference order:
  *
  *   private  ⊂  moderators  ⊂  testers  ⊂  public
@@ -200,28 +222,39 @@ export function isVisibilityEligibleListingStatus(status: string): boolean {
 /**
  * Is this listing visible in the store to a viewer in this cohort?
  *
- * 🔴 THE LEVEL ONLY EVER WIDENS. `approved` is the PRE-FEATURE baseline and is never
- * revoked by a level: before this feature the store showed exactly the approved
- * listings, so making an approved row's visibility authoritative would mean a newly
- * approved listing (whose column carries the `private` default) silently vanished from
- * the store. The level's job is to admit a NON-approved listing to the cohort it names.
+ * Three rules, in order, and each is load-bearing:
  *
- * Narrowing an approved listing is therefore NOT expressible here, and that is a
- * deliberate omission rather than an oversight: taking an approved app out of the store
- * already has a feature (owner unpublish → `status='removed'`), and a second mechanism
- * for it would need the approve path to stamp a level as well.
+ * 1. 🔴 AN INELIGIBLE STATUS IS REFUSED FIRST. `removed` and `rejected` are negative
+ *    moderation outcomes, and a row can carry a level that was set BEFORE it was taken
+ *    down — so the allowlist is checked at the READ as well as at the write. Without this
+ *    ordering, a stale level on a delisted listing would partially un-take-down the app.
  *
- * 🔴 AND IT IS STILL AN `AND` WITH THE SURFACE GATE. This predicate never sees the
- * surface scope; the caller applies both. See {@link viewerSeesListingVisibility}.
+ * 2. 🔴 A `null` LEVEL MEANS "NO CHOICE EXPRESSED" AND FALLS BACK TO THE PRE-FEATURE RULE
+ *    for the status: `approved` is visible, everything else is not. This is what makes the
+ *    feature inert on every existing row and on every row a future approval mints, with no
+ *    write at any of the eight scattered `status='approved'` sites. It can only ever grant
+ *    the approved baseline, so it never admits anything the store does not already show.
  *
- * Takes an ALREADY-NARROWED level.
+ * 3. A level that IS set is AUTHORITATIVE, at every eligible status including `approved`.
+ *    So an owner can both WIDEN (admit a `draft` to a cohort) and RESTRICT (pull a live
+ *    `approved` listing back to `testers`, `moderators`, or out of the store entirely with
+ *    `private`).
+ *
+ * ⚠️ RESTRICTING AN APPROVED LISTING IS DISCOVERY-ONLY, and the UI copy has to say so. The
+ * run route gates on the backing BLOCK's status and never consults this column, so a
+ * restricted approved listing is hidden from the store while anyone holding the slug can
+ * still open the app. That is a real and useful behaviour — unlisting — but it is not
+ * access control, and `private` here does not mean "nobody can open it".
+ *
+ * 🔴 AND IT IS STILL AN `AND` WITH THE SURFACE GATE. This predicate never sees the surface
+ * scope; the caller applies both. See {@link viewerSeesListingVisibility}.
  */
 export function listingVisibleInStore(args: {
   status: string;
-  visibility: AppListingVisibility;
+  visibility: AppListingVisibility | null;
   floor: ListingAudienceFloor;
 }): boolean {
   if (!isVisibilityEligibleListingStatus(args.status)) return false;
-  if (args.status === 'approved') return true;
+  if (args.visibility === null) return args.status === 'approved';
   return viewerSeesListingVisibility(args.floor, args.visibility);
 }

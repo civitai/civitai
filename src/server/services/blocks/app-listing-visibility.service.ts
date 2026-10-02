@@ -29,10 +29,11 @@
  * this feature existed. That is why {@link isListingVisibilityColumnAvailable} exists and
  * why the list path probes before it will NAME the column in its statement.
  *
- * 🔴 `available` IS NOT THE SAME QUESTION AS "private", and conflating them is how this
- * goes wrong. A listing nobody has set a level on reads
- * `{ available: true, visibility: 'private' }`; an unapplied migration reads
- * `{ available: false, visibility: 'private' }`. Only the FIRST licenses a write.
+ * 🔴 THREE STATES, NOT TWO, AND COLLAPSING ANY PAIR IS HOW THIS GOES WRONG. A listing
+ * nobody has set a level on reads `{ available: true, visibility: null }`; one carrying a
+ * level reads `{ available: true, visibility: <level> }`; an unapplied migration reads
+ * `{ available: false, visibility: null }`. Only the first two license a write, and only
+ * the third means "do not consult the level at all". `null` is NOT the `private` level.
  */
 
 import { TRPCError } from '@trpc/server';
@@ -40,7 +41,7 @@ import { TRPCError } from '@trpc/server';
 import { logToAxiom } from '~/server/logging/client';
 import { isMissingColumnError } from '~/server/services/blocks/app-listing-source-repo.service';
 import type { AppListingVisibility } from '~/shared/utils/app-listing-visibility';
-import { narrowListingVisibility } from '~/shared/utils/app-listing-visibility';
+import { parseStoredVisibility } from '~/shared/utils/app-listing-visibility';
 
 /** What a guarded read of the visibility column yields. See the header on `available`. */
 export type ListingVisibilityRead = {
@@ -50,22 +51,23 @@ export type ListingVisibilityRead = {
    * column.
    */
   available: boolean;
-  /** The stored level, narrowed. `private` for "not set", for an unknown value, AND for
-   *  "could not read" — `available` is what tells those apart. */
-  visibility: AppListingVisibility;
+  /**
+   * The stored level, or `null` for "the owner has expressed no choice".
+   *
+   * 🔴 `null` IS NOT `private`. A NULL column means the pre-feature rule for the row's
+   * status applies (approved visible, non-approved not), which is what keeps the feature
+   * inert on every row nobody has set a level on — including every row a future approval
+   * mints. An UNKNOWN stored string is a different case and still narrows to `private`
+   * (fail closed). `available === false` is a third case again: the column could not be
+   * read at all.
+   */
+  visibility: AppListingVisibility | null;
 };
 
 /** The read every degraded path returns. One frozen value so no caller can mutate it. */
 export const VISIBILITY_UNAVAILABLE: ListingVisibilityRead = Object.freeze({
   available: false,
-  visibility: 'private' as AppListingVisibility,
-});
-
-/** The read a caller uses when it has no listing to ask about (a preview fixture, a
- *  projection default). Distinct from {@link VISIBILITY_UNAVAILABLE} only in `available`. */
-export const VISIBILITY_NOT_SET: ListingVisibilityRead = Object.freeze({
-  available: true,
-  visibility: 'private' as AppListingVisibility,
+  visibility: null,
 });
 
 /** One row as the guarded reads select it. */
@@ -85,17 +87,13 @@ export type VisibilityReadClient = {
       where: { id: string } | { slug: string };
       select: { visibility: true };
     }) => Promise<VisibilityRow | null>;
-    findMany: (args: {
-      where: { id: { in: string[] } };
-      select: { id: true; visibility: true };
-    }) => Promise<Array<VisibilityRow & { id: string }>>;
   };
 };
 
 /** Shape one raw row (or a miss) into a successful read. A miss is `available: true` — the
  *  column WAS readable, there was simply no row. */
 function readFromRow(row: VisibilityRow | null): ListingVisibilityRead {
-  return { available: true, visibility: narrowListingVisibility(row?.visibility) };
+  return { available: true, visibility: parseStoredVisibility(row?.visibility) };
 }
 
 /**
@@ -121,48 +119,6 @@ export async function readListingVisibility(
     );
   } catch (err) {
     if (isMissingColumnError(err)) return VISIBILITY_UNAVAILABLE;
-    throw err;
-  }
-}
-
-/** Read one listing's level BY SLUG. `AppListing.slug` is `@unique`, so this is a single
- *  indexed row read. */
-export async function readListingVisibilityBySlug(
-  slug: string,
-  db: VisibilityReadClient
-): Promise<ListingVisibilityRead> {
-  try {
-    return readFromRow(
-      await db.appListing.findUnique({ where: { slug }, select: { visibility: true } })
-    );
-  } catch (err) {
-    if (isMissingColumnError(err)) return VISIBILITY_UNAVAILABLE;
-    throw err;
-  }
-}
-
-/**
- * Read the level for a PAGE of listings, as a `Map` keyed by listing id.
- *
- * 🔴 A LISTING MISSING FROM THE MAP IS NOT "PUBLIC". Callers project a row they already
- * hold, so a missing entry means the row was deleted between the two queries — they must
- * substitute {@link VISIBILITY_NOT_SET}, never an admitting level. Degrades to an EMPTY map
- * when the column is absent, which every caller must read as "do not consult the level",
- * not as "nobody is visible".
- */
-export async function readListingVisibilityMany(
-  listingIds: readonly string[],
-  db: VisibilityReadClient
-): Promise<Map<string, ListingVisibilityRead>> {
-  if (listingIds.length === 0) return new Map();
-  try {
-    const rows = await db.appListing.findMany({
-      where: { id: { in: [...listingIds] } },
-      select: { id: true, visibility: true },
-    });
-    return new Map(rows.map((r) => [r.id, readFromRow(r)]));
-  } catch (err) {
-    if (isMissingColumnError(err)) return new Map();
     throw err;
   }
 }
