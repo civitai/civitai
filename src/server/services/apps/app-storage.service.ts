@@ -39,6 +39,7 @@ import {
   appStorageQuotaExceededCounter,
   appStorageUserQuotaUntrackedCounter,
 } from '~/server/prom/client';
+import type { AppStorageOp } from '~/server/prom/app-block-storage.metrics';
 import { logToAxiom } from '~/server/logging/client';
 import { requireAppsDb } from '~/server/db/appsDb';
 import { appSchemaIdent, sanitizeAppSlug } from '~/server/utils/apps-slug';
@@ -465,7 +466,20 @@ async function resolveStorageContext(
   };
 }
 
-type StorageOp = 'get' | 'set' | 'delete' | 'list' | 'getQuota';
+/**
+ * Derived, NOT restated. `APP_STORAGE_OPS` in
+ * `src/server/prom/app-block-storage.metrics.ts` is the single source of truth,
+ * because that module has to enumerate every op to publish its series at 0 —
+ * and a sixth op added here but not there would simply never be seeded, leaving
+ * its series absent until the first real call. That is silent: no error, no
+ * failing test, and an absent series is exactly what the seeding exists to stop
+ * being ambiguous.
+ *
+ * `import type` is erased at build, so this adds no runtime edge from the
+ * service to a prom module (nor the reverse — that module imports only the
+ * metric handles from `@civitai/telemetry/client`).
+ */
+type StorageOp = AppStorageOp;
 
 const keyInput = z.string().min(1).max(200);
 
@@ -880,7 +894,7 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
     //
     // "We did not enforce" stays distinct from "we enforced against zero" where
     // that distinction is actually consumable: the
-    // `app_blocks_storage_user_quota_untracked_total` counter and the
+    // `civitai_app_block_storage_user_quota_untracked_total` counter and the
     // `user_quota_relation_missing` log on the fallback branch above. The flag
     // itself is gone — it had no reader left that could act on it.
     if (!isNonIncreasing && userUsedBytes + netDelta > USER_QUOTA_BYTES) {

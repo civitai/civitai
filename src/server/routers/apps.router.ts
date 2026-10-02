@@ -120,8 +120,20 @@ export const appsStorageRouter = router({
    *
    * The consequence is worth stating rather than implying: after this change
    * NOTHING reports how close an app is to its 50MB / 1M-row ceiling, so the app
-   * ceilings are observable only through `app_blocks_storage_quota_exceeded_total`
-   * (`ceiling="app"`) firing after the fact.
+   * ceilings are observable only through
+   * `civitai_app_block_storage_quota_exceeded_total` (`ceiling="app"`) firing
+   * after the fact. That is the EXPOSED Prometheus name — the one you can
+   * actually query. This line named `app_blocks_storage_quota_exceeded_total`
+   * until 2026-10-02, which was the metric's prefix-relative DECLARED name and
+   * matched nothing in Prometheus; the series the declaration produced was in
+   * fact `civitai_app_app_blocks_storage_quota_exceeded_total` (the register
+   * helper prepends `civitai_app_`, and the declared name carried `app_blocks_`
+   * of its own). So the one documented operator contract for the app ceilings
+   * pointed at a metric that did not exist, on BOTH spellings. The declared name
+   * is now `block_storage_quota_exceeded_total`; see
+   * `packages/civitai-telemetry/src/client.ts` for the family and
+   * `src/server/prom/app-block-storage.metrics.ts` for the zero-seeding that
+   * makes an absent series mean "not wired".
    *
    * Field names are unchanged, so the host bridge and the SDK's
    * APP_STORAGE_QUOTA_RESULT contract carry through untouched; what moved is the
