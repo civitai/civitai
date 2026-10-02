@@ -277,7 +277,7 @@ const featureFlags = createFeatureFlags({
     default: true,
     displayName: 'Training Studio',
     badge: 'Beta',
-    description: `Use the new Training Studio for LoRA training — turn this off to go back to the classic trainer.`,
+    description: `Use the new Training Studio for LoRA training. Turn this off to go back to the classic trainer, which will be phased out gradually as Training Studio matures.`,
     availability: ['mod'],
     fliptKey: 'training-studio-ui',
   },

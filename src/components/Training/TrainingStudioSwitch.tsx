@@ -61,9 +61,11 @@ export function SwitchToTrainingStudioAlert({
           {children ?? (
             <>
               <b>Training Studio</b> is our new training experience — a redesigned flow for image
-              and video, plus audio training. You can switch back at any time.
+              and video, plus audio training.
             </>
-          )}
+          )}{' '}
+          This classic trainer will be phased out gradually as Training Studio matures. For now you
+          can switch back at any time.
         </Text>
         <Button size="compact-sm" loading={switching} onClick={() => switchTo(true, destination)}>
           Switch to Training Studio
@@ -80,8 +82,9 @@ export function SwitchToClassicTrainerAlert({ destination }: { destination: stri
     <AlertWithIcon icon={<IconBarbell size={16} />} iconColor="blue" color="blue" size="sm" mb="md">
       <Group gap="sm">
         <Text size="sm">
-          You&rsquo;re using the new <b>Training Studio</b>. Looking for your drafts, or prefer the
-          classic trainer? You can switch back at any time.
+          You&rsquo;re using the new <b>Training Studio</b>. The classic trainer is still here for
+          your drafts, or if you prefer it, but it will be phased out gradually as Training Studio
+          matures.
         </Text>
         <Button
           size="compact-sm"
