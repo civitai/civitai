@@ -6128,6 +6128,7 @@ enum JobQueueType {
   BlockedImageDelete
   ImageScan
   ReplacedImageDelete
+  ImageStorageDelete
 }
 
 model JobQueue {
@@ -6135,6 +6136,7 @@ model JobQueue {
   entityType EntityType
   entityId   Int
   createdAt  DateTime     @default(now())
+  url        String?
 
   @@id([entityType, entityId, type])
 }

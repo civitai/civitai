@@ -43,6 +43,8 @@ export const JOB_QUEUE_OVERDUE_MINUTES: Record<JobQueueType, number> = {
   ImageScan: MINUTES_PER_DAY,
   // Waits REPLACED_IMAGE_RETENTION_DAYS, then a once-daily job.
   ReplacedImageDelete: (REPLACED_IMAGE_RETENTION_DAYS + 1) * MINUTES_PER_DAY,
+  // `retry-image-storage-deletes`, every 15 minutes. A day of failures means storage is down.
+  ImageStorageDelete: MINUTES_PER_DAY,
 };
 
 /** Types nothing drains: a row of one of these is stranded on arrival, not merely waiting. */

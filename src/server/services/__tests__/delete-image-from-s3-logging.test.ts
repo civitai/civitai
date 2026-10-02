@@ -360,6 +360,83 @@ describe('deleteImageFromS3', () => {
     );
   });
 
+  // ── The retry queue. The row is gone by now, so the key must be persisted or it is lost. ──
+
+  const retryInserts = () =>
+    dbMock.dbWrite.$executeRaw.mock.calls
+      .map((call: unknown[]) => ({
+        sql: (call[0] as TemplateStringsArray).join('?'),
+        values: call.slice(1),
+      }))
+      .filter((w) => w.sql.includes('INSERT INTO "JobQueue"'));
+
+  it('queues the key for retry when the B2 delete throws', async () => {
+    mockFindFirst.mockResolvedValue(null);
+    mockB2Send.mockRejectedValue(new Error('connect ETIMEDOUT'));
+
+    const outcome = await deleteImageFromS3({ id: 4242, url: 'abc-def/original.jpeg' });
+
+    expect(outcome).toBe('failed');
+    expect(retryInserts()).toHaveLength(1);
+    expect(retryInserts()[0].values).toEqual([
+      4242,
+      'Image',
+      'ImageStorageDelete',
+      'abc-def/original.jpeg',
+    ]);
+  });
+
+  it('queues the key for retry when the shared-url check itself fails', async () => {
+    mockFindFirst.mockRejectedValue(new Error("Can't reach database server"));
+
+    const outcome = await deleteImageFromS3({ id: 4242, url: 'abc-def/original.jpeg' });
+
+    expect(outcome).toBe('failed');
+    expect(retryInserts()).toHaveLength(1);
+  });
+
+  it('queues nothing when the delete succeeds', async () => {
+    mockFindFirst.mockResolvedValue(null);
+
+    const outcome = await deleteImageFromS3({ id: 4242, url: 'abc-def/original.jpeg' });
+
+    expect(outcome).toBe('deleted');
+    expect(mockB2Send).toHaveBeenCalledTimes(1);
+    expect(retryInserts()).toHaveLength(0);
+  });
+
+  it('reports a shared url as skipped, not deleted, and queues nothing', async () => {
+    mockFindFirst.mockResolvedValue({ id: 1 });
+
+    const outcome = await deleteImageFromS3({ id: 4242, url: 'abc-def/original.jpeg' });
+
+    expect(outcome).toBe('skipped');
+    expect(retryInserts()).toHaveLength(0);
+  });
+
+  // The migration follows the deploy, so for a while the label and column do not exist and the
+  // insert throws. That must cost a log line, never the caller's delete flow.
+  it('logs and carries on when the queue insert fails', async () => {
+    mockFindFirst.mockResolvedValue(null);
+    mockB2Send.mockRejectedValue(new Error('b2 refused'));
+    dbMock.dbWrite.$executeRaw.mockRejectedValueOnce(
+      new Error('invalid input value for enum "JobQueueType": "ImageStorageDelete"')
+    );
+
+    const outcome = await deleteImageFromS3({ id: 4242, url: 'abc-def/original.jpeg' });
+
+    expect(outcome).toBe('failed');
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        name: 'queue-image-storage-delete-retry-failed',
+        imageId: 4242,
+        url: 'abc-def/original.jpeg',
+      })
+    );
+    expect(invalidateCalls()).toHaveLength(1);
+  });
+
   // The guard above is safe only while no row holds a url for a bucket we own. Nothing enforces
   // that, so a first-party url reaching it has to be audible rather than a silent skip.
   it('flags a first-party url instead of skipping it silently', async () => {

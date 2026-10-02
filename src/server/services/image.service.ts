@@ -467,8 +467,8 @@ export async function deleteImageFromS3({
   // Off unless a moderation flow says otherwise. See `PurgeResizeCacheRetraction` for what it
   // destroys and for the collateral that is knowingly accepted along with it.
   retractPublicBlobs = false,
-}: { id: number; url: string } & PurgeResizeCacheRetraction) {
-  if (!env.DATABASE_IS_PROD) return;
+}: { id: number; url: string } & PurgeResizeCacheRetraction): Promise<StorageDeleteOutcome> {
+  if (!env.DATABASE_IS_PROD) return 'skipped';
   // Legacy avatar rows hold a full external URL where every other row holds a bucket key.
   // Handing one to deleteObject as a Key can only fail, and it is not ours to delete anyway.
   if (!url || url.startsWith('http')) {
@@ -483,9 +483,10 @@ export async function deleteImageFromS3({
         imageId: id,
         url,
       }).catch(() => undefined);
-    return;
+    return 'skipped';
   }
 
+  let outcome: StorageDeleteOutcome = 'deleted';
   try {
     const otherImagesWithSameUrl = await dbWrite.image.findFirst({
       select: { id: true },
@@ -495,7 +496,7 @@ export async function deleteImageFromS3({
       },
     });
 
-    if (!!otherImagesWithSameUrl) return;
+    if (!!otherImagesWithSameUrl) return 'skipped';
 
     // B2 is the only backend an image can be on, so the registry is consulted for observability
     // rather than to choose a destination — a miss means "unregistered", never "somewhere else".
@@ -546,8 +547,9 @@ export async function deleteImageFromS3({
       )
     );
   } catch (error) {
-    // Nothing retries this: deleteImages drops the DB row first, so a lost object stays
-    // publicly reachable (CDN urls are unsigned) with only this line to find it by.
+    // The DB row is already gone, so this key is the only route back to a publicly reachable
+    // object (CDN urls are unsigned). `retry-image-storage-deletes` works the queue.
+    outcome = 'failed';
     await logToAxiom({
       type: 'error',
       name: 'delete-image-from-s3-failed',
@@ -556,6 +558,7 @@ export async function deleteImageFromS3({
       url,
       error: safeError(error),
     }).catch(() => undefined);
+    await queueImageStorageDeleteRetry({ id, url });
   }
 
   // 🔴 The only attribution trail. Retraction destroys the shared stored object for every
@@ -578,6 +581,35 @@ export async function deleteImageFromS3({
   // already gone. The `otherImagesWithSameUrl` return above still skips this — that url belongs
   // to an image that is still live, so its bytes are not ours to retract either.
   await purgeResizeCache({ url: url, retractPublicBlobs });
+  return outcome;
+}
+
+export type StorageDeleteOutcome = 'deleted' | 'skipped' | 'failed';
+
+/**
+ * The url column carries the key because the Image row it came from is already deleted.
+ *
+ * 🔴 Must tolerate the enum label and column not existing yet: the migration is applied only after
+ * the deploy, since a label written before every pod knows it breaks every Prisma reader of
+ * JobQueue. Until then this insert fails and is logged, which is today's behaviour.
+ */
+export async function queueImageStorageDeleteRetry({ id, url }: { id: number; url: string }) {
+  try {
+    await dbWrite.$executeRaw`
+      INSERT INTO "JobQueue" ("entityId", "entityType", "type", "url")
+      VALUES (${id}, ${EntityType.Image}::"EntityType", ${JobQueueType.ImageStorageDelete}::"JobQueueType", ${url})
+      ON CONFLICT ("entityType", "entityId", "type") DO UPDATE SET "url" = EXCLUDED."url"
+    `;
+  } catch (error) {
+    await logToAxiom({
+      type: 'error',
+      name: 'queue-image-storage-delete-retry-failed',
+      message: 'failed storage delete was not queued for retry; the object may still be public',
+      imageId: id,
+      url,
+      error: safeError(error),
+    }).catch(() => undefined);
+  }
 }
 
 export const invalidateManyImageExistence = async (ids: number[]) => {
