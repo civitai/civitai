@@ -8,7 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  *   2. it reads, and removes, ONLY its own queue type — JobQueue is keyed by image id across
  *      types, so a dropped type filter would delete another queue's row for the same image
  *      (`BlockedImageDelete` is the take-down queue);
- *   3. a key that deletes, or is legitimately skipped, leaves the queue; one that fails again
+ *   3. a key that deletes, or is legitimately skipped, leaves the queue — so does a row whose
+ *      payload carries no usable key, which is logged; one that fails again
  *      stays, with its original `createdAt`, so the overdue check can see it age;
  *   4. one key throwing does not cost the rest of the run its dequeue;
  *   5. no new batch starts past the run budget, so a slow outage cannot outlive the lock;
@@ -30,6 +31,7 @@ vi.mock('~/env/other', () => ({
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import {
   RETRY_BATCH_SIZE,
@@ -40,15 +42,17 @@ import {
 const DELETES_ID = 11;
 const SHARED_ID = 12;
 const STILL_FAILING_ID = 13;
-const NO_URL_ID = 14;
+const NULL_DATA_ID = 14;
+const EMPTY_URL_ID = 16;
 const THROWS_ID = 15;
 
 const QUEUE = [
-  { id: DELETES_ID, url: 'key-deletes' },
-  { id: SHARED_ID, url: 'key-shared' },
-  { id: STILL_FAILING_ID, url: 'key-failing' },
-  { id: NO_URL_ID, url: null },
-  { id: THROWS_ID, url: 'key-throws' },
+  { id: DELETES_ID, data: { url: 'key-deletes' } },
+  { id: SHARED_ID, data: { url: 'key-shared' } },
+  { id: STILL_FAILING_ID, data: { url: 'key-failing' } },
+  { id: NULL_DATA_ID, data: null },
+  { id: THROWS_ID, data: { url: 'key-throws' } },
+  { id: EMPTY_URL_ID, data: { url: '' } },
 ];
 
 const OUTCOMES: Record<string, 'deleted' | 'skipped' | 'failed'> = {
@@ -56,6 +60,8 @@ const OUTCOMES: Record<string, 'deleted' | 'skipped' | 'failed'> = {
   'key-shared': 'skipped',
   'key-failing': 'failed',
 };
+
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 const ctx = {} as Parameters<typeof retryImageStorageDeletes.run>[0];
 const runJob = () => retryImageStorageDeletes.run(ctx).result as Promise<Record<string, unknown>>;
@@ -69,7 +75,7 @@ const reads = () => dbMock.dbWrite.$queryRaw.mock.calls.map(toCall);
 const writes = () => dbMock.dbWrite.$executeRaw.mock.calls.map(toCall);
 
 let probe: { ready: boolean }[] = [{ ready: true }];
-let queue: typeof QUEUE = QUEUE;
+let queue: { id: number; data: unknown }[] = QUEUE;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -97,13 +103,13 @@ afterEach(() => {
 });
 
 describe('retry-image-storage-deletes', () => {
-  it('probes for its own enum label and the url column', async () => {
+  it('probes for its own enum label and the data column', async () => {
     await runJob();
 
     const [probeCall] = reads();
     expect(probeCall.values).toEqual(['ImageStorageDelete']);
     expect(probeCall.sql).toContain("t.typname = 'JobQueueType'");
-    expect(probeCall.sql).toContain("table_name = 'JobQueue' AND column_name = 'url'");
+    expect(probeCall.sql).toContain("table_name = 'JobQueue' AND column_name = 'data'");
     // Both must exist: the two halves are separate migrations and can land apart.
     expect(probeCall.sql).toMatch(/\)\s+AND EXISTS \(/);
   });
@@ -147,7 +153,7 @@ describe('retry-image-storage-deletes', () => {
     );
   });
 
-  it('dequeues deleted, skipped and keyless rows of its own type only', async () => {
+  it('dequeues deleted, skipped and malformed rows of its own type only', async () => {
     const result = await runJob();
 
     expect(writes()).toHaveLength(1);
@@ -160,9 +166,13 @@ describe('retry-image-storage-deletes', () => {
     expect((dequeue.values[2] as number[]).slice().sort()).toEqual([
       DELETES_ID,
       SHARED_ID,
-      NO_URL_ID,
+      NULL_DATA_ID,
+      EMPTY_URL_ID,
     ]);
-    expect(result).toEqual({ deleted: 1, skipped: 2, failed: 2, unattempted: 0 });
+    expect(result).toEqual({ deleted: 1, skipped: 1, failed: 2, malformed: 2, unattempted: 0 });
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'warning', imageIds: [NULL_DATA_ID, EMPTY_URL_ID] })
+    );
   });
 
   // The job issues no write against a failed row. The service's re-enqueue is the other writer;
@@ -180,7 +190,7 @@ describe('retry-image-storage-deletes', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(0);
     // Ten keys = two batches of five. The first batch eats the whole budget.
-    queue = Array.from({ length: 10 }, (_, i) => ({ id: 100 + i, url: `key-${i}` }));
+    queue = Array.from({ length: 10 }, (_, i) => ({ id: 100 + i, data: { url: `key-${i}` } }));
     mockDeleteImageFromS3.mockImplementation(async () => {
       vi.setSystemTime(RUN_BUDGET_MS + 1);
       return 'deleted';
@@ -196,7 +206,7 @@ describe('retry-image-storage-deletes', () => {
   it('still starts a batch with the budget exactly spent', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(0);
-    queue = Array.from({ length: 10 }, (_, i) => ({ id: 100 + i, url: `key-${i}` }));
+    queue = Array.from({ length: 10 }, (_, i) => ({ id: 100 + i, data: { url: `key-${i}` } }));
     mockDeleteImageFromS3.mockImplementation(async () => {
       vi.setSystemTime(RUN_BUDGET_MS);
       return 'deleted';

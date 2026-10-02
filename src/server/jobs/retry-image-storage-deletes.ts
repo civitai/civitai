@@ -3,6 +3,7 @@ import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
+import { imageStorageDeletePayloadSchema } from '~/server/schema/job-queue.schema';
 import { logToAxiom } from '~/server/logging/client';
 import { deleteImageFromS3 } from '~/server/services/image.service';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
@@ -17,7 +18,7 @@ const LOCK_SECONDS = 20 * 60;
 export const RUN_BUDGET_MS = 12 * 60 * 1000;
 const DEADLINE_MARGIN_MS = 2 * 60 * 1000;
 
-type QueueRow = { id: number; url: string | null };
+type QueueRow = { id: number; data: unknown };
 
 /**
  * The enum label is added after the deploy, so this job ships ahead of it. Probing the catalog
@@ -32,7 +33,7 @@ async function isQueueReady() {
       )
       AND EXISTS (
         SELECT 1 FROM information_schema.columns
-        WHERE table_name = 'JobQueue' AND column_name = 'url'
+        WHERE table_name = 'JobQueue' AND column_name = 'data'
       ) AS ready
   `;
   return row?.ready === true;
@@ -50,19 +51,20 @@ export const retryImageStorageDeletes = createJob(
     // Failed rows keep their original `createdAt`: it is what the overdue check in
     // `JOB_QUEUE_OVERDUE_MINUTES` reads, so a key that never clears has to age.
     const rows = await dbWrite.$queryRaw<QueueRow[]>`
-      SELECT "entityId" AS id, url
+      SELECT "entityId" AS id, data
       FROM "JobQueue"
       WHERE type = ${JobQueueType.ImageStorageDelete}::"JobQueueType"
         AND "entityType" = ${EntityType.Image}::"EntityType"
       ORDER BY "createdAt" ASC
       LIMIT ${RETRY_BATCH_SIZE}
     `;
-    if (!rows.length) return { deleted: 0, skipped: 0, failed: 0, unattempted: 0 };
+    if (!rows.length) return { deleted: 0, skipped: 0, failed: 0, malformed: 0, unattempted: 0 };
 
     // A local run, or an app pointed at a restored prod snapshot, must never delete production media.
     if (!isProd || !env.DATABASE_IS_PROD) return { wouldRetry: rows.length };
 
     const done: number[] = [];
+    const malformed: number[] = [];
     let deleted = 0;
     let skipped = 0;
     let failed = 0;
@@ -72,12 +74,15 @@ export const retryImageStorageDeletes = createJob(
       if (Date.now() - startedAt > RUN_BUDGET_MS) break;
       attempted += batch.length;
       await Promise.all(
-        batch.map(async ({ id, url }) => {
-          if (!url) {
-            skipped++;
+        batch.map(async ({ id, data }) => {
+          const payload = imageStorageDeletePayloadSchema.safeParse(data);
+          // No key means nothing to delete and nothing to retry with.
+          if (!payload.success) {
+            malformed.push(id);
             done.push(id);
             return;
           }
+          const { url } = payload.data;
           const outcome = await deleteImageFromS3({
             id,
             url,
@@ -103,7 +108,21 @@ export const retryImageStorageDeletes = createJob(
           AND "entityId" = ANY(${done}::integer[])
       `;
 
-    const result = { deleted, skipped, failed, unattempted: rows.length - attempted };
+    if (malformed.length)
+      logToAxiom({
+        name: 'retry-image-storage-deletes',
+        type: 'warning',
+        message: 'queued rows without a usable storage key were dropped',
+        imageIds: malformed,
+      }).catch(() => undefined);
+
+    const result = {
+      deleted,
+      skipped,
+      failed,
+      malformed: malformed.length,
+      unattempted: rows.length - attempted,
+    };
     logToAxiom({ name: 'retry-image-storage-deletes', type: 'info', ...result }).catch(
       () => undefined
     );

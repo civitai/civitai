@@ -6136,7 +6136,7 @@ model JobQueue {
   entityType EntityType
   entityId   Int
   createdAt  DateTime     @default(now())
-  url        String?
+  data       Json?
 
   @@id([entityType, entityId, type])
 }

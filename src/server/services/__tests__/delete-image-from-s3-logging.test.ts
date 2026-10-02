@@ -121,6 +121,7 @@ vi.mock('~/server/search-index', async (importOriginal) => ({
 }));
 
 const { deleteImageFromS3 } = await import('../image.service');
+const { imageStorageDeletePayloadSchema } = await import('~/server/schema/job-queue.schema');
 
 const invalidateCalls = () =>
   mockFetch.mock.calls.filter((call) => String(call[0]).includes('/admin/invalidate'));
@@ -378,18 +379,22 @@ describe('deleteImageFromS3', () => {
 
     expect(outcome).toBe('failed');
     expect(retryInserts()).toHaveLength(1);
-    expect(retryInserts()[0].values).toEqual([
-      4242,
-      'Image',
-      'ImageStorageDelete',
-      'abc-def/original.jpeg',
-    ]);
+    const [insert] = retryInserts();
+    expect(insert.values.slice(0, 3)).toEqual([4242, 'Image', 'ImageStorageDelete']);
+    // The payload must be what the retry job's schema accepts, or the key is dropped as malformed.
+    expect(imageStorageDeletePayloadSchema.parse(JSON.parse(insert.values[3] as string))).toEqual({
+      url: 'abc-def/original.jpeg',
+    });
+    expect(insert.values).toHaveLength(4);
+    expect(insert.sql).toMatch(
+      /"type", "data"\)\s+VALUES \(\?, \?::"EntityType", \?::"JobQueueType", \?::jsonb\)/
+    );
     // The retry job re-enters this path for a key already queued. Without the upsert that is a
     // primary-key violation, logged as a lost key every run for every stuck key.
     // Anchored at the end: an extra SET (`"createdAt" = now()`) would reset the age the overdue
     // check reads, and a missing WHERE writes a dead row version on every failed retry.
-    expect(retryInserts()[0].sql).toMatch(
-      /ON CONFLICT \("entityType", "entityId", "type"\) DO UPDATE SET "url" = EXCLUDED\."url"\s+WHERE "JobQueue"\."url" IS DISTINCT FROM EXCLUDED\."url"\s*$/
+    expect(insert.sql).toMatch(
+      /ON CONFLICT \("entityType", "entityId", "type"\) DO UPDATE SET "data" = EXCLUDED\."data"\s+WHERE "JobQueue"\."data"->>'url' IS DISTINCT FROM EXCLUDED\."data"->>'url'\s*$/
     );
   });
 

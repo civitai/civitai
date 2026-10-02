@@ -3786,7 +3786,7 @@ export interface JobQueue {
   entityType: EntityType;
   entityId: number;
   createdAt: Date;
-  url: string | null;
+  data: JsonValue | null;
 }
 
 export interface VaultItem {

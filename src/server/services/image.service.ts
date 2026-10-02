@@ -143,6 +143,7 @@ import type {
   UpdateImageToolsOutput,
 } from '~/server/schema/image.schema';
 import { imageMetaOutput, ingestImageSchema } from '~/server/schema/image.schema';
+import type { ImageStorageDeletePayload } from '~/server/schema/job-queue.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { imagesMetricsSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import type {
@@ -600,20 +601,21 @@ export async function deleteImageFromS3({
 export type StorageDeleteOutcome = 'deleted' | 'skipped' | 'failed';
 
 /**
- * The url column carries the key because the Image row it came from is already deleted.
- *
- * 🔴 Must tolerate the enum label and column not existing yet: the migration is applied only after
- * the deploy, since a label written before every pod knows it breaks every Prisma reader of
- * JobQueue. Until then this insert fails and is logged, which is today's behaviour.
+ * 🔴 Must tolerate the enum label not existing yet: it is added only after the deploy, since a label
+ * written before every pod knows it breaks every Prisma reader of JobQueue. Until then this insert
+ * fails and is logged, which is today's behaviour.
  */
 export async function queueImageStorageDeleteRetry({ id, url }: { id: number; url: string }) {
+  const payload: ImageStorageDeletePayload = { url };
   try {
     await dbWrite.$executeRaw`
-      INSERT INTO "JobQueue" ("entityId", "entityType", "type", "url")
-      VALUES (${id}, ${EntityType.Image}::"EntityType", ${JobQueueType.ImageStorageDelete}::"JobQueueType", ${url})
-      -- Every failed retry lands here again; an unchanged url must not leave a dead row version.
-      ON CONFLICT ("entityType", "entityId", "type") DO UPDATE SET "url" = EXCLUDED."url"
-        WHERE "JobQueue"."url" IS DISTINCT FROM EXCLUDED."url"
+      INSERT INTO "JobQueue" ("entityId", "entityType", "type", "data")
+      VALUES (${id}, ${EntityType.Image}::"EntityType", ${
+      JobQueueType.ImageStorageDelete
+    }::"JobQueueType", ${JSON.stringify(payload)}::jsonb)
+      -- Every failed retry lands here again; an unchanged key must not leave a dead row version.
+      ON CONFLICT ("entityType", "entityId", "type") DO UPDATE SET "data" = EXCLUDED."data"
+        WHERE "JobQueue"."data"->>'url' IS DISTINCT FROM EXCLUDED."data"->>'url'
     `;
   } catch (error) {
     await logToAxiom({
