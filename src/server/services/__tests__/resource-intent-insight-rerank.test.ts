@@ -170,7 +170,9 @@ describe('resource-intent — a label changes the served response', () => {
     expect(mockGetResourceData.mock.calls[0][0]).toEqual([83003, 82002, 81001]);
   });
 
-  it('invariant guard: with no labels at all the response keeps the popularity order', async () => {
+  // The ordering test above expects the exact reverse of the seed, so a mutant that
+  // ignores the labels and reverses the tiebreak passes it. This is what fails.
+  it('with no labels at all the response keeps the popularity order — kills a reversed tiebreak', async () => {
     const result = await getResourceIntent(INPUT, CTX);
 
     expect(result.degraded).toBe(false);

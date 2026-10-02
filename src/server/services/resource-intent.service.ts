@@ -3,9 +3,9 @@ import { createHash } from 'crypto';
 import { clickhouse } from '~/server/clickhouse/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
+  clampResourceIntentCap,
   RESOURCE_INTENT_CRITERIA_VERSION,
   RESOURCE_INTENT_DEFAULT_LIMIT,
-  RESOURCE_INTENT_MAX_SHORTLIST,
   RESOURCE_INTENT_QUESTIONS,
   RESOURCE_INTENT_SPEC_HASH,
   QUESTION_SPEC_VERSION,
@@ -81,7 +81,7 @@ function clickhouseDateTime64(d: Date): string {
  * disagree about how wide a response is allowed to be.
  */
 export function resolveSuggestionLimit(limit: number | undefined): number {
-  return Math.min(limit ?? RESOURCE_INTENT_DEFAULT_LIMIT, RESOURCE_INTENT_MAX_SHORTLIST);
+  return clampResourceIntentCap(limit ?? RESOURCE_INTENT_DEFAULT_LIMIT);
 }
 
 /**
@@ -160,6 +160,13 @@ export function buildStage3Question(shortlist: ResourceIntentShortlistEntry[]): 
   };
 }
 
+/**
+ * Tiebreaks on the incoming index, so an indifferent distribution preserves the
+ * matcher's order. `applyInsightRanking` tiebreaks the same way on the seed
+ * order; the two stages together are what makes the whole pipeline's order
+ * deterministic, so changing either tiebreak in isolation breaks that claim for
+ * one stage only.
+ */
 function reorderShortlistByDistribution(
   shortlist: ResourceIntentShortlistEntry[],
   distribution: Record<string, number>

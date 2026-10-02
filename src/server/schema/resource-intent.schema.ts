@@ -34,6 +34,17 @@ export const RESOURCE_INTENT_DEFAULT_LIMIT = 50;
 
 export const RESOURCE_INTENT_MAX_PROMPT_LENGTH = 6000;
 
+/**
+ * The one bound on a shortlist width, next to the constant it enforces and the
+ * zod rule that validates the request field. `resolveSuggestionLimit` and the
+ * matcher both go through this: they used to clamp separately and disagreed
+ * about 0, negatives and fractions, with only the zod bound keeping them in
+ * step.
+ */
+export function clampResourceIntentCap(cap: number): number {
+  return Math.min(Math.max(1, Math.trunc(cap)), RESOURCE_INTENT_MAX_SHORTLIST);
+}
+
 const roleOptions = [
   'style',
   'character',

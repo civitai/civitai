@@ -10,7 +10,9 @@ import {
   withMeiliResourceSelect,
 } from '~/server/meilisearch/client';
 import {
-  RESOURCE_INTENT_MAX_SHORTLIST,
+  clampResourceIntentCap,
+  RESOURCE_INTENT_ROLE_OPTIONS,
+  RESOURCE_INTENT_STYLE_FAMILY_OPTIONS,
   type ResourceIntentCriteria,
   type ResourceIntentRole,
   type ResourceIntentStyleFamily,
@@ -59,21 +61,24 @@ export type ResourceIntentShortlistEntry = {
 };
 
 // One model usually contributes 1–3 baseModel-matching versions, so a page of
-// twice the response cap covers the re-rank pool (also twice the cap) without
-// widening the query; expansion below still caps the pool hard.
+// twice the VERSION target covers it (bounded by Meili's 1000-page limit);
+// expansion below still caps hard. The target is the re-rank pool, not the
+// response cap — sizing it off the cap left the page too narrow to fill the pool
+// the moment the two multipliers disagreed.
 const SEARCH_PAGE_MULTIPLIER = 2;
 const SEARCH_PAGE_MAX = 500;
 
 /**
- * Pool width as a multiple of the response cap. The pool is what gets re-ranked,
- * so a candidate the popularity seed placed outside the cap can still be promoted
- * into the response — without it this would only ever reorder the visible page.
+ * Pool width as a multiple of the response cap, so a candidate the popularity
+ * seed placed outside the response can still be promoted into it.
+ *
+ * 🔴 The effective width is `min(cap * 2, RESOURCE_INTENT_MAX_SHORTLIST)`, which
+ * starts shrinking at `cap = 128` and reaches 1x — i.e. reorder-the-visible-page
+ * only — at the maximum accepted `limit` of 255. That is deliberate (the pool is
+ * the work bound as well as the lookahead) but it means the widening is a
+ * property of the DEFAULT cap of 50, not of every request.
  */
 const RERANK_POOL_MULTIPLIER = 2;
-
-function clampShortlistCap(cap: number): number {
-  return Math.min(Math.max(1, Math.trunc(cap)), RESOURCE_INTENT_MAX_SHORTLIST);
-}
 
 export function buildResourceIntentFilter({
   modelTypes,
@@ -115,7 +120,7 @@ export function expandShortlist(
     cap: number;
   }
 ): ResourceIntentShortlistEntry[] {
-  const cap = clampShortlistCap(opts.cap);
+  const cap = clampResourceIntentCap(opts.cap);
   const entries: ResourceIntentShortlistEntry[] = [];
   const seen = new Set<number>();
   for (const hit of hits) {
@@ -156,11 +161,11 @@ export type ResourceIntentInsight = {
 };
 
 /**
- * `ResourceInsight.confidence` is the WEAKEST of a row's four label judgments,
- * and the written distribution is p50 0.43 / mean 0.44 with only 3.4% of rows at
- * or above 0.70 — so a 0.70 floor would discard ~96.6% of the labels and leave
- * this ordering inert. 0.30 is the measured ~12.8th percentile and still roughly
- * twice the 1-in-9 a uniform-random role choice would score.
+ * `ResourceInsight.confidence` is the WEAKEST of a row's four label judgments —
+ * including the `contentType` one this ordering never reads — and the written
+ * distribution is p50 0.43 / mean 0.44 with only 3.4% of rows at or above 0.70.
+ * So a 0.70 floor would discard ~96.6% of the labels and leave this ordering
+ * inert; 0.30 is the measured ~12.8th percentile.
  */
 export const RESOURCE_INSIGHT_MIN_CONFIDENCE = 0.3;
 
@@ -172,13 +177,33 @@ type ResourceIntentWant = {
   styleFamily: ResourceIntentStyleFamily;
 };
 
+/**
+ * `role` and `styleFamily` are TEXT, versioned with the label spec, so a stored
+ * row can hold a value this build's taxonomy no longer contains. Narrowing here
+ * is what keeps the comparison below honest — a bare string compares false
+ * against every current option, which reads as disagreement rather than as a
+ * value nobody can interpret.
+ */
+function knownValue<T extends string>(options: readonly T[], stored: string): T | null {
+  return (options as readonly string[]).includes(stored) ? (stored as T) : null;
+}
+
 function insightBucket(insight: ResourceIntentInsight, want: ResourceIntentWant): number {
   if (insight.confidence < RESOURCE_INSIGHT_MIN_CONFIDENCE) return 0;
+  const role = knownValue(RESOURCE_INTENT_ROLE_OPTIONS, insight.role);
+  const styleFamily = knownValue(RESOURCE_INTENT_STYLE_FAMILY_OPTIONS, insight.styleFamily);
   // `other` means "none of the above" on both sides, so other↔other is not agreement.
-  const styleMatch = want.styleFamily !== 'other' && insight.styleFamily === want.styleFamily;
+  const styleMatch = want.styleFamily !== 'other' && styleFamily === want.styleFamily;
   const agreement =
-    (insight.role === want.role ? ROLE_MATCH_WEIGHT : 0) + (styleMatch ? STYLE_MATCH_WEIGHT : 0);
-  return agreement > 0 ? agreement : -1;
+    (role === want.role ? ROLE_MATCH_WEIGHT : 0) + (styleMatch ? STYLE_MATCH_WEIGHT : 0);
+  if (agreement > 0) return agreement;
+  // 🔴 Demotion needs positive evidence the resource is for something ELSE, and
+  // only a recognised role is that. A taxonomy edit supersedes every stored row's
+  // spec AND makes its strings unmatchable in the same move, so demoting on an
+  // unrecognised value would bury the entire labeled population — the catalogue's
+  // high-usage head — beneath the unlabeled majority, silently, until a manual
+  // re-label pass caught up.
+  return role ? -1 : 0;
 }
 
 /**
@@ -217,9 +242,16 @@ export function applyInsightRanking(
 }
 
 /**
- * `stale` rows were written under a superseded label spec and are queued for a
- * re-label, so they describe nothing current — dropped here rather than scored
- * down, which is what the `specHash`/`stale` pair exists for.
+ * 🔴 `stale: false` is a floor, not a freshness guarantee. Nothing in this repo
+ * sets `stale = true` — the migration describes that flip as a manual step of a
+ * label-spec bump — so today the clause excludes no row, and `specHash` is
+ * deliberately NOT compared: filtering on it would make the whole ordering inert
+ * from the moment a spec moves until a manual, vendor-spend-gated re-label pass
+ * finished, and the table was designed so superseded rows stay readable. The
+ * harm a superseded row could do is handled in `insightBucket` instead, by
+ * refusing to demote on a value this build cannot interpret. What is NOT covered
+ * either way is a spec that keeps an option's spelling and changes its meaning;
+ * that one needs the manual flip.
  */
 export async function loadResourceInsights(
   versionIds: number[]
@@ -278,7 +310,8 @@ export async function findResourceIntentCandidates(
   }
 ): Promise<ResourceIntentShortlistEntry[]> {
   if (criteria.role === 'none') return [];
-  const cap = clampShortlistCap(opts.cap);
+  const cap = clampResourceIntentCap(opts.cap);
+  const poolCap = clampResourceIntentCap(cap * RERANK_POOL_MULTIPLIER);
   const baseModels = criteria.baseModel ? [criteria.baseModel] : null;
   const filter = buildResourceIntentFilter({
     modelTypes: criteria.modelTypes,
@@ -286,11 +319,11 @@ export async function findResourceIntentCandidates(
     browsingLevel: opts.browsingLevel,
     coverage: opts.coverage,
   });
-  const hits = await searchShortlistModels(filter, cap);
+  const hits = await searchShortlistModels(filter, poolCap);
   const pool = expandShortlist(hits, {
     baseModels,
     coverage: opts.coverage,
-    cap: cap * RERANK_POOL_MULTIPLIER,
+    cap: poolCap,
   });
 
   let insights: Map<number, ResourceIntentInsight>;

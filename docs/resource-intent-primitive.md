@@ -34,6 +34,7 @@ POST /api/v1/blocks/resource-intent {prompt, baseModel?, limit?}
 | `src/server/services/resource-intent-matcher.service.ts` | Deterministic gates + popularity-seeded pool + `ResourceInsight` ordering + hard cap.                                               |
 | `src/pages/api/v1/blocks/resource-intent.ts`             | Block-token REST surface.                                                                                                           |
 | `scripts/label-resource-insights.ts`                     | The offline batch pass that WRITES `ResourceInsight`. Run manually; spends vendor budget on every invocation, dry run included.      |
+| `scripts/eval-resource-intent-goldset.ts`                | M3 gold-set study runner. Committed, never executed; no-ops without `--execute`. Grades stage-1 agreement, not retrieval.            |
 
 ## Hard rules
 
@@ -78,10 +79,15 @@ reads it to order the shortlist.
 popularity-seeded index query, because no insight field is projected into
 `models_v9` — doing that needs a schema addition to the index plus a full reindex.
 So this ranks within a popularity-seeded pool; it is not purpose-first retrieval.
-The pool is deliberately **twice** the response cap so the ordering can promote a
-candidate popularity placed outside the response, rather than only reshuffling the
-visible page. The seed reaches `applyInsightRanking` only as the tiebreak index, so
-replacing it later is a change to `searchShortlistModels` alone.
+The seed reaches `applyInsightRanking` only as the tiebreak index, so replacing it
+later is a change to `searchShortlistModels` alone.
+
+The pool is wider than the response — `min(cap × 2, 255)` — so the ordering can
+promote a candidate popularity placed outside the response rather than only
+reshuffling the visible page. 🔴 Read that bound literally: the widening shrinks
+from `cap = 128` and is **1× at the maximum accepted `limit` of 255**, where the
+ordering really can only reshuffle the visible page. It is the default cap of 50
+that gets a 2× pool.
 
 **Three buckets, not a score.** Only a small fraction of eligible versions carry a
 row, and the labeled set is the high-usage head of the catalogue — so insight
@@ -102,10 +108,32 @@ agreement; it is never scored as a zero, which would bury the unlabeled majority
 under any weakly-labeled row. `qualityScore` separates candidates only inside one
 bucket — there is no quality score to compare an unlabeled candidate against.
 
-Two details that are decisions, not oversights: a `styleFamily` of `other` means
-"none of the above" on both sides, so `other` ↔ `other` is not counted as
-agreement; and `stale` rows (written under a superseded label spec, queued for a
-re-label) are excluded at the read rather than scored down.
+Three details that are decisions, not oversights.
+
+**`other` is not agreement.** A `styleFamily` of `other` means "none of the above"
+on both sides, so `other` ↔ `other` does not count. Consequence worth knowing: for
+a request whose compiled `styleFamily` is `other`, the style axis is dead and the
+"agrees on style family only" row of the table above is unreachable — that slice
+degrades to role-only.
+
+**The confidence floor is a four-axis minimum.** `ResourceInsight.confidence` is
+the weakest of a row's four label judgments, `contentType` included — the axis the
+ordering never reads. So a row can fall below the floor on the confidence of a
+question this design calls unusable. Only the aggregate is persisted, so nothing
+here can separate them.
+
+**`stale` is a floor, not a freshness guarantee.** Nothing in this repo sets
+`stale = true` — the migration describes that flip as a manual step of a label-spec
+bump — so the clause excludes no row today, and `specHash` is deliberately not
+compared: filtering on it would make the ordering inert from the moment a spec
+moves until a manual, vendor-spend-gated re-label pass finished, and the table was
+designed so superseded rows stay readable. What protects a superseded row from
+doing harm is the demotion rule instead: a `role` or `styleFamily` value this build
+cannot interpret is treated as neutral, never as a disagreement. A taxonomy edit
+supersedes every row's spec *and* makes its strings unmatchable in one move, so
+demoting on an unrecognised value would bury the whole labeled population beneath
+the unlabeled majority. The residual, which needs the manual flip: a spec that
+keeps an option's spelling and changes its meaning.
 
 `contentTypes` is **not** read. The v1 label spec asks a singular single-`choice`
 question and wraps the answer in a one-element array, so the column has one value
@@ -116,12 +144,30 @@ An unreachable label table costs the ordering and nothing else: the matcher logs
 `resource-intent-insight-read-failed` and returns the seed order, rather than
 taking the whole response down to `degraded: true`.
 
-### Still not in this change: the M3 study
+🔴 **The shadow table cannot see any of this, and that gap has to close before
+M4/M5 read it.** `ShadowEvent` records no insight field, so a row produced by the
+fallback above — cached for the full hour as `degraded: false` — is indistinguishable
+from one whose pool simply held no labeled version, which is in turn indistinguishable
+from one the labels reordered. Grading "do the labels help" against that corpus is
+not possible. Closing condition: a `resourceIntentShadow` column carrying the pooled
+label count plus a fallback marker, with the matcher reporting both, verified by a
+query that separates the three cases. Harmless today only because the endpoint is
+dark.
 
-The offline gold-set study was built with an earlier draft and removed before
-merge, along with the first attempt at this seam. It is parked on
-`zach/jev-resource-intent-m2m3-parked` and should land with the decision it feeds
-(M5's operating point), not before.
+### The M3 study exists, has never been run, and does not grade this
+
+`scripts/eval-resource-intent-goldset.ts` is committed and its own header says so:
+without `--execute` it prints its queries and exits, and a live run needs a
+replica read plus a vendor key. ⚠️ An earlier version of this section said the
+study had been "removed before merge" and was "parked on a branch" — that was
+wrong in the direction that wastes someone's day, since the runnable evaluator
+was in the tree the whole time.
+
+What it measures is **stage-1 agreement** against the provenance corpus (role vs
+the resource types a prompt actually attached, `needsResource` calibration,
+review-rate curves). That is not the arm the parent arc's closing condition names
+— "a purpose-query arm beating the popularity arm" needs a retrieval comparison,
+which neither this evaluator nor this change provides.
 
 ## Rollout
 

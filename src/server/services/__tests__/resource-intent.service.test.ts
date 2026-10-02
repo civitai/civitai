@@ -55,7 +55,7 @@ vi.mock('~/server/services/generation/coverage-source', async (importOriginal) =
   coverageAudience: vi.fn(async () => ({ next: false, member: false })),
 }));
 
-const { getResourceIntent, resourceIntentCacheKey } = await import(
+const { getResourceIntent, resolveSuggestionLimit, resourceIntentCacheKey } = await import(
   '~/server/services/resource-intent.service'
 );
 
@@ -158,6 +158,24 @@ beforeEach(() => {
   redisMock.redis.packed.get.mockResolvedValue(null);
   redisMock.redis.packed.set.mockReset();
   redisMock.redis.packed.set.mockResolvedValue('OK');
+});
+
+describe('resolveSuggestionLimit — the one shortlist bound', () => {
+  // 🔴 The matcher used to clamp separately, and the two disagreed about exactly
+  // these inputs: `Math.min(limit, MAX)` alone passes 0, negatives and fractions
+  // straight through. Only the zod bound on the request field kept them in step,
+  // and `getResourceIntent` is reachable from tRPC without it.
+  it('floors at 1, truncates, and caps at the maximum', async () => {
+    const { RESOURCE_INTENT_MAX_SHORTLIST, RESOURCE_INTENT_DEFAULT_LIMIT } = await import(
+      '~/server/schema/resource-intent.schema'
+    );
+    expect(resolveSuggestionLimit(undefined)).toBe(RESOURCE_INTENT_DEFAULT_LIMIT);
+    expect(resolveSuggestionLimit(7)).toBe(7);
+    expect(resolveSuggestionLimit(0)).toBe(1);
+    expect(resolveSuggestionLimit(-4)).toBe(1);
+    expect(resolveSuggestionLimit(9.8)).toBe(9);
+    expect(resolveSuggestionLimit(1000)).toBe(RESOURCE_INTENT_MAX_SHORTLIST);
+  });
 });
 
 describe('cache behavior', () => {
@@ -286,6 +304,66 @@ describe('cache behavior', () => {
     expect(mockAskJev).not.toHaveBeenCalled();
     expect(redisMock.redis.packed.set).not.toHaveBeenCalled();
     expect(result).toEqual(cached);
+  });
+
+  it('🔴 a well-formed PRE-BUMP entry is recomputed, not served', async () => {
+    // The cache key is unchanged by this bump — it carries the question spec hash,
+    // which did not move — so every live entry keeps its key and only the response
+    // parse rejects it. The sibling test below plants garbage; this plants the one
+    // blob shape that actually sits in Redis today, which is the only thing standing
+    // between a cached prompt and an hour of un-ordered suggestions.
+    const v1Criteria = {
+      criteriaVersion: 1,
+      specHash: 'a'.repeat(64),
+      role: 'style',
+      modelTypes: ['LORA'],
+      baseModel: null,
+    };
+    const v1Intent = {
+      needsResource: 0.9,
+      role: { value: 'style', distribution: { style: 1 } },
+      styleFamily: { value: 'anime_manga', distribution: { anime_manga: 1 } },
+      contentType: { value: 'portrait_character', distribution: { portrait_character: 1 } },
+      specificity: 3,
+      injectionPresent: 0,
+    };
+    redisMock.redis.packed.get.mockResolvedValue({
+      degraded: false,
+      intent: v1Intent,
+      criteria: v1Criteria,
+      suggestions: [{ versionId: 999 }],
+      noneProbability: 0.1,
+      model: 'typesafe/jev-1.13-20260917',
+      criteriaVersion: 1,
+    });
+    mockStage1();
+    mockFindCandidates.mockResolvedValue([]);
+
+    const result = await getResourceIntent(INPUT, CTX);
+
+    expect(mockAskJev).toHaveBeenCalledTimes(1);
+    expect(result.criteriaVersion).toBe(2);
+    expect(result.suggestions).toEqual([]);
+
+    // And the version term specifically: a blob whose `criteria` is otherwise
+    // current is still rejected on the version alone. Kills a `z.literal` ->
+    // `z.number()` relaxation, which the v1 shape above cannot see.
+    mockAskJev.mockReset();
+    mockStage1();
+    redisMock.redis.packed.get.mockResolvedValue({
+      degraded: false,
+      intent: v1Intent,
+      criteria: { ...v1Criteria, styleFamily: 'anime_manga' },
+      suggestions: [{ versionId: 999 }],
+      noneProbability: 0.1,
+      model: 'typesafe/jev-1.13-20260917',
+      criteriaVersion: 1,
+    });
+
+    const stillStale = await getResourceIntent(INPUT, CTX);
+
+    expect(mockAskJev).toHaveBeenCalledTimes(1);
+    expect(stillStale.suggestions).toEqual([]);
   });
 
   it('a corrupted cached blob is ignored and recomputed', async () => {
