@@ -89,10 +89,19 @@ export function CrucibleJudgingUI({
     { pairKey: string | null } & Record<Side, MediaStatus>
   >({ pairKey: null, ...bothLoading });
   const [playingSide, setPlayingSide] = useState<Side | null>(null);
-  const [soundOn, setSoundOn] = useState(true);
+  const [soundWanted, setSoundWanted] = useState(true);
+  const [soundBlockedPairKey, setSoundBlockedPairKey] = useState<string | null>(null);
   const isDisabled = disabled || isLoading || !pair;
 
   const pairKey = pair ? `${pair.left.id}:${pair.right.id}` : null;
+  // A browser refusal is retried on the next pair: the judge has usually clicked something by
+  // then, which is what the browser was waiting for. Only the judge's own mute sticks.
+  const soundOn = soundWanted && soundBlockedPairKey !== pairKey;
+  const handleSoundChange = useCallback((on: boolean) => {
+    setSoundWanted(on);
+    if (on) setSoundBlockedPairKey(null);
+  }, []);
+  const handleSoundBlocked = useCallback(() => setSoundBlockedPairKey(pairKey), [pairKey]);
   useEffect(() => {
     setWatchedMs(emptyWatched);
     setPlayedThrough(notPlayedThrough);
@@ -226,7 +235,8 @@ export function CrucibleJudgingUI({
           otherPlaying={playingSide === 'right'}
           onPlay={setPlayingSide}
           soundOn={soundOn}
-          onSoundChange={setSoundOn}
+          onSoundChange={handleSoundChange}
+          onSoundBlocked={handleSoundBlocked}
           hotkeyLabel="1"
         />
 
@@ -249,7 +259,8 @@ export function CrucibleJudgingUI({
           otherPlaying={playingSide === 'left'}
           onPlay={setPlayingSide}
           soundOn={soundOn}
-          onSoundChange={setSoundOn}
+          onSoundChange={handleSoundChange}
+          onSoundBlocked={handleSoundBlocked}
           hotkeyLabel="2"
         />
       </div>
@@ -318,6 +329,7 @@ type ImageCardProps = {
   onPlay: (side: Side) => void;
   soundOn: boolean;
   onSoundChange: (soundOn: boolean) => void;
+  onSoundBlocked: () => void;
   hotkeyLabel: string;
 };
 
@@ -344,6 +356,7 @@ function ImageCard({
   onPlay,
   soundOn,
   onSoundChange,
+  onSoundBlocked,
   hotkeyLabel,
 }: ImageCardProps) {
   const [attempt, setAttempt] = useState(0);
@@ -443,6 +456,7 @@ function ImageCard({
             onPlay={onPlay}
             soundOn={soundOn}
             onSoundChange={onSoundChange}
+            onSoundBlocked={onSoundBlocked}
             onTimeUpdate={handleTimeUpdate}
           />
         )}
@@ -498,6 +512,7 @@ type JudgingMediaProps = {
   onPlay: (side: Side) => void;
   soundOn: boolean;
   onSoundChange: (soundOn: boolean) => void;
+  onSoundBlocked: () => void;
   onTimeUpdate: (e: React.SyntheticEvent<HTMLVideoElement>) => void;
 };
 
@@ -513,6 +528,7 @@ function JudgingMedia({
   onPlay,
   soundOn,
   onSoundChange,
+  onSoundBlocked,
   onTimeUpdate,
 }: JudgingMediaProps) {
   const ref = useRef<HTMLDivElement>(null);
@@ -542,16 +558,20 @@ function JudgingMedia({
 
   // Browsers refuse sound until the judge has interacted with the page (Safari, per element), so a
   // refused clip falls back to muted, and the toggle shows it, rather than not playing at all.
+  // The retry un-pauses the clip before its `volumechange` is dispatched, so without this the
+  // fallback's own mute reads as the judge pressing mute, and sound never comes back.
+  const fallbackMuted = useRef(false);
   const play = useCallback(
     (video: HTMLVideoElement) => {
       video.play().catch((error: unknown) => {
         if ((error as Error)?.name !== 'NotAllowedError' || video.muted) return;
+        fallbackMuted.current = true;
         video.muted = true;
-        onSoundChange(false);
+        onSoundBlocked();
         video.play().catch(() => undefined);
       });
     },
-    [onSoundChange]
+    [onSoundBlocked]
   );
 
   useEffect(() => {
@@ -599,6 +619,10 @@ function JudgingMedia({
 
   const handleVolumeChange = (e: React.SyntheticEvent) => {
     const video = e.target as HTMLVideoElement;
+    if (fallbackMuted.current) {
+      fallbackMuted.current = false;
+      return;
+    }
     // A paused element's `muted` is also rewritten by EdgeVideo itself, so only a playing clip's
     // native mute button is taken as the judge's choice.
     if (!video.paused) onSoundChange(!video.muted);

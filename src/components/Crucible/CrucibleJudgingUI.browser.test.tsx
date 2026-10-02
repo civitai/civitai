@@ -392,6 +392,51 @@ describe('CrucibleJudgingUI — video playback', () => {
     play.mockRestore();
   });
 
+  test('sound refused on one pair is tried again on the next', async () => {
+    let refuseSound = true;
+    const soundPlays: HTMLMediaElement[] = [];
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(function (
+      this: HTMLMediaElement
+    ) {
+      if (this.muted) return Promise.resolve();
+      if (refuseSound)
+        return Promise.reject(new DOMException('needs a gesture', 'NotAllowedError'));
+      soundPlays.push(this);
+      return Promise.resolve();
+    });
+    renderWithProviders(<PairSwitchingHarness onVote={vi.fn()} />);
+    await expectBothCardsRendered();
+    await vi.waitFor(() =>
+      expect(card('left')!.querySelector('[aria-label="Unmute clips"]')).toBeTruthy()
+    );
+
+    // By the next pair the judge has clicked something, so the browser now allows sound.
+    refuseSound = false;
+    document.querySelector<HTMLButtonElement>('[data-testid="next-pair"]')!.click();
+
+    await vi.waitFor(() => expect(soundPlays).toContain(video('left')));
+    expect(card('left')!.querySelector('[aria-label="Mute clips"]')).toBeTruthy();
+    vi.restoreAllMocks();
+  });
+
+  test("the judge's own mute carries over to the next pair", async () => {
+    // Control for the test above: only a browser refusal is retried, never the judge's choice.
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+    renderWithProviders(<PairSwitchingHarness onVote={vi.fn()} />);
+    await expectBothCardsRendered();
+
+    card('left')!.querySelector<HTMLButtonElement>('[aria-label="Mute clips"]')!.click();
+    await vi.waitFor(() => expect(video('left').muted).toBe(true));
+    const firstPairVideo = video('left');
+    document.querySelector<HTMLButtonElement>('[data-testid="next-pair"]')!.click();
+    await vi.waitFor(() => {
+      expect(video('left')).not.toBe(firstPairVideo);
+      expect(card('left')!.querySelector('[aria-label="Unmute clips"]')).toBeTruthy();
+    });
+    expect(video('left').muted).toBe(true);
+    vi.restoreAllMocks();
+  });
+
   test('a clip that starts playing pauses the other one', async () => {
     renderWithProviders(
       <CrucibleJudgingUI pair={pairOf(1, 2)} onVote={vi.fn()} onSkip={vi.fn()} />
