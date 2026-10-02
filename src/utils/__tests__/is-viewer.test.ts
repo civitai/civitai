@@ -156,7 +156,7 @@ describe('sites without a behavioural case: the removed comparison stays removed
     [
       'src/components/Image/image.utils.ts',
       'filters.userId === currentUser',
-      'const isOwnImages = isViewingOwnImages(currentUser, filters)',
+      'const isOwnImages = isViewingOwnImages(currentUser, filters);',
     ],
     [
       'src/components/Collections/Collection.tsx',
