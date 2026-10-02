@@ -184,14 +184,20 @@ beforeEach(() => {
  * `octet_length(value::text)` Postgres would store for the value about to be
  * written, which is the unit `quota.used_bytes` is accounted in.
  *
- * 🔴 DELIBERATELY NOT THE WIRE SIZE. These fixtures stand in for Postgres, and a
- * stand-in that echoed `Buffer.byteLength(JSON.stringify(v))` would make the gate's
- * UNIT unobservable from this suite — a router that charged wire bytes would pass
- * every assertion here. `2n + 1` is not jsonb's real expansion (that identity is
- * asserted against a real server in
- * `src/server/routers/__tests__/apps-shared.router.quota.stored-units.behavior.test.ts`);
- * it only has to be distinguishable from `n`, so a wire-unit term cannot satisfy a
- * stored-unit expectation by coincidence.
+ * 🔴 DELIBERATELY NOT THE WIRE SIZE, so the two units are DISTINGUISHABLE here. `2n + 1`
+ * is not jsonb's real expansion — that identity is asserted against a real server in
+ * `src/server/routers/__tests__/apps-shared.router.quota.stored-units.behavior.test.ts`.
+ *
+ * ⚠️ WHAT THIS DOES NOT BUY, measured rather than assumed. An earlier draft of this
+ * comment claimed the choice means "a wire-unit term cannot satisfy a stored-unit
+ * expectation by coincidence" in this suite. It does not: restoring the wire term on
+ * either write path leaves this file 146/146 GREEN, because every quota case here has a
+ * margin of thousands of bytes between the value size and the remaining budget, so `n`
+ * and `2n + 1` land on the same verdict. The unit question is settled by the behaviour
+ * suite named above, NOT here. What this buys is that a case added later with a margin
+ * BETWEEN `n` and `2n + 1` would discriminate, and — unintentionally but usefully —
+ * that reading `params[1]` makes this suite sensitive to the two SQL parameters being
+ * swapped, which it previously could not see.
  *
  * `$2` is the serialized value on both write paths (`$1` is the app block id).
  */
@@ -1288,11 +1294,85 @@ describe('append `data` blob (opaque, unmoderated app payload)', () => {
     expect(mockClient.query).not.toHaveBeenCalled();
   });
 
+  /**
+   * 🔴 THE PROBE'S FAILURE ARM, which only a mocked pool can reach.
+   *
+   * `requireStoredSize` rejects a null `stored_size_bytes` BEFORE coercing, and throws
+   * rather than absorbing it into a 0. Its own docblock calls both choices load-bearing,
+   * and both were unpinned: a mutation sweep found that dropping the `raw == null` term
+   * (leaving only `Number.isFinite`, which `Number(null) === 0` passes) and replacing
+   * the throw with `return 0` each SURVIVED the entire 152-test suite. Either mutant
+   * reopens the bypass through the guard instead of around it — a zero-byte charge on
+   * append, and a non-positive delta on update, which the non-increasing exemption then
+   * waves through.
+   *
+   * The arm is unreachable via the real SQL (a FROM-less `SELECT octet_length(...)`
+   * always yields one non-null row), so there is no behavioural fixture for it — which
+   * is exactly why it needs this test rather than none. Asserted on the MESSAGE, so a
+   * guard that throws for some other reason does not satisfy it, and on no row being
+   * written.
+   */
+  it('refuses the write loudly when the stored-size probe comes back NULL', async () => {
+    for (const probeValue of [null, undefined]) {
+      mockClient.query.mockClear();
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      mockPool.query.mockImplementation(async (sql: string) => {
+        if (sql.includes('author_user_id') && sql.includes('count(*)'))
+          return { rows: [{ n: '0' }], rowCount: 1 };
+        if (sql.includes('.quota'))
+          return {
+            rows: [{ used_bytes: '0', row_count: '0', stored_size_bytes: probeValue }],
+            rowCount: 1,
+          };
+        return { rows: [], rowCount: 0 };
+      });
+      await expect(
+        caller().append({ blockToken: 't', value: { title: 'ok', data: [1, 2, 3] } })
+      ).rejects.toThrow('stored-size probe returned no usable value');
+      // No row was written: the throw lands before the transaction opens.
+      expect(mockClient.query).not.toHaveBeenCalled();
+    }
+
+    // The mirror case on the UPDATE path, where absorbing a null to 0 would make the
+    // delta NEGATIVE and the exemption would then skip the ceiling entirely.
+    mockClient.query.mockClear();
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('author_user_id, size_bytes'))
+        return { rows: [{ author_user_id: 42, size_bytes: 9000 }], rowCount: 1 };
+      if (sql.includes('.quota'))
+        return { rows: [{ used_bytes: '0', stored_size_bytes: null }], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    });
+    await expect(
+      caller().update({
+        blockToken: 't',
+        key: 'ROW-KEY-1',
+        value: { title: 'ok', data: [1, 2, 3] },
+      })
+    ).rejects.toThrow('stored-size probe returned no usable value');
+    expect(mockClient.query).not.toHaveBeenCalled();
+
+    // 🔴 POSITIVE CONTROL for the whole test: with a USABLE probe value and the same
+    // mocks otherwise, the write goes through. Without this the assertions above are
+    // also satisfied by a router that refuses every append.
+    mockClient.query.mockClear();
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockAppendDataPath();
+    await expect(
+      caller().append({ blockToken: 't', value: { title: 'ok', data: [1, 2, 3] } })
+    ).resolves.toMatchObject({ key: expect.any(String) });
+    expect(mockClient.query).toHaveBeenCalled();
+  });
+
   it('counts `data` bytes toward the per-app quota', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
     // usedBytes is 50 bytes under the app quota; a data blob larger than that pushes
-    // usedBytes + byteSize over APP_QUOTA_BYTES → 'app quota exceeded' (proving the
-    // data bytes are included in byteSize).
+    // usedBytes + the value's STORED size over APP_QUOTA_BYTES → 'app quota exceeded',
+    // proving the `data` bytes reach the gate at all. ⚠️ NOT via `byteSize`, which this
+    // comment used to name: the wire `byteSize` is deliberately excluded from this gate
+    // now, and the stored size arrives as the `stored_size_bytes` column the mock below
+    // supplies (derived from `params[1]`, i.e. the serialized value the router sends).
     const APP_QUOTA_BYTES = 50 * 1024 * 1024;
     mockPool.query.mockImplementation(async (sql: string, params?: unknown[]) => {
       if (sql.includes('author_user_id') && sql.includes('count(*)'))

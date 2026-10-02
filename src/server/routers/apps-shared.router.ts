@@ -78,10 +78,11 @@ const APP_ROW_LIMIT = 1_000_000;
 // deliberately so: it bounds what one call SENDS, which is the only quantity a
 // block can predict for itself before it writes. It is NOT the unit the byte
 // QUOTA is accounted in, and the two diverge by far more than they look: measured
-// through this path, a value of 65,532 wire bytes (9,358 copies of `1e308`, which
-// jsonb normalises to their full 309-digit expansions) stores 2,910,366 — 44.4x. So
-// this cap does not bound stored bytes at all, and a wire byte count must never be
-// reused in a quota comparison — see
+// through this path, a value of 65,532 wire bytes (9,358 copies of `5e-324`, which
+// jsonb normalises to their full 326-digit expansions) stores 3,069,452 — 46.8x; the
+// same shape built from `1e308` stores 2,910,366, so this is a measurement of two
+// candidates and NOT a maximum. So this cap does not bound stored bytes at all, and a
+// wire byte count must never be reused in a quota comparison — see
 // `STORED_SIZE_PROBE_SQL` below, and the units block in `app-storage.service`'s
 // `set` for the full measurements.
 const SHARED_VALUE_BYTE_CAP = 64 * 1024;
@@ -115,7 +116,8 @@ const SHARED_KV_PER_USER_ROW_CAP = 50;
  * Holding the NEW side of a quota comparison in the wire unit was a REPEATABLE
  * BYPASS of the app byte ceiling, in both shapes it appears in:
  *   - `append` compared `usedBytes + <wire>` against the cap, so every create was
- *     charged ~1/1.5x (and up to 44.4x less) than it actually stored;
+ *     charged ~1/1.5x (and, on the shapes measured above, up to 46.8x less) than it
+ *     actually stored;
  *   - `update` compared `usedBytes + (<wire> − <stored old>)`, a subtraction
  *     between two different units. Submitting any value whose WIRE size is at or
  *     below the row's CURRENT STORED size holds that delta at or below zero
@@ -793,6 +795,9 @@ export async function updateSharedRow(
   // Per-app byte quota re-checked on the DELTA (new − old). A shrinking edit always
   // fits; a growing edit must sit within the remaining budget. Row count is
   // UNCHANGED by an in-place update, so there's no row-limit / per-user-row check.
+  //
+  // "A shrinking edit always fits" is enforced by the `isNonIncreasing` exemption
+  // below, not merely by the arithmetic — see the comment on it.
   const quota = (
     await pool.query<{ used_bytes: string | null; stored_size_bytes: number | null }>(
       `SELECT (SELECT used_bytes::text FROM ${schema}.quota WHERE app_block_id = $1) AS used_bytes,
@@ -810,7 +815,43 @@ export async function updateSharedRow(
   // true stored growth. Read STORED_SIZE_PROBE_SQL's header before touching this.
   const storedByteSize = requireStoredSize(quota?.stored_size_bytes);
   const oldBytes = Number(existing.size_bytes ?? 0);
-  if (usedBytes + (storedByteSize - oldBytes) > APP_QUOTA_BYTES) {
+  const netDelta = storedByteSize - oldBytes;
+
+  // 🔴 AN EDIT THAT DOES NOT GROW THE STORED BYTES MUST NEVER BE REFUSED BY A BYTE
+  // CEILING, and this exemption is part of the unit fix rather than a separate
+  // policy change — without it the fix above TRAPS the authors of an over-quota app.
+  //
+  // `usedBytes` is what is stored NOW, not a projection, so whenever a counter
+  // already sits at or above the cap, `used + netDelta > CAP` is true for a SHRINK
+  // and for a no-op re-save as well as for a growth: the one action that would bring
+  // the app back under its ceiling is the action refused, and the only remaining exit
+  // is `withdraw`, which deletes the row and cascades its votes, counters and
+  // reports. A counter can reach that state from a lowered cap, from trigger drift
+  // (`kv_quota_trigger` no-ops when the GUC is unset), or — the reason this matters
+  // on this commit specifically — from the pre-fix bypass this change closes.
+  //
+  // It was previously reachable only BY ACCIDENT. The old delta was
+  // `wireNew − storedOld`, carrying a systematic negative bias (~33% of the row on a
+  // separator-dense value), so a no-op re-save computed a comfortably negative number
+  // and passed. Correcting the unit removes that bias, and with it the escape hatch —
+  // so the exemption has to be stated deliberately instead.
+  //
+  // 🔴 THE EXEMPTION IS SAFE ONLY BECAUSE `netDelta` IS NOW IN THE STORED UNIT. Both
+  // terms are `octet_length(value::text)` over jsonb, i.e. exactly what
+  // `shared_kv.size_bytes` holds and the trigger sums, so `netDelta <= 0` really does
+  // mean "this write stores no more than the row already did". Held in the wire unit
+  // the same condition was satisfiable indefinitely by writes that GREW the stored
+  // bytes, which is the bypass itself. Do not reintroduce a wire-unit term here.
+  // (Identical reasoning, and the identical warning, on the per-user path — see the
+  // `isNonIncreasing` block in `app-storage.service`'s `set`.)
+  //
+  // What it cannot skip: SHARED_VALUE_BYTE_CAP is already enforced per value before
+  // any of this, the row population is unchanged by an in-place update so no row gate
+  // is in play, and the trigger reconciles the counter from the row itself afterwards.
+  // `append` needs no equivalent — there `oldBytes` is 0 and the smallest value this
+  // path can serialize is a one-key object, so its delta is always positive.
+  const isNonIncreasing = netDelta <= 0;
+  if (!isNonIncreasing && usedBytes + netDelta > APP_QUOTA_BYTES) {
     throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'app quota exceeded' });
   }
 

@@ -36,8 +36,8 @@ vi.setConfig({ hookTimeout: 120_000, testTimeout: 120_000 });
  *   2. `append` refuses at exactly the STORED-byte boundary, so a value whose WIRE
  *      size fits the remaining budget and whose STORED size does not is refused;
  *   3. a sequence of `update`s that each hold the quota delta at or below zero in the
- *      WIRE unit cannot push `quota.used_bytes` past the ceiling — using the
- *      highest-expansion value the wire cap admits (44.4x), which is what makes the
+ *      WIRE unit cannot push `quota.used_bytes` past the ceiling — using a value the
+ *      wire cap admits that stores 46.8x what it sends, which is what makes the
  *      overrun megabytes rather than kilobytes.
  *
  * (2) and (3) are the regressions this file was written for. Before the fix, the
@@ -278,24 +278,32 @@ const ones = (n: number) => Array.from({ length: n }, () => 1);
 const wireBytes = (value: SharedValue) => Buffer.byteLength(JSON.stringify(value), 'utf8');
 
 /**
- * The HIGHEST-EXPANSION value SHARED_VALUE_BYTE_CAP admits, whose whole-value wire
- * size is also at most `wireLimit`.
+ * A high-expansion value whose whole-value wire size is at most `wireLimit`, for
+ * showing that SHARED_VALUE_BYTE_CAP — enforced in the wire unit — bounds stored
+ * bytes by nothing.
  *
- * `JSON.stringify(1e308)` is `1e+308` — six bytes plus a comma — while jsonb
- * normalises the same number to its full 309-digit decimal expansion plus `, `. So
- * the wire cap, which is enforced in the wire unit, admits a value that stores 44.4x
- * what it sent. That is why a wire-unit quota term is not merely imprecise: a single
- * accepted write can add megabytes to a counter the gate thought it was holding flat.
+ * `JSON.stringify(Number.MIN_VALUE)` is `5e-324`, six bytes plus a comma, while jsonb
+ * normalises the same number to its full 326-digit decimal expansion plus `, `. So a
+ * single value of 65,532 wire bytes stores 3,069,452 — **46.8x** — and one accepted
+ * write can add megabytes to a counter a wire-unit gate thought it was holding flat.
+ *
+ * ⚠️ MEASURED, NOT MAXIMAL. An earlier draft of this file used `1e308` and claimed in
+ * two places to be "the highest-expansion value the cap admits". It is not: at the
+ * identical wire size and element count, `1e308` stores 2,910,366 (44.4x) against
+ * `5e-324`'s 3,069,452 (46.8x), because the decimal expansion is 309 digits rather
+ * than 326. Both numbers were measured against Postgres. No claim of maximality is
+ * made here — only that these two were compared and this is the larger. If you need a
+ * true maximum, search for it; do not infer one from this comment.
  *
  * Solved rather than searched — the wire size is linear in the element count — and
  * the result is asserted at the call site rather than trusted.
  */
 function expansionBomb(title: string, wireLimit: number): SharedValue {
   const base = wireBytes({ title, data: [] as unknown });
-  const perElement = Buffer.byteLength(`${JSON.stringify(1e308)},`, 'utf8');
+  const perElement = Buffer.byteLength(`${JSON.stringify(Number.MIN_VALUE)},`, 'utf8');
   const ceiling = Math.min(wireLimit, SHARED_VALUE_BYTE_CAP);
   const n = Math.max(1, Math.floor((ceiling - base) / perElement));
-  return { title, data: Array.from({ length: n }, () => 1e308) };
+  return { title, data: Array.from({ length: n }, () => Number.MIN_VALUE) };
 }
 
 beforeAll(async () => {
@@ -347,10 +355,18 @@ describe('shared-storage quota arithmetic vs the bytes Postgres stores', () => {
       await expect(storedSizeOf(key.key)).resolves.toBe(c.stored);
       expect(c.stored).toBeGreaterThan(c.wire);
     }
-    // The dense case is a RATIO, which is what makes the walk below compound. The
-    // threshold is deliberately well under the measured 1.4991x so an unrelated
-    // jsonb formatting change does not fail this for no reason.
-    expect(15_024 / 10_022).toBeGreaterThan(1.4);
+    // The dense case is a RATIO, which is what makes the sequence below compound.
+    // 🔴 Computed from what Postgres ACTUALLY STORED and what JSON.stringify actually
+    // produced, never from the literals above — `expect(15_024 / 10_022)` is arithmetic
+    // on two constants and cannot fail, which is the worst kind of line to leave in the
+    // test labelled "the positive control for this whole file". The threshold is well
+    // under the measured 1.4991x so an unrelated jsonb formatting change does not fail
+    // this for no reason.
+    const dense = cases[2];
+    const denseKey = await append(dense.value);
+    const denseStored = await storedSizeOf(denseKey.key);
+    const denseWire = wireBytes(dense.value);
+    expect(denseStored / denseWire).toBeGreaterThan(1.4);
 
     // …and the shape where the gap is a CONSTANT, so "stored is bigger" is not
     // mistaken for the claim. A title-only value differs by exactly the one `: `
@@ -413,25 +429,25 @@ describe('shared-storage quota arithmetic vs the bytes Postgres stores', () => {
    * 🔴 THE UPDATE REGRESSION, in the shape that actually bites.
    *
    * Each edit here holds the quota delta at or BELOW ZERO in the WIRE unit while
-   * multiplying the row's STORED bytes by 44.4x. Under a wire-unit delta the gate's
+   * multiplying the row's STORED bytes by 46.8x. Under a wire-unit delta the gate's
    * comparison is `used + (wire − storedOld) > CAP` with the parenthesised term
-   * negative, so it cannot refuse — and the trigger then charges the real 2.84 MB of
+   * negative, so it cannot refuse — and the trigger then charges the real 3.0 MB of
    * growth, carrying `used_bytes` straight past the ceiling.
    *
-   * THE FIXTURE IS THE HIGHEST-EXPANSION VALUE SHARED_VALUE_BYTE_CAP ADMITS, because
-   * that cap is enforced in the wire unit and therefore does not bound stored bytes
-   * at all: 9,358 copies of `1e308` serialize to 65,532 wire bytes (JSON.stringify
-   * writes `1e+308`, six bytes) and store 2,910,366, because jsonb normalises each
-   * element to its full 309-digit decimal expansion. Measured, not assumed — the
-   * ratio is asserted below. The all-ones array used elsewhere in this file only
+   * THE FIXTURE IS A HIGH-EXPANSION VALUE SHARED_VALUE_BYTE_CAP ADMITS (see
+   * `expansionBomb` — measured at 46.8x, and deliberately not claimed to be the
+   * maximum), because that cap is enforced in the wire unit and therefore does not
+   * bound stored bytes at all. The all-ones array used elsewhere in this file only
    * reaches 1.5x, which makes it a poor discriminator here: the pre-fix gate
    * self-limits once `used_bytes` passes the cap, since acceptance then requires the
-   * negative wire delta to exceed the overrun, and at 1.5x it barely does.
+   * negative wire delta to exceed the overrun, and at 1.5x it barely does — measured,
+   * that variant separated the two arms by 11 KB where this one separates them by
+   * 2.8 MB.
    *
    * No other control stands in the way: the row population never moves (these are all
    * updates, so neither APP_ROW_LIMIT nor SHARED_KV_PER_USER_ROW_CAP is consulted),
    * and the rate limiter is the same daily bucket an honest editor uses. The app byte
-   * ceiling is the only thing between this and 2.84 MB of unbudgeted storage per
+   * ceiling is the only thing between this and 3.0 MB of unbudgeted storage per
    * write.
    *
    * The counter is SEEDED near the ceiling rather than walked up to it: the defect is
@@ -440,9 +456,10 @@ describe('shared-storage quota arithmetic vs the bytes Postgres stores', () => {
    */
   it('cannot be driven past the app byte ceiling by wire-non-increasing edits', async () => {
     const ROWS = 4;
-    // Enough for exactly ONE honest bomb, so the accepted-control below is satisfiable
-    // by a correct gate and the second write is the one that has to be refused.
-    const HEADROOM = 3_000_000;
+    // Enough for exactly ONE honest bomb (whose stored delta is 3,003,424) and not
+    // two, so the accepted-control below is satisfiable by a correct gate and the
+    // second write is the one that has to be refused.
+    const HEADROOM = 3_200_000;
 
     // Seed real rows, each climbed just past the wire cap in STORED bytes so a
     // cap-maximal bomb is wire-non-increasing against it. 22,000 ones is 44,026 wire
@@ -474,10 +491,10 @@ describe('shared-storage quota arithmetic vs the bytes Postgres stores', () => {
     // it, an implementation that refused everything would satisfy the ceiling
     // assertion below for the wrong reason.
     expect(accepted).toBeGreaterThan(0);
-    // …and the 44.4x expansion really happened on an accepted row, so the ceiling
+    // …and the 46.8x expansion really happened on an accepted row, so the ceiling
     // assertion is about real stored bytes.
     const grown = await recomputedBytes();
-    expect(grown - seededRowBytes).toBeGreaterThan(2_800_000);
+    expect(grown - seededRowBytes).toBeGreaterThan(2_900_000);
 
     const used = await usedBytes();
     // The counter agrees with an independent recompute over the rows, so this is
@@ -513,14 +530,8 @@ describe('shared-storage quota arithmetic vs the bytes Postgres stores', () => {
    * wire-unit gate would compute a different (smaller) reclaim and the thresholds
    * below would not land where they do.
    *
-   * ⚠️ NOTE WHAT THIS DOES *NOT* SAY, because the per-user path differs here and the
-   * difference is easy to misread as a bug in this test. `app-storage.service`'s
-   * `set` carries an explicit non-increasing EXEMPTION: a write with `netDelta <= 0`
-   * skips its byte ceilings outright, so a shrink is accepted from ANY counter value.
-   * This path has no such exemption — it evaluates `used + delta > CAP` unconditionally
-   * — so from an over-ceiling counter a shrink is accepted only if it is large enough
-   * to land back under the cap. That is pre-existing behaviour, unchanged by the unit
-   * fix, and pinned here as what the code does rather than as what it should do.
+   * The non-increasing exemption's own killing test is the next one; this one is about
+   * the growth arm, from a counter already over the ceiling.
    */
   it('accepts a shrinking edit that reclaims enough, and refuses a growing one', async () => {
     const key = (await append({ title: 'shrink', data: ones(3000) })).key;
@@ -548,6 +559,166 @@ describe('shared-storage quota arithmetic vs the bytes Postgres stores', () => {
   });
 
   /**
+   * 🔴 THE TRAP THE UNIT FIX WOULD OTHERWISE OPEN, and the reason the
+   * `isNonIncreasing` exemption on the update path is part of that fix rather than a
+   * separate policy change.
+   *
+   * An app whose `quota.used_bytes` already sits above the ceiling — from a lowered
+   * cap, from trigger drift, or from the pre-fix bypass this commit closes — makes
+   * `used + netDelta > CAP` true for a SHRINK and for a NO-OP RE-SAVE as well as for a
+   * growth. Without the exemption the one action that reduces the counter is the action
+   * refused, and the only exit left is `withdraw`, which deletes the row and cascades
+   * its votes, counters and reports.
+   *
+   * ⚠️ MEASURED AT BOTH COMMITS, because the obvious story is wrong in a way worth
+   * recording. The old delta was `wireNew − storedOld`, and on a separator-dense value
+   * the wire term is ~2/3 of the stored term, so a no-op re-save computed roughly −⅓ of
+   * the row — an accidental credit that let the write through a gate that should have
+   * refused it. That credit is bounded by the row, so it covered only a SMALL overrun:
+   *
+   *   - at `CAP + 2_000` the pre-fix gate ACCEPTED a no-op re-save (credit −3,000
+   *     against a 2,000 overrun), and the unit fix WITHOUT this exemption refuses it —
+   *     a regression the fix would have introduced. Pinned as arm (a) below.
+   *   - at the `CAP + 5_000_000` used for arms (b) and (c), the credit is nowhere near
+   *     enough and the pre-fix gate refused too — a PRE-EXISTING trap, which this
+   *     exemption also fixes.
+   *
+   * So this test is red at the base commit as well, and it is not purely a guard against
+   * a regression this commit introduces. Both readings are true at different overrun
+   * sizes; neither alone describes it. Measured: at the base commit arm (a) PASSES and
+   * the failure is on arm (b). At this commit, removing the exemption or narrowing it
+   * from `netDelta <= 0` to `< 0` each make arm (a) fail instead — so (a) and (b) have
+   * different killing conditions and both are load-bearing.
+   */
+  it('lets an over-ceiling app re-save and shrink, including when the reclaim is too small', async () => {
+    const key = (await append({ title: 'trap', data: ones(3000) })).key;
+    const stored = await storedSizeOf(key);
+    expect(stored).toBe(9027);
+
+    // Far enough over that no realistic single reclaim could clear it, so neither
+    // acceptance in (b) can be explained by the delta arithmetic alone.
+    const wayOver = APP_QUOTA_BYTES + 5_000_000;
+    // Small enough that the pre-fix wire-unit credit (~-3,000 on this row) covered it,
+    // which is what makes arm (a) the regression-shaped one. See the docstring.
+    const slightlyOver = APP_QUOTA_BYTES + 2_000;
+
+    // (a) EXACT NO-OP at a SMALL overrun: byte-identical content, netDelta === 0. 3,000
+    // twos is the same length as 3,000 ones in both units, so this is a real rewrite
+    // rather than a skipped write, and the stored size is unchanged. This is the arm
+    // the two mutations named in the docstring kill.
+    await seedUsedBytes(slightlyOver);
+    const twos = Array.from({ length: 3000 }, () => 2);
+    expect(await tryUpdate(key, { title: 'trap', data: twos })).toBe(true);
+    await expect(storedSizeOf(key)).resolves.toBe(stored);
+    await expect(usedBytes()).resolves.toBe(slightlyOver);
+
+    // (b) A SHRINK FAR TOO SMALL to clear a 5 MB overrun — 6,000 stored bytes against
+    // it — which the unconditional comparison would refuse. It must be accepted, and
+    // the counter must move DOWN by the stored reclaim.
+    await seedUsedBytes(wayOver);
+    expect(await tryUpdate(key, { title: 'trap', data: ones(1000) })).toBe(true);
+    await expect(storedSizeOf(key)).resolves.toBe(3027);
+    await expect(usedBytes()).resolves.toBe(wayOver - 6_000);
+
+    // (c) 🔴 The exemption must NOT be a blanket "updates always pass": a GROWTH from
+    // the same over-ceiling state is still refused. Without this arm, deleting the
+    // whole gate also satisfies (a) and (b).
+    await seedUsedBytes(wayOver);
+    expect(await tryUpdate(key, { title: 'trap', data: ones(5000) })).toBe(false);
+    await expect(storedSizeOf(key)).resolves.toBe(3027);
+    await expect(usedBytes()).resolves.toBe(wayOver);
+  });
+
+  /**
+   * 🔴 THE UPDATE GATE'S OWN BOUNDARY, WITH THE EXEMPTION IN PLACE — and the reason
+   * this test exists at all is a trap worth recording.
+   *
+   * Before the `isNonIncreasing` exemption was added, the `>` in the update gate was
+   * killed by the same-STORED-size test below: that write has `netDelta === 0`, so
+   * tightening `>` to `>=` refused it. The exemption now short-circuits the gate for
+   * `netDelta <= 0`, which means that write NO LONGER REACHES the comparison — the
+   * mutation became UNREACHABLE and `>` → `>=` SURVIVED the whole suite. Verified by
+   * running that mutant: 153/153 green.
+   *
+   * So the boundary needs a case with `netDelta > 0` — one the exemption cannot
+   * swallow — landing `used + netDelta` exactly ON the cap. The gate is `>`, so
+   * equality must be ACCEPTED, and one byte less headroom must be REFUSED.
+   *
+   * The generalisable bit: adding a short-circuit in front of a comparison can make an
+   * existing test stop exercising it while staying green. The guard that was killed
+   * yesterday is not necessarily the guard that is killed today.
+   */
+  it('accepts a growing edit that lands exactly on the cap, and refuses one byte more', async () => {
+    const key = (await append({ title: 'edge', data: ones(1000) })).key;
+    const small = await storedSizeOf(key);
+    expect(small).toBe(3027);
+
+    // Measure the grown row's stored size the only way that is not a prediction:
+    // append it, read the generated column, roll it back.
+    const grown: SharedValue = { title: 'edge', data: ones(3000) };
+    const probeKey = (await append(grown)).key;
+    const grownStored = await storedSizeOf(probeKey);
+    await holder.db.query(`DELETE FROM ${SCHEMA}.shared_kv WHERE key = $1`, [probeKey]);
+    expect(grownStored).toBe(9027);
+
+    const netDelta = grownStored - small;
+    expect(netDelta).toBe(6_000);
+    // The exemption must not apply here, or this test cannot see the comparison.
+    expect(netDelta).toBeGreaterThan(0);
+
+    // ACCEPTED at exactly the cap: `used + netDelta === CAP` is not `> CAP`.
+    await seedUsedBytes(APP_QUOTA_BYTES - netDelta);
+    expect(await tryUpdate(key, grown)).toBe(true);
+    await expect(storedSizeOf(key)).resolves.toBe(grownStored);
+    await expect(usedBytes()).resolves.toBe(APP_QUOTA_BYTES);
+
+    // REFUSED one byte over. Reset the row to its small size first — through the
+    // router, so the counter stays consistent with the rows.
+    await seedUsedBytes(0);
+    expect(await tryUpdate(key, { title: 'edge', data: ones(1000) })).toBe(true);
+    await expect(storedSizeOf(key)).resolves.toBe(small);
+    await seedUsedBytes(APP_QUOTA_BYTES - netDelta + 1);
+    expect(await tryUpdate(key, grown)).toBe(false);
+    await expect(storedSizeOf(key)).resolves.toBe(small);
+    await expect(usedBytes()).resolves.toBe(APP_QUOTA_BYTES - netDelta + 1);
+  });
+
+  /**
+   * The ONE structural claim the new SQL shape makes about itself, which nothing else
+   * in the tree exercises: the probe is selected WITHOUT a FROM clause, as a sibling of
+   * scalar subqueries over `quota`, so it returns exactly one row whether or not the
+   * app has a quota row — preserving the pre-existing "missing quota row counts as 0"
+   * behaviour rather than turning it into a hard failure.
+   *
+   * The provisioner seeds that row with `ON CONFLICT DO NOTHING` and `beforeEach`
+   * re-provisions, so the row always exists in every other test here. Delete it and the
+   * write must still be ACCEPTED (treated as 0 used bytes), not throw. A `FROM quota`
+   * column would return zero rows and `requireStoredSize` would raise.
+   */
+  it('still accepts a write when the app has no quota row at all', async () => {
+    await holder.db.query(`DELETE FROM ${SCHEMA}.quota WHERE app_block_id = $1`, [APP_BLOCK_ID]);
+    await expect(
+      scalar(`SELECT count(*) FROM ${SCHEMA}.quota WHERE app_block_id = $1`, [APP_BLOCK_ID])
+    ).resolves.toBe(0);
+
+    // Accepted on both write paths, and neither raises the probe's hard error.
+    const key = (await append({ title: 'no-quota-row', data: ones(100) })).key;
+    await expect(storedSizeOf(key)).resolves.toBe(335);
+    await expect(update(key, { title: 'no-quota-row', data: ones(200) })).resolves.toEqual({
+      ok: true,
+    });
+    await expect(storedSizeOf(key)).resolves.toBe(635);
+
+    // The trigger's UPDATE matched no counter row, which is the pre-existing
+    // accept-and-drift behaviour this shape preserves — asserted so a future change to
+    // it is visible rather than silent.
+    await expect(rowCount()).resolves.toBe(1);
+    await expect(
+      scalar(`SELECT count(*) FROM ${SCHEMA}.quota WHERE app_block_id = $1`, [APP_BLOCK_ID])
+    ).resolves.toBe(0);
+  });
+
+  /**
    * 🔴 THE REFUSAL THAT ONLY THE STORED UNIT PRODUCES, isolated from the walk so the
    * unit has a killing test that needs no loop.
    *
@@ -567,10 +738,18 @@ describe('shared-storage quota arithmetic vs the bytes Postgres stores', () => {
     expect(await storedSizeOf(key)).toBe(3029);
 
     const grown: SharedValue = { title: 'shrink', data: ones(3000) };
-    // The two deltas, measured rather than asserted in prose.
+    // The two deltas, both MEASURED. 🔴 The stored side is read back from Postgres on a
+    // throwaway row rather than written as `9_029 - 3_029`: that subtraction is
+    // arithmetic on two literals, cannot fail, and sat under a comment claiming it was
+    // measured. The grown row never exists in this test — the write under test is
+    // refused — so the only way to measure its stored size is to append it, read the
+    // generated column, and roll it back.
     const wireDelta = wireBytes(grown) - wireBytes({ title: 'shrink', data: ones(1000) });
     expect(wireDelta).toBe(4_000);
-    const storedDelta = 9_029 - 3_029;
+    const probeKey = (await append(grown)).key;
+    const grownStored = await storedSizeOf(probeKey);
+    await holder.db.query(`DELETE FROM ${SCHEMA}.shared_kv WHERE key = $1`, [probeKey]);
+    const storedDelta = grownStored - 3_029;
     expect(storedDelta).toBe(6_000);
 
     const remaining = 5_000;
