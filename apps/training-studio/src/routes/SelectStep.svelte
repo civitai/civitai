@@ -50,16 +50,15 @@
   }: {
     onContinue: (sel: Selection) => void;
     prices: Record<string, number>;
-    /** Per-model catalog gates this user may see (`ModelCard.flagKey`), resolved server-side in `/new`'s
-     *  load. Cards whose gate isn't in this set are hidden from every offer surface below. */
+    /** Per-model catalog gates this user may see (`ModelCard.flagKey`). Cards whose gate isn't in
+     *  this set are hidden from every offer surface below. */
     enabledModelFlags?: string[];
     /** The selection to restore when re-entering this step (e.g. Back from Data) — the flow owns it, so a
      *  remount doesn't lose the chosen model(s). */
     initial?: Selection | null;
   } = $props();
 
-  // The resolved gate set from the page load. Used by every card-offering surface (seed, recommendation,
-  // featured/other lists). Derived so the seed and lists reflect the prop rather than a captured snapshot.
+  // Derived so the seed and lists reflect the prop rather than a captured snapshot.
   const enabledFlags = $derived(new Set(enabledModelFlags));
 
   // The "from" price for a card — the single source of truth lives in trainingFlow so Select/Data/Review
