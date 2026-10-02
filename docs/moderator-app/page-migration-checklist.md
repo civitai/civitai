@@ -193,6 +193,7 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
   - Services: `article.service.ts` → `getArticleRatingReviews`, `getArticleRatingReviewCounts`
   - Schemas: `article.schema.ts` (`getArticleRatingReviewsSchema`) + `ReportStatus` enum
   - Infra: **Postgres only** (secondary image lookup for cover images)
+  - Generalized to `/ratings` (all rated entities) by text-scan plan 05; `/articles/ratings` redirects; `ArticleRatingReview` is frozen history, dropped in plan 06.
 
 - [ ] **`/moderator/models`** — `src/pages/moderator/models/index.tsx` — flag: none (`requireModerator`)
   - Procedures: `model.getAllPagedSimple` (query); `model.declineReview`, `modelVersion.declineReview` (mutations)
