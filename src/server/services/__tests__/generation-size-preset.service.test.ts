@@ -1,35 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Prisma } from '@prisma/client';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { addSizePreset, deleteSizePreset } from '~/server/services/generation-size-preset.service';
 
-const db = vi.hoisted(() => ({
-  create: vi.fn(),
-  findMany: vi.fn(),
-  deleteMany: vi.fn(),
-  findUniqueOrThrow: vi.fn(),
-  findUnique: vi.fn(),
-  delete: vi.fn(),
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: { generationSizePreset: { findMany: db.findMany, findUnique: db.findUnique } },
-  dbWrite: {
-    generationSizePreset: {
-      create: db.create,
-      findMany: db.findMany,
-      deleteMany: db.deleteMany,
-      findUniqueOrThrow: db.findUniqueOrThrow,
-      delete: db.delete,
-    },
-  },
-}));
-
-const { addSizePreset, deleteSizePreset } = await import(
-  '~/server/services/generation-size-preset.service'
-);
+const read = dbMock.dbRead.generationSizePreset;
+const write = dbMock.dbWrite.generationSizePreset;
+const db = {
+  create: write.create,
+  findMany: write.findMany,
+  deleteMany: write.deleteMany,
+  findUniqueOrThrow: write.findUniqueOrThrow,
+  findUnique: read.findUnique,
+  delete: write.delete,
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
-  db.findMany.mockResolvedValue([]);
   db.findUniqueOrThrow.mockImplementation(({ where }) =>
     Promise.resolve({ id: 1, ...where.userId_width_height })
   );
