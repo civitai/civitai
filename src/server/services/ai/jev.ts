@@ -1,5 +1,5 @@
 import { env } from '~/env/server';
-import { AI_MODELS, type TokenUsage } from '~/server/services/ai/openrouter';
+import { AI_MODELS, extractUsage, type TokenUsage } from '~/server/services/ai/openrouter';
 
 /**
  * Jev vendor seam — bounded judgments only: Choice (full distribution), Score
@@ -161,18 +161,58 @@ export const JEV_MAX_CHOICE_OPTIONS = 255;
 // between "Jev is broken" and a diagnosis, so this must not clip it.
 const ERROR_BODY_EXCERPT = 400;
 
+// A vendor-reported model id is a short slug plus a date stamp
+// (`typesafe/jev-1.13-20260917` is 26 chars). The cap is generous enough that a
+// longer naming scheme still passes and tight enough that the string cannot be
+// used as a payload.
+const JEV_MODEL_MAX_LENGTH = 64;
+
+// Shortest state value worth redacting out of an error body. Below this, a
+// `split`/`join` would shred the vendor's message without protecting anything a
+// 3-character prompt could plausibly leak.
+const MIN_REDACTABLE_STATE_VALUE = 4;
+
+/**
+ * Strip every `state` VALUE out of a vendor error body before it can become log
+ * content.
+ *
+ * 🔴 `state` is USER PROMPT TEXT, and this endpoint answers a malformed request
+ * with a schema error DESCRIBING the submitted body — that is literally how its
+ * contract was recovered. Meanwhile the consumer writes a `JevError`'s message
+ * verbatim to Axiom, while the ClickHouse shadow row deliberately stores only
+ * `sha256(prompt)` and its length so the table cannot become a prompt corpus. An
+ * echoed body would route around that decision into a different sink, on every
+ * request, for as long as a request-shape drift lasted. Redacting here keeps the
+ * whole diagnostic value of the body and closes that path.
+ *
+ * Runs BEFORE the excerpt is taken, so a prompt straddling the cut is still hit.
+ */
+function redactStateValues(body: string, state: Record<string, string>): string {
+  let out = body;
+  for (const value of Object.values(state)) {
+    if (typeof value !== 'string' || value.length < MIN_REDACTABLE_STATE_VALUE) continue;
+    out = out.split(value).join('[redacted]');
+  }
+  return out;
+}
+
 // Per-kind wire key whitelists. `legend` (score) is the vendor's index→criterion
 // map; it is accepted and ignored — `criteria` is already the authority on it,
 // and the adapter needs no second copy.
 //
 // 🔴 `noul` does NOT list `confidence`, and that is a deliberate trade with a
 // real cost. The recorded 200 returns `{type, noul}` for a noul and nothing
-// else, and this module's contract is to reject unknown answer keys (the
-// alternative — accept and ignore — would make a future vendor addition
-// invisible rather than merely inconvenient). The cost: if this ALPHA endpoint
-// starts returning a noul confidence, every call degrades until this set gains
-// the key. That is one line, and the degrade is loud. Do not widen it to a
-// wildcard.
+// else, and rejecting unknown keys here keeps a future vendor addition visible
+// rather than merely inconvenient. The cost: if this ALPHA endpoint starts
+// returning a noul confidence, every call degrades until this set gains the key.
+// That is one line, and the degrade is loud. Do not widen it to a wildcard.
+//
+// ⚠️ SCOPE: "reject unknown keys" is this module's policy for an ANSWER OBJECT
+// only — the ENVELOPE deliberately does the opposite. The old implementation
+// permitted exactly one top-level key, `answers`, and the real response carries
+// five (`model`, `answers`, `usage`, `id`, `provider`), so an envelope-level
+// whitelist would reject every genuine response. Do not read this paragraph as a
+// description of the whole file.
 const WIRE_KEYS: Record<JevQuestionSpec['type'], ReadonlySet<string>> = {
   choice: new Set(['type', 'choice', 'probabilities', 'confidence']),
   score: new Set(['type', 'score', 'probabilities', 'confidence', 'legend']),
@@ -243,6 +283,9 @@ function parseAnswer(question: JevQuestionSpec, raw: unknown, idPath: string): J
       let sum = 0;
       const distribution: Record<string, number> = {};
       for (const [option, probability] of entries) {
+        // Membership is checked BEFORE the key is written, which is also what
+        // keeps a `__proto__`-shaped key out of the assignment below: it is not
+        // in any caller's option set, so it never reaches `distribution[option]`.
         if (!options.has(option)) {
           fail('malformed', `distribution for "${idPath}" names unknown option "${option}"`);
         }
@@ -260,6 +303,19 @@ function parseAnswer(question: JevQuestionSpec, raw: unknown, idPath: string): J
       if (Math.abs(sum - 1) > JEV_DISTRIBUTION_SUM_TOLERANCE) {
         fail('malformed', `distribution for "${idPath}" sums to ${sum}, expected ~1`);
       }
+      // 🔴 The argmax must APPEAR in its own distribution. Without this, a
+      // `choice` the distribution omits passes every check above and then
+      // `reorderShortlistByDistribution` — which reads `distribution[key] ?? 0` —
+      // ranks the vendor's own pick LAST. Nothing leaks (the option set is ours),
+      // but the ranking would silently contradict the answer. Membership in the
+      // option set is already proven, so `hasOwnProperty` here is about the
+      // distribution, not about prototype safety.
+      if (!Object.prototype.hasOwnProperty.call(distribution, record.choice)) {
+        fail(
+          'malformed',
+          `answer value "${record.choice}" for "${idPath}" is absent from its own distribution`
+        );
+      }
       return { id: question.id, type: 'choice', value: record.choice, distribution, confidence };
     }
     case 'score': {
@@ -270,16 +326,36 @@ function parseAnswer(question: JevQuestionSpec, raw: unknown, idPath: string): J
       // proven `criteria.length === max - min + 1`, so this bound and the
       // declared range are the same interval expressed twice.
       const lastIndex = scoreCriteriaCount(question) - 1;
-      if (typeof score !== 'number' || !Number.isFinite(score) || score < 0 || score > lastIndex) {
-        fail('malformed', `score for "${idPath}" is not a number in [0,${lastIndex}]`);
-      }
-      const value = (question.integer ? Math.round(score) : score) + question.min;
-      if (value < question.min || value > question.max) {
+      // 🔴 THE BOUND NEEDS SLACK, AND THE SLACK MUST SCALE WITH THE INDEX ARM.
+      // The recorded 200 shows what the vendor is computing: `score: 1.94` against
+      // `probabilities {0:0.01, 1:0.04, 2:0.95}` is exactly Σ i·pᵢ. Those
+      // probabilities are reported to 2 decimal places, which is the whole reason
+      // the choice path above tolerates a ±JEV_DISTRIBUTION_SUM_TOLERANCE sum
+      // drift — and the same drift reaches the score multiplied by the index it
+      // lands on, i.e. up to `lastIndex × TOL`, concentrated at the TOP of the
+      // scale. A near-degenerate `{3:0.01, 4:1.00}` (sum 1.01, comfortably inside
+      // the choice tolerance) yields 4.03 against a `lastIndex` of 4. A zero-slack
+      // bound rejects that, which degrades precisely the prompts the vendor is
+      // MOST confident about — a 100%-for-a-category failure of the same kind this
+      // rewrite exists to remove. So: accept inside the slack, CLAMP into index
+      // space, and fail closed outside it.
+      const slack = JEV_DISTRIBUTION_SUM_TOLERANCE * lastIndex;
+      if (
+        typeof score !== 'number' ||
+        !Number.isFinite(score) ||
+        score < -slack ||
+        score > lastIndex + slack
+      ) {
         fail(
           'malformed',
-          `score for "${idPath}" maps to ${value}, outside [${question.min},${question.max}]`
+          `score for "${idPath}" is not a number in [0,${lastIndex}] (±${slack} drift)`
         );
       }
+      // Clamping makes a post-mapping `[min,max]` range check UNREACHABLE, so
+      // there deliberately is not one: a guard that cannot fire reads as coverage
+      // and provides none.
+      const index = Math.min(Math.max(score, 0), lastIndex);
+      const value = (question.integer ? Math.round(index) : index) + question.min;
       return { id: question.id, type: 'score', value, confidence };
     }
     case 'noul': {
@@ -365,24 +441,18 @@ function assertPinnedModel(model: unknown): string {
   if (typeof model !== 'string' || !model) {
     fail('malformed', 'Jev response carries no model');
   }
+  // Capped BEFORE the value is interpolated into an error message, and before it
+  // is returned: `JevResponse.model` now carries a VENDOR-controlled string, and
+  // the consumer puts it in the public API response, a 1h cache entry, a
+  // ClickHouse column and an Axiom log. The prefix check below pins what it is;
+  // this pins how big it can be.
+  if (model.length > JEV_MODEL_MAX_LENGTH) {
+    fail('malformed', `Jev response model is ${model.length} chars, over ${JEV_MODEL_MAX_LENGTH}`);
+  }
   if (model !== AI_MODELS.JEV && !model.startsWith(`${AI_MODELS.JEV}-`)) {
     fail('malformed', `Jev response came from "${model}", not the pinned ${AI_MODELS.JEV}`);
   }
   return model;
-}
-
-function parseUsage(raw: unknown): TokenUsage {
-  const usage = (raw ?? {}) as Record<string, unknown>;
-  const num = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
-  const cost = usage.cost;
-  return {
-    promptTokens: num(usage.input_tokens),
-    completionTokens: num(usage.output_tokens),
-    // The vendor reports per-call spend, so a batch pass can meter itself
-    // instead of estimating. Absent rather than 0 when the vendor omits it — a
-    // real $0 and "not reported" are different facts.
-    ...(typeof cost === 'number' && Number.isFinite(cost) ? { costUsd: cost } : {}),
-  };
 }
 
 export async function askJev(
@@ -401,6 +471,14 @@ export async function askJev(
         fail('malformed', `choice "${question.id}" needs >=2 options`);
       if (question.options.length > JEV_MAX_CHOICE_OPTIONS) {
         fail('malformed', `choice "${question.id}" exceeds ${JEV_MAX_CHOICE_OPTIONS} options`);
+      }
+      // 🔴 The wire `criteria` is a RECORD keyed by option, so
+      // `Object.fromEntries` collapses a duplicate silently: the vendor would be
+      // offered fewer options than the caller counted, and `>=2` would pass on a
+      // pair that is really one. Unreachable from today's callers (stage 3 uses
+      // `String(i)` plus `none`), and one caller away from being reachable.
+      if (new Set(question.options).size !== question.options.length) {
+        fail('malformed', `choice "${question.id}" has duplicate options`);
       }
     }
     if (question.type === 'score') {
@@ -474,7 +552,10 @@ export async function askJev(
       // said precisely what was wrong.
       fail(
         'transport',
-        `Jev decisions call failed with ${response.status}: ${body.slice(0, ERROR_BODY_EXCERPT)}`
+        `Jev decisions call failed with ${response.status}: ${redactStateValues(
+          body,
+          request.state
+        ).slice(0, ERROR_BODY_EXCERPT)}`
       );
     }
     try {
@@ -512,7 +593,9 @@ export async function askJev(
     parseAnswer(question, answersById[question.id], question.id)
   );
 
-  return { answers, model, usage: parseUsage(envelope.usage) };
+  // `extractUsage` is the single place that knows how a vendor spells token
+  // usage and cost; the decisions spelling lives there with the other two.
+  return { answers, model, usage: extractUsage(envelope) };
 }
 
 /*

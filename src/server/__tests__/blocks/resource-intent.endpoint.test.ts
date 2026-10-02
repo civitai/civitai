@@ -77,7 +77,7 @@ const SERVICE_RESULT = {
   criteria: null,
   suggestions: [],
   noneProbability: null,
-  model: 'typesafe/jev-1.13',
+  model: 'typesafe/jev-1.13-20260917',
   criteriaVersion: 1,
 };
 

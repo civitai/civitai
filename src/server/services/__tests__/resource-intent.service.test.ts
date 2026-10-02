@@ -127,7 +127,11 @@ function mockStage1() {
   mockAskJev.mockImplementationOnce(async () => ({
     answers: STAGE1_ANSWERS,
     usage: { promptTokens: 100, completionTokens: 50 },
-    model: 'typesafe/jev-1.13',
+    // A DATED build, not the bare pin: `askJev` now returns the model the vendor
+    // reports answered, and a response carrying the bare pin is possible but is not
+    // what the live endpoint sends. A fixture production can never produce is not a
+    // fixture. `jev.test.ts` covers both arms of the pin check.
+    model: 'typesafe/jev-1.13-20260917',
   }));
 }
 
@@ -135,7 +139,7 @@ function mockStage3(distribution: Record<string, number>, value = '0') {
   mockAskJev.mockImplementationOnce(async () => ({
     answers: [{ id: 'resourceVersion', type: 'choice' as const, value, distribution }],
     usage: { promptTokens: 200, completionTokens: 20 },
-    model: 'typesafe/jev-1.13',
+    model: 'typesafe/jev-1.13-20260917',
   }));
 }
 
@@ -198,7 +202,7 @@ describe('cache behavior', () => {
       },
       suggestions: [{ versionId: 11 }, { versionId: 22 }, { versionId: 33 }],
       noneProbability: 0.1,
-      model: 'typesafe/jev-1.13',
+      model: 'typesafe/jev-1.13-20260917',
       criteriaVersion: 1 as const,
     };
     redisMock.redis.packed.get.mockResolvedValue(wide);
@@ -245,7 +249,7 @@ describe('cache behavior', () => {
       },
       suggestions: [],
       noneProbability: 0.1,
-      model: 'typesafe/jev-1.13',
+      model: 'typesafe/jev-1.13-20260917',
       criteriaVersion: 1,
     };
     redisMock.redis.packed.get.mockResolvedValue(cached);
@@ -328,7 +332,7 @@ describe('stage flow', () => {
         a.id === 'role' ? { ...a, value: 'none', distribution: { style: 0.2, none: 0.8 } } : a
       ),
       usage: { promptTokens: 1, completionTokens: 1 },
-      model: 'typesafe/jev-1.13',
+      model: 'typesafe/jev-1.13-20260917',
     }));
     const result = await getResourceIntent(INPUT, CTX);
     expect(result.degraded).toBe(false);
@@ -544,7 +548,7 @@ describe('shadow event', () => {
       // rejection never reaches us, so the table would just stay empty.
       // Pinned as a literal, not derived from the implementation.
       time: '2026-09-29 00:00:00.000',
-      model: 'typesafe/jev-1.13',
+      model: 'typesafe/jev-1.13-20260917',
       degraded: 0,
       role: 'style',
       styleFamily: 'anime_manga',
@@ -583,7 +587,10 @@ describe('shadow event', () => {
     await getResourceIntent(INPUT, CTX);
     expect(mockInsert).not.toHaveBeenCalled();
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'resource-intent-shadow', model: 'typesafe/jev-1.13' }),
+      expect.objectContaining({
+        type: 'resource-intent-shadow',
+        model: 'typesafe/jev-1.13-20260917',
+      }),
       'temp-search'
     );
   });
@@ -622,7 +629,7 @@ describe('shadow event', () => {
         },
       ],
       noneProbability: 0.1,
-      model: 'typesafe/jev-1.13',
+      model: 'typesafe/jev-1.13-20260917',
       criteriaVersion: 1,
     };
     redisMock.redis.packed.get.mockResolvedValue(cached);
@@ -653,7 +660,7 @@ describe('degradation reasons', () => {
         a.id === 'role' ? { id: 'role', type: 'noul', value: 0.5 } : a
       ),
       usage: { promptTokens: 1, completionTokens: 1 },
-      model: 'typesafe/jev-1.13',
+      model: 'typesafe/jev-1.13-20260917',
     }));
     const result = await getResourceIntent(INPUT, CTX);
     expect(result.degraded).toBe(true);
@@ -688,7 +695,7 @@ describe('coverage resolution', () => {
       criteria: null,
       suggestions: [],
       noneProbability: null,
-      model: 'typesafe/jev-1.13',
+      model: 'typesafe/jev-1.13-20260917',
       criteriaVersion: 1,
     });
     await getResourceIntent(INPUT, { browsingLevel: 3 });

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { setEnv } from '~/__tests__/mocks';
+import { RESOURCE_INTENT_QUESTIONS } from '~/server/schema/resource-intent.schema';
 import { AI_MODELS } from '~/server/services/ai/openrouter';
 
 /**
@@ -254,6 +255,16 @@ describe('🔴 the wire `questions` payload is a RECORD keyed by id', () => {
     expect(q.type).toBe('choice');
     expect(Array.isArray(q.criteria)).toBe(false);
     expect(Object.keys(q.criteria)).toEqual(RECORDED_ROLE_OPTIONS);
+    // 🔴 The VALUES too, literally. Asserting only the key set left
+    // `[option, '']` and `[option, question.prompt]` alive — both send the
+    // vendor a criteria record whose descriptions are empty or all identical.
+    // The "each option describes itself" decision is held here and nowhere else.
+    expect(q.criteria).toEqual({
+      none: 'none',
+      concept: 'concept',
+      character: 'character',
+      style: 'style',
+    });
     expect(q).not.toHaveProperty('options');
   });
 
@@ -285,6 +296,11 @@ describe('🔴 the RECORDED 200 adapts to the JevAnswer contract', () => {
   it('maps every answer kind, the vendor model, and usage including cost', async () => {
     respond(RECORDED_200);
     const result = await askJev({ state: { prompt: 'p' }, questions: recordedQuestions });
+
+    // If `jev.ts` ever captures `fetch` at module scope, `vi.stubGlobal` stops
+    // applying and the response-shape cases below would keep passing against a
+    // real 401 while only the happy path went red. A call count is what notices.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
 
     // The vendor-reported BUILD, not the request pin — the only thing that can
     // show which model actually answered now that `allowFallbacks` is gone.
@@ -348,6 +364,91 @@ describe('🔴 the RECORDED 200 adapts to the JevAnswer contract', () => {
     expect(result.answers[0]).toMatchObject({
       distribution: { none: 0.02, concept: 0.13, character: 0.47, style: 0.379 },
     });
+  });
+
+  it('🔴 accepts the BARE pin as well as a dated build', async () => {
+    // Every other fixture answers with a DATED build, so the accepting arm of
+    // `assertPinnedModel` (`model !== AI_MODELS.JEV`) was never executed and
+    // deleting it left the whole suite green. It is the guard that replaced
+    // `allowFallbacks: false`: if the vendor ever stops stamping dates, a
+    // missing arm here throws `malformed` on EVERY call and the primitive
+    // degrades to empty suggestions exactly as it did before this rewrite.
+    respond({ ...RECORDED_200, model: AI_MODELS.JEV });
+    await expect(askJev({ state: {}, questions: recordedQuestions })).resolves.toHaveProperty(
+      'model',
+      AI_MODELS.JEV
+    );
+  });
+
+  it('🔴 an answer with NO vendor confidence yields no confidence AND a null floor', async () => {
+    // The seam. `parseConfidence` returning `0` instead of `undefined` survived
+    // the whole suite, because the adapter cases that omit `confidence` asserted
+    // only `value`/`distribution`, and the floor case that covers the decision
+    // hand-built its `JevAnswer`. Each half was tested; the join was not — and
+    // the join is where a `?? 0` pins every row to zero.
+    respondAnswers({
+      role: { type: 'choice', choice: 'character', probabilities: { character: 1 } },
+    });
+    const result = await askJev({ state: {}, questions: [roleQuestion] });
+    expect(Object.keys(result.answers[0]).sort()).toEqual([
+      'confidence',
+      'distribution',
+      'id',
+      'type',
+      'value',
+    ]);
+    expect(result.answers[0].confidence).toBeUndefined();
+    expect(jevConfidenceFloor(result.answers)).toBeNull();
+  });
+
+  it('🔴 reports an ABSENT cost as absent, never as 0', async () => {
+    // "A real $0 and 'not reported' are different facts" is a claim the module
+    // makes in a comment; nothing asserted it, so `costUsd: num(usage.cost)`
+    // survived. Use `in`, not `toEqual` — `toEqual` ignores undefined.
+    respond({
+      model: RECORDED_200.model,
+      answers: { needsResource: RECORDED_200.answers.needsResource },
+      usage: { input_tokens: 1, output_tokens: 2 },
+    });
+    const result = await askJev({ state: {}, questions: [needsResourceQuestion] });
+    expect(result.usage.promptTokens).toBe(1);
+    expect(result.usage.completionTokens).toBe(2);
+    expect('costUsd' in result.usage).toBe(false);
+  });
+
+  it('drops a NEGATIVE cost to absent rather than metering it', async () => {
+    respond({
+      model: RECORDED_200.model,
+      answers: { needsResource: RECORDED_200.answers.needsResource },
+      usage: { input_tokens: 1, output_tokens: 2, cost: -5 },
+    });
+    const result = await askJev({ state: {}, questions: [needsResourceQuestion] });
+    expect('costUsd' in result.usage).toBe(false);
+  });
+
+  it('survives a response with no `usage` at all, with zeros rather than a TypeError', async () => {
+    // `(raw ?? {})` was unexercised: no fixture omitted `usage`, so a vendor
+    // response without it would have thrown a bare TypeError out of a module
+    // whose entire contract is that every violation is a `JevError`.
+    respond({
+      model: RECORDED_200.model,
+      answers: { needsResource: RECORDED_200.answers.needsResource },
+    });
+    const result = await askJev({ state: {}, questions: [needsResourceQuestion] });
+    expect(result.usage).toEqual({ promptTokens: 0, completionTokens: 0 });
+  });
+
+  it('🔴 orders answers by the REQUEST, not by the response key order', async () => {
+    // The recording's `answers` key order happens to equal `recordedQuestions`,
+    // so mapping the RESPONSE's keys produced an identical array and survived —
+    // the fixture could only ever produce the constant's own value. Asking in a
+    // different order is the control.
+    respond(RECORDED_200);
+    const result = await askJev({
+      state: {},
+      questions: [needsResourceQuestion, qualityQuestion, roleQuestion],
+    });
+    expect(result.answers.map((a) => a.id)).toEqual(['needsResource', 'quality', 'role']);
   });
 });
 
@@ -450,6 +551,100 @@ describe('🔴 score mapping: index space → the declared range', () => {
       JevError
     );
   });
+
+  it('🔴 absorbs the drift the vendor SHOWS us, at the top of the scale', async () => {
+    // The recording proves the score is Σ i·pᵢ: 0(0.01)+1(0.04)+2(0.95) = 1.94
+    // exactly. Those probabilities are 2dp, which is why the choice path already
+    // tolerates a ±0.02 sum drift — and that drift reaches the score multiplied
+    // by the index it lands on. `{3:0.01, 4:1.00}` sums to 1.01 (inside the
+    // choice tolerance) and yields 4.03 against a lastIndex of 4. A zero-slack
+    // bound would reject exactly the prompts the vendor is most certain about.
+    respond({
+      model: RECORDED_200.model,
+      answers: { specificity: { type: 'score', score: 4.03 } },
+      usage: {},
+    });
+    await expect(askJev({ state: {}, questions: [specificityQuestion] })).resolves.toMatchObject({
+      answers: [{ value: 5 }],
+    });
+  });
+
+  it('absorbs the same drift at the BOTTOM of the scale', async () => {
+    respond({
+      model: RECORDED_200.model,
+      answers: { specificity: { type: 'score', score: -0.05 } },
+      usage: {},
+    });
+    await expect(askJev({ state: {}, questions: [specificityQuestion] })).resolves.toMatchObject({
+      answers: [{ value: 1 }],
+    });
+  });
+
+  it('🔴 the slack SCALES with the index arm and is not open-ended', async () => {
+    // lastIndex 4 ⇒ slack 0.08. 4.5 is outside it and must still fail closed.
+    respond({
+      model: RECORDED_200.model,
+      answers: { specificity: { type: 'score', score: 4.5 } },
+      usage: {},
+    });
+    await expect(askJev({ state: {}, questions: [specificityQuestion] })).rejects.toMatchObject({
+      kind: 'malformed',
+      message: expect.stringContaining('(±0.08 drift)'),
+    });
+    // And the 2-index question's slack is smaller, so 2.1 fails there while
+    // being well inside a 4-index question's. Two points, not one.
+    respondAnswers({ quality: { type: 'score', score: 2.1 } });
+    await expect(askJev({ state: {}, questions: [qualityQuestion] })).rejects.toMatchObject({
+      kind: 'malformed',
+      message: expect.stringContaining('(±0.04 drift)'),
+    });
+  });
+
+  it('🔴 rejects a NEGATIVE score beyond the slack, which rounding would otherwise hide', async () => {
+    // With `integer: true`, `Math.round(-0.4)` is `-0`, so `-0 + min` lands
+    // exactly on the rubric's floor: an out-of-index answer would have been
+    // reported as a plausible "1 = any style works" for every prompt.
+    respond({
+      model: RECORDED_200.model,
+      answers: { specificity: { type: 'score', score: -0.4 } },
+      usage: {},
+    });
+    await expect(askJev({ state: {}, questions: [specificityQuestion] })).rejects.toMatchObject({
+      kind: 'malformed',
+      message: expect.stringContaining('is not a number in [0,4]'),
+    });
+  });
+
+  it('🔴 the PRODUCTION question spec passes the real pre-flight', async () => {
+    // The seam nobody owned. `RESOURCE_INTENT_QUESTIONS` gained `criteria` +
+    // `integer` specifically to satisfy the `criteria.length === max - min + 1`
+    // guard — and the service suite mocks this whole module, while this suite
+    // only ever exercised the guard against test-local fixtures. So the guard
+    // and the spec that exists for it were tested in different universes: a
+    // later `max: 10` edit without a criteria edit would throw `malformed` on
+    // every production call with both suites green.
+    const answers: Record<string, unknown> = {};
+    for (const q of RESOURCE_INTENT_QUESTIONS) {
+      if (q.type === 'noul') answers[q.id] = { type: 'noul', noul: 0.5 };
+      else if (q.type === 'score') answers[q.id] = { type: 'score', score: 0 };
+      else
+        answers[q.id] = {
+          type: 'choice',
+          choice: q.options[0],
+          probabilities: { [q.options[0]]: 1 },
+        };
+    }
+    respond({ model: RECORDED_200.model, answers, usage: RECORDED_200.usage });
+    const result = await askJev({
+      state: { prompt: 'p' },
+      questions: RESOURCE_INTENT_QUESTIONS.map((q) => ({ ...q })),
+    });
+    expect(result.answers.map((a) => a.id)).toEqual(RESOURCE_INTENT_QUESTIONS.map((q) => q.id));
+    // And the one score question still lands where its consumer's schema needs it.
+    const specificity = result.answers.find((a) => a.id === 'specificity')!;
+    expect(specificity).toMatchObject({ type: 'score', value: 1 });
+    expect(Number.isInteger((specificity as { value: number }).value)).toBe(true);
+  });
 });
 
 // ───────────────────────────────────────────────────────────────────────────────
@@ -512,8 +707,41 @@ describe('askJev — fail-closed on the response', () => {
       kind: 'transport',
       message: expect.stringContaining('400'),
     });
+    // 🔴 The WHOLE message, not a fragment. `ERROR_BODY_EXCERPT` is commented
+    // "the vendor's message is ~130 chars … this must not clip it", and a
+    // `stringContaining('is a decisions model')` is satisfied by a slice of ~45,
+    // so the constant could be cut nine-fold and stay green.
     await expect(askJev({ state: {}, questions: recordedQuestions })).rejects.toMatchObject({
-      message: expect.stringContaining('is a decisions model'),
+      message: expect.stringContaining(DECISIONS_MODEL_400),
+    });
+  });
+
+  it('🔴 REDACTS the prompt out of a vendor body that echoes the request', async () => {
+    // This endpoint answers a malformed request with a schema error describing
+    // the submitted body — that is how its contract was recovered — and `state`
+    // is user prompt text. The consumer writes a JevError's message straight to
+    // Axiom, while the shadow row deliberately stores only sha256(prompt). An
+    // echoed body would route around that into a different sink.
+    const prompt = 'a very distinctive user prompt about a red sports car';
+    respond(`Invalid request: expected string, received object at state.prompt ("${prompt}")`, {
+      ok: false,
+      status: 400,
+    });
+    const err = await askJev({ state: { prompt }, questions: recordedQuestions }).catch(
+      (e) => e as Error
+    );
+    expect(err.message).not.toContain(prompt);
+    expect(err.message).toContain('[redacted]');
+    // The diagnosis itself must survive the redaction.
+    expect(err.message).toContain('state.prompt');
+    expect(err.message).toContain('400');
+  });
+
+  it('rejects an absurdly long model string before it reaches any sink', async () => {
+    respond({ ...RECORDED_200, model: `${AI_MODELS.JEV}-${'9'.repeat(200)}` });
+    await expect(askJev({ state: {}, questions: recordedQuestions })).rejects.toMatchObject({
+      kind: 'malformed',
+      message: expect.stringContaining('over 64'),
     });
   });
 
@@ -644,6 +872,48 @@ describe('askJev — fail-closed on the response', () => {
     });
   });
 
+  it('🔴 rejects a distribution summing ABOVE 1, not only below', async () => {
+    // The only rejecting fixture summed to 0.62, so `Math.abs(sum - 1) > TOL`
+    // could be narrowed to `(1 - sum) > TOL` and survive — and an unnormalised
+    // distribution (logits, a double-counted option) is the canonical malformed
+    // shape. Every member here is individually legal.
+    respondAnswers({
+      role: { type: 'choice', choice: 'character', probabilities: { character: 0.75, style: 0.5 } },
+    });
+    await expect(askJev({ state: {}, questions: [roleQuestion] })).rejects.toMatchObject({
+      kind: 'malformed',
+      message: expect.stringContaining('sums to 1.25'),
+    });
+  });
+
+  it('🔴 pins the tolerance BOUNDARY, so it cannot be widened undetected', async () => {
+    // 0.97 is 0.03 off — just outside the 0.02 tolerance. Without this the
+    // constant could go to anything under 0.38 and stay green.
+    respondAnswers({
+      role: {
+        type: 'choice',
+        choice: 'character',
+        probabilities: { character: 0.5, style: 0.46875 },
+      },
+    });
+    await expect(askJev({ state: {}, questions: [roleQuestion] })).rejects.toMatchObject({
+      kind: 'malformed',
+      message: expect.stringContaining('sums to 0.96875'),
+    });
+  });
+
+  it('🔴 rejects an argmax that is absent from its own distribution', async () => {
+    // Passes every other check, and then `reorderShortlistByDistribution` — which
+    // reads `distribution[key] ?? 0` — ranks the vendor's own pick LAST.
+    respondAnswers({
+      role: { type: 'choice', choice: 'character', probabilities: { style: 0.5, none: 0.5 } },
+    });
+    await expect(askJev({ state: {}, questions: [roleQuestion] })).rejects.toMatchObject({
+      kind: 'malformed',
+      message: expect.stringContaining('absent from its own distribution'),
+    });
+  });
+
   it('rejects a distribution probability outside [0,1]', async () => {
     respondAnswers({
       role: {
@@ -669,7 +939,7 @@ describe('askJev — fail-closed on the response', () => {
     });
   });
 
-  it('rejects a non-finite confidence', async () => {
+  it('rejects a confidence that is not a number', async () => {
     for (const bad of ['Infinity-ish', null]) {
       respondAnswers({ role: { ...RECORDED_200.answers.role, confidence: bad } });
       await expect(askJev({ state: {}, questions: [roleQuestion] })).rejects.toMatchObject({
@@ -677,6 +947,22 @@ describe('askJev — fail-closed on the response', () => {
         message: expect.stringContaining('confidence'),
       });
     }
+  });
+
+  it('🔴 rejects a genuinely NON-FINITE confidence', async () => {
+    // The case above tests non-NUMBERS — a string and a null, both of which die
+    // on the `typeof` arm — so `|| !Number.isFinite(...)` survived its deletion.
+    // It is reachable: `JSON.parse('{"confidence":1e400}')` yields `Infinity`,
+    // and this is the only load-bearing `Number.isFinite` in the file, since the
+    // score/probability/noul ones sit behind range checks that reject Infinity
+    // anyway. Sent as a RAW BODY so JSON.parse does the producing.
+    respond(
+      '{"model":"typesafe/jev-1.13-20260917","answers":{"role":{"type":"choice","choice":"character","probabilities":{"character":1},"confidence":1e400}},"usage":{}}'
+    );
+    await expect(askJev({ state: {}, questions: [roleQuestion] })).rejects.toMatchObject({
+      kind: 'malformed',
+      message: expect.stringContaining('is not a finite number'),
+    });
   });
 
   it('rejects a noul outside [0,1]', async () => {
@@ -692,6 +978,16 @@ describe('askJev — fail-closed on the response', () => {
     await expect(askJev({ state: {}, questions: recordedQuestions })).rejects.toMatchObject({
       kind: 'malformed',
       message: expect.stringContaining('missing an answers object'),
+    });
+  });
+
+  it('rejects an individual answer that is an ARRAY', async () => {
+    // `typeof [] === 'object'`, so without the `Array.isArray` arm this would
+    // fall through to the type cross-check and fail for the wrong reason.
+    respondAnswers({ role: [] });
+    await expect(askJev({ state: {}, questions: [roleQuestion] })).rejects.toMatchObject({
+      kind: 'malformed',
+      message: expect.stringContaining('is not an object'),
     });
   });
 });
@@ -714,6 +1010,17 @@ describe('askJev — fail-closed on the request, before any spend', () => {
     await expect(
       askJev({ state: {}, questions: [{ ...roleQuestion, options: ['only'] }] })
     ).rejects.toMatchObject({ message: expect.stringContaining('>=2 options') });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('🔴 rejects DUPLICATE choice options', async () => {
+    // The wire `criteria` is a record keyed by option, so `Object.fromEntries`
+    // collapses a duplicate silently: the vendor would be offered fewer options
+    // than the caller counted, and the `>=2` check would pass on a pair that is
+    // really one.
+    await expect(
+      askJev({ state: {}, questions: [{ ...roleQuestion, options: ['a', 'b', 'a'] }] })
+    ).rejects.toMatchObject({ message: expect.stringContaining('duplicate options') });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -776,4 +1083,38 @@ describe('askJev — timeout and transport', () => {
       message: expect.stringContaining('ECONNRESET'),
     });
   });
+
+  it("🔴 labels a REAL fetch AbortError as a timeout, not as the network's fault", async () => {
+    // Both timeout cases above reject with our own `JevError`, so the
+    // `instanceof` arm always won and the `signal.aborted` branch was never
+    // reached. A real `fetch` rejects with a plain `AbortError` DOMException —
+    // and mislabelling that as `transport` makes the consumer write the degrade
+    // reason `jev_transport`, so a timeout wave would read as a network problem
+    // in the only operator-facing signal there is.
+    vi.useFakeTimers();
+    fetchMock.mockImplementation(
+      (_url: string, init: { signal: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          init.signal.addEventListener('abort', () =>
+            reject(new DOMException('The operation was aborted.', 'AbortError'))
+          );
+        })
+    );
+    const pending = askJev({ state: {}, questions: recordedQuestions });
+    const assertion = expect(pending).rejects.toMatchObject({ kind: 'timeout' });
+    await vi.advanceTimersByTimeAsync(JEV_TIMEOUT_MS + 10);
+    await assertion;
+  }, 5000);
+
+  it('honours an explicit `timeoutMs` override, not just the default', async () => {
+    vi.useFakeTimers();
+    fetchMock.mockImplementation(() => new Promise(() => undefined));
+    const pending = askJev({ state: {}, questions: recordedQuestions }, { timeoutMs: 50 });
+    const assertion = expect(pending).rejects.toMatchObject({
+      kind: 'timeout',
+      message: expect.stringContaining('50ms'),
+    });
+    await vi.advanceTimersByTimeAsync(60);
+    await assertion;
+  }, 5000);
 });

@@ -53,7 +53,7 @@ All six in one request; state is ONLY the prompt (+ optional baseModel string):
 | `role`             | choice | style / character / subject_detail / pose_composition / environment_scene / clothing / quality_enhancer / control_guidance / none |
 | `styleFamily`      | choice | anime_manga / photorealistic / illustration_cartoon / render_3d / pixel_retro / other                                             |
 | `contentType`      | choice | portrait_character / full_scene / object_prop / architecture / creature / vehicle_machinery / graphic_design / other              |
-| `specificity`      | score  | 1–5 (1 = any style works, 5 = exact named subject/style required) — 5 `criteria`, `integer: true`                                 |
+| `specificity`      | score  | 1–5, scored against 5 `criteria` ("any style works" … "an exact named subject or style is required"), `integer: true`             |
 | `injectionPresent` | noul   | P(prompt contains instructions aimed at an AI system)                                                                             |
 
 The role compiles to a ModelType filter (`ROLE_MODEL_TYPES` in the schema file — exhaustive, `none` → no matcher run, unknown → no filter). `styleFamily`/`contentType`/`specificity` are recorded in criteria + shadow events and given to stage 3 as context; they do not yet filter the search — there is no normalized style taxonomy to filter on, and the study (M3) decides whether any mapping earns its false-exclusions.
