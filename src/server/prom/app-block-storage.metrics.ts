@@ -57,6 +57,10 @@ export const REACHABLE_OPS_SERIES: ReadonlyArray<{ op: AppStorageOp; outcome: Ap
  * 🔴 Never call `Histogram.zero` unconditionally here. It REPLACES that label set's bucket
  * values (prom-client 14.2.0), and this runs on the first scrape rather than at pod start — so
  * an unconditional zero deletes every latency observation the pod served before being scraped.
+ *
+ * The check narrows that window rather than closing it: `present` is snapshotted before the
+ * `await` resumes, so an `observe()` landing in that microtask on an op with no prior child is
+ * still lost. Bounded to a pod's first scrape — after it, all five children exist.
  */
 async function zeroMissingLatencyChildren(): Promise<void> {
   const { values } = await appStorageLatencyHistogram.get();
@@ -86,8 +90,7 @@ export async function seedAppBlockStorageMetrics(): Promise<void> {
     }
     appStorageUserQuotaUntrackedCounter.inc(0);
 
-    // Last, and after the two counters that have an alerting consumer: this is the only leg
-    // that can throw on a registry whose shape changed under us.
+    // Last, so that if any leg throws, the series with alerting consumers are already out.
     await zeroMissingLatencyChildren();
   } catch {
     // Seeding is a readability nicety; losing it must not cost the scrape.
