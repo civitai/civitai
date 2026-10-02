@@ -1,65 +1,78 @@
-import { useWindowEvent } from '@mantine/hooks';
 import clsx from 'clsx';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
-import { useCallback, useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
+import {
+  GENERATION_SIDEBAR_DEFAULT_WIDTH,
+  GENERATION_SIDEBAR_NAME,
+  useGenerationPanelFullScreen,
+} from '~/components/ImageGeneration/useGenerationPanelFullScreen';
 import { ResizableSidebar } from '~/components/Resizable/ResizableSidebar';
-import { useResizeStore } from '~/components/Resizable/useResize';
 import { useRefreshResidencyOnOpen } from '~/components/ResourceLoad/ResourceResidency';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
-const GenerationTabs = dynamic(() => import('~/components/ImageGeneration/GenerationTabs'));
+import { generationGraphPanel } from '~/store/generation-graph.store';
+const GenerationPanel = dynamic(() => import('~/components/ImageGeneration/GenerationTabs'));
 
-const RESIZE_STORE_NAME = 'generation-sidebar';
-const DEFAULT_WIDTH = 400;
-
-export function GenerationSidebar() {
+export function useGenerationSidebarState() {
   const _opened = useGenerationPanelStore((state) => state.opened);
   const router = useRouter();
-  // TODO - see if we can elevate this to `BaseLayout` and set visibility hidden to content behind sidebar
-  const [fullScreen, setFullScreen] = useState(false);
-  const isGeneratePage = router.pathname.startsWith('/generate');
-  const opened = _opened || isGeneratePage;
+  const fullScreen = useGenerationPanelFullScreen() ?? false;
+  // `/generate` renders the generator itself; a second copy here doubles every query and image.
+  const opened = _opened && !router.pathname.startsWith('/generate');
+  return { opened, fullScreen, coversPage: opened && fullScreen };
+}
 
-  const updateShowDrawer = useCallback(() => {
-    const width = useResizeStore.getState()[RESIZE_STORE_NAME] ?? DEFAULT_WIDTH;
-    setFullScreen(width + 320 > window.innerWidth);
-  }, []);
+export function GenerationSidebar() {
+  const router = useRouter();
+  const { opened, fullScreen } = useGenerationSidebarState();
 
-  useEffect(() => {
-    if (isGeneratePage) useGenerationPanelStore.setState({ opened: true });
-  }, [isGeneratePage]);
-
-  useEffect(() => {
-    if (opened) {
-      updateShowDrawer();
-      useResizeStore.subscribe((state) => {
-        const width = state[RESIZE_STORE_NAME] ?? DEFAULT_WIDTH;
-        setFullScreen(width + 320 > window.innerWidth);
-      });
-    }
-  }, [opened, updateShowDrawer]);
-
-  useWindowEvent('resize', updateShowDrawer);
   useRefreshResidencyOnOpen(opened);
 
   if (!opened) return null;
 
   return (
+    <GenerationColumn className={clsx('z-10', fullScreen && 'z-[210] !w-screen')}>
+      <GenerationPanel
+        onClose={generationGraphPanel.close}
+        closeLabel="Close generation panel"
+        onMaximize={fullScreen ? undefined : () => router.push('/generate')}
+      />
+    </GenerationColumn>
+  );
+}
+
+export function GenerationColumn({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
     <ResizableSidebar
-      name={RESIZE_STORE_NAME}
-      data-tour="gen:start"
+      name={GENERATION_SIDEBAR_NAME}
       resizePosition="right"
       minWidth={350}
       maxWidth={800}
-      defaultWidth={DEFAULT_WIDTH}
-      className={clsx('z-10', fullScreen && 'z-[210] !w-screen')}
+      defaultWidth={GENERATION_SIDEBAR_DEFAULT_WIDTH}
+      className={className}
     >
-      <div className="size-full">
-        <ContainerProvider containerName={RESIZE_STORE_NAME} className="bg-gray-0 dark:bg-dark-7">
-          <GenerationTabs fullScreen={fullScreen} />
-        </ContainerProvider>
-      </div>
+      <GenerationSurface>{children}</GenerationSurface>
     </ResizableSidebar>
+  );
+}
+
+/** What the generator renders into, whether it is a column or the whole viewport. */
+export function GenerationSurface({ children }: { children: ReactNode }) {
+  return (
+    <div data-tour="gen:start" className="size-full">
+      <ContainerProvider
+        containerName={GENERATION_SIDEBAR_NAME}
+        className="bg-gray-0 dark:bg-dark-7"
+      >
+        {children}
+      </ContainerProvider>
+    </div>
   );
 }
