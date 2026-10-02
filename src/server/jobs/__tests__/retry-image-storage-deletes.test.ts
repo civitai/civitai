@@ -90,6 +90,8 @@ beforeEach(() => {
   });
 });
 
+const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+
 afterEach(() => {
   vi.useRealTimers();
 });
@@ -102,6 +104,8 @@ describe('retry-image-storage-deletes', () => {
     expect(probeCall.values).toEqual(['ImageStorageDelete']);
     expect(probeCall.sql).toContain("t.typname = 'JobQueueType'");
     expect(probeCall.sql).toContain("table_name = 'JobQueue' AND column_name = 'url'");
+    // Both must exist: the two halves are separate migrations and can land apart.
+    expect(probeCall.sql).toMatch(/\)\s+AND EXISTS \(/);
   });
 
   it.each([
@@ -127,15 +131,20 @@ describe('retry-image-storage-deletes', () => {
     expect(select.sql).toMatch(/ORDER BY "createdAt" ASC\s+LIMIT \?/);
   });
 
-  it('retries every queued key with the purge suppressed on failure', async () => {
+  it('retries every queued key with the purge suppressed and a deadline before the lock', async () => {
     await runJob();
 
-    expect(mockDeleteImageFromS3.mock.calls.map((c) => c[0])).toEqual([
-      { id: DELETES_ID, url: 'key-deletes', purgeOnFailure: false },
-      { id: SHARED_ID, url: 'key-shared', purgeOnFailure: false },
-      { id: STILL_FAILING_ID, url: 'key-failing', purgeOnFailure: false },
-      { id: THROWS_ID, url: 'key-throws', purgeOnFailure: false },
-    ]);
+    // 20-minute lock less a 2-minute margin.
+    expect(timeoutSpy).toHaveBeenCalledWith(18 * 60 * 1000);
+    const deadline = timeoutSpy.mock.results[0].value;
+    expect(mockDeleteImageFromS3.mock.calls.map((c) => c[0])).toEqual(
+      [
+        [DELETES_ID, 'key-deletes'],
+        [SHARED_ID, 'key-shared'],
+        [STILL_FAILING_ID, 'key-failing'],
+        [THROWS_ID, 'key-throws'],
+      ].map(([id, url]) => ({ id, url, purgeOnFailure: false, abortSignal: deadline }))
+    );
   });
 
   it('dequeues deleted, skipped and keyless rows of its own type only', async () => {
@@ -156,7 +165,8 @@ describe('retry-image-storage-deletes', () => {
     expect(result).toEqual({ deleted: 1, skipped: 2, failed: 2, unattempted: 0 });
   });
 
-  // No write touches a failed row: its `createdAt` is the age the overdue check reads.
+  // The job issues no write against a failed row. The service's re-enqueue is the other writer;
+  // its upsert is pinned in delete-image-from-s3-logging.test.ts.
   it('leaves rows that failed, or threw, queued and untouched', async () => {
     await runJob();
 
@@ -181,6 +191,18 @@ describe('retry-image-storage-deletes', () => {
     expect(mockDeleteImageFromS3).toHaveBeenCalledTimes(5);
     expect(result).toMatchObject({ deleted: 5, unattempted: 5 });
     expect(writes()[0].values[2]).toEqual([100, 101, 102, 103, 104]);
+  });
+
+  it('still starts a batch with the budget exactly spent', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(0);
+    queue = Array.from({ length: 10 }, (_, i) => ({ id: 100 + i, url: `key-${i}` }));
+    mockDeleteImageFromS3.mockImplementation(async () => {
+      vi.setSystemTime(RUN_BUDGET_MS);
+      return 'deleted';
+    });
+
+    expect(await runJob()).toMatchObject({ deleted: 10, unattempted: 0 });
   });
 
   it.each([

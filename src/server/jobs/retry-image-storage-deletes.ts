@@ -15,6 +15,7 @@ const LOCK_SECONDS = 20 * 60;
  * that outlives its lock is joined by the next trigger working the same oldest rows.
  */
 export const RUN_BUDGET_MS = 12 * 60 * 1000;
+const DEADLINE_MARGIN_MS = 2 * 60 * 1000;
 
 type QueueRow = { id: number; url: string | null };
 
@@ -42,6 +43,8 @@ export const retryImageStorageDeletes = createJob(
   '7,22,37,52 * * * *',
   async () => {
     const startedAt = Date.now();
+    // The budget only stops new batches; this bounds the one in flight, before the lock lapses.
+    const deadline = AbortSignal.timeout(LOCK_SECONDS * 1000 - DEADLINE_MARGIN_MS);
     if (!(await isQueueReady())) return { ready: false };
 
     // Failed rows keep their original `createdAt`: it is what the overdue check in
@@ -75,9 +78,12 @@ export const retryImageStorageDeletes = createJob(
             done.push(id);
             return;
           }
-          const outcome = await deleteImageFromS3({ id, url, purgeOnFailure: false }).catch(
-            () => 'failed' as const
-          );
+          const outcome = await deleteImageFromS3({
+            id,
+            url,
+            purgeOnFailure: false,
+            abortSignal: deadline,
+          }).catch(() => 'failed' as const);
           if (outcome === 'failed') {
             failed++;
             return;

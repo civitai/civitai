@@ -470,10 +470,14 @@ export async function deleteImageFromS3({
   // The retry job turns this off: the first failure already purged, and an outage would otherwise
   // re-purge every queued key on every run.
   purgeOnFailure = true,
+  // The shared B2 client sets no request timeout, and it also serves uploads, so a caller that
+  // needs a bound supplies its own.
+  abortSignal,
 }: {
   id: number;
   url: string;
   purgeOnFailure?: boolean;
+  abortSignal?: AbortSignal;
 } & PurgeResizeCacheRetraction): Promise<StorageDeleteOutcome> {
   if (!env.DATABASE_IS_PROD) return 'skipped';
   // Legacy avatar rows hold a full external URL where every other row holds a bucket key.
@@ -550,7 +554,8 @@ export async function deleteImageFromS3({
         new DeleteObjectCommand({
           Bucket: env.S3_IMAGE_B2_BUCKET ?? 'civitai-media-uploads',
           Key: url,
-        })
+        }),
+        { abortSignal }
       )
     );
   } catch (error) {
@@ -606,7 +611,9 @@ export async function queueImageStorageDeleteRetry({ id, url }: { id: number; ur
     await dbWrite.$executeRaw`
       INSERT INTO "JobQueue" ("entityId", "entityType", "type", "url")
       VALUES (${id}, ${EntityType.Image}::"EntityType", ${JobQueueType.ImageStorageDelete}::"JobQueueType", ${url})
+      -- Every failed retry lands here again; an unchanged url must not leave a dead row version.
       ON CONFLICT ("entityType", "entityId", "type") DO UPDATE SET "url" = EXCLUDED."url"
+        WHERE "JobQueue"."url" IS DISTINCT FROM EXCLUDED."url"
     `;
   } catch (error) {
     await logToAxiom({

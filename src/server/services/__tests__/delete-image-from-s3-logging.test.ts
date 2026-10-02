@@ -386,9 +386,20 @@ describe('deleteImageFromS3', () => {
     ]);
     // The retry job re-enters this path for a key already queued. Without the upsert that is a
     // primary-key violation, logged as a lost key every run for every stuck key.
+    // Anchored at the end: an extra SET (`"createdAt" = now()`) would reset the age the overdue
+    // check reads, and a missing WHERE writes a dead row version on every failed retry.
     expect(retryInserts()[0].sql).toMatch(
-      /ON CONFLICT \("entityType", "entityId", "type"\) DO UPDATE SET "url" = EXCLUDED\."url"/
+      /ON CONFLICT \("entityType", "entityId", "type"\) DO UPDATE SET "url" = EXCLUDED\."url"\s+WHERE "JobQueue"\."url" IS DISTINCT FROM EXCLUDED\."url"\s*$/
     );
+  });
+
+  it("hands the caller's abort signal to the B2 delete", async () => {
+    mockFindFirst.mockResolvedValue(null);
+    const abortSignal = new AbortController().signal;
+
+    await deleteImageFromS3({ id: 4242, url: 'abc-def/original.jpeg', abortSignal });
+
+    expect(mockB2Send.mock.calls[0][1]).toEqual({ abortSignal });
   });
 
   it('skips the cache purge on a failed retry, but not on a successful one', async () => {
