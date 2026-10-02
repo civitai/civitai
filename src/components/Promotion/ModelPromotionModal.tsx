@@ -100,13 +100,13 @@ export function ModelPromotionModal({ modelId }: { modelId: number }) {
           days={days}
           onDaysChange={setDays}
           loading={create.isPending}
-          onBuy={(expectedPrice) =>
+          onBuy={(expected) =>
             quote &&
             create.mutate({
               modelId: quote.modelId,
               promotedModelId: modelId,
               days,
-              expectedPrice,
+              ...expected,
             })
           }
         />

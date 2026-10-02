@@ -6,6 +6,11 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { NsfwLevel } from '~/server/common/enums';
+import { placementSpaceSchema } from '~/server/schema/placement.schema';
+import {
+  createGalleryPromotionSchema,
+  createModelPromotionSchema,
+} from '~/server/schema/promotion.schema';
 
 /** Every quantity distinct, so a value reaching the wrong place cannot pass by colliding. */
 const OWNER = 41;
@@ -138,8 +143,14 @@ beforeEach(() => {
     ownerId: OWNER,
     mode: 'review',
     price: DAILY_PRICE,
+    hostDeclineFeePercent: HOST_DECLINE_PERCENT,
+    declineFeeRate: HOST_DECLINE_PERCENT / 100,
   });
 });
+
+// Not the surface default (0) nor the sticker 30%, so a hold sized by either
+// reads as a wrong number rather than passing by coincidence.
+const HOST_DECLINE_PERCENT = 20;
 
 describe('actOnPromotion', () => {
   it('refuses anyone but the page owner, and moves no money', async () => {
@@ -270,6 +281,7 @@ describe('createGalleryPromotion', () => {
       postId: POST,
       days: 3,
       expectedPrice: DAILY_PRICE,
+      expectedDeclineFeePercent: HOST_DECLINE_PERCENT,
       spendType: 'green',
     });
 
@@ -320,6 +332,7 @@ describe('createGalleryPromotion', () => {
       placerId: PLACER,
       surface: 'galleryPromotion',
       amount: DAILY_PRICE * 3,
+      declineFeeRate: HOST_DECLINE_PERCENT / 100,
       spendType: 'green',
     });
     expect(settlePlacement).not.toHaveBeenCalled();
@@ -356,6 +369,44 @@ describe('createGalleryPromotion', () => {
     await expect(buy()).rejects.toThrow('price changed');
     expect(dbMock.dbWrite.placement.create).not.toHaveBeenCalled();
   });
+
+  it('refuses a decline fee that moved while the buyer was deciding', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue({
+      ownerId: OWNER,
+      mode: 'review',
+      price: DAILY_PRICE,
+      hostDeclineFeePercent: 25,
+      declineFeeRate: 0.25,
+    });
+    await expect(buy()).rejects.toThrow('decline fee changed to 25%');
+    expect(dbMock.dbWrite.placement.create).not.toHaveBeenCalled();
+    expect(holdPlacementEscrow).not.toHaveBeenCalled();
+  });
+
+  // 🔴 Required on purpose, unlike `expectedPrice`. A caller that omits it would
+  // be held to a fee it was never shown. Pinned at a 0% host, where an optional
+  // check mirrored from the price one (`expected != null && ...`) would let the
+  // purchase through.
+  it('refuses a purchase that does not say what decline fee it was shown', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue({
+      ownerId: OWNER,
+      mode: 'review',
+      price: DAILY_PRICE,
+      hostDeclineFeePercent: 0,
+      declineFeeRate: 0,
+    });
+    await expect(
+      createGalleryPromotion({
+        placerId: PLACER,
+        modelId: HOST_MODEL,
+        postId: POST,
+        days: 3,
+        expectedPrice: DAILY_PRICE,
+        spendType: 'green',
+      } as unknown as Parameters<typeof createGalleryPromotion>[0])
+    ).rejects.toThrow('decline fee changed');
+    expect(dbMock.dbWrite.placement.create).not.toHaveBeenCalled();
+  });
 });
 
 describe('one promotion of a thing per page', () => {
@@ -365,6 +416,7 @@ describe('one promotion of a thing per page', () => {
       modelId: HOST_MODEL,
       promotedModelId: PROMOTED_MODEL,
       days: 1,
+      expectedDeclineFeePercent: HOST_DECLINE_PERCENT,
       spendType: 'green',
     });
 
@@ -566,5 +618,41 @@ describe('serving with the flag absent', () => {
     ).resolves.toBeUndefined();
     await expect(getSponsoredModel({ modelId: HOST_MODEL, features: {} })).resolves.toBeUndefined();
     expect(dbMock.dbRead.placement.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('the purchase schemas', () => {
+  const gallery = { modelId: 1, postId: 2, days: 3, expectedPrice: 50 };
+  const model = { modelId: 1, promotedModelId: 2, days: 3, expectedPrice: 50 };
+
+  it('require the decline fee the buyer was shown', () => {
+    expect(createGalleryPromotionSchema.safeParse(gallery).success).toBe(false);
+    expect(createModelPromotionSchema.safeParse(model).success).toBe(false);
+    expect(
+      createGalleryPromotionSchema.safeParse({ ...gallery, expectedDeclineFeePercent: 0 }).success
+    ).toBe(true);
+    expect(
+      createModelPromotionSchema.safeParse({ ...model, expectedDeclineFeePercent: 0 }).success
+    ).toBe(true);
+  });
+});
+
+describe('the space settings schema', () => {
+  const space = { entityType: 'user', entityId: 1, mode: 'review' } as const;
+  const issues = (input: Record<string, unknown>) => {
+    const parsed = placementSpaceSchema.safeParse({ ...space, ...input });
+    return parsed.success ? [] : parsed.error.issues.map((issue) => issue.path.join('.'));
+  };
+
+  it('takes a host decline fee on promotions only', () => {
+    expect(issues({ surface: 'galleryPromotion', declineFeePercent: 30 })).toEqual([]);
+    expect(issues({ surface: 'modelPromotion', declineFeePercent: 0 })).toEqual([]);
+    expect(issues({ surface: 'galleryPromotion', declineFeePercent: 31 })).toEqual([
+      'declineFeePercent',
+    ]);
+    expect(issues({ surface: 'sticker', declineFeePercent: 30 })).toEqual(['declineFeePercent']);
+    expect(issues({ surface: 'remixGallery', declineFeePercent: 0 })).toEqual([
+      'declineFeePercent',
+    ]);
   });
 });

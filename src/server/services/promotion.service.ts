@@ -14,7 +14,6 @@ import {
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { assertCanPlace } from '~/server/services/placement-moderation.service';
 import { resolvePlacementSpaceFor } from '~/server/services/placement-space.service';
-import { getPlacementConfig } from '~/server/services/placement.service';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -282,6 +281,11 @@ type CreatePromotionBase = {
   days: number;
   /** The daily price the buyer was shown. Refused if the host has moved it since. */
   expectedPrice?: number;
+  /**
+   * The decline fee the buyer was shown, in whole percent. Required: without it
+   * a buyer would be held to a fee they never saw.
+   */
+  expectedDeclineFeePercent: number;
   /** Decided at the router from the request's domain, never from the client. */
   spendType: BuzzSpendType;
 };
@@ -293,6 +297,7 @@ async function preparePromotion({
   modelId,
   days,
   expectedPrice,
+  expectedDeclineFeePercent,
 }: CreatePromotionBase & { surface: PromotionSurface }) {
   if (!isPromotionRunDays(days))
     throw throwBadRequestError(`promotion: runs are ${PROMOTION_RUN_DAYS.join(', ')} days`);
@@ -318,6 +323,12 @@ async function preparePromotion({
   if (expectedPrice != null && expectedPrice !== space.price)
     throw throwBadRequestError(
       `promotion: the price changed to ${space.price} Buzz a day while you were deciding`
+    );
+  if (space.hostDeclineFeePercent == null)
+    throw new Error(`promotion: ${surface} must carry a host decline fee`);
+  if (expectedDeclineFeePercent !== space.hostDeclineFeePercent)
+    throw throwBadRequestError(
+      `promotion: the decline fee changed to ${space.hostDeclineFeePercent}% while you were deciding`
     );
 
   return { space, days, dailyPrice: space.price };
@@ -390,6 +401,7 @@ async function createPromotionPlacement({
   ownerId,
   placerId,
   amount,
+  declineFeeRate,
   data,
   spendType,
 }: {
@@ -398,6 +410,7 @@ async function createPromotionPlacement({
   ownerId: number;
   placerId: number;
   amount: number;
+  declineFeeRate: number;
   data: GalleryPromotionData | ModelPromotionData;
   spendType: BuzzSpendType;
 }) {
@@ -420,7 +433,14 @@ async function createPromotionPlacement({
   });
 
   try {
-    await holdPlacementEscrow({ placementId: placement.id, placerId, surface, amount, spendType });
+    await holdPlacementEscrow({
+      placementId: placement.id,
+      placerId,
+      surface,
+      amount,
+      declineFeeRate,
+      spendType,
+    });
   } catch (error) {
     await settlePlacement({ placementId: placement.id, action: 'expire' }).catch((settleError) =>
       logToAxiom({
@@ -457,6 +477,7 @@ export async function createGalleryPromotion({
     ownerId: space.ownerId,
     placerId: input.placerId,
     amount: promotionAmount(dailyPrice, days),
+    declineFeeRate: space.declineFeeRate,
     data: { postId, days, modelVersionIds, imageIds },
     spendType: input.spendType,
   });
@@ -483,6 +504,7 @@ export async function createModelPromotion({
     ownerId: space.ownerId,
     placerId: input.placerId,
     amount: promotionAmount(dailyPrice, days),
+    declineFeeRate: space.declineFeeRate,
     data: { modelId: promotedModelId, days },
     spendType: input.spendType,
   });
@@ -729,20 +751,20 @@ async function promotionQuote({
   }).catch(() => null);
   if (!space || space.mode !== 'review' || space.price == null) return null;
   if (space.price < PLACEMENT_SURFACES[surface].serverMinPrice) return null;
+  if (space.hostDeclineFeePercent == null) return null;
 
-  const config = await getPlacementConfig();
-  const rate = config.declineFeeRate(surface);
   const dailyPrice = space.price;
   return {
     ownerId: space.ownerId,
     ownerUsername: space.ownerUsername,
     dailyPrice,
+    declineFeePercent: space.hostDeclineFeePercent,
     // Amounts, not a rate: the fee floors at 1 Buzz, so a client multiplying a
     // percentage would be wrong on a cheap run.
     declineFees: Object.fromEntries(
       PROMOTION_RUN_DAYS.map((days) => [
         days,
-        declineFeeAmount(promotionAmount(dailyPrice, days), rate),
+        declineFeeAmount(promotionAmount(dailyPrice, days), space.declineFeeRate),
       ])
     ) as Record<PromotionRunDays, number>,
   };

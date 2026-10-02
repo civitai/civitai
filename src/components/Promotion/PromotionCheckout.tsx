@@ -17,12 +17,16 @@ export function PromotionCheckout({
   loading,
   onBuy,
 }: {
-  quote: { dailyPrice: number; declineFees: Record<PromotionRunDays, number> } | null;
+  quote: {
+    dailyPrice: number;
+    declineFeePercent: number;
+    declineFees: Record<PromotionRunDays, number>;
+  } | null;
   days: PromotionRunDays;
   onDaysChange: (days: PromotionRunDays) => void;
   disabled?: boolean;
   loading?: boolean;
-  onBuy: (expectedPrice: number) => void;
+  onBuy: (expected: { expectedPrice: number; expectedDeclineFeePercent: number }) => void;
 }) {
   const spendTypes = useAvailableBuzz();
   const total = quote ? promotionAmount(quote.dailyPrice, days) : 0;
@@ -46,8 +50,10 @@ export function PromotionCheckout({
       {quote && (
         <Text size="sm" c="dimmed">
           {quote.dailyPrice} Buzz a day, {total} Buzz in total. The run starts when the page owner
-          accepts. If they decline, they keep {quote.declineFees[days]} Buzz and the rest comes
-          back.
+          accepts.{' '}
+          {quote.declineFees[days] > 0
+            ? `If they decline, they keep ${quote.declineFeePercent}% (${quote.declineFees[days]} Buzz) and the rest comes back.`
+            : 'If they decline, all of it comes back.'}
         </Text>
       )}
 
@@ -69,9 +75,15 @@ export function PromotionCheckout({
           label="Promote"
           disabled={disabled || !quote}
           loading={loading}
-          // The daily price this render showed travels with the purchase, so the
-          // server refuses rather than charging a number the buyer never saw.
-          onPerformTransaction={() => quote && onBuy(quote.dailyPrice)}
+          // The terms this render showed travel with the purchase, so the server
+          // refuses rather than charging terms the buyer never saw.
+          onPerformTransaction={() =>
+            quote &&
+            onBuy({
+              expectedPrice: quote.dailyPrice,
+              expectedDeclineFeePercent: quote.declineFeePercent,
+            })
+          }
         />
       </Group>
     </Stack>

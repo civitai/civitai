@@ -20,7 +20,6 @@ vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction,
 }));
 
-
 // Wholesale on purpose: the real module loads `base.reward`, which builds a
 // ClickHouse client, redis handles and prom collectors at import time. The
 // reward's own behaviour is tested in stickerPlacementAccepted.reward.test.ts;
@@ -94,7 +93,6 @@ const legKey = (placementId: number, kind: string) => `${placementId}:${kind}`;
 
 const queryRaw = vi.fn(async () => [] as { id: number }[]);
 const txCommits: string[][] = [];
-
 
 Object.assign(dbWriteMock, {
   // Interactive transaction: the callback gets the same client. Good enough to
@@ -606,6 +604,77 @@ describe('holding the escrow', () => {
     ).rejects.toThrow(/non-negative integer/);
     expect(moneyMoved()).toBe(0);
   });
+});
+
+describe('a decline fee the host sets', () => {
+  const promotion = () =>
+    givenPlacement({ surface: 'galleryPromotion', targetType: 'model', targetId: 5 });
+  const holdPromotion = (declineFeeRate?: number) =>
+    holdPlacementEscrow({
+      spendType: 'yellow',
+      placementId: 1,
+      placerId: PLACER,
+      surface: 'galleryPromotion',
+      amount: 1000,
+      declineFeeRate,
+    });
+
+  it('sizes the fee hold from the host rate, not the operator rate', async () => {
+    promotion();
+    await holdPromotion(0.2);
+    expect(legsFor(1)).toEqual({ holdFee: 200, holdPrincipal: 800 });
+  });
+
+  // The snapshot. The hold is taken at purchase, so a host who raises their fee
+  // (or an operator who retunes) afterwards cannot change what this decline pays.
+  it('pays a decline exactly what was held at purchase', async () => {
+    promotion();
+    await holdPromotion(0.2);
+    storedRate(0.5);
+
+    await settlePlacement({ placementId: 1, action: 'decline', actorId: OWNER });
+
+    expect(legsFor(1)).toMatchObject({ feeToOwner: 200, principalToPlacer: 800 });
+  });
+
+  it('holds no fee at 0%, so a decline returns everything', async () => {
+    promotion();
+    await holdPromotion(0);
+    expect(legsFor(1)).toEqual({ holdPrincipal: 1000 });
+
+    await settlePlacement({ placementId: 1, action: 'decline', actorId: OWNER });
+    expect(legsFor(1)).not.toHaveProperty('feeToOwner');
+    expect(legsFor(1)).toMatchObject({ principalToPlacer: 1000 });
+  });
+
+  it.each([
+    ['no rate', undefined],
+    ['a rate above the host range', 0.31],
+    ['a negative rate', -0.1],
+  ])('refuses a promotion hold with %s, before touching the row', async (_label, rate) => {
+    const placement = promotion();
+    await expect(holdPromotion(rate)).rejects.toThrow("needs the host's decline fee");
+    expect(moneyMoved()).toBe(0);
+    expect(placement.expiresAt).toBeNull();
+  });
+
+  it.each(['sticker', 'remixGallery'] as const)(
+    'refuses a caller-supplied rate on %s, whose fee is fixed',
+    async (surface) => {
+      givenPlacement({ surface });
+      await expect(
+        holdPlacementEscrow({
+          spendType: 'yellow',
+          placementId: 1,
+          placerId: PLACER,
+          surface,
+          amount: 1000,
+          declineFeeRate: 0.3,
+        })
+      ).rejects.toThrow('is fixed');
+      expect(moneyMoved()).toBe(0);
+    }
+  );
 });
 
 describe('settling', () => {

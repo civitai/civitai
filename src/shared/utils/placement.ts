@@ -193,6 +193,7 @@ export const PLACEMENT_SURFACES = {
     trackMinPrice: 50,
     serverMinPrice: 50,
     defaultDeclineFeeRate: 0.3,
+    hostDeclineFeePercent: null,
     defaultSellerShare: 0,
     // The whole payment reaches the space owner, and the place button says so.
     // Changing this makes that copy false — change both or neither.
@@ -224,6 +225,7 @@ export const PLACEMENT_SURFACES = {
     trackMinPrice: 50,
     serverMinPrice: 50,
     defaultDeclineFeeRate: 0.3,
+    hostDeclineFeePercent: null,
     defaultSellerShare: 0,
     // Zero for launch: the whole payment reaches the creator. Unlike the sticker
     // surface, no copy hardcodes that — the submit card reads `ownerShare` and
@@ -253,7 +255,8 @@ export const PLACEMENT_SURFACES = {
     defaultPrice: 100,
     trackMinPrice: 50,
     serverMinPrice: 50,
-    defaultDeclineFeeRate: 0.3,
+    defaultDeclineFeeRate: 0,
+    hostDeclineFeePercent: { min: 0, max: 30 },
     defaultSellerShare: 0,
     defaultPlatformShare: 0,
     expiryHours: 48,
@@ -274,7 +277,8 @@ export const PLACEMENT_SURFACES = {
     defaultPrice: 100,
     trackMinPrice: 50,
     serverMinPrice: 50,
-    defaultDeclineFeeRate: 0.3,
+    defaultDeclineFeeRate: 0,
+    hostDeclineFeePercent: { min: 0, max: 30 },
     defaultSellerShare: 0,
     defaultPlatformShare: 0,
     expiryHours: 48,
@@ -303,6 +307,12 @@ export const PLACEMENT_SURFACES = {
      */
     serverMinPrice: number;
     defaultDeclineFeeRate: number;
+    /**
+     * The whole-percent range a host may set the decline fee to on their own
+     * space, or `null` when the surface's fee is fixed by the platform. A fixed
+     * surface refuses a host value where it is stored AND where it is charged.
+     */
+    hostDeclineFeePercent: { min: number; max: number } | null;
     defaultSellerShare: number;
     defaultPlatformShare: number;
     expiryHours: number;
@@ -909,7 +919,10 @@ export function placementOutcomeFromStatus(
  */
 export function declineFeeAmount(amount: number, rate: number) {
   if (rate <= 0 || amount <= 0) return 0;
-  return Math.min(amount, Math.max(1, Math.floor(amount * rate)));
+  // Rounded before flooring: `100 * 0.29` is 28.999999999999996, so a host's 29%
+  // would keep 28. No fee at 0.3 moves (checked to 1M Buzz).
+  const exact = Math.round(amount * rate * 1e4) / 1e4;
+  return Math.min(amount, Math.max(1, Math.floor(exact)));
 }
 
 /**
@@ -946,3 +959,46 @@ export const clampDeclineFeeRate = (rate: number | null | undefined, fallback: n
   const value = typeof rate === 'number' && Number.isFinite(rate) ? rate : fallback;
   return Math.min(Math.max(value, MIN_DECLINE_FEE_RATE), MAX_DECLINE_FEE_RATE);
 };
+
+/** The key in a space's `settings` that holds the host's decline fee, in whole percent. */
+export const HOST_DECLINE_FEE_SETTING = 'declineFeePercent';
+
+export const isDeclineFeeHostAdjustable = (surface: PlacementSurface) =>
+  PLACEMENT_SURFACES[surface].hostDeclineFeePercent != null;
+
+/**
+ * Why a host may not save this decline fee, or `null` when they may. `null` as
+ * the value is a reset to the surface default, allowed only where a host has a
+ * setting to reset.
+ */
+export function hostDeclineFeePercentRefusal(surface: PlacementSurface, percent: unknown) {
+  const range = PLACEMENT_SURFACES[surface].hostDeclineFeePercent;
+  if (!range) return `The decline fee on ${placementSurfaceLabel(surface)} is fixed`;
+  if (percent === null) return null;
+  if (
+    typeof percent !== 'number' ||
+    !Number.isSafeInteger(percent) ||
+    percent < range.min ||
+    percent > range.max
+  )
+    return `The decline fee must be a whole percent from ${range.min} to ${range.max}`;
+  return null;
+}
+
+/**
+ * What a host-adjustable space keeps on a decline, in whole percent, from its
+ * resolved settings. Clamped rather than refused: the column is editable by hand,
+ * and a bad stored value must not close the space.
+ */
+export function resolveHostDeclineFeePercent(
+  surface: PlacementSurface,
+  settings: PlacementSpaceSettings | undefined
+) {
+  const range = PLACEMENT_SURFACES[surface].hostDeclineFeePercent;
+  if (!range) throw new Error(`placement: the decline fee on ${surface} is not host-adjustable`);
+
+  const stored = settings?.[HOST_DECLINE_FEE_SETTING];
+  if (typeof stored !== 'number' || !Number.isSafeInteger(stored))
+    return Math.round(PLACEMENT_SURFACES[surface].defaultDeclineFeeRate * 100);
+  return Math.min(Math.max(stored, range.min), range.max);
+}
