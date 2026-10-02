@@ -175,6 +175,7 @@ function PromotionSurfaceSettings({
           onChange={setDeclineFee}
           onChangeEnd={commitDeclineFee}
           label={(value) => `${value}%`}
+          thumbLabel={`${COPY[surface].title}: kept if you decline`}
           marks={[0, 10, 20, 30].map((value) => ({ value, label: `${value}%` }))}
           mb="md"
         />

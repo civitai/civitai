@@ -50,7 +50,7 @@ export const sponsoredBrowsingLevel = ({
 
 /** What a buyer is told a decline costs them, from the host's percent and the fee in Buzz. */
 export const promotionDeclineTerms = (percent: number, fee: number) =>
-  percent > 0 && fee > 0
+  fee > 0
     ? `If they decline, they keep ${percent}% (${fee} Buzz) and the rest comes back.`
     : 'If they decline, all of it comes back.';
 
