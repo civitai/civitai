@@ -22,7 +22,7 @@ export default function FormGraphDemoPage() {
       <IsClient>
         {/* the resource-select components the bespoke slots will host read this
             context — mounted here the way GenerationTabs mounts it for v1 */}
-        {/* queue state + rate limiting for the footer, same as GenerationTabs */}
+        {/* queue state + rate limiting for the footer, as FormGraphGenerator mounts it */}
         <GenerationProvider>
           <ResourceDataProvider>
             <BaseGenerationForm />
