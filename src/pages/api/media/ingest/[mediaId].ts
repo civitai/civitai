@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
+import { matchesConfiguredSecret } from '~/server/utils/configured-secret';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { dbRead } from '~/server/db/client';
 import { createImageIngestionRequest } from '~/server/services/orchestrator/orchestrator.service';
@@ -29,7 +30,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const tokenAuthed = !!req.query.token && req.query.token === env.WEBHOOK_TOKEN;
+  const tokenAuthed = matchesConfiguredSecret(req.query.token, env.WEBHOOK_TOKEN);
   if (!tokenAuthed) {
     const session = await getServerAuthSession({ req, res });
     if (!session?.user?.isModerator || session.user.bannedAt) {
