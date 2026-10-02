@@ -1,7 +1,6 @@
-import { sql } from '@civitai/db/kysely';
-import { articleModerationFloorText } from '@civitai/shared/rated-entity-sql';
 import { dbRead, dbWrite } from './db';
 import { recordModActivity } from './mod-activity';
+import { computeArticleDerivedNsfwLevel } from './rated-entity-derivation';
 import { ReportStatus, type RatingReviewStatusFilter } from '$lib/article-rating-review';
 import type { MediaType } from '$lib/media/edge-url';
 
@@ -166,43 +165,6 @@ export async function getArticleRatingReviewCounts(): Promise<RatingReviewCounts
   return counts;
 }
 
-// dbRead is safe here — the resolve write doesn't touch the image/report state this reads.
-export async function computeArticleDerivedNsfwLevel(articleId: number): Promise<number | null> {
-  const result = await sql<{ derived: number | null }>`
-    WITH level AS (
-      SELECT
-        a.id,
-        GREATEST(
-          COALESCE(max(cover."nsfwLevel"), 0),
-          COALESCE(max(content_imgs."nsfwLevel"), 0)
-        ) AS "nsfwLevel"
-      FROM "Article" a
-      LEFT JOIN "Image" cover
-        ON a."coverId" = cover.id
-        AND cover."ingestion" = 'Scanned'
-      LEFT JOIN "ImageConnection" ic
-        ON ic."entityId" = a.id
-        AND ic."entityType" = 'Article'
-      LEFT JOIN "Image" content_imgs
-        ON ic."imageId" = content_imgs.id
-        AND content_imgs."ingestion" = 'Scanned'
-      WHERE a.id = ${articleId}
-      GROUP BY a.id
-    ),
-    moderation_floor AS (
-      SELECT a.id, ${sql.raw(articleModerationFloorText('a.id'))} AS "floor"
-      FROM "Article" a
-      WHERE a.id = ${articleId}
-    )
-    SELECT GREATEST(level."nsfwLevel", mf."floor") AS derived
-    FROM level
-    JOIN moderation_floor mf ON mf.id = level.id
-  `.execute(dbRead);
-
-  if (result.rows.length === 0) return null;
-  return result.rows[0]?.derived ?? 0;
-}
-
 export type ResolveResult = {
   articleId: number;
   ownerUserId: number;
@@ -256,7 +218,7 @@ export async function resolveArticleRatingReview(input: {
     const locked = new Set<string>(article?.lockedProperties ?? []);
     locked.add('userNsfwLevel');
 
-    const basis = (await computeArticleDerivedNsfwLevel(review.articleId)) ?? 0;
+    const basis = (await computeArticleDerivedNsfwLevel(trx, review.articleId)) ?? 0;
 
     await trx
       .updateTable('Article')
