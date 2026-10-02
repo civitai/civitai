@@ -76,14 +76,14 @@ describe('the scope an entry point BRANCHED on is recorded per entry point', () 
     mockResolveStoreVisibilityScope.mockResolvedValue('public-external');
     const caller = appListingsRouter.createCaller(fakeCtx({ id: 7 }) as never);
     await caller.listAvailable(listInput);
-    expect(recordStoreScopeApplied).toHaveBeenCalledWith('public-external', 'trpc-list');
+    expect(recordStoreScopeApplied).toHaveBeenCalledWith('public-external', 'trpc-list', 'public');
   });
 
   it('records `full` on the detail proc', async () => {
     mockResolveStoreVisibilityScope.mockResolvedValue('full');
     const caller = appListingsRouter.createCaller(fakeCtx({ id: 7 }) as never);
     await caller.getAppDetail({ slug: 'x' } as never);
-    expect(recordStoreScopeApplied).toHaveBeenCalledWith('full', 'trpc-detail');
+    expect(recordStoreScopeApplied).toHaveBeenCalledWith('full', 'trpc-detail', 'public');
   });
 
   it('records `none` on the reviews proc', async () => {
@@ -107,8 +107,10 @@ describe('🔴 POSITIVE CONTROL: a scope that never arrives reads as `absent`, n
       nextCursor: undefined,
     });
 
-    expect(recordStoreScopeApplied).toHaveBeenCalledWith(undefined, 'trpc-list');
-    expect(recordStoreScopeApplied).not.toHaveBeenCalledWith('none', 'trpc-list');
+    // The SCOPE is absent while the FLOOR resolved normally — the two axes are independent,
+    // which is the point of recording both on one counter.
+    expect(recordStoreScopeApplied).toHaveBeenCalledWith(undefined, 'trpc-list', 'public');
+    expect(recordStoreScopeApplied).not.toHaveBeenCalledWith('none', 'trpc-list', 'public');
   });
 
   it('detail: an absent scope still fails CLOSED (NOT_FOUND) while being recorded', async () => {
@@ -118,6 +120,6 @@ describe('🔴 POSITIVE CONTROL: a scope that never arrives reads as `absent`, n
     await expect(caller.getAppDetail({ slug: 'x' } as never)).rejects.toMatchObject({
       code: 'NOT_FOUND',
     });
-    expect(recordStoreScopeApplied).toHaveBeenCalledWith(undefined, 'trpc-detail');
+    expect(recordStoreScopeApplied).toHaveBeenCalledWith(undefined, 'trpc-detail', 'public');
   });
 });

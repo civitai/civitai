@@ -32,7 +32,9 @@ vi.mock('~/server/flipt/client', () => ({
   isFlipt: (...a: unknown[]) => mockIsFlipt(...a),
   isFliptSync: () => null,
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
+// 🔴 NO PER-FILE MOCK OF THE LOGGING CLIENT — it has a canonical shared mock registered in
+// the global setup, and `no-direct-shared-module-mock` is the ratchet that stops a new
+// direct one being added. Nothing here needs to assert on it.
 vi.mock('~/server/prom/store-scope.metrics', () => ({
   recordStoreScopeResolution: vi.fn(),
   recordStoreScopeDivergence: vi.fn(),
