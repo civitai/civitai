@@ -280,6 +280,16 @@ describe('re-seeding is non-destructive', () => {
  */
 describe('the seeded domain matches the service', () => {
   const SRC = path.resolve(__dirname, '../../..');
+  /**
+   * Every counter whose emits are funnelled through a typed wrapper. Each must appear exactly
+   * twice in each writer — the import and the one use — so an alias, a `.call`, or a second raw
+   * emit has to add an occurrence.
+   */
+  const LEDGERED_WRITERS = [
+    'appStorageOpsCounter',
+    'appStorageQuotaExceededCounter',
+    'appStorageUserQuotaUntrackedCounter',
+  ] as const;
   const SERVICE = path.join(SRC, 'server/services/apps/app-storage.service.ts');
   const service = () => fs.readFileSync(SERVICE, 'utf8');
 
@@ -343,6 +353,15 @@ describe('the seeded domain matches the service', () => {
     // two `startTimer` calls leaves both literals present — measured, it survived. A swap is
     // the same mislabel the resolver anchoring above exists to catch, on the bigger axis.
     const procedures = src.split('\nexport async function ').slice(1);
+    // 🔴 Pin the PARTITION, not just its contents. Nothing else asserts the split produced five
+    // chunks, and `export const <name> = async` is this repo's other export idiom — 556 sites
+    // across 72 service files, two of them in this very directory. Convert one procedure to it
+    // and two procedures merge into one chunk, at which point the pairing below degrades to
+    // exactly the whole-file `toContain` it replaced: measured, an arrow conversion PLUS a
+    // get/set label swap went 17/17 green, with no warning of any kind.
+    expect(procedures.length, 'the file partitions into the 5 storage procedures').toBe(
+      APP_STORAGE_OPS.length
+    );
     for (const op of APP_STORAGE_OPS) {
       const owning = procedures.filter((body) =>
         new RegExp(`resolveStorageContext\\(\\s*[^,()]+\\s*,\\s*'${op}'\\s*\\)`).test(body)
@@ -381,6 +400,7 @@ describe('the seeded domain matches the service', () => {
     const reaching: string[] = [];
     const sites: Record<string, number> = {};
     const occurrences: Record<string, number> = {};
+    const perSymbol: Record<string, Record<string, number>> = {};
     const walk = (dir: string) => {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, entry.name);
@@ -388,7 +408,7 @@ describe('the seeded domain matches the service', () => {
           if (entry.name !== 'node_modules' && entry.name !== '__tests__') walk(full);
         } else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) {
           const text = fs.readFileSync(full, 'utf8');
-          if (text.includes('appStorageOpsCounter') || text.includes(`'${OPS}'`)) {
+          if (text.includes('appStorageOpsCounter') || text.includes(OPS)) {
             const rel = path.relative(SRC, full);
             reaching.push(rel);
             sites[rel] = (
@@ -398,7 +418,11 @@ describe('the seeded domain matches the service', () => {
             // a raw count reads 4 for the service and would false-fail on a prose edit —
             // turning a guard about reachability into one about wording.
             const code = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
-            occurrences[rel] = (code.match(/\bappStorageOpsCounter\b/g) ?? []).length;
+            for (const sym of LEDGERED_WRITERS) {
+              perSymbol[sym] ??= {};
+              perSymbol[sym][rel] = (code.match(new RegExp(`\\b${sym}\\b`, 'g')) ?? []).length;
+            }
+            occurrences[rel] = perSymbol.appStorageOpsCounter[rel];
           }
         }
       }
@@ -421,10 +445,25 @@ describe('the seeded domain matches the service', () => {
     // alias or a `.call` must add to: two CODE occurrences in each writer (the import and the
     // one use), and zero in `block-token-access.service.ts` — which is in the membership set on
     // a docstring mention alone, so a first real emit there would otherwise be uncounted.
-    expect(sites['server/services/apps/app-storage.service.ts']).toBe(1);
-    expect(sites['server/prom/app-block-storage.metrics.ts']).toBe(1);
-    expect(sites['server/services/blocks/block-token-access.service.ts']).toBe(0);
-    expect(occurrences['server/services/apps/app-storage.service.ts']).toBe(2);
-    expect(occurrences['server/prom/app-block-storage.metrics.ts']).toBe(2);
+    const SERVICE_REL = 'server/services/apps/app-storage.service.ts';
+    const SEEDER_REL = 'server/prom/app-block-storage.metrics.ts';
+    expect(sites[SERVICE_REL], `${SERVICE_REL} .inc sites`).toBe(1);
+    expect(sites[SEEDER_REL], `${SEEDER_REL} .inc sites`).toBe(1);
+    expect(sites['server/services/blocks/block-token-access.service.ts'], 'comment-only file').toBe(
+      0
+    );
+
+    // 🔴 All THREE counters, not just the ops one. The asymmetry was the gap: the quota counter
+    // is the one with the alerting consumer AND the one whose typo is worse than absence, yet
+    // it had no writer ledger at all — so `countQuotaExceeded` was bypassable at any new site
+    // and invisible on both axes. Measured: a raw
+    // `appStorageQuotaExceededCounter.inc({ app_block_id: appBlockId, ceiling: 'User' })`
+    // replacing one wrapper call left typecheck at 4 errors and the suite 17/17 green, because
+    // `registerCounterWithLabels` parameterises label NAMES only — prom-client types a label
+    // VALUE as `string | number`, so skipping the helper violates no type.
+    for (const sym of LEDGERED_WRITERS) {
+      expect(perSymbol[sym]?.[SERVICE_REL], `${sym} in the service`).toBe(2);
+      expect(perSymbol[sym]?.[SEEDER_REL], `${sym} in the seeder`).toBe(2);
+    }
   });
 });
