@@ -2596,7 +2596,6 @@ const REDIS_KEYS_UNPREFIXED = {
   ARTICLE: {
     SCAN_UPDATE: 'article:scan-update',
     RESCAN: 'article:rescan',
-    RATING_REVIEW_RATE_LIMIT: 'article:nsfw-review-rate',
   },
   RATING_REVIEW: {
     /*

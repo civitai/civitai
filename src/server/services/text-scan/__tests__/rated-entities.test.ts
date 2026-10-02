@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as NotifyModule from '~/server/services/text-scan/notify';
+import type * as RatingReviewService from '~/server/services/rating-review.service';
 
 // Hand-listed: the real module builds Meilisearch clients and prom collectors at load.
 vi.mock('~/server/services/nsfwLevels.service', () => ({
@@ -13,6 +14,10 @@ vi.mock('~/server/services/text-scan/notify', async (importOriginal) => ({
   ...(await importOriginal<typeof NotifyModule>()),
   notifyTextScanRatingRaised: vi.fn(),
 }));
+vi.mock('~/server/services/rating-review.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof RatingReviewService>()),
+  maybeAutoResolveRatingDisputeAfterScan: vi.fn(),
+}));
 // Hand-listed, as in challenge-moderation-adapter.test.ts: notify.ts imports it.
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 
@@ -23,6 +28,9 @@ const { updatePostNsfwLevels, updateBountyNsfwLevels, updateBountyEntryNsfwLevel
   '~/server/services/nsfwLevels.service'
 );
 const { notifyTextScanRatingRaised } = await import('~/server/services/text-scan/notify');
+const { maybeAutoResolveRatingDisputeAfterScan } = await import(
+  '~/server/services/rating-review.service'
+);
 
 const args = (level: number, raised: boolean) => ({
   entityId: 7,
@@ -187,6 +195,28 @@ describe('applyRatingFloor', () => {
     expect(notifyTextScanRatingRaised).toHaveBeenCalledWith(
       expect.objectContaining({ url: '/bounties/3/entries/7', title: null })
     );
+  });
+});
+
+describe('applyRatingFloor → pending dispute', () => {
+  it('offers a pending dispute to the auto-approve after the floor is applied', async () => {
+    dbMock.dbWrite.post.findUnique.mockResolvedValue(post(4, { moderatorNsfwLevel: 8 }));
+    await applyRatingFloor('Post', args(2, false));
+    expect(maybeAutoResolveRatingDisputeAfterScan).toHaveBeenCalledWith('Post', 7);
+    expect(vi.mocked(updatePostNsfwLevels).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(maybeAutoResolveRatingDisputeAfterScan).mock.invocationCallOrder[0]
+    );
+  });
+
+  it('offers it even when the scan returned no nsfw verdict, since the scan is no longer in flight', async () => {
+    await applyRatingFloor('Bounty', { ...args(4, true), outcome: { triggeredLabels: [], nsfwLevel: null } });
+    expect(maybeAutoResolveRatingDisputeAfterScan).toHaveBeenCalledWith('Bounty', 7);
+  });
+
+  it('leaves an article dispute to the article ingestion hook', async () => {
+    dbMock.dbWrite.article.findUnique.mockResolvedValue(post(4));
+    await applyRatingFloor('Article', args(4, true));
+    expect(maybeAutoResolveRatingDisputeAfterScan).not.toHaveBeenCalled();
   });
 });
 

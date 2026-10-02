@@ -10,6 +10,7 @@ import {
   ratingReviewModeratorLevels,
   ratingReviewOwnerLevels,
   textScanNsfwReason,
+  textScanResultTextHash,
 } from '../rating-review';
 
 describe('rating-review constants', () => {
@@ -55,6 +56,13 @@ describe('rating-review constants', () => {
     expect(textScanNsfwReason({ labels: [{ label: 'nsfw', score: 0.9 }] })).toBeNull();
     expect(textScanNsfwReason({ labels: { nsfw: { level: 'r', reason: 'fake reason' } } })).toBeNull();
     expect(textScanNsfwReason(null)).toBeNull();
+  });
+
+  it('reads the scanned text hash only from a text-scan result', () => {
+    expect(textScanResultTextHash({ version: 1, textHash: 'h1', labels: {} })).toBe('h1');
+    expect(textScanResultTextHash({ version: 1, labels: {} })).toBeNull();
+    expect(textScanResultTextHash({ textHash: 'h1', labels: [] })).toBeNull();
+    expect(textScanResultTextHash(null)).toBeNull();
   });
 
   it('keys the notification by type and review id and renders levels per entity', () => {

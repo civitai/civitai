@@ -5,6 +5,7 @@ import {
   updateBountyNsfwLevels,
   updatePostNsfwLevels,
 } from '~/server/services/nsfwLevels.service';
+import { maybeAutoResolveRatingDisputeAfterScan } from '~/server/services/rating-review.service';
 import type { ApplyTextScanArgs } from '~/server/services/text-scan/actions/types';
 import { highestNsfwLevel } from '~/server/services/text-scan/evaluate';
 import {
@@ -91,6 +92,16 @@ export type RatingFloorResult = { deferredRatingNotice: NotifyTextScanRatingRais
 const NOTHING_DEFERRED: RatingFloorResult = { deferredRatingNotice: null };
 
 export async function applyRatingFloor(
+  entityType: RatedEntityType,
+  args: ApplyTextScanArgs
+): Promise<RatingFloorResult> {
+  const result = await raiseToFloor(entityType, args);
+  if (entityType !== 'Article')
+    await maybeAutoResolveRatingDisputeAfterScan(entityType, args.entityId);
+  return result;
+}
+
+async function raiseToFloor(
   entityType: RatedEntityType,
   { entityId, workflowId, outcome }: ApplyTextScanArgs
 ): Promise<RatingFloorResult> {

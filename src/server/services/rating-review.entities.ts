@@ -2,6 +2,7 @@ import { getHighestBrowsingLevelBit } from '@civitai/shared';
 import {
   modelRatingLevel,
   textScanNsfwReason,
+  textScanResultTextHash,
   type RatingReviewEntityType,
 } from '@civitai/shared/rating-review';
 import { isTextScanRaised } from '@civitai/shared/rated-entity-sql';
@@ -140,11 +141,6 @@ export type RatingReviewScan = {
   pending: boolean;
 };
 
-function resultTextHash(result: unknown): string | null {
-  const hash = (result as { textHash?: unknown } | null)?.textHash;
-  return typeof hash === 'string' && hash ? hash : null;
-}
-
 export async function getRatingReviewScan(
   entityType: RatingReviewEntityType,
   entityId: number
@@ -159,7 +155,7 @@ export async function getRatingReviewScan(
     raised,
     level: raised ? em.nsfwLevel : null,
     reason: raised ? textScanNsfwReason(em.result) : null,
-    textHash: resultTextHash(em.result),
+    textHash: textScanResultTextHash(em.result),
     pending: em.status === EntityModerationStatus.Pending,
   };
 }

@@ -83,6 +83,15 @@ export function textScanNsfwReason(result: unknown): string | null {
   return typeof reason === 'string' && reason.trim() ? reason : null;
 }
 
+// The hash of the text a completed scan read. A skipped or in-flight scan leaves the previous
+// one in place, so it only moves once a new verdict lands.
+export function textScanResultTextHash(result: unknown): string | null {
+  if (!result || typeof result !== 'object') return null;
+  const r = result as { version?: unknown; textHash?: unknown };
+  if (r.version == null) return null;
+  return typeof r.textHash === 'string' && r.textHash ? r.textHash : null;
+}
+
 export type RatingReviewNotificationDetails = {
   entityType: RatingReviewEntityType;
   entityId: number;
