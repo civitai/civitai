@@ -11,6 +11,7 @@ import { Flags } from '~/shared/utils/flags';
 import { emitFeedNoImagesDrop } from '~/utils/faro/feedDrop';
 import { getBlockedNsfwWords, hasNsfwWords } from '~/utils/metadata/audit-base';
 import { isDefined, paired } from '~/utils/type-guards';
+import { isViewer } from '~/utils/is-viewer';
 
 export function useApplyHiddenPreferences<
   T extends keyof BaseDataTypeMap,
@@ -196,8 +197,7 @@ export function filterPreferences<
   }
 
   const isModerator = !!currentUser?.isModerator;
-  const ownedByViewer = (userId: number | null | undefined) =>
-    !!currentUser?.id && userId === currentUser.id;
+  const ownedByViewer = (userId: number | null | undefined) => isViewer(currentUser, userId);
   const { key, value } = paired<BaseDataTypeMap>(type, data);
   const {
     hiddenModels,
