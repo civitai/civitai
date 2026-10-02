@@ -802,11 +802,15 @@ describe('askJev — fail-closed on the response', () => {
     // answers a malformed request by echoing the submitted body. So an echoed
     // prompt almost always straddles the cut: slicing first would leak a
     // 300-plus-character prefix of user text on MOST real 400s.
-    const prompt = 'SECRETPROMPTTEXT about a red sports car';
-    respond(`${'x'.repeat(390)} received "${prompt}" at state.prompt`, {
-      ok: false,
-      status: 400,
-    });
+    // 🔴 The fixture's geometry is the whole test, and the first attempt at it
+    // SURVIVED the mutation: with 390 filler chars plus ` received "`, the prompt
+    // began past char 400, so slicing first dropped it entirely and leaked
+    // nothing. The prompt must BEGIN inside the 400-char excerpt and RUN PAST it.
+    const prompt = `SECRETPROMPTTEXT about a red sports car ${'y'.repeat(100)}`;
+    const body = `${'x'.repeat(380)}${prompt} at state.prompt`;
+    expect(body.indexOf(prompt)).toBeLessThan(400);
+    expect(body.indexOf(prompt) + prompt.length).toBeGreaterThan(400);
+    respond(body, { ok: false, status: 400 });
     const err = await askJev({ state: { prompt }, questions: recordedQuestions }).then(
       () => {
         throw new Error('expected askJev to reject on a 400');
