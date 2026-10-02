@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { TRPCError } from '@trpc/server';
+import { NsfwLevel } from '~/server/common/enums';
 import { Availability } from '~/shared/utils/prisma/enums';
 
 const { mockGetPostDetail, mockRateLimit, mockIsRegionRestricted } = vi.hoisted(() => ({
@@ -118,6 +119,42 @@ describe('GET /api/v1/posts/[id]', () => {
 
     mockGetPostDetail.mockResolvedValue(post({ nsfwLevel: 1 }));
     expect((await call({ id: '55288' })).statusCode).toBe(200);
+  });
+
+  it('404s a post whose every image is Blocked', async () => {
+    mockGetPostDetail.mockResolvedValue(post({ nsfwLevel: NsfwLevel.Blocked }));
+
+    expect((await call({ id: '55288' })).statusCode).toBe(404);
+  });
+
+  it('serves a post with some Blocked images alongside viewable ones', async () => {
+    mockGetPostDetail.mockResolvedValue(post({ nsfwLevel: NsfwLevel.PG | NsfwLevel.Blocked }));
+
+    expect((await call({ id: '55288' })).statusCode).toBe(200);
+  });
+
+  it('404s an unscanned post, in every region', async () => {
+    mockGetPostDetail.mockResolvedValue(post({ nsfwLevel: 0 }));
+    expect((await call({ id: '55288' })).statusCode).toBe(404);
+
+    mockIsRegionRestricted.mockReturnValue(true);
+    expect((await call({ id: '55288' })).statusCode).toBe(404);
+  });
+
+  it('404s a post that is unpublished or scheduled, whatever the service returned', async () => {
+    mockGetPostDetail.mockResolvedValue(post({ publishedAt: null }));
+    expect((await call({ id: '55288' })).statusCode).toBe(404);
+
+    mockGetPostDetail.mockResolvedValue(post({ publishedAt: new Date(Date.now() + 60_000) }));
+    expect((await call({ id: '55288' })).statusCode).toBe(404);
+  });
+
+  it('withholds the id of a model version that is not published', async () => {
+    mockGetPostDetail.mockResolvedValue(post({ modelVersionId: 7, modelVersion: null }));
+
+    const { body } = await call({ id: '55288' });
+
+    expect(body.modelVersionId).toBeNull();
   });
 
   it('404s a private post', async () => {

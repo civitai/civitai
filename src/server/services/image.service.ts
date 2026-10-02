@@ -102,6 +102,7 @@ import {
   imageTagsCache,
   tagCache,
   tagIdsForImagesCache,
+  refreshThumbnailCache,
   thumbnailCache,
   userImageVideoCountCaches,
 } from '~/server/redis/caches';
@@ -1076,7 +1077,7 @@ export async function updateNsfwLevel(ids: number | number[]) {
   await dbWrite.$executeRawUnsafe(
     `SELECT update_nsfw_levels_new(ARRAY[${ids.join(',')}]::integer[])`
   );
-  await thumbnailCache.refresh(ids);
+  await refreshThumbnailCache(ids);
 }
 
 // Single source of truth for restoring an image's rating after it's unblocked.
@@ -7113,7 +7114,7 @@ export async function raiseOwnImageNsfwLevel({
   `;
   if (!raised) return false;
 
-  await thumbnailCache.refresh(id);
+  await refreshThumbnailCache(id);
   if (raised.postId) await updatePostNsfwLevel(raised.postId);
   await updateModel3DNsfwLevelForThumbnailImage({ imageId: id, postId: raised.postId });
   await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Update });
@@ -7841,8 +7842,7 @@ export async function queueImageSearchIndexUpdate({
   await imagesMetricsSearchIndex.queueUpdate(ids.map((id) => ({ id, action })));
 
   if (action === SearchIndexUpdateQueueAction.Delete) {
-    // Bust the thumbnail cache for deleted images
-    await thumbnailCache.refresh(ids);
+    await refreshThumbnailCache(ids);
     // Remove the image from the knights of new order pool counters
     await Promise.all([
       ...poolCounters.Knight.a.map((queue) => queue.reset({ id: ids })),

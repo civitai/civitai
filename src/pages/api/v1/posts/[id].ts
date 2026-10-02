@@ -6,7 +6,10 @@ import { getPostDetail } from '~/server/services/post.service';
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { checkPublicApiRateLimit } from '~/server/utils/public-api-rate-limit';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
-import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
@@ -16,8 +19,12 @@ import { TRPCError } from '@trpc/server';
  *
  * Always evaluated as anonymous, so the response is a function of id + region only and the
  * `MixedAuthEndpoint` public cache stays leak-free. Maturity follows `/api/v1/model-versions/[id]`:
- * every level is served, except in a restricted region, where a post with any non-SFW level is a
- * 404. The 404 is answered here, not by `handleEndpointError`, so the edge can absorb it.
+ * any browsable level is served (never unscanned or Blocked-only), except in a restricted region,
+ * where a post with any non-SFW level is a 404. The 404 is answered here, not by
+ * `handleEndpointError`, so the edge can absorb it.
+ *
+ * Published + scanned is re-checked here rather than trusted from `getPostDetail`, whose
+ * collection-judge branch can return posts that are neither.
  */
 
 export const schema = z.object({ id: z.coerce.number().int().gt(0).lte(2147483647) });
@@ -44,9 +51,11 @@ export default MixedAuthEndpoint(async function handler(
   try {
     const post = await getPostDetail({ id });
 
-    if (post.availability === Availability.Private) return notFound();
-    if (isRegionRestricted(getRegion(req)) && !Flags.hasFlag(sfwBrowsingLevelsFlag, post.nsfwLevel))
-      return notFound();
+    const published = !!post.publishedAt && post.publishedAt <= new Date();
+    const browsable = isRegionRestricted(getRegion(req))
+      ? !!post.nsfwLevel && Flags.hasFlag(sfwBrowsingLevelsFlag, post.nsfwLevel)
+      : Flags.intersects(post.nsfwLevel, allBrowsingLevelsFlag);
+    if (!published || !browsable || post.availability === Availability.Private) return notFound();
 
     return res.status(200).json({
       id: post.id,
@@ -54,7 +63,7 @@ export default MixedAuthEndpoint(async function handler(
       detail: post.detail,
       nsfwLevel: post.nsfwLevel,
       publishedAt: post.publishedAt,
-      modelVersionId: post.modelVersionId,
+      modelVersionId: post.modelVersion?.id ?? null,
       user: { id: post.user.id, username: post.user.username },
       tags: post.tags.map((tag) => ({ id: tag.id, name: tag.name })),
     });

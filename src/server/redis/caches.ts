@@ -1468,6 +1468,20 @@ export const thumbnailCache = createCachedObject<{
   ttl: CacheTTL.day,
 });
 
+/** The cache is keyed by video id, so a change to a thumbnail image must refresh its parent video. */
+export async function refreshThumbnailCache(imageIds: number | number[]) {
+  const ids = Array.isArray(imageIds) ? imageIds : [imageIds];
+  if (!ids.length) return;
+
+  const parents = await dbWrite.$queryRaw<{ parentId: number | null }[]>`
+    SELECT cast(metadata->'parentId' as int) as "parentId"
+    FROM "Image"
+    WHERE id IN (${Prisma.join(ids)})
+  `;
+  const parentIds = parents.map((x) => x.parentId).filter(isDefined);
+  await thumbnailCache.refresh([...new Set([...ids, ...parentIds])]);
+}
+
 type ArticleStatLookup = {
   articleId: number;
   favoriteCount: number;

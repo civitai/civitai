@@ -1,5 +1,6 @@
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import { MediaType } from '~/shared/utils/prisma/enums';
 
@@ -38,7 +39,9 @@ export function getPublicVideoThumbnail({
 }): PublicVideoThumbnail | null {
   if (image.type !== MediaType.video) return null;
 
-  if (customThumbnail?.nsfwLevel && Flags.intersects(customThumbnail.nsfwLevel, browsingLevel)) {
+  // The public endpoint passes the caller's raw `browsingLevel`, which can include Blocked.
+  const allowed = Flags.intersection(browsingLevel, allBrowsingLevelsFlag);
+  if (customThumbnail?.nsfwLevel && Flags.intersects(customThumbnail.nsfwLevel, allowed)) {
     return {
       url: getEdgeUrl(customThumbnail.url, {
         original: false,

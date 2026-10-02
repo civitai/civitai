@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { getPublicVideoThumbnail } from '~/server/utils/public-video-thumbnail';
+import { NsfwLevel } from '~/server/common/enums';
 import { MediaType } from '~/shared/utils/prisma/enums';
 
 const video = {
@@ -54,7 +55,9 @@ describe('getPublicVideoThumbnail', () => {
     const thumbnail = getPublicVideoThumbnail({ image: video, customThumbnail, browsingLevel: 1 });
 
     expect(thumbnail).toEqual({ url: expect.any(String), width: 832, height: 1216 });
-    expect(thumbnail!.url).toMatch(/(^|\/)thumb-uuid\/original=false,optimized=true\/thumb-uuid\.jpeg$/);
+    expect(thumbnail!.url).toMatch(
+      /(^|\/)thumb-uuid\/original=false,optimized=true\/thumb-uuid\.jpeg$/
+    );
   });
 
   it('serves the frame instead of a custom thumbnail rated above the browsing level', () => {
@@ -66,6 +69,16 @@ describe('getPublicVideoThumbnail', () => {
 
     expect(thumbnail!.url).toMatch(/(^|\/)video-uuid\//);
     expect(thumbnail!.width).toBe(1280);
+  });
+
+  it('never serves a Blocked custom thumbnail, even when the caller asks for the Blocked level', () => {
+    const thumbnail = getPublicVideoThumbnail({
+      image: video,
+      customThumbnail: { ...customThumbnail, nsfwLevel: NsfwLevel.Blocked },
+      browsingLevel: 63,
+    });
+
+    expect(thumbnail!.url).toMatch(/(^|\/)video-uuid\//);
   });
 
   it('serves the frame instead of an unrated custom thumbnail', () => {
