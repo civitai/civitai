@@ -811,7 +811,9 @@ async function payoutLegsFor(
       const split = splitPlacementPayment({
         amount: fee + principal,
         outcome,
-        declineFeeRate: config.declineFeeRate(placement.surface as PlacementSurface),
+        // An approval never reads the decline rate, and a host-set surface has no
+        // operator rate to ask for.
+        declineFeeRate: 0,
         sellerShare: shares.seller,
         platformShare: shares.platform,
       });

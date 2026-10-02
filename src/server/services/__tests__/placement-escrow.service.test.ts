@@ -282,7 +282,12 @@ Object.assign(dbWriteMock, {
 const configState = { rate: 0.3, shares: { seller: 0, platform: 0.3 } };
 vi.mock('~/server/services/placement.service', () => ({
   getPlacementConfig: async () => ({
-    declineFeeRate: () => configState.rate,
+    // Refuses host-set surfaces, as the real accessor does.
+    declineFeeRate: (surface: string) => {
+      if (surface === 'galleryPromotion' || surface === 'modelPromotion')
+        throw new Error(`config asked for ${surface}'s decline rate`);
+      return configState.rate;
+    },
     expiryHours: () => 48,
     priceCapTiers: () => [],
     approvalShares: () => configState.shares,
@@ -635,6 +640,13 @@ describe('a decline fee the host sets', () => {
     await settlePlacement({ placementId: 1, action: 'decline', actorId: OWNER });
 
     expect(legsFor(1)).toMatchObject({ feeToOwner: 200, principalToPlacer: 800 });
+  });
+
+  it('settles an approval without asking anyone for a decline rate', async () => {
+    promotion();
+    await holdPromotion(0.2);
+    await settlePlacement({ placementId: 1, action: 'approve', actorId: OWNER });
+    expect(legsFor(1)).toMatchObject({ toOwner: 700, toPlatform: 300 });
   });
 
   it('holds no fee at 0%, so a decline returns everything', async () => {

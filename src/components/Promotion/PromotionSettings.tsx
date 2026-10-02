@@ -169,6 +169,9 @@ function PromotionSurfaceSettings({
           max={declineRange.max}
           step={1}
           value={declineFee}
+          // The save resends `mode`, which reads the surface default until the
+          // stored row loads — releasing early would reopen a space turned off.
+          disabled={!spaces}
           onChange={setDeclineFee}
           onChangeEnd={commitDeclineFee}
           label={(value) => `${value}%`}

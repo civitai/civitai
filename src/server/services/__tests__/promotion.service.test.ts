@@ -41,7 +41,13 @@ const resolvePlacementSpaceFor = vi.fn();
 vi.mock('~/server/services/placement-space.service', () => ({ resolvePlacementSpaceFor }));
 
 vi.mock('~/server/services/placement.service', () => ({
-  getPlacementConfig: async () => ({ declineFeeRate: () => 0.3 }),
+  // The real accessor refuses promotion surfaces; a quote that asked it would
+  // be reading a second, different rate.
+  getPlacementConfig: async () => ({
+    declineFeeRate: () => {
+      throw new Error('promotion asked the operator config for its decline rate');
+    },
+  }),
 }));
 
 vi.mock('~/server/services/creator-gallery-hidden-users.service', () => ({
@@ -57,6 +63,7 @@ const {
   actOnPromotion,
   createGalleryPromotion,
   createModelPromotion,
+  getModelPromotionOffer,
   getSponsoredGalleryPost,
   getSponsoredModel,
   hostPromotionLevel,
@@ -406,6 +413,57 @@ describe('createGalleryPromotion', () => {
       } as unknown as Parameters<typeof createGalleryPromotion>[0])
     ).rejects.toThrow('decline fee changed');
     expect(dbMock.dbWrite.placement.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('the checkout quote', () => {
+  const offer = () => getModelPromotionOffer({ modelId: HOST_MODEL, placerId: PLACER });
+
+  it('quotes the host percent and what it keeps for each run length', async () => {
+    expect(await offer()).toMatchObject({
+      open: true,
+      dailyPrice: DAILY_PRICE,
+      declineFeePercent: HOST_DECLINE_PERCENT,
+      declineFees: { 1: 14, 3: 42, 7: 98 },
+    });
+  });
+
+  it('quotes nothing kept for a 0% host', async () => {
+    resolvePlacementSpaceFor.mockResolvedValue({
+      ownerId: OWNER,
+      mode: 'review',
+      price: DAILY_PRICE,
+      hostDeclineFeePercent: 0,
+      declineFeeRate: 0,
+    });
+    expect(await offer()).toMatchObject({
+      open: true,
+      declineFeePercent: 0,
+      declineFees: { 1: 0, 3: 0, 7: 0 },
+    });
+  });
+});
+
+describe('createModelPromotion', () => {
+  it('holds at the host rate the buyer was shown', async () => {
+    await createModelPromotion({
+      placerId: PLACER,
+      modelId: HOST_MODEL,
+      promotedModelId: PROMOTED_MODEL,
+      days: 7,
+      expectedPrice: DAILY_PRICE,
+      expectedDeclineFeePercent: HOST_DECLINE_PERCENT,
+      spendType: 'green',
+    });
+    expect(holdPlacementEscrow).toHaveBeenCalledTimes(1);
+    expect(holdPlacementEscrow).toHaveBeenCalledWith({
+      placementId: PLACEMENT,
+      placerId: PLACER,
+      surface: 'modelPromotion',
+      amount: DAILY_PRICE * 7,
+      declineFeeRate: HOST_DECLINE_PERCENT / 100,
+      spendType: 'green',
+    });
   });
 });
 

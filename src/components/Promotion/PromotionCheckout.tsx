@@ -3,7 +3,12 @@ import { IconAlertTriangle } from '@tabler/icons-react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import type { PromotionRunDays } from '~/shared/utils/promotion';
-import { promotionAmount, promotionRunLabel, PROMOTION_RUN_DAYS } from '~/shared/utils/promotion';
+import {
+  promotionAmount,
+  promotionDeclineTerms,
+  promotionRunLabel,
+  PROMOTION_RUN_DAYS,
+} from '~/shared/utils/promotion';
 
 export const PROMOTION_CHECKOUT_TERMS =
   "Once the page owner accepts, your Buzz is theirs, and they can't end your promotion early. Promotions are not refunded if moderation removes them, or if you change or remove what you promoted.";
@@ -50,10 +55,7 @@ export function PromotionCheckout({
       {quote && (
         <Text size="sm" c="dimmed">
           {quote.dailyPrice} Buzz a day, {total} Buzz in total. The run starts when the page owner
-          accepts.{' '}
-          {quote.declineFees[days] > 0
-            ? `If they decline, they keep ${quote.declineFeePercent}% (${quote.declineFees[days]} Buzz) and the rest comes back.`
-            : 'If they decline, all of it comes back.'}
+          accepts. {promotionDeclineTerms(quote.declineFeePercent, quote.declineFees[days])}
         </Text>
       )}
 

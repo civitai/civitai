@@ -400,6 +400,34 @@ describe('the host decline fee', () => {
     }
   );
 
+  it('drops a fee key from a sticker row on save, whatever is stored', async () => {
+    spaceFindUnique.mockResolvedValue({ price: 100, settings: { declineFeePercent: 15 } });
+    await setPlacementSpace({ ...base, mode: 'review', settings: { maxScale: 0.5 } });
+    expect(settingsWritten()).toEqual({ maxScale: 0.5 });
+  });
+
+  it('keeps the other settings keys on a fee-only save', async () => {
+    spaceFindUnique.mockResolvedValue({ price: 100, settings: { contentRule: 'any' } });
+    await setPlacementSpace({ ...promotion, mode: 'review', declineFeePercent: 10 });
+    expect(settingsWritten()).toEqual({ contentRule: 'any', declineFeePercent: 10 });
+  });
+
+  // The default every promotion host starts on, at the layer that sizes the hold.
+  it('resolves a promotion host who never chose to 0%, holding nothing', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue({ userId: OWNER, user: { username: 'h' } });
+    spaceFindMany.mockResolvedValue([
+      { entityType: 'user', mode: 'review', price: 200, freeSlots: null, settings: {} },
+    ]);
+    const space = await resolvePlacementSpaceFor({
+      surface: 'modelPromotion',
+      targetType: 'model',
+      targetId: 1,
+    });
+    expect([space.hostDeclineFeePercent, space.declineFeeRate, space.declineFee]).toEqual([
+      0, 0, 0,
+    ]);
+  });
+
   it('resolves a promotion space to the host fee, and a sticker space to 30%', async () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue({ userId: OWNER, user: { username: 'h' } });
     spaceFindMany.mockResolvedValue([

@@ -432,7 +432,8 @@ export const placementQueueKeyset = (cursor: PlacementQueueCursor | null) =>
 /**
  * Settings a surface owns and the foundation only carries. Sticker placement
  * keeps a max size in here; a remix gallery will keep something else. Nothing in
- * this layer reads inside it.
+ * this layer reads inside it, except `HOST_DECLINE_FEE_SETTING` on a surface
+ * whose host sets its decline fee.
  */
 export type PlacementSpaceSettings = Record<string, unknown>;
 
