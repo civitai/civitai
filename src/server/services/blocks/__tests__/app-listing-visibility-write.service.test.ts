@@ -49,7 +49,6 @@ vi.mock('~/server/services/blocks/app-access.service', () => ({
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import {
-  setListingVisibilityAsModerator,
   setListingVisibilityAsOwner,
   VISIBILITY_BLOCK_SUSPENDED_MESSAGE,
   VISIBILITY_EXCEEDS_REVIEW_CEILING_MESSAGE,
@@ -57,9 +56,9 @@ import {
   VISIBILITY_STATUS_INELIGIBLE_MESSAGE,
 } from '~/server/services/blocks/app-listing-visibility-write.service';
 import { VISIBILITY_UNAVAILABLE_MESSAGE } from '~/server/services/blocks/app-listing-visibility.service';
+import { maxVisibilityForStatus } from '~/shared/utils/app-listing-visibility';
 
 const listing = dbMock.dbWrite.appListing;
-const events = dbMock.dbWrite.appListingModerationEvent;
 
 /** The row the status read returns. Set per case. */
 let row: Record<string, unknown> | null;
@@ -88,7 +87,6 @@ function installDefaults() {
     return row ? { id: 'apl_1' } : null;
   });
   listing.updateMany.mockImplementation(async () => ({ count: 1 }));
-  events.create.mockImplementation(async () => ({ id: 'alme_1' }));
   // 🔴 THE TRANSACTION RUNS ITS CALLBACK. A `$transaction` fake that resolves without
   // invoking the callback would make every write assertion below vacuous while every test
   // stayed green — the write simply would not happen.
@@ -163,7 +161,6 @@ describe('the OWNER path — authorization', () => {
     // edit; attributing a moderation event to them would put owner actions into the
     // moderator audit trail and corrupt the `set-visibility` population.
     await setListingVisibilityAsOwner({ appListingId: 'apl_1', visibility: 'testers', userId: 9 });
-    expect(events.create).not.toHaveBeenCalled();
   });
 });
 
@@ -181,19 +178,15 @@ describe('D1 — the status gate', () => {
     }
   );
 
-  it('[INV] a MODERATOR is NOT exempt from the status gate', async () => {
+  it('[INV] a `removed` listing is refused even with a role on it', async () => {
     // D1 is a decision about which listings carry a level, not about who may set one. A
-    // taken-down listing's only path is private-run, for everyone.
+    // taken-down listing's only path is private-run, for everyone — including, when the
+    // deferred moderator proc lands, a moderator.
     row = { id: 'apl_1', slug: 'an-app', status: 'removed', appBlock: null };
     await expect(
-      setListingVisibilityAsModerator({
-        appListingId: 'apl_1',
-        visibility: 'public',
-        moderatorUserId: 3,
-      })
+      setListingVisibilityAsOwner({ appListingId: 'apl_1', visibility: 'public', userId: 9 })
     ).rejects.toThrow(VISIBILITY_STATUS_INELIGIBLE_MESSAGE);
     expect(listing.updateMany).not.toHaveBeenCalled();
-    expect(events.create).not.toHaveBeenCalled();
   });
 
   it('[INV] a SUSPENDED backing block is refused even when the listing status is fine', async () => {
@@ -249,19 +242,14 @@ describe('the REVIEW CEILING', () => {
     }
   );
 
-  it('[NEW] a MODERATOR is NOT exempt from the review ceiling', async () => {
-    // The ceiling is a property of what has been REVIEWED, not of who is asking. A
-    // moderator who wants a draft public approves it rather than relabelling it — otherwise
-    // the level becomes a second, unaudited approval path.
-    row = { id: 'apl_1', slug: 'an-app', status: 'draft', appBlock: null };
-    await expect(
-      setListingVisibilityAsModerator({
-        appListingId: 'apl_1',
-        visibility: 'public',
-        moderatorUserId: 3,
-      })
-    ).rejects.toThrow(VISIBILITY_EXCEEDS_REVIEW_CEILING_MESSAGE);
-    expect(events.create).not.toHaveBeenCalled();
+  it('[INV] D7 is a property of the LISTING, not of the caller', () => {
+    // The ceiling is keyed on review state alone — `maxVisibilityForStatus` takes a status
+    // and nothing else — so it cannot be made caller-dependent without changing its
+    // signature. That matters for the DEFERRED moderator proc: when it lands it inherits
+    // this ceiling automatically, and a moderator who wants a draft public must approve it
+    // rather than relabelling it, or the level becomes a second unaudited approval path.
+    expect(maxVisibilityForStatus('draft')).toBe('moderators');
+    expect(maxVisibilityForStatus('approved')).toBe('public');
   });
 
   it('[NEW] an APPROVED listing accepts every level — the ceiling is `public` there', async () => {
@@ -334,7 +322,6 @@ describe('the compare-and-set write', () => {
       setListingVisibilityAsOwner({ appListingId: 'apl_1', visibility: 'testers', userId: 9 })
     ).resolves.toMatchObject({ visibility: 'testers', changed: false });
     expect(listing.updateMany).not.toHaveBeenCalled();
-    expect(events.create).not.toHaveBeenCalled();
   });
 
   it('[NEW] an UNSET level is not the same as `private` — setting `private` is a real write', async () => {
@@ -346,52 +333,6 @@ describe('the compare-and-set write', () => {
       setListingVisibilityAsOwner({ appListingId: 'apl_1', visibility: 'private', userId: 9 })
     ).resolves.toMatchObject({ visibility: 'private', changed: true });
     expect(listing.updateMany).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('the MODERATOR path — the audit event', () => {
-  it('[INV] writes a `set-visibility` event with the actor and the before/after levels', async () => {
-    stored = 'public';
-    await setListingVisibilityAsModerator({
-      appListingId: 'apl_1',
-      visibility: 'moderators',
-      moderatorUserId: 3,
-    });
-    expect(events.create).toHaveBeenCalledTimes(1);
-    const data = (events.create.mock.calls[0]?.[0] as { data?: Record<string, unknown> })?.data;
-    expect(data).toMatchObject({
-      appListingId: 'apl_1',
-      slug: 'an-app',
-      action: 'set-visibility',
-      actorUserId: 3,
-      before: { visibility: 'public' },
-      after: { visibility: 'moderators' },
-    });
-  });
-
-  it('[INV] the event and the level change are in the SAME transaction', async () => {
-    // Otherwise a failure between them leaves a moderator level change with no audit row,
-    // or an audit row for a change that did not happen.
-    await setListingVisibilityAsModerator({
-      appListingId: 'apl_1',
-      visibility: 'moderators',
-      moderatorUserId: 3,
-    });
-    expect(dbMock.dbWrite.$transaction).toHaveBeenCalledTimes(1);
-    expect(listing.updateMany).toHaveBeenCalledTimes(1);
-    expect(events.create).toHaveBeenCalledTimes(1);
-  });
-
-  it('[INV] the moderator path performs NO role resolve', async () => {
-    // Its gate is the router's `moderatorProcedure` plus the inner recheck. A role resolve
-    // here would refuse a moderator who holds no seat on the listing — the audience the
-    // path exists for.
-    await setListingVisibilityAsModerator({
-      appListingId: 'apl_1',
-      visibility: 'moderators',
-      moderatorUserId: 3,
-    });
-    expect(mockResolveListingAccess).not.toHaveBeenCalled();
   });
 });
 
@@ -410,13 +351,12 @@ describe('the manual-apply column gate', () => {
 
   it('[INV] it refuses BEFORE any side effect', async () => {
     stored = 'THROW_P2022';
-    await setListingVisibilityAsModerator({
+    await setListingVisibilityAsOwner({
       appListingId: 'apl_1',
       visibility: 'testers',
-      moderatorUserId: 3,
+      userId: 9,
     }).catch(() => null);
     expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
-    expect(events.create).not.toHaveBeenCalled();
   });
 });
 
@@ -424,11 +364,7 @@ describe('a missing listing', () => {
   it('[INV] NOT_FOUND, and nothing is written', async () => {
     row = null;
     await expect(
-      setListingVisibilityAsModerator({
-        appListingId: 'apl_gone',
-        visibility: 'public',
-        moderatorUserId: 3,
-      })
+      setListingVisibilityAsOwner({ appListingId: 'apl_gone', visibility: 'public', userId: 9 })
     ).rejects.toThrow('Listing not found');
     expect(listing.updateMany).not.toHaveBeenCalled();
   });

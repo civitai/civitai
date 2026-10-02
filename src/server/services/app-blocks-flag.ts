@@ -1258,11 +1258,13 @@ async function resolveStoreVisibilityScopeUninstrumented(opts?: {
  * tester passes it and floors at `testers`, which is exactly the distinction the enum
  * draws.
  *
- * ⚠️ PRE-GA THE `testers` AND `public` LEVELS ADMIT THE SAME POPULATION, and that is
- * harmless rather than a defect: the surface flag is NARROWER than either cohort today, so
- * the AND is decided by the surface and the level cannot widen anything. It becomes a real
- * distinction the moment `app-listings` widens past `app-blocks-enabled` — which is the
- * transition the OR-fallback on {@link isAppListingsEnabled} already exists to manage.
+ * ⚠️ ALL FOUR LEVELS ARE ALREADY DISTINGUISHABLE — an earlier revision of this paragraph
+ * claimed `testers` and `public` "admit the same population pre-GA", and that was false in
+ * the REASSURING direction. A live floor-`public` population exists today: both public
+ * `/api/v1/apps` endpoints pass `floor: 'public'` explicitly while
+ * `resolvePublicAppsCatalogScope` grants an anonymous caller `full` SURFACE scope, so a
+ * `testers` listing is hidden there while a `public` one is served. The two axes are
+ * independent, which is the whole reason they are resolved separately.
  *
  * 🔴 FAIL-CLOSED IS `public`, WHICH READS BACKWARDS AND IS CORRECT. The floor is the
  * NARROWEST level that admits the viewer, so the least-privileged answer is the WIDEST

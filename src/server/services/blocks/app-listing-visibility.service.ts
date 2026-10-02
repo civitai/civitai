@@ -24,10 +24,20 @@
  *   · degrading to `private` fails CLOSED in the wrong place — the store read would stop
  *     admitting listings it admits today, i.e. an unapplied migration would EMPTY the
  *     public grid.
- * The honest third answer is to report the absence (`available: false`) and have the read
- * path then not consult the level at all, so the store behaves exactly as it did before
- * this feature existed. That is why {@link isListingVisibilityColumnAvailable} exists and
- * why the list path probes before it will NAME the column in its statement.
+ * The honest third answer is for the read to DEGRADE TO `null` — "no choice expressed" —
+ * which {@link listingVisibleInStore} already resolves to the pre-feature rule for the
+ * row's status. So an unapplied migration and an unset level reach the same behaviour by
+ * the same route, and the store is byte-identical to how it was before this feature.
+ *
+ * ⚠️ AN EARLIER REVISION PRE-FLIGHT PROBED FOR THE COLUMN INSTEAD, AND THAT WAS REMOVED.
+ * It cost a database round trip on EVERY `/apps` grid and detail read — including cache
+ * hits, because it was awaited before the cache was even constructed — and its protection
+ * was incomplete anyway: many `appListing` call sites pass no explicit `select` and so
+ * raise 42703 regardless. Neither in-tree sibling does it: `app-listing-beta.service.ts`
+ * and `app-listing-source-repo.service.ts` both degrade via a catch on
+ * {@link isMissingColumnError}, and this module now matches them rather than inventing a
+ * third posture. The real ordering control is `CLAUDE.md` rule 8 and the migration's own
+ * APPLY-BEFORE-DEPLOY header, which this file was never a substitute for and said so.
  *
  * 🔴 THREE STATES, NOT TWO, AND COLLAPSING ANY PAIR IS HOW THIS GOES WRONG. A listing
  * nobody has set a level on reads `{ available: true, visibility: null }`; one carrying a
@@ -142,47 +152,8 @@ function noteDegradedVisibilityRead(err: unknown): void {
 }
 
 /**
- * A listing id that CANNOT exist, used to ask the database about the COLUMN without caring
- * about any row. `AppListing.id` is an `apl_<ULID>`, so nothing can collide with this, and
- * the lookup is a primary-key probe that matches nothing — the query still parses the
- * `select`, which is the only part that can raise P2022.
- */
-const VISIBILITY_COLUMN_PROBE_ID = '__app_listing_visibility_column_probe__';
-
-/**
- * Is the manual-apply column present?
- *
- * 🔴 THE STORE LIST PATH CANNOT WORK ANY OTHER WAY. That read is raw SQL inside a cached
- * statement, so a missing column is a PARSE error it cannot catch per-column — the
- * statement either names `al.visibility` or it does not, and that decision has to be taken
- * before the statement is built. This probe is how it is taken.
- *
- * Deliberately NOT memoised: the whole point is that the column APPEARS partway through a
- * deploy's life, and a cached `false` would keep the feature inert until the next restart.
- * It costs one primary-key probe that matches nothing, and the store's own `scope === 'none'`
- * short-circuit means it never runs for the dark majority of traffic.
- *
- * ⚠️ IT DEGRADES TO `false` ON *ANY* ERROR, not only a missing column, and that is the
- * correct direction HERE even though {@link readListingVisibility} propagates. A throw from
- * this probe would 500 the public grid; answering `false` makes the grid behave exactly as
- * it did before this feature, which is the degraded behaviour the module header argues for.
- * Write paths must use {@link readListingVisibility}, whose narrow guard is what keeps a
- * real outage from being reported to an author as "not available on this environment".
- */
-export async function isListingVisibilityColumnAvailable(
-  db: VisibilityReadClient
-): Promise<boolean> {
-  try {
-    return (await readListingVisibility(VISIBILITY_COLUMN_PROBE_ID, db)).available;
-  } catch (err) {
-    noteDegradedVisibilityRead(err);
-    return false;
-  }
-}
-
-/**
- * The message an AUTHOR or MODERATOR sees when they set a level before the manual-apply
- * migration has run.
+ * The message an author sees when they set a level before the manual-apply migration has
+ * run.
  *
  * Exported so the tests assert the EXACT string rather than a substring of their own
  * invention, and so a mutant that swaps this guard for a different error is killed by the

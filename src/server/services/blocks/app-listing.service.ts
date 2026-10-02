@@ -16,10 +16,7 @@ import {
 } from '~/shared/utils/app-listing-visibility';
 // The MANUAL-APPLY `visibility` column is read ONLY through this guard — never via
 // `listingHydrateSelect`, which the public `/apps` GRID shares. See its module header.
-import {
-  isListingVisibilityColumnAvailable,
-  readListingVisibility,
-} from '~/server/services/blocks/app-listing-visibility.service';
+import { readListingVisibility } from '~/server/services/blocks/app-listing-visibility.service';
 import { tokenScopeMaskToList } from '~/shared/constants/token-scope.constants';
 import type {
   GetAppListingDetailInput,
@@ -38,7 +35,10 @@ import type {
 import { listingCoverUrl, listingIconUrl } from '~/server/services/blocks/listing-media-url';
 // The MANUAL-APPLY `source_repo_url` column is read ONLY through this guard — never via
 // `listingHydrateSelect`, which the public `/apps` GRID shares. See its module header.
-import { readListingSourceRepoUrl } from '~/server/services/blocks/app-listing-source-repo.service';
+import {
+  isMissingColumnError,
+  readListingSourceRepoUrl,
+} from '~/server/services/blocks/app-listing-source-repo.service';
 // The MANUAL-APPLY `is_beta` / `beta_message` columns are read ONLY through this guard —
 // never via `listingHydrateSelect` or `moderationListingSelect`, for the same reason. See
 // its module header.
@@ -935,21 +935,16 @@ export function listingPublicVisibilityFilter(scope: StoreVisibilityScope): Pris
  * partial un-takedown of the owner's own app — so they are excluded here as well as at the
  * mutation, because a row can carry a level set BEFORE it was taken down.
  *
- * 🔴 AND IT EMITS THE PRE-FEATURE PREDICATE WHEN THE COLUMN IS NOT THERE. This is raw SQL
- * inside a cached statement: a missing column is a PARSE error, not something a per-column
- * guard can swallow, so the statement must not NAME `al.visibility` until the manual-apply
- * migration has run. `available` comes from
- * `isListingVisibilityColumnAvailable`; `false` makes this byte-identical to the predicate
- * that shipped before this feature.
+ * ⚠️ IT ALWAYS NAMES `al.visibility`, AND THE MANUAL-APPLY CASE IS HANDLED AT THE CALLER.
+ * This is raw SQL inside a cached statement, so a missing column is a PARSE error no
+ * per-column guard can swallow — `listAvailableListings` catches it and re-runs the
+ * pre-feature predicate. An earlier revision pre-flight PROBED for the column here, which
+ * cost a round trip on every grid read INCLUDING cache hits; neither in-tree sibling does
+ * that, and both degrade via a catch instead.
  *
- * Exported so the drift-guard unit test can assert the exact SQL each (floor, available)
- * pair emits.
+ * Exported so the drift-guard unit test can assert the exact SQL each floor emits.
  */
-export function listingLevelVisibilityFilter(
-  floor: ListingAudienceFloor,
-  available: boolean
-): Prisma.Sql {
-  if (!available) return Prisma.sql`al.status = 'approved'`;
+export function listingLevelVisibilityFilter(floor: ListingAudienceFloor): Prisma.Sql {
   // 🔴 PER-STATUS LEVEL LISTS, BECAUSE THE REVIEW CEILING IS PER STATUS. One shared
   // `al.visibility IN (...)` across every eligible status was a moderator-review bypass: it
   // admitted a `draft` carrying `visibility='public'` to the anonymous store, with a name,
@@ -1224,10 +1219,7 @@ export async function listAvailableListings(
   // read so it costs no extra round trip on the `top-rated` path. Deliberately not memoised:
   // the column appears partway through a deploy's life. The router short-circuits
   // `scope === 'none'` before reaching here, so the probe never runs for dark traffic.
-  const [globalMean, visibilityAvailable] = await Promise.all([
-    sort === 'top-rated' ? cursorMean ?? getGlobalRecommendMean() : 0,
-    isListingVisibilityColumnAvailable(dbRead),
-  ]);
+  const globalMean = sort === 'top-rated' ? cursorMean ?? (await getGlobalRecommendMean()) : 0;
 
   const { expr: sortKeyExpr, descending } = listingSortKeyExpr(sort, globalMean);
   const dir = descending ? Prisma.sql`DESC` : Prisma.sql`ASC`;
@@ -1258,8 +1250,21 @@ export async function listAvailableListings(
   // burst of identical cold reads a `/apps` page load produces, at a staleness a missed
   // bust cannot stretch past.
   const cacheable = catalogPageCache(scope, floor, redCapable);
-  const idRows = await cacheable<{ id: string; sort_key: string }[]>(
-    Prisma.sql`
+  /**
+   * The keyset page, for one level predicate.
+   *
+   * 🔴 PARAMETERISED ON THE PREDICATE SO THE MANUAL-APPLY CASE IS A RETRY, NOT A PROBE. An
+   * earlier revision pre-flight asked the database whether `al.visibility` existed, on every
+   * grid read, INCLUDING cache hits — the probe was awaited before this cache was even
+   * constructed. Both in-tree siblings for a manual-apply column
+   * (`app-listing-beta.service.ts`, `app-listing-source-repo.service.ts`) degrade via a catch
+   * instead, and this now matches them: optimistic read, and on 42703 re-run with the
+   * pre-feature predicate. The steady state — the column present, which is every state after
+   * a human runs the migration once — costs nothing at all.
+   */
+  const pageFor = (levelFilter: Prisma.Sql) =>
+    cacheable<{ id: string; sort_key: string }[]>(
+      Prisma.sql`
     SELECT al.id, ${sortKeyExpr} AS sort_key
     FROM app_listings al
     LEFT JOIN app_listing_metrics m ON m.app_listing_id = al.id
@@ -1268,7 +1273,7 @@ export async function listAvailableListings(
     LEFT JOIN app_blocks ab ON ab.id = al.app_block_id
     -- LEVEL GATE: the approved-only predicate, widened by the viewer's audience floor.
     -- Emits exactly the bare approved-only test while the manual-apply column is absent.
-    WHERE ${listingLevelVisibilityFilter(floor, visibilityAvailable)}
+    WHERE ${levelFilter}
       -- 🔴 NOW LOAD-BEARING RATHER THAN DEFENCE-IN-DEPTH. A shadow revision is
       -- status='draft', and the level gate above can admit a draft — so this is the only
       -- thing keeping a shadow's staged, un-reviewed content out of the store for a
@@ -1295,8 +1300,19 @@ export async function listAvailableListings(
     ORDER BY sort_key ${dir}, al.id ${dir}
     LIMIT ${limit + 1}
   `,
-    { ttl: CacheTTL.sm, tag: [APP_LISTING_CATALOG_TAG] }
-  );
+      { ttl: CacheTTL.sm, tag: [APP_LISTING_CATALOG_TAG] }
+    );
+
+  // 🔴 THE CATCH IS NARROW AND THE FALLBACK IS THE PRE-FEATURE PREDICATE. Not `private`,
+  // which would empty the public grid on an unapplied migration, and not `public`, which
+  // would admit drafts — the approved-only test this statement carried before the feature
+  // existed. Everything that is not a missing column (a timeout, a dead replica, a cache-bus
+  // fault) PROPAGATES, because degrading on those turns a real outage into a quietly short
+  // store page.
+  const idRows = await pageFor(listingLevelVisibilityFilter(floor)).catch((err: unknown) => {
+    if (!isMissingColumnError(err)) throw err;
+    return pageFor(Prisma.sql`al.status = 'approved'`);
+  });
 
   const trimmed = idRows.slice(0, limit);
   const last = trimmed[trimmed.length - 1];
@@ -1392,16 +1408,15 @@ export async function getListingDetail(
   // manual-apply column and `listingHydrateSelect` is shared with the public GRID, so
   // naming it there would 500 the whole store until a human runs the SQL.
   //
-  // 🔴 AND AN UNAVAILABLE COLUMN FALLS BACK TO THE PRE-FEATURE PREDICATE, not to `private`.
-  // Degrading to `private` would make an unapplied migration hide every approved listing's
-  // detail page — an outage dressed as fail-closed. An UNSET level (`null`) reaches the
-  // same answer through `listingVisibleInStore`, but by a different route and for a
-  // different reason, so the two are written separately rather than collapsed.
+  // 🔴 AND AN UNAVAILABLE COLUMN NEEDS NO SPECIAL CASE HERE. `readListingVisibility` catches
+  // the missing column and answers `visibility: null`, which `listingVisibleInStore` already
+  // resolves to the pre-feature rule for the status — approved visible, non-approved not. An
+  // earlier revision branched on `available` to reach the same answer; that branch is gone
+  // because the two states genuinely coincide, and one route is easier to keep true than two.
   const level = await readListingVisibility(row.id, dbRead);
-  const visible = level.available
-    ? listingVisibleInStore({ status: row.status, visibility: level.visibility, floor })
-    : row.status === 'approved';
-  if (!visible) return null;
+  if (!listingVisibleInStore({ status: row.status, visibility: level.visibility, floor })) {
+    return null;
+  }
   // STORE-SCOPE kind gate (the public/onsite security boundary): under
   // `public-external` an ONSITE listing is indistinguishable from a missing one —
   // return null so no crafted id/slug can reach an onsite listing's detail. EVERY

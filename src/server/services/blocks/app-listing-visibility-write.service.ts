@@ -4,14 +4,21 @@
  * 🔴 SEPARATE MODULE FROM THE GUARDED READER (`app-listing-visibility.service.ts`), and
  * the split is structural rather than stylistic. That module is imported by
  * `app-listing.service.ts`, which is the public `/apps` store read path; this one pulls
- * `dbWrite`, the role resolver and the moderation-event id helper. Putting the write
- * beside the read would drag all three into the hot read path's module graph.
+ * `dbWrite` and the role resolver. Putting the write beside the read would drag both into
+ * the hot read path's module graph.
  *
- * 🔴 TWO ENTRY POINTS, NOT ONE FUNCTION WITH AN `asModerator` FLAG. A boolean argument
- * that selects between "resolve the caller's role" and "trust the caller" is an
- * authorization decision the CALLER makes, and every call site then has to be audited to
- * see which it passed. Two exported functions make the gate a property of which symbol you
- * imported: the owner path cannot skip the role resolve, and the moderator path has no
+ * ⚠️ THE OWNER PATH IS THE ONLY ONE HERE, AND THAT IS SEQUENCING RATHER THAN CAPABILITY.
+ * A moderator path — settable on ANY listing, writing a `set-visibility` moderation event
+ * — is operator-asked (D2) and was built, then DEFERRED to the follow-up PR that adds the
+ * UI: every part of it existed for a verb no surface could invoke, and it obliged a human
+ * to hand-apply a SECOND production DDL (the moderation-action CHECK widen) for a code
+ * path nothing reached. It lands with the surface that writes it.
+ *
+ * 🔴 WHEN IT COMES BACK IT MUST BE ITS OWN EXPORTED FUNCTION — never an `asModerator` flag
+ * on this one. A boolean that selects between "resolve the caller's role" and "trust the
+ * caller" is an authorization decision the CALLER makes, and every call site then has to be
+ * audited to see which it passed. Separate symbols make the gate a property of which one
+ * you imported: this path cannot skip the role resolve, and a moderator path would have no
  * role resolve to be handed a wrong argument for.
  *
  * 🔴 THE STATUS GATE IS ENFORCED HERE, NOT INFERRED FROM THE ROLE RESOLVER.
@@ -24,7 +31,6 @@
 import { TRPCError } from '@trpc/server';
 
 import { dbWrite } from '~/server/db/client';
-import { newAppListingModerationEventId } from '~/server/utils/app-block-ids';
 import { assertVisibilityWritable } from '~/server/services/blocks/app-listing-visibility.service';
 import { isMissingColumnError } from '~/server/services/blocks/app-listing-source-repo.service';
 import type { AppListingVisibility } from '~/shared/utils/app-listing-visibility';
@@ -79,7 +85,7 @@ export const VISIBILITY_EXCEEDS_REVIEW_CEILING_MESSAGE =
   'This listing has not been approved yet, so it can only be made visible to moderators. Submit it for review to widen its audience.';
 
 /**
- * The shared core: gate on D1, then write.
+ * The core: gate on D1 and the review ceiling, then write.
  *
  * 🔴 THE WRITE IS A COMPARE-AND-SET, NOT A BARE `update`. It re-asserts the eligible
  * status set in the `where` clause, so a concurrent delist landing between the read above
@@ -98,10 +104,8 @@ export const VISIBILITY_EXCEEDS_REVIEW_CEILING_MESSAGE =
 async function applyVisibility(args: {
   appListingId: string;
   visibility: AppListingVisibility;
-  /** Present ⇒ write a `set-visibility` moderation event attributed to this actor. */
-  moderatorUserId?: number;
 }): Promise<SetListingVisibilityResult> {
-  const { appListingId, visibility, moderatorUserId } = args;
+  const { appListingId, visibility } = args;
 
   // 🔴 THE PRIMARY, NOT THE REPLICA. A freshly-delisted or freshly-relisted row read
   // through a replication-lag window would be gated on a stale status — in both
@@ -216,20 +220,6 @@ async function applyVisibility(args: {
       if (!still) throw new TRPCError({ code: 'NOT_FOUND', message: 'Listing not found' });
       throw new TRPCError({ code: 'FORBIDDEN', message: VISIBILITY_STATUS_INELIGIBLE_MESSAGE });
     }
-    if (moderatorUserId != null) {
-      await tx.appListingModerationEvent.create({
-        data: {
-          id: newAppListingModerationEventId(),
-          appListingId,
-          slug: listing.slug,
-          action: 'set-visibility',
-          actorUserId: moderatorUserId,
-          before: { visibility: before.visibility },
-          after: { visibility },
-          detail: `visibility ${before.visibility} -> ${visibility}`,
-        },
-      });
-    }
   });
 
   // The cached store catalog keys on which rows a cohort sees, and this write moves
@@ -283,29 +273,4 @@ export async function setListingVisibilityAsOwner(args: {
     throw new TRPCError({ code: 'FORBIDDEN', message: VISIBILITY_NOT_OWNED_MESSAGE });
   }
   return applyVisibility({ appListingId: args.appListingId, visibility: args.visibility });
-}
-
-/**
- * MODERATOR path — set the level on ANY listing, with an audit event.
- *
- * 🔴 THIS FUNCTION PERFORMS NO ROLE CHECK AND MUST NOT BE CALLED WITHOUT ONE. Its gate is
- * the router's `moderatorProcedure` plus the inner `ctx.user.isModerator` recheck, which is
- * the shape every moderator mutation in `app-listings.router.ts` uses. `moderatorUserId`
- * is bound from `ctx.user.id` at that call site and is never client-supplied — it is the
- * actor on the audit row.
- *
- * D1 still applies: a moderator may not set a level on a `removed` or `rejected` listing
- * either. The decision is that levels govern non-suspended listings, not that moderators
- * are exempt from it — a taken-down listing's only path is private-run, for everyone.
- */
-export async function setListingVisibilityAsModerator(args: {
-  appListingId: string;
-  visibility: AppListingVisibility;
-  moderatorUserId: number;
-}): Promise<SetListingVisibilityResult> {
-  return applyVisibility({
-    appListingId: args.appListingId,
-    visibility: args.visibility,
-    moderatorUserId: args.moderatorUserId,
-  });
 }

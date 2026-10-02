@@ -120,13 +120,6 @@ const MOD_ACTION_CHIPS: Record<string, Chip> = {
   // The label is therefore written for the MOD queue and names whose data moved —
   // "User storage purged", not the second-person voice the `owner-*` labels use.
   'purge-user-storage': { label: 'User storage purged', color: 'red' },
-  // W14 per-listing VISIBILITY LEVEL. Changes no listing state — it records that a
-  // moderator moved the listing's audience, with the levels in `before`/`after`. The label
-  // must read correctly in BOTH views this map serves, so it names the ACT and not the
-  // actor: "Visibility changed" is true in the mod queue and in the owner's own history,
-  // where every `owner-*` label above is already second-person. Blue, matching
-  // `message-owner` and `claim` — informational, not a takedown.
-  'set-visibility': { label: 'Visibility changed', color: 'blue' },
 };
 
 /** Chip for a moderation-event action, for the per-listing history view. */

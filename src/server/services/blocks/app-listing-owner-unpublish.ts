@@ -113,10 +113,6 @@ export const STATE_NEUTRAL_MODERATION_ACTIONS = [
   'report-resolve',
   'report-dismiss',
   'message-owner',
-  // W14: moves a listing's AUDIENCE, never its status — so it must stay here. Putting it
-  // in the status-changing half would let it displace an `owner-unpublish` event and hand
-  // the owner back edit rights on a listing a moderator removed.
-  'set-visibility',
   // App Blocks per-user STORAGE takedown. NEUTRAL, and the classification is not a
   // close call: it writes nothing in `app_listings` at all — it deletes rows from a
   // per-app schema in a DIFFERENT DATABASE and records the fact here. So it must

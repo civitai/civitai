@@ -217,17 +217,6 @@ describe('the level is an AND with the surface scope, never an override', () => 
 });
 
 describe('listingLevelVisibilityFilter — the SQL drift guard', () => {
-  it('[NEW] emits ONLY the approved-only predicate while the column is absent', () => {
-    // 🔴 THE MANUAL-APPLY GUARANTEE, AS SQL. If this ever named `al.visibility`, the
-    // public grid would 500 on P2022 from the moment the code deployed until a human ran
-    // the migration — the outage the guarded-reader pattern exists to prevent.
-    for (const floor of ['moderators', 'testers', 'public'] as const) {
-      const sql = listingLevelVisibilityFilter(floor, false).sql;
-      expect(sql).toBe("al.status = 'approved'");
-      expect(sql).not.toContain('visibility');
-    }
-  });
-
   it('[NEW] pins the WHOLE predicate, normalised — not three substrings of it', () => {
     // 🔴 `toBe` ON THE NORMALISED STRING, AND THE CHANGE FROM `toContain` IS THE WHOLE
     // POINT. Three `toContain` checks over `al.status = 'approved'`, `al.status IN` and
@@ -244,7 +233,7 @@ describe('listingLevelVisibilityFilter — the SQL drift guard', () => {
     // `available === false` case below was already pinned this way, and that asymmetry was
     // the tell that this one was under-specified.
     const norm = (frag: { sql: string }) => frag.sql.replace(/\s+/g, ' ').trim();
-    expect(norm(listingLevelVisibilityFilter('moderators', true))).toBe(
+    expect(norm(listingLevelVisibilityFilter('moderators'))).toBe(
       "( (al.visibility IS NULL AND al.status = 'approved') OR (al.visibility IS NOT NULL " +
         "AND ((al.status = 'approved' AND al.visibility IN (?,?,?)) OR (al.status IN (?,?) " +
         'AND al.visibility IN (?)))) )'
@@ -254,17 +243,17 @@ describe('listingLevelVisibilityFilter — the SQL drift guard', () => {
     // any level, so the arm is OMITTED rather than emitted as a bare `FALSE`: an empty
     // `IN ()` is a syntax error, and a stray `FALSE` here trips the sibling kind-gate
     // drift-guard that scans this statement for exactly that word.
-    expect(norm(listingLevelVisibilityFilter('testers', true))).toBe(
+    expect(norm(listingLevelVisibilityFilter('testers'))).toBe(
       "( (al.visibility IS NULL AND al.status = 'approved') OR (al.visibility IS NOT NULL " +
         "AND ((al.status = 'approved' AND al.visibility IN (?,?)))) )"
     );
-    expect(norm(listingLevelVisibilityFilter('public', true))).toBe(
+    expect(norm(listingLevelVisibilityFilter('public'))).toBe(
       "( (al.visibility IS NULL AND al.status = 'approved') OR (al.visibility IS NOT NULL " +
         "AND ((al.status = 'approved' AND al.visibility IN (?)))) )"
     );
     // Neither emits a bare FALSE, which is the property the sibling guard rests on.
     for (const f of ['moderators', 'testers', 'public'] as const) {
-      expect(norm(listingLevelVisibilityFilter(f, true))).not.toMatch(/\bFALSE\b/);
+      expect(norm(listingLevelVisibilityFilter(f))).not.toMatch(/\bFALSE\b/);
     }
   });
 
@@ -272,7 +261,7 @@ describe('listingLevelVisibilityFilter — the SQL drift guard', () => {
     // Parameterised, not interpolated: the predicate cannot be built by splicing a string
     // into SQL source. Order follows the two arms — the approved arm's levels, then the
     // unreviewed statuses and the single level the ceiling admits there.
-    expect(listingLevelVisibilityFilter('moderators', true).values).toEqual([
+    expect(listingLevelVisibilityFilter('moderators').values).toEqual([
       'moderators',
       'testers',
       'public',
@@ -283,14 +272,14 @@ describe('listingLevelVisibilityFilter — the SQL drift guard', () => {
     // 🔴 A NON-MODERATOR FLOOR BINDS NO UNREVIEWED STATUS AT ALL — not `draft`, not
     // `pending`. The arm is a literal FALSE, so there is nothing to bind.
     for (const floor of ['testers', 'public'] as const) {
-      const vals = listingLevelVisibilityFilter(floor, true).values;
+      const vals = listingLevelVisibilityFilter(floor).values;
       expect(vals).not.toContain('draft');
       expect(vals).not.toContain('pending');
     }
     // `removed` and `rejected` appear nowhere, for any floor — the status set is an
     // allowlist.
     for (const floor of ['moderators', 'testers', 'public'] as const) {
-      const vals = listingLevelVisibilityFilter(floor, true).values;
+      const vals = listingLevelVisibilityFilter(floor).values;
       expect(vals).not.toContain('removed');
       expect(vals).not.toContain('rejected');
     }
@@ -310,7 +299,7 @@ describe('listingLevelVisibilityFilter — the SQL drift guard', () => {
     expect(approvedLevels('public')).toEqual(['public']);
     // `private` is bound for NO floor — it admits nobody.
     for (const f of ['moderators', 'testers', 'public'] as const) {
-      expect(listingLevelVisibilityFilter(f, true).values).not.toContain('private');
+      expect(listingLevelVisibilityFilter(f).values).not.toContain('private');
     }
   });
 });
@@ -403,13 +392,82 @@ describe('the SQL predicate and the app-layer predicate AGREE', () => {
   });
 });
 
-describe('the probe is WIRED to the statement, not merely available', () => {
-  it('[INV] a P2022 on the probe makes the LIST statement omit the column entirely', async () => {
-    // 🔴 THE OUTAGE THE GUARDED READER EXISTS TO PREVENT, pinned at the SEAM rather than at
-    // the filter. Hardwiring `isListingVisibilityColumnAvailable` to `true` was a surviving
-    // mutant: the `available === false` branch was only ever exercised by calling the
-    // filter directly, so nothing proved the probe's answer actually reached it. With the
-    // column absent, a statement naming `al.visibility` is a P2022 on the public grid.
+describe('the manual-apply column degrades via a CATCH, not a probe', () => {
+  /**
+   * ⚠️ THESE TWO CASES CHANGED SHAPE RATHER THAN BEING DELETED, and the reason is the whole
+   * point of the change they track. The degradation used to be driven by a pre-flight PROBE
+   * (`isListingVisibilityColumnAvailable`), so the behaviour was reachable by calling
+   * `listingLevelVisibilityFilter(floor, false)` directly — which is what the old cases did,
+   * and why hardwiring the probe to `true` once SURVIVED a mutation sweep: nothing proved
+   * the probe's answer reached the statement.
+   *
+   * The probe is gone — it cost a round trip on every grid read including cache hits, and
+   * neither in-tree sibling for a manual-apply column does it. The degradation is now a
+   * catch on 42703 that re-runs the pre-feature predicate, matching those siblings. So the
+   * coverage is re-pointed at the catch: drive the real read with the column missing and
+   * assert the SECOND statement, which is the only place the behaviour now exists.
+   */
+  it('[INV] a 42703 on the real read re-runs with the pre-feature predicate', async () => {
+    // 🔴 THE OUTAGE THIS PREVENTS: a statement naming `al.visibility` against a database
+    // that has not had the migration applied is a P2022 on the PUBLIC grid, not a missing
+    // badge. The retry must be the approved-only test — not `private` (which would empty
+    // the grid) and not `public` (which would admit drafts).
+    let call = 0;
+    dbMock.dbRead.$queryRaw.mockImplementation(async () => {
+      call += 1;
+      if (call === 1) {
+        throw Object.assign(new Error('column al.visibility does not exist'), { code: 'P2022' });
+      }
+      return [];
+    });
+    await listAvailableListings({ kind: 'all', sort: 'newest', limit: 10 } as never, {
+      scope: 'full',
+      floor: 'moderators',
+    });
+    // Two statements were issued, and it is the SECOND that must be level-free.
+    expect(call).toBe(2);
+    const sql = capturedPredicateSql();
+    expect(sql).not.toContain('al.visibility');
+    expect(sql).toContain("al.status = 'approved'");
+  });
+
+  it('[INV][POSITIVE CONTROL] with the column present there is ONE statement, and it names the column', async () => {
+    // Without the pair, the `not.toContain` above is indistinguishable from a statement that
+    // never names the column at all — and the call COUNT is what separates "degraded" from
+    // "never tried", which the old probe-shaped case could not express.
+    let call = 0;
+    dbMock.dbRead.$queryRaw.mockImplementation(async () => {
+      call += 1;
+      return [];
+    });
+    await listAvailableListings({ kind: 'all', sort: 'newest', limit: 10 } as never, {
+      scope: 'full',
+      floor: 'moderators',
+    });
+    expect(call).toBe(1);
+    expect(capturedPredicateSql()).toContain('al.visibility');
+  });
+
+  it('[INV] a NON-column error PROPAGATES — a dead replica must not read as a short store', async () => {
+    // The catch is narrow on purpose. Swallowing a timeout here would turn a real outage
+    // into a quietly truncated grid, which is the failure mode the degradation exists to
+    // avoid rather than cause.
+    const boom = Object.assign(new Error('Timed out fetching a connection'), { code: 'P2024' });
+    dbMock.dbRead.$queryRaw.mockImplementation(async () => {
+      throw boom;
+    });
+    await expect(
+      listAvailableListings({ kind: 'all', sort: 'newest', limit: 10 } as never, {
+        scope: 'full',
+        floor: 'moderators',
+      })
+    ).rejects.toBe(boom);
+  });
+
+  it('[INV] the DETAIL read degrades through `null`, with no `available` branch', async () => {
+    // The detail path needs no special case at all now: the guarded reader catches the
+    // missing column and answers `visibility: null`, which already resolves to the
+    // pre-feature rule. An approved listing stays visible; a draft stays hidden.
     listing.findUnique.mockImplementation(async (args: unknown) => {
       const select = (args as { select?: Record<string, unknown> } | undefined)?.select ?? {};
       if ('visibility' in select) {
@@ -418,23 +476,13 @@ describe('the probe is WIRED to the statement, not merely available', () => {
       if ('sourceRepoUrl' in select) return { sourceRepoUrl: null };
       return { isBeta: false, betaMessage: null };
     });
-    await listAvailableListings({ kind: 'all', sort: 'newest', limit: 10 } as never, {
-      scope: 'full',
-      floor: 'moderators',
-    });
-    const sql = capturedPredicateSql();
-    expect(sql).not.toContain('al.visibility');
-    expect(sql).toContain("al.status = 'approved'");
-  });
-
-  it('[INV][POSITIVE CONTROL] with the column present the statement DOES name it', async () => {
-    // Without the pair, the `not.toContain` above is indistinguishable from a statement
-    // that never names the column under any condition.
-    await listAvailableListings({ kind: 'all', sort: 'newest', limit: 10 } as never, {
-      scope: 'full',
-      floor: 'moderators',
-    });
-    expect(capturedPredicateSql()).toContain('al.visibility');
+    await expect(
+      getListingDetail({ slug: 'and-app' }, { scope: 'full', floor: 'public' })
+    ).resolves.not.toBeNull();
+    listing.findFirst.mockImplementation(async () => approvedRow({ status: 'draft' }));
+    await expect(
+      getListingDetail({ slug: 'and-app' }, { scope: 'full', floor: 'moderators' })
+    ).resolves.toBeNull();
   });
 });
 

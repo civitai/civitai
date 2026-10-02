@@ -224,6 +224,32 @@ export function isVisibilityEligibleListingStatus(status: string): boolean {
  *     level on an unreviewed listing is refused at the READ as well as the write, because a
  *     row can carry a level set before it was withdrawn for re-review.
  *
+ * ── 🔴🔴 OPERATOR RULING, 2026-10-02 — THIS IS **D7**, AND IT NARROWS D2 ON PURPOSE ──
+ * NOT AN OVERSIGHT AND NOT A TODO.
+ *
+ * This ceiling was introduced by a correctness lane of the W14 PR, not by an operator ask —
+ * and an `/audit-pr` round then found that it NARROWS decision D2 ("the owner sets the level
+ * freely within the enum"), which is a narrowing the operator had **explicitly rejected**
+ * when they chose resolution (3) for the D4/D5 collision over the mirror-image option (2).
+ * So a lane took a decision that had been declined. It was escalated rather than kept
+ * quietly, and the operator **ratified it**: the ceiling stays, as D7.
+ *
+ * 🔴 WHAT D7 CHANGES ABOUT D2, STATED PLAINLY: D2's "freely" now means **freely within what
+ * review has cleared**. An owner picks any of the four levels on an `approved` listing, and
+ * only `private`/`moderators` on one that has never been reviewed.
+ *
+ * Grounds, which the audit verified rather than assumed: BOTH `/api/v1/apps` endpoints are
+ * anonymous-capable under the deliberate public-catalog grant, so without the ceiling an
+ * owner could put an unreviewed listing — their own URL, their own self-declared content
+ * rating, no moderator having seen any of it — in front of anonymous traffic.
+ *
+ * Rejected alternatives: honour D2 as written (no ceiling, which is the exposure above); and
+ * a ceiling at `public` only, which would still admit `testers` — a real cohort of real
+ * accounts — to content review has never looked at.
+ *
+ * 🔴 UI COPY REQUIREMENT. The control must tell an owner WHY `testers`/`public` are
+ * unavailable before review, or the greyed-out options read as a bug and get filed as one.
+ *
  * Returns `null` for a status no level may reach at all.
  *
  * 🔴 THE CEILING IS ALSO WHERE D4'S GUARANTEE ENDS — OPERATOR RULING, 2026-10-01: D4 binds

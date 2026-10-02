@@ -1845,6 +1845,12 @@ export const appListingsRouter = router({
    *
    * Rate-limited on the same budget as `updateListing`: this is an authored edit, and a
    * level change busts the store catalog cache, so it is not free to repeat.
+   *
+   * ⚠️ THE MODERATOR COUNTERPART IS DEFERRED, NOT DROPPED. A `setListingVisibilityAsModerator`
+   * proc — any listing, `moderatorProcedure` + an inner recheck, writing a `set-visibility`
+   * moderation event — is operator-asked (D2) and lands with the UI PR. It was removed from
+   * this one because it existed for a verb no surface could invoke while obliging a human to
+   * hand-apply a second production DDL. See the write service's header.
    */
   setListingVisibility: appDeveloperProcedure
     .use(
@@ -1864,39 +1870,6 @@ export const appListingsRouter = router({
         appListingId: input.listingId,
         visibility: input.visibility,
         userId: ctx.user.id,
-      });
-    }),
-
-  /**
-   * MODERATOR: set the per-listing VISIBILITY LEVEL on ANY listing, with an audit event.
-   *
-   * 🔴 A SEPARATE PROC RATHER THAN A MODERATOR BYPASS INSIDE THE OWNER ONE. The owner
-   * path's resolver has no moderator override (deliberately — see its service docblock),
-   * and a moderator acting on someone else's listing must leave an
-   * `AppListingModerationEvent` behind. Two procs is what makes the audit row
-   * unskippable rather than conditional on an argument.
-   *
-   * `moderatorProcedure` + the redundant inner `isModerator` recheck + `moderatorUserId`
-   * bound from `ctx.user.id` — the triple every moderator mutation in this file uses, and
-   * the reason the actor on the audit row can never be client-supplied.
-   *
-   * Deliberately NOT behind `enforceAppListingsWriteFlag`: that gate darkens the store UI
-   * and moderators resolve `full` through it anyway, so it would be inert here — the same
-   * reasoning `setReviewExclude` records.
-   */
-  setListingVisibilityAsModerator: moderatorProcedure
-    .input(setListingVisibilitySchema)
-    .mutation(async ({ ctx, input }) => {
-      if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError('Changing listing visibility is restricted to civitai team');
-      }
-      const { setListingVisibilityAsModerator } = await import(
-        '~/server/services/blocks/app-listing-visibility-write.service'
-      );
-      return setListingVisibilityAsModerator({
-        appListingId: input.listingId,
-        visibility: input.visibility,
-        moderatorUserId: ctx.user.id,
       });
     }),
 

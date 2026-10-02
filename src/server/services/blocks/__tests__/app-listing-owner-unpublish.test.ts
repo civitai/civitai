@@ -137,8 +137,6 @@ describe('LISTING_STATUS_CHANGING_MODERATION_ACTIONS', () => {
       'report-resolve',
       'report-dismiss',
       'message-owner',
-      // W14: moves a listing's AUDIENCE (`app_listings.visibility`), never its status.
-      'set-visibility',
       'purge-user-storage',
     ]);
   });
@@ -154,9 +152,6 @@ describe('LISTING_STATUS_CHANGING_MODERATION_ACTIONS', () => {
     // A moderator writing to the owner ("fix X and republish") — the workflow that made
     // an unfiltered last-event read revoke the very repair loop this arc adds.
     'message-owner',
-    // W14: a level change writes `app_listings.visibility`, never `status` — so it must
-    // never displace the `owner-unpublish` event underneath it.
-    'set-visibility',
     // A REPORT's status flips; the listing's does not.
     'report-resolve',
     'report-dismiss',
