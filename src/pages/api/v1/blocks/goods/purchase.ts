@@ -47,7 +47,9 @@ import { BLOCK_IDEMPOTENCY_KEY_REGEX } from '~/server/utils/block-gen-idempotenc
  *
  * PAGE-SAFE BY BOUNDING, the same argument that puts `social:tip:self` on a page
  * (see `PAGE_FORBIDDEN_SCOPES`): the price is review-gated AND hard-capped per
- * purchase (BLOCK_GOOD_MAX_PRICE_BUZZ), and a per-user daily ceiling
+ * purchase — PER KIND, via `maxPriceBuzzForKind`, so an `app_unlock` is bounded at
+ * BLOCK_APP_UNLOCK_MAX_PRICE_BUZZ and an ordinary good at the general
+ * BLOCK_GOOD_MAX_PRICE_BUZZ — and a per-user daily ceiling
  * (BLOCK_GOOD_CAP_PER_DAY, reserve-and-refund) bounds the day across every app
  * the viewer has installed. Over either → a clean 4xx, never a 500.
  *

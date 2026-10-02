@@ -185,8 +185,9 @@ export const BLOCK_APP_UNLOCK_MAX_PER_MANIFEST = 1;
  * `SCOPE_JUSTIFICATION_MAX_LENGTH` (the per-scope rationale bound) by POLICY
  * rather than by construction — same independent-knobs reasoning as the share
  * constant above: a repricing of one rationale surface should not silently
- * reprice the other. Pinned by an agreement guard in the test file, so the
- * divergence is noticed rather than merely permitted.
+ * reprice the other. Pinned by an agreement guard in the test file (which imports
+ * the other constant through the client-safe re-export shim beside this file), so
+ * the divergence is noticed rather than merely permitted.
  *
  * 🔴 THE NUMBER AGREES; THE RULE DOES NOT. This bound is measured against the
  * TRIMMED string, while the per-scope bound measures the RAW one — so a 500-char
@@ -380,21 +381,29 @@ export function parseManifestGoods(manifest: GoodsManifestInput): {
     // declared scope. That is the whole point, and it is worth being precise about
     // what the existing sensitive-scope gate does and does not already cover:
     //
-    // - A FREE app declaring its FIRST catalog is ALREADY caught today. Any
-    //   non-empty `goods` requires `goods:purchase:self`
-    //   (`src/server/services/block-manifest-validator.service.ts`), that scope IS
-    //   in `SENSITIVE_BLOCK_SCOPES`, and a declared sensitive scope must carry a
-    //   `scopeJustifications` entry. So the mod already sees something.
-    // - THE GAP THIS CLOSES TODAY is an app that ALREADY SELLS ordinary goods and
-    //   adds an unlock in v2. Its scope set does not change, so no new sensitive
-    //   scope is declared, so no new justification is demanded — and an app going
-    //   from "sells an item" to "charges for admission" is a different product
-    //   decision that nothing on the review screen would have mentioned.
-    // - AND IT IS ROBUST TO THE PLANNED CHANGE. The approved design drops the
-    //   `goods:purchase:self` requirement for an unlock; the moment that lands, the
-    //   free→paid case stops tripping the scope gate too. Because this rule keys on
-    //   the kind and not on a scope, it already covers that and will not need to be
-    //   rediscovered.
+    // - A FREE app declaring its FIRST catalog IS already caught — but only because
+    //   the catalog brings a NEW scope with it. Any non-empty `goods` requires
+    //   `goods:purchase:self` (`src/server/services/block-manifest-validator.service.ts`),
+    //   that scope IS in `SENSITIVE_BLOCK_SCOPES`, and a declared sensitive scope must
+    //   carry a `scopeJustifications` entry. So the mod sees something.
+    // - THE GAP IS THAT THE SCOPE IS DECLARED ONCE AND DOES NOT MOVE AGAIN. Any app
+    //   whose permission set ALREADY contains `goods:purchase:self` can add an unlock
+    //   with no scope change, hence no new sensitive scope, hence no new justification
+    //   demanded — while the product goes from "sells an item" to "charges for
+    //   admission", which nothing on the review screen would have mentioned. That is
+    //   the already-selling app, and also (⚠️ wider than it first looks) an app that
+    //   declared and justified the scope in v1 against an EMPTY catalog: nothing
+    //   rejects that, since the scope→goods rule is one-directional.
+    // - AND IT DOES NOT DEPEND ON A FUTURE CHANGE TO BE WORTH HAVING. There is an
+    //   EXPECTATION that the `goods:purchase:self` requirement will be relaxed for an
+    //   unlock, which would widen this gap to the free-app case too — but that is an
+    //   expectation, not a cited design artefact (`app_unlock` appears nowhere in
+    //   `docs/`), and it is deliberately NOT the argument. Keying on the kind means
+    //   the rule holds either way.
+    // ⚠️ One carve-out to know about: the moderator APPROVE path re-validates with
+    //   `enforceSensitiveScopeJustification:false`, so a legacy PENDING request can be
+    //   approved without the scope justification this reasoning leans on. The goods
+    //   rule here is not exempted on that path.
     //
     // Requiring the rationale HERE — in the one parser both the submit gate and the
     // purchase path call — is what makes "becoming paid" an explicit, reviewed
@@ -469,13 +478,20 @@ export function parseManifestGoods(manifest: GoodsManifestInput): {
   //
   // ⚠️ This is the FIRST catalog-level error that leaves `goods` POPULATED — the
   // per-entry rules all `return` before pushing, and `BLOCK_GOOD_MAX_PER_MANIFEST`
-  // returns `goods: []`. Deliberate: the review modal renders the offending unlocks
-  // so a moderator can see WHAT was declared, which an empty array would hide. Both
-  // current consumers are all-or-nothing on `errors` (`findManifestGood` refuses on
-  // any error; the submit validator reads only `.errors`), so the populated array is
-  // safe — but a future consumer that reads `goods` WITHOUT checking `errors` would
-  // receive the two-unlock catalog this bound exists to make impossible. Check
-  // `errors` first; that is the contract, not a suggestion.
+  // returns `goods: []`. Deliberate, and there are THREE consumers, not two:
+  //
+  // - `findManifestGood` refuses on ANY error, so nothing becomes sellable.
+  // - the submit validator reads only `.errors`, so the manifest is rejected.
+  // - the review modal (`ManifestGoods`) reads BOTH and deliberately does not gate
+  //   the catalog render on `errors` — which is the whole reason this array stays
+  //   populated. An arity-violating manifest therefore renders the "becoming PAID"
+  //   alert for both declared unlocks AND the errors card. That is the intended
+  //   outcome, not an accident: the moderator should see exactly what was declared
+  //   while also being told it does not validate. Pinned by a browser test.
+  //
+  // So "populated" is a property this parser OWES its one rendering consumer, and a
+  // new NON-rendering consumer must check `errors` first — that is the contract, not
+  // a suggestion.
   const appUnlockCount = goods.filter((good) => good.kind === 'app_unlock').length;
   if (appUnlockCount > BLOCK_APP_UNLOCK_MAX_PER_MANIFEST) {
     errors.push(

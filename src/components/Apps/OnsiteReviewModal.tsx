@@ -1329,10 +1329,11 @@ function ManifestScopes({ manifest }: { manifest: Record<string, unknown> }) {
  * that panel CANNOT show is an app that ALREADY SELLS ordinary goods and adds an
  * access unlock in v2 — its scope set does not change, so nothing new is justified
  * and nothing new is flagged, while the product goes from "sells an item" to
- * "charges for admission". That is the gap this card closes today. (The approved
- * design also drops the scope requirement for an unlock; once that lands the
- * free→paid case stops tripping the scope gate too, and this card already covers
- * it because it keys on the KIND rather than on a scope.)
+ * "charges for admission". That is the gap this card closes today. (It is EXPECTED
+ * that the scope requirement will later be relaxed for an unlock, which would widen
+ * the gap to the free-app case as well — stated as an expectation rather than as a
+ * cited design, and deliberately not the argument. This card keys on the KIND, so it
+ * holds either way.)
  *
  * 🔴 `goods` IS DELIBERATELY *NOT* ADDED TO `HANDLED_MANIFEST_KEYS`, so it still
  * appears in the raw disclosure as well. That differs from how `tagline` and
@@ -1401,10 +1402,13 @@ function ManifestGoods({ manifest }: { manifest: Record<string, unknown> }) {
                         "undefined" to a moderator. `unlocks` is derived from the
                         ACCEPTED goods, and the parser rejects an `app_unlock` with no
                         justification — so an unlock that reaches this line always has
-                        one. It is NOT the "invalid catalog" path: that manifest
-                        produces zero accepted unlocks and renders the errors card
-                        below instead, with no alert at all. Do not "fix" this by
-                        asserting the fallback in a test; it cannot be reached. */}
+                        one, including on the arity-error path. Do not "fix" this by
+                        asserting the fallback in a test; it cannot be reached.
+                        ⚠️ Narrowly: it is the UNJUSTIFIED catalog that produces zero
+                        accepted unlocks and renders only the errors card. An
+                        ARITY-violating catalog is also invalid and DOES reach here —
+                        two accepted unlocks plus an error — so "invalid ⇒ no alert" is
+                        not true in general. */}
                     {unlock.justification ?? '— none provided —'}
                   </Text>
                 </Stack>

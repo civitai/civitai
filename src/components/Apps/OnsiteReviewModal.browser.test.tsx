@@ -318,12 +318,16 @@ describe('OnsiteReviewModal — store-visible copy is surfaced INLINE for the mo
 
 describe('OnsiteReviewModal — a PAID app is announced to the mod', () => {
   /**
-   * 🔴 WHY THIS SUITE EXISTS. An `app_unlock` good is what flips a free app to a
-   * paid one, and it does NOT require the sensitive `goods:purchase:self` scope —
-   * so the sensitive-permissions panel cannot announce it. If the goods card fails
-   * to render, nothing on the moderator's screen says the app now charges, and the
-   * approve button still works. A review signal that silently does not render is
-   * the entire failure mode, which is why presence is asserted rather than assumed.
+   * 🔴 WHY THIS SUITE EXISTS — stated precisely, because the first version of this
+   * docblock got it wrong. An `app_unlock` good is what makes an app charge for
+   * ADMISSION. The sensitive-permissions panel does NOT announce that for an app
+   * that already sells ordinary goods: `goods:purchase:self` was declared and
+   * justified once, and adding an unlock moves no scope, so that panel renders
+   * exactly what it rendered before. If the goods card fails to render, nothing on
+   * the moderator's screen says the app now charges — and the approve button still
+   * works. A review signal that silently does not render is the entire failure mode,
+   * which is why both its PRESENCE and its PLACEMENT are asserted rather than
+   * assumed.
    */
   const UNLOCK_GOOD = {
     id: 'full-access',
@@ -394,6 +398,49 @@ describe('OnsiteReviewModal — a PAID app is announced to the mod', () => {
     // above is about a card outside it rather than about a panel that failed to mount.
     const otherCtrl = page.getByRole('button', { name: /^Other manifest fields/ });
     await expect.element(otherCtrl).toHaveAttribute('aria-expanded', 'false');
+
+    // 🔴 POSITIVE CONTROL ON THE DISCRIMINATOR ITSELF. Everything above rests on the
+    // claim that Mantine marks a collapsed panel's subtree `aria-hidden="true"`. That
+    // was prose; if a Mantine upgrade switches to `hidden` / `display:none` /
+    // unmounting, `closest(...)` returns null for EVERYTHING and the `toBeNull()`
+    // above becomes permanently, silently true in both placements — the exact vacuity
+    // this test rejected `toBeVisible()` for. So assert that content which IS inside
+    // the collapsed disclosure genuinely reports hidden. The raw-JSON `<pre>` is the
+    // handle (`goods` is deliberately left in that dump), reached non-exactly on
+    // purpose so it resolves the `<pre>` rather than the card.
+    const rawJson = page.getByText(/"full-access"/).element();
+    expect(rawJson.closest('[aria-hidden="true"]')).not.toBeNull();
+  });
+
+  test('an ARITY-violating catalog shows BOTH the paid alert and the errors card', async () => {
+    // 🔴 PINS AN INTENTIONAL ASYMMETRY THAT IS EASY TO MISREAD AS A BUG. The arity
+    // rule is the one catalog-level error that leaves `goods` POPULATED, precisely so
+    // this card can show a moderator WHAT was declared. So an invalid-by-arity
+    // manifest renders the alert for both unlocks AND the "does not validate" card —
+    // unlike an unjustified unlock, which is dropped and renders only the errors card.
+    // "Invalid ⇒ no alert" is therefore NOT true in general, and the parser comment
+    // owes this consumer the populated array.
+    renderWithProviders(
+      <OnsiteReviewModal
+        selection={{
+          request: {
+            ...ONSITE_PENDING,
+            manifest: {
+              ...ONSITE_PENDING.manifest,
+              goods: [UNLOCK_GOOD, { ...UNLOCK_GOOD, id: 'full-access-2', priceBuzz: 4200 }],
+            },
+          },
+          mode: 'pending',
+        }}
+        onClose={vi.fn()}
+      />
+    );
+    await expect.element(page.getByText('This app is becoming PAID')).toBeInTheDocument();
+    await expect.element(page.getByText(/Goods catalog does not validate/)).toBeInTheDocument();
+    await expect.element(page.getByText(/at most 1 app_unlock good/)).toBeInTheDocument();
+    // Both unlocks are shown, so the moderator sees the whole declaration.
+    await expect.element(page.getByText('3,100 Buzz')).toBeInTheDocument();
+    await expect.element(page.getByText('4,200 Buzz')).toBeInTheDocument();
   });
 
   test('an ORDINARY goods catalog renders the goods card but NOT the paid-app alert', async () => {

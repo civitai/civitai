@@ -471,7 +471,10 @@ describe('app_unlock — the paid-app bounds, arity and review trigger', () => {
     );
     expect(overCapSibling.errors).toHaveLength(1);
     expect(overCapSibling.errors[0]).toContain('priceBuzz');
-    expect(overCapSibling.errors[0]).not.toContain('at most');
+    // The arity message would be errors[1] under a raw-count mutant, so assert over the
+    // WHOLE set rather than errors[0] — a `not.toContain` on the first element alone is
+    // satisfied in both worlds and carries no weight.
+    expect(overCapSibling.errors.join(' | ')).not.toContain('at most');
 
     // (b) Two unlocks sharing an id: ONLY the duplicate error. The duplicate is
     // dropped BEFORE the count, so it never reaches the arity rule — which is also
@@ -483,10 +486,14 @@ describe('app_unlock — the paid-app bounds, arity and review trigger', () => {
   });
 
   it('REJECTS an app_unlock good with NO justification — the free→paid review trigger', () => {
-    // 🔴 WHY THIS RULE EXISTS. An app unlock is designed NOT to require the
-    // sensitive `goods:purchase:self` scope, so the sensitive-scope justification
-    // gate cannot see it: without this, a v2 could flip a free app to paid with
-    // nothing for a moderator to read.
+    // 🔴 WHY THIS RULE EXISTS — and it is NOT "the scope gate cannot see an unlock".
+    // It can, for a FREE app's first catalog: any non-empty `goods` requires
+    // `goods:purchase:self`, that scope IS sensitive, and a sensitive scope demands a
+    // justification. The gap is that the scope is declared ONCE and does not move
+    // when a later version adds an unlock — so an app already selling ordinary items
+    // can start charging for ADMISSION with its permission set unchanged, and nothing
+    // on the review screen would mention it. Keying on the KIND is what sees that,
+    // and it keeps working if the scope requirement for unlocks is ever relaxed.
     const { errors, goods } = parseManifestGoods(
       manifestWith([{ id: 'full-access', title: 'Full access', priceBuzz: 3_100, kind: 'app_unlock' }])
     );
@@ -779,18 +786,36 @@ describe('the tip-ceiling and Stripe-minimum agreement guard', () => {
     // (the tip ceiling above, the creator-shop share below) AND THIS ONE HAD NONE —
     // the one duplicate whose divergence nobody would ever notice. Unlike
     // `BLOCK_TIP_MAX_PER_TIP` it is trivially importable: a client-safe re-export
-    // shim sits in this very directory, which also retires the earlier claim that
-    // the constant stayed local to "avoid an auth-package import". It does not.
+    // shim sits in this very directory, which retires the earlier claim that the
+    // constant stayed local to "avoid an auth-package import". (Pedantically, going
+    // through the shim IS an auth-package import — just a client-safe one; the point
+    // is that nothing stood in the way of the guard.)
     expect(BLOCK_GOOD_JUSTIFICATION_MAX_LENGTH).toBe(SCOPE_JUSTIFICATION_MAX_LENGTH);
     // ⚠️ THE NUMBER AGREES; THE RULE DOES NOT, and that is deliberate rather than an
-    // oversight. The per-scope check measures the RAW string
-    // (`block-manifest-validator.service.ts`) while the goods parser measures the
-    // TRIMMED one, so a 500-char rationale padded with whitespace is rejected as a
-    // scope justification and accepted as a good justification. Asserted here so
-    // "same 500" is never read as "same rule".
+    // oversight: the per-scope check measures the RAW string
+    // (`block-manifest-validator.service.ts`) while this one measures the TRIMMED one.
+    //
+    // 🔴 An earlier version of this guard "asserted" that with two lines of arithmetic
+    // about its own fixture (`502 > 500`, `500 === 500`) and invoked NEITHER validator
+    // — a docstring wider than its body, the exact defect this PR renames another test
+    // to avoid. So the claim is made against the PARSER instead: a padded string whose
+    // RAW length exceeds the shared bound is ACCEPTED here, which is only true because
+    // this side trims. The scope side's raw measurement is not this file's to pin.
     const padded = `  ${'x'.repeat(SCOPE_JUSTIFICATION_MAX_LENGTH)}  `;
     expect(padded.length).toBeGreaterThan(SCOPE_JUSTIFICATION_MAX_LENGTH);
-    expect(padded.trim().length).toBe(BLOCK_GOOD_JUSTIFICATION_MAX_LENGTH);
+    expect(
+      parseManifestGoods(
+        manifestWith([
+          {
+            id: 'full-access',
+            title: 'Full access',
+            priceBuzz: 3_100,
+            kind: 'app_unlock',
+            justification: padded,
+          },
+        ])
+      ).errors
+    ).toEqual([]);
   });
 
   it('the unlock cap EQUALS the smallest Buzz top-up a viewer can actually buy', () => {
