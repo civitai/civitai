@@ -1,14 +1,13 @@
 import { faker } from '@faker-js/faker';
 import dayjs from '~/shared/utils/dayjs';
 import { capitalize, pull, range, without } from 'lodash-es';
-import type { DatabaseError } from 'pg';
+import { Pool, type DatabaseError } from 'pg';
 import format from 'pg-format';
 // import type { DatabaseError } from 'pg-protocol/src/messages';
 import { clickhouse } from '~/server/clickhouse/client';
 import type { BaseModelType } from '~/server/common/constants';
 import { constants } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
-import { notifDbWrite } from '~/server/db/notifDb';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { notificationProcessors } from '~/server/notifications/utils.notifications';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -77,6 +76,9 @@ const fbool = faker.datatype.boolean;
 // TODO fix tables ownership from doadmin to civitai
 
 // TODO seed logicalDb
+
+// The notification DB client moved to apps/notifications; the seed only needs a plain pool.
+const notifDbWrite = new Pool({ connectionString: process.env.NOTIFICATION_DB_URL });
 
 const setSerialNotif = async (table: string) => {
   // language=text
@@ -621,7 +623,6 @@ const genModels = (num: number, userIds: number[]) => {
       fbool(0.01), // locked
       isDeleted ? rand(userIds) : null, // deletedBy
       fbool(0.001), // underAttack
-      isEa ? faker.date.future().toISOString() : null, // earlyAccessDeadline
       randw([
         { value: null, weight: 100 },
         { value: rand(Object.values(ModelModifier)), weight: 1 },
@@ -732,8 +733,6 @@ const genMvs = (num: number, modelData: { id: number; uploadType: ModelUploadTyp
         { value: 15, weight: 2 },
         { value: 31, weight: 2 },
       ]), // nsfwLevel
-      null, // earlyAccessConfig // TODO
-      null, // earlyAccessEndsAt // TODO
       model.uploadType, // uploadType
     ];
     ret.push(row);
@@ -1438,7 +1437,6 @@ const genTags = (num: number) => {
       true,
       false,
       'Label',
-      'None',
       false,
       1,
     ],
@@ -1453,7 +1451,6 @@ const genTags = (num: number) => {
       true,
       false,
       'Label',
-      'None',
       false,
       1,
     ],
@@ -1468,7 +1465,6 @@ const genTags = (num: number) => {
       true,
       false,
       'Label',
-      'None',
       false,
       1,
     ],
@@ -1483,7 +1479,6 @@ const genTags = (num: number) => {
       true,
       false,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1498,7 +1493,6 @@ const genTags = (num: number) => {
       true,
       false,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1513,7 +1507,6 @@ const genTags = (num: number) => {
       true,
       true,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1528,7 +1521,6 @@ const genTags = (num: number) => {
       true,
       false,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1543,7 +1535,6 @@ const genTags = (num: number) => {
       true,
       true,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1558,7 +1549,6 @@ const genTags = (num: number) => {
       true,
       false,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1573,7 +1563,6 @@ const genTags = (num: number) => {
       true,
       false,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1588,7 +1577,6 @@ const genTags = (num: number) => {
       true,
       false,
       'Label',
-      'None',
       false,
       1,
     ],
@@ -1603,7 +1591,6 @@ const genTags = (num: number) => {
       true,
       false,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1618,7 +1605,6 @@ const genTags = (num: number) => {
       true,
       false,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1633,7 +1619,6 @@ const genTags = (num: number) => {
       true,
       false,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1648,7 +1633,6 @@ const genTags = (num: number) => {
       true,
       false,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1663,7 +1647,6 @@ const genTags = (num: number) => {
       true,
       false,
       'Label',
-      'None',
       false,
       1,
     ],
@@ -1678,7 +1661,6 @@ const genTags = (num: number) => {
       true,
       true,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1693,7 +1675,6 @@ const genTags = (num: number) => {
       true,
       false,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1708,7 +1689,6 @@ const genTags = (num: number) => {
       true,
       true,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1723,7 +1703,6 @@ const genTags = (num: number) => {
       true,
       true,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1738,7 +1717,6 @@ const genTags = (num: number) => {
       true,
       false,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1753,7 +1731,6 @@ const genTags = (num: number) => {
       true,
       false,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1768,7 +1745,6 @@ const genTags = (num: number) => {
       true,
       false,
       'Label',
-      'None',
       false,
       1,
     ],
@@ -1783,7 +1759,6 @@ const genTags = (num: number) => {
       true,
       true,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1798,7 +1773,6 @@ const genTags = (num: number) => {
       true,
       false,
       'Label',
-      'None',
       false,
       1,
     ],
@@ -1813,7 +1787,6 @@ const genTags = (num: number) => {
       true,
       false,
       'UserGenerated',
-      'None',
       false,
       1,
     ],
@@ -1828,7 +1801,6 @@ const genTags = (num: number) => {
       false,
       false,
       'System',
-      'None',
       false,
       1,
     ],
@@ -1843,7 +1815,6 @@ const genTags = (num: number) => {
       false,
       false,
       'System',
-      'None',
       false,
       1,
     ],
@@ -1858,7 +1829,6 @@ const genTags = (num: number) => {
       false,
       false,
       'System',
-      'None',
       false,
       1,
     ],
@@ -1873,7 +1843,6 @@ const genTags = (num: number) => {
       false,
       false,
       'System',
-      'None',
       false,
       1,
     ],
@@ -1888,7 +1857,6 @@ const genTags = (num: number) => {
       false,
       false,
       'System',
-      'None',
       false,
       1,
     ],
@@ -1925,7 +1893,6 @@ const genTags = (num: number) => {
         { value: TagType.Label, weight: 7500 },
         { value: TagType.UserGenerated, weight: 150000 },
       ]), // type
-      'None', // nsfw
       false, // adminOnly
       1, // nsfwLevel
     ];
@@ -3411,10 +3378,10 @@ const genRows = async (truncate = true) => {
     .map((m) => ({
       id: m[6] as number,
       userId: m[7] as number,
-      uploadType: m[25] as ModelUploadType,
+      uploadType: m[24] as ModelUploadType,
       type: m[2] as ModelType,
       status: m[9] as ModelStatus,
-      availability: m[28] as Availability,
+      availability: m[27] as Availability,
     }))
     .filter((m) => modelIds.includes(m.id));
 
@@ -3428,7 +3395,7 @@ const genRows = async (truncate = true) => {
         id: mv[6] as number,
         modelId: modelId,
         userId: matchModel?.userId,
-        uploadType: mv[28] as ModelUploadType,
+        uploadType: mv[26] as ModelUploadType,
         type: matchModel?.type,
         status: matchModel?.status,
         availability: matchModel?.availability,
