@@ -5,7 +5,6 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { withRetries } from '~/server/utils/errorHandling';
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 import {
-  IMAGES_SEARCH_INDEX,
   MODELS_SEARCH_INDEX,
   ARTICLES_SEARCH_INDEX,
   COLLECTIONS_SEARCH_INDEX,
@@ -199,7 +198,7 @@ export const removeUserContentFromSearchIndex = async ({
 /**
  * Process the queued user content removals in a single batch.
  * Combines multiple users into one filter per index using IN syntax,
- * reducing Meilisearch task count from 7*N to just 7.
+ * reducing Meilisearch task count from N*len(indexes) to one per index.
  */
 export const processUserContentRemovalQueue = async () => {
   const pending = await sysRedis.hGetAll(REDIS_SYS_KEYS.QUEUES.USER_CONTENT_REMOVAL);
@@ -227,7 +226,13 @@ export const processUserContentRemovalQueue = async () => {
   // One combined filter per index instead of one per user per index
   const mainIndexConfigs = [
     { name: MODELS_SEARCH_INDEX, filter: `user.id IN [${userIdList}]` },
-    { name: IMAGES_SEARCH_INDEX, filter: `user.username IN [${escapedUsernames}]` },
+    // NOTE: no entry for IMAGES_SEARCH_INDEX. The images_v6 index is retired (see
+    // images.search-index.ts): including it here re-created it bare via
+    // getOrCreateIndex, and because `retired` skips onIndexSetup it came back with no
+    // filterableAttributes, so every `user.username` delete task failed as
+    // invalid_document_filter (71 failed tasks 2026-09-27..10-02). The index holds no
+    // documents, so nothing is missed. Restoring image search requires re-adding the
+    // images entry here as part of the same change as the index reset.
     { name: ARTICLES_SEARCH_INDEX, filter: `user.username IN [${escapedUsernames}]` },
     { name: COLLECTIONS_SEARCH_INDEX, filter: `user.username IN [${escapedUsernames}]` },
     { name: BOUNTIES_SEARCH_INDEX, filter: `user.username IN [${escapedUsernames}]` },
