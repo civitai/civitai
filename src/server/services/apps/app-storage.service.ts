@@ -39,7 +39,11 @@ import {
   appStorageQuotaExceededCounter,
   appStorageUserQuotaUntrackedCounter,
 } from '~/server/prom/client';
-import type { AppStorageOp, AppStorageOutcome } from '~/server/prom/app-block-storage.metrics';
+import type {
+  AppStorageCeiling,
+  AppStorageOp,
+  AppStorageOutcome,
+} from '~/server/prom/app-block-storage.metrics';
 import { logToAxiom } from '~/server/logging/client';
 import { requireAppsDb } from '~/server/db/appsDb';
 import { appSchemaIdent, sanitizeAppSlug } from '~/server/utils/apps-slug';
@@ -242,6 +246,18 @@ function isUndefinedTable(err: unknown): boolean {
  */
 function countStorageOutcome(op: StorageOp, outcome: AppStorageOutcome): void {
   appStorageOpsCounter.inc({ op, outcome });
+}
+
+/**
+ * The ONLY writer of `civitai_app_block_storage_quota_exceeded_total`.
+ *
+ * 🔴 Same reason as `countStorageOutcome`, and it matters more here: this is the counter with
+ * an alerting consumer, and it is SEEDED. A mistyped `ceiling` is therefore worse than an
+ * absent series — the seeded `ceiling="user"` row keeps reading a reassuring 0 forever while
+ * real refusals pile up under the typo. `absent()` at least fires; a present 0 does not.
+ */
+function countQuotaExceeded(appBlockId: string, ceiling: AppStorageCeiling): void {
+  appStorageQuotaExceededCounter.inc({ app_block_id: appBlockId, ceiling });
 }
 
 /**
@@ -835,7 +851,7 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
 
     if (!isNonIncreasing && usedBytes + netDelta > APP_QUOTA_BYTES) {
       countStorageOutcome('set', 'quota_exceeded');
-      appStorageQuotaExceededCounter.inc({ app_block_id: appBlockId, ceiling: 'app' });
+      countQuotaExceeded(appBlockId, 'app');
       logToAxiom(
         {
           event: 'quota_exceeded',
@@ -860,7 +876,7 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
     }
     if (isInsert && rowCount + 1 > APP_ROW_LIMIT) {
       countStorageOutcome('set', 'quota_exceeded');
-      appStorageQuotaExceededCounter.inc({ app_block_id: appBlockId, ceiling: 'app' });
+      countQuotaExceeded(appBlockId, 'app');
       throw new TRPCError({
         code: 'PAYLOAD_TOO_LARGE',
         message: 'app row limit exceeded',
@@ -901,7 +917,7 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
     // itself is gone — it had no reader left that could act on it.
     if (!isNonIncreasing && userUsedBytes + netDelta > USER_QUOTA_BYTES) {
       countStorageOutcome('set', 'quota_exceeded');
-      appStorageQuotaExceededCounter.inc({ app_block_id: appBlockId, ceiling: 'user' });
+      countQuotaExceeded(appBlockId, 'user');
       logToAxiom(
         {
           event: 'user_quota_exceeded',
@@ -922,7 +938,7 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
     }
     if (isInsert && userRowCount + 1 > USER_ROW_LIMIT) {
       countStorageOutcome('set', 'quota_exceeded');
-      appStorageQuotaExceededCounter.inc({ app_block_id: appBlockId, ceiling: 'user' });
+      countQuotaExceeded(appBlockId, 'user');
       throw new TRPCError({
         code: 'PAYLOAD_TOO_LARGE',
         message: 'per-user row limit exceeded',

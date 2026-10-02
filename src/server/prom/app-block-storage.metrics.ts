@@ -37,6 +37,7 @@ export type AppStorageOutcome =
   | (typeof APP_STORAGE_OUTCOMES_SET_ONLY)[number];
 
 export const APP_STORAGE_CEILINGS = ['app', 'user'] as const;
+export type AppStorageCeiling = (typeof APP_STORAGE_CEILINGS)[number];
 
 /** The 22 (op, outcome) pairs the service can emit: 5 x 4, plus `set` x 2. */
 export const REACHABLE_OPS_SERIES: ReadonlyArray<{ op: AppStorageOp; outcome: AppStorageOutcome }> =

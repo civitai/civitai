@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import client from 'prom-client';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 import {
   APP_STORAGE_CEILINGS,
@@ -190,8 +190,13 @@ describe('re-seeding is non-destructive', () => {
     // The try/catch is a scrape-AVAILABILITY guard: this runs inside the /api/metrics handler,
     // so a throw out of the seeder 500s the whole response — default metrics, every other
     // seeded counter, the Prisma series. Deleting the catch left the suite green, so the guard
-    // had no case. This also pins the ordering claim: the counters go out BEFORE the leg that
-    // can fail, so a failure here still leaves the alertable series published.
+    // had no case.
+    //
+    // 🔴 Asserts MEMBERSHIP, not a total. An earlier draft asserted `toBe(22)`, which this
+    // describe's own header forbids and which cannot fail: `beforeAll` has already published
+    // those series, so a count passes whether or not THIS invocation wrote anything. It also
+    // misattributed — a case appended to the first describe that incremented one pair turned
+    // this case red with `expected 23 to be 22`, reading as "the scrape lost series".
     const handle = client.register.getSingleMetric(LATENCY) as unknown as {
       get: () => Promise<unknown>;
     };
@@ -200,11 +205,42 @@ describe('re-seeding is non-destructive', () => {
     try {
       await expect(seedAppBlockStorageMetrics()).resolves.toBeUndefined();
 
-      expect((await valuesOf(OPS)).length).toBe(22);
-      expect((await valuesOf(QUOTA_EXCEEDED)).length).toBe(2);
-      expect((await valuesOf(USER_QUOTA_UNTRACKED)).length).toBe(1);
+      const pairs = new Set((await valuesOf(OPS)).map((v) => `${v.labels.op}/${v.labels.outcome}`));
+      for (const { op, outcome } of REACHABLE_OPS_SERIES) {
+        expect(pairs.has(`${op}/${outcome}`), `${op}/${outcome}`).toBe(true);
+      }
+      expect((await valuesOf(QUOTA_EXCEEDED)).map((v) => v.labels.ceiling).sort()).toEqual([
+        'app',
+        'user',
+      ]);
     } finally {
       handle.get = original;
+    }
+
+    // Nothing else asserted the patch came back. Neutering the `finally` leaves this file
+    // green; the leak only surfaces in whichever case is appended next, attributed to it.
+    expect(handle.get).toBe(original);
+  });
+
+  it('🔴 the counters are written BEFORE the leg that can fail', async () => {
+    // The ordering the module comment claims, pinned as ORDER rather than as end state. The
+    // end state cannot see it — `beforeAll` has already published everything, so reversing the
+    // legs leaves every count correct. Measured: with the state-only assertion above, moving
+    // `zeroMissingLatencyChildren()` to the top of the `try` stayed green, while on a real
+    // pod's first scrape that reversal plus a failing read publishes nothing at all.
+    const ops = client.register.getSingleMetric(OPS) as unknown as Record<string, unknown>;
+    const latency = client.register.getSingleMetric(LATENCY) as unknown as Record<string, unknown>;
+    const incSpy = vi.spyOn(ops as unknown as { inc: (...a: unknown[]) => void }, 'inc');
+    const getSpy = vi.spyOn(latency as unknown as { get: () => Promise<unknown> }, 'get');
+    try {
+      await seedAppBlockStorageMetrics();
+
+      expect(incSpy.mock.invocationCallOrder.length).toBeGreaterThan(0);
+      expect(getSpy.mock.invocationCallOrder.length).toBeGreaterThan(0);
+      expect(incSpy.mock.invocationCallOrder[0]).toBeLessThan(getSpy.mock.invocationCallOrder[0]);
+    } finally {
+      incSpy.mockRestore();
+      getSpy.mockRestore();
     }
   });
 });
@@ -266,48 +302,84 @@ describe('the seeded domain matches the service', () => {
     // the mislabel this case claims to catch (every `list` refusal counted as `op="get"`).
     const src = service();
     for (const op of APP_STORAGE_OPS) {
+      // `[^,()]+` for argument 1, not a bare-identifier class: `input.blockToken`, `token!` and
+      // `'get' as const` all reach the resolver perfectly well, and a narrow class false-fails
+      // them with a message that reads as "this op is unreachable". Argument POSITION is the
+      // property; the token's spelling is not. Never a character window — a `[\s\S]{0,80}?`
+      // window runs past the closing paren into the adjacent `countStorageOutcome('<op>', …)`,
+      // which left three of the five ops matching their own emit site instead.
       expect(src, `resolveStorageContext(<token>, '${op}')`).toMatch(
-        new RegExp(`resolveStorageContext\\(\\s*[A-Za-z_$][\\w$]*\\s*,\\s*'${op}'\\s*\\)`)
+        new RegExp(`resolveStorageContext\\(\\s*[^,()]+\\s*,\\s*'${op}'\\s*\\)`)
       );
       expect(src, `countStorageFault('${op}', …)`).toContain(`countStorageFault('${op}'`);
-      // The histogram's `op` axis carries 65 of the 90 seeded series and has no other guard:
-      // an op whose timer is never started is a dead zero exactly like an unemitted outcome.
-      expect(src, `startTimer({ op: '${op}' })`).toContain(
+    }
+
+    // 🔴 The histogram's `op` axis carries 65 of the 90 seeded series. Paired PER PROCEDURE,
+    // not per file: a whole-file `toContain` cannot see a SWAP, and swapping the `op` labels on
+    // two `startTimer` calls leaves both literals present — measured, it survived. A swap is
+    // the same mislabel the resolver anchoring above exists to catch, on the bigger axis.
+    const procedures = src.split('\nexport async function ').slice(1);
+    for (const op of APP_STORAGE_OPS) {
+      const owning = procedures.filter((body) =>
+        new RegExp(`resolveStorageContext\\(\\s*[^,()]+\\s*,\\s*'${op}'\\s*\\)`).test(body)
+      );
+      expect(owning.length, `exactly one procedure resolves '${op}'`).toBe(1);
+      expect(owning[0], `the '${op}' procedure times itself as '${op}'`).toContain(
         `appStorageLatencyHistogram.startTimer({ op: '${op}' })`
       );
     }
   });
 
-  it('🔴 only three files name the ops counter at all — every case above assumes that scope', () => {
-    // Ledgers files that REFERENCE the handle, not ones that spell `.inc`. A spelled guard is
-    // walkable: `const c = appStorageOpsCounter; c.inc(…)`, `.labels(op, outcome).inc()` and
-    // `inc.call(appStorageOpsCounter, …)` are all first-class prom-client usage that a
-    // `/appStorageOpsCounter\s*\.inc/` pattern misses — measured, all three evaded it with an
-    // untyped `outcome`. A writer cannot avoid naming the symbol to import it, so this is
-    // structural. Fails on growth AND shrink.
+  it('🔴 only three non-test files under src/ can reach the ops counter — every case above assumes that scope', () => {
+    // Ledgers files that REACH the handle, not ones that spell `.inc`. A spelled guard is
+    // walkable: `const c = appStorageOpsCounter; c.inc(…)`, `.labels(op, outcome).inc()` (live
+    // production idiom in `flipt-eval-cache.metrics.ts`) and `inc.call(…)` are all first-class
+    // prom-client usage that a `/appStorageOpsCounter\s*\.inc/` pattern misses — measured, all
+    // three evaded it with an untyped `outcome`.
     //
-    // `block-token-access.service.ts` names it in a comment only; that is still the right
-    // membership test, because the claim is "nothing else can reach this counter". `__tests__`
-    // is excluded — a suite that stubs the handle is not a production writer, which is why
-    // this set is three files and not the four a test-inclusive walk reports.
-    const referencing: string[] = [];
+    // Two reach-paths, so two patterns: the symbol (which any importer must name) and the WIRE
+    // NAME via `register.getSingleMetric(...)`, which needs no import at all — this file itself
+    // obtains a writable handle that way, so "a writer cannot avoid naming the symbol" would be
+    // false as a claim about the program. Fails on growth AND shrink.
+    //
+    // 🔴 Title says "under src/" deliberately: the walk root is `src/`, so a writer added under
+    // `packages/` or `apps/` is invisible here. `packages/civitai-telemetry/src/client.ts` is a
+    // fourth referencing file for exactly that reason — it is the declaration, and benign.
+    // `__tests__` is excluded: a suite that stubs the handle is not a production writer, which
+    // is why this set is three and not the seven a test-inclusive walk reports.
+    // `block-token-access.service.ts` names it in a comment only, and that is still the right
+    // membership test, because the claim is about what can reach the counter.
+    const reaching: string[] = [];
+    const sites: Record<string, number> = {};
     const walk = (dir: string) => {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, entry.name);
         if (entry.isDirectory()) {
           if (entry.name !== 'node_modules' && entry.name !== '__tests__') walk(full);
         } else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) {
-          if (fs.readFileSync(full, 'utf8').includes('appStorageOpsCounter')) {
-            referencing.push(path.relative(SRC, full));
+          const text = fs.readFileSync(full, 'utf8');
+          if (text.includes('appStorageOpsCounter') || text.includes(`'${OPS}'`)) {
+            const rel = path.relative(SRC, full);
+            reaching.push(rel);
+            sites[rel] = (
+              text.match(/appStorageOpsCounter\s*(?:\.\w+\([^)]*\))?\s*\.inc\b/g) ?? []
+            ).length;
           }
         }
       }
     };
     walk(SRC);
-    expect(referencing.sort()).toEqual([
+    expect(reaching.sort()).toEqual([
       'server/prom/app-block-storage.metrics.ts',
       'server/services/apps/app-storage.service.ts',
       'server/services/blocks/block-token-access.service.ts',
     ]);
+
+    // 🔴 Per-file membership is not enough on its own: the service is permanently on that list
+    // because it holds `countStorageOutcome`'s own `.inc`, so a SECOND raw emit added inside it
+    // — the likeliest place one appears — passes the set check. Measured: it survived. One site
+    // per writer file is the real invariant.
+    expect(sites['server/services/apps/app-storage.service.ts']).toBe(1);
+    expect(sites['server/prom/app-block-storage.metrics.ts']).toBe(1);
   });
 });
