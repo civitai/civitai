@@ -14,9 +14,13 @@ import {
   VISIBILITY_ELIGIBLE_LISTING_STATUSES,
   visibilitiesVisibleToForStatus,
 } from '~/shared/utils/app-listing-visibility';
-// The MANUAL-APPLY `visibility` column is read ONLY through this guard — never via
-// `listingHydrateSelect`, which the public `/apps` GRID shares. See its module header.
-import { readListingVisibility } from '~/server/services/blocks/app-listing-visibility.service';
+// The MANUAL-APPLY `visibility` column is read ONLY through this guard, which uses raw SQL:
+// the field is `// @no-type` and therefore absent from the generated client entirely. See its
+// module header for the production 500 that forced that.
+import {
+  noteDegradedVisibilityRead,
+  readListingVisibility,
+} from '~/server/services/blocks/app-listing-visibility.service';
 import { tokenScopeMaskToList } from '~/shared/constants/token-scope.constants';
 import type {
   GetAppListingDetailInput,
@@ -1212,13 +1216,12 @@ export async function listAvailableListings(
   // Only `top-rated` needs the global mean. PIN it into the cursor across a
   // paging session (page 1 reads the 1h cache + encodes it; pages 2..N reuse
   // the pinned value, NOT a fresh read) so the sort key can't shift mid-scan.
-  // 🔴 CONCURRENT WITH THE MEAN, AND IT MUST PRECEDE THE STATEMENT. The level filter is raw
-  // SQL, so whether it may NAME `al.visibility` has to be decided before the statement is
-  // built — a missing column is a parse error no per-column guard can swallow. One
-  // primary-key probe that matches nothing, issued alongside the only other pre-statement
-  // read so it costs no extra round trip on the `top-rated` path. Deliberately not memoised:
-  // the column appears partway through a deploy's life. The router short-circuits
-  // `scope === 'none'` before reaching here, so the probe never runs for dark traffic.
+  // ⚠️ THERE IS NO PRE-FLIGHT PROBE HERE, AND A COMMENT CLAIMING ONE STOOD IN THIS SPOT.
+  // It described a column-availability probe that was removed, and leaving it would lead a
+  // maintainer to believe the statement below is guarded before it runs — and therefore to
+  // delete the `isMissingColumnError` catch on the cached read, which is the ONLY thing
+  // keeping the public grid alive while the manual-apply migration is outstanding. The
+  // degradation is that catch and nothing else.
   const globalMean = sort === 'top-rated' ? cursorMean ?? (await getGlobalRecommendMean()) : 0;
 
   const { expr: sortKeyExpr, descending } = listingSortKeyExpr(sort, globalMean);
@@ -1311,6 +1314,11 @@ export async function listAvailableListings(
   // store page.
   const idRows = await pageFor(listingLevelVisibilityFilter(floor)).catch((err: unknown) => {
     if (!isMissingColumnError(err)) throw err;
+    // 🔴 RECORDED, NOT SILENT. Without this the whole manual-apply window is invisible: the
+    // store serves the pre-feature predicate and nothing anywhere says so. Bounded by
+    // catalog cache MISSES (one per cohort per TTL), which is why it is wired here and not
+    // on the detail path, where it would fire at page-view rate.
+    noteDegradedVisibilityRead(err);
     return pageFor(Prisma.sql`al.status = 'approved'`);
   });
 
@@ -1386,9 +1394,12 @@ export async function getListingDetail(
   // undefined })` would return an ARBITRARY approved row (enumeration footgun);
   // both → ambiguous. Fail closed to null in either case.
   if (!input.id === !input.slug) return null;
-  // `revisionOfId: null` is defense-in-depth: a shadow is status='draft' (already
-  // excluded by the approved-only check below), but never let a crafted id reach a
-  // shadow's data through this public read.
+  // `revisionOfId: null` is NOT redundant. ⚠️ An earlier version of this comment called it
+  // "defense-in-depth … already excluded by the approved-only check below" — there IS no
+  // approved-only check below any more: the level gate replaced it, and that gate can admit
+  // a non-approved row. A shadow revision is a draft, so this term is now the only thing
+  // keeping a shadow's staged, un-reviewed content out of a public detail read. Do not
+  // remove it as redundant; the grid's twin comment was corrected in this same change.
   const where: Prisma.AppListingWhereInput = input.id
     ? { id: input.id, revisionOfId: null }
     : { slug: input.slug, revisionOfId: null };
@@ -1404,9 +1415,12 @@ export async function getListingDetail(
   // this for a non-public path: a row this viewer's cohort may not see returns null
   // exactly like a missing one — never its data, and never a distinguishable refusal.
   //
-  // 🔴 THE LEVEL IS READ SEPARATELY, NOT VIA THE SHARED `select` ABOVE. `visibility` is a
-  // manual-apply column and `listingHydrateSelect` is shared with the public GRID, so
-  // naming it there would 500 the whole store until a human runs the SQL.
+  // 🔴 THE LEVEL IS READ SEPARATELY, AND IT CANNOT BE READ ANY OTHER WAY. `visibility` is
+  // `// @no-type` in `schema.full.prisma`, so it is stripped from the generated client and
+  // does not exist on the `appListing` delegate — naming it in any `select` is a compile
+  // error. Deliberate: as an ordinary field it was emitted by every default
+  // SELECT/RETURNING, which 500d off-site submit on the PR preview during the manual-apply
+  // window. The guarded reader uses raw SQL.
   //
   // 🔴 AND AN UNAVAILABLE COLUMN NEEDS NO SPECIAL CASE HERE. `readListingVisibility` catches
   // the missing column and answers `visibility: null`, which `listingVisibleInStore` already

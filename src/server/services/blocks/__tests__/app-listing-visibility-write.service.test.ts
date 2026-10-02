@@ -64,37 +64,34 @@ const listing = dbMock.dbWrite.appListing;
 let row: Record<string, unknown> | null;
 /** What the guarded level read answers. Set per case. */
 let stored: string | null | 'THROW_P2022';
+/** What the raw compare-and-set reports as its affected-row count. Set per case. */
+let flipped: number;
+
+/** The shape the shared mock's nodes expose, so a cast reads once rather than inline. */
+type MockFn = { mockImplementation: (f: (...a: unknown[]) => unknown) => void };
 
 function installDefaults() {
   row = { id: 'apl_1', slug: 'an-app', status: 'approved', appBlock: { status: 'approved' } };
   stored = null;
-  // 🔴 DISCRIMINATE ON `status`, NOT ON `visibility`. The write path's single row read now
-  // names BOTH (it derives the level from the same read rather than paying a third PK
-  // lookup), so a mock keyed on `'visibility' in select` answers the STATUS read with a
-  // level-only object and every D1 case silently loses its row. That cost a round of red
-  // tests whose message pointed at the wrong gate.
+  flipped = 1;
+  // The Prisma delegate answers the STATUS read and the post-CAS existence probe only. It
+  // can no longer answer for the level: the column is `// @no-type`, so the field does not
+  // exist on the generated client at all — which is the fix this suite now has to model.
   listing.findUnique.mockImplementation(async (args: unknown) => {
     const select = (args as { select?: Record<string, unknown> })?.select ?? {};
-    if ('status' in select) {
-      // The combined read. P2022 here is what an unapplied migration produces, and the
-      // service re-reads without the column — mirror that by answering the narrow select.
-      if (stored === 'THROW_P2022' && 'visibility' in select) {
-        throw Object.assign(new Error('column does not exist'), { code: 'P2022' });
-      }
-      return row ? { ...row, visibility: stored === 'THROW_P2022' ? null : stored } : null;
-    }
-    // The post-CAS existence probe asks for `id` alone.
+    if ('status' in select) return row;
     return row ? { id: 'apl_1' } : null;
   });
-  listing.updateMany.mockImplementation(async () => ({ count: 1 }));
-  // 🔴 THE TRANSACTION RUNS ITS CALLBACK. A `$transaction` fake that resolves without
-  // invoking the callback would make every write assertion below vacuous while every test
-  // stayed green — the write simply would not happen.
-  (
-    dbMock.dbWrite.$transaction as unknown as { mockImplementation: (f: unknown) => void }
-  ).mockImplementation(async (fn: unknown) =>
-    typeof fn === 'function' ? (fn as (tx: unknown) => unknown)(dbMock.dbWrite) : undefined
-  );
+  // 🔴 THE LEVEL IS READ THROUGH `$queryRaw` AND WRITTEN THROUGH `$executeRaw`, so the
+  // fakes are keyed on the STATEMENT rather than on a delegate method. A P2022 from the
+  // read is what an unapplied migration produces.
+  (dbMock.dbWrite.$queryRaw as unknown as MockFn).mockImplementation(async () => {
+    if (stored === 'THROW_P2022') {
+      throw Object.assign(new Error('column does not exist'), { code: 'P2022' });
+    }
+    return [{ visibility: stored }];
+  });
+  (dbMock.dbWrite.$executeRaw as unknown as MockFn).mockImplementation(async () => flipped);
   mockResolveListingAccess.mockImplementation(async () => ({ role: 'owner' }));
 }
 
@@ -113,7 +110,7 @@ describe('the OWNER path — authorization', () => {
     await expect(
       setListingVisibilityAsOwner({ appListingId: 'apl_1', visibility: 'testers', userId: 9 })
     ).rejects.toThrow(VISIBILITY_NOT_OWNED_MESSAGE);
-    expect(listing.updateMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 
   it('[INV] a row that resolves with a NULL role is refused', async () => {
@@ -123,7 +120,7 @@ describe('the OWNER path — authorization', () => {
     await expect(
       setListingVisibilityAsOwner({ appListingId: 'apl_1', visibility: 'testers', userId: 9 })
     ).rejects.toThrow(VISIBILITY_NOT_OWNED_MESSAGE);
-    expect(listing.updateMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 
   it('[INV] a MISSING listing and an UNOWNED one are indistinguishable', async () => {
@@ -157,10 +154,29 @@ describe('the OWNER path — authorization', () => {
   });
 
   it('[INV] the OWNER path writes NO moderation event', async () => {
-    // 🔴 A SURVIVING MUTANT. An owner editing their own listing is an ordinary authored
-    // edit; attributing a moderation event to them would put owner actions into the
-    // moderator audit trail and corrupt the `set-visibility` population.
+    // 🔴 THIS CASE HAD **NO ASSERTION AT ALL** AND IS THE REASON TO DISTRUST A GREEN FILE.
+    // It called the function and asserted nothing — no `expect`, no `expect.hasAssertions()`,
+    // and the file carried no moderation-event mock to assert against. A faithful mutant
+    // (an `appListingModerationEvent.create` on the write path, the shape
+    // `offsite-moderation.service.ts` uses) SURVIVED the whole file, while the file header
+    // claimed every case here was the behavioural half of a killed mutant. That claim was
+    // false for this one.
+    //
+    // ⚠️ AND A CRUDER MUTANT DIED FOR THE WRONG REASON — a `create` placed where the shared
+    // db mock had no default threw `Cannot read properties of undefined (reading 'catch')`,
+    // i.e. the harness refusing a shape rather than an assertion firing. So the node is
+    // given an explicit default below, which is what makes the red attributable.
+    //
+    // The property: an owner editing their own listing is an ordinary authored edit.
+    // Attributing a moderation event to them would put owner actions into the MODERATOR
+    // audit trail — and the deferred moderator path is the only thing that may write there.
+    const events = dbMock.dbWrite.appListingModerationEvent;
+    (events.create as unknown as MockFn).mockImplementation(async () => ({ id: 'alme_1' }));
     await setListingVisibilityAsOwner({ appListingId: 'apl_1', visibility: 'testers', userId: 9 });
+    expect(events.create).not.toHaveBeenCalled();
+    // The write itself DID happen, so the zero above is a measurement rather than a
+    // function that returned early.
+    expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -174,7 +190,7 @@ describe('D1 — the status gate', () => {
       await expect(
         setListingVisibilityAsOwner({ appListingId: 'apl_1', visibility: 'public', userId: 9 })
       ).rejects.toThrow(VISIBILITY_STATUS_INELIGIBLE_MESSAGE);
-      expect(listing.updateMany).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
     }
   );
 
@@ -186,7 +202,7 @@ describe('D1 — the status gate', () => {
     await expect(
       setListingVisibilityAsOwner({ appListingId: 'apl_1', visibility: 'public', userId: 9 })
     ).rejects.toThrow(VISIBILITY_STATUS_INELIGIBLE_MESSAGE);
-    expect(listing.updateMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 
   it('[INV] a SUSPENDED backing block is refused even when the listing status is fine', async () => {
@@ -197,7 +213,7 @@ describe('D1 — the status gate', () => {
     await expect(
       setListingVisibilityAsOwner({ appListingId: 'apl_1', visibility: 'public', userId: 9 })
     ).rejects.toThrow(VISIBILITY_BLOCK_SUSPENDED_MESSAGE);
-    expect(listing.updateMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 
   it('[INV] the two D1 refusals are DISTINCT messages', async () => {
@@ -233,7 +249,7 @@ describe('the REVIEW CEILING', () => {
           setListingVisibilityAsOwner({ appListingId: 'apl_1', visibility: tooWide, userId: 9 })
         ).rejects.toThrow(VISIBILITY_EXCEEDS_REVIEW_CEILING_MESSAGE);
       }
-      expect(listing.updateMany).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
       // POSITIVE CONTROL: the ceiling itself is reachable, so the refusals above are the
       // ceiling and not a blanket refusal on unreviewed listings.
       await expect(
@@ -281,18 +297,23 @@ describe('the compare-and-set write', () => {
     // `updateMany` matching zero rows and the refusal surfacing from the concurrency
     // branch, i.e. a stale allowlist misreported as a race.
     await setListingVisibilityAsOwner({ appListingId: 'apl_1', visibility: 'testers', userId: 9 });
-    const args = listing.updateMany.mock.calls.at(-1)?.[0] as {
-      where?: { status?: { in?: string[] } };
-      data?: Record<string, unknown>;
-    };
-    expect(args?.where?.status?.in).toEqual(['draft', 'pending', 'approved']);
-    expect(args?.data).toEqual({ visibility: 'testers' });
+    const call = (
+      dbMock.dbWrite.$executeRaw as unknown as { mock: { calls: unknown[][] } }
+    ).mock.calls.at(-1);
+    const stmt = call?.[0] as { sql: string; values: unknown[] };
+    // The statuses ride as BOUND VALUES, derived from the shared allowlist rather than
+    // written a second time — a hardcoded list here would drift from the read's allowlist
+    // and surface as a phantom concurrency refusal.
+    expect(stmt.values).toEqual(['testers', 'apl_1', 'draft', 'pending', 'approved']);
+    // Both halves of D1 are re-asserted inside the write.
+    expect(stmt.sql).toContain('"status" IN');
+    expect(stmt.sql).toContain(`ab."status" <> 'suspended'`);
   });
 
   it('[INV] zero matched rows is a REFUSAL, never a reported success', async () => {
     // The losing side of the race must be loud. Collapsing this into success would report
     // a level change on a listing that was taken down a millisecond earlier.
-    listing.updateMany.mockImplementation(async () => ({ count: 0 }));
+    flipped = 0;
     await expect(
       setListingVisibilityAsOwner({ appListingId: 'apl_1', visibility: 'testers', userId: 9 })
     ).rejects.toThrow(VISIBILITY_STATUS_INELIGIBLE_MESSAGE);
@@ -301,13 +322,13 @@ describe('the compare-and-set write', () => {
   it('[NEW] zero rows PLUS a vanished listing is NOT_FOUND, not a status refusal', async () => {
     // A refusal naming the wrong cause is the failure mode this branch exists to avoid —
     // the whole point of distinguishing the concurrency arm is that it is legible.
-    listing.updateMany.mockImplementation(async () => ({ count: 0 }));
+    flipped = 0;
     const base = listing.findUnique.getMockImplementation();
     listing.findUnique.mockImplementation(async (args: unknown) => {
       const select = (args as { select?: Record<string, unknown> })?.select ?? {};
       // The post-CAS existence probe asks for `id` alone — that is the read that must now
-      // answer "gone". The combined status read above still succeeds, which is the whole
-      // point: the row vanished BETWEEN them.
+      // answer "gone". The status read above still succeeds, which is the whole point: the
+      // row vanished BETWEEN them.
       if (!('status' in select)) return null;
       return base ? base(args) : null;
     });
@@ -321,7 +342,7 @@ describe('the compare-and-set write', () => {
     await expect(
       setListingVisibilityAsOwner({ appListingId: 'apl_1', visibility: 'testers', userId: 9 })
     ).resolves.toMatchObject({ visibility: 'testers', changed: false });
-    expect(listing.updateMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 
   it('[NEW] an UNSET level is not the same as `private` — setting `private` is a real write', async () => {
@@ -332,7 +353,7 @@ describe('the compare-and-set write', () => {
     await expect(
       setListingVisibilityAsOwner({ appListingId: 'apl_1', visibility: 'private', userId: 9 })
     ).resolves.toMatchObject({ visibility: 'private', changed: true });
-    expect(listing.updateMany).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -346,7 +367,7 @@ describe('the manual-apply column gate', () => {
     await expect(
       setListingVisibilityAsOwner({ appListingId: 'apl_1', visibility: 'testers', userId: 9 })
     ).rejects.toThrow(VISIBILITY_UNAVAILABLE_MESSAGE);
-    expect(listing.updateMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 
   it('[INV] it refuses BEFORE any side effect', async () => {
@@ -356,7 +377,7 @@ describe('the manual-apply column gate', () => {
       visibility: 'testers',
       userId: 9,
     }).catch(() => null);
-    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 });
 
@@ -366,6 +387,6 @@ describe('a missing listing', () => {
     await expect(
       setListingVisibilityAsOwner({ appListingId: 'apl_gone', visibility: 'public', userId: 9 })
     ).rejects.toThrow('Listing not found');
-    expect(listing.updateMany).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 });

@@ -1,20 +1,33 @@
 /**
  * App Store Listings — the guarded reader for `AppListing.visibility`.
  *
- * 🔴 WHY THIS MODULE EXISTS AT ALL. `app_listings.visibility` is a MANUAL-APPLY column.
- * Migrations in this repo are never auto-applied (no `prisma migrate deploy` path; a human
- * runs the SQL per environment), so between the code deploy and that human there is a
- * window in which production runs code naming a column the database does not have. A
- * Prisma `select` naming a missing column does not return `undefined` — it THROWS (P2022 /
- * Postgres 42703), for the WHOLE query. Put `visibility: true` into `listingHydrateSelect`
- * and every public `/apps` store read that shares it — the GRID as well as the detail page
- * — 500s until the SQL is applied.
+ * 🔴 WHY THIS MODULE EXISTS AT ALL, AND WHY IT IS RAW SQL. `app_listings.visibility` is a
+ * MANUAL-APPLY column: migrations here are never auto-applied, so between the code deploy
+ * and the human who runs the SQL there is a window in which production runs code naming a
+ * column the database does not have.
  *
- * So the column is read HERE and nowhere else, and nothing adds it to an existing
- * `select`. Same posture, and the same reasoning, as `app-listing-beta.service.ts`; read
- * that module's header for the part this one does not repeat (why controlling explicit
- * `select`s is necessary but NOT sufficient, and why the migration is a hard pre-deploy
- * step rather than a thing this file makes safe).
+ * 🔴 CONTROLLING EXPLICIT `select`s IS NOT ENOUGH, AND THAT IS MEASURED RATHER THAN
+ * ARGUED. Prisma names every scalar the MODEL declares in its default `SELECT` /
+ * `RETURNING` list, so any call that returns rows and passes no `select` emits the column
+ * whatever this module does. Enumerated on this tree: 18 such sites, **17 of them WRITES**
+ * — the off-site submit/approve/reject/delist path among them. The sibling
+ * `app-listing-source-repo.service.ts` header records the same thing happening for real on
+ * a preview environment: `prisma.appListing.create()` 500ing with
+ * `The column app_listings.source_repo_url does not exist`, for authors who supplied no
+ * link at all. It happened again here, on PR preview, for `visibility`.
+ *
+ * 🔴 SO THE COLUMN IS NOT ON THE PRISMA MODEL. It is declared in `schema.full.prisma` —
+ * which keeps it visible to the schema-drift detector and to anyone reading the schema —
+ * with an inline `// @no-type`, which `scripts/generate-slim-schema.js` strips from the
+ * schema the CLIENT is generated from. The field therefore does not exist on the generated
+ * delegate, no Prisma query anywhere can emit it, and all 18 of those sites are unaffected
+ * by construction rather than by a guard somebody has to remember. That closes the window
+ * for reads AND writes instead of mitigating it.
+ *
+ * The price is that this column has no Prisma type safety: it is read here and written in
+ * `app-listing-visibility-write.service.ts`, both through raw SQL, and nowhere else. It is
+ * bounded by a DB CHECK and narrowed through `parseStoredVisibility` on the way in, so an
+ * unexpected value fails closed rather than propagating.
  *
  * 🔴 THE DEGRADED VALUE IS THE PRE-FEATURE BEHAVIOUR, WHICH IS NEITHER FAIL-OPEN NOR
  * FAIL-CLOSED, AND THAT IS THE WHOLE DESIGN. The sibling modules can degrade to a harmless
@@ -46,6 +59,7 @@
  * the third means "do not consult the level at all". `null` is NOT the `private` level.
  */
 
+import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
 import { logToAxiom } from '~/server/logging/client';
@@ -84,20 +98,19 @@ export const VISIBILITY_UNAVAILABLE: ListingVisibilityRead = Object.freeze({
 type VisibilityRow = { visibility: string | null };
 
 /**
- * The MINIMAL Prisma-client surface this module needs, structurally typed.
+ * The MINIMAL client surface this module needs: `$queryRaw` and nothing else.
  *
- * Deliberately not `typeof dbRead`: callers pass a replica client, a primary client AND an
- * interactive-transaction client. Structural typing accepts all three, and lets the unit
- * tests hand in a THROWING FAKE — the only way to exercise the degraded branch without a
- * database that is actually missing a column.
+ * 🔴 RAW, NOT THE `appListing` DELEGATE, AND THAT IS THE WHOLE POINT. The column is marked
+ * `// @no-type` in `schema.full.prisma`, so `scripts/generate-slim-schema.js` strips it from
+ * the schema the client is generated from — it does not exist on the Prisma model at all,
+ * and therefore cannot be read or written through the delegate. See the module header.
+ *
+ * Structurally typed so a replica client, a primary client, an interactive-transaction
+ * client and a throwing fake all satisfy it.
  */
 export type VisibilityReadClient = {
-  appListing: {
-    findUnique: (args: {
-      where: { id: string } | { slug: string };
-      select: { visibility: true };
-    }) => Promise<VisibilityRow | null>;
-  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  $queryRaw: (query: any, ...values: any[]) => Promise<any>;
 };
 
 /** Shape one raw row (or a miss) into a successful read. A miss is `available: true` — the
@@ -121,12 +134,10 @@ export async function readListingVisibility(
   db: VisibilityReadClient
 ): Promise<ListingVisibilityRead> {
   try {
-    return readFromRow(
-      await db.appListing.findUnique({
-        where: { id: listingId },
-        select: { visibility: true },
-      })
-    );
+    const rows = (await db.$queryRaw(
+      Prisma.sql`SELECT "visibility" FROM "app_listings" WHERE "id" = ${listingId} LIMIT 1`
+    )) as VisibilityRow[];
+    return readFromRow(rows[0] ?? null);
   } catch (err) {
     if (isMissingColumnError(err)) return VISIBILITY_UNAVAILABLE;
     throw err;
@@ -134,7 +145,51 @@ export async function readListingVisibility(
 }
 
 /**
- * Record a degraded read, without letting the recording break the page.
+ * Read the level for a PAGE of listings, as a `Map` keyed by listing id.
+ *
+ * 🔴 ONE STATEMENT FOR N LISTINGS. The post-app chip surface resolves every candidate
+ * listing on a public post view, so a per-row read would be an N+1 on a page-view-rate
+ * path. An empty input issues no query at all.
+ *
+ * 🔴 A LISTING MISSING FROM THE MAP IS NOT "hidden" AND NOT "public" — it is ABSENT, and
+ * the caller must substitute the unset level, which resolves to the pre-feature rule. A
+ * missing column yields an EMPTY map for the same reason: every caller must read that as
+ * "do not consult the level", never as "nobody is visible", or an unapplied migration
+ * would blank every chip.
+ */
+export async function readListingVisibilityMany(
+  listingIds: readonly string[],
+  db: VisibilityReadClient
+): Promise<Map<string, ListingVisibilityRead>> {
+  if (listingIds.length === 0) return new Map();
+  try {
+    const rows = (await db.$queryRaw(
+      Prisma.sql`SELECT "id", "visibility" FROM "app_listings" WHERE "id" IN (${Prisma.join([
+        ...listingIds,
+      ])})`
+    )) as Array<VisibilityRow & { id: string }>;
+    return new Map(rows.map((r) => [r.id, readFromRow(r)]));
+  } catch (err) {
+    if (isMissingColumnError(err)) return new Map();
+    throw err;
+  }
+}
+
+/**
+ * Record that a read fell back to the pre-feature predicate, without letting the recording
+ * break the page.
+ *
+ * 🔴 IT WAS DEAD CODE — DEFINED, DOCUMENTED AT LENGTH AS LOAD-BEARING, AND CALLED FROM
+ * NOWHERE. The consequence was that the whole manual-apply window was UNOBSERVABLE: the
+ * store silently served the pre-feature predicate with no counter, log or metric saying so,
+ * which is exactly the silent-gate class `store-scope.metrics` exists for. It is now called
+ * from the store list path's catch.
+ *
+ * ⚠️ FROM THE LIST PATH ONLY, AND THAT IS A RATE DECISION. That catch fires at most once per
+ * catalog cache MISS (one per cohort per TTL), which is a usable signal. The DETAIL path's
+ * equivalent is deliberately silent: it would emit at page-view rate on a public page, which
+ * is a flood rather than observability. So the window is observable, not fully audited —
+ * state it that way rather than implying every degraded read is recorded.
  *
  * `type: 'error'` because the missing-column case is swallowed UPSTREAM and never reaches
  * a caller's catch — what arrives here is the complement (connection failure, timeout,
@@ -142,7 +197,7 @@ export async function readListingVisibility(
  * nothing awaits this, so an unhandled rejection would take down the render this exists
  * only to observe. Same reasoning as `app-listing-beta.service.ts`.
  */
-function noteDegradedVisibilityRead(err: unknown): void {
+export function noteDegradedVisibilityRead(err: unknown): void {
   logToAxiom({
     name: 'app-listing-visibility-read-degraded',
     type: 'error',

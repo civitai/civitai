@@ -250,6 +250,16 @@ export function isVisibilityEligibleListingStatus(status: string): boolean {
  * 🔴 UI COPY REQUIREMENT. The control must tell an owner WHY `testers`/`public` are
  * unavailable before review, or the greyed-out options read as a bug and get filed as one.
  *
+ * ⚠️ A LEVEL SURVIVES APPROVAL, AND THAT IS A UI REQUIREMENT RATHER THAN A CODE ONE.
+ * The review-sandbox workflow is "set `moderators` so a mod can see my draft" — and on
+ * approval that level STAYS, so the listing goes live visible to moderators only, with no
+ * owner-side signal that it is still restricted. Nothing here clears it: doing so would mean
+ * the approve path WRITING this column, which is the eight-scattered-writes problem the
+ * no-type shape exists to avoid, and it would silently discard a deliberate choice for an
+ * owner who really did want `moderators` on a live listing. So the UI must surface the
+ * current level on the listing and prompt after approval. Recorded as a required behaviour
+ * for the follow-up PR rather than left to be discovered.
+ *
  * Returns `null` for a status no level may reach at all.
  *
  * 🔴 THE CEILING IS ALSO WHERE D4'S GUARANTEE ENDS — OPERATOR RULING, 2026-10-01: D4 binds

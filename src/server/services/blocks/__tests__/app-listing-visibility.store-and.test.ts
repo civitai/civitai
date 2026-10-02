@@ -66,12 +66,17 @@ import {
 const listing = dbMock.dbRead.appListing;
 
 /** What the guarded `visibility` read answers for the seeded row. Set per case. */
-let seededVisibility: AppListingVisibility | null = 'public';
+let seededVisibility: AppListingVisibility | null | 'THROW_P2022' = 'public';
+/** What the cached keyset page returns. */
+let pageRows: unknown[] = [];
 
 /** Reconstruct the SQL string Prisma received (single Prisma.Sql arg), comments stripped. */
 function capturedPredicateSql(): string {
-  const last = dbMock.dbRead.$queryRaw.mock.calls.at(-1);
-  const first = last?.[0] as { sql?: unknown } | undefined;
+  // 🔴 THE LAST *PAGE* STATEMENT, NOT THE LAST STATEMENT. The level read also rides
+  // `$queryRaw` now, so `calls.at(-1)` can be the level read and every SQL assertion would
+  // be reading the wrong statement — green or red for reasons unrelated to the predicate.
+  const pageCalls = dbMock.dbRead.$queryRaw.mock.calls.filter((c) => !isLevelRead(c[0]));
+  const first = pageCalls.at(-1)?.[0] as { sql?: unknown } | undefined;
   const sql = first && typeof first.sql === 'string' ? first.sql : '';
   // 🔴 COMMENTS STRIPPED, AND IT IS LOAD-BEARING. The statement's own comments name the
   // predicates in prose ("the approved-only predicate"), so a bare match over the raw text
@@ -109,12 +114,34 @@ function approvedRow(over: Record<string, unknown> = {}) {
   };
 }
 
-/** The default guarded-read behaviour: answer whichever manual-apply `select` is asked. */
+/** The default guarded-read behaviour for the Prisma delegate. */
 async function defaultFindUnique(args: unknown): Promise<unknown> {
   const select = (args as { select?: Record<string, unknown> } | undefined)?.select ?? {};
-  if ('visibility' in select) return { visibility: seededVisibility };
   if ('sourceRepoUrl' in select) return { sourceRepoUrl: null };
   return { isBeta: false, betaMessage: null };
+}
+
+/** Is this statement the level read rather than the cached keyset page? */
+const isLevelRead = (stmt: unknown) =>
+  typeof (stmt as { sql?: unknown })?.sql === 'string' &&
+  (stmt as { sql: string }).sql.includes('SELECT "visibility" FROM "app_listings"');
+
+/**
+ * 🔴 BOTH THE LEVEL READ AND THE CACHED PAGE NOW GO THROUGH `$queryRaw`, so this fake
+ * discriminates on the STATEMENT. The level column is `// @no-type` — absent from the
+ * generated client — so it can only be reached by raw SQL; that is the fix for the P2022
+ * that 500d off-site submit on the PR preview, and it means the delegate can no longer
+ * answer for it. A fake keyed on the method alone would hand the keyset page's rows to the
+ * level reader and vice versa.
+ */
+async function defaultQueryRaw(stmt: unknown): Promise<unknown[]> {
+  if (isLevelRead(stmt)) {
+    if (seededVisibility === 'THROW_P2022') {
+      throw Object.assign(new Error('column does not exist'), { code: 'P2022' });
+    }
+    return [{ visibility: seededVisibility }];
+  }
+  return pageRows;
 }
 
 beforeEach(() => {
@@ -128,7 +155,8 @@ beforeEach(() => {
   seededVisibility = 'public';
   listing.findFirst.mockImplementation(async () => approvedRow());
   listing.findUnique.mockImplementation(defaultFindUnique);
-  dbMock.dbRead.$queryRaw.mockImplementation(async () => []);
+  pageRows = [];
+  dbMock.dbRead.$queryRaw.mockImplementation(defaultQueryRaw);
 });
 
 describe('the level is an AND with the surface scope, never an override', () => {
@@ -412,10 +440,11 @@ describe('the manual-apply column degrades via a CATCH, not a probe', () => {
     // that has not had the migration applied is a P2022 on the PUBLIC grid, not a missing
     // badge. The retry must be the approved-only test — not `private` (which would empty
     // the grid) and not `public` (which would admit drafts).
-    let call = 0;
-    dbMock.dbRead.$queryRaw.mockImplementation(async () => {
-      call += 1;
-      if (call === 1) {
+    let page = 0;
+    dbMock.dbRead.$queryRaw.mockImplementation(async (stmt: unknown) => {
+      if (isLevelRead(stmt)) return [{ visibility: seededVisibility }];
+      page += 1;
+      if (page === 1) {
         throw Object.assign(new Error('column al.visibility does not exist'), { code: 'P2022' });
       }
       return [];
@@ -424,8 +453,8 @@ describe('the manual-apply column degrades via a CATCH, not a probe', () => {
       scope: 'full',
       floor: 'moderators',
     });
-    // Two statements were issued, and it is the SECOND that must be level-free.
-    expect(call).toBe(2);
+    // Two PAGE statements were issued, and it is the SECOND that must be level-free.
+    expect(page).toBe(2);
     const sql = capturedPredicateSql();
     expect(sql).not.toContain('al.visibility');
     expect(sql).toContain("al.status = 'approved'");
@@ -435,16 +464,17 @@ describe('the manual-apply column degrades via a CATCH, not a probe', () => {
     // Without the pair, the `not.toContain` above is indistinguishable from a statement that
     // never names the column at all — and the call COUNT is what separates "degraded" from
     // "never tried", which the old probe-shaped case could not express.
-    let call = 0;
-    dbMock.dbRead.$queryRaw.mockImplementation(async () => {
-      call += 1;
+    let page = 0;
+    dbMock.dbRead.$queryRaw.mockImplementation(async (stmt: unknown) => {
+      if (isLevelRead(stmt)) return [{ visibility: seededVisibility }];
+      page += 1;
       return [];
     });
     await listAvailableListings({ kind: 'all', sort: 'newest', limit: 10 } as never, {
       scope: 'full',
       floor: 'moderators',
     });
-    expect(call).toBe(1);
+    expect(page).toBe(1);
     expect(capturedPredicateSql()).toContain('al.visibility');
   });
 
@@ -453,7 +483,8 @@ describe('the manual-apply column degrades via a CATCH, not a probe', () => {
     // into a quietly truncated grid, which is the failure mode the degradation exists to
     // avoid rather than cause.
     const boom = Object.assign(new Error('Timed out fetching a connection'), { code: 'P2024' });
-    dbMock.dbRead.$queryRaw.mockImplementation(async () => {
+    dbMock.dbRead.$queryRaw.mockImplementation(async (stmt: unknown) => {
+      if (isLevelRead(stmt)) return [{ visibility: seededVisibility }];
       throw boom;
     });
     await expect(
@@ -468,14 +499,7 @@ describe('the manual-apply column degrades via a CATCH, not a probe', () => {
     // The detail path needs no special case at all now: the guarded reader catches the
     // missing column and answers `visibility: null`, which already resolves to the
     // pre-feature rule. An approved listing stays visible; a draft stays hidden.
-    listing.findUnique.mockImplementation(async (args: unknown) => {
-      const select = (args as { select?: Record<string, unknown> } | undefined)?.select ?? {};
-      if ('visibility' in select) {
-        throw Object.assign(new Error('column does not exist'), { code: 'P2022' });
-      }
-      if ('sourceRepoUrl' in select) return { sourceRepoUrl: null };
-      return { isBeta: false, betaMessage: null };
-    });
+    seededVisibility = 'THROW_P2022';
     await expect(
       getListingDetail({ slug: 'and-app' }, { scope: 'full', floor: 'public' })
     ).resolves.not.toBeNull();
@@ -491,14 +515,7 @@ describe('the detail read falls back to the pre-feature predicate, not to `priva
     // 🔴 THE OUTAGE THIS PREVENTS. Degrading an unreadable level to `private` would hide
     // every approved listing's detail page — fail-closed in form, a store outage in
     // effect. The fallback is the predicate that shipped before this feature.
-    listing.findUnique.mockImplementation(async (args: unknown) => {
-      const select = (args as { select?: Record<string, unknown> } | undefined)?.select ?? {};
-      if ('visibility' in select) {
-        throw Object.assign(new Error('column does not exist'), { code: 'P2022' });
-      }
-      if ('sourceRepoUrl' in select) return { sourceRepoUrl: null };
-      return { isBeta: false, betaMessage: null };
-    });
+    seededVisibility = 'THROW_P2022';
     const detail = await getListingDetail({ slug: 'and-app' }, { scope: 'full', floor: 'public' });
     expect(detail).not.toBeNull();
   });

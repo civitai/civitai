@@ -239,7 +239,12 @@ describe('the app read is an allowlist', () => {
       ['appListing', 'currentVersionDeployedAt', 'status'].sort()
     );
     expect(Object.keys(q.select.appBlocks.select.appListing.select).sort()).toEqual(
-      ['contentRating', 'icon', 'kind', 'name', 'revisionOfId', 'slug', 'status'].sort()
+      // `id` is W14: the per-listing VISIBILITY LEVEL is the FOURTH term of the
+      // destination's predicate, and resolving it needs the listing's id for a batched
+      // read. The column itself is NOT selected here and cannot be — it is `// @no-type`
+      // and absent from the generated client, which is what keeps every unguarded
+      // `appListing` write immune to the manual-apply window.
+      ['contentRating', 'icon', 'id', 'kind', 'name', 'revisionOfId', 'slug', 'status'].sort()
     );
     expect(Object.keys(q.select.appBlocks.select.appListing.select.icon.select)).toEqual(['url']);
   });

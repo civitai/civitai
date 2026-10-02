@@ -100,9 +100,12 @@ const GATE_LEDGER: Record<string, string> = {
     'setListingVisibilityAsOwner is THE gate on the owner path for the per-listing ' +
     'VISIBILITY LEVEL: owner | ACCEPTED collaborator, resolved by resolveListingAccess ' +
     'through dbWrite so a seat accepted moments ago is visible. NO mod bypass, ' +
-    'deliberately — a moderator uses the separate setListingVisibilityAsModerator proc, ' +
-    'which writes an AppListingModerationEvent; admitting them here would be an ' +
-    "unaudited moderator write on someone else's listing. A missing row and a caller " +
+    'deliberately. NOTE: moderators have NO visibility path at all today — the moderator ' +
+    'proc was deferred to the UI PR, and an earlier version of THIS ledger entry asserted ' +
+    'a setListingVisibilityAsModerator that does not exist, which is worse in a ledger ' +
+    'than in prose because a ledger is the authoritative in-tree record. Admitting a ' +
+    "moderator here would be an unaudited write on someone else's listing. A missing row " +
+    'and a caller ' +
     'with no role produce the SAME refusal, so the proc is not an existence oracle over ' +
     'listing ids. The resolver is NOT status-aware (its own header says so), so D1 ' +
     '("levels apply to non-suspended listings only") is enforced separately in ' +

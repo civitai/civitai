@@ -25,6 +25,8 @@
  * identical and the chip could otherwise vanish site-wide unnoticed.
  */
 import { dbRead } from '~/server/db/client';
+import { readListingVisibilityMany } from '~/server/services/blocks/app-listing-visibility.service';
+import { listingVisibleInStore } from '~/shared/utils/app-listing-visibility';
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { recordPostAppChipRead } from '~/server/prom/post-app-chip.metrics';
@@ -147,6 +149,29 @@ export async function readPostAppChip({
       // a cache would add invalidation surface for no measured saving. The trigger
       // is `post_app_chip_reads_total{outcome="chip"}` — when that stops being
       // near-zero, build it.
+      // 🔴 THE LEVEL TERM. One batched raw statement for every candidate listing, because
+      // the column is `// @no-type` and therefore unreachable through the Prisma delegate.
+      // Resolved for the `public` floor only — strictly narrower than any real viewer's
+      // floor, so it can only UNDER-link, never link a page the store would refuse. A
+      // missing column yields an empty map, i.e. pre-feature behaviour.
+      readHiddenListingIds: async (listingIds) => {
+        const levels = await readListingVisibilityMany(listingIds, dbRead);
+        const hidden = new Set<string>();
+        for (const id of listingIds) {
+          const level = levels.get(id);
+          if (!level) continue;
+          if (
+            !listingVisibleInStore({
+              status: 'approved',
+              visibility: level.visibility,
+              floor: 'public',
+            })
+          ) {
+            hidden.add(id);
+          }
+        }
+        return hidden;
+      },
       readApp: async (appId) =>
         (await dbRead.oauthClient.findUnique(postAppChipQuery(appId))) as PostAppChipRow | null,
     });

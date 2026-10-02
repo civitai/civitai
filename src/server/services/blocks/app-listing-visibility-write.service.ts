@@ -28,17 +28,19 @@
  * `VISIBILITY_ELIGIBLE_LISTING_STATUSES`, plus the backing block's own suspension.
  */
 
+import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
 import { dbWrite } from '~/server/db/client';
-import { assertVisibilityWritable } from '~/server/services/blocks/app-listing-visibility.service';
-import { isMissingColumnError } from '~/server/services/blocks/app-listing-source-repo.service';
+import {
+  assertVisibilityWritable,
+  readListingVisibility,
+} from '~/server/services/blocks/app-listing-visibility.service';
 import type { AppListingVisibility } from '~/shared/utils/app-listing-visibility';
 import {
   isVisibilityEligibleListingStatus,
   listingVisibilityRank,
   maxVisibilityForStatus,
-  parseStoredVisibility,
   VISIBILITY_ELIGIBLE_LISTING_STATUSES,
 } from '~/shared/utils/app-listing-visibility';
 
@@ -115,36 +117,17 @@ async function applyVisibility(args: {
   // needs no separate lookup. A missing column makes the whole select raise P2022, which is
   // caught below and reported as "not available on this environment" — the honest answer for
   // a write, and the reason this function may name the column at all.
-  let columnAvailable = true;
-  const listing = await dbWrite.appListing
-    .findUnique({
-      where: { id: appListingId },
-      select: {
-        id: true,
-        slug: true,
-        status: true,
-        // 🔴 THE MANUAL-APPLY COLUMN, NAMED IN THIS FUNCTION'S OWN SELECT. Safe here and
-        // nowhere else on this feature: this select is PRIVATE to the write path, so a
-        // missing column raises P2022 on a mutation that has to refuse anyway — never on the
-        // public grid, which is what `listingHydrateSelect` would do. It saves a third PK
-        // read of a row this function has already fetched twice.
-        visibility: true,
-        // The backing block's own suspension. Null for an offsite listing, which has no
-        // block and therefore no block-level suspension to respect.
-        appBlock: { select: { status: true } },
-      },
-    })
-    .catch(async (err: unknown) => {
-      if (!isMissingColumnError(err)) throw err;
-      columnAvailable = false;
-      // Re-read WITHOUT the manual-apply column so the D1 gates below still run against a
-      // real row — they must refuse a `removed` listing whether or not the migration has run.
-      const row = await dbWrite.appListing.findUnique({
-        where: { id: appListingId },
-        select: { id: true, slug: true, status: true, appBlock: { select: { status: true } } },
-      });
-      return row ? { ...row, visibility: null } : null;
-    });
+  const listing = await dbWrite.appListing.findUnique({
+    where: { id: appListingId },
+    select: {
+      id: true,
+      slug: true,
+      status: true,
+      // The backing block's own suspension. Null for an offsite listing, which has no
+      // block and therefore no block-level suspension to respect.
+      appBlock: { select: { status: true } },
+    },
+  });
   if (!listing) throw new TRPCError({ code: 'NOT_FOUND', message: 'Listing not found' });
 
   // D1, half one: the listing's own lifecycle. `removed` and `rejected` are refused.
@@ -174,53 +157,50 @@ async function applyVisibility(args: {
   // The manual-apply column. Refuses rather than silently dropping the write — the caller
   // picked this level and expects to see it again.
   //
-  // 🔴 READ FROM THE ROW ABOVE, NOT A THIRD PK LOOKUP. This used to call
-  // `readListingVisibility`, which re-read the same row a third time in this function. The
-  // split that forces a separate guarded read on the STORE paths does not apply here: the
-  // select at the top of this function is PRIVATE to it, not shared with the public grid, so
-  // naming the manual-apply column in it can only ever break this mutation — which must
-  // refuse anyway — rather than a public page.
-  const before = {
-    available: columnAvailable,
-    visibility: parseStoredVisibility(listing.visibility),
-  };
+  // 🔴 READ THROUGH THE RAW READER, because the column is NOT on the Prisma model — it is
+  // `// @no-type` in `schema.full.prisma` and stripped from the generated client, so the
+  // select above cannot name it. That is deliberate: it is what makes all 17 unguarded
+  // `appListing` WRITES elsewhere in the tree immune to the missing column instead of
+  // 500ing on it. See the reader module's header.
+  const before = await readListingVisibility(appListingId, dbWrite);
   assertVisibilityWritable(before.available);
   if (before.visibility === visibility) {
     return { appListingId, visibility, changed: false };
   }
 
-  await dbWrite.$transaction(async (tx) => {
-    const flipped = await tx.appListing.updateMany({
-      where: {
-        id: appListingId,
-        // 🔴 DERIVED, NOT A SECOND LITERAL. This re-asserts the gate inside the write so a
-        // concurrent takedown wins the race — but a hardcoded list would silently fall out
-        // of step with the allowlist the READ uses, and the failure mode is a misdiagnosis:
-        // `updateMany` would match zero rows and the refusal would surface from the
-        // CONCURRENCY branch below, reporting a stale allowlist as a race.
-        status: { in: [...VISIBILITY_ELIGIBLE_LISTING_STATUSES] },
-        // 🔴 BOTH HALVES OF D1, NOT JUST THE STATUS. The pre-read checks the backing
-        // block's suspension too, and that is the one case the status re-check cannot
-        // catch — a block suspended through a path that leaves the listing row alone.
-        // Correct today only because every delist flips both; re-asserting it here is what
-        // makes the race safe for the next edit that adds a suspend-only path.
-        OR: [{ appBlock: null }, { appBlock: { status: { not: 'suspended' } } }],
-      },
-      data: { visibility },
+  // 🔴 THE COMPARE-AND-SET, IN RAW SQL FOR THE SAME REASON — `data: { visibility }` is not
+  // expressible through a delegate that has no such field. It re-asserts BOTH halves of D1
+  // inside the write so a concurrent takedown wins the race: the eligible statuses (derived,
+  // never a second literal, or a grown allowlist would surface as a phantom race) and the
+  // backing block's suspension, which is the half the status re-check cannot catch.
+  // `$executeRaw` returns the affected row count — that is the CAS signal.
+  const flipped = await dbWrite.$executeRaw(
+    Prisma.sql`
+      UPDATE "app_listings"
+         SET "visibility" = ${visibility}
+       WHERE "id" = ${appListingId}
+         AND "status" IN (${Prisma.join([...VISIBILITY_ELIGIBLE_LISTING_STATUSES])})
+         AND (
+           "app_block_id" IS NULL
+           OR EXISTS (
+             SELECT 1 FROM "app_blocks" ab
+              WHERE ab."id" = "app_listings"."app_block_id"
+                AND ab."status" <> 'suspended'
+           )
+         )
+    `
+  );
+  if (flipped === 0) {
+    // 🔴 A DELETION IS NOT AN INELIGIBLE STATUS. Mapping every zero-row outcome to the
+    // status refusal reported a vanished listing as a lifecycle problem — a refusal naming
+    // the wrong cause, in the one branch whose whole job is to be legible.
+    const still = await dbWrite.appListing.findUnique({
+      where: { id: appListingId },
+      select: { id: true },
     });
-    if (flipped.count === 0) {
-      // 🔴 A DELETION IS NOT AN INELIGIBLE STATUS. Mapping every zero-row outcome to the
-      // status refusal reported a vanished listing as a lifecycle problem, which is a
-      // refusal naming the wrong cause — and this branch's whole job is to be legible.
-      // One extra read, only on the losing side of a race that is already rare.
-      const still = await tx.appListing.findUnique({
-        where: { id: appListingId },
-        select: { id: true },
-      });
-      if (!still) throw new TRPCError({ code: 'NOT_FOUND', message: 'Listing not found' });
-      throw new TRPCError({ code: 'FORBIDDEN', message: VISIBILITY_STATUS_INELIGIBLE_MESSAGE });
-    }
-  });
+    if (!still) throw new TRPCError({ code: 'NOT_FOUND', message: 'Listing not found' });
+    throw new TRPCError({ code: 'FORBIDDEN', message: VISIBILITY_STATUS_INELIGIBLE_MESSAGE });
+  }
 
   // The cached store catalog keys on which rows a cohort sees, and this write moves
   // exactly that. Fire-and-forget by this module's convention: a cache-bus outage must
@@ -250,9 +230,14 @@ async function applyVisibility(args: {
  *
  * 🔴 NO MODERATOR BYPASS ON THIS PATH, deliberately — `updateListing`'s own resolver has
  * none either, and the divergence between it and `app-listing-assets.service`'s
- * mod-bypassing loader is recorded in the access call-site ledger. A moderator uses
- * {@link setListingVisibilityAsModerator}, which writes an audit event; letting them in
- * here would be an unaudited moderator write on someone else's listing.
+ * mod-bypassing loader is recorded in the access call-site ledger.
+ *
+ * ⚠️ AND MODERATORS CURRENTLY HAVE **NO PATH AT ALL**, which this paragraph claimed
+ * otherwise. It pointed at a `setListingVisibilityAsModerator` that DOES NOT EXIST — it was
+ * deferred to the UI PR along with the rest of the moderator surface, and the sentence
+ * survived the removal. A moderator cannot set a level today. Letting them in HERE would be
+ * an unaudited moderator write on someone else's listing, so the gap is closed by the
+ * deferred proc rather than by widening this one.
  */
 export async function setListingVisibilityAsOwner(args: {
   appListingId: string;
