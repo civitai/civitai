@@ -802,7 +802,10 @@ describe('the tip-ceiling and Stripe-minimum agreement guard', () => {
     // RAW length exceeds the shared bound is ACCEPTED here, which is only true because
     // this side trims. The scope side's raw measurement is not this file's to pin.
     const padded = `  ${'x'.repeat(SCOPE_JUSTIFICATION_MAX_LENGTH)}  `;
-    expect(padded.length).toBeGreaterThan(SCOPE_JUSTIFICATION_MAX_LENGTH);
+    // AT the bound once trimmed, OVER it raw — asserted, so this stays an at-bound case
+    // rather than drifting into a merely near-bound one.
+    expect(padded.length).toBe(SCOPE_JUSTIFICATION_MAX_LENGTH + 4);
+    expect(padded.trim().length).toBe(BLOCK_GOOD_JUSTIFICATION_MAX_LENGTH);
     expect(
       parseManifestGoods(
         manifestWith([
@@ -991,7 +994,37 @@ describe('published schema ⇄ constants drift guard', () => {
     // rewording: "a justification is OPTIONAL for an app unlock" contains the word
     // and would have passed while stating the opposite of the rule. Pin the sentence.
     expect(description).toContain('MUST carry a `justification`');
-    expect(description).toContain('at most ONE app_unlock good');
+    // 🔴 BUILT FROM THE CONSTANT, not the literal "ONE". The price phrase two lines up
+    // is derived; this one was not, so moving BLOCK_APP_UNLOCK_MAX_PER_MANIFEST to 2
+    // would leave the published prose false with this guard green — the exact asymmetry
+    // the price assertion exists to prevent.
+    expect(BLOCK_APP_UNLOCK_MAX_PER_MANIFEST).toBe(1);
+    expect(description).toContain(
+      `at most ${BLOCK_APP_UNLOCK_MAX_PER_MANIFEST === 1 ? 'ONE' : BLOCK_APP_UNLOCK_MAX_PER_MANIFEST} app_unlock good`
+    );
+  });
+
+  it('the justification DESCRIPTION does not deny the scope requirement', () => {
+    // 🔴 THIS FIELD'S PROSE WAS UNPINNED, AND IT IS WHERE A FALSE PUBLISHED CLAIM
+    // SURVIVED THE FEATURE COMMIT PLUS TWO FIX ROUNDS. It said an app unlock "does not
+    // require the sensitive `goods:purchase:self` scope" — contradicting this schema's
+    // own `goods` description — and nothing could fail. The sibling `kind` prose has a
+    // drift assertion precisely because the published docs must not lie; this field had
+    // none, which is the whole reason the error lasted.
+    const justification = goodsProperty().items.properties.justification.description ?? '';
+    expect(justification).not.toMatch(/does not require .*goods:purchase:self/);
+    expect(justification).toContain('goods:purchase:self');
+    expect(justification).toContain('REQUIRED when kind is "app_unlock"');
+  });
+
+  it('the kind DESCRIPTION does not claim declaring app_unlock is free', () => {
+    // 🔴 ALSO FALSIFIED BY THIS PR AND MISSED FOR THREE ROUNDS. The description used to
+    // say "Declaring it now buys nothing, so leave it unset" — true before these bounds
+    // existed, and afterwards both wrong AND read as advice to avoid the review trigger,
+    // sitting two clauses from the sentence enumerating the three rules it denies.
+    const description = goodsProperty().items.properties.kind.description ?? '';
+    expect(description).not.toContain('buys nothing');
+    expect(description).not.toMatch(/leave it unset unless/);
   });
 
   it('the schema requires exactly the fields the parser requires', () => {

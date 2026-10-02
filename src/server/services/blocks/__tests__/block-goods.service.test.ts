@@ -775,8 +775,19 @@ describe('purchaseBlockGood — the money path', () => {
         },
       })
     );
+    // 🔴 THE CLAIM IS "THE CEILING DID NOT FIRE", AND IT IS ASSERTED ON THE CHARGE, not
+    // on `ok`. `not.toMatchObject({reason})` alone does not discriminate — it passes for
+    // any other refusal and for a result with no `reason` at all. But `ok: true` would
+    // OVER-specify: this shared fixture only wires a successful Buzz response for the
+    // default price, so at a non-default amount the attempt gets past the ceiling and
+    // then returns `charge_failed` from the mock. That is a harness artefact, not a
+    // bound — do not chase it. What proves the ceiling allowed exactly-at-the-cap is
+    // that the charge was ATTEMPTED, at that amount, which no `price_over_cap` refusal
+    // could ever reach (it returns `charge: 'none'` before any debit).
     expect(result).not.toMatchObject({ reason: 'price_over_cap' });
-    expect(mockCreateMulti).toHaveBeenCalled();
+    expect(mockCreateMulti).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: BLOCK_APP_UNLOCK_MAX_PRICE_BUZZ })
+    );
   });
 
   it('REFUSES as a duplicate when another attempt already SETTLED this purchase, without charging', async () => {
