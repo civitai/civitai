@@ -35,7 +35,9 @@
 </script>
 
 <header class="page-header">
-  <h1>Generator Restrictions</h1>
+  <h1>
+    {data.type === RESTRICTION_TYPE ? 'Generator' : RESTRICTION_TYPE_LABELS[data.type]} Restrictions
+  </h1>
   {#if data.type === RESTRICTION_TYPE}
     <p>Generation restrictions raised by the prompt-auditing system, and the rulings on them.</p>
   {:else if RULINGS_WIRED_FOR.includes(data.type)}
