@@ -43,7 +43,13 @@
 -- ------------------------------------------------------------
 -- THE BACKFILL IS PER STATUS, NOT ONE BLANKET DEFAULT
 -- ------------------------------------------------------------
--- Measured population at authoring time: draft 18, removed 17, approved 16, pending 0.
+-- NO POPULATION FIGURE IS QUOTED HERE, AND THAT IS DELIBERATE TWICE OVER — the same two
+-- reasons `blocks.router.ts` gives for refusing to quote its own. It is a count of a
+-- population MODERATORS MOVE (every delist, relist and approval changes it), so a number
+-- written into a permanent file is a snapshot that reads as a fact. And this repo is
+-- public: a per-status census of the store, the `removed` bucket above all, is not
+-- something to publish for the sake of a comment. The per-status RULE below is what
+-- matters and it holds at any population; derive the counts when you need them.
 --
 --   * `approved`                    -> 'public'.  These rows are ALREADY reachable by
 --     everyone the surface flags admit, so `public` is the only value that truthfully
