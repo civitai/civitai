@@ -1,7 +1,14 @@
 import { branch, defineGraph } from 'form-graph';
 import { zImageControlNetPreprocessors } from '~/shared/constants/controlnets.constants';
 import { checkpointDef } from '../checkpoint';
-import { SDXL_FULL_AR, SEED, controlNetsDef, defaultSamplerPresets, selectDef } from '../defs';
+import {
+  SDXL_FULL_AR,
+  SDXL_FULL_AR_4MP,
+  SEED,
+  controlNetsDef,
+  defaultSamplerPresets,
+  selectDef,
+} from '../defs';
 import {
   familyResources,
   familyScope,
@@ -35,12 +42,14 @@ const modeOf = (ecosystem: string) => {
   }
 };
 
-const AR = SDXL_FULL_AR;
+// Base is documented to 2048² total area; Turbo has no official figure above 1 MP.
+const AR_TURBO = SDXL_FULL_AR;
+const AR_BASE = SDXL_FULL_AR_4MP;
 const CONTROL_NETS = controlNetsDef({ preprocessors: zImageControlNetPreprocessors, limit: 1 });
 
 const turbo = defineGraph<FamilyExt>()
   .field('resources', familyResources)
-  .field('aspectRatio', AR)
+  .field('aspectRatio', AR_TURBO)
   .field('cfgScale', perModelSlider({ min: 1, max: 2, step: 0.1, default: 1 }))
   .field('steps', perModelSlider({ min: 1, max: 15, default: 9 }))
   .field('controlNets', ({ _ext }) => (_ext.workflow === 'txt2img' ? CONTROL_NETS : null))
@@ -48,7 +57,7 @@ const turbo = defineGraph<FamilyExt>()
 
 const base = defineGraph<FamilyExt>()
   .field('resources', familyResources)
-  .field('aspectRatio', AR)
+  .field('aspectRatio', AR_BASE)
   .field(
     'sampler',
     selectDef({ options: zImageSamplers, default: 'euler', presets: defaultSamplerPresets })

@@ -1,7 +1,14 @@
-import { describe, expect, test, vi } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
+import { DialogProvider } from '~/components/Dialog/DialogProvider';
+import { useDialogStore } from '~/components/Dialog/dialogStore';
 import { AspectRatioInput } from '~/components/generation_v2/inputs/AspectRatioInput';
-import { sdxlFullAspectRatioBuckets } from '~/shared/constants/generation.constants';
+import { sideRange } from '~/components/generation_v2/inputs/CustomDimensionsModal';
+import {
+  CUSTOM_ASPECT_RATIO,
+  sdxlCustomDimensionLimits,
+  sdxlFullAspectRatioBuckets,
+} from '~/shared/constants/generation.constants';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../test/component-setup';
 
@@ -133,5 +140,227 @@ describe('AspectRatioInput "More"', () => {
     await expect.element(page.getByText('1536x640')).toBeInTheDocument();
     await expect.element(page.getByText('21:9', { exact: true }).last()).toHaveClass('text-sm');
     expect(document.querySelector('.mantine-Drawer-root')).toBeNull();
+  });
+});
+
+describe('AspectRatioInput "Custom"', () => {
+  // dialogStore is a module-level store that outlives each render: a modal one test
+  // leaves open would be reused (same id) by the next, with the old test's callbacks.
+  afterEach(() => useDialogStore.getState().closeAll());
+
+  const custom = (width: number, height: number) => ({
+    value: CUSTOM_ASPECT_RATIO,
+    width,
+    height,
+  });
+
+  function renderCustom(value: { value: string; width: number; height: number }) {
+    const onChange = vi.fn();
+    renderWithProviders(
+      <div style={{ width: 800 }}>
+        <AspectRatioInput
+          label="Aspect Ratio"
+          value={value}
+          options={sdxlFullAspectRatioBuckets}
+          priorityOptions={['3:2', '1:1', '2:3']}
+          custom={sdxlCustomDimensionLimits}
+          onChange={onChange}
+        />
+        {/* The size editor is a dialogStore modal; this is what mounts it. */}
+        <DialogProvider />
+      </div>
+    );
+    return onChange;
+  }
+
+  const modal = () => page.getByRole('dialog', { name: 'Custom size' });
+  const customSegment = () => page.getByText('Custom', { exact: true });
+  const readout = () => modal().getByTestId('custom-size-readout');
+  const megapixels = () => modal().getByTestId('custom-size-megapixels');
+  // The modal resolves a promise the picker awaits, so onChange lands a tick after the click.
+  const apply = async (onChange: ReturnType<typeof vi.fn>) => {
+    await userEvent.click(modal().getByRole('button', { name: 'Apply' }));
+    await vi.waitFor(() => expect(onChange).toHaveBeenCalled());
+  };
+
+  test('choosing Custom opens the modal on the size already chosen; Apply sends it', async () => {
+    await page.viewport(1440, 900);
+    const onChange = renderCustom(toValue('16:9'));
+
+    await userEvent.click(page.getByText('More'));
+    await userEvent.click(page.getByText('Width × height'));
+
+    await expect.element(readout()).toHaveTextContent('1344 × 768');
+    await expect.element(megapixels()).toHaveTextContent('0.98 MP');
+    expect(onChange).not.toHaveBeenCalled();
+    await apply(onChange);
+    expect(onChange).toHaveBeenCalledWith(custom(1344, 768));
+  });
+
+  test('Cancel leaves the previous pick alone', async () => {
+    await page.viewport(1440, 900);
+    const onChange = renderCustom(toValue('1:1'));
+
+    await userEvent.click(page.getByText('More'));
+    await userEvent.click(page.getByText('Width × height'));
+    await userEvent.click(modal().getByRole('button', { name: 'Cancel' }));
+
+    expect(onChange).not.toHaveBeenCalled();
+    await expect.element(modal()).not.toBeInTheDocument();
+  });
+
+  test('clicking the selected Custom segment reopens the modal', async () => {
+    const onChange = renderCustom(custom(992, 1408));
+
+    await userEvent.click(customSegment());
+    await expect.element(readout()).toHaveTextContent('992 × 1408');
+    await expect.element(megapixels()).toHaveTextContent('1.33 MP');
+
+    await userEvent.click(modal().getByRole('button', { name: 'Swap width and height' }));
+    await apply(onChange);
+    expect(onChange).toHaveBeenCalledWith(custom(1408, 992));
+  });
+
+  // The reported bug: 512 tall, the width box went past 1280 and snapped back,
+  // because 2.5:1 caps it there. The slider's end now says so up front.
+  test("each slider's range follows the other side", async () => {
+    renderCustom(custom(1280, 512));
+    await userEvent.click(customSegment());
+
+    await expect.element(modal().getByText(/Up to 1280 at this height/)).toBeInTheDocument();
+
+    // Raising the height lifts the width's ceiling.
+    await userEvent.fill(modal().getByRole('textbox', { name: 'Height' }), '640');
+    await expect.element(modal().getByText(/Up to 1280 at this height/)).not.toBeInTheDocument();
+  });
+
+  test('clicking a selected bucket opens nothing', async () => {
+    renderCustom(toValue('1:1'));
+    await userEvent.click(page.getByText('1:1', { exact: true }));
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+  });
+
+  // The slider spans every size a side can ever take; what the other side rules out
+  // is greyed, and the thumb stops at its edge rather than the range shrinking.
+  test('greys the part of a slider the other side rules out, and stops there', async () => {
+    renderCustom(custom(1024, 512));
+    await userEvent.click(customSegment());
+
+    const widthZone = () => document.querySelector('[data-blocked-zone="width-end"]');
+    await vi.waitFor(() => expect(widthZone()).not.toBeNull());
+
+    // 512 tall caps the width at 1280 (2.5:1); End drives the thumb to the top of the
+    // full range, and it stops at the grey zone's edge.
+    const thumb = modal().getByRole('slider', { name: 'Width' });
+    (thumb.element() as HTMLElement).focus();
+    await userEvent.keyboard('{End}');
+    await expect.element(readout()).toHaveTextContent('1280 × 512');
+
+    // Raising the height shrinks the width's grey zone, then removes it.
+    await userEvent.fill(modal().getByRole('textbox', { name: 'Height' }), '1024');
+    await vi.waitFor(() =>
+      expect(document.querySelectorAll('[data-blocked-zone="width-end"]')).toHaveLength(0)
+    );
+  });
+
+  // Two levels: past the recommended 1MP warns and still applies; the hard cap is enforced.
+  test('warns above the recommended size, but still applies it', async () => {
+    const onChange = renderCustom(custom(1024, 1024));
+    await userEvent.click(customSegment());
+    await expect.element(modal().getByText(/Above the recommended/)).not.toBeInTheDocument();
+
+    await userEvent.fill(modal().getByRole('textbox', { name: 'Width' }), '1536');
+    await userEvent.fill(modal().getByRole('textbox', { name: 'Height' }), '1536');
+    await expect.element(modal().getByText(/Above the recommended 1.00 MP/)).toBeInTheDocument();
+
+    await apply(onChange);
+    expect(onChange).toHaveBeenCalledWith(custom(1536, 1536));
+  });
+
+  // The ratio buttons change the shape and keep the size, like Forge's with its lock on.
+  test('a ratio button reshapes at the current size', async () => {
+    const onChange = renderCustom(custom(1024, 1024));
+    await userEvent.click(customSegment());
+
+    await userEvent.click(modal().getByRole('button', { name: '16:9' }));
+    // 1024² at 16:9 is 1365 × 768; snapped to 32, 1376 × 768.
+    await expect.element(readout()).toHaveTextContent('1376 × 768');
+    await expect
+      .element(modal().getByRole('button', { name: '16:9' }))
+      .toHaveAttribute('aria-pressed', 'true');
+
+    await apply(onChange);
+    expect(onChange).toHaveBeenCalledWith(custom(1376, 768));
+  });
+
+  test('the ratio buttons follow a portrait size', async () => {
+    renderCustom(custom(768, 1344));
+    await userEvent.click(customSegment());
+
+    // Portrait: the row reads 9:16, and 9:16 is the current shape.
+    await expect
+      .element(modal().getByRole('button', { name: '9:16' }))
+      .toHaveAttribute('aria-pressed', 'true');
+    await userEvent.click(modal().getByRole('button', { name: '1:1' }));
+    await expect.element(readout()).toHaveTextContent('1024 × 1024');
+  });
+
+  test('a typed side snaps to 32 when the box loses focus', async () => {
+    renderCustom(custom(1024, 1024));
+    await userEvent.click(customSegment());
+
+    await userEvent.fill(modal().getByRole('textbox', { name: 'Width' }), '1000');
+    await userEvent.tab();
+    // The readout shows what Apply would send.
+    await expect.element(readout()).toHaveTextContent('992 × 1024');
+  });
+
+  test('the sliders move independently', async () => {
+    renderCustom(custom(1024, 1024));
+    await userEvent.click(customSegment());
+
+    await userEvent.fill(modal().getByRole('textbox', { name: 'Width' }), '1344');
+    await expect.element(readout()).toHaveTextContent('1344 × 1024');
+  });
+
+  test('Apply fits a typed out-of-range size instead of sending it', async () => {
+    const onChange = renderCustom(custom(1024, 1024));
+    await userEvent.click(customSegment());
+
+    await userEvent.fill(modal().getByRole('textbox', { name: 'Width' }), '4000');
+    await apply(onChange);
+
+    const sent = onChange.mock.calls.at(-1)![0];
+    expect(sent.width % 32).toBe(0);
+    expect(sent.width * sent.height).toBeLessThanOrEqual(sdxlCustomDimensionLimits.maxArea);
+    expect(sent.width / sent.height).toBeLessThanOrEqual(sdxlCustomDimensionLimits.maxRatio);
+  });
+});
+
+describe('sideRange', () => {
+  const L = sdxlCustomDimensionLimits;
+
+  test.each([
+    [512, 512, 1280, 'ratio'],
+    [768, 512, 1920, 'ratio'],
+    [1024, 512, 2048, 'side'],
+    [1536, 640, 1536, 'area'],
+  ] as const)('at %i the other side runs %i–%i, capped by %s', (other, min, max, limitedBy) => {
+    expect(sideRange(other, L)).toMatchObject({ min, max, limitedBy });
+  });
+
+  test('every pair inside both ranges is accepted unchanged', () => {
+    // Up to the longest a side can be under the joint caps.
+    let longest: number = L.minSide;
+    for (let x = L.minSide; x <= L.maxSide; x += L.step)
+      longest = Math.max(longest, sideRange(x, L).max);
+    for (let h = L.minSide; h <= longest; h += L.step) {
+      const w = sideRange(h, L);
+      for (const width of [w.min, w.max]) {
+        const back = sideRange(width, L);
+        expect(h).toBeGreaterThanOrEqual(back.min);
+        expect(h).toBeLessThanOrEqual(back.max);
+      }
+    }
   });
 });

@@ -60,6 +60,12 @@ export interface OverflowSegmentedControlProps<T extends string = string> {
   gridColumns?: number;
   /** Title of the bottom sheet "More" opens on a phone, where the popover is replaced. */
   drawerTitle?: ReactNode;
+  /**
+   * A click on the segment that is already selected. Mantine's SegmentedControl
+   * reports nothing for it (the radio doesn't change), so a segment that opens
+   * something — Custom's size modal — would otherwise open only once.
+   */
+  onReselect?: (value: T) => void;
   className?: string;
 }
 
@@ -198,6 +204,7 @@ export function OverflowSegmentedControl<T extends string = string>({
   renderOption,
   gridColumns = 1,
   drawerTitle,
+  onReselect,
   className,
 }: OverflowSegmentedControlProps<T>) {
   const mobile = useIsMobile({ type: 'media' });
@@ -320,7 +327,19 @@ export function OverflowSegmentedControl<T extends string = string>({
   );
 
   return (
-    <div ref={containerRef} className={`relative ${className ?? ''}`}>
+    <div
+      ref={containerRef}
+      className={`relative ${className ?? ''}`}
+      onClick={(event) => {
+        if (!onReselect || !value || disabled) return;
+        // A segment is a <label> beside its radio, so one click arrives twice: on the
+        // label, then forwarded to the radio. Act on the radio's only — reacting to both
+        // opened Custom's modal twice.
+        const radio = event.target;
+        if (radio instanceof HTMLInputElement && radio.type === 'radio' && radio.value === value)
+          onReselect(value);
+      }}
+    >
       <SegmentedControl
         key={segmentedKey}
         value={controlValue}

@@ -3,7 +3,7 @@ import { fluxControlNetPreprocessors } from '~/shared/constants/controlnets.cons
 import { checkpointDef } from '../checkpoint';
 import {
   FLUX1_PRO_AR,
-  SDXL_FULL_AR,
+  SDXL_FULL_AR_2MP,
   SEED,
   aspectRatioDef,
   boolDef,
@@ -62,7 +62,7 @@ const fluxUltraAspectRatios = [
 /** One lookup for the graph AND the handler — the lanes cannot drift. */
 export const fluxModeOf = versionModeOf(fluxVersionIds, 'standard');
 
-const AR = SDXL_FULL_AR;
+const AR = SDXL_FULL_AR_2MP;
 const AR_ULTRA = aspectRatioDef({ options: fluxUltraAspectRatios, default: '1:1' });
 const CFG = sliderDef({
   min: 2,

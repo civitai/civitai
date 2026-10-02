@@ -2,6 +2,9 @@ import type { InputWrapperProps } from '@mantine/core';
 import { Input, Paper } from '@mantine/core';
 import { IconDots } from '@tabler/icons-react';
 import { useCallback, useMemo } from 'react';
+import { CUSTOM_ASPECT_RATIO } from '~/shared/constants/generation.constants';
+import type { CustomDimensionLimits } from '~/utils/aspect-ratio-helpers';
+import { openCustomDimensionsModal } from './CustomDimensionsModal';
 
 import {
   OverflowSegmentedControl,
@@ -37,6 +40,8 @@ export interface AspectRatioInputProps extends Omit<InputWrapperProps, 'children
   maxVisible?: number;
   /** Priority aspect ratio values to show before "More" button. When set, these values are shown instead of the first N options. */
   priorityOptions?: string[];
+  /** When set, "Custom" joins the options and opens a width × height modal held to these limits. */
+  custom?: CustomDimensionLimits;
 }
 
 // =============================================================================
@@ -174,6 +179,58 @@ function ModalOptionDisplay({ option, selected, inSheet }: ModalOptionDisplayPro
 }
 
 // =============================================================================
+// Custom width × height
+// =============================================================================
+
+function CustomOptionDisplay({ value }: { value?: AspectRatioValue }) {
+  const current = value?.value === CUSTOM_ASPECT_RATIO ? value : undefined;
+  const preview = getPreviewDimensions(current ?? { value: '1:1' }, 36, 20);
+  return (
+    <div className="flex flex-col gap-0.5">
+      <div className="flex h-5 items-center justify-center">
+        <Paper
+          withBorder
+          style={{
+            borderWidth: 2,
+            width: preview.width,
+            height: preview.height,
+          }}
+        />
+      </div>
+      <span className="text-xs">Custom</span>
+      {current && (
+        <span className="text-[10px] text-gray-6 dark:text-dark-2">
+          {getDimensionsLabel(current)}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function CustomModalOption({ selected, inSheet }: { selected: boolean; inSheet: boolean }) {
+  const box = inSheet ? 32 : 24;
+  return (
+    <div className={`flex w-full items-center px-3 ${inSheet ? 'gap-4 py-3.5' : 'gap-3 py-2'}`}>
+      <div
+        className={`flex shrink-0 items-center justify-center ${inSheet ? 'h-8 w-16' : 'h-6 w-12'}`}
+      >
+        <Paper withBorder style={{ borderWidth: 2, width: box, height: box }} />
+      </div>
+      <span
+        className={`flex-1 text-left ${inSheet ? 'text-base' : 'text-sm'} ${
+          selected ? 'font-semibold' : 'font-normal'
+        }`}
+      >
+        Custom
+      </span>
+      <span className={`${inSheet ? 'text-sm' : 'text-xs'} text-gray-6 dark:text-dark-2`}>
+        Width × height
+      </span>
+    </div>
+  );
+}
+
+// =============================================================================
 // More Button Content
 // =============================================================================
 
@@ -205,6 +262,7 @@ export function AspectRatioInput({
   disabled,
   maxVisible = DEFAULT_MAX_VISIBLE,
   priorityOptions,
+  custom,
   ...inputWrapperProps
 }: AspectRatioInputProps) {
   // Extract the value string from the value object
@@ -223,11 +281,17 @@ export function AspectRatioInput({
     [priorityOptions, options, maxVisible]
   );
 
-  // Convert AspectRatioOption[] to OverflowSegmentedControlOption[]
-  const segmentedOptions: OverflowSegmentedControlOption<string>[] = options.map((option) => ({
-    value: option.value,
-    label: <AspectRatioOptionDisplay option={option} />,
-  }));
+  // Convert AspectRatioOption[] to OverflowSegmentedControlOption[]. "Custom" goes
+  // last: it is not a ratio, so it has no place in the widest-first order.
+  const segmentedOptions: OverflowSegmentedControlOption<string>[] = [
+    ...options.map((option) => ({
+      value: option.value,
+      label: <AspectRatioOptionDisplay option={option} />,
+    })),
+    ...(custom
+      ? [{ value: CUSTOM_ASPECT_RATIO, label: <CustomOptionDisplay value={value} /> }]
+      : []),
+  ];
 
   // Render the More button
   const renderMoreButton = useCallback(() => <MoreButtonContent />, []);
@@ -235,6 +299,8 @@ export function AspectRatioInput({
   // Render modal option
   const renderModalOption = useCallback(
     (option: OverflowSegmentedControlOption<string>, selected: boolean, inSheet: boolean) => {
+      if (option.value === CUSTOM_ASPECT_RATIO)
+        return <CustomModalOption selected={selected} inSheet={inSheet} />;
       const aspectOption = options.find((opt) => opt.value === option.value);
       if (!aspectOption) return null;
       return <ModalOptionDisplay option={aspectOption} selected={selected} inSheet={inSheet} />;
@@ -242,15 +308,28 @@ export function AspectRatioInput({
     [options]
   );
 
+  // Opens on the size already chosen, so a bucket the user liked is the starting
+  // point. Nothing changes until Apply: dismissing it leaves the previous pick.
+  const editCustom = useCallback(async () => {
+    if (!custom || disabled) return;
+    const initial = { width: value?.width ?? 1024, height: value?.height ?? 1024 };
+    const fit = await openCustomDimensionsModal({ initial, limits: custom });
+    if (fit) onChange?.({ value: CUSTOM_ASPECT_RATIO, ...fit });
+  }, [custom, disabled, value?.width, value?.height, onChange]);
+
   // Handle value change - convert string to AspectRatioValue
   const handleChange = useCallback(
     (newValue: string) => {
+      if (newValue === CUSTOM_ASPECT_RATIO && custom) {
+        editCustom();
+        return;
+      }
       const option = options.find((opt) => opt.value === newValue);
       if (option) {
         onChange?.(optionToValue(option));
       }
     },
-    [options, onChange]
+    [options, onChange, custom, editCustom]
   );
 
   return (
@@ -266,6 +345,7 @@ export function AspectRatioInput({
         renderOption={renderModalOption}
         gridColumns={1}
         drawerTitle={label ?? 'Aspect ratio'}
+        onReselect={(selected) => selected === CUSTOM_ASPECT_RATIO && editCustom()}
       />
     </Input.Wrapper>
   );
