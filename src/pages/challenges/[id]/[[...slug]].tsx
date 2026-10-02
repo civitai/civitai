@@ -1,3 +1,4 @@
+import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
 import { challengeEndedMessage } from '~/components/Challenge/challenge-messages';
 import {
   Accordion,
@@ -716,6 +717,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
               </>
             )}
           </Group>
+          <OwnerRatingControls entityType="Challenge" entityId={challenge.id} isOwner={isOwner} />
         </Stack>
 
         <ContainerGrid2 gutter={{ base: 16, md: 32, lg: 64 }}>

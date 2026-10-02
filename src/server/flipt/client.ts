@@ -7,6 +7,8 @@ export enum FLIPT_FEATURE_FLAGS {
   // background paths (no request context) can gate on the same Flipt flag the
   // tRPC `isFlagProtected('articleRatingDispute')` endpoints use.
   ARTICLE_RATING_DISPUTE = 'article-rating-dispute',
+  // Mirrors `ratingDispute`, for the scan-completion auto-approve of every other entity.
+  RATING_DISPUTE = 'rating-dispute',
   FEED_IMAGE_EXISTENCE = 'feed-image-existence',
   FEED_POST_FILTER = 'feed-fetch-filter-in-post',
   // Serves the image feed from the PostgreSQL feed service (page from the feed, rows from

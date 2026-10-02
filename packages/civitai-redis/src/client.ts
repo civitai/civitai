@@ -2596,7 +2596,13 @@ const REDIS_KEYS_UNPREFIXED = {
   ARTICLE: {
     SCAN_UPDATE: 'article:scan-update',
     RESCAN: 'article:rescan',
-    RATING_REVIEW_RATE_LIMIT: 'article:nsfw-review-rate',
+  },
+  RATING_REVIEW: {
+    /*
+      Use: per-user count of rating disputes filed in the current 24h window, across every entity type.
+      Structure: integer (INCR), TTL 24h set on the first increment
+     */
+    RATE_LIMIT: 'rating-review:rate',
   },
   REPORT: {
     /*

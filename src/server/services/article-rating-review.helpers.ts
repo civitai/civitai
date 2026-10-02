@@ -1,4 +1,8 @@
 import { Prisma } from '@prisma/client';
+import {
+  buildRatingReviewNotification,
+  textScanResultTextHash,
+} from '@civitai/shared/rating-review';
 import { constants } from '~/server/common/constants';
 import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -7,7 +11,6 @@ import { articlesSearchIndex } from '~/server/search-index';
 import { createNotification } from '~/server/services/notification.service';
 import { articleModerationFloorSql } from '~/server/services/text-scan/scan-floor';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
-import { getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
 import {
   ArticleIngestionStatus,
   ArticleStatus,
@@ -18,7 +21,7 @@ import {
 // the same name in `~/shared/utils/prisma/enums`.
 import { NsfwLevel } from '~/server/common/enums';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
-import { handleLogError } from '~/server/utils/errorHandling';
+import { handleLogError, throwBadRequestError } from '~/server/utils/errorHandling';
 
 export type AutoApproveEntryPoint = 'submission' | 'scan-completion';
 
@@ -277,7 +280,9 @@ const AUTO_APPROVE_MOD_COMMENT = 'Auto-approved: rescan matched requested rating
  */
 export type AutoResolvedReview = {
   id: number;
-  articleId: number;
+  entityType: string;
+  entityId: number;
+  resolvedTextHash: string | null;
   userId: number;
   currentLevel: number;
   suggestedLevel: number;
@@ -298,12 +303,18 @@ export async function autoResolveArticleRatingReview(args: AutoResolveArgs): Pro
   const systemUserId = constants.system.user.id;
 
   const result = await dbWrite.$transaction(async (tx) => {
+    const scanRow = await tx.entityModeration.findUnique({
+      where: { entityType_entityId: { entityType: 'Article', entityId: args.articleId } },
+      select: { result: true },
+    });
+    const resolvedTextHash = textScanResultTextHash(scanRow?.result);
     let reviewId: number;
 
     if (args.mode === 'create') {
-      const created = await tx.articleRatingReview.create({
+      const created = await tx.ratingReview.create({
         data: {
-          articleId: args.articleId,
+          entityType: 'Article',
+          entityId: args.articleId,
           userId: args.ownerUserId,
           currentLevel: args.previousLevel,
           suggestedLevel: args.suggestedLevel,
@@ -313,6 +324,7 @@ export async function autoResolveArticleRatingReview(args: AutoResolveArgs): Pro
           resolvedAt: new Date(),
           resolvedBy: systemUserId,
           modComment: AUTO_APPROVE_MOD_COMMENT,
+          resolvedTextHash,
         },
         select: { id: true },
       });
@@ -320,7 +332,7 @@ export async function autoResolveArticleRatingReview(args: AutoResolveArgs): Pro
     } else {
       // resolve-existing: status-guarded updateMany to handle races with a
       // concurrent mod resolution or a duplicate scan-completion fire.
-      const claim = await tx.articleRatingReview.updateMany({
+      const claim = await tx.ratingReview.updateMany({
         where: { id: args.reviewId, status: ReportStatus.Pending },
         data: {
           status: ReportStatus.Actioned,
@@ -328,6 +340,7 @@ export async function autoResolveArticleRatingReview(args: AutoResolveArgs): Pro
           resolvedAt: new Date(),
           resolvedBy: systemUserId,
           modComment: AUTO_APPROVE_MOD_COMMENT,
+          resolvedTextHash,
         },
       });
       if (claim.count !== 1) {
@@ -366,11 +379,13 @@ export async function autoResolveArticleRatingReview(args: AutoResolveArgs): Pro
     // ensured derived <= suggested, so effective settles at `suggestedLevel`.
     await updateArticleNsfwLevels([args.articleId], tx);
 
-    const review = await tx.articleRatingReview.findUniqueOrThrow({
+    const review = await tx.ratingReview.findUniqueOrThrow({
       where: { id: reviewId },
       select: {
         id: true,
-        articleId: true,
+        entityType: true,
+        entityId: true,
+        resolvedTextHash: true,
         userId: true,
         currentLevel: true,
         suggestedLevel: true,
@@ -397,22 +412,20 @@ export async function autoResolveArticleRatingReview(args: AutoResolveArgs): Pro
       })
     );
 
-  const previousLevelLabel = getBrowsingLevelLabel(args.previousLevel);
-  const newLevelLabel = getBrowsingLevelLabel(args.suggestedLevel);
-
+  const notification = buildRatingReviewNotification({
+    reviewId: result.reviewId,
+    approved: true,
+    entityType: 'Article',
+    entityId: args.articleId,
+    title: args.articleTitle,
+    previousLevel: args.previousLevel,
+    appliedLevel: args.suggestedLevel,
+    modComment: null,
+  });
   await createNotification({
     userId: args.ownerUserId,
-    type: 'article-rating-review-approved',
     category: NotificationCategory.System,
-    key: `article-rating-review-approved:${result.reviewId}`,
-    details: {
-      articleId: args.articleId,
-      articleTitle: args.articleTitle,
-      previousLevel: previousLevelLabel,
-      newLevel: newLevelLabel,
-      // Intentionally null — owner doesn't need to know it was automated.
-      modComment: null,
-    },
+    ...notification,
   }).catch((e) =>
     handleLogError(e, 'article-rating-review-auto-approved-notification', {
       articleId: args.articleId,
@@ -446,8 +459,8 @@ export class AutoResolveRaceLost extends Error {
  */
 export async function maybeAutoResolveDisputeAfterScan(articleId: number): Promise<void> {
   try {
-    const pending = await dbRead.articleRatingReview.findFirst({
-      where: { articleId, status: ReportStatus.Pending },
+    const pending = await dbRead.ratingReview.findFirst({
+      where: { entityType: 'Article', entityId: articleId, status: ReportStatus.Pending },
       select: {
         id: true,
         suggestedLevel: true,
@@ -525,5 +538,79 @@ export async function maybeAutoResolveDisputeAfterScan(articleId: number): Promi
   } catch (e) {
     const error = e as Error;
     handleLogError(error, 'article-rating-review-auto-resolve-after-scan', { articleId });
+  }
+}
+
+export async function tryAutoApproveArticleDispute(args: {
+  articleId: number;
+  ownerUserId: number;
+  suggestedLevel: number;
+  userComment: string | null;
+}) {
+  const article = await dbRead.article.findUnique({
+    where: { id: args.articleId },
+    select: {
+      id: true,
+      title: true,
+      status: true,
+      ingestion: true,
+      nsfwLevel: true,
+      moderatorNsfwLevel: true,
+      moderatorNsfwLevelBasis: true,
+      coverId: true,
+    },
+  });
+  if (!article) return null;
+
+  const gate = await evaluateAutoApproveGate({ article, suggestedLevel: args.suggestedLevel });
+  if (!gate.eligible) return null;
+
+  // Pending first, so the partial unique index serializes two concurrent submissions: the loser hits
+  // P2002 instead of producing a second Actioned row and a second "approved" notification.
+  let pendingId: number;
+  try {
+    const created = await dbWrite.ratingReview.create({
+      data: {
+        entityType: 'Article',
+        entityId: args.articleId,
+        userId: args.ownerUserId,
+        currentLevel: article.nsfwLevel,
+        suggestedLevel: args.suggestedLevel,
+        userComment: args.userComment,
+        status: ReportStatus.Pending,
+      },
+      select: { id: true },
+    });
+    pendingId = created.id;
+  } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002')
+      throw throwBadRequestError('A dispute is already pending for this item');
+    throw e;
+  }
+
+  try {
+    const auto = await autoResolveArticleRatingReview({
+      mode: 'resolve-existing',
+      reviewId: pendingId,
+      articleId: args.articleId,
+      ownerUserId: args.ownerUserId,
+      suggestedLevel: args.suggestedLevel,
+      previousLevel: article.nsfwLevel,
+      articleTitle: article.title ?? 'your article',
+    });
+    logToAxiom({
+      type: 'info',
+      name: 'article-rating-review-auto-resolved',
+      articleId: args.articleId,
+      reviewId: auto.reviewId,
+      suggestedLevel: args.suggestedLevel,
+      derivedLevel: gate.derivedLevel,
+      entryPoint: 'submission' as AutoApproveEntryPoint,
+    }).catch();
+    return auto.review;
+  } catch (e) {
+    if (e instanceof AutoResolveRaceLost)
+      return dbRead.ratingReview.findUniqueOrThrow({ where: { id: pendingId } });
+    throw e;
   }
 }

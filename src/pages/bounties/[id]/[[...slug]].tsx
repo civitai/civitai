@@ -25,6 +25,7 @@ import type { InferGetServerSidePropsType } from 'next';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as z from 'zod';
 
+import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Gated } from '~/components/Gated/Gated';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
@@ -348,6 +349,11 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
               </>
             )}
           </Group>
+          <OwnerRatingControls
+            entityType="Bounty"
+            entityId={bounty.id}
+            isOwner={currentUser?.id === bounty.user?.id}
+          />
         </Stack>
         <ContainerGrid2 gutter={{ md: 32, lg: 64 }}>
           <ContainerGrid2.Col span={{ base: 12, md: 4 }} order={{ md: 2 }}>

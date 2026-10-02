@@ -572,6 +572,8 @@ export interface User {
   articleEngagements?: ArticleEngagement[];
   articleRatingReviewsSubmitted?: ArticleRatingReview[];
   articleRatingReviewsResolved?: ArticleRatingReview[];
+  ratingReviewsSubmitted?: RatingReview[];
+  ratingReviewsResolved?: RatingReview[];
   leaderboardResults?: LeaderboardResult[];
   receivedReports?: UserReport[];
   engagedImages?: ImageEngagement[];
@@ -1659,6 +1661,25 @@ export interface ArticleRatingReview {
   userComment: string | null;
   modComment: string | null;
   status: ReportStatus;
+}
+
+export interface RatingReview {
+  id: number;
+  entityType: string;
+  entityId: number;
+  userId: number;
+  user?: User;
+  currentLevel: number;
+  suggestedLevel: number;
+  appliedLevel: number | null;
+  userComment: string | null;
+  modComment: string | null;
+  status: ReportStatus;
+  resolvedBy: number | null;
+  resolver?: User | null;
+  resolvedAt: Date | null;
+  resolvedTextHash: string | null;
+  createdAt: Date;
 }
 
 export interface CollectionMetric {

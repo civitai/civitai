@@ -1,6 +1,7 @@
 import { articleNotifications } from '~/server/notifications/article.notifications';
 import { comicNotifications } from '~/server/notifications/comics.notifications';
 import { articleRatingReviewNotifications } from '~/server/notifications/article-rating-review.notifications';
+import { ratingReviewNotifications } from '~/server/notifications/rating-review.notifications';
 import { articleUnpublishNotifications } from '~/server/notifications/article-unpublish.notifications';
 import { appBlockNotifications } from '~/server/notifications/app-block.notifications';
 import { appCollaboratorNotifications } from '~/server/notifications/app-collaborator.notifications';
@@ -57,6 +58,7 @@ export const notificationProcessors = {
   ...appCollaboratorNotifications,
   ...appModeratorMessageNotifications,
   ...articleRatingReviewNotifications,
+  ...ratingReviewNotifications,
   ...reportNotifications,
   ...featuredNotifications,
   ...bountyNotifications,
