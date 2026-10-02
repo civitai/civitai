@@ -8,6 +8,7 @@ import { env as serverEnv } from '~/env/server';
 import { Page } from '~/components/AppLayout/Page';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { seedRawAirResource } from '~/components/form-graph/generation/raw-air-seed';
+import { SwitchToClassicTrainerAlert } from '~/components/Training/TrainingStudioSwitch';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
@@ -294,8 +295,14 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
     ref.current?.classList.toggle('light', colorScheme === 'light');
   }, [elReady, colorScheme]);
 
+  const classicTrainerUrl =
+    isNew || !currentUser?.username
+      ? '/models/train'
+      : `/user/${currentUser.username}/models?section=training`;
+
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: 24 }}>
+      <SwitchToClassicTrainerAlert destination={classicTrainerUrl} />
       {error ? <p>{error}</p> : <StudioTag ref={ref} />}
     </div>
   );

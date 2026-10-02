@@ -144,8 +144,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           newUntil: new Date('2026-09-20'),
         },
         {
-          // Same flag swap as the trainer entry below: with the Training Studio on, "my trainings"
-          // IS the studio's run list — the old DB-backed list stays reachable via the banner there.
+          // With the Training Studio on, "my trainings" IS the studio's run list.
           href: features.trainingStudioUi
             ? '/training-studio'
             : `/user/${currentUser?.username as string}/models?section=training`,
