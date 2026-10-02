@@ -1,40 +1,54 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * A storage delete that fails after its Image row is gone leaves a publicly served object whose
  * key exists nowhere but this queue. The properties pinned here:
  *
- *   1. the job is a quiet no-op until the migration adds the enum label and column, because the
- *      code ships first and the migration follows the deploy;
- *   2. a key that deletes, or that is legitimately skipped, leaves the queue;
- *   3. a key that fails again STAYS, and moves to the back so it cannot starve the rest;
- *   4. a non-prod database never deletes production media.
+ *   1. the job is a quiet no-op until the enum label exists, because the code ships first;
+ *   2. it reads, and removes, ONLY its own queue type — JobQueue is keyed by image id across
+ *      types, so a dropped type filter would delete another queue's row for the same image
+ *      (`BlockedImageDelete` is the take-down queue);
+ *   3. a key that deletes, or is legitimately skipped, leaves the queue; one that fails again
+ *      stays, with its original `createdAt`, so the overdue check can see it age;
+ *   4. one key throwing does not cost the rest of the run its dequeue;
+ *   5. no new batch starts past the run budget, so a slow outage cannot outlive the lock;
+ *   6. a non-prod environment never deletes production media.
  */
 
-const { mockDeleteImageFromS3, mockEnv } = vi.hoisted(() => ({
+const { mockDeleteImageFromS3, mockOther } = vi.hoisted(() => ({
   mockDeleteImageFromS3: vi.fn(),
-  mockEnv: { DATABASE_IS_PROD: true },
+  mockOther: { isProd: true },
 }));
 
 // Hand-listed rather than spread from the real module: image.service is ~8k lines and builds
 // module-scope caches on import.
 vi.mock('~/server/services/image.service', () => ({ deleteImageFromS3: mockDeleteImageFromS3 }));
-vi.mock('~/env/other', () => ({ isProd: true }));
-vi.mock('~/env/server', () => ({ env: mockEnv }));
+vi.mock('~/env/other', () => ({
+  get isProd() {
+    return mockOther.isProd;
+  },
+}));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { retryImageStorageDeletes } from '~/server/jobs/retry-image-storage-deletes';
+import { setEnv } from '~/__tests__/mocks/env.mock';
+import {
+  RETRY_BATCH_SIZE,
+  RUN_BUDGET_MS,
+  retryImageStorageDeletes,
+} from '~/server/jobs/retry-image-storage-deletes';
 
 const DELETES_ID = 11;
 const SHARED_ID = 12;
 const STILL_FAILING_ID = 13;
 const NO_URL_ID = 14;
+const THROWS_ID = 15;
 
 const QUEUE = [
   { id: DELETES_ID, url: 'key-deletes' },
   { id: SHARED_ID, url: 'key-shared' },
   { id: STILL_FAILING_ID, url: 'key-failing' },
   { id: NO_URL_ID, url: null },
+  { id: THROWS_ID, url: 'key-throws' },
 ];
 
 const OUTCOMES: Record<string, 'deleted' | 'skipped' | 'failed'> = {
@@ -46,69 +60,137 @@ const OUTCOMES: Record<string, 'deleted' | 'skipped' | 'failed'> = {
 const ctx = {} as Parameters<typeof retryImageStorageDeletes.run>[0];
 const runJob = () => retryImageStorageDeletes.run(ctx).result as Promise<Record<string, unknown>>;
 
-const writes = () =>
-  dbMock.dbWrite.$executeRaw.mock.calls.map((call: unknown[]) => ({
-    sql: (call[0] as TemplateStringsArray).join('?'),
-    values: call.slice(1),
-  }));
-const idsOf = (needle: string) =>
-  (writes()
-    .find((w) => w.sql.includes(needle))
-    ?.values.find(Array.isArray) as number[] | undefined) ?? [];
+type Call = { sql: string; values: unknown[] };
+const toCall = (call: unknown[]): Call => ({
+  sql: (call[0] as TemplateStringsArray).join('?'),
+  values: call.slice(1),
+});
+const reads = () => dbMock.dbWrite.$queryRaw.mock.calls.map(toCall);
+const writes = () => dbMock.dbWrite.$executeRaw.mock.calls.map(toCall);
 
-let ready = true;
+let probe: { ready: boolean }[] = [{ ready: true }];
+let queue: typeof QUEUE = QUEUE;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockEnv.DATABASE_IS_PROD = true;
-  ready = true;
+  setEnv({ DATABASE_IS_PROD: true });
+  mockOther.isProd = true;
+  probe = [{ ready: true }];
+  queue = QUEUE;
   dbMock.dbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
     const sql = strings.join('?');
-    if (sql.includes('pg_enum')) return [{ ready }];
-    if (sql.includes('FROM "JobQueue"')) return QUEUE;
+    if (sql.includes('pg_enum')) return probe;
+    if (sql.includes('FROM "JobQueue"')) return queue;
     throw new Error(`unexpected query: ${sql}`);
   });
   dbMock.dbWrite.$executeRaw.mockResolvedValue(0);
-  mockDeleteImageFromS3.mockImplementation(async ({ url }: { url: string }) => OUTCOMES[url]);
+  mockDeleteImageFromS3.mockImplementation(async ({ url }: { url: string }) => {
+    if (url === 'key-throws') throw new Error('purge exploded');
+    return OUTCOMES[url];
+  });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('retry-image-storage-deletes', () => {
-  it('does nothing before the migration exists', async () => {
-    ready = false;
+  it('probes for its own enum label and the url column', async () => {
+    await runJob();
 
-    const result = await runJob();
-
-    expect(result).toEqual({ ready: false });
-    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
-    expect(mockDeleteImageFromS3).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    const [probeCall] = reads();
+    expect(probeCall.values).toEqual(['ImageStorageDelete']);
+    expect(probeCall.sql).toContain("t.typname = 'JobQueueType'");
+    expect(probeCall.sql).toContain("table_name = 'JobQueue' AND column_name = 'url'");
   });
 
-  it('retries every queued key that has one', async () => {
+  it.each([
+    ['the label or column is missing', [{ ready: false }]],
+    ['the probe returns no row', []],
+  ])('does nothing when %s', async (_, result) => {
+    probe = result;
+
+    expect(await runJob()).toEqual({ ready: false });
+    expect(reads()).toHaveLength(1);
+    expect(mockDeleteImageFromS3).not.toHaveBeenCalled();
+    expect(writes()).toHaveLength(0);
+  });
+
+  it('reads only its own queue type, oldest first, one batch', async () => {
+    await runJob();
+
+    const select = reads()[1];
+    expect(select.values).toEqual(['ImageStorageDelete', 'Image', RETRY_BATCH_SIZE]);
+    expect(select.sql).toMatch(
+      /WHERE type = \?::"JobQueueType"\s+AND "entityType" = \?::"EntityType"/
+    );
+    expect(select.sql).toMatch(/ORDER BY "createdAt" ASC\s+LIMIT \?/);
+  });
+
+  it('retries every queued key with the purge suppressed on failure', async () => {
     await runJob();
 
     expect(mockDeleteImageFromS3.mock.calls.map((c) => c[0])).toEqual([
-      { id: DELETES_ID, url: 'key-deletes' },
-      { id: SHARED_ID, url: 'key-shared' },
-      { id: STILL_FAILING_ID, url: 'key-failing' },
+      { id: DELETES_ID, url: 'key-deletes', purgeOnFailure: false },
+      { id: SHARED_ID, url: 'key-shared', purgeOnFailure: false },
+      { id: STILL_FAILING_ID, url: 'key-failing', purgeOnFailure: false },
+      { id: THROWS_ID, url: 'key-throws', purgeOnFailure: false },
     ]);
   });
 
-  it('dequeues deleted, skipped and keyless rows, and keeps the one that failed again', async () => {
+  it('dequeues deleted, skipped and keyless rows of its own type only', async () => {
     const result = await runJob();
 
-    expect(idsOf('DELETE FROM "JobQueue"').sort()).toEqual([DELETES_ID, SHARED_ID, NO_URL_ID]);
-    expect(idsOf('UPDATE "JobQueue"')).toEqual([STILL_FAILING_ID]);
-    expect(result).toEqual({ deleted: 1, skipped: 2, failed: 1 });
+    expect(writes()).toHaveLength(1);
+    const [dequeue] = writes();
+    expect(dequeue.sql).toMatch(
+      /DELETE FROM "JobQueue"\s+WHERE type = \?::"JobQueueType"\s+AND "entityType" = \?::"EntityType"\s+AND "entityId" = ANY\(\?::integer\[\]\)/
+    );
+    expect(dequeue.values[0]).toBe('ImageStorageDelete');
+    expect(dequeue.values[1]).toBe('Image');
+    expect((dequeue.values[2] as number[]).slice().sort()).toEqual([
+      DELETES_ID,
+      SHARED_ID,
+      NO_URL_ID,
+    ]);
+    expect(result).toEqual({ deleted: 1, skipped: 2, failed: 2, unattempted: 0 });
   });
 
-  it('never deletes from a non-prod database', async () => {
-    mockEnv.DATABASE_IS_PROD = false;
+  // No write touches a failed row: its `createdAt` is the age the overdue check reads.
+  it('leaves rows that failed, or threw, queued and untouched', async () => {
+    await runJob();
+
+    const touched = writes().flatMap((w) => w.values.filter(Array.isArray).flat());
+    expect(touched).not.toContain(STILL_FAILING_ID);
+    expect(touched).not.toContain(THROWS_ID);
+    expect(writes().some((w) => w.sql.includes('UPDATE'))).toBe(false);
+  });
+
+  it('starts no new batch once the run budget is spent', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(0);
+    // Ten keys = two batches of five. The first batch eats the whole budget.
+    queue = Array.from({ length: 10 }, (_, i) => ({ id: 100 + i, url: `key-${i}` }));
+    mockDeleteImageFromS3.mockImplementation(async () => {
+      vi.setSystemTime(RUN_BUDGET_MS + 1);
+      return 'deleted';
+    });
 
     const result = await runJob();
 
-    expect(result).toEqual({ wouldRetry: QUEUE.length });
+    expect(mockDeleteImageFromS3).toHaveBeenCalledTimes(5);
+    expect(result).toMatchObject({ deleted: 5, unattempted: 5 });
+    expect(writes()[0].values[2]).toEqual([100, 101, 102, 103, 104]);
+  });
+
+  it.each([
+    ['DATABASE_IS_PROD is off', () => setEnv({ DATABASE_IS_PROD: false })],
+    ['the app is not prod', () => (mockOther.isProd = false)],
+  ])('never deletes when %s', async (_, arrange) => {
+    arrange();
+
+    expect(await runJob()).toEqual({ wouldRetry: QUEUE.length });
     expect(mockDeleteImageFromS3).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(writes()).toHaveLength(0);
   });
 });

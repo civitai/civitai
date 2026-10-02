@@ -384,6 +384,27 @@ describe('deleteImageFromS3', () => {
       'ImageStorageDelete',
       'abc-def/original.jpeg',
     ]);
+    // The retry job re-enters this path for a key already queued. Without the upsert that is a
+    // primary-key violation, logged as a lost key every run for every stuck key.
+    expect(retryInserts()[0].sql).toMatch(
+      /ON CONFLICT \("entityType", "entityId", "type"\) DO UPDATE SET "url" = EXCLUDED\."url"/
+    );
+  });
+
+  it('skips the cache purge on a failed retry, but not on a successful one', async () => {
+    mockFindFirst.mockResolvedValue(null);
+    mockB2Send.mockRejectedValue(new Error('connect ETIMEDOUT'));
+
+    expect(
+      await deleteImageFromS3({ id: 4242, url: 'abc-def/original.jpeg', purgeOnFailure: false })
+    ).toBe('failed');
+    expect(invalidateCalls()).toHaveLength(0);
+
+    mockB2Send.mockResolvedValue({ Key: 'abc-def/original.jpeg' });
+    expect(
+      await deleteImageFromS3({ id: 4242, url: 'abc-def/original.jpeg', purgeOnFailure: false })
+    ).toBe('deleted');
+    expect(invalidateCalls()).toHaveLength(1);
   });
 
   it('queues the key for retry when the shared-url check itself fails', async () => {
