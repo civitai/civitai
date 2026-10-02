@@ -19,7 +19,8 @@
     "./image-ingestion": "./src/image-ingestion.ts",
     "./training-custom-model": "./src/training-custom-model.ts",
     "./job-queue": "./src/job-queue.ts",
-    "./rated-entity-sql": "./src/rated-entity-sql.ts"
+    "./rated-entity-sql": "./src/rated-entity-sql.ts",
+    "./rating-review": "./src/rating-review.ts"
   },
   "scripts": {
     "test": "vitest run",
