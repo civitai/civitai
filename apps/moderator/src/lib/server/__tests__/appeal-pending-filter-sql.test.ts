@@ -39,9 +39,11 @@ async function appealStatementsOf(run: () => Promise<unknown>) {
 
 function expectPendingOnly(statements: { text: string; params: unknown[] }[]) {
   expect(statements.map(({ text }) => text.split(' ')[0])).toEqual(['select', 'update']);
+  // Read from the WHERE clause: the update's SET also binds a status.
   for (const { text, params: bound } of statements) {
-    expect(text).toMatch(/"status" = \$\d+/);
-    expect(bound).toContain('Pending');
+    const placeholder = / where .*"status" = \$(\d+)/.exec(text)?.[1];
+    expect(placeholder, text).toBeDefined();
+    expect(bound[Number(placeholder) - 1]).toBe('Pending');
   }
 }
 

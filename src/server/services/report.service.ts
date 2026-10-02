@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { randomUUID } from 'crypto';
 import dayjs from '~/shared/utils/dayjs';
 import {
   BlockedReason,
@@ -689,7 +690,9 @@ export async function getAppealDetails({
   return { ...appeal, entityDetails };
 }
 
-const getAppealPrefix = (userId: number) => `appeal-${userId}-${new Date().getTime()}`;
+// The failure path refunds by this prefix, so two submits in the same millisecond must not share it.
+const getAppealPrefix = (userId: number) =>
+  `appeal-${userId}-${new Date().getTime()}-${randomUUID().slice(0, 8)}`;
 const isAppealPrefix = (prefix: string) => prefix.startsWith('appeal-');
 
 export async function createEntityAppeal({

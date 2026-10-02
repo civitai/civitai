@@ -207,6 +207,25 @@ describe('a second appeal on the same image', () => {
     expect(appeals).toHaveLength(2);
   });
 
+  // A losing submit refunds by its fee prefix; a prefix shared with the winner would refund both.
+  it('gives each charge its own refund prefix, even within the same millisecond', async () => {
+    const clock = vi.spyOn(Date.prototype, 'getTime').mockReturnValue(1_790_000_000_000);
+    try {
+      seed(AppealStatus.Approved);
+      await appeal();
+      seed(AppealStatus.Approved);
+      await appeal();
+    } finally {
+      clock.mockRestore();
+    }
+
+    const [first, second] = mockCharge.mock.calls.map(
+      ([input]) => input.externalTransactionIdPrefix
+    );
+    expect(first).toMatch(/^appeal-602767-1790000000000-/);
+    expect(second).not.toBe(first);
+  });
+
   // Older rows carry blockedFor 'moderated' with ingestion 'Scanned'; the page offers them an appeal.
   it('accepts a moderator block whose ingestion was never set to Blocked', async () => {
     seed(AppealStatus.Approved);
