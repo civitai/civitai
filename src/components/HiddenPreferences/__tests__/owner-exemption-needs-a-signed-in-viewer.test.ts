@@ -9,7 +9,6 @@ const SYSTEM_HIDDEN_TAG = 500;
 
 type Viewer = { id: number } | null;
 type Kind = 'poi' | 'systemTag' | 'unrated';
-const KINDS: Kind[] = ['poi', 'systemTag', 'unrated'];
 
 const prefs = (): HiddenPreferencesState => ({
   hiddenUsers: new Map(),
@@ -25,7 +24,8 @@ const prefs = (): HiddenPreferencesState => ({
 function run(
   type: Parameters<typeof filterPreferences>[0]['type'],
   data: unknown[],
-  viewer: Viewer
+  viewer: Viewer,
+  extra: { showImageless?: boolean } = {}
 ) {
   return filterPreferences({
     type,
@@ -35,6 +35,7 @@ function run(
     currentUser: viewer as never,
     canViewNsfw: true,
     poiDisabled: true,
+    ...extra,
   }).items as Record<string, unknown>[];
 }
 
@@ -115,60 +116,86 @@ describe('the owner exemption needs a signed-in viewer whose id matches', () => 
 
   // Row types declare `user.id` required, but a row that arrives without it must not make a
   // signed-out viewer its owner either.
+  const userOf = (ownerId?: number) => (ownerId === undefined ? {} : { id: ownerId });
+  const userIdOf = (ownerId?: number) => (ownerId === undefined ? {} : { userId: ownerId });
   const rowSites = {
-    models: (kind: Kind, user: object) => ({
+    models: (kind: Kind, ownerId?: number) => ({
       id: 11,
-      user,
+      user: userOf(ownerId),
       nsfw: false,
       name: 'm',
       nsfwLevel: kind === 'unrated' ? 0 : NsfwLevel.R,
       tags: kind === 'systemTag' ? [SYSTEM_HIDDEN_TAG] : [],
       images: [{ id: 9, nsfwLevel: NsfwLevel.R }],
     }),
-    articles: (kind: Kind, user: object) => ({
+    articles: (kind: Kind, ownerId?: number) => ({
       id: 12,
-      user,
+      user: userOf(ownerId),
       userNsfwLevel: 0,
       nsfwLevel: kind === 'unrated' ? 0 : NsfwLevel.R,
       tags: kind === 'systemTag' ? [{ id: SYSTEM_HIDDEN_TAG }] : [],
       coverImage:
         kind === 'poi' ? { id: 120, nsfwLevel: NsfwLevel.R, tags: [], poi: true } : undefined,
     }),
-    bounties: (kind: Kind, user: object) => ({
+    bounties: (kind: Kind, ownerId?: number) => ({
       id: 13,
-      user,
+      user: userOf(ownerId),
       nsfwLevel: kind === 'unrated' ? 0 : NsfwLevel.R,
       tags: kind === 'systemTag' ? [SYSTEM_HIDDEN_TAG] : [],
-      images: [{ id: 9, nsfwLevel: NsfwLevel.R, poi: kind === 'poi' }],
+      images: [{ id: 9, nsfwLevel: NsfwLevel.R }],
     }),
-    crucibles: (kind: Kind, user: object) => ({
+    crucibles: (kind: Kind, ownerId?: number) => ({
       id: 14,
-      user,
+      user: userOf(ownerId),
       nsfwLevel: kind === 'unrated' ? 0 : NsfwLevel.R,
       tags: kind === 'systemTag' ? [SYSTEM_HIDDEN_TAG] : [],
     }),
-    model3d: (kind: Kind, user: object) => ({
+    model3d: (kind: Kind, ownerId?: number) => ({
       id: 15,
-      user,
+      user: userOf(ownerId),
       nsfwLevel: kind === 'unrated' ? 0 : NsfwLevel.R,
       tags: kind === 'systemTag' ? [SYSTEM_HIDDEN_TAG] : [],
       poi: kind === 'poi',
     }),
+    collections: (kind: Kind, ownerId?: number) => ({
+      id: 17,
+      ...userIdOf(ownerId),
+      nsfwLevel: kind === 'unrated' ? 0 : NsfwLevel.R,
+      image: kind === 'poi' ? { id: 170, nsfwLevel: NsfwLevel.R, poi: true } : null,
+      images: [{ id: 9, nsfwLevel: NsfwLevel.R }],
+    }),
+    posts: (kind: Kind, ownerId?: number) => ({
+      ...userIdOf(ownerId),
+      nsfwLevel: kind === 'unrated' ? 0 : NsfwLevel.R,
+      title: 'p',
+    }),
   } as const;
 
-  // Only articles (on the cover) and model3d have a row-level POI gate; the others gate POI on
-  // their child images, or not at all.
-  const rowCases = (Object.keys(rowSites) as (keyof typeof rowSites)[]).flatMap((type) =>
-    KINDS.filter((kind) => kind !== 'poi' || type === 'articles' || type === 'model3d').map(
-      (kind) => [type, kind] as const
-    )
+  // The row-level gates each branch actually has; a gate missing here lives on child images.
+  const rowKinds: Record<keyof typeof rowSites, Kind[]> = {
+    models: ['systemTag', 'unrated'],
+    articles: ['poi', 'systemTag', 'unrated'],
+    bounties: ['systemTag', 'unrated'],
+    crucibles: ['systemTag', 'unrated'],
+    model3d: ['poi', 'systemTag', 'unrated'],
+    collections: ['poi', 'unrated'],
+    posts: ['unrated'],
+  };
+  const rowCases = (Object.keys(rowKinds) as (keyof typeof rowSites)[]).flatMap((type) =>
+    rowKinds[type].map((kind) => [type, kind] as const)
   );
 
   it.each(rowCases)('%s row (%s): only a signed-in owner is exempt', (type, kind) => {
     const make = rowSites[type];
-    expect(run(type, [make(kind, {})], null)).toHaveLength(0);
-    expect(run(type, [make(kind, {})], STRANGER)).toHaveLength(0);
-    expect(run(type, [make(kind, { id: OWNER.id })], OWNER)).toHaveLength(1);
+    expect(run(type, [make(kind)], null)).toHaveLength(0);
+    expect(run(type, [make(kind)], STRANGER)).toHaveLength(0);
+    expect(run(type, [make(kind, OWNER.id)], OWNER)).toHaveLength(1);
+  });
+
+  it('models: showImageless keeps an imageless model only for its signed-in owner', () => {
+    const imageless = (ownerId?: number) => ({ ...rowSites.models('poi', ownerId), images: [] });
+    expect(run('models', [imageless()], null, { showImageless: true })).toHaveLength(0);
+    expect(run('models', [imageless(OWNER.id)], OWNER, { showImageless: true })).toHaveLength(1);
   });
 
   it('challenges: a signed-out viewer does not own a challenge with no creator id', () => {
