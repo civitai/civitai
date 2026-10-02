@@ -48,8 +48,8 @@ const bothLoading = { left: 'loading', right: 'loading' } as const;
 const SHORT_CLIP_TOLERANCE_MS = 400;
 
 const clipSeconds = (entry: JudgingEntry | undefined) => {
-  const duration = (entry?.image.metadata as { duration?: number } | null)?.duration;
-  return typeof duration === 'number' && duration > 0 ? duration : null;
+  const duration = entry?.image.metadata?.duration;
+  return duration && duration > 0 ? duration : null;
 };
 
 // Below md the pair gets fixed heights and the page scrolls: squeezed into the space left under

@@ -45,6 +45,7 @@ const rawEntry = (id: number, userId: number, score = 1500) => ({
   image_width: 512,
   image_height: 512,
   image_nsfwLevel: 1,
+  image_duration: '5.162',
   user_id: userId,
   user_username: `user${userId}`,
   user_deletedAt: null,
@@ -113,6 +114,19 @@ describe('getJudgingPair — pair selection', () => {
   it('returns null when fewer than two entries are available to this judge', async () => {
     queryRaw.mockResolvedValue([rawEntry(1, 99)]);
     expect(await getJudgingPair({ crucibleId: 1, userId: 1 })).toBeNull();
+  });
+
+  it('carries each clip\'s duration, which the judging UI needs to stop a short clip at its end', async () => {
+    queryRaw.mockResolvedValue([
+      rawEntry(1, 99),
+      { ...rawEntry(2, 98), image_duration: null },
+    ]);
+    const pair = await getJudgingPair({ crucibleId: 1, userId: 1 });
+
+    const durations = [pair!.left, pair!.right]
+      .sort((a, b) => a.id - b.id)
+      .map((entry) => entry.image.metadata);
+    expect(durations).toEqual([{ duration: 5.162 }, null]);
   });
 
   it('returns null when the crucible has no entries at all', async () => {
