@@ -89,7 +89,7 @@ export function CrucibleJudgingUI({
     { pairKey: string | null } & Record<Side, MediaStatus>
   >({ pairKey: null, ...bothLoading });
   const [playingSide, setPlayingSide] = useState<Side | null>(null);
-  const [soundOn, setSoundOn] = useState(false);
+  const [soundOn, setSoundOn] = useState(true);
   const isDisabled = disabled || isLoading || !pair;
 
   const pairKey = pair ? `${pair.left.id}:${pair.right.id}` : null;
@@ -540,6 +540,20 @@ function JudgingMedia({
   }, [soundOn]);
   useEffect(applySound, [applySound]);
 
+  // Browsers refuse sound until the judge has interacted with the page (Safari, per element), so a
+  // refused clip falls back to muted, and the toggle shows it, rather than not playing at all.
+  const play = useCallback(
+    (video: HTMLVideoElement) => {
+      video.play().catch((error: unknown) => {
+        if ((error as Error)?.name !== 'NotAllowedError' || video.muted) return;
+        video.muted = true;
+        onSoundChange(false);
+        video.play().catch(() => undefined);
+      });
+    },
+    [onSoundChange]
+  );
+
   useEffect(() => {
     if (otherPlaying) ref.current?.querySelector('video')?.pause();
   }, [otherPlaying]);
@@ -550,13 +564,13 @@ function JudgingMedia({
     if (!video) return;
     if (autoplay) {
       applySound();
-      video.play().catch(() => undefined);
+      play(video);
     } else if (wasAutoplaying.current) {
       video.pause();
     }
     wasAutoplaying.current = autoplay;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `getVideo` only reads the ref
-  }, [autoplay, applySound]);
+  }, [autoplay, applySound, play]);
 
   const handleLoaded = () => {
     setStatus('loaded');
@@ -576,7 +590,7 @@ function JudgingMedia({
     const video = getVideo();
     if (!video) return;
     video.muted = !soundOn;
-    video.play().catch(() => undefined);
+    play(video);
   };
 
   const handlePointerLeave = (e: React.PointerEvent) => {

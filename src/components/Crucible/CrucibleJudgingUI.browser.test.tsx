@@ -352,20 +352,44 @@ describe('CrucibleJudgingUI — media loading', () => {
 });
 
 describe('CrucibleJudgingUI — video playback', () => {
-  test('clips start muted, and the sound toggle unmutes them', async () => {
+  test('clips start with sound on, and the sound toggle mutes them', async () => {
     renderWithProviders(
       <CrucibleJudgingUI pair={pairOf(1, 2)} onVote={vi.fn()} onSkip={vi.fn()} />
     );
     await expectBothCardsRendered();
 
-    expect(video('left').muted).toBe(true);
-    expect(video('right').muted).toBe(true);
+    expect(video('left').muted).toBe(false);
+    expect(video('right').muted).toBe(false);
 
-    card('left')!.querySelector<HTMLButtonElement>('[aria-label="Unmute clips"]')!.click();
+    card('left')!.querySelector<HTMLButtonElement>('[aria-label="Mute clips"]')!.click();
     await vi.waitFor(() => {
-      expect(video('left').muted).toBe(false);
-      expect(video('right').muted).toBe(false);
+      expect(video('left').muted).toBe(true);
+      expect(video('right').muted).toBe(true);
     });
+  });
+
+  test('a clip the browser refuses to play with sound plays muted instead', async () => {
+    const mutedPlays: HTMLMediaElement[] = [];
+    const play = vi
+      .spyOn(HTMLMediaElement.prototype, 'play')
+      .mockImplementation(function (this: HTMLMediaElement) {
+        if (!this.muted) return Promise.reject(new DOMException('needs a gesture', 'NotAllowedError'));
+        mutedPlays.push(this);
+        return Promise.resolve();
+      });
+    renderWithProviders(
+      <CrucibleJudgingUI pair={pairOf(1, 2)} minViewSeconds={3} onVote={vi.fn()} onSkip={vi.fn()} />
+    );
+    await expectBothCardsRendered();
+
+    await vi.waitFor(() => expect(mutedPlays).toContain(video('left')));
+    expect(video('left').muted).toBe(true);
+    // The toggle reflects what the judge actually hears, and the other clip follows it.
+    await vi.waitFor(() =>
+      expect(card('left')!.querySelector('[aria-label="Unmute clips"]')).toBeTruthy()
+    );
+    expect(video('right').muted).toBe(true);
+    play.mockRestore();
   });
 
   test('a clip that starts playing pauses the other one', async () => {
