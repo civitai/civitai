@@ -10,7 +10,7 @@ vi.mock('~/server/flipt/client', () => ({
   getFliptVariant: vi.fn(async () => 'off'),
 }));
 
-const thumbnailFetch = vi.fn(async (_ids: number[]) => ({} as Record<number, unknown>));
+const thumbnailFetch = vi.fn<(ids: number[]) => Promise<Record<number, unknown>>>(async () => ({}));
 vi.mock('~/server/redis/caches', () => ({
   imageMetaCache: { fetch: vi.fn(async () => ({})) },
   thumbnailCache: { fetch: (ids: number[]) => thumbnailFetch(ids) },
@@ -80,7 +80,9 @@ describe('runImageSearch: video thumbnails', () => {
 
     expect(thumbnailFetch).toHaveBeenCalledWith([2]);
     expect(video.thumbnail).toEqual({
-      url: expect.stringMatching(/(^|\/)thumb-uuid\/original=false,optimized=true\/thumb-uuid\.jpeg$/),
+      url: expect.stringMatching(
+        /(^|\/)thumb-uuid\/original=false,optimized=true\/thumb-uuid\.jpeg$/
+      ),
       width: 832,
       height: 1216,
     });
@@ -94,7 +96,9 @@ describe('runImageSearch: video thumbnails', () => {
     const [video] = await search([item(2, 'video')], 1);
 
     expect(video.thumbnail).toEqual({
-      url: expect.stringMatching(/(^|\/)uuid-2\/anim=false,transcode=true,original=false,optimized=true\//),
+      url: expect.stringMatching(
+        /(^|\/)uuid-2\/anim=false,transcode=true,original=false,optimized=true\//
+      ),
       width: 1280,
       height: 704,
     });

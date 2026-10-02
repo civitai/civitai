@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { NextApiRequest, NextApiResponse } from 'next';
 import { TRPCError } from '@trpc/server';
 import { NsfwLevel } from '~/server/common/enums';
 import { Availability } from '~/shared/utils/prisma/enums';
@@ -16,36 +15,41 @@ vi.mock('~/server/utils/region-blocking', () => ({
   getRegion: () => ({ countryCode: 'XX' }),
   isRegionRestricted: mockIsRegionRestricted,
 }));
-vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
-  ...(await importOriginal<typeof EndpointHelpers>()),
-  MixedAuthEndpoint: (handler: any) => (req: any, res: any) => handler(req, res, req.user),
+vi.mock('@civitai/next-axiom', () => ({
+  withAxiom:
+    (h: (...args: unknown[]) => unknown) =>
+    (...args: unknown[]) =>
+      h(...args),
 }));
+vi.mock('~/server/auth/get-server-auth-session', () => ({ getServerAuthSession: vi.fn() }));
+vi.mock('~/server/prom/http-errors', () => ({ instrumentApiResponse: vi.fn() }));
 
-import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
+import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { createRealApiPair } from '~/server/utils/__tests__/real-api-response';
 import handler from '~/pages/api/v1/posts/[id]';
 
-function call(query: Record<string, unknown>, user?: { id: number; isModerator?: boolean }) {
-  const req = { method: 'GET', query, headers: {}, user } as unknown as NextApiRequest;
-  let statusCode = 200;
-  let body: any;
-  const headers: Record<string, string> = {};
-  const res = {
-    status(code: number) {
-      statusCode = code;
-      return res;
-    },
-    json(b: unknown) {
-      body = b;
-      return res;
-    },
-    setHeader(k: string, v: string) {
-      headers[k] = v;
-    },
-    getHeader: (k: string) => headers[k],
-    end: () => res,
-    headersSent: false,
-  } as unknown as NextApiResponse;
-  return Promise.resolve((handler as any)(req, res)).then(() => ({ statusCode, body, headers }));
+const PUBLIC_CACHE = 'public, s-maxage=300, stale-while-revalidate=150';
+
+/** Drives the REAL `MixedAuthEndpoint`, so the cache headers it stamps are observable. */
+async function call(
+  query: Record<string, string>,
+  session?: { user: { id: number; isModerator?: boolean } }
+) {
+  vi.mocked(getServerAuthSession).mockResolvedValue((session ?? null) as never);
+  const { req, res, header } = createRealApiPair({
+    url: `/api/v1/posts/${query.id}`,
+    query,
+    headers: session ? { authorization: 'Bearer test' } : {},
+  });
+  let body: Record<string, unknown> | undefined;
+  const json = res.json.bind(res);
+  res.json = ((b: unknown) => {
+    body = b;
+    return json(b);
+  }) as typeof res.json;
+
+  await (handler as (req: unknown, res: unknown) => Promise<void>)(req, res);
+  return { statusCode: res.statusCode, body, header };
 }
 
 function post(overrides: Record<string, unknown> = {}) {
@@ -98,7 +102,7 @@ describe('GET /api/v1/posts/[id]', () => {
   it('looks the post up as anonymous even for a signed-in owner or moderator', async () => {
     mockGetPostDetail.mockResolvedValue(post());
 
-    await call({ id: '55288' }, { id: 3, isModerator: true });
+    await call({ id: '55288' }, { user: { id: 3, isModerator: true } });
 
     expect(mockGetPostDetail).toHaveBeenCalledWith({ id: 55288 });
   });
@@ -172,6 +176,19 @@ describe('GET /api/v1/posts/[id]', () => {
     expect(body).toEqual({ error: 'Post not found' });
   });
 
+  it('keeps a 404 publicly cacheable, so the edge absorbs repeat misses', async () => {
+    mockGetPostDetail.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND' }));
+    const missing = await call({ id: '55288' });
+
+    mockGetPostDetail.mockResolvedValue(post({ nsfwLevel: NsfwLevel.Blocked }));
+    const withheld = await call({ id: '55288' });
+
+    for (const { statusCode, header } of [missing, withheld]) {
+      expect(statusCode).toBe(404);
+      expect(header('Cache-Control')).toBe(PUBLIC_CACHE);
+    }
+  });
+
   it('400s an id that is not a positive int4', async () => {
     for (const id of ['abc', '0', '-1', '2147483648']) {
       expect((await call({ id })).statusCode).toBe(400);
@@ -182,10 +199,11 @@ describe('GET /api/v1/posts/[id]', () => {
   it('429s a rate-limited caller before looking anything up', async () => {
     mockRateLimit.mockResolvedValue({ allowed: false, retryAfterSeconds: 7 });
 
-    const { statusCode, headers } = await call({ id: '55288' });
+    const { statusCode, header } = await call({ id: '55288' });
 
     expect(statusCode).toBe(429);
-    expect(headers['Retry-After']).toBe('7');
+    expect(header('Retry-After')).toBe('7');
+    expect(header('Cache-Control')).toBe('no-store');
     expect(mockRateLimit).toHaveBeenCalledWith(expect.objectContaining({ family: 'posts' }));
     expect(mockGetPostDetail).not.toHaveBeenCalled();
   });
