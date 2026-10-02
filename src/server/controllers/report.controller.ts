@@ -74,7 +74,10 @@ async function assertNotAlreadyAppealed({
   entityId: number;
   userId: number;
 }) {
-  const refusal = getAppealRefusal(await getLatestAppeal({ entityType, entityId, userId }));
+  const refusal = getAppealRefusal(
+    entityType,
+    await getLatestAppeal({ entityType, entityId, userId })
+  );
   if (refusal) throw throwBadRequestError(refusal);
 }
 

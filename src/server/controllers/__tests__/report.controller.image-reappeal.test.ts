@@ -153,8 +153,11 @@ describe('a second appeal on the same image', () => {
     expect(appeals).toHaveLength(1);
   });
 
+  // Submitting an appeal sets needsReview = 'appeal', which also fails eligibility; the pending
+  // check runs first so the owner is told why.
   it('refuses while an appeal is still pending, without charging', async () => {
     seed(AppealStatus.Approved, AppealStatus.Pending);
+    dbMock.dbRead.image.findUnique.mockResolvedValue(blockedImage({ needsReview: 'appeal' }));
 
     await expect(appeal()).rejects.toMatchObject({
       code: 'BAD_REQUEST',

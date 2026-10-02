@@ -155,33 +155,38 @@ describe.each([
         blockedFor: 'moderated',
         needsReview: null,
       }),
+    allowedAfter: [null, 'Approved'],
+    refusedAfter: ['Pending', 'Rejected'],
   },
   {
     entityType: EntityType.Model3D,
     entityId: 77,
     owned: () => mockModel3DFindUnique.mockResolvedValue({ userId: 602767, status: 'Unpublished' }),
+    // Approving a 3D model appeal restores nothing, so the model is still under the same removal.
+    allowedAfter: [null],
+    refusedAfter: ['Pending', 'Rejected', 'Approved'],
   },
-])('createEntityAppealHandler — $entityType', ({ entityType, entityId, owned }) => {
-  const appeal = () =>
-    createEntityAppealHandler({
-      input: { entityId, entityType, message: 'Please review again.' },
-      ctx: ctxUser(602767),
+])(
+  'createEntityAppealHandler — $entityType',
+  ({ entityType, entityId, owned, allowedAfter, refusedAfter }) => {
+    const appeal = () =>
+      createEntityAppealHandler({
+        input: { entityId, entityType, message: 'Please review again.' },
+        ctx: ctxUser(602767),
+      });
+
+    beforeEach(() => owned());
+
+    it('looks up this owner’s latest appeal on this entity', async () => {
+      await appeal();
+
+      expect(mockGetLatestAppeal).toHaveBeenCalledWith(
+        expect.objectContaining({ entityType, entityId, userId: 602767 })
+      );
     });
 
-  beforeEach(() => owned());
-
-  it('looks up this owner’s latest appeal on this entity', async () => {
-    await appeal();
-
-    expect(mockGetLatestAppeal).toHaveBeenCalledWith(
-      expect.objectContaining({ entityType, entityId, userId: 602767 })
-    );
-  });
-
-  it.each([null, { id: 7, status: 'Approved' }])(
-    'creates a new charged appeal when the latest is %o',
-    async (latest) => {
-      mockGetLatestAppeal.mockResolvedValue(latest);
+    it.each(allowedAfter)('creates a new charged appeal when the latest is %s', async (status) => {
+      mockGetLatestAppeal.mockResolvedValue(status ? { id: 7, status } : null);
 
       await appeal();
 
@@ -189,21 +194,21 @@ describe.each([
         expect.objectContaining({ entityType, entityId, skipFee: false })
       );
       expect(mockReopenModelAppeal).not.toHaveBeenCalled();
-    }
-  );
+    });
 
-  it.each(['Pending', 'Rejected'])(
-    'refuses with BAD_REQUEST, before any charge, when the latest is %s',
-    async (status) => {
-      mockGetLatestAppeal.mockResolvedValue({ id: 7, status });
+    it.each(refusedAfter)(
+      'refuses with BAD_REQUEST, before any charge, when the latest is %s',
+      async (status) => {
+        mockGetLatestAppeal.mockResolvedValue({ id: 7, status });
 
-      await expect(appeal()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        await expect(appeal()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
 
-      expect(mockCreateEntityAppeal).not.toHaveBeenCalled();
-      expect(mockReopenModelAppeal).not.toHaveBeenCalled();
-    }
-  );
-});
+        expect(mockCreateEntityAppeal).not.toHaveBeenCalled();
+        expect(mockReopenModelAppeal).not.toHaveBeenCalled();
+      }
+    );
+  }
+);
 
 describe('createEntityAppealHandler — Model3D eligibility', () => {
   it('refuses a 3D model that moderators have not removed, before any charge', async () => {

@@ -17,7 +17,7 @@ export function AppealRemovalPrompt({
     entityType,
   });
 
-  const refusal = getAppealRefusal(latestAppeal);
+  const refusal = getAppealRefusal(entityType, latestAppeal);
   if (refusal) return <>{refusal}</>;
 
   return (
