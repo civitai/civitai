@@ -14,7 +14,6 @@ import {
   createEntityAppeal,
   createReport,
   getAppealCount,
-  APPEAL_ALREADY_PENDING,
   getLatestAppeal,
   reopenModelAppeal,
 } from '~/server/services/report.service';
@@ -26,7 +25,8 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { AppealStatus, EntityType, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { getAppealRefusal, isAppealableImage, isAppealableModel3D } from '~/shared/utils/appeal';
+import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 
 export async function createReportHandler({
@@ -65,9 +65,6 @@ export async function createReportHandler({
   }
 }
 
-// One appeal per block. An approved appeal unblocked the content, so a later block is a new
-// decision to contest; a rejected one upheld the block that is still in place. Runs before the
-// fee is charged.
 async function assertNotAlreadyAppealed({
   entityType,
   entityId,
@@ -77,12 +74,8 @@ async function assertNotAlreadyAppealed({
   entityId: number;
   userId: number;
 }) {
-  const latest = await getLatestAppeal({ entityType, entityId, userId });
-  if (latest?.status === AppealStatus.Pending) throw throwBadRequestError(APPEAL_ALREADY_PENDING);
-  if (latest?.status === AppealStatus.Rejected)
-    throw throwBadRequestError(
-      'This removal has already been reviewed on appeal and the decision stands'
-    );
+  const refusal = getAppealRefusal(await getLatestAppeal({ entityType, entityId, userId }));
+  if (refusal) throw throwBadRequestError(refusal);
 }
 
 export async function createEntityAppealHandler({
@@ -101,20 +94,21 @@ export async function createEntityAppealHandler({
         const image = await getImageById({ id: input.entityId });
         if (!image) throw throwNotFoundError('Image not found');
         if (image.userId !== userId) throw throwAuthorizationError();
-        if (image.ingestion !== ImageIngestionStatus.Blocked)
-          throw throwBadRequestError('Only a blocked image can be appealed');
-
         await assertNotAlreadyAppealed({ ...input, userId });
+        if (!isAppealableImage(image))
+          throw throwBadRequestError('Only an image blocked by moderators can be appealed');
         break;
       }
       case EntityType.Model3D:
         const m3d = await dbRead.model3D.findUnique({
           where: { id: input.entityId },
-          select: { userId: true },
+          select: { userId: true, status: true },
         });
         if (!m3d) throw throwNotFoundError('3D model not found');
         if (m3d.userId !== userId) throw throwAuthorizationError();
         await assertNotAlreadyAppealed({ ...input, userId });
+        if (!isAppealableModel3D(m3d))
+          throw throwBadRequestError('Only a 3D model removed by moderators can be appealed');
         break;
       case EntityType.Model: {
         const model = await dbRead.model.findUnique({

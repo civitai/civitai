@@ -62,6 +62,7 @@ import {
 import type { Report } from '~/shared/utils/prisma/models';
 import { withRetries } from '~/utils/errorHandling';
 import { isSafeToRetry } from '@civitai/buzz';
+import { APPEAL_ALREADY_PENDING } from '~/shared/utils/appeal';
 import { getModeratedTags } from '~/server/services/system-cache';
 
 export const getReportById = <TSelect extends Prisma.ReportSelect>({
@@ -687,8 +688,6 @@ export async function getAppealDetails({
 
   return { ...appeal, entityDetails };
 }
-
-export const APPEAL_ALREADY_PENDING = 'Your appeal for this content is already under review';
 
 const getAppealPrefix = (userId: number) => `appeal-${userId}-${new Date().getTime()}`;
 const isAppealPrefix = (prefix: string) => prefix.startsWith('appeal-');

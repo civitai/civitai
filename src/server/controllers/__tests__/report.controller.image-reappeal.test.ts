@@ -28,7 +28,7 @@ vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
 
 import { createEntityAppealHandler } from '../report.controller';
 import { isSafeToRetry } from '@civitai/buzz';
-import { APPEAL_ALREADY_PENDING } from '~/server/services/report.service';
+import { APPEAL_ALREADY_DECIDED, APPEAL_ALREADY_PENDING } from '~/shared/utils/appeal';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
 const OWNER = 602767;
@@ -71,6 +71,15 @@ function seed(...statuses: AppealStatus[]) {
   }));
 }
 
+const blockedImage = (overrides: Record<string, unknown> = {}) => ({
+  id: IMAGE_ID,
+  userId: OWNER,
+  blockedFor: 'moderated',
+  needsReview: null,
+  ingestion: 'Blocked',
+  ...overrides,
+});
+
 const appeal = () =>
   createEntityAppealHandler({
     input: { entityId: IMAGE_ID, entityType: EntityType.Image, message: 'Blocked again.' },
@@ -81,11 +90,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   seed();
 
-  dbMock.dbRead.image.findUnique.mockResolvedValue({
-    id: IMAGE_ID,
-    userId: OWNER,
-    ingestion: 'Blocked',
-  });
+  dbMock.dbRead.image.findUnique.mockResolvedValue(blockedImage());
   // Past the free allowance, so every appeal here carries the fee.
   dbMock.dbRead.appeal.count.mockResolvedValue(3);
   dbMock.dbRead.appeal.findFirst.mockImplementation(
@@ -141,7 +146,7 @@ describe('a second appeal on the same image', () => {
 
     await expect(appeal()).rejects.toMatchObject({
       code: 'BAD_REQUEST',
-      message: 'This removal has already been reviewed on appeal and the decision stands',
+      message: APPEAL_ALREADY_DECIDED,
     });
 
     expect(mockCharge).not.toHaveBeenCalled();
@@ -178,18 +183,47 @@ describe('a second appeal on the same image', () => {
     expect(mockRefund.mock.calls[0][0].externalTransactionIdPrefix).toBe(
       mockCharge.mock.calls[0][0].externalTransactionIdPrefix
     );
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'create-entity-appeal' })
+    );
     expect(appeals).toHaveLength(2);
   });
 
-  it('refuses an image that is not blocked, without charging', async () => {
-    seed(AppealStatus.Approved);
-    dbMock.dbRead.image.findUnique.mockResolvedValue({
-      id: IMAGE_ID,
-      userId: OWNER,
-      ingestion: 'Scanned',
+  it('tells a free appeal that lost the race it is already pending, charging nothing', async () => {
+    seed(AppealStatus.Approved, AppealStatus.Pending);
+    dbMock.dbRead.appeal.count.mockResolvedValue(0);
+    dbMock.dbRead.appeal.findFirst.mockResolvedValueOnce(null);
+
+    await expect(appeal()).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: APPEAL_ALREADY_PENDING,
     });
 
-    await expect(appeal()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockCharge).not.toHaveBeenCalled();
+    expect(mockRefund).not.toHaveBeenCalled();
+    expect(appeals).toHaveLength(2);
+  });
+
+  // Older rows carry blockedFor 'moderated' with ingestion 'Scanned'; the page offers them an appeal.
+  it('accepts a moderator block whose ingestion was never set to Blocked', async () => {
+    seed(AppealStatus.Approved);
+    dbMock.dbRead.image.findUnique.mockResolvedValue(blockedImage({ ingestion: 'Scanned' }));
+
+    await expect(appeal()).resolves.toMatchObject({ status: AppealStatus.Pending });
+  });
+
+  it.each([
+    ['not blocked', { blockedFor: null }],
+    ['blocked for another reason', { blockedFor: 'AiNotVerified' }],
+    ['held for another review', { needsReview: 'minor' }],
+  ])('refuses an image that is %s, without charging', async (_, overrides) => {
+    seed(AppealStatus.Approved);
+    dbMock.dbRead.image.findUnique.mockResolvedValue(blockedImage(overrides));
+
+    await expect(appeal()).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'Only an image blocked by moderators can be appealed',
+    });
 
     expect(mockCharge).not.toHaveBeenCalled();
     expect(appeals).toHaveLength(1);
@@ -198,10 +232,16 @@ describe('a second appeal on the same image', () => {
   it('still refunds and reports the original error when the create fails for another reason', async () => {
     dbMock.dbWrite.appeal.create.mockRejectedValueOnce(new Error('connection reset'));
 
-    await expect(appeal()).rejects.not.toMatchObject({ message: APPEAL_ALREADY_PENDING });
+    await expect(appeal()).rejects.toMatchObject({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: 'connection reset',
+    });
 
     expect(mockCharge).toHaveBeenCalledTimes(1);
     expect(mockRefund).toHaveBeenCalledTimes(1);
+    expect(mockRefund.mock.calls[0][0].externalTransactionIdPrefix).toBe(
+      mockCharge.mock.calls[0][0].externalTransactionIdPrefix
+    );
   });
 
   it('logs the fee as owed, and keeps the original error, when the refund itself fails', async () => {
@@ -217,6 +257,7 @@ describe('a second appeal on the same image', () => {
     expect(mockRefund).toHaveBeenCalledTimes(1);
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
+        type: 'error',
         name: 'create-entity-appeal',
         userId: OWNER,
         buzzTransactionId: mockCharge.mock.calls[0][0].externalTransactionIdPrefix,

@@ -13,14 +13,13 @@ describe('notifyAppealResolved', () => {
   // repeated key, so a per-image key would show the second decision as the first one.
   it('keys the notification by appeal, not only by image', async () => {
     await notifyAppealResolved({
-      appealId: 555,
-      userId: 1,
+      appeal: { id: 555, userId: 1 },
       entityId: 128489949,
       status: 'Rejected',
     });
 
     expect(createNotification).toHaveBeenCalledWith(
-      expect.objectContaining({ key: 'entity-appeal-resolved:Image:128489949:555' })
+      expect.objectContaining({ userId: 1, key: 'entity-appeal-resolved:Image:128489949:555' })
     );
   });
 });

@@ -283,4 +283,41 @@ describe('resolveEntityAppeal — reset+unlock on appeal approval (ClickUp 868kf
       expect.objectContaining({ key: 'entity-appeal-resolved:Image:128489949:555' })
     );
   });
+
+  // With several appeals per image, only the pending one may be closed, refunded and notified.
+  it('resolves only the pending appeal when the image also has an earlier, decided one', async () => {
+    const rows = [
+      {
+        id: 554,
+        entityId: 128489949,
+        entityType: ENTITY_IMAGE,
+        userId: 1,
+        status: 'Approved',
+        buzzTransactionId: null,
+      },
+      {
+        id: 555,
+        entityId: 128489949,
+        entityType: ENTITY_IMAGE,
+        userId: 1,
+        status: 'Pending',
+        buzzTransactionId: null,
+      },
+    ];
+    mockAppealFindMany.mockImplementation(async ({ where }: { where: { status?: string } }) =>
+      rows.filter((r) => !where.status || r.status === where.status)
+    );
+
+    await resolveEntityAppeal({
+      ids: [128489949],
+      entityType: ENTITY_IMAGE,
+      status: 'Rejected',
+      userId: 2023372,
+    } as any);
+
+    expect(dbWrite.appeal.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: [555] } } })
+    );
+    expect(createNotification).toHaveBeenCalledTimes(1);
+  });
 });

@@ -149,12 +149,17 @@ describe.each([
     entityType: EntityType.Image,
     entityId: 99,
     owned: () =>
-      mockGetImageById.mockResolvedValue({ id: 99, userId: 602767, ingestion: 'Blocked' }),
+      mockGetImageById.mockResolvedValue({
+        id: 99,
+        userId: 602767,
+        blockedFor: 'moderated',
+        needsReview: null,
+      }),
   },
   {
     entityType: EntityType.Model3D,
     entityId: 77,
-    owned: () => mockModel3DFindUnique.mockResolvedValue({ userId: 602767 }),
+    owned: () => mockModel3DFindUnique.mockResolvedValue({ userId: 602767, status: 'Unpublished' }),
   },
 ])('createEntityAppealHandler — $entityType', ({ entityType, entityId, owned }) => {
   const appeal = () =>
@@ -198,4 +203,21 @@ describe.each([
       expect(mockReopenModelAppeal).not.toHaveBeenCalled();
     }
   );
+});
+
+describe('createEntityAppealHandler — Model3D eligibility', () => {
+  it('refuses a 3D model that moderators have not removed, before any charge', async () => {
+    mockModel3DFindUnique.mockResolvedValue({ userId: 602767, status: 'Published' });
+
+    await expect(
+      createEntityAppealHandler({
+        input: { entityId: 77, entityType: EntityType.Model3D, message: 'Please review again.' },
+        ctx: ctxUser(602767),
+      })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'Only a 3D model removed by moderators can be appealed',
+    });
+    expect(mockCreateEntityAppeal).not.toHaveBeenCalled();
+  });
 });

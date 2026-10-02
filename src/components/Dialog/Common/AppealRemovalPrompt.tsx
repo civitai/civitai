@@ -1,8 +1,8 @@
 import { Anchor } from '@mantine/core';
 import { AppealDialog } from '~/components/Dialog/Common/AppealDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { getAppealRefusal } from '~/shared/utils/appeal';
 import type { EntityType } from '~/shared/utils/prisma/enums';
-import { AppealStatus } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 
 export function AppealRemovalPrompt({
@@ -17,8 +17,8 @@ export function AppealRemovalPrompt({
     entityType,
   });
 
-  if (latestAppeal?.status === AppealStatus.Rejected)
-    return <>Your appeal of this removal was reviewed and the decision stands.</>;
+  const refusal = getAppealRefusal(latestAppeal);
+  if (refusal) return <>{refusal}</>;
 
   return (
     <>

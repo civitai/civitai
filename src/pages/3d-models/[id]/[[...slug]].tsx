@@ -53,6 +53,7 @@ import { Gated } from '~/components/Gated/Gated';
 import { Model3DPermissionIndicator } from '~/components/PermissionIndicator/Model3DPermissionIndicator';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { AppealRemovalPrompt } from '~/components/Dialog/Common/AppealRemovalPrompt';
+import { isAppealableModel3D } from '~/shared/utils/appeal';
 import { Model3DComments } from '~/components/Model3D/Comments/Model3DComments';
 import { Model3DActionsMenu } from '~/components/Model3D/Actions/Model3DActionsMenu';
 import { Model3DThumbsUpButton } from '~/components/Model3D/ThumbsUp/Model3DThumbsUpButton';
@@ -384,7 +385,7 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
         <Stack gap="md">
           {/* Mod-takedown appeal CTA — surfaces when the owner sees their own
               Unpublished/Deleted Model3D. Mirrors the Image appeal pattern. */}
-          {isOwner && (isUnpublished || model3d.status === Model3DStatus.Deleted) && (
+          {isOwner && isAppealableModel3D(model3d) && (
             <AlertWithIcon
               icon={<IconCube />}
               color="yellow"
