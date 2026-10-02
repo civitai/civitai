@@ -20,6 +20,7 @@ const {
   mockGetMyAppAnalytics,
   mockGetRevenueForOwner,
   mockGetRecentAttributionsForOwner,
+  mockGetGoodsSalesForOwner,
   mockVerifyBlockToken,
   mockParseSubjectUserId,
   mockGetUserById,
@@ -29,6 +30,7 @@ const {
   mockGetMyAppAnalytics: vi.fn(),
   mockGetRevenueForOwner: vi.fn(),
   mockGetRecentAttributionsForOwner: vi.fn(),
+  mockGetGoodsSalesForOwner: vi.fn(),
   mockVerifyBlockToken: vi.fn(),
   mockParseSubjectUserId: vi.fn(),
   mockGetUserById: vi.fn(),
@@ -60,6 +62,21 @@ vi.mock('~/server/services/blocks/app-analytics.service', () => ({
 vi.mock('~/server/services/blocks/buzz-attribution.service', () => ({
   getRevenueForOwner: (...a: unknown[]) => mockGetRevenueForOwner(...a),
   getRecentAttributionsForOwner: (...a: unknown[]) => mockGetRecentAttributionsForOwner(...a),
+  getGoodsSalesForOwner: (...a: unknown[]) => mockGetGoodsSalesForOwner(...a),
+  // Pure (no DB) — use a faithful copy so the unreadable-path test observes the
+  // real contract: zeros PLUS the discriminator, never bare zeros.
+  unreadableGoodsSales: () => ({
+    sales: {
+      count: 0,
+      grossBuzz: 0,
+      shareBuzz: 0,
+      shareUsdCents: 0,
+      grossUsdCents: 0,
+      blueGrossBuzz: 0,
+    },
+    refunded: { count: 0, grossBuzz: 0 },
+    unavailable: 'unreadable',
+  }),
   // Mirrors the real `emptyRevenue()`, INCLUDING the `unavailable` discriminator that
   // function bakes in. Without this key the flag-OFF test below cannot observe the
   // contract at all, and the proc stays correct-by-inspection with no CI-visible guard.
@@ -72,6 +89,20 @@ vi.mock('~/server/services/blocks/buzz-attribution.service', () => ({
     },
     topApps: [],
     recentAttributions: [],
+    // The goods bucket, zeroed exactly as the real `emptyRevenue()` does. Present
+    // so the flag-OFF test can assert the dark path reports NO sales — without it
+    // the key would be absent and the assertion would pass on `undefined`.
+    goods: {
+      sales: {
+        count: 0,
+        grossBuzz: 0,
+        shareBuzz: 0,
+        shareUsdCents: 0,
+        grossUsdCents: 0,
+        blueGrossBuzz: 0,
+      },
+      refunded: { count: 0, grossBuzz: 0 },
+    },
     unavailable: 'notEntitled',
   }),
 }));
@@ -168,6 +199,18 @@ beforeEach(() => {
   mockGetRevenueForOwner.mockResolvedValue({ summary: {}, topApps: [] });
   mockGetRecentAttributionsForOwner.mockReset();
   mockGetRecentAttributionsForOwner.mockResolvedValue([]);
+  mockGetGoodsSalesForOwner.mockReset();
+  mockGetGoodsSalesForOwner.mockResolvedValue({
+    sales: {
+      count: 0,
+      grossBuzz: 0,
+      shareBuzz: 0,
+      shareUsdCents: 0,
+      grossUsdCents: 0,
+      blueGrossBuzz: 0,
+    },
+    refunded: { count: 0, grossBuzz: 0 },
+  });
 });
 
 describe('getMyAppAnalytics — gate', () => {
@@ -299,6 +342,113 @@ describe('getMyRevenue — dark-flag short-circuit', () => {
     expect(result.recentAttributions).toEqual([]);
   });
 
+  it('flag ON: the DIGITAL-GOODS bridge runs too, scoped and returned', async () => {
+    // 🔴 THE REGRESSION. Digital-goods sales record into `block_good_purchase` and
+    // write no attribution row, so before this call existed a settled sale showed as
+    // $0 on both revenue pages. This asserts the proc actually makes the second
+    // read — and makes it with the caller's own id and the requested app scope,
+    // since `appOwnerUserId` IS the authorization on that aggregate.
+    mockGetGoodsSalesForOwner.mockResolvedValue({
+      sales: {
+        count: 1,
+        grossBuzz: 10,
+        shareBuzz: 7,
+        shareUsdCents: 0,
+        grossUsdCents: 1,
+        blueGrossBuzz: 0,
+      },
+      refunded: { count: 0, grossBuzz: 0 },
+    });
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    const result = await caller.getMyRevenue({ appBlockId: 'apb_1' });
+
+    expect(mockGetGoodsSalesForOwner).toHaveBeenCalledTimes(1);
+    expect(mockGetGoodsSalesForOwner).toHaveBeenCalledWith({
+      ownerUserId: modUser.id,
+      appBlockId: 'apb_1',
+      from: undefined,
+      to: undefined,
+    });
+    // Carried through to the payload rather than computed and dropped — a value the
+    // proc fetches and does not return is the invisible-revenue bug with extra steps.
+    expect(result.goods.sales).toStrictEqual({
+      count: 1,
+      grossBuzz: 10,
+      shareBuzz: 7,
+      shareUsdCents: 0,
+      grossUsdCents: 1,
+      blueGrossBuzz: 0,
+    });
+  });
+
+  it('flag ON: an explicit date range reaches BOTH date-filtered reads as Dates', async () => {
+    // The range is parsed once in the resolver and handed to both aggregates. A
+    // read that silently ignored `from`/`to` would report the lifetime total under
+    // a period heading.
+    //
+    // 🔴 BOTH, not just the new one. Adding the goods branch rewrote all three call
+    // sites, and `getRevenueForOwner`'s arguments were asserted NOWHERE — only its
+    // call COUNT — so dropping `from`/`to` from the pre-existing attribution read
+    // in that refactor would have shipped silently.
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    await caller.getMyRevenue({
+      from: '2026-09-01T00:00:00.000Z',
+      to: '2026-09-30T00:00:00.000Z',
+    });
+    const from = new Date('2026-09-01T00:00:00.000Z');
+    const to = new Date('2026-09-30T00:00:00.000Z');
+    const goodsArgs = mockGetGoodsSalesForOwner.mock.calls[0]?.[0] as { from?: Date; to?: Date };
+    expect(goodsArgs.from).toEqual(from);
+    expect(goodsArgs.to).toEqual(to);
+    const revenueArgs = mockGetRevenueForOwner.mock.calls[0]?.[0] as { from?: Date; to?: Date };
+    expect(revenueArgs.from).toEqual(from);
+    expect(revenueArgs.to).toEqual(to);
+  });
+
+  it('UNREADABLE goods table: the rail is flagged, the rest of the payload survives', async () => {
+    // 🔴 `block_good_purchase` is applied BY HAND per environment, so this proc can
+    // run against a database without it. Unguarded, the new branch took the whole
+    // of `getMyRevenue` down — including the attribution figures, which were
+    // readable — so both revenue pages failed outright.
+    mockGetGoodsSalesForOwner.mockRejectedValue(new Error('relation does not exist'));
+    // 🔴 NON-ZERO attribution figures, deliberately. The default fixture returns an
+    // empty summary, against which "the attribution half survived" is unfalsifiable —
+    // a proc that dropped it entirely would look identical. These literals appear
+    // nowhere else in this file, so they can only have come through intact.
+    mockGetRevenueForOwner.mockResolvedValue({
+      summary: { confirmed: { count: 4, grossCents: 517, shareCents: 362 } },
+      topApps: [{ appBlockId: 'apb_1', shareCents: 362, count: 4 }],
+    });
+    mockGetRecentAttributionsForOwner.mockResolvedValue([{ id: 'bba_survivor' }]);
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+
+    const result = await caller.getMyRevenue({ appBlockId: 'apb_1' });
+
+    // 🔴 FLAGGED, NOT ZEROED. Returning bare zeros here would report "no sales" for
+    // a rail that was never read — the fabricated zero this surface is built to
+    // prevent, which is why the catch returns `unreadableGoodsSales()`.
+    expect(result.goods.unavailable).toBe('unreadable');
+    expect(result.goods.sales.count).toBe(0);
+    // ...and the attribution half arrives untouched: one unreadable rail must degrade
+    // to a labelled gap, not take down figures that were readable.
+    expect(result.summary.confirmed).toEqual({ count: 4, grossCents: 517, shareCents: 362 });
+    expect(result.topApps).toEqual([{ appBlockId: 'apb_1', shareCents: 362, count: 4 }]);
+    expect(result.recentAttributions).toEqual([{ id: 'bba_survivor' }]);
+    // The PAYLOAD-level discriminator must stay absent: the payload is a real
+    // measurement; it is one bucket inside it that could not be read.
+    expect(result.unavailable).toBeUndefined();
+  });
+
+  it('DISCRIMINATOR: a measured goods result carries NO unavailable flag', async () => {
+    // Byte-identical zero figures to the case above — only the discriminator
+    // differs. Without this, a change that flagged every goods read would satisfy
+    // the test above while telling every owner their sales could not be loaded.
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    const result = await caller.getMyRevenue({ appBlockId: 'apb_1' });
+    expect(result.goods.sales.count).toBe(0);
+    expect(result.goods.unavailable).toBeUndefined();
+  });
+
   it('flag OFF (even for a moderator): returns zeroed revenue + runs NO query', async () => {
     mockIsAppBlocksEnabled.mockResolvedValue(false);
     const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
@@ -308,6 +458,12 @@ describe('getMyRevenue — dark-flag short-circuit', () => {
     expect(result.summary.confirmed).toEqual({ count: 0, grossCents: 0, shareCents: 0 });
     expect(mockGetRevenueForOwner).not.toHaveBeenCalled();
     expect(mockGetRecentAttributionsForOwner).not.toHaveBeenCalled();
+    // The goods read is behind the SAME short-circuit. A third aggregate added
+    // after the guard would leak live sales to a flag-off caller while every
+    // assertion above still passed.
+    expect(mockGetGoodsSalesForOwner).not.toHaveBeenCalled();
+    expect(result.goods.sales.count).toBe(0);
+    expect(result.goods.sales.shareBuzz).toBe(0);
     // 🔴 THE POINT OF THE CHANGE, and the only assertion in CI that sits at the proc
     // boundary this contract actually ships through. Without it, the zeroed buckets
     // above are byte-identical to a publisher who genuinely earned nothing — which is

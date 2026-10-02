@@ -31,6 +31,7 @@ const { mockDbRead, mockDbWrite, mockLog } = vi.hoisted(() => ({
   mockDbRead: {
     oauthClient: { findUnique: vi.fn() },
     blockBuzzAttribution: { findUnique: vi.fn(), aggregate: vi.fn(), groupBy: vi.fn() },
+    blockGoodPurchase: { groupBy: vi.fn() },
   },
   mockDbWrite: {
     blockBuzzAttribution: {
@@ -55,8 +56,11 @@ vi.mock('~/server/logging/client', () => ({
 
 import {
   AttributionAppMissingError,
+  emptyGoodsSales,
   emptyRevenue,
+  getGoodsSalesForOwner,
   getRevenueForOwner,
+  unreadableGoodsSales,
   recordAttribution,
   REFUND_WINDOWS_DAYS,
   voidAttributionsForPayment,
@@ -484,6 +488,20 @@ describe('emptyRevenue (placeholder vs measurement discriminator)', () => {
     expect(empty.summary.voided).toEqual({ count: 0, grossCents: 0 });
     expect(empty.topApps).toEqual([]);
     expect(empty.recentAttributions).toEqual([]);
+    // The goods rail is a bucket too, and this test's name claims EVERY bucket.
+    // Without this line the dark-flag payload could grow a non-zero sales figure
+    // and the assertion that is supposed to notice would still pass.
+    expect(empty.goods).toStrictEqual({
+      sales: {
+        count: 0,
+        grossBuzz: 0,
+        shareBuzz: 0,
+        shareUsdCents: 0,
+        grossUsdCents: 0,
+        blueGrossBuzz: 0,
+      },
+      refunded: { count: 0, grossBuzz: 0 },
+    });
   });
 
   it('DISCRIMINATOR: a genuinely-measured all-zero result is NOT flagged', async () => {
@@ -510,5 +528,277 @@ describe('emptyRevenue (placeholder vs measurement discriminator)', () => {
     // The measured payload carries no discriminator at all; the placeholder does.
     expect('unavailable' in measured).toBe(false);
     expect(placeholder.unavailable).toBe('notEntitled');
+  });
+});
+
+/**
+ * The digital-goods bridge.
+ *
+ * THE DEFECT THIS COVERS, concretely: a settled sale — price 10 Buzz, owner
+ * share 7, `status='paid'`, a ledger transaction id in `payouts`, the entitlement
+ * granted — and the owner's revenue page reported $0.00, because every figure on
+ * it was a SUM over `block_buzz_attribution` and this rail writes no row there.
+ * `getGoodsSalesForOwner` is the read that makes the sale visible.
+ *
+ * Fixtures are pairwise distinct AND distinct from every constant the assertions
+ * name, so an aggregate that read the wrong `_sum` field, the wrong status bucket
+ * or the wrong row count cannot land on a right-looking number by coincidence.
+ */
+describe('getGoodsSalesForOwner — the goods → earnings bridge', () => {
+  const GOODS_OWNER = 4242;
+
+  /**
+   * Three status buckets, as the DB would group them. `pending` carries LARGE,
+   * unmistakable figures precisely so that leaking it anywhere into the result is
+   * obvious rather than plausible.
+   */
+  const THREE_BUCKETS = [
+    {
+      status: 'paid',
+      _count: 3,
+      _sum: { priceBuzz: 430, appOwnerShareBuzz: 301, bluePaidBuzz: 115 },
+    },
+    {
+      status: 'refunded',
+      _count: 2,
+      _sum: { priceBuzz: 60, appOwnerShareBuzz: 42, bluePaidBuzz: 17 },
+    },
+    {
+      status: 'pending',
+      _count: 5,
+      _sum: { priceBuzz: 999, appOwnerShareBuzz: 700, bluePaidBuzz: 888 },
+    },
+  ];
+
+  beforeEach(() => {
+    mockDbRead.blockGoodPurchase.groupBy.mockReset();
+  });
+
+  it('sums the PAID bucket, in Buzz, with USD derived from the total', async () => {
+    mockDbRead.blockGoodPurchase.groupBy.mockResolvedValue(THREE_BUCKETS);
+
+    const result = await getGoodsSalesForOwner({ ownerUserId: GOODS_OWNER });
+
+    expect(result.sales.count).toBe(3);
+    expect(result.sales.grossBuzz).toBe(430);
+    expect(result.sales.shareBuzz).toBe(301);
+    // 1,000 Buzz = $1 → 430 Buzz = 43c, 301 Buzz = 30c (floored). Both literals
+    // differ from every Buzz figure above, so a conversion that was skipped
+    // entirely (cents === Buzz) fails here rather than passing on a coincidence.
+    expect(result.sales.grossUsdCents).toBe(43);
+    expect(result.sales.shareUsdCents).toBe(30);
+    // Blue comes from the PAID bucket, and 115 is distinct from every other
+    // fixture figure — so reading it off the wrong bucket (17, 888) or off the
+    // wrong column (430, 301) fails here.
+    expect(result.sales.blueGrossBuzz).toBe(115);
+    // A real measurement carries no discriminator at all.
+    expect('unavailable' in result).toBe(false);
+  });
+
+  it('selects exactly the three columns it sums, and counts rows', async () => {
+    // 🔴 THE ARGUMENT, NOT JUST THE FILTER. Dropping `appOwnerShareBuzz: true`
+    // from `_sum` is the single most damaging silent mutation available here:
+    // production then reads `undefined`, the `?? 0` fallback turns it into 0, and
+    // the owner's share renders as 0 Buzz — the invisible-revenue bug this whole
+    // segment exists to fix, one layer down. Every other test in this file mocks
+    // the row shape, so none of them can see it.
+    //
+    // `_count: true` (a boolean, not a field selection) is what makes `_count` a
+    // plain number rather than a count-object; selecting fields instead would make
+    // the sale count an object and render it as one.
+    mockDbRead.blockGoodPurchase.groupBy.mockResolvedValue([]);
+
+    await getGoodsSalesForOwner({ ownerUserId: GOODS_OWNER });
+
+    const args = mockDbRead.blockGoodPurchase.groupBy.mock.calls[0]?.[0] as {
+      _sum: Record<string, boolean>;
+      _count: boolean;
+    };
+    expect(args._sum).toStrictEqual({
+      priceBuzz: true,
+      appOwnerShareBuzz: true,
+      bluePaidBuzz: true,
+    });
+    expect(args._count).toBe(true);
+  });
+
+  it('EXCLUDES reversed/refunded rows from earnings, and reports them as the exclusion', async () => {
+    mockDbRead.blockGoodPurchase.groupBy.mockResolvedValue(THREE_BUCKETS);
+
+    const result = await getGoodsSalesForOwner({ ownerUserId: GOODS_OWNER });
+
+    // A refund reverses the buyer's debit and normally claws the owner's payout
+    // back, so counting one as earnings credits the owner for money that went
+    // back. (The same status also covers a charge reversed before any entitlement
+    // existed — no sale at all — which is why the renderer must not call these
+    // "sales".)
+    expect(result.refunded).toStrictEqual({ count: 2, grossBuzz: 60 });
+    // 🔴 POSITIVE assertions on the paid totals, not just `not.toBe` — the
+    // negatives below cannot distinguish "excluded correctly" from "produced some
+    // third wrong number", so the exact sums carry the claim and the negatives pin
+    // the specific additive mutation.
+    expect(result.sales.count).toBe(3);
+    expect(result.sales.grossBuzz).toBe(430);
+    expect(result.sales.shareBuzz).toBe(301);
+    expect(result.sales.grossBuzz).not.toBe(430 + 60);
+    expect(result.sales.shareBuzz).not.toBe(301 + 42);
+    // The refunded bucket must not contribute blue either.
+    expect(result.sales.blueGrossBuzz).toBe(115);
+  });
+
+  it('EXCLUDES pending rows entirely — from both buckets', async () => {
+    mockDbRead.blockGoodPurchase.groupBy.mockResolvedValue(THREE_BUCKETS);
+
+    const result = await getGoodsSalesForOwner({ ownerUserId: GOODS_OWNER });
+
+    // `pending` is the reconciliation record for a charge whose outcome is
+    // unknown. It is neither money the owner has nor money they are owed, so it
+    // must appear nowhere — not as a sale, and not as an exclusion either.
+    //
+    // 🔴 THE EXACT SUMS ARE WHAT CARRY THIS. The `JSON.stringify` check below
+    // catches only a SUBSTITUTION leak: an ADDITIVE one is invisible to it, since
+    // 430 + 999 = 1429 contains neither "999" nor "700". So the sums are pinned
+    // first, and the stringify is a cheap second net for a pending figure
+    // surfacing somewhere nobody thought to assert.
+    expect(result.sales.grossBuzz).toBe(430);
+    expect(result.sales.shareBuzz).toBe(301);
+    expect(result.sales.grossBuzz).not.toBe(430 + 999);
+    expect(result.sales.shareBuzz).not.toBe(301 + 700);
+    expect(result.refunded.grossBuzz).toBe(60);
+    expect(result.refunded.grossBuzz).not.toBe(60 + 999);
+
+    const flat = JSON.stringify(result);
+    expect(flat).not.toContain('999');
+    expect(flat).not.toContain('888');
+    expect(flat).not.toContain('700');
+
+    // Counts: 3 paid + 2 refunded. Pinned separately because their sum (5) equals
+    // the pending count, so the total alone could pass for the wrong reason.
+    expect(result.sales.count).toBe(3);
+    expect(result.refunded.count).toBe(2);
+  });
+
+  it('a sub-cent share renders as 0 cents, never rounded up', async () => {
+    // The smallest realistic shape: a 10-Buzz good, owner share 7. 7 Buzz is 0.7c.
+    mockDbRead.blockGoodPurchase.groupBy.mockResolvedValue([
+      {
+        status: 'paid',
+        _count: 1,
+        _sum: { priceBuzz: 10, appOwnerShareBuzz: 7, bluePaidBuzz: 0 },
+      },
+    ]);
+
+    const result = await getGoodsSalesForOwner({ ownerUserId: GOODS_OWNER });
+
+    // 🔴 The Buzz figure is the one that must be non-zero. This is why the panel
+    // leads with Buzz: a cents-only line would read $0.00 for this exact row.
+    expect(result.sales.shareBuzz).toBe(7);
+    // FLOOR, not round: rounding 0.7c to 1c over-states what the owner earned.
+    // This fixture is what kills a `Math.round` mutant — 7 → 0 under floor, 1
+    // under round — which the 301-Buzz fixture above cannot see (30 either way).
+    expect(result.sales.shareUsdCents).toBe(0);
+    // Gross is 1c exactly, so the two differ: a result that copied one field into
+    // the other would fail here.
+    expect(result.sales.grossUsdCents).toBe(1);
+  });
+
+  it('a statusless result (no sales at all) is a measured zero, not a crash', async () => {
+    mockDbRead.blockGoodPurchase.groupBy.mockResolvedValue([]);
+
+    const result = await getGoodsSalesForOwner({ ownerUserId: GOODS_OWNER });
+
+    expect(result).toStrictEqual(emptyGoodsSales());
+    // A measured zero carries NO discriminator — that is the whole contract the
+    // renderer branches on.
+    expect('unavailable' in result).toBe(false);
+  });
+
+  it('a present bucket with NULL sums falls back to zero rather than NaN', async () => {
+    // Prisma returns `null` sums when no row contributes to a group. Nothing else
+    // in this file produces that shape, so without this the `?? 0` fallbacks are
+    // unexercised and `|| 0` / `!` survive as mutations — and a NaN reaching
+    // `buzzSpendToUsdCents` would render "$NaN" on a money page.
+    mockDbRead.blockGoodPurchase.groupBy.mockResolvedValue([
+      {
+        status: 'paid',
+        _count: 0,
+        _sum: { priceBuzz: null, appOwnerShareBuzz: null, bluePaidBuzz: null },
+      },
+    ]);
+
+    const result = await getGoodsSalesForOwner({ ownerUserId: GOODS_OWNER });
+
+    expect(result.sales).toStrictEqual({
+      count: 0,
+      grossBuzz: 0,
+      shareBuzz: 0,
+      shareUsdCents: 0,
+      grossUsdCents: 0,
+      blueGrossBuzz: 0,
+    });
+  });
+
+  it('scopes by owner, app and date range — and dates filter created_at', async () => {
+    mockDbRead.blockGoodPurchase.groupBy.mockResolvedValue([]);
+    const from = new Date('2026-09-01T00:00:00.000Z');
+    const to = new Date('2026-09-30T00:00:00.000Z');
+
+    await getGoodsSalesForOwner({ ownerUserId: GOODS_OWNER, appBlockId: 'apb_goods', from, to });
+
+    const args = mockDbRead.blockGoodPurchase.groupBy.mock.calls[0]?.[0] as {
+      by: string[];
+      where: Record<string, unknown>;
+    };
+    expect(args.by).toStrictEqual(['status']);
+    // 🔴 `appOwnerUserId` IS the authorization. There is no ownership probe
+    // anywhere in this path: a caller asking about an app they do not own gets a
+    // zero-row aggregate because of this clause and nothing else. Pinned whole, so
+    // dropping or renaming it fails rather than silently widening the read.
+    //
+    // ⚠️ `toStrictEqual`, NOT `toEqual`. Measured: `toEqual` treats
+    // `{a:1, b:undefined}` as equal to `{a:1}`, so the sibling test below could not
+    // have caught the clause being passed as an explicit `undefined` — the very
+    // thing its comment claimed to pin.
+    expect(args.where).toStrictEqual({
+      appOwnerUserId: GOODS_OWNER,
+      appBlockId: 'apb_goods',
+      // `created_at` — this table has no `attributed_at`, because there is no
+      // attribution row. A range applied to the wrong column would silently
+      // report the wrong period.
+      createdAt: { gte: from, lte: to },
+    });
+  });
+
+  it('omits the app and date clauses when not asked for them', async () => {
+    mockDbRead.blockGoodPurchase.groupBy.mockResolvedValue([]);
+
+    await getGoodsSalesForOwner({ ownerUserId: GOODS_OWNER });
+
+    const args = mockDbRead.blockGoodPurchase.groupBy.mock.calls[0]?.[0] as {
+      where: Record<string, unknown>;
+    };
+    // `toStrictEqual` is load-bearing here: under `toEqual` an `appBlockId:
+    // undefined` key compares equal to its absence, so the spread-vs-bare-key
+    // mutation this test exists for survived.
+    expect(args.where).toStrictEqual({ appOwnerUserId: GOODS_OWNER });
+  });
+
+  it('the UNREADABLE bucket is zeros PLUS a discriminator, never bare zeros', async () => {
+    // 🔴 `block_good_purchase` is applied by hand per environment, so the read can
+    // fail against a database that lacks it. The router catches that and returns
+    // this shape. It must be distinguishable from a genuine zero, or the page
+    // reports "no sales" for a rail nobody read — the fabricated zero the
+    // payload-level discriminator exists to prevent.
+    const unreadable = unreadableGoodsSales();
+    const measured = emptyGoodsSales();
+
+    // Precondition: the figures really are identical, so nothing but the
+    // discriminator could tell them apart. If this ever fails, the test below has
+    // stopped proving what it claims.
+    expect(unreadable.sales).toStrictEqual(measured.sales);
+    expect(unreadable.refunded).toStrictEqual(measured.refunded);
+
+    expect(unreadable.unavailable).toBe('unreadable');
+    expect('unavailable' in measured).toBe(false);
   });
 });

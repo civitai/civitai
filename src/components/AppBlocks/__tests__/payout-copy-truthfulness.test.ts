@@ -190,16 +190,50 @@ function propValue(src: string, prop: string) {
 
 const SUBTITLE =
   'Revenue share and analytics for your apps. Confirmed earnings accrue here; ' +
-  'automated payouts are not yet enabled. See Apps to manage installations.';
+  'automated payouts are not yet enabled. Digital goods sales are separate: that rail ' +
+  'pays out in Buzz at the time of sale rather than accruing here. See Apps to manage ' +
+  'installations.';
 
 const CONFIRMED_TOOLTIP =
   'Past the refund window. This amount accrues; automated payouts are not yet enabled.';
+
+/**
+ * The digital-goods card's timing disclosure, pinned whole for the same reason the two
+ * sentences above are: it is a claim about WHEN money moves, on a surface a user reads.
+ *
+ * 🔴 UNLIKE THOSE TWO, THIS ONE PROMISES A DISBURSEMENT — so it is only admissible while
+ * the rail behind it exists, which is what `GOODS_PAYOUT_FN` below asserts. That pairing
+ * is the whole point of this file: the three retracted claims it was written for described
+ * a pipeline whose only writer had no production caller, and nothing could tell, because
+ * the prose agreed only with other prose.
+ */
+const GOODS_TOOLTIP =
+  'This rail pays out immediately in Buzz rather than accruing like the buckets above. ' +
+  'The figure is your recorded share of each sale. Reversed and refunded rows are excluded.';
+
+/** The goods payout leg — the rail the goods copy describes. */
+const GOODS_SERVICE = 'src/server/services/blocks/block-goods.service.ts';
+const GOODS_PAYOUT_FN = 'payBlockGoodOwner';
+/**
+ * The positive control for the goods-rail assertion — the mirror of `PAYOUT_MINT_CONTROL`
+ * above, which controls a zero; this one controls a NON-zero. An identifier that appears in
+ * that file ONLY as an awaited call, never as a declaration (it is imported from
+ * `~/server/services/buzz.service`).
+ *
+ * ⚠️ CORRECTED. This was `readRecordedPayouts`, which is DECLARED in that same file, so a
+ * bare `name(`-shaped probe matched its `export function readRecordedPayouts(` line. That
+ * controlled "can this read find an identifier followed by a paren" — true of any declared
+ * function — not "can this machinery observe a CALL", which is the only thing the assertion
+ * claims. It could not have gone red if every call vanished while the declaration stayed. A
+ * control must share the assertion's SHAPE, not merely its subject.
+ */
+const GOODS_PAYOUT_CONTROL = 'createMultiAccountBuzzTransaction';
 
 describe('app earnings copy does not promise a payout pipeline that does not run', () => {
   it('sanity: every file this guard reasons about is on disk (positive control)', () => {
     // Without this, a renamed or moved file would make the assertions below pass by
     // reading an empty string / matching nothing, which is the shape of a vacuous green.
-    for (const f of [REVENUE_PAGE, REVENUE_PANEL, EARNINGS_PANEL, EARNINGS_ROUTER]) {
+    for (const f of [REVENUE_PAGE, REVENUE_PANEL, EARNINGS_PANEL, EARNINGS_ROUTER, GOODS_SERVICE]) {
       expect(read(f).length).toBeGreaterThan(0);
     }
   });
@@ -329,6 +363,50 @@ describe('app earnings copy does not promise a payout pipeline that does not run
     expect(label).toBe(CONFIRMED_TOOLTIP);
   });
 
+  it('the digital-goods timing disclosure is pinned whole', () => {
+    const panel = read(REVENUE_PANEL);
+    // Anchored to the constant that feeds the card's Tooltip, so the assertion cannot be
+    // satisfied by the sentence appearing in a comment elsewhere in the file.
+    const at = panel.indexOf('const GOODS_TIMING_TOOLTIP');
+    // Anchor control: without it a renamed constant gives `slice(-1)` and the failure
+    // reads as a copy mismatch rather than "the card this guard targets is gone".
+    expect(at).toBeGreaterThan(-1);
+    const value = /=\s*\n?\s*'([^']*)'/.exec(panel.slice(at))?.[1];
+    expect(value).toBe(GOODS_TOOLTIP);
+    // ...and it must actually be the Tooltip's label, not a dead constant. The GROW
+    // lesson of this file is that a claim nothing renders is still a claim, but a claim
+    // nothing renders is not the one that misleads a user — so pin the wiring too.
+    expect(stripComments(panel)).toMatch(/label=\{GOODS_TIMING_TOOLTIP\}/);
+  });
+
+  it('the goods payout rail DOES exist — the one claim here that promises a disbursement', () => {
+    // 🔴 THE STATE HALF FOR THE GOODS COPY, and the inverse of the mint guard above. That
+    // one asserts a rail is GONE so its cadence copy must not return; this one asserts a
+    // rail is WIRED, which is the only thing that licenses the subtitle and the tooltip to
+    // say a share "is credited at the time of each sale".
+    //
+    // Stripping is correct HERE and wrong above, and the difference is polarity: this
+    // assertion is that a call IS present, so the stripper's documented bias toward
+    // over-stripping turns it RED — the safe direction. The absence guards above must not
+    // strip, for exactly the inverted reason recorded at them.
+    const service = stripComments(read(GOODS_SERVICE));
+    // 🔴 POSITIVE CONTROL, IN THE ASSERTION'S OWN SHAPE. A control that merely finds an
+    // identifier followed by a paren is also satisfied by a DECLARATION, so it cannot
+    // establish that this machinery observes a CALL — which is the only thing the assertion
+    // below claims. Same `await X(` pattern, on an identifier that appears in that file only
+    // as a call. If this fails, the read or the stripper is broken and the assertion below
+    // means nothing.
+    expect(service).toMatch(new RegExp(String.raw`await\s+${GOODS_PAYOUT_CONTROL}\s*\(`));
+    // The payout leg is AWAITED somewhere in the service — a declaration alone would match
+    // a bare `name(` shape, which is why the keyword is part of the pattern.
+    expect(service).toMatch(new RegExp(String.raw`await\s+${GOODS_PAYOUT_FN}\s*\(`));
+    // Residual gap, stated rather than papered over: this proves the leg is called from
+    // somewhere in that module, not that the call is reachable from the REST purchase
+    // entry point. Proving reachability needs a call graph; what makes the weaker form
+    // worth having is that the defect this file documents was a writer with NO caller at
+    // all, which this does catch.
+  });
+
   it('the earnings docblock describes the gate the proc actually has', () => {
     // 🔴 STATE, not vocabulary: the defect was a comment asserting an access property the
     // code does not have. Pinning the procedure name on both sides is what ties them — if
@@ -382,6 +460,14 @@ describe('app earnings copy does not promise a payout pipeline that does not run
     // A third such surface fails here, and its author then has to decide — consciously —
     // whether it needs the accrual disclosure the other two carry.
     const BUCKET_LABELS = ['Confirmed (unpaid)', 'Paid out'];
+    //
+    // 🔴 THE GOODS RAIL HAS ITS OWN SETTLEMENT VOCABULARY, and this half of the guard was
+    // blind to it. `BUCKET_LABELS` is the card-purchase rail's; `GoodsSalesCard` shares
+    // neither string, so extracting it into its own file — the obvious next refactor —
+    // would have dropped it from this ledger silently, and a future goods surface on a new
+    // file would be invisible to the very check written to catch that. A second marker,
+    // OR-ed into the same population, so the ledger covers both rails rather than one.
+    const GOODS_LABELS = ['Digital goods sales', 'reversed or refunded'];
     const files = MONEY_COPY_ROOTS.flatMap((d) => walk(join(REPO_ROOT, d)));
     // Walk positive control: an empty walk yields an empty set, which would "equal" nothing
     // and pass if the expectation below were also empty. It is not — but prove the walk ran.
@@ -392,12 +478,24 @@ describe('app earnings copy does not promise a payout pipeline that does not run
       .filter((f) => !/\.test\.tsx?$/.test(rel(f)) && !rel(f).includes('__tests__/'))
       .filter((f) => {
         const src = readFileSync(f, 'utf8');
-        return BUCKET_LABELS.every((l) => src.includes(l));
+        return (
+          BUCKET_LABELS.every((l) => src.includes(l)) || GOODS_LABELS.every((l) => src.includes(l))
+        );
       })
       .map(rel)
       .sort();
 
     // Non-empty by construction, so this cannot be a vacuous "no matches" pass.
     expect(surfaces).toEqual([EARNINGS_PANEL, REVENUE_PANEL].sort());
+
+    // 🔴 CONTROL ON THE SECOND MARKER. Without this the `||` arm could match nothing —
+    // a typo'd label, a reworded card — and the expectation above would still pass on the
+    // first arm alone, leaving the goods rail unledgered exactly as it was before. Assert
+    // that the goods marker, on its own, finds the surface it was added for.
+    const goodsSurfaces = files
+      .filter((f) => !/\.test\.tsx?$/.test(rel(f)) && !rel(f).includes('__tests__/'))
+      .filter((f) => GOODS_LABELS.every((l) => readFileSync(f, 'utf8').includes(l)))
+      .map(rel);
+    expect(goodsSurfaces).toEqual([REVENUE_PANEL]);
   });
 });
