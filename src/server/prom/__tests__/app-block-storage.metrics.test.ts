@@ -192,11 +192,14 @@ describe('re-seeding is non-destructive', () => {
     // seeded counter, the Prisma series. Deleting the catch left the suite green, so the guard
     // had no case.
     //
-    // 🔴 Asserts MEMBERSHIP, not a total. An earlier draft asserted `toBe(22)`, which this
-    // describe's own header forbids and which cannot fail: `beforeAll` has already published
-    // those series, so a count passes whether or not THIS invocation wrote anything. It also
-    // misattributed — a case appended to the first describe that incremented one pair turned
-    // this case red with `expected 23 to be 22`, reading as "the scrape lost series".
+    // 🔴 MEMBERSHIP throughout, per this describe's header — no totals and no literal series
+    // set. An earlier draft asserted `toBe(22)`, which cannot fail (`beforeAll` has already
+    // published those series, so a count passes whether or not THIS invocation wrote anything)
+    // and which misattributed: a case appended to the first describe that incremented one pair
+    // turned this red with `expected 23 to be 22`, reading as "the scrape lost series". The
+    // ceiling half had the same defect one step smaller — `toEqual(['app','user'])` is an exact
+    // series set, so any appended quota-refusal case (real code always supplies
+    // `app_block_id`, so it creates a third child) tripped it the same way.
     const handle = client.register.getSingleMetric(LATENCY) as unknown as {
       get: () => Promise<unknown>;
     };
@@ -209,10 +212,10 @@ describe('re-seeding is non-destructive', () => {
       for (const { op, outcome } of REACHABLE_OPS_SERIES) {
         expect(pairs.has(`${op}/${outcome}`), `${op}/${outcome}`).toBe(true);
       }
-      expect((await valuesOf(QUOTA_EXCEEDED)).map((v) => v.labels.ceiling).sort()).toEqual([
-        'app',
-        'user',
-      ]);
+      const ceilings = new Set((await valuesOf(QUOTA_EXCEEDED)).map((v) => v.labels.ceiling));
+      for (const ceiling of APP_STORAGE_CEILINGS) {
+        expect(ceilings.has(ceiling), ceiling).toBe(true);
+      }
     } finally {
       handle.get = original;
     }
@@ -222,25 +225,46 @@ describe('re-seeding is non-destructive', () => {
     expect(handle.get).toBe(original);
   });
 
-  it('🔴 the counters are written BEFORE the leg that can fail', async () => {
+  it('🔴 BOTH counters are written BEFORE the leg that can fail', async () => {
     // The ordering the module comment claims, pinned as ORDER rather than as end state. The
     // end state cannot see it — `beforeAll` has already published everything, so reversing the
-    // legs leaves every count correct. Measured: with the state-only assertion above, moving
+    // legs leaves every count correct. Measured: with a state-only assertion, moving
     // `zeroMissingLatencyChildren()` to the top of the `try` stayed green, while on a real
     // pod's first scrape that reversal plus a failing read publishes nothing at all.
-    const ops = client.register.getSingleMetric(OPS) as unknown as Record<string, unknown>;
-    const latency = client.register.getSingleMetric(LATENCY) as unknown as Record<string, unknown>;
-    const incSpy = vi.spyOn(ops as unknown as { inc: (...a: unknown[]) => void }, 'inc');
-    const getSpy = vi.spyOn(latency as unknown as { get: () => Promise<unknown> }, 'get');
+    //
+    // 🔴 BOTH counters, because spying only the ops one pinned the half that matters LEAST.
+    // The module docstring's claim is about "the series with alerting consumers", and the
+    // counter with the alerting consumer is `quota_exceeded` — yet with ops alone, moving the
+    // histogram leg to sit BETWEEN the two counter loops measured 17/17 green while leaving
+    // `quota_exceeded` and `user_quota_untracked` unpublished on a failing first scrape. One
+    // spy per counter, each required to precede the read.
+    // `{ inc: () => void }` rather than a rest-param signature: the arity is irrelevant here
+    // (vitest calls through, so the real arguments are forwarded untouched) and a `(...args:
+    // never[])` type trips `no-unused-vars` on the parameter name.
+    const incTarget = (name: string) =>
+      client.register.getSingleMetric(name) as unknown as { inc: () => void };
+    const opsSpy = vi.spyOn(incTarget(OPS), 'inc');
+    const quotaSpy = vi.spyOn(incTarget(QUOTA_EXCEEDED), 'inc');
+    const untrackedSpy = vi.spyOn(incTarget(USER_QUOTA_UNTRACKED), 'inc');
+    const getSpy = vi.spyOn(
+      client.register.getSingleMetric(LATENCY) as unknown as { get: () => Promise<unknown> },
+      'get'
+    );
     try {
       await seedAppBlockStorageMetrics();
 
-      expect(incSpy.mock.invocationCallOrder.length).toBeGreaterThan(0);
       expect(getSpy.mock.invocationCallOrder.length).toBeGreaterThan(0);
-      expect(incSpy.mock.invocationCallOrder[0]).toBeLessThan(getSpy.mock.invocationCallOrder[0]);
+      const read = getSpy.mock.invocationCallOrder[0];
+      for (const [label, spy] of [
+        ['ops', opsSpy],
+        ['quota_exceeded', quotaSpy],
+        ['user_quota_untracked', untrackedSpy],
+      ] as const) {
+        expect(spy.mock.invocationCallOrder.length, label).toBeGreaterThan(0);
+        expect(spy.mock.invocationCallOrder[0], label).toBeLessThan(read);
+      }
     } finally {
-      incSpy.mockRestore();
-      getSpy.mockRestore();
+      for (const spy of [opsSpy, quotaSpy, untrackedSpy, getSpy]) spy.mockRestore();
     }
   });
 });
@@ -346,11 +370,17 @@ describe('the seeded domain matches the service', () => {
     // `packages/` or `apps/` is invisible here. `packages/civitai-telemetry/src/client.ts` is a
     // fourth referencing file for exactly that reason — it is the declaration, and benign.
     // `__tests__` is excluded: a suite that stubs the handle is not a production writer, which
-    // is why this set is three and not the seven a test-inclusive walk reports.
+    // is why this set is three and not the EIGHT a test-inclusive walk reports. (Seven is the
+    // figure under the symbol-only predicate — i.e. before the wire-name pattern three lines
+    // above existed. The eighth is `metrics-endpoint-seeds-app-block-storage.test.ts`, which
+    // matches on the wire name and never names the symbol: measured bySym=7, byWire=2,
+    // either=8. A count that silently belonged to the previous version of its own predicate is
+    // the whole hazard this file exists to catch, so it is spelled out rather than restated.)
     // `block-token-access.service.ts` names it in a comment only, and that is still the right
     // membership test, because the claim is about what can reach the counter.
     const reaching: string[] = [];
     const sites: Record<string, number> = {};
+    const occurrences: Record<string, number> = {};
     const walk = (dir: string) => {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, entry.name);
@@ -364,6 +394,11 @@ describe('the seeded domain matches the service', () => {
             sites[rel] = (
               text.match(/appStorageOpsCounter\s*(?:\.\w+\([^)]*\))?\s*\.inc\b/g) ?? []
             ).length;
+            // Comments stripped first: these files DISCUSS the handle in their docstrings, so
+            // a raw count reads 4 for the service and would false-fail on a prose edit —
+            // turning a guard about reachability into one about wording.
+            const code = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+            occurrences[rel] = (code.match(/\bappStorageOpsCounter\b/g) ?? []).length;
           }
         }
       }
@@ -377,9 +412,19 @@ describe('the seeded domain matches the service', () => {
 
     // 🔴 Per-file membership is not enough on its own: the service is permanently on that list
     // because it holds `countStorageOutcome`'s own `.inc`, so a SECOND raw emit added inside it
-    // — the likeliest place one appears — passes the set check. Measured: it survived. One site
-    // per writer file is the real invariant.
+    // — the likeliest place one appears — passes the set check. Measured: it survived.
+    //
+    // 🔴 But a `.inc` SITE count is itself a spelling, and it is walkable by exactly two of the
+    // three evasions this case's own comment enumerates: `const c = appStorageOpsCounter;
+    // c.inc(…)` and `inc.call(appStorageOpsCounter, …)` both leave the count at 1 inside an
+    // already-listed file. So the invariant is asserted on OCCURRENCES of the symbol, which an
+    // alias or a `.call` must add to: two CODE occurrences in each writer (the import and the
+    // one use), and zero in `block-token-access.service.ts` — which is in the membership set on
+    // a docstring mention alone, so a first real emit there would otherwise be uncounted.
     expect(sites['server/services/apps/app-storage.service.ts']).toBe(1);
     expect(sites['server/prom/app-block-storage.metrics.ts']).toBe(1);
+    expect(sites['server/services/blocks/block-token-access.service.ts']).toBe(0);
+    expect(occurrences['server/services/apps/app-storage.service.ts']).toBe(2);
+    expect(occurrences['server/prom/app-block-storage.metrics.ts']).toBe(2);
   });
 });

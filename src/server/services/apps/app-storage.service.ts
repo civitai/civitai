@@ -236,7 +236,9 @@ function isUndefinedTable(err: unknown): boolean {
 }
 
 /**
- * The ONLY writer of `civitai_app_block_storage_ops_total`.
+ * The only site in this service that emits a real count on
+ * `civitai_app_block_storage_ops_total` — the zero-seeding in
+ * `~/server/prom/app-block-storage.metrics` also writes it.
  *
  * 🔴 Exists so `outcome` is type-checked. prom-client types a label value as `string | number`,
  * so a bare `.inc({ op, outcome: 'rateLimited' })` compiles, emits an unseeded series, and
@@ -249,7 +251,9 @@ function countStorageOutcome(op: StorageOp, outcome: AppStorageOutcome): void {
 }
 
 /**
- * The ONLY writer of `civitai_app_block_storage_quota_exceeded_total`.
+ * The only site in this service that emits a real count on
+ * `civitai_app_block_storage_quota_exceeded_total` — the zero-seeding in
+ * `~/server/prom/app-block-storage.metrics` also writes it.
  *
  * 🔴 Same reason as `countStorageOutcome`, and it matters more here: this is the counter with
  * an alerting consumer, and it is SEEDED. A mistyped `ceiling` is therefore worse than an
