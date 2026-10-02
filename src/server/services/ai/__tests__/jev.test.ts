@@ -569,6 +569,17 @@ describe('🔴 score mapping: index space → the declared range', () => {
     });
   });
 
+  it('🔴 CLAMPS into index space — rounding cannot stand in for it', async () => {
+    // Both drift cases above use `specificity`, which is `integer: true`, so
+    // `Math.round` absorbs the out-of-range value and `const index = score`
+    // survives. A FLOAT consumer has no rounding to hide behind: `quality` is
+    // [1,3] with slack 0.04, so 2.04 must land on 3 and not on 3.04 — a value
+    // outside the range the question declared, handed to a caller that trusts it.
+    respondAnswers({ quality: { type: 'score', score: 2.04 } });
+    const result = await askJev({ state: {}, questions: [qualityQuestion] });
+    expect((result.answers[0] as { value: number }).value).toBe(3);
+  });
+
   it('absorbs the same drift at the BOTTOM of the scale', async () => {
     respond({
       model: RECORDED_200.model,
@@ -914,12 +925,29 @@ describe('askJev — fail-closed on the response', () => {
     });
   });
 
-  it('rejects a distribution probability outside [0,1]', async () => {
+  it('rejects a distribution probability ABOVE 1', async () => {
     respondAnswers({
       role: {
         type: 'choice',
         choice: 'character',
         probabilities: { character: 1.4 },
+      },
+    });
+    await expect(askJev({ state: {}, questions: [roleQuestion] })).rejects.toMatchObject({
+      kind: 'malformed',
+      message: expect.stringContaining('not in [0,1]'),
+    });
+  });
+
+  it('🔴 rejects a NEGATIVE probability, which the sum check cannot see', async () => {
+    // Only the upper bound was exercised, so `probability < 0` survived its
+    // deletion: these two sum to exactly 1.0 and every other check passes, so a
+    // negative probability would have been recorded and then re-ranked on.
+    respondAnswers({
+      role: {
+        type: 'choice',
+        choice: 'character',
+        probabilities: { character: 1.25, none: -0.25 },
       },
     });
     await expect(askJev({ state: {}, questions: [roleQuestion] })).rejects.toMatchObject({
