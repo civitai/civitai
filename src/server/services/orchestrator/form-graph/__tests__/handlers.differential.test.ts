@@ -1,16 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import type { GenerationCtx } from '~/shared/data-graph/generation/context';
 import type { GenerationHandlerCtx } from '../../orchestration-new.service';
-import type * as FliptClient from '~/server/flipt/client';
-
-// Wan v2.2 routes on this flag; pin it per test so both lanes see one answer.
-let wan22MultiStep = false;
-vi.mock('~/server/flipt/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof FliptClient>()),
-  isFlipt: vi.fn(async () => wan22MultiStep),
-}));
 
 import { openaiVersionIds } from '~/shared/data-graph/generation/openai-graph';
 import { createEcosystemStepInput } from '../../ecosystems';
@@ -583,7 +575,7 @@ const CASES: Record<string, unknown>[] = [
     seed: 42,
     enablePromptEnhancer: true,
   },
-  // Wan: every version; v2.1 I2V resolution variants; v2.2 legacy fal path
+  // Wan: every version; v2.1 I2V resolution variants
   { workflow: 'txt2vid', ecosystem: 'WanVideo14B_T2V', prompt: 'a cat', seed: 42 },
   {
     workflow: 'img2vid',
@@ -983,21 +975,17 @@ describe('form-graph handlers emit the same steps as the data-graph handlers', (
     }
   );
 
-  it('wan v2.2 multi-step path (flipt on): videoGen + interpolation, both lanes', async () => {
-    wan22MultiStep = true;
-    try {
-      const { v1, v2 } = await bothLanes({
-        workflow: 'txt2vid',
-        ecosystem: 'WanVideo-22-T2V-A14B',
-        prompt: 'a cat',
-        seed: 42,
-        shift: 10,
-      });
-      expect(v2).toEqual(v1);
-      expect(v2.map((s) => s.$type)).toEqual(['videoGen', 'videoInterpolation']);
-    } finally {
-      wan22MultiStep = false;
-    }
+  it('wan v2.2 runs on comfy at 12fps, then interpolates, in both lanes', async () => {
+    const { v1, v2 } = await bothLanes({
+      workflow: 'txt2vid',
+      ecosystem: 'WanVideo-22-T2V-A14B',
+      prompt: 'a cat',
+      seed: 42,
+      shift: 10,
+    });
+    expect(v2).toEqual(v1);
+    expect(v2.map((s) => s.$type)).toEqual(['videoGen', 'videoInterpolation']);
+    expect(firstInput(v2)).toMatchObject({ provider: 'comfy', frameRate: 12 });
   });
 
   // The differential above compares two lanes, so a mapping both lanes get
