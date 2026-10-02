@@ -7,8 +7,8 @@ import {
   isAppListingVisibility,
   isListingAudienceFloor,
   isVisibilityEligibleListingStatus,
-  listingVisibilityCountsAsUsage,
   listingVisibilityRank,
+  maxVisibilityForStatus,
   listingVisibleInStore,
   narrowListingVisibility,
   parseStoredVisibility,
@@ -250,17 +250,46 @@ describe('listingVisibleInStore — unset falls back, a set level BINDS', () => 
     ).toBe(true);
   });
 
-  it('[NEW] a SET level BINDS on `draft`/`pending` — an owner can WIDEN', () => {
+  it('[NEW] on `draft`/`pending` a set level WIDENS only as far as `moderators`', () => {
+    // 🔴 THE REVIEW CEILING, AND THIS CASE PREVIOUSLY ENCODED THE BYPASS IT CLOSES. It
+    // asserted that a set level binds unconditionally on an unreviewed listing, i.e. that
+    // `draft` + `public` is visible to a `public` floor — which served a listing whose name,
+    // URL and content rating no moderator had seen to the anonymous catalog endpoints.
     for (const status of ['draft', 'pending']) {
       for (const floor of FLOORS) {
         for (const visibility of APP_LISTING_VISIBILITIES) {
+          const withinCeiling =
+            listingVisibilityRank(visibility) <= listingVisibilityRank('moderators');
           expect(
             listingVisibleInStore({ status, visibility, floor }),
             `${status} @ ${visibility} for ${floor}`
-          ).toBe(viewerSeesListingVisibility(floor, visibility));
+          ).toBe(withinCeiling && viewerSeesListingVisibility(floor, visibility));
         }
       }
     }
+  });
+
+  it('[NEW] the review ceiling refuses a too-wide level on an UNREVIEWED listing', () => {
+    // Spelled out, because this is the bypass and a reader should not have to re-derive it
+    // from the rank arithmetic above. A moderator can see an unreviewed listing marked for
+    // moderators; nobody sees one marked testers or public, moderators included.
+    expect(
+      listingVisibleInStore({ status: 'draft', visibility: 'moderators', floor: 'moderators' })
+    ).toBe(true);
+    for (const floor of FLOORS) {
+      for (const tooWide of ['testers', 'public'] as const) {
+        expect(
+          listingVisibleInStore({ status: 'draft', visibility: tooWide, floor }),
+          `draft @ ${tooWide} must be refused for ${floor}`
+        ).toBe(false);
+      }
+    }
+    // And the ceiling itself, as data.
+    expect(maxVisibilityForStatus('draft')).toBe('moderators');
+    expect(maxVisibilityForStatus('pending')).toBe('moderators');
+    expect(maxVisibilityForStatus('approved')).toBe('public');
+    expect(maxVisibilityForStatus('removed')).toBeNull();
+    expect(maxVisibilityForStatus('rejected')).toBeNull();
   });
 
   it('[INV] a `removed`/`rejected` listing is invisible at EVERY level, set or unset', () => {
@@ -280,23 +309,18 @@ describe('listingVisibleInStore — unset falls back, a set level BINDS', () => 
   });
 });
 
-describe('listingVisibilityCountsAsUsage — D4', () => {
-  it('[NEW] `public` and `testers` count; `moderators` does not', () => {
-    expect(listingVisibilityCountsAsUsage('public')).toBe(true);
-    expect(listingVisibilityCountsAsUsage('testers')).toBe(true);
-    expect(listingVisibilityCountsAsUsage('moderators')).toBe(false);
-  });
-
-  it('[INV] `private` does not count, because it can produce no run', () => {
-    // Not an exclusion — an unreachable audience has no usage. Stated so a future reader
-    // does not read this `false` as a third exclusion rail alongside the private-run ones.
-    expect(listingVisibilityCountsAsUsage('private')).toBe(false);
-  });
-
-  it('[INV] the predicate covers every level — a new level must be classified out loud', () => {
-    // A level nobody classified would silently fall into "does not count", which is the
-    // direction that silently deletes an owner's real usage data.
-    const counted = APP_LISTING_VISIBILITIES.filter(listingVisibilityCountsAsUsage);
-    expect([...counted].sort()).toEqual(['public', 'testers']);
-  });
-});
+/**
+ * ⚠️ `listingVisibilityCountsAsUsage` AND ITS FOUR CASES WERE DELETED, NOT MOVED.
+ *
+ * The predicate had NO production caller, and its docblock asserted two things as handled —
+ * that a `moderators`-audience run is invisible in the owner's analytics, and that it pays
+ * no author fee. Neither is implemented by this change. A predicate that reads as coverage
+ * while providing none is worse than its absence, because it stops the next person looking;
+ * the same reasoning removed the unreachable `private` guard above.
+ *
+ * Where D4 actually stands is recorded in the PR body: for an unreviewed listing the run
+ * falls through to the private-run path and inherits the existing exclusion rails unchanged,
+ * which is why no new predicate was added. The residual case — a `pending` listing whose
+ * backing block is still approved, where the run is an ordinary public run and does count —
+ * is stated there as an open item rather than papered over with a predicate nothing calls.
+ */

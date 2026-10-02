@@ -25,13 +25,14 @@ import { TRPCError } from '@trpc/server';
 
 import { dbWrite } from '~/server/db/client';
 import { newAppListingModerationEventId } from '~/server/utils/app-block-ids';
-import {
-  assertVisibilityWritable,
-  readListingVisibility,
-} from '~/server/services/blocks/app-listing-visibility.service';
+import { assertVisibilityWritable } from '~/server/services/blocks/app-listing-visibility.service';
+import { isMissingColumnError } from '~/server/services/blocks/app-listing-source-repo.service';
 import type { AppListingVisibility } from '~/shared/utils/app-listing-visibility';
 import {
   isVisibilityEligibleListingStatus,
+  listingVisibilityRank,
+  maxVisibilityForStatus,
+  parseStoredVisibility,
   VISIBILITY_ELIGIBLE_LISTING_STATUSES,
 } from '~/shared/utils/app-listing-visibility';
 
@@ -64,6 +65,20 @@ export const VISIBILITY_BLOCK_SUSPENDED_MESSAGE =
 export const VISIBILITY_NOT_OWNED_MESSAGE = 'You can only change your own listings.';
 
 /**
+ * The refusal a level WIDER than the listing's review state allows produces.
+ *
+ * 🔴 THIS GUARD CLOSES A MODERATOR-REVIEW BYPASS. Without it an owner could set
+ * `visibility='public'` on a `draft` — a listing whose name, description, external URL and
+ * content rating no moderator has ever seen — and the anon-capable public catalog endpoints
+ * would serve it. The level can only ever be as wide as the review state permits; see
+ * `maxVisibilityForStatus`. Unlike the two D1 refusals this one NAMES the ceiling, because
+ * the caller can act on it (submit for review, or pick a narrower level) — it is not a
+ * statement about a moderation outcome.
+ */
+export const VISIBILITY_EXCEEDS_REVIEW_CEILING_MESSAGE =
+  'This listing has not been approved yet, so it can only be made visible to moderators. Submit it for review to widen its audience.';
+
+/**
  * The shared core: gate on D1, then write.
  *
  * 🔴 THE WRITE IS A COMPARE-AND-SET, NOT A BARE `update`. It re-asserts the eligible
@@ -91,17 +106,41 @@ async function applyVisibility(args: {
   // 🔴 THE PRIMARY, NOT THE REPLICA. A freshly-delisted or freshly-relisted row read
   // through a replication-lag window would be gated on a stale status — in both
   // directions. Same argument `resolvePrivateRunAccess` makes for threading its pool.
-  const listing = await dbWrite.appListing.findUnique({
-    where: { id: appListingId },
-    select: {
-      id: true,
-      slug: true,
-      status: true,
-      // The backing block's own suspension. Null for an offsite listing, which has no
-      // block and therefore no block-level suspension to respect.
-      appBlock: { select: { status: true } },
-    },
-  });
+  //
+  // `columnAvailable` carries the manual-apply answer out of the SAME read, so the level
+  // needs no separate lookup. A missing column makes the whole select raise P2022, which is
+  // caught below and reported as "not available on this environment" — the honest answer for
+  // a write, and the reason this function may name the column at all.
+  let columnAvailable = true;
+  let listing = await dbWrite.appListing
+    .findUnique({
+      where: { id: appListingId },
+      select: {
+        id: true,
+        slug: true,
+        status: true,
+        // 🔴 THE MANUAL-APPLY COLUMN, NAMED IN THIS FUNCTION'S OWN SELECT. Safe here and
+        // nowhere else on this feature: this select is PRIVATE to the write path, so a
+        // missing column raises P2022 on a mutation that has to refuse anyway — never on the
+        // public grid, which is what `listingHydrateSelect` would do. It saves a third PK
+        // read of a row this function has already fetched twice.
+        visibility: true,
+        // The backing block's own suspension. Null for an offsite listing, which has no
+        // block and therefore no block-level suspension to respect.
+        appBlock: { select: { status: true } },
+      },
+    })
+    .catch(async (err: unknown) => {
+      if (!isMissingColumnError(err)) throw err;
+      columnAvailable = false;
+      // Re-read WITHOUT the manual-apply column so the D1 gates below still run against a
+      // real row — they must refuse a `removed` listing whether or not the migration has run.
+      const row = await dbWrite.appListing.findUnique({
+        where: { id: appListingId },
+        select: { id: true, slug: true, status: true, appBlock: { select: { status: true } } },
+      });
+      return row ? { ...row, visibility: null } : null;
+    });
   if (!listing) throw new TRPCError({ code: 'NOT_FOUND', message: 'Listing not found' });
 
   // D1, half one: the listing's own lifecycle. `removed` and `rejected` are refused.
@@ -116,9 +155,31 @@ async function applyVisibility(args: {
     throw new TRPCError({ code: 'FORBIDDEN', message: VISIBILITY_BLOCK_SUSPENDED_MESSAGE });
   }
 
+  // 🔴 THE REVIEW CEILING. A level wider than this status permits is refused — see
+  // VISIBILITY_EXCEEDS_REVIEW_CEILING_MESSAGE. Applies to MODERATORS too: the ceiling is a
+  // property of what has been reviewed, not of who is asking, and a moderator wanting a
+  // draft public approves it rather than relabelling it.
+  const ceiling = maxVisibilityForStatus(listing.status);
+  if (ceiling === null || listingVisibilityRank(visibility) > listingVisibilityRank(ceiling)) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: VISIBILITY_EXCEEDS_REVIEW_CEILING_MESSAGE,
+    });
+  }
+
   // The manual-apply column. Refuses rather than silently dropping the write — the caller
   // picked this level and expects to see it again.
-  const before = await readListingVisibility(appListingId, dbWrite);
+  //
+  // 🔴 READ FROM THE ROW ABOVE, NOT A THIRD PK LOOKUP. This used to call
+  // `readListingVisibility`, which re-read the same row a third time in this function. The
+  // split that forces a separate guarded read on the STORE paths does not apply here: the
+  // select at the top of this function is PRIVATE to it, not shared with the public grid, so
+  // naming the manual-apply column in it can only ever break this mutation — which must
+  // refuse anyway — rather than a public page.
+  const before = {
+    available: columnAvailable,
+    visibility: parseStoredVisibility(listing.visibility),
+  };
   assertVisibilityWritable(before.available);
   if (before.visibility === visibility) {
     return { appListingId, visibility, changed: false };
@@ -134,10 +195,25 @@ async function applyVisibility(args: {
         // `updateMany` would match zero rows and the refusal would surface from the
         // CONCURRENCY branch below, reporting a stale allowlist as a race.
         status: { in: [...VISIBILITY_ELIGIBLE_LISTING_STATUSES] },
+        // 🔴 BOTH HALVES OF D1, NOT JUST THE STATUS. The pre-read checks the backing
+        // block's suspension too, and that is the one case the status re-check cannot
+        // catch — a block suspended through a path that leaves the listing row alone.
+        // Correct today only because every delist flips both; re-asserting it here is what
+        // makes the race safe for the next edit that adds a suspend-only path.
+        OR: [{ appBlock: null }, { appBlock: { status: { not: 'suspended' } } }],
       },
       data: { visibility },
     });
     if (flipped.count === 0) {
+      // 🔴 A DELETION IS NOT AN INELIGIBLE STATUS. Mapping every zero-row outcome to the
+      // status refusal reported a vanished listing as a lifecycle problem, which is a
+      // refusal naming the wrong cause — and this branch's whole job is to be legible.
+      // One extra read, only on the losing side of a race that is already rare.
+      const still = await tx.appListing.findUnique({
+        where: { id: appListingId },
+        select: { id: true },
+      });
+      if (!still) throw new TRPCError({ code: 'NOT_FOUND', message: 'Listing not found' });
       throw new TRPCError({ code: 'FORBIDDEN', message: VISIBILITY_STATUS_INELIGIBLE_MESSAGE });
     }
     if (moderatorUserId != null) {

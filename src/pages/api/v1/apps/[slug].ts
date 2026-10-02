@@ -102,7 +102,9 @@ export default MixedAuthEndpoint(async function handler(req, res, user) {
     const detail = await getListingDetail(
       { slug: parsed.data.slug },
       // `floor: 'public'` — the public catalog grant lifts the SURFACE scope, never the
-      // per-listing audience. See the sibling list endpoint for the full reasoning.
+      // per-listing audience. What keeps an UNREVIEWED listing off this endpoint is the
+      // review ceiling (`maxVisibilityForStatus`), not this argument; see the sibling list
+      // endpoint, whose comment used to credit the wrong guard.
       { redCapable: isRedCapableRequest(req.headers.host), scope, floor: 'public' }
     );
     if (!detail) {

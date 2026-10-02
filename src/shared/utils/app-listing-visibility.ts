@@ -172,22 +172,6 @@ export function visibilitiesVisibleTo(floor: ListingAudienceFloor): AppListingVi
 }
 
 /**
- * Does this level count as REAL USAGE — owner analytics and the author fee?
- *
- * 🔴 ONE PREDICATE FOR BOTH DECISIONS, because they are one decision. `moderators` is a
- * review audience: a run by it must be invisible in the owner's analytics (a visible
- * review run tells a bad actor exactly when review is happening) and must not pay the
- * author fee (the reviewer would be debited and the publisher credited for a review).
- * `testers` and `public` are real audiences whose usage counts and pays.
- *
- * `private` is unreachable through a level, so it can produce no run; it answers `false`
- * because an unreachable audience has no usage, not because it is excluded.
- */
-export function listingVisibilityCountsAsUsage(visibility: AppListingVisibility): boolean {
-  return visibility === 'testers' || visibility === 'public';
-}
-
-/**
  * The listing statuses on which a level may WIDEN who reaches the store, and the only
  * statuses on which a level may be SET.
  *
@@ -220,6 +204,53 @@ export function isVisibilityEligibleListingStatus(status: string): boolean {
 }
 
 /**
+ * The WIDEST level a listing in this state may be seen at, regardless of what its column
+ * says.
+ *
+ * 🔴 THE REVIEW CEILING, AND ITS ABSENCE WAS A MODERATOR-REVIEW BYPASS. Without it a set
+ * level binds identically at every eligible status, so an owner could put
+ * `visibility='public'` on a `draft` — a listing whose name, description, external URL,
+ * icon, cover and content rating NO MODERATOR HAS EVER SEEN — and it would be served by
+ * `GET /api/v1/apps` and `/api/v1/apps/<slug>`, both of which are anon-capable under the
+ * deliberate public-catalog grant. For an offsite listing there is no deploy gate either,
+ * so the row would carry an owner-controlled unreviewed URL on a civitai.com store page;
+ * and because `contentRating` on a draft is self-declared and only re-derived at approve,
+ * a self-rated `g` draft with unscanned assets would pass the maturity gate too.
+ *
+ * So the level can only ever be as wide as the listing's REVIEW STATE permits:
+ *   · `approved` — reviewed, so all four levels bind. This is the restrict direction.
+ *   · `draft` / `pending` — never reviewed, so the ceiling is `moderators`. That is exactly
+ *     the review-sandbox audience the non-approved half of this feature exists for; a wider
+ *     level on an unreviewed listing is refused at the READ as well as the write, because a
+ *     row can carry a level set before it was withdrawn for re-review.
+ *
+ * Returns `null` for a status no level may reach at all.
+ */
+export function maxVisibilityForStatus(status: string): AppListingVisibility | null {
+  if (!isVisibilityEligibleListingStatus(status)) return null;
+  return status === 'approved' ? 'public' : 'moderators';
+}
+
+/**
+ * The levels a viewer in this cohort can see ON A LISTING IN THIS STATE — the cohort rule
+ * and the review ceiling composed, for a data-layer `IN (...)` list.
+ *
+ * May be EMPTY (a non-moderator cohort against an unreviewed listing), and a caller
+ * building SQL must emit a FALSE predicate rather than an empty `IN ()`, which is a syntax
+ * error.
+ */
+export function visibilitiesVisibleToForStatus(
+  floor: ListingAudienceFloor,
+  status: string
+): AppListingVisibility[] {
+  const cap = maxVisibilityForStatus(status);
+  if (cap === null) return [];
+  return visibilitiesVisibleTo(floor).filter(
+    (v) => listingVisibilityRank(v) <= listingVisibilityRank(cap)
+  );
+}
+
+/**
  * Is this listing visible in the store to a viewer in this cohort?
  *
  * Three rules, in order, and each is load-bearing:
@@ -235,10 +266,12 @@ export function isVisibilityEligibleListingStatus(status: string): boolean {
  *    write at any of the eight scattered `status='approved'` sites. It can only ever grant
  *    the approved baseline, so it never admits anything the store does not already show.
  *
- * 3. A level that IS set is AUTHORITATIVE, at every eligible status including `approved`.
- *    So an owner can both WIDEN (admit a `draft` to a cohort) and RESTRICT (pull a live
- *    `approved` listing back to `testers`, `moderators`, or out of the store entirely with
- *    `private`).
+ * 3. A level that IS set is AUTHORITATIVE, at every eligible status including `approved`,
+ *    but never wider than the REVIEW CEILING for that status
+ *    ({@link maxVisibilityForStatus}). So an owner can RESTRICT a live `approved` listing to
+ *    `testers`, `moderators`, or out of the store entirely with `private`, and can WIDEN an
+ *    unreviewed `draft`/`pending` listing as far as `moderators` — the review-sandbox
+ *    audience — and no further.
  *
  * ⚠️ RESTRICTING AN APPROVED LISTING IS DISCOVERY-ONLY, and the UI copy has to say so. The
  * run route gates on the backing BLOCK's status and never consults this column, so a
@@ -256,5 +289,12 @@ export function listingVisibleInStore(args: {
 }): boolean {
   if (!isVisibilityEligibleListingStatus(args.status)) return false;
   if (args.visibility === null) return args.status === 'approved';
+  // 🔴 THE REVIEW CEILING, BEFORE THE COHORT RULE. A level wider than the listing's review
+  // state permits is refused outright — see `maxVisibilityForStatus` for the bypass this
+  // closes. Checked here as well as at the write, because a row can carry a level set
+  // before it was withdrawn for re-review.
+  const cap = maxVisibilityForStatus(args.status);
+  if (cap === null) return false;
+  if (listingVisibilityRank(args.visibility) > listingVisibilityRank(cap)) return false;
   return viewerSeesListingVisibility(args.floor, args.visibility);
 }

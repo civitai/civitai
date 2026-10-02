@@ -12,7 +12,7 @@ import type { ListingAudienceFloor } from '~/shared/utils/app-listing-visibility
 import {
   listingVisibleInStore,
   VISIBILITY_ELIGIBLE_LISTING_STATUSES,
-  visibilitiesVisibleTo,
+  visibilitiesVisibleToForStatus,
 } from '~/shared/utils/app-listing-visibility';
 // The MANUAL-APPLY `visibility` column is read ONLY through this guard — never via
 // `listingHydrateSelect`, which the public `/apps` GRID shares. See its module header.
@@ -950,15 +950,41 @@ export function listingLevelVisibilityFilter(
   available: boolean
 ): Prisma.Sql {
   if (!available) return Prisma.sql`al.status = 'approved'`;
-  const eligible = VISIBILITY_ELIGIBLE_LISTING_STATUSES;
-  const levels = visibilitiesVisibleTo(floor);
+  // 🔴 PER-STATUS LEVEL LISTS, BECAUSE THE REVIEW CEILING IS PER STATUS. One shared
+  // `al.visibility IN (...)` across every eligible status was a moderator-review bypass: it
+  // admitted a `draft` carrying `visibility='public'` to the anonymous store, with a name,
+  // URL and content rating no moderator had seen. See `maxVisibilityForStatus`.
+  //
+  // An unreviewed status against a non-moderator cohort admits NOTHING, so its list is
+  // EMPTY — and an empty `IN ()` is a syntax error, hence the explicit FALSE.
+  const approvedLevels = visibilitiesVisibleToForStatus(floor, 'approved');
+  const unreviewed = VISIBILITY_ELIGIBLE_LISTING_STATUSES.filter((st) => st !== 'approved');
+  const unreviewedLevels = visibilitiesVisibleToForStatus(floor, 'draft');
+  // 🔴 AN ARM THE CEILING ADMITS NOTHING THROUGH IS OMITTED, NOT EMITTED AS `FALSE`. Two
+  // reasons, and the second is why it matters beyond tidiness: an empty `IN ()` is a syntax
+  // error, and a bare `FALSE` in this statement trips a sibling drift-guard
+  // (`app-listing.public-scope.test.ts`) that scans the emitted SQL for exactly that word to
+  // prove the KIND gate has not failed closed. Leaving one here would have made an unrelated
+  // guard red for a reason that has nothing to do with what it protects.
+  const arms: Prisma.Sql[] = [];
+  if (approvedLevels.length) {
+    arms.push(
+      Prisma.sql`(al.status = 'approved' AND al.visibility IN (${Prisma.join(approvedLevels)}))`
+    );
+  }
+  if (unreviewedLevels.length) {
+    arms.push(
+      Prisma.sql`(al.status IN (${Prisma.join(unreviewed)}) AND al.visibility IN (${Prisma.join(
+        unreviewedLevels
+      )}))`
+    );
+  }
+  // No arm at all ⇒ a set level admits this cohort nowhere, so only the unset-and-approved
+  // baseline remains.
+  if (!arms.length) return Prisma.sql`(al.visibility IS NULL AND al.status = 'approved')`;
   return Prisma.sql`(
         (al.visibility IS NULL AND al.status = 'approved')
-        OR (
-          al.visibility IS NOT NULL
-          AND al.status IN (${Prisma.join(eligible)})
-          AND al.visibility IN (${Prisma.join(levels)})
-        )
+        OR (al.visibility IS NOT NULL AND (${Prisma.join(arms, ' OR ')}))
       )`;
 }
 

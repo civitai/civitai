@@ -57,7 +57,10 @@ import type {
   AppListingVisibility,
   ListingAudienceFloor,
 } from '~/shared/utils/app-listing-visibility';
-import { listingVisibleInStore } from '~/shared/utils/app-listing-visibility';
+import {
+  listingVisibleInStore,
+  visibilitiesVisibleToForStatus,
+} from '~/shared/utils/app-listing-visibility';
 
 /** The `appListing` delegate on the shared mock — this file's only fake. */
 const listing = dbMock.dbRead.appListing;
@@ -242,40 +245,69 @@ describe('listingLevelVisibilityFilter — the SQL drift guard', () => {
     // the tell that this one was under-specified.
     const norm = (frag: { sql: string }) => frag.sql.replace(/\s+/g, ' ').trim();
     expect(norm(listingLevelVisibilityFilter('moderators', true))).toBe(
-      "( (al.visibility IS NULL AND al.status = 'approved') OR ( al.visibility IS NOT NULL " +
-        'AND al.status IN (?,?,?) AND al.visibility IN (?,?,?) ) )'
+      "( (al.visibility IS NULL AND al.status = 'approved') OR (al.visibility IS NOT NULL " +
+        "AND ((al.status = 'approved' AND al.visibility IN (?,?,?)) OR (al.status IN (?,?) " +
+        'AND al.visibility IN (?)))) )'
     );
+    // 🔴 AND THE NON-MODERATOR FLOORS CARRY NO UNREVIEWED ARM AT ALL — that is the review
+    // ceiling in the data layer. A non-moderator cohort can reach NO unreviewed listing at
+    // any level, so the arm is OMITTED rather than emitted as a bare `FALSE`: an empty
+    // `IN ()` is a syntax error, and a stray `FALSE` here trips the sibling kind-gate
+    // drift-guard that scans this statement for exactly that word.
+    expect(norm(listingLevelVisibilityFilter('testers', true))).toBe(
+      "( (al.visibility IS NULL AND al.status = 'approved') OR (al.visibility IS NOT NULL " +
+        "AND ((al.status = 'approved' AND al.visibility IN (?,?)))) )"
+    );
+    expect(norm(listingLevelVisibilityFilter('public', true))).toBe(
+      "( (al.visibility IS NULL AND al.status = 'approved') OR (al.visibility IS NOT NULL " +
+        "AND ((al.status = 'approved' AND al.visibility IN (?)))) )"
+    );
+    // Neither emits a bare FALSE, which is the property the sibling guard rests on.
+    for (const f of ['moderators', 'testers', 'public'] as const) {
+      expect(norm(listingLevelVisibilityFilter(f, true))).not.toMatch(/\bFALSE\b/);
+    }
   });
 
   it('[NEW] binds the statuses and levels as PARAMETERS, allowlisted', () => {
-    const frag = listingLevelVisibilityFilter('moderators', true);
     // Parameterised, not interpolated: the predicate cannot be built by splicing a string
-    // into SQL source.
-    expect(frag.values).toEqual([
-      'draft',
-      'pending',
-      'approved',
+    // into SQL source. Order follows the two arms — the approved arm's levels, then the
+    // unreviewed statuses and the single level the ceiling admits there.
+    expect(listingLevelVisibilityFilter('moderators', true).values).toEqual([
       'moderators',
       'testers',
       'public',
+      'draft',
+      'pending',
+      'moderators',
     ]);
-    // `removed` and `rejected` appear nowhere — the status set is an allowlist.
-    expect(frag.values).not.toContain('removed');
-    expect(frag.values).not.toContain('rejected');
+    // 🔴 A NON-MODERATOR FLOOR BINDS NO UNREVIEWED STATUS AT ALL — not `draft`, not
+    // `pending`. The arm is a literal FALSE, so there is nothing to bind.
+    for (const floor of ['testers', 'public'] as const) {
+      const vals = listingLevelVisibilityFilter(floor, true).values;
+      expect(vals).not.toContain('draft');
+      expect(vals).not.toContain('pending');
+    }
+    // `removed` and `rejected` appear nowhere, for any floor — the status set is an
+    // allowlist.
+    for (const floor of ['moderators', 'testers', 'public'] as const) {
+      const vals = listingLevelVisibilityFilter(floor, true).values;
+      expect(vals).not.toContain('removed');
+      expect(vals).not.toContain('rejected');
+    }
   });
 
   it('[INV] a narrower floor binds strictly fewer levels', () => {
     // The cohort distinction, visible in the bound parameters. If every floor bound the
     // same list, the enum would be inert in the data layer while every unit test of the
     // value model stayed green.
-    const STATUSES = new Set(['draft', 'pending', 'approved']);
-    const levels = (floor: 'moderators' | 'testers' | 'public') =>
-      listingLevelVisibilityFilter(floor, true).values.filter(
-        (v) => typeof v === 'string' && !STATUSES.has(v)
-      );
-    expect(levels('moderators')).toEqual(['moderators', 'testers', 'public']);
-    expect(levels('testers')).toEqual(['testers', 'public']);
-    expect(levels('public')).toEqual(['public']);
+    // Scoped to the APPROVED arm, which is the one where the cohort rule is the only
+    // constraint — the unreviewed arm is governed by the review ceiling instead and is
+    // asserted above.
+    const approvedLevels = (floor: 'moderators' | 'testers' | 'public') =>
+      visibilitiesVisibleToForStatus(floor, 'approved');
+    expect(approvedLevels('moderators')).toEqual(['moderators', 'testers', 'public']);
+    expect(approvedLevels('testers')).toEqual(['testers', 'public']);
+    expect(approvedLevels('public')).toEqual(['public']);
     // `private` is bound for NO floor — it admits nobody.
     for (const f of ['moderators', 'testers', 'public'] as const) {
       expect(listingLevelVisibilityFilter(f, true).values).not.toContain('private');
@@ -303,15 +335,19 @@ describe('the SQL predicate and the app-layer predicate AGREE', () => {
     visibility: AppListingVisibility | null,
     floor: ListingAudienceFloor
   ): boolean => {
-    const frag = listingLevelVisibilityFilter(floor, true);
-    const vals = frag.values.filter((v): v is string => typeof v === 'string');
-    // The fragment binds the eligible statuses first, then the admitted levels.
-    const eligible = vals.filter((v) => ['draft', 'pending', 'approved'].includes(v));
-    const levels = vals.filter((v) => !['draft', 'pending', 'approved'].includes(v));
     // (al.visibility IS NULL AND al.status = 'approved')
     if (visibility === null) return status === 'approved';
-    // OR (al.visibility IS NOT NULL AND al.status IN (...) AND al.visibility IN (...))
-    return eligible.includes(status) && levels.includes(visibility);
+    // OR (al.visibility IS NOT NULL AND ( approvedArm OR unreviewedArm ))
+    // Each arm's admitted level list is read back out of the helper the fragment itself
+    // uses, so a change to either moves this check with it rather than needing a restated
+    // predicate. An EMPTY list is the literal FALSE the fragment emits.
+    const approvedArm =
+      status === 'approved' &&
+      visibilitiesVisibleToForStatus(floor, 'approved').includes(visibility);
+    const unreviewedArm =
+      (status === 'draft' || status === 'pending') &&
+      visibilitiesVisibleToForStatus(floor, 'draft').includes(visibility);
+    return approvedArm || unreviewedArm;
   };
 
   it('[INV] the two predicates agree on EVERY (status, level, floor) combination', () => {

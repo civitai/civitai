@@ -104,8 +104,34 @@ ALTER TABLE "app_listings"
 --    `NULL IN (...)` evaluates to NULL and a CHECK is violated only by FALSE. So the
 --    constraint bounds the LEVELS without forbidding "no level set". Do not "fix" it by
 --    adding `"visibility" IS NOT NULL` — that reintroduces the defaulting problem above.
+--
+--    🔴 AND IT DELIBERATELY DOES NOT ENCODE THE REVIEW CEILING. A level may not be wider
+--    than the listing's review state allows (`moderators` on an unreviewed `draft`/`pending`,
+--    `public` on an `approved`) — but that is a STATUS-DEPENDENT rule, so expressing it here
+--    would be a two-column CHECK that a legitimate status transition could violate: a
+--    moderator withdrawing an approved `public` listing back to `pending` would be rejected
+--    with 23514 on a row it never touched. The ceiling is enforced in `maxVisibilityForStatus`
+--    at BOTH the read and the write instead, and the read enforcement is what makes a row
+--    whose status moved under a now-too-wide level safe rather than merely unlikely.
 BEGIN;
 ALTER TABLE "app_listings" DROP CONSTRAINT IF EXISTS "app_listings_visibility_check";
 ALTER TABLE "app_listings" ADD  CONSTRAINT "app_listings_visibility_check"
   CHECK ("visibility" IN ('private', 'moderators', 'testers', 'public'));
 COMMIT;
+
+-- 3. Statistics for the new column.
+--
+--    🔴 AUTOANALYZE WILL NEVER DO THIS ON ITS OWN. `ADD COLUMN` with no default is
+--    catalog-only, which is why statement 1 is O(1) — but the flip side is that it changes
+--    ZERO TUPLES, so `n_mod_since_analyze` does not move and autoanalyze is never triggered.
+--    `visibility` would have no `pg_stats` row indefinitely, and with no stats `nulltestsel`
+--    falls back to 0.005 for `IS NULL` / 0.995 for `IS NOT NULL` — estimating the store
+--    read's two disjuncts EXACTLY INVERTED, since today essentially every row is NULL. The
+--    plan is a seq scan at this table's size either way, so this is cheap insurance rather
+--    than a fix for a live problem; the point is that the error is in the wrong direction and
+--    feeds the row estimates for both LEFT JOINs and the sort.
+--
+--    Outside the transaction above: ANALYZE takes only a SHARE UPDATE EXCLUSIVE lock and is
+--    safe to run against a live table, but keeping it out of the CHECK swap means a slow
+--    sample cannot hold that lock alongside the constraint change.
+ANALYZE "app_listings";

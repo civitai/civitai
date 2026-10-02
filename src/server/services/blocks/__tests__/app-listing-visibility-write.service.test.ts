@@ -52,6 +52,7 @@ import {
   setListingVisibilityAsModerator,
   setListingVisibilityAsOwner,
   VISIBILITY_BLOCK_SUSPENDED_MESSAGE,
+  VISIBILITY_EXCEEDS_REVIEW_CEILING_MESSAGE,
   VISIBILITY_NOT_OWNED_MESSAGE,
   VISIBILITY_STATUS_INELIGIBLE_MESSAGE,
 } from '~/server/services/blocks/app-listing-visibility-write.service';
@@ -68,15 +69,23 @@ let stored: string | null | 'THROW_P2022';
 function installDefaults() {
   row = { id: 'apl_1', slug: 'an-app', status: 'approved', appBlock: { status: 'approved' } };
   stored = null;
+  // 🔴 DISCRIMINATE ON `status`, NOT ON `visibility`. The write path's single row read now
+  // names BOTH (it derives the level from the same read rather than paying a third PK
+  // lookup), so a mock keyed on `'visibility' in select` answers the STATUS read with a
+  // level-only object and every D1 case silently loses its row. That cost a round of red
+  // tests whose message pointed at the wrong gate.
   listing.findUnique.mockImplementation(async (args: unknown) => {
     const select = (args as { select?: Record<string, unknown> })?.select ?? {};
-    if ('visibility' in select) {
-      if (stored === 'THROW_P2022') {
+    if ('status' in select) {
+      // The combined read. P2022 here is what an unapplied migration produces, and the
+      // service re-reads without the column — mirror that by answering the narrow select.
+      if (stored === 'THROW_P2022' && 'visibility' in select) {
         throw Object.assign(new Error('column does not exist'), { code: 'P2022' });
       }
-      return { visibility: stored };
+      return row ? { ...row, visibility: stored === 'THROW_P2022' ? null : stored } : null;
     }
-    return row;
+    // The post-CAS existence probe asks for `id` alone.
+    return row ? { id: 'apl_1' } : null;
   });
   listing.updateMany.mockImplementation(async () => ({ count: 1 }));
   events.create.mockImplementation(async () => ({ id: 'alme_1' }));
@@ -218,6 +227,64 @@ describe('D1 — the status gate', () => {
   });
 });
 
+describe('the REVIEW CEILING', () => {
+  it.each(['draft', 'pending'])(
+    '[NEW] %s refuses a level wider than `moderators`',
+    async (status) => {
+      // 🔴 THE MODERATOR-REVIEW BYPASS THIS CLOSES. Without the ceiling an owner could set
+      // `public` on a never-reviewed listing and the anon-capable catalog endpoints would
+      // serve its unreviewed name, URL and self-declared content rating.
+      row = { id: 'apl_1', slug: 'an-app', status, appBlock: null };
+      for (const tooWide of ['testers', 'public'] as const) {
+        await expect(
+          setListingVisibilityAsOwner({ appListingId: 'apl_1', visibility: tooWide, userId: 9 })
+        ).rejects.toThrow(VISIBILITY_EXCEEDS_REVIEW_CEILING_MESSAGE);
+      }
+      expect(listing.updateMany).not.toHaveBeenCalled();
+      // POSITIVE CONTROL: the ceiling itself is reachable, so the refusals above are the
+      // ceiling and not a blanket refusal on unreviewed listings.
+      await expect(
+        setListingVisibilityAsOwner({ appListingId: 'apl_1', visibility: 'moderators', userId: 9 })
+      ).resolves.toMatchObject({ changed: true });
+    }
+  );
+
+  it('[NEW] a MODERATOR is NOT exempt from the review ceiling', async () => {
+    // The ceiling is a property of what has been REVIEWED, not of who is asking. A
+    // moderator who wants a draft public approves it rather than relabelling it — otherwise
+    // the level becomes a second, unaudited approval path.
+    row = { id: 'apl_1', slug: 'an-app', status: 'draft', appBlock: null };
+    await expect(
+      setListingVisibilityAsModerator({
+        appListingId: 'apl_1',
+        visibility: 'public',
+        moderatorUserId: 3,
+      })
+    ).rejects.toThrow(VISIBILITY_EXCEEDS_REVIEW_CEILING_MESSAGE);
+    expect(events.create).not.toHaveBeenCalled();
+  });
+
+  it('[NEW] an APPROVED listing accepts every level — the ceiling is `public` there', async () => {
+    row = { id: 'apl_1', slug: 'an-app', status: 'approved', appBlock: null };
+    for (const v of ['private', 'moderators', 'testers', 'public'] as const) {
+      stored = null;
+      await expect(
+        setListingVisibilityAsOwner({ appListingId: 'apl_1', visibility: v, userId: 9 })
+      ).resolves.toMatchObject({ visibility: v, changed: true });
+    }
+  });
+
+  it('[INV] the ceiling refusal is DISTINCT from both D1 refusals', async () => {
+    // So a mutant swapping one gate for another is killed by the message rather than by
+    // "something threw". Unlike the D1 messages this one deliberately NAMES the remedy,
+    // because the caller can act on it.
+    expect(VISIBILITY_EXCEEDS_REVIEW_CEILING_MESSAGE).not.toBe(
+      VISIBILITY_STATUS_INELIGIBLE_MESSAGE
+    );
+    expect(VISIBILITY_EXCEEDS_REVIEW_CEILING_MESSAGE).not.toBe(VISIBILITY_BLOCK_SUSPENDED_MESSAGE);
+  });
+});
+
 describe('the compare-and-set write', () => {
   it('[INV] the WHERE re-asserts the ELIGIBLE statuses, derived not hardcoded', async () => {
     // 🔴 A SURVIVING MUTANT WIDENED THIS TO ADMIT `removed`/`rejected`. The `where` is the
@@ -241,6 +308,24 @@ describe('the compare-and-set write', () => {
     await expect(
       setListingVisibilityAsOwner({ appListingId: 'apl_1', visibility: 'testers', userId: 9 })
     ).rejects.toThrow(VISIBILITY_STATUS_INELIGIBLE_MESSAGE);
+  });
+
+  it('[NEW] zero rows PLUS a vanished listing is NOT_FOUND, not a status refusal', async () => {
+    // A refusal naming the wrong cause is the failure mode this branch exists to avoid —
+    // the whole point of distinguishing the concurrency arm is that it is legible.
+    listing.updateMany.mockImplementation(async () => ({ count: 0 }));
+    const base = listing.findUnique.getMockImplementation();
+    listing.findUnique.mockImplementation(async (args: unknown) => {
+      const select = (args as { select?: Record<string, unknown> })?.select ?? {};
+      // The post-CAS existence probe asks for `id` alone — that is the read that must now
+      // answer "gone". The combined status read above still succeeds, which is the whole
+      // point: the row vanished BETWEEN them.
+      if (!('status' in select)) return null;
+      return base ? base(args) : null;
+    });
+    await expect(
+      setListingVisibilityAsOwner({ appListingId: 'apl_1', visibility: 'testers', userId: 9 })
+    ).rejects.toThrow('Listing not found');
   });
 
   it('[NEW] setting the level it already has is an idempotent no-op, not a write', async () => {
