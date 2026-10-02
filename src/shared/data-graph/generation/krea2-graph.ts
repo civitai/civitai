@@ -43,6 +43,8 @@ import type {
   AspectRatioDimensions,
   GenerationAspectRatio,
 } from '~/shared/constants/generation.constants';
+import { fourMegapixelCustomDimensionLimits } from '~/shared/constants/generation.constants';
+import { fitCustomDimensions } from '~/utils/aspect-ratio-helpers';
 
 // =============================================================================
 // Version Constants
@@ -136,17 +138,29 @@ const krea2AspectRatioDimensions = {
   '9:16': { width: 768, height: 1376 },
 } satisfies Partial<Record<GenerationAspectRatio, AspectRatioDimensions>>;
 
-/** 2K doubles each ~1MP bucket to ~4MP. The FAL tiers take `size` + `aspectRatio` only, so they get no tier. */
+/** The FAL tiers take `size` + `aspectRatio` only, so they get no tier. */
 const krea2ResolutionOptions = [
   { label: '1K', value: '1K' },
   { label: '2K', value: '2K' },
 ] as const;
 
+/**
+ * 2K: each ~1MP bucket doubled, then fitted, so every ratio stays inside the comfy
+ * input's 2048 per side and the 4 MP ceiling — a straight doubling sent 16:9 as
+ * 2752 × 1536, which the orchestrator refused. 16:9 at 2K is 2048 × 1152.
+ */
 const krea2AspectRatioOptionsFor = (scale: number) =>
   (Object.keys(krea2AspectRatioDimensions) as (keyof typeof krea2AspectRatioDimensions)[]).map(
     (ratio) => {
       const { width, height } = krea2AspectRatioDimensions[ratio];
-      return { label: ratio, value: ratio, width: width * scale, height: height * scale };
+      const size =
+        scale === 1
+          ? { width, height }
+          : fitCustomDimensions(
+              { width: width * scale, height: height * scale },
+              fourMegapixelCustomDimensionLimits
+            )!;
+      return { label: ratio, value: ratio, ...size };
     }
   );
 
@@ -360,8 +374,12 @@ export const krea2Graph = new DataGraph<
         options: krea2AspectRatioOptionsByResolution[ctx.resolution ?? '1K'],
         defaultValue: '1:1',
         priorityOptions: krea2PriorityRatios,
+        // Comfy builds take any width × height; the FAL tiers a ratio label only.
+        custom: krea2UsesComfyEngine(ctx.model?.id, ctx.workflow)
+          ? fourMegapixelCustomDimensionLimits
+          : undefined,
       }),
-    ['resolution']
+    ['resolution', 'model', 'workflow']
   )
   // Unknown ids are community checkpoints. Only the comfy builds can load one via
   // `diffusionModel`, so they fall back off the FAL tiers — and to the full-step

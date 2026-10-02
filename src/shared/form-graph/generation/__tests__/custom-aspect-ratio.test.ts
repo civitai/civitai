@@ -4,6 +4,7 @@ import { generationGraph } from '~/shared/data-graph/generation/generation-graph
 import type { GenerationCtx } from '~/shared/data-graph/generation/context';
 import { CUSTOM_ASPECT_RATIO } from '~/shared/constants/generation.constants';
 import { MEGAPIXEL } from '~/utils/aspect-ratio-helpers';
+import { krea2VersionIds } from '~/shared/data-graph/generation/krea2-graph';
 
 /**
  * A custom width × height, parsed as the server parses a request. `validateInput`
@@ -99,7 +100,8 @@ describe('custom aspect ratio', () => {
     const { hub, legacy } = parseBoth('Flux1', custom(1536, 640), {
       model: { id: 922358, model: { type: 'Checkpoint' } },
     });
-    expect(hub).toEqual(custom(1440, 640));
+    // Shrunk whole, not just clamped: 1536 × 640 keeps its 2.4:1 as 1440 × 608.
+    expect(hub).toEqual(custom(1440, 608));
     expect(legacy).toEqual(hub);
   });
 
@@ -131,5 +133,49 @@ describe('custom aspect ratio', () => {
     const result = store.validate();
     expect(result.success).toBe(true);
     expect(store.getSnapshot().state.aspectRatio).toEqual(custom(992, 1408));
+  });
+});
+
+describe('Krea 2', () => {
+  const krea2 = (versionId: number, extra: Record<string, unknown>) => {
+    const r = generationHub.parse(
+      {
+        workflow: 'txt2img',
+        ecosystem: 'Krea2',
+        prompt: 'a cat',
+        model: { id: versionId, model: { type: 'Checkpoint' } },
+        ...extra,
+      },
+      ctx
+    ) as { success: boolean; data?: { aspectRatio: Dims } };
+    expect(r.success).toBe(true);
+    return r.data!.aspectRatio;
+  };
+
+  // The 2K tier doubled each bucket: 16:9 went out as 2752 × 1536, which the comfy
+  // input (64–2048 per side) refused. Every 2K size now fits and keeps its ratio.
+  it.each(['16:9', '4:3', '3:2', '1:1', '4:5', '2:3', '9:16'])(
+    'sends 2K %s inside 2048 per side and 4 MP, at that ratio',
+    (ratio) => {
+      const { width, height } = krea2(krea2VersionIds.raw, {
+        resolution: '2K',
+        aspectRatio: ratio,
+      });
+      expect(Math.max(width, height)).toBeLessThanOrEqual(2048);
+      expect(width * height).toBeLessThanOrEqual(4 * MEGAPIXEL);
+      const [a, b] = ratio.split(':').map(Number) as [number, number];
+      expect(Math.abs(width / height - a / b) / (a / b)).toBeLessThan(0.03);
+    }
+  );
+
+  it('takes a custom size on the comfy builds', () => {
+    expect(krea2(krea2VersionIds.raw, { aspectRatio: custom(2048, 1152) })).toEqual(
+      custom(2048, 1152)
+    );
+  });
+
+  // The FAL tiers take a ratio label only: a custom size snaps to the nearest one.
+  it('snaps a custom size to a ratio on the FAL tiers', () => {
+    expect(krea2(krea2VersionIds.medium, { aspectRatio: custom(2048, 1152) }).value).toBe('16:9');
   });
 });

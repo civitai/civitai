@@ -157,6 +157,14 @@ export function fitCustomDimensions(
     height *= scale;
   }
 
+  // A long side past maxSide shrinks BOTH sides: clamping it alone below would turn
+  // 2752 × 1536 (16:9) into 2048 × 1536 (4:3) rather than 2048 × 1152.
+  const longest = Math.max(width, height);
+  if (longest > maxSide) {
+    width *= maxSide / longest;
+    height *= maxSide / longest;
+  }
+
   const snap = (side: number) =>
     Math.min(maxSide, Math.max(minSide, Math.round(side / step) * step));
   width = snap(width);

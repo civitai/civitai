@@ -573,6 +573,7 @@ model User {
   issuedStrikes               UserStrike[]                    @relation("strikeIssuedBy")
   voidedStrikes               UserStrike[]                    @relation("strikeVoidedBy")
   generationPresets           GenerationPreset[]
+  generationSizePresets       GenerationSizePreset[]
   ownedWildcardSets           WildcardSet[]                   @relation("WildcardSetOwner")
   blurbs                      Blurb[]
 
@@ -8151,6 +8152,20 @@ model GenerationPreset {
   @@unique([userId, ecosystem, name])
   @@index([userId])
   @@index([userId, ecosystem])
+}
+
+/// A custom width × height a user saved. One list per user, offered on every
+/// model whose limits accept the size unchanged; greyed out where they don't.
+model GenerationSizePreset {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  width     Int
+  height    Int
+  createdAt DateTime @default(now())
+
+  @@unique([userId, width, height])
+  @@index([userId])
 }
 
 enum WildcardSetKind {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { fitCustomDimensions, type CustomDimensionLimits } from '~/utils/aspect-ratio-helpers';
 import {
   flux1ProCustomDimensionLimits,
+  fourMegapixelCustomDimensionLimits,
   sd1CustomDimensionLimits,
   sdxlCustomDimensionLimits,
 } from '~/shared/constants/generation.constants';
@@ -45,10 +46,18 @@ describe('fitCustomDimensions', () => {
     expect(fit.width / fit.height).toBeLessThanOrEqual(SDXL.maxRatio);
   });
 
+  it('keeps the shape when a side runs past the maximum', () => {
+    // 16:9 at 4 MP is 2731 wide; shrinking both sides keeps it 16:9 (2048 × 1152),
+    // where clamping the width alone gave 4:3.
+    expect(
+      fitCustomDimensions({ width: 2752, height: 1536 }, fourMegapixelCustomDimensionLimits)
+    ).toEqual({ width: 2048, height: 1152 });
+  });
+
   it('holds Flux.1 Pro to its 1440 side', () => {
     expect(
       fitCustomDimensions({ width: 1536, height: 640 }, flux1ProCustomDimensionLimits)
-    ).toEqual({ width: 1440, height: 640 });
+    ).toEqual({ width: 1440, height: 608 });
   });
 
   it('refuses a non-positive or non-numeric request', () => {

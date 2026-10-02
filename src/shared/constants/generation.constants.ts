@@ -813,6 +813,18 @@ export const sd1CustomDimensionLimits = {
   maxRatio: 2.5,
 } as const satisfies CustomDimensionLimits;
 
+/**
+ * Every set of custom limits. A saved size belongs to the user, not to a model: it
+ * is shown wherever it fits, so saving one only needs some model to accept it.
+ */
+export const allCustomDimensionLimits: readonly CustomDimensionLimits[] = [
+  sdxlCustomDimensionLimits,
+  twoMegapixelCustomDimensionLimits,
+  fourMegapixelCustomDimensionLimits,
+  flux1ProCustomDimensionLimits,
+  sd1CustomDimensionLimits,
+];
+
 /** Shown before the picker's "More" button: the three buckets these pickers offered before. */
 export const sdxlFullPriorityAspectRatios = ['3:2', '1:1', '2:3'];
 

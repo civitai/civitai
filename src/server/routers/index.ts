@@ -74,6 +74,9 @@ export const appRouter = router({
   generationPreset: lazy(() =>
     import('./generation-preset.router').then((m) => m.generationPresetRouter)
   ),
+  generationSizePreset: lazy(() =>
+    import('./generation-size-preset.router').then((m) => m.generationSizePresetRouter)
+  ),
   wildcardSet: lazy(() => import('./wildcard-set.router').then((m) => m.wildcardSetRouter)),
   newsletter: lazy(() => import('./newsletter.router').then((m) => m.newsletterRouter)),
   system: lazy(() => import('./system.router').then((m) => m.systemRouter)),

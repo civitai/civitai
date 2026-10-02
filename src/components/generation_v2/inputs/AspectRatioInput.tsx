@@ -5,6 +5,11 @@ import { useCallback, useMemo } from 'react';
 import { CUSTOM_ASPECT_RATIO } from '~/shared/constants/generation.constants';
 import type { CustomDimensionLimits } from '~/utils/aspect-ratio-helpers';
 import { openCustomDimensionsModal } from './CustomDimensionsModal';
+import { useSizePresets, type SizePreset } from './useSizePresets';
+
+/** A saved size's option value: not a ratio label, and never sent as one. */
+const SAVED_PREFIX = 'saved:';
+const savedValue = (preset: SizePreset) => `${SAVED_PREFIX}${preset.id}`;
 
 import {
   OverflowSegmentedControl,
@@ -207,6 +212,32 @@ function CustomOptionDisplay({ value }: { value?: AspectRatioValue }) {
   );
 }
 
+function SavedModalOption({ preset, inSheet }: { preset: SizePreset; inSheet: boolean }) {
+  const preview = getPreviewDimensions(
+    { value: '', width: preset.width, height: preset.height },
+    inSheet ? 64 : 48,
+    inSheet ? 32 : 24
+  );
+  return (
+    <div className={`flex w-full items-center px-3 ${inSheet ? 'gap-4 py-3.5' : 'gap-3 py-2'}`}>
+      <div
+        className={`flex shrink-0 items-center justify-center ${inSheet ? 'h-8 w-16' : 'h-6 w-12'}`}
+      >
+        <Paper
+          withBorder
+          style={{ borderWidth: 2, width: preview.width, height: preview.height }}
+        />
+      </div>
+      <span className={`flex-1 text-left ${inSheet ? 'text-base' : 'text-sm'}`}>
+        {preset.width} × {preset.height}
+      </span>
+      <span className={`${inSheet ? 'text-sm' : 'text-xs'} text-gray-6 dark:text-dark-2`}>
+        Saved
+      </span>
+    </div>
+  );
+}
+
 function CustomModalOption({ selected, inSheet }: { selected: boolean; inSheet: boolean }) {
   const box = inSheet ? 32 : 24;
   return (
@@ -269,6 +300,8 @@ export function AspectRatioInput({
   const selectedAspectRatio = value?.value;
 
   const options = useMemo(() => sortWidestFirst(declaredOptions), [declaredOptions]);
+  // Only the sizes this model accepts: More is for picking, not explaining.
+  const savedSizes = useSizePresets(custom).presets.filter((preset) => preset.fits);
 
   // Without explicit priorityOptions, a list too long for the row shows its middle
   // — the extremes (21:9, 9:21) go behind More rather than squeezing out 1:1.
@@ -284,13 +317,30 @@ export function AspectRatioInput({
   // Convert AspectRatioOption[] to OverflowSegmentedControlOption[]. "Custom" goes
   // last: it is not a ratio, so it has no place in the widest-first order.
   const segmentedOptions: OverflowSegmentedControlOption<string>[] = [
+    // With Custom on offer, More splits into the model's own presets and the
+    // user's sizes; without it, one list with no headings, as before.
     ...options.map((option) => ({
       value: option.value,
       label: <AspectRatioOptionDisplay option={option} />,
+      section: custom ? 'Presets' : undefined,
     })),
     ...(custom
-      ? [{ value: CUSTOM_ASPECT_RATIO, label: <CustomOptionDisplay value={value} /> }]
+      ? [
+          {
+            value: CUSTOM_ASPECT_RATIO,
+            label: <CustomOptionDisplay value={value} />,
+            section: 'Custom',
+          },
+        ]
       : []),
+    // Saved sizes follow Custom: one tap sets that size, no modal.
+    ...savedSizes.map((preset) => ({
+      value: savedValue(preset),
+      label: `${preset.width} × ${preset.height}`,
+      section: 'Custom',
+      // Picking one selects Custom at that size; the saved size itself is never a segment.
+      overflowOnly: true,
+    })),
   ];
 
   // Render the More button
@@ -301,11 +351,13 @@ export function AspectRatioInput({
     (option: OverflowSegmentedControlOption<string>, selected: boolean, inSheet: boolean) => {
       if (option.value === CUSTOM_ASPECT_RATIO)
         return <CustomModalOption selected={selected} inSheet={inSheet} />;
+      const saved = savedSizes.find((preset) => savedValue(preset) === option.value);
+      if (saved) return <SavedModalOption preset={saved} inSheet={inSheet} />;
       const aspectOption = options.find((opt) => opt.value === option.value);
       if (!aspectOption) return null;
       return <ModalOptionDisplay option={aspectOption} selected={selected} inSheet={inSheet} />;
     },
-    [options]
+    [options, savedSizes]
   );
 
   // Opens on the size already chosen, so a bucket the user liked is the starting
@@ -324,12 +376,17 @@ export function AspectRatioInput({
         editCustom();
         return;
       }
+      const saved = savedSizes.find((preset) => savedValue(preset) === newValue);
+      if (saved) {
+        onChange?.({ value: CUSTOM_ASPECT_RATIO, width: saved.width, height: saved.height });
+        return;
+      }
       const option = options.find((opt) => opt.value === newValue);
       if (option) {
         onChange?.(optionToValue(option));
       }
     },
-    [options, onChange, custom, editCustom]
+    [options, onChange, custom, editCustom, savedSizes]
   );
 
   return (

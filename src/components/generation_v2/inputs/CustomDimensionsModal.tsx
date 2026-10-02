@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Badge,
   Button,
   Group,
@@ -11,10 +10,11 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
-import { IconArrowsLeftRight } from '@tabler/icons-react';
+import { IconArrowsLeftRight, IconBookmark, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
+import { useSizePresets } from '~/components/generation_v2/inputs/useSizePresets';
 import {
   MEGAPIXEL,
   fitCustomDimensions,
@@ -205,6 +205,14 @@ function CustomDimensionsModal({
   const portrait = size.height > size.width;
   const currentRatio = size.width / size.height;
 
+  // One list per user; a size this model can't take shows greyed, with why.
+  const sizePresets = useSizePresets(limits);
+  // What Save stores is what Apply would send: a typed side mid-entry is fitted first.
+  const fitted = fitCustomDimensions(size, limits);
+  const alreadySaved =
+    !!fitted &&
+    sizePresets.presets.some((p) => p.width === fitted.width && p.height === fitted.height);
+
   const finish = (dimensions: Dimensions | null) => {
     onResolve(dimensions);
     dialog.onClose();
@@ -263,24 +271,68 @@ function CustomDimensionsModal({
             >
               {megapixels} MP
             </Badge>
-            {/* Its own row under the size it flips, so the size text keeps the whole
-                width and nothing here takes width from the sliders on a phone. */}
-            <Group gap="xs" wrap="nowrap">
-              <ActionIcon
-                variant="default"
-                size="lg"
-                aria-label="Swap width and height"
-                title="Swap width and height"
-                onClick={() => setSize(({ width, height }) => ({ width: height, height: width }))}
-              >
-                <IconArrowsLeftRight size={18} />
-              </ActionIcon>
-            </Group>
           </Stack>
         </Group>
 
-        {/* Change the shape, keep the size. */}
+        {sizePresets.presets.length > 0 && (
+          <Stack gap={4}>
+            <Text size="xs" c="dimmed">
+              Saved
+            </Text>
+            <Group gap={6}>
+              {/* Smallest to largest, so the sizes read as a scale. */}
+              {[...sizePresets.presets]
+                .sort((a, b) => a.width * a.height - b.width * b.height || a.width - b.width)
+                .map((preset) => {
+                  const active = preset.width === size.width && preset.height === size.height;
+                  const label = `${preset.width} × ${preset.height}`;
+                  return (
+                    <Button.Group key={preset.id}>
+                      <Button
+                        size="compact-sm"
+                        variant={active ? 'filled' : 'default'}
+                        aria-pressed={active}
+                        disabled={!preset.fits}
+                        title={
+                          preset.fits
+                            ? undefined
+                            : `Doesn't fit this model — up to ${megapixelsOf(limits.maxArea)} MP, ${
+                                limits.minSide
+                              }–${limits.maxSide} per side`
+                        }
+                        onClick={() => setSize({ width: preset.width, height: preset.height })}
+                      >
+                        {label}
+                      </Button>
+                      <Button
+                        size="compact-sm"
+                        variant="default"
+                        px={6}
+                        aria-label={`Remove saved size ${label}`}
+                        title="Remove"
+                        onClick={() => sizePresets.remove(preset.id)}
+                      >
+                        <IconX size={14} />
+                      </Button>
+                    </Button.Group>
+                  );
+                })}
+            </Group>
+          </Stack>
+        )}
+
+        {/* Change the shape, keep the size — swap included. */}
         <Group gap={6}>
+          <Button
+            size="compact-sm"
+            variant="default"
+            px={6}
+            aria-label="Swap width and height"
+            title="Swap width and height"
+            onClick={() => setSize(({ width, height }) => ({ width: height, height: width }))}
+          >
+            <IconArrowsLeftRight size={16} />
+          </Button>
           {QUICK_RATIOS.map(([a, b]) => {
             const ratio = portrait ? b / a : a / b;
             const label = portrait ? `${b}:${a}` : `${a}:${b}`;
@@ -343,11 +395,28 @@ function CustomDimensionsModal({
               : `Recommended up to ${megapixelsOf(limits.recommendedArea)} MP.`}
           </Text>
         </Stack>
-        <Group justify="flex-end">
-          <Button variant="default" onClick={() => finish(null)}>
-            Cancel
-          </Button>
-          <Button onClick={apply}>Apply</Button>
+        <Group justify="space-between">
+          {/* Saves what Apply would send, for every model in this size group. */}
+          {sizePresets.canSave ? (
+            <Button
+              // Bordered like Cancel: subtle read as a text label sitting in the footer.
+              variant="default"
+              leftSection={<IconBookmark size={16} />}
+              disabled={!fitted || alreadySaved}
+              loading={sizePresets.saving}
+              onClick={() => fitted && sizePresets.save(fitted)}
+            >
+              {alreadySaved ? 'Saved' : 'Save size'}
+            </Button>
+          ) : (
+            <span />
+          )}
+          <Group gap="xs">
+            <Button variant="default" onClick={() => finish(null)}>
+              Cancel
+            </Button>
+            <Button onClick={apply}>Apply</Button>
+          </Group>
         </Group>
       </Stack>
     </Modal>

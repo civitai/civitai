@@ -6,11 +6,28 @@ import { AspectRatioInput } from '~/components/generation_v2/inputs/AspectRatioI
 import { sideRange } from '~/components/generation_v2/inputs/CustomDimensionsModal';
 import {
   CUSTOM_ASPECT_RATIO,
+  sd1AspectRatioBuckets,
+  sd1CustomDimensionLimits,
   sdxlCustomDimensionLimits,
   sdxlFullAspectRatioBuckets,
 } from '~/shared/constants/generation.constants';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../test/component-setup';
+import type * as SizePresetsModule from '~/components/generation_v2/inputs/useSizePresets';
+
+// Saved sizes come from tRPC behind useSizePresets; the picker and modal only read
+// what it returns, so the tests drive it directly. Signed out by default: no saves.
+const sizePresets = vi.hoisted(() => ({
+  presets: [] as { id: number; width: number; height: number; fits: boolean }[],
+  canSave: false,
+  saving: false,
+  save: vi.fn(),
+  remove: vi.fn(),
+}));
+vi.mock('~/components/generation_v2/inputs/useSizePresets', async (importOriginal) => ({
+  ...(await importOriginal<typeof SizePresetsModule>()),
+  useSizePresets: () => sizePresets,
+}));
 
 // The picker imposes one order — widest first — whatever order an ecosystem
 // declares its options in, and a pick from "More" lands in its place in that
@@ -146,7 +163,11 @@ describe('AspectRatioInput "More"', () => {
 describe('AspectRatioInput "Custom"', () => {
   // dialogStore is a module-level store that outlives each render: a modal one test
   // leaves open would be reused (same id) by the next, with the old test's callbacks.
-  afterEach(() => useDialogStore.getState().closeAll());
+  afterEach(() => {
+    useDialogStore.getState().closeAll();
+    Object.assign(sizePresets, { presets: [], canSave: false });
+    vi.clearAllMocks();
+  });
 
   const custom = (width: number, height: number) => ({
     value: CUSTOM_ASPECT_RATIO,
@@ -321,6 +342,135 @@ describe('AspectRatioInput "Custom"', () => {
 
     await userEvent.fill(modal().getByRole('textbox', { name: 'Width' }), '1344');
     await expect.element(readout()).toHaveTextContent('1344 × 1024');
+  });
+
+  // Saved sizes: per size group, offered in the modal and straight from More.
+  test('Save stores the size Apply would send', async () => {
+    sizePresets.canSave = true;
+    renderCustom(custom(1024, 1024));
+    await userEvent.click(customSegment());
+
+    await userEvent.fill(modal().getByRole('textbox', { name: 'Width' }), '1000');
+    await userEvent.click(modal().getByRole('button', { name: 'Save size' }));
+    expect(sizePresets.save).toHaveBeenCalledWith({ width: 992, height: 1024 });
+  });
+
+  test('signed out, there is no Save', async () => {
+    renderCustom(custom(1024, 1024));
+    await userEvent.click(customSegment());
+    await expect.element(readout()).toBeInTheDocument();
+    await expect
+      .element(modal().getByRole('button', { name: 'Save size' }))
+      .not.toBeInTheDocument();
+  });
+
+  test('the modal lists saved sizes smallest to largest', async () => {
+    Object.assign(sizePresets, {
+      canSave: true,
+      // Newest first, as the server returns them.
+      presets: [
+        { id: 1, width: 1536, height: 640, fits: true },
+        { id: 2, width: 1536, height: 1536, fits: true },
+        { id: 3, width: 832, height: 1216, fits: true },
+      ],
+    });
+    renderCustom(custom(1024, 1024));
+    await userEvent.click(customSegment());
+
+    await expect.element(modal().getByText('Saved', { exact: true })).toBeInTheDocument();
+    const order = [...document.querySelectorAll('[role=dialog] button')]
+      .map((b) => b.textContent ?? '')
+      .filter((text) => /^\d+ × \d+$/.test(text));
+    expect(order).toEqual(['1536 × 640', '832 × 1216', '1536 × 1536']);
+  });
+
+  test('a saved size applies from the modal, and can be removed there', async () => {
+    Object.assign(sizePresets, {
+      canSave: true,
+      presets: [{ id: 5, width: 1536, height: 640, fits: true }],
+    });
+    renderCustom(custom(1024, 1024));
+    await userEvent.click(customSegment());
+
+    await userEvent.click(modal().getByRole('button', { name: '1536 × 640', exact: true }));
+    await expect.element(readout()).toHaveTextContent('1536 × 640');
+
+    await userEvent.click(modal().getByRole('button', { name: 'Remove saved size 1536 × 640' }));
+    expect(sizePresets.remove).toHaveBeenCalledWith(5);
+  });
+
+  test('More splits into the model presets and the user sizes', async () => {
+    await page.viewport(1440, 900);
+    Object.assign(sizePresets, {
+      canSave: true,
+      presets: [{ id: 5, width: 1536, height: 640, fits: true }],
+    });
+    renderCustom(toValue('1:1'));
+
+    await userEvent.click(page.getByText('More'));
+    await expect.element(page.getByText('Presets', { exact: true })).toBeInTheDocument();
+    // Custom and the saved size share the second heading.
+    await expect.element(page.getByText('Custom', { exact: true }).last()).toBeInTheDocument();
+    await expect.element(page.getByText('1536 × 640')).toBeInTheDocument();
+  });
+
+  // One list per user: a size this model can't take is greyed in the modal, with
+  // why, and left out of More.
+  test("a saved size this model can't take is greyed in the modal and absent from More", async () => {
+    await page.viewport(1440, 900);
+    Object.assign(sizePresets, {
+      canSave: true,
+      presets: [{ id: 6, width: 2048, height: 2048, fits: false }],
+    });
+    renderCustom(custom(1024, 1024));
+
+    await userEvent.click(customSegment());
+    const saved = modal().getByRole('button', { name: '2048 × 2048', exact: true });
+    await expect.element(saved).toBeDisabled();
+    await expect
+      .element(saved)
+      .toHaveAttribute('title', expect.stringContaining("Doesn't fit this model"));
+    await userEvent.click(modal().getByRole('button', { name: 'Cancel' }));
+
+    await userEvent.click(page.getByText('More'));
+    await expect.element(page.getByText('2048 × 2048')).not.toBeInTheDocument();
+  });
+
+  // SD1 has three ratios: with Custom and a saved size the row had room for all
+  // five, so the saved size became a segment and More vanished.
+  test('a saved size never becomes a segment, even with room in the row', async () => {
+    Object.assign(sizePresets, {
+      canSave: true,
+      presets: [{ id: 7, width: 512, height: 640, fits: true }],
+    });
+    renderWithProviders(
+      <div style={{ width: 800 }}>
+        <AspectRatioInput
+          value={{ value: '1:1', width: 512, height: 512 }}
+          options={sd1AspectRatioBuckets}
+          custom={sd1CustomDimensionLimits}
+          onChange={vi.fn()}
+        />
+      </div>
+    );
+
+    await vi.waitFor(() => expect(rowValues()).toEqual(['3:2', '1:1', '2:3', 'custom']));
+    await expect.element(page.getByText('More')).toBeInTheDocument();
+  });
+
+  test('a saved size under More sets the size in one tap, no modal', async () => {
+    await page.viewport(1440, 900);
+    Object.assign(sizePresets, {
+      canSave: true,
+      presets: [{ id: 5, width: 1536, height: 640, fits: true }],
+    });
+    const onChange = renderCustom(toValue('1:1'));
+
+    await userEvent.click(page.getByText('More'));
+    await userEvent.click(page.getByText('1536 × 640'));
+
+    expect(onChange).toHaveBeenCalledWith(custom(1536, 640));
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
   });
 
   test('Apply fits a typed out-of-range size instead of sending it', async () => {

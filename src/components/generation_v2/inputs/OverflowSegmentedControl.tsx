@@ -12,7 +12,7 @@
  * - Built-in popover for selecting from all options; a bottom sheet on a phone
  */
 
-import { Popover, SegmentedControl, Text } from '@mantine/core';
+import { Popover, ScrollArea, SegmentedControl, Text } from '@mantine/core';
 import { IconDots } from '@tabler/icons-react';
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { MobileMenuDrawer } from '~/components/Drawer/MobileMenuDrawer';
@@ -25,6 +25,16 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 export interface OverflowSegmentedControlOption<T extends string = string> {
   value: T;
   label: ReactNode;
+  /**
+   * The heading this option sits under in the "More" list. Consecutive options with
+   * the same section share one heading; with none set the list has no headings.
+   */
+  section?: string;
+  /**
+   * Listed under "More" only, never as a segment — even when the row has room for
+   * every option, which would otherwise leave no More at all.
+   */
+  overflowOnly?: boolean;
 }
 
 export interface OverflowSegmentedControlProps<T extends string = string> {
@@ -128,7 +138,33 @@ interface OptionGridProps<T extends string> {
   inSheet?: boolean;
 }
 
-function OptionGrid<T extends string>({
+/** The "More" list: one grid per section, each under its heading when sections are set. */
+function OptionGrid<T extends string>(props: OptionGridProps<T>) {
+  const sections: { title?: string; options: OverflowSegmentedControlOption<T>[] }[] = [];
+  for (const option of props.options) {
+    const last = sections[sections.length - 1];
+    if (last && last.title === option.section) last.options.push(option);
+    else sections.push({ title: option.section, options: [option] });
+  }
+  if (sections.length === 1 && !sections[0]!.title) return <OptionGridSection {...props} />;
+
+  return (
+    <div className="flex flex-col gap-2 p-2">
+      {sections.map((section) => (
+        <div key={section.title ?? ''} className="flex flex-col gap-1">
+          {section.title && (
+            <Text size="xs" fw={600} c="dimmed" tt="uppercase" px={4}>
+              {section.title}
+            </Text>
+          )}
+          <OptionGridSection {...props} options={section.options} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function OptionGridSection<T extends string>({
   options,
   value,
   disabled,
@@ -240,17 +276,19 @@ export function OverflowSegmentedControl<T extends string = string>({
 
   // Determine which options to show
   const { visibleOptions, showMoreButton } = useMemo(() => {
+    // Overflow-only options never take a segment, so they alone call for More.
+    const rowOptions = options.filter((opt) => !opt.overflowOnly);
     // Check if we need a More button (can't fit all options in visible count)
-    const needsMoreButton = options.length > visibleCount;
+    const needsMoreButton = options.length > visibleCount || rowOptions.length < options.length;
 
     // Calculate available slots (reserve 1 for More button if needed)
     const availableSlots = needsMoreButton ? visibleCount - 1 : visibleCount;
 
     // Determine base options to consider (priority or all)
-    let baseOptions = options;
+    let baseOptions = rowOptions;
     if (priorityOptions && priorityOptions.length > 0) {
       const prioritySet = new Set(priorityOptions);
-      baseOptions = options.filter((opt) => prioritySet.has(opt.value));
+      baseOptions = rowOptions.filter((opt) => prioritySet.has(opt.value));
     }
 
     // Take first N options
@@ -382,14 +420,17 @@ export function OverflowSegmentedControl<T extends string = string>({
             <span className="absolute bottom-0 right-0 top-0 w-px" />
           </Popover.Target>
           <Popover.Dropdown p={0}>
-            <OptionGrid
-              options={options}
-              value={value}
-              disabled={disabled}
-              onSelect={handlePopoverSelect}
-              renderOption={renderOption}
-              gridColumns={gridColumns}
-            />
+            {/* Saved sizes can make the list taller than the screen: it scrolls. */}
+            <ScrollArea.Autosize mah="min(60vh, 480px)" type="auto">
+              <OptionGrid
+                options={options}
+                value={value}
+                disabled={disabled}
+                onSelect={handlePopoverSelect}
+                renderOption={renderOption}
+                gridColumns={gridColumns}
+              />
+            </ScrollArea.Autosize>
           </Popover.Dropdown>
         </Popover>
       )}
