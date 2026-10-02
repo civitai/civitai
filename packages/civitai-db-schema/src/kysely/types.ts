@@ -2934,6 +2934,7 @@ export type JobQueue = {
   entityType: EntityType;
   entityId: number;
   createdAt: Generated<Timestamp>;
+  data: unknown | null;
 };
 export type KeyValue = {
   key: string;
