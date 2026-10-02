@@ -60,6 +60,12 @@ enters the flow.
 are present, grouped by family with versions. Re-mirror by hand when the trainer's list changes; if
 `trainingModelInfo` ever moves to a `packages/civitai-*`, import it instead.
 
+A card's `flagKey` (its per-model Flipt gate) is evaluated by the shell in `/new`'s load, but the
+main-app embed can't ask Flipt: every key must also be in `studioModelFlagFeatures`
+(`src/utils/training.ts`), or the card is hidden on `/training-studio` for everyone. That is pinned by
+`src/utils/__tests__/new-training-models.test.ts` in the **root** unit suite — this app's own `test`
+does not run it.
+
 ## Tests
 
 Node-env vitest over the plain modules only (`vitest.config.ts`, project `app:training-studio`; run

@@ -80,5 +80,9 @@
 {#if !ready}
   <p class="p-6 font-mono text-sm text-dark-2">Waiting for a host context…</p>
 {:else}
-  <StudioApp {location} {reloadTick} />
+  <StudioApp
+    {location}
+    {reloadTick}
+    enabledModelFlags={studioHost?.config.enabledModelFlags}
+  />
 {/if}
