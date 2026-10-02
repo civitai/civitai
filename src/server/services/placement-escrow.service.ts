@@ -922,6 +922,23 @@ async function payOutPlacement(placement: PlacementRow) {
 }
 
 /**
+ * Whether every Buzz of a paid placement's amount has been receipted into the
+ * escrow. False while a hold is in flight or after one failed.
+ */
+export const isPlacementEscrowFunded = async ({
+  placementId,
+  amount,
+}: {
+  placementId: number;
+  amount: number;
+}) => {
+  const held = await heldAmountsFor(placementId);
+  let total = 0;
+  for (const value of held.values()) total += value;
+  return total >= amount;
+};
+
+/**
  * What is actually sitting in the escrow account for this placement.
  *
  * **Receipted holds only.** A claimed-but-unpaid hold is a leg that was planned

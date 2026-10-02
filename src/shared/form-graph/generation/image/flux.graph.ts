@@ -2,7 +2,8 @@ import { branch, defineGraph } from 'form-graph';
 import { fluxControlNetPreprocessors } from '~/shared/constants/controlnets.constants';
 import { checkpointDef } from '../checkpoint';
 import {
-  SDXL_SQUARE_AR,
+  FLUX1_PRO_AR,
+  SDXL_FULL_AR,
   SEED,
   aspectRatioDef,
   boolDef,
@@ -24,12 +25,6 @@ import {
  * prompt, no sampler, no CLIP skip. The MODE (draft/standard/pro/krea/ultra)
  * derives from the model version id and picks the mode branch; the mounted
  * branch's pick sees `model` because ctx-so-far merges over ext.
- *
- * The draft coupling is v1's two sync effects, resolved at parse the way the
- * oracle resolves them (probed 2026-09-01): the WORKFLOW wins — a draft
- * workflow forces the draft model even over an explicit selection, and a
- * non-draft workflow snaps the draft model back to standard. Both are
- * `correct` policies on the model, keyed on the upstream workflow.
  */
 
 // ---- copied from flux-graph.ts, which dies with the data-graph engine -------
@@ -67,7 +62,7 @@ const fluxUltraAspectRatios = [
 /** One lookup for the graph AND the handler — the lanes cannot drift. */
 export const fluxModeOf = versionModeOf(fluxVersionIds, 'standard');
 
-const AR = SDXL_SQUARE_AR;
+const AR = SDXL_FULL_AR;
 const AR_ULTRA = aspectRatioDef({ options: fluxUltraAspectRatios, default: '1:1' });
 const CFG = sliderDef({
   min: 2,
@@ -84,7 +79,7 @@ type FluxModeExt = FamilyExt & { model?: ResourceData | number };
 const draft = defineGraph<FluxModeExt>().field('aspectRatio', AR).field('seed', SEED);
 
 const pro = defineGraph<FluxModeExt>()
-  .field('aspectRatio', AR)
+  .field('aspectRatio', FLUX1_PRO_AR)
   .field('cfgScale', CFG)
   .field('steps', STEPS)
   .field('seed', SEED);
@@ -113,35 +108,14 @@ const modes = branch('fluxMode', (ext: FluxModeExt) => fluxModeOf(ext.model), {
 });
 
 export const flux = defineGraph<FamilyExt>({ scope: familyScope })
-  .field('model', ({ _ext }) => {
-    const isDraftWorkflow = _ext.workflow === 'txt2img:draft';
-    const base = checkpointDef({
+  .field('model', ({ _ext }) =>
+    checkpointDef({
       ecosystem: _ext.ecosystem,
       workflow: _ext.workflow,
       ext: _ext,
       versions: { options: fluxModeVersionOptions },
-      modelLocked: isDraftWorkflow,
-    });
-    return {
-      ...base,
-      correct: (value) => {
-        const isDraftModel = value?.id === fluxVersionIds.draft;
-        if (isDraftWorkflow && !isDraftModel) {
-          return {
-            value: { id: fluxVersionIds.draft, model: { type: 'Checkpoint' } } as ResourceData,
-            reason: 'draft_workflow_forces_draft_model',
-          };
-        }
-        if (!isDraftWorkflow && isDraftModel) {
-          return {
-            value: { id: fluxVersionIds.standard, model: { type: 'Checkpoint' } } as ResourceData,
-            reason: 'draft_model_needs_draft_workflow',
-          };
-        }
-        return base.correct?.(value);
-      },
-    };
-  })
+    })
+  )
   .use(modes)
   .use(promptOnlyTextBlock);
 

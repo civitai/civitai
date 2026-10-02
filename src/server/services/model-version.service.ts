@@ -2853,17 +2853,18 @@ export const createModelVersionPostFromTraining = async ({
 
   const uploadedImages = (
     await Promise.all(
-      imageUrls.map(async (data, index) => {
-        const image = await uploadImageFromUrl({
-          imageUrl: typeof data === 'string' ? data : data.image_url,
-        });
-
-        return image;
+      imageUrls.map(async (data) => {
+        const imageUrl = typeof data === 'string' ? data : data.image_url;
+        // '' is a failed sample's slot; uploading it throws and fails the whole publish.
+        if (!imageUrl) return undefined;
+        return uploadImageFromUrl({ imageUrl });
       })
     )
-  ).filter((x) => isDefined(x?.url));
+  ).filter((x): x is NonNullable<typeof x> => isDefined(x?.url));
 
-  // Create post:
+  // No post rather than an empty one: publishPrivateModelVersionHandler skips any version that already has a post.
+  if (!uploadedImages.length) return;
+
   const post = await createPost({
     userId: user.id,
     isModerator: user.isModerator,

@@ -1,7 +1,7 @@
 import { branch, defineGraph } from 'form-graph';
 import { animaControlNetPreprocessors } from '~/shared/constants/controlnets.constants';
 import { checkpointDef } from '../checkpoint';
-import { SDXL_SQUARE_AR, SEED, controlNetsDef, selectDef } from '../defs';
+import { SDXL_FULL_AR, SEED, controlNetsDef, selectDef } from '../defs';
 import {
   familyResources,
   familyScope,
@@ -74,7 +74,7 @@ export const anima = defineGraph<FamilyExt>({ scope: familyScope })
   )
   .field('resources', familyResources)
   .field('seed', SEED)
-  .field('aspectRatio', SDXL_SQUARE_AR)
+  .field('aspectRatio', SDXL_FULL_AR)
   .use(variants)
   .field(
     'sampler',

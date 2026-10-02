@@ -49,6 +49,8 @@ type VideoProps = Omit<
   disablePoster?: boolean;
   /** Database image ID — included in drag data so drop targets can look up metadata server-side */
   imageId?: number;
+  /** Play after a second of hover when not autoplaying. */
+  hoverPlay?: boolean;
 };
 
 export type EdgeVideoRef = {
@@ -88,6 +90,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       disableWebm,
       disablePoster,
       imageId,
+      hoverPlay = true,
       onLoad,
       onError,
       onLoadedData,
@@ -436,8 +439,8 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
             onMutedChange?.(nextMuted);
           }}
           playsInline
-          onMouseOver={!options?.anim ? handleMouseEnter : undefined}
-          onMouseLeave={!options?.anim ? handleMouseLeave : undefined}
+          onMouseOver={!options?.anim && hoverPlay ? handleMouseEnter : undefined}
+          onMouseLeave={!options?.anim && hoverPlay ? handleMouseLeave : undefined}
           autoPlay={!!(options?.anim && disablePoster)}
           loop
           poster={!disablePoster ? coverUrl : undefined}

@@ -133,6 +133,8 @@ import type {
   ShopifyMerchOrderStatus,
   OutboxEntity,
   UserHubSourceType,
+  CrucibleStatus,
+  CrucibleIngestionStatus,
 } from './enums';
 
 export type Account = {
@@ -2429,6 +2431,53 @@ export type CreatorGalleryHiddenUser = {
   userId: number;
   note: string | null;
   createdAt: Generated<Timestamp>;
+};
+export type Crucible = {
+  id: Generated<number>;
+  userId: number;
+  name: string;
+  description: string | null;
+  imageId: number | null;
+  heroImageId: number | null;
+  buzzType: Generated<string>;
+  nsfwLevel: Generated<number>;
+  contentType: Generated<MediaType>;
+  entryFee: Generated<number>;
+  seededPrizePool: Generated<number>;
+  prizePool: Generated<number>;
+  entryLimit: Generated<number>;
+  freeEntriesPerUser: Generated<number>;
+  maxTotalEntries: number | null;
+  minViewSeconds: number | null;
+  maxClipSeconds: number | null;
+  prizePositions: Generated<unknown>;
+  allowedResources: unknown | null;
+  duration: Generated<number>;
+  startAt: Timestamp | null;
+  endAt: Timestamp | null;
+  status: Generated<CrucibleStatus>;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+  buzzTransactionId: string | null;
+  seedTransactionId: string | null;
+  ingestion: Generated<CrucibleIngestionStatus>;
+  scannedAt: Timestamp | null;
+  textNsfw: Generated<boolean>;
+};
+export type CrucibleEntry = {
+  id: Generated<number>;
+  crucibleId: number;
+  userId: number;
+  imageId: number | null;
+  score: Generated<number>;
+  voteCount: Generated<number>;
+  position: number | null;
+  buzzTransactionId: string | null;
+  createdAt: Generated<Timestamp>;
+};
+export type CrucibleReport = {
+  crucibleId: number;
+  reportId: number;
 };
 export type CryptoDeposit = {
   paymentId: string;
@@ -4839,6 +4888,9 @@ export type DB = {
   CosmeticShopSectionItem: CosmeticShopSectionItem;
   CoveredCheckpoint: CoveredCheckpoint;
   CreatorGalleryHiddenUser: CreatorGalleryHiddenUser;
+  Crucible: Crucible;
+  CrucibleEntry: CrucibleEntry;
+  CrucibleReport: CrucibleReport;
   CryptoDeposit: CryptoDeposit;
   CryptoTransaction: CryptoTransaction;
   CryptoWallet: CryptoWallet;

@@ -2252,12 +2252,22 @@ export function IframeHost({
     modelCtx.slotId,
   ]);
 
-  // Checkpoint picker: the block fires OPEN_CHECKPOINT_PICKER with the
-  // ecosystem group (e.g. 'Flux1') it wants restricted to. We open the
-  // platform's existing ResourceSelectModal filtered to Checkpoints in that
-  // family, then post the selection back via CHECKPOINT_PICKER_RESULT.
-  // Empty `selected` means the user closed without picking — the block's
-  // SDK promise resolves to `{ selected: undefined }`.
+  // Checkpoint picker: the block fires OPEN_CHECKPOINT_PICKER, OPTIONALLY with
+  // an ecosystem group (e.g. 'Flux1') to restrict the pick to. We open the
+  // platform's existing ResourceSelectModal on Checkpoints — narrowed to that
+  // family when a group was sent, and NOT narrowed at all when one was not (an
+  // absent group means "every checkpoint the viewer can generate with", see the
+  // detail on `groupKey` below) — then post the selection back via
+  // CHECKPOINT_PICKER_RESULT. Empty `selected` means the user closed without
+  // picking — the block's SDK promise resolves to `{ selected: undefined }`.
+  //
+  // The group is OPTIONAL, and that is the normal case rather than the
+  // exception: a block that passes the family it is already in pins its viewer
+  // to that ecosystem forever. This summary used to say the block sends "the
+  // ecosystem group it wants restricted to" and that we open the modal
+  // "filtered to Checkpoints in that family", full stop — which reads as though
+  // an unconstrained pick were unsupported, and is the exact misreading that
+  // made SDK callers over-constrain in the first place.
   useEffect(() => {
     const off = onMessage<
       { requestId?: unknown; baseModelGroup?: unknown; currentVersionId?: unknown } | undefined
@@ -2267,9 +2277,25 @@ export function IframeHost({
       // The block may send either an ecosystem key ('Flux1') or a baseModel
       // name ('Flux.1 D'). Normalize through getBaseModelGroup — it accepts
       // both forms and returns the ecosystem key, which is what
-      // getBaseModelsByGroup expects. Empty filter → no checkpoints at all
-      // rather than all checkpoints, since "all" includes incompatible
-      // families that would 400 at submit.
+      // getBaseModelsByGroup expects. An ABSENT baseModelGroup → groupKey null →
+      // baseModels:[] → NO baseModel narrowing: the modal emits the bare
+      // `type = Checkpoint` clause and returns ALL checkpoints (still gated by
+      // `canGenerate`). That is safe because the server is the authority on
+      // family compatibility at spend — an incompatible pick is rejected there,
+      // not silently filtered out of the picker here.
+      //
+      // This comment used to claim an empty filter yielded "no checkpoints at
+      // all rather than all checkpoints". It was wrong: the empty array is
+      // special-cased as "no narrowing" by ResourceSelectProvider, by
+      // `selectableVersions` in resource-select.types, and by the query builder
+      // in resource-select.service.
+      //
+      // 🔴 An EMPTY STRING is not the same as absent here. `getBaseModelGroup('')`
+      // returns the REAL ecosystem key 'Other', so `baseModelGroup: ''` narrows
+      // the picker to the Other family rather than widening it. Unlike the page
+      // host — whose resolveCheckpointPickerRequest strips '' to undefined —
+      // this handler passes any string straight through, so a block wanting an
+      // unconstrained pick must OMIT the key.
       const groupKey =
         typeof raw.baseModelGroup === 'string' ? getBaseModelGroup(raw.baseModelGroup) : null;
       const baseModels = groupKey ? getBaseModelsByGroup(groupKey) : [];

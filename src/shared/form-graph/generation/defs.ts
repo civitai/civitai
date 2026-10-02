@@ -2,7 +2,12 @@ import { z } from 'zod';
 import { rootScope } from 'form-graph';
 import type { FieldDef } from 'form-graph';
 import type { VersionGroup } from './checkpoint';
-import { MAX_SEED, sdxlAspectRatioBuckets } from '~/shared/constants/generation.constants';
+import {
+  MAX_SEED,
+  flux1ProAspectRatioBuckets,
+  sdxlFullAspectRatioBuckets,
+  sdxlFullPriorityAspectRatios,
+} from '~/shared/constants/generation.constants';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 import { snippetReferenceSchema } from '~/shared/data-graph/schemas/snippet-schema';
 import {
@@ -141,13 +146,22 @@ export const aspectRatioDef = cachedFactory(function aspectRatioDef(opts: {
     // Output checks SHAPE, not membership, so an out-of-set ratio would validate
     // and be submitted rather than blocked — the quiet half of the same problem
     // the other defs' `correct` hooks solve loudly.
-    correct: (value) =>
-      options.some((o) => o.value === value.value)
-        ? undefined
-        : {
-            value: toValue(findClosestAspectRatio(value, options)),
-            reason: 'ratio_unavailable',
-          },
+    //
+    // Membership is by label AND size: Flux Ultra's 16:9 is 2752×1536 and
+    // Standard's is 1344×768, and the modes share one aspectRatio, so a label-only
+    // check left Ultra's size in state after a switch. (The server re-parses through
+    // `input` and generated the right size; only the client state was wrong.)
+    correct: (value) => {
+      const exact = options.find((o) => o.value === value.value);
+      if (!exact)
+        return {
+          value: toValue(findClosestAspectRatio(value, options)),
+          reason: 'ratio_unavailable',
+        };
+      if (exact.width !== value.width || exact.height !== value.height)
+        return { value: toValue(exact), reason: 'ratio_resized' };
+      return undefined;
+    },
     meta: { options, ...(opts.priorityOptions ? { priorityOptions: opts.priorityOptions } : {}) },
   } satisfies FieldDef<AspectRatioValue, AspectRatioMeta>;
 });
@@ -468,7 +482,7 @@ export const defaultSamplerPresets = [
 
 // --- quantity -------------------------------------------------------------------
 
-/** common.ts `quantityNode`: min and default both equal the step (draft = 4s). */
+/** common.ts `quantityNode`: min and default both equal the step. */
 export const quantityDef = cachedFactory(function quantityDef(opts: {
   max: number;
   step?: number;
@@ -784,4 +798,16 @@ export const guidancePresetsLowBalHigh = [
   { label: 'High', value: 7 },
 ];
 
-export const SDXL_SQUARE_AR = aspectRatioDef({ options: sdxlAspectRatioBuckets, default: '1:1' });
+/** All nine SDXL buckets: 3:2 / 1:1 / 2:3 in the row, the rest behind More. */
+export const SDXL_FULL_AR = aspectRatioDef({
+  options: sdxlFullAspectRatioBuckets,
+  priorityOptions: sdxlFullPriorityAspectRatios,
+  default: '1:1',
+});
+
+/** SDXL_FULL_AR minus the buckets over Flux.1 Pro's 1440 side limit. */
+export const FLUX1_PRO_AR = aspectRatioDef({
+  options: flux1ProAspectRatioBuckets,
+  priorityOptions: sdxlFullPriorityAspectRatios,
+  default: '1:1',
+});

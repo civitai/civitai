@@ -77,14 +77,23 @@ export type BlockHostSurface =
   /** Moderator review surfaces (review modal + full-page preview). */
   | 'review-preview'
   /**
-   * The PRIVATE RUN of a DELISTED / SUSPENDED app, `/apps/private-run/<slug>`, for its
+   * The PRIVATE RUN of a DELISTED / SUSPENDED app, served by `/apps/run/<slug>`'s own
+   * fallback (the dedicated `/apps/private-run/<slug>` route was removed), for its
    * owner, an accepted listing collaborator, or a moderator. 🔴 Never eligible — see
    * the unconditional refusal in `blockInitFragmentEnabledWith`.
    */
   | 'private-run';
 
 /**
- * Where a block's own client router may push a sub-path, per surface.
+ * Where a block's own client router may push an APP-SCOPED sub-path, per surface.
+ *
+ * 🔴 SCOPE, since #5209: this map governs the APP-SCOPED half of `NAVIGATE` only —
+ * a payload with `scope: 'app'`, which is the default. A `scope: 'site'` request
+ * does not pass through a base at all; whether a surface may serve one is a
+ * SEPARATE per-surface capability, `BLOCK_HOST_SITE_NAVIGATION` below. One
+ * concern each: this map answers "where does an in-app sub-path go?", that one
+ * answers "may a block move the viewer off the app?". They are deliberately not
+ * folded together — `private-run` says yes to the first and no to the second.
  *
  * 🔴 A TOTAL `Record`, NOT A TERNARY, AND THAT IS THE WHOLE VALUE OF IT. `PageBlockHost`
  * handles a block's `NAVIGATE` request by pushing `<base>/<slug>/<path>`, and the base
@@ -101,21 +110,33 @@ export type BlockHostSurface =
  * reach it and does push `/apps/run/<slug>` — pushing the author off their tunnel onto
  * the public route. Recorded as `'/apps/run'` here because that IS today's behaviour and
  * this change must not alter it; naming it is what makes it fixable. `null` is reserved
- * for a surface that should drop the navigation instead, which is probably what the dev
- * tunnel and the review preview both want.
+ * for a surface that should drop the navigation instead — which is what the REVIEW
+ * PREVIEW now does (see its entry below). The dev tunnel probably wants the same and
+ * still does not have it; that is a separate, load-bearing decision about the author's
+ * own surface, not a tidy-up to fold into this one.
  *
  * ⚠️ `model-slot` IS `null` AND THAT IS NOT A BEHAVIOUR CHANGE — verified rather than
  * assumed, because the ternary this replaced gave every non-private surface
  * `/apps/run`. `PageBlockHost` is never mounted with `surface: 'model-slot'` in
- * production: its FOUR production mounts are the public run route (`page-run`), the
- * private run route (`private-run`), `/apps/dev/<blockId>` (`dev-tunnel`) and
- * `~/components/Apps/ReviewBlockPreviewHost` (`review-preview`) — the moderator's live
- * preview, which the paragraph above names and which this enumeration used to omit.
+ * production: its THREE production mount sites pass FOUR surfaces between them —
+ * `src/pages/apps/run/[slug]/[[...path]].tsx` passes `hostSurfaceFor(audience)`, which
+ * is `page-run` OR `private-run`; `src/pages/apps/dev/[blockId].tsx` passes
+ * `dev-tunnel`; and `~/components/Apps/ReviewBlockPreviewHost` passes `review-preview`
+ * — the moderator's live preview, which the paragraph above names and which this
+ * enumeration used to omit.
+ * ⚠️ IT SAID "FOUR PRODUCTION MOUNTS … the private run route (`private-run`)" AND BOTH
+ * HALVES WERE FALSIFIED BY #5255, which deleted `/apps/private-run/<slug>` and moved
+ * the private run onto the run route's own fallback. Re-measured by enumerating every
+ * non-test `surface=` / `surface:` site: three mounts, four surfaces. The distinction
+ * is not pedantic here — this enumeration IS the evidence for the no-behaviour-change
+ * claim below, so a reader auditing which mounts reach this map would go looking for a
+ * route file that no longer exists.
  * ⚠️ That omission mattered in the direction that weakens the argument: this list IS the
  * evidence for the no-behaviour-change claim, and `review-preview` is one of the surfaces
- * whose base is now LOOKED UP rather than defaulted. It maps to `/apps/run`, which is
- * exactly what the ternary it replaced produced — so the claim holds, but it now rests on
- * a complete enumeration rather than one missing its only non-obvious member. The model slot is `IframeHost`, a SEPARATE component
+ * whose base is now LOOKED UP rather than defaulted. ⚠️ It mapped to `/apps/run` when this
+ * paragraph was written, and since #5209 it maps to `null` — for a reason recorded at its
+ * own entry, and STILL without a behaviour change, because the value was never reachable.
+ * The model slot is `IframeHost`, a SEPARATE component
  * with its own message handlers, which uses the string only to call
  * `blockInitFragmentEnabled` directly. So this entry is unreachable today, and `null` is
  * the honest value — a model slot has no page route to deep-link into, so inheriting the
@@ -125,8 +146,81 @@ export const BLOCK_HOST_DEEP_LINK_BASE: Record<BlockHostSurface, string | null> 
   'model-slot': null,
   'page-run': '/apps/run',
   'dev-tunnel': '/apps/run',
-  'review-preview': '/apps/run',
-  'private-run': '/apps/private-run',
+  // 🔴 `null` SINCE #5209, AND IT IS STILL NOT A BEHAVIOUR CHANGE. It read
+  // `'/apps/run'` to preserve the ternary this map replaced — but that value was
+  // never reachable: the NAVIGATE handler returns early on the `reviewMode` prop,
+  // and the ONE mount that passes `surface: 'review-preview'`
+  // (`~/components/Apps/ReviewBlockPreviewHost`) also passes `reviewMode`. So the
+  // two were a single condition expressed twice, coupled only by that mount
+  // remembering to pass both props.
+  //
+  // What changed is the STAKE on that coupling, not the coupling. Before #5209 a
+  // forgotten `reviewMode` let unreviewed code push the moderator to a sub-path
+  // of the app they were already looking at. With a site-absolute contract it
+  // would let unreviewed code move the moderator's tab to ANY page route. `null`
+  // makes the refusal structural — a second mount of this surface cannot
+  // re-open it by omission.
+  'review-preview': null,
+  // 🔴 `/apps/run`, NOT a private path — the dedicated `/apps/private-run/<slug>` route
+  // was REMOVED and a private run is now served by the public route's fallback, so this
+  // is the base a private run's own deep links must push to. The SURFACE stays distinct
+  // (it still carries the unconditional fragment refusal below); only its route moved.
+  // Pointing this at the deleted path would make a block's first in-app navigation 404 —
+  // the exact failure this total record's docblock exists to prevent.
+  'private-run': '/apps/run',
+};
+
+/**
+ * May a block on this surface ask the host to leave the app — a `NAVIGATE` with
+ * `scope: 'site'`?
+ *
+ * 🔴 A SEPARATE RECORD FROM `BLOCK_HOST_DEEP_LINK_BASE` ON PURPOSE. The two
+ * questions are independent and a surface can answer them differently, so folding
+ * site navigation into a `null` base would force them to move together and make
+ * each refusal untraceable to a decision. Total over `BlockHostSurface` for the
+ * same reason as the base map: a new surface is a COMPILE ERROR here until
+ * someone decides whether it may move the viewer off the app, rather than
+ * inheriting an answer from a default branch.
+ *
+ * 🔴 `private-run` IS THE CASE THAT MOTIVATED SPLITTING THEM, and the refusal is
+ * load-bearing rather than tidy. That surface resolves an audience that includes
+ * `moderator`, it exists precisely to serve `suspended` and delisted apps, and it
+ * passes NO `reviewMode` — so the review surface's two refusals do not cover it.
+ * Without this entry a suspended app could move a moderator's tab to any page
+ * route on the site, which is the same hazard `review-preview` is closed against,
+ * on a surface that reaches the same viewer. APP-scoped deep-linking inside the
+ * owner's own private preview stays working (its base above is non-null) — that
+ * is what the surface is for, and it reaches no site route.
+ *
+ * ⚠️ IT USED TO NAME A ROUTE, `/apps/private-run/<slug>`, AND THAT ROUTE IS GONE
+ * (#5255 folded the private run into `/apps/run/<slug>`'s own fallback behind the
+ * approved-only resolver). None of the three facts above moved with it — the
+ * audience, the suspended-app population and the absent `reviewMode` are
+ * properties of the SURFACE, which is still distinct. What DID move is the
+ * argument's cheapest support: `private-run`'s base is now `'/apps/run'`, BYTE-
+ * IDENTICAL to `page-run`'s, so the base can no longer tell the two surfaces
+ * apart and "it keeps its own route" is no longer a true sentence about either.
+ * 🔴 Read that as strengthening the split, not weakening it: this record is now
+ * the ONLY thing in the host that distinguishes a private run from a public one,
+ * so folding it into the base map would silently grant a suspended app the public
+ * surface's site capability.
+ *
+ * `review-preview` and `model-slot` are `false` as well, but they are not the
+ * interesting entries: both already have a `null` base, so they perform no
+ * app-scoped navigation either. `false` here states the site half explicitly
+ * instead of leaving it to be inferred from the other map.
+ */
+export const BLOCK_HOST_SITE_NAVIGATION: Record<BlockHostSurface, boolean> = {
+  'model-slot': false,
+  'page-run': true,
+  'dev-tunnel': true,
+  'review-preview': false,
+  // 🔴 See the docblock above — a suspended app must not be able to move a
+  // moderator's tab off the run route it is being served on. App scope stays
+  // enabled, and since #5255 that base is `'/apps/run'`, the same string
+  // `page-run` carries: this `false` is the only difference between the two
+  // surfaces that the navigate handler can still see.
+  'private-run': false,
 };
 
 /**

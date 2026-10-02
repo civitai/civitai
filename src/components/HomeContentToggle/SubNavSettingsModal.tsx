@@ -21,7 +21,7 @@ import { forwardRef, useRef } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { SortableItem } from '~/components/ImageUpload/SortableItem';
 import { navIcons } from '~/components/HomeContentToggle/nav-icons';
-import { navRegistry } from '~/components/HomeContentToggle/nav-registry';
+import { isNavEntryVisible, navRegistry } from '~/components/HomeContentToggle/nav-registry';
 import type { NavGroup } from '~/components/HomeContentToggle/nav-registry';
 import type { NavRow as Row } from '~/components/HomeContentToggle/nav-rows';
 import { matchesDefaults, rowsToConfig, seedRows } from '~/components/HomeContentToggle/nav-rows';
@@ -155,13 +155,10 @@ export default function SubNavSettingsModal() {
   // The same gate the nav applies, so the modal never offers a destination the viewer cannot
   // reach. Filtering only what is DISPLAYED — `rows` stays whole, so a gated item keeps its
   // place and is written back untouched instead of being dropped on save.
-  const isReachable = (row: Row) =>
-    navRegistry
-      .find((entry) => entry.key === row.key)
-      ?.visible?.({
-        features,
-        isAuthed: !!currentUser,
-      }) ?? true;
+  const isReachable = (row: Row) => {
+    const entry = navRegistry.find((entry) => entry.key === row.key);
+    return !entry || isNavEntryVisible(entry, { features, isAuthed: !!currentUser });
+  };
   const shown = rows.filter(isReachable);
 
   // `SortableItem` spreads dnd-kit's `attributes`, which announce the rows as keyboard-reorderable

@@ -432,6 +432,9 @@ export const getInfiniteImagesSchema = baseQuerySchema
     hidden: z.boolean().optional(),
     limit: z.number().min(0).max(200).default(constants.galleryFilterDefaults.limit),
     modelId: z.number().optional(),
+    // The viewer's level before a model gallery's cap narrows `browsingLevel`. A
+    // sponsored post is served at this and the cap frozen when its host accepted.
+    preCapBrowsingLevel: z.number().int().min(0).optional(),
     modelVersionId: z.number().optional(),
     // Filter the gallery to posts linked to a single Model3D
     // (Post.model3dId). Resolved server-side into a postIds prefilter so the
@@ -654,4 +657,6 @@ export const toggleImageFlagSchema = z.object({
 });
 
 export type GetMyImagesInput = z.infer<typeof getMyImagesInput>;
-export const getMyImagesInput = infiniteQuerySchema.merge(imageSelectProfileFilterSchema);
+export const getMyImagesInput = infiniteQuerySchema
+  .merge(imageSelectProfileFilterSchema)
+  .extend({ publishedOnly: z.boolean().optional() });

@@ -534,6 +534,158 @@ describe('mod queue procs — widened to kind IN (onsite, offsite), each row car
     for (const select of selects) expect(select.revisionOfId).toBe(true);
   });
 
+  it('🔴 every mod queue projects the listing MEDIA + METRIC and the row carries them', async () => {
+    // The Plays and icon columns exist on all three tabs, so the projection has to be on
+    // all three procs: a field present in one payload and absent in another renders an em
+    // dash that reads as data rather than as a missing join.
+    mockRead.appListingPublishRequest.findMany.mockResolvedValue([
+      {
+        id: 'a',
+        kind: 'onsite',
+        slug: 'x',
+        status: 'pending',
+        appListingId: 'apl_s',
+        appListing: {
+          kind: 'onsite',
+          icon: { url: 'icon-uuid' },
+          cover: { url: 'cover-uuid' },
+          metric: { openCount: 318 },
+        },
+      },
+    ]);
+    for (const proc of [
+      listPendingOffsiteRequests,
+      listApprovedOffsiteRequests,
+      listRejectedOffsiteRequests,
+    ]) {
+      const res = await proc({});
+      const row = res.items[0] as {
+        playCount: number | null;
+        iconUrl: string | null;
+        coverUrl: string | null;
+        appListing: Record<string, unknown> | null;
+      };
+      expect(row.playCount).toBe(318);
+      // CDN-transformed, not the raw `Image.url`.
+      expect(row.iconUrl).toContain('icon-uuid');
+      expect(row.coverUrl).toContain('cover-uuid');
+      // The three derived relations are stripped. ⚠️ A DENYLIST, so these assertions cannot
+      // see another key added to the select — that is what the exact select key-set
+      // assertion below is for.
+      for (const stripped of ['icon', 'cover', 'metric']) {
+        expect(row.appListing, `appListing.${stripped} must not ship`).not.toHaveProperty(stripped);
+      }
+    }
+    const selects = mockRead.appListingPublishRequest.findMany.mock.calls.map(
+      (c) =>
+        (c[0] as { select: { appListing: { select: Record<string, unknown> } } }).select.appListing
+          .select
+    );
+    expect(selects).toHaveLength(3);
+    for (const select of selects) {
+      expect(select.icon).toEqual({ select: { url: true } });
+      expect(select.cover).toEqual({ select: { url: true } });
+      expect(select.metric).toEqual({ select: { openCount: true } });
+      // The LISTING's kind — what `cardOpenCount` discriminates on.
+      expect(select.kind).toBe(true);
+      /**
+       * 🔴 THE EXACT KEY SET, BECAUSE THE PAYLOAD STRIP IS A DENYLIST. The row-level
+       * assertions above name the three relations that are removed, which a select gaining
+       * another key satisfies — that key would then ship to the browser with nothing
+       * reading on it. Pinning the
+       * select is what turns a widening into a decision. This queue adds `kind`, `icon`,
+       * `cover` and `metric`; the rest is `submissionSelect`'s.
+       *
+       * ⚠️ SCOPED TO THE NESTED `appListing` SELECT. A column added to `submissionSelect`'s
+       * TOP level (beside `id`, `slug`, `changelog`) also ships with nothing reading on it,
+       * and no arm here sees that half.
+       */
+      expect(Object.keys(select).sort()).toEqual([
+        'category',
+        'connectClient',
+        'connectClientId',
+        'connectRequestedScopes',
+        'connectScopeJustifications',
+        'contentRating',
+        'cover',
+        'externalUrl',
+        'icon',
+        'kind',
+        'metric',
+        'name',
+        'revisionOfId',
+        'status',
+      ]);
+    }
+  });
+
+  it('🔴 an OFF-SITE listing reads NULL plays, not the literal 0 its column carries', async () => {
+    /**
+     * 🔴 THE CANONICAL RULE, AND THIS QUEUE IS THE ONE PLACE BOTH KINDS MEET.
+     * `app_listing_metrics.open_count` is `NOT NULL DEFAULT 0`, so an off-site listing
+     * carries a literal `0` — and rendering it would claim "nobody has ever used this app"
+     * about an app whose CTA is an external anchor nothing on-platform can count.
+     * `cardOpenCount` returns `null` there.
+     */
+    mockRead.appListingPublishRequest.findMany.mockResolvedValue([
+      {
+        id: 'off',
+        kind: 'offsite',
+        slug: 'ext',
+        status: 'pending',
+        appListingId: 'apl_o',
+        appListing: { kind: 'offsite', metric: { openCount: 0 } },
+      },
+      {
+        id: 'on',
+        kind: 'onsite',
+        slug: 'hosted',
+        status: 'pending',
+        appListingId: 'apl_h',
+        appListing: { kind: 'onsite', metric: { openCount: 0 } },
+      },
+    ]);
+    const res = await listPendingOffsiteRequests({});
+    expect(res.items[0].playCount, 'an off-site count is UNMEASURABLE, not zero').toBeNull();
+    // POSITIVE CONTROL on the same page: an on-site listing nobody has opened is a real 0.
+    expect(res.items[1].playCount, 'an on-site zero is a genuine zero').toBe(0);
+  });
+
+  it('a row with NO backing listing projects nulls rather than throwing', async () => {
+    // A rejected/withdrawn row whose listing was deleted has `appListing: null`, and that
+    // is the shape a naive `listing.metric.openCount` would 500 on.
+    mockRead.appListingPublishRequest.findMany.mockResolvedValue([
+      {
+        id: 'a',
+        kind: 'offsite',
+        slug: 'x',
+        status: 'rejected',
+        appListingId: null,
+        appListing: null,
+      },
+    ]);
+    const res = await listRejectedOffsiteRequests({});
+    expect(res.items[0]).toMatchObject({ playCount: null, iconUrl: null, coverUrl: null });
+    expect(res.items[0].appListing).toBeNull();
+  });
+
+  it('an on-site listing with no METRIC ROW is a genuine zero, not unknown', async () => {
+    // The other half of the canonical rule: a missing metric row means "no plays recorded
+    // yet" ⇒ 0. Over-nulling here is what `cardOpenCount` warns about in capitals.
+    mockRead.appListingPublishRequest.findMany.mockResolvedValue([
+      {
+        id: 'a',
+        kind: 'onsite',
+        slug: 'x',
+        status: 'pending',
+        appListingId: 'apl_a',
+        appListing: { kind: 'onsite', metric: null },
+      },
+    ]);
+    const res = await listPendingOffsiteRequests({});
+    expect(res.items[0].playCount).toBe(0);
+  });
+
   it('listApprovedOffsiteRequests + listRejectedOffsiteRequests both widen the kind filter', async () => {
     await listApprovedOffsiteRequests({});
     await listRejectedOffsiteRequests({});

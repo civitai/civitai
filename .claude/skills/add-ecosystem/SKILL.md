@@ -14,9 +14,9 @@ Use when a new model provider or variant is being added to Civitai — e.g., new
 This skill has two modes, and you should only be here if one of them applies:
 
 - **New ecosystem**: a new line, or a checkpoint that existing resources in its ecosystem won't run on (for example `LTXV` → `LTXV2`).
-- **Base model only**: a hosted-weights checkpoint that existing resources in its ecosystem *do* run on (for example `SDXL 0.9` → `SDXL 1.0`). Skip the `ECO`, family and ecosystem steps. Add only the `BM` constant and the `baseModelRecords` entry, pointing at the existing ecosystem.
+- **Base model only**: a hosted-weights checkpoint that existing resources in its ecosystem *do* run on (for example `SDXL 0.9` → `SDXL 1.0`). Skip the `ECO`, family and ecosystem steps. Add only the `BM` constant and the `baseModelRecords` entry, pointing at the existing ecosystem. Also used for the API-only exception below.
 
-**A new release of an API-only model that already has an ecosystem needs neither.** It becomes a new model version under the existing base model, with no constants change. Stop and say so. `onboard-generator-model` Phase 0 has the full decision.
+**A new release of an API-only model that already has an ecosystem usually needs neither.** It becomes a new model version under the existing base model, with no constants change. Stop and say so — unless the existing base model is hosted weights whose licence, restrictions or LoRAs must not apply to the API release; then use **Base model only** with `hidden: true` (`Ideogram 4.5` beside `Ideogram 4.0`). `onboard-generator-model` Phase 0 has the full decision.
 
 ## The test: does this need its own ecosystem?
 

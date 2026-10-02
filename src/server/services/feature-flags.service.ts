@@ -371,7 +371,6 @@ const featureFlags = createFeatureFlags({
   creatorsProgram: ['mod', 'granted'],
   buzzWithdrawalTransfer: ['granted'],
   vault: ['user'],
-  draftMode: ['public'],
   membershipsV2: ['public'],
   cosmeticShop: ['public'],
   // Mods get it by default; unlock testers via the `creator-shop` Flipt flag.
@@ -404,6 +403,10 @@ const featureFlags = createFeatureFlags({
   // gate rendering a gallery that already has entries, or an owner declining
   // what is already waiting on their work.
   remixGallery: { availability: ['mod'], fliptKey: 'remix-gallery' },
+  // Paid "Sponsored" slots on someone else's model page: a post in its gallery
+  // or a model in its Suggested Resources. Gates buying and serving; a host can
+  // still answer what is already waiting on them.
+  creatorPromotions: { availability: ['mod'], fliptKey: 'creator-promotions' },
   // The three entry points below are gated SEPARATELY from `remixGallery` so they
   // can be released one at a time, and each one is checked TOGETHER with it
   // rather than instead of it. `remixGallery` gates the submit mutation, so a
@@ -723,6 +726,28 @@ const featureFlags = createFeatureFlags({
   // `scripts/validate-flag-shape.py` in that repo, and modelled in
   // `feature-flags.early-adopter.seam.test.ts`.
   earlyAdopter: { availability: [], fliptKey: 'early-adopter' },
+  // Flipt-backed so the whole feature has a runtime kill switch — it moves Buzz, and
+  // `['mod', 'granted']` alone could only be changed by a deploy.
+  //
+  // `['mod', 'granted']` is the FLIPT-DOWN fallback, not the cohort: it reproduces exactly
+  // who had access before this flag was wired, so an outage cannot widen the audience. Flipt
+  // overrides it in both directions once the flag exists.
+  //
+  // NOT `availability: []`. That shape exists for flags whose server half calls the async
+  // `isFlipt` directly — an absent flag answers `false` there while the client's
+  // `isEnabledSync` answers `null` and falls through to static, so the two disagree. Every
+  // crucible gate goes through `getFeatureFlags` instead (`isFlagProtected` on every
+  // procedure, `features.crucible` in every page and the nav registry), so both sides read one
+  // value and `[]` would only strip mods of the access they have today.
+  //
+  // Local dev: `FEATURE_FLAG_CRUCIBLE=public` in `.env`, which bypasses Flipt entirely.
+  crucible: { availability: ['mod', 'granted'], fliptKey: 'crucible' },
+  // Jev resource-intent primitive (POST /api/v1/blocks/resource-intent).
+  // DARK by construction: Flipt owns it entirely and the flag must be created
+  // default-OFF in flipt-state (separate, human-reviewed change) before any
+  // cohort is opened. isFliptSync answers false for an unknown flag or an
+  // unreachable Flipt, so an absent flag is deny-by-default.
+  resourceIntentJev: { availability: [], fliptKey: 'resource-intent-jev' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

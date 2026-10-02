@@ -1,3 +1,6 @@
+import { Flags } from '~/shared/utils/flags';
+import { getSponsoredModel } from '~/server/services/promotion.service';
+import { sponsoredSlotIndex } from '~/shared/utils/promotion';
 import { Prisma } from '@prisma/client';
 import {
   coverageAudience,
@@ -1778,6 +1781,27 @@ export const getAssociatedResourcesCardDataHandler = async ({
         : { id: toArticleId, resourceType: 'article' as const }
     );
 
+    // A paid, host-accepted model promotion takes the second slot. The viewer's
+    // own level and hidden lists still apply to it below, like any other card.
+    const sponsored =
+      type === 'Suggested'
+        ? await getSponsoredModel({ modelId: fromId, features: ctx.features }).catch(
+            () => undefined
+          )
+        : undefined;
+    if (sponsored) {
+      // Its organic copy is dropped, as in the gallery, so the card the buyer paid
+      // for is the one in the sponsored slot.
+      const organic = resourcesIds.findIndex(
+        ({ id, resourceType }) => resourceType === 'model' && id === sponsored.modelId
+      );
+      if (organic >= 0) resourcesIds.splice(organic, 1);
+      resourcesIds.splice(sponsoredSlotIndex(0, resourcesIds.length), 0, {
+        id: sponsored.modelId,
+        resourceType: 'model' as const,
+      });
+    }
+
     if (!resourcesIds.length) return [];
 
     const modelResources = resourcesIds
@@ -1943,8 +1967,16 @@ export const getAssociatedResourcesCardDataHandler = async ({
             const model = completeModels.find((model) => model.id === id);
             if (!model) return null;
             if (excludedUserIds.includes(model.user.id)) return null;
+            const isSponsored = id === sponsored?.modelId;
+            // A buyer who re-rates their model above what the page may show ends
+            // their own run.
+            if (
+              isSponsored &&
+              (!model.nsfwLevel || !Flags.hasFlag(sponsored.servingLevel, model.nsfwLevel))
+            )
+              return null;
 
-            return { resourceType: 'model' as const, ...model };
+            return { resourceType: 'model' as const, ...model, sponsored: isSponsored };
         }
       })
       .filter(isDefined);

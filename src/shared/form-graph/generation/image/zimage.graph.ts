@@ -1,7 +1,7 @@
 import { branch, defineGraph } from 'form-graph';
 import { zImageControlNetPreprocessors } from '~/shared/constants/controlnets.constants';
 import { checkpointDef } from '../checkpoint';
-import { SDXL_SQUARE_AR, SEED, controlNetsDef, defaultSamplerPresets, selectDef } from '../defs';
+import { SDXL_FULL_AR, SEED, controlNetsDef, defaultSamplerPresets, selectDef } from '../defs';
 import {
   familyResources,
   familyScope,
@@ -35,7 +35,7 @@ const modeOf = (ecosystem: string) => {
   }
 };
 
-const AR = SDXL_SQUARE_AR;
+const AR = SDXL_FULL_AR;
 const CONTROL_NETS = controlNetsDef({ preprocessors: zImageControlNetPreprocessors, limit: 1 });
 
 const turbo = defineGraph<FamilyExt>()

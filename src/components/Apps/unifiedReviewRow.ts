@@ -1,5 +1,6 @@
 import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
-import type { AnyRequest } from '~/components/Apps/OnsiteReviewModal';
+import { appDisplayName } from '~/shared/utils/app-display-name';
+import type { AnyRequest, ManifestDiffSummary } from '~/components/Apps/OnsiteReviewModal';
 import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
 
 /**
@@ -92,6 +93,37 @@ export type UnifiedReviewRow = {
    *  version, so the Approved tab can show that an approval never actually
    *  shipped (and offer a re-trigger). Undefined for every other row kind. */
   deploy?: ReviewRowDeploy;
+  /** The on-site CODE publish-request id whose version this row's Version column
+   *  describes — the marker the prior-versions modal uses to pick out the entry the
+   *  moderator is looking at. Undefined on a listing-only row, which has no code
+   *  version and therefore no version history. */
+  publishRequestId?: string;
+  /** The semver of the submitted CODE version. `null` on a listing-revision row: an
+   *  off-site listing has no bundle, and an on-site listing-MEDIA revision changes
+   *  assets without shipping code. Rendered as `—` rather than an empty cell. */
+  version: string | null;
+  /**
+   * Has NO version of this app ever been APPROVED? Read off the server's own
+   * `manifestDiffSummary.kind === 'first-version'`, which is computed against the previous
+   * *approved* version — so a resubmission after a rejection still reads first-version.
+   * Always `false` on a listing-revision row.
+   */
+  isFirstVersion: boolean;
+  /**
+   * Lifetime `AppListingMetric.openCount`, or `null` when there is no listing row — the
+   * `cardOpenCount` projection in `~/server/services/blocks/app-listing.service` owns the
+   * null-vs-zero rule and this read goes through it.
+   *
+   * 🔴 THREE FACTS THE COLUMN CANNOT SHOW. (1) An off-site listing's count is STRUCTURALLY
+   * zero — its CTA is an external anchor. (2) Not read-time deduped
+   * (`~/server/services/blocks/app-listing-open.service`), so crawlers and unfurlers
+   * inflate it; not a unique-user figure. (3) `null` and `0` both render `—`.
+   */
+  playCount: number | null;
+  /** CDN icon URL for the app's store listing (`listingIconUrl`), or null. */
+  iconUrl: string | null;
+  /** CDN cover URL for the app's store listing (`listingCoverUrl`), or null. */
+  coverUrl: string | null;
 };
 
 /** The deploy lifecycle projection carried on an on-site approved review row. */
@@ -134,13 +166,8 @@ export function onsiteRequestToUnifiedRow(
   req: OnsiteReviewRequest,
   openOnsiteReview: (req: OnsiteReviewRequest) => void
 ): UnifiedReviewRow {
-  const reviewedAt =
-    'reviewedAt' in req && req.reviewedAt != null ? req.reviewedAt : null;
-  const manifestName =
-    req.manifest && typeof req.manifest === 'object'
-      ? (req.manifest as Record<string, unknown>).name
-      : undefined;
-  const title = typeof manifestName === 'string' && manifestName.length > 0 ? manifestName : req.slug;
+  const reviewedAt = 'reviewedAt' in req && req.reviewedAt != null ? req.reviewedAt : null;
+  const title = appDisplayName(req.manifest, req.slug);
   // Approved rows carry the deploy lifecycle (added to `listApprovedRequests`);
   // pending/rejected rows do not, so `deploy` stays undefined and every existing
   // caller/fixture is unaffected.
@@ -148,11 +175,14 @@ export function onsiteRequestToUnifiedRow(
     'deployState' in req
       ? {
           state: (req as { deployState?: string | null }).deployState ?? null,
-          updatedAt: toOptionalDate((req as { deployUpdatedAt?: string | Date | null }).deployUpdatedAt),
+          updatedAt: toOptionalDate(
+            (req as { deployUpdatedAt?: string | Date | null }).deployUpdatedAt
+          ),
           reviewedAt: toOptionalDate(reviewedAt),
           publishRequestId: req.id,
         }
       : undefined;
+  const mds = (req.manifestDiffSummary ?? {}) as ManifestDiffSummary;
   return {
     key: `onsite:${req.id}`,
     kind: 'onsite',
@@ -167,6 +197,12 @@ export function onsiteRequestToUnifiedRow(
     appBlockId: req.appBlockId,
     onsiteRequest: req,
     deploy,
+    publishRequestId: req.id,
+    version: req.version ?? null,
+    isFirstVersion: mds.kind === 'first-version',
+    playCount: req.playCount ?? null,
+    iconUrl: req.iconUrl ?? null,
+    coverUrl: req.coverUrl ?? null,
   };
 }
 
@@ -188,19 +224,22 @@ export type OffsiteReviewRequest = {
   submittedAt: string | Date;
   reviewedAt?: string | Date | null;
   changelog: string | null;
-  appListing:
-    | {
-        name: string | null;
-        externalUrl: string | null;
-        category: string | null;
-        contentRating: string | null;
-        connectClientId?: string | null;
-        connectRequestedScopes?: number | null;
-        connectScopeJustifications?: Record<string, string> | null;
-        connectClient?: { name: string | null } | null;
-      }
-    | null;
+  appListing: {
+    name: string | null;
+    externalUrl: string | null;
+    category: string | null;
+    contentRating: string | null;
+    connectClientId?: string | null;
+    connectRequestedScopes?: number | null;
+    connectScopeJustifications?: Record<string, string> | null;
+    connectClient?: { name: string | null } | null;
+  } | null;
   submittedBy: { id: number; username: string | null; image: string | null } | null;
+  /** Lifetime store opens for the backing listing — see `UnifiedReviewRow.playCount` for
+   *  the three caveats. Absent on an older payload → treated as unknown (`null`). */
+  playCount?: number | null;
+  iconUrl?: string | null;
+  coverUrl?: string | null;
 };
 
 /**
@@ -259,6 +298,13 @@ export function offsiteRequestToUnifiedRow(
     // Carried so a COMBINED row can open the media-review section from this payload.
     // (The listing queue row has no backing appBlockId; pairing falls back to slug.)
     offsiteRow: row,
+    // A listing revision ships no code, so there is no version and no first-version
+    // verdict to make — never the badge, and `—` in the cell.
+    version: null,
+    isFirstVersion: false,
+    playCount: req.playCount ?? null,
+    iconUrl: req.iconUrl ?? null,
+    coverUrl: req.coverUrl ?? null,
   };
 }
 
@@ -308,12 +354,19 @@ function combineCodeAndMediaRows(
       submitter: code.submitter,
       // Sort by the EARLIER of the two so the pair surfaces by when the app first
       // needed review (oldest-first pending); tiebreak by key stays stable.
-      submittedAt: new Date(
-        Math.min(code.submittedAt.getTime(), media.submittedAt.getTime())
-      ),
+      submittedAt: new Date(Math.min(code.submittedAt.getTime(), media.submittedAt.getTime())),
       appBlockId: code.appBlockId ?? media.appBlockId,
       onReview: () => openCombined(payload),
       combined: payload,
+      // The CODE half owns the version columns — the media half has none. Play count and
+      // media fall back to the listing row, which is the side that carries them when the
+      // code row's slug has no listing yet.
+      publishRequestId: code.publishRequestId,
+      version: code.version,
+      isFirstVersion: code.isFirstVersion,
+      playCount: code.playCount ?? media.playCount,
+      iconUrl: code.iconUrl ?? media.iconUrl,
+      coverUrl: code.coverUrl ?? media.coverUrl,
     });
   }
 

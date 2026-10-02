@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assertDifferential, type AnyRecord } from './differential';
+import { assertDifferential, runOracle, runPort, type AnyRecord } from './differential';
 import { generationHub } from '../hub.graph';
 import { reconcileSelectors } from '../reconcile';
 import { isWorkflowAvailable } from '~/shared/data-graph/generation/config';
@@ -47,12 +47,12 @@ const CONTEXTS: [string, GenerationCtx][] = [
           modelVersionIds: [],
         },
         {
-          id: 'test-disable-draft',
-          name: 'disable draft',
+          id: 'test-disable-hires',
+          name: 'disable hires',
           availableTo: 'nobody',
           presentation: 'disabled',
           ecosystems: [],
-          workflows: ['txt2img:draft'],
+          workflows: ['txt2img:hires-fix'],
           modelVersionIds: [],
         },
       ] as GenerationCtx['gateRules'],
@@ -227,7 +227,6 @@ const FLUX2_ONLY_SHAPES: AnyRecord[] = [
 
 const WORKFLOWS = [
   'txt2img',
-  'txt2img:draft',
   'txt2img:face-fix',
   'txt2img:hires-fix',
   'img2img',
@@ -236,8 +235,6 @@ const WORKFLOWS = [
   'img2img:edit',
 ];
 
-// SD2 is in the SD family's discriminator but supports no generation
-// workflows any more, so it can produce no matrix rows.
 const ECOSYSTEMS = [
   'Flux1',
   'FluxKrea',
@@ -286,6 +283,22 @@ const port = {
   parse: (raw: AnyRecord, ext: never) => generationHub.parse(reconcileSelectors(raw).raw, ext),
 };
 
+/** Ideogram: 4.5 (3375798) on txt2img, with 4.0-only keys that must drop, and a stale 4.0 id on edit. */
+const IDEOGRAM_ONLY_SHAPES: AnyRecord[] = [
+  { prompt: 'a poster', model: 3375798 },
+  {
+    prompt: 'a poster',
+    model: 3375798,
+    aspectRatio: '21:9',
+    quality: 'high',
+    enablePromptExpansion: true,
+    cfgScale: 7,
+    steps: 30,
+  },
+  { prompt: 'a poster', model: 3246186, images: [IMG] },
+  { prompt: 'a poster', model: 3375798, images: [IMG, IMG] },
+];
+
 /**
  * Family-specific extra shapes, keyed by ecosystem. A RECORD rather than a
  * ternary chain so a typo'd key fails the canary by name instead of silently
@@ -332,6 +345,7 @@ const EXTRA_SHAPES: Record<string, AnyRecord[]> = {
   FluxKrea: FLUX_ONLY_SHAPES,
   WanImage27: WANIMAGE_ONLY_SHAPES,
   Grok: GROK_ONLY_SHAPES,
+  Ideogram: IDEOGRAM_ONLY_SHAPES,
 };
 
 type Combo = { name: string; input: AnyRecord; ext: GenerationCtx };
@@ -371,10 +385,55 @@ describe('image slice: differential parity with generationGraph', () => {
     // every family-specific shape list must be keyed by a REAL matrix
     // ecosystem — a typo here is zero extra shapes, invisibly
     expect(Object.keys(EXTRA_SHAPES).filter((k) => !ECOSYSTEMS.includes(k))).toEqual([]);
+    // and every WORKFLOWS entry must be live for at least one matrix ecosystem — a retired key
+    // contributes zero rows, and the `> 500` floor above stays green while they vanish.
+    expect(
+      WORKFLOWS.filter(
+        (w) => !ECOSYSTEMS.some((e) => isWorkflowAvailable(w, ecosystemByKey.get(e)!.id))
+      )
+    ).toEqual([]);
   });
 
   it.each(COMBOS)('$name', ({ input, ext }) => {
     assertDifferential(port, { name: JSON.stringify(input), input }, ext);
+  });
+});
+
+// Absolute, per lane: a change made identically in both lanes passes every differential row.
+describe('ideogram version selection, per lane', () => {
+  const lanes: [string, (input: AnyRecord) => { success: boolean; data: AnyRecord }][] = [
+    ['data-graph', (input) => runOracle(input, BASE)],
+    ['form-graph', (input) => runPort(port, input, BASE)],
+  ];
+
+  it.each(lanes)('%s: edit corrects a stale 4.0 id to 4.5', (_, run) => {
+    const result = run({
+      workflow: 'img2img:edit',
+      ecosystem: 'Ideogram',
+      prompt: 'a cat',
+      model: 3246186,
+      images: [IMG],
+    });
+    expect(result.success).toBe(true);
+    expect((result.data.model as { id: number }).id).toBe(3375798);
+    expect(result.data.ideogramVersion).toBe('v4.5');
+  });
+
+  it.each(lanes)('%s: txt2img keeps 4.5 and drops the 4.0-only fields', (_, run) => {
+    const result = run({
+      workflow: 'txt2img',
+      ecosystem: 'Ideogram',
+      prompt: 'a cat',
+      model: 3375798,
+      cfgScale: 7,
+      steps: 30,
+    });
+    expect(result.success).toBe(true);
+    expect((result.data.model as { id: number }).id).toBe(3375798);
+    expect(result.data.ideogramVersion).toBe('v4.5');
+    expect(result.data).not.toHaveProperty('cfgScale');
+    expect(result.data).not.toHaveProperty('steps');
+    expect(result.data.enablePromptExpansion).toBe(false);
   });
 });
 
@@ -386,7 +445,7 @@ describe('incompatible workflow x ecosystem combos redirect like the oracle', ()
     { workflow: 'txt2img', ecosystem: 'WanVideo30' },
     { workflow: 'txt2img', ecosystem: 'LTXV23' },
     { workflow: 'txt2img', ecosystem: 'Seedance' },
-    { workflow: 'txt2img:draft', ecosystem: 'WanVideo-25-T2V' },
+    { workflow: 'txt2img:hires-fix', ecosystem: 'WanVideo-25-T2V' },
   ];
   it.each(CROSS_COMBOS)('$workflow x $ecosystem', ({ workflow, ecosystem }) => {
     assertDifferential(

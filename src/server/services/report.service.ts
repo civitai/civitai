@@ -207,6 +207,7 @@ const reportTypeNameMap: Record<ReportEntity, string> = {
   [ReportEntity.Model3D]: 'model3d',
   [ReportEntity.Model3DReview]: 'model3dReview',
   [ReportEntity.Announcement]: 'announcement',
+  [ReportEntity.Crucible]: 'crucible',
 };
 
 const reportTypeConnectionMap = {
@@ -227,6 +228,7 @@ const reportTypeConnectionMap = {
   [ReportEntity.Model3D]: 'model3dId',
   [ReportEntity.Model3DReview]: 'model3dReviewId',
   [ReportEntity.Announcement]: 'announcementId',
+  [ReportEntity.Crucible]: 'crucibleId',
 } as const;
 
 const statusOverrides: Partial<Record<ReportReason, ReportStatus>> = {
@@ -317,8 +319,11 @@ export const createReport = async ({
 
   await assertReportedPlacementIsOnEntity({ type, entityId: id, details: data.details });
 
+  // Nothing automated acts on a crucible's mature-content report, unlike an image's or a model's
+  // tag votes, so it goes to a moderator like any other reason: deduped, and left Pending.
+  const awaitsModerator = type === ReportEntity.Crucible;
   const validReport =
-    data.reason !== ReportReason.NSFW && data.reason !== ReportReason.Automated
+    (data.reason !== ReportReason.NSFW || awaitsModerator) && data.reason !== ReportReason.Automated
       ? await validateReportCreation({
           userId,
           reportType: type,
@@ -356,7 +361,7 @@ export const createReport = async ({
       data: {
         ...data,
         userId,
-        status: statusOverrides[data.reason] ?? ReportStatus.Pending,
+        status: (!awaitsModerator && statusOverrides[data.reason]) || ReportStatus.Pending,
         [type]: {
           create: {
             [reportTypeConnectionMap[type]]: id,

@@ -13,7 +13,7 @@ All controllers/nodes rendered inside the `<AccordionLayout label="Advanced">` s
 | 7 | `clipSkip` | CLIP Skip | `SliderInput` | Skip CLIP layers | SD only |
 | 8 | `denoise` | Denoise Strength | `SliderInput` | Denoising strength for img2img | img2img only (renders `null` when no meta) |
 | 9 | `vae` | VAE | `ResourceSelectInput` | Additional color and detail improvements | SD only |
-| 10 | `enhancedCompatibility` | Enhanced Compatibility | `Checkbox` | Off (default) runs sdcpp; on runs comfyui | SD1, SDXL — txt2img only |
+| 10 | `enhancedCompatibility` | Enhanced Compatibility | `Checkbox` | Off (default) runs sdcpp; on runs comfyui. A ControlNet request forces comfyui either way — the sdcpp inputs have no `controlNets` field | SD1, SDXL — txt2img only |
 | 11 | `usePro` | Pro Mode | `Checkbox` | Higher quality generation (more credits) | Sora |
 | 12 | `fluxUltraRaw` | Raw Mode | `Checkbox` | More natural, less processed look | Flux Ultra |
 | 13 | `transparent` | Transparent Background | `Checkbox` | Generate image with transparent background | OpenAI |

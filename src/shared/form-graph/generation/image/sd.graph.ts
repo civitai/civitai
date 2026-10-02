@@ -1,9 +1,5 @@
 import { defineGraph } from 'form-graph';
-import {
-  sd1AspectRatioBuckets,
-  sdxlAspectRatioBuckets,
-  samplers,
-} from '~/shared/constants/generation.constants';
+import { sd1AspectRatioBuckets, samplers } from '~/shared/constants/generation.constants';
 import {
   sd1ControlNetPreprocessors,
   sdxlControlNetPreprocessors,
@@ -13,6 +9,7 @@ import { effectiveEcosystemOf } from '../reconcile';
 import {
   SEED,
   defaultSamplerPresets,
+  SDXL_FULL_AR,
   aspectRatioDef,
   controlNetsDef,
   imagesDef,
@@ -27,7 +24,7 @@ import {
 import { familyScope, textBlock, type FamilyExt, narrowEcosystem } from '../shared';
 
 /**
- * Stable Diffusion family (SD1 / SD2 / SDXL / Pony / Illustrious / NoobAI),
+ * Stable Diffusion family (SD1 / SDXL / Pony / Illustrious / NoobAI),
  * ported from `stable-diffusion-graph.ts`.
  */
 
@@ -98,7 +95,7 @@ export const sd = defineGraph<FamilyExt>({ scope: familyScope })
     'effectiveEcosystem',
     ({ model, _ext }) =>
       narrowEcosystem(
-        ['SD1', 'SD2', 'SDXL', 'Pony', 'Illustrious', 'NoobAI'],
+        ['SD1', 'SDXL', 'Pony', 'Illustrious', 'NoobAI'],
         effectiveEcosystemOf(model, _ext.ecosystem, _ext.workflow)
       ),
     { emit: 'ecosystem' }
@@ -114,9 +111,9 @@ export const sd = defineGraph<FamilyExt>({ scope: familyScope })
   .field('aspectRatio', ({ images, effectiveEcosystem }) =>
     hasImages(images)
       ? null
-      : aspectRatioDef({
-          options: effectiveEcosystem === 'SD1' ? sd1AspectRatioBuckets : sdxlAspectRatioBuckets,
-        })
+      : effectiveEcosystem === 'SD1'
+      ? aspectRatioDef({ options: sd1AspectRatioBuckets })
+      : SDXL_FULL_AR
   )
   .use(textBlock)
   .field('sampler', SAMPLER)

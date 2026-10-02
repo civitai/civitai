@@ -592,7 +592,7 @@ export type ComponentFileType = (typeof componentFileTypes)[number];
 
 export const POST_IMAGE_LIMIT = 20;
 export const POST_TAG_LIMIT = 5;
-export const POST_MINIMUM_SCHEDULE_MINUTES = 60;
+export const POST_MINIMUM_SCHEDULE_MINUTES = 10;
 // Caps on resources a user can manually credit on a single uploaded/external image
 // (`ImageResourceNew.detected = false`); auto-detected resources are not counted. This is an
 // attribution action with no GPU cost, so it is intentionally decoupled from the per-tier
@@ -794,6 +794,12 @@ const baseLicenses: Record<string, LicenseDetails> = {
     // Ideogram Non-Commercial Model Agreement forbids commercial use.
     nonCommercial: true,
   },
+  'ideogram tos': {
+    url: 'https://ideogram.ai/legal/tos',
+    name: 'Ideogram Terms of Service',
+    // The ToS bars sexually explicit output.
+    disableMature: true,
+  },
   'qwen research': {
     url: 'https://huggingface.co/Qwen/Qwen-Image-2.1/blob/main/LICENSE',
     name: 'Qwen Research License Agreement',
@@ -907,6 +913,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Vidu Q1': baseLicenses['vidu'],
   Seedance: baseLicenses['seedream'],
   'Ideogram 4.0': baseLicenses['ideogram nc'],
+  'Ideogram 4.5': baseLicenses['ideogram tos'],
   'MiniMax H3': baseLicenses['minimax h3'],
   'MiniMax Music 3': baseLicenses['minimax music 3'],
 };

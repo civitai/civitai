@@ -200,6 +200,12 @@ export type ListApprovedRequestsInput = z.infer<typeof listApprovedRequestsSchem
 export const listRejectedRequestsSchema = listPendingRequestsSchema;
 export type ListRejectedRequestsInput = z.infer<typeof listRejectedRequestsSchema>;
 
+/** Mod-only: one app's publish-request history. Same column as `getMyPendingForSlug`, so
+ *  the same schema rather than a second copy of its bounds. */
+export const listVersionHistorySchema = getMyPendingForSlugSchema;
+
+export type ListVersionHistoryInput = z.infer<typeof listVersionHistorySchema>;
+
 export const approveRequestSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
   approvalNotes: z.string().max(2000).optional(),
@@ -217,10 +223,7 @@ export const PUBLISH_REJECTION_REASON_MAX = 2000;
 
 export const rejectRequestSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
-  rejectionReason: z
-    .string()
-    .min(PUBLISH_REJECTION_REASON_MIN)
-    .max(PUBLISH_REJECTION_REASON_MAX),
+  rejectionReason: z.string().min(PUBLISH_REJECTION_REASON_MIN).max(PUBLISH_REJECTION_REASON_MAX),
 });
 
 export type RejectRequestInput = z.infer<typeof rejectRequestSchema>;
@@ -246,9 +249,7 @@ export const getPublishRequestScreenshotsSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
 });
 
-export type GetPublishRequestScreenshotsInput = z.infer<
-  typeof getPublishRequestScreenshotsSchema
->;
+export type GetPublishRequestScreenshotsInput = z.infer<typeof getPublishRequestScreenshotsSchema>;
 
 /** Input for the MOD-ONLY `blocks.getPublishRequestDiff` (line-level code diff). */
 export const getPublishRequestDiffSchema = z.object({

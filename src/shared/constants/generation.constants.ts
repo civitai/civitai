@@ -1,4 +1,10 @@
 import type { WorkflowStatus } from '@civitai/client';
+import type {
+  ComfySampler,
+  ComfyScheduler,
+  SdCppSampleMethod,
+  SdCppSchedule,
+} from '@civitai/orchestration-client';
 import { Scheduler } from '@civitai/client';
 import type { MantineColor } from '@mantine/core';
 import type { Sampler } from '~/server/common/constants';
@@ -19,7 +25,7 @@ import {
   getBaseModelMediaType,
   getResourceGenerationSupport,
 } from '~/shared/constants/basemodel.constants';
-import { ModelType } from '~/shared/utils/prisma/enums';
+import type { ModelType } from '~/shared/utils/prisma/enums';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 import { findClosest, getRatio } from '~/utils/number-helpers';
 
@@ -182,20 +188,6 @@ export const draftInjectableResources = [
   } as InjectableResource,
 ];
 
-const SD1DraftResource = {
-  id: 424706,
-  baseModel: 'SD 1.5',
-  strength: 1,
-  model: { id: 195519, type: ModelType.LORA },
-};
-
-const SDXLDraftResource = {
-  id: 391999,
-  baseModel: 'SDXL 1.0',
-  strength: 1,
-  model: { id: 350450, type: ModelType.LORA },
-};
-
 export const allInjectableResourceIds = [...draftInjectableResources].map((x) => x.id);
 
 export function getInjectableResources(baseModelSetType: BaseModelGroup) {
@@ -264,14 +256,14 @@ export const generationSamplers = Object.keys(samplersToSchedulers) as Sampler[]
 // !important - undefined maps to the same values as 'DPM++ 2M Karras'
 export const samplersToComfySamplers: Record<
   Sampler | 'undefined',
-  { sampler: string; scheduler: 'normal' | 'karras' | 'exponential' }
+  { sampler: ComfySampler; scheduler: ComfyScheduler }
 > = {
   'Euler a': { sampler: 'euler_ancestral', scheduler: 'normal' },
   Euler: { sampler: 'euler', scheduler: 'normal' },
   LMS: { sampler: 'lms', scheduler: 'normal' },
   Heun: { sampler: 'heun', scheduler: 'normal' },
-  DPM2: { sampler: 'dpmpp_2', scheduler: 'normal' },
-  'DPM2 a': { sampler: 'dpmpp_2_ancestral', scheduler: 'normal' },
+  DPM2: { sampler: 'dpm_2', scheduler: 'normal' },
+  'DPM2 a': { sampler: 'dpm_2_ancestral', scheduler: 'normal' },
   'DPM++ 2S a': { sampler: 'dpmpp_2s_ancestral', scheduler: 'normal' },
   'DPM++ 2M': { sampler: 'dpmpp_2m', scheduler: 'normal' },
   'DPM++ 2M SDE': { sampler: 'dpmpp_2m_sde', scheduler: 'normal' },
@@ -289,10 +281,46 @@ export const samplersToComfySamplers: Record<
   'DPM++ 3M SDE Karras': { sampler: 'dpmpp_3m_sde', scheduler: 'karras' },
   'DPM++ 3M SDE Exponential': { sampler: 'dpmpp_3m_sde', scheduler: 'exponential' },
   DDIM: { sampler: 'ddim', scheduler: 'normal' },
-  PLMS: { sampler: 'plms', scheduler: 'normal' },
+  PLMS: { sampler: 'ddim', scheduler: 'normal' },
   UniPC: { sampler: 'uni_pc', scheduler: 'normal' },
   LCM: { sampler: 'lcm', scheduler: 'normal' },
   undefined: { sampler: 'dpmpp_2m', scheduler: 'karras' },
+};
+
+// stable-diffusion.cpp ships a smaller sampler set than ComfyUI: LMS, the SDE variants,
+// DPM fast/adaptive, UniPC and PLMS have no equivalent and collapse onto the nearest
+// family member, so a user's sampler choice is not always preserved across this map.
+export const samplersToSdCppSamplers: Record<
+  Sampler | 'undefined',
+  { sampleMethod: SdCppSampleMethod; schedule: SdCppSchedule }
+> = {
+  'Euler a': { sampleMethod: 'euler_a', schedule: 'discrete' },
+  Euler: { sampleMethod: 'euler', schedule: 'discrete' },
+  LMS: { sampleMethod: 'euler', schedule: 'discrete' },
+  Heun: { sampleMethod: 'heun', schedule: 'discrete' },
+  DPM2: { sampleMethod: 'dpm2', schedule: 'discrete' },
+  'DPM2 a': { sampleMethod: 'dpm++2s_a', schedule: 'discrete' },
+  'DPM++ 2S a': { sampleMethod: 'dpm++2s_a', schedule: 'discrete' },
+  'DPM++ 2M': { sampleMethod: 'dpm++2m', schedule: 'discrete' },
+  'DPM++ 2M SDE': { sampleMethod: 'dpm++2mv2', schedule: 'discrete' },
+  'DPM++ SDE': { sampleMethod: 'dpm++2mv2', schedule: 'discrete' },
+  'DPM fast': { sampleMethod: 'euler', schedule: 'discrete' },
+  'DPM adaptive': { sampleMethod: 'euler', schedule: 'discrete' },
+  'LMS Karras': { sampleMethod: 'euler', schedule: 'karras' },
+  'DPM2 Karras': { sampleMethod: 'dpm2', schedule: 'karras' },
+  'DPM2 a Karras': { sampleMethod: 'dpm++2s_a', schedule: 'karras' },
+  'DPM++ 2S a Karras': { sampleMethod: 'dpm++2s_a', schedule: 'karras' },
+  'DPM++ 2M Karras': { sampleMethod: 'dpm++2m', schedule: 'karras' },
+  'DPM++ SDE Karras': { sampleMethod: 'dpm++2mv2', schedule: 'karras' },
+  'DPM++ 2M SDE Karras': { sampleMethod: 'dpm++2mv2', schedule: 'karras' },
+  'DPM++ 3M SDE': { sampleMethod: 'dpm++2mv2', schedule: 'discrete' },
+  'DPM++ 3M SDE Karras': { sampleMethod: 'dpm++2mv2', schedule: 'karras' },
+  'DPM++ 3M SDE Exponential': { sampleMethod: 'dpm++2mv2', schedule: 'exponential' },
+  DDIM: { sampleMethod: 'ddim_trailing', schedule: 'discrete' },
+  PLMS: { sampleMethod: 'ddim_trailing', schedule: 'discrete' },
+  UniPC: { sampleMethod: 'dpm++2m', schedule: 'discrete' },
+  LCM: { sampleMethod: 'lcm', schedule: 'lcm' },
+  undefined: { sampleMethod: 'dpm++2m', schedule: 'karras' },
 };
 
 // #region [utils]
@@ -515,7 +543,7 @@ export const fluxProAirId = 922358;
 export const ponyV7Air = 'urn:air:auraflow:checkpoint:civitai:1901521@2152373';
 
 // Ecosystems that expose the `enhancedCompatibility` toggle — txt2img only.
-// Off (the default) runs sdcpp; on runs comfyui. Pony/Illustrious/NoobAI are SDXL derivatives and
+// Off (the default) runs sdcpp; on runs comfy. Pony/Illustrious/NoobAI are SDXL derivatives and
 // stay on sdcpp with SDXL.
 export const EXPERIMENTAL_MODE_SUPPORTED_MODELS: string[] = [
   'SD1',
@@ -524,10 +552,6 @@ export const EXPERIMENTAL_MODE_SUPPORTED_MODELS: string[] = [
   'Illustrious',
   'NoobAI',
 ];
-
-// Always comfyui, no toggle. Not workflow-scoped: these have no sdcpp support left, so every
-// textToImage step they emit belongs on comfyui.
-export const COMFY_ONLY_ECOSYSTEMS: string[] = ['Flux1', 'FluxKrea'];
 
 // Ecosystems that qualify for the 2-for-1 quantity bonus + footer alert. Historical name: membership
 // is a pricing decision, not "runs on sdcpp" (Flux2Klein submits 'flux2').
@@ -539,22 +563,16 @@ export const SDCPP_SUPPORTED_ECOSYSTEMS: string[] = [
   'Flux2Klein_4B_base',
 ];
 
-// Flux Pro 1.1 / Ultra: versions inside comfy-only Flux1 that keep their handler's engine rather
-// than being forced onto comfyui.
+// Flux Pro 1.1 / Ultra: excluded from the sdcpp 2-for-1 bonus and its footer alert.
 export const SDCPP_EXCLUDED_MODEL_IDS: number[] = [fluxProAirId, fluxUltraAirId];
 
-/** Flux Ultra and Flux Pro keep the engine their handler chose, despite Flux1 being comfy-only. */
 export function usesComfyEngine({
   ecosystem,
-  modelId,
   enhancedCompatibility,
 }: {
   ecosystem: string;
-  modelId?: number;
   enhancedCompatibility?: boolean;
 }): boolean {
-  if (modelId !== undefined && SDCPP_EXCLUDED_MODEL_IDS.includes(modelId)) return false;
-  if (COMFY_ONLY_ECOSYSTEMS.includes(ecosystem)) return true;
   return EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(ecosystem) && enhancedCompatibility === true;
 }
 
@@ -688,14 +706,33 @@ export const aspectRatioDimensions: Record<
  * scaling a clean ratio.
  */
 
-/** SDXL/Flux training buckets (~1024² area, /64 aligned). Used by SDXL, Pony v7,
- * Chroma, Flux v1/v2, Hi-Dream, Z-Image, Anima, and any other ~1M-pixel
- * diffusion model that follows SDXL's bucketing convention. */
-export const sdxlAspectRatioBuckets = [
-  { label: '2:3', value: '2:3', width: 832, height: 1216 },
-  { label: '1:1', value: '1:1', width: 1024, height: 1024 },
+/** The SDXL training bucket set (~1024² area, /64 aligned), widest to tallest —
+ * the order AspectRatioInput displays in. Used by every ~1M-pixel diffusion
+ * ecosystem: SDXL, Pony, Illustrious, NoobAI, Pony v7, Anima, Chroma, Flux.1
+ * (comfy modes), Flux.2, Flux.2 Klein, Hi-Dream, Z-Image, Boogu and Ideogram.
+ * Each of those inputs takes any width/height up to 2048 divisible by 16
+ * (Flux.2 and Klein from 512), so all nine fit. Labels are approximate, the
+ * same way 832×1216 is called 2:3. */
+export const sdxlFullAspectRatioBuckets = [
+  { label: '21:9', value: '21:9', width: 1536, height: 640 },
+  { label: '16:9', value: '16:9', width: 1344, height: 768 },
   { label: '3:2', value: '3:2', width: 1216, height: 832 },
+  { label: '4:3', value: '4:3', width: 1152, height: 896 },
+  { label: '1:1', value: '1:1', width: 1024, height: 1024 },
+  { label: '3:4', value: '3:4', width: 896, height: 1152 },
+  { label: '2:3', value: '2:3', width: 832, height: 1216 },
+  { label: '9:16', value: '9:16', width: 768, height: 1344 },
+  { label: '9:21', value: '9:21', width: 640, height: 1536 },
 ];
+
+/** Flux.1 Pro (BFL `flux1-pro`) caps each side at 1440 (/32), so the 1536-long
+ * 21:9 and 9:21 buckets are out. */
+export const flux1ProAspectRatioBuckets = sdxlFullAspectRatioBuckets.filter(
+  (b) => b.width <= 1440 && b.height <= 1440
+);
+
+/** Shown before the picker's "More" button: the three buckets these pickers offered before. */
+export const sdxlFullPriorityAspectRatios = ['3:2', '1:1', '2:3'];
 
 /** SD1 training buckets (~512² area, /64 aligned). */
 export const sd1AspectRatioBuckets = [
@@ -755,6 +792,14 @@ export function getIsPonyV7(id: number) {
 
 export function getSizeFromFluxUltraAspectRatio(value: number) {
   return fluxUltraAspectRatios[value] ?? fluxUltraAspectRatios[defaultFluxUltraAspectRatioIndex];
+}
+
+/** The label form `Flux1ProUltraImageGenInput.aspectRatio` takes, vs the index the sibling returns. */
+export function getClosestFluxUltraAspectRatioLabel(width = 1024, height = 1024) {
+  const ratios = fluxUltraAspectRatios.map((x) => x.width / x.height);
+  const index = ratios.indexOf(findClosest(ratios, width / height));
+  return (fluxUltraAspectRatios[index] ?? fluxUltraAspectRatios[defaultFluxUltraAspectRatioIndex])
+    .label;
 }
 
 export function getClosestFluxUltraAspectRatio(width = 1024, height = 1024) {

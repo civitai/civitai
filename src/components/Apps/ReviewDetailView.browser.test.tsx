@@ -2,7 +2,7 @@ import { useRouter } from 'next/router';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
-import { renderWithProviders } from '../../../test/component-setup';
+import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
 
 /**
  * `ReviewDetailView` — the per-submission review PAGE body (`/apps/review/<id>`),
@@ -215,9 +215,7 @@ describe('ReviewDetailView — aria-live status region', () => {
     await expect.element(live).toBeInTheDocument();
     expect(live.element().textContent).toBe('');
     await page.getByRole('button', { name: 'Approve + build' }).click();
-    await vi.waitFor(() =>
-      expect(live.element().textContent).toContain('Submission approved')
-    );
+    await vi.waitFor(() => expect(live.element().textContent).toContain('Submission approved'));
   });
 
   test('announces "submitting" while a mutation is in flight', async () => {
@@ -307,5 +305,93 @@ describe('ReviewDetailView — route-leave guard', () => {
     expect(confirmSpy).not.toHaveBeenCalled();
 
     confirmSpy.mockRestore();
+  });
+});
+
+describe('ReviewDetailView — the STORE LISTING media section', () => {
+  /**
+   * 🔴 THESE ARE DIFFERENT BYTES FROM THE BUNDLE SCREENSHOTS THE SHARED BODY ALREADY SHOWS.
+   * The icon and cover are `AppListing` columns, authored in the store form and never in
+   * the submitted ZIP, so a moderator approving a first version was approving an app whose
+   * store card they had not seen.
+   */
+  const PIXEL = LOADABLE_IMAGE_DATA_URI;
+
+  test('both assets render as sized images, and NEITHER missing-state appears', async () => {
+    renderWithProviders(
+      <ReviewDetailView
+        selection={{
+          request: { ...PENDING, iconUrl: PIXEL, coverUrl: `${PIXEL}#cover` },
+          mode: 'pending',
+        }}
+        onClose={vi.fn()}
+      />
+    );
+    await expect.element(page.getByTestId('apps-review-listing-media')).toBeInTheDocument();
+    const icon = page.getByTestId('apps-review-listing-icon-my-block');
+    const cover = page.getByTestId('apps-review-listing-cover-my-block');
+    await expect.element(icon).toBeInTheDocument();
+    await expect.element(cover).toBeInTheDocument();
+    // The box is reserved before the bytes land — a review page with two images is
+    // otherwise a CLS machine.
+    expect((icon.element() as HTMLImageElement).getAttribute('width')).toBe('40');
+    expect((cover.element() as HTMLImageElement).getAttribute('width')).toBe('96');
+    expect(page.getByTestId('apps-review-listing-no-icon-my-block').elements()).toEqual([]);
+    expect(page.getByTestId('apps-review-listing-no-cover-my-block').elements()).toEqual([]);
+  });
+
+  test('a listing with NO media says so explicitly, rather than rendering empty boxes', async () => {
+    // A pending first version usually HAS a pre-approval draft listing, but not always,
+    // and "no icon" is a fact the reviewer needs rather than a blank.
+    renderWithProviders(
+      <ReviewDetailView selection={{ request: PENDING, mode: 'pending' }} onClose={vi.fn()} />
+    );
+    await expect
+      .element(page.getByTestId('apps-review-listing-no-icon-my-block'))
+      .toHaveTextContent('No icon');
+    await expect
+      .element(page.getByTestId('apps-review-listing-no-cover-my-block'))
+      .toHaveTextContent('No cover');
+    // Same-sized placeholders, so a listing with one asset does not shift the other.
+    await expect
+      .element(page.getByTestId('apps-review-listing-icon-placeholder-my-block'))
+      .toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('apps-review-listing-cover-placeholder-my-block'))
+      .toBeInTheDocument();
+    expect(page.getByTestId('apps-review-listing-icon-my-block').elements()).toEqual([]);
+    // Nothing to view → no button, so no dead tab stop on an incomplete listing.
+    expect(page.getByTestId('apps-review-listing-icon-button-my-block').elements()).toEqual([]);
+    expect(page.getByTestId('apps-review-listing-cover-button-my-block').elements()).toEqual([]);
+  });
+
+  test('ONE asset present renders that image AND the other missing-state', async () => {
+    // The mixed case is the one a single boolean would get wrong.
+    renderWithProviders(
+      <ReviewDetailView
+        selection={{ request: { ...PENDING, coverUrl: PIXEL }, mode: 'pending' }}
+        onClose={vi.fn()}
+      />
+    );
+    await expect
+      .element(page.getByTestId('apps-review-listing-cover-my-block'))
+      .toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('apps-review-listing-no-icon-my-block'))
+      .toBeInTheDocument();
+    expect(page.getByTestId('apps-review-listing-no-cover-my-block').elements()).toEqual([]);
+  });
+
+  test('clicking an asset opens the same viewer the queue uses', async () => {
+    renderWithProviders(
+      <ReviewDetailView
+        selection={{ request: { ...PENDING, iconUrl: PIXEL }, mode: 'pending' }}
+        onClose={vi.fn()}
+      />
+    );
+    await page.getByTestId('apps-review-listing-icon-button-my-block').click();
+    // The shared `AppListingScreenshotViewer`, which is where prev/next and the
+    // broken-shot rescue live — so the two surfaces cannot drift on either.
+    await expect.element(page.getByText('My Block icon')).toBeInTheDocument();
   });
 });

@@ -15,6 +15,7 @@ import type { RecommendedSettingsSchema } from '~/server/schema/model-version.sc
 import type { ModelMeta } from '~/server/schema/model.schema';
 import type { SearchIndexContext } from '~/server/search-index/base.search-index';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
+import { modelsDisplayedAttributes } from '~/server/search-index/displayed-attributes';
 import { modelsFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { modelVersionPricingSignals } from '@civitai/buzz';
 import {
@@ -81,52 +82,21 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     );
   }
 
-  // Creator Controls: `sortMetrics` holds the REAL download/tipped values used only
-  // for sorting. Excluding it from displayedAttributes keeps the true number out of
-  // every search hit (a masked model's real count is never returned to any client,
-  // including direct Meili queries). Meili whitelists by top-level attribute — nested
-  // children are included with their parent, so only NEW top-level doc keys need to
-  // be added here.
-  const displayedAttributes = [
-    'id',
-    'name',
-    'type',
-    'nsfw',
-    'nsfwLevel',
-    'minor',
-    'sfwOnly',
-    'status',
-    'createdAt',
-    'lastVersionAt',
-    'lastVersionAtUnix',
-    'publishedAt',
-    'locked',
-    'earlyAccessDeadline',
-    'hasActivePaidAccess',
-    'mode',
-    'checkpointType',
-    'availability',
-    'poi',
-    'user',
-    'category',
-    'permissions',
-    'version',
-    'versions',
-    'triggerWords',
-    'fileFormats',
-    'hashes',
-    'tags',
-    'metrics',
-    'rank',
-    'hiddenMetrics',
-    'canGenerate',
-    'cannotPromote',
-    'cosmetic',
-    'images',
-  ];
-
-  if (JSON.stringify(displayedAttributes) !== JSON.stringify(settings.displayedAttributes)) {
-    const displayedAttributesTask = await index.updateDisplayedAttributes(displayedAttributes);
+  // Creator Controls privacy boundary — the list, and why withholding `sortMetrics` matters, now
+  // live in ./displayed-attributes.ts so that this writer and the admin apply route cannot drift.
+  // 🔴 This runs ONLY from `reset()`, against `<index>_NEW`, and that job is `UNRUNNABLE_JOB_CRON`,
+  // so editing the list does NOT change what a live index returns. To narrow a LIVE index use
+  // `src/pages/api/admin/temp/apply-models-index-displayed-attributes.ts`.
+  // 🔴 The module export is passed straight through — no local copy. A local one could be mutated
+  // between its declaration and this call, which re-opened the leak once and passed every test.
+  // ⚠️ That alone is NOT what makes this safe, and an earlier version of this comment claimed it
+  // was: the export is handed out by reference, so mutating IT has the same effect and a wider
+  // blast radius. What makes it safe is that ./displayed-attributes.ts FREEZES the export. Read
+  // that file before changing either side.
+  if (JSON.stringify(modelsDisplayedAttributes) !== JSON.stringify(settings.displayedAttributes)) {
+    const displayedAttributesTask = await index.updateDisplayedAttributes(
+      modelsDisplayedAttributes
+    );
     console.log('onIndexSetup :: displayedAttributesTask created', displayedAttributesTask);
   }
 

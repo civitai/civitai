@@ -73,7 +73,14 @@ const {
       oauthClient: { findUnique: vi.fn() },
       // W13 auto-create-on-approve: approveRequest checks for an existing onsite
       // AppListing (idempotency, keyed on appBlockId) before creating one.
-      appListing: { findUnique: vi.fn(), findFirst: vi.fn<DelegateMock>(async () => null) },
+      // `findMany` added: the three mod-queue list procs batch-read each page's slugs'
+      // store listings for the Plays + icon/cover columns. Defaults to none, which is the
+      // "app has no listing yet" case every row then projects as null.
+      appListing: {
+        findUnique: vi.fn(),
+        findFirst: vi.fn<DelegateMock>(async () => null),
+        findMany: vi.fn<DelegateMock>(async () => []),
+      },
       // Fix #1 (onsite): withdrawRequest probes the listing's latest mod event to
       // decide whether a reset withdraw closes the listing. Null → no reset in flight.
       appListingModerationEvent: { findFirst: vi.fn<DelegateMock>(async () => null) },
@@ -1701,7 +1708,11 @@ describe('approveRequest', () => {
       return { count: hit ? 1 : 0 };
     });
     // Scan-clean + rating-floor reads for the arm where the lookup DOES find the row.
-    mockDbWrite.appListing.findUnique.mockResolvedValue({ iconId: 1, coverId: 2, contentRating: 'g' });
+    mockDbWrite.appListing.findUnique.mockResolvedValue({
+      iconId: 1,
+      coverId: 2,
+      contentRating: 'g',
+    });
     mockDbWrite.appListingScreenshot.findMany.mockResolvedValue([]);
     mockDbWrite.image.findMany.mockImplementation(
       async (args: { where?: { id?: { in?: number[] } } }) =>
@@ -1768,7 +1779,9 @@ describe('approveRequest', () => {
 
     expect(flippedRows).toHaveLength(1);
     expect(flippedRows[0]).toMatchObject({ data: { status: 'approved' } });
-    expect(unsuspendCall()).toEqual([{ where: { id: 'apb_existing', status: 'suspended' }, data: { status: 'approved' } }]);
+    expect(unsuspendCall()).toEqual([
+      { where: { id: 'apb_existing', status: 'suspended' }, data: { status: 'approved' } },
+    ]);
   });
 
   it('🔴 the reset restore FLOORS contentRating at the media-derived rating (raise-only)', async () => {

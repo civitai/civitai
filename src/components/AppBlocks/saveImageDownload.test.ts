@@ -34,9 +34,60 @@ describe('isAllowedSaveImageUrl (SAVE_IMAGE origin allowlist)', () => {
     // contract, and this ledger is what makes each addition explicit.
     expect([...CIVITAI_IMAGE_HOSTS].sort()).toEqual([
       'image.civitai.com',
+      'orchestration-new.civitai.com',
       'orchestration-next.civitai.com',
       'orchestration.civitai.com',
     ]);
+  });
+
+  /**
+   * 🔴 REGRESSION, not an invariant guard. `orchestration-new.civitai.com` — note `-new`, NOT
+   * `-next` — is the host the LIVE orchestrator actually mints consumer-blob URLs on, and it was
+   * missing from the allowlist, so `isAllowedSaveImageUrl` returned **false** for every generated
+   * output in production. The user-visible symptom: a viewer who had just spent real Buzz in an App
+   * Block got `image url is not allowed` from the host (PageBlockHost.tsx:3609) and had NO in-app
+   * way to keep the image — `<a download>` is inert in the block's sandbox, which is the whole
+   * reason this bridge exists.
+   *
+   * Why the suite stayed green through it: every ALLOW case above used
+   * `orchestration.civitai.com` or `orchestration-next.civitai.com`. Neither is the production
+   * host, so no test ever exercised the url production serves. This case is built from a REAL
+   * measured production URL shape — the `/v2/consumer/blobs/<uuid>-<n>.jpg` path with the `sig` /
+   * `exp` query the orchestrator signs it with — rather than a tidy fixture, so it fails for the
+   * reason production failed.
+   *
+   * The sibling allowlist `KNOWN_ORCHESTRATOR_HOSTS`
+   * (src/server/services/orchestrator/trusted-blob-url.ts) already trusted this host; only this
+   * copy of the predicate did not.
+   */
+  it('ALLOWS the LIVE orchestrator host (orchestration-new) that production mints blobs on', () => {
+    const PROD_BLOB_URL =
+      'https://orchestration-new.civitai.com/v2/consumer/blobs/' +
+      '9f3c1b7a-5e2d-4a08-bf41-6c0d2e8a7b19-0.jpg' +
+      '?sig=0PqkT3nR8xV2mB6yJ4hLc1dWfAeZsQ9uG7iN5oY3rK0' +
+      '&exp=1790000000';
+
+    expect(isAllowedSaveImageUrl(PROD_BLOB_URL, CDN)).toBe(true);
+
+    // Control, so this cannot pass by the allowlist having gone permissive: the SAME path/query on
+    // a non-civitai host is still refused, and `-new` is matched EXACTLY (no suffix/wildcarding).
+    expect(
+      isAllowedSaveImageUrl(
+        PROD_BLOB_URL.replace(
+          'orchestration-new.civitai.com',
+          'orchestration-new.civitai.com.evil.example'
+        ),
+        CDN
+      )
+    ).toBe(false);
+    expect(
+      isAllowedSaveImageUrl(
+        PROD_BLOB_URL.replace('orchestration-new.civitai.com', 'sub.orchestration-new.civitai.com'),
+        CDN
+      )
+    ).toBe(false);
+    // …and https is still mandatory for it, like every other allowlisted host.
+    expect(isAllowedSaveImageUrl(PROD_BLOB_URL.replace('https://', 'http://'), CDN)).toBe(false);
   });
 
   it('ALLOWS the configured CDN origin even when not in the static list', () => {

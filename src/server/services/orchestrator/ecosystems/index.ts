@@ -6,7 +6,7 @@
  * the appropriate orchestrator step input format.
  *
  * Handler files follow the {name}.handler.ts naming convention:
- * - stable-diffusion.handler.ts → stable-diffusion-graph.ts (SD1, SD2, SDXL, Pony, Illustrious, NoobAI)
+ * - stable-diffusion.handler.ts → stable-diffusion-graph.ts (SD1, SDXL, Pony, Illustrious, NoobAI)
  * - flux.handler.ts → flux-graph.ts (Flux1, FluxKrea)
  * - flux2.handler.ts → flux2-graph.ts
  * - flux-kontext.handler.ts → flux-kontext-graph.ts
@@ -21,7 +21,6 @@ import type {
   ImageGenStepTemplate,
   PreprocessImageStepTemplate,
   PromptEnhancementStepTemplate,
-  TextToImageStepTemplate,
   VideoGenStepTemplate,
   VideoInterpolationStepTemplate,
 } from '@civitai/client';
@@ -31,7 +30,6 @@ import type {
   YuE2StepTemplate,
 } from '@civitai/orchestration-client';
 import { maxRandomSeed } from '~/server/common/constants';
-import { usesComfyEngine } from '~/shared/constants/generation.constants';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import type { GenerationHandlerCtx } from '../orchestration-new.service';
 
@@ -97,7 +95,6 @@ import { createFlux3VideoInput } from './flux3-video.handler';
 
 /** Step input for orchestrator - union of all possible step types */
 export type StepInput =
-  | TextToImageStepTemplate
   | ComfyStepTemplate
   | ImageGenStepTemplate
   | VideoGenStepTemplate
@@ -118,10 +115,10 @@ export type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosys
 
 /** SD family context */
 export type SDFamilyCtx = EcosystemGraphOutput & {
-  ecosystem: 'SD1' | 'SD2' | 'SDXL' | 'Pony' | 'Illustrious' | 'NoobAI';
+  ecosystem: 'SD1' | 'SDXL' | 'Pony' | 'Illustrious' | 'NoobAI';
 };
 
-/** Flux family context (Flux1/FluxKrea - textToImage) */
+/** Flux family context (Flux1/FluxKrea) */
 export type FluxCtx = EcosystemGraphOutput & {
   ecosystem: 'Flux1' | 'FluxKrea';
 };
@@ -349,24 +346,7 @@ export async function createEcosystemStepInput(
     seed: dataSeed ?? Math.floor(Math.random() * maxRandomSeed),
   };
 
-  const steps = await createEcosystemStep(normalizedData, handlerCtx);
-
-  if (
-    usesComfyEngine({
-      ecosystem: data.ecosystem,
-      modelId: 'model' in data ? (data as { model?: { id?: number } }).model?.id : undefined,
-      enhancedCompatibility:
-        'enhancedCompatibility' in data ? (data.enhancedCompatibility as boolean) : undefined,
-    })
-  ) {
-    for (const step of steps) {
-      if (step.$type === 'textToImage') {
-        (step as { input: Record<string, unknown> }).input.engine = 'comfyui';
-      }
-    }
-  }
-
-  return steps;
+  return createEcosystemStep(normalizedData, handlerCtx);
 }
 
 async function createEcosystemStep(
@@ -377,12 +357,11 @@ async function createEcosystemStep(
 
   switch (ecosystem) {
     // =========================================================================
-    // Image Ecosystems - textToImage step type
+    // Image Ecosystems
     // =========================================================================
 
     // SD Family
     case 'SD1':
-    case 'SD2':
     case 'SDXL':
     case 'Pony':
     case 'Illustrious':
@@ -422,10 +401,6 @@ async function createEcosystemStep(
     // PonyV7
     case 'PonyV7':
       return createPonyV7Input(normalizedData, handlerCtx);
-
-    // =========================================================================
-    // Image Ecosystems - imageGen step type
-    // =========================================================================
 
     // Flux2
     case 'Flux2':
@@ -469,7 +444,7 @@ async function createEcosystemStep(
     case 'Ernie':
       return createErnieInput(normalizedData, handlerCtx);
 
-    // Ideogram 4 (comfy)
+    // Ideogram 4.0 (comfy) and 4.5 (fal)
     case 'Ideogram':
       return createIdeogramInput(normalizedData, handlerCtx);
 
@@ -578,7 +553,7 @@ async function createEcosystemStep(
     }
 
     // =========================================================================
-    // Audio Ecosystems - aceStepAudio / miniMaxMusic3 step types
+    // Audio Ecosystems
     // =========================================================================
 
     case 'Ace':

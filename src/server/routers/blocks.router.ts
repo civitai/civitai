@@ -94,6 +94,7 @@ import {
   listApprovedRequestsSchema,
   listPendingRequestsSchema,
   listRejectedRequestsSchema,
+  listVersionHistorySchema,
   mintReviewBlockTokenSchema,
   previewRequestSchema,
   rejectRequestSchema,
@@ -2245,6 +2246,29 @@ export const blocksRouter = router({
         throw throwAuthorizationError('Mod review history is restricted to civitai team');
       }
       return listRejectedRequests({ limit: input.limit, cursor: input.cursor });
+    }),
+
+  /**
+   * Mod-only: every publish request for ONE app, newest-first. Powers the prior-versions
+   * modal on the `/apps/review` queue's Version column.
+   *
+   * slug-keyed, not `appBlockId` — see `~/server/services/blocks/publish-request.service`.
+   *
+   * 🔴 DO NOT COUNT `enforceAppBlocksFlag` AS A GATE HERE — for a `query` it falls through
+   * with `_appBlocksDisabled` rather than throwing, and this proc does not read that
+   * marker. Pinned in `__tests__/blocks.router.listVersionHistory.test.ts`.
+   */
+  listVersionHistory: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(listVersionHistorySchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Mod review history is restricted to civitai team');
+      }
+      const { listVersionHistory } = await import(
+        '~/server/services/blocks/publish-request.service'
+      );
+      return listVersionHistory({ slug: input.slug });
     }),
 
   /**

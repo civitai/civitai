@@ -636,6 +636,8 @@ model User {
   placementsMade                     Placement[]                @relation("PlacementPlacer")
   placementsSold                     Placement[]                @relation("PlacementSeller")
   pricingSlots                       PricingSlot[]
+  crucibles                          Crucible[]
+  crucibleEntries                    CrucibleEntry[]
 
   @@index([deletedAt])
 }
@@ -1595,6 +1597,7 @@ model Report {
   model3d        Model3DReport?
   model3dReview  Model3DReviewReport?
   announcement   AnnouncementReport?
+  crucible       CrucibleReport?
 }
 
 model ResourceReviewReport {
@@ -1954,6 +1957,9 @@ model Image {
   appListingIcons        AppListing[]           @relation("AppListingIcon")
   appListingCovers       AppListing[]           @relation("AppListingCover")
   appListingScreenshots  AppListingScreenshot[] @relation("AppListingScreenshot")
+  crucibles              Crucible[]             @relation("CrucibleImage")
+  crucibleHeroes         Crucible[]             @relation("CrucibleHeroImage")
+  crucibleEntries        CrucibleEntry[]
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -8900,4 +8906,103 @@ model BlurbReference {
   // RAW partial index (NOT expressible in Prisma — it carries a WHERE):
   // "BlurbReference_pending_idx" ON ("materializedAt") WHERE "pendingSince" IS NOT NULL.
   // Created in 20260825000000_add_blurbs (manual-apply).
+}
+
+// ============================================================================
+// Crucible - Head-to-head content competitions
+// ============================================================================
+
+enum CrucibleStatus {
+  Pending
+  Active
+  Completed
+  Cancelled
+}
+
+enum CrucibleIngestionStatus {
+  Pending
+  Scanned
+  Blocked
+  Error
+}
+
+model Crucible {
+  id                Int            @id @default(autoincrement())
+  userId            Int
+  user              User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name              String
+  description       String?
+  imageId           Int?
+  image             Image?         @relation("CrucibleImage", fields: [imageId], references: [id], onDelete: SetNull)
+  heroImageId       Int?
+  heroImage         Image?         @relation("CrucibleHeroImage", fields: [heroImageId], references: [id], onDelete: SetNull)
+  buzzType          String         @default("yellow")
+  nsfwLevel         Int            @default(0)
+  contentType       MediaType      @default(image)
+  entryFee          Int            @default(0)
+  seededPrizePool   Int            @default(0)
+  // Sort key for the feed, kept in step with seed + paid entries. Payouts and every shown pool
+  // derive from the entries instead (getCrucibleTotalPrizePool).
+  prizePool         Int            @default(0)
+  entryLimit        Int            @default(1)
+  // Each person's first N entries skip the fee and add nothing to the pool. Moderators only.
+  freeEntriesPerUser Int           @default(0)
+  maxTotalEntries   Int?
+  minViewSeconds    Int?
+  maxClipSeconds    Int?
+  prizePositions    Json           @default("[]")
+  allowedResources  Json?
+  duration          Int            @default(480)
+  startAt           DateTime?
+  endAt             DateTime?
+  status            CrucibleStatus @default(Pending)
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  buzzTransactionId String?
+  seedTransactionId String?
+  // Text scan of name + description. Defaults to Scanned so rows from before the scan stay visible.
+  ingestion         CrucibleIngestionStatus @default(Scanned)
+  scannedAt         DateTime?
+  // The scan found the text adult: list surfaces show it only to viewers who browse R or above.
+  textNsfw          Boolean        @default(false)
+
+  entries CrucibleEntry[]
+  reports CrucibleReport[]
+
+  @@index([userId], type: Hash)
+  @@index([status])
+  @@index([endAt])
+  @@index([startAt])
+  @@index([status, ingestion])
+}
+
+model CrucibleReport {
+  crucibleId Int
+  crucible   Crucible @relation(fields: [crucibleId], references: [id], onDelete: Cascade)
+  reportId   Int      @unique
+  report     Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, crucibleId])
+  @@index([crucibleId], type: Hash)
+}
+
+model CrucibleEntry {
+  id                Int      @id @default(autoincrement())
+  crucibleId        Int
+  crucible          Crucible @relation(fields: [crucibleId], references: [id], onDelete: Cascade)
+  userId            Int
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Null once its image is deleted: the entry and its fee stay, so the pool and a cancel's refund
+  // still count it.
+  imageId           Int?
+  image             Image?   @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  score             Int      @default(1500)
+  voteCount         Int      @default(0)
+  position          Int?
+  buzzTransactionId String?
+  createdAt         DateTime @default(now())
+
+  @@index([crucibleId], type: Hash)
+  @@index([userId], type: Hash)
+  @@index([crucibleId, score(sort: Desc)])
 }

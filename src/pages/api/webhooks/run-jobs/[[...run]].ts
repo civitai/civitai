@@ -124,6 +124,8 @@ import { removeReplacedImages } from '~/server/jobs/remove-replaced-images';
 import { restoreUserImages } from '~/server/jobs/restore-user-images';
 import { expireStrikesJob, processTimedUnmutesJob } from '~/server/jobs/process-strikes';
 import { processEnqueuedComicPanelsJob } from '~/server/jobs/process-enqueued-comic-panels';
+import { crucibleJobs } from '~/server/jobs/finalize-crucibles';
+import { crucibleSyncJobs } from '~/server/jobs/sync-crucible-scores';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -251,6 +253,8 @@ export const jobs: Job[] = [
   voidOrphanedAppealsJob,
   announcementMediaCheckJob,
   blurbFanoutJob,
+  ...crucibleJobs,
+  ...crucibleSyncJobs,
   pushSubscriptionCleanupJob,
 ];
 
