@@ -659,44 +659,12 @@ export const sysredisSentinelClientErrorsCounter = registerSysredisCounter({
 
 // App Blocks KV datastore (op ∈ get|set|delete|list|getQuota; outcome ∈ ok|unauthorized|…).
 //
-// 🔴 THE DECLARED NAME IS PREFIX-RELATIVE — do NOT re-add `app_blocks_` here.
-// `registerCounterWithLabels` / `registerHistogram` construct with
-// `PROM_PREFIX + name`, so the four App Blocks storage metrics below used to
-// expose a STUTTERING wire name: `civitai_app_` + `app_blocks_storage_ops_total`
-// = `civitai_app_app_blocks_storage_ops_total`. Measured in production: the
-// stutter was real and scrapeable (110 series, 354.7 increase over 7 days), so
-// nothing was broken — it was simply unguessable, and the operator contract
-// documented in `apps.router.ts` named the unprefixed spelling, i.e. a metric
-// that did not exist.
-//
-// The four exposed names are now, EXACTLY:
-//   civitai_app_block_storage_ops_total
-//   civitai_app_block_storage_quota_exceeded_total
-//   civitai_app_block_storage_user_quota_untracked_total
-//   civitai_app_block_storage_latency_seconds
-//
-// `block_storage_` rather than `blocks_storage_` is deliberate: it lands the
-// family inside the EXISTING `civitai_app_block_*` App Blocks namespace
-// (`civitai_app_block_requests_total`, `…_renders_total`,
-// `…_spend_cap_rejections_total`, `…_bridge_messages_total`, ~20 metrics in
-// `src/server/metrics/app-block-runtime.metrics.ts`) instead of opening a
-// second, plural one beside it. The alternative considered was a dedicated
-// registrar that opts out of PROM_PREFIX the way `registerSysredisCounter`
-// above does; it was rejected because it buys the same de-stutter at the cost
-// of new machinery AND a split namespace.
-//
-// 🔴 A RENAME BREAKS ANY DASHBOARD / ALERT / RECORDING RULE KEYED ON THE OLD
-// NAME, AND A BROKEN ALERT READS AS "no problem" RATHER THAN ERRORING. The
-// in-repo consumer set was enumerated at the time of the rename and held no
-// query — only this declaration, the service that calls `.inc()` through the JS
-// symbol, and two prose comments. Consumers OUTSIDE this repo (Grafana,
-// PrometheusRule) are not visible from here; the exact old and new names are
-// written out above so an operator can grep their own definitions.
-//
-// Seeded to 0 at scrape time by `seedAppBlockStorageMetrics`
-// (`src/server/prom/app-block-storage.metrics.ts`) — see that module for why a
-// labelled counter is otherwise ABSENT rather than zero, and for why the two
-// `app_block_id`-labelled counters can only get a presence beacon.
+// 🔴 These four names are PREFIX-RELATIVE — do NOT re-add `app_blocks_`. The helpers prepend
+// PROM_PREFIX, so a declared `app_blocks_*` stutters into `civitai_app_app_blocks_*`, which is
+// what shipped. Exposed: `civitai_app_block_storage_{ops_total,quota_exceeded_total,
+// user_quota_untracked_total,latency_seconds}`, in the `civitai_app_block_*` family the rest of
+// App Blocks already uses. Pinned by `__tests__/app-block-storage-metric-names.test.ts`.
+// Seeded to 0 by `src/server/prom/app-block-storage.metrics.ts`.
 export const appStorageOpsCounter = registerCounterWithLabels({
   name: 'block_storage_ops_total',
   help: 'App Blocks KV datastore tRPC operations',

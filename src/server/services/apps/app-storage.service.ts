@@ -39,7 +39,7 @@ import {
   appStorageQuotaExceededCounter,
   appStorageUserQuotaUntrackedCounter,
 } from '~/server/prom/client';
-import type { AppStorageOp } from '~/server/prom/app-block-storage.metrics';
+import type { AppStorageOp, AppStorageOutcome } from '~/server/prom/app-block-storage.metrics';
 import { logToAxiom } from '~/server/logging/client';
 import { requireAppsDb } from '~/server/db/appsDb';
 import { appSchemaIdent, sanitizeAppSlug } from '~/server/utils/apps-slug';
@@ -88,14 +88,14 @@ async function assertViewerIsAppDeveloper(userId: number, op: StorageOp): Promis
   // capability is evaluated. Distinct message from the capability refusal below
   // AND from the run gate's, so all three stay separable in a log and in a test.
   if (!user) {
-    appStorageOpsCounter.inc({ op, outcome: 'unauthorized' });
+    countStorageOutcome(op, 'unauthorized');
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'review token subject could not be resolved',
     });
   }
   if (!(await isAppBlocksAuthorEnabled({ user }))) {
-    appStorageOpsCounter.inc({ op, outcome: 'unauthorized' });
+    countStorageOutcome(op, 'unauthorized');
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: 'Apps authoring is not enabled for this account',
@@ -154,14 +154,14 @@ async function assertAppBlocksEnabledForTokenUser(userId: number, op: StorageOp)
   // message so the two refusals below are separable in a log AND in a test —
   // they are different conditions, not one gate spelled twice.
   if (!user) {
-    appStorageOpsCounter.inc({ op, outcome: 'unauthorized' });
+    countStorageOutcome(op, 'unauthorized');
     throw new TRPCError({
       code: 'UNAUTHORIZED',
       message: 'block token subject could not be resolved',
     });
   }
   if (!(await isAppBlocksEnabled({ user }))) {
-    appStorageOpsCounter.inc({ op, outcome: 'unauthorized' });
+    countStorageOutcome(op, 'unauthorized');
     throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
   }
 }
@@ -232,6 +232,19 @@ function isUndefinedTable(err: unknown): boolean {
 }
 
 /**
+ * The ONLY writer of `civitai_app_block_storage_ops_total`.
+ *
+ * 🔴 Exists so `outcome` is type-checked. prom-client types a label value as `string | number`,
+ * so a bare `.inc({ op, outcome: 'rateLimited' })` compiles, emits an unseeded series, and
+ * reads as `no data` until it first fires — and no grep can reliably tell a metric literal
+ * apart from the same word in an Axiom payload or a comment (there are three such in this
+ * file). Routing every emit through this signature puts the union under `tsc` instead.
+ */
+function countStorageOutcome(op: StorageOp, outcome: AppStorageOutcome): void {
+  appStorageOpsCounter.inc({ op, outcome });
+}
+
+/**
  * Count an UNEXPECTED fault on a storage procedure.
  *
  * Every deliberate refusal on these paths increments its own `outcome`
@@ -246,12 +259,12 @@ function isUndefinedTable(err: unknown): boolean {
  *
  * The discriminator is the error type, not a flag threaded through the body: a
  * refusal is always a `TRPCError`, a fault never is. A future `TRPCError` thrown
- * without its own `.inc` would go uncounted — that is the pre-existing contract
- * this preserves, and the reason each refusal counts itself at the throw site.
+ * without its own `countStorageOutcome` would go uncounted — that is the pre-existing
+ * contract this preserves, and the reason each refusal counts itself at the throw site.
  */
 function countStorageFault(op: StorageOp, err: unknown): void {
   if (err instanceof TRPCError) return;
-  appStorageOpsCounter.inc({ op, outcome: 'error' });
+  countStorageOutcome(op, 'error');
 }
 
 // H2: evaluated with the request user's context (`ctx.user`) so the live
@@ -296,12 +309,12 @@ async function resolveStorageContext(
 }> {
   const claims = await verifyBlockToken(blockToken);
   if (!claims) {
-    appStorageOpsCounter.inc({ op, outcome: 'unauthorized' });
+    countStorageOutcome(op, 'unauthorized');
     throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
   }
   const slug = sanitizeAppSlug(claims.blockId);
   if (!slug) {
-    appStorageOpsCounter.inc({ op, outcome: 'error' });
+    countStorageOutcome(op, 'error');
     throw new TRPCError({
       code: 'INTERNAL_SERVER_ERROR',
       message: 'block id is not a valid storage slug',
@@ -328,7 +341,7 @@ async function resolveStorageContext(
   // AppBlock row and an ephemeral app has none — but the argument costs nothing and
   // the alternative is a silent trap pointed at unsubmitted-app storage.
   if (await BlockRevocation.isRevoked(claims.blockInstanceId, claims.sub)) {
-    appStorageOpsCounter.inc({ op, outcome: 'unauthorized' });
+    countStorageOutcome(op, 'unauthorized');
     throw new TRPCError({ code: 'FORBIDDEN', message: 'block instance revoked' });
   }
 
@@ -351,7 +364,7 @@ async function resolveStorageContext(
   // is never granted in run-for-real).
   if (claims.reviewRunForReal === true) {
     if (!Array.isArray(claims.scopes) || !claims.scopes.includes(requiredScope)) {
-      appStorageOpsCounter.inc({ op, outcome: 'unauthorized' });
+      countStorageOutcome(op, 'unauthorized');
       throw new TRPCError({
         code: 'FORBIDDEN',
         message: `storage ${op} requires the ${requiredScope} scope`,
@@ -379,7 +392,7 @@ async function resolveStorageContext(
       select: { status: true },
     });
     if (!pr || pr.status !== 'pending') {
-      appStorageOpsCounter.inc({ op, outcome: 'unauthorized' });
+      countStorageOutcome(op, 'unauthorized');
       throw new TRPCError({
         code: 'FORBIDDEN',
         message: 'review preview is no longer active for this request',
@@ -414,11 +427,11 @@ async function resolveStorageContext(
     select: { id: true, status: true },
   });
   if (!block) {
-    appStorageOpsCounter.inc({ op, outcome: 'not_found' });
+    countStorageOutcome(op, 'not_found');
     throw new TRPCError({ code: 'NOT_FOUND', message: 'app block not found' });
   }
   if (block.status !== 'approved') {
-    appStorageOpsCounter.inc({ op, outcome: 'unauthorized' });
+    countStorageOutcome(op, 'unauthorized');
     throw new TRPCError({ code: 'FORBIDDEN', message: 'app block is not approved' });
   }
   // A5 / design-gaps H4: storage is a DECLARED, approved scope — not an
@@ -430,7 +443,7 @@ async function resolveStorageContext(
   // claims.scopes, so a block approved for e.g. only models:read:self could
   // still read/write 50MB of per-user KV it never disclosed.)
   if (!Array.isArray(claims.scopes) || !claims.scopes.includes(requiredScope)) {
-    appStorageOpsCounter.inc({ op, outcome: 'unauthorized' });
+    countStorageOutcome(op, 'unauthorized');
     throw new TRPCError({
       code: 'FORBIDDEN',
       message: `storage ${op} requires the ${requiredScope} scope`,
@@ -466,19 +479,8 @@ async function resolveStorageContext(
   };
 }
 
-/**
- * Derived, NOT restated. `APP_STORAGE_OPS` in
- * `src/server/prom/app-block-storage.metrics.ts` is the single source of truth,
- * because that module has to enumerate every op to publish its series at 0 —
- * and a sixth op added here but not there would simply never be seeded, leaving
- * its series absent until the first real call. That is silent: no error, no
- * failing test, and an absent series is exactly what the seeding exists to stop
- * being ambiguous.
- *
- * `import type` is erased at build, so this adds no runtime edge from the
- * service to a prom module (nor the reverse — that module imports only the
- * metric handles from `@civitai/telemetry/client`).
- */
+// Derived so a new op cannot be added without the metric seeding in
+// `~/server/prom/app-block-storage.metrics` picking it up. Type-only, so no runtime edge.
 type StorageOp = AppStorageOp;
 
 const keyInput = z.string().min(1).max(200);
@@ -560,7 +562,7 @@ export async function getAppStorageValue(blockToken: string, key: string) {
   try {
     const { userId, schema, blockInstanceId } = await resolveStorageContext(blockToken, 'get');
     if (userId == null) {
-      appStorageOpsCounter.inc({ op: 'get', outcome: 'ok' });
+      countStorageOutcome('get', 'ok');
       return { value: null as unknown };
     }
     const pool = requireAppsDb();
@@ -571,7 +573,7 @@ export async function getAppStorageValue(blockToken: string, key: string) {
         [blockInstanceId, userId, key]
       )
     ).rows;
-    appStorageOpsCounter.inc({ op: 'get', outcome: 'ok' });
+    countStorageOutcome('get', 'ok');
     return { value: rows[0]?.value ?? null };
   } catch (err) {
     countStorageFault('get', err);
@@ -594,7 +596,7 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
     const { userId, slug, schema, appBlockId, blockInstanceId, privateRun } =
       await resolveStorageContext(blockToken, 'set');
     if (userId == null) {
-      appStorageOpsCounter.inc({ op: 'set', outcome: 'unauthorized' });
+      countStorageOutcome('set', 'unauthorized');
       throw new TRPCError({
         code: 'UNAUTHORIZED',
         message: 'storage requires an authenticated viewer',
@@ -633,7 +635,7 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
     const serialized = JSON.stringify(value ?? null);
     const byteSize = Buffer.byteLength(serialized, 'utf8');
     if (byteSize > PER_VALUE_BYTE_CAP) {
-      appStorageOpsCounter.inc({ op: 'set', outcome: 'payload_too_large' });
+      countStorageOutcome('set', 'payload_too_large');
       throw new TRPCError({
         code: 'PAYLOAD_TOO_LARGE',
         message: `value exceeds ${PER_VALUE_BYTE_CAP / 1024}KB cap`,
@@ -832,7 +834,7 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
     const isNonIncreasing = netDelta <= 0;
 
     if (!isNonIncreasing && usedBytes + netDelta > APP_QUOTA_BYTES) {
-      appStorageOpsCounter.inc({ op: 'set', outcome: 'quota_exceeded' });
+      countStorageOutcome('set', 'quota_exceeded');
       appStorageQuotaExceededCounter.inc({ app_block_id: appBlockId, ceiling: 'app' });
       logToAxiom(
         {
@@ -857,7 +859,7 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
       });
     }
     if (isInsert && rowCount + 1 > APP_ROW_LIMIT) {
-      appStorageOpsCounter.inc({ op: 'set', outcome: 'quota_exceeded' });
+      countStorageOutcome('set', 'quota_exceeded');
       appStorageQuotaExceededCounter.inc({ app_block_id: appBlockId, ceiling: 'app' });
       throw new TRPCError({
         code: 'PAYLOAD_TOO_LARGE',
@@ -898,7 +900,7 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
     // `user_quota_relation_missing` log on the fallback branch above. The flag
     // itself is gone — it had no reader left that could act on it.
     if (!isNonIncreasing && userUsedBytes + netDelta > USER_QUOTA_BYTES) {
-      appStorageOpsCounter.inc({ op: 'set', outcome: 'quota_exceeded' });
+      countStorageOutcome('set', 'quota_exceeded');
       appStorageQuotaExceededCounter.inc({ app_block_id: appBlockId, ceiling: 'user' });
       logToAxiom(
         {
@@ -919,7 +921,7 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
       });
     }
     if (isInsert && userRowCount + 1 > USER_ROW_LIMIT) {
-      appStorageOpsCounter.inc({ op: 'set', outcome: 'quota_exceeded' });
+      countStorageOutcome('set', 'quota_exceeded');
       appStorageQuotaExceededCounter.inc({ app_block_id: appBlockId, ceiling: 'user' });
       throw new TRPCError({
         code: 'PAYLOAD_TOO_LARGE',
@@ -960,7 +962,7 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
       client.release();
     }
 
-    appStorageOpsCounter.inc({ op: 'set', outcome: 'ok' });
+    countStorageOutcome('set', 'ok');
     logToAxiom(
       {
         event: 'set',
@@ -1032,7 +1034,7 @@ export async function deleteAppStorageValue(blockToken: string, key: string) {
       'delete'
     );
     if (userId == null) {
-      appStorageOpsCounter.inc({ op: 'delete', outcome: 'unauthorized' });
+      countStorageOutcome('delete', 'unauthorized');
       throw new TRPCError({
         code: 'UNAUTHORIZED',
         message: 'storage requires an authenticated viewer',
@@ -1049,7 +1051,7 @@ export async function deleteAppStorageValue(blockToken: string, key: string) {
         [blockInstanceId, userId, key]
       );
       await client.query('COMMIT');
-      appStorageOpsCounter.inc({ op: 'delete', outcome: 'ok' });
+      countStorageOutcome('delete', 'ok');
       const deleted = (result.rowCount ?? 0) > 0;
       if (deleted) {
         logToAxiom(
@@ -1127,7 +1129,7 @@ export async function listAppStorageKeys(
   try {
     const { userId, schema, blockInstanceId } = await resolveStorageContext(blockToken, 'list');
     if (userId == null) {
-      appStorageOpsCounter.inc({ op: 'list', outcome: 'ok' });
+      countStorageOutcome('list', 'ok');
       return { keys: [], nextCursor: undefined as string | undefined };
     }
 
@@ -1154,7 +1156,7 @@ export async function listAppStorageKeys(
         ? Buffer.from(rows[rows.length - 1].key, 'utf8').toString('base64')
         : undefined;
 
-    appStorageOpsCounter.inc({ op: 'list', outcome: 'ok' });
+    countStorageOutcome('list', 'ok');
     return {
       keys: rows.map((r) => ({ key: r.key, updatedAt: r.updated_at })),
       nextCursor,
@@ -1202,7 +1204,7 @@ export async function getAppStorageQuota(blockToken: string) {
     } else {
       quota = await AppStorageProvisioner.getUserQuota({ slug, appBlockId, userId });
     }
-    appStorageOpsCounter.inc({ op: 'getQuota', outcome: 'ok' });
+    countStorageOutcome('getQuota', 'ok');
     return {
       usedBytes: quota?.usedBytes ?? 0,
       rowCount: quota?.rowCount ?? 0,

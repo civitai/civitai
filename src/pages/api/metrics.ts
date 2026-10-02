@@ -47,22 +47,16 @@ import { ensureRegisterImageUploadRelayMetrics } from '~/server/prom/image-uploa
 // this counter was added to end, so leaving it unseeded would reproduce the defect one
 // level down.
 import { ensureRegisterCsamArchiveMetrics } from '~/server/metrics/csam-archive.metrics';
-// Same reason as the three neighbours above: publishes the App Blocks KV storage series
-// at 0. Two of the four counters were ABSENT in production (measured 2026-10-01) purely
-// because nothing had ever incremented them — and one of those, the per-user
-// quota-untracked counter, exists specifically to be alerted on. Without a zero there is
-// no way to tell "no app has hit a ceiling" from "the instrument is not wired", so an
-// `absent()` alert fires on a healthy fleet and a `> 0` alert never fires on a dead one.
-//
-// 🔴 NOT idempotent, unlike its neighbours — it is once-only and latched on globalThis,
-// because `Histogram.zero()` is destructive. Call it here and nowhere else on a hot path.
+// Same reason as the three neighbours above, for the App Blocks KV storage counters: two of
+// the four were absent in production purely because nothing had ever incremented them, and one
+// of those exists to be alerted on. Called from the handler rather than here because it must
+// await a read of the latency histogram's existing children before zeroing any of them.
 import { seedAppBlockStorageMetrics } from '~/server/prom/app-block-storage.metrics';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 ensureRegisterGenerationModelSubstitutionMetrics();
 ensureRegisterImageUploadRelayMetrics();
 ensureRegisterCsamArchiveMetrics();
-seedAppBlockStorageMetrics();
 
 const labels: Record<string, string> = {};
 if (process.env.PODNAME) {
@@ -195,6 +189,8 @@ async function collectRegistryMetrics(
 }
 
 const handler = WebhookEndpoint(async (_, res: NextApiResponse) => {
+  await seedAppBlockStorageMetrics();
+
   const metrics = await collectRegistryMetrics(client.register, 'default');
 
   // Metrics emitted from the instrumentation webpack graph (e.g. the event-loop

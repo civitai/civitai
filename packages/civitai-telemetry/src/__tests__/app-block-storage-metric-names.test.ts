@@ -55,6 +55,14 @@ describe('App Blocks storage metric names', () => {
     for (const name of [OPS, QUOTA_EXCEEDED, USER_QUOTA_UNTRACKED, LATENCY]) {
       expect(promClient.register.getSingleMetric(name), name).toBeDefined();
     }
+
+    // Fails on GROWTH too, not only on a rename: a fifth `block_storage_*` metric would
+    // otherwise join the family with its exposed name pinned nowhere.
+    const family = promClient.register
+      .getMetricsAsArray()
+      .map((m) => (m as { name: string }).name)
+      .filter((n) => n.startsWith('civitai_app_block_storage_'));
+    expect(family.sort()).toEqual([LATENCY, OPS, QUOTA_EXCEEDED, USER_QUOTA_UNTRACKED].sort());
   });
 
   it('the exported handles ARE those four metrics — not same-named strangers', () => {
@@ -84,15 +92,31 @@ describe('App Blocks storage metric names', () => {
     // Asserted against DECLARED labelNames, not emitted series: prom-client
     // omits a declared-but-never-supplied label from its output, so inspecting
     // emitted labels stays green on a metric declared wide open.
+    //
+    // `?? {}` on the metric, not just on `labelNames`: this is the file whose job is a legible
+    // name failure, and reading a field off `undefined` throws a TypeError instead.
     const declared = (name: string) =>
       [
-        ...((promClient.register.getSingleMetric(name) as unknown as { labelNames: string[] })
-          .labelNames ?? []),
+        ...((
+          (promClient.register.getSingleMetric(name) ?? {}) as unknown as {
+            labelNames?: string[];
+          }
+        ).labelNames ?? []),
       ].sort();
     expect(declared(OPS)).toEqual(['op', 'outcome']);
     expect(declared(QUOTA_EXCEEDED)).toEqual(['app_block_id', 'ceiling']);
     expect(declared(USER_QUOTA_UNTRACKED)).toEqual(['app_block_id']);
     expect(declared(LATENCY)).toEqual(['op']);
+  });
+
+  it('🔴 pins the latency buckets — a boundary change silently reshapes every quantile on it', () => {
+    // Same unguessable-from-outside property the names had: nothing outside this repo can see
+    // a bucket edit, and `histogram_quantile` over a moved boundary just returns a different
+    // number. The 5 children x 13 series arithmetic in the seeding test also rests on this.
+    const buckets = (
+      promClient.register.getSingleMetric(LATENCY) as unknown as { upperBounds: number[] }
+    ).upperBounds;
+    expect([...buckets]).toEqual([0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5]);
   });
 
   it('no metric in this package repeats the `app_` segment the prefix already supplies', () => {
