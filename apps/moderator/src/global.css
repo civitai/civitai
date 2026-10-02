@@ -46,3 +46,99 @@
     @apply grid min-h-60 place-items-center rounded-xl border border-dashed border-dark-4 bg-dark-6 p-6 text-dark-2;
   }
 }
+
+/* ---------------------------------------------------------------------------------------------- *
+ * COARSE-POINTER TOUCH-TARGET FLOOR
+ *
+ * OPT-IN, via `data-touch-target`, and deliberately NOT app-wide. A blanket floor over this app's
+ * dense moderation lists would widen every row under touch and risks re-introducing the page-level
+ * horizontal overflow the three preceding responsive PRs removed. What is marked is the set where a
+ * mis-hit is destructive and irreversible: a ban, a purge, a bulk delete, and the checkboxes that
+ * decide how far one of those reaches.
+ *
+ * WHY IT LIVES IN THE APP AND NOT IN `@civitai/ui`, honestly — because the obvious answer is wrong.
+ * "It is scoped to destructive controls, so it belongs to the app" is a NON-SEQUITUR: the scoping is
+ * done by where the marker is written in MARKUP, and an attribute-keyed rule matches nothing in an app
+ * that never writes the attribute. Moving it to the package would cost the other three SvelteKit apps
+ * exactly nothing. The real reason is that this rule reaches into the package's internals — it
+ * overrides `after:-inset-x-3 after:-inset-y-2` on a shadcn file the package README forbids
+ * hand-editing and a `--overwrite` regenerates — so it is on the wrong side of a boundary either way.
+ * It sits here because it has ONE consumer and the standard says promote on the second. When that
+ * arrives (`apps/creator-studio` .../RightsAffirmation.svelte and `apps/training-studio` ReviewStep
+ * both still use raw 16px checkboxes on consequential forms), move it to `theme.css` — but NOT into
+ * its `@layer base` block, for the layering reason below.
+ *
+ * 🔴 UNLAYERED ON PURPOSE. Tailwind v4 declares `@layer theme, base, components, utilities`, so
+ * `utilities` outranks `components` REGARDLESS OF SPECIFICITY. An unlayered rule beats every layered
+ * one, which is the only reason rule (2) below works: its `inset` is competing head-on with the
+ * primitive's own `after:-inset-x-3 after:-inset-y-2` utilities, and inside `@layer components` it
+ * would still parse, still match, and lose every time.
+ *
+ * Precisely: this applies to rule (2) and NOT to rule (1). `min-height`/`min-width` are different
+ * PROPERTIES from the `h-*`/`size-*` utilities they exist to overrule, so they clamp the used value
+ * whichever layer they land in — and no marked file carries a competing `min-h-*`/`min-w-*`. Stated
+ * as "the whole block would be inert" this read as a stronger guarantee than it is, and an
+ * over-claiming comment is the kind that stops the next reader checking. Keep the block unlayered
+ * anyway: one of its two rules genuinely depends on it, and splitting them to make the distinction
+ * visible would break the coupling described under GEOMETRY. A test pins it.
+ *
+ * 🔴 ASSERTED STRUCTURALLY, NEVER OBSERVED. `(pointer: coarse)` does not fire in a desktop browser
+ * narrowed to a phone width — it needs real touch emulation — and this repo has no tier that renders
+ * a Svelte component, so nothing here has been measured against a laid-out page. It is arithmetic
+ * over the cascade, and it is written so a test can re-derive the arithmetic rather than restate it.
+ *
+ * WHAT IT DOES
+ *   (1) A marked element's own box never falls below the floor. On a `<Button>` the marked element IS
+ *       the control (every one of the 8 size variants is 24-36px, all under the floor). On a checkbox
+ *       row the marked element is the ROW, which is what reserves the vertical space rule (2) needs.
+ *   (2) A checkbox is 16px of paint, so its hit area is a pseudo-element rather than its box — growing
+ *       the box would turn a 16px tick into a 44px slab. The primitive already carries one
+ *       (`after:-inset-x-3 after:-inset-y-2`, i.e. 40x32 — under the floor on BOTH axes, which is why
+ *       swapping a raw input for the primitive does not on its own satisfy anything). This restates
+ *       `content`/`position` rather than inheriting them from those utilities, so it stays correct if
+ *       a `shadcn-svelte add checkbox --overwrite` regenerates that file — the package README forbids
+ *       hand-editing it, so this had to hold without one.
+ *
+ * GEOMETRY. `100%` under `inset` resolves per axis against the containing block, so each axis
+ * independently reaches the floor and a non-square checkbox cannot silently come out short.
+ *
+ * Rule (1) is what stops two stacked hit areas OVERLAPPING — a tap landing on the wrong one of two
+ * adjacent destructive checkboxes is the failure it exists to prevent. That is exact only where the
+ * checkbox is centred in its row (`items-center`), which is how six of the eight marked checkbox rows
+ * are written: the hit area is then exactly the row and cannot reach a neighbour's. The other two were
+ * checked by hand rather than by this rule, and both clear:
+ *   · `ReviewsPanel` `<li>` is `items-baseline` in a `space-y-1` list — the area overhangs the row top
+ *     by ~15px and the previous row's ends ~16px earlier, so ~4px of clearance.
+ *   · `ImageActionBar`'s strike row is `items-start`; its checkbox carries `mt-1.5` (not the original
+ *     `mt-0.5`) precisely so the area's top edge lands flush with the 8px `mb-2` gap above instead of
+ *     4px onto the bottom edge of the reason Input. The arithmetic is at that call site.
+ * Changing an `items-*` on a marked row, or the spacing around one, re-opens this — and no test can
+ * see it, because none of this is ever laid out.
+ *
+ * The coupling is also why both rules are keyed on the same marker and the same custom property:
+ * split them and stacked checkboxes start stealing each other's taps.
+ * ---------------------------------------------------------------------------------------------- */
+
+:root {
+  --touch-target-min: 44px;
+}
+
+@media (pointer: coarse) {
+  [data-touch-target] {
+    min-height: var(--touch-target-min);
+    min-width: var(--touch-target-min);
+  }
+
+  /* The pseudo-element's containing block. Set here rather than relied on from the primitive's
+     `relative` token: without it `inset` would resolve against some ancestor and the hit area would
+     cover half the form. */
+  [data-touch-target] [data-slot='checkbox'] {
+    position: relative;
+  }
+
+  [data-touch-target] [data-slot='checkbox']::after {
+    content: '';
+    position: absolute;
+    inset: calc((var(--touch-target-min) - 100%) / -2);
+  }
+}

@@ -41,14 +41,31 @@
   });
 </script>
 
+<!-- `data-touch-target` on all three: under a coarse pointer `size="sm"` is a 28px box, and these are
+     the buttons that delete. Cancel carries it too — an undersized escape hatch beside an oversized
+     destructive one makes the mis-hit MORE likely, not less, which is the opposite of the point. -->
 {#if confirming}
   <span class="text-sm text-red-300">
     {label} {count} {noun}{count === 1 ? '' : 's'}?
   </span>
-  <Button type="submit" {name} {value} size="sm" variant="destructive" disabled={submitting}>
+  <Button
+    type="submit"
+    {name}
+    {value}
+    size="sm"
+    variant="destructive"
+    disabled={submitting}
+    data-touch-target
+  >
     Yes, {label.toLowerCase()}
   </Button>
-  <Button type="button" size="sm" variant="outline" onclick={() => (confirming = false)}>
+  <Button
+    type="button"
+    size="sm"
+    variant="outline"
+    onclick={() => (confirming = false)}
+    data-touch-target
+  >
     Cancel
   </Button>
 {:else}
@@ -58,6 +75,7 @@
     variant="destructive"
     disabled={submitting || count === 0}
     onclick={() => (confirming = true)}
+    data-touch-target
   >
     {label}
   </Button>
