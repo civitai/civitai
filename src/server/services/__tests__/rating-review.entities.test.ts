@@ -39,16 +39,45 @@ describe('loadRatingReviewSubject', () => {
   });
 
   it('maps a model to SFW/NSFW from its flag, gives it no override, and hides a deleted model', async () => {
-    dbMock.dbRead.model.findUnique.mockResolvedValueOnce({ userId: 3, nsfw: true, updatedAt: at, name: 'm', deletedAt: null });
-    expect(await loadRatingReviewSubject('Model', 1)).toMatchObject({ currentLevel: 4, override: null, overrideBasis: null });
-    dbMock.dbRead.model.findUnique.mockResolvedValueOnce({ userId: 3, nsfw: false, updatedAt: at, name: 'm', deletedAt: null });
+    dbMock.dbRead.model.findUnique.mockResolvedValueOnce({
+      userId: 3,
+      nsfw: true,
+      updatedAt: at,
+      name: 'm',
+      deletedAt: null,
+    });
+    expect(await loadRatingReviewSubject('Model', 1)).toMatchObject({
+      currentLevel: 4,
+      override: null,
+      overrideBasis: null,
+    });
+    dbMock.dbRead.model.findUnique.mockResolvedValueOnce({
+      userId: 3,
+      nsfw: false,
+      updatedAt: at,
+      name: 'm',
+      deletedAt: null,
+    });
     expect((await loadRatingReviewSubject('Model', 1))?.currentLevel).toBe(1);
-    dbMock.dbRead.model.findUnique.mockResolvedValueOnce({ userId: 3, nsfw: true, updatedAt: at, name: 'm', deletedAt: at });
+    dbMock.dbRead.model.findUnique.mockResolvedValueOnce({
+      userId: 3,
+      nsfw: true,
+      updatedAt: at,
+      name: 'm',
+      deletedAt: at,
+    });
     expect(await loadRatingReviewSubject('Model', 1)).toBeNull();
   });
 
   it('gives a system challenge no owner and a user challenge its creator', async () => {
-    const row = { createdById: 9, nsfwLevel: 4, updatedAt: at, title: 't', moderatorNsfwLevel: null, moderatorNsfwLevelBasis: null };
+    const row = {
+      createdById: 9,
+      nsfwLevel: 4,
+      updatedAt: at,
+      title: 't',
+      moderatorNsfwLevel: null,
+      moderatorNsfwLevelBasis: null,
+    };
     dbMock.dbRead.challenge.findUnique.mockResolvedValueOnce({ ...row, source: 'System' });
     expect((await loadRatingReviewSubject('Challenge', 1))?.ownerId).toBeNull();
     dbMock.dbRead.challenge.findUnique.mockResolvedValueOnce({ ...row, source: 'User' });
@@ -64,7 +93,22 @@ describe('loadRatingReviewSubject', () => {
       moderatorNsfwLevel: null,
       moderatorNsfwLevelBasis: null,
     });
-    expect(await loadRatingReviewSubject('BountyEntry', 8)).toMatchObject({ parentId: 44, title: 'Entry #8' });
+    expect(await loadRatingReviewSubject('BountyEntry', 8)).toMatchObject({
+      parentId: 44,
+      title: 'Entry #8',
+    });
+  });
+
+  it('never reports Blocked as the current rating: an nsfw bounty stores R|X|XXX|Blocked', async () => {
+    dbMock.dbRead.bounty.findUnique.mockResolvedValue({
+      userId: 3,
+      nsfwLevel: 60,
+      updatedAt: at,
+      name: 'b',
+      moderatorNsfwLevel: null,
+      moderatorNsfwLevelBasis: null,
+    });
+    expect(await loadRatingReviewSubject('Bounty', 9)).toMatchObject({ currentLevel: 16 });
   });
 
   it('returns null for a missing row', async () => {
@@ -88,7 +132,9 @@ describe('getRatingReviewScan', () => {
       pending: false,
     });
     expect(dbMock.dbRead.entityModeration.findUnique).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { entityType_entityId: { entityType: 'Post', entityId: 1 } } })
+      expect.objectContaining({
+        where: { entityType_entityId: { entityType: 'Post', entityId: 1 } },
+      })
     );
   });
 
@@ -101,7 +147,11 @@ describe('getRatingReviewScan', () => {
       result: textScan('x', 'h2'),
       contentHash: 'h-being-scanned',
     });
-    expect(await getRatingReviewScan('Post', 1)).toMatchObject({ raised: true, pending: true, textHash: 'h2' });
+    expect(await getRatingReviewScan('Post', 1)).toMatchObject({
+      raised: true,
+      pending: true,
+      textHash: 'h2',
+    });
   });
 
   it('never counts an XGuard row, whatever it triggered', async () => {
@@ -122,11 +172,23 @@ describe('getRatingReviewScan', () => {
   });
 
   it('needs R or above to raise a model, and a PG verdict never raises anything', async () => {
-    dbMock.dbRead.entityModeration.findUnique.mockResolvedValueOnce({ status: 'Succeeded', nsfwLevel: 2, result: textScan('pg13') });
+    dbMock.dbRead.entityModeration.findUnique.mockResolvedValueOnce({
+      status: 'Succeeded',
+      nsfwLevel: 2,
+      result: textScan('pg13'),
+    });
     expect((await getRatingReviewScan('Model', 1))?.raised).toBe(false);
-    dbMock.dbRead.entityModeration.findUnique.mockResolvedValueOnce({ status: 'Succeeded', nsfwLevel: 4, result: textScan('r') });
+    dbMock.dbRead.entityModeration.findUnique.mockResolvedValueOnce({
+      status: 'Succeeded',
+      nsfwLevel: 4,
+      result: textScan('r'),
+    });
     expect((await getRatingReviewScan('Model', 1))?.raised).toBe(true);
-    dbMock.dbRead.entityModeration.findUnique.mockResolvedValueOnce({ status: 'Succeeded', nsfwLevel: 1, result: textScan('pg') });
+    dbMock.dbRead.entityModeration.findUnique.mockResolvedValueOnce({
+      status: 'Succeeded',
+      nsfwLevel: 1,
+      result: textScan('pg'),
+    });
     expect((await getRatingReviewScan('Post', 1))?.raised).toBe(false);
   });
 

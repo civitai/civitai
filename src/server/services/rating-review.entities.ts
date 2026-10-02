@@ -1,4 +1,4 @@
-import { getHighestBrowsingLevelBit } from '@civitai/shared';
+import { allBrowsingLevelsFlag, getHighestBrowsingLevelBit } from '@civitai/shared';
 import {
   modelRatingLevel,
   textScanNsfwReason,
@@ -18,6 +18,9 @@ export type RatingReviewSubject = {
   override: number | null;
   overrideBasis: number | null;
 };
+
+// Blocked is a ToS action, not a rating: an `nsfw` bounty stores R|X|XXX|Blocked, so its highest bit would read as Blocked.
+const ratedLevel = (mask: number) => getHighestBrowsingLevelBit(mask & allBrowsingLevelsFlag);
 
 type Db = typeof dbRead | typeof dbWrite;
 type Loader = (id: number, db: Db) => Promise<RatingReviewSubject | null>;
@@ -69,7 +72,7 @@ const loaders: Record<RatingReviewEntityType, Loader> = {
     return (
       p && {
         ownerId: p.userId,
-        currentLevel: getHighestBrowsingLevelBit(p.nsfwLevel),
+        currentLevel: ratedLevel(p.nsfwLevel),
         updatedAt: p.updatedAt,
         title: p.title ?? `Post #${id}`,
         parentId: null,
@@ -85,7 +88,7 @@ const loaders: Record<RatingReviewEntityType, Loader> = {
     return (
       b && {
         ownerId: b.userId,
-        currentLevel: getHighestBrowsingLevelBit(b.nsfwLevel),
+        currentLevel: ratedLevel(b.nsfwLevel),
         updatedAt: b.updatedAt,
         title: b.name,
         parentId: null,
@@ -101,7 +104,7 @@ const loaders: Record<RatingReviewEntityType, Loader> = {
     return (
       e && {
         ownerId: e.userId,
-        currentLevel: getHighestBrowsingLevelBit(e.nsfwLevel),
+        currentLevel: ratedLevel(e.nsfwLevel),
         updatedAt: e.updatedAt,
         title: `Entry #${id}`,
         parentId: e.bountyId,
@@ -117,7 +120,7 @@ const loaders: Record<RatingReviewEntityType, Loader> = {
     return (
       c && {
         ownerId: c.source === ChallengeSource.User ? c.createdById : null,
-        currentLevel: getHighestBrowsingLevelBit(c.nsfwLevel),
+        currentLevel: ratedLevel(c.nsfwLevel),
         updatedAt: c.updatedAt,
         title: c.title,
         parentId: null,

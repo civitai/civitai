@@ -1,4 +1,4 @@
-import { getHighestBrowsingLevelBit, NsfwLevel } from '@civitai/shared';
+import { allBrowsingLevelsFlag, getHighestBrowsingLevelBit, NsfwLevel } from '@civitai/shared';
 import { overrideBasisDropped } from '@civitai/shared/rated-entity-sql';
 import { dbRead } from '~/server/db/client';
 import { computeArticleDerivedNsfwLevel } from '~/server/services/article-rating-review.helpers';
@@ -92,7 +92,7 @@ export async function evaluateOverrideAutoApprove({
 
   const derivedLevel = await computeDerivedNsfwLevel(entityType, entityId);
   if (!derivedLevel) return no('no-derivable-signal', derivedLevel);
-  if (getHighestBrowsingLevelBit(derivedLevel) > suggestedLevel)
+  if (getHighestBrowsingLevelBit(derivedLevel & allBrowsingLevelsFlag) > suggestedLevel)
     return no('derived-exceeds-suggested', derivedLevel);
   if (subject.overrideBasis == null) return no('no-override-basis', derivedLevel);
   if (
