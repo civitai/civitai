@@ -62,7 +62,20 @@ type GetJsonCompletionInput = {
   retries?: number;
 };
 
-export type TokenUsage = { promptTokens: number; completionTokens: number };
+/**
+ * `costUsd` is the vendor's OWN reported spend for the call, present only where
+ * the transport reports one. OpenRouter's `/api/alpha/decisions` does (see
+ * `services/ai/jev.ts`); chat/completions does not report it in the field
+ * `extractUsage` reads, so every chat caller leaves it absent. Absent and `0`
+ * are different facts — "not reported" vs "free" — so it is optional rather
+ * than defaulted.
+ *
+ * 🔴 `sumUsage` below does NOT sum it. That is correct only because nothing
+ * that populates it goes through `sumUsage` (its sole caller is the
+ * `getJsonCompletionWithUsage` retry path, which is chat-only). If a chat
+ * transport ever starts reporting cost, `sumUsage` must learn to add it.
+ */
+export type TokenUsage = { promptTokens: number; completionTokens: number; costUsd?: number };
 
 // The OpenRouter SDK's parsed `ChatResponse.usage` is camelCase (its zod schema
 // remaps the wire format), but the raw OpenRouter/OpenAI-compatible REST API

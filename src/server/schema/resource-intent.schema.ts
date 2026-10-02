@@ -106,6 +106,21 @@ export const RESOURCE_INTENT_QUESTIONS = [
       'How specific is the prompt about what it wants? 1 = any style works, 5 = an exact named subject or style is required.',
     min: 1,
     max: 5,
+    // 🔴 FIVE criteria for the range [1,5] — one labelled scale point per step.
+    // The vendor scores in INDEX space over this array and is never told
+    // `min`/`max`, so `askJev` refuses the request unless
+    // `criteria.length === max - min + 1`; a mismatch would silently rescale
+    // every answer. `integer` because `resourceIntentAnswerSchema` types
+    // `specificity` as `z.number().int().min(1).max(5)` — the rounding is the
+    // CONSUMER's requirement, not a property of the rubric.
+    criteria: [
+      'any style or subject works — the prompt states no preference',
+      'a loose direction is implied but nothing is named',
+      'a general style or subject category is named',
+      'a specific style or subject is named, with some latitude',
+      'an exact named subject or style is required',
+    ],
+    integer: true,
   },
   {
     id: 'injectionPresent',
