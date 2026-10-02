@@ -151,35 +151,61 @@ describe('seedAppBlockStorageMetrics', () => {
 });
 
 /**
- * Separate `describe` because these two RECORD latency observations. Inside the block above a
- * case appended after them would fail on `publishes one zeroed latency histogram child per op`
- * with `expected 1 to be +0` — a message that reads as "the seeding is broken" and says nothing
- * about ordering. Vitest runs describes in source order, so the split keeps that block's
- * append-point clean.
+ * Separate `describe` because these RECORD latency observations.
+ *
+ * 🔴 Every assertion here is RELATIVE to the count it reads first, never to a literal. The
+ * split alone is not enough: with literals, a case appended to the block above that happens to
+ * `observe()` turns the headline non-destructiveness guard red with `expected 1 to be 2` — a
+ * message that reads as "the seeder went destructive again" for what is a fixture collision.
+ * Relative assertions make these cases independent of whatever ran before them.
  */
 describe('re-seeding is non-destructive', () => {
   it('🔴 re-seeding does NOT wipe a recorded latency observation', async () => {
     // The seeder runs on the FIRST SCRAPE, not at pod start, so by the time it first executes
     // the pod may already have served storage calls. An unconditional `zero()` would delete
     // them. This is the case that fails if `zeroMissingLatencyChildren` stops checking.
+    const before = (await latencyCount('get')) ?? 0;
     latencyHandle().observe({ op: 'get' }, 0.5);
-    expect(await latencyCount('get')).toBe(1);
+    expect(await latencyCount('get')).toBe(before + 1);
 
     await seedAppBlockStorageMetrics();
 
-    expect(await latencyCount('get')).toBe(1);
+    expect(await latencyCount('get')).toBe(before + 1);
   });
 
   it('the destructive case is REACHABLE — an unconditional zero() really would delete it', async () => {
     // Proves the case above is not vacuous: the primitive it declines to call does destroy the
     // child. Without this, replacing the existence check with a bare `zero()` could leave the
     // previous case green because nothing was ever at risk.
+    const before = (await latencyCount('list')) ?? 0;
     latencyHandle().observe({ op: 'list' }, 0.25);
-    expect(await latencyCount('list')).toBe(1);
+    expect(await latencyCount('list')).toBe(before + 1);
 
     latencyHandle().zero({ op: 'list' });
 
     expect(await latencyCount('list')).toBe(0);
+  });
+
+  it('🔴 a failing latency read costs the series, never the scrape', async () => {
+    // The try/catch is a scrape-AVAILABILITY guard: this runs inside the /api/metrics handler,
+    // so a throw out of the seeder 500s the whole response — default metrics, every other
+    // seeded counter, the Prisma series. Deleting the catch left the suite green, so the guard
+    // had no case. This also pins the ordering claim: the counters go out BEFORE the leg that
+    // can fail, so a failure here still leaves the alertable series published.
+    const handle = client.register.getSingleMetric(LATENCY) as unknown as {
+      get: () => Promise<unknown>;
+    };
+    const original = handle.get;
+    handle.get = () => Promise.reject(new Error('registry read failed'));
+    try {
+      await expect(seedAppBlockStorageMetrics()).resolves.toBeUndefined();
+
+      expect((await valuesOf(OPS)).length).toBe(22);
+      expect((await valuesOf(QUOTA_EXCEEDED)).length).toBe(2);
+      expect((await valuesOf(USER_QUOTA_UNTRACKED)).length).toBe(1);
+    } finally {
+      handle.get = original;
+    }
   });
 });
 
@@ -210,14 +236,20 @@ describe('the seeded domain matches the service', () => {
 
   it('every seeded outcome is emitted somewhere — no permanent dead zero', () => {
     const emitted = [...service().matchAll(EMIT)].map((m) => m[1]);
-    // Exact, not `> 10`: a loose floor survived hoisting four sites to a shared const, which
-    // left an outcome with zero emit sites while this case still vouched for it.
-    expect(emitted.length).toBe(27);
 
+    // Membership BEFORE the count, deliberately: an outcome that loses its last emit site
+    // trips both, and if the count goes first the failure reads `expected 26 to be 27` instead
+    // of naming the outcome that died.
     const emittedSet = new Set(emitted);
     for (const outcome of [...APP_STORAGE_OUTCOMES_ALL_OPS, ...APP_STORAGE_OUTCOMES_SET_ONLY]) {
       expect(emittedSet.has(outcome), outcome).toBe(true);
     }
+
+    // Exact, not `> 10`: a loose floor survived hoisting four sites to a shared const, which
+    // left an outcome with zero emit sites while this case still vouched for it. Every blind
+    // spot in the regex (variable op, variable outcome, const indirection) DROPS the count, so
+    // exactness false-fails in the safe direction.
+    expect(emitted.length).toBe(27);
   });
 
   it('🔴 every op reaches the shared resolver AND the fault counter — that is what makes the all-ops outcomes reachable', () => {
@@ -225,35 +257,57 @@ describe('the seeded domain matches the service', () => {
     // under every op. That rests entirely on each procedure routing through
     // `resolveStorageContext` and `countStorageFault` with its own op literal. A new procedure
     // that skips either puts a permanent dead zero on screen with nothing else red.
+    //
+    // 🔴 Anchored on ARGUMENT POSITION, never a character window. A `[\s\S]{0,80}?'<op>'`
+    // window reaches PAST the call into the next statement, which in three of the five
+    // procedures is `countStorageOutcome('<op>', …)` — so the literal satisfying it was the
+    // adjacent emit site, not the resolver argument. Measured: with the window, passing
+    // `'get'` to `listAppStorageKeys`'s resolver left the whole suite green, which is exactly
+    // the mislabel this case claims to catch (every `list` refusal counted as `op="get"`).
     const src = service();
     for (const op of APP_STORAGE_OPS) {
-      expect(src, `resolveStorageContext(…, '${op}')`).toMatch(
-        new RegExp(`resolveStorageContext\\([\\s\\S]{0,80}?'${op}'`)
+      expect(src, `resolveStorageContext(<token>, '${op}')`).toMatch(
+        new RegExp(`resolveStorageContext\\(\\s*[A-Za-z_$][\\w$]*\\s*,\\s*'${op}'\\s*\\)`)
       );
       expect(src, `countStorageFault('${op}', …)`).toContain(`countStorageFault('${op}'`);
+      // The histogram's `op` axis carries 65 of the 90 seeded series and has no other guard:
+      // an op whose timer is never started is a dead zero exactly like an unemitted outcome.
+      expect(src, `startTimer({ op: '${op}' })`).toContain(
+        `appStorageLatencyHistogram.startTimer({ op: '${op}' })`
+      );
     }
   });
 
-  it('🔴 `countStorageOutcome` is still the only writer — every case above assumes that scope', () => {
-    // A second `.inc` site would be free to pass an untyped outcome, which defeats the compile
-    // check the whole arrangement now rests on.
-    const emitters: string[] = [];
+  it('🔴 only three files name the ops counter at all — every case above assumes that scope', () => {
+    // Ledgers files that REFERENCE the handle, not ones that spell `.inc`. A spelled guard is
+    // walkable: `const c = appStorageOpsCounter; c.inc(…)`, `.labels(op, outcome).inc()` and
+    // `inc.call(appStorageOpsCounter, …)` are all first-class prom-client usage that a
+    // `/appStorageOpsCounter\s*\.inc/` pattern misses — measured, all three evaded it with an
+    // untyped `outcome`. A writer cannot avoid naming the symbol to import it, so this is
+    // structural. Fails on growth AND shrink.
+    //
+    // `block-token-access.service.ts` names it in a comment only; that is still the right
+    // membership test, because the claim is "nothing else can reach this counter". `__tests__`
+    // is excluded — a suite that stubs the handle is not a production writer, which is why
+    // this set is three files and not the four a test-inclusive walk reports.
+    const referencing: string[] = [];
     const walk = (dir: string) => {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, entry.name);
         if (entry.isDirectory()) {
           if (entry.name !== 'node_modules' && entry.name !== '__tests__') walk(full);
         } else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) {
-          if (/appStorageOpsCounter\s*\.inc/.test(fs.readFileSync(full, 'utf8'))) {
-            emitters.push(path.relative(SRC, full));
+          if (fs.readFileSync(full, 'utf8').includes('appStorageOpsCounter')) {
+            referencing.push(path.relative(SRC, full));
           }
         }
       }
     };
     walk(SRC);
-    expect(emitters.sort()).toEqual([
+    expect(referencing.sort()).toEqual([
       'server/prom/app-block-storage.metrics.ts',
       'server/services/apps/app-storage.service.ts',
+      'server/services/blocks/block-token-access.service.ts',
     ]);
   });
 });
