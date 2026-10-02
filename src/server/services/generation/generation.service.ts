@@ -1046,6 +1046,28 @@ export async function setAdditionalResourceFeeWaived({
 }
 
 const FREE_RESOURCE_TYPES: ModelType[] = ['VAE', 'Checkpoint'];
+
+// The one rule both the orchestrator's charge (mini endpoint) and the generator's cost badge read.
+// Callers decide what a missing file size means; they disagree today.
+export function isAdditionalResourceFeeExempt({
+  modelType,
+  featured,
+  versionFlags,
+  fileSizeKB,
+}: {
+  modelType: ModelType;
+  featured: boolean;
+  versionFlags: number;
+  fileSizeKB?: number;
+}) {
+  return (
+    featured ||
+    isAdditionalResourceFeeWaived(versionFlags) ||
+    FREE_RESOURCE_TYPES.includes(modelType) ||
+    (!!fileSizeKB && fileSizeKB <= 10 * 1024)
+  );
+}
+
 export async function getShouldChargeForResources(
   args: {
     modelType: ModelType;
@@ -1059,10 +1081,12 @@ export async function getShouldChargeForResources(
     (acc, { modelType, modelId, fileSizeKB, versionFlags }) => ({
       ...acc,
       [modelId]: fileSizeKB
-        ? !isAdditionalResourceFeeWaived(versionFlags) &&
-          !FREE_RESOURCE_TYPES.includes(modelType) &&
-          !featuredModels.map((fm) => fm.modelId).includes(modelId) &&
-          fileSizeKB > 10 * 1024
+        ? !isAdditionalResourceFeeExempt({
+            modelType,
+            featured: featuredModels.some((fm) => fm.modelId === modelId),
+            versionFlags,
+            fileSizeKB,
+          })
         : false,
     }),
     {}
@@ -1435,16 +1459,12 @@ export async function getResourceData(
   ) {
     const generationFile = getGenerationFile(modelFiles);
     const fileSizeKB = generationFile?.sizeKB;
-    const featured = !!featuredModels.find((x) => x.modelId === resource.model.id);
-    let additionalResourceCost = true;
-    if (
-      featured ||
-      isAdditionalResourceFeeWaived(resource.flags) ||
-      FREE_RESOURCE_TYPES.includes(resource.model.type) ||
-      (fileSizeKB && fileSizeKB <= 10 * 1024)
-    ) {
-      additionalResourceCost = false;
-    }
+    const additionalResourceCost = !isAdditionalResourceFeeExempt({
+      modelType: resource.model.type,
+      featured: featuredModels.some((x) => x.modelId === resource.model.id),
+      versionFlags: resource.flags,
+      fileSizeKB,
+    });
 
     const epochDetails = getEpochDetails(resource, modelFiles);
 

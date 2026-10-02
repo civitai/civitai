@@ -53,6 +53,7 @@ vi.mock('~/server/utils/otel-helpers', () => ({
 import {
   getResourceCanGenerate,
   getShouldChargeForResources,
+  isAdditionalResourceFeeExempt,
   setAdditionalResourceFeeWaived,
   setEvictable,
   toggleGenerationDisabled,
@@ -150,6 +151,29 @@ describe('getShouldChargeForResources — NoAdditionalResourceFee flag', () => {
   });
 });
 
+// Both the orchestrator's charge and the generator's cost badge read this predicate.
+describe('isAdditionalResourceFeeExempt', () => {
+  const largeLora = {
+    modelType: 'LORA' as const,
+    featured: false,
+    versionFlags: ModelVersionFlag.None,
+    fileSizeKB: 200 * 1024,
+  };
+
+  it('does not exempt a large, unfeatured, unflagged LoRA', () => {
+    expect(isAdditionalResourceFeeExempt(largeLora)).toBe(false);
+  });
+
+  it.each([
+    ['the waiver flag', { versionFlags: ModelVersionFlag.NoAdditionalResourceFee }],
+    ['a featured model', { featured: true }],
+    ['a free resource type', { modelType: 'VAE' as const }],
+    ['a file of 10 MB or less', { fileSizeKB: 10 * 1024 }],
+  ])('exempts on %s', (_, override) => {
+    expect(isAdditionalResourceFeeExempt({ ...largeLora, ...override })).toBe(true);
+  });
+});
+
 describe('moderator flag writes', () => {
   const VERSION_ID = 7;
   const MODEL_ID = 70;
@@ -232,6 +256,17 @@ describe('moderator flag writes', () => {
       id: VERSION_ID,
       generationDisabled: false,
     });
+  });
+
+  it('reports waived from the returned flags, not from the request', async () => {
+    returning(ModelVersionFlag.NotEvictable);
+    expect(
+      await setAdditionalResourceFeeWaived({ id: VERSION_ID, waived: true, isModerator: true })
+    ).toEqual({ id: VERSION_ID, waived: false });
+    returning(ModelVersionFlag.NoAdditionalResourceFee);
+    expect(
+      await setAdditionalResourceFeeWaived({ id: VERSION_ID, waived: false, isModerator: true })
+    ).toEqual({ id: VERSION_ID, waived: true });
   });
 
   it('reports evictable from the returned flags', async () => {

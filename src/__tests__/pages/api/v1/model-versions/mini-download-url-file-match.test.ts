@@ -830,5 +830,14 @@ describe('additionalResourceCharge', () => {
         versionFlags,
       },
     ]);
+    expect(mockGetShouldChargeForResources).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([true, false])('reports the charge decision for the version (%s)', async (charge) => {
+    mockGetShouldChargeForResources.mockResolvedValue({ [versionRow.modelId]: charge });
+    const { body } = await run([SAFETENSOR]);
+    expect((body as Body & { additionalResourceCharge?: boolean }).additionalResourceCharge).toBe(
+      charge
+    );
   });
 });
