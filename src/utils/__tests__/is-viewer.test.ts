@@ -134,6 +134,7 @@ describe('own-images feed: excluded tags are dropped only for the signed-in owne
   it.each([
     ['signed out, no user filter', null, {}, false],
     ['signed out, filtered to a user', null, { userId: 7 }, false],
+    ['signed out, filtered to a username', null, { username: 'me' }, false],
     ['signed in, someone else', { id: 7, username: 'me' }, { userId: 8, username: 'you' }, false],
     ['signed in, own id', { id: 7, username: 'me' }, { userId: 7 }, true],
     [
@@ -152,6 +153,11 @@ describe('own-images feed: excluded tags are dropped only for the signed-in owne
 // value in use, so it catches a revert or a deleted check, not every way to get the owner wrong.
 describe('sites without a behavioural case: the removed comparison stays removed', () => {
   it.each([
+    [
+      'src/components/Image/image.utils.ts',
+      'filters.userId === currentUser',
+      'const isOwnImages = isViewingOwnImages(currentUser, filters)',
+    ],
     [
       'src/components/Collections/Collection.tsx',
       'currentUser?.id === (image.userId ?? image.user?.id)',
