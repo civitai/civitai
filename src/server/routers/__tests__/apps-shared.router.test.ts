@@ -179,13 +179,37 @@ beforeEach(() => {
   mockLogToAxiom.mockResolvedValue(undefined);
 });
 
+/**
+ * Stand in for the `stored_size_bytes` column the quota SELECT projects — the
+ * `octet_length(value::text)` Postgres would store for the value about to be
+ * written, which is the unit `quota.used_bytes` is accounted in.
+ *
+ * 🔴 DELIBERATELY NOT THE WIRE SIZE. These fixtures stand in for Postgres, and a
+ * stand-in that echoed `Buffer.byteLength(JSON.stringify(v))` would make the gate's
+ * UNIT unobservable from this suite — a router that charged wire bytes would pass
+ * every assertion here. `2n + 1` is not jsonb's real expansion (that identity is
+ * asserted against a real server in
+ * `src/server/routers/__tests__/apps-shared.router.quota.stored-units.behavior.test.ts`);
+ * it only has to be distinguishable from `n`, so a wire-unit term cannot satisfy a
+ * stored-unit expectation by coincidence.
+ *
+ * `$2` is the serialized value on both write paths (`$1` is the app block id).
+ */
+function fixtureStoredSize(params?: unknown[]) {
+  return Buffer.byteLength(String((params ?? [])[1] ?? ''), 'utf8') * 2 + 1;
+}
+
 // Helper: the append data path needs the row-count + quota SELECTs to resolve so a
 // trusted write reaches the INSERT.
 function mockAppendDataPath() {
-  mockPool.query.mockImplementation(async (sql: string) => {
+  mockPool.query.mockImplementation(async (sql: string, params?: unknown[]) => {
     if (sql.includes('author_user_id') && sql.includes('count(*)'))
       return { rows: [{ n: '0' }], rowCount: 1 };
-    if (sql.includes('.quota')) return { rows: [{ used_bytes: '0', row_count: '0' }], rowCount: 1 };
+    if (sql.includes('.quota'))
+      return {
+        rows: [{ used_bytes: '0', row_count: '0', stored_size_bytes: fixtureStoredSize(params) }],
+        rowCount: 1,
+      };
     return { rows: [], rowCount: 0 };
   });
 }
@@ -270,11 +294,14 @@ describe('H3 min-trust gate (write + vote)', () => {
 
   it('ALLOWS a trusted writer (reaches the data path)', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
-    mockPool.query.mockImplementation(async (sql: string) => {
+    mockPool.query.mockImplementation(async (sql: string, params?: unknown[]) => {
       if (sql.includes('author_user_id') && sql.includes('count(*)'))
         return { rows: [{ n: '0' }], rowCount: 1 };
       if (sql.includes('.quota'))
-        return { rows: [{ used_bytes: '0', row_count: '0' }], rowCount: 1 };
+        return {
+          rows: [{ used_bytes: '0', row_count: '0', stored_size_bytes: fixtureStoredSize(params) }],
+          rowCount: 1,
+        };
       return { rows: [], rowCount: 0 };
     });
     const out = await caller().append({ blockToken: 't', value: { title: 'idea' } });
@@ -474,11 +501,14 @@ describe('trust gate is independent of the (now-exempt) shared:write scope', () 
 describe('C1 cross-user overwrite', () => {
   it('append SERVER-generates the key (client key never used)', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
-    mockPool.query.mockImplementation(async (sql: string) => {
+    mockPool.query.mockImplementation(async (sql: string, params?: unknown[]) => {
       if (sql.includes('author_user_id') && sql.includes('count(*)'))
         return { rows: [{ n: '0' }], rowCount: 1 };
       if (sql.includes('.quota'))
-        return { rows: [{ used_bytes: '0', row_count: '0' }], rowCount: 1 };
+        return {
+          rows: [{ used_bytes: '0', row_count: '0', stored_size_bytes: fixtureStoredSize(params) }],
+          rowCount: 1,
+        };
       return { rows: [], rowCount: 0 };
     });
     // Even if a caller smuggles `key`, zod strips it and the server ULID is used.
@@ -1264,12 +1294,18 @@ describe('append `data` blob (opaque, unmoderated app payload)', () => {
     // usedBytes + byteSize over APP_QUOTA_BYTES → 'app quota exceeded' (proving the
     // data bytes are included in byteSize).
     const APP_QUOTA_BYTES = 50 * 1024 * 1024;
-    mockPool.query.mockImplementation(async (sql: string) => {
+    mockPool.query.mockImplementation(async (sql: string, params?: unknown[]) => {
       if (sql.includes('author_user_id') && sql.includes('count(*)'))
         return { rows: [{ n: '0' }], rowCount: 1 };
       if (sql.includes('.quota'))
         return {
-          rows: [{ used_bytes: String(APP_QUOTA_BYTES - 50), row_count: '0' }],
+          rows: [
+            {
+              used_bytes: String(APP_QUOTA_BYTES - 50),
+              row_count: '0',
+              stored_size_bytes: fixtureStoredSize(params),
+            },
+          ],
           rowCount: 1,
         };
       return { rows: [], rowCount: 0 };
@@ -1333,10 +1369,16 @@ describe('apps.shared.update (author-scoped in-place edit)', () => {
     opts: { author?: number; sizeBytes?: number; usedBytes?: number; updatedRows?: number } = {}
   ) {
     const { author = 42, sizeBytes = 100, usedBytes = 0, updatedRows = 1 } = opts;
-    mockPool.query.mockImplementation(async (sql: string) => {
+    mockPool.query.mockImplementation(async (sql: string, params?: unknown[]) => {
       if (sql.includes('author_user_id, size_bytes'))
         return { rows: [{ author_user_id: author, size_bytes: sizeBytes }], rowCount: 1 };
-      if (sql.includes('.quota')) return { rows: [{ used_bytes: String(usedBytes) }], rowCount: 1 };
+      if (sql.includes('.quota'))
+        return {
+          rows: [
+            { used_bytes: String(usedBytes), stored_size_bytes: fixtureStoredSize(params) },
+          ],
+          rowCount: 1,
+        };
       return { rows: [], rowCount: 0 };
     });
     mockClient.query.mockImplementation(async (sql: string) => {

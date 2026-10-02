@@ -73,10 +73,94 @@ const APP_ROW_LIMIT = 1_000_000;
 // optional opaque app-owned `data` blob). Raised from 8KB → 64KB so apps can store
 // real structured state in `data`; still tightly bounded and enforced BEFORE the DB
 // write, and the bytes count toward the per-app `size_bytes`/quota + row caps below.
+//
+// 🔴 ENFORCED IN THE WIRE UNIT — `Buffer.byteLength(JSON.stringify(value))` — and
+// deliberately so: it bounds what one call SENDS, which is the only quantity a
+// block can predict for itself before it writes. It is NOT the unit the byte
+// QUOTA is accounted in, and the two diverge by far more than they look: measured
+// through this path, a value of 65,532 wire bytes (9,358 copies of `1e308`, which
+// jsonb normalises to their full 309-digit expansions) stores 2,910,366 — 44.4x. So
+// this cap does not bound stored bytes at all, and a wire byte count must never be
+// reused in a quota comparison — see
+// `STORED_SIZE_PROBE_SQL` below, and the units block in `app-storage.service`'s
+// `set` for the full measurements.
 const SHARED_VALUE_BYTE_CAP = 64 * 1024;
 // Per-USER row cap on shared_kv (design M2): one hostile-but-trusted account can't
 // exhaust the app row budget on its own.
 const SHARED_KV_PER_USER_ROW_CAP = 50;
+
+/**
+ * The projection that yields the number of bytes `shared_kv.size_bytes` will hold
+ * for the value about to be written — i.e. the unit `quota.used_bytes` is accounted
+ * in, and the ONLY unit a comparison against APP_QUOTA_BYTES may be made in.
+ *
+ * ONE fragment, selected into the quota read on BOTH write paths, so the two gates
+ * cannot drift apart. `$2` is the serialized value on both; `$1` is the app block
+ * id. Pair it with `requireStoredSize` to read the result.
+ *
+ * 🔴 WHY THIS EXISTS AND WHY IT ASKS POSTGRES. `shared_kv.size_bytes` is
+ * `GENERATED ALWAYS AS (octet_length(value::text))` over a JSONB column
+ * (`storage-provision.service`), and `shared_kv_quota_trg` reuses
+ * `kv_quota_trigger`, which sums exactly that column into `quota.used_bytes`. So
+ * both the stored per-row weight and the app counter are in STORED bytes.
+ * Postgres' jsonb output function is not `JSON.stringify`: it emits `, ` after
+ * every separator and `: ` after every object key. Measured against Postgres,
+ * `[1,2,3]` stores 9 bytes where `JSON.stringify` gives 7, and a 5,000-element
+ * integer array stores 15,000 against 10,001 — a 1.5x RATIO. The ratio is what
+ * matters, not the gap: a shared value is always a JSON object, so a title-only
+ * value diverges by exactly the one `: ` after its single key — one byte, however
+ * long the title — which is why a title-only fixture makes a wire-unit gate look
+ * correct and can see none of this.
+ *
+ * Holding the NEW side of a quota comparison in the wire unit was a REPEATABLE
+ * BYPASS of the app byte ceiling, in both shapes it appears in:
+ *   - `append` compared `usedBytes + <wire>` against the cap, so every create was
+ *     charged ~1/1.5x (and up to 44.4x less) than it actually stored;
+ *   - `update` compared `usedBytes + (<wire> − <stored old>)`, a subtraction
+ *     between two different units. Submitting any value whose WIRE size is at or
+ *     below the row's CURRENT STORED size holds that delta at or below zero
+ *     forever, so the gate passes unconditionally while the trigger charges the
+ *     true stored growth — repeatable, with no ceiling ever binding. This is the
+ *     same class already fixed on the per-user path; see the units block in
+ *     `app-storage.service`'s `set`.
+ *
+ * This is a PREDICTION of what the write will store, not a read of what it stored —
+ * it is evaluated before the INSERT/UPDATE. It is exact for the reason the two agree
+ * at all: identical input text through identical casts (`$2::jsonb`, then jsonb →
+ * text) evaluated by the same server. That identity is asserted against rows
+ * Postgres actually wrote in
+ * `src/server/routers/__tests__/apps-shared.router.quota.stored-units.behavior.test.ts`,
+ * not in prose here.
+ *
+ * It is selected WITHOUT a FROM clause, as a sibling of two scalar subqueries over
+ * `quota`, rather than as a column of a `FROM quota` select. That shape returns
+ * exactly one row on every Postgres whether or not the app has a quota row, which
+ * keeps the pre-existing "missing quota row counts as 0" behaviour intact instead of
+ * turning it into a hard failure. It also costs no extra round trip.
+ */
+const STORED_SIZE_PROBE_SQL = `octet_length($2::jsonb::text) AS stored_size_bytes`;
+
+/**
+ * Read the `STORED_SIZE_PROBE_SQL` result, or fail loudly.
+ *
+ * Throws a plain Error (not a TRPCError → a 500, not a refusal): the probe sits in a
+ * FROM-less select, so there is no legitimate path to a missing or NULL result.
+ * Absorbing one into a 0 would make the gates below read "this write stores nothing"
+ * and sail through — the same fail-open the probe exists to close, reached through
+ * the guard instead of around it.
+ *
+ * 🔴 `Number.isFinite(Number(x))` alone is NOT enough: `Number(null)` is 0, which is
+ * finite, so a NULL would pass that check and then produce a zero-byte charge (and,
+ * on the update path, a non-positive delta — the exact bypass). Reject the null
+ * explicitly, before the coercion.
+ */
+function requireStoredSize(raw: number | null | undefined): number {
+  const storedByteSize = Number(raw);
+  if (raw == null || !Number.isFinite(storedByteSize)) {
+    throw new Error('app shared storage: stored-size probe returned no usable value');
+  }
+  return storedByteSize;
+}
 
 // ── Min-trust gate (design H3 / MIN-TRUST GATE) ───────────────────────────────
 // MOVED to `~/server/services/blocks/block-write-trust.service` — it now has a
@@ -540,7 +624,11 @@ export async function appendSharedRow(
   // (see assertSharedValueSafeAndSerialize): a policy-violating edit and a create
   // are moderated identically. Throws a clean 4xx on any rejection — no row is
   // ever written on failure.
-  const { serialized, byteSize } = await assertSharedValueSafeAndSerialize({
+  //
+  // Only `serialized` is taken: the wire `byteSize` it also returns has already
+  // done its one job (SHARED_VALUE_BYTE_CAP, enforced in that unit inside the
+  // helper) and must not reach the quota gate below. See STORED_SIZE_PROBE_SQL.
+  const { serialized } = await assertSharedValueSafeAndSerialize({
     schema,
     slug,
     appBlockId,
@@ -567,16 +655,29 @@ export async function appendSharedRow(
     });
   }
 
-  // Per-app byte + row quota (shared with the per-user kv path).
+  // Per-app byte + row quota (shared with the per-user kv path), read together with
+  // the stored size of the value about to be written.
   const quota = (
-    await pool.query<{ used_bytes: string; row_count: string }>(
-      `SELECT used_bytes::text, row_count::text FROM ${schema}.quota WHERE app_block_id = $1`,
-      [appBlockId]
+    await pool.query<{
+      used_bytes: string | null;
+      row_count: string | null;
+      stored_size_bytes: number | null;
+    }>(
+      `SELECT (SELECT used_bytes::text FROM ${schema}.quota WHERE app_block_id = $1) AS used_bytes,
+              (SELECT row_count::text FROM ${schema}.quota WHERE app_block_id = $1) AS row_count,
+              ${STORED_SIZE_PROBE_SQL}`,
+      [appBlockId, serialized]
     )
   ).rows[0];
   const usedBytes = Number(quota?.used_bytes ?? '0');
   const rowCount = Number(quota?.row_count ?? '0');
-  if (usedBytes + byteSize > APP_QUOTA_BYTES) {
+  // 🔴 BOTH SIDES OF THIS COMPARISON MUST BE IN THE STORED UNIT. `usedBytes` is the
+  // trigger-maintained sum of `shared_kv.size_bytes`; the wire `byteSize` the
+  // serialize helper also returns belongs only to SHARED_VALUE_BYTE_CAP, which it
+  // has already enforced in that unit. Read STORED_SIZE_PROBE_SQL's header before
+  // changing either term.
+  const storedByteSize = requireStoredSize(quota?.stored_size_bytes);
+  if (usedBytes + storedByteSize > APP_QUOTA_BYTES) {
     throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'app quota exceeded' });
   }
   if (rowCount + 1 > APP_ROW_LIMIT) {
@@ -676,7 +777,11 @@ export async function updateSharedRow(
   // Belt on the NEW title/body + serialize-guard + whole-value byte cap (mirrors
   // append EXACTLY — same helper). A policy-violating edit throws here, before any
   // write, so the stored row is never touched.
-  const { serialized, byteSize } = await assertSharedValueSafeAndSerialize({
+  //
+  // Only `serialized` is taken — see the matching note in `append`: the wire
+  // `byteSize` has already enforced SHARED_VALUE_BYTE_CAP inside the helper and
+  // must not reach the delta arithmetic below.
+  const { serialized } = await assertSharedValueSafeAndSerialize({
     schema,
     slug,
     appBlockId,
@@ -689,14 +794,23 @@ export async function updateSharedRow(
   // fits; a growing edit must sit within the remaining budget. Row count is
   // UNCHANGED by an in-place update, so there's no row-limit / per-user-row check.
   const quota = (
-    await pool.query<{ used_bytes: string }>(
-      `SELECT used_bytes::text FROM ${schema}.quota WHERE app_block_id = $1`,
-      [appBlockId]
+    await pool.query<{ used_bytes: string | null; stored_size_bytes: number | null }>(
+      `SELECT (SELECT used_bytes::text FROM ${schema}.quota WHERE app_block_id = $1) AS used_bytes,
+              ${STORED_SIZE_PROBE_SQL}`,
+      [appBlockId, serialized]
     )
   ).rows[0];
   const usedBytes = Number(quota?.used_bytes ?? '0');
+  // 🔴 A SUBTRACTION IS ONLY A DELTA IF BOTH TERMS SHARE A UNIT. `oldBytes` comes
+  // straight out of the generated `shared_kv.size_bytes` column, so it is already
+  // in stored bytes; the new side must be too, or the difference is not a measure
+  // of growth at all. Held in the wire unit this was a repeatable bypass — any
+  // value whose wire size is at or below the row's stored size made the delta
+  // non-positive, so the gate passed unconditionally while the trigger charged the
+  // true stored growth. Read STORED_SIZE_PROBE_SQL's header before touching this.
+  const storedByteSize = requireStoredSize(quota?.stored_size_bytes);
   const oldBytes = Number(existing.size_bytes ?? 0);
-  if (usedBytes + (byteSize - oldBytes) > APP_QUOTA_BYTES) {
+  if (usedBytes + (storedByteSize - oldBytes) > APP_QUOTA_BYTES) {
     throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'app quota exceeded' });
   }
 
