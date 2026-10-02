@@ -103,8 +103,9 @@ describe('getAbuseRuns reports how much of each run has been reviewed', () => {
 
   it('leaves the detector’s own figures alone', async () => {
     // 🔴 THE TWO COLUMNS ARE INDEPENDENT AND THE BOARD SAYS SO. The commonest finding is one the
-    // detector left alone and a moderator ruled correct; a reviewed count that moved `actionedCount`
-    // would erase the only record of what the detector chose to do.
+    // detector left alone and a moderator ruled `tp` — the account IS abusing the site — and a
+    // reviewed count that moved `actionedCount` would erase the only record of what the detector
+    // chose to do.
     const runId = await seedRun(db, 'bot-account-detection', STARTED_TODAY);
     await rule(await seedFinding(db, { runId, userId: 41, actioned: false }));
     await seedFinding(db, { runId, userId: 42, actioned: true, action: 'flagged' });

@@ -269,7 +269,11 @@ function BlurToggle({
   const handleBrowsingLevelClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    openSetBrowsingLevelModal({ imageId, nsfwLevel: browsingLevel });
+    openSetBrowsingLevelModal({
+      imageId,
+      nsfwLevel: browsingLevel,
+      isOwner: !!currentUser && currentUser.id === userId,
+    });
   };
 
   if (children) {

@@ -875,10 +875,11 @@ export async function getAbuseVerdictSummary(
  * not a group — it is the absence of one — so it must never be used as a match value, or every
  * ungrouped finding in the run would be ruled together by the first one anybody clicked.
  *
- * 🔴 IT DOES NOT TOUCH `actioned` OR `action`. Those are the producer's record of what IT did; this
- * is a human's record of whether that was right. Overwriting the first with the second would destroy
- * the only evidence of what the detector actually chose to do, which is the measurement this whole
- * board exists to make.
+ * 🔴 IT DOES NOT TOUCH `actioned` OR `action`. Those are the producer's record of what IT did; this is
+ * a human's record of whether the ACCOUNT is abusing the site — a different question, not a grade on
+ * that record (see `apps/moderator/src/lib/abuse-verdicts.ts`). Overwriting the first with the second
+ * would destroy the only evidence of what the detector actually chose to do, which is the measurement
+ * this whole board exists to make.
  *
  * Re-ruling is expected and overwrites: `verdict_by`/`verdict_at` always name the CURRENT ruling, so
  * a moderator correcting a mistake stands behind the correction rather than the mistake.

@@ -195,11 +195,13 @@ export const ECO = {
   Anima: 59,
   Grok: 61,
   HappyHorse: 52,
-  // FLUX-3 ships as separate weight releases per modality (Video now, Image and
+  // FLUX-3 ships as separate weight releases per modality (Video, Image, and
   // the open-weight Dev backbone later) off a shared multimodal architecture.
   // Shared architecture is not shared weights, so each gets its own ecosystem —
   // a LoRA is trained against weights. Same reasoning as the Flux2Klein variants.
+  // `Flux3` is the Image release, not the family root; the Dev backbone needs its own key.
   Flux3Video: 79,
+  Flux3: 92,
 
   // Root ecosystems - Audio models
   AceAudio: 68,
@@ -334,11 +336,18 @@ export const ecosystems: EcosystemRecord[] = [
     parentEcosystemId: ECO.Flux2,
   },
   {
+    id: ECO.Flux3,
+    key: 'Flux3',
+    displayName: 'Flux.3',
+    familyId: 1,
+    sortOrder: 8,
+  },
+  {
     id: ECO.Flux3Video,
     key: 'Flux3Video',
     displayName: 'Flux 3 Video',
     familyId: 1,
-    sortOrder: 8,
+    sortOrder: 9,
   },
 
   // Stable Diffusion Family (familyId: 2)
@@ -695,7 +704,7 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.Ideogram,
     key: 'Ideogram',
-    displayName: 'Ideogram 4.0',
+    displayName: 'Ideogram',
     familyId: 22,
     sortOrder: 170,
   },
@@ -1225,6 +1234,8 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // HappyHorse - checkpoint only
   { ecosystemId: ECO.HappyHorse, supportType: 'generation', modelTypes: checkpointOnly },
 
+  // Flux.3 - checkpoint only (FLUX 3 Image, BFL via FAL, closed weights)
+  { ecosystemId: ECO.Flux3, supportType: 'generation', modelTypes: checkpointOnly },
   // Flux 3 Video - checkpoint only (BFL via FAL, closed weights)
   { ecosystemId: ECO.Flux3Video, supportType: 'generation', modelTypes: checkpointOnly },
 
@@ -1724,6 +1735,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
       model: { id: 2864671 },
       modelLocked: true,
       engine: 'seedance',
+    },
+  },
+  {
+    ecosystemId: ECO.Flux3,
+    defaults: {
+      model: { id: 3376170 },
+      modelLocked: true,
     },
   },
   {
@@ -2319,6 +2337,8 @@ export const BM = {
   Ming: 108,
   MingLayer: 109,
   Sonilo: 110,
+  Ideogram45: 111,
+  Flux3: 112,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2647,6 +2667,12 @@ export const licenses: LicenseRecord[] = [
     name: 'Sonilo Terms of Service',
     url: 'https://sonilo.com/terms',
   },
+  {
+    id: 47,
+    name: 'Ideogram Terms of Service',
+    url: 'https://ideogram.ai/legal/tos',
+    disableMature: true,
+  },
 ];
 
 export const licenseById = new Map(licenses.map((l) => [l.id, l]));
@@ -2931,6 +2957,14 @@ export const baseModelRecords: BaseModelRecord[] = [
     licenseId: 13,
   },
   {
+    id: BM.Flux3,
+    name: 'Flux.3',
+    description: "Black Forest Labs' FLUX 3 image generation and editing model",
+    type: 'image',
+    ecosystemId: ECO.Flux3,
+    licenseId: 39,
+  },
+  {
     id: BM.Flux3Video,
     name: 'Flux 3 Video',
     description: "Black Forest Labs' FLUX 3 video generation model with native audio",
@@ -3004,6 +3038,15 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.Ideogram,
     licenseId: 37,
+  },
+  {
+    id: BM.Ideogram45,
+    name: 'Ideogram 4.5',
+    description: "Ideogram, Inc.'s text-to-image and image editing model with strong typography",
+    type: 'image',
+    ecosystemId: ECO.Ideogram,
+    hidden: true,
+    licenseId: 47,
   },
 
   // Boogu

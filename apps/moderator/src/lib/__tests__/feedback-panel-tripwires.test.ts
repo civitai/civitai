@@ -210,6 +210,11 @@ describe('typed text outlives the reload every write issues', () => {
    * section at a time behind `{#if activeTab === …}`, which DESTROYED the other sections' markup —
    * the reason every box below is bound to parent-owned state in the first place. A conditional
    * section reintroduces that without reintroducing anything that says so.
+   *
+   * ⚠️ "UNCONDITIONALLY" IS ABOUT MOUNTING, NOT ABOUT BEING ON SCREEN. The context block ships
+   * inside a default-closed `<details>`, which hides its content and keeps it mounted — the next
+   * test is the one that pins that distinction, and this one would pass just as happily over an
+   * `{#if}` that unmounted it.
    */
   it('renders every section unconditionally', () => {
     const detail = source('FeedbackDetail.svelte');
@@ -217,6 +222,116 @@ describe('typed text outlives the reload every write issues', () => {
     expect(detail).toContain('<FeedbackAttachments {context} />');
     expect(detail).toContain('<FeedbackContextPanel');
     expect(detail).toContain('<FeedbackPromote');
+  });
+
+  /**
+   * 🔴 THE CONTEXT BLOCK IS COLLAPSED, AND WHAT THIS PINS IS THE UNMOUNT — NOT THE CHEVRON. The
+   * sibling test above forbids `{#if}` around a section because the tab strip's conditionals
+   * DESTROYED the inactive sections' markup; a collapse is a conditional-shaped change, so it is
+   * exactly the back door that test was written against. `<details>` HIDES its content and keeps it
+   * mounted, which is the whole reason it is allowed here.
+   *
+   * 🔴 BOTH ASSERTIONS BELOW REPLACE ONES THAT READ AS COVERAGE AND PROVIDED NONE. Recorded rather
+   * than quietly fixed, because the shapes that walked them are the shapes a maintainer writes:
+   *
+   *   - `toContain('<FeedbackContextPanel')` was supposed to pin the unmount. It does not: an
+   *     `{#if contextOpen}` nested INSIDE the `<details>` and driven by `ontoggle` keeps that
+   *     substring inside the extracted block, so the lazy-render this test exists to forbid passed
+   *     37/37. The only `{#if}` it ever caught was one that also deleted `<details>` — which the
+   *     count above already catches. The pin now reads the REGION between `</summary>` and
+   *     `</details>` and forbids any `{#…}` block opener in it.
+   *   - The default-closed pin was a regex requiring whitespace before `open`, so `bind:open=`
+   *     matched nothing and a block shipping EXPANDED passed 37/37. A partial regex over a tag is
+   *     satisfied by the inverted tag; the attribute NAMES are enumerated and compared as a set.
+   *
+   * 🔴 WHAT THE UNMOUNT PIN DOES NOT COVER, STATED EXACTLY, BECAUSE THIS IS THE ONE PARAGRAPH WHOSE
+   * JOB IS SCOPE. The region runs from `</summary>` to `</details>`, so it covers the block's
+   * descendants BELOW the summary and nothing else. Two things are outside it:
+   *   - ANCESTORS — wrapping the whole `<details>` in `{#if …}` unmounts everything inside it and
+   *     passes. That hole predates this guard. What makes it worth naming is that the badge below
+   *     returns `null` when a report has no console errors and no failed requests, which makes
+   *     "then hide the block entirely" the obvious next edit — and it would take the reconstructed
+   *     URL, the filters, the session id and the Grafana link with it, on the ORDINARY report.
+   *   - THE SUMMARY'S OWN DESCENDANTS — there is a live `{#if technicalSummary}` in there, which is
+   *     exactly why the slice starts at `</summary>` rather than at the opening tag. Summary content
+   *     is never hidden, so unmounting it costs nothing; a reader expecting "no `{#if}` anywhere
+   *     inside `<details>`" would be wrong about the guard and about what it should assert.
+   *
+   * ⚠️ The class VALUES are deliberately not pinned — a Tailwind reorder changes them without
+   * changing anything true. The attribute-name set is what carries the claim.
+   */
+  it('collapses the technical-details block with <details>, closed by default', () => {
+    const detail = source('FeedbackDetail.svelte');
+
+    // Exactly one, so every assertion below is about the block the reader has in mind. It doubles
+    // as a `stripComments` tripwire: `FeedbackDetail.svelte`'s own comment names `<details>` in
+    // prose, so a stripper that stopped working pushes this count above 1. How far above is
+    // deliberately not written down — that is a property of prose nobody will keep in step.
+    expect(count(detail, '<details')).toBe(1);
+
+    const block = detail.match(/<details\b[^>]*>.*?<\/details>/)?.[0];
+    // Positive control on the extraction: without it, a regex that stopped matching would make
+    // every assertion below a claim about `undefined`.
+    expect(block, 'no <details>…</details> block in FeedbackDetail.svelte').toBeDefined();
+
+    // The summary carries the operator-specified title AND the badge. The badge is the only thing
+    // that survives the collapse — without it, a report whose session threw forty console errors
+    // looks exactly like a clean one at every level the operator can see. Its WORDING is asserted
+    // behaviourally in `feedback-technical-summary.test.ts`; this only pins that it is rendered.
+    const summary = block!.slice(block!.indexOf('<summary'), block!.indexOf('</summary>'));
+    expect(summary, 'no <summary> in the <details> block').toContain('<summary');
+    expect(summary).toContain('Technical details');
+    expect(summary).toContain('{technicalSummary}');
+
+    expect(block).toContain('<FeedbackContextPanel');
+
+    // 🔴 THE UNMOUNT PIN. Everything the collapse hides must be mounted unconditionally, so the
+    // region it wraps carries no block opener at all — `{#if}`, `{#each}`, `{#await}`, `{#key}`.
+    const body = block!.slice(block!.indexOf('</summary>'));
+    expect(body, 'the <details> body does not start at </summary>').toContain(
+      '<FeedbackContextPanel'
+    );
+    expect(body).not.toMatch(/\{#\w+/);
+
+    // 🔴 DEFAULT-CLOSED IS THE ABSENCE OF AN ATTRIBUTE, and `toContain('<details')` is satisfied by
+    // every spelling that adds one. The tag is required to carry exactly one attribute, `class`,
+    // with a literal value — so `open`, `bind:open`, `open={…}`, `{open}` and `{...spread}` all
+    // fail, without pinning a single class value.
+    const openTag = block!.match(/<details\b[^>]*>/)![0];
+
+    // 🔴 THE BRACE CHECK IS NOT BELT-AND-BRACES — IT IS THE HALF THE NAME SCAN CANNOT SEE, AND THE
+    // NAME SCAN'S OWN BLANKING STEP IS WHY. Quoted values are blanked so a Tailwind class list is
+    // not read as attributes (`border-t` would be a name), and `{…}` is blanked with it — which
+    // ERASES Svelte's shorthand `{open}`, an attribute spelled entirely inside braces and exactly
+    // equivalent to `open={open}`. Measured: with only the name scan, `{open}` yielded `['class']`
+    // and a block shipping EXPANDED passed 37/37 — the defect this assertion replaced, in a second
+    // spelling, reintroduced by the fix for the first. No brace belongs in this tag at all, so the
+    // cheap whole-token rule is also the correct one.
+    expect(openTag).not.toContain('{');
+
+    const attrNames = (tag: string): string[] =>
+      [
+        ...tag
+          .replace(/"[^"]*"/g, '""')
+          .replace(/\{[^}]*\}/g, '{}')
+          .matchAll(/\s([A-Za-z_:][-\w:.]*)(?==|[\s/>])/g),
+      ].map((m) => m[1]);
+
+    // Instrument controls: both halves must be shown able to fire on the spellings they are trusted
+    // against. A negative assertion over a matcher wired to nothing is green for the wrong reason.
+    expect(attrNames('<details open class="x">')).toEqual(['open', 'class']);
+    expect(attrNames('<details class="x" open>')).toEqual(['class', 'open']);
+    expect(attrNames('<details class="x" bind:open={contextOpen}>')).toEqual([
+      'class',
+      'bind:open',
+    ]);
+    // The spelling the name scan is BLIND to, documented by exercising it: `{open}` yields only
+    // `class`, so the name set alone would pass a tag that ships expanded. (No control is written
+    // for the brace check itself — a literal asserted to contain a character visible in it cannot
+    // fail and establishes nothing. What establishes it is the mutation run recorded in the commit.)
+    expect(attrNames('<details class="x" {open}>')).toEqual(['class']);
+
+    expect(attrNames(openTag)).toEqual(['class']);
   });
 
   /**

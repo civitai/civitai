@@ -277,6 +277,37 @@ const CASES: Record<string, unknown>[] = [
     steps: 30,
     resources: [{ id: 555, baseModel: 'Ideogram 4.0', model: { type: 'LORA' }, strength: 0.6 }],
   },
+  // Ideogram 4.5: same ecosystem, picked by version; fal create and edit
+  { workflow: 'txt2img', ecosystem: 'Ideogram', prompt: 'a cat', seed: 42, model: 3375798 },
+  {
+    workflow: 'txt2img',
+    ecosystem: 'Ideogram',
+    prompt: 'a cat',
+    seed: 42,
+    model: 3375798,
+    aspectRatio: '16:9',
+    quality: 'high',
+    enablePromptExpansion: true,
+  },
+  {
+    workflow: 'img2img:edit',
+    ecosystem: 'Ideogram',
+    prompt: 'a cat',
+    seed: 42,
+    quality: 'low',
+    images: [IMAGE],
+  },
+  // Flux.3
+  { workflow: 'txt2img', ecosystem: 'Flux3', prompt: 'a cat' },
+  {
+    workflow: 'txt2img',
+    ecosystem: 'Flux3',
+    prompt: 'a cat',
+    resolution: '4k',
+    aspectRatio: '16:9',
+    enablePromptExpansion: true,
+  },
+  { workflow: 'img2img:edit', ecosystem: 'Flux3', prompt: 'a cat', images: [IMAGE] },
   { workflow: 'txt2img', ecosystem: 'Seedream', prompt: 'a cat', seed: 42 },
   {
     workflow: 'txt2img',
@@ -851,7 +882,98 @@ async function bothLanes({
   return { v1, v2 };
 }
 
+const firstInput = (steps: unknown[]) => (steps[0] as { input: unknown }).input;
+const IMAGE2 = { url: 'https://example.com/b.png', width: 1216, height: 832 };
+
 describe('form-graph handlers emit the same steps as the data-graph handlers', () => {
+  it('flux3: create and edit reach fal with the expected inputs', async () => {
+    const create = await bothLanes({
+      workflow: 'txt2img',
+      ecosystem: 'Flux3',
+      prompt: 'a cat',
+      resolution: '2k',
+      aspectRatio: '16:9',
+    });
+    expect(create.v2).toEqual(create.v1);
+    expect(firstInput(create.v2)).toMatchObject({
+      engine: 'fal',
+      model: 'flux3',
+      operation: 'createImage',
+      resolution: '2k',
+      aspectRatio: '16:9',
+      enablePromptExpansion: false,
+    });
+
+    const expanded = await bothLanes({
+      workflow: 'txt2img',
+      ecosystem: 'Flux3',
+      prompt: 'a cat',
+      enablePromptExpansion: true,
+    });
+    expect(firstInput(expanded.v2)).toMatchObject({ enablePromptExpansion: true });
+
+    const edit = await bothLanes({
+      workflow: 'img2img:edit',
+      ecosystem: 'Flux3',
+      prompt: 'a cat',
+      images: [IMAGE, IMAGE2],
+    });
+    expect(edit.v2).toEqual(edit.v1);
+    expect(firstInput(edit.v2)).toMatchObject({
+      engine: 'fal',
+      model: 'flux3',
+      operation: 'editImage',
+      aspectRatio: 'auto',
+      resolution: '1k',
+      images: [IMAGE.url, IMAGE2.url],
+    });
+  });
+
+  it('ideogram: the 4.5 version routes to fal, 4.0 stays on comfy', async () => {
+    const v45 = await bothLanes({
+      workflow: 'txt2img',
+      ecosystem: 'Ideogram',
+      prompt: 'a cat',
+      seed: 42,
+      model: 3375798,
+      aspectRatio: '16:9',
+      quality: 'high',
+    });
+    expect(v45.v2).toEqual(v45.v1);
+    expect(firstInput(v45.v2)).toMatchObject({
+      engine: 'fal',
+      model: 'ideogram45',
+      operation: 'createImage',
+      width: 2560,
+      height: 1440,
+      quality: 'high',
+      enablePromptExpansion: false,
+    });
+
+    const edit = await bothLanes({
+      workflow: 'img2img:edit',
+      ecosystem: 'Ideogram',
+      prompt: 'a cat',
+      seed: 42,
+      images: [IMAGE, IMAGE2],
+    });
+    expect(edit.v2).toEqual(edit.v1);
+    expect(firstInput(edit.v2)).toMatchObject({
+      engine: 'fal',
+      operation: 'editImage',
+      imageSize: 'auto',
+      images: [IMAGE.url, IMAGE2.url],
+    });
+
+    const v40 = await bothLanes({
+      workflow: 'txt2img',
+      ecosystem: 'Ideogram',
+      prompt: 'a cat',
+      seed: 42,
+    });
+    expect(firstInput(v40.v2)).toMatchObject({ engine: 'comfy', ecosystem: 'ideogram4' });
+  });
+
   it.each(CASES.map((input) => ({ name: `${input.workflow} | ${input.ecosystem}`, input })))(
     '$name',
     async ({ input }) => {

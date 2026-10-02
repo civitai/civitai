@@ -205,6 +205,7 @@ import {
 import type { RuleDefinition } from '~/server/utils/mod-rules';
 import { getCursor } from '~/server/utils/pagination-helpers';
 import {
+  browsingLevels as selectableBrowsingLevels,
   nsfwBrowsingLevelsArray,
   nsfwBrowsingLevelsFlag,
   onlySelectableLevels,
@@ -7079,6 +7080,44 @@ export async function updateImageNsfwLevel({
   }
 
   return nsfwLevel;
+}
+
+/**
+ * Applies an owner's own rating at once when it only RAISES the level: nobody over-rates their own
+ * content to hide it, so upward-only needs no review first. Not locked, so Knights and moderators
+ * still review the vote recorded alongside it and can change the level.
+ *
+ * Scanned images only: on an unscanned image the scan sets the level, and a lock-free raise would be
+ * overwritten by it anyway.
+ */
+export async function raiseOwnImageNsfwLevel({
+  id,
+  nsfwLevel,
+  userId,
+}: {
+  id: number;
+  nsfwLevel: NsfwLevel;
+  userId: number;
+}) {
+  if (!selectableBrowsingLevels.some((level) => level === nsfwLevel)) return false;
+
+  const [raised] = await dbWrite.$queryRaw<{ postId: number | null }[]>`
+    UPDATE "Image"
+    SET "nsfwLevel" = ${nsfwLevel}
+    WHERE id = ${id}
+      AND "userId" = ${userId}
+      AND NOT "nsfwLevelLocked"
+      AND ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
+      AND "nsfwLevel" < ${nsfwLevel}
+    RETURNING "postId"
+  `;
+  if (!raised) return false;
+
+  await thumbnailCache.refresh(id);
+  if (raised.postId) await updatePostNsfwLevel(raised.postId);
+  await updateModel3DNsfwLevelForThumbnailImage({ imageId: id, postId: raised.postId });
+  await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Update });
+  return true;
 }
 
 // NOTE(moderator-migration): getImageRatingRequests + getDownleveledImages (the image-rating-review and

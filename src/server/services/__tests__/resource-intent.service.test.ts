@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -127,7 +128,11 @@ function mockStage1() {
   mockAskJev.mockImplementationOnce(async () => ({
     answers: STAGE1_ANSWERS,
     usage: { promptTokens: 100, completionTokens: 50 },
-    model: 'typesafe/jev-1.13',
+    // A DATED build, not the bare pin: `askJev` now returns the model the vendor
+    // reports answered, and a response carrying the bare pin is possible but is not
+    // what the live endpoint sends. A fixture production can never produce is not a
+    // fixture. `jev.test.ts` covers both arms of the pin check.
+    model: 'typesafe/jev-1.13-20260917',
   }));
 }
 
@@ -135,7 +140,7 @@ function mockStage3(distribution: Record<string, number>, value = '0') {
   mockAskJev.mockImplementationOnce(async () => ({
     answers: [{ id: 'resourceVersion', type: 'choice' as const, value, distribution }],
     usage: { promptTokens: 200, completionTokens: 20 },
-    model: 'typesafe/jev-1.13',
+    model: 'typesafe/jev-1.13-20260917',
   }));
 }
 
@@ -172,6 +177,30 @@ describe('cache behavior', () => {
     expect(resourceIntentCacheKey({ ...base, cap: 1 })).not.toBe(a);
   });
 
+  it('🔴 the spec term in the key is the spec HASH, not the hand-maintained version', async () => {
+    // Recomputed independently, so swapping the term back to
+    // `String(QUESTION_SPEC_VERSION)` goes red. The hash moves on ANY question-spec
+    // edit; the integer only moves when someone remembers. Measured once: rewording
+    // the `specificity` prompt moved the hash and left the version at 1, so a
+    // pre-edit cache entry would have been served for its full hour under the new
+    // spec and then stamped into the shadow table with the NEW hash.
+    const { RESOURCE_INTENT_SPEC_HASH, QUESTION_SPEC_VERSION } = await import(
+      '~/server/schema/resource-intent.schema'
+    );
+    const base = { prompt: 'p', baseModel: 'SDXL 1.0', browsingLevel: 3, cap: 50 };
+    const expected = createHash('sha256')
+      .update(['p', 'SDXL 1.0', '3', '50', RESOURCE_INTENT_SPEC_HASH].join('|'))
+      .digest('hex');
+    expect(resourceIntentCacheKey(base)).toBe(`packed:caches:jev-resource-intent:v1:${expected}`);
+    // And the control: the version integer is NOT what the key carries.
+    const withVersion = createHash('sha256')
+      .update(['p', 'SDXL 1.0', '3', '50', String(QUESTION_SPEC_VERSION)].join('|'))
+      .digest('hex');
+    expect(resourceIntentCacheKey(base)).not.toBe(
+      `packed:caches:jev-resource-intent:v1:${withVersion}`
+    );
+  });
+
   it('🔴 never serves more suggestions than the caller asked for, even from a wider entry', async () => {
     // An entry written under an OLDER key shape (i.e. at a wider cap) landing on
     // this request's key is the case the key change alone cannot fix — the
@@ -198,7 +227,7 @@ describe('cache behavior', () => {
       },
       suggestions: [{ versionId: 11 }, { versionId: 22 }, { versionId: 33 }],
       noneProbability: 0.1,
-      model: 'typesafe/jev-1.13',
+      model: 'typesafe/jev-1.13-20260917',
       criteriaVersion: 1 as const,
     };
     redisMock.redis.packed.get.mockResolvedValue(wide);
@@ -245,7 +274,7 @@ describe('cache behavior', () => {
       },
       suggestions: [],
       noneProbability: 0.1,
-      model: 'typesafe/jev-1.13',
+      model: 'typesafe/jev-1.13-20260917',
       criteriaVersion: 1,
     };
     redisMock.redis.packed.get.mockResolvedValue(cached);
@@ -328,7 +357,7 @@ describe('stage flow', () => {
         a.id === 'role' ? { ...a, value: 'none', distribution: { style: 0.2, none: 0.8 } } : a
       ),
       usage: { promptTokens: 1, completionTokens: 1 },
-      model: 'typesafe/jev-1.13',
+      model: 'typesafe/jev-1.13-20260917',
     }));
     const result = await getResourceIntent(INPUT, CTX);
     expect(result.degraded).toBe(false);
@@ -544,7 +573,7 @@ describe('shadow event', () => {
       // rejection never reaches us, so the table would just stay empty.
       // Pinned as a literal, not derived from the implementation.
       time: '2026-09-29 00:00:00.000',
-      model: 'typesafe/jev-1.13',
+      model: 'typesafe/jev-1.13-20260917',
       degraded: 0,
       role: 'style',
       styleFamily: 'anime_manga',
@@ -583,7 +612,10 @@ describe('shadow event', () => {
     await getResourceIntent(INPUT, CTX);
     expect(mockInsert).not.toHaveBeenCalled();
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'resource-intent-shadow', model: 'typesafe/jev-1.13' }),
+      expect.objectContaining({
+        type: 'resource-intent-shadow',
+        model: 'typesafe/jev-1.13-20260917',
+      }),
       'temp-search'
     );
   });
@@ -622,7 +654,7 @@ describe('shadow event', () => {
         },
       ],
       noneProbability: 0.1,
-      model: 'typesafe/jev-1.13',
+      model: 'typesafe/jev-1.13-20260917',
       criteriaVersion: 1,
     };
     redisMock.redis.packed.get.mockResolvedValue(cached);
@@ -653,7 +685,7 @@ describe('degradation reasons', () => {
         a.id === 'role' ? { id: 'role', type: 'noul', value: 0.5 } : a
       ),
       usage: { promptTokens: 1, completionTokens: 1 },
-      model: 'typesafe/jev-1.13',
+      model: 'typesafe/jev-1.13-20260917',
     }));
     const result = await getResourceIntent(INPUT, CTX);
     expect(result.degraded).toBe(true);
@@ -688,7 +720,7 @@ describe('coverage resolution', () => {
       criteria: null,
       suggestions: [],
       noneProbability: null,
-      model: 'typesafe/jev-1.13',
+      model: 'typesafe/jev-1.13-20260917',
       criteriaVersion: 1,
     });
     await getResourceIntent(INPUT, { browsingLevel: 3 });

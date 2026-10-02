@@ -43,6 +43,11 @@ export type NavRegistryEntry = {
   classes?: string[];
 };
 
+/** `FeatureAccess` carries only the flags that are ON, so a gate reading an off flag returns
+ *  `undefined` — which `?? true` would treat as "ungated" and show to everyone. */
+export const isNavEntryVisible = (entry: NavRegistryEntry, ctx: NavGateContext) =>
+  entry.visible ? !!entry.visible(ctx) : true;
+
 const authed = (ctx: NavGateContext) => ctx.isAuthed;
 
 /**
@@ -95,7 +100,7 @@ export const navRegistry: NavRegistryEntry[] = [
   {
     key: 'challenges',
     url: '/challenges',
-    defaultGroup: 'bar',
+    defaultGroup: 'more',
     visible: (ctx) => ctx.features.challengePlatform,
   },
   {
