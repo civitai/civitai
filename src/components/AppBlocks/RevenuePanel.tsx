@@ -71,8 +71,15 @@ type RecentRow = {
  * `~/server/services/blocks/buzz-attribution.service`. Separate from the
  * payload-level union above: that one means the WHOLE payload is a placeholder,
  * this one means one bucket of an otherwise-real payload could not be read
- * (`block_good_purchase` is applied by hand per environment). Exhaustive below
- * for the same reason the other is.
+ * (`block_good_purchase` is applied by hand per environment).
+ *
+ * ⚠️ THE `never` BRANCH BELOW GUARDS THIS CLIENT-LOCAL UNION ONLY — it is not a
+ * cross-boundary check, and saying "exhaustive" without that qualifier overstates
+ * it. This type is a hand-mirror and `data` is an `as`-cast of a wire payload, so
+ * widening the union SERVER-side does not fail `tsc` here: the default branch is
+ * reached at runtime and returns the raw reason string, which would render an
+ * unrecognised reason as body text. It does catch the case it can catch — someone
+ * widening THIS union without adding copy — which is why it stays.
  */
 type GoodsUnavailableReason = 'unreadable';
 
@@ -117,11 +124,25 @@ type RevenueData = {
   topApps: Array<{ appBlockId: string; shareCents: number; count: number }>;
   recentAttributions: RecentRow[];
   /**
-   * REQUIRED, not optional. An optional field invites a renderer to skip it, and
-   * skipping it is precisely the defect being fixed — goods revenue that exists
-   * and is shown nowhere. The server returns it on both paths (`getMyRevenue`
-   * measures it; `emptyRevenue()` zeroes it), and client and server ship in one
-   * bundle, so there is no skew that could make it absent.
+   * REQUIRED in the type, because an optional field invites a renderer to skip it
+   * and skipping it is the defect being fixed — goods revenue that exists and is
+   * shown nowhere. The server returns it on both paths (`getMyRevenue` measures
+   * it, `emptyRevenue()` zeroes it).
+   *
+   * ⚠️ BUT THE TYPE IS NOT A GUARANTEE, and the first version of this docblock
+   * claimed it was: it argued "client and server ship in one bundle, so there is
+   * no skew that could make it absent". That is false here. `rawData` arrives over
+   * the wire and is `as`-cast below, so nothing checks it — and on this deployment
+   * SSR and `/api/trpc` are SEPARATE deployments with independent rollouts, so a
+   * browser holding the new bundle can be answered by an older API process during
+   * any rollout window. Destructuring `goods` unchecked then threw and took the
+   * WHOLE revenue page down, which is the same outage the `unreadable` branch was
+   * added to prevent, reached by a different route.
+   *
+   * The reader therefore defaults it — see `GOODS_ABSENT` — to the unreadable
+   * shape rather than to zeros, because "the payload did not carry this" is
+   * exactly "could not be read", and reporting it as zero sales would be the
+   * fabricated zero again.
    */
   goods: GoodsShape;
   /**
@@ -130,6 +151,26 @@ type RevenueData = {
    * all-zero one.
    */
   unavailable?: RevenueUnavailableReason;
+};
+
+/**
+ * The fallback when the payload carries no `goods` key at all — a response from an
+ * API process older than this bundle. Mirrors `unreadableGoodsSales()` on the
+ * server: zeros PLUS the discriminator, never bare zeros, because "absent from the
+ * payload" and "could not be read" are the same fact from the reader's side and
+ * neither is a measurement of zero sales.
+ */
+const GOODS_ABSENT: GoodsShape = {
+  sales: {
+    count: 0,
+    grossBuzz: 0,
+    shareBuzz: 0,
+    shareUsdCents: 0,
+    grossUsdCents: 0,
+    blueGrossBuzz: 0,
+  },
+  refunded: { count: 0, grossBuzz: 0 },
+  unavailable: 'unreadable',
 };
 
 function dollars(cents: number | null | undefined) {
@@ -269,7 +310,7 @@ function SummaryCards({ summary }: { summary: SummaryShape }) {
  * exactly what the column is.
  */
 const GOODS_TIMING_TOOLTIP =
-  'This rail pays out immediately in Buzz rather than accruing like the buckets above. The figure is your recorded share of each sale. Reversed and refunded rows are excluded.';
+  'This rail pays out immediately in Buzz rather than accruing like the buckets above. The figure is your recorded share of each settled sale. Reversed, refunded and not-yet-settled rows are all excluded.';
 
 /**
  * 🔴 BLUE BUZZ IS NOT CASH, so a dollar figure beside it needs saying so.
@@ -278,9 +319,20 @@ const GOODS_TIMING_TOOLTIP =
  * proportionally in blue. Whenever any gross blue is present the USD asides are an
  * upper bound on what could ever be cashed, not a value. Worded around the GROSS
  * blue total because that is all the aggregate can know — see `blueGrossBuzz`.
+ *
+ * 🔴 "MAY BE", NOT "IS" — a correction, not a hedge. `blueLegOfPayout` FLOORS:
+ * `floor(share * bluePaid / price)`. At the 70% share a sale with exactly 1 blue
+ * Buzz gives `floor(0.7) = 0`, so gross blue is non-zero while the owner's share is
+ * paid entirely in the domain colour. The aggregate sums over every paid row, so ONE
+ * such historical sale would otherwise assert indefinitely that part of the owner's
+ * share is non-bankable when none of it is.
+ *
+ * The other direction needs no hedge: `blueGrossBuzz === 0` means every row had
+ * `bluePaid === 0`, so every blue leg is 0 — a partly-blue share with zero gross blue
+ * is impossible, and the caveat cannot be falsely SILENT.
  */
 const GOODS_BLUE_CAVEAT =
-  'Some of these sales were paid with Blue Buzz, so part of your share is Blue and cannot be withdrawn. The dollar figures are an upper bound.';
+  'Some of these sales were paid with Blue Buzz, so part of your share may be Blue and cannot be withdrawn. The dollar figures are an upper bound.';
 
 function GoodsSalesCard({ goods, scoped }: { goods: GoodsShape; scoped: boolean }) {
   const { sales, refunded, unavailable } = goods;
@@ -393,7 +445,7 @@ function GoodsSalesCard({ goods, scoped }: { goods: GoodsShape; scoped: boolean 
         // would be a claim this aggregate cannot support in either direction.
         <Text size="xs" c="dimmed" mt="sm" data-testid="goods-reversed-line">
           {refunded.count.toLocaleString()} reversed or refunded
-          {refunded.count === 1 ? ' purchase' : ' purchases'} ({refunded.grossBuzz.toLocaleString()}{' '}
+          {refunded.count === 1 ? ' charge' : ' charges'} ({refunded.grossBuzz.toLocaleString()}{' '}
           Buzz) — not counted above.
         </Text>
       )}
@@ -467,7 +519,14 @@ export function RevenuePanel({ appBlockId }: { appBlockId?: string }) {
         <>
           <SummaryCards summary={data.summary} />
 
-          <GoodsSalesCard goods={data.goods} scoped={scoped} />
+          {/*
+            `?? GOODS_ABSENT` rather than `data.goods` alone: the type says this key is
+            required, but `data` is an `as`-cast of a wire payload, and SSR and the API
+            are separate deployments here — so an older API process can answer this
+            bundle during a rollout and omit it. Destructuring it unchecked threw and
+            took the whole page down. The fallback is the UNREADABLE shape, not zeros.
+          */}
+          <GoodsSalesCard goods={data.goods ?? GOODS_ABSENT} scoped={scoped} />
 
           {!scoped && data.topApps.length > 0 && (
             <Card padding="md" radius="md" withBorder>

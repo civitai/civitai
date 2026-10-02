@@ -63,7 +63,8 @@ export default function AppBlocksDashboardPage() {
           <>
             Revenue share and analytics for your apps. Confirmed earnings accrue here; automated
             payouts are not yet enabled. Digital goods sales are separate: that rail pays out in
-            Buzz at the time of sale rather than accruing here. See{' '}
+            Buzz at the time of each settled sale rather than accruing here, and the figures shown
+            are your recorded share. See{' '}
             <Anchor component={Link} href="/apps/activity">
               Apps
             </Anchor>{' '}

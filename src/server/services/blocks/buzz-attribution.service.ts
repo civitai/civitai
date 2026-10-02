@@ -1810,6 +1810,36 @@ export function unreadableGoodsSales(): GoodsSalesSummary {
 }
 
 /**
+ * Is this error "the `block_good_purchase` table is not in this database"?
+ *
+ * 🔴 NARROW ON PURPOSE, AND THE WIDE VERSION WAS A REAL BUG. The caller catches
+ * this to degrade the goods rail instead of failing the whole revenue page — but
+ * the first version of that catch took EVERY rejection, which means a column
+ * rename, a bad argument or a `TypeError` inside the aggregate would all have
+ * been reported to the owner as "sales could not be loaded", politely, in
+ * production, forever. That is the invisible-revenue bug this whole change exists
+ * to fix, re-entering through the error path: a defect that hides itself behind a
+ * message the owner has no reason to question.
+ *
+ * So only the ONE condition the degradation is justified for is caught. The
+ * justification is specific — the migration's header says the table is applied by
+ * hand per environment — and it does not generalise to anything else that can go
+ * wrong in there.
+ *
+ * Matched by CODE, not `instanceof`: the branch has to stay reachable under a
+ * mocked Prisma client, which does not construct the real error class. Mirrors
+ * `isUniqueViolation` in `block-goods.service.ts`.
+ *   - `P2021` — Prisma's "table does not exist in the current database".
+ *   - `42P01` — Postgres `undefined_table`, which is what surfaces if the read
+ *     ever goes through a raw query instead.
+ */
+export function isMissingGoodsTableError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null || !('code' in error)) return false;
+  const code = (error as { code?: unknown }).code;
+  return code === 'P2021' || code === '42P01';
+}
+
+/**
  * An owner's digital-goods sales, for the publisher revenue pages.
  *
  * 🔴 READ-SIDE ONLY, DELIBERATELY. The goods rail records into

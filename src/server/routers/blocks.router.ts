@@ -122,6 +122,7 @@ import {
   getGoodsSalesForOwner,
   getRecentAttributionsForOwner,
   getRevenueForOwner,
+  isMissingGoodsTableError,
   unreadableGoodsSales,
 } from '~/server/services/blocks/buzz-attribution.service';
 import {
@@ -7861,12 +7862,22 @@ export const blocksRouter = router({
       // THREE BRANCHES, **SEVEN** CONCURRENT READS — do not read this as "three
       // queries". `getRevenueForOwner` is itself a `Promise.all` of five (four
       // single-status aggregates plus a groupBy), `getRecentAttributionsForOwner`
-      // is one, and the goods bridge is one. Measured against the per-pod Prisma
-      // read limit, one call of this proc holds ~20% of a pod's read pool for the
-      // duration of its slowest member, so ~5 concurrent callers exhaust it. That
-      // is acceptable only because `appDeveloperProcedure` plus the `appBlocks`
-      // flag keeps the audience tiny; it is the number to re-check before this
-      // proc is widened, and it is why there is no fourth branch here.
+      // is one, and the goods bridge is one.
+      //
+      // ⚠️ SEVEN IS THE ONLY NUMBER HERE THAT IS DERIVABLE FROM THIS REPO, and an
+      // earlier version of this comment also claimed the call holds "~20% of a
+      // pod's read pool, so ~5 concurrent callers exhaust it". That was removed as
+      // unfounded: the pool size comes from `connection_limit` on `DATABASE_URL`,
+      // which is deployment configuration this repo does not set, and Prisma's
+      // default is `num_cpus * 2 + 1` — on a small pod that is single digits, under
+      // which seven concurrent reads is most of the pool rather than a fifth. A
+      // fabricated capacity figure is worse than none, because the next author
+      // widening this proc would have budgeted against it.
+      //
+      // What survives is the shape of the concern: this proc fans out SEVEN reads
+      // per call, it is only acceptable because `appDeveloperProcedure` plus the
+      // `appBlocks` flag keeps the audience tiny, and anyone widening the audience
+      // should measure the live pool rather than trust a number in a comment.
       //
       // Parallel rather than sequential is still right: the connections are held
       // for the same total work either way, just longer, and
@@ -7881,30 +7892,36 @@ export const blocksRouter = router({
       const [{ summary, topApps }, recentAttributions, goods] = await Promise.all([
         getRevenueForOwner({ ownerUserId: user.id, appBlockId: input.appBlockId, from, to }),
         getRecentAttributionsForOwner({ ownerUserId: user.id, appBlockId: input.appBlockId }),
-        // 🔴 THE ONLY BRANCH THAT IS ALLOWED TO FAIL, and the reason is the table:
+        // 🔴 THE ONLY BRANCH THAT MAY DEGRADE, and only for ONE error. The table
         // `block_good_purchase` is applied BY HAND per environment (see the
         // migration header), so this code can legitimately run against a database
         // that does not have it. Unguarded, that took down BOTH revenue pages
         // entirely — including the card-purchase figures, which were readable.
         //
-        // 🔴 IT RETURNS A FLAGGED BUCKET, NOT ZEROS. `emptyGoodsSales()` here
+        // 🔴 `isMissingGoodsTableError` IS WHAT MAKES THIS SAFE, AND THE WIDE
+        // VERSION OF THIS CATCH WAS A BUG. Catching every rejection means a column
+        // rename, a bad argument or a `TypeError` in the aggregate is reported to
+        // the owner as "sales could not be loaded" — politely, in production,
+        // indefinitely. That is the invisible-revenue defect this change exists to
+        // fix, re-entering through the error path. Anything that is not the missing
+        // table RETHROWS and the proc fails loudly, as it should.
+        //
+        // 🔴 AND IT RETURNS A FLAGGED BUCKET, NOT ZEROS. `emptyGoodsSales()` here
         // would report "no sales" for a rail that was never read — the fabricated
-        // zero this whole surface is built to prevent. `unreadableGoodsSales()`
-        // carries `unavailable: 'unreadable'` and `RevenuePanel` has a branch for
-        // it. Narrow on purpose: the other two branches still bring the proc down,
-        // because a failure there means the attribution figures are unknown and
-        // there is nothing honest to render.
+        // zero this surface is built to prevent. `unreadableGoodsSales()` carries
+        // `unavailable: 'unreadable'` and `RevenuePanel` branches on it.
         getGoodsSalesForOwner({
           ownerUserId: user.id,
           appBlockId: input.appBlockId,
           from,
           to,
         }).catch((error) => {
+          if (!isMissingGoodsTableError(error)) throw error;
           logToAxiom(
             {
               name: 'block-goods-earnings',
               type: 'error',
-              message: 'goods sales aggregate failed; reporting the bucket as unreadable',
+              message: 'block_good_purchase is absent; reporting the goods bucket as unreadable',
               ownerUserId: user.id,
               error: error instanceof Error ? error.message : String(error),
             },

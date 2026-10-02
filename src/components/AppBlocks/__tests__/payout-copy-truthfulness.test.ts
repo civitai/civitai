@@ -175,6 +175,33 @@ function prose(block: string) {
     .trim();
 }
 
+/**
+ * The first single-quoted string literal after a cursor, CONCATENATING a `'a' + 'b'` run.
+ *
+ * 🔴 The run-joining is the point, not decoration. A single-literal regex reads only the
+ * first piece, so the moment prettier wraps a long string into a concatenation — which it
+ * does at the print width, i.e. exactly for the sentences this file pins — the pin would
+ * silently start comparing against a FRAGMENT and pass on a reworded tail. That is the
+ * vacuous-green shape this file exists to prevent, arriving via the formatter.
+ */
+function extractSingleQuoted(src: string): string | null {
+  const re = /'((?:[^'\\]|\\.)*)'/g;
+  const first = re.exec(src);
+  if (!first) return null;
+  let out = first[1];
+  let cursor = re.lastIndex;
+  for (;;) {
+    const joiner = /^\s*\+\s*/.exec(src.slice(cursor));
+    if (!joiner) break;
+    re.lastIndex = cursor + joiner[0].length;
+    const next = re.exec(src);
+    if (!next || next.index !== cursor + joiner[0].length) break;
+    out += next[1];
+    cursor = re.lastIndex;
+  }
+  return out;
+}
+
 /** The balanced `{...}` value of a JSX prop, so the extraction cannot run past the prop. */
 function propValue(src: string, prop: string) {
   const key = `${prop}={`;
@@ -191,8 +218,8 @@ function propValue(src: string, prop: string) {
 const SUBTITLE =
   'Revenue share and analytics for your apps. Confirmed earnings accrue here; ' +
   'automated payouts are not yet enabled. Digital goods sales are separate: that rail ' +
-  'pays out in Buzz at the time of sale rather than accruing here. See Apps to manage ' +
-  'installations.';
+  'pays out in Buzz at the time of each settled sale rather than accruing here, and the ' +
+  'figures shown are your recorded share. See Apps to manage installations.';
 
 const CONFIRMED_TOOLTIP =
   'Past the refund window. This amount accrues; automated payouts are not yet enabled.';
@@ -209,7 +236,29 @@ const CONFIRMED_TOOLTIP =
  */
 const GOODS_TOOLTIP =
   'This rail pays out immediately in Buzz rather than accruing like the buckets above. ' +
-  'The figure is your recorded share of each sale. Reversed and refunded rows are excluded.';
+  'The figure is your recorded share of each settled sale. Reversed, refunded and ' +
+  'not-yet-settled rows are all excluded.';
+
+/**
+ * 🔴 TWO MORE MONEY CLAIMS, PINNED WHOLE for the reason this file's SHRINK half exists.
+ * Both shipped guarded only by a four-word substring regex in the component test, which is
+ * exactly the SPELLED guard this file forbids: either could be reworded into something
+ * false while staying green.
+ *
+ * - The blue caveat is a claim about NON-BANKABILITY. It must stay "may be": the owner's
+ *   blue leg is floored, so gross blue can be non-zero while the share is entirely domain
+ *   colour (see the constant's own docblock).
+ * - The unavailable message asserts "this is NOT a zero", which is the whole point of
+ *   having a discriminator at all. A reword that softened it back into sounding like a
+ *   measured zero would undo the fix silently.
+ */
+const GOODS_BLUE_CAVEAT =
+  'Some of these sales were paid with Blue Buzz, so part of your share may be Blue and ' +
+  'cannot be withdrawn. The dollar figures are an upper bound.';
+
+const GOODS_UNAVAILABLE_MESSAGE =
+  'Digital goods sales could not be loaded, so none are shown here. This is not a report ' +
+  'of zero sales — the figures above cover your other revenue only.';
 
 /** The goods payout leg — the rail the goods copy describes. */
 const GOODS_SERVICE = 'src/server/services/blocks/block-goods.service.ts';
@@ -371,19 +420,48 @@ describe('app earnings copy does not promise a payout pipeline that does not run
     // Anchor control: without it a renamed constant gives `slice(-1)` and the failure
     // reads as a copy mismatch rather than "the card this guard targets is gone".
     expect(at).toBeGreaterThan(-1);
-    const value = /=\s*\n?\s*'([^']*)'/.exec(panel.slice(at))?.[1];
-    expect(value).toBe(GOODS_TOOLTIP);
+    expect(extractSingleQuoted(panel.slice(at))).toBe(GOODS_TOOLTIP);
     // ...and it must actually be the Tooltip's label, not a dead constant. The GROW
     // lesson of this file is that a claim nothing renders is still a claim, but a claim
     // nothing renders is not the one that misleads a user — so pin the wiring too.
     expect(stripComments(panel)).toMatch(/label=\{GOODS_TIMING_TOOLTIP\}/);
   });
 
+  it('the two other goods money claims are pinned whole, and are rendered', () => {
+    // The blue caveat and the unavailable message. Both were guarded only by a short
+    // substring regex in the component test — walkable by rewording, which on a money
+    // surface is this file's entire thesis.
+    const panel = read(REVENUE_PANEL);
+
+    const blueAt = panel.indexOf('const GOODS_BLUE_CAVEAT');
+    expect(blueAt).toBeGreaterThan(-1); // anchor control
+    expect(extractSingleQuoted(panel.slice(blueAt))).toBe(GOODS_BLUE_CAVEAT);
+    // Rendered, not a dead constant.
+    expect(stripComments(panel)).toMatch(/\{GOODS_BLUE_CAVEAT\}/);
+
+    // Anchored past the `case` LABEL, not at the function: the label is itself a
+    // single-quoted literal, so anchoring at the function name extracted `'unreadable'`
+    // and compared the reason code against the sentence.
+    const unavailAt = panel.indexOf("case 'unreadable':");
+    expect(unavailAt).toBeGreaterThan(-1); // anchor control
+    expect(extractSingleQuoted(panel.slice(unavailAt + "case 'unreadable':".length))).toBe(
+      GOODS_UNAVAILABLE_MESSAGE
+    );
+    // ...and reachable: the card must call it, or the branch is decoration.
+    expect(stripComments(panel)).toMatch(/goodsUnavailableMessage\(unavailable\)/);
+  });
+
   it('the goods payout rail DOES exist — the one claim here that promises a disbursement', () => {
     // 🔴 THE STATE HALF FOR THE GOODS COPY, and the inverse of the mint guard above. That
     // one asserts a rail is GONE so its cadence copy must not return; this one asserts a
     // rail is WIRED, which is the only thing that licenses the subtitle and the tooltip to
-    // say a share "is credited at the time of each sale".
+    // say this rail "pays out" at all.
+    //
+    // ⚠️ This sentence used to quote `is credited at the time of each sale` as the claim
+    // being licensed. That string was REMOVED from the product for being unsupportable —
+    // the figure is an accrual a failed payout leg can leave unpaid — so the comment was
+    // naming a claim that exists nowhere in the tree and telling a reader of this guard
+    // the wrong thing about what it protects.
     //
     // Stripping is correct HERE and wrong above, and the difference is polarity: this
     // assertion is that a call IS present, so the stripper's documented bias toward

@@ -60,6 +60,7 @@ import {
   emptyRevenue,
   getGoodsSalesForOwner,
   getRevenueForOwner,
+  isMissingGoodsTableError,
   unreadableGoodsSales,
   recordAttribution,
   REFUND_WINDOWS_DAYS,
@@ -781,6 +782,36 @@ describe('getGoodsSalesForOwner — the goods → earnings bridge', () => {
     // undefined` key compares equal to its absence, so the spread-vs-bare-key
     // mutation this test exists for survived.
     expect(args.where).toStrictEqual({ appOwnerUserId: GOODS_OWNER });
+  });
+
+  it('isMissingGoodsTableError matches ONLY a missing table — it fails closed', () => {
+    // 🔴 THIS PREDICATE IS WHAT BOUNDS THE ROUTER'S DEGRADATION, so its NEGATIVE
+    // cases carry the safety property, not its positive ones. A version that
+    // returned true for anything unclassifiable would report every bug in the
+    // aggregate to the owner as "sales could not be loaded" — the invisible-revenue
+    // defect this change fixes, re-entering through the error path.
+    //
+    // Positive: the two codes that genuinely mean the table is absent.
+    expect(isMissingGoodsTableError({ code: 'P2021' })).toBe(true);
+    expect(isMissingGoodsTableError({ code: '42P01' })).toBe(true);
+    expect(
+      isMissingGoodsTableError(Object.assign(new Error('no such table'), { code: 'P2021' }))
+    ).toBe(true);
+
+    // Negative: everything else, including the shapes that are easy to get wrong.
+    // `P2010` is a RAW-QUERY failure whose message can even quote 42P01; it is
+    // deliberately NOT matched, because this read is not a raw query and widening to
+    // it would start swallowing genuine query bugs.
+    expect(isMissingGoodsTableError({ code: 'P2010' })).toBe(false);
+    expect(isMissingGoodsTableError({ code: 'P2009' })).toBe(false);
+    expect(isMissingGoodsTableError(new TypeError('cannot read _sum'))).toBe(false);
+    // The message ALONE must not be enough — this is the exact shape an earlier
+    // version of the router test used while the catch swallowed everything.
+    expect(isMissingGoodsTableError(new Error('relation does not exist'))).toBe(false);
+    expect(isMissingGoodsTableError({ code: 42101 })).toBe(false);
+    expect(isMissingGoodsTableError(undefined)).toBe(false);
+    expect(isMissingGoodsTableError(null)).toBe(false);
+    expect(isMissingGoodsTableError('P2021')).toBe(false);
   });
 
   it('the UNREADABLE bucket is zeros PLUS a discriminator, never bare zeros', async () => {

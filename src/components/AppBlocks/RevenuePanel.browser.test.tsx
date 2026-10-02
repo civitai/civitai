@@ -244,7 +244,7 @@ describe('RevenuePanel — digital goods sales', () => {
     // them apart. Pinned so the wording cannot drift back.
     await expect
       .element(page.getByTestId('goods-reversed-line'))
-      .toHaveTextContent(/^1 reversed or refunded purchase \(10 Buzz\) — not counted above\.$/);
+      .toHaveTextContent(/^1 reversed or refunded charge \(10 Buzz\) — not counted above\.$/);
 
     // 🔴 It must NOT be counted as a sale. ANCHORED: `toHaveTextContent('0')` is a
     // substring match satisfied by "10", so the unanchored form let a reversed
@@ -265,6 +265,40 @@ describe('RevenuePanel — digital goods sales', () => {
     // then reversed, so that sentence would be false — which is why the empty state
     // keys on `sales.count === 0 && refunded.count === 0`, not on the paid count.
     expect(page.getByText(/No digital goods sales attributed to you/i).elements()).toHaveLength(0);
+  });
+
+  test('PLURAL: more than one reversed charge pluralises, and the caveat co-renders', async () => {
+    // Two surviving mutations in one case. (1) The plural ternary had no multi-count
+    // fixture, so collapsing it to always-singular was green. (2) The blue caveat and
+    // the reversed line had never rendered TOGETHER, so nothing proved the card can
+    // show a sale, a colour caveat and an exclusion at once rather than one of them.
+    mocks.revenue.current = {
+      ...ZEROED,
+      goods: {
+        sales: {
+          count: 2,
+          grossBuzz: 430,
+          shareBuzz: 301,
+          shareUsdCents: 30,
+          grossUsdCents: 43,
+          blueGrossBuzz: 115,
+        },
+        refunded: { count: 4, grossBuzz: 60 },
+      },
+    };
+    renderWithProviders(<RevenuePanel />);
+
+    await expect
+      .element(page.getByTestId('goods-reversed-line'))
+      .toHaveTextContent(/^4 reversed or refunded charges \(60 Buzz\) — not counted above\.$/);
+    await expect.element(page.getByTestId('goods-blue-caveat')).toBeInTheDocument();
+    // The earnings figures are the PAID bucket's, untouched by the 60 reversed Buzz.
+    await expect.element(page.getByTestId('goods-share-buzz')).toHaveTextContent(/^301$/);
+    await expect.element(page.getByTestId('goods-gross-buzz')).toHaveTextContent(/^430$/);
+    // ...and at this size the dollars are real, so the sub-cent form must NOT appear —
+    // the other half of the `approxDollars` condition, pinned on a third shape.
+    await expect.element(page.getByTestId('goods-share-usd')).toHaveTextContent(/^≈ \$0\.30$/);
+    await expect.element(page.getByTestId('goods-gross-usd')).toHaveTextContent(/^≈ \$0\.43$/);
   });
 
   test('scoped to one app: the empty state claims only what was MEASURED', async () => {
@@ -291,9 +325,18 @@ describe('RevenuePanel — digital goods sales', () => {
     // that were fine. The fix must not swing to the other error either: zeroing the
     // bucket would report "no sales" for a rail nobody read — the fabricated zero
     // the payload-level guard in the describe above exists to prevent.
+    // 🔴 NON-ZERO blue and reversed figures, deliberately. The card guards those two
+    // lines with `!unavailable &&`, and with an all-zero fixture both guards are
+    // unreachable — deleting them was a green mutation. A flagged bucket should not
+    // normally carry figures at all, but the guards exist precisely for the case
+    // where a future `unavailable` reason does, so the fixture has to create it.
     mocks.revenue.current = {
       ...ZEROED,
-      goods: { ...ZERO_GOODS, unavailable: 'unreadable' },
+      goods: {
+        sales: { ...ZERO_GOODS.sales, blueGrossBuzz: 40 },
+        refunded: { count: 3, grossBuzz: 90 },
+        unavailable: 'unreadable',
+      },
     };
     renderWithProviders(<RevenuePanel />);
 
@@ -308,6 +351,13 @@ describe('RevenuePanel — digital goods sales', () => {
     expect(page.getByTestId('goods-gross-buzz').elements()).toHaveLength(0);
     // ...nor the "no sales" copy, which would be the same lie in words.
     expect(page.getByText(/No digital goods sales attributed to you/i).elements()).toHaveLength(0);
+
+    // 🔴 NEITHER SUBORDINATE LINE MAY RENDER BESIDE THE FLAG. Both carry figures the
+    // bucket did not measure, so showing either would reinstate the fabricated-zero
+    // problem one line down. These are the assertions that make the `!unavailable &&`
+    // guards reachable rather than decoration.
+    expect(page.getByTestId('goods-blue-caveat').elements()).toHaveLength(0);
+    expect(page.getByTestId('goods-reversed-line').elements()).toHaveLength(0);
 
     // 🔴 DISCRIMINATOR, and the whole point: the REST of the dashboard still
     // renders. One unreadable rail must degrade to a labelled gap, not an outage.

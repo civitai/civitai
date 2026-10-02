@@ -59,52 +59,22 @@ vi.mock('~/server/services/blocks/app-analytics.service', () => ({
   }),
   resolveRange: () => ({ from: new Date(0), to: new Date(0), granularity: 'day' as const }),
 }));
-vi.mock('~/server/services/blocks/buzz-attribution.service', () => ({
+// 🔴 SPREAD + OVERRIDES, not a hand-listed factory. This suite DOES assert revenue, so it
+// needs the three reads stubbed — but a factory that lists only those fails to LOAD the
+// moment `blocks.router` imports one more export from this module: in CI, in a file nobody
+// was looking at, with a green typecheck. It already had to be edited twice for exactly
+// that (`getGoodsSalesForOwner`, then `unreadableGoodsSales` + `isMissingGoodsTableError`).
+//
+// The spread also keeps the PURE helpers real, which is strictly better than copying them:
+// the unreadable-path test below then exercises the actual `unreadableGoodsSales()` shape
+// and the actual `isMissingGoodsTableError` predicate, so neither can drift from the copy
+// a hand-listed factory would have had to carry. `emptyRevenue()` is real for the same
+// reason — it is the function whose `unavailable` discriminator the flag-off test asserts.
+vi.mock('~/server/services/blocks/buzz-attribution.service', async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
   getRevenueForOwner: (...a: unknown[]) => mockGetRevenueForOwner(...a),
   getRecentAttributionsForOwner: (...a: unknown[]) => mockGetRecentAttributionsForOwner(...a),
   getGoodsSalesForOwner: (...a: unknown[]) => mockGetGoodsSalesForOwner(...a),
-  // Pure (no DB) — use a faithful copy so the unreadable-path test observes the
-  // real contract: zeros PLUS the discriminator, never bare zeros.
-  unreadableGoodsSales: () => ({
-    sales: {
-      count: 0,
-      grossBuzz: 0,
-      shareBuzz: 0,
-      shareUsdCents: 0,
-      grossUsdCents: 0,
-      blueGrossBuzz: 0,
-    },
-    refunded: { count: 0, grossBuzz: 0 },
-    unavailable: 'unreadable',
-  }),
-  // Mirrors the real `emptyRevenue()`, INCLUDING the `unavailable` discriminator that
-  // function bakes in. Without this key the flag-OFF test below cannot observe the
-  // contract at all, and the proc stays correct-by-inspection with no CI-visible guard.
-  emptyRevenue: () => ({
-    summary: {
-      pending: { count: 0, grossCents: 0, shareCents: 0 },
-      confirmed: { count: 0, grossCents: 0, shareCents: 0 },
-      paidOut: { count: 0, grossCents: 0, shareCents: 0 },
-      voided: { count: 0, grossCents: 0 },
-    },
-    topApps: [],
-    recentAttributions: [],
-    // The goods bucket, zeroed exactly as the real `emptyRevenue()` does. Present
-    // so the flag-OFF test can assert the dark path reports NO sales — without it
-    // the key would be absent and the assertion would pass on `undefined`.
-    goods: {
-      sales: {
-        count: 0,
-        grossBuzz: 0,
-        shareBuzz: 0,
-        shareUsdCents: 0,
-        grossUsdCents: 0,
-        blueGrossBuzz: 0,
-      },
-      refunded: { count: 0, grossBuzz: 0 },
-    },
-    unavailable: 'notEntitled',
-  }),
 }));
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
   verifyBlockToken: mockVerifyBlockToken,
@@ -410,7 +380,15 @@ describe('getMyRevenue — dark-flag short-circuit', () => {
     // run against a database without it. Unguarded, the new branch took the whole
     // of `getMyRevenue` down — including the attribution figures, which were
     // readable — so both revenue pages failed outright.
-    mockGetGoodsSalesForOwner.mockRejectedValue(new Error('relation does not exist'));
+    // 🔴 THE CODE IS LOAD-BEARING, NOT THE MESSAGE. The router degrades only on
+    // `isMissingGoodsTableError`, which matches Prisma's `P2021` / Postgres `42P01`
+    // by CODE. An earlier version of this test rejected with a bare
+    // `new Error('relation does not exist')` while the catch took every rejection —
+    // so the fixture implied a specificity the code did not have, and the
+    // rethrow-everything-else case below could not even be written.
+    mockGetGoodsSalesForOwner.mockRejectedValue(
+      Object.assign(new Error('The table `block_good_purchase` does not exist'), { code: 'P2021' })
+    );
     // 🔴 NON-ZERO attribution figures, deliberately. The default fixture returns an
     // empty summary, against which "the attribution half survived" is unfalsifiable —
     // a proc that dropped it entirely would look identical. These literals appear
@@ -437,6 +415,49 @@ describe('getMyRevenue — dark-flag short-circuit', () => {
     // The PAYLOAD-level discriminator must stay absent: the payload is a real
     // measurement; it is one bucket inside it that could not be read.
     expect(result.unavailable).toBeUndefined();
+    // 🔴 AND IT IS REPORTED. The catch's only observability is this log, and nothing
+    // asserted it — so deleting the call was a green mutation, which would have made
+    // a missing production table completely silent.
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'block-goods-earnings', type: 'error' }),
+      'civitai-prod'
+    );
+  });
+
+  it('a NON-table goods failure RETHROWS — it is not laundered into "unreadable"', async () => {
+    // 🔴 THE CONTROL THAT MAKES THE DEGRADATION SAFE, and the reason the catch is
+    // narrow. A `.catch` that swallowed everything would report a column rename, a
+    // bad argument or a `TypeError` to the owner as "sales could not be loaded" —
+    // politely, in production, indefinitely. That is the invisible-revenue defect
+    // this whole change fixes, re-entering through the error path: a bug that hides
+    // itself behind a message the owner has no reason to question.
+    mockGetGoodsSalesForOwner.mockRejectedValue(
+      Object.assign(new Error('Unknown argument `bluePaidBuzz`'), {
+        code: 'P2009',
+      })
+    );
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+
+    await expect(caller.getMyRevenue({ appBlockId: 'apb_1' })).rejects.toThrow(/Unknown argument/);
+  });
+
+  it('...and so does an error carrying no code at all', async () => {
+    // A plain `TypeError` from inside the aggregate. `isMissingGoodsTableError`
+    // requires a `code` property, so this is the shape that proves the predicate
+    // fails CLOSED rather than treating "I cannot classify this" as the table case.
+    mockGetGoodsSalesForOwner.mockRejectedValue(
+      new TypeError("Cannot read properties of undefined (reading '_sum')")
+    );
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+
+    // tRPC wraps a thrown error as `TRPCError{ code: INTERNAL_SERVER_ERROR, cause }`, so
+    // the assertion is on the OUTCOME — a loud 500 carrying the original message — not on
+    // the constructor. That outcome is the point: the request fails instead of the owner
+    // being told their sales could not be loaded.
+    await expect(caller.getMyRevenue({ appBlockId: 'apb_1' })).rejects.toMatchObject({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: expect.stringContaining("reading '_sum'"),
+    });
   });
 
   it('DISCRIMINATOR: a measured goods result carries NO unavailable flag', async () => {
