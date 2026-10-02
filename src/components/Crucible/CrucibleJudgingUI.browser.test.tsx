@@ -386,6 +386,65 @@ describe('CrucibleJudgingUI — video playback', () => {
   });
 });
 
+describe('CrucibleJudgingUI — sequenced preview', () => {
+  const spies = () => ({
+    play: vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined),
+    pause: vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined),
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  test('plays the left clip, then the right, then leaves the judge on their own', async () => {
+    const { play, pause } = spies();
+    renderWithProviders(
+      <CrucibleJudgingUI pair={pairOf(1, 2)} minViewSeconds={3} onVote={vi.fn()} onSkip={vi.fn()} />
+    );
+    await expectBothCardsRendered();
+
+    await vi.waitFor(() => expect(play.mock.contexts).toContain(video('left')));
+    expect(play.mock.contexts).not.toContain(video('right'));
+
+    await advance(0, 4);
+
+    await vi.waitFor(() => expect(pause.mock.contexts).toContain(video('left')));
+    await vi.waitFor(() => expect(play.mock.contexts).toContain(video('right')));
+    expect(voteButton('left')!.disabled).toBe(true);
+
+    await advance(1, 4);
+
+    await vi.waitFor(() => expect(voteButton('left')!.disabled).toBe(false));
+    await vi.waitFor(() => expect(pause.mock.contexts).toContain(video('right')));
+  });
+
+  test('does not start without a minimum view time', async () => {
+    // Negative control: the sequence is driven by the rule, not by every video pair.
+    const { play } = spies();
+    renderWithProviders(<CrucibleJudgingUI pair={pairOf(1, 2)} onVote={vi.fn()} onSkip={vi.fn()} />);
+    await expectBothCardsRendered();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    expect(play).not.toHaveBeenCalled();
+  });
+
+  test('a clip shorter than the rule only has to play to its own end', async () => {
+    spies();
+    const onVote = vi.fn();
+    const short = pairOf(1, 2) as unknown as { left: { image: { metadata: unknown } } };
+    short.left.image.metadata = { duration: 1 };
+    renderWithProviders(
+      <CrucibleJudgingUI pair={short as never} minViewSeconds={3} onVote={onVote} onSkip={vi.fn()} />
+    );
+    await expectBothCardsRendered();
+
+    await advance(0, 2);
+    await advance(1, 4);
+
+    await vi.waitFor(() => expect(voteButton('left')!.disabled).toBe(false));
+    voteButton('left')!.click();
+    await vi.waitFor(() => expect(onVote).toHaveBeenCalledTimes(1));
+    expect(onVote.mock.calls[0][2].winnerWatchedMs).toBeGreaterThanOrEqual(3000);
+  });
+});
+
 describe('CrucibleJudgingUI — hotkeys', () => {
   const press = (key: string, code: string, repeat: boolean) =>
     document.documentElement.dispatchEvent(
