@@ -24,6 +24,7 @@ import type {
   GetGenerationDataSchema,
   ResolveImageMetaInput,
   SetEvictableInput,
+  SetAdditionalResourceFeeWaivedInput,
 } from '~/server/schema/generation.schema';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
@@ -70,6 +71,7 @@ import { removeNulls } from '~/utils/object-helpers';
 import { parseAIR, stringifyAIR } from '~/shared/utils/air';
 import {
   ModelVersionFlag,
+  isAdditionalResourceFeeWaived,
   isEvictable,
   isGenerationDisabled,
 } from '~/shared/constants/model-version-flags.constants';
@@ -1028,20 +1030,37 @@ export async function setEvictable({
   return { id, evictable: isEvictable(flags) };
 }
 
+export async function setAdditionalResourceFeeWaived({
+  id,
+  waived,
+  isModerator,
+}: SetAdditionalResourceFeeWaivedInput & { isModerator?: boolean }) {
+  if (!isModerator) throw throwAuthorizationError();
+  const flags = await updateModelVersionFlags(
+    id,
+    waived
+      ? Prisma.sql`flags | ${ModelVersionFlag.NoAdditionalResourceFee}`
+      : Prisma.sql`flags & ~(${ModelVersionFlag.NoAdditionalResourceFee}::int)`
+  );
+  return { id, waived: isAdditionalResourceFeeWaived(flags) };
+}
+
 const FREE_RESOURCE_TYPES: ModelType[] = ['VAE', 'Checkpoint'];
 export async function getShouldChargeForResources(
   args: {
     modelType: ModelType;
     modelId: number;
     fileSizeKB?: number;
+    versionFlags: number;
   }[]
 ) {
   const featuredModels = await getFeaturedModels();
   return args.reduce<Record<string, boolean>>(
-    (acc, { modelType, modelId, fileSizeKB }) => ({
+    (acc, { modelType, modelId, fileSizeKB, versionFlags }) => ({
       ...acc,
       [modelId]: fileSizeKB
-        ? !FREE_RESOURCE_TYPES.includes(modelType) &&
+        ? !isAdditionalResourceFeeWaived(versionFlags) &&
+          !FREE_RESOURCE_TYPES.includes(modelType) &&
           !featuredModels.map((fm) => fm.modelId).includes(modelId) &&
           fileSizeKB > 10 * 1024
         : false,
@@ -1420,6 +1439,7 @@ export async function getResourceData(
     let additionalResourceCost = true;
     if (
       featured ||
+      isAdditionalResourceFeeWaived(resource.flags) ||
       FREE_RESOURCE_TYPES.includes(resource.model.type) ||
       (fileSizeKB && fileSizeKB <= 10 * 1024)
     ) {

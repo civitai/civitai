@@ -12,6 +12,7 @@ import {
   IconShieldHalf,
   IconPlaylistX,
   IconPin,
+  IconCoinOff,
 } from '@tabler/icons-react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -29,6 +30,7 @@ import { PAID_ACCESS_REFUND_WINDOW_DAYS } from '~/server/utils/early-access-help
 import { moderatorModelVersionLookupPath } from '~/shared/constants/moderator-app';
 import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
 import { getEvictableAction } from '~/components/Model/ModelVersions/evictable-action';
+import { getAdditionalResourceFeeAction } from '~/components/Model/ModelVersions/additional-resource-fee-action';
 
 export function ModelVersionMenu({
   modelVersionId,
@@ -40,6 +42,7 @@ export function ModelVersionMenu({
   canGenerate,
   generationDisabled,
   evictable,
+  additionalResourceFeeWaived,
   showToggleCoverage,
 }: {
   modelVersionId: number;
@@ -51,6 +54,7 @@ export function ModelVersionMenu({
   canGenerate: boolean;
   generationDisabled: boolean;
   evictable: boolean;
+  additionalResourceFeeWaived: boolean;
   showToggleCoverage: boolean;
 }) {
   const router = useRouter();
@@ -126,6 +130,32 @@ export function ModelVersionMenu({
         onConfirm: () =>
           setEvictableMutation
             .mutateAsync({ id: modelVersionId, evictable: evictableAction.next })
+            .catch(() => null),
+      },
+    });
+  };
+
+  const setFeeWaivedMutation = trpc.generation.setAdditionalResourceFeeWaived.useMutation({
+    onSuccess: () => queryUtils.model.getById.invalidate({ id: modelId }),
+    onError: (error) =>
+      showErrorNotification({
+        title: 'Error updating additional resource fee',
+        error: new Error(error.message),
+      }),
+  });
+
+  const feeAction = getAdditionalResourceFeeAction(additionalResourceFeeWaived);
+  const handleToggleFeeWaived = () => {
+    dialogStore.trigger({
+      id: 'toggle-additional-resource-fee',
+      component: ConfirmDialog,
+      props: {
+        title: feeAction.label,
+        message: feeAction.message,
+        labels: { cancel: 'Cancel', confirm: feeAction.label },
+        onConfirm: () =>
+          setFeeWaivedMutation
+            .mutateAsync({ id: modelVersionId, waived: feeAction.next })
             .catch(() => null),
       },
     });
@@ -466,6 +496,24 @@ export function ModelVersionMenu({
               }}
             >
               {evictableAction.label}
+            </Menu.Item>
+            <Menu.Item
+              disabled={setFeeWaivedMutation.isPending}
+              leftSection={
+                setFeeWaivedMutation.isPending ? (
+                  <Loader size="xs" />
+                ) : (
+                  <IconCoinOff size={14} stroke={1.5} />
+                )
+              }
+              color="yellow"
+              onClick={(e: React.MouseEvent) => {
+                e.stopPropagation();
+                e.preventDefault();
+                handleToggleFeeWaived();
+              }}
+            >
+              {feeAction.label}
             </Menu.Item>
           </>
         )}
