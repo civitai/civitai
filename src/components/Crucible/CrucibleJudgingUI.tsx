@@ -23,7 +23,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import type { RouterOutput } from '~/types/router';
 import { MediaType } from '~/shared/utils/prisma/enums';
-import { accumulatePlaybackMs } from '~/shared/constants/crucible.constants';
+import {
+  accumulatePlaybackMs,
+  CRUCIBLE_PLAYBACK_SAMPLE_CEILING_MS,
+} from '~/shared/constants/crucible.constants';
 
 /**
  * Type inferred from tRPC router output - stays in sync with backend automatically
@@ -43,14 +46,8 @@ type MediaStatus = 'loading' | 'loaded' | 'error';
 const IMAGE_LOAD_TIMEOUT_MS = 12_000;
 const VIDEO_LOAD_TIMEOUT_MS = 20_000;
 const bothLoading = { left: 'loading', right: 'loading' } as const;
-// `timeupdate` samples land a few hundred ms apart, so a clip cut short by its own length never
-// accumulates quite all of it.
-const SHORT_CLIP_TOLERANCE_MS = 400;
-
-const clipSeconds = (entry: JudgingEntry | undefined) => {
-  const duration = entry?.image.metadata?.duration;
-  return duration && duration > 0 ? duration : null;
-};
+const notPlayedThrough = { left: false, right: false };
+const LOOP_WRAP_WINDOW_SECONDS = CRUCIBLE_PLAYBACK_SAMPLE_CEILING_MS / 1000;
 
 // Below md the pair gets fixed heights and the page scrolls: squeezed into the space left under
 // the header, a phone (landscape especially) cropped each entry to a strip.
@@ -87,6 +84,7 @@ export function CrucibleJudgingUI({
 }: CrucibleJudgingUIProps) {
   const [selectedSide, setSelectedSide] = useState<Side | null>(null);
   const [watchedMs, setWatchedMs] = useState<Record<Side, number>>(emptyWatched);
+  const [playedThrough, setPlayedThrough] = useState<Record<Side, boolean>>(notPlayedThrough);
   const [mediaStatus, setMediaStatus] = useState<
     { pairKey: string | null } & Record<Side, MediaStatus>
   >({ pairKey: null, ...bothLoading });
@@ -97,6 +95,7 @@ export function CrucibleJudgingUI({
   const pairKey = pair ? `${pair.left.id}:${pair.right.id}` : null;
   useEffect(() => {
     setWatchedMs(emptyWatched);
+    setPlayedThrough(notPlayedThrough);
   }, [pairKey]);
 
   // Keyed on the pair so a new pair reads as loading from its first render, not after an effect.
@@ -113,19 +112,11 @@ export function CrucibleJudgingUI({
   );
 
   const requiredMs = (minViewSeconds ?? 0) * 1000;
-  // A clip shorter than the rule can never reach it, so its own length is all that is asked.
-  const clipDurationMs = {
-    left: (clipSeconds(pair?.left) ?? Infinity) * 1000,
-    right: (clipSeconds(pair?.right) ?? Infinity) * 1000,
-  };
-  const sideDone = (side: Side) =>
-    clipDurationMs[side] < requiredMs
-      ? watchedMs[side] >= clipDurationMs[side] - SHORT_CLIP_TOLERANCE_MS
-      : watchedMs[side] >= requiredMs;
+  // A clip shorter than the rule can never reach it, so playing it to its end once is enough.
+  const sideDone = (side: Side) => playedThrough[side] || watchedMs[side] >= requiredMs;
+  // The server checks the rule, not the clip's length, so a played-through short clip reports it.
   const reportedMs = (side: Side) =>
-    clipDurationMs[side] < requiredMs && sideDone(side)
-      ? Math.max(watchedMs[side], requiredMs)
-      : watchedMs[side];
+    playedThrough[side] ? Math.max(watchedMs[side], requiredMs) : watchedMs[side];
   const remainingMs = requiredMs
     ? (['left', 'right'] as const).reduce(
         (sum, side) => sum + (sideDone(side) ? 0 : Math.max(0, requiredMs - watchedMs[side])),
@@ -144,6 +135,10 @@ export function CrucibleJudgingUI({
 
   const handleWatched = useCallback((side: Side, ms: number) => {
     setWatchedMs((prev) => (ms > prev[side] ? { ...prev, [side]: ms } : prev));
+  }, []);
+
+  const handlePlayedThrough = useCallback((side: Side) => {
+    setPlayedThrough((prev) => (prev[side] ? prev : { ...prev, [side]: true }));
   }, []);
 
   // The parent locks only once `onVote` runs, so clicks inside the feedback delay would each vote.
@@ -167,8 +162,8 @@ export function CrucibleJudgingUI({
         setSelectedSide(null);
       }, 200);
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `reportedMs` is derived from the watched totals and pair
-    [voteLocked, pair, onVote, watchedMs]
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `reportedMs` reads only the deps below
+    [voteLocked, pair, onVote, watchedMs, playedThrough, requiredMs]
   );
 
   const anyUnavailable = media.left === 'error' || media.right === 'error';
@@ -224,6 +219,7 @@ export function CrucibleJudgingUI({
           autoplay={autoplaySide === 'left'}
           sequencing={sequencing}
           onWatched={(ms) => handleWatched('left', ms)}
+          onPlayedThrough={() => handlePlayedThrough('left')}
           onVote={() => handleVote('left')}
           onSkip={handleSkip}
           onMediaStatus={handleMediaStatus}
@@ -246,6 +242,7 @@ export function CrucibleJudgingUI({
           autoplay={autoplaySide === 'right'}
           sequencing={sequencing}
           onWatched={(ms) => handleWatched('right', ms)}
+          onPlayedThrough={() => handlePlayedThrough('right')}
           onVote={() => handleVote('right')}
           onSkip={handleSkip}
           onMediaStatus={handleMediaStatus}
@@ -313,6 +310,7 @@ type ImageCardProps = {
   autoplay: boolean;
   sequencing: boolean;
   onWatched: (ms: number) => void;
+  onPlayedThrough: () => void;
   onVote: () => void;
   onSkip: () => void;
   onMediaStatus: (side: Side, status: MediaStatus) => void;
@@ -338,6 +336,7 @@ function ImageCard({
   autoplay,
   sequencing,
   onWatched,
+  onPlayedThrough,
   onVote,
   onSkip,
   onMediaStatus,
@@ -370,7 +369,18 @@ function ImageCard({
   }, [entry?.id, pairKey]);
 
   const handleTimeUpdate = (e: React.SyntheticEvent<HTMLVideoElement>) => {
-    const currentTime = e.currentTarget.currentTime;
+    const { currentTime, duration } = e.currentTarget;
+    const previousTime = lastTimeRef.current;
+    // The player loops, so `ended` never fires: reaching the end shows up as the playhead wrapping.
+    // The element's decoded duration, not the uploader-reported one, decides what counts as short.
+    if (
+      previousTime != null &&
+      duration * 1000 < requiredMs &&
+      currentTime < previousTime &&
+      previousTime >= duration - LOOP_WRAP_WINDOW_SECONDS &&
+      currentTime <= LOOP_WRAP_WINDOW_SECONDS
+    )
+      onPlayedThrough();
     watchedRef.current = accumulatePlaybackMs({
       watchedMs: watchedRef.current,
       previousTime: lastTimeRef.current,

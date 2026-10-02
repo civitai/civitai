@@ -19,6 +19,8 @@ import { renderWithProviders } from '../../../test/component-setup';
 const playheads = vi.hoisted(() => new Map<string, number>());
 const mediaOutcome = vi.hoisted(() => new Map<string, 'loadedmetadata' | 'error' | 'pending'>());
 const lastVideoProps = vi.hoisted(() => new Map<string, Record<string, unknown>>());
+// A clip's decoded length. Unset means long enough never to loop within a test.
+const clipDurations = vi.hoisted(() => new Map<string, number>());
 
 vi.mock('~/components/EdgeMedia/EdgeMedia', async () => {
   const { useEffect, useRef } = await import('react');
@@ -28,7 +30,9 @@ vi.mock('~/components/EdgeMedia/EdgeMedia', async () => {
       videoProps,
     }: {
       src: string;
-      videoProps?: { onTimeUpdate?: (e: { currentTarget: { currentTime: number } }) => void };
+      videoProps?: {
+        onTimeUpdate?: (e: { currentTarget: { currentTime: number; duration: number } }) => void;
+      };
     }) {
       const videoRef = useRef<HTMLVideoElement>(null);
       lastVideoProps.set(src, videoProps ?? {});
@@ -46,10 +50,12 @@ vi.mock('~/components/EdgeMedia/EdgeMedia', async () => {
             onClick={() => {
               // Four ordinary 250ms samples per click. The first sample of a clip only establishes
               // the baseline, so N clicks are worth (4N - 1) × 250ms of counted playback.
+              const duration = clipDurations.get(src) ?? 600;
               for (let i = 0; i < 4; i++) {
-                const currentTime = (playheads.get(src) ?? 0) + 0.25;
+                // The real player loops, so a short clip's playhead wraps back to the start.
+                const currentTime = ((playheads.get(src) ?? 0) + 0.25) % duration;
                 playheads.set(src, currentTime);
-                videoProps?.onTimeUpdate?.({ currentTarget: { currentTime } });
+                videoProps?.onTimeUpdate?.({ currentTarget: { currentTime, duration } });
               }
             }}
           >
@@ -124,6 +130,7 @@ const expectBothCardsRendered = async () =>
 
 beforeEach(() => {
   playheads.clear();
+  clipDurations.clear();
   mediaOutcome.clear();
   lastVideoProps.clear();
 });
@@ -427,21 +434,59 @@ describe('CrucibleJudgingUI — sequenced preview', () => {
 
   test('a clip shorter than the rule only has to play to its own end', async () => {
     spies();
+    // 1.5s: the first click plays to 1.0s, the second wraps the playhead back to the start.
+    clipDurations.set(srcOf(1), 1.5);
     const onVote = vi.fn();
-    const short = pairOf(1, 2) as unknown as { left: { image: { metadata: unknown } } };
-    short.left.image.metadata = { duration: 1 };
     renderWithProviders(
-      <CrucibleJudgingUI pair={short as never} minViewSeconds={3} onVote={onVote} onSkip={vi.fn()} />
+      <CrucibleJudgingUI pair={pairOf(1, 2)} minViewSeconds={3} onVote={onVote} onSkip={vi.fn()} />
     );
     await expectBothCardsRendered();
 
-    await advance(0, 2);
+    await advance(0, 1);
     await advance(1, 4);
+    // Not yet: a 1s clip whose playhead has not wrapped has not been seen to its end.
+    expect(voteButton('left')!.disabled).toBe(true);
+
+    await advance(0, 1);
 
     await vi.waitFor(() => expect(voteButton('left')!.disabled).toBe(false));
     voteButton('left')!.click();
     await vi.waitFor(() => expect(onVote).toHaveBeenCalledTimes(1));
+    // The server gate checks the rule, not the clip's length.
     expect(onVote.mock.calls[0][2].winnerWatchedMs).toBeGreaterThanOrEqual(3000);
+  });
+
+  test('a sub-second clip stays locked until it has actually played', async () => {
+    spies();
+    clipDurations.set(srcOf(1), 0.3);
+    clipDurations.set(srcOf(2), 0.3);
+    renderWithProviders(
+      <CrucibleJudgingUI pair={pairOf(1, 2)} minViewSeconds={3} onVote={vi.fn()} onSkip={vi.fn()} />
+    );
+    await expectBothCardsRendered();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(voteButton('left')!.disabled).toBe(true);
+
+    await advance(0, 1);
+    await advance(1, 1);
+
+    await vi.waitFor(() => expect(voteButton('left')!.disabled).toBe(false));
+  });
+
+  test('a wrapping playhead does not count for a clip longer than the rule', async () => {
+    // Negative control: on a long clip, a wrap is a skip to the end, not a finished viewing.
+    spies();
+    clipDurations.set(srcOf(1), 10);
+    playheads.set(srcOf(1), 9.6);
+    renderWithProviders(
+      <CrucibleJudgingUI pair={pairOf(1, 2)} minViewSeconds={6} onVote={vi.fn()} onSkip={vi.fn()} />
+    );
+    await expectBothCardsRendered();
+
+    await advance(0, 1);
+
+    await vi.waitFor(() => expect(playheads.get(srcOf(1))).toBeLessThan(1));
+    expect(label('left')).toMatch(/^Watch \d+s more/);
   });
 });
 
