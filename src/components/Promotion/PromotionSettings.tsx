@@ -1,4 +1,13 @@
-import { Alert, Anchor, Divider, Group, SegmentedControl, Stack, Text } from '@mantine/core';
+import {
+  Alert,
+  Anchor,
+  Divider,
+  Group,
+  SegmentedControl,
+  Slider,
+  Stack,
+  Text,
+} from '@mantine/core';
 import { useEffect, useState } from 'react';
 import { SettingsSection } from '~/components/Account/SettingsLayout';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
@@ -9,7 +18,9 @@ import {
   placementPriceCaption,
   PLACEMENT_MIN_PRICE,
   PLACEMENT_SURFACES,
+  resolveHostDeclineFeePercent,
 } from '~/shared/utils/placement';
+import type { PlacementSpaceSettings } from '~/shared/utils/placement';
 import type { PromotionSurface } from '~/shared/utils/promotion';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -47,12 +58,19 @@ function PromotionSurfaceSettings({
   // 'off' would write that opt-out the first time they touched the price.
   const [mode, setMode] = useState<string>(PLACEMENT_SURFACES[surface].defaultMode);
   const [price, setPrice] = useState<number | ''>('');
+  const declineRange = PLACEMENT_SURFACES[surface].hostDeclineFeePercent;
+  const [declineFee, setDeclineFee] = useState(() =>
+    resolveHostDeclineFeePercent(surface, undefined)
+  );
 
   useEffect(() => {
     if (!stored) return;
     setMode(stored.mode);
     setPrice(stored.price ?? '');
-  }, [stored]);
+    setDeclineFee(
+      resolveHostDeclineFeePercent(surface, (stored.settings ?? {}) as PlacementSpaceSettings)
+    );
+  }, [stored, surface]);
 
   const save = trpc.placement.setSpace.useMutation({
     onSuccess: () => utils.placement.invalidate(),
@@ -79,6 +97,15 @@ function PromotionSurfaceSettings({
       entityId: currentUser.id,
       mode: nextMode as 'off' | 'review',
       price: nextPrice === '' ? null : nextPrice,
+    });
+
+  const commitDeclineFee = (value: number) =>
+    save.mutate({
+      surface,
+      entityType: 'user',
+      entityId: currentUser.id,
+      mode: mode as 'off' | 'review',
+      declineFeePercent: value,
     });
 
   const heading = (
@@ -132,6 +159,32 @@ function PromotionSurfaceSettings({
             {caption.text}
           </Text>
         )}
+      </Stack>
+      <Stack gap={4}>
+        <Text size="sm" fw={500}>
+          Kept if you decline
+        </Text>
+        <Slider
+          min={declineRange.min}
+          max={declineRange.max}
+          step={1}
+          value={declineFee}
+          // The save resends `mode`, which reads the surface default until the
+          // stored row loads — releasing early would reopen a space turned off.
+          disabled={!spaces}
+          onChange={setDeclineFee}
+          onChangeEnd={commitDeclineFee}
+          label={(value) => `${value}%`}
+          thumbLabel={`${COPY[surface].title}: kept if you decline`}
+          marks={[0, 10, 20, 30].map((value) => ({ value, label: `${value}%` }))}
+          mb="md"
+        />
+        <Text size="xs" c="dimmed">
+          {declineFee === 0
+            ? 'Buyers get all of their Buzz back when you decline.'
+            : `You keep ${declineFee}% of what a buyer paid when you decline, and they get the rest back.`}{' '}
+          Raise it if you are getting unwanted requests.
+        </Text>
       </Stack>
       {overCap && (
         <Alert color="yellow" p="xs">

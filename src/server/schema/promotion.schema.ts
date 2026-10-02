@@ -20,6 +20,7 @@ export const createGalleryPromotionSchema = z.object({
   postId: id,
   days: runDays,
   expectedPrice: z.number().int().min(0).optional(),
+  expectedDeclineFeePercent: z.number().int().min(0).max(100),
 });
 export type CreateGalleryPromotionInput = z.infer<typeof createGalleryPromotionSchema>;
 
@@ -28,6 +29,7 @@ export const createModelPromotionSchema = z.object({
   promotedModelId: id,
   days: runDays,
   expectedPrice: z.number().int().min(0).optional(),
+  expectedDeclineFeePercent: z.number().int().min(0).max(100),
 });
 export type CreateModelPromotionInput = z.infer<typeof createModelPromotionSchema>;
 
