@@ -190,11 +190,18 @@ beforeEach(() => {
  *
  * ⚠️ WHAT THIS DOES NOT BUY, measured rather than assumed. An earlier draft of this
  * comment claimed the choice means "a wire-unit term cannot satisfy a stored-unit
- * expectation by coincidence" in this suite. It does not: restoring the wire term on
- * either write path leaves this file 146/146 GREEN, because every quota case here has a
- * margin of thousands of bytes between the value size and the remaining budget, so `n`
- * and `2n + 1` land on the same verdict. The unit question is settled by the behaviour
- * suite named above, NOT here. What this buys is that a case added later with a margin
+ * expectation by coincidence" in this suite. It does not, and the margins are why:
+ * every quota case here leaves thousands of bytes between the value size and the
+ * remaining budget, so `n` and `2n + 1` land on the same verdict. Measured against this
+ * file as it stood before the NULL-probe test below was added, restoring the wire term
+ * on EITHER write path left it **146/146 green**. The unit question is settled by the
+ * behaviour suite named above, NOT here.
+ *
+ * What DOES discriminate, now, is the NULL-probe test below — not through the margins
+ * but because it asserts the probe is called at all. Restoring the wire term on the
+ * UPDATE path takes this file to **146/147**, red on that test's update arm. Treat that
+ * as a second line of defence against a wire-term reintroduction rather than as
+ * evidence the fixtures can see the unit; they still cannot. What this buys is that a case added later with a margin
  * BETWEEN `n` and `2n + 1` would discriminate, and — unintentionally but usefully —
  * that reading `params[1]` makes this suite sensitive to the two SQL parameters being
  * swapped, which it previously could not see.
@@ -1313,7 +1320,16 @@ describe('append `data` blob (opaque, unmoderated app payload)', () => {
    * written.
    */
   it('refuses the write loudly when the stored-size probe comes back NULL', async () => {
-    for (const probeValue of [null, undefined]) {
+    // 🔴 NaN IS IN THIS LOOP DELIBERATELY. `null` and `undefined` are both caught by
+    // the guard's FIRST half (`raw == null`), so without a NaN case the second half
+    // (`!Number.isFinite(...)`) never decides anything and could be deleted with
+    // nothing going red — measured, that mutant SURVIVED the whole suite. NaN is
+    // type-valid for `number | null | undefined`, and with the finiteness half gone it
+    // fails open through BOTH gates: append gets `usedBytes + NaN > CAP` (false) and
+    // update gets `netDelta = NaN`, where `NaN <= 0` and `NaN > CAP` are both false, so
+    // the write is ACCEPTED and charged nothing. Same reasoning that justified pinning
+    // the structurally-unreachable null arm.
+    for (const probeValue of [null, undefined, NaN]) {
       mockClient.query.mockClear();
       mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
       mockPool.query.mockImplementation(async (sql: string) => {
@@ -1332,6 +1348,32 @@ describe('append `data` blob (opaque, unmoderated app payload)', () => {
       // No row was written: the throw lands before the transaction opens.
       expect(mockClient.query).not.toHaveBeenCalled();
     }
+
+    // 🔴 The OTHER term of the same subtraction. `oldBytes` comes from the generated
+    // column, so a non-numeric value is unreachable with the current DDL — but a NaN
+    // there fails open through BOTH arms of the gate (`NaN <= 0` is false, so no
+    // exemption; `NaN > CAP` is false, so no refusal), which is strictly worse than the
+    // null case above. Pinned so the guard is not deleted as dead weight.
+    mockClient.query.mockClear();
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query.mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('author_user_id, size_bytes'))
+        return { rows: [{ author_user_id: 42, size_bytes: 'not-a-number' }], rowCount: 1 };
+      if (sql.includes('.quota'))
+        return {
+          rows: [{ used_bytes: '0', stored_size_bytes: fixtureStoredSize(params) }],
+          rowCount: 1,
+        };
+      return { rows: [], rowCount: 0 };
+    });
+    await expect(
+      caller().update({
+        blockToken: 't',
+        key: 'ROW-KEY-1',
+        value: { title: 'ok', data: [1, 2, 3] },
+      })
+    ).rejects.toThrow('stored row size is not numeric');
+    expect(mockClient.query).not.toHaveBeenCalled();
 
     // The mirror case on the UPDATE path, where absorbing a null to 0 would make the
     // delta NEGATIVE and the exemption would then skip the ceiling entirely.

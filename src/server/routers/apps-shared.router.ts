@@ -814,27 +814,55 @@ export async function updateSharedRow(
   // non-positive, so the gate passed unconditionally while the trigger charged the
   // true stored growth. Read STORED_SIZE_PROBE_SQL's header before touching this.
   const storedByteSize = requireStoredSize(quota?.stored_size_bytes);
+  // Already in STORED bytes — it comes straight out of the generated column. The
+  // finiteness check mirrors the per-user path (`app-storage.service`'s `set`) and
+  // exists because a NaN here would fail open through BOTH arms of the gate below:
+  // `NaN <= 0` is false (no exemption) and `NaN > CAP` is false (no refusal), so the
+  // write would land uncharged. Unreachable with the current DDL — `size_bytes` is a
+  // non-null generated `integer` — but the asymmetry with the `storedByteSize` guard
+  // above is exactly the kind a later schema change turns into a hole.
   const oldBytes = Number(existing.size_bytes ?? 0);
+  if (!Number.isFinite(oldBytes)) {
+    throw new Error('app shared storage: stored row size is not numeric');
+  }
   const netDelta = storedByteSize - oldBytes;
 
   // 🔴 AN EDIT THAT DOES NOT GROW THE STORED BYTES MUST NEVER BE REFUSED BY A BYTE
   // CEILING, and this exemption is part of the unit fix rather than a separate
   // policy change — without it the fix above TRAPS the authors of an over-quota app.
   //
-  // `usedBytes` is what is stored NOW, not a projection, so whenever a counter
-  // already sits at or above the cap, `used + netDelta > CAP` is true for a SHRINK
-  // and for a no-op re-save as well as for a growth: the one action that would bring
-  // the app back under its ceiling is the action refused, and the only remaining exit
-  // is `withdraw`, which deletes the row and cascades its votes, counters and
-  // reports. A counter can reach that state from a lowered cap, from trigger drift
-  // (`kv_quota_trigger` no-ops when the GUC is unset), or — the reason this matters
-  // on this commit specifically — from the pre-fix bypass this change closes.
+  // `usedBytes` is what is stored NOW, not a projection, so once a counter sits above
+  // the cap the gate refuses any write for which `used + netDelta > CAP` — and since
+  // `netDelta` is at best a reclaim, that means **a shrink is refused unless it is big
+  // enough to land the counter back under the cap**, i.e. iff `used > CAP + |netDelta|`.
+  // A no-op re-save (`netDelta === 0`) is then refused at any overrun at all. So the
+  // action that would bring the app back under its ceiling is the one refused, exactly
+  // when the overrun exceeds what one edit can reclaim.
   //
-  // It was previously reachable only BY ACCIDENT. The old delta was
-  // `wireNew − storedOld`, carrying a systematic negative bias (~33% of the row on a
-  // separator-dense value), so a no-op re-save computed a comfortably negative number
-  // and passed. Correcting the unit removes that bias, and with it the escape hatch —
-  // so the exemption has to be stated deliberately instead.
+  // ⚠️ Not "every shrink at or above the cap is refused" — an earlier draft of this
+  // comment said that and it is wrong in two measurable places, both covered by tests
+  // in `apps-shared.router.quota.stored-units.behavior.test.ts`: at `used === CAP`
+  // exactly a no-op passes (`CAP + 0 > CAP` is false), and at `used = CAP + 2_000` a
+  // 6,000-byte reclaim passes. Overstating it hides what the exemption is actually for.
+  //
+  // The fallback exits are narrow but not singular: the author's own `withdraw` (which
+  // hard-deletes the row and cascades its votes and counter — NOT its reports, whose
+  // `key` is deliberately not an FK so the audit trail survives a purge), a moderator's
+  // `apps.mod.purgeSharedRow` with `action: 'delete'`, and — because `quota` is SHARED
+  // with the per-user `kv` table through the same trigger — any `storage.delete` on the
+  // per-user path. All of them destroy data to reclaim bytes; none lets an author simply
+  // correct an oversized row, which is what this exemption restores.
+  //
+  // A counter can reach the over-cap state from a lowered cap, from trigger drift
+  // (`kv_quota_trigger` no-ops when the GUC is unset), or — the reason this matters on
+  // this commit specifically — from the pre-fix bypass this change closes.
+  //
+  // It was previously reachable only BY ACCIDENT, and only at a SMALL overrun. The old
+  // delta was `wireNew − storedOld`, carrying a systematic negative bias (~33% of the
+  // row on a separator-dense value), so a no-op re-save computed a comfortably negative
+  // number and passed while the overrun stayed under that bias. Correcting the unit
+  // removes the bias, and with it the escape hatch — so the exemption has to be stated
+  // deliberately instead.
   //
   // 🔴 THE EXEMPTION IS SAFE ONLY BECAUSE `netDelta` IS NOW IN THE STORED UNIT. Both
   // terms are `octet_length(value::text)` over jsonb, i.e. exactly what
@@ -845,11 +873,18 @@ export async function updateSharedRow(
   // (Identical reasoning, and the identical warning, on the per-user path — see the
   // `isNonIncreasing` block in `app-storage.service`'s `set`.)
   //
-  // What it cannot skip: SHARED_VALUE_BYTE_CAP is already enforced per value before
-  // any of this, the row population is unchanged by an in-place update so no row gate
-  // is in play, and the trigger reconciles the counter from the row itself afterwards.
-  // `append` needs no equivalent — there `oldBytes` is 0 and the smallest value this
-  // path can serialize is a one-key object, so its delta is always positive.
+  // What it cannot skip: SHARED_VALUE_BYTE_CAP is already enforced per value before any
+  // of this, and the row population is unchanged by an in-place update so no row gate is
+  // in play. ⚠️ It is NOT bounded by the trigger "reconciling" afterwards — an earlier
+  // draft claimed that, and `kv_quota_trigger` only ever applies a DELTA
+  // (`used_bytes = used_bytes + (NEW.size_bytes - OLD.size_bytes)`), so it propagates
+  // this write faithfully and cannot correct pre-existing drift. Recomputation is a
+  // separate job; see the provisioner's own note on the trigger.
+  //
+  // `append` needs no equivalent, for a stronger reason than a sign argument: its gate
+  // is ABSOLUTE (`usedBytes + storedByteSize > CAP`), not a delta, so there is no
+  // non-increasing case for an exemption to recognise. Do not "harmonise" the two by
+  // giving append a delta.
   const isNonIncreasing = netDelta <= 0;
   if (!isNonIncreasing && usedBytes + netDelta > APP_QUOTA_BYTES) {
     throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'app quota exceeded' });

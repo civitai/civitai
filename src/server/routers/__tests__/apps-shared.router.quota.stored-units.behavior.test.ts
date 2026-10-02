@@ -505,9 +505,14 @@ describe('shared-storage quota arithmetic vs the bytes Postgres stores', () => {
     // 🔴 THE CLAIM, asserted before the remaining controls so a regression fails with
     // the actual overrun in the message rather than with a control's `0 > 0`.
     // MEASURED, both arms, on this exact sequence. Pre-fix (wire-unit delta): TWO
-    // bombs accepted, `used_bytes` 55,117,476 against the 52,428,800-byte ceiling —
-    // 2,688,676 bytes over, from writes the gate was structurally unable to refuse.
-    // Post-fix: ONE bomb accepted (the one that fits), three refused, 52,273,138.
+    // bombs accepted, `used_bytes` 55,235,648 against the 52,428,800-byte ceiling —
+    // 2,806,848 bytes over, from writes the gate was structurally unable to refuse.
+    // Post-fix: ONE bomb accepted (the one that fits), three refused, 52,232,224.
+    // ⚠️ These four figures move together with `expansionBomb` and `HEADROOM`. An
+    // earlier revision carried the pair from the `1e308` / 3,000,000 configuration
+    // (55,117,476 / 2,688,676 / 52,273,138) after the fixture was swapped, and nothing
+    // went red because all the assertions here are thresholds. Re-measure them, do not
+    // adjust them by hand.
     expect(used).toBeLessThanOrEqual(APP_QUOTA_BYTES);
     // …and it genuinely pressed against the ceiling rather than stopping early for
     // some unrelated reason: most of the seeded headroom was consumed.
@@ -583,8 +588,10 @@ describe('shared-storage quota arithmetic vs the bytes Postgres stores', () => {
    *     enough and the pre-fix gate refused too — a PRE-EXISTING trap, which this
    *     exemption also fixes.
    *
-   * So this test is red at the base commit as well, and it is not purely a guard against
-   * a regression this commit introduces. Both readings are true at different overrun
+   * So this test is red at `c4b553af79` (the pre-fix base) as well, and it is not purely
+   * a guard against a regression this commit introduces. ⚠️ Read "base" as that ref, not
+   * as this commit's parent: against the parent — the unit fix WITHOUT the exemption —
+   * it is arm (a) that fails, which is the regression reading. Both readings are true at different overrun
    * sizes; neither alone describes it. Measured: at the base commit arm (a) PASSES and
    * the failure is on arm (b). At this commit, removing the exemption or narrowing it
    * from `netDelta <= 0` to `< 0` each make arm (a) fail instead — so (a) and (b) have
@@ -638,7 +645,12 @@ describe('shared-storage quota arithmetic vs the bytes Postgres stores', () => {
    * tightening `>` to `>=` refused it. The exemption now short-circuits the gate for
    * `netDelta <= 0`, which means that write NO LONGER REACHES the comparison — the
    * mutation became UNREACHABLE and `>` → `>=` SURVIVED the whole suite. Verified by
-   * running that mutant: 153/153 green.
+   * running that mutant against the suite as it then stood — this file's 6 tests plus
+   * the fixture file's 146 — which is **152/152 green**. (An earlier revision said
+   * 153/153; that was an intermediate state during the same session, not the baseline,
+   * and the fixture file's own docstring says 152. The configuration matters more than
+   * the number: the mutant survives whenever the only `netDelta === 0` case is the
+   * same-stored-size test, because the exemption short-circuits ahead of it.)
    *
    * So the boundary needs a case with `netDelta > 0` — one the exemption cannot
    * swallow — landing `used + netDelta` exactly ON the cap. The gate is `>`, so
@@ -763,11 +775,22 @@ describe('shared-storage quota arithmetic vs the bytes Postgres stores', () => {
   });
 
   /**
-   * The boundary of the delta comparison. A rewrite to the same STORED size is
-   * `delta === 0` and must be allowed; pinned separately so tightening the gate from
-   * `> CAP` to `>= CAP` has its own killing test rather than dying to a neighbouring
-   * assertion — and pinned on a value whose wire and stored sizes differ, so it also
-   * fails if the boundary is evaluated in the wrong unit.
+   * A rewrite to the same STORED size (`netDelta === 0`) at a counter sitting exactly
+   * on the cap must be allowed.
+   *
+   * ⚠️ THIS IS AN INVARIANT GUARD, NOT A BOUNDARY TEST — and its docstring used to
+   * claim otherwise, which is why the correction is spelled out rather than quietly
+   * applied. It was written before the `isNonIncreasing` exemption existed, when
+   * `netDelta === 0` still reached the comparison and tightening `> CAP` to `>= CAP`
+   * refused this write. The exemption now short-circuits ahead of the comparison, so
+   * this test no longer exercises it at all: measured, NONE of `> CAP` -> `>= CAP`,
+   * removing `!isNonIncreasing &&`, or `netDelta <= 0` -> `< 0` makes this test fail —
+   * each is killed by one of the two tests above instead.
+   *
+   * What it still pins is worth keeping: that a same-size rewrite is accepted at the
+   * cap, on a value whose wire and stored sizes differ. The gate's `>` boundary is
+   * pinned by `accepts a growing edit that lands exactly on the cap`, which uses a
+   * `netDelta > 0` case the exemption cannot swallow.
    */
   it('allows a rewrite to the same STORED size when the app is at its ceiling', async () => {
     const key = (await append({ title: 'same', data: ones(2000) })).key;
