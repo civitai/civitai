@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { toggleHiddenSchema } from '~/server/schema/user-preferences.schema';
 import { userFollowsCache } from '~/server/redis/caches';
+import type * as DbHelpers from '~/server/db/db-helpers';
 
 const { declinePlacementsOnBlock } = vi.hoisted(() => ({
   declinePlacementsOnBlock: vi.fn(async () => undefined),
@@ -17,11 +18,22 @@ vi.mock('~/server/services/placement-moderation.service', () => ({
   declinePlacementsOnBlock,
 }));
 
+const { queryWithTimeout } = vi.hoisted(() => ({ queryWithTimeout: vi.fn() }));
+vi.mock('~/server/db/db-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof DbHelpers>()),
+  queryWithTimeout,
+}));
+
 import {
   toggleHidden,
   BlockedUsers,
   BlockedByUsers,
 } from '~/server/services/user-preferences.service';
+import {
+  BLOCK_HIDE_MAX_COMMENTS,
+  BLOCK_HIDE_READ_TIMEOUT_MS,
+  blockHideCandidatesSql,
+} from '~/server/services/block-hide-comments.service';
 
 const userId = 42;
 const targetUserId = 99;
@@ -336,5 +348,115 @@ describe('toggleHiddenSchema', () => {
     });
 
     expect(parsed).toMatchObject({ kind: 'blockedUser', hidden: false });
+  });
+
+  it('carries hideComments through the blockedUser member', () => {
+    const parsed = toggleHiddenSchema.parse({
+      kind: 'blockedUser',
+      data: [{ id: targetUserId }],
+      hidden: true,
+      hideComments: true,
+    });
+
+    expect(parsed).toMatchObject({ kind: 'blockedUser', hideComments: true });
+  });
+});
+
+// The bulk comment hide runs after the block commits. However it fails, the block must stand and
+// the mutation must succeed, or the client rolls back its optimistic block and shows an error for a
+// user who is in fact blocked.
+describe('toggleHidden kind=blockedUser — hideComments', () => {
+  const blockHiding = () =>
+    toggleHidden({
+      kind: 'blockedUser',
+      data: [{ id: targetUserId }],
+      hidden: true,
+      hideComments: true,
+      userId,
+    });
+
+  it('a failing bulk hide still leaves the user blocked', async () => {
+    queryWithTimeout.mockRejectedValue(
+      Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' })
+    );
+
+    const result = await blockHiding();
+
+    expect(result.commentsHidden).toEqual({ status: 'failed', count: 0 });
+    expect(engagement.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ where, create: { userId, targetUserId, type: 'Block' } })
+    );
+    expect(engagement.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('hides only once the block is written', async () => {
+    const order: string[] = [];
+    engagement.upsert.mockImplementation((async () => {
+      order.push('block');
+      return {};
+    }) as any);
+    queryWithTimeout.mockImplementation(async () => {
+      order.push('hide');
+      return { rows: [] };
+    });
+
+    const result = await blockHiding();
+
+    expect(order).toEqual(['block', 'hide']);
+    expect(result.commentsHidden).toEqual({ status: 'hidden', count: 0, capped: false });
+  });
+
+  it("hides the BLOCKED user's comments on the BLOCKER's content, never the reverse", async () => {
+    queryWithTimeout.mockResolvedValue({ rows: [] });
+
+    await blockHiding();
+
+    expect(queryWithTimeout).toHaveBeenCalledTimes(1);
+    expect(queryWithTimeout).toHaveBeenCalledWith(
+      expect.anything(),
+      BLOCK_HIDE_READ_TIMEOUT_MS,
+      blockHideCandidatesSql,
+      [targetUserId, userId, BLOCK_HIDE_MAX_COMMENTS]
+    );
+  });
+
+  it('does not re-run on a block that was already in place', async () => {
+    engagement.findUnique.mockResolvedValue({ type: 'Block' });
+
+    const result = await blockHiding();
+
+    expect(queryWithTimeout).not.toHaveBeenCalled();
+    expect(result.commentsHidden).toEqual({ status: 'skipped' });
+  });
+
+  it('does not hide anything when the switch is off', async () => {
+    const result = await block(true);
+
+    expect(queryWithTimeout).not.toHaveBeenCalled();
+    expect(result.commentsHidden).toBeUndefined();
+  });
+
+  it('says nothing about comments on a re-block with the switch off', async () => {
+    engagement.findUnique.mockResolvedValue({ type: 'Block' });
+
+    const result = await block(true);
+
+    expect(queryWithTimeout).not.toHaveBeenCalled();
+    expect(result.commentsHidden).toBeUndefined();
+  });
+
+  it('ignores the switch on an unblock', async () => {
+    engagement.findUnique.mockResolvedValue({ type: 'Block' });
+
+    const result = await toggleHidden({
+      kind: 'blockedUser',
+      data: [{ id: targetUserId }],
+      hidden: false,
+      hideComments: true,
+      userId,
+    });
+
+    expect(queryWithTimeout).not.toHaveBeenCalled();
+    expect(result.commentsHidden).toBeUndefined();
   });
 });

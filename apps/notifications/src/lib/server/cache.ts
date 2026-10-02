@@ -1,7 +1,6 @@
-// Per-user unread counter cache. Ported from the monolith's notification-cache.ts — keyed on the SAME
-// redis hash (`system:notification-counts:{userId}`, field = category) via @civitai/redis's REDIS_KEYS,
-// so the counts stay consistent now that this app (not the monolith) owns the read/count/mark path. A
-// missing redis client (unconfigured) no-ops the counter side; the base-row queries still work.
+// Per-user unread counter cache: one redis hash per user (`system:notification-counts:{userId}`), field =
+// category, plus the `__complete` and `__floor` markers. A missing redis client no-ops the counter side; the
+// base-row queries still work.
 
 import { REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
 import type { NotificationCategory } from '@civitai/notifications';
@@ -9,8 +8,19 @@ import { getRedis } from './clients/redis';
 import { redisErrorsTotal } from './metrics';
 
 const NOTIFICATION_CACHE_TIME = 60 * 60 * 24 * 7; // one week
+// Written only by setUser, in the same EVAL as the counts. A hash without it was assembled by increments
+// (or by a build before this field existed) and is not the user's whole count. Its value is "0" so a build
+// that doesn't know the field reads it as an empty category rather than adding to the badge.
+const COMPLETE_FIELD = '__complete';
+// Present when the recount stopped at its row limit, so every count in the hash is a lower bound. Value "0"
+// for the same reason as COMPLETE_FIELD.
+const FLOOR_FIELD = '__floor';
 
-export type NotificationCategoryCount = { category: NotificationCategory; count: number };
+export type NotificationCategoryCount = {
+  category: NotificationCategory;
+  count: number;
+  floor?: boolean;
+};
 
 function userKey(userId: number) {
   return `${REDIS_KEYS.SYSTEM.NOTIFICATION_COUNTS}:${userId}` as RedisKeyTemplateCache;
@@ -45,27 +55,52 @@ async function hasUser(userId: number) {
 async function getUser(userId: number): Promise<NotificationCategoryCount[] | undefined> {
   const redis = getRedis();
   if (!redis) return undefined;
-  const counts = await withRedisErrorCount('get', () => redis.hGetAll(userKey(userId)));
-  if (!Object.keys(counts).length) return undefined;
+  const {
+    [COMPLETE_FIELD]: complete,
+    [FLOOR_FIELD]: floor,
+    ...counts
+  } = await withRedisErrorCount('get', () => redis.hGetAll(userKey(userId)));
+  // An older build or a decrement racing bustIfFloored can still empty a floored hash, which would read as
+  // an exact zero.
+  if (complete === undefined || (floor !== undefined && !Object.keys(counts).length)) {
+    // Bust rather than overwrite: setUser merges, so a stale category or `__floor` the recount no longer
+    // returns would otherwise survive under the new marker.
+    if (Object.keys(counts).length || floor !== undefined) await bustUser(userId);
+    return undefined;
+  }
   return Object.entries(counts).map(([category, count]) => {
     const casted = Number(count);
-    return { category: category as NotificationCategory, count: casted > 0 ? casted : 0 };
+    return {
+      category: category as NotificationCategory,
+      count: casted > 0 ? casted : 0,
+      ...(floor !== undefined ? { floor: true } : {}),
+    };
   });
 }
 
 async function setUser(userId: number, counts: NotificationCategoryCount[]) {
   const redis = getRedis();
   if (!redis) return;
-  const key = userKey(userId);
-  await withRedisErrorCount('set', async () => {
-    for (const { category, count } of counts) await redis.hSet(key, category, count.toString());
-  });
-  await slideExpiration(userId);
+  // Nothing unread stays uncached: fan-out skips an absent counter, so a notification committed during
+  // this recount would be missed, and a cached zero hides the badge entirely until the TTL runs out.
+  if (!counts.length) return;
+  const fields = [
+    COMPLETE_FIELD,
+    '0',
+    ...(counts.some((c) => c.floor) ? [FLOOR_FIELD, '0'] : []),
+    ...counts.flatMap(({ category, count }) => [category, count.toString()]),
+  ];
+  await withRedisErrorCount('set', () =>
+    redis.hSetMultiWithExpire(userKey(userId), fields, NOTIFICATION_CACHE_TIME)
+  );
 }
 
+// Skip an absent counter: HINCRBY would create a partial hash with no TTL, which getUser refuses and
+// nothing else ever deletes for a user who doesn't read.
 async function incrementUser(userId: number, category: NotificationCategory, by = 1) {
   const redis = getRedis();
   if (!redis) return;
+  if (!(await hasUser(userId))) return;
   const key = userKey(userId);
   await withRedisErrorCount('increment', async () => {
     await redis.hIncrBy(key, category, by);
@@ -76,8 +111,19 @@ async function incrementUser(userId: number, category: NotificationCategory, by 
   });
 }
 
+// Recount rather than adjust a floored hash: `__floor` survives arithmetic, so it would keep reporting floors
+// after the true count fell below the limit, and clearing its last category would leave only the markers.
+async function bustIfFloored(userId: number) {
+  const redis = getRedis();
+  if (!redis) return false;
+  if (!(await withRedisErrorCount('has', () => redis.hExists(userKey(userId), FLOOR_FIELD))))
+    return false;
+  await bustUser(userId);
+  return true;
+}
+
 async function decrementUser(userId: number, category: NotificationCategory, by = 1) {
-  if (!(await hasUser(userId))) return;
+  if (await bustIfFloored(userId)) return;
   await incrementUser(userId, category, -by);
   await slideExpiration(userId);
 }
@@ -92,6 +138,7 @@ async function clearCategory(userId: number, category: NotificationCategory) {
   const redis = getRedis();
   if (!redis) return;
   if (!(await hasUser(userId))) return;
+  if (await bustIfFloored(userId)) return;
   await withRedisErrorCount('clearCategory', () => redis.hDel(userKey(userId), category));
   await slideExpiration(userId);
 }

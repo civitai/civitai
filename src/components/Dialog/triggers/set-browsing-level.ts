@@ -7,6 +7,5 @@ const SetBrowsingLevelModal = dynamic(
   { ssr: false }
 );
 
-// TODO.Justin - allow image owners to request image rating change
 export const openSetBrowsingLevelModal = (props: SetBrowsingLevelModalProps) =>
   dialogStore.trigger({ component: SetBrowsingLevelModal, props });

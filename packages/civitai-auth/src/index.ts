@@ -73,3 +73,4 @@ export { firstPartyClientId, FIRST_PARTY_ID_PREFIX, SPOKE_CALLBACK_PATH } from '
 export { hubLoginUrl, hubLogoutUrl, type ProviderId, type HubLoginUrlOptions } from './providers';
 export { appRole, appRoles, hasAppRole, APP_ROLE_SEPARATOR } from './roles'; // app-namespaced role helpers (read SessionUser.roles by prefix)
 export type { SessionUser, SessionClaims } from './types';
+export * from './app-token';

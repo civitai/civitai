@@ -280,8 +280,7 @@ function CollectionListForm({
     : [];
   const otherCollections = visible.filter(
     (collection) =>
-      !collection.isOwner &&
-      !(includeActiveContests && collection.mode === CollectionMode.Contest)
+      !collection.isOwner && !(includeActiveContests && collection.mode === CollectionMode.Contest)
   );
   // Submitting follows, so most of these are collections the user followed by posting to them, not
   // ones they were invited to — one "Shared with you" heading over both is wrong about the follows.
@@ -388,7 +387,14 @@ function CollectionListForm({
 
     setSelectedCollections(existingSelectedCollections);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [collectionItems, props.articleId, props.imageId, props.modelId, props.postId]);
+  }, [
+    collectionItems,
+    props.articleId,
+    props.imageId,
+    props.modelId,
+    props.postId,
+    props.model3dId,
+  ]);
 
   const metaFor = (collection: (typeof collections)[number]) => {
     if (collection.isOwner) return undefined;
@@ -508,7 +514,9 @@ function CollectionListForm({
             <Stack align="center" gap="sm" py="xl" px="md">
               <Text c="dimmed" ta="center">
                 {!debouncedSearch
-                  ? `You don't have any ${props.type?.toLowerCase() ?? ''} collections yet.`
+                  ? `You don't have any ${
+                      props.type ? collectionTypeData[props.type].label.toLowerCase() : ''
+                    } collections yet.`
                   : searching
                   ? 'Searching…'
                   : `No collections match “${debouncedSearch}”.`}

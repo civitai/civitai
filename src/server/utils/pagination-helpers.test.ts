@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { describe, expect, it } from 'vitest';
-import { getCursor, getPagingData } from '~/server/utils/pagination-helpers';
+import { getCursor, getCursorClauses, getPagingData } from '~/server/utils/pagination-helpers';
 
 // `parseCursor` is not exported; it is exercised here through `getCursor`, the
 // public helper every keyset-paginated endpoint uses to turn a `nextCursor`
@@ -48,6 +48,123 @@ describe('parseCursor (via getCursor) — malformed-token rejection', () => {
   });
 });
 
+/**
+ * Regression: `model.getAll` 500'd with the raw Postgres error
+ * `date/time field value out of range: "165997"` / `"493785"`.
+ *
+ * `model.getAll` takes its cursor as JSON, so a client can send a bare NUMBER.
+ * `parseCursor`'s scalar branch bound that number to `fields[0]` without any
+ * arity check — and for the Newest/Oldest sorts `fields[0]` is the TIMESTAMP
+ * column `mm."lastVersionAt"`. Postgres then had to read `165997` as a
+ * timestamp and threw, surfacing as an INTERNAL_SERVER_ERROR for what is a
+ * malformed client input.
+ *
+ * Note the offending values are ordinary in-range integers, so no magnitude
+ * bound on the cursor input can catch this — the guard has to be the arity one.
+ */
+describe('parseCursor (via getCursor) — scalar cursor on a multi-field sort', () => {
+  const NEWEST = 'lastVersionAt DESC NULLS LAST, modelId DESC';
+
+  it('rejects the production value 165997 as a number on a date-headed 2-field sort → 400', () => {
+    expectBadRequest(() => getCursor(NEWEST, 165997));
+  });
+
+  it('rejects the production value 493785 as a number on a date-headed 2-field sort → 400', () => {
+    expectBadRequest(() => getCursor(NEWEST, 493785));
+  });
+
+  it('never binds a bare number to a timestamp sort column (the actual PG fault)', () => {
+    // The pre-fix behaviour: `where` came back holding 165997 as the bound value
+    // for `lastVersionAt`, which is what Postgres choked on. Post-fix the call
+    // cannot return at all.
+    let where: unknown;
+    expect(() => {
+      where = getCursor(NEWEST, 165997).where;
+    }).toThrow();
+    expect(where).toBeUndefined();
+  });
+
+  it('rejects a scalar cursor on the 3-field metric sorts too (HighestRated/MostDownloaded shape)', () => {
+    expectBadRequest(() => getCursor('thumbsUpCount DESC, downloadCount DESC, modelId', 165997));
+  });
+
+  it('rejects a bigint scalar cursor on a multi-field sort → 400', () => {
+    expectBadRequest(() => getCursor(NEWEST, BigInt(165997)));
+  });
+
+  it('rejects a Date scalar cursor on a multi-field sort → 400', () => {
+    expectBadRequest(() => getCursor(NEWEST, new Date('2024-01-15T00:00:00.000Z')));
+  });
+
+  it('reports the arity in the message, matching the string-cursor guard', () => {
+    let thrown: unknown;
+    try {
+      getCursor(NEWEST, 165997);
+    } catch (e) {
+      thrown = e;
+    }
+    expect((thrown as TRPCError).message).toBe(
+      'Invalid cursor: expected 2 value(s) for this sort, received 1'
+    );
+  });
+
+  it('still accepts a scalar cursor on a SINGLE-field sort (RecentlyAdded: ci."id" DESC)', () => {
+    // Not over-tightened: a single-field sort genuinely issues a bare column
+    // value as its nextCursor, so a number is well-formed there.
+    const { where } = getCursor('ci."id" DESC', 165997);
+    expect(where).toBeDefined();
+    expect((where as unknown as { values: unknown[] }).values).toContain(165997);
+  });
+});
+
+/**
+ * 🔴 DOCUMENTED OPEN RESIDUAL — this test pins a KNOWN FAULT, not correct behaviour.
+ *
+ * The scalar guard above closes only the bare-number/bigint/Date shape. A
+ * hand-built COMPOSITE cursor has the right token COUNT, and `parseCursor`
+ * decides date-vs-numeric per token by whether the token contains `-`, so a
+ * numeric head token on a date-headed sort is still bound to the TIMESTAMP
+ * column and Postgres still throws `date/time field value out of range`.
+ *
+ * Closing it needs per-field TYPE information that the sort string does not
+ * carry — the fix is to thread the sort fields' types through
+ * `getCursor`/`getCursorClauses`, which is a wider change than the defect this
+ * file's guard was added for.
+ *
+ * When that lands, this test will fail. That is the point: replace it with an
+ * `expectBadRequest(...)` rather than deleting it.
+ */
+describe('parseCursor (via getCursorClauses) — KNOWN GAP: composite numeric token on a date column', () => {
+  it('still binds a numeric head token to a timestamp sort column (NOT yet rejected)', () => {
+    const { strict } = getCursorClauses(
+      'mm."lastVersionAt" DESC NULLS LAST, mm."modelId" DESC',
+      '165997|123'
+    );
+    const values = (strict as unknown as { values: unknown[] }).values;
+    // 165997 reaches the SQL comparison against `lastVersionAt` — the exact
+    // binding that makes Postgres throw. No guard rejects it today.
+    expect(values).toContain(165997);
+    expect(values.some((v) => v instanceof Date)).toBe(false);
+  });
+});
+
+describe('getCursorClauses — scalar cursor on a multi-field sort (the model.getAll caller)', () => {
+  // getModelsRaw uses getCursorClauses, not getCursor. Same parseCursor inside,
+  // but pin it separately so a future divergence can't reopen the hole.
+  const NEWEST = 'mm."lastVersionAt" DESC NULLS LAST, mm."modelId" DESC';
+
+  it('rejects 165997 as a number → 400', () => {
+    expectBadRequest(() => getCursorClauses(NEWEST, 165997));
+  });
+
+  it('accepts a well-formed composite cursor unchanged', () => {
+    const { strict, equality, splittable } = getCursorClauses(NEWEST, '2024-01-15|2686725');
+    expect(splittable).toBe(true);
+    expect(strict).toBeDefined();
+    expect(equality).toBeDefined();
+  });
+});
+
 describe('parseCursor (via getCursor) — well-formed cursors parse unchanged', () => {
   it('parses a well-formed composite date|id cursor without throwing and binds real values', () => {
     const { where } = getCursor('createdAt DESC, id DESC', '2024-01-15|2686725');
@@ -75,6 +192,50 @@ describe('parseCursor (via getCursor) — well-formed cursors parse unchanged', 
   it('returns no predicate when there is no cursor (unchanged)', () => {
     const { where } = getCursor('id DESC', undefined);
     expect(where).toBeUndefined();
+  });
+});
+
+/**
+ * REGRESSION. A numeric cursor token above int4 used to bind straight into the
+ * SQL comparison, so Postgres threw `value out of range for type integer` — a raw
+ * 500 for a client fault. `keysetCursorSchema` bounds only the number/bigint
+ * spellings, so the same value was rejected as `999999999999` and accepted as
+ * `'999999999999'`. See PR #5146.
+ */
+describe('parseCursor (via getCursor) — int4 range guard on a numeric STRING token', () => {
+  it('rejects an out-of-range numeric string token on a single-field sort → 400', () => {
+    expectBadRequest(() => getCursor('id DESC', '999999999999'));
+  });
+
+  it('rejects an out-of-range numeric token in the TAIL of a composite cursor → 400', () => {
+    expectBadRequest(() => getCursor('createdAt DESC, id DESC', '2024-01-15|999999999999'));
+  });
+
+  it('CONTROL: accepts int4 max itself, so the guard is not off by one', () => {
+    const { where } = getCursor('id DESC', '2147483647');
+    expect(where).toBeDefined();
+    const values = (where as unknown as { values: unknown[] }).values;
+    expect(values).toContain(2147483647);
+  });
+
+  // 🔴 EXPECTED TO FAIL once the date/numeric discriminator is fixed — that is the
+  // point, not a regression. Update this test as part of that change.
+  it('KNOWN GAP, pinning TODAY’S WRONG BEHAVIOUR: a negative token is parsed as a DATE, not range-checked', () => {
+    // The split is `value.includes('-')`, true of every negative integer, so `'-5'`
+    // takes the date branch and `dayjs.utc('-5')` reports VALID. The resulting Date
+    // binds to an `int` column — a different 500 from the overflow guarded above,
+    // and one no range check here can reach. Not fixed in range: correcting the
+    // discriminator retypes every token for every caller.
+    //
+    // The instant is TIMEZONE-DEPENDENT, so nothing below asserts it literally —
+    // assert only what holds everywhere: a Date came out, and the number did not.
+    const { where } = getCursor('id DESC', '-5');
+    expect(where).toBeDefined();
+    const values = (where as unknown as { values: unknown[] }).values;
+    const dates = values.filter((v): v is Date => v instanceof Date);
+    expect(dates).toHaveLength(1);
+    expect(Number.isNaN(dates[0].getTime())).toBe(false);
+    expect(values).not.toContain(-5);
   });
 });
 

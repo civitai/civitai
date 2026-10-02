@@ -4,6 +4,7 @@ import {
   publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { PLACEMENT_SURFACES, placementSurfaces } from '~/shared/utils/placement';
+import { isPromotionSurface } from '~/shared/utils/promotion';
 import { REMIX_GALLERY_MAX_PINNED } from '~/shared/utils/remix-gallery';
 import {
   STICKER_COMMENT_MAX_LENGTH,
@@ -126,11 +127,20 @@ export const placementSpaceSchema = z
             ? 'Remix gallery submissions always need review'
             : 'That is not a mode this surface accepts',
       });
+
+    // A promotion's space is set on the host's account only; a row on one image
+    // or post would never be read, so an owner saving it would see no effect.
+    if (isPromotionSurface(input.surface) && input.entityType !== 'user')
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['entityType'],
+        message: 'Promotion prices are set on your account',
+      });
   });
 
 export const getPlacementSpaceSchema = z.object({
   surface: placementSurfaceSchema,
-  targetType: z.enum(['image']),
+  targetType: z.enum(['image', 'model']),
   targetId: z.number().int().positive(),
 });
 

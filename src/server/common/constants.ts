@@ -502,6 +502,8 @@ export const constants = {
   },
   modelGallery: {
     maxPinnedPosts: 20,
+    maxCreatorHiddenUsers: 1000,
+    maxCreatorHiddenUserNoteLength: 500,
   },
   chat: {
     airRegex: /^civitai:(?<mId>\d+)@(?<mvId>\d+)$/i,
@@ -590,12 +592,13 @@ export type ComponentFileType = (typeof componentFileTypes)[number];
 
 export const POST_IMAGE_LIMIT = 20;
 export const POST_TAG_LIMIT = 5;
-export const POST_MINIMUM_SCHEDULE_MINUTES = 60;
-// Cap on resources that can be manually credited on a single uploaded/external
-// image. This is an attribution action with no GPU cost, so it is intentionally
-// decoupled from the per-tier generation resource limits (genStatus.limits) —
-// those are throttled during GPU crunches and must not bleed into crediting.
-export const MAX_RESOURCES_PER_IMAGE = 20;
+export const POST_MINIMUM_SCHEDULE_MINUTES = 10;
+// Caps on resources a user can manually credit on a single uploaded/external image
+// (`ImageResourceNew.detected = false`); auto-detected resources are not counted. This is an
+// attribution action with no GPU cost, so it is intentionally decoupled from the per-tier
+// generation resource limits (genStatus.limits), which are throttled during GPU crunches.
+export const MAX_MANUAL_RESOURCES_PER_IMAGE = 10;
+export const MAX_MANUAL_CHECKPOINTS_PER_IMAGE = 3;
 export const CAROUSEL_LIMIT = 20;
 export const DEFAULT_EDGE_IMAGE_WIDTH = 450;
 export const MAX_ANIMATION_DURATION_SECONDS = 30;
@@ -791,6 +794,16 @@ const baseLicenses: Record<string, LicenseDetails> = {
     // Ideogram Non-Commercial Model Agreement forbids commercial use.
     nonCommercial: true,
   },
+  'bfl tos': {
+    url: 'https://bfl.ai/legal/terms-of-service',
+    name: 'Black Forest Labs Terms of Service',
+  },
+  'ideogram tos': {
+    url: 'https://ideogram.ai/legal/tos',
+    name: 'Ideogram Terms of Service',
+    // The ToS bars sexually explicit output.
+    disableMature: true,
+  },
   'qwen research': {
     url: 'https://huggingface.co/Qwen/Qwen-Image-2.1/blob/main/LICENSE',
     name: 'Qwen Research License Agreement',
@@ -863,6 +876,8 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Flux.1 D': baseLicenses['flux1D'],
   'Flux.1 Krea': baseLicenses['flux1D'],
   'Flux.1 Kontext': baseLicenses['flux1D'],
+  'Flux.3': baseLicenses['bfl tos'],
+  'Flux 3 Video': baseLicenses['bfl tos'],
   'Flux.2 D': baseLicenses['flux1D'],
   'Flux.2 Klein 9B': baseLicenses['flux1D'],
   'Flux.2 Klein 9B-base': baseLicenses['flux1D'],
@@ -904,6 +919,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Vidu Q1': baseLicenses['vidu'],
   Seedance: baseLicenses['seedream'],
   'Ideogram 4.0': baseLicenses['ideogram nc'],
+  'Ideogram 4.5': baseLicenses['ideogram tos'],
   'MiniMax H3': baseLicenses['minimax h3'],
   'MiniMax Music 3': baseLicenses['minimax music 3'],
 };

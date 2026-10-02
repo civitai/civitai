@@ -22,13 +22,14 @@ import type { BlockAuthorFeeComputation } from './author-fee';
 //      `author-fee-settlement.service.ts`, driven by the
 //      `settle-block-author-fees` job.
 //
-// 🔴 BOTH HOPS ARE STILL DARK, AND THE ACCURATE FORM OF THE CLAIM IS NARROWER
-// THAN "EVERY MONEY-MOVING ENTRY POINT" — AN EARLIER REVISION SAID THAT AND IT IS
-// FALSE. Every entry point that can CREATE AN OBLIGATION is behind
-// `app-blocks-author-fee-enabled`, which is `enabled: false`: the charge path
-// reads that flag before it prices anything, so with the flag off no fee is
-// quoted, no fee is reserved, no viewer is debited and this table stays empty —
-// which is also why the settlement rail has nothing to settle.
+// 🔴 BOTH HOPS ARE LIVE — earlier revisions of this comment said "still dark", and
+// that is what this file was read as. Viewers are debited, this table accrues rows,
+// and the daily settlement job mints to app owners.
+//
+// WHAT THE FLAG COVERS, stated precisely because an earlier revision overstated it:
+// every entry point that can CREATE AN OBLIGATION, not every money-moving one. The
+// charge path reads the flag before it prices anything, so turning it off stops new
+// fees being quoted, reserved or debited — it does not stop the refund path below.
 //
 // `reverseBlockAuthorFee` DOES move money — it refunds the viewer through
 // `createBuzzTransactionMany` — and reads NO flag, so it is not an exception to
@@ -38,14 +39,13 @@ import type { BlockAuthorFeeComputation } from './author-fee';
 // ever KEEP money the viewer is owed is the wrong direction. The flag exists to
 // stop a fee being CREATED, not to stop one being given back.
 //
-// Its cost with the flag off is one `dbWrite` `findUnique` per terminal
-// observation that is NOT `succeeded` — all three observers gate on
+// Its cost is one `dbWrite` `findUnique` per terminal observation that is NOT
+// `succeeded` — all three observers gate on
 // `TERMINAL_BLOCK_WORKFLOW_STATUSES.has(status) && status !== 'succeeded'`, so
 // the ordinary completing generation never reaches it, and the two cancel paths
-// carry that same compound guard rather than calling unconditionally.
-// Behaviourally inert today (the table is empty, so it returns `no-accrual` and
-// moves nothing), but it is a real query on a real path and the claim has to say
-// so.
+// carry that same compound guard rather than calling unconditionally. It is not
+// inert: the table holds accruals, so a failed or cancelled generation whose fee
+// was already debited takes the refund branch and moves real money.
 //
 // The two-hop shape is exactly what `deliver-creator-compensation` does for the
 // model licensing fee: the orchestrator charges the viewer at generation time,
@@ -152,16 +152,27 @@ export type AccrueBlockAuthorFeeInput = {
   computation: BlockAuthorFeeComputation;
   /** The resolved generation type, or null when it could not be established. */
   generationType: string | null;
+  /**
+   * PRIVATE RUN of a delisted / suspended app — forwarded to
+   * `resolveBlockAuthorFeePayee`, which refuses. Present on this INPUT (and not
+   * only on the charge path) because this function is exported and its contract is
+   * "record that a debit happened": a caller that is not `chargeBlockAuthorFee`
+   * must be able to state the fact, or the write-side belt cannot see it.
+   */
+  privateRun?: boolean;
 };
 
 export type AccrueBlockAuthorFeeResult =
   | { accrued: true; id: string; feeBuzz: number }
-  | { accrued: false; reason: 'zero-fee' | 'self-dealing' | 'app-missing' | 'duplicate' | 'error' };
+  | {
+      accrued: false;
+      reason: 'zero-fee' | 'self-dealing' | 'private-run' | 'app-missing' | 'duplicate' | 'error';
+    };
 
 /** Who this app's fee is owed to, or why nobody is. */
 export type BlockAuthorFeePayee =
   | { payee: true; appOwnerUserId: number }
-  | { payee: false; reason: 'app-missing' | 'self-dealing' };
+  | { payee: false; reason: 'app-missing' | 'self-dealing' | 'private-run' };
 
 /**
  * Resolve the app owner a fee is owed to, and refuse when that owner IS the
@@ -197,8 +208,88 @@ export async function resolveBlockAuthorFeePayee(args: {
   viewerUserId: number;
   /** Carried onto the log lines only, so a skip is traceable to a generation. */
   workflowId: string;
+  /**
+   * Suppress the two SKIP log lines below. The RESOLUTION is unaffected — this
+   * changes what is written, never what is returned.
+   *
+   * 🔴 IT EXISTS FOR THE DISCLOSURE CALLERS, AND THE REASON IS VOLUME, NOT NOISE.
+   * The two ESTIMATE arms now resolve the payee so a self-dealing author is not
+   * quoted a fee they will never pay. An estimate is fired per parameter change
+   * by third-party block code over `postMessage` and carries no rate limit and no
+   * idempotency key, whereas a submit is one call per real generation. Both skip
+   * arms below call `logToAxiom`, which is NOT a cheap no-op: it does an
+   * unconditional `console.error` — a SYNCHRONOUS write on the event loop when
+   * stderr is a pipe, which it is in a container — plus an HTTP ingest. Leaving
+   * them on would put that on an unbounded surface, and this file's own note
+   * records that ~91% of the spend population to date is operator self-testing,
+   * i.e. the self-dealing arm is precisely the hot one.
+   *
+   * Nothing is lost: both skips are re-derived at the SUBMIT, where
+   * `chargeBlockAuthorFee` re-resolves the payee once per real generation and
+   * logs there. And the lines this suppresses would have been unattributable
+   * anyway — a whatIf has no workflow id, so every one of them carries the same
+   * constant label and differs only by timestamp.
+   */
+  suppressSkipLogs?: boolean;
+  /**
+   * PRIVATE RUN of a delisted / suspended app — from the verified token's
+   * `privateRun` claim. When true nobody is owed a fee, and the refusal is
+   * returned BEFORE the owner is even looked up.
+   *
+   * 🔴 IT LIVES HERE RATHER THAN IN THE CHARGE SERVICE FOR THE SAME REASON THE
+   * SELF-DEALING CHECK DOES: this is the ONE SPELLING, and it has two callers.
+   * Putting it in `quoteBlockAuthorFeeUncounted` alone would leave a direct
+   * `accrueBlockAuthorFee` caller able to write a private-run accrual row — the
+   * exact defence-in-depth-against-a-CALLER argument made above for self-dealing.
+   * Both callers therefore get it from one branch and cannot disagree.
+   *
+   * Absent/false → byte-identical to the pre-feature behaviour.
+   */
+  privateRun?: boolean;
 }): Promise<BlockAuthorFeePayee> {
-  const { appId, viewerUserId, workflowId } = args;
+  const { appId, viewerUserId, workflowId, suppressSkipLogs, privateRun } = args;
+
+  // 🔴 PRIVATE-RUN EXCLUSION. A private run serves a DELISTED / SUSPENDED app's
+  // deployed bundle to its owner, an accepted listing collaborator, or a
+  // moderator, so that a takedown can be diagnosed or appealed without relisting
+  // the app publicly. It is a REVIEW, not a use — and a delisted app has no users
+  // to charge on the author's behalf.
+  //
+  // 🔴 ITS ONLY LIVE CONSUMER IS A MODERATOR RUN, WHICH IS WHY THIS ARM EXISTS AT
+  // ALL. The owner is already refused one branch below (`self-dealing`). That
+  // leaves the moderator, who IS a third party: without this branch, reviewing a
+  // takedown debits the MODERATOR and credits the SUSPENDED PUBLISHER the same
+  // Buzz, because the platform takes no cut on this rail. That is a straight
+  // transfer from the person reviewing the takedown to the author who was taken
+  // down.
+  //
+  // ⚠️ COLLABORATORS (EDITORS) ARE A DECISION, NOT YET A MECHANISM — AND THE
+  // PRESENT TENSE HERE WOULD BE A LIE. The operator's decision is that an editor is
+  // READ-ONLY on the private-run surface, to be delivered by stripping
+  // `ai:write:budgeted` in the private-run scope clamp. That clamp DOES NOT EXIST
+  // YET; it arrives with the mint. So do not read this as "an editor cannot reach a
+  // generation" — nothing enforces that today, and if the clamp strip is forgotten,
+  // an editor reaches a generation and is refused HERE, by this arm, rather than
+  // upstream.
+  //
+  // That is why the arm is written audience-BLIND: it keys on the CLAIM, never on a
+  // role, so it holds for whichever audiences the clamp ends up admitting. An
+  // earlier draft of this comment asserted the clamp in the present tense, which
+  // would have made a missing clamp look handled — a review lane caught it.
+  //
+  // Placed FIRST, before the owner lookup, for three reasons: the refusal needs no
+  // owner, so it costs no query; a private run must be refused even if the app row
+  // is missing or dangling; and it keeps the two arms below independently
+  // reachable — `app-missing` and `self-dealing` are still the only way an ordinary
+  // (non-private) run can be refused, so neither becomes dead.
+  //
+  // NOT LOGGED. The two arms below log because their rate is a signal about real
+  // traffic; a private run is an operator action that the mint's own audit line
+  // already records with its audience, slug and user, so a second line here would
+  // be duplicate volume carrying strictly less.
+  if (privateRun === true) {
+    return { payee: false, reason: 'private-run' };
+  }
 
   // Resolve + snapshot the app owner. 🔴 AT WRITE TIME, never at settlement: an
   // app that changes hands must not retroactively move earnings already accrued
@@ -208,16 +299,18 @@ export async function resolveBlockAuthorFeePayee(args: {
     select: { id: true, userId: true },
   });
   if (!app?.userId) {
-    logToAxiom(
-      {
-        name: BLOCK_AUTHOR_FEE_LOG_NAME,
-        type: 'warning',
-        message: 'accrual skipped: app or owner missing',
-        workflowId,
-        appId,
-      },
-      'civitai-prod'
-    ).catch(() => undefined);
+    if (!suppressSkipLogs) {
+      logToAxiom(
+        {
+          name: BLOCK_AUTHOR_FEE_LOG_NAME,
+          type: 'warning',
+          message: 'accrual skipped: app or owner missing',
+          workflowId,
+          appId,
+        },
+        'civitai-prod'
+      ).catch(() => undefined);
+    }
     return { payee: false, reason: 'app-missing' };
   }
 
@@ -231,17 +324,19 @@ export async function resolveBlockAuthorFeePayee(args: {
   // self-testing, so this arm is expected to be hot early and should not be
   // mistaken for the fee failing.
   if (app.userId === viewerUserId) {
-    logToAxiom(
-      {
-        name: BLOCK_AUTHOR_FEE_LOG_NAME,
-        type: 'info',
-        message: 'accrual skipped: self-dealing',
-        workflowId,
-        appId,
-        appOwnerUserId: app.userId,
-      },
-      'civitai-prod'
-    ).catch(() => undefined);
+    if (!suppressSkipLogs) {
+      logToAxiom(
+        {
+          name: BLOCK_AUTHOR_FEE_LOG_NAME,
+          type: 'info',
+          message: 'accrual skipped: self-dealing',
+          workflowId,
+          appId,
+          appOwnerUserId: app.userId,
+        },
+        'civitai-prod'
+      ).catch(() => undefined);
+    }
     return { payee: false, reason: 'self-dealing' };
   }
 
@@ -266,8 +361,16 @@ export async function resolveBlockAuthorFeePayee(args: {
 export async function accrueBlockAuthorFee(
   input: AccrueBlockAuthorFeeInput
 ): Promise<AccrueBlockAuthorFeeResult> {
-  const { workflowId, appId, appBlockId, viewerUserId, buzzType, computation, generationType } =
-    input;
+  const {
+    workflowId,
+    appId,
+    appBlockId,
+    viewerUserId,
+    buzzType,
+    computation,
+    generationType,
+    privateRun,
+  } = input;
 
   // A zero fee is not an accrual with an amount of zero — it is the absence of a
   // charge. Writing it would put rows in the ledger that can never settle (the
@@ -281,7 +384,12 @@ export async function accrueBlockAuthorFee(
   // or extract it. It is extracted, and `chargeBlockAuthorFee` calls it before it
   // takes any money; this call is the write-side belt for any OTHER caller of
   // this exported function, not a second copy of the rule.
-  const payee = await resolveBlockAuthorFeePayee({ appId, viewerUserId, workflowId });
+  const payee = await resolveBlockAuthorFeePayee({
+    appId,
+    viewerUserId,
+    workflowId,
+    privateRun,
+  });
   if (!payee.payee) return { accrued: false, reason: payee.reason };
 
   const id = newBlockAuthorFeeAccrualId();

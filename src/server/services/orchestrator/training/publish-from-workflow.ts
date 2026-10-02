@@ -14,6 +14,7 @@ import { getWorkflow, updateWorkflow } from '~/server/services/orchestrator/work
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { dbWrite } from '~/server/db/client';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
+import { sampleSlotUrl } from '~/server/services/orchestrator/training/workflow-state';
 import type {
   TrainingDetailsBaseModelList,
   TrainingDetailsObj,
@@ -145,9 +146,7 @@ export function mapWorkflowToTrainingResultsV2(workflow: Workflow): TrainingResu
         epochNumber: epoch.epochNumber ?? -1,
         modelUrl: epoch.model?.url ?? '',
         modelSize: 0,
-        sampleImages: (epoch.samples ?? [])
-          .map((sample) => sample.url ?? '')
-          .filter((url) => url.length > 0),
+        sampleImages: (epoch.samples ?? []).map(sampleSlotUrl),
       }));
   } else {
     const output = (step as ImageResourceTrainingStep).output as
@@ -158,7 +157,7 @@ export function mapWorkflowToTrainingResultsV2(workflow: Workflow): TrainingResu
       epochNumber: epoch.epochNumber ?? -1,
       modelUrl: epoch.blobUrl ?? '',
       modelSize: epoch.blobSize ?? 0,
-      sampleImages: (epoch.sampleImages ?? []).filter((url) => url.length > 0),
+      sampleImages: epoch.sampleImages ?? [],
     }));
   }
 

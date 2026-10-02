@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { clickupTaskIdFromUrl } from '@civitai/shared/clickup-url';
 import { clickhouse } from '~/server/clickhouse/client';
 import { BUG_CLOSED_STATUSES, CacheTTL, isBugClosed } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -296,15 +297,13 @@ export const getBugReportStats = async ({
 export { BUG_CLOSED_STATUSES };
 
 /**
- * `https://app.clickup.com/t/8459928/868kfwm3j` -> `868kfwm3j`. Tolerates `-`/`_`
- * so a ClickUp custom task id (`DEV-1234`) parses rather than silently reading
- * as "no link".
+ * Re-exported, not defined here: the moderator app validates a pasted ClickUp URL with the SAME
+ * function, because a URL it accepts that this file cannot parse would be stored as a link that
+ * never matches and an issue that never auto-closes. See `@civitai/shared/clickup-url`.
+ *
+ * Kept as a named re-export so this module stays the import site it has always been.
  */
-export const clickupTaskIdFromUrl = (url?: string | null) => {
-  if (!url) return null;
-  const last = url.split('?')[0].split('#')[0].replace(/\/+$/, '').split('/').pop();
-  return last && /^[a-z0-9_-]+$/i.test(last) ? last : null;
-};
+export { clickupTaskIdFromUrl };
 
 const CLICKUP_DONE_TYPES = new Set(['closed', 'done']);
 

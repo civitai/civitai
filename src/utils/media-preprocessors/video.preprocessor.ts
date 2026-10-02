@@ -1,6 +1,6 @@
 import type { VideoMetadata } from '~/server/schema/media.schema';
 import { createBlurHash } from '~/utils/blurhash';
-import { VideoMetadataParser } from '~/utils/metadata';
+import { getVideoMetadata } from '~/utils/metadata';
 
 const hasAudio = (video: any): boolean => {
   return (
@@ -56,10 +56,7 @@ export const getVideoData = async <T = HTMLVideoElement>(
 
 export const preprocessVideo = async (file: File) => {
   const objectUrl = URL.createObjectURL(file);
-  const [video, meta] = await Promise.all([
-    getVideoData(objectUrl),
-    VideoMetadataParser(file).then((parser) => parser.getMetadata()),
-  ]);
+  const [video, meta] = await Promise.all([getVideoData(objectUrl), getVideoMetadata(file)]);
 
   const width = video.videoWidth;
   const height = video.videoHeight;
@@ -77,10 +74,10 @@ export const preprocessVideo = async (file: File) => {
 
   return {
     objectUrl,
-    meta,
     metadata: {
       size: file.size,
       ...metadata,
     },
+    meta,
   };
 };

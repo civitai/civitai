@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
-import { renderWithProviders } from '../../../../../test/component-setup';
+import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../../../test/component-setup';
 import { useRouter } from 'next/router';
 
 /**
@@ -43,7 +43,11 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 vi.mock('~/components/Apps/ReviewDetailView', () => ({
   ReviewDetailView: (props: { selection: any; onClose: () => void }) => {
     state.bodyProps.last = props;
-    return <div data-testid="review-body">body:{props.selection.request.id}:{props.selection.mode}</div>;
+    return (
+      <div data-testid="review-body">
+        body:{props.selection.request.id}:{props.selection.mode}
+      </div>
+    );
   },
 }));
 vi.mock('~/components/Apps/OnsiteReviewModal', () => ({
@@ -110,7 +114,9 @@ describe('ReviewDetailPage — route shell', () => {
     await expect.element(page.getByTestId('review-body')).toBeInTheDocument();
     // The body received the resolved request id + mode (proves the shell threads
     // the fetched `{ request, mode }` into the extracted body, not the modal).
-    await expect.element(page.getByTestId('review-body')).toHaveTextContent('body:pubreq_1:pending');
+    await expect
+      .element(page.getByTestId('review-body'))
+      .toHaveTextContent('body:pubreq_1:pending');
     // The page header uses the shared modal title component.
     await expect.element(page.getByTestId('review-title')).toHaveTextContent('my-onsite-block');
     // No fail-closed surface on the happy path.
@@ -166,5 +172,35 @@ describe('ReviewDetailPage — route shell', () => {
     push.mockClear();
     state.bodyProps.last?.onClose();
     expect(push).toHaveBeenCalledWith('/apps/review');
+  });
+});
+
+describe('ReviewDetailPage — the listing-media seam', () => {
+  /**
+   * ⚠️ AN INVARIANT GUARD, NOT REGRESSION COVERAGE, AND LABELLED SO BECAUSE IT WAS
+   * MEASURED: green on the commit before the listing-media work, because the page hands the
+   * body the fetched `request` OBJECT WHOLE and never names a field.
+   *
+   * What it pins is the future edit that WOULD break — the page cherry-picking fields out
+   * of `query.data.request`, which would blank the media section while
+   * `ReviewDetailView`'s own arms stayed green.
+   */
+  test('the page passes the fetched request through WHOLE (no field cherry-picking)', async () => {
+    const request = {
+      ...REQUEST,
+      iconUrl: `${LOADABLE_IMAGE_DATA_URI}#icon`,
+      coverUrl: `${LOADABLE_IMAGE_DATA_URI}#cover`,
+    };
+    state.query = {
+      data: { mode: 'pending', request },
+      isLoading: false,
+      isError: false,
+      error: null,
+    };
+    renderWithProviders(<ReviewDetailPage publishRequestId="pubreq_1" />);
+    await expect.element(page.getByTestId('review-body')).toBeInTheDocument();
+    // Every key, not only the two this change added — that is what makes it a pass-through
+    // assertion rather than a list someone has to remember to extend.
+    expect(state.bodyProps.last?.selection.request).toEqual(request);
   });
 });

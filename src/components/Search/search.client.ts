@@ -3,6 +3,7 @@ import type { InstantSearchProps } from 'react-instantsearch';
 import { env } from '~/env/client';
 import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
 import { withUserHydration } from '~/components/Search/userHydration';
+import { emptyMeiliResults } from '~/components/Search/emptySearchClient';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -20,19 +21,7 @@ const baseSearchClient: InstantSearchProps['searchClient'] = {
       requests.every(({ params }) => !params?.query)
       // && !location.pathname.startsWith('/search')
     ) {
-      return Promise.resolve({
-        results: requests.map(() => ({
-          hits: [],
-          nbHits: 0,
-          nbPages: 0,
-          page: 0,
-          processingTimeMS: 0,
-          hitsPerPage: 0,
-          exhaustiveNbHits: false,
-          query: '',
-          params: '',
-        })),
-      });
+      return Promise.resolve(emptyMeiliResults(requests));
     }
 
     return meilisearch.search(requests);

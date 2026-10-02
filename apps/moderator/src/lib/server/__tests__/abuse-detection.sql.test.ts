@@ -128,10 +128,43 @@ beforeEach(() => {
 /** Whitespace-normalised, so a prettier reflow of the builder chain cannot fail these. */
 const lastSql = () => sql[sql.length - 1].replace(/\s+/g, ' ').trim();
 
+/**
+ * The one recorded statement containing `fragment`, with the parameters bound to it.
+ *
+ * 🔴 SELECTED BY SHAPE, NEVER BY POSITION. Three guards about the list query read
+ * `sql[sql.length - 1]`, and the moment `getAbuseRuns` grew a second statement they silently
+ * re-pointed at that one instead — asserting the reviewed-count query's text under the list query's
+ * name. They went red here only because their fragments were specific; a looser one would have gone
+ * quietly vacuous, which is the same defect with no symptom.
+ *
+ * Uniqueness is asserted rather than assumed, so a THIRD statement cannot take this one's place
+ * either — and `params` is indexed alongside `sql`, so the pair cannot come from different queries.
+ */
+function statement(fragment: string): { sql: string; params: readonly unknown[] } {
+  const hits = sql
+    .map((text, i) => ({ sql: text.replace(/\s+/g, ' ').trim(), params: params[i] ?? [] }))
+    .filter((s) => s.sql.includes(fragment));
+  expect(
+    hits.map((h) => h.sql),
+    `exactly one recorded statement should contain \`${fragment}\``
+  ).toHaveLength(1);
+  return hits[0];
+}
+
+/** Forget what has been recorded so far — for a case that drives the same call twice. */
+function forgetStatements() {
+  sql.length = 0;
+  (params as unknown[][]).length = 0;
+}
+
+/** The list query, and the reviewed-count query `getAbuseRuns` issues beside it. */
+const RUN_LIST = 'from "abuse_detection_run" as "r"';
+const RULED_COUNT = 'count("id") as "ruled"';
+
 describe('compiled SQL — column names and shape', () => {
   it('getAbuseRuns joins findings and groups by the run PK alone', async () => {
     await service.getAbuseRuns({});
-    const q = lastSql();
+    const { sql: q, params: bound } = statement(RUN_LIST);
 
     expect(q).toContain('from "abuse_detection_run" as "r"');
     expect(q).toContain('left join "abuse_detection_finding" as "f" on "f"."run_id" = "r"."id"');
@@ -145,23 +178,49 @@ describe('compiled SQL — column names and shape', () => {
     // 🔴 The bound VALUE, not just the placeholder. `$1` matches whatever was bound, so a regex over
     // the SQL text alone cannot see the predicate inverted to `false` — which would report the
     // NOT-actioned count under the "acted on" column, the one number this board exists to separate.
-    expect(params[params.length - 1]).toContain(true);
+    expect(bound).toContain(true);
   });
 
   // Sibling of the `getAbuseFindings` default the last round pinned. Unpinned, the board's list
   // silently shows a handful of runs and reads as "that is all there is".
   it('getAbuseRuns defaults to a page of 50 runs', async () => {
     await service.getAbuseRuns({});
-    expect(params[params.length - 1]).toContain(50);
+    expect(statement(RUN_LIST).params).toContain(50);
   });
 
   it('getAbuseRuns filters by detector only when one is given', async () => {
     await service.getAbuseRuns({});
-    expect(lastSql()).not.toContain('"r"."detector" =');
+    expect(statement(RUN_LIST).sql).not.toContain('"r"."detector" =');
 
+    forgetStatements();
     await service.getAbuseRuns({ detector: 'reaction-abuse' });
-    expect(lastSql()).toContain('"r"."detector" =');
-    expect(params[params.length - 1]).toContain('reaction-abuse');
+    const filtered = statement(RUN_LIST);
+    expect(filtered.sql).toContain('"r"."detector" =');
+    expect(filtered.params).toContain('reaction-abuse');
+  });
+
+  /**
+   * 🔴 THE REVIEWED COUNT IS A SECOND STATEMENT, AND THAT IS THE DEGRADATION. It is the only read
+   * behind the list page that names `verdict`, and the DDL carrying `verdict` is applied BY HAND —
+   * folded into the list query, a deployment in that window would take a `42703` on the read the
+   * whole page is, and `routes/abuse/+page.server.ts` would report a database it is reading from
+   * perfectly well as `unreachable`.
+   */
+  it('getAbuseRuns counts the ruled findings in its own statement', async () => {
+    await service.getAbuseRuns({});
+    const list = statement(RUN_LIST);
+    const ruled = statement(RULED_COUNT);
+
+    // Two different statements. One query naming `verdict` is exactly what this separation exists
+    // to avoid.
+    expect(list.sql).not.toContain('"verdict"');
+    expect(ruled.sql).toContain('from "abuse_detection_finding"');
+    expect(ruled.sql).toContain('"verdict" is not null');
+    expect(ruled.sql).toContain('group by "run_id"');
+    // 🔴 SCOPED TO THE RUNS THE LIST RETURNED. Without the `in`, a detector filter would still pay
+    // for — and could still attribute — every run in the table.
+    expect(ruled.sql).toContain('"run_id" in (');
+    expect(ruled.params).toContain(CANNED_RUN_ID);
   });
 
   it('getAbuseRun reads one row by primary key', async () => {

@@ -241,7 +241,7 @@ const featureFlags = createFeatureFlags({
   aiToolkitDefaultSd: { availability: ['mod'], fliptKey: 'ai-toolkit-default-sd' },
   kohyaTraining: { availability: ['public'], fliptKey: 'kohya-training' },
   qwenTraining: { availability: ['mod'], fliptKey: 'qwen-training' },
-  flux2Training: { availability: ['public'], fliptKey: 'flux2-training' },
+  flux2Training: { availability: ['mod'], fliptKey: 'flux2-training' },
   zimageturboTraining: { availability: ['mod'], fliptKey: 'zimage-turbo-training' },
   zimagebaseTraining: { availability: ['mod'], fliptKey: 'zimage-base-training' },
   fluxTwoKleinTraining: { availability: ['mod'], fliptKey: 'flux2-klein-training' },
@@ -252,11 +252,15 @@ const featureFlags = createFeatureFlags({
   wan22Training: { availability: ['mod'], fliptKey: 'wan22-training' },
   ernieTraining: { availability: ['mod'], fliptKey: 'ernie-training' },
   hidreamO1Training: { availability: ['mod'], fliptKey: 'hidream-o1-training' },
+  qwen21Training: { availability: ['mod'], fliptKey: 'qwen21-training' },
+  mingTraining: { availability: ['mod'], fliptKey: 'ming-training' },
+  yue2Training: { availability: ['mod'], fliptKey: 'yue2-training' },
   animaTraining: { availability: ['mod'], fliptKey: 'anima-training' },
   booguTraining: { availability: ['public'], fliptKey: 'boogu-training' },
   krea2Training: { availability: ['public'], fliptKey: 'krea2-training' },
   mageflowTraining: { availability: ['public'], fliptKey: 'mageflow-training' },
   ideogram4Training: { availability: ['mod'], fliptKey: 'ideogram4-training' },
+  // Old trainer only — Training Studio gates ACE-Step on its own `training-studio-audio-training`.
   audioTraining: { availability: ['mod'], fliptKey: 'audio-training' },
   // Steps-based training pricing + QOL inputs (steps/batchSize/sample params/continue-training).
   // Public availability so it can be rolled out to a tester segment via Flipt; default off.
@@ -332,6 +336,11 @@ const featureFlags = createFeatureFlags({
   // last full ingestion: p95 search latency ~4.6s and p99 above 10s, sustained over six days.
   // So: treat re-enabling as a planned project, not a flag flip.
   imageSearch: { availability: [], fliptKey: 'image-search' },
+  // Whether the Images entry appears in the search pickers/tabs at all. Split from `imageSearch`
+  // (which gates whether image search actually RUNS) so the entry can stay visible with a
+  // "temporarily disabled for maintenance" notice while the index is retired — see 868m8yafw.
+  // Set to [] to hide the entry entirely again and redirect /search/images to /search/models.
+  imageSearchEntry: ['public'],
   buzz: ['public'],
   referralProgramV2: { availability: ['public'], fliptKey: 'referral-program-v2' },
   assistant: {
@@ -362,7 +371,6 @@ const featureFlags = createFeatureFlags({
   creatorsProgram: ['mod', 'granted'],
   buzzWithdrawalTransfer: ['granted'],
   vault: ['user'],
-  draftMode: ['public'],
   membershipsV2: ['public'],
   cosmeticShop: ['public'],
   // Mods get it by default; unlock testers via the `creator-shop` Flipt flag.
@@ -395,6 +403,10 @@ const featureFlags = createFeatureFlags({
   // gate rendering a gallery that already has entries, or an owner declining
   // what is already waiting on their work.
   remixGallery: { availability: ['mod'], fliptKey: 'remix-gallery' },
+  // Paid "Sponsored" slots on someone else's model page: a post in its gallery
+  // or a model in its Suggested Resources. Gates buying and serving; a host can
+  // still answer what is already waiting on them.
+  creatorPromotions: { availability: ['mod'], fliptKey: 'creator-promotions' },
   // The three entry points below are gated SEPARATELY from `remixGallery` so they
   // can be released one at a time, and each one is checked TOGETHER with it
   // rather than instead of it. `remixGallery` gates the submit mutation, so a
@@ -512,7 +524,6 @@ const featureFlags = createFeatureFlags({
   nowpaymentPayments: [],
   thirtyDayEarlyAccess: ['granted'],
   datapacketRead: ['public'],
-  modelVersionPopularity: ['mod'],
   kinguinIframe: ['dev'],
   serviceStatus: ['granted'],
   cashManagement: { availability: ['granted'], fliptKey: 'feature-cash-management' },
@@ -651,6 +662,22 @@ const featureFlags = createFeatureFlags({
   // only on-switch + kill-switch. (Mirrors the `hiddenPrefsCompact` /
   // `genTabDeferView` `availability: []` precedent.)
   appBlocksAgenticReview: { availability: [], fliptKey: 'app-blocks-agentic-review' },
+  // 🔴 THE PRIVATE-RUN SURFACE HAS NO ENTRY HERE, DELIBERATELY — do not "complete the
+  // set" by adding one. Its gate is the server accessor `isAppBlocksPrivateRunEnabled`
+  // (`app-blocks-flag.ts`), which reads the `app-blocks-private-run-enabled` Flipt key
+  // directly and REQUIRES a `SessionUser`, so it denies an anonymous caller by type
+  // rather than falling back to the flag's base value the way a registry entry's global
+  // evaluation would. It is therefore strictly stronger than an `availability: []` entry
+  // for the one property such an entry would buy.
+  //
+  // An entry was written here first, mirroring `appBlocksAgenticReview` above, and
+  // REMOVED after review found it had zero readers: nothing consumes
+  // `features.appBlocksPrivateRun`, while every `fliptKey`'d entry is eagerly evaluated
+  // by `computeFeatureFlags` on every SSR render sitewide. So it cost one wasm
+  // evaluation per unique (user, host, region) per cache window, on requests that have
+  // nothing to do with App Blocks, and bought nothing — the unbranched-field shape this
+  // repo's own guards forbid. Add an entry if and when a CLIENT component needs to
+  // branch on it.
   // App Blocks — dedicated per-submission REVIEW PAGE (`/apps/review/<id>`). A
   // flag-gated, deep-linkable full page that re-hosts the existing on-site review
   // body (today a modal on `/apps/review`) so mods can open, share, and refresh a
@@ -699,6 +726,28 @@ const featureFlags = createFeatureFlags({
   // `scripts/validate-flag-shape.py` in that repo, and modelled in
   // `feature-flags.early-adopter.seam.test.ts`.
   earlyAdopter: { availability: [], fliptKey: 'early-adopter' },
+  // Flipt-backed so the whole feature has a runtime kill switch — it moves Buzz, and
+  // `['mod', 'granted']` alone could only be changed by a deploy.
+  //
+  // `['mod', 'granted']` is the FLIPT-DOWN fallback, not the cohort: it reproduces exactly
+  // who had access before this flag was wired, so an outage cannot widen the audience. Flipt
+  // overrides it in both directions once the flag exists.
+  //
+  // NOT `availability: []`. That shape exists for flags whose server half calls the async
+  // `isFlipt` directly — an absent flag answers `false` there while the client's
+  // `isEnabledSync` answers `null` and falls through to static, so the two disagree. Every
+  // crucible gate goes through `getFeatureFlags` instead (`isFlagProtected` on every
+  // procedure, `features.crucible` in every page and the nav registry), so both sides read one
+  // value and `[]` would only strip mods of the access they have today.
+  //
+  // Local dev: `FEATURE_FLAG_CRUCIBLE=public` in `.env`, which bypasses Flipt entirely.
+  crucible: { availability: ['mod', 'granted'], fliptKey: 'crucible' },
+  // Jev resource-intent primitive (POST /api/v1/blocks/resource-intent).
+  // DARK by construction: Flipt owns it entirely and the flag must be created
+  // default-OFF in flipt-state (separate, human-reviewed change) before any
+  // cohort is opened. isFliptSync answers false for an unknown flag or an
+  // unreachable Flipt, so an absent flag is deny-by-default.
+  resourceIntentJev: { availability: [], fliptKey: 'resource-intent-jev' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

@@ -1,5 +1,3 @@
-import dayjs from '~/shared/utils/dayjs';
-
 import * as z from 'zod';
 import { constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
@@ -9,6 +7,7 @@ import {
   baseQuerySchema,
   getByIdSchema,
   infiniteQuerySchema,
+  keysetCursorSchema,
   paginationSchema,
   periodModeSchema,
   userPreferencesSchema,
@@ -58,14 +57,7 @@ export const getAllModelsSchema = z.object({
 
   limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).optional(),
   page: z.preprocess((val) => Number(val), z.number().min(1)).optional(),
-  cursor: z
-    .union([z.bigint(), z.number(), z.string(), z.date()])
-    .transform((val) =>
-      typeof val === 'string' && dayjs(val, 'YYYY-MM-DDTHH:mm:ss.SSS[Z]', true).isValid()
-        ? new Date(val)
-        : val
-    )
-    .optional(),
+  cursor: keysetCursorSchema.optional(),
   query: z.string().optional(),
   tag: z.string().optional(),
   tagname: z.string().optional(),
@@ -253,6 +245,27 @@ export type UpdateGallerySettingsInput = z.infer<typeof updateGallerySettingsSch
 export const updateGallerySettingsSchema = z.object({
   id: z.number(),
   gallerySettings: modelGallerySettingsInput.nullable(),
+});
+
+const creatorGalleryHiddenUserNote = z
+  .string()
+  .trim()
+  .max(constants.modelGallery.maxCreatorHiddenUserNoteLength)
+  .nullish();
+
+export type UpsertCreatorGalleryHiddenUserInput = z.infer<
+  typeof upsertCreatorGalleryHiddenUserSchema
+>;
+export const upsertCreatorGalleryHiddenUserSchema = z.object({
+  userId: z.number().int().positive(),
+  note: creatorGalleryHiddenUserNote,
+});
+
+export type RemoveCreatorGalleryHiddenUserInput = z.infer<
+  typeof removeCreatorGalleryHiddenUserSchema
+>;
+export const removeCreatorGalleryHiddenUserSchema = z.object({
+  userId: z.number().int().positive(),
 });
 
 export type CopyGallerySettingsInput = z.infer<typeof copyGallerySettingsSchema>;
@@ -510,8 +523,10 @@ export const getResourceSelectSchema = z.object({
     .default([]),
   filterTypes: z.enum(ModelType).array().default([]),
   filterBaseModels: z.string().array().default([]),
+  filterLoaded: z.boolean().default(false),
   tagName: z.string().optional(),
   canGenerate: z.boolean().optional(),
+  hidePaid: z.boolean().optional(),
   excludedVersionIds: z.number().array().default([]),
   // recent → generation only: orchestrator history ids resolved client-side
   restrictToIds: z.number().array().optional(),

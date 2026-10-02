@@ -236,13 +236,14 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
             if (meta) {
               const audit = await auditMetaData(meta, false);
               if (audit.blockedFor.length) processing.blockedFor = audit.blockedFor.join(',');
-              if (meta.comfy && calculateSizeInMegabytes(meta.comfy) > 1)
+            }
+
+            if (data.type === 'image') {
+              if (meta?.comfy && calculateSizeInMegabytes(meta.comfy) > 1)
                 throw new Error(
                   'Comfy metadata is too large. Please consider updating your workflow'
                 );
-            }
-
-            if (data.type === 'video') {
+            } else if (data.type === 'video') {
               const { metadata } = data;
               if (metadata.duration && metadata.duration > uploadSettings.maxVideoDuration)
                 throw new Error(

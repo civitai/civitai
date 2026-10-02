@@ -1,4 +1,3 @@
-import dayjs from '~/shared/utils/dayjs';
 import * as z from 'zod';
 import { imageSelectProfileFilterSchema } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
@@ -6,6 +5,7 @@ import { constants } from '~/server/common/constants';
 import {
   baseQuerySchema,
   infiniteQuerySchema,
+  keysetCursorSchema,
   paginationSchema,
   periodModeSchema,
 } from '~/server/schema/base.schema';
@@ -432,6 +432,9 @@ export const getInfiniteImagesSchema = baseQuerySchema
     hidden: z.boolean().optional(),
     limit: z.number().min(0).max(200).default(constants.galleryFilterDefaults.limit),
     modelId: z.number().optional(),
+    // The viewer's level before a model gallery's cap narrows `browsingLevel`. A
+    // sponsored post is served at this and the cap frozen when its host accepted.
+    preCapBrowsingLevel: z.number().int().min(0).optional(),
     modelVersionId: z.number().optional(),
     // Filter the gallery to posts linked to a single Model3D
     // (Post.model3dId). Resolved server-side into a postIds prefilter so the
@@ -472,14 +475,7 @@ export const getInfiniteImagesSchema = baseQuerySchema
     requiringMeta: z.boolean().optional(),
 
     // - additional
-    cursor: z
-      .union([z.bigint(), z.number(), z.string(), z.date()])
-      .transform((val) =>
-        typeof val === 'string' && dayjs(val, 'YYYY-MM-DDTHH:mm:ss.SSS[Z]', true).isValid()
-          ? new Date(val)
-          : val
-      )
-      .optional(),
+    cursor: keysetCursorSchema.optional(),
     excludedTagIds: z.array(z.number()).optional(),
     excludedUserIds: z.array(z.number()).optional(),
     // excludedImageIds: z.array(z.number()).optional(),
@@ -661,4 +657,6 @@ export const toggleImageFlagSchema = z.object({
 });
 
 export type GetMyImagesInput = z.infer<typeof getMyImagesInput>;
-export const getMyImagesInput = infiniteQuerySchema.merge(imageSelectProfileFilterSchema);
+export const getMyImagesInput = infiniteQuerySchema
+  .merge(imageSelectProfileFilterSchema)
+  .extend({ publishedOnly: z.boolean().optional() });

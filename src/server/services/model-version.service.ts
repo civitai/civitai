@@ -35,11 +35,7 @@ import {
 } from '~/server/db/db-lag-helpers';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { logToAxiom } from '~/server/logging/client';
-import {
-  dataForModelsCache,
-  modelVersionAccessCache,
-  modelVersionResourceCache,
-} from '~/server/redis/caches';
+import { dataForModelsCache, modelVersionAccessCache } from '~/server/redis/caches';
 import type { DonationGoalWithTotal } from '~/server/redis/caches';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -57,8 +53,6 @@ import type {
   DeleteExplorationPromptInput,
   EarlyAccessModelVersionsOnTimeframeSchema,
   GetModelVersionByModelTypeProps,
-  GetModelVersionPopularityInput,
-  GetModelVersionsPopularityInput,
   ModelVersionPaidAccessInputSchema,
   ModelVersionMeta,
   ModelVersionsGeneratedImagesOnTimeframeSchema,
@@ -1792,8 +1786,7 @@ export const publishModelVersionById = async ({
     select: { id: true },
   });
 
-  if (!republishing && !meta?.unpublishedBy)
-    await updateModelLastVersionAt({ id: version.modelId });
+  await updateModelLastVersionAt({ id: version.modelId, onlyForward: republishing });
   await bustMvCache(version.id, version.modelId);
 
   // Best-effort: evict any cached by-hash 404 for this version's hashes so a
@@ -2187,7 +2180,8 @@ export const modelVersionGeneratedImagesOnTimeframe = async ({
         AND modelVersionId IN (${modelVersions.map((x) => x.id)})
       GROUP BY modelVersionId, createdDate
       ORDER BY createdAt DESC, generations DESC;
-    `
+    `,
+    { path: 'model-version-generations' }
   );
 
   const versions = modelVersions
@@ -2859,19 +2853,21 @@ export const createModelVersionPostFromTraining = async ({
 
   const uploadedImages = (
     await Promise.all(
-      imageUrls.map(async (data, index) => {
-        const image = await uploadImageFromUrl({
-          imageUrl: typeof data === 'string' ? data : data.image_url,
-        });
-
-        return image;
+      imageUrls.map(async (data) => {
+        const imageUrl = typeof data === 'string' ? data : data.image_url;
+        // '' is a failed sample's slot; uploading it throws and fails the whole publish.
+        if (!imageUrl) return undefined;
+        return uploadImageFromUrl({ imageUrl });
       })
     )
-  ).filter((x) => isDefined(x?.url));
+  ).filter((x): x is NonNullable<typeof x> => isDefined(x?.url));
 
-  // Create post:
+  // No post rather than an empty one: publishPrivateModelVersionHandler skips any version that already has a post.
+  if (!uploadedImages.length) return;
+
   const post = await createPost({
     userId: user.id,
+    isModerator: user.isModerator,
     modelVersionId,
     publishedAt: now,
   });
@@ -2895,15 +2891,6 @@ export const createModelVersionPostFromTraining = async ({
   // Returned so request handlers can emit the post-create ClickHouse event
   // (track.post) — the service-level createPost above doesn't track on its own.
   return post;
-};
-
-export const getModelVersionPopularity = async ({ id }: GetModelVersionPopularityInput) => {
-  const resp = await modelVersionResourceCache.fetch([id]);
-  return resp[id] ?? { versionId: id, popularityRank: 0, isFeatured: false, isNew: false };
-};
-
-export const getModelVersionsPopularity = async ({ ids }: GetModelVersionsPopularityInput) => {
-  return await modelVersionResourceCache.fetch(ids);
 };
 
 /**

@@ -31,26 +31,32 @@ const { amIBlockedByUser, throwOnBlockedCommentContent, tx } = vi.hoisted(() => 
   },
 }));
 
-// One local served both clients and hid a genuine split. `upsertComment` resolves the content
-// owner through `getThreadEntityOwnerId`, which reads `image` on dbRead (commentsv2.service:172);
-// its own thread lookup (:267) and the previous-content read on the edit path (:279) are dbWrite.
-// The edit-path block check reads the stored comment on dbRead — a THIRD split, and the reason
-// `commentV2` appears here twice.
+// The block check resolves every owner on dbWrite; so do the service's own thread lookup and
+// previous-content read. Nothing is seeded on dbRead, so a guard read moved there resolves no one.
 const db = {
   tx,
-  image: dbMock.dbRead.image,
+  image: dbMock.dbWrite.image,
   thread: dbMock.dbWrite.thread,
   commentV2: dbMock.dbWrite.commentV2,
-  readCommentV2: dbMock.dbRead.commentV2,
-  challenge: dbMock.dbRead.challenge,
+  challenge: dbMock.dbWrite.challenge,
 };
 
 db.image.findUnique.mockResolvedValue({ userId: 100 });
-db.commentV2.findUnique.mockResolvedValue({ content: '' });
 // The comment being edited lives on a top-level thread hanging off the image owned by 100.
-db.readCommentV2.findUnique.mockResolvedValue({
-  thread: { commentId: null, rootThreadId: null, imageId: 1 },
+db.commentV2.findUnique.mockResolvedValue({
+  threadId: 1,
+  content: '',
+  thread: { commentId: null },
 });
+// By id is the block check's root-content read; by entity key is the service's own thread lookup,
+// which finds no thread yet.
+const installThreadLookup = () =>
+  db.thread.findUnique.mockImplementation((async ({ where }: { where: { id?: number } }) =>
+    where.id != null ? { imageId: 1 } : null) as never);
+const isOwnerWalk = (strings: TemplateStringsArray) =>
+  strings.join('?').includes('muteable_threads');
+dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+  isOwnerWalk(strings) ? [{ id: 1, rooted: true }] : []) as never);
 dbMock.dbWrite.$transaction.mockImplementation(async (cb: (t: typeof tx) => Promise<unknown>) =>
   cb(tx)
 );
@@ -72,6 +78,9 @@ const baseCreate = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // A reset, not a clear: a `…Once` a refusing test queued and never consumed must not outlive it.
+  db.thread.findUnique.mockReset();
+  installThreadLookup();
   amIBlockedByUser.mockResolvedValue(false);
   throwOnBlockedCommentContent.mockResolvedValue(undefined);
 });
@@ -163,11 +172,40 @@ describe('upsertComment — block enforcement on create', () => {
       entityId: 999,
     } as Parameters<typeof upsertComment>[0]);
 
-    // Reads the comment being edited...
-    expect(db.readCommentV2.findUnique).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: 5 } })
-    );
+    // The guard reads the comment being edited...
+    expect(db.commentV2.findUnique).toHaveBeenCalledWith({
+      where: { id: 5 },
+      select: { threadId: true, thread: { select: { commentId: true } } },
+    });
     // ...and never resolves the entity the request named.
     expect(db.challenge.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe('upsertComment — block enforcement on a reply create', () => {
+  const reply = {
+    ...baseCreate,
+    entityType: 'comment',
+    entityId: 5,
+  } as Parameters<typeof upsertComment>[0];
+
+  it('checks the parent author and the content owner the stored chain resolves', async () => {
+    db.commentV2.findUnique.mockResolvedValueOnce({ userId: 55, threadId: 1 });
+    await upsertComment(reply);
+    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: 7, targetUserId: 55 });
+    expect(amIBlockedByUser).toHaveBeenCalledWith({ userId: 7, targetUserId: 100 });
+  });
+
+  // The thread-lock walk refuses an unresolved chain too, with the same message; this pins that the
+  // block check refuses on its own rather than leaning on the lock walk running after it.
+  it('refuses a reply into a chain with no resolvable root before the lock walk runs', async () => {
+    db.commentV2.findUnique.mockResolvedValueOnce({ userId: 55, threadId: 1 });
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ id: 1, rooted: false }]);
+    db.thread.findUnique.mockResolvedValueOnce({ id: 1, locked: false });
+    await expect(upsertComment(reply)).rejects.toThrow('comment thread is no longer available');
+    // One walk ran: the block check's own. The lock walk would be a second.
+    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(isOwnerWalk(dbMock.dbWrite.$queryRaw.mock.calls[0][0])).toBe(true);
+    expect(db.tx.commentV2.create).not.toHaveBeenCalled();
   });
 });

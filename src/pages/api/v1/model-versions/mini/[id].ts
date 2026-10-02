@@ -12,9 +12,11 @@ import {
   resolveCanGenerateForVersions,
 } from '~/server/services/generation/generation.service';
 import { getFeaturedModels } from '~/server/services/model.service';
+import { coverageColumn, nextCoverageEnabled } from '~/server/services/generation/coverage-source';
 import type { GenerationAlias } from '~/server/schema/model-version.schema';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getEpochJobAndFileName, getPrimaryFile } from '~/server/utils/model-helpers';
+import { getGenerationFile } from '~/server/utils/resource-air';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import type {
   LicensingFeeSettlementCurrency,
@@ -27,6 +29,7 @@ import { Availability, ModelFileVisibility } from '~/shared/utils/prisma/enums';
 import { stringifyAIR } from '~/shared/utils/air';
 import { Flags } from '~/shared/utils/flags';
 import { UserFlag } from '~/shared/constants/user-flags.constants';
+import { isEvictable } from '~/shared/constants/model-version-flags.constants';
 
 export const schema = z.object({
   // Bound to Postgres int4 (the `ModelVersion.id` column type, max 2147483647).
@@ -39,7 +42,7 @@ export const schema = z.object({
   id: z.coerce.number().int().gt(0).lte(2147483647),
   epoch: z.number().optional(),
   // When supplied, the response describes that exact ModelFile (download url,
-  // hashes, size, AIR with `+<fileId>`) rather than the version's primary file.
+  // hashes, size, AIR with `+<fileId>`) rather than the version's generation file.
   modelFileId: z.coerce.number().int().positive().optional(),
 });
 
@@ -57,6 +60,8 @@ type VersionRow = {
   requireAuth: boolean;
   checkPermission: boolean;
   covered?: boolean;
+  coveredLive?: boolean;
+  isPromoted: boolean;
   generationAlias?: GenerationAlias | null;
   freeTrialLimit?: number;
   minor: boolean;
@@ -86,6 +91,7 @@ type FileRow = {
   sizeKB: number;
   name: string;
   hashes: Record<ModelHashType, string>;
+  replacedAt: Date | null;
 };
 
 export default MixedAuthEndpoint(async function handler(
@@ -102,6 +108,11 @@ export default MixedAuthEndpoint(async function handler(
   const where = [Prisma.sql`mv.id = ${id}`];
   if (!user?.isModerator)
     where.push(Prisma.sql`(mv.status = 'Published' OR m."userId" = ${user?.id})`);
+
+  // 🔴 NO audience here. The ORCHESTRATOR reads this endpoint with no user to decide what it may
+  // load (see the coverage flag in flipt/client.ts), so deriving membership from the caller
+  // would answer `member: false` to it and refuse the expansion for everyone, members included.
+  const coverage = Prisma.raw(`"${coverageColumn(await nextCoverageEnabled())}"`);
 
   const [modelVersion] = await dbWrite.$queryRaw<VersionRow[]>`
     SELECT
@@ -145,17 +156,25 @@ export default MixedAuthEndpoint(async function handler(
         (m."availability" = 'Private')
 
       ) AS "checkPermission",
-      -- 🔴 coveredNext, not covered. This endpoint is what the ORCHESTRATOR reads to decide
-      -- whether a resource can generate, and prepareResource refuses anything it believes cannot --
-      -- so on the live rule paid model loading cannot load the very checkpoints it exists for.
-      -- Verified 2026-09-08 on version 3040959: covered by the staged rule, not the live one, and
-      -- the estimate failed with the orchestrator's "not enabled for generation".
-      --
-      -- No site code calls this endpoint, and the site's own generator gates on
-      -- GenerationCoverage through resource-data/generation.service -- so this widens what the
-      -- orchestrator will accept without changing what a user sees on the site.
+      -- 🔴 The column is chosen by the flag, because this is what the ORCHESTRATOR reads to decide
+      -- whether a resource can generate, and prepareResource refuses anything it believes cannot.
+      -- On the live rule paid model loading cannot load the very checkpoints it exists for --
+      -- verified 2026-09-08 on version 3040959: covered by the staged rule, not the live one, and
+      -- the estimate failed with the orchestrator's "not enabled for generation". Turning the flag
+      -- off must therefore close this surface too, or the orchestrator keeps loading community
+      -- checkpoints the site has stopped offering.
       -- See docs/features/paid-model-loading-coverage.md.
-      (SELECT "coveredNext" FROM "GenerationCoverage" WHERE "modelVersionId" = mv.id) AS "covered",
+      -- Both columns off ONE evaluation of the view: a second scalar subquery re-runs the whole
+      -- view body (its three IN-lists, the ModelFile aggregate) against the PRIMARY pool, per
+      -- resource per submit -- measured at +58% buffers on this query.
+      gc.${coverage} AS "covered",
+      -- isGenerationEligible holds a locked ecosystem's checkpoints to the live rule.
+      gc."covered" AS "coveredLive",
+      -- Auction winners, for the orchestrator to prioritise their downloads. It does not read this yet.
+      EXISTS (
+        SELECT 1 FROM "CoveredCheckpoint" cc
+        WHERE cc.model_id = mv."modelId" AND cc.version_id = mv.id
+      ) AS "isPromoted",
       mv."meta"->'generationAlias' AS "generationAlias",
       (
         CASE
@@ -176,6 +195,9 @@ export default MixedAuthEndpoint(async function handler(
     LEFT JOIN "LicensingRoot" lr ON lr."modelVersionId" = mv.id
     LEFT JOIN "ModelVersion" lsv ON lsv.id = mv."licensingSourceVersionId"
     LEFT JOIN "Model" lsm ON lsm.id = lsv."modelId"
+    LEFT JOIN LATERAL (
+      SELECT "covered", "coveredNext" FROM "GenerationCoverage" WHERE "modelVersionId" = mv.id
+    ) gc ON TRUE
     WHERE ${Prisma.join(where, ' AND ')}
   `;
   if (!modelVersion) return res.status(404).json({ error: 'Model not found' });
@@ -189,6 +211,7 @@ export default MixedAuthEndpoint(async function handler(
       mf.metadata, 
       mf."sizeKB", 
       mf.name,
+      mf."replacedAt",
       COALESCE(
         JSON_OBJECT_AGG(mfh.type, mfh.hash) FILTER (WHERE mfh.hash IS NOT NULL),
         '{}'::json
@@ -196,7 +219,10 @@ export default MixedAuthEndpoint(async function handler(
     FROM "ModelFile" mf
     LEFT JOIN "ModelFileHash" mfh ON mfh."fileId" = mf.id
     WHERE mf."modelVersionId" = ${id}
-    GROUP BY mf.id, mf.type, mf.visibility, mf.url, mf.metadata, mf."sizeKB", mf.name
+    GROUP BY mf.id, mf.type, mf.visibility, mf.url, mf.metadata, mf."sizeKB", mf.name, mf."replacedAt"
+    -- requestedFile below calls the bare getPrimaryFile, which settles a full tie by input order,
+    -- and that choice decides the epoch branch. (getGenerationFile does its own id sort.)
+    ORDER BY mf.id
   `;
 
   const { modelFileId } = results.data;
@@ -241,10 +267,8 @@ export default MixedAuthEndpoint(async function handler(
   // `targetFile` still governs both on that arm.
   const filePreferences = { metadata: user?.filePreferences };
 
-  // Caller-specified file overrides the version's primary file. Falls back to
-  // primary when modelFileId is omitted, preserving legacy behavior.
-  // Default preferences deliberately — see the note above; this value only ever
-  // decides `useEpochUrl` and, on the epoch arm, names the training file.
+  // `getPrimaryFile` over the unfiltered files with default preferences, deliberately — see both
+  // notes above; this only decides `useEpochUrl` and, on the epoch arm, names the training file.
   const requestedFile = modelFileId
     ? files.find((f) => f.id === modelFileId)
     : getPrimaryFile(files);
@@ -255,7 +279,7 @@ export default MixedAuthEndpoint(async function handler(
     ? requestedFile
     : modelFileId
     ? visibleFiles.find((f) => f.id === modelFileId)
-    : getPrimaryFile(visibleFiles, filePreferences);
+    : getGenerationFile(visibleFiles, filePreferences);
   if (!targetFile) {
     return res.status(404).json({
       error: modelFileId
@@ -352,6 +376,7 @@ export default MixedAuthEndpoint(async function handler(
         usageControl: modelVersion.usageControl,
         baseModel: modelVersion.baseModel,
         covered: modelVersion.covered ?? false,
+        coveredLive: modelVersion.coveredLive ?? false,
         modelUserId: modelVersion.modelUserId,
         modelType: modelVersion.type,
         flags: modelVersion.versionFlags,
@@ -476,6 +501,8 @@ export default MixedAuthEndpoint(async function handler(
     format, // nullable
     canGenerate,
     isFeatured,
+    isPromoted: modelVersion.isPromoted,
+    evictable: isEvictable(modelVersion.versionFlags),
     requireAuth: modelVersion.requireAuth,
     checkPermission: modelVersion.checkPermission,
     earlyAccessEndsAt: modelVersion.checkPermission ? modelVersion.earlyAccessEndsAt : undefined,

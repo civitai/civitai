@@ -34,7 +34,6 @@ import {
   shouldRefineSearchQuery,
   useCarriedSearchText,
 } from '~/components/Search/useCarriedSearchText';
-import { quoteMeiliValue } from '~/components/Search/meili-filter';
 import {
   autocompleteAvailability,
   useAutocompleteAvailabilityStore,
@@ -53,8 +52,12 @@ import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { useHitsTransformed } from '~/components/Search/search.utils2';
 import type { ReverseSearchIndexKey, SearchIndexKey } from '~/components/Search/search.types';
 import { reverseSearchIndexMap, searchIndexMap } from '~/components/Search/search.types';
-import { isDefined, paired } from '~/utils/type-guards';
+import { paired } from '~/utils/type-guards';
 import { BrowsingLevelFilter } from '../Search/CustomSearchComponents';
+import { withSearchBrowsingScope } from '~/components/Search/SearchBrowsingScope';
+import { buildAutocompleteBaseFilters } from '~/components/AutocompleteSearch/autocomplete-filters';
+import { IMAGE_SEARCH_MAINTENANCE_MESSAGE } from '~/components/Search/ImageSearchMaintenance';
+import { emptyMeiliResults, emptySearchClient } from '~/components/Search/emptySearchClient';
 import {
   buildSearchPageUrl,
   checkAIR,
@@ -62,7 +65,6 @@ import {
 } from '~/components/AutocompleteSearch/autocomplete-query';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 import { ComicsSearchItem } from '~/components/AutocompleteSearch/renderItems/comics';
-import { Availability } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { getBlockedNsfwWords } from '~/utils/metadata/audit-base';
@@ -100,19 +102,7 @@ const searchClient: InstantSearchProps['searchClient'] = withUserHydration(
         // @see https://www.algolia.com/doc/guides/building-search-ui/going-further/conditional-requests/react/#detecting-empty-search-requests
         // @see https://github.com/algolia/react-instantsearch/issues/1111#issuecomment-496132977
         if (requests.every(({ params }) => !params?.query)) {
-          return Promise.resolve({
-            results: requests.map(() => ({
-              hits: [],
-              nbHits: 0,
-              nbPages: 0,
-              page: 0,
-              processingTimeMS: 0,
-              hitsPerPage: 0,
-              exhaustiveNbHits: false,
-              query: '',
-              params: '',
-            })),
-          });
+          return Promise.resolve(emptyMeiliResults(requests));
         }
 
         return meilisearch.search(requests);
@@ -138,7 +128,7 @@ const targetData = [
   { value: 'comics', label: 'Comics' },
 ] as const;
 
-export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ...props }, ref) => {
+const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...props }, ref) => {
   const browsingSettingsAddons = useBrowsingSettingsAddons();
   const features = useFeatureFlags();
   const [targetIndex, setTargetIndex] = useState<SearchIndexKey>('models');
@@ -175,37 +165,24 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
     setTargetIndex(searchTarget);
   }, [searchTarget]);
 
-  const isModels = targetIndex === 'models';
-  const isImages = targetIndex === 'images';
-  const supportsPoi = ['models', 'images'].includes(targetIndex);
-  const supportsMinor = ['models', 'images'].includes(targetIndex);
-  const filters = [
-    isModels && supportsPoi && browsingSettingsAddons.settings.disablePoi
-      ? `poi != true${currentUser?.id ? ` OR user.id = ${currentUser?.id}` : ''}`
-      : null,
-    isImages && supportsPoi && browsingSettingsAddons.settings.disablePoi
-      ? `poi != true${
-          currentUser?.username
-            ? ` OR user.username = ${quoteMeiliValue(currentUser.username)}`
-            : ''
-        }`
-      : null,
-    supportsMinor && browsingSettingsAddons.settings.disableMinor ? 'minor != true' : null,
-    isModels && !currentUser?.isModerator
-      ? `availability != ${Availability.Private}${
-          currentUser?.id ? ` OR user.id = ${currentUser?.id}` : ''
-        }`
-      : null,
-  ].filter(isDefined);
+  const filters = buildAutocompleteBaseFilters({
+    targetIndex,
+    addons: browsingSettingsAddons.settings,
+    currentUser,
+  });
 
   const resolvedIndexName = searchIndexMap[targetIndex as keyof typeof searchIndexMap];
+
+  // Images stays selectable while image search is retired, but images_v6 is gone — swap to a
+  // client that never reaches the network so the on-mount search can't hit the deleted index.
+  const imageSearchMaintenance = targetIndex === 'images' && !features.imageSearch;
 
   // The options the selector OFFERS: every target, narrowed by feature flag. Computed once here
   // because the render below reads it twice — as `data`, and in the `value` expression that
   // blanks the label when the target is not one of these.
   const enabledTargets = targetData.filter(
     ({ value }) =>
-      (features.imageSearch ? true : value !== 'images') &&
+      (features.imageSearchEntry ? true : value !== 'images') &&
       (features.bounties ? true : value !== 'bounties') &&
       (features.articles ? true : value !== 'articles') &&
       (features.toolSearch ? true : value !== 'tools') &&
@@ -257,7 +234,7 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
         // previous index's parameters: react-instantsearch sets the new index and searches in its
         // render body, before the children that own `filters` have re-rendered.
         key={resolvedIndexName}
-        searchClient={searchClient}
+        searchClient={imageSearchMaintenance ? emptySearchClient : searchClient}
         indexName={resolvedIndexName}
         future={{ preserveSharedStateOnUnmount: false }}
       >
@@ -273,7 +250,9 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
   );
 });
 
-AutocompleteSearch.displayName = 'AutocompleteSearch';
+AutocompleteSearchInner.displayName = 'AutocompleteSearchInner';
+
+export const AutocompleteSearch = withSearchBrowsingScope(AutocompleteSearchInner);
 
 type AutocompleteSearchProps<T extends SearchIndexKey> = Props & {
   indexName: T;
@@ -302,6 +281,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const isMobile = useIsMobile();
   const inputRef = useRef<HTMLInputElement>(null);
   const domainColor = useDomainColor();
+  const features = useFeatureFlags();
 
   const { status } = useInstantSearch({
     catchError: true,
@@ -312,6 +292,10 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const indexName = results?.index
     ? reverseSearchIndexMap[results.index as ReverseSearchIndexKey]
     : indexNameProp;
+
+  // Images stays selectable while image search is retired, but the images_v6 index is gone — so
+  // show a maintenance notice in place and never refine the query against it.
+  const imageSearchMaintenance = indexName === 'images' && !features.imageSearch;
 
   const [selectedItem, setSelectedItem] = useState<ComboboxData[number] | null>(null);
   const [search, setSearch, clearDisplayedText] = useCarriedSearchText(carriedSearchText, query);
@@ -353,6 +337,17 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   const isProfaneSearch = profanityAnalysis.hasProfanity;
 
   const items = useMemo(() => {
+    if (imageSearchMaintenance) {
+      return [
+        {
+          key: 'image-maintenance',
+          value: debouncedSearch,
+          hit: null as any,
+          label: 'Maintenance',
+        },
+      ];
+    }
+
     const isIllegalQuery = debouncedSearch
       ? includesInappropriate({ prompt: auditedSearch }) === 'minor'
       : false;
@@ -442,7 +437,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
       items.push({ key: 'view-more', value: query, hit: null as any, label: 'View more results' });
 
     return items;
-  }, [status, searchErrorState, filtered, results?.nbHits, query]);
+  }, [status, searchErrorState, filtered, results?.nbHits, query, imageSearchMaintenance]);
 
   // Track profanity search separately to avoid side effects in useMemo
   useEffect(() => {
@@ -548,9 +543,10 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
       item.key === 'profanity' ||
       item.key === 'disabled' ||
       item.key === 'blocked-words' ||
-      item.key === 'error'
+      item.key === 'error' ||
+      item.key === 'image-maintenance'
     ) {
-      // Do not allow to click on blocked items
+      // Do not allow to click on blocked / notice items
       return;
     }
 
@@ -573,6 +569,9 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   ]);
 
   useEffect(() => {
+    // Image search is retired and its index deleted — never send a query to it.
+    if (imageSearchMaintenance) return;
+
     // Only set the query when the debounced search changes
     // and user didn't select from the list
     if (!shouldRefineSearchQuery(debouncedSearch, query, !!selectedItem || searchErrorState))
@@ -595,7 +594,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     // was unavailable restores the typed text, returns early, and then never refines when the
     // flag clears — the box reads as populated while the fresh helper's query is still empty.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedSearch, query, indexName, searchErrorState]);
+  }, [debouncedSearch, query, indexName, searchErrorState, imageSearchMaintenance]);
 
   // Clear selected item after search changes
   useEffect(() => {
@@ -717,6 +716,15 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
                 </Text>
                 <Text size="xs" align="center">
                   Please try again later
+                </Text>
+              </Stack>
+            );
+          }
+          if (key === 'image-maintenance') {
+            return (
+              <Stack gap="xs" align="center">
+                <Text size="sm" align="center">
+                  {IMAGE_SEARCH_MAINTENANCE_MESSAGE}
                 </Text>
               </Stack>
             );

@@ -7,6 +7,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { logToAxiom } from '~/server/logging/client';
 import { dataForModelsCache } from '~/server/redis/caches';
+import { resourceDataCache } from '~/server/redis/resource-data.redis';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { modelsSearchIndex } from '~/server/search-index';
 import {
@@ -16,6 +17,8 @@ import {
 import { unpublishModelById } from '~/server/services/model.service';
 import { checkMinorHashOnScan, MINOR_HASH_FILE_TYPE } from '~/server/services/minor-hash.service';
 import { createNotification } from '~/server/services/notification.service';
+import { LOADABLE_FILE_TYPES } from '~/server/services/resource-residency.service';
+import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import {
   createModelFileScanRequest,
   ModelFileScanSubmissionError,
@@ -342,6 +345,26 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     // D5: refresh (proactive re-warm) matches legacy behavior.
     await dataForModelsCache.refresh(modelId);
   }
+
+  // A first scan of a weight file can make a version coverable (`scannedAt` gates the uploaded-file
+  // arms of GenerationCoverage), and both caches hold the old answer — the orchestrator's until
+  // expiry, resourceDataCache for an hour. Last and logged, not thrown: the callback's dedupe key
+  // is already taken, so a 500 here drops the redelivery.
+  if (ranScan && LOADABLE_FILE_TYPES.includes(file.type))
+    await Promise.all([
+      resourceDataCache.bust([modelVersionId]),
+      bustOrchestratorModelCache(modelVersionId),
+    ]).catch((e) =>
+      logToAxiom(
+        {
+          type: 'error',
+          name: 'model-file-scan',
+          message: `coverage bust failed: ${String(e)}`,
+          modelVersionId,
+        },
+        'webhooks'
+      ).catch(() => undefined)
+    );
 }
 
 async function notifyHashFix(modelVersionId: number, fileId: number) {

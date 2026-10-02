@@ -33,9 +33,7 @@ import {
   earlyAccessModelVersionsOnTimeframeSchema,
   getLicensingRootsSchema,
   getModelVersionByModelTypeSchema,
-  getModelVersionPopularityInput,
   getModelVersionSchema,
-  getModelVersionsPopularityInput,
   modelVersionEarlyAccessPurchase,
   modelVersionsGeneratedImagesOnTimeframeSchema,
   modelVersionUpsertSchema2,
@@ -51,10 +49,8 @@ import { enqueueJobs } from '~/server/services/job-queue.service';
 import {
   deleteExplorationPrompt,
   getExplorationPromptsById,
-  getModelVersionPopularity,
   getLicensingRoots,
   getModelVersionsByModelType,
-  getModelVersionsPopularity,
   getVersionById,
   getVersionsByIds,
   addLinkedComponent,
@@ -159,14 +155,6 @@ export const modelVersionRouter = router({
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getByIdSchema)
     .query(getModelVersionRunStrategiesHandler),
-  getPopularity: publicProcedure
-    .meta({ requiredScope: TokenScope.ModelsRead })
-    .input(getModelVersionPopularityInput)
-    .query(({ input }) => getModelVersionPopularity(input)),
-  getPopularities: publicProcedure
-    .meta({ requiredScope: TokenScope.ModelsRead })
-    .input(getModelVersionsPopularityInput)
-    .query(({ input }) => getModelVersionsPopularity(input)),
   getVersionsByIds: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getModelVersionsByIdsInput)

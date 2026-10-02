@@ -1,6 +1,6 @@
 {
   "name": "@civitai/training-studio-app",
-  "version": "0.0.14",
+  "version": "0.0.16",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,6 +11,7 @@
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "typecheck": "svelte-check --tsconfig ./tsconfig.json",
     "lint": "eslint . --ext .js,.ts,.svelte --cache --cache-strategy metadata",
+    "test": "vitest run",
     "build:element": "vite build --config vite.element.config.ts"
   },
   "dependencies": {
@@ -21,6 +22,7 @@
     "@civitai/db": "workspace:*",
     "@civitai/db-schema": "workspace:*",
     "@civitai/flipt": "workspace:*",
+    "@civitai/orchestration-client": "0.2.0-beta.114",
     "@civitai/redis": "workspace:*",
     "@civitai/shared": "workspace:*",
     "@civitai/ui": "workspace:*",

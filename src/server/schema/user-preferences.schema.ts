@@ -31,6 +31,7 @@ export const toggleHiddenSchema = z.discriminatedUnion('kind', [
     kind: z.literal('blockedUser'),
     data: z.object({ id: z.number(), username: z.string().nullish() }).array().min(1).max(1), // max 1 until we add support for more
     hidden: z.boolean().optional(),
+    hideComments: z.boolean().optional(),
   }),
 ]);
 

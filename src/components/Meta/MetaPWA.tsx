@@ -10,6 +10,8 @@ export function MetaPWA() {
       <meta name="viewport" content={VIEWPORT_META_CONTENT} />
       <link rel="manifest" href="/site.webmanifest" />
       <meta name="mobile-web-app-capable" content="yes" />
+      {/* Without this, iOS uses a page screenshot as the home-screen icon. */}
+      <link rel="apple-touch-icon" href="/images/apple-touch-icon.png" />
       {/* exoclick ad meta tag */}
       <meta name="6a97888e-site-verification" content="f517e489c958cfe10876b8f7daa294c2"></meta>
       <link

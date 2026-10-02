@@ -71,7 +71,8 @@ export const trainingResultsV2Schema = z.object({
       epochNumber: z.number(),
       modelUrl: z.string(),
       modelSize: z.number(),
-      sampleImages: z.array(z.url()),
+      // '' holds the slot of a sample that failed, keeping indices aligned with the prompts.
+      sampleImages: z.array(z.union([z.url(), z.literal('')])),
     })
   ),
   sampleImagesPrompts: z.array(z.string()),

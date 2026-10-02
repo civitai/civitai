@@ -17,6 +17,7 @@ import {
   useUpdateImageStepMetadata,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useTourContext } from '~/components/Tours/ToursProvider';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { postGeneratedMedia } from '~/components/ImageGeneration/utils/postGeneratedMedia';
 import { showErrorNotification, showWarningNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -50,6 +51,7 @@ export function GeneratedImageActions({
   const { setSelected } = useActions();
   const deselect = () => setSelected([]);
   const [zipping, setZipping] = useState(false);
+  const mobile = useIsMobile({ type: 'media' });
 
   const { updateImages, isLoading } = useUpdateImageStepMetadata({
     onSuccess: () => deselect(),
@@ -205,7 +207,9 @@ export function GeneratedImageActions({
           </Tooltip>
         </div>
       )}
-      {selectableImages.length > 0 && (
+      {/* Touch keeps this row to sort + filters. Once a selection exists the control
+          comes back, because it is also the count and the only way to clear one. */}
+      {selectableImages.length > 0 && (!mobile || hasSelected) && (
         <Checkbox
           checked={allChecked}
           indeterminate={indeterminate}

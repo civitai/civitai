@@ -10,6 +10,9 @@ import {
   withMeiliResourceSelect,
 } from '~/server/meilisearch/client';
 import { REDIS_KEYS } from '~/server/redis/client';
+
+import { coverageFilter } from '~/shared/generation/coverage-fields';
+import { coverageAudience } from '~/server/services/generation/coverage-source';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import type { GetResourceSelectInput } from '~/server/schema/model.schema';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
@@ -25,13 +28,18 @@ import {
   getModelSearchIndexRecords,
   type ModelSearchIndexRecord,
 } from '~/server/search-index/models.search-index';
+import {
+  modelPricingFilterClause,
+  versionSatisfiesPricingFilter,
+} from '~/shared/search/model-pricing-filter';
 import { transformModelHits } from '~/shared/search/models-transform';
 import { and, eq, inArray, ne, not, or } from '~/shared/utils/meili-filter';
 import { Availability, ModelStatus, ModelUploadType } from '~/shared/utils/prisma/enums';
 import { parseAIRSafe } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
-type ServiceUser = { id: number } | undefined;
+/** Dropping `tier`/`isModerator` here silently makes `coverageAudience` read every user as free. */
+type ServiceUser = { id: number; tier?: string; isModerator?: boolean } | undefined;
 
 const FEATURED_LIMIT = 1000;
 
@@ -107,23 +115,38 @@ async function resolveTabIds(
   }
 }
 
-function buildFilter({
+export function buildFilter({
   input,
   user,
   featuredModels,
   tabIds,
   excludeIds,
+  coverageNext,
+  member,
 }: {
   input: GetResourceSelectInput;
   user: ServiceUser;
   featuredModels?: GetFeaturedModels;
   tabIds: number[] | null;
+  /** Which indexed coverage field is live — the index carries both. */
+  coverageNext?: boolean;
+  /** Whether this user gets the expansion; a non-member also keeps what is already resident. */
+  member: boolean;
   // Ids pinned to the front from Postgres — excluded from the Meili stream so a
   // naturally-ranked official model isn't emitted twice across pages.
   excludeIds?: number[];
 }): string | null {
-  const { tab, selectSource, canGenerate, resources, filterTypes, filterBaseModels, tagName } =
-    input;
+  const {
+    tab,
+    selectSource,
+    canGenerate,
+    resources,
+    filterTypes,
+    filterBaseModels,
+    filterLoaded,
+    tagName,
+    hidePaid,
+  } = input;
 
   // On the featured tab, determine which types have featured models so we can
   // skip the baseModel filter for those types and instead AND an explicit id set.
@@ -169,13 +192,16 @@ function buildFilter({
     selectSource === 'auction' || !user?.id
       ? ne('availability', Availability.Private)
       : or(ne('availability', Availability.Private), eq('user.id', user.id)),
-    canGenerate !== undefined && eq('canGenerate', canGenerate),
+    coverageFilter({ canGenerate, coverageNext: !!coverageNext, member }),
     selectSource === 'auction' && not(eq('cannotPromote', true)),
     or(...typeClauses),
     featuredIds.length > 0 && inArray('id', featuredIds),
     filterTypes.length > 0 && inArray('type', filterTypes),
     filterBaseModels.length > 0 && inArray('versions.baseModel', filterBaseModels),
+    // Any version resident, not the one the card happens to show — Meili matches a nested array.
+    filterLoaded && eq('versions.generatorLoaded', true),
     tagName ? eq('tags.name', tagName) : null,
+    modelPricingFilterClause({ hidePaid }),
     tabIds && inArray('id', tabIds),
     tab === 'mine' && user ? eq('user.id', user.id) : null,
     tab === 'official' ? eq('user.id', constants.system.officialUserId) : null,
@@ -250,8 +276,19 @@ export async function getResourceSelectModels(
   input: GetResourceSelectInput,
   { user, signal }: { user: ServiceUser; signal?: AbortSignal }
 ) {
-  const { tab, query = '', sort, cursor, limit, filterTypes, filterBaseModels, tagName } = input;
+  const {
+    tab,
+    query = '',
+    sort,
+    cursor,
+    limit,
+    filterTypes,
+    filterBaseModels,
+    filterLoaded,
+    tagName,
+  } = input;
 
+  const { next: coverageNext, member } = await coverageAudience(user);
   const featuredModels = tab === 'featured' ? await getFeaturedModels() : undefined;
   const tabIds = await resolveTabIds(input, user);
 
@@ -265,6 +302,7 @@ export async function getResourceSelectModels(
     !query &&
     filterTypes.length === 0 &&
     filterBaseModels.length === 0 &&
+    !filterLoaded &&
     !tagName;
 
   // Filtered by type only (cheap, cached). Type-matching ids that don't match the
@@ -290,6 +328,8 @@ export async function getResourceSelectModels(
     featuredModels,
     tabIds,
     excludeIds: officialIdsForType,
+    coverageNext,
+    member,
   });
 
   const results = await searchModels(
@@ -316,6 +356,15 @@ export async function getResourceSelectModels(
     const officialItems = transformModelHits(
       await getModelSearchIndexRecords(officialIdsForType)
     ).filter((m) => {
+      // buildFilter never sees the pin, so anything it would have excluded is re-applied here —
+      // pricing and base model only. `canGenerate`, the private-availability split and the celebrity
+      // exclusion are NOT re-applied; `getOfficialModelIds` scopes on isOfficial + Published alone,
+      // so a mod flagging a private or non-generatable model official would pin it past all three.
+      if (
+        input.hidePaid &&
+        !m.versions.some((v) => versionSatisfiesPricingFilter(v.pricing, input))
+      )
+        return false;
       const baseModels = input.resources
         .filter((r) => r.type === m.type)
         .flatMap((r) => r.baseModels);
@@ -327,5 +376,5 @@ export async function getResourceSelectModels(
 
   const nextCursor = !isFeatured && results.hits.length === take ? offset + take : undefined;
 
-  return { items, nextCursor };
+  return { items, nextCursor, coverageNext, member };
 }

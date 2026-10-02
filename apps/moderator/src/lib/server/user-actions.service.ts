@@ -613,6 +613,7 @@ export const BUZZ_TRANSACTION_TYPES = {
   Fee: 25,
   Bid: 26,
   LicenseFee: 27,
+  AppAuthorFee: 28,
 } as const;
 
 export type BuzzTransactionType = keyof typeof BUZZ_TRANSACTION_TYPES;

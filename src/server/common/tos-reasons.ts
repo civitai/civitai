@@ -118,9 +118,20 @@ export function mapToViolationType(
   return ViolationType.Other;
 }
 
-/** The moderator-facing wording for a violation, for the places that show a removal reason back to the
- *  person it happened to. Falls back to the raw enum rather than throwing — a notification is not worth
- *  losing over an unmapped value. */
-export function tosReasonLabel(violationType: ViolationType | string): string {
-  return TOS_REASONS.find((r) => r.value === violationType)?.label ?? String(violationType);
+// Labels that would misstate the removal if shown to its owner. A school removal is a stricter
+// standard applied to ambiguous-age content, not a finding that the subject is a minor.
+// No trailing period: the notification template appends one.
+const USER_FACING_REASONS: Partial<Record<ViolationType, string>> = {
+  [ViolationType.SchoolNsfw]:
+    'School settings are moderated more strictly, and this was removed under that stricter standard',
+};
+
+/** The wording for a violation shown back to the person it happened to. Falls back to the raw enum
+ *  rather than throwing — a notification is not worth losing over an unmapped value. */
+export function tosReasonUserMessage(violationType: ViolationType | string): string {
+  return (
+    USER_FACING_REASONS[violationType as ViolationType] ??
+    TOS_REASONS.find((r) => r.value === violationType)?.label ??
+    String(violationType)
+  );
 }

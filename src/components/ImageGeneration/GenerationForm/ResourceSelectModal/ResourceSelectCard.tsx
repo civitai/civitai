@@ -11,7 +11,7 @@ import {
 } from '@mantine/core';
 import { IconBrush, IconCheck, IconDownload, IconLock, IconPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { BidModelButton } from '~/components/Auction/BidModelButton';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
@@ -27,7 +27,6 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import { ModelTypeBadge } from '~/components/Model/ModelTypeBadge/ModelTypeBadge';
 import { ModelURN, URNExplanation } from '~/components/Model/ModelURN/ModelURN';
-import { ModelVersionPopularity } from '~/components/Model/ModelVersions/ModelVersionPopularity';
 import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
@@ -48,8 +47,23 @@ import { getDisplayName, getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import type { ResourceSelectSource } from '../resource-select.types';
+import { versionCanGenerate } from '~/shared/generation/coverage-fields';
 import { getResourceCompatibility } from '~/components/generation_v2/inputs/ResourceItemContent';
+import {
+  pickInitialVersionIndex,
+  resolveSelectedIndex,
+} from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import {
+  pricingFilterKey,
+  versionSatisfiesPricingFilter,
+} from '~/shared/search/model-pricing-filter';
 import { TopRightIcons } from './TopRightIcons';
+import {
+  LoadedMark,
+  useResidency,
+  ResourceResidencyStatus,
+} from '~/components/ResourceLoad/ResourceResidency';
+import { VersionPricingBadge } from './VersionPricingBadge';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -57,10 +71,12 @@ export function ResourceSelectCard({
   data,
   height,
   selectSource,
+  coverageNext,
 }: {
   data: TransformedModel;
   height?: number;
   selectSource?: ResourceSelectSource;
+  coverageNext?: boolean;
 }) {
   const {
     onSelect,
@@ -72,6 +88,7 @@ export function ResourceSelectCard({
     resources,
     staged,
     limit,
+    filters,
   } = useResourceSelectContext();
   const currentUser = useCurrentUser();
   const [loading, setLoading] = useState(false);
@@ -81,8 +98,26 @@ export function ResourceSelectCard({
   const colorScheme = useComputedColorScheme('dark');
 
   const versions = data.versions;
-  const [selectedIndex, setSelectedIndex] = useState<number>(0);
-  const _selectedIndex = selectedIndex < versions.length ? selectedIndex : 0;
+  const initialIndex = useMemo(
+    () =>
+      pickInitialVersionIndex(versions, {
+        filter: filters,
+        satisfiesFilter: (v) => versionSatisfiesPricingFilter(v.pricing, filters),
+        isCompatible: (v) =>
+          role !== 'resource' ||
+          getResourceCompatibility(v.baseModel, data.type, { resources }) !== null,
+      }),
+    [versions, filters, role, data.type, resources]
+  );
+  const filterKey = pricingFilterKey(filters);
+  const [override, setOverride] = useState<{ key: string; index: number } | null>(null);
+  const _selectedIndex = resolveSelectedIndex({
+    override,
+    filterKey,
+    versionCount: versions.length,
+    initialIndex,
+  });
+  const setSelectedIndex = (index: number) => setOverride({ key: filterKey, index });
   const selectedVersion = versions[_selectedIndex];
   const [flipped, setFlipped] = useState(false);
 
@@ -233,6 +268,7 @@ export function ResourceSelectCard({
                       </div>
                       <TopRightIcons data={data} setFlipped={setFlipped} imageId={image.id} />
                       <Group className="absolute bottom-2 right-2 flex items-center gap-1">
+                        <VersionPricingBadge pricing={selectedVersion?.pricing} />
                         {data.availability === Availability.Private && (
                           <Tooltip
                             label="This is a private model which requires permission to generate with."
@@ -300,6 +336,7 @@ export function ResourceSelectCard({
                   data={data}
                   selectedVersion={selectedVersion}
                   selectSource={selectSource}
+                  coverageNext={coverageNext}
                 />
                 <TopRightIcons data={data} setFlipped={setFlipped} />
               </div>
@@ -329,6 +366,13 @@ export function ResourceSelectCard({
             <div className="flex items-center justify-between gap-2">
               <Select
                 className="flex-1"
+                leftSection={
+                  selectSource === 'generation' && selectedVersion?.generatorLoaded ? (
+                    <LoadedMark readiness="ready" />
+                  ) : undefined
+                }
+                leftSectionWidth={26}
+                leftSectionPointerEvents="none"
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
@@ -339,6 +383,17 @@ export function ResourceSelectCard({
                   label: version.name,
                   value: index.toString(),
                 }))}
+                renderOption={({ option }) => {
+                  const version = versions[Number(option.value)];
+                  return (
+                    <Group gap={6} wrap="nowrap" className="min-w-0">
+                      {selectSource === 'generation' && version?.generatorLoaded && (
+                        <LoadedMark readiness="ready" />
+                      )}
+                      <span className="truncate">{option.label}</span>
+                    </Group>
+                  );
+                }}
                 onChange={(index) => setSelectedIndex(Number(index ?? 0))}
                 styles={{
                   input: { cursor: versions.length <= 1 ? 'auto !important' : undefined },
@@ -406,12 +461,15 @@ function ModelDetailsPanel({
   data,
   selectedVersion,
   selectSource,
+  coverageNext,
 }: {
   data: TransformedModel;
   selectedVersion: TransformedModel['versions'][number];
   selectSource?: ResourceSelectSource;
+  coverageNext?: boolean;
 }) {
   const features = useFeatureFlags();
+  const residency = useResidency(selectedVersion.id);
 
   const modelDetails: DescriptionTableProps['items'] = [
     {
@@ -429,7 +487,7 @@ function ModelDetailsPanel({
           <IconBadge radius="xs" icon={<IconDownload size={14} />}>
             <Text>{(selectedVersion.metrics?.downloadCount ?? 0).toLocaleString()}</Text>
           </IconBadge>
-          {selectedVersion.canGenerate && (
+          {versionCanGenerate(selectedVersion, coverageNext) && (
             <IconBadge radius="xs" icon={<IconBrush size={14} />}>
               <Text>{(selectedVersion.metrics?.generationCount ?? 0).toLocaleString()}</Text>
             </IconBadge>
@@ -451,16 +509,14 @@ function ModelDetailsPanel({
     {
       label: 'Generation',
       value: (
-        <ModelVersionPopularity
-          versionId={selectedVersion.id}
-          isCheckpoint={data.type === ModelType.Checkpoint}
-          listenForUpdates={false}
+        <ResourceResidencyStatus
+          modelVersionId={selectedVersion.id}
+          // The indexed field is readiness, so it can't tell resident from external; the component's
+          // own live read replaces this as soon as it answers.
+          readiness={selectedVersion.generatorLoaded ? 'ready' : 'cold'}
         />
       ),
-      visible:
-        selectSource === 'generation' &&
-        data.type === ModelType.Checkpoint &&
-        features.modelVersionPopularity,
+      visible: selectSource === 'generation' && !!residency,
     },
     { label: 'Created', value: formatDate(selectedVersion.createdAt) },
     {

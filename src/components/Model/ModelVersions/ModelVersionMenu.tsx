@@ -11,6 +11,7 @@ import {
   IconAi,
   IconShieldHalf,
   IconPlaylistX,
+  IconPin,
 } from '@tabler/icons-react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -25,8 +26,9 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { openUnpublishModal } from '~/components/Dialog/triggers/unpublish';
 import { getModelUrl } from '~/utils/string-helpers';
 import { PAID_ACCESS_REFUND_WINDOW_DAYS } from '~/server/utils/early-access-helpers';
-import { moderatorBulkImageManagerPath } from '~/shared/constants/moderator-app';
+import { moderatorModelVersionLookupPath } from '~/shared/constants/moderator-app';
 import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
+import { getEvictableAction } from '~/components/Model/ModelVersions/evictable-action';
 
 export function ModelVersionMenu({
   modelVersionId,
@@ -37,6 +39,7 @@ export function ModelVersionMenu({
   published,
   canGenerate,
   generationDisabled,
+  evictable,
   showToggleCoverage,
 }: {
   modelVersionId: number;
@@ -47,6 +50,7 @@ export function ModelVersionMenu({
   published: boolean;
   canGenerate: boolean;
   generationDisabled: boolean;
+  evictable: boolean;
   showToggleCoverage: boolean;
 }) {
   const router = useRouter();
@@ -97,6 +101,32 @@ export function ModelVersionMenu({
         // the dialog still closes and clears its loading state.
         onConfirm: () =>
           toggleGenerationDisabledMutation.mutateAsync({ id: modelVersionId }).catch(() => null),
+      },
+    });
+  };
+
+  const setEvictableMutation = trpc.generation.setEvictable.useMutation({
+    onSuccess: () => queryUtils.model.getById.invalidate({ id: modelId }),
+    onError: (error) =>
+      showErrorNotification({
+        title: 'Error updating eviction setting',
+        error: new Error(error.message),
+      }),
+  });
+
+  const evictableAction = getEvictableAction(evictable);
+  const handleToggleEvictable = () => {
+    dialogStore.trigger({
+      id: 'toggle-evictable',
+      component: ConfirmDialog,
+      props: {
+        title: evictableAction.label,
+        message: evictableAction.message,
+        labels: { cancel: 'Cancel', confirm: evictableAction.label },
+        onConfirm: () =>
+          setEvictableMutation
+            .mutateAsync({ id: modelVersionId, evictable: evictableAction.next })
+            .catch(() => null),
       },
     });
   };
@@ -344,9 +374,7 @@ export function ModelVersionMenu({
         {currentUser?.isModerator && (
           <>
             <Menu.Label>Moderation</Menu.Label>
-            <ModeratorLookupMenuItem
-              path={moderatorBulkImageManagerPath('modelVersion', modelVersionId)}
-            >
+            <ModeratorLookupMenuItem path={moderatorModelVersionLookupPath(modelVersionId)}>
               Lookup Version
             </ModeratorLookupMenuItem>
             {published && (
@@ -420,6 +448,24 @@ export function ModelVersionMenu({
               }}
             >
               {generationDisabled ? 'Unblock generation' : 'Block generation'}
+            </Menu.Item>
+            <Menu.Item
+              disabled={setEvictableMutation.isPending}
+              leftSection={
+                setEvictableMutation.isPending ? (
+                  <Loader size="xs" />
+                ) : (
+                  <IconPin size={14} stroke={1.5} />
+                )
+              }
+              color="yellow"
+              onClick={(e: React.MouseEvent) => {
+                e.stopPropagation();
+                e.preventDefault();
+                handleToggleEvictable();
+              }}
+            >
+              {evictableAction.label}
             </Menu.Item>
           </>
         )}

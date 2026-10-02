@@ -81,6 +81,8 @@ export const SCOPE_DESCRIPTIONS: Record<string, string> = {
   'collections:read:private': 'Read your private collections',
   'posts:write:self':
     "Publish posts to your profile from this app's own results — you approve each one",
+  'goods:read:self': "See which of this app's items you already own",
+  'goods:purchase:self': "Buy this app's items with your Buzz",
 };
 
 export const SLOT_DESCRIPTIONS: Record<string, string> = {

@@ -63,12 +63,39 @@ describe('ResourceSelectProvider persistence', () => {
       first.ctx().setSort('newest');
       first.ctx().setFilters((f) => ({ ...f, types: ['LORA'], baseModels: ['SDXL 1.0'] }));
     });
-    expect(first.ctx().filters).toEqual({ types: ['LORA'], baseModels: ['SDXL 1.0'] });
+    expect(first.ctx().filters).toEqual({
+      types: ['LORA'],
+      baseModels: ['SDXL 1.0'],
+      loadedOnly: false,
+      hidePaid: false,
+    });
     first.unmount();
 
     const second = mount();
     expect(second.ctx().sort).toBe('newest');
-    expect(second.ctx().filters).toEqual({ types: ['LORA'], baseModels: [] });
+    // Base models, the loaded filter and the pricing filter are deliberately not persisted: each
+    // follows the ecosystem or the moment, not the user's standing preference.
+    expect(second.ctx().filters).toEqual({
+      types: ['LORA'],
+      baseModels: [],
+      loadedOnly: false,
+      hidePaid: false,
+    });
+    second.unmount();
+  });
+
+  it('does not carry the pricing filter across a reopen', () => {
+    const first = mount();
+    act(() => {
+      first.ctx().setFilters((f) => ({ ...f, hidePaid: true }));
+    });
+    expect(first.ctx().filters).toMatchObject({ hidePaid: true });
+    first.unmount();
+
+    const second = mount();
+    expect(second.ctx().filters).toMatchObject({
+      hidePaid: false,
+    });
     second.unmount();
   });
 

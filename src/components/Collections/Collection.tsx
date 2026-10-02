@@ -41,6 +41,7 @@ import { useArticleQueryParams } from '~/components/Article/article.utils';
 import { ArticleFiltersDropdown } from '~/components/Article/Infinite/ArticleFiltersDropdown';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { Model3DsInfinite } from '~/components/Model3D/Infinite/Model3DsInfinite';
 import {
   contestCollectionReactionsHidden,
   isCollectionSubsmissionPeriod,
@@ -1017,6 +1018,9 @@ export function Collection({
                     )}
                     {collection && collectionType === CollectionType.Article && (
                       <ArticleCollection collection={collection} />
+                    )}
+                    {collection && collectionType === CollectionType.Model3D && (
+                      <Model3DsInfinite filters={{ collectionId: collection.id }} />
                     )}
                   </>
                 )}

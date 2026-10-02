@@ -19,15 +19,19 @@ import {
   UNQUANTIZED_QUANT_TYPE,
 } from '~/utils/file-display-helpers';
 import {
-  getModelFileFormat,
   inferGgufQuantType,
   inferSafetensorsPrecision,
   resolveUploadPrecision,
 } from '~/utils/file-helpers';
 import { useModelFileOptions } from '~/hooks/useModelFileOptions';
+import { getSimilarFiles } from '~/components/Resource/file-conflicts';
 import { resolveOfficialFileHash } from '~/components/Resource/official-match';
 import { useFileHash } from '~/hooks/useFileHash';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import {
+  showErrorNotification,
+  showSuccessNotification,
+  showWarningNotification,
+} from '~/utils/notifications';
 import { bytesToKB } from '~/utils/number-helpers';
 import { getFileExtension, getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -511,14 +515,9 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     }
 
     if (targetIndex >= 0) {
-      // Only conflicts the edited file is part of — an unrelated pair of siblings
+      // Only groups the edited file is part of — an unrelated pair of siblings
       // that happen to share a key isn't this save's problem.
-      const target = files[targetIndex];
-      const conflicts = getConflictingFiles(files).filter((group) => group.includes(target));
-      if (conflicts.length) {
-        showConflictNotification(conflicts);
-        return false;
-      }
+      warnSimilarFiles(files, files[targetIndex]);
       return true;
     }
 
@@ -555,11 +554,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       }
     }
 
-    const conflicts = getConflictingFiles(files);
-    if (conflicts.length) {
-      showConflictNotification(conflicts);
-      return false;
-    }
+    warnSimilarFiles(files);
     return true;
   };
 
@@ -886,43 +881,25 @@ const metadataSchema = modelFileMetadataSchema
   })
   .array();
 
-// The key is positional so absent fields can't collapse two distinct files onto
-// the same key.
-export const getConflictingFiles = (files: FileFromContextProps[]) => {
-  const groups = new Map<string, FileFromContextProps[]>();
-
-  files.forEach((item) => {
-    const key = [item.size, item.type, item.fp, getModelFileFormat(item.name), item.quantType]
-      .map((value) => value ?? '')
-      .join('|');
-    groups.set(key, [...(groups.get(key) ?? []), item]);
-  });
-
-  // Component files need none of size/fp/quantType, so a group where no member has
-  // any of them (e.g. two bare Text Encoders) has nothing to disambiguate on and
-  // isn't a real duplicate.
-  const hasDistinguishingSettings = (file: FileFromContextProps) =>
-    !!(file.size || file.fp || file.quantType);
-
-  return [...groups.values()].filter(
-    (group) => group.length > 1 && group.some(hasDistinguishingSettings)
-  );
-};
-
-const showConflictNotification = (conflicts: FileFromContextProps[][]) => {
-  showErrorNotification({
-    title: 'Duplicate file types',
-    error: new Error(
-      conflicts
-        .map(
-          (group) =>
-            `${group
-              .map((f) => f.name)
-              .join(', ')}: same type, size, format, precision and quant, one must differ`
-        )
-        .join('\n')
-    ),
-  });
+const warnSimilarFiles = (files: FileFromContextProps[], target?: FileFromContextProps) => {
+  const listNames = (group: FileFromContextProps[]) => group.map((f) => f.name).join(', ');
+  const warnings = getSimilarFiles(files).filter((group) => !target || group.includes(target));
+  if (warnings.length) {
+    showWarningNotification({
+      title: 'Files share the same type, format and precision',
+      message: (
+        <Stack gap={4}>
+          {warnings.map((group, i) => (
+            <Text key={i} size="sm">
+              {listNames(group)}
+            </Text>
+          ))}
+          <Text size="sm">Make sure the file names make clear how they differ.</Text>
+        </Stack>
+      ),
+      autoClose: 8000,
+    });
+  }
 };
 
 /** Model types whose primary file is an archive/config rather than model weights */

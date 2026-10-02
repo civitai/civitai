@@ -44,6 +44,7 @@ import { includesInappropriate } from '~/utils/metadata/audit';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { useCheckProfanity } from '~/hooks/useCheckProfanity';
 import { useBenignPhrases } from '~/hooks/useBenignPhrases';
+import { emptySearchClient } from '~/components/Search/emptySearchClient';
 import classes from './SearchLayout.module.scss';
 import clsx from 'clsx';
 
@@ -107,11 +108,18 @@ export function SearchLayout({
   indexName,
   leftSidebar,
   initialUiState,
+  maintenance,
 }: {
   children: React.ReactNode;
   indexName: SearchIndex;
   leftSidebar?: React.ReactNode;
   initialUiState?: UiState;
+  /**
+   * Render the search chrome without querying `indexName`. Used when the index is intentionally
+   * retired (image search — the images_v6 index has been deleted) so the page can show a
+   * maintenance notice in place of results instead of hitting an index that no longer exists.
+   */
+  maintenance?: boolean;
 }) {
   const isMobile = useIsMobile();
   const [sidebarOpenLocalStorage, setSidebarOpenLocalStorage] = useLocalStorage({
@@ -222,7 +230,7 @@ export function SearchLayout({
       <InstantSearch
         // Needs re-render. Otherwise the prev. index will screw up the app.
         key={indexName}
-        searchClient={searchClient}
+        searchClient={maintenance ? emptySearchClient : searchClient}
         indexName={indexName}
         routing={routing}
         future={{ preserveSharedStateOnUnmount: true }}

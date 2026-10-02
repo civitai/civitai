@@ -90,8 +90,10 @@ const DERIVED_BASES: Record<string, string> = {
   creatorShopProcedure: 'protectedProcedure',
   experimentalProcedure: 'protectedProcedure',
   giftProcedure: 'protectedProcedure',
+  guardedPromotionProcedure: 'guardedProcedure',
   orchestratorGuardedProcedure: 'guardedProcedure',
   orchestratorProcedure: 'protectedProcedure',
+  promotionProcedure: 'protectedProcedure',
 };
 
 const stripComments = (s: string) =>

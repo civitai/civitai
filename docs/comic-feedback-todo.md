@@ -25,7 +25,7 @@ Source: [ClickUp Task 868hmbhq8](https://app.clickup.com/t/868hmbhq8)
 
 ## Bugs
 
-- [ ] **Image generation timeout** - Image times out in Comic system but actually generated (visible in Generator). Doesn't pull into panel until page refresh or clicking into the panel.
+- [ ] **Image generation timeout** - Image times out in Comic system but actually generated (visible in Generator). Doesn't pull into panel until page refresh or clicking into the panel. **2026-09-17**: both cutoffs that manufactured the false timeout are gone — the 25-minute `Failed` cutoff in `comics.router.ts`'s panel poll and the 3-minute modal timeout in `GenerateImageModal.tsx`. The poll now runs until the orchestrator reports a terminal state. Left open until someone confirms the second symptom (the panel picking the result up without a refresh) also resolves; split the item if it does not.
 - [x] **References list overflow** - References list extends out of screen in the Iterative Edit box. Should be scrollable/contained.
 - [ ] **Generate panel error** - Error when trying to generate a new panel (see screenshot in task).
 - [x] **Generate without references error** - Generating a panel with no references produces an error.

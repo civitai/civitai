@@ -340,7 +340,7 @@ export async function getCollectionPlayableSample(
       FROM "CollectionItem" ci
       WHERE ci."collectionId" = c."id"
         AND ci."status" = ${CollectionItemStatus.ACCEPTED}::"CollectionItemStatus"
-        AND (ci."imageId" IS NOT NULL OR ci."modelId" IS NOT NULL OR ci."postId" IS NOT NULL OR ci."articleId" IS NOT NULL)
+        AND (ci."imageId" IS NOT NULL OR ci."modelId" IS NOT NULL OR ci."postId" IS NOT NULL OR ci."articleId" IS NOT NULL OR ci."model3dId" IS NOT NULL)
       ORDER BY ci."id" DESC
       LIMIT ${sampleSize}
     ) s

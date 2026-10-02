@@ -10,6 +10,29 @@ interface TokenPair {
   refreshTokenExpiresAt: Date;
 }
 
+async function insertToken(opts: {
+  userId: number;
+  clientId: string;
+  scope: number;
+  type: 'Access' | 'Refresh';
+  expiresAt: Date;
+}): Promise<string> {
+  const token = OAUTH_TOKEN_PREFIX + generateKey(36);
+  await db
+    .insertInto('ApiKey')
+    .values({
+      key: generateSecretHash(token),
+      name: `${opts.type === 'Access' ? 'oauth' : 'oauth-refresh'}:${opts.clientId}`,
+      tokenScope: opts.scope,
+      userId: opts.userId,
+      type: opts.type,
+      expiresAt: opts.expiresAt,
+      clientId: opts.clientId,
+    })
+    .execute();
+  return token;
+}
+
 /**
  * Create an OAuth access + refresh token pair stored as ApiKey rows.
  * Used by both the OAuth model (saveToken) and the device authorization flow.
@@ -30,41 +53,41 @@ export async function createOAuthTokenPair(
   // the bit on regardless of what was requested so it can never be dropped by any grant flow.
   scope = scope | TokenScope.UserRead;
 
-  // Access token
-  const accessToken = OAUTH_TOKEN_PREFIX + generateKey(36);
-  const accessHash = generateSecretHash(accessToken);
   const accessTokenExpiresAt = new Date(now.getTime() + ACCESS_TOKEN_TTL * 1000);
+  const accessToken = await insertToken({
+    userId,
+    clientId,
+    scope,
+    type: 'Access',
+    expiresAt: accessTokenExpiresAt,
+  });
 
-  await db
-    .insertInto('ApiKey')
-    .values({
-      key: accessHash,
-      name: `oauth:${clientId}`,
-      tokenScope: scope,
-      userId,
-      type: 'Access',
-      expiresAt: accessTokenExpiresAt,
-      clientId,
-    })
-    .execute();
-
-  // Refresh token
-  const refreshToken = OAUTH_TOKEN_PREFIX + generateKey(36);
-  const refreshHash = generateSecretHash(refreshToken);
   const refreshTokenExpiresAt = new Date(now.getTime() + REFRESH_TOKEN_TTL * 1000);
-
-  await db
-    .insertInto('ApiKey')
-    .values({
-      key: refreshHash,
-      name: `oauth-refresh:${clientId}`,
-      tokenScope: scope,
-      userId,
-      type: 'Refresh',
-      expiresAt: refreshTokenExpiresAt,
-      clientId,
-    })
-    .execute();
+  const refreshToken = await insertToken({
+    userId,
+    clientId,
+    scope,
+    type: 'Refresh',
+    expiresAt: refreshTokenExpiresAt,
+  });
 
   return { accessToken, accessTokenExpiresAt, refreshToken, refreshTokenExpiresAt };
+}
+
+/** Access-only mint for app blocks: no refresh token, caller-bounded TTL, same prefix/hash as the pair. */
+export async function createAppAccessToken(
+  userId: number,
+  clientId: string,
+  scope: number,
+  ttlSeconds: number
+): Promise<{ accessToken: string; expiresAt: Date }> {
+  const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
+  const accessToken = await insertToken({
+    userId,
+    clientId,
+    scope: scope | TokenScope.UserRead,
+    type: 'Access',
+    expiresAt,
+  });
+  return { accessToken, expiresAt };
 }

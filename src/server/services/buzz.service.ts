@@ -323,9 +323,80 @@ export async function getUserBuzzTransactions({
 // The buzz service caps at 200 transactions per call and takes a single account
 // type, so a multi-account view or an export would need hundreds of sequential
 // round-trips. ClickHouse answers the same question in one query.
-function toClickhouseTransactionType(type: TransactionType) {
+export function toClickhouseTransactionType(type: TransactionType) {
   const name = TransactionType[type];
   return name.charAt(0).toLowerCase() + name.slice(1);
+}
+
+/**
+ * The inverse, and it MUST also accept a bare number.
+ *
+ * 🔴 The ingest MV's int→string map enumerates only `0..26` and falls back to
+ * `toString(Type)`, so every member above 26 arrives as its DIGITS — today
+ * `LicenseFee` (27) and `AppAuthorFee` (28). Capitalising `'28'` is a no-op and
+ * `TransactionType['28']` then hits the enum's REVERSE mapping, yielding the
+ * NAME as a string where a number is declared; that value renders as the raw
+ * `28` in the user's transaction list and in the CSV export instead of its
+ * label. `src/server/schema/buzz.schema.ts` already carries this rule for the
+ * buzz-service API read path — this is the ClickHouse half of the same rule,
+ * which had been open-coded at both call sites without it.
+ */
+export function fromClickhouseTransactionType(raw: string): TransactionType {
+  if (/^\d+$/.test(raw)) {
+    const numeric = Number(raw);
+    // A reverse-mapped name proves it is a real member; anything else keeps the
+    // long-standing Tip fallback rather than rendering blank.
+    return TransactionType[numeric] != null ? numeric : TransactionType.Tip;
+  }
+  const name = (raw.charAt(0).toUpperCase() + raw.slice(1)) as keyof typeof TransactionType;
+  // 🔴 A `typeof` test, not `??`. `TransactionType['__proto__']` resolves up the
+  // prototype chain to a non-nullish OBJECT, which `??` accepts — so the obvious
+  // `TransactionType[name] ?? Tip` returns `Object.prototype` typed as a
+  // `TransactionType`.
+  //
+  // Narrowing on the RESULT rejects that, and no input STRING can defeat it: every
+  // `Object.prototype` key that survives the capitalisation above starts with `_`
+  // and holds a function or an accessor. What it does NOT cover — stated because an
+  // earlier revision of this comment claimed nothing could — is a numeric-valued
+  // own property added to `Object.prototype` by something else in the process.
+  // That is prototype pollution, out of scope for this function rather than
+  // impossible; an `Object.hasOwn` check here would catch it and was removed as
+  // untestable by any reachable input.
+  const resolved: unknown = TransactionType[name];
+  return typeof resolved === 'number' ? resolved : TransactionType.Tip;
+}
+
+/**
+ * 🔴 BOTH SPELLINGS, for the same `0..26` ingest gap. A name-only `type = '…'`
+ * predicate is a SILENT ZERO for a member past the map: the transaction list
+ * renders empty and the CSV export answers 200 with a header-only body. This is
+ * the `type IN ('licenseFee','27')` shape creator-studio's reads already use,
+ * derived instead of hand-written.
+ *
+ * The numeric arm admitting nothing extra is a premise about what the MV writes,
+ * NOT something any test here establishes: `Number(type)` is always a real member
+ * integer (both entry points gate `type` through `z.enum(TransactionType)`), so
+ * it can only ever match rows of that same type.
+ */
+export function clickhouseTransactionTypePredicate(type: TransactionType) {
+  return `type IN ('${toClickhouseTransactionType(type)}','${Number(type)}')`;
+}
+
+/**
+ * The exclusion form of the same rule. Inert today — every excluded member is
+ * ≤ 26, so the numeric arm can match nothing — but this was the last type
+ * predicate in this file not going through a shared builder, which is how the
+ * `0..26` bug would have regenerated the next time a member above 26 was added
+ * to an exclusion list.
+ */
+export function clickhouseTransactionTypeExclusionPredicate(types: TransactionType[]) {
+  // `NOT IN ()` is a syntax error, not an empty exclusion. Today's only caller
+  // passes a non-empty constant, but this is exported, and a caller that filtered
+  // its list down to nothing would take out the whole query rather than excluding
+  // nothing.
+  if (!types.length) return '1 = 1';
+  const spellings = types.flatMap((type) => [toClickhouseTransactionType(type), String(type)]);
+  return `type NOT IN (${spellings.map((s) => `'${s}'`).join(',')})`;
 }
 
 // Lowercase-only: toString(uuid) is always lowercase and ClickHouse compares
@@ -382,7 +453,7 @@ function buildBranchQuery({
     `date >= '${toClickhouseDate(start)}'`,
     `date <= '${toClickhouseDate(end)}'`,
     cursor ? `(date, toString(transactionId)) < ${toClickhouseCursor(cursor)}` : null,
-    type !== undefined ? `type = '${toClickhouseTransactionType(type)}'` : null,
+    type !== undefined ? clickhouseTransactionTypePredicate(type) : null,
   ].filter(isDefined);
 
   return `
@@ -512,10 +583,7 @@ async function hydrateTransactions(rows: ClickhouseBuzzTransaction[], accountId:
 
   return rows.map((row) => {
     const details = parseDetails(row.details);
-    const type =
-      TransactionType[
-        (row.type.charAt(0).toUpperCase() + row.type.slice(1)) as keyof typeof TransactionType
-      ] ?? TransactionType.Tip;
+    const type = fromClickhouseTransactionType(row.type);
 
     return {
       date: new Date(`${row.date.replace(' ', 'T')}Z`),
@@ -699,10 +767,7 @@ async function formatExportBatch(
     rows.map((row) => {
       const isDebit = row.fromAccountId === accountId;
       const details = parseDetails(row.details);
-      const type =
-        TransactionType[
-          (row.type.charAt(0).toUpperCase() + row.type.slice(1)) as keyof typeof TransactionType
-        ] ?? TransactionType.Tip;
+      const type = fromClickhouseTransactionType(row.type);
       const { url } = parseBuzzTransactionDetails(details, type);
       const entityUrl = !url ? '' : url.startsWith('http') ? url : `${baseUrl}${url}`;
 
@@ -1606,7 +1671,10 @@ export const getDailyCompensationRewardByUser = async ({
       GROUP BY modelVersionId, accountType, date
       ORDER BY date DESC, total DESC
     `,
-    'Daily Buzz compensation is temporarily unavailable, please retry.'
+    {
+      path: 'buzz-compensation',
+      message: 'Daily Buzz compensation is temporarily unavailable, please retry.',
+    }
   );
 
   if (!generationData.length) return { resources: [], hasPublishedResources };
@@ -1713,7 +1781,7 @@ const CHART_EXCLUDED_TYPES = [
   TransactionType.Bank,
   TransactionType.Withdrawal,
   TransactionType.Extract,
-].map(toClickhouseTransactionType);
+];
 
 const REPORT_BUCKET_SQL: Record<TransactionsReportWindow, string> = {
   hour: 'toStartOfHour(date)',
@@ -1753,7 +1821,7 @@ function buildTransactionsReportQuery({
   end: Date;
 }) {
   const bucket = REPORT_BUCKET_SQL[window];
-  const excluded = CHART_EXCLUDED_TYPES.map((type) => `'${type}'`).join(',');
+  const excluded = clickhouseTransactionTypeExclusionPredicate(CHART_EXCLUDED_TYPES);
   const range = `date >= '${toClickhouseDate(start)}' AND date < '${toClickhouseDate(end)}'`;
 
   return `
@@ -1762,12 +1830,12 @@ function buildTransactionsReportQuery({
       SELECT ${bucket} AS bucket, amount AS gained, 0 AS spent
       FROM buzzTransactions
       WHERE toAccountId = ${userId} AND toAccountType = '${accountType}' AND ${range}
-        AND type NOT IN (${excluded})
+        AND ${excluded}
       UNION ALL
       SELECT ${bucket} AS bucket, 0 AS gained, amount AS spent
       FROM buzzTransactions
       WHERE fromAccountId = ${userId} AND fromAccountType = '${accountType}' AND ${range}
-        AND type NOT IN (${excluded})
+        AND ${excluded}
     )
     GROUP BY bucket
   `;

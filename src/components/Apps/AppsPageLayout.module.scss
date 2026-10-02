@@ -65,6 +65,82 @@
   display: flex;
 }
 
+/* The rail's own PAINTED SURFACE — a tinted panel with a hairline ring, so the rail reads
+   as a distinct region rather than as floating text on the page background. It goes on the
+   layout's inner wrapper inside the `<aside>` (see `AppsPageLayout.tsx`); no new DOM node.
+
+   🔴 IT BELONGS ON THAT LAYOUT WRAPPER AND MUST NOT BE COPIED INSIDE `AppsRailNavView`.
+   That component is rendered TWICE by `AppsPageLayout` — once in the desktop rail and
+   once inside the narrow-screen `Drawer`, which is already a panel — so tinting the
+   component itself puts a panel inside a panel on mobile.
+   ⚠️ Precisely: MOVING the class off this wrapper is caught (the surface test's positive
+   half reads the `[data-apps-chrome="rail-surface"]` node and finds it transparent), but
+   ADDING a second tint inside the nav while leaving this one alone is NOT — no guard
+   opens the drawer. This paragraph is the only thing standing between that and a
+   reviewer, which is why it is here rather than in a test's docstring.
+
+   🔴 A RENDERED-PIXEL LEDGER FORBIDS TWO OF THESE DECLARATIONS' ALTERNATIVES. DO NOT TURN
+   THE INSET SHADOW INTO A `border`, AND DO NOT ADD ORDINARY PADDING.
+   `AppsPageLayout.chromeAlignment.browser.test.tsx` measures
+   `nav[aria-label="App sections"]` across 12 routes x 3 viewports x 2 rail states and
+   asserts `navWidth === APPS_RAIL_WIDTH` (260), `navLeft === containerLeft` (16),
+   `bodyLeft - navLeft === appsRailChromeWidth(false)` (276) and
+   `bodyWidth === contentWidth - railChrome`. The aside's width is an INLINE `width` under
+   `box-sizing: border-box`, so anything that consumes the aside's content box shrinks the
+   nav inside it and moves its left edge:
+
+     • `border: 1px`      -> nav 259 wide (and 258 with both sides)
+     • `padding: 8px`     -> nav 244 wide, left 24
+
+   Measured, with the naive `border: 1px` + `padding: 8px` form actually applied: 15 of the
+   22 tests in that file went red, `navLeft` reading 25 against 16 and `navWidth` 242
+   against 260 (38 against 56 collapsed). That is the guard doing its job, not a stale
+   expectation to update.
+
+   🔴 BUT THE LEDGER DOES NOT FORCE THE `margin`/`padding` PAIR, AND AN EARLIER VERSION OF
+   THIS COMMENT CLAIMED IT DID. All four ledger assertions are RECT GEOMETRY. `background`,
+   `box-shadow: inset` and `border-radius` move none of them, so a flush three-declaration
+   panel — fill, inset ring, radius, with no margin and no padding — satisfies the ledger
+   perfectly. The negative margin is a DESIGN CHOICE, not a constraint discharge:
+
+     • `margin: -8px` + `padding: 8px` cancel EXACTLY in both axes, so the wrapper's
+       CONTENT box — and therefore the nav's rect — is byte-identical to no surface at all.
+       The paint simply bleeds 8px past the aside's box, into the 16px `.railRow` gap and
+       the Container's 16px gutter. That buys 8px of VISUAL INSET at zero layout cost.
+     • The measured reason to want it: both forms were rendered and compared, and flush puts
+       the active-row highlight hard against the ring with no breathing space between them.
+       The bleed is what separates them. Keep it for that reason — not because the tests
+       demand it.
+     • `box-shadow: inset` IS forced, and that half of the old claim stands. A `border`
+       takes layout and trips the ledger above; an `outline` paints OUTSIDE the box and
+       would sit 8px further out than the fill it is meant to trace.
+
+   ⚠️ The bleed has BOUNDS, and they are not stylistic — `AppsPageLayout.railSurface.browser
+   .test.tsx` asserts the margins are symmetric and that the bleed stays inside BOTH the
+   16px `.railRow` gap and the 16px sticky offset. Past the first, the panel overlaps the
+   body column and swallows clicks meant for the page; past the second, a stuck rail
+   overlaps the global subnav and swallows clicks in it.
+
+   The tint + ring colour pair follows the repo's existing tinted-panel convention —
+   `light-dark()` as in `src/components/Collections/CollectionsLayout.module.scss`, and the
+   `gray-0`/`dark-6` fill with a `gray-3`/`dark-4` edge as in
+   `src/components/Profile/ProfileLayout2.tsx` (the sidebar precedent, in its Tailwind
+   form). ⚠️ The edge is deliberately NOT `--mantine-color-default-border`, which is the
+   single-token form used at ~36 sites: that token is `gray-4` in light mode, and Mantine's
+   own PAPER border (`@mantine/core/styles/Paper.css`) is `gray-3`/`dark-4` — the lighter
+   one. This is a panel, so it takes the panel edge, and it matches the sidebar precedent
+   above. The cost of not using the token is that a future border-tone sweep will move
+   those 36 sites and leave this one behind; that is the trade, made knowingly. */
+.railSurface {
+  /* Bleeds the paint past the nav's box… */
+  margin: -8px;
+  /* …and gives it straight back, so the content box is unchanged. */
+  padding: 8px;
+  border-radius: var(--mantine-radius-md);
+  background: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6));
+  box-shadow: inset 0 0 0 1px light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+}
+
 @media (min-width: 1300px) {
   .rail {
     display: block;

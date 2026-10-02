@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { buildWordmarkSvg } from '@civitai/brand';
+  import { serializeJsonLd } from '@civitai/shared/json-ld';
   import {
     IconLicense,
     IconChartBar,
@@ -37,7 +38,7 @@
   ];
 
   const jsonLd = $derived(
-    JSON.stringify({
+    serializeJsonLd({
       '@context': 'https://schema.org',
       '@type': 'WebApplication',
       name: 'Civitai Creator Studio',
@@ -64,7 +65,7 @@
   <meta name="twitter:card" content="summary" />
   <meta name="twitter:title" content={TITLE} />
   <meta name="twitter:description" content={DESCRIPTION} />
-  <!-- eslint-disable-next-line svelte/no-at-html-tags -- JSON.stringify of module constants; no user input -->
+  <!-- eslint-disable-next-line svelte/no-at-html-tags -- serializeJsonLd output is safe inside a script element -->
   {@html `<script type="application/ld+json">${jsonLd}</` + `script>`}
 </svelte:head>
 

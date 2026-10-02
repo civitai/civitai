@@ -45,6 +45,51 @@ const VIDEO_INPUT = {
 
 /** Every input carries a seed so neither dispatcher reaches its RNG. */
 const CASES: Record<string, unknown>[] = [
+  { workflow: 'txt2img', ecosystem: 'Ming', prompt: 'a poster', seed: 42 },
+  {
+    workflow: 'txt2img',
+    ecosystem: 'Ming',
+    prompt: 'a poster',
+    seed: 42,
+    resolution: '2K',
+    aspectRatio: '16:9',
+    outputFormat: 'png',
+    cfgScale: 2,
+    steps: 24,
+    negativePrompt: 'blurry',
+  },
+  {
+    workflow: 'txt2img',
+    ecosystem: 'Ming',
+    prompt: 'a poster',
+    seed: 42,
+    images: [IMAGE],
+    resources: [
+      { id: 111, baseModel: 'Ming Image Design 0.1', model: { type: 'LORA' }, strength: 0.75 },
+    ],
+  },
+  {
+    workflow: 'img2img:edit',
+    ecosystem: 'Ming',
+    prompt: 'make it teal',
+    seed: 42,
+    images: [IMAGE],
+  },
+  {
+    workflow: 'img2img:edit',
+    ecosystem: 'Ming',
+    prompt: 'combine the references',
+    seed: 42,
+    images: [IMAGE, IMAGE, IMAGE],
+    resolution: '2K',
+    aspectRatio: '9:16',
+    cfgScale: 2,
+    steps: 30,
+    resources: [
+      { id: 111, baseModel: 'Ming Image Design 0.1', model: { type: 'LORA' }, strength: 0.5 },
+    ],
+  },
+
   {
     workflow: 'txt2music',
     ecosystem: 'YuE2',
@@ -94,10 +139,24 @@ const CASES: Record<string, unknown>[] = [
     yue2Mode: 'off',
     yue2Abc: 'X:1\nK:C\nC D E G |',
   },
+  { workflow: 'txt2music', ecosystem: 'Sonilo', prompt: 'warm lo-fi hip hop' },
+  {
+    workflow: 'txt2music',
+    ecosystem: 'Sonilo',
+    soniloOperation: 'soundEffect',
+    prompt: 'glass bottle shattering on concrete',
+    duration: 2.5,
+  },
+  {
+    workflow: 'txt2music',
+    ecosystem: 'Sonilo',
+    soniloOperation: 'music',
+    prompt: 'upbeat synth-pop at 118 BPM',
+    duration: 120,
+  },
 
-  // SD family: textToImage, draft batching, comfy (img2img + hires), controlnets
+  // SD family: imageGen, comfy (img2img + hires), controlnets
   { workflow: 'txt2img', ecosystem: 'SDXL', prompt: 'a cat', seed: 42 },
-  { workflow: 'txt2img:draft', ecosystem: 'SD1', prompt: 'a cat', seed: 42, quantity: 4 },
   { workflow: 'img2img', ecosystem: 'Pony', prompt: 'a cat', seed: 42, images: [IMAGE] },
   { workflow: 'txt2img:hires-fix', ecosystem: 'Illustrious', prompt: 'a cat', seed: 42 },
   {
@@ -122,10 +181,8 @@ const CASES: Record<string, unknown>[] = [
   },
   // Chroma
   { workflow: 'txt2img', ecosystem: 'Chroma', prompt: 'a cat', seed: 42, quantity: 2 },
-  // Flux: every mode + the draft coupling in both directions
+  // Flux: every mode
   { workflow: 'txt2img', ecosystem: 'Flux1', prompt: 'a cat', seed: 42 },
-  { workflow: 'txt2img:draft', ecosystem: 'Flux1', prompt: 'a cat', seed: 42 },
-  { workflow: 'txt2img:draft', ecosystem: 'Flux1', prompt: 'a cat', seed: 42, model: 691639 },
   { workflow: 'txt2img', ecosystem: 'Flux1', prompt: 'a cat', seed: 42, model: 699279 },
   { workflow: 'txt2img', ecosystem: 'Flux1', prompt: 'a cat', seed: 42, model: 922358 },
   {
@@ -145,7 +202,7 @@ const CASES: Record<string, unknown>[] = [
     seed: 42,
     resources: [{ id: 555, baseModel: 'Flux.1 D', model: { type: 'LORA' }, strength: 0.7 }],
   },
-  // Enhanced compatibility rewrites textToImage engines in both lanes
+  // Enhanced compatibility: comfy engine instead of sdcpp
   {
     workflow: 'txt2img',
     ecosystem: 'SDXL',
@@ -220,6 +277,37 @@ const CASES: Record<string, unknown>[] = [
     steps: 30,
     resources: [{ id: 555, baseModel: 'Ideogram 4.0', model: { type: 'LORA' }, strength: 0.6 }],
   },
+  // Ideogram 4.5: same ecosystem, picked by version; fal create and edit
+  { workflow: 'txt2img', ecosystem: 'Ideogram', prompt: 'a cat', seed: 42, model: 3375798 },
+  {
+    workflow: 'txt2img',
+    ecosystem: 'Ideogram',
+    prompt: 'a cat',
+    seed: 42,
+    model: 3375798,
+    aspectRatio: '16:9',
+    quality: 'high',
+    enablePromptExpansion: true,
+  },
+  {
+    workflow: 'img2img:edit',
+    ecosystem: 'Ideogram',
+    prompt: 'a cat',
+    seed: 42,
+    quality: 'low',
+    images: [IMAGE],
+  },
+  // Flux.3
+  { workflow: 'txt2img', ecosystem: 'Flux3', prompt: 'a cat' },
+  {
+    workflow: 'txt2img',
+    ecosystem: 'Flux3',
+    prompt: 'a cat',
+    resolution: '4k',
+    aspectRatio: '16:9',
+    enablePromptExpansion: true,
+  },
+  { workflow: 'img2img:edit', ecosystem: 'Flux3', prompt: 'a cat', images: [IMAGE] },
   { workflow: 'txt2img', ecosystem: 'Seedream', prompt: 'a cat', seed: 42 },
   {
     workflow: 'txt2img',
@@ -755,9 +843,14 @@ const CASES: Record<string, unknown>[] = [
   },
 ];
 
-async function bothLanes({ expectEcosystem, expectFlags, ...input }: Record<string, unknown>) {
-  // meshy v7 needs its flag in ext or the selection is hidden and falls back
-  // to the default
+async function bothLanes({
+  expectEcosystem,
+  expectWorkflow,
+  expectFlags,
+  ...input
+}: Record<string, unknown>) {
+  // flag-gated ecosystems (v7 meshy, the newer 3D generators) need their flag
+  // in ext or the selection is hidden and falls back to the default
   const ext = expectFlags
     ? { ...BASE, flags: { ...BASE.flags, ...(expectFlags as object) } as GenerationCtx['flags'] }
     : BASE;
@@ -773,13 +866,114 @@ async function bothLanes({ expectEcosystem, expectFlags, ...input }: Record<stri
       )} — redirected, not testing the named handler`
     );
   }
+  // the ecosystem check above cannot see a MIGRATED key: a retired workflow parses to txt2img,
+  // silently duplicating another row.
+  const parsedWorkflow = (parsed.data as { workflow?: string }).workflow;
+  if (parsedWorkflow !== (expectWorkflow ?? input.workflow)) {
+    throw new Error(
+      `case labeled ${String(input.workflow)} parsed to ${String(
+        parsedWorkflow
+      )} — a migrated or retired workflow key, not testing the named workflow`
+    );
+  }
   const data = parsed.data as GenerationData;
   const v1 = await createEcosystemStepInput(data, ctx);
   const v2 = await createFormGraphStepInput(data, ctx);
   return { v1, v2 };
 }
 
+const firstInput = (steps: unknown[]) => (steps[0] as { input: unknown }).input;
+const IMAGE2 = { url: 'https://example.com/b.png', width: 1216, height: 832 };
+
 describe('form-graph handlers emit the same steps as the data-graph handlers', () => {
+  it('flux3: create and edit reach fal with the expected inputs', async () => {
+    const create = await bothLanes({
+      workflow: 'txt2img',
+      ecosystem: 'Flux3',
+      prompt: 'a cat',
+      resolution: '2k',
+      aspectRatio: '16:9',
+    });
+    expect(create.v2).toEqual(create.v1);
+    expect(firstInput(create.v2)).toMatchObject({
+      engine: 'fal',
+      model: 'flux3',
+      operation: 'createImage',
+      resolution: '2k',
+      aspectRatio: '16:9',
+      enablePromptExpansion: false,
+    });
+
+    const expanded = await bothLanes({
+      workflow: 'txt2img',
+      ecosystem: 'Flux3',
+      prompt: 'a cat',
+      enablePromptExpansion: true,
+    });
+    expect(firstInput(expanded.v2)).toMatchObject({ enablePromptExpansion: true });
+
+    const edit = await bothLanes({
+      workflow: 'img2img:edit',
+      ecosystem: 'Flux3',
+      prompt: 'a cat',
+      images: [IMAGE, IMAGE2],
+    });
+    expect(edit.v2).toEqual(edit.v1);
+    expect(firstInput(edit.v2)).toMatchObject({
+      engine: 'fal',
+      model: 'flux3',
+      operation: 'editImage',
+      aspectRatio: 'auto',
+      resolution: '1k',
+      images: [IMAGE.url, IMAGE2.url],
+    });
+  });
+
+  it('ideogram: the 4.5 version routes to fal, 4.0 stays on comfy', async () => {
+    const v45 = await bothLanes({
+      workflow: 'txt2img',
+      ecosystem: 'Ideogram',
+      prompt: 'a cat',
+      seed: 42,
+      model: 3375798,
+      aspectRatio: '16:9',
+      quality: 'high',
+    });
+    expect(v45.v2).toEqual(v45.v1);
+    expect(firstInput(v45.v2)).toMatchObject({
+      engine: 'fal',
+      model: 'ideogram45',
+      operation: 'createImage',
+      width: 2560,
+      height: 1440,
+      quality: 'high',
+      enablePromptExpansion: false,
+    });
+
+    const edit = await bothLanes({
+      workflow: 'img2img:edit',
+      ecosystem: 'Ideogram',
+      prompt: 'a cat',
+      seed: 42,
+      images: [IMAGE, IMAGE2],
+    });
+    expect(edit.v2).toEqual(edit.v1);
+    expect(firstInput(edit.v2)).toMatchObject({
+      engine: 'fal',
+      operation: 'editImage',
+      imageSize: 'auto',
+      images: [IMAGE.url, IMAGE2.url],
+    });
+
+    const v40 = await bothLanes({
+      workflow: 'txt2img',
+      ecosystem: 'Ideogram',
+      prompt: 'a cat',
+      seed: 42,
+    });
+    expect(firstInput(v40.v2)).toMatchObject({ engine: 'comfy', ecosystem: 'ideogram4' });
+  });
+
   it.each(CASES.map((input) => ({ name: `${input.workflow} | ${input.ecosystem}`, input })))(
     '$name',
     async ({ input }) => {
@@ -930,6 +1124,238 @@ describe('form-graph handlers emit the same steps as the data-graph handlers', (
         ctx
       )
     ).rejects.toThrow(/no handler for ecosystem/);
+  });
+});
+
+describe('the former textToImage families emit their specialised endpoints', () => {
+  const MIGRATED: { name: string; input: Record<string, unknown>; engine: string }[] = [
+    {
+      name: 'SDXL txt2img keeps sdcpp',
+      input: { workflow: 'txt2img', ecosystem: 'SDXL', prompt: 'a cat', seed: 42 },
+      engine: 'sdcpp',
+    },
+    {
+      name: 'SD1 txt2img with a textual inversion keeps sdcpp',
+      input: {
+        workflow: 'txt2img',
+        ecosystem: 'SD1',
+        prompt: 'a cat',
+        seed: 42,
+        resources: [
+          { id: 111, baseModel: 'SD 1.5', model: { type: 'LORA' }, strength: 0.8 },
+          { id: 222, baseModel: 'SD 1.5', model: { type: 'TextualInversion' }, strength: 1 },
+        ],
+        vae: { id: 333, baseModel: 'SD 1.5', model: { type: 'VAE' } },
+      },
+      engine: 'sdcpp',
+    },
+    {
+      name: 'SDXL with enhanced compatibility and a controlnet keeps comfy',
+      input: {
+        workflow: 'txt2img',
+        ecosystem: 'SDXL',
+        prompt: 'a cat',
+        seed: 42,
+        enhancedCompatibility: true,
+        controlNets: [{ preprocessor: 'canny', image: { url: 'https://example.com/cn.png' } }],
+      },
+      engine: 'comfy',
+    },
+    {
+      name: 'Flux1 standard',
+      input: { workflow: 'txt2img', ecosystem: 'Flux1', prompt: 'a cat', seed: 42 },
+      engine: 'comfy',
+    },
+    {
+      name: 'Flux1 pro',
+      input: { workflow: 'txt2img', ecosystem: 'Flux1', prompt: 'a cat', seed: 42, model: 922358 },
+      engine: 'flux1-pro',
+    },
+    {
+      name: 'Flux1 ultra raw',
+      input: {
+        workflow: 'txt2img',
+        ecosystem: 'Flux1',
+        prompt: 'a cat',
+        seed: 42,
+        model: 1088507,
+        aspectRatio: '21:9',
+        fluxUltraRaw: true,
+      },
+      engine: 'flux1-pro',
+    },
+    {
+      name: 'FluxKrea',
+      input: { workflow: 'txt2img', ecosystem: 'FluxKrea', prompt: 'a cat', seed: 42 },
+      engine: 'comfy',
+    },
+    {
+      name: 'HiDream full',
+      input: {
+        workflow: 'txt2img',
+        ecosystem: 'HiDream',
+        prompt: 'a cat',
+        seed: 42,
+        model: 1772448,
+      },
+      engine: 'comfy',
+    },
+    {
+      name: 'PonyV7',
+      input: { workflow: 'txt2img', ecosystem: 'PonyV7', prompt: 'a cat', seed: 42, quantity: 2 },
+      engine: 'comfy',
+    },
+    {
+      name: 'Chroma',
+      input: { workflow: 'txt2img', ecosystem: 'Chroma', prompt: 'a cat', seed: 42 },
+      engine: 'comfy',
+    },
+  ];
+
+  it.each(MIGRATED)('$name emits one imageGen step in both lanes', async ({ input, engine }) => {
+    const { v1, v2 } = await bothLanes(input);
+    expect(v2).toEqual(v1);
+    expect(v2.filter((s) => s.$type === 'textToImage')).toHaveLength(0);
+    const gen = v2.filter((s) => s.$type === 'imageGen');
+    expect(gen).toHaveLength(1);
+    expect(gen[0].input).toMatchObject({ engine });
+  });
+
+  it('flux ultra carries its aspect-ratio label and raw flag', async () => {
+    const { v2 } = await bothLanes({
+      workflow: 'txt2img',
+      ecosystem: 'Flux1',
+      prompt: 'a cat',
+      seed: 42,
+      model: 1088507,
+      aspectRatio: '21:9',
+      fluxUltraRaw: true,
+    });
+    expect(v2[0].input).toMatchObject({ model: 'ultra', aspectRatio: '21:9', raw: true });
+  });
+
+  it('the sdcpp route carries textual inversions as embeddings', async () => {
+    const { v2 } = await bothLanes({
+      workflow: 'txt2img',
+      ecosystem: 'SD1',
+      prompt: 'a cat',
+      seed: 42,
+      resources: [
+        { id: 111, baseModel: 'SD 1.5', model: { type: 'LORA' }, strength: 0.8 },
+        { id: 222, baseModel: 'SD 1.5', model: { type: 'TextualInversion' }, strength: 1 },
+      ],
+    });
+    expect(v2[0].input).toMatchObject({
+      engine: 'sdcpp',
+      embeddings: ['urn:air:test:222'],
+      loras: { 'urn:air:test:111': 0.8 },
+    });
+  });
+
+  // `expect(v2).toEqual(v1)` is invariant under an edit applied to BOTH lanes, so every
+  // payload below needs an absolute assertion or a revert stays green.
+  it('chroma pins its imageGen payload, not just the engine', async () => {
+    const { v1, v2 } = await bothLanes({
+      workflow: 'txt2img',
+      ecosystem: 'Chroma',
+      prompt: 'a cat',
+      seed: 42,
+      quantity: 2,
+      resources: [{ id: 111, baseModel: 'Chroma', model: { type: 'LORA' }, strength: 0.8 }],
+    });
+    expect(v2).toEqual(v1);
+    expect(v2[0].input).toMatchObject({
+      engine: 'comfy',
+      ecosystem: 'chroma',
+      operation: 'createImage',
+      model: 'urn:air:test:2164239',
+      // the graph always supplies these, so the handler's own `?? 28` / `?? 3.5` never fire
+      steps: 25,
+      cfgScale: 3.5,
+      quantity: 2,
+    });
+    // toEqual, not toMatchObject: a subset match would not see an extra key appear here
+    expect((v2[0].input as { loras?: unknown }).loras).toEqual({ 'urn:air:test:111': 0.8 });
+  });
+
+  it('chroma drops a textual inversion rather than sending it as a lora', async () => {
+    const { v2 } = await bothLanes({
+      workflow: 'txt2img',
+      ecosystem: 'Chroma',
+      prompt: 'a cat',
+      seed: 42,
+      resources: [
+        { id: 111, baseModel: 'Chroma', model: { type: 'LORA' }, strength: 0.8 },
+        { id: 222, baseModel: 'Chroma', model: { type: 'TextualInversion' }, strength: 1 },
+      ],
+    });
+    expect((v2[0].input as { loras?: unknown }).loras).toEqual({ 'urn:air:test:111': 0.8 });
+    expect(v2[0].input).not.toHaveProperty('embeddings');
+  });
+
+  it('hidream sends its loras', async () => {
+    const { v2 } = await bothLanes({
+      workflow: 'txt2img',
+      ecosystem: 'HiDream',
+      prompt: 'a cat',
+      seed: 42,
+      model: 1772448,
+      resources: [{ id: 321, baseModel: 'HiDream', model: { type: 'LORA' }, strength: 0.9 }],
+    });
+    expect((v2[0].input as { loras?: unknown }).loras).toEqual({ 'urn:air:test:321': 0.9 });
+  });
+
+  it('sdxl carries clipSkip now that both engines accept it', async () => {
+    const { v2 } = await bothLanes({
+      workflow: 'txt2img',
+      ecosystem: 'SDXL',
+      prompt: 'a cat',
+      seed: 42,
+      clipSkip: 3,
+    });
+    expect(v2[0].input).toMatchObject({ ecosystem: 'sdxl', clipSkip: 3 });
+  });
+
+  it('hidream sends variant and precision instead of a checkpoint AIR', async () => {
+    const { v2 } = await bothLanes({
+      workflow: 'txt2img',
+      ecosystem: 'HiDream',
+      prompt: 'a cat',
+      seed: 42,
+      model: 1768731,
+    });
+    expect(v2[0].input).toMatchObject({ variant: 'fast', precision: 'fp16' });
+    expect(v2[0].input).not.toHaveProperty('model');
+  });
+
+  it('a textual inversion rides the comfy route, which now carries embeddings', async () => {
+    const { v1, v2 } = await bothLanes({
+      workflow: 'txt2img',
+      ecosystem: 'SDXL',
+      prompt: 'a cat',
+      seed: 42,
+      enhancedCompatibility: true,
+      resources: [
+        { id: 222, baseModel: 'SDXL 1.0', model: { type: 'TextualInversion' }, strength: 1 },
+      ],
+    });
+    expect(v2).toEqual(v1);
+    expect(v2[0].input).toMatchObject({ engine: 'comfy', embeddings: ['urn:air:test:222'] });
+  });
+
+  it('a controlnet forces the comfy engine even with enhancedCompatibility off', async () => {
+    const { v1, v2 } = await bothLanes({
+      workflow: 'txt2img',
+      ecosystem: 'SD1',
+      prompt: 'a cat',
+      seed: 42,
+      controlNets: [{ preprocessor: 'canny', image: { url: 'https://example.com/cn.png' } }],
+    });
+    expect(v2).toEqual(v1);
+    const gen = v2.filter((s) => s.$type === 'imageGen');
+    expect(gen).toHaveLength(1);
+    expect(gen[0].input).toMatchObject({ engine: 'comfy' });
+    expect(gen[0].input).toHaveProperty('controlNets');
   });
 });
 

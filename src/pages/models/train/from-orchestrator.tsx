@@ -123,7 +123,8 @@ export const getServerSideProps = createServerSideProps({
         versionName: version.name,
         baseModel: version.baseModel,
         epochUrl: selectedEpoch.modelUrl,
-        sampleImages: selectedEpoch.sampleImages ?? [],
+        // '' is a failed sample's slot, not an image.
+        sampleImages: (selectedEpoch.sampleImages ?? []).filter(Boolean),
         existingModelFileId: existingModelFile?.id ?? null,
       },
     };

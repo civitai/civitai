@@ -134,6 +134,26 @@ type RestExposure =
  * reader concludes the REST surface was already covered.
  */
 const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string }> = {
+  'src/pages/api/v1/blocks/app-storage/delete.ts': {
+    exposure: 'WRITE',
+    why: 'DELETEs a row of the viewer’s OWN per-app KV. Destructive and unrecoverable from anything left behind — there is no tombstone and no undo, so a suspended app left reachable here could erase a signed-in user’s saved state in a loop, one key per call, faster than they could notice. It also frees their quota, which makes the damage invisible in the usage numbers afterwards. ALREADY refused before this gate, incidentally, for the same delegation reason as the shared-storage routes: it goes through resolveStorageContext, which reads app_blocks.status itself.',
+  },
+  'src/pages/api/v1/blocks/app-storage/get.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'One key of the viewer’s OWN per-app KV, keyed on (block_instance, verified token subject, key). This is private per-user application state — whatever the app chose to persist about that person — and no anonymous caller receives any of it (anon is refused outright by enforceContextBinding on this transport). A suspended app left reachable here would keep reading a signed-in user’s stored data after the takedown. ALREADY refused before this gate, incidentally, for the same delegation reason as the shared-storage routes: it goes through resolveStorageContext, which reads app_blocks.status itself.',
+  },
+  'src/pages/api/v1/blocks/app-storage/list.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'The viewer’s OWN key list for this block instance, paged. Same viewer-scoped data as get.ts but it discloses the SHAPE of the whole keyspace rather than one value, and it is the enumeration primitive: a caller that does not know what to ask for uses this to find out, then reads each key with get.ts. A suspended app left reachable here could therefore exfiltrate a signed-in user’s entire per-app store in 200-row batches, which is exactly the retained per-user data a takedown exists to stop. ALREADY refused before this gate, incidentally, for the same delegation reason as get.ts.',
+  },
+  'src/pages/api/v1/blocks/app-storage/quota.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'The viewer’s OWN { usedBytes, rowCount } against their own caps — deliberately NOT the app-wide aggregate, which was removed from this procedure precisely because summing other users’ rows is a cross-user readout on the one surface whose whole invariant is that a caller sees only their own data. It names no key and no value, but it is still a live per-user counter that moves with what that person stores, so it is a retained activity signal rather than a static fact. ALREADY refused before this gate, incidentally, for the same delegation reason as get.ts.',
+  },
+  'src/pages/api/v1/blocks/app-storage/set.ts': {
+    exposure: 'WRITE',
+    why: 'Upserts a row of the viewer’s OWN per-app KV, and the only route on this surface that CONSUMES A BUDGET: it spends the viewer’s 2MB / per-user row sub-budget and the app’s 50MB / 1M-row ceiling. A suspended app left reachable here could keep writing into a signed-in user’s store after the takedown and, worse, could fill their per-user quota so that the app they actually want to use cannot write — a denial that outlives the suspension and that the victim cannot diagnose. It is NOT classed SPEND: it moves no Buzz and no money ledger, only a storage budget.',
+  },
   'src/pages/api/v1/blocks/buzz.ts': {
     exposure: 'READ_VIEWER_SCOPED',
     why: 'The viewer’s own spendable Buzz balances — getUserBuzzAccounts keyed on the verified token subject, projected to { blue, green, yellow }. A suspended app would otherwise keep reading a signed-in user’s live wallet: how much free Buzz they hold, how much purchased Buzz they hold, and therefore what they can afford. No anonymous caller receives any of that, and the numbers move with the viewer’s spending, so a retained balance read is also a per-user activity signal a takedown is meant to stop.',
@@ -150,6 +170,10 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
     exposure: 'READ_VIEWER_SCOPED',
     why: 'Collection discovery AND the viewer’s own collection list — the second half is viewer data an anonymous caller does not receive.',
   },
+  'src/pages/api/v1/blocks/gated-images.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'The per-viewer gated image read — the REST twin of GET_IMAGES_BY_IDS. It shares "no requiredScope" with images.ts and nothing else, and the difference is the corpus: not the public catalog but the rows carrying metadata.blockPublishedAppId = THIS token’s appId, i.e. the calling app’s OWN published outputs. What it returns per id is then decided against the VERIFIED subject — their maxBrowsingLevel ceiling, their blocked-users / blocked-tags sets, and the one owner branch that shows an author their own not-yet-rated image — so it is viewer-scoped twice over. It is also the only route on this surface that MINTS A MODERATED EDGE URL for bytes the caller cannot otherwise reach: the raw storage key never leaves the server, so a `visible` entry hands out a url nothing else could construct. A suspended app left reachable here would keep serving its users’ generated images — including, on the owner path, unrated ones no scan has cleared — after the takedown, which is exactly the retained reach a suspension exists to end. Anon is refused inside the shared body (parseSubjectUserId → UNAUTHORIZED), so nothing here is reachable without a signed-in subject.',
+  },
   'src/pages/api/v1/blocks/generation-resources.ts': {
     exposure: 'READ_PUBLIC',
     why: 'Public, maturity-clamped resource data. Thinnest gate of the set: no requiredScope, so no scope check and no context binding either.',
@@ -165,6 +189,10 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
   'src/pages/api/v1/blocks/models.ts': {
     exposure: 'READ_PUBLIC',
     why: 'The public, maturity-clamped model catalog. No requiredScope.',
+  },
+  'src/pages/api/v1/blocks/resource-intent.ts': {
+    exposure: 'READ_PUBLIC',
+    why: 'Jev resource-intent suggestions: public, maturity-clamped resource data projected through projectSafeGenerationResource — no requiredScope, nothing viewer-scoped, nothing written. It costs vendor LLM spend per call (the reason it keeps the default fail-closed 503 on an approval-lookup failure, unlike its READ_PUBLIC siblings), but the RESPONSE discloses only what the catalog routes disclose.',
   },
   'src/pages/api/v1/blocks/shared-storage/append.ts': {
     exposure: 'WRITE',
@@ -210,6 +238,18 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
     exposure: 'WRITE',
     why: 'DELETEs the viewer’s own shared_kv row, cascading away its votes, counter and reports. The most destructive route on the whole shared surface: what it removes cannot be reconstructed from anything left behind, so a suspended app left reachable here could erase a user’s published history in a loop. ALREADY refused before this gate, incidentally, for the same delegation reason as increment.ts.',
   },
+  'src/pages/api/v1/blocks/user-checkpoint/set.ts': {
+    exposure: 'WRITE',
+    why: 'Upserts the VIEWER’s own checkpoint override into block_user_settings, keyed on (block_instance_id, user_id) — and that row is not inert configuration, it is the FIRST link in the precedence chain resolveBlockCheckpoint walks on every subsequent generation, ahead of the publisher’s own default. A suspended app left reachable here could therefore keep steering which Checkpoint a signed-in viewer’s generations anchor to, silently and durably: the override outlives the session and outlives the takedown, and the viewer has no reason to suspect the model they are generating against is not the one the publisher configured. It spends no Buzz and no storage quota — the write is a single bounded upsert on an already-resolved install — so it is not SPEND, but it is the one write on this surface whose effect lands on FUTURE spending rather than on present state. Neither half of the key is a request parameter: both come from the verified JWT, which is what keeps an override from leaking across installs or across viewers.',
+  },
+  'src/pages/api/v1/blocks/entitlements.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'Lists the DIGITAL GOODS the viewer owns from THIS app — the goodId, the manifest-sourced payload and the grant time of every entitlement the app has sold them. Scoped to claims.appBlockId in the query, so it discloses nothing about what the viewer bought elsewhere, which is why it is not a broader read; but a suspended app left reachable here keeps reading a signed-in user’s purchase history with this app after the takedown, and the payload is whatever that app chose to put on the entitlement.',
+  },
+  'src/pages/api/v1/blocks/goods/purchase.ts': {
+    exposure: 'SPEND',
+    why: 'Debits the viewer’s Buzz for a manifest-declared good and pays the app owner 70% immediately. The third SPEND route this table carries, and the only one whose counterparty is the app’s own owner: a suspended app left reachable here would keep selling its catalog to signed-in users and keep paying its own owner out of their balances, which is precisely the revenue a takedown exists to stop. The charge is bounded per purchase and per viewer per day, but neither bound is a substitute for refusing a suspended app.',
+  },
   'src/pages/api/v1/blocks/tip-allowance.ts': {
     exposure: 'READ_VIEWER_SCOPED',
     why: 'A read, but of the money counter: it discloses the viewer’s live { cap, spent, remaining } tip allowance.',
@@ -217,6 +257,26 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
   'src/pages/api/v1/blocks/tip.ts': {
     exposure: 'SPEND',
     why: 'createBuzzTipTransactionHandler, a real irreversible Buzz transfer. The highest-value entry in this table and the reason the gate was added.',
+  },
+  'src/pages/api/v1/blocks/workflows/cancel.ts': {
+    exposure: 'WRITE',
+    why: 'Stops a RUNNING generation on the orchestrator — a real server-side kill, not a client-side "stop watching". A suspended app left reachable here could terminate generations a signed-in viewer is paying for and waiting on, one call at a time, and the work destroyed cannot be recovered from anything left behind: the orchestrator prorates the refund by undelivered output, so a cancel late in a run returns only part of the Buzz. It also triggers the post-paid settle and the author-fee reversal, so it moves the money ledger as well as the queue.',
+  },
+  'src/pages/api/v1/blocks/workflows/estimate.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'A whatIf price quote for a generation, computed against the VIEWER’s own orchestrator token and their entitlement to the requested resources — so the answer discloses what this viewer in particular would be charged, including early-access and Private-subscription resolution an anonymous caller receives nothing of. It queues nothing and spends nothing, which is why it is not SPEND, but a suspended app left reachable here would keep running priced, entitlement-resolving origin work on a signed-in user’s behalf, once per parameter change, with no money counter bounding it.',
+  },
+  'src/pages/api/v1/blocks/workflows/poll.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'Reads one of the VIEWER’s own workflows — its live status, its cost and its output image urls and generated text, scoped by assertBlockWorkflowMintedForViewer (the id must name this viewer) and assertBlockWorkflowTaggedForApp (the record must carry this app’s provenance tag). A suspended app left reachable here would keep harvesting the outputs of generations it had already started on a signed-in user’s behalf, which is precisely the retained per-user data a takedown exists to stop; with the optional waitSeconds hold it also keeps an origin request slot open per call.',
+  },
+  'src/pages/api/v1/blocks/workflows/query.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'Pages the VIEWER’s own generation workflows, narrowed to the calling app’s subqueue by a host-forced app-block:<appId> tag built from the verified token — so the body is a list of that viewer’s statuses, costs and output image urls, up to 50 per call, and an anonymous caller receives none of it. A suspended app left reachable here would keep harvesting the full history of everything it ever generated on a signed-in user’s behalf, in BULK rather than one workflow at a time like poll.ts, which is the same retained per-user data a takedown exists to stop at the worst rows-per-call ratio on this surface.',
+  },
+  'src/pages/api/v1/blocks/workflows/submit.ts': {
+    exposure: 'SPEND',
+    why: 'Runs a generation that debits the VIEWER’s Buzz — irreversible once the orchestrator accepts it. The highest-value entry in this table alongside tip.ts, and the one with the largest per-call ceiling: a tip is bounded by BLOCK_TIP_MAX_PER_TIP, a generation by whatever per-call buzzBudget the viewer consented to. A suspended app left reachable here could keep spending a signed-in user’s balance, keep accruing an author fee payable to the suspended app’s own publisher, and keep consuming the per-app velocity allowance every other viewer of that app shares.',
   },
   'src/pages/api/v1/blocks/tools.ts': {
     exposure: 'READ_PUBLIC',
@@ -1253,10 +1313,38 @@ describe('no unguarded block-REST token verification', () => {
    * this file objected to opting any of them in.
    */
   const MUST_FAIL_CLOSED = [
+    // The five PER-VIEWER app-storage routes. All five are READ_VIEWER_SCOPED or
+    // WRITE — there is no READ_PUBLIC among them, because there is no public half
+    // of this datastore at all: every row is keyed on (block_instance, viewer) and
+    // an anonymous caller receives none of it. None may opt out. A suspended app
+    // reaching any of them keeps reading, rewriting or DELETING a signed-in
+    // viewer's saved state after the takedown, and `delete` in particular destroys
+    // data that nothing left behind can reconstruct.
+    'src/pages/api/v1/blocks/app-storage/delete.ts',
+    'src/pages/api/v1/blocks/app-storage/get.ts',
+    'src/pages/api/v1/blocks/app-storage/list.ts',
+    'src/pages/api/v1/blocks/app-storage/quota.ts',
+    'src/pages/api/v1/blocks/app-storage/set.ts',
     'src/pages/api/v1/blocks/buzz.ts',
     'src/pages/api/v1/blocks/collections/[id]/follow.ts',
     'src/pages/api/v1/blocks/collections/[id]/index.ts',
     'src/pages/api/v1/blocks/collections/index.ts',
+    // The per-viewer gated image read. It sits NEXT TO images.ts in the route
+    // tree and on the opposite side of this line from it, which is the pairing
+    // worth noticing: images.ts is READ_PUBLIC and opts out, this one may not.
+    // The corpus is the calling app's OWN published rows rather than the public
+    // catalog, every verdict is computed against the verified subject, and a
+    // `visible` entry hands out a minted edge url for bytes that are otherwise
+    // unreachable — so a suspended app left serving it keeps delivering its
+    // users' generated images after the takedown.
+    'src/pages/api/v1/blocks/gated-images.ts',
+    // The DIGITAL GOODS pair. `goods/purchase.ts` is the third SPEND route this
+    // table has ever carried and `entitlements.ts` reads the viewer's purchase
+    // history with the app. Neither may opt out: a suspended app reaching the
+    // first keeps charging signed-in viewers and paying its own owner, and one
+    // reaching the second keeps reading what it sold them.
+    'src/pages/api/v1/blocks/entitlements.ts',
+    'src/pages/api/v1/blocks/goods/purchase.ts',
     'src/pages/api/v1/blocks/me.ts',
     'src/pages/api/v1/blocks/shared-storage/append.ts',
     'src/pages/api/v1/blocks/shared-storage/counts.ts',
@@ -1271,6 +1359,22 @@ describe('no unguarded block-REST token verification', () => {
     'src/pages/api/v1/blocks/shared-storage/withdraw.ts',
     'src/pages/api/v1/blocks/tip-allowance.ts',
     'src/pages/api/v1/blocks/tip.ts',
+    // The per-viewer checkpoint override write. WRITE, so it may not opt out: a
+    // suspended app reaching it keeps steering which Checkpoint a signed-in
+    // viewer's future generations anchor to, and the row it writes OUTLIVES the
+    // takedown — `resolveBlockCheckpoint` consults the viewer override ahead of
+    // the publisher's own default on every subsequent submit.
+    'src/pages/api/v1/blocks/user-checkpoint/set.ts',
+    // The five workflow routes. `submit.ts` is the second SPEND route this table
+    // has ever carried; the other four are WRITE / READ_VIEWER_SCOPED. None may
+    // opt out: a suspended app reaching any of them keeps spending, stopping or
+    // harvesting a signed-in viewer's generations, which is the whole exposure
+    // the gate removes.
+    'src/pages/api/v1/blocks/workflows/cancel.ts',
+    'src/pages/api/v1/blocks/workflows/estimate.ts',
+    'src/pages/api/v1/blocks/workflows/poll.ts',
+    'src/pages/api/v1/blocks/workflows/query.ts',
+    'src/pages/api/v1/blocks/workflows/submit.ts',
   ];
 
   it('the money, write and viewer-scoped routes fail CLOSED — the option is absent from all of them', () => {
@@ -1421,8 +1525,8 @@ const BACKING_ROW_LOOKUP_RE = /\bappId_blockId\b/;
 const BACKING_ROW_LOOKUP_LEDGER: Record<string, string> = {
   'src/server/services/blocks/block-approval.service.ts':
     'THE PREDICATE. The one place the row is resolved from token claims and compared against `approved`. Both halves of the runtime — withBlockScope (REST) and assertAppBlockApproved (the tRPC bridge) — resolve their verdict here. Its exemptions are THREE named cases, not the bare `dev` claim (clawgate #571): a signed reviewRunForReal review token, a synthetic id with no backing row, and the owner-dev-tunnel case re-derived from the row owner plus an ACTIVE tunnel. A new approval check belongs in this file or calling it, not beside it.',
-  'src/server/routers/apps.router.ts':
-    'resolveStorageContext — per-user KV. Reads the row and refuses a non-approved one itself, and is STRICTER than the predicate: it exempts ONLY reviewRunForReal, because per-user KV must resolve to a real Postgres schema and a plain dev token names none. Since clawgate #571 the predicate answers reviewRunForReal first too, so the two now agree about the review sandbox and differ by exactly the owner-dev-tunnel case — correctly, since a suspended app being debugged in its owner tunnel has a page to render but no per-user KV schema to write. Folding this into the predicate would widen an exemption it deliberately does not have.',
+  'src/server/services/apps/app-storage.service.ts':
+    'resolveStorageContext — per-user KV. Reads the row and refuses a non-approved one itself, and is STRICTER than the predicate: it exempts ONLY reviewRunForReal, because per-user KV must resolve to a real Postgres schema and a plain dev token names none. Since clawgate #571 the predicate answers reviewRunForReal first too, so the two now agree about the review sandbox and differ by exactly the owner-dev-tunnel case — correctly, since a suspended app being debugged in its owner tunnel has a page to render but no per-user KV schema to write. Folding this into the predicate would widen an exemption it deliberately does not have. (This lived in `routers/apps.router.ts` until the `/api/v1/blocks/app-storage/*` REST twins landed; it moved so a route module could import the implementation without module-evaluating `appsRouter`. Same function, same single call site, new file.)',
   'src/server/routers/apps-shared.router.ts':
     'resolveSharedContext — shared, app-global KV. Same shape, exempts NOTHING: shared storage is cross-user state and run-for-real never grants apps:storage:shared:* at all, so there is no case to exempt. Stricter than both the predicate and resolveStorageContext, for a reason about its target rather than about approval.',
   'src/pages/api/v1/developer/block-manifests.ts':
@@ -1540,5 +1644,232 @@ describe('the approval predicate is not open-coded a second time', () => {
     expect(BACKING_ROW_LOOKUP_LEDGER).not.toHaveProperty(
       'src/server/services/blocks/block-bridge-auth.service.ts'
     );
+  });
+
+  /**
+   * 🔴 WHICH TOKEN SEAMS APPLY PER-SCOPE CONSENT REVOCATIONS — a growth/shrink ledger, because
+   * the enforcement is a STRIP and a strip is invisible where it is absent.
+   *
+   * `verifyBlockToken` has FOUR call sites. Two of them apply revocations
+   * (`consent-revocation.service`'s `applyRevocations`); two do not, and that is safe ONLY
+   * because each of those authorizes exclusively `apps:storage:*` / `apps:storage:shared:*`,
+   * every one of which is in `CONSENT_EXEMPT_SCOPES` — so no marker can ever name a scope they
+   * check. Nothing asserted that property, which means a gated scope added to the storage family
+   * would be silently unenforced on those two paths. This is that assertion.
+   *
+   * 🔴 IT FAILS IN BOTH DIRECTIONS **BECAUSE IT DERIVES THE CALLER SET**, and the first version did
+   * not. That version asserted a growth property it could not observe: every `walk()` in this file
+   * targets `src/pages/api`, while all four real `verifyBlockToken` call sites live under
+   * `src/server/**` — so a fifth caller was invisible and the "fails on growth" sentence was
+   * false. Same description-wider-than-body defect this commit fixed twice elsewhere, reproduced
+   * inside its own new guard. The callers are now enumerated from **`src`**, whole.
+   *
+   * ⚠️ IT WAS `src/server` + `src/pages`, WHICH IS A BOUND NOTHING JUSTIFIED. No caller lives
+   * outside those two today, but the guard's whole claim is "a FIFTH caller is loud", and a caller
+   * added under `src/shared`, `src/utils` or `src/libs` would have been exactly as invisible as
+   * the `src/server` ones were to the version before it. Walking one root instead of two costs
+   * nothing — 2,012 files become 4,503, an 8 ms walk and a 29 ms read — and removes the residual.
+   *
+   * ⚠️ AND THE ENUMERATION HERE USED TO BE WRONG, in the commit whose stated purpose included
+   * correcting three un-derived counts. It claimed "the only other mentions of the name anywhere
+   * in `src` are comments in `src/env/server-schema.ts` and
+   * `src/shared/constants/block-scope.constants.ts`". Re-derived by round-5 review: **13**
+   * non-test files under `src` mention the name, **5** match the raw call-shape regex, and **3**
+   * survive `stripNonCode` as real callers. Of the files the widening newly brought into scope,
+   * exactly one matches the raw regex — `block-scope.constants.ts`, twice, both inside a
+   * block comment that `stripNonCode` removes. The argument never depended on the enumeration; the
+   * number is the part that rots, so read the derivation rather than this sentence.
+   */
+  const CONSENT_STRIP_SEAMS: Record<string, string> = {
+    'src/server/middleware/block-scope.middleware.ts':
+      "REST. Refuses with `code: consent_revoked` when the route's own requiredScope is revoked, " +
+      'and strips every other revoked scope so in-handler sub-checks — which is how ' +
+      '`collections:read:private` is gated — honour the revoke too.',
+    'src/server/services/blocks/block-bridge-auth.service.ts':
+      'tRPC bridge. Strips, so all of its procedures honour the revoke through their own ' +
+      '`claims.scopes.includes(...)` gates. This is the only path that authorizes ' +
+      '`posts:write:self`.',
+  };
+
+  /** The seams that verify a token but apply NO revocations, with the property that makes it safe. */
+  const EXEMPT_ONLY_SEAMS: Record<string, readonly string[]> = {
+    'src/server/routers/apps-shared.router.ts': [
+      'apps:storage:shared:read',
+      'apps:storage:shared:write',
+    ],
+    'src/server/services/apps/app-storage.service.ts': ['apps:storage:read', 'apps:storage:write'],
+  };
+
+  /**
+   * Every production file that CALLS `verifyBlockToken`, derived by walking `src` whole.
+   * `block-scope.middleware.ts` is excluded as the DEFINER — it exports the function, and its own
+   * call is the REST seam, which is ledgered by name. The exclusion is safe because both sides of
+   * the equality use the same constant, so a RENAME breaks the comparison loudly rather than
+   * quietly dropping a caller.
+   */
+  function verifyTokenCallers(): string[] {
+    /** Every `.ts`/`.tsx` under a repo-relative dir, excluding tests. Uses this file's own
+     *  `toPosix` so the keys compare on win32 as well. */
+    function tsFiles(relDir: string, out: string[] = []): string[] {
+      for (const entry of fs.readdirSync(path.join(REPO_ROOT, relDir), { withFileTypes: true })) {
+        const rel = toPosix(path.join(relDir, entry.name));
+        if (entry.isDirectory()) {
+          if (entry.name === '__tests__' || entry.name === 'node_modules') continue;
+          tsFiles(rel, out);
+          continue;
+        }
+        if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) out.push(rel);
+      }
+      return out;
+    }
+    const DEFINER = 'src/server/middleware/block-scope.middleware.ts';
+    return tsFiles('src')
+      .filter((rel) => rel !== DEFINER)
+      .filter((rel) => /verifyBlockToken\s*\(/.test(stripNonCode(read(rel))))
+      .sort();
+  }
+
+  it('POSITIVE CONTROL: the verifyBlockToken caller set is derived and complete', () => {
+    const callers = verifyTokenCallers();
+    // A broken walk makes every equality below vacuous.
+    expect(callers.length).toBeGreaterThan(2);
+    // And it really is the union of the two ledgers — this is the GROWTH check the first version
+    // claimed and could not perform.
+    // The REST seam IS `block-scope.middleware.ts`, which is also the DEFINER and therefore
+    // excluded from the derivation — so compare against the ledgers minus that one key.
+    const DEFINER = 'src/server/middleware/block-scope.middleware.ts';
+    expect(callers).toEqual(
+      [...Object.keys(CONSENT_STRIP_SEAMS), ...Object.keys(EXEMPT_ONLY_SEAMS)]
+        .filter((k) => k !== DEFINER)
+        .sort()
+    );
+  });
+
+  it('every verifyBlockToken seam either applies revocations or authorizes only exempt scopes', async () => {
+    const { isConsentExemptScope } = await import('~/server/services/blocks/scope-grant.service');
+    const seams = [...Object.keys(CONSENT_STRIP_SEAMS), ...Object.keys(EXEMPT_ONLY_SEAMS)].sort();
+
+    // POSITIVE CONTROL on the enumeration itself: every ledgered seam must really call
+    // `verifyBlockToken`, or this whole block is a claim about a list rather than the tree.
+    for (const rel of seams) {
+      expect(stripNonCode(read(rel)), `${rel} does not verify a block token`).toMatch(
+        /verifyBlockToken\s*\(/
+      );
+    }
+
+    for (const [rel, why] of Object.entries(CONSENT_STRIP_SEAMS)) {
+      expect(
+        stripNonCode(read(rel)),
+        `${rel} is ledgered as applying consent revocations (${why}) and does not call ` +
+          `applyRevocations. A strip that is absent is invisible: every scope the viewer ` +
+          `withdrew keeps working on that seam for the rest of the token's life.`
+      ).toMatch(/applyRevocations\s*\(/);
+    }
+
+    for (const [rel, scopes] of Object.entries(EXEMPT_ONLY_SEAMS)) {
+      const code = stripNonCode(read(rel));
+      expect(code, `${rel} now applies revocations — move it to CONSENT_STRIP_SEAMS.`).not.toMatch(
+        /applyRevocations\s*\(/
+      );
+      for (const scope of scopes) {
+        expect(
+          isConsentExemptScope(scope),
+          `${rel} authorizes "${scope}", which is NO LONGER consent-exempt. That seam applies ` +
+            `no revocations, so a viewer withdrawing it would be silently ignored there. Either ` +
+            `wire the strip in, or re-exempt the scope deliberately.`
+        ).toBe(true);
+      }
+      // …and the scopes it authorizes are still the ones ledgered here. Read the RAW source for
+      // this one: `stripNonCode` blanks string literals, so the scope names are gone from `code`.
+      const raw = read(rel);
+      for (const scope of scopes) {
+        expect(raw, `${rel} no longer authorizes "${scope}" — re-derive this ledger`).toContain(
+          scope
+        );
+      }
+    }
+  });
+
+  /**
+   * 🔴 THE ANY-TOKEN ROUTES READ NO SCOPES — DERIVED, NOT LISTED.
+   *
+   * The middleware skips the consent-marker read entirely when a route declares no
+   * `requiredScope`, on the ground that such a route exercises no scope and a marker can therefore
+   * neither refuse nor usefully strip. That holds only while those routes really do ignore
+   * `claims.scopes`; if one starts reading them, a viewer's revoke is silently unenforced there.
+   *
+   * ⚠️ THE FIRST VERSION HARDCODED FIVE PATHS AND THE POPULATION IS SIX — `generation-resources.ts`
+   * was missing. A hand-list ALONE is exactly what this file's own preamble forbids ("A
+   * RELATIONSHIP, NOT A COUNT … the KEY SET must equal the DERIVED set, in both directions"), and
+   * it is the shape that let the skip's soundness guard cover 5 of 6 while claiming the population.
+   * So the set is DERIVED from the same `blockScopedRoutes()` walk every other ledger here uses,
+   * and a seventh route is covered the day it is added.
+   *
+   * ⚠️ THE FIX THAT CLAIMED SIX SAID SEVEN. The commit adding this derivation asserted a population
+   * of seven by also counting `blocks/me.ts` — which declares `requiredScope: 'user:read:self'` and
+   * is therefore not in this population at all. Both the five and the seven were stated without
+   * being derived; that is why the ledger below exists.
+   */
+  function anyTokenRoutes(): string[] {
+    return blockScopedRoutes()
+      .filter((rel) => !/requiredScope\s*:/.test(stripNonCode(read(rel))))
+      .sort();
+  }
+
+  /**
+   * 🔴 THE LEDGER THE DERIVATION IS GRADED AGAINST — the idiom this file's preamble mandates, and
+   * the only control that fails when the derivation SHRINKS.
+   *
+   * `expect(routes.length).toBeGreaterThan(3)` was measured too loose to be worth keeping: with a
+   * derived population of six, a walk that silently lost 2 of 6 still passed, which is a WEAKER
+   * property than the hand-list defect it replaced (missing 1 of 6). Established by mutating
+   * `stripNonCode` to the identity function — the population collapsed from 6 to 3 and the control
+   * failed by exactly one. The companion `toBeLessThan(blockScopedRoutes().length)` was free: that
+   * side is 35.
+   *
+   * Set equality in BOTH directions is what makes a lost route and a new route each loud. Adding a
+   * route here is a deliberate act: it asserts the route reads no `claims.scopes`, which the arm
+   * below then verifies mechanically.
+   */
+  const ANY_TOKEN_ROUTES = [
+    'src/pages/api/v1/blocks/gated-images.ts',
+    'src/pages/api/v1/blocks/generation-resources.ts',
+    'src/pages/api/v1/blocks/images.ts',
+    'src/pages/api/v1/blocks/models.ts',
+    'src/pages/api/v1/blocks/resource-intent.ts',
+    'src/pages/api/v1/blocks/tools.ts',
+    'src/pages/api/v1/blocks/user-checkpoint/set.ts',
+  ];
+
+  it('POSITIVE CONTROL: the any-token population is derived and equals its ledger', () => {
+    const routes = anyTokenRoutes();
+    // Non-vacuous first: an empty derivation makes the soundness arm below assert nothing.
+    expect(routes.length).toBeGreaterThan(3);
+    // …and it is a strict subset of the wrapped routes, i.e. the filter really filtered.
+    expect(routes.length).toBeLessThan(blockScopedRoutes().length);
+    // 🔴 BOTH DIRECTIONS. A route that STOPS being any-token (it gained a `requiredScope`) and a
+    // route that STARTS being one (a new catalog route) are both findings: the first means this
+    // ledger over-claims, the second means the middleware's marker skip just widened without
+    // anyone checking the new route ignores `claims.scopes`.
+    expect(
+      routes,
+      'the derived any-token population no longer matches its ledger. A route ADDED here must be ' +
+        'confirmed to read no claims.scopes (the arm below does that); a route REMOVED here now ' +
+        'declares a requiredScope and is consulted normally — update the list either way. A ' +
+        'SHRINKING derivation is the dangerous direction: it silently reduces what the soundness ' +
+        'arm covers, which is how a list of five stood in for a population of six.'
+    ).toEqual([...ANY_TOKEN_ROUTES].sort());
+  });
+
+  it('every any-token route reads no scopes, so the marker skip is sound', () => {
+    for (const rel of anyTokenRoutes()) {
+      const code = stripNonCode(read(rel));
+      expect(
+        code,
+        `${rel} declares no requiredScope, so the consent-marker read is SKIPPED for it — but it ` +
+          `reads claims.scopes, which means a viewer's revoke is silently unenforced there. ` +
+          `Either give the route a requiredScope, or stop reading scopes in it.`
+      ).not.toMatch(/\bscopes\b/);
+    }
   });
 });

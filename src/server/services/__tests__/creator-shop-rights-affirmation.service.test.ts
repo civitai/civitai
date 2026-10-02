@@ -109,7 +109,11 @@ describe('submitCreatorShopItem', () => {
     });
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) })
+      vi.fn().mockResolvedValue({
+        ok: true,
+        headers: { get: () => null },
+        arrayBuffer: async () => new ArrayBuffer(8),
+      })
     );
     mocks.createBuzzTransaction.mockResolvedValue({ transactionId: 'tx-1' });
     mocks.cosmeticCreate.mockResolvedValue({ id: 99 });

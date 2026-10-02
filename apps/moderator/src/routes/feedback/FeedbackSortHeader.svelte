@@ -25,8 +25,8 @@
   `<button>`. `$lib/feedback-sort.ts` carries both arguments; the short version is that the queue is
   keyset-paged, so sorting the loaded rows orders one page and presents it as the whole queue.
 
-  The three `data-sveltekit-*` attributes are the set the tab strip carries, for the same reasons
-  (`FeedbackTabs.svelte`): without `noscroll` a sort click throws the operator back to the top of the
+  The three `data-sveltekit-*` attributes are what make a real navigation behave like an in-place
+  control: without `noscroll` a sort click throws the operator back to the top of the
   queue, away from the row they have open; without `keepfocus` a keyboard operator is dropped to the
   top of the document, so cycling asc→desc→none means re-tabbing to the header three times; without
   `replacestate` the three clicks it takes to get back to unsorted leave three history entries and

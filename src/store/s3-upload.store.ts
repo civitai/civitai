@@ -5,12 +5,14 @@ import { immer } from 'zustand/middleware/immer';
 
 import type { UploadType } from '~/server/common/enums';
 import { withRetries } from '~/utils/errorHandling';
-import type { UploadPartError } from '~/utils/upload-retry';
+import type { PartFailureReason, UploadPartError } from '~/utils/upload-retry';
 import {
+  describePartFailure,
   getPartRetryDelay,
   isExpiredPartError,
   isTerminalCompleteStatus,
   MAX_PART_ATTEMPTS,
+  resolveUploadRowStatus,
   shouldRetryPartError,
 } from '~/utils/upload-retry';
 
@@ -289,7 +291,7 @@ export const useS3UploadStore = create<StoreProps>()(
           };
 
           // Prepare abort
-          const abortUpload = () =>
+          const abortUpload = (failure?: PartFailureReason) =>
             fetch(abortEndpoint, {
               method: 'POST',
               headers,
@@ -299,6 +301,7 @@ export const useS3UploadStore = create<StoreProps>()(
                 type,
                 uploadId,
                 backend,
+                ...(failure ? { failure } : {}),
               }),
             });
 
@@ -314,9 +317,9 @@ export const useS3UploadStore = create<StoreProps>()(
           // with an incidental teardown error at every call site. The abort endpoint
           // also treats an already-gone upload as success, so a throw on this path is
           // genuinely exceptional — it gets logged, not raised.
-          const abortUploadQuietly = async () => {
+          const abortUploadQuietly = async (failure?: PartFailureReason) => {
             try {
-              await abortUpload();
+              await abortUpload(failure);
             } catch (err) {
               console.error('Failed to abort upload');
               console.error(err);
@@ -422,16 +425,17 @@ export const useS3UploadStore = create<StoreProps>()(
                   reject({
                     status: xhr.status,
                     retryAfter: xhr.getResponseHeader('Retry-After'),
+                    partNumber: i,
                   } as UploadPartError);
                 }
               });
               xhr.addEventListener('error', () => {
                 activeXhrs.delete(xhr);
-                reject({ status: null, networkError: true } as UploadPartError);
+                reject({ status: null, networkError: true, partNumber: i } as UploadPartError);
               });
               xhr.addEventListener('abort', () => {
                 activeXhrs.delete(xhr);
-                reject({ status: null, aborted: true } as UploadPartError);
+                reject({ status: null, aborted: true, partNumber: i } as UploadPartError);
               });
               xhr.open('PUT', url);
               xhr.setRequestHeader('Content-Type', 'application/octet-stream');
@@ -441,6 +445,19 @@ export const useS3UploadStore = create<StoreProps>()(
           // Shared cancellation: trips on user abort or first fatal failure so sleeping
           // retry workers don't fire zombie PUTs after the upload has been torn down.
           const cancelController = new AbortController();
+          // 🔴 Whether the PERSON cancelled — not whether `cancelController` has tripped.
+          // Both a user cancel and the worker's own teardown trip that signal and abort
+          // the same in-flight xhrs, so neither it nor the resulting `{ aborted: true }`
+          // part errors can tell the two apart. Set in exactly one place: the `abort`
+          // handed out on the tracked row below.
+          //
+          // The sibling client `useS3Upload` had the same confusion with a worse
+          // consequence — its relay fallback was gated on the shared signal and could
+          // never run. This client has no relay (the relay route writes to the image
+          // bucket; this one serves model/training uploads), so here it is the terminal
+          // status that was wrong: a cancel racing a non-retryable part failure reported
+          // as an upload error.
+          let userAborted = false;
           const cancellableSleep = (ms: number) =>
             new Promise<void>((resolve) => {
               if (cancelController.signal.aborted) return resolve();
@@ -457,6 +474,7 @@ export const useS3UploadStore = create<StoreProps>()(
           try {
             updateFile(pendingItem.uuid, {
               abort: () => {
+                userAborted = true;
                 cancelProgress();
                 cancelController.abort();
                 for (const x of activeXhrs) x.abort();
@@ -472,6 +490,15 @@ export const useS3UploadStore = create<StoreProps>()(
 
           const runWorker = async () => {
             while (queue.length > 0 && !fatalErrorRef.value) {
+              // ⚠ Returns WITHOUT recording a fatal, where the same guard in `useS3Upload`
+              // records `{ aborted: true }`. Neither is reachable today. This guard runs
+              // on first loop entry — synchronous with pool creation, with no `await`
+              // between registering `abort` on the row and `Promise.all`, so a click
+              // cannot land there — and thereafter only after a part SUCCEEDED, where the
+              // gap before it is a microtask, which a click also cannot land in. The two
+              // real macrotask windows inside the loop, the backoff sleep and the part
+              // re-sign, both re-enter at the `for`-loop top, whose guard DOES record.
+              // If this loop ever grows an `await` before this line, record here too.
               if (cancelController.signal.aborted) return;
               const item = queue.shift();
               if (!item) return;
@@ -514,10 +541,10 @@ export const useS3UploadStore = create<StoreProps>()(
           await Promise.all(
             Array.from({ length: Math.min(CONCURRENT_PARTS, urls.length) }, () => runWorker())
           );
+          // Shared with the hook client; the rules and the reason they are shared are on
+          // `resolveUploadRowStatus`.
           const failureStatus: UploadStatus | null = fatalErrorRef.value
-            ? fatalErrorRef.value.aborted
-              ? 'aborted'
-              : 'error'
+            ? resolveUploadRowStatus(fatalErrorRef.value, { userAborted })
             : null;
 
           // No more progress events past this point; drop any queued frame so it can't
@@ -526,7 +553,7 @@ export const useS3UploadStore = create<StoreProps>()(
 
           if (failureStatus) {
             setTerminalStatus(failureStatus);
-            await abortUploadQuietly();
+            await abortUploadQuietly(describePartFailure(fatalErrorRef.value));
             return;
           }
 

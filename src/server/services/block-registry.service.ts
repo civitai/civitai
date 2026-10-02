@@ -379,6 +379,85 @@ export interface PageBlockSsr {
 }
 
 /**
+ * PRIVATE RUN — the NON-APPROVED page block shape both private-run callers consume.
+ *
+ * 🔴 IT IS THE UNION OF TWO EXISTING SHAPES, AND EVERY FIELD ADDED OVER
+ * `OwnedNonApprovedPageBlockResolution` IS THERE FOR A NAMED GATE. That shape backs
+ * the dev tunnel, which serves the author's LOCAL code from a tunnel host; a private
+ * run serves the app's DEPLOYED bundle at its real origin, so it needs the fields the
+ * public SSR path uses to decide whether that bundle may be shown at all:
+ *
+ *   - `currentVersionDeployedAt` — the deploy gate. `resolveOwnedNonApprovedPageBlock`
+ *     does not even `select` this column, which is correct there (local code needs no
+ *     deployment) and a hole for any deployed-artifact path. A never-deployed app
+ *     would otherwise mint a token for an origin with no Deployment behind it.
+ *   - `contentRating` — the maturity ceiling (`ratingAllowedOnHost`).
+ *   - `trustTier` — the iframe sandbox. 🔴 THE COLUMN, never `manifest.trustTier`,
+ *     which is publisher-self-declared (the C1 self-escalation class).
+ *   - `ownerUserId` — the publisher-ban check. Ban revocation markers are TIME-BOXED
+ *     (they expire after `MAX_BLOCK_TOKEN_LIFETIME_SECONDS`), so after that window the
+ *     mint is the only remaining gate and it needs the owner's `bannedAt`.
+ *   - `listingStatus` — audit only, so the mint's forensic line records the state the
+ *     decision was taken against. NOT a gate: a delist and an owner self-unpublish are
+ *     indistinguishable at the row level, and both must stay privately runnable.
+ *
+ * It also carries the public SSR projection (`iframeSrc`, `sandbox`, `name`,
+ * `pageTitle`, `scopes`, `bootSkeleton`) so the private route renders through the same
+ * `PageBlockHost` as production rather than a second, divergent projection.
+ */
+export interface PrivateRunPageBlockResolution {
+  appBlockId: string;
+  blockId: string;
+  appId: string;
+  status: string;
+  /** The moderator-reviewed scope snapshot. The ONLY legitimate scope source here. */
+  approvedScopes: string[];
+  manifest: Record<string, unknown>;
+  iframeSrc: string;
+  sandbox: string;
+  trustTier: 'unverified' | 'verified' | 'internal';
+  name: string;
+  pageTitle: string;
+  scopes: string[];
+  contentRating: string | null;
+  bootSkeleton: boolean;
+  currentVersionDeployedAt: Date | null;
+  ownerUserId: number | null;
+  listingStatus: string | null;
+}
+
+/**
+ * What `resolvePrivateRunPageBlock` answers.
+ *
+ * 🔴 A DISCRIMINATED REFUSAL, NOT THE BARE `null` EVERY SIBLING RESOLVER RETURNS, AND
+ * THE DIVERGENCE IS DELIBERATE. `resolveOwnedNonApprovedPageBlock` collapses "no such
+ * app", "approved app" and "not a page app" into one `null` and pushes the
+ * `status != 'approved'` test into its WHERE clause. That is right for the dev tunnel,
+ * which never has to explain itself. It is wrong here for two reasons:
+ *
+ *   1. A WHERE clause CANNOT BE WATCHED TO FAIL. The property "an APPROVED app never
+ *      resolves through the private branch" is the single most important thing this
+ *      resolver guarantees — it is what keeps the private surface from shadowing the
+ *      public one — and as a query predicate it is invisible: remove it and an
+ *      approved app returns a row that is indistinguishable from a suspended one to
+ *      every test downstream. As the named `'approved'` branch below it is a guard a
+ *      mutation can break and a test can watch go red, by its OWN reason.
+ *   2. The private-run mint's forensic audit line records WHY a request was refused,
+ *      and one `null` for three causes makes that line useless for the one question
+ *      it exists to answer.
+ *
+ * 🔴 THE REFUSAL REASON MUST NEVER REACH AN HTTP RESPONSE. Both callers map every
+ * refusal onto their OWN pre-existing bare 404 (`{ notFound: true }` for SSR,
+ * `'continue'` → `404 {"error":"Page app not found"}` for the mint). The moment a
+ * reason becomes a status code or a body, this becomes the existence oracle the whole
+ * design is built to avoid: "approved" vs "no-app" tells an unauthenticated prober
+ * whether a given slug exists.
+ */
+export type PrivateRunPageBlockResult =
+  | { ok: true; block: PrivateRunPageBlockResolution }
+  | { ok: false; reason: 'no-app' | 'approved' | 'not-a-page' };
+
+/**
  * APP DEV TUNNEL — the caller's OWN app resolved for the `/apps/dev/<blockId>`
  * route, at ANY status (pending/draft/approved/rejected). DISTINCT from
  * PageBlockSsr in TWO load-bearing ways:
@@ -409,6 +488,12 @@ export interface DevPageBlockResolution {
    *  `'brand-new'` (a truly-unclaimed slug, scopes from the dev-tunnel session).
    *  Undefined for the owned-approved path. Used for the mint-time audit log. */
   ephemeralSource?: 'pending' | 'brand-new';
+  /** The manifest's `auth`; the CLI-declared local value wins over it in the tunnel. */
+  auth?: 'block-token' | 'oauth';
+}
+
+function manifestAuth(manifest: { auth?: unknown }): 'block-token' | 'oauth' | undefined {
+  return manifest.auth === 'oauth' || manifest.auth === 'block-token' ? manifest.auth : undefined;
 }
 
 interface UninstallOpts {
@@ -1897,6 +1982,122 @@ export class BlockRegistry {
   }
 
   /**
+   * PRIVATE RUN — resolve a NON-APPROVED page app by slug OR appBlockId, for the
+   * private-run surface (the `/apps/run/<slug>` fallback + the PHASE 3 page-token mint).
+   *
+   * 🔴 THIS RESOLVER TAKES NO ACCESS DECISION AND MUST NEVER BE CALLED DIRECTLY BY A
+   * ROUTE. It answers only "is there a non-approved page app here, and what does the
+   * private surface need to know about it". WHO may see it is
+   * `resolvePrivateRunAccess` (`blocks/private-run-access.service.ts`), the ONE
+   * predicate both callers share. Calling this without that predicate is a status
+   * bypass with no role check — the exact shape the shared predicate exists to make
+   * impossible.
+   *
+   * THE THREE REFUSALS, IN ORDER, EACH A NAMED BRANCH RATHER THAN A QUERY PREDICATE
+   * (see `PrivateRunPageBlockResult` for why they are not one bare `null`):
+   *   1. `no-app` — nothing by that key.
+   *   2. `approved` — an APPROVED app must NEVER resolve through the private branch.
+   *      The public path owns that case (`resolvePageBlockBySlug` / `resolvePageBlock`),
+   *      and the private path being a no-op for it is what stops the two surfaces
+   *      disagreeing. Tested post-query, mirroring `resolvePageBlock`'s own
+   *      `if (!ab || ab.status !== 'approved')` shape rather than
+   *      `resolveOwnedNonApprovedPageBlock`'s in-query `status: { not: 'approved' }`.
+   *   3. `not-a-page` — no `page` block in the manifest, so no full-page surface.
+   *
+   * 🔴 OWNERSHIP IS DELIBERATELY *NOT* IN THIS QUERY, unlike
+   * `resolveOwnedNonApprovedPageBlock`. That resolver bakes `app: { userId }` in
+   * because the dev tunnel is owner-only. A private run admits three audiences
+   * (owner, accepted editor, moderator), and a moderator is not the owner — so
+   * baking ownership here would refuse exactly the audience the feature exists for.
+   * The role resolve moves OUT to the shared predicate, which calls the real
+   * `resolveAppAccess`. That is the one structural difference between the two
+   * resolvers, and it is why this one must not be reached without the predicate.
+   *
+   * POOL DEFAULT IS `dbWrite`, matching `resolvePageBlock` /
+   * `resolveOwnedNonApprovedPageBlock` and NOT `resolveDevPageBlockForAuthor` (which
+   * defaults `dbRead` — do not copy that spelling here). The mint reads the primary
+   * throughout so a freshly-suspended or freshly-relisted block cannot be resolved
+   * through a replication-lag window in either direction.
+   *
+   * An empty key answers `no-app` without touching the database.
+   */
+  static async resolvePrivateRunPageBlock(
+    by: { slug: string } | { appBlockId: string },
+    opts?: { db?: 'read' | 'write' }
+  ): Promise<PrivateRunPageBlockResult> {
+    const key = 'slug' in by ? by.slug : by.appBlockId;
+    if (!key) return { ok: false, reason: 'no-app' };
+    const db = opts?.db === 'read' ? dbRead : dbWrite;
+    const ab = await db.appBlock.findFirst({
+      where: 'slug' in by ? { blockId: by.slug } : { id: by.appBlockId },
+      select: {
+        id: true,
+        blockId: true,
+        appId: true,
+        status: true,
+        manifest: true,
+        approvedScopes: true,
+        trustTier: true,
+        contentRating: true,
+        currentVersionDeployedAt: true,
+        // The publisher-ban input. `app` is the OauthClient; `userId` on it is the
+        // canonical owner — the same value `resolveAppAccess` derives.
+        app: { select: { userId: true } },
+        // Audit only; never a gate. See the interface docblock.
+        appListing: { select: { status: true } },
+      },
+    });
+    if (!ab) return { ok: false, reason: 'no-app' };
+    // 🔴 THE PUBLIC/PRIVATE SPLIT. An approved app is the PUBLIC path's business; it
+    // must never resolve here, or the private surface becomes a second way to reach an
+    // app that is already reachable, with a different gate order.
+    if (ab.status === 'approved') return { ok: false, reason: 'approved' };
+    const manifest = (ab.manifest ?? {}) as Record<string, unknown>;
+    if (!manifestDeclaresPage(manifest)) return { ok: false, reason: 'not-a-page' };
+    const iframe = (manifest.iframe ?? {}) as { src?: unknown };
+    const iframeSrc = typeof iframe.src === 'string' ? iframe.src : '';
+    // Extracted independently of `src`, for the reason given in
+    // `resolvePageBlockBySlug`: sandbox presence has nothing to do with src's type.
+    const sandbox =
+      typeof iframe === 'object' && iframe !== null
+        ? (iframe as { sandbox?: unknown }).sandbox
+        : '';
+    const page = (manifest.page ?? {}) as { title?: unknown };
+    const name = typeof manifest.name === 'string' ? manifest.name : ab.blockId;
+    const declaredScopes = Array.isArray((manifest as { scopes?: unknown }).scopes)
+      ? (manifest as { scopes: unknown[] }).scopes.filter((s): s is string => typeof s === 'string')
+      : [];
+    return {
+      ok: true,
+      block: {
+        appBlockId: ab.id,
+        blockId: ab.blockId,
+        appId: ab.appId,
+        status: ab.status,
+        approvedScopes: ab.approvedScopes ?? [],
+        manifest,
+        iframeSrc,
+        sandbox: typeof sandbox === 'string' ? sandbox : '',
+        // The COLUMN, never `manifest.trustTier` (C1 self-escalation).
+        trustTier:
+          ab.trustTier === 'verified' || ab.trustTier === 'internal'
+            ? (ab.trustTier as 'verified' | 'internal')
+            : 'unverified',
+        name,
+        pageTitle: typeof page.title === 'string' ? page.title : name,
+        scopes: declaredScopes,
+        contentRating: typeof ab.contentRating === 'string' ? ab.contentRating : null,
+        // STRICT `=== true`: publisher JSON must not flip a host behaviour with a
+        // truthy-but-not-boolean value.
+        bootSkeleton: (manifest as { bootSkeleton?: unknown }).bootSkeleton === true,
+        currentVersionDeployedAt: ab.currentVersionDeployedAt ?? null,
+        ownerUserId: ab.app?.userId ?? null,
+        listingStatus: ab.appListing?.status ?? null,
+      },
+    };
+  }
+
+  /**
    * APP DEV TUNNEL — resolve the caller's OWN app by `blockId` (== AppBlock
    * `block_id`, GLOBALLY unique via `@@unique([blockId])`) at ANY status, for the
    * `/apps/dev/<blockId>` SSR route + the startDevTunnel gate. Ownership is
@@ -1984,6 +2185,7 @@ export class BlockRegistry {
       // Same strict `=== true` as the SSR projection: publisher JSON.
       bootSkeleton: (manifest as { bootSkeleton?: unknown }).bootSkeleton === true,
       contentRating: typeof ab.contentRating === 'string' ? ab.contentRating : null,
+      auth: manifestAuth(manifest),
     };
   }
 
@@ -2100,14 +2302,17 @@ export class BlockRegistry {
     // already selected and already read below for `scopes`; there was nothing
     // to fetch.
     let ephemeralBootSkeleton = false;
+    let ephemeralAuth: 'block-token' | 'oauth' | undefined;
     const ephemeralSource: 'pending' | 'brand-new' = pending ? 'pending' : 'brand-new';
     if (pending) {
       const pendingManifest = (pending.manifest ?? {}) as {
         scopes?: unknown;
         bootSkeleton?: unknown;
+        auth?: unknown;
       };
       // Same strict `=== true` as every other read of this field.
       ephemeralBootSkeleton = pendingManifest.bootSkeleton === true;
+      ephemeralAuth = manifestAuth(pendingManifest);
       const declared = Array.isArray(pendingManifest.scopes)
         ? pendingManifest.scopes.filter((s): s is string => typeof s === 'string')
         : [];
@@ -2145,6 +2350,7 @@ export class BlockRegistry {
       // block-token mint so the dev-page block's Generate gate is not falsely empty.
       scopes: ephemeralScopes,
       ephemeralSource,
+      auth: ephemeralAuth,
       // SFW default — no reviewed content rating exists pre-submit.
       contentRating: null,
     };

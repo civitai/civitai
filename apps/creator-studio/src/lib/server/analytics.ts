@@ -2,7 +2,10 @@ import { sql } from '@civitai/db/kysely';
 import { getClickhouse } from '$lib/server/clickhouse';
 import { entityImpressionTotalsSql } from '$lib/server/analytics-sql';
 import { dbRead } from '$lib/server/db';
+import { followersAmong } from '$lib/server/followers';
 import { createCache } from '$lib/server/cache';
+import { getLogger } from '$lib/server/logger';
+import { mapWithConcurrency } from '$lib/server/concurrency';
 import { rangeTtlSeconds } from '$lib/date-range';
 import { bucketReactors, type ReactionAudienceSplit } from '$lib/analytics/reaction-audience';
 import { viewTrackingSql, ownerViewsDailySql } from '$lib/server/analytics-sql';
@@ -163,7 +166,7 @@ export const getContentTotals = createCache({
 
 // Top reacted media over the range (images + videos, split by `type` on each page).
 export const getTopMedia = createCache({
-  name: 'analytics:top-media:v4',
+  name: 'analytics:top-media:v5',
   fetch: ({ userId, from, to }: { userId: number; from: string; to: string }) =>
     fetchTopMedia(userId, from, to),
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
@@ -554,33 +557,54 @@ async function fetchReactionAudienceSplit(
   // reactions total this page already shows.
   const reactors = rows.map((r) => ({ id: Number(r.reactorId), reactions: Number(r.reactions) }));
   const otherIds = reactors.filter((r) => r.id !== uid && r.id > 0).map((r) => r.id);
-
-  // `= ANY($1)` and not an `in` list: kysely expands `in` to one placeholder per id, and a heavy creator's reactor
-  // set is past Postgres' 65535-parameter ceiling.
-  const followerIds = new Set<number>();
-  if (otherIds.length) {
-    const result = await sql<{ userId: number }>`
-      SELECT "userId" FROM "UserEngagement"
-      WHERE "targetUserId" = ${uid} AND "type" = 'Follow' AND "userId" = ANY(${otherIds})
-    `.execute(dbRead);
-    for (const row of result.rows) followerIds.add(Number(row.userId));
-  }
+  const followerIds = await followersAmong(dbRead, uid, otherIds);
 
   return bucketReactors(reactors, uid, followerIds);
 }
 
-// Top reacted media (images + videos) over the range — the /analytics/content tabs filter this by `type`. We rank
-// the creator's most-reacted image-entities in ClickHouse, then enrich via Postgres (which is where the media type
-// lives), so both tabs share one fetch. 100 gives each type a reasonable list.
+export const TOP_MEDIA_PER_TYPE = 100;
+// Bounds the payload for an extreme creator; the heaviest month as of 2026-09 was ~53k reacted ids.
+export const TOP_MEDIA_READ_CEILING = 200_000;
+// `ANY` already avoids the parameter cap. Batches bound how long one statement holds a connection from the read
+// pool every other request shares (~0.7s per batch, measured 2026-09), and CONCURRENCY bounds how many it holds:
+// keep it a small fraction of that pool (`max` in @civitai/db's kysely clients).
+export const TOP_MEDIA_PG_BATCH_SIZE = 10_000;
+export const TOP_MEDIA_PG_CONCURRENCY = 4;
+
+// The content tabs filter this by `type`, so the limit is per type, and only Postgres can apply it: `reactions` has
+// no media type, and ClickHouse's `images_created` keeps rows for deleted images, so any cut made in ClickHouse
+// lets deleted ids take a live image's slot. Every reacted id up to TOP_MEDIA_READ_CEILING comes back, and
+// `enrichTopImages` cuts.
 async function fetchTopMedia(userId: number, from: string, to: string): Promise<TopImage[]> {
   const uid = Number(userId);
   const raw = await getClickhouse().$query<{
     imageId: number | string;
     reactions: number | string;
   }>(
-    `SELECT entityId AS imageId, ${netReactions} AS reactions FROM reactions WHERE ownerId = ${uid} AND type IN ('Image_Create', 'Image_Delete') AND toDate(time) >= toDate('${from}') AND toDate(time) <= toDate('${to}') GROUP BY imageId HAVING reactions > 0 ORDER BY reactions DESC LIMIT 100`
+    `SELECT entityId AS imageId, ${netReactions} AS reactions FROM reactions WHERE ownerId = ${uid} AND type IN ('Image_Create', 'Image_Delete') AND toDate(time) >= toDate('${from}') AND toDate(time) <= toDate('${to}') GROUP BY imageId HAVING reactions > 0 ORDER BY reactions DESC, imageId DESC LIMIT ${TOP_MEDIA_READ_CEILING}`
   );
+  if (raw.length >= TOP_MEDIA_READ_CEILING) {
+    getLogger()
+      .logToAxiom({
+        name: 'top-media-read-ceiling',
+        userId: uid,
+        from,
+        to,
+        ceiling: TOP_MEDIA_READ_CEILING,
+      })
+      .catch(() => undefined);
+  }
   return enrichTopImages(raw, from, to);
+}
+
+// Input is in ranking order, so the first N of each type are its top N.
+function capPerType<T extends { type: string }>(media: T[]): T[] {
+  const taken = new Map<string, number>();
+  return media.filter((m) => {
+    const count = taken.get(m.type) ?? 0;
+    taken.set(m.type, count + 1);
+    return count < TOP_MEDIA_PER_TYPE;
+  });
 }
 
 // Per-image view counts for an already-ranked, bounded id list. Reads `daily_views` rather than the owner rollup,
@@ -624,41 +648,52 @@ async function fetchImpressionsByEntity(
 }
 
 // Look up the CF url + nsfwLevel for the top images (Postgres, by primary key) so the analytics grid can show real
-// thumbnails instead of bare IDs. Order is preserved from the ClickHouse ranking.
+// thumbnails instead of bare IDs. Order is preserved from the ClickHouse ranking. Views and impressions are read
+// only for what survives the per-type cap, since the ranked input can run to tens of thousands of ids.
 async function enrichTopImages(
   raw: { imageId: number | string; reactions: number | string }[],
   from: string,
   to: string
 ): Promise<TopImage[]> {
   const ids = raw.map((r) => Number(r.imageId));
-  const [rows, viewsById, impressionsById] = await Promise.all([
-    ids.length
-      ? dbRead
-          .selectFrom('Image')
-          .where('id', 'in', ids)
-          .select(['id', 'url', 'nsfwLevel', 'type'])
-          .execute()
-      : Promise.resolve([]),
-    fetchViewsByImage(ids, from, to),
-    fetchImpressionsByEntity(VIEW_ENTITY.image, ids, from, to),
-  ]);
-  const byId = new Map(rows.map((i) => [i.id, i]));
+  const batches: number[][] = [];
+  for (let i = 0; i < ids.length; i += TOP_MEDIA_PG_BATCH_SIZE) {
+    batches.push(ids.slice(i, i + TOP_MEDIA_PG_BATCH_SIZE));
+  }
+  type ImageRow = { id: number; url: string | null; nsfwLevel: number | null; type: string };
+  const results = await mapWithConcurrency(batches, TOP_MEDIA_PG_CONCURRENCY, (batch) =>
+    sql<ImageRow>`SELECT id, url, "nsfwLevel", type FROM "Image" WHERE id = ANY(${batch})`.execute(
+      dbRead
+    )
+  );
+  const byId = new Map<number, ImageRow>();
+  for (const { rows } of results) for (const row of rows) byId.set(Number(row.id), row);
   // Drop deleted images (no Image row / no url) — we don't surface them in the grid.
-  return raw
-    .map((r): TopImage | null => {
+  const live = capPerType(
+    raw.flatMap((r) => {
       const img = byId.get(Number(r.imageId));
-      if (!img?.url) return null;
-      return {
-        imageId: Number(r.imageId),
-        reactions: Number(r.reactions),
-        views: viewsById.get(Number(r.imageId)) ?? 0,
-        impressions: impressionsById.get(Number(r.imageId)) ?? 0,
-        url: img.url,
-        nsfwLevel: Number(img.nsfwLevel ?? 0),
-        type: img.type as 'image' | 'video' | 'audio',
-      };
+      if (!img?.url) return [];
+      return [
+        {
+          imageId: Number(r.imageId),
+          reactions: Number(r.reactions),
+          url: img.url,
+          nsfwLevel: Number(img.nsfwLevel ?? 0),
+          type: img.type as TopImage['type'],
+        },
+      ];
     })
-    .filter((x): x is TopImage => x !== null);
+  );
+  const keptIds = live.map((m) => m.imageId);
+  const [viewsById, impressionsById] = await Promise.all([
+    fetchViewsByImage(keptIds, from, to),
+    fetchImpressionsByEntity(VIEW_ENTITY.image, keptIds, from, to),
+  ]);
+  return live.map((m) => ({
+    ...m,
+    views: viewsById.get(m.imageId) ?? 0,
+    impressions: impressionsById.get(m.imageId) ?? 0,
+  }));
 }
 
 // One image's view series for the drilldown. Ownership is checked against Postgres first and a miss returns

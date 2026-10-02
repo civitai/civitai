@@ -20,7 +20,14 @@ import {
   getGenerationSupport,
   filterCompatibleResources,
 } from '~/shared/constants/basemodel.constants';
-import { MAX_PROMPT_LENGTH, MAX_SEED, samplers } from '~/shared/constants/generation.constants';
+import {
+  MAX_PROMPT_LENGTH,
+  MAX_SEED,
+  flux1ProAspectRatioBuckets,
+  samplers,
+  sdxlFullAspectRatioBuckets,
+  sdxlFullPriorityAspectRatios,
+} from '~/shared/constants/generation.constants';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
 import { unselectableVersionIds } from './gates';
@@ -126,6 +133,22 @@ export function aspectRatioNode({
     },
   };
 }
+
+/** The nine SDXL buckets with the three-bucket first row; v1's SDXL_FULL_AR. */
+export const sdxlFullAspectRatioNode = () =>
+  aspectRatioNode({
+    options: sdxlFullAspectRatioBuckets,
+    priorityOptions: sdxlFullPriorityAspectRatios,
+    defaultValue: '1:1',
+  });
+
+/** sdxlFullAspectRatioNode minus the buckets over Flux.1 Pro's 1440 side limit. */
+export const flux1ProAspectRatioNode = () =>
+  aspectRatioNode({
+    options: flux1ProAspectRatioBuckets,
+    priorityOptions: sdxlFullPriorityAspectRatios,
+    defaultValue: '1:1',
+  });
 
 // =============================================================================
 // Text Node Builder
@@ -842,7 +865,7 @@ function getWorkflowKey(
  *   .merge(
  *     (ctx) => createCheckpointGraph({
  *       versions: { options: fluxModeVersionOptions },
- *       modelLocked: ctx.workflow === 'txt2img:draft',
+ *       modelLocked: ctx.workflow === 'img2img',
  *     }),
  *     ['workflow']
  *   );

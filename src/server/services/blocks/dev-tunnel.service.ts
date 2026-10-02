@@ -9,6 +9,7 @@ import {
   waitForApplyJob,
 } from '~/server/services/blocks/apps-pipeline.service';
 import {
+  DEV_TUNNEL_SESSION_BUZZ_CAP,
   fingerprintSshPublicKey,
   generateDevHostLabel,
   isValidDevHost,
@@ -56,7 +57,7 @@ export const DEV_TUNNEL_HARD_SECONDS = 8 * 60 * 60; // 8h (design §9)
 /** Per-dev-session cumulative Buzz ceiling (backstop over the block-token
  *  DEV_BUZZ_BUDGET_CAP + the untouched per-user daily cap). Bounds a runaway
  *  local submit loop within ONE dev session. Conservative default. */
-export const DEV_TUNNEL_SESSION_BUZZ_CAP = 5000;
+export { DEV_TUNNEL_SESSION_BUZZ_CAP };
 
 /** A route whose backing session record is CONFIRMED-ABSENT is only reaped once
  *  its k8s object is older than this. Closes the create-before-persist race:
@@ -100,6 +101,8 @@ const DEV_TUNNEL_SESSION_LABEL = 'civitai.com/dev-tunnel-session';
 // Record shapes
 // ---------------------------------------------------------------------------
 
+export type DevTunnelDeclaredAuth = 'block-token' | 'oauth';
+
 export type DevTunnelSessionRecord = {
   sessionId: string;
   userId: number;
@@ -121,6 +124,8 @@ export type DevTunnelSessionRecord = {
    *  defense-in-depth. ABSENT on an old-CLI session → treated as `[]` (read-only,
    *  no spend). */
   grantedScopes?: string[];
+  /** The local manifest's `auth`, as the CLI read it; absent on an older CLI. */
+  declaredAuth?: DevTunnelDeclaredAuth;
   /** Last browser-activity marker (unix seconds), refreshed by the forwardAuth
    *  gate on each successful ENTRY-document hit (F3). The reaper reaps a session
    *  idle past DEV_TUNNEL_IDLE_SECONDS. ABSENT on a never-visited tunnel → the
@@ -750,6 +755,7 @@ export type StartDevTunnelParams = {
    *  ownership + flags; these scopes are NOT an authz input — they are clamped to
    *  the tunnel allowlist and re-gated at the mint. Omitted/absent → read-only. */
   declaredScopes?: string[];
+  declaredAuth?: DevTunnelDeclaredAuth;
 };
 
 export type StartDevTunnelResult = {
@@ -817,6 +823,9 @@ export async function startDevTunnel(params: StartDevTunnelParams): Promise<Star
     spendCapBuzz: DEV_TUNNEL_SESSION_BUZZ_CAP,
     declaredScopes,
     grantedScopes,
+    ...(params.declaredAuth === 'oauth' || params.declaredAuth === 'block-token'
+      ? { declaredAuth: params.declaredAuth }
+      : {}),
     // Seed the idle marker at mint so a never-visited tunnel still idle-reaps
     // (createdAt fallback in the reaper covers an absent field too).
     lastActivityAt: created,

@@ -78,6 +78,7 @@ import { buildBreadcrumbSchema } from '~/components/Meta/site-schema';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { Metrics } from '~/components/Metrics';
 import { Reactions } from '~/components/Reaction/Reactions';
+import { ImageReactorsPreview } from '~/components/Reaction/ImageReactorsPreview';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
@@ -494,7 +495,11 @@ export function ImageDetail2() {
                             <ImageDetailReactions image={image} />
                             {/* Inside the provider, not beside it: the bar reads
                                 the same `buttonStyling` the reactions do. */}
-                            <StickerPlacementBar imageId={image.id} className="ml-2" />
+                            <StickerPlacementBar
+                              imageId={image.id}
+                              imageNsfwLevel={image.nsfwLevel}
+                              className="ml-2"
+                            />
                           </ReactionSettingsProvider>
                         </div>
                         <CarouselIndicators {...carouselNavigation} />
@@ -732,15 +737,17 @@ function ImageDetailReactions({
       }}
     >
       {(metrics) => (
-        <Reactions
-          entityId={image.id}
-          entityType="image"
-          reactions={image.reactions}
-          metrics={metrics}
-          metricsUnknown={image.stats?.statsUnknown}
-          targetUserId={image.user.id}
-          disableBuzzTip={image.poi}
-        />
+        <ImageReactorsPreview imageId={image.id} ownerId={image.user.id}>
+          <Reactions
+            entityId={image.id}
+            entityType="image"
+            reactions={image.reactions}
+            metrics={metrics}
+            metricsUnknown={image.stats?.statsUnknown}
+            targetUserId={image.user.id}
+            disableBuzzTip={image.poi}
+          />
+        </ImageReactorsPreview>
       )}
     </Metrics>
   );

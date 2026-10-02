@@ -1,4 +1,4 @@
-import poiWords from '~/utils/metadata/lists/words-poi.json';
+import { poiWords } from '@civitai/mod-utils/prompt-audit/lists';
 import { dbWrite } from '~/server/db/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { env } from '~/env/server';
@@ -555,38 +555,31 @@ export async function resolveScanOutcome({
   let reviewKey = audit.reviewKey ?? null;
 
   const toUpdate: Prisma.ImageUpdateInput = { updatedAt, pHash };
-  // AI-generation verification is no longer a blocking gate (per operations
-  // 2026-05-11): nsfw images that we couldn't auto-verify as AI used to
-  // land in `Blocked + AiNotVerified`, but the false-positive rate didn't
-  // justify the friction. The remaining `audit.blockedFor` branch still
-  // catches hard violations (TOS / Moderated / CSAM) — everything else
-  // falls through to Scanned.
+  // Set before the verdict: a block that dropped minor/poi would leave a later-unblocked image unflagged.
+  toUpdate.minor = audit.minor;
+  toUpdate.poi = audit.poi;
+
+  const now = new Date();
+  if (!image.scannedAt) toUpdate.scannedAt = now;
+  else if (
+    !(image.metadata as any)?.skipScannedAtReassignment &&
+    image.ingestion !== 'Rescan' &&
+    new Date(image.createdAt).getTime() >= decreaseDate(now, 7, 'days').getTime()
+  )
+    toUpdate.scannedAt = now;
+  else toUpdate.scannedAt = image.scannedAt;
+
   if (audit.blockedFor) {
+    // A block outranks a locked rating: it is a ToS decision, not a rating.
     toUpdate.ingestion = ImageIngestionStatus.Blocked;
     toUpdate.blockedFor = audit.blockedFor;
     toUpdate.nsfwLevel = NsfwLevel.Blocked;
   } else {
     toUpdate.ingestion = ImageIngestionStatus.Scanned;
     toUpdate.needsReview = reviewKey;
-    toUpdate.minor = audit.minor;
-    toUpdate.poi = audit.poi;
     toUpdate.blockedFor = null;
     // Respect a manually-locked nsfw level — never overwrite it from the scan.
     toUpdate.nsfwLevel = image.nsfwLevelLocked ? image.nsfwLevel : audit.nsfwLevel;
-
-    // scannedAt reassignment: always stamp the first scan; afterwards only
-    // re-stamp recent (<1 week old) non-Rescan images that haven't opted out
-    // via metadata.skipScannedAtReassignment. Older/rescanned images keep
-    // their original scannedAt.
-    const now = new Date();
-    if (!image.scannedAt) toUpdate.scannedAt = now;
-    else if (
-      !(image.metadata as any)?.skipScannedAtReassignment &&
-      image.ingestion !== 'Rescan' &&
-      new Date(image.createdAt).getTime() >= decreaseDate(now, 7, 'days').getTime()
-    )
-      toUpdate.scannedAt = now;
-    else toUpdate.scannedAt = image.scannedAt;
   }
 
   // Moderation rules can block the image, hold it for review, or annotate its

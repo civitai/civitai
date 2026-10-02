@@ -133,7 +133,6 @@ function modelTypeToComponentType(modelType: ModelType): ModelFileComponentType 
   }
 }
 
-// TODO.Briant - compare file extension when checking for duplicate files
 export function Files({ showRenameOnPrimary }: { showRenameOnPrimary?: boolean } = {}) {
   const {
     files,

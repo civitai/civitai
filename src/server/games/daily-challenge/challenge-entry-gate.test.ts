@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
-const mockFindFirst = dbMock.dbRead.challenge.findFirst;
+const mockFindFirst = dbMock.dbWrite.challenge.findFirst;
 const { assertUserChallengeAcceptingEntries } = await import('./challenge-entry-gate');
 
 beforeEach(() => vi.clearAllMocks());

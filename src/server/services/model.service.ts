@@ -1,4 +1,10 @@
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
+import {
+  coverageColumn,
+  coveragePair,
+  pickCovered,
+  nextCoverageEnabled,
+} from '~/server/services/generation/coverage-source';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
@@ -29,6 +35,7 @@ import {
   getDbWithoutLag,
   preventModelVersionLagBatch,
   preventReplicationLag,
+  preventReplicationLagBatch,
 } from '~/server/db/db-lag-helpers';
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { isFlipt } from '~/server/flipt/client';
@@ -55,6 +62,10 @@ import {
   userModelCountCache,
 } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import {
+  bustModelGallerySettings,
+  getCreatorGalleryHiddenUserIds,
+} from '~/server/services/creator-gallery-hidden-users.service';
 import type { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import type { ModelVersionMeta } from '~/server/schema/model-version.schema';
 import type {
@@ -543,7 +554,11 @@ export const getModelsRaw = async ({
     AND.push(Prisma.sql`(${pSql}."poi" = false OR mm."userId" = ${userId})`);
   }
   if (disableMinor) {
-    AND.push(Prisma.sql`${pSql}."minor" = false`);
+    AND.push(
+      userId
+        ? Prisma.sql`(${pSql}."minor" = false OR mm."userId" = ${userId})`
+        : Prisma.sql`${pSql}."minor" = false`
+    );
   }
   if (input.excludedTagIds?.length) {
     const notExcluded = Prisma.sql`NOT EXISTS (
@@ -824,7 +839,9 @@ export const getModelsRaw = async ({
 
   if (supportsGeneration) {
     AND.push(
-      Prisma.sql`EXISTS (SELECT 1 FROM "GenerationCoverage" gc WHERE gc."modelId" = m."id" AND gc."covered" = true)`
+      Prisma.sql`EXISTS (SELECT 1 FROM "GenerationCoverage" gc WHERE gc."modelId" = m."id" AND gc.${Prisma.raw(
+        `"${coverageColumn(await nextCoverageEnabled())}"`
+      )})`
     );
   }
 
@@ -1376,7 +1393,9 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   }
 
   if (supportsGeneration) {
-    AND.push({ generationCoverage: { some: { covered: true } } });
+    AND.push({
+      generationCoverage: { some: { [coverageColumn(await nextCoverageEnabled())]: true } },
+    });
   }
 
   // Filter only followed users
@@ -1613,6 +1632,7 @@ export const getModelsWithImagesAndModelVersions = async ({
     hideGenerations: h.generations,
   });
 
+  const next = await nextCoverageEnabled();
   const result = {
     nextCursor,
     isPrivate,
@@ -1635,7 +1655,7 @@ export const getModelsWithImagesAndModelVersions = async ({
         if (!filteredImages.length && !showImageless) return null;
 
         const canGenerate = isGenerationEligible({
-          covered: version?.covered,
+          ...coveragePair(version, next),
           baseModel: version?.baseModel ?? '',
           modelType: model.type,
           flags: version?.flags ?? 0,
@@ -2274,7 +2294,7 @@ export async function applyModelFlagSideEffects({
   const newGallerySettings = after.gallerySettings as ModelGallerySettingsSchema;
   const galleryBrowsingLevelChanged = prevGallerySettings?.level !== newGallerySettings?.level;
 
-  if (galleryBrowsingLevelChanged) await redis.del(`${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}`);
+  if (galleryBrowsingLevelChanged) await bustModelGallerySettings([id]);
 
   if (minorChanged || poiChanged) {
     const modelVersions = await dbWrite.modelVersion.findMany({
@@ -2589,8 +2609,9 @@ export async function setModelSfwOnly({
   return result;
 }
 
-// Model columns the GenerationCoverage view reads. `poi` belongs to the same set but is left out
-// here because applyModelFlagSideEffects already busts the version caches when it moves.
+// Model columns the GenerationCoverage view reads that THIS path can change. `poi` and `mode` are
+// read by the view too, but move through applyModelFlagSideEffects and updateModelById, which bust
+// the version caches themselves.
 const coverageModelFields = ['allowCommercialUse', 'availability', 'type', 'uploadType'] as const;
 
 export const upsertModel = async (
@@ -2740,6 +2761,11 @@ export const upsertModel = async (
                   }
                 : undefined,
             userId,
+            // Official by definition. `isOfficial` is otherwise only reachable through
+            // `model.setOfficial`, a separate call nobody makes — which is how 14 models went
+            // unflagged, and why anything keyed on the flag (attribution, the official-models cache)
+            // silently excluded the newest official releases.
+            ...(userId === constants.system.officialUserId ? { isOfficial: true } : {}),
             tagsOnModels: tagsOnModels
               ? {
                   create: tagsOnModels.map((tag) => {
@@ -3343,7 +3369,7 @@ export const publishModelById = async ({
             AND (p."publishedAt" IS NULL OR p."publishedAt" > NOW())
         `;
       }
-      if (!republishing && !meta?.unpublishedBy) await updateModelLastVersionAt({ id, tx });
+      await updateModelLastVersionAt({ id, tx, onlyForward: republishing });
 
       return model;
     },
@@ -3910,11 +3936,14 @@ export const queueModelEarlyAccessReindex = async ({ id }: GetByIdInput) => {
  * as a follow-up; the current fan-out side-effect is acceptable for Phase 1.
  */
 export async function bumpModel({ id }: { id: number }) {
-  const updated = await dbWrite.model.update({
-    where: { id },
-    data: { lastVersionAt: new Date() },
-    select: { id: true, userId: true, lastVersionAt: true },
-  });
+  // Truncated DB clock for the same reason as process-scheduled-publishing: a value ahead of the
+  // DB's NOW() is dropped by sync_model_to_metric, and the bump never reaches the feed.
+  const [updated] = await dbWrite.$queryRaw<{ id: number; userId: number; lastVersionAt: Date }[]>`
+    UPDATE "Model" SET "lastVersionAt" = date_trunc('milliseconds', NOW()), "updatedAt" = NOW()
+    WHERE id = ${id}
+    RETURNING id, "userId", "lastVersionAt"
+  `;
+  if (!updated) throw throwNotFoundError(`No model with id ${id}`);
 
   await Promise.all([
     dataForModelsCache.refresh([id]),
@@ -3925,12 +3954,18 @@ export async function bumpModel({ id }: { id: number }) {
   return updated;
 }
 
+/**
+ * `onlyForward` never lowers the stored value, so a republish can restore the date a version
+ * already had without undoing a moderator bump (`bumpModel`) that sits above every version's date.
+ */
 export async function updateModelLastVersionAt({
   id,
   tx,
+  onlyForward = false,
 }: {
   id: number;
   tx?: Prisma.TransactionClient;
+  onlyForward?: boolean;
 }) {
   const dbClient = tx ?? dbWrite;
 
@@ -3945,12 +3980,31 @@ export async function updateModelLastVersionAt({
     select: { publishedAt: true },
     orderBy: { publishedAt: 'desc' },
   });
-  if (!modelVersion) return;
+  const publishedAt = modelVersion?.publishedAt;
+  if (!publishedAt) return;
 
   try {
+    if (onlyForward) {
+      const { count } = await dbClient.model.updateMany({
+        where: {
+          id,
+          OR: [{ lastVersionAt: null }, { lastVersionAt: { lt: publishedAt } }],
+        },
+        data: { lastVersionAt: publishedAt },
+      });
+      if (!count) return;
+
+      const model = await dbClient.model.findUniqueOrThrow({
+        where: { id },
+        select: { userId: true },
+      });
+      await userModelCountCache.refresh(model.userId);
+      return;
+    }
+
     const model = await dbClient.model.update({
       where: { id },
-      data: { lastVersionAt: modelVersion.publishedAt },
+      data: { lastVersionAt: publishedAt },
     });
 
     await userModelCountCache.refresh(model.userId);
@@ -4236,7 +4290,9 @@ export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
 
   const cachedSettings = await redis.get(cacheKey);
   if (cachedSettings)
-    return fromJson<ReturnType<typeof getGalleryHiddenPreferences>>(cachedSettings);
+    return fromJson<
+      Awaited<ReturnType<typeof getGalleryHiddenPreferences>> & { creatorHiddenUserIds?: number[] }
+    >(cachedSettings);
 
   const model = await getModel({
     id: id,
@@ -4244,11 +4300,16 @@ export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
   });
   if (!model) return null;
 
-  const settings = model.gallerySettings
-    ? await getGalleryHiddenPreferences({
+  let settings = null;
+  if (model.gallerySettings) {
+    const [preferences, creatorHiddenUserIds] = await Promise.all([
+      getGalleryHiddenPreferences({
         settings: model.gallerySettings as ModelGallerySettingsSchema,
-      })
-    : null;
+      }),
+      getCreatorGalleryHiddenUserIds(model.userId, { fresh: true }),
+    ]);
+    settings = { ...preferences, creatorHiddenUserIds };
+  }
   await redis.set(cacheKey, toJson(settings), { EX: CacheTTL.week });
 
   return settings;
@@ -4395,6 +4456,7 @@ export async function getModelsWithVersions({
   //   currentUserId: user?.id,
   // });
 
+  const next = await nextCoverageEnabled();
   // Get VAE version IDs from linked components
   const allMvIds = items.flatMap(({ modelVersions }) => modelVersions.map((v) => v.id));
   const vaeLinkedRows = allMvIds.length
@@ -4505,7 +4567,7 @@ export async function getModelsWithVersions({
         return {
           ...model,
           user: user.username === 'civitai' ? undefined : user,
-          supportsGeneration: modelVersions.some((x) => x.covered),
+          supportsGeneration: modelVersions.some((x) => !!pickCovered(x, next)),
           modelVersions: modelVersions.map(
             ({ trainingStatus, earlyAccessTimeFrame, ...version }) => {
               const versionHidden = resolveVersionHiddenMetrics({
@@ -4633,7 +4695,7 @@ export async function copyGallerySettingsToAllModelsByUser({
   const models = await dbWrite.model.findMany({ where: { userId }, select: { id: true } });
   const modelIds = models.map((x) => x.id);
 
-  await Promise.all(modelIds.map((id) => redis.del(`${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}`)));
+  await bustModelGallerySettings(modelIds);
   return result;
 }
 
@@ -5427,10 +5489,16 @@ export async function transferModelOwnership({
     : [];
   const affectedImageIds = affectedImages.map((i) => i.id);
 
+  // A model becomes official by arriving at the official account — which is how every mirrored
+  // model gets there, since `model.upsert` makes the caller the owner and the transfer follows.
+  // Not cleared on a transfer AWAY: `isOfficial` is also set on partner-hosted models that have
+  // never belonged to this account, so unsetting it here would revoke a claim it didn't grant.
+  const becomesOfficial = targetUserId === constants.system.officialUserId;
+
   const result = await dbWrite.$transaction([
     dbWrite.model.updateMany({
       where: { id: { in: modelIds } },
-      data: { userId: targetUserId },
+      data: { userId: targetUserId, ...(becomesOfficial ? { isOfficial: true } : {}) },
     }),
     // PaidAccess.ownerId is a denormalised copy of the model owner, and it is what decides who
     // generates free from a gated version and whose scheduled sales may reprice it. Left behind, the
@@ -5531,7 +5599,19 @@ export async function transferModelOwnership({
       }).catch(() => null)
     );
 
+  // Before the gallery-settings bust: its rebuild reads Model.userId to pick the owner's hidden list,
+  // and a replica still showing the previous owner would cache that owner's list for a week.
+  await invalidation('preventReplicationLagBatch', preventReplicationLagBatch('model', modelIds));
+
   await Promise.all([
+    ...(becomesOfficial
+      ? [
+          invalidation(
+            'bustOfficialModels',
+            bustFetchThroughCache(REDIS_KEYS.CACHES.OFFICIAL_MODELS)
+          ),
+        ]
+      : []),
     // Everything keyed off the owner. modelVersionAccessCache is the one that matters most here: it
     // holds Model.userId for a DAY, and hasEntityAccess grants "owners always have access" from it, so
     // without this the previous owner keeps reaching a gated version the UPDATE above just moved.
@@ -5550,6 +5630,8 @@ export async function transferModelOwnership({
     // The gate row carries ownerId and the public donation goal carries userId, so both have to go.
     // bustMvCache busts the gate row too as of 868kwp6ne — this stays as the deliberate duplicate that
     // keeps the pair together, and a second bust of an already-busted key costs one SET.
+    // Built from the previous owner's creator-wide hidden list.
+    invalidation('bustModelGallerySettings', bustModelGallerySettings(modelIds)),
     invalidation('bustPaidAccessCache', bustPaidAccessCache('ModelVersion', affectedVersionIds)),
     invalidation(
       'bustPublicDonationGoals',

@@ -1,4 +1,8 @@
 import { TRPCError } from '@trpc/server';
+import {
+  coverageAudience,
+  coveragePairForUser,
+} from '~/server/services/generation/coverage-source';
 
 import { licensingFeeBlockedFor, paidAccessBlockedFor } from '@civitai/buzz';
 import { recordPricingSlot, releasePricingSlot } from '~/server/services/pricing-slot.service';
@@ -148,6 +152,7 @@ const loadModelVersion = async ({
         trainingStatus: true,
         uploadType: true,
         usageControl: true,
+        generatorLoaded: true,
         availability: true,
         licensingFee: true,
         licensingFeeType: true,
@@ -207,7 +212,7 @@ const loadModelVersion = async ({
             },
           },
         },
-        generationCoverage: { select: { covered: true } },
+        generationCoverage: { select: { covered: true, coveredNext: true } },
       },
     });
 
@@ -280,6 +285,7 @@ const loadModelVersion = async ({
 
     if (!version) throw throwNotFoundError(`No version with id ${input.id}`);
 
+    const { next, member } = await coverageAudience(ctx.user ?? undefined);
     const genStates = await resolveCanGenerateForVersions(
       [
         {
@@ -288,7 +294,10 @@ const loadModelVersion = async ({
           availability: version.availability,
           usageControl: version.usageControl,
           baseModel: version.baseModel,
-          covered: version.generationCoverage?.covered ?? false,
+          ...coveragePairForUser(version, next, {
+            member,
+            isCheckpoint: version.model.type === 'Checkpoint',
+          }),
           modelUserId: version.model.user.id,
           modelType: version.model.type,
           flags: version.flags,
@@ -845,13 +854,9 @@ export const publishModelVersionHandler = async ({
 
     const republishing =
       version.status !== ModelStatus.Draft && version.status !== ModelStatus.Scheduled;
-    const { needsReview, unpublishedReason, unpublishedAt, customMessage, ...meta } =
+    const { needsReview, unpublishedReason, unpublishedAt, unpublishedBy, customMessage, ...meta } =
       versionMeta || {};
-    const updatedVersion = await publishModelVersionById({
-      ...input,
-      meta,
-      republishing,
-    });
+    const updatedVersion = await publishModelVersionById({ ...input, meta, republishing });
 
     await queueModelEarlyAccessReindex({ id: updatedVersion.modelId }).catch((e) => {
       console.error('Unable to update model early access deadline');

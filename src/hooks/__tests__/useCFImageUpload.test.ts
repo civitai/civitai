@@ -22,6 +22,7 @@ vi.mock('~/utils/media-preprocessors', () => ({
 }));
 
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
+import { IMAGE_UPLOAD_RELAY_PRODUCER_HEADER } from '~/utils/image-upload-relay-producer';
 
 /** The key the (stubbed) sign endpoint hands back. Distinct from every other literal here. */
 const UPLOAD_ID = 'd47b16f0-9a25-4e88-8c31-71fe0a3b62d4';
@@ -31,8 +32,17 @@ type Listeners = Record<string, Array<() => void>>;
 /**
  * A hand-rolled XHR that lets a test decide which terminal event sequence the browser
  * delivers. The sequences are the ones the spec mandates and they are the whole point of
- * the code under test: `error` and `abort` are EACH FOLLOWED BY `loadend`, while a
- * completed-but-refused request delivers `loadend` alone.
+ * the code under test: `error` and `abort` are EACH FOLLOWED BY `loadend`.
+ *
+ * ⚠ CORRECTION, because this claimed otherwise and a newer stub was written against it:
+ * a completed-but-refused request does NOT deliver `loadend` alone. The browser fires
+ * `load` then `loadend` for ANY transfer that completed at the transport layer, whatever
+ * the HTTP status — "refused" is a status, not a transport failure. `completeWith` below
+ * omits `load` only because neither this hook nor `attachUploadSettlement` registers a
+ * `load` listener (checked: the hook's only listeners are `loadstart` and `progress` on
+ * `xhr.upload`), so firing it would change nothing here. Do not carry the omission into a
+ * stub for a client that DOES read `load` — `useS3Upload` reads its part ETag there, and
+ * its stub in `src/hooks/__tests__/useS3Upload.test.ts` fires both, correctly.
  */
 class FakeXHR {
   static last: FakeXHR;
@@ -63,7 +73,11 @@ class FakeXHR {
   private fire(type: string) {
     for (const fn of this.listeners[type] ?? []) fn();
   }
-  /** A request that completed with this status, i.e. `load` -> `loadend`, no `error`. */
+  /**
+   * A request that completed with this status: no `error`, and — see the class note —
+   * `loadend` only, which is a deliberate simplification rather than the browser's own
+   * `load` -> `loadend`.
+   */
   completeWith(status: number) {
     this.readyState = 4;
     this.status = status;
@@ -230,6 +244,37 @@ describe('useCFImageUpload — the tracked file must not lie about a refused PUT
       objectUrl: 'blob:fake-object-url',
       type: 'image',
     });
+    h.unmount();
+  });
+
+  it('🔴 identifies itself as the SINGLE-PUT producer when it reaches for the relay', async () => {
+    // 🔴 DRIVEN THROUGH THE HOOK, not through `postImageUploadRelay` directly. The header
+    // is only worth anything if the REAL caller sends it, and the pair of call sites is
+    // exactly where it could go missing: the two paths used to build near-identical
+    // fetches side by side, and the counter they feed cannot tell them apart without it.
+    //
+    // A network-layer `error` is the one event that reaches the relay at all (a non-2xx
+    // `loadend` deliberately does not — see `attachUploadSettlement`), so this drives the
+    // real fallback rather than a synthetic call.
+    const h = await mountHook();
+    const { xhr } = await startUpload(h);
+    const fetchMock = globalThis.fetch as unknown as {
+      mock: { calls: [string, { headers?: Record<string, string> }][] };
+    };
+
+    await act(async () => {
+      xhr.networkError();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    const relayCall = fetchMock.mock.calls.find(([url]) => url === '/api/v1/image-upload/relay');
+    // Positive control: without it, a hook that never reached the relay at all would
+    // satisfy every assertion below vacuously.
+    expect(relayCall, 'the relay POST must have been issued').toBeDefined();
+    // An EQUALITY, not a presence check: a mutant sending `multipart` here is the most
+    // damaging one available, because it re-creates the attribution error this change
+    // exists to fix while looking like a working discriminator.
+    expect(relayCall![1].headers?.[IMAGE_UPLOAD_RELAY_PRODUCER_HEADER]).toBe('single_put');
     h.unmount();
   });
 

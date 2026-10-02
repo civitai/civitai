@@ -91,7 +91,7 @@ function makeRes() {
   };
 }
 
-function makeReq() {
+function makeReq(overrides?: { body?: Record<string, unknown> }) {
   return {
     method: 'POST',
     body: {
@@ -100,6 +100,7 @@ function makeReq() {
       type: 'model',
       uploadId: 'test-upload-id',
       backend: 'b2',
+      ...overrides?.body,
     },
     headers: {},
     socket: { remoteAddress: '127.0.0.1' },
@@ -281,5 +282,134 @@ describe('/api/upload/abort — error classification', () => {
         { name: 's3-upload-abort-error', statusAtLogTime: 204, sent: true },
       ]);
     });
+  });
+});
+
+/**
+ * The client-side failure reason. The 2026-09 image-upload investigation (browser PUTs
+ * to Backblaze reset at the network layer, ~0.4% of daily image uploads) could only be
+ * diagnosed from a user's devtools screenshots because the abort event carried no
+ * reason. The multipart clients now send a bounded `failure` object in the abort body;
+ * the endpoint logs it verbatim on `s3-upload-abort` — SANITIZED, because it is
+ * caller-supplied JSON on an unauthenticated-body route: only the three known keys may
+ * through, with bounded values, so a crafted body cannot smuggle fields into the event
+ * stream.
+ */
+describe('/api/upload/abort — client failure reason', () => {
+  it('happy path: logs the failure object it was sent', async () => {
+    mockAbortMultipartUpload.mockResolvedValue(undefined);
+    const res = makeRes();
+    await handler(makeReq({ body: { failure: { kind: 'network-error', partNumber: 3 } } }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 's3-upload-abort',
+        failure: { kind: 'network-error', partNumber: 3 },
+      })
+    );
+  });
+
+  it('logs the failure object on the abort-error path too, beside the server error', async () => {
+    mockAbortMultipartUpload.mockRejectedValue(
+      s3Error({ name: 'InternalError', $metadata: { httpStatusCode: 500 } })
+    );
+    const res = makeRes();
+    await handler(
+      makeReq({ body: { failure: { kind: 'part-status', partNumber: 2, status: 503 } } }),
+      res
+    );
+
+    expect(res.statusCode).toBe(503);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 's3-upload-abort-error',
+        failure: { kind: 'part-status', partNumber: 2, status: 503 },
+      })
+    );
+  });
+
+  it('sanitizes the failure object: unknown keys, wrong types and out-of-range values are dropped', async () => {
+    mockAbortMultipartUpload.mockResolvedValue(undefined);
+    const res = makeRes();
+    await handler(
+      makeReq({
+        body: {
+          failure: {
+            kind: 'x'.repeat(64), // over the kind bound → dropped
+            partNumber: 1.5, // not an integer → dropped
+            status: 999, // out of range → dropped
+            stack: 'injected', // unknown key → dropped
+            __proto__: { polluted: true }, // never becomes an own key
+          },
+        },
+      }),
+      res
+    );
+
+    expect(res.statusCode).toBe(200);
+    const logged = vi.mocked(logToAxiom).mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(logged.failure).toBeUndefined();
+  });
+
+  it('keeps only what survives sanitization when some fields are valid', async () => {
+    mockAbortMultipartUpload.mockResolvedValue(undefined);
+    const res = makeRes();
+    await handler(
+      makeReq({
+        body: { failure: { kind: 'client-aborted', partNumber: 4, status: 999, junk: 1 } },
+      }),
+      res
+    );
+
+    const logged = vi.mocked(logToAxiom).mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(logged.failure).toEqual({ kind: 'client-aborted', partNumber: 4 });
+  });
+
+  // 🔴 Boundary fixtures, not spot checks: a bound mutated to exclude everything (or to
+  // admit everything) must move one of these. Each field is probed at both edges of its
+  // own bound — last-accepted and first-rejected — so a changed limit cannot survive.
+  it.each([
+    ['partNumber 1', { kind: 'network-error', partNumber: 1 }, 'partNumber'],
+    [
+      'partNumber 10000 (S3 part ceiling)',
+      { kind: 'network-error', partNumber: 10_000 },
+      'partNumber',
+    ],
+    ['status 100', { kind: 'part-status', status: 100 }, 'status'],
+    ['status 599', { kind: 'part-status', status: 599 }, 'status'],
+    ['kind at 32 chars', { kind: 'a'.repeat(32) }, 'kind'],
+  ])('keeps %s', async (_name, failure, key) => {
+    mockAbortMultipartUpload.mockResolvedValue(undefined);
+    const res = makeRes();
+    await handler(makeReq({ body: { failure } }), res);
+
+    const logged = vi.mocked(logToAxiom).mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(logged.failure).toHaveProperty(key);
+  });
+
+  it.each([
+    ['partNumber 10001', { kind: 'network-error', partNumber: 10_001 }, 'partNumber'],
+    ['partNumber 0', { kind: 'network-error', partNumber: 0 }, 'partNumber'],
+    ['status 99', { kind: 'part-status', status: 99 }, 'status'],
+    ['status 600', { kind: 'part-status', status: 600 }, 'status'],
+    ['kind at 33 chars', { kind: 'a'.repeat(33) }, 'kind'],
+    ['a non-object failure', 'network-error', 'kind'],
+  ])('drops %s', async (_name, failure, key) => {
+    mockAbortMultipartUpload.mockResolvedValue(undefined);
+    const res = makeRes();
+    await handler(makeReq({ body: { failure } }), res);
+
+    const logged = vi.mocked(logToAxiom).mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(logged.failure ?? {}).not.toHaveProperty(key);
+  });
+
+  it('an absent failure object logs nothing extra', async () => {
+    mockAbortMultipartUpload.mockResolvedValue(undefined);
+    const res = makeRes();
+    await handler(makeReq(), res);
+
+    const logged = vi.mocked(logToAxiom).mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(logged.failure).toBeUndefined();
   });
 });

@@ -597,7 +597,17 @@ export const serverSchema = z
     POST_QUERY_CACHING: zc.booleanString,
     EXTERNAL_MODERATION_ENDPOINT: z.url().optional(),
     EXTERNAL_MODERATION_TOKEN: z.string().optional(),
+    // Which classifier categories block, as `provider_category:our_label,...` (a bare
+    // `cat` means `cat:cat`). Its PRESENCE switches `deriveModerationVerdict` between two
+    // modes — see that function; the consequence worth knowing here is that setting this
+    // var narrows what blocks and unsetting it widens, so an empty deploy is not a safe
+    // default.
+    //
+    // 🔴 The value stays in the environment deliberately rather than defaulting here: the
+    // mapping is content-safety policy and this repo is public (CLAUDE.md → Security).
     EXTERNAL_MODERATION_CATEGORIES: commaDelimitedStringObject().optional(),
+    // Only consulted when EXTERNAL_MODERATION_CATEGORIES is unset; in category mode
+    // membership decides and the score is never read.
     EXTERNAL_MODERATION_THRESHOLD: z.coerce.number().optional().default(0.5),
     // Hard request timeout (ms) for the external moderation call. Bounds the
     // fail-soft path: when the moderation gateway is slow/hanging (503/504 waves),
@@ -820,7 +830,6 @@ export const serverSchema = z
     NOW_PAYMENTS_IPN_KEY: z.string().optional(),
     NOW_PAYMENTS_EMAIL: z.string().optional(),
     NOW_PAYMENTS_PASSWORD: z.string().optional(),
-    NOW_PAYMENTS_PAYOUT_ADDRESS: z.string().optional(),
     NOWPAYMENTS_IPN_URL: z.string().optional(), // Override IPN callback URL (e.g., webhook.site for dev)
     NOWPAYMENTS_SUPPORT_EMAIL: z.string().optional(), // NP support inbox for stuck-deposit tickets; unset disables the notifier
 
@@ -875,6 +884,39 @@ export const serverSchema = z
     S3_UPLOAD_B2_SECRET_KEY: z.string().optional(),
     S3_UPLOAD_B2_BUCKET: z.string().optional(),
     S3_UPLOAD_B2_REGION: z.string().optional(),
+    // Quarantine destination for model-file deletes that opt in (see
+    // `deleteModelFileObject`'s `quarantine` option). The object is copied here and
+    // only then removed from the source bucket, so this bucket's own retention rule
+    // — not the application — is what finally destroys the bytes.
+    //
+    // 🔴 UNSET IS A REFUSAL, NOT A FALLBACK. A caller that asked for quarantine and
+    // finds this unconfigured gets `quarantine-not-configured` and deletes nothing.
+    // Falling back to a plain delete would silently reinstate exactly the behaviour
+    // the option exists to replace, at the moment the operator is least likely to be
+    // watching for it.
+    //
+    // 🔴 THIS BUCKET MUST HAVE A RETENTION RULE AND MUST NOT HAVE VERSIONING. Nothing
+    // in this application ever deletes from it; if no lifecycle rule expires its
+    // contents, quarantine is an unbounded copy of everything ever deleted. And with
+    // versioning enabled, that rule would hide objects rather than remove them and the
+    // bucket would still grow without limit.
+    S3_UPLOAD_B2_QUARANTINE_BUCKET: z.string().optional(),
+    // 🔴 A SEPARATE CREDENTIAL, AND IT HAS TO BE ACCOUNT-WIDE — WHICH IS EXACTLY WHY IT IS NOT
+    // THE UPLOAD CREDENTIAL. A server-side copy reads one bucket and writes another in a single
+    // call, so one credential must be authorised for both; B2 pins a restricted key to exactly
+    // one bucket, so no bucket-scoped key can ever perform it. Rather than widen the key used by
+    // every model-file upload, download and presign from one bucket to the whole account, the
+    // wide credential is confined to the quarantine path and nothing else reads these.
+    //
+    // 🔴 Grant it FILE capabilities only — read/write/delete/list. It needs nothing that can
+    // create, delete or reconfigure a bucket, and nothing that can mint another key. It is
+    // account-wide in SCOPE out of necessity; it should not be account-wide in POWER.
+    //
+    // Endpoint and region are deliberately NOT duplicated — `getQuarantineS3Client` reuses
+    // `S3_UPLOAD_B2_ENDPOINT`/`_REGION`, because it is the same B2 account and a second copy of
+    // those values is a second thing to get wrong.
+    S3_UPLOAD_B2_QUARANTINE_ACCESS_KEY: z.string().optional(),
+    S3_UPLOAD_B2_QUARANTINE_SECRET_KEY: z.string().optional(),
 
     // B2 Upload — media/images (gated by Flipt flag B2_IMAGE_UPLOAD)
     S3_IMAGE_B2_ENDPOINT: z.string().optional(),
@@ -921,6 +963,7 @@ export const serverSchema = z
     BLOCK_TOKEN_PUBLIC_KEY: z.string().optional(),
     BLOCK_TOKEN_PUBLIC_KEY_NEXT: z.string().optional(),
     BLOCK_ALLOWED_ORIGINS: z.string().optional(),
+    APP_BLOCK_OAUTH_TOKENS_ENABLED: zc.booleanString.optional().default(false),
 
     // App Blocks W2 (apps-as-repos). Optional so envs that don't run the
     // platform layer (PR previews without apps-pipeline wiring) still boot.

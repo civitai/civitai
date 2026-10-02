@@ -8,6 +8,7 @@ import {
   ScrollArea,
   Select,
   Stack,
+  Text,
 } from '@mantine/core';
 import { DatePickerInput } from '@mantine/dates';
 import { IconFilter, IconX } from '@tabler/icons-react';
@@ -15,8 +16,10 @@ import type { ReactNode } from 'react';
 import { useState } from 'react';
 import { FilterButton } from '~/components/Buttons/FilterButton';
 import { FilterChip } from '~/components/Filters/FilterChip';
+import { MobileMenuDrawer } from '~/components/Drawer/MobileMenuDrawer';
 import { IsClient } from '~/components/IsClient/IsClient';
-import { isMobileDevice } from '~/hooks/useIsMobile';
+import { isMobileDevice, useIsMobile } from '~/hooks/useIsMobile';
+import { mobileMenuSheetZIndex } from '~/shared/constants/app-layout.constants';
 import type { GenerationFilterSchema } from '~/providers/FiltersProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { GenerationReactType } from '~/server/common/enums';
@@ -137,6 +140,166 @@ export function DumbMarkerFiltersDropdown({
     });
   };
 
+  const mobile = useIsMobile({ type: 'media' });
+
+  // The bottom sheet's body is the scroll container, so an unportalled dropdown is
+  // clipped by it — and a portalled one then has to clear the sheet in turn.
+  const overlayProps = mobile
+    ? { withinPortal: true, zIndex: mobileMenuSheetZIndex + 1 }
+    : { withinPortal: false };
+
+  const button = (
+    <FilterButton icon={IconFilter} active={opened} onClick={() => setOpened((o) => !o)}>
+      Filters
+    </FilterButton>
+  );
+
+  const indicatorProps = {
+    offset: 4,
+    label: filterLength ? filterLength : undefined,
+    size: 14,
+    zIndex: 10,
+    disabled: !filterLength,
+    inline: true,
+  };
+
+  const body = (
+    <Stack gap={8} pb="xl">
+      {/* Clear all filters button */}
+      {filterLength > 0 && (
+        <Button
+          variant="subtle"
+          size="xs"
+          leftSection={<IconX size={14} />}
+          onClick={clearAllFilters}
+          className="self-start"
+        >
+          Clear all filters
+        </Button>
+      )}
+
+      <Divider label="Reactions" className="text-sm font-bold" />
+      <div className="flex gap-2">
+        {Object.values(GenerationReactType).map((marker) => {
+          return (
+            <FilterChip
+              key={marker}
+              checked={marker === filters.marker}
+              onChange={(checked) => {
+                setMarker(checked ? marker : undefined);
+                setFilters({ marker: checked ? marker : undefined });
+              }}
+            >
+              <span>{titleCase(marker)}</span>
+            </FilterChip>
+          );
+        })}
+      </div>
+
+      {!hideMediaTypes && (
+        <>
+          <Divider label="Generation Type" className="text-sm font-bold" />
+          <div className="flex gap-2">
+            <FilterChip checked={!filters.tags?.length} onChange={() => setFilters({ tags: [] })}>
+              All
+            </FilterChip>
+            <FilterChip
+              checked={filters.tags?.includes(WORKFLOW_TAGS.IMAGE) ?? false}
+              onChange={() => setFilters({ tags: [WORKFLOW_TAGS.IMAGE] })}
+            >
+              Images
+            </FilterChip>
+            <FilterChip
+              checked={filters.tags?.includes(WORKFLOW_TAGS.VIDEO) ?? false}
+              onChange={() => setFilters({ tags: [WORKFLOW_TAGS.VIDEO] })}
+            >
+              Videos
+            </FilterChip>
+            <FilterChip
+              checked={filters.tags?.includes(WORKFLOW_TAGS.AUDIO) ?? false}
+              onChange={() => setFilters({ tags: [WORKFLOW_TAGS.AUDIO] })}
+            >
+              Audio
+            </FilterChip>
+          </div>
+        </>
+      )}
+
+      {/* Base Model Filter */}
+      <Divider label="Ecosystem" className="text-sm font-bold" />
+      <Select
+        data={ecosystemSelectData}
+        value={filters.baseModel ?? null}
+        onChange={(value) => setFilters({ baseModel: value ?? undefined })}
+        placeholder="All Models"
+        searchable={!isMobileDevice()}
+        clearable
+        comboboxProps={overlayProps}
+      />
+
+      {/* Workflow Filter */}
+      <Divider label="Workflow" className="text-sm font-bold" />
+      <Select
+        data={workflowSelectData}
+        value={filters.processType ?? null}
+        onChange={(value) => setFilters({ processType: value ?? undefined })}
+        placeholder="All Workflows"
+        searchable={!isMobileDevice()}
+        clearable
+        comboboxProps={overlayProps}
+      />
+
+      {/* Date Range Filter */}
+      <Divider label="Date Range" className="text-sm font-bold" />
+      <Group grow>
+        <DatePickerInput
+          label="From"
+          placeholder="Start date"
+          value={filters.fromDate}
+          onChange={(date) => setFilters({ fromDate: date ?? undefined })}
+          maxDate={filters.toDate ?? undefined}
+          clearable
+          popoverProps={overlayProps}
+        />
+        <DatePickerInput
+          label="To"
+          placeholder="End date"
+          value={filters.toDate}
+          onChange={(date) => setFilters({ toDate: date ?? undefined })}
+          minDate={filters.fromDate ?? undefined}
+          clearable
+          popoverProps={overlayProps}
+        />
+      </Group>
+
+      {/* Status Filter */}
+      <Divider label="Status" className="text-sm font-bold" />
+      <div className="flex gap-2">
+        <FilterChip
+          checked={filters.excludeFailed ?? false}
+          onChange={(checked) => setFilters({ excludeFailed: checked || undefined })}
+        >
+          Hide Failed
+        </FilterChip>
+      </div>
+    </Stack>
+  );
+
+  if (mobile)
+    return (
+      <IsClient>
+        <Indicator {...indicatorProps}>{button}</Indicator>
+        <MobileMenuDrawer
+          opened={opened}
+          onClose={() => setOpened(false)}
+          title={<Text fw={600}>Filters</Text>}
+          closeButtonProps={{ 'aria-label': 'Close filters' }}
+        >
+          {body}
+        </MobileMenuDrawer>
+      </IsClient>
+    );
+
   return (
     <IsClient>
       <Popover
@@ -146,142 +309,12 @@ export function DumbMarkerFiltersDropdown({
         onClose={() => setOpened(false)}
         withinPortal
       >
-        <Indicator
-          offset={4}
-          label={filterLength ? filterLength : undefined}
-          size={14}
-          zIndex={10}
-          disabled={!filterLength}
-          inline
-        >
-          <Popover.Target>
-            <FilterButton icon={IconFilter} active={opened} onClick={() => setOpened((o) => !o)}>
-              Filters
-            </FilterButton>
-          </Popover.Target>
+        <Indicator {...indicatorProps}>
+          <Popover.Target>{button}</Popover.Target>
         </Indicator>
         <Popover.Dropdown maw={576} w="100%">
           <ScrollArea.Autosize mah={'calc(90vh - var(--header-height) - 56px)'} type="hover">
-            <Stack gap={8} pb="xl">
-              {/* Clear all filters button */}
-              {filterLength > 0 && (
-                <Button
-                  variant="subtle"
-                  size="xs"
-                  leftSection={<IconX size={14} />}
-                  onClick={clearAllFilters}
-                  className="self-start"
-                >
-                  Clear all filters
-                </Button>
-              )}
-
-              <Divider label="Reactions" className="text-sm font-bold" />
-              <div className="flex gap-2">
-                {Object.values(GenerationReactType).map((marker) => {
-                  return (
-                    <FilterChip
-                      key={marker}
-                      checked={marker === filters.marker}
-                      onChange={(checked) => {
-                        setMarker(checked ? marker : undefined);
-                        setFilters({ marker: checked ? marker : undefined });
-                      }}
-                    >
-                      <span>{titleCase(marker)}</span>
-                    </FilterChip>
-                  );
-                })}
-              </div>
-
-              {!hideMediaTypes && (
-                <>
-                  <Divider label="Generation Type" className="text-sm font-bold" />
-                  <div className="flex gap-2">
-                    <FilterChip
-                      checked={!filters.tags?.length}
-                      onChange={() => setFilters({ tags: [] })}
-                    >
-                      All
-                    </FilterChip>
-                    <FilterChip
-                      checked={filters.tags?.includes(WORKFLOW_TAGS.IMAGE) ?? false}
-                      onChange={() => setFilters({ tags: [WORKFLOW_TAGS.IMAGE] })}
-                    >
-                      Images
-                    </FilterChip>
-                    <FilterChip
-                      checked={filters.tags?.includes(WORKFLOW_TAGS.VIDEO) ?? false}
-                      onChange={() => setFilters({ tags: [WORKFLOW_TAGS.VIDEO] })}
-                    >
-                      Videos
-                    </FilterChip>
-                    <FilterChip
-                      checked={filters.tags?.includes(WORKFLOW_TAGS.AUDIO) ?? false}
-                      onChange={() => setFilters({ tags: [WORKFLOW_TAGS.AUDIO] })}
-                    >
-                      Audio
-                    </FilterChip>
-                  </div>
-                </>
-              )}
-
-              {/* Base Model Filter */}
-              <Divider label="Ecosystem" className="text-sm font-bold" />
-              <Select
-                data={ecosystemSelectData}
-                value={filters.baseModel ?? null}
-                onChange={(value) => setFilters({ baseModel: value ?? undefined })}
-                placeholder="All Models"
-                searchable={!isMobileDevice()}
-                clearable
-                comboboxProps={{ withinPortal: false }}
-              />
-
-              {/* Workflow Filter */}
-              <Divider label="Workflow" className="text-sm font-bold" />
-              <Select
-                data={workflowSelectData}
-                value={filters.processType ?? null}
-                onChange={(value) => setFilters({ processType: value ?? undefined })}
-                placeholder="All Workflows"
-                searchable={!isMobileDevice()}
-                clearable
-                comboboxProps={{ withinPortal: false }}
-              />
-
-              {/* Date Range Filter */}
-              <Divider label="Date Range" className="text-sm font-bold" />
-              <Group grow>
-                <DatePickerInput
-                  label="From"
-                  placeholder="Start date"
-                  value={filters.fromDate}
-                  onChange={(date) => setFilters({ fromDate: date ?? undefined })}
-                  maxDate={filters.toDate ?? undefined}
-                  clearable
-                />
-                <DatePickerInput
-                  label="To"
-                  placeholder="End date"
-                  value={filters.toDate}
-                  onChange={(date) => setFilters({ toDate: date ?? undefined })}
-                  minDate={filters.fromDate ?? undefined}
-                  clearable
-                />
-              </Group>
-
-              {/* Status Filter */}
-              <Divider label="Status" className="text-sm font-bold" />
-              <div className="flex gap-2">
-                <FilterChip
-                  checked={filters.excludeFailed ?? false}
-                  onChange={(checked) => setFilters({ excludeFailed: checked || undefined })}
-                >
-                  Hide Failed
-                </FilterChip>
-              </div>
-            </Stack>
+            {body}
           </ScrollArea.Autosize>
         </Popover.Dropdown>
       </Popover>

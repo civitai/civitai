@@ -4,6 +4,7 @@ import * as z from 'zod';
 import { Form, InputDateTimePicker, useForm } from '~/libs/form';
 import { POST_MINIMUM_SCHEDULE_MINUTES } from '~/server/common/constants';
 import { increaseDate } from '~/utils/date-helpers';
+import { getDefaultScheduleDate } from './schedule-post.utils';
 
 const schema = z.object({
   date: z
@@ -46,7 +47,7 @@ export function SchedulePostModal({
 
   const form = useForm({
     schema,
-    defaultValues: { date: publishedAt ? publishedAt : new Date() },
+    defaultValues: { date: publishedAt ?? getDefaultScheduleDate() },
   });
 
   const handleSubmit = async (data: z.infer<typeof schema>) => {

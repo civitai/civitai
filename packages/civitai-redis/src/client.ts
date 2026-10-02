@@ -1799,6 +1799,10 @@ export const REDIS_SYS_KEYS = {
     // Fixed-window submission counter for in-product feedback — `system:feedback:rate-limit:${userId}`.
     RATE_LIMIT: 'system:feedback:rate-limit',
   },
+  COLLECTION_AI_REVIEW: {
+    // Failed review attempts per item — `system:collection-ai-review:attempts:${collectionItemId}`.
+    ATTEMPTS: 'system:collection-ai-review:attempts',
+  },
   BLOCKS: {
     // Emergency kill list — Redis SET of `block_id` strings BlockRegistry excludes from every
     // listForModel response (disable a runaway block without a deploy).
@@ -1846,6 +1850,26 @@ export const REDIS_SYS_KEYS = {
      * sibling BLOCKS caps; fail-CLOSED on a redis error at claim time (money path).
      */
     GEN_IDEM: 'system:blocks:gen-idem',
+    /**
+     * Cumulative DIGITAL-GOODS spend cap counter for the block goods purchase
+     * endpoint (`POST /api/v1/blocks/goods/purchase`), keyed
+     * `system:blocks:goods-cap:${userId}:${UTC-day}`. DISTINCT from BUZZ_CAP
+     * (daily generation spend) and TIP_CAP (daily Buzz tipped out): this bounds
+     * a user's daily Buzz spent BUYING app goods. Per-USER aggregate (no
+     * appBlockId) so N installed apps share ONE daily ceiling and a publisher
+     * cannot multiply it by shipping more apps. INCRBY'd by the price
+     * pre-transaction (reserve-and-refund), TTL set on first write.
+     */
+    GOODS_CAP: 'system:blocks:goods-cap',
+    /**
+     * Idempotency record for the block goods purchase endpoint, keyed
+     * `system:blocks:goods-idem:${userId}:${appBlockId}:${clientIdempotencyKey}`.
+     * Same `SET NX` claim → replay / 409 / 422-on-fingerprint-mismatch state
+     * machine as TIP_IDEM, and fail-CLOSED on a redis error at claim time for
+     * the same reason (a money endpoint must not dedupe blind). DISTINCT from
+     * TIP_IDEM so a key value reused across the two surfaces cannot collide.
+     */
+    GOODS_IDEM: 'system:blocks:goods-idem',
     /**
      * Per-APP aggregate generation-SPEND + velocity cap counters (G8 — generic
      * per-app safety). DISTINCT from BUZZ_CAP (which bounds a single USER's daily
@@ -1950,6 +1974,24 @@ export const REDIS_SYS_KEYS = {
      * `sysRedis`.
      */
     REVIEW_RUN_FOR_REAL_BUZZ_CAP: 'system:blocks:review-run-for-real-buzz-cap',
+    /**
+     * PRIVATE RUN — AGGREGATE Buzz-spend ceiling for a private run of a DELISTED /
+     * SUSPENDED app by its owner, an accepted listing collaborator, or a moderator.
+     * Keyed `${PRIVATE_RUN_BUZZ_CAP}:<viewerUserId>:<appBlockId>` so every private-run
+     * generation by one viewer against one app accumulates against a SINGLE ceiling
+     * (`PRIVATE_RUN_BUZZ_CAP`) — a per-call budget alone cannot bound an app looping
+     * sub-budget calls, which is the same hole the sibling caps exist for.
+     *
+     * 🔴 A SEPARATE KEY FROM `REVIEW_RUN_FOR_REAL_BUZZ_CAP`, DELIBERATELY, AND NOT A
+     * TIDINESS CHOICE. That key's reservation id is a `pubreq_<ULID>` PUBLISH-REQUEST
+     * id; this one's is a real `apb_<…>` AppBlock id. Sharing one prefix would let a
+     * moderator's review-sandbox session and their private run of the same app draw
+     * down one another's ceiling, and the two ceilings answer different questions
+     * ("how much may a mod spend vetting this SUBMISSION" vs "…diagnosing this
+     * TAKEN-DOWN APP"). Same atomic INCRBY reserve-and-refund + hard-TTL EX shape as
+     * the sibling BLOCKS caps, on `sysRedis`, fail-CLOSED on a redis error.
+     */
+    PRIVATE_RUN_BUZZ_CAP: 'system:blocks:private-run-buzz-cap',
     /**
      * CONSENT BUDGET — the per-(USER, APP BLOCK, UTC-day) Buzz ceiling the VIEWER
      * themselves set at consent time (`app_user_scope_grants.buzz_budget_per_day`).
@@ -2287,6 +2329,14 @@ export const REDIS_SYS_KEYS = {
   RETOOL_ENDPOINT: {
     RATE_LIMIT: 'retool-endpoint:rate-limit',
   },
+  CRUCIBLE: {
+    ELO: 'crucible:elo',
+    VOTED_PAIRS: 'crucible:voted',
+    SERVED_PAIRS: 'crucible:served',
+    JUDGE_ENTRY_VOTES: 'crucible:judge-entry-votes',
+    JUDGES: 'crucible:judges',
+    USER_VOTES: 'crucible:user-votes',
+  },
 } as const;
 
 // Cached data.
@@ -2319,6 +2369,30 @@ const REDIS_KEYS_UNPREFIXED = {
     // unrepresentable — the install path cannot address this key at all.
     // Same TTL, same semantics, checked together by BlockRevocation.isRevoked.
     REVOKED_INSTANCE_BAN: 'blocks:revoked-instance-ban',
+    // 🔴 A THIRD KEYSPACE, FOR PER-SCOPE CONSENT REVOCATION, AND IT IS KEYED ON A
+    // DIFFERENT THING ENTIRELY: `<prefix>:<userId>:<appBlockId>`, not a blockInstanceId.
+    // The value is a JSON array of the scopes that (user, app) pair has revoked, so the
+    // guard can refuse the ONE route whose required scope was withdrawn instead of the
+    // app's whole surface.
+    //
+    // WHY NOT REUSE EITHER KEY ABOVE. Same argument as the install/ban split, one step
+    // out: those two are per-INSTANCE and are written by an owner/moderator action, this
+    // one is per-(user, app) and is written by the VIEWER. A shared key would let one
+    // population's write clear another's marker, which is exactly the downgrade the
+    // install/ban split was introduced to make unrepresentable.
+    //
+    // 🔴 AND ITS READ FAILS **CLOSED**, unlike `BlockRevocation.isRevoked`, which
+    // deliberately fails open. That asymmetry is why the two cannot share one `mGet`
+    // either: one call has one catch, and these two need opposite ones. See
+    // `src/server/services/blocks/consent-revocation.service.ts`.
+    //
+    // Same TTL relationship as the two above: it must OUTLIVE the longest token it
+    // refuses. Deliberately NOT restated as a number — the constant lives in the Next
+    // app's `src/server/services/block-token-lifetimes.ts`
+    // (`MAX_BLOCK_TOKEN_LIFETIME_SECONDS`), a different workspace package that cannot be
+    // imported from here, and a hardcoded figure is exactly what let `REVOKED_INSTANCE`'s
+    // comment claim 15min while dev tokens lived 4h.
+    CONSENT_REVOKED_SCOPES: 'blocks:consent-revoked-scopes',
     // Per-ecosystem-key most-popular-Checkpoint cache (JSON ValidatedCheckpoint, 1h TTL).
     POPULAR_CHECKPOINT: 'blocks:popular-checkpoint',
   },
@@ -2337,7 +2411,7 @@ const REDIS_KEYS_UNPREFIXED = {
   },
   BUZZ_EVENTS: 'buzz-events',
   GENERATION: {
-    RESOURCE_DATA: 'packed:generation:resource-data-3',
+    RESOURCE_DATA: 'packed:generation:resource-data-5',
     /** @deprecated Bare-token orchestrator bearers. Superseded by TOKENS_OWNED; drains by TTL (~1h). */
     TOKENS: 'generation:tokens',
     /**
@@ -2369,11 +2443,20 @@ const REDIS_KEYS_UNPREFIXED = {
     BLOCKLIST: 'system:blocklist',
     PROMPT_ALLOWLIST: 'packed:system:prompt-allowlist',
     NOTIFICATION_COUNTS: 'system:notification-counts',
+    /** Per-user daily web-push quota counters: `<prefix>:<userId>:<YYYY-MM-DD>`. */
+    PUSH_QUOTA: 'system:push-quota',
     CATEGORIES: 'system:categories',
     BLOCKED_BROWSING_TAGS: 'system:blocked-browsing-tags',
   },
   CACHES: {
     ECOSYSTEM_SEO: 'packed:caches:ecosystem-seo',
+    RESOURCE_LOAD_RESIDENCY: 'packed:caches:resource-load-residency',
+    // Full resource-intent responses (degraded ones under a short TTL). The v1
+    // segment pins the response shape; see resource-intent.service.ts for the
+    // rest of the key (…:<sha256> of prompt|baseModel|browsingLevel|cap|specVersion).
+    // `cap` is in there because it bounds the shortlist and so bounds the cached
+    // suggestions — omitting it let one prompt's entry be reused across limits.
+    JEV_RESOURCE_INTENT: 'packed:caches:jev-resource-intent:v1',
     METRIC_EXCLUDED_USERS: 'packed:caches:metric-excluded-users',
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',
@@ -2388,7 +2471,7 @@ const REDIS_KEYS_UNPREFIXED = {
     IMAGES_FOR_MODEL_VERSION: 'packed:caches:images-for-model-version-2',
     EDGE_CACHED: 'packed:caches:edge-cache',
     TAGGED_CACHE: 'packed:caches:tagged-cache',
-    DATA_FOR_MODEL: 'packed:caches:data-for-model',
+    DATA_FOR_MODEL: 'packed:caches:data-for-model-2',
     PUBLIC_MODEL_RESPONSE: 'packed:caches:public-model-response',
     BLOCKED_USERS: 'packed:caches:blocked-users',
     BLOCKED_BY_USERS: 'packed:caches:blocked-by-users',
@@ -2416,7 +2499,6 @@ const REDIS_KEYS_UNPREFIXED = {
     MODEL_VOTABLE_TAGS: 'packed:caches:model-votable-tags',
     MODEL_VERSION_PUBLIC_DONATION_GOALS: 'packed:caches:model-version-public-donation-goals',
     IMAGE_TAGS: 'packed:caches:image-tags',
-    MODEL_VERSION_RESOURCE_INFO: 'packed:caches:model-version-resource-info',
     TENSOR_METADATA: 'packed:caches:tensor-metadata',
     TENSOR_METADATA_SUMMARY: 'packed:caches:tensor-metadata-summary',
     IMAGE_RESOURCES: 'packed:caches:image-resources',
@@ -2594,6 +2676,9 @@ const REDIS_KEYS_UNPREFIXED = {
       Read by: the moderator app's dashboard, which filters its most-reported list through it.
      */
     RESOLVED_RECENT: 'report:resolved-recent',
+  },
+  CRUCIBLE: {
+    USER_BUZZ_WON: 'packed:caches:crucible:user-buzz-won',
   },
 } as const;
 

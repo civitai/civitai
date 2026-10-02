@@ -6,7 +6,6 @@ import type { FilterButtonProps } from '~/components/Buttons/FilterButton';
 import { FilterButton } from '~/components/Buttons/FilterButton';
 import { MobileMenuDrawer } from '~/components/Drawer/MobileMenuDrawer';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import classes from './SelectMenu.module.scss';
 
 type SelectMenu<T extends string | number> = {
   label: React.ReactNode;
@@ -107,7 +106,6 @@ export function SelectMenuV2<T extends string | number>({
         <MobileMenuDrawer
           opened={opened}
           onClose={() => setOpened(false)}
-          classNames={{ root: classes.root }}
           closeButtonProps={{ 'aria-label': 'Close sort menu' }}
         >
           <div className="flex flex-col gap-2">

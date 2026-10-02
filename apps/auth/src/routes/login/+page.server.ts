@@ -11,6 +11,7 @@ import { sendVerificationEmail } from '$lib/server/email/verification.email';
 import {
   captchaSiteKey,
   captchaManagedSiteKey,
+  isCaptchaEnabled,
   verifyCaptchaToken,
 } from '$lib/server/auth/captcha';
 import {
@@ -73,6 +74,10 @@ export const load: PageServerLoad = async ({ url, locals, request }) => {
     // null when unprovisioned, so the fallback never appears (behavior == pre-fallback).
     turnstileSiteKey: captchaSiteKey() ?? null,
     turnstileManagedSiteKey: captchaManagedSiteKey() ?? null,
+    // Whether the email action will actually ENFORCE captcha. Keyed on the secret, so it is
+    // independent of either sitekey — the page must not tell a user login is blocked in a
+    // configuration where a tokenless submit still passes.
+    turnstileEnforced: isCaptchaEnabled(),
     user: locals.user ? { username: locals.user.username, id: locals.user.id } : null,
   };
 };

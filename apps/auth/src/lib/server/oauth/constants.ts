@@ -7,3 +7,5 @@ export const REFRESH_TOKEN_TTL = 30 * 24 * 60 * 60; // 30 days
 export const AUTH_CODE_TTL = 10 * 60; // 10 minutes
 export const DEVICE_CODE_TTL = 15 * 60; // 15 minutes
 export const DEVICE_POLL_INTERVAL = 5; // seconds
+export const APP_TOKEN_DEFAULT_TTL = 15 * 60; // 15 minutes
+export const APP_TOKEN_MAX_TTL = ACCESS_TOKEN_TTL;

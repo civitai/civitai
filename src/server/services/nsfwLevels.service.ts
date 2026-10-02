@@ -515,8 +515,9 @@ export async function updateCollectionsNsfwLevels(collectionIds: number[]) {
                   LEFT JOIN "Post"    p ON p.id = ci."postId"    AND p."publishedAt" IS NOT NULL
                   LEFT JOIN "Model"   m ON m.id = ci."modelId"   AND m."status" = 'Published'
                   LEFT JOIN "Article" a ON a.id = ci."articleId" AND a."publishedAt" IS NOT NULL
+                  LEFT JOIN "Model3D" m3 ON m3.id = ci."model3dId" AND m3."status" = 'Published'
                   WHERE ci."collectionId" = c.id AND ci.status = 'ACCEPTED'
-                    AND (COALESCE(i."nsfwLevel", p."nsfwLevel", m."nsfwLevel", a."nsfwLevel", 0) & ${sfwBrowsingLevelsFlag}) != 0
+                    AND (COALESCE(i."nsfwLevel", p."nsfwLevel", m."nsfwLevel", a."nsfwLevel", m3."nsfwLevel", 0) & ${sfwBrowsingLevelsFlag}) != 0
                 ) THEN 1 ELSE 0 END)
                 | (CASE WHEN EXISTS (
                   SELECT 1 FROM "CollectionItem" ci
@@ -524,8 +525,9 @@ export async function updateCollectionsNsfwLevels(collectionIds: number[]) {
                   LEFT JOIN "Post"    p ON p.id = ci."postId"    AND p."publishedAt" IS NOT NULL
                   LEFT JOIN "Model"   m ON m.id = ci."modelId"   AND m."status" = 'Published'
                   LEFT JOIN "Article" a ON a.id = ci."articleId" AND a."publishedAt" IS NOT NULL
+                  LEFT JOIN "Model3D" m3 ON m3.id = ci."model3dId" AND m3."status" = 'Published'
                   WHERE ci."collectionId" = c.id AND ci.status = 'ACCEPTED'
-                    AND (COALESCE(i."nsfwLevel", p."nsfwLevel", m."nsfwLevel", a."nsfwLevel", 0) & ${nsfwBrowsingLevelsFlag}) != 0
+                    AND (COALESCE(i."nsfwLevel", p."nsfwLevel", m."nsfwLevel", a."nsfwLevel", m3."nsfwLevel", 0) & ${nsfwBrowsingLevelsFlag}) != 0
                 ) THEN ${COLLECTION_NSFW_BUCKET} ELSE 0 END)
               )
           END

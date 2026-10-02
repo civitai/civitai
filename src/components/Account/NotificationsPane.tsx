@@ -1,4 +1,4 @@
-import { Badge, Checkbox, Text, UnstyledButton } from '@mantine/core';
+import { Badge, Text, UnstyledButton } from '@mantine/core';
 import type { Icon } from '@tabler/icons-react';
 import {
   IconBellOff,
@@ -18,8 +18,14 @@ import React, { useState } from 'react';
 
 import { NewsletterToggle } from '~/components/Account/NewsletterToggle';
 import { SettingRow, SettingsSection, SettingsStack } from '~/components/Account/SettingsLayout';
+import { NotificationTypeControl } from '~/components/Notifications/NotificationTypeControl';
+import { PushDeviceList } from '~/components/Notifications/PushDeviceList';
+import { PushDeviceToggle } from '~/components/Notifications/PushDeviceToggle';
+import { PushSoftAsk } from '~/components/Notifications/PushSoftAsk';
+import { usePushSubscription } from '~/components/Notifications/usePushSubscription';
 import {
   useNotificationSettings,
+  usePushNotificationSettings,
   useToggleNotificationSetting,
 } from '~/components/Notifications/useNotificationSettings';
 import { SkeletonSwitch } from '~/components/SkeletonSwitch/SkeletonSwitch';
@@ -52,6 +58,8 @@ const categoryEntries = Object.entries(notificationCategoryTypes).sort(
 export function NotificationsPane() {
   const { hasNotifications, hasCategory, notificationSettings, isLoading } =
     useNotificationSettings();
+  const { active: pushAvailable } = usePushSubscription();
+  const { pushTypes } = usePushNotificationSettings(pushAvailable);
   const updateNotificationSettingMutation = useToggleNotificationSetting();
   const [expanded, setExpanded] = useState<string | null>(null);
 
@@ -69,12 +77,9 @@ export function NotificationsPane() {
     if (!categoryTypes?.length) return;
     updateNotificationSettingMutation.mutate({ toggle, type: categoryTypes });
   };
-  const toggleType = (type: string, toggle: boolean) => {
-    updateNotificationSettingMutation.mutate({ toggle, type: [type] });
-  };
-
   return (
     <SettingsStack>
+      <PushSoftAsk />
       <SettingsSection title="Delivery">
         <SettingRow
           label="On-site notifications"
@@ -87,6 +92,8 @@ export function NotificationsPane() {
             />
           }
         />
+        <PushDeviceToggle />
+        <PushDeviceList />
         {/* Default branch is a raw Group with the switch first, which the section's Switch
             overrides can't reach. */}
         <NewsletterToggle>
@@ -165,12 +172,14 @@ export function NotificationsPane() {
                       </Text>
                     )}
                     {settings.map(({ type, displayName }) => (
-                      <Checkbox
+                      <NotificationTypeControl
                         key={type}
-                        label={displayName}
+                        type={type}
+                        displayName={displayName}
                         checked={notificationSettings[type]}
+                        pushOn={pushTypes.includes(type)}
+                        pushAvailable={pushAvailable}
                         disabled={isLoading || !categoryOn}
-                        onChange={(e) => toggleType(type, e.target.checked)}
                       />
                     ))}
                   </div>

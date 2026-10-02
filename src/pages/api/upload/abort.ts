@@ -9,6 +9,31 @@ import {
 } from '~/utils/s3-utils';
 import { logToAxiom } from '~/server/logging/client';
 
+/**
+ * Sanitize the caller-supplied failure object before it reaches the event stream.
+ *
+ * The multipart clients send a bounded shape (`PartFailureReason` in
+ * `~/utils/upload-retry`), but this is unauthenticated-body input on a POST route, so it
+ * is rebuilt from scratch: only the three known keys pass, with bounded values, and
+ * everything else — including a JSON body's own `__proto__` key — is dropped rather than
+ * spread. An empty or malformed object becomes `undefined`, which the log sites omit.
+ */
+function sanitizeClientFailure(input: unknown): Record<string, unknown> | undefined {
+  if (!input || typeof input !== 'object') return undefined;
+  const o = input as Record<string, unknown>;
+  const failure: Record<string, unknown> = {};
+  if (typeof o.kind === 'string' && o.kind.length > 0 && o.kind.length <= 32) failure.kind = o.kind;
+  if (
+    Number.isInteger(o.partNumber) &&
+    (o.partNumber as number) >= 1 &&
+    (o.partNumber as number) <= 10_000
+  )
+    failure.partNumber = o.partNumber;
+  if (Number.isInteger(o.status) && (o.status as number) >= 100 && (o.status as number) <= 599)
+    failure.status = o.status;
+  return Object.keys(failure).length > 0 ? failure : undefined;
+}
+
 const upload = async (req: NextApiRequest, res: NextApiResponse) => {
   // 5xx attribution: bypasses the endpoint wrappers, so its 500s were
   // counter-blind. Listener-only (res.once('finish')); no behavior change.
@@ -20,7 +45,8 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
     return;
   }
 
-  const { bucket, key, type, uploadId, backend } = req.body;
+  const { bucket, key, type, uploadId, backend, failure } = req.body;
+  const clientFailure = sanitizeClientFailure(failure);
   try {
     let s3;
     if (backend === 'backblaze') {
@@ -36,7 +62,15 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
     // uncontained throw would unwind into the catch below and re-answer a request that
     // already succeeded. Not silent — @civitai/axiom reports its own ingest failures.
     try {
-      await logToAxiom({ name: 's3-upload-abort', userId, type, key, uploadId, backend });
+      await logToAxiom({
+        name: 's3-upload-abort',
+        userId,
+        type,
+        key,
+        uploadId,
+        backend,
+        ...(clientFailure ? { failure: clientFailure } : {}),
+      });
     } catch {
       /* contained — see above */
     }
@@ -86,6 +120,7 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
           key,
           uploadId,
           backend,
+          ...(clientFailure ? { failure: clientFailure } : {}),
           error: error.message,
           errorClass,
         });

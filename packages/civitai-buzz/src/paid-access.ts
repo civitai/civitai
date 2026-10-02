@@ -190,6 +190,18 @@ export const grantsGeneration = (
   { isOwnerOrMod, hasBought }: { isOwnerOrMod: boolean; hasBought: boolean }
 ): boolean => isOwnerOrMod || hasBought || generationOpenToNonBuyers(terms);
 
+/**
+ * Whether this viewer will have to BUY generation access. A trial user is granted generation —
+ * `grantsGeneration` is true — and still answers true here, because the grant is finite. Conflating the
+ * two is what left a spent trial with nowhere to go: every surface knew the user could generate, none
+ * knew they were on a clock. Says nothing about whether the trial is already spent, which only the
+ * orchestrator counts.
+ */
+export const requiresGenerationPurchase = (
+  terms: ModelVersionTerms,
+  { isOwnerOrMod, hasBought }: { isOwnerOrMod: boolean; hasBought: boolean }
+): boolean => !isOwnerOrMod && !hasBought && !isFreeGeneration(terms);
+
 // Tiers a creator can actually be shown, cheapest first. `founder` is omitted deliberately: it's a legacy
 // tier nobody can buy, and every cap it has matches bronze — listing it would imply a choice that isn't one.
 export const CAP_TIERS = ['free', 'bronze', 'silver', 'gold'] as const;

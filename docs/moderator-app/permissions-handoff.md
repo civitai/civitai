@@ -18,12 +18,17 @@ and 08-17.
 One reported defect is probably downstream of this and should be re-checked once it is back rather
 than investigated first: `reportedUser` renders greyed out on the reports pages.
 
-## 2. Grant the five newer pages
+## 2. Grant the newer pages
 
 A page with no `AppPageAccess` row is reachable only by `moderator:admin`, so each of these is invisible
 to ordinary moderators until granted:
 
 - [ ] `/retool/article-lookup`
+- [ ] `/retool/model-lookup` — **grant it wherever Image Lookup is granted.** The main app's
+      "Lookup Model" now opens this page, so an ungranted moderator following that link is bounced to
+      civitai.com, which reads as the button being broken. ⚠️ **Not read-only since 2026-09-29**: the
+      Moderator notes panel adds and edits `ModelNotes` rows, and those writes have no permission of
+      their own — this page grant is the whole gate on them.
 - [ ] `/retool/user-reports`
 - [ ] `/retool/bulk-image-manager` — **grant narrowly.** Reaching it is gated on the page, but its
       actions remove images in bulk across accounts the moderator never looked up. It is an enforcement

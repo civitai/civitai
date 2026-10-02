@@ -11,7 +11,7 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 type Eligibility = RouterOutput['challenge']['getCreateEligibility'];
 type Requirement = Eligibility['requirements'][number];
 
-function renderRequirement(req: Requirement): { title: string; content: ReactNode } {
+function renderRequirement(req: Requirement, noun: string): { title: string; content: ReactNode } {
   switch (req.key) {
     case 'score':
       return {
@@ -36,11 +36,11 @@ function renderRequirement(req: Requirement): { title: string; content: ReactNod
         content: (
           <Text size="sm" c="dimmed">
             {req.banned
-              ? "Your account isn't eligible to create challenges."
+              ? `Your account isn't eligible to create ${noun}s.`
               : req.muted
-              ? "Muted accounts can't create challenges."
+              ? `Muted accounts can't create ${noun}s.`
               : req.activePoints >= MUTE_POINTS
-              ? "You can't create challenges while your account has active strikes."
+              ? `You can't create ${noun}s while your account has active strikes.`
               : 'No active strikes or restrictions on your account.'}
           </Text>
         ),
@@ -50,17 +50,17 @@ function renderRequirement(req: Requirement): { title: string; content: ReactNod
         title: 'Stay under the daily create limit',
         content: (
           <Text size="sm" c="dimmed">
-            You&apos;ve created {req.recentCount} of {req.limit} challenges allowed in the last 24
+            You&apos;ve created {req.recentCount} of {req.limit} {noun}s allowed in the last 24
             hours.
           </Text>
         ),
       };
     case 'activeLimit':
       return {
-        title: 'Stay under your active challenge limit',
+        title: `Stay under your active ${noun} limit`,
         content: (
           <Text size="sm" c="dimmed">
-            You have {req.activeCount} of {req.limit} active challenge
+            You have {req.activeCount} of {req.limit} active {noun}
             {req.limit === 1 ? '' : 's'} allowed for your membership tier.
           </Text>
         ),
@@ -68,8 +68,8 @@ function renderRequirement(req: Requirement): { title: string; content: ReactNod
   }
 }
 
-function RequirementRow({ req }: { req: Requirement }) {
-  const { title, content } = renderRequirement(req);
+function RequirementRow({ req, noun }: { req: Requirement; noun: string }) {
+  const { title, content } = renderRequirement(req, noun);
   return (
     <div className="flex gap-2">
       {req.met ? (
@@ -85,13 +85,21 @@ function RequirementRow({ req }: { req: Requirement }) {
   );
 }
 
-export function ChallengeCreateRequirements({ eligibility }: { eligibility: Eligibility }) {
+export function ChallengeCreateRequirements({
+  eligibility,
+  noun = 'challenge',
+  backUrl = '/challenges',
+}: {
+  eligibility: Eligibility;
+  noun?: 'challenge' | 'crucible';
+  backUrl?: string;
+}) {
   const router = useRouter();
   const hasHistory = useHasClientHistory();
 
   const handleGoBack = () => {
     if (hasHistory) router.back();
-    else router.push('/challenges');
+    else router.push(backUrl);
   };
 
   return (
@@ -101,13 +109,13 @@ export function ChallengeCreateRequirements({ eligibility }: { eligibility: Elig
       withCloseButton={false}
       closeOnClickOutside={false}
       closeOnEscape={false}
-      title="Requirements to create a challenge"
+      title={`Requirements to create a ${noun}`}
       centered
     >
       <Stack gap="md">
         <Text size="sm" c="dimmed">
-          You don&apos;t meet all the requirements to create a challenge yet. Once every item below
-          is met, you&apos;ll be able to create one.
+          You don&apos;t meet all the requirements to create a {noun} yet. Once every item below is
+          met, you&apos;ll be able to create one.
         </Text>
         <Divider />
         <Stack gap="md">
@@ -117,7 +125,7 @@ export function ChallengeCreateRequirements({ eligibility }: { eligibility: Elig
             // when it's the actual blocker.
             .filter((req) => !(req.key === 'dailyLimit' && req.met))
             .map((req) => (
-              <RequirementRow key={req.key} req={req} />
+              <RequirementRow key={req.key} req={req} noun={noun} />
             ))}
         </Stack>
         <Button onClick={handleGoBack} leftSection={<IconArrowLeft size={16} />} fullWidth>

@@ -1,4 +1,13 @@
+import { Flags } from '~/shared/utils/flags';
+import { getSponsoredModel } from '~/server/services/promotion.service';
+import { sponsoredSlotIndex } from '~/shared/utils/promotion';
 import { Prisma } from '@prisma/client';
+import {
+  coverageAudience,
+  coveragePair,
+  coveragePairForUser,
+  nextCoverageEnabled,
+} from '~/server/services/generation/coverage-source';
 import { TRPCError } from '@trpc/server';
 import { isPaidAccessActive } from '@civitai/buzz';
 import {
@@ -9,6 +18,7 @@ import type { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink
 import type { BaseModelType, ModelFileType } from '~/server/common/constants';
 import { type BaseModel } from '~/shared/constants/basemodel.constants';
 import { constants } from '~/server/common/constants';
+import { canViewModelVersionStatus } from '~/server/common/model-version-visibility';
 import {
   EntityAccessPermission,
   ModelSort,
@@ -178,7 +188,7 @@ import { resolveDownloadUrl } from '~/utils/delivery-worker';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { removeNulls } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { redis, REDIS_KEYS } from '../redis/client';
+import { bustModelGallerySettings } from '~/server/services/creator-gallery-hidden-users.service';
 import type { BountyDetailsSchema } from '../schema/bounty.schema';
 import {
   getResourceData,
@@ -223,14 +233,15 @@ export const getModelHandler = async ({
       throw throwNotFoundError(`No model with id ${input.id}`);
     }
 
-    const now = new Date();
-    const filteredVersions = isOwner
-      ? model.modelVersions
-      : model.modelVersions.filter(
-          (version) =>
-            version.status === ModelStatus.Published &&
-            (!version.publishedAt || version.publishedAt <= now)
-        );
+    const filteredVersions = model.modelVersions.filter((version) =>
+      canViewModelVersionStatus({
+        viewer: ctx.user,
+        ownerId: model.user.id,
+        modelStatus: model.status,
+        versionStatus: version.status,
+        publishedAt: version.publishedAt,
+      })
+    );
     const modelVersionIds = filteredVersions.map((version) => version.id);
     const posts = await dbRead.post.findMany({
       where: {
@@ -252,6 +263,7 @@ export const getModelHandler = async ({
     const modelCategories = await getCategoryTags('model');
 
     const sfwOnly = !!features.isGreen;
+    const { next: useNext, member } = await coverageAudience(ctx.user ?? undefined);
     const versionGenStates = await resolveCanGenerateForVersions(
       filteredVersions.map((v) => ({
         id: v.id,
@@ -259,7 +271,7 @@ export const getModelHandler = async ({
         availability: v.availability,
         usageControl: v.usageControl,
         baseModel: v.baseModel,
-        covered: v.generationCoverage?.covered ?? false,
+        ...coveragePairForUser(v, useNext, { member, isCheckpoint: model.type === 'Checkpoint' }),
         modelUserId: model.user.id,
         modelType: model.type,
         flags: v.flags,
@@ -821,7 +833,7 @@ export const publishModelHandler = async ({
     const modelMeta = model.meta as ModelMeta | null;
     const republishing =
       model.status !== ModelStatus.Draft && model.status !== ModelStatus.Scheduled;
-    const { needsReview, unpublishedReason, unpublishedAt, customMessage, ...meta } =
+    const { needsReview, unpublishedReason, unpublishedAt, unpublishedBy, customMessage, ...meta } =
       modelMeta || {};
     const updatedModel = await publishModelById({ ...input, meta, republishing });
 
@@ -1756,6 +1768,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
   try {
     const { fromId, type, ...userPreferences } = input;
     const { user } = ctx;
+    const useNext = await nextCoverageEnabled();
     const associatedResources = await dbRead.modelAssociations.findMany({
       where: { fromModelId: fromId, type },
       select: { toModelId: true, toArticleId: true },
@@ -1767,6 +1780,27 @@ export const getAssociatedResourcesCardDataHandler = async ({
         ? { id: toModelId, resourceType: 'model' as const }
         : { id: toArticleId, resourceType: 'article' as const }
     );
+
+    // A paid, host-accepted model promotion takes the second slot. The viewer's
+    // own level and hidden lists still apply to it below, like any other card.
+    const sponsored =
+      type === 'Suggested'
+        ? await getSponsoredModel({ modelId: fromId, features: ctx.features }).catch(
+            () => undefined
+          )
+        : undefined;
+    if (sponsored) {
+      // Its organic copy is dropped, as in the gallery, so the card the buyer paid
+      // for is the one in the sponsored slot.
+      const organic = resourcesIds.findIndex(
+        ({ id, resourceType }) => resourceType === 'model' && id === sponsored.modelId
+      );
+      if (organic >= 0) resourcesIds.splice(organic, 1);
+      resourcesIds.splice(sponsoredSlotIndex(0, resourcesIds.length), 0, {
+        id: sponsored.modelId,
+        resourceType: 'model' as const,
+      });
+    }
 
     if (!resourcesIds.length) return [];
 
@@ -1830,7 +1864,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
                 status: v.status,
                 availability: v.availability,
                 baseModel: v.baseModel,
-                covered: v.covered,
+                ...coveragePair(v, useNext),
                 modelUserId: m.user.id,
                 modelType: m.type,
                 flags: v.flags,
@@ -1933,8 +1967,16 @@ export const getAssociatedResourcesCardDataHandler = async ({
             const model = completeModels.find((model) => model.id === id);
             if (!model) return null;
             if (excludedUserIds.includes(model.user.id)) return null;
+            const isSponsored = id === sponsored?.modelId;
+            // A buyer who re-rates their model above what the page may show ends
+            // their own run.
+            if (
+              isSponsored &&
+              (!model.nsfwLevel || !Flags.hasFlag(sponsored.servingLevel, model.nsfwLevel))
+            )
+              return null;
 
-            return { resourceType: 'model' as const, ...model };
+            return { resourceType: 'model' as const, ...model, sponsored: isSponsored };
         }
       })
       .filter(isDefined);
@@ -2175,8 +2217,7 @@ export const updateGallerySettingsHandler = async ({
       id,
       data: { gallerySettings: updatedSettings !== null ? updatedSettings : Prisma.JsonNull },
     });
-    // Clear cache
-    await redis.del(`${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}`);
+    await bustModelGallerySettings([id]);
 
     return { ...updatedModel, gallerySettings };
   } catch (error) {

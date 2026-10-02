@@ -2,6 +2,7 @@ import { error, json, type RequestHandler } from '@sveltejs/kit';
 import { sql } from '@civitai/db/kysely';
 import { sfwBrowsingLevelsFlag } from '@civitai/shared';
 import { dbRead } from '$lib/server/db';
+import { followersAmong } from '$lib/server/followers';
 import {
   assembleReactorPage,
   defaultReaction,
@@ -93,6 +94,11 @@ export async function getReactors(
   `.execute(db);
 
   const page = assembleReactorPage(rows, cursor);
+  const followers = await followersAmong(
+    db,
+    ownerId,
+    page.rows.filter((r) => !r.deletedAt && r.userId !== ownerId).map((r) => r.userId)
+  );
   return {
     reaction,
     counts,
@@ -103,6 +109,7 @@ export async function getReactors(
       reactedAt: new Date(r.createdAt).toISOString(),
       deleted: !!r.deletedAt,
       banned: !!r.bannedAt,
+      follows: followers.has(r.userId),
     })),
     next: page.next,
     prev: page.prev,

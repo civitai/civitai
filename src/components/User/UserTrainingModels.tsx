@@ -117,7 +117,16 @@ type TrainingModelRow = MyTrainingModelGetAll['items'][number] & {
 const DEFAULT_PAGE_SIZE = 10;
 
 // Helper to extract dates and other derived info from training data
-function enrichTrainingData(items: MyTrainingModelGetAll['items']): TrainingModelRow[] {
+export function sumBuzzByAccount(
+  transactions: { amount: number; accountType?: string | null }[],
+  accountType: 'yellow' | 'blue' | 'green'
+): number | undefined {
+  const matching = transactions.filter((tx) => tx.accountType === accountType);
+  if (matching.length === 0) return undefined;
+  return matching.reduce((sum, tx) => sum + tx.amount, 0);
+}
+
+export function enrichTrainingData(items: MyTrainingModelGetAll['items']): TrainingModelRow[] {
   return items.map((mv) => {
     const thisTrainingDetails = mv.trainingDetails as TrainingDetailsObj | undefined;
     const thisFile = pickBestTrainingFile(mv.files);
@@ -151,13 +160,10 @@ function enrichTrainingData(items: MyTrainingModelGetAll['items']): TrainingMode
     if (trainingResults?.version === 2 && trainingResults.transactionData) {
       const costTxs = trainingResults.transactionData.filter((tx) => tx.type === 'debit');
       if (costTxs.length > 0) {
-        const yellowTx = costTxs.find((tx) => tx.accountType === 'yellow');
-        const blueTx = costTxs.find((tx) => tx.accountType === 'blue');
-        const greenTx = costTxs.find((tx) => tx.accountType === 'green');
         costInfo = {
-          yellowBuzz: yellowTx?.amount,
-          blueBuzz: blueTx?.amount,
-          greenBuzz: greenTx?.amount,
+          yellowBuzz: sumBuzzByAccount(costTxs, 'yellow'),
+          blueBuzz: sumBuzzByAccount(costTxs, 'blue'),
+          greenBuzz: sumBuzzByAccount(costTxs, 'green'),
         };
       }
     }
@@ -167,14 +173,11 @@ function enrichTrainingData(items: MyTrainingModelGetAll['items']): TrainingMode
     if (trainingResults?.version === 2 && trainingResults.transactionData) {
       const refundTxs = trainingResults.transactionData.filter((tx) => tx.type === 'credit');
       if (refundTxs.length > 0) {
-        const yellowTx = refundTxs.find((tx) => tx.accountType === 'yellow');
-        const blueTx = refundTxs.find((tx) => tx.accountType === 'blue');
-        const greenTx = refundTxs.find((tx) => tx.accountType === 'green');
         refundInfo = {
           isRefunded: true,
-          yellowBuzz: yellowTx?.amount,
-          blueBuzz: blueTx?.amount,
-          greenBuzz: greenTx?.amount,
+          yellowBuzz: sumBuzzByAccount(refundTxs, 'yellow'),
+          blueBuzz: sumBuzzByAccount(refundTxs, 'blue'),
+          greenBuzz: sumBuzzByAccount(refundTxs, 'green'),
         };
       } else if (mv.trainingStatus === TrainingStatus.Failed) {
         // Failed but no refund transaction yet
@@ -522,10 +525,14 @@ export default function UserTrainingModels() {
                       <Text size="sm">
                         Training success can vary based on system conditions and configuration.
                         Check for service updates at the top of the page or on the{' '}
-                        <Anchor href="/changelog" target="_blank">
-                          Updates page
+                        <Anchor href="/issues" target="_blank">
+                          Known Issues
                         </Anchor>{' '}
-                        for any relevant LoRA training notices before retrying.
+                        or{' '}
+                        <Anchor href="/changelog" target="_blank">
+                          Updates
+                        </Anchor>{' '}
+                        pages for any relevant LoRA training notices before retrying.
                       </Text>
                     </HoverCard.Dropdown>
                   </HoverCard>

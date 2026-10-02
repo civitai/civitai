@@ -5,6 +5,18 @@ import { renderWithProviders } from '../../../test/component-setup';
 import { DEPLOY_STALE_AFTER_MS } from '~/shared/constants/app-block-deploy.constants';
 import type { OffsitePendingRow } from './OffsiteReviewQueue';
 import type { OnsiteReviewRequest } from './unifiedReviewRow';
+import type * as UserAvatarMod from '~/components/UserAvatar/UserAvatar';
+
+/*
+  Stubbed: the real `UserAvatar` reaches providers and a tRPC proc this harness does not
+  mount. Precedent: `~/components/Reaction/ImageReactorsPreview.browser.test.tsx`.
+*/
+vi.mock('~/components/UserAvatar/UserAvatar', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserAvatarMod>()),
+  UserAvatar: ({ user }: { user: { id: number; username?: string | null } }) => (
+    <span>{user.username ?? `#${user.id}`}</span>
+  ),
+}));
 
 /**
  * /apps/review APPROVED tab — the MODERATOR half of the fix.

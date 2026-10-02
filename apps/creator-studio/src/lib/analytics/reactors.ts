@@ -16,6 +16,8 @@ export type Reactor = {
   reactedAt: string;
   deleted: boolean;
   banned: boolean;
+  /** Follows the owner now, not necessarily when they reacted: `UserEngagement` keeps no history. */
+  follows: boolean;
 };
 
 export type ReactorPage = {

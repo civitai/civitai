@@ -18,7 +18,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 //   5. a report older than CSAM_HOLD_MAX_DAYS purges anyway and alerts, since the
 //      send/archive pipeline has no retry limit and can strand a report indefinitely;
 //   6. AiNotVerified and vanished rows are still swept out of the queue;
-//   7. a non-prod database is never mass-deleted.
+//   7. a non-prod database is never mass-deleted;
+//   8. an image under a pending appeal is held until the appeal is resolved.
 
 const DAY = 24 * 60 * 60 * 1000;
 const EXPIRED = new Date(Date.now() - 8 * DAY); // past BLOCKED_IMAGE_RETENTION_DAYS (7)
@@ -36,6 +37,7 @@ const QUEUE = [
   { entityId: 4, createdAt: EXPIRED }, // no longer Blocked -> swept, never deleted
   { entityId: 5, createdAt: EXPIRED }, // live hold -> excluded from the batch
   { entityId: 6, createdAt: EXPIRED }, // hold past the ceiling -> purged + alerted
+  { entityId: 7, createdAt: EXPIRED }, // under appeal when a test marks it so -> held
 ];
 // Every image here is a MODERATOR TAKEDOWN, so each carries the `ModActivity` row the job now
 // requires before it will ask for blob retraction — dated after its own block, as a real one
@@ -52,6 +54,7 @@ const IMAGES = [
   { id: 3, userId: PLAIN_USER, blockedFor: 'AiNotVerified' },
   { id: 5, userId: HELD_USER, blockedFor: 'CSAM' },
   { id: 6, userId: STRANDED_USER, blockedFor: 'CSAM' },
+  { id: 7, userId: PLAIN_USER, blockedFor: 'moderated' },
 ];
 
 const {
@@ -64,12 +67,14 @@ const {
   mockLogToAxiom,
   mockEnv,
   heldUsers,
+  appealedIds,
 } = vi.hoisted(() => {
   const execLog: { sql: string; values: unknown[] }[] = [];
   const sqlLog: string[] = [];
   const queueWhereLog: any[] = [];
   // Mutable so a test can vary which reports are open.
   const heldUsers: { userId: number; oldestReport: Date }[] = [];
+  const appealedIds: number[] = [];
   const mockEnv = {
     IMAGE_SCANNING_MAX_PER_RUN: 100,
     IMAGE_SCANNING_RETRY_DELAY: 5,
@@ -80,6 +85,7 @@ const {
     const sql = strings.join('?');
     sqlLog.push(sql);
     if (sql.includes('FROM "CsamReport"')) return heldUsers;
+    if (sql.includes(`"needsReview" = 'appeal'`)) return appealedIds.map((id) => ({ id }));
     // The moderator-activity lookup that gates blob retraction. Routed before the catch-all
     // below, which would otherwise answer it with Image rows.
     if (sql.includes('FROM "ModActivity"')) {
@@ -100,6 +106,7 @@ const {
     sqlLog,
     queueWhereLog,
     heldUsers,
+    appealedIds,
     mockEnv,
     mockDbRead: {
       jobQueue: {
@@ -146,6 +153,7 @@ async function runJob() {
     waitingForRetention: number;
     csamHeld: number;
     csamHoldExpired: number;
+    appealHeld: number;
   }>;
 }
 
@@ -170,6 +178,7 @@ beforeEach(() => {
   sqlLog.length = 0;
   queueWhereLog.length = 0;
   heldUsers.length = 0;
+  appealedIds.length = 0;
   heldUsers.push(
     { userId: HELD_USER, oldestReport: RECENT },
     { userId: STRANDED_USER, oldestReport: OLD_REPORT }
@@ -308,5 +317,27 @@ describe('remove-blocked-images retention clock', () => {
     expect(mockDeleteImages).not.toHaveBeenCalled();
     expect(execLog).toHaveLength(0);
     expect(mockLogToAxiom).not.toHaveBeenCalled();
+  });
+
+  it('holds an image whose appeal is still pending', async () => {
+    appealedIds.push(7);
+    const result = await runJob();
+
+    // Deleting it leaves the Appeal row Pending forever against an image that no longer
+    // exists — and a fee-paying user with no resolution and no refund.
+    expect(deletedIds()).not.toContain(7);
+    expect(result.appealHeld).toBe(1);
+    // Must stay queued: once the appeal is rejected the image is still Blocked, and the
+    // queue trigger only fires on the transition INTO Blocked, so nothing would re-enqueue it.
+    expect(queuePruneIds()).not.toContain(7);
+    // Excluded from the batch like CSAM holds, so held rows cannot starve the window.
+    expect(batchWhere()?.entityId?.notIn).toEqual(expect.arrayContaining([5, 7]));
+  });
+
+  it('deletes the image once the appeal is no longer pending', async () => {
+    const result = await runJob();
+
+    expect(deletedIds()).toContain(7);
+    expect(result.appealHeld).toBe(0);
   });
 });

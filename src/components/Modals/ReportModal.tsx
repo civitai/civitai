@@ -63,6 +63,7 @@ const reports = [
       ReportEntity.BountyEntry,
       ReportEntity.ComicProject,
       ReportEntity.Model3D,
+      ReportEntity.Crucible,
     ],
   },
   {
@@ -87,6 +88,7 @@ const reports = [
       ReportEntity.Model3DReview,
       ReportEntity.Challenge,
       ReportEntity.Announcement,
+      ReportEntity.Crucible,
     ],
   },
   {
@@ -112,6 +114,7 @@ const reports = [
       ReportEntity.Model3DReview,
       ReportEntity.Challenge,
       ReportEntity.Announcement,
+      ReportEntity.Crucible,
     ],
   },
   {
@@ -126,7 +129,12 @@ const reports = [
     reason: ReportReason.Ownership,
     label: 'This uses my art',
     Element: OwnershipForm,
-    availableFor: [ReportEntity.Model, ReportEntity.BountyEntry, ReportEntity.Challenge],
+    availableFor: [
+      ReportEntity.Model,
+      ReportEntity.BountyEntry,
+      ReportEntity.Challenge,
+      ReportEntity.Crucible,
+    ],
   },
   {
     // Its own reason, not TOSViolation. Reports dedupe on (reason, entityId), so
@@ -164,6 +172,7 @@ const reports = [
       ReportEntity.Model3DReview,
       ReportEntity.Challenge,
       ReportEntity.Announcement,
+      ReportEntity.Crucible,
     ],
   },
 ];

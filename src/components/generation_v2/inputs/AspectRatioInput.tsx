@@ -1,7 +1,7 @@
 import type { InputWrapperProps } from '@mantine/core';
 import { Input, Paper } from '@mantine/core';
 import { IconDots } from '@tabler/icons-react';
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 
 import {
   OverflowSegmentedControl,
@@ -74,6 +74,20 @@ function getDimensionsLabel(option: AspectRatioOption): string | null {
   return null;
 }
 
+/**
+ * Widest first, tallest last. Ecosystems declare their options in whatever order
+ * their graph was written in (some portrait-first, some landscape-first, a few
+ * neither), so the picker imposes one order rather than trusting each list.
+ * Stable, so two options with the same ratio keep their declared order.
+ */
+function sortWidestFirst(options: AspectRatioOption[]): AspectRatioOption[] {
+  const ratio = (option: AspectRatioOption) => {
+    const { width, height } = optionToValue(option);
+    return width / height;
+  };
+  return [...options].sort((a, b) => ratio(b) - ratio(a));
+}
+
 /** Helper to convert an option to an AspectRatioValue */
 function optionToValue(option: AspectRatioOption): AspectRatioValue {
   const parsed = parseRatio(option.value);
@@ -123,24 +137,38 @@ function AspectRatioOptionDisplay({
 interface ModalOptionDisplayProps {
   option: AspectRatioOption;
   selected: boolean;
+  /** The phone bottom sheet: taller rows, bigger text and preview, for a thumb. */
+  inSheet: boolean;
 }
 
-function ModalOptionDisplay({ option, selected }: ModalOptionDisplayProps) {
+function ModalOptionDisplay({ option, selected, inSheet }: ModalOptionDisplayProps) {
   const dimensions = getDimensionsLabel(option);
-  const preview = getPreviewDimensions(option, 48, 24);
+  const preview = inSheet
+    ? getPreviewDimensions(option, 64, 32)
+    : getPreviewDimensions(option, 48, 24);
 
   return (
-    <div className="flex w-full items-center gap-3 px-3 py-2">
-      <div className="flex h-6 w-12 shrink-0 items-center justify-center">
+    <div className={`flex w-full items-center px-3 ${inSheet ? 'gap-4 py-3.5' : 'gap-3 py-2'}`}>
+      <div
+        className={`flex shrink-0 items-center justify-center ${inSheet ? 'h-8 w-16' : 'h-6 w-12'}`}
+      >
         <Paper
           withBorder
           style={{ borderWidth: 2, width: preview.width, height: preview.height }}
         />
       </div>
-      <span className={`flex-1 text-left text-sm ${selected ? 'font-semibold' : 'font-normal'}`}>
+      <span
+        className={`flex-1 text-left ${inSheet ? 'text-base' : 'text-sm'} ${
+          selected ? 'font-semibold' : 'font-normal'
+        }`}
+      >
         {option.value}
       </span>
-      {dimensions && <span className="text-xs text-gray-6 dark:text-dark-2">{dimensions}</span>}
+      {dimensions && (
+        <span className={`${inSheet ? 'text-sm' : 'text-xs'} text-gray-6 dark:text-dark-2`}>
+          {dimensions}
+        </span>
+      )}
     </div>
   );
 }
@@ -172,7 +200,7 @@ const DEFAULT_MAX_VISIBLE = 5;
 export function AspectRatioInput({
   value,
   onChange,
-  options,
+  options: declaredOptions,
   label,
   disabled,
   maxVisible = DEFAULT_MAX_VISIBLE,
@@ -181,6 +209,19 @@ export function AspectRatioInput({
 }: AspectRatioInputProps) {
   // Extract the value string from the value object
   const selectedAspectRatio = value?.value;
+
+  const options = useMemo(() => sortWidestFirst(declaredOptions), [declaredOptions]);
+
+  // Without explicit priorityOptions, a list too long for the row shows its middle
+  // — the extremes (21:9, 9:21) go behind More rather than squeezing out 1:1.
+  const rowOptions = useMemo(
+    () =>
+      priorityOptions ??
+      (options.length > maxVisible
+        ? options.slice(1, maxVisible + 1).map((option) => option.value)
+        : undefined),
+    [priorityOptions, options, maxVisible]
+  );
 
   // Convert AspectRatioOption[] to OverflowSegmentedControlOption[]
   const segmentedOptions: OverflowSegmentedControlOption<string>[] = options.map((option) => ({
@@ -193,10 +234,10 @@ export function AspectRatioInput({
 
   // Render modal option
   const renderModalOption = useCallback(
-    (option: OverflowSegmentedControlOption<string>, selected: boolean) => {
+    (option: OverflowSegmentedControlOption<string>, selected: boolean, inSheet: boolean) => {
       const aspectOption = options.find((opt) => opt.value === option.value);
       if (!aspectOption) return null;
-      return <ModalOptionDisplay option={aspectOption} selected={selected} />;
+      return <ModalOptionDisplay option={aspectOption} selected={selected} inSheet={inSheet} />;
     },
     [options]
   );
@@ -220,10 +261,11 @@ export function AspectRatioInput({
         options={segmentedOptions}
         disabled={disabled}
         maxVisible={maxVisible}
-        priorityOptions={priorityOptions}
+        priorityOptions={rowOptions}
         renderMoreButton={renderMoreButton}
         renderOption={renderModalOption}
         gridColumns={1}
+        drawerTitle={label ?? 'Aspect ratio'}
       />
     </Input.Wrapper>
   );

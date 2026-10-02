@@ -57,6 +57,7 @@ export const NAV: NavItem[] = [
       { href: '/analytics/engagement', label: 'Engagement' },
       { href: '/analytics/content', label: 'Content' },
       { href: '/analytics/audience', label: 'Audience' },
+      { href: '/analytics/storage', label: 'Storage' },
     ],
   },
   {

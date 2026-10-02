@@ -12,6 +12,7 @@
   } from '@tabler/icons-svelte';
   import { untrack } from 'svelte';
   import { pickModel } from '$lib/host';
+  import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import {
@@ -78,6 +79,10 @@
   );
   let focus = $state(0);
   let sweepOpen = $state(untrack(() => (initial?.runs.length ?? 1) > 1));
+  // Until the user touches the base model it tracks the type's recommendation; after that a type
+  // change keeps their pick. Silently swapping a hand-picked SDXL for the recommended model on a
+  // Character→Style click is how a tester started (and paid for) a run on a model they never chose.
+  let userPickedModel = $state(untrack(() => initial?.userPickedModel ?? false));
 
   const types = $derived(typesForMedia(media));
   const type = $derived(types.find((t) => t.id === loraType) ?? types[0]!);
@@ -123,6 +128,9 @@
   const labelModeNoun = $derived(labelNoun(runCard(primary)));
   // Partial when any selected run is unpriced — the summary shows "—" rather than a total missing a model.
   const total = $derived(selectionFromTotal(prices, runs));
+  const keptOverRecommendation = $derived(
+    !multi && userPickedModel && !!recommendedCard && recommendedCard.type !== primary.cardType
+  );
 
   function pickMedia(m: Media) {
     if (m === media) return;
@@ -133,13 +141,14 @@
     const t = next.find((o) => o.id === loraType) ?? next[0]!;
     loraType = t.id;
     runs = [newRun(recommendedCardFor(t.id, m, enabledFlags))];
+    userPickedModel = false;
     focus = 0;
     sweepOpen = false;
   }
 
   function pickType(id: string) {
     loraType = id;
-    if (runs.length === 1) {
+    if (runs.length === 1 && !userPickedModel) {
       runs = [newRun(recommendedCardFor(id, media, enabledFlags))];
       focus = 0;
     }
@@ -148,6 +157,14 @@
   function pickBase(card: ModelCard) {
     if (multi && !labelOptions(card).includes(labelMode)) return; // label-type lock
     runs = runs.map((r, i) => (i === focus ? { ...newRun(card), id: r.id } : r));
+    userPickedModel = true;
+  }
+
+  function useRecommended() {
+    if (!recommendedCard) return;
+    runs = [newRun(recommendedCard)];
+    focus = 0;
+    userPickedModel = false;
   }
 
   function openSweep() {
@@ -157,12 +174,14 @@
 
   function pickVersion(runIndex: number, versionKey: string) {
     runs = runs.map((r, i) => (i === runIndex ? { ...r, versionKey } : r));
+    userPickedModel = true;
   }
   function setCustomAir(runIndex: number, value: string) {
     // A hand-edited AIR is no longer the picked model — drop its name.
     runs = runs.map((r, i) =>
       i === runIndex ? { ...r, customAir: value, customName: undefined } : r
     );
+    userPickedModel = true;
     pickErrorRunId = null;
   }
   // A Custom run needs a valid pasted AIR before it can continue.
@@ -307,8 +326,9 @@
       </p>
     </div>
 
-    <!-- Media + Type gate everything below (switching either resets the model), so they stay full
-         labeled rows rather than a dropdown or a quiet segmented strip that would under-sell them. -->
+    <!-- Media + Type gate everything below (media always resets the model; type does until the user
+         picks one), so they stay full labeled rows rather than a dropdown or a quiet segmented strip
+         that would under-sell them. -->
     <div class="flex flex-col gap-3">
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <div id="media-group-label" class="w-14 shrink-0 font-mono text-xs uppercase tracking-wider text-dark-2">
@@ -388,7 +408,19 @@
           <IconStarFilled size={12} class="mr-0.5 inline text-buzz" />
           We recommend <span class="font-semibold text-white">{recommendedCard.name}</span> for a
           {type.name.toLowerCase()}
-          {media} LoRA — or pick any below.
+          {media} LoRA —
+          {#if keptOverRecommendation}
+            keeping your pick, <span class="font-semibold text-white">{selectedCard.name}</span>.
+            <button
+              type="button"
+              onclick={useRecommended}
+              class="font-semibold text-primary underline-offset-2 hover:underline"
+            >
+              Use {recommendedCard.name} instead
+            </button>
+          {:else}
+            or pick any below.
+          {/if}
         </p>
       {/if}
 
@@ -425,26 +457,30 @@
               {disabled ? 'cursor-not-allowed opacity-40 grayscale' : ''}"
           >
             <div class="flex items-center gap-2">
-              <div class="min-w-0 flex-1">
-                <div class="truncate text-sm font-semibold text-dark-0">{card.name}</div>
+              <div class="min-w-0 flex-1 truncate text-sm font-semibold text-dark-0">
+                {card.name}
               </div>
-              {#if card.flag}
-                <span class="inline-flex shrink-0 items-center gap-0.5 rounded bg-primary px-1.5 py-0.5 font-mono text-xs font-bold uppercase tracking-wide text-primary-foreground">
-                  {#if card.flag === 'recommended'}<IconStarFilled size={8} />{/if}{card.flag}
-                </span>
-              {/if}
               {#if selected}
                 <span class="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground">
                   <IconCheck size={11} stroke={3} />
                 </span>
               {/if}
             </div>
+            <!-- Own row, never sharing the title's: on the recommended tile the badge was truncating
+                 the model name to "MiniMax …". -->
+            {#if card.flag}
+              <div class="mt-1">
+                <span class="inline-flex items-center gap-0.5 rounded bg-primary px-1.5 py-0.5 font-mono text-xs font-bold uppercase tracking-wide text-primary-foreground">
+                  {#if card.flag === 'recommended'}<IconStarFilled size={8} />{/if}{card.flag}
+                </span>
+              </div>
+            {/if}
             <!-- Two lines, and always two lines tall: at one line most taglines were clipped mid-sentence,
                  and letting the height follow the text made the price rows sit at different heights. -->
             <div class="mt-1 line-clamp-2 min-h-[2lh] text-xs leading-snug text-dark-2">
               {card.description}
             </div>
-            <div class="mt-2 flex items-center gap-2">
+            <div class="mt-auto flex items-center gap-2 pt-2">
               {#if cardPrice != null}
                 <span
                   class="inline-flex items-center whitespace-nowrap rounded border border-buzz/25 bg-buzz/[0.08] px-1.5 py-0.5 font-mono text-xs font-semibold text-buzz"
@@ -491,6 +527,8 @@
           {/if}
         </button>
       {/if}
+
+      <BlueFirstNote class="mt-2" />
 
       <!-- version choice for the single selected model, inline (no disclosure) -->
       {#if !multi}
@@ -564,9 +602,19 @@
             {@const card = runCard(r)}
             {@const focusedRow = ri === focus}
             {@const runPrice = price(r.cardType)}
+            <!-- Whole-card pointer target: anywhere on the row focuses the run (inner controls keep
+                 their own behavior and bubble here, which also focuses — intended; the remove X is
+                 the exception, since its run is gone and removeRun already re-aims focus). Keyboard
+                 focus stays on the title button below, the semantic control — so no role/tabindex
+                 here. -->
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div
-              class="rounded-md border p-3 transition
-                {focusedRow ? 'border-primary ring-2 ring-primary/30' : 'border-dark-4 bg-dark-6'}"
+              onclick={() => (focus = ri)}
+              class="cursor-pointer rounded-md border p-3 transition
+                {focusedRow
+                ? 'border-primary ring-2 ring-primary/30'
+                : 'border-dark-4 bg-dark-6 hover:border-dark-3'}"
             >
               <div class="flex items-center gap-3">
                 <button
@@ -590,7 +638,10 @@
                   <button
                     type="button"
                     aria-label={`Remove run ${ri + 1}`}
-                    onclick={() => removeRun(ri)}
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      removeRun(ri);
+                    }}
                     class="grid h-7 w-7 shrink-0 place-items-center rounded border border-dark-4 text-dark-2 hover:border-red-500 hover:text-red-400"
                   >
                     <IconX size={14} stroke={2} />
@@ -644,11 +695,15 @@
     <div class="flex justify-between gap-2.5 border-b border-dark-4 py-2 text-sm">
       <span class="text-dark-2">Type</span><span class="font-semibold text-dark-0">{type.name}</span>
     </div>
-    {#if multi}
+    {#each runs as r, ri (r.id)}
       <div class="flex justify-between gap-2.5 border-b border-dark-4 py-2 text-sm">
-        <span class="text-dark-2">Models</span><span class="font-semibold text-dark-0">{runs.length}</span>
+        <span class="shrink-0 text-dark-2">{multi ? `Run ${ri + 1}` : 'Base model'}</span>
+        <span class="truncate text-right font-semibold text-dark-0" title={isCustom(r) ? r.customAir : undefined}>
+          {runCard(r).name}
+          {runVersionLabel(r)}
+        </span>
       </div>
-    {/if}
+    {/each}
     <div class="flex justify-between gap-2.5 py-2 text-sm">
       <span class="text-dark-2">Labeling</span>
       <span class="font-semibold text-dark-0">{labelMode === 'tag' ? 'Tags' : 'Captions'}</span>
@@ -669,7 +724,7 @@
     <Button
       class="mt-4 h-11 w-full"
       disabled={customIncomplete}
-      onclick={() => onContinue({ media, loraType, runs })}
+      onclick={() => onContinue({ media, loraType, runs, userPickedModel })}
     >
       Continue to data<IconArrowRight size={15} stroke={2} class="ml-1.5 inline" />
     </Button>

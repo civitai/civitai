@@ -14,6 +14,7 @@ import { membershipGiftNotifications } from '~/server/notifications/membership-g
 import { challengeNotifications } from '~/server/notifications/challenge.notifications';
 import { collectionNotifications } from '~/server/notifications/collection.notifications';
 import { commentNotifications } from '~/server/notifications/comment.notifications';
+import { crucibleNotifications } from '~/server/notifications/crucible.notifications';
 import { cosmeticShopNotifications } from '~/server/notifications/cosmetic-shop.notifications';
 import { placementNotifications } from '~/server/notifications/placement.notifications';
 import { creatorsProgramNotifications } from '~/server/notifications/creators-program.notifications';
@@ -65,6 +66,7 @@ export const notificationProcessors = {
   ...generationMuteNotifications,
   ...cosmeticShopNotifications,
   ...challengeNotifications,
+  ...crucibleNotifications,
   ...auctionNotifications,
   ...knightsNewOrderNotifications,
   ...comicNotifications,
@@ -132,3 +134,13 @@ export const { notificationCategoryTypes, notificationTypes, optInNotificationTy
   getNotificationTypes();
 
 export const isOptInNotification = (type: string) => optInNotificationTypes.includes(type);
+
+/**
+ * Push may target exactly the types that render a control — registered and toggleable. Gates the
+ * `updatePushSettings` insert so a direct API client can't create rows for unknown or
+ * non-toggleable (system/moderation) types the UI never exposes.
+ */
+export const isPushableNotificationType = (type: string) => {
+  const processor = notificationProcessors[type];
+  return !!processor && processor.toggleable !== false;
+};

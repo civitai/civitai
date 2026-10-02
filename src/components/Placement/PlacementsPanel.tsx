@@ -7,6 +7,7 @@ import { useQueryNotificationsCount } from '~/components/Notifications/notificat
 import { QueueCountBadge } from '~/components/Placement/QueueCountBadge';
 import { RemixSubmissionQueue } from '~/components/Placement/RemixSubmissionQueue';
 import { StickerPlacementQueue } from '~/components/Placement/StickerPlacementQueue';
+import { PromotionQueue } from '~/components/Promotion/PromotionQueue';
 import {
   isPlacementSurfaceTab,
   PLACEMENT_SURFACE_TABS,
@@ -40,9 +41,12 @@ export function PlacementsPanel() {
   const features = useFeatureFlags();
   const { pendingStickerPlacements, pendingRemixSubmissions } = useQueryNotificationsCount();
 
-  const surface: PlacementSurfaceTab = isPlacementSurfaceTab(router.query.type)
-    ? router.query.type
-    : 'sticker';
+  const tabs = PLACEMENT_SURFACE_TABS.filter(
+    (option) => option.value !== 'promotion' || features.creatorPromotions
+  );
+  // A link to a tab this viewer cannot see lands on stickers.
+  const surface: PlacementSurfaceTab =
+    tabs.find((option) => option.value === router.query.type)?.value ?? 'sticker';
 
   const setSurface = (value: string) =>
     router.replace(
@@ -66,6 +70,7 @@ export function PlacementsPanel() {
   const counts: Record<PlacementSurfaceTab, number> = {
     sticker: pendingStickerPlacements,
     remix: pendingRemixSubmissions,
+    promotion: 0,
   };
 
   return (
@@ -93,7 +98,7 @@ export function PlacementsPanel() {
             <SegmentedControl
               value={surface}
               onChange={setSurface}
-              data={PLACEMENT_SURFACE_TABS.map((option) => ({
+              data={tabs.map((option) => ({
                 value: option.value,
                 label: (
                   <span className="flex items-center gap-1.5">
@@ -110,7 +115,13 @@ export function PlacementsPanel() {
               looking at and nothing else. Unifying the shell was the point;
               unifying the rows would have been a rewrite of two working
               surfaces. */}
-          {surface === 'sticker' ? <StickerPlacementQueue /> : <RemixSubmissionQueue />}
+          {surface === 'sticker' ? (
+            <StickerPlacementQueue />
+          ) : surface === 'remix' ? (
+            <RemixSubmissionQueue />
+          ) : (
+            <PromotionQueue />
+          )}
         </Stack>
       </Container>
     </>

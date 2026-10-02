@@ -167,7 +167,6 @@ export enum SignalMessages {
   WorkflowUpdate = 'orchestrator:workflow-update',
   SchedulerDownload = 'scheduler:download',
   NotificationNew = 'notification:new',
-  ModelVersionPopularityUpdate = 'model-version:popularity:update',
   ResourceLoadUpdate = 'resource-load:update',
   Pong = 'pong',
   CompensationPoolUpdate = 'creators-program:compensation-pool-update',
@@ -206,6 +205,13 @@ export enum BountySort {
 export enum BountyBenefactorSort {
   HighestAmount = 'Highest Amount',
   Newest = 'Newest',
+}
+
+export enum CrucibleSort {
+  PrizePool = 'Prize Pool',
+  EndingSoon = 'Ending Soon',
+  Newest = 'Newest',
+  MostEntries = 'Most Entries',
 }
 
 export enum BountyStatus {

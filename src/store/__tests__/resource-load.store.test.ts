@@ -45,6 +45,10 @@ describe('resourceLoadDrainVerdict', () => {
     });
   });
 
+  it('keeps one in the `queued` status the orchestrator reports from beta.105', () => {
+    expect(resourceLoadDrainVerdict(item(), state('queued', 3), NOW)).toEqual({ action: 'keep' });
+  });
+
   it('drops an unavailable resource with no queue position — nothing is in flight', () => {
     // A load that failed, or finished and was evicted, reads back exactly like this. Treating it as
     // "still queued" is what would keep it in the queue forever.

@@ -78,8 +78,9 @@ tracker only ever listed nine of the parent's **thirteen** subtasks. Export pull
       already happened** — two `UserNotes` ids were spent locally on 2026-08-07 while Retool spent the
       same two, so id preservation is no longer universal and those two rows are re-idded with the remap
       recorded. Everything else is byte-identical below its watermark (md5-verified, not just counted).
-      `ModelNotes` **is** being migrated (935 rows, wanted by `868kn8aa0`), and is already typed by the
-      schema introspection.
+      `ModelNotes` **is** being migrated (935 rows at that measurement, 938 today; wanted by
+      `868kn8aa0`), and is already typed by the schema introspection — since `868mb8h0y` it is also read
+      and written, by the Moderator notes panel on Model Lookup.
       🔒 That ticket body contains a **live Postgres connection string with its password** — rotate it.
 
 ## 1. User Lookup — the primary console

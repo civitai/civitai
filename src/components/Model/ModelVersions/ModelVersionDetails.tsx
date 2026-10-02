@@ -1,4 +1,5 @@
-import { type ModelVersionTerms, generationPrice } from '@civitai/buzz';
+import { type ModelVersionTerms, acceptsBlueBuzz, generationPrice } from '@civitai/buzz';
+import { generatorReadiness } from '~/shared/generation/generator-readiness';
 import { formatLicensingFee } from '~/utils/licensing-fee-display';
 import {
   Accordion,
@@ -88,7 +89,10 @@ import { ModelURN, URNExplanation } from '~/components/Model/ModelURN/ModelURN';
 import { DownloadVariantDropdown } from '~/components/Model/ModelVersions/DownloadVariantDropdown';
 import { ModelModerationCard } from '~/components/Model/ModelVersions/ModelModerationCard';
 import { ModelTensorMetadata } from '~/components/Model/ModelVersions/ModelTensorMetadata';
-import { ModelVersionPopularity } from '~/components/Model/ModelVersions/ModelVersionPopularity';
+import {
+  LoadedCornerBadge,
+  ResourceResidencyStatus,
+} from '~/components/ResourceLoad/ResourceResidency';
 import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
 import { RequiredComponentsSection } from '~/components/Model/ModelVersions/RequiredComponentsSection';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
@@ -151,7 +155,6 @@ import {
   ModelFileVisibility,
   ModelModifier,
   ModelStatus,
-  ModelType,
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
 import type { ModelById } from '~/types/router';
@@ -311,6 +314,8 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   // same reason the tier cap is never folded into it. That rule protects an editor, not a button: an
   // owner reading their own model page should see the price a buyer is quoted, like everyone else.
   const displayTerms = saleForViewer?.buyerTerms ?? paidAccessTerms;
+  // Which Buzz the price chips advertise — a sale that takes Blue must not read as Yellow-only.
+  const paidAccessAcceptsBlue = acceptsBlueBuzz(paidAccessTerms);
   const isDraft = version?.status === ModelStatus.Draft;
 
   // const shouldOmit = [1562709, 1672021, 1669468].includes(model.id) && !user?.isModerator;
@@ -574,6 +579,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               ? displayTerms.download.price
               : undefined
           }
+          acceptsBlueBuzz={paidAccessAcceptsBlue}
           isLoadingAccess={isLoadingAccess}
           archived={archived}
           onPurchase={() => onPurchase('download')}
@@ -730,26 +736,32 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               <Card withBorder p="md">
                 <Stack gap="xs">
                   {canGenerate ? (
-                    <GenerateButton
-                      versionId={version.id}
-                      modelId={model.id}
-                      wildcardSetId={version.wildcardSetId}
-                      data-tour="model:create"
-                      data-activity="create:model"
-                      disabled={isLoadingAccess || !!model.mode}
-                      generationPrice={
-                        generationRequiresPurchase && !isLoadingAccess && displayTerms
-                          ? generationPrice(displayTerms)
-                          : undefined
-                      }
-                      listedPrice={
-                        !generationRequiresPurchase && isOwnerOrMod && displayTerms
-                          ? generationPrice(displayTerms) || undefined
-                          : undefined
-                      }
-                      onPurchase={() => onPurchase('generation')}
-                      fullWidth
-                    />
+                    <div className="relative flex w-full">
+                      <GenerateButton
+                        versionId={version.id}
+                        modelId={model.id}
+                        wildcardSetId={version.wildcardSetId}
+                        data-tour="model:create"
+                        data-activity="create:model"
+                        disabled={isLoadingAccess || !!model.mode}
+                        generationPrice={
+                          generationRequiresPurchase && !isLoadingAccess && displayTerms
+                            ? generationPrice(displayTerms)
+                            : undefined
+                        }
+                        listedPrice={
+                          !generationRequiresPurchase && isOwnerOrMod && displayTerms
+                            ? generationPrice(displayTerms) || undefined
+                            : undefined
+                        }
+                        acceptsBlueBuzz={paidAccessAcceptsBlue}
+                        onPurchase={() => onPurchase('generation')}
+                        fullWidth
+                      />
+                      {features.imageGeneration && (
+                        <LoadedCornerBadge readiness={generatorReadiness(version)} />
+                      )}
+                    </div>
                   ) : null}
                   {/* Action icon buttons row */}
                   <div className="flex gap-2">
@@ -1087,12 +1099,13 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
             })}
           >
             {model.meta?.showcaseCollectionId && collection && (
-              <Accordion.Item value="collection-showcase">
-                <Accordion.Control
-                  disabled={settingShowcase}
-                  className="aria-expanded:border-b aria-expanded:border-solid aria-expanded:border-gray-2 dark:aria-expanded:border-dark-4"
-                >
-                  <div className="flex items-center justify-between">
+              <Accordion.Item value="collection-showcase" className="group">
+                {/* The follow/edit action sits BESIDE the control, not inside it: the control is a
+                    <button>, so nesting one there is invalid DOM and React drops the inner button's
+                    events on some paths. The expanded underline moves with it, keyed off the item's
+                    own data-active so it still spans the full row. */}
+                <div className="flex items-center group-data-[active]:border-b group-data-[active]:border-solid group-data-[active]:border-gray-2 dark:group-data-[active]:border-dark-4">
+                  <Accordion.Control disabled={settingShowcase} className="flex-1">
                     <div>
                       <Link
                         href={`/collections/${model.meta?.showcaseCollectionId}`}
@@ -1114,15 +1127,15 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                           : ''}
                       </Text>
                     </div>
+                  </Accordion.Control>
+                  <div className="pr-3">
                     {isOwnerOrMod ? (
                       <Anchor
                         size="sm"
                         className={clsx(
                           settingShowcase && 'pointer-events-none cursor-not-allowed text-dark-2'
                         )}
-                        onClick={(e: React.MouseEvent) => {
-                          e.stopPropagation();
-                          e.preventDefault();
+                        onClick={() => {
                           if (model.user.username)
                             openCollectionSelectModal({
                               username: model.user.username,
@@ -1139,7 +1152,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       <CollectionFollowAction collectionId={collection.id} />
                     )}
                   </div>
-                </Accordion.Control>
+                </div>
                 <Accordion.Panel>
                   <CollectionShowcase modelId={model.id} loading={settingShowcase} />
                 </Accordion.Panel>
@@ -1159,6 +1172,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       ? paidAccessTerms.download.price
                       : undefined
                   }
+                  acceptsBlueBuzz={paidAccessAcceptsBlue}
                   isLoadingAccess={isLoadingAccess}
                   archived={archived}
                   onPurchase={() => onPurchase('download')}
@@ -1443,19 +1457,15 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       )}
                     </Group>
                   </div>
-                  {/* Generation Popularity */}
-                  {canGenerate &&
-                    features.modelVersionPopularity &&
-                    model.type === ModelType.Checkpoint && (
-                      <div className={classes.detailRow}>
-                        <span className={classes.detailLabel}>Generation</span>
-                        <ModelVersionPopularity
-                          versionId={version.id}
-                          isCheckpoint={model.type === ModelType.Checkpoint}
-                          listenForUpdates
-                        />
-                      </div>
-                    )}
+                  {canGenerate && features.imageGeneration && (
+                    <div className={classes.detailRow}>
+                      <span className={classes.detailLabel}>Generation</span>
+                      <ResourceResidencyStatus
+                        modelVersionId={version.id}
+                        readiness={generatorReadiness(version)}
+                      />
+                    </div>
+                  )}
                   {/* Generation License Fee */}
                   {Number(version.licensingFee ?? 0) > 0 && (
                     <div className={classes.detailRow}>

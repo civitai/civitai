@@ -27,7 +27,6 @@ export const commentConnectorSchema = z.object({
     'model3dReview',
     'appListing',
   ]),
-  hidden: z.boolean().nullish(),
   parentThreadId: z.number().optional(),
   excludedUserIds: z.array(z.number()).optional(),
 });

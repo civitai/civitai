@@ -1,13 +1,17 @@
 import { useState } from 'react';
 import { constants } from '~/server/common/constants';
-import type { MediaType } from '~/shared/utils/prisma/enums';
+import { MediaType } from '~/shared/utils/prisma/enums';
 import { calculateSizeInMegabytes } from '~/utils/json-helpers';
 import { auditImageMeta, preprocessFile } from '~/utils/media-preprocessors';
 import { showErrorNotification } from '~/utils/notifications';
 import { isDefined } from '~/utils/type-guards';
 import { v4 as uuidv4 } from 'uuid';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { attachUploadSettlement, relayWithRetry } from '~/utils/upload-settlement';
+import {
+  attachUploadSettlement,
+  postImageUploadRelay,
+  relayWithRetry,
+} from '~/utils/upload-settlement';
 
 type TrackedFileStatus = 'pending' | 'error' | 'success' | 'uploading' | 'aborted' | 'blocked';
 type TrackedFile = AsyncReturnType<typeof getDataFromFile> & {
@@ -137,12 +141,11 @@ export const useCFImageUpload: UseCFImageUpload = () => {
      * an unreachable host.
      */
     async function postToRelay(signal: AbortSignal) {
-      return fetch('/api/v1/image-upload/relay', {
-        method: 'POST',
-        headers: { 'Content-Type': file.type || 'application/octet-stream' },
-        body: file,
-        signal,
-      });
+      // `single_put`: this hook IS the single-PUT path. The request construction is
+      // shared with the multipart caller (`relayImageFallback`) through the one helper
+      // `postImageUploadRelay`, so the producer header cannot be present on one and
+      // missing on the other — the two used to build near-identical fetches side by side.
+      return postImageUploadRelay(file, { signal, producer: 'single_put' });
     }
 
     async function relayUpload(signal: AbortSignal) {
@@ -226,8 +229,14 @@ export const useCFImageUpload: UseCFImageUpload = () => {
 
 export type DataFromFile = AsyncReturnType<typeof getDataFromFile>;
 export const getDataFromFile = async (file: File, options?: { allowAnimatedWebP?: boolean }) => {
-  const processed = await preprocessFile(file, options);
-  const { blockedFor } = await auditImageMeta(processed.meta, false);
+  const preprocessed = await preprocessFile(file, options);
+  // Video generation meta is only taken through useMediaUpload.
+  const processed =
+    preprocessed.type === 'video' ? { ...preprocessed, meta: undefined } : preprocessed;
+  const { blockedFor } = await auditImageMeta(
+    processed.type === MediaType.image ? processed.meta : undefined,
+    false
+  );
   if (processed.type === 'video') {
     const { metadata } = processed;
     try {
@@ -248,7 +257,7 @@ export const getDataFromFile = async (file: File, options?: { allowAnimatedWebP?
     }
   }
 
-  if (processed.meta.comfy) {
+  if (processed.type === 'image' && processed.meta.comfy) {
     const { comfy } = processed.meta;
     // if comfy metadata is larger than 1MB, we don't want to store it
     const tooLarge = calculateSizeInMegabytes(comfy) > 1;
@@ -257,7 +266,7 @@ export const getDataFromFile = async (file: File, options?: { allowAnimatedWebP?
         throw new Error('Comfy metadata is too large. Please consider updating your workflow');
     } catch (e) {
       const error = e as Error;
-      showErrorNotification({ title: 'Unable to parse media metadata', error });
+      showErrorNotification({ title: 'Unable to parse image metadata', error });
       return null;
     }
   }

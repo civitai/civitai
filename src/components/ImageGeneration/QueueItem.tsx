@@ -28,7 +28,6 @@ import {
   IconLink,
 } from '@tabler/icons-react';
 import { NextLink as Link, NextLink } from '~/components/NextLink/NextLink';
-import dayjs from '~/shared/utils/dayjs';
 import { useEffect, useState } from 'react';
 import { GeneratedOutput } from '~/components/ImageGeneration/GeneratedOutput';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
@@ -41,7 +40,6 @@ import {
   useUpdateWorkflow,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import type { TransactionInfo, WorkflowStatus } from '@civitai/client';
-import { TimeSpan } from '@civitai/client';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
@@ -81,7 +79,12 @@ import type {
   ImageBlob,
   VideoBlob,
 } from '~/shared/orchestrator/workflow-data';
-import { numberWithCommas } from '~/utils/number-helpers';
+import { formatBytes, numberWithCommas } from '~/utils/number-helpers';
+import {
+  DownloadBoostPanel,
+  useWorkflowDownloads,
+} from '~/components/ImageGeneration/DownloadBoostPanel';
+import type { DownloadRow } from '~/components/ImageGeneration/download-status';
 import { getModelUrl } from '~/utils/string-helpers';
 import type { Model3DViewableVariant } from '~/components/Model3D/Viewer/Model3DVariantViewer';
 import {
@@ -96,9 +99,6 @@ const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
   ...orchestratorPendingStatuses,
   'processing',
 ];
-const LONG_DELAY_TIME = 5; // minutes
-const EXPIRY_TIME = 10; // minutes
-const delayTimeouts = new Map<string, NodeJS.Timeout>();
 
 /** 3D ecosystem key → user-facing model name shown on the queue card. */
 const POLYGEN_ECOSYSTEM_MODEL_LABELS: Record<string, string> = {
@@ -126,7 +126,6 @@ export function QueueItem({
 
   const { copied, copy } = useClipboard();
 
-  const [showDelayedMessage, setShowDelayedMessage] = useState(false);
   const { status } = request;
   const params = request.params;
   const resources = request.resources;
@@ -151,38 +150,6 @@ export function QueueItem({
   const canceled = status === 'canceled';
 
   const cancellable = PENDING_PROCESSING_STATUSES.includes(status);
-
-  useEffect(() => {
-    if (!cancellable) return;
-
-    const id = request.id.toString();
-
-    function removeTimeout(id: string) {
-      const timeout = delayTimeouts.get(id);
-      if (timeout) {
-        clearTimeout(timeout);
-        delayTimeouts.delete(id);
-      }
-    }
-
-    removeTimeout(id);
-    delayTimeouts.set(
-      id,
-      setTimeout(() => {
-        setShowDelayedMessage(true);
-        delayTimeouts.delete(id);
-      }, LONG_DELAY_TIME * 60 * 1000)
-    );
-    return () => {
-      removeTimeout(id);
-    };
-  }, [request.id, request.createdAt, cancellable]);
-
-  const minTimeout = request.steps.reduce((min, s) => {
-    const minutes = s.timeout ? new TimeSpan(s.timeout).minutes : EXPIRY_TIME;
-    return Math.min(min, minutes);
-  }, EXPIRY_TIME);
-  const refundTime = dayjs(request.createdAt).add(minTimeout, 'minute').toDate();
 
   const handleCopy = () => {
     copy(request.id);
@@ -297,6 +264,11 @@ export function QueueItem({
   const version = params.version as string | undefined;
 
   const queuePosition = request.steps.find((s) => s.queuePosition)?.queuePosition;
+  const downloads = useWorkflowDownloads({ request, enabled: pending && inView });
+  const waitingOnDownloads = pending && downloads.rows.length > 0;
+  const downloadsByVersion = new Map(
+    waitingOnDownloads ? downloads.rows.map((x) => [x.resource.id, x.row]) : []
+  );
   const stepDisplay = workflowDefinition?.stepDisplay ?? 'inline';
 
   return (
@@ -420,36 +392,21 @@ export function QueueItem({
       {inView && !isPolyGen && (
         <>
           <div className="flex flex-col gap-3 py-3 @container">
-            {showDelayedMessage &&
-              cancellable &&
-              request.awaitingOutput &&
-              !request.steps.some((s) => s.$type === 'videoGen') && (
-                <Alert color="yellow" p={0}>
-                  <div className="flex items-center gap-2 px-2 py-1">
-                    <Text size="xs" c="yellow" lh={1}>
-                      <IconAlertTriangleFilled size={20} />
-                    </Text>
-                    <Text size="xs" lh={1.2} c="yellow">
-                      <Text fw={500} component="span">
-                        This is taking longer than usual.
-                      </Text>
-                      {` Don't want to wait? Cancel this job to get refunded for any undelivered images. If we aren't done by ${formatDateMin(
-                        refundTime
-                      )} we'll refund you automatically.`}
-                    </Text>
-                  </div>
-                </Alert>
-              )}
-
             {prompt && <LineClamp lh={1.3}>{prompt}</LineClamp>}
 
             {resources.length > 0 && (
               <div className="flex flex-wrap gap-1">
                 {resources.map((resource) => (
-                  <ResourceRow key={resource.id} resource={resource} />
+                  <ResourceRow
+                    key={resource.id}
+                    resource={resource}
+                    download={downloadsByVersion.get(resource.id)}
+                  />
                 ))}
               </div>
             )}
+
+            {waitingOnDownloads && <DownloadBoostPanel request={request} downloads={downloads} />}
 
             {stepDisplay === 'inline' && (
               <WorkflowStatusAlert status={status} failureReason={failureReason} />
@@ -473,6 +430,7 @@ export function QueueItem({
                         pending={pending}
                         processing={processing}
                         queuePosition={queuePosition}
+                        waitingOnDownloads={waitingOnDownloads}
                         markerTags={markerTags}
                       />
                     </div>
@@ -486,6 +444,7 @@ export function QueueItem({
                 pending={pending}
                 processing={processing}
                 queuePosition={queuePosition}
+                waitingOnDownloads={waitingOnDownloads}
                 markerTags={markerTags}
               />
             )}
@@ -507,7 +466,13 @@ export function QueueItem({
   );
 }
 
-function ResourceRow({ resource }: { resource: GenerationResource }) {
+function ResourceRow({
+  resource,
+  download,
+}: {
+  resource: GenerationResource;
+  download?: DownloadRow;
+}) {
   const { unstableResources } = useGenerationConfig();
   const features = useFeatureFlags();
   const { model, id, name, epochDetails } = resource;
@@ -567,18 +532,29 @@ function ResourceRow({ resource }: { resource: GenerationResource }) {
         href={getModelUrl({ modelId: model.id, modelName: model.name, modelVersionId: id })}
         onClick={() => generationGraphPanel.close()}
         leftSection={
-          unstable ? (
+          download ? (
+            <Loader size={10} color="yellow" />
+          ) : unstable ? (
             <Tooltip label="Unstable resource">
               <IconAlertTriangleFilled size={14} className="text-yellow-500" />
             </Tooltip>
           ) : undefined
         }
-        color={unstable ? 'yellow' : undefined}
+        color={unstable || download ? 'yellow' : undefined}
         className="min-w-0 flex-1"
         classNames={{ label: 'truncate' }}
       >
         {truncatedModelName} - {name}
         {epochDetails?.epochNumber && ` #${epochDetails.epochNumber}`}
+        {!!download?.sizeBytes && (
+          <Text span size="xs" c="dimmed" ml={6} fw={500}>
+            {download.progress != null
+              ? `${formatBytes(download.sizeBytes * download.progress)} / ${formatBytes(
+                  download.sizeBytes
+                )}`
+              : formatBytes(download.sizeBytes)}
+          </Text>
+        )}
       </Button>
       <ButtonTooltip {...tooltipProps} label="Generate with this resource">
         <Button
@@ -612,6 +588,7 @@ function StepOutputs({
   pending,
   processing,
   queuePosition,
+  waitingOnDownloads,
   markerTags,
 }: {
   step: StepData | null;
@@ -620,6 +597,8 @@ function StepOutputs({
   pending: boolean;
   processing: boolean;
   queuePosition?: WorkflowData['steps'][number]['queuePosition'];
+  /** The download panel stands in for the pending tile. */
+  waitingOnDownloads?: boolean;
   markerTags?: string[];
 }) {
   const images = step ? step.output : request.steps.flatMap((s) => s.output);
@@ -659,7 +638,7 @@ function StepOutputs({
           workflowId={request.id}
           transactions={request.transactions}
         />
-        {(pending || processing) && awaitingOutput && (
+        {(processing || (pending && !waitingOnDownloads)) && awaitingOutput && (
           <TwCard
             className="items-center justify-center border"
             style={{ aspectRatio: images[0]?.aspect ?? 1 }}

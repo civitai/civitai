@@ -12,6 +12,7 @@ import { newNotificationSignal, type NotificationCategory } from '@civitai/notif
 import { notifDbWrite } from '../lib/server/clients/db';
 import { logAxiomError, logToAxiom } from '../lib/server/clients/axiom';
 import { notificationCache } from '../lib/server/cache';
+import { dispatchPush } from './push';
 import { signalsEndpoint } from '../env';
 import {
   notificationsFannedOutTotal,
@@ -263,11 +264,21 @@ export const run = async () => {
     workerPendingProcessedTotal.inc({ outcome: 'fanned' });
     notificationsFannedOutTotal.inc(affectedUsers.length);
 
+    // Sibling of the signals POST below: runs after the DB write committed, on a recipient list
+    // that already passed the opt-out filter. Awaited (unlike signals) because it does its own
+    // pacing-sensitive outbound calls; it never throws.
+    await dispatchPush(
+      row.type,
+      row.details,
+      affectedUsers.map((u) => u.userId)
+    );
+
     const signalData = { type: row.type, category: row.category, details: row.details };
     const affectBatches = chunk(affectedUsers, signalBatchSize);
     for (let i = 0; i < affectBatches.length; i++) {
       for (const { userId, id, createdAt } of affectBatches[i]!) {
-        await notificationCache.incrementUser(userId, row.category);
+        // A failed counter bump must not cost the remaining recipients their signals.
+        await notificationCache.incrementUser(userId, row.category).catch(() => null);
         // Fire-and-forget (resilience unchanged): a signals failure must NOT break fan-out. We only add
         // outcome counting — non-2xx AND network/throw both count as `failure` (the old server silently
         // POSTed to a non-existent endpoint; that drop is now scrapeable).

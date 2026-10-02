@@ -83,9 +83,10 @@ already routes them to `UPDATE`.
 - `ModelFlag` — `PK(modelId)`. Moderation state; needs OR-the-flags, not pick-a-winner. Silently
   dropping one side is a safety regression.
 - The `Model` row itself — `poi`, `minor`, `nsfw`, `sfwOnly`, `allowCommercialUse`, `licenses`,
-  `mode`, `status`, `availability`, `lockedProperties`. `GenerationCoverage`'s predicate reads
-  `m.poi` / `m.allowCommercialUse` / `m.type` from the **new** parent, so coverage can silently flip
-  at merge time.
+  `mode`, `status`, `availability`, `lockedProperties`. `GenerationCoverage`'s predicate (the one view
+  the app reads; both its `covered` and `coveredNext` columns) reads `m.mode` / `m.poi` /
+  `m.allowCommercialUse` / `m.type` from the **new** parent, so coverage can silently flip at merge
+  time — including to zero, if the new parent is `Archived` or `TakenDown`.
 
 **Requeue, never hand-edit — none of these self-heal:**
 

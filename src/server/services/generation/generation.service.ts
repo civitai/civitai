@@ -1,4 +1,12 @@
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
+import {
+  coverageAudience,
+  coverageColumn,
+  coveragePair,
+  coveredBy,
+  coveredForUser,
+  nextCoverageEnabled,
+} from '~/server/services/generation/coverage-source';
 import { Prisma } from '@prisma/client';
 import { type ModelVersionTerms } from '@civitai/buzz';
 import { uniqBy } from 'lodash-es';
@@ -15,6 +23,7 @@ import type {
   GenerationStatusMode,
   GetGenerationDataSchema,
   ResolveImageMetaInput,
+  SetEvictableInput,
 } from '~/server/schema/generation.schema';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
@@ -32,7 +41,8 @@ import {
   throwBadRequestError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { getPrimaryFile, getTrainingFileEpochNumberDetails } from '~/server/utils/model-helpers';
+import { getTrainingFileEpochNumberDetails } from '~/server/utils/model-helpers';
+import { getGenerationFile } from '~/server/utils/resource-air';
 import { withSpan } from '~/server/utils/otel-helpers';
 import {
   fluxKreaAir,
@@ -60,6 +70,7 @@ import { removeNulls } from '~/utils/object-helpers';
 import { parseAIR, stringifyAIR } from '~/shared/utils/air';
 import {
   ModelVersionFlag,
+  isEvictable,
   isGenerationDisabled,
 } from '~/shared/constants/model-version-flags.constants';
 import { pickPreviewImage } from '~/shared/utils/resource-preview';
@@ -116,13 +127,18 @@ function getMetaResources({
 
 export async function checkResourcesCoverage({ id }: CheckResourcesCoverageSchema) {
   const db = await getDbWithoutLag('modelVersion', id);
+  const next = await nextCoverageEnabled();
   const version = await db.modelVersion.findFirst({
     where: { id },
-    select: { flags: true, generationCoverage: { select: { covered: true } } },
+    select: {
+      flags: true,
+      generationCoverage: { select: { covered: true, coveredNext: true } },
+    },
   });
 
   return (
-    (version?.generationCoverage?.covered ?? false) && !isGenerationDisabled(version?.flags ?? 0)
+    (version ? coveredBy(version, next) ?? false : false) &&
+    !isGenerationDisabled(version?.flags ?? 0)
   );
 }
 
@@ -577,17 +593,18 @@ async function resolveAliasGateVersions(
       usageControl: true,
       baseModel: true,
       flags: true,
-      generationCoverage: { select: { covered: true } },
+      generationCoverage: { select: { covered: true, coveredNext: true } },
       model: { select: { userId: true, type: true } },
     },
   });
+  const next = await nextCoverageEnabled();
   const targetById = new Map<number, ResolveCanGenerateVersion>(
     rows.map(({ generationCoverage, model, usageControl, ...rest }) => [
       rest.id,
       {
         ...rest,
         usageControl: usageControl ?? undefined,
-        covered: generationCoverage?.covered ?? null,
+        ...coveragePair(generationCoverage, next),
         modelUserId: model.userId,
         modelType: model.type,
       },
@@ -964,29 +981,51 @@ export async function getGenerationConfig(
   };
 }
 
+async function updateModelVersionFlags(id: number, flags: Prisma.Sql) {
+  // One atomic statement, never a read-modify-write: `flags` holds several bits,
+  // and a round trip would clobber a concurrent write to the others.
+  const [updated] = await dbWrite.$queryRaw<{ modelId: number; flags: number }[]>(Prisma.sql`
+    UPDATE "ModelVersion"
+    SET flags = ${flags}
+    WHERE id = ${id}
+    RETURNING "modelId", flags
+  `);
+  if (!updated) throw throwNotFoundError(`No model version with id ${id}`);
+
+  // The flags are baked into cached version/model rows (resourceDataCache,
+  // dataForModelsCache, search index), so bust them the same way a coverage
+  // toggle does — otherwise the change wouldn't surface until TTL expiry.
+  await bustMvCache(id, updated.modelId);
+
+  return updated.flags;
+}
+
 export async function toggleGenerationDisabled({
   id,
   isModerator,
 }: GetByIdInput & { isModerator?: boolean }) {
   if (!isModerator) throw throwAuthorizationError();
+  const flags = await updateModelVersionFlags(
+    id,
+    Prisma.sql`flags # ${ModelVersionFlag.GenerationDisabled}`
+  );
+  return { id, generationDisabled: isGenerationDisabled(flags) };
+}
 
-  // Flip the bit in a single atomic statement (`#` is Postgres bitwise XOR).
-  // `flags` is shared with NotDerivative, so a read-modify-write would clobber a
-  // concurrent write to those other bits.
-  const [updated] = await dbWrite.$queryRaw<{ modelId: number; flags: number }[]>`
-    UPDATE "ModelVersion"
-    SET flags = flags # ${ModelVersionFlag.GenerationDisabled}
-    WHERE id = ${id}
-    RETURNING "modelId", flags
-  `;
-  if (!updated) throw throwNotFoundError(`No model version with id ${id}`);
-
-  // The flag is baked into cached version/model rows (resourceDataCache,
-  // dataForModelsCache, search index), so bust them the same way a coverage
-  // toggle does — otherwise the change wouldn't surface until TTL expiry.
-  await bustMvCache(id, updated.modelId);
-
-  return { id, generationDisabled: isGenerationDisabled(updated.flags) };
+// Sets rather than toggles: a flip sent from a stale menu would un-pin a base model.
+export async function setEvictable({
+  id,
+  evictable,
+  isModerator,
+}: SetEvictableInput & { isModerator?: boolean }) {
+  if (!isModerator) throw throwAuthorizationError();
+  const flags = await updateModelVersionFlags(
+    id,
+    evictable
+      ? Prisma.sql`flags & ~(${ModelVersionFlag.NotEvictable}::int)`
+      : Prisma.sql`flags | ${ModelVersionFlag.NotEvictable}`
+  );
+  return { id, evictable: isEvictable(flags) };
 }
 
 const FREE_RESOURCE_TYPES: ModelType[] = ['VAE', 'Checkpoint'];
@@ -1122,6 +1161,8 @@ export type ResolveCanGenerateVersion = {
   usageControl?: string;
   baseModel: string;
   covered: boolean | null | undefined;
+  /** The LIVE rule's answer, which `isGenerationEligible` holds a locked ecosystem's checkpoints to. */
+  coveredLive: boolean | null | undefined;
   modelUserId: number;
   modelType: ModelType;
   /** ModelVersion.flags — the GenerationDisabled bit gates canGenerate. */
@@ -1202,6 +1243,7 @@ export async function resolveCanGenerateForVersions(
         }) &&
         isGenerationEligible({
           covered: gate.covered,
+          coveredLive: gate.coveredLive,
           baseModel: gate.baseModel,
           modelType: gate.modelType,
           flags: gate.flags,
@@ -1221,7 +1263,7 @@ export async function getResourceData(
     withPreview = false,
     browsingLevel,
   }: {
-    user?: { id?: number; isModerator?: boolean };
+    user?: { id?: number; isModerator?: boolean; tier?: string };
     generation?: boolean;
     withPreview?: boolean;
     browsingLevel?: number;
@@ -1231,6 +1273,8 @@ export async function getResourceData(
   const args = (
     typeof versionIds[0] === 'number' ? versionIds.map((id) => ({ id })) : versionIds
   ) as { id: number; epoch?: number }[];
+
+  const { next, member } = await coverageAudience(user);
 
   // Spans localize the gen-path park: getResourceData does these as SEQUENTIAL
   // awaits, so wrapping each shows which prelim lookup dominates.
@@ -1248,6 +1292,21 @@ export async function getResourceData(
     const isPrivate =
       item.availability === 'Private' || ['Draft', 'Training'].includes(item.status);
 
+    const covered = coveredForUser(item, next, {
+      member,
+      isCheckpoint: item.model.type === 'Checkpoint',
+    });
+    // 🔴 `getResourceCanGenerate` ALONE, deliberately — not the `isGenerationEligible` pair that
+    // `resolveCanGenerateForVersions` uses. This path receives every resource in the request, and the
+    // helper's third clause is the ecosystem's flat model-TYPE list, which the generator has never
+    // applied to additional resources: adding it refuses live-covered Wan/LTXV LoRAs, Flux.1 D DoRAs
+    // and LoCons with a hard "not available for generation", and breaks remix from every image that
+    // used one. The view's `other_type` disjunct covers those by design, so the two rules disagree
+    // permanently. Counts: docs/features/paid-model-loading-coverage.md.
+    //
+    // The cost is that a community checkpoint on a `modelLocked` ecosystem reads generatable here
+    // while the model page, the search index and `mini/[id]` refuse it. That is the silent
+    // substitution of issue #3520, which is counted rather than changed.
     const canGenerate = getResourceCanGenerate({
       resource: {
         id: item.id,
@@ -1255,7 +1314,7 @@ export async function getResourceData(
         availability: item.availability,
         usageControl: item.usageControl,
         baseModel: item.baseModel,
-        covered: item.covered,
+        covered,
         modelUserId: item.model.userId,
         flags: item.flags,
       },
@@ -1306,7 +1365,7 @@ export async function getResourceData(
       .findMany({
         where: {
           status: 'Published',
-          generationCoverage: { covered: true },
+          generationCoverage: { [coverageColumn(next)]: true },
           modelId: { in: modelIdsThatRequireSubstitutes },
         },
         orderBy: { index: { sort: 'asc', nulls: 'last' } },
@@ -1355,8 +1414,8 @@ export async function getResourceData(
     resource: ReturnType<typeof transformGenerationData>,
     modelFiles: ModelFileCached[]
   ) {
-    const primaryFile = getPrimaryFile(modelFiles);
-    const fileSizeKB = primaryFile?.sizeKB;
+    const generationFile = getGenerationFile(modelFiles);
+    const fileSizeKB = generationFile?.sizeKB;
     const featured = !!featuredModels.find((x) => x.modelId === resource.model.id);
     let additionalResourceCost = true;
     if (
@@ -1373,7 +1432,7 @@ export async function getResourceData(
       fileSizeKB: fileSizeKB ? Math.round(fileSizeKB) : undefined,
       additionalResourceCost,
       epochDetails,
-      primaryFileType: primaryFile?.type,
+      generationFileType: generationFile?.type,
     };
   }
 
@@ -1381,18 +1440,15 @@ export async function getResourceData(
     resource: ReturnType<typeof transformGenerationData>,
     modelFiles: ModelFileCached[]
   ) {
-    const { fileSizeKB, additionalResourceCost, epochDetails, primaryFileType } = getModelFileProps(
-      resource,
-      modelFiles
-    );
+    const { fileSizeKB, additionalResourceCost, epochDetails, generationFileType } =
+      getModelFileProps(resource, modelFiles);
     const air = stringifyAIR({
       baseModel: resource.baseModel,
       type: resource.model.type,
       modelId: epochDetails ? epochDetails.jobId : resource.model.id,
       id: epochDetails ? epochDetails.fileName : resource.id,
-      // epoch resources resolve to an orchestrator-hosted file, not the version's
-      // primary model file, so only forward the file type for civitai sources.
-      fileType: epochDetails ? undefined : primaryFileType,
+      // Epoch resources are orchestrator-hosted; only a civitai source carries a file type.
+      fileType: epochDetails ? undefined : generationFileType,
       source: epochDetails ? 'orchestrator' : 'civitai',
     });
 
@@ -1656,16 +1712,26 @@ export function extractHashCandidates(
  *
  * Returns { resources, params } where params are ready for the generation graph.
  */
-type HashMatch = { versionPublished: boolean; versionDate: Date; fileId: number };
+type HashMatch = {
+  versionPublished: boolean;
+  isOfficial: boolean;
+  versionDate: Date;
+  fileId: number;
+};
 
 /**
  * Which of several files sharing one hash gets the credit. Mirrors
- * get_image_resources.sql's `ORDER BY IIF(version_published,0,1), version_date, file_id`:
- * published first, then OLDEST, then lowest file id.
+ * get_image_resources.sql's
+ * `ORDER BY IIF(version_published,0,1), IIF(is_official,0,1), version_date, file_id`:
+ * published first, then OFFICIAL, then OLDEST, then lowest file id.
  *
- * Oldest, not newest. A hash shared across owners is in practice a re-upload of someone
- * else's weights, so the earliest published copy is the closest thing to the original
- * uploader; preferring the most recent hands every duplicated model to whoever posted it
+ * Official outranks date because a hash is a statement about bytes: when the same bytes sit on an
+ * official version and on a community re-host, the official page is the true answer whoever
+ * uploaded first.
+ *
+ * Oldest, not newest, for everything below that. A hash shared across owners is in practice a
+ * re-upload of someone else's weights, so the earliest published copy is the closest thing to the
+ * original uploader; preferring the most recent hands every duplicated model to whoever posted it
  * last. This read `>` until 2026-09-15, which meant the image page credited the original
  * and the generator credited the re-uploader for the same file — the two are the same
  * rule in two languages, and nothing compares them.
@@ -1673,6 +1739,7 @@ type HashMatch = { versionPublished: boolean; versionDate: Date; fileId: number 
 export function prefersHashMatch(candidate: HashMatch, existing: HashMatch | undefined): boolean {
   if (!existing) return true;
   if (existing.versionPublished !== candidate.versionPublished) return candidate.versionPublished;
+  if (existing.isOfficial !== candidate.isOfficial) return candidate.isOfficial;
   const existingDate = existing.versionDate.valueOf();
   const candidateDate = candidate.versionDate.valueOf();
   if (existingDate !== candidateDate) return candidateDate < existingDate;
@@ -1705,6 +1772,7 @@ export async function resolveImageMeta({
         modelVersionId: number;
         fileId: number;
         versionPublished: boolean;
+        isOfficial: boolean;
         versionDate: Date;
         excludeFromAutoDetection: boolean;
       }>
@@ -1714,6 +1782,7 @@ export async function resolveImageMeta({
         mf."modelVersionId",
         mf.id AS "fileId",
         mv.status = 'Published' AS "versionPublished",
+        COALESCE(m."isOfficial", false) AS "isOfficial",
         COALESCE(mv."publishedAt", mv."createdAt") AS "versionDate",
         COALESCE(mv.meta->>'excludeFromAutoDetection', '') != '' AS "excludeFromAutoDetection"
       FROM "ModelFileHash" mfh

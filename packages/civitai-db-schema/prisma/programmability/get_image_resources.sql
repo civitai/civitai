@@ -1,8 +1,9 @@
 -- Resource detection credits an image to a model by joining image metadata to "ModelFileHash" on
 -- hash VALUE. Nothing in that join says what the hash is a hash OF, so a component file that many
 -- creators bundle beside their checkpoint -- an upstream text encoder, a VAE, a CLIP -- matches
--- every version hosting it, and the tie-break below hands the image to the EARLIEST published of
--- them: a stranger's model, on a page the uploader cannot correct.
+-- every version hosting it, and the tie-break below hands the image to an OFFICIAL version if one
+-- holds the hash, otherwise to the EARLIEST published of them: a stranger's model, on a page the
+-- uploader cannot correct.
 --
 -- Worked case (FD 69881, ClickUp 868m16ckn): the Qwen3-VL text encoder f111f9a940bc is bundled
 -- under 11 published versions owned by 8 creators, so every Krea 2 creator shipping it was credited
@@ -162,6 +163,7 @@ BEGIN
       irh.detected,
       mv.status = 'Published' AS version_published,
       COALESCE(mv."publishedAt", mv."createdAt") AS version_date,
+      COALESCE(m."isOfficial", false) AS is_official,
       mf.id AS file_id
     FROM image_resource_hashes irh
     LEFT JOIN "ModelFileHash" mfh ON mfh.hash = irh.hash::citext
@@ -170,6 +172,12 @@ BEGIN
     LEFT JOIN "Model" m ON m.id = mv."modelId"
     WHERE (irh.name IS NULL OR irh.name != 'vae')
       AND (m.id IS NULL OR m.status NOT IN ('Deleted', 'Unpublished', 'UnpublishedViolation'))
+      -- Here, not in the final SELECT, which is where it used to sit. There it ran AFTER
+      -- row_number picked a winner per (image, hash): the excluded version still won its partition
+      -- and was then dropped, so the slot came back empty instead of going to the next candidate.
+      -- Measured on the two batches it was used for (Ming, Qwen): 331 attributions removed, none
+      -- reassigned. As a candidate filter it does what its name says.
+      AND (mv.id IS NULL OR mv.meta IS NULL OR mv.meta->>'excludeFromAutoDetection' IS NULL)
       AND (irh.hash IS NULL OR irh.hash != 'e3b0c44298fc') -- the sha256 of empty content
       AND (irh.role IS NULL OR irh.role = ANY (resource_roles))
       -- mf.id first, deliberately: mf.type is NULL on an unmatched row, and a bare
@@ -186,11 +194,15 @@ BEGIN
       irh.hash,
       irh.strength,
       irh.detected,
-      row_number() OVER (PARTITION BY irh.id, irh.hash ORDER BY IIF(irh.detected,0,1), IIF(irh.strength IS NOT NULL,0,1), IIF(version_published,0,1), version_date, file_id) AS row_number,
+      -- `is_official` outranks `version_date`: a hash is a statement about BYTES, and when the same
+      -- bytes sit on an official version and on a community re-host, the official page is the true
+      -- answer regardless of who uploaded first. Publish order decided it before, so a mirror
+      -- uploaded a day earlier took the credit — and the only remedy was per-version SQL.
+      row_number() OVER (PARTITION BY irh.id, irh.hash ORDER BY IIF(irh.detected,0,1), IIF(irh.strength IS NOT NULL,0,1), IIF(version_published,0,1), IIF(is_official,0,1), version_date, file_id) AS row_number,
       -- PARTITION BY groups NULLs, so without this every unmatched row on an image dedupes
       -- against every other and only one survives. They still dedupe by hash via row_number.
       CASE WHEN irh."modelVersionId" IS NULL THEN 1 ELSE
-        row_number() OVER (PARTITION BY irh.id, irh."modelVersionId" ORDER BY IIF(irh.detected,0,1), IIF(irh.strength IS NOT NULL,0,1), IIF(version_published,0,1), version_date, file_id)
+        row_number() OVER (PARTITION BY irh.id, irh."modelVersionId" ORDER BY IIF(irh.detected,0,1), IIF(irh.strength IS NOT NULL,0,1), IIF(version_published,0,1), IIF(is_official,0,1), version_date, file_id)
       END AS row_number_version
     FROM image_resource_merge irh
   )
@@ -202,12 +214,6 @@ BEGIN
     iri.strength,
     iri.detected
   FROM image_resource_id iri
-  LEFT JOIN "ModelVersion" mv ON mv.id = iri."modelVersionId"
-  WHERE ((iri.row_number = 1 AND iri.row_number_version = 1) OR iri.hash IS NULL)
-    AND (
-      mv.id IS NULL OR
-      mv.meta IS NULL OR
-      mv.meta->>'excludeFromAutoDetection' IS NULL
-    );
+  WHERE (iri.row_number = 1 AND iri.row_number_version = 1) OR iri.hash IS NULL;
 END;
 $$ LANGUAGE plpgsql;

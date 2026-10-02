@@ -18,7 +18,6 @@ import {
   IconMessages,
   IconPencil,
   IconPhotoPlus,
-  IconPlayerStop,
   IconRefresh,
   IconRestore,
   IconSend,
@@ -76,12 +75,6 @@ const DrawingEditorModal = dynamic(
 const ImageSelectModal = dynamic(() => import('~/components/Training/Form/ImageSelectModal'), {
   ssr: false,
 });
-
-/** Show the "taking longer than usual" alert after this long. Matches the
- *  Generator queue's threshold (5 minutes). */
-const DELAYED_WARNING_MS = 5 * 60 * 1000;
-/** Hard timeout — match the orchestrator's ~21 min step expiry plus a buffer. */
-const HARD_TIMEOUT_MS = 25 * 60 * 1000;
 
 /** Pick the model aspect-ratio whose w:h is closest to the source image's. */
 function pickClosestAspectRatio(
@@ -621,48 +614,6 @@ export function IterativeImageEditor({
     return () => clearInterval(interval);
   }, [isGenerating, doPollOnce]);
 
-  // Hard timeout: stop the editor from spinning forever even if both signals
-  // and polling fail to detect a terminal state. Generation-step timeout on
-  // the orchestrator side is ~21min, so 25min is a comfortable upper bound.
-  useEffect(() => {
-    if (!isGenerating) return;
-    const timeout = setTimeout(() => {
-      const iterationId = activeIterationIdRef.current;
-      clearActiveWorkflow();
-      if (iterationId) {
-        setIterations((prev) =>
-          prev.map((it) =>
-            it.id === iterationId
-              ? {
-                  ...it,
-                  status: 'error' as const,
-                  errorMessage:
-                    it.errorMessage ??
-                    'Generation timed out. If the image actually completed, find it in the Generator queue.',
-                }
-              : it
-          )
-        );
-      }
-      setIsGenerating(false);
-      isGeneratingRef.current = false;
-    }, HARD_TIMEOUT_MS);
-    return () => clearTimeout(timeout);
-  }, [isGenerating, clearActiveWorkflow]);
-
-  // After ~5 minutes of waiting, show a "this is taking longer than usual"
-  // alert with a Stop-waiting button — same pattern the Generator queue uses.
-  // Resets every time generation flips on, so a fresh send hides the alert.
-  const [showDelayedWarning, setShowDelayedWarning] = useState(false);
-  useEffect(() => {
-    if (!isGenerating) {
-      setShowDelayedWarning(false);
-      return;
-    }
-    const timeout = setTimeout(() => setShowDelayedWarning(true), DELAYED_WARNING_MS);
-    return () => clearTimeout(timeout);
-  }, [isGenerating]);
-
   // Manual abort — bail out of a stuck "generating" iteration. Doesn't try to
   // cancel the orchestrator workflow (the user can grab the result from the
   // Generator queue if it does eventually complete); just unsticks the UI.
@@ -1132,34 +1083,6 @@ export function IterativeImageEditor({
             ))
           )}
         </div>
-
-        {/* ── "Taking longer than usual" notice — appears after 5 min and
-              gives the user an explicit out so they aren't stuck waiting on a
-              stalled signal. ── */}
-        {isGenerating && showDelayedWarning && (
-          <Alert color="yellow" icon={<IconClock size={16} />} mx="sm" mb={0} p="xs">
-            <Text size="xs" lh={1.3}>
-              <Text span fw={600}>
-                This is taking longer than usual.
-              </Text>{' '}
-              Don&apos;t want to wait? Stop waiting now and try again — your in-flight job will keep
-              running, and if it eventually completes you can find it in the Generator queue.
-            </Text>
-            <Button
-              size="compact-xs"
-              variant="light"
-              color="yellow"
-              leftSection={<IconPlayerStop size={12} />}
-              mt={6}
-              onClick={() => {
-                const id = activeIterationIdRef.current;
-                if (id) handleAbort(id);
-              }}
-            >
-              Stop waiting
-            </Button>
-          </Alert>
-        )}
 
         {/* ── Queue / generation status warnings ── */}
         {queueFull && (

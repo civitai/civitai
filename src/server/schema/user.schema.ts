@@ -14,7 +14,11 @@ import {
   ModelEngagementType,
   TagEngagementType,
 } from '~/shared/utils/prisma/enums';
-import { usernameSchema } from '~/shared/zod/username.schema';
+import {
+  usernameSchema,
+  USERNAME_MAX_LENGTH,
+  USERNAME_MIN_LENGTH,
+} from '~/shared/zod/username.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import {
@@ -55,8 +59,8 @@ export const userPageQuerySchema = z
   });
 
 export const usernameInputSchema = usernameSchema
-  .min(3, 'Your username must be at least 3 characters long')
-  .max(25, 'Your username must be at most 25 characters long')
+  .min(USERNAME_MIN_LENGTH, `Your username must be at least ${USERNAME_MIN_LENGTH} characters long`)
+  .max(USERNAME_MAX_LENGTH, `Your username must be at most ${USERNAME_MAX_LENGTH} characters long`)
   .transform((v) => v.trim());
 
 export const getUserByUsernameSchema = z.object({
@@ -332,6 +336,10 @@ export const userSettingsSchema = z.object({
   // Opt-in: horizontal drag on multi-image gallery post cards. Off by default —
   // the feed mounts hundreds of cards and each one costs an embla engine.
   swipeGalleryCards: z.boolean().optional(),
+  // Web-push soft-ask dismissals. Server-side, not localStorage — a cache clear must not re-nag
+  // the same person. Re-ask cadence and lifetime cap are enforced client-side in PushSoftAsk.
+  pushPromptDismissedCount: z.number().optional(),
+  pushPromptDismissedAt: z.coerce.date().nullish(),
   // Opt-in: leave blue buzz out of the header badge, which otherwise adds blue and the domain's
   // main type into one number. Blue is granted and non-transferable, so a creator watching what
   // they hold is reading one of the two, not the sum. NOT a filter for earned buzz — yellow and
@@ -406,6 +414,8 @@ export type SetUserSettingsInput = z.infer<typeof setUserSettingsInput>;
 export const setUserSettingsInput = z.object({
   creatorsProgramCodeOfConductAccepted: z.date().optional(),
   cosmeticStoreLastViewed: z.date().optional(),
+  pushPromptDismissedCount: z.number().int().min(0).optional(),
+  pushPromptDismissedAt: z.date().optional(),
   allowAds: z.boolean().optional(),
   isEarlyAdopter: z.boolean().optional(),
   swipeGalleryCards: z.boolean().optional(),

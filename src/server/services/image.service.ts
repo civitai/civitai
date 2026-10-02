@@ -10,6 +10,10 @@ import { randomUUID } from 'crypto';
 import type { ManipulateType } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';
 import { chunk, isEqual, truncate, uniq, uniqBy } from 'lodash-es';
+import {
+  filterViewableModelVersions,
+  modelVersionVisibilitySelect,
+} from '~/server/services/model-version-visibility.service';
 import { MeiliSearch, type SearchParams } from 'meilisearch';
 import type { SessionUser } from '~/types/session';
 import { v4 as uuid } from 'uuid';
@@ -34,7 +38,7 @@ import {
   METRICS_IMAGES_SEARCH_INDEX,
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
-import { imageReviewedSql } from '~/server/common/image-visibility';
+import { imageReviewedSql, KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '~/server/common/image-visibility';
 import {
   BlockedReason,
   ImageSort,
@@ -99,6 +103,7 @@ import {
   tagCache,
   tagIdsForImagesCache,
   thumbnailCache,
+  userImageVideoCountCaches,
 } from '~/server/redis/caches';
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import {
@@ -147,7 +152,7 @@ import type {
 } from '~/server/search-index/metrics-images.search-index';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import type { ImageResourceHelperModel } from '~/server/selectors/image.selector';
-import { imageSelect } from '~/server/selectors/image.selector';
+import { imageSelect, publishedImageWhere } from '~/server/selectors/image.selector';
 import type { ImageV2Model, ImageV2Stats } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
 import {
@@ -200,6 +205,7 @@ import {
 import type { RuleDefinition } from '~/server/utils/mod-rules';
 import { getCursor } from '~/server/utils/pagination-helpers';
 import {
+  browsingLevels as selectableBrowsingLevels,
   nsfwBrowsingLevelsArray,
   nsfwBrowsingLevelsFlag,
   onlySelectableLevels,
@@ -266,6 +272,11 @@ import {
   createImageIngestionRequest,
   imageIngestionLogName,
 } from '~/server/services/orchestrator/orchestrator.service';
+import {
+  ImageIngestionUrlBlockedError,
+  isAllowedImageScanUrl,
+} from '~/server/utils/image-scan-url';
+import { probeVideoDimensions } from '~/server/services/video-dimensions';
 import { getGenerationDisplayKeys } from '~/server/services/orchestrator/legacy-metadata-mapper';
 import {
   sanitizeProvenance,
@@ -668,6 +679,7 @@ export const deleteImageById = async ({
       invalidateExistence,
       imageMetaCache.refresh(id),
       imageMetadataCache.refresh(id),
+      userImageVideoCountCaches.bust(image.userId),
       enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'image-delete' }),
     ]);
 
@@ -787,6 +799,7 @@ export async function deleteImages(
       invalidateExistence,
       imageMetaCache.refresh(imageIds),
       imageMetadataCache.refresh(imageIds),
+      userImageVideoCountCaches.bust(uniq(results.map((x) => x.userId))),
       enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'image-delete-bulk' }),
     ]);
 
@@ -1261,6 +1274,36 @@ export const ingestImage = async ({
   if (!parsedImage.success) throw new Error('Failed to parse image data');
 
   const { url, id, type } = parsedImage.data;
+
+  if (!isAllowedImageScanUrl(url)) {
+    // Same guard createImageIngestionRequest applies (which would throw here); checking
+    // first routes the rejection through the submit-failure machinery — status 400
+    // classifies PERMANENT, so the row terminalizes to Error on this attempt (retry
+    // ceiling 1) instead of churning orchestrator submits for media we will never fetch.
+    const blocked = new ImageIngestionUrlBlockedError(url);
+    const failureClass = await markImageScanSubmitFailure({
+      dbClient,
+      imageId: id,
+      status: 400,
+      error: blocked,
+    });
+    // `lane` is unknown here by construction: it comes from a Flipt read inside
+    // `createImageIngestionRequest`, which this rejection returns before. Attributing it to
+    // a concrete lane would make a per-lane rejection rate wrong, so it is reported as
+    // `unknown` rather than guessed.
+    imageScanSubmittedCounter.inc({ lane: 'unknown', result: 'rejected' });
+    logToAxiom({
+      name: imageIngestionLogName(false),
+      type: 'error',
+      reason: 'url-not-allowed',
+      failureType: 'send-fail',
+      failureClass,
+      imageId: id,
+      mediaType: type,
+      url,
+    }).catch(() => null);
+    return false;
+  }
 
   const callbackUrl =
     env.IMAGE_SCANNING_CALLBACK ??
@@ -1865,7 +1908,11 @@ const getAllImagesUncaptured = async (
     AND.push(Prisma.sql`(i."poi" != TRUE OR p."userId" = ${userId})`);
   }
   if (disableMinor) {
-    AND.push(Prisma.sql`(i."minor" != TRUE)`);
+    AND.push(
+      userId
+        ? Prisma.sql`(i."minor" != TRUE OR i."userId" = ${userId})`
+        : Prisma.sql`(i."minor" != TRUE)`
+    );
   }
   if (excludedTagIds?.length) {
     const notExcluded = Prisma.sql`NOT EXISTS (
@@ -2246,11 +2293,9 @@ const getAllImagesUncaptured = async (
     AND.push(Prisma.sql`i."needsReview" IS NULL`);
     // Acceptable in collections, need to check for contest collection only
     if (!collectionId) AND.push(Prisma.sql`i."acceptableMinor" = FALSE`);
-    AND.push(
-      browsingLevel
-        ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`
-        : Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
-    );
+    if (browsingLevel)
+      AND.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`);
+    AND.push(imageReviewedSql());
   }
 
   // TODO: Adjust ImageMetric
@@ -3642,7 +3687,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     filters.push(`(NOT poi = true${ownCarveOut})`);
   }
   if (disableMinor) {
-    filters.push(`(NOT minor = true)`);
+    filters.push(`(NOT minor = true${ownCarveOut})`);
   }
 
   if (isModerator) {
@@ -4261,7 +4306,8 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     filters.push(`(NOT poi = true)`);
   }
   if (disableMinor) {
-    filters.push(`(NOT minor = true)`);
+    const ownCarveOut = currentUserId ? ` OR "userId" = ${currentUserId}` : '';
+    filters.push(`(NOT minor = true${ownCarveOut})`);
   }
 
   if (isModerator) {
@@ -5570,6 +5616,7 @@ export const getImagesForModelVersion = async ({
         ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
         : Prisma.sql`i."nsfwLevel" != 0`
     );
+    imageWhere.push(imageReviewedSql());
   }
 
   const query = Prisma.sql`
@@ -5831,7 +5878,11 @@ export const getImagesForPosts = async ({
   }
 
   if (disableMinor) {
-    imageWhere.push(Prisma.sql`(i."minor" = false OR i."minor" IS NULL)`);
+    imageWhere.push(
+      userId
+        ? Prisma.sql`(i."minor" = false OR i."minor" IS NULL OR i."userId" = ${userId})`
+        : Prisma.sql`(i."minor" = false OR i."minor" IS NULL)`
+    );
   }
 
   if (isModerator) {
@@ -6342,6 +6393,13 @@ export async function createImage({
     select: { id: true },
   });
 
+  // The upload page reads these in the browser; API and script uploads arrive without them, and
+  // the grid then renders the video as a cropped square. Not awaited: an ffprobe round-trip
+  // must not sit on the create request.
+  if (image.type === MediaType.video && (!image.width || !image.height)) {
+    void fillVideoDimensions({ id: result.id, url: image.url }).catch(() => null);
+  }
+
   if (!skipIngestion) {
     await upsertImageFlag({ imageId: result.id, prompt: image.meta?.prompt });
     await ingestImage({
@@ -6363,6 +6421,36 @@ export async function createImage({
   // publish and scan completion.
 
   return result;
+}
+
+/**
+ * Probes a stored video and writes its width/height (and duration, unless one is recorded) onto
+ * the row. Returns the dimensions written, or null when the probe had no answer or the row
+ * already had dimensions.
+ */
+export async function fillVideoDimensions({ id, url }: { id: number; url: string }) {
+  const dimensions = await probeVideoDimensions(url);
+  if (!dimensions) return null;
+
+  const { width, height, duration } = dimensions;
+  const written = await dbWrite.$executeRaw`
+    UPDATE "Image"
+    SET
+      width = ${width},
+      height = ${height},
+      metadata = COALESCE(metadata, '{}'::jsonb)
+        || jsonb_build_object('width', ${width}::int, 'height', ${height}::int)
+        || CASE
+             WHEN metadata ? 'duration' OR ${duration ?? null}::float8 IS NULL THEN '{}'::jsonb
+             ELSE jsonb_build_object('duration', ${duration ?? null}::float8)
+           END
+    WHERE id = ${id} AND (width IS NULL OR height IS NULL)
+  `;
+  if (!written) return null;
+
+  await imageMetadataCache.bust(id);
+  await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Update });
+  return dimensions;
 }
 
 export const createEntityImages = async ({
@@ -6930,7 +7018,7 @@ export async function updateImageNsfwLevel({
     if (!image) throw throwNotFoundError('Image not found');
 
     const metadata = (image.metadata as ImageMetadata) ?? undefined;
-    if (activity === 'setNsfwLevelKono' && !reason) reason = 'Knights Vote';
+    if (activity === 'setNsfwLevelKono' && !reason) reason = KNIGHTS_VOTE_NSFW_LEVEL_REASON;
     const updatedMetadata = { ...metadata, nsfwLevelReason: reason ?? null };
 
     await dbWrite.image.update({
@@ -6992,6 +7080,44 @@ export async function updateImageNsfwLevel({
   }
 
   return nsfwLevel;
+}
+
+/**
+ * Applies an owner's own rating at once when it only RAISES the level: nobody over-rates their own
+ * content to hide it, so upward-only needs no review first. Not locked, so Knights and moderators
+ * still review the vote recorded alongside it and can change the level.
+ *
+ * Scanned images only: on an unscanned image the scan sets the level, and a lock-free raise would be
+ * overwritten by it anyway.
+ */
+export async function raiseOwnImageNsfwLevel({
+  id,
+  nsfwLevel,
+  userId,
+}: {
+  id: number;
+  nsfwLevel: NsfwLevel;
+  userId: number;
+}) {
+  if (!selectableBrowsingLevels.some((level) => level === nsfwLevel)) return false;
+
+  const [raised] = await dbWrite.$queryRaw<{ postId: number | null }[]>`
+    UPDATE "Image"
+    SET "nsfwLevel" = ${nsfwLevel}
+    WHERE id = ${id}
+      AND "userId" = ${userId}
+      AND NOT "nsfwLevelLocked"
+      AND ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
+      AND "nsfwLevel" < ${nsfwLevel}
+    RETURNING "postId"
+  `;
+  if (!raised) return false;
+
+  await thumbnailCache.refresh(id);
+  if (raised.postId) await updatePostNsfwLevel(raised.postId);
+  await updateModel3DNsfwLevelForThumbnailImage({ imageId: id, postId: raised.postId });
+  await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Update });
+  return true;
 }
 
 // NOTE(moderator-migration): getImageRatingRequests + getDownleveledImages (the image-rating-review and
@@ -7834,6 +7960,41 @@ export async function getImageResourcesFromImageId({
   return computed;
 }
 
+type ImageResourceRow = Awaited<ReturnType<typeof getImageResourcesFromImageId>>[number];
+
+// A version id taken as-is from meta.civitaiResources: the only branch of get_image_resources that
+// yields a detected version with no hash to have matched it through.
+const isMetaAssertedResource = (r: ImageResourceRow) => r.detected && !r.hash && !!r.modelversionid;
+
+async function withoutUnviewableMetaVersions({
+  imageId,
+  resources,
+  dbClient,
+  inTransaction,
+}: {
+  imageId: number;
+  resources: ImageResourceRow[];
+  dbClient: Prisma.TransactionClient;
+  inTransaction: boolean;
+}) {
+  const assertedIds = uniq(resources.filter(isMetaAssertedResource).map((r) => r.modelversionid!));
+  if (!assertedIds.length) return resources;
+
+  const image = await dbClient.image.findUnique({
+    where: { id: imageId },
+    select: { user: { select: { id: true, isModerator: true } } },
+  });
+  const versions = await dbClient.modelVersion.findMany({
+    where: { id: { in: assertedIds } },
+    select: modelVersionVisibilitySelect,
+  });
+  const viewable = image?.user
+    ? await filterViewableModelVersions(versions, image.user, { checkGrants: !inTransaction })
+    : [];
+  const allowed = new Set(viewable.map((v) => v.id));
+  return resources.filter((r) => !isMetaAssertedResource(r) || allowed.has(r.modelversionid!));
+}
+
 export async function createImageResources({
   imageId,
   tx,
@@ -7842,8 +8003,12 @@ export async function createImageResources({
   tx?: Prisma.TransactionClient;
 }) {
   const dbClient = tx ?? dbWrite;
-  // Read the resources based on complex metadata and hash matches
-  const resources = await getImageResourcesFromImageId({ imageId, tx });
+  const resources = await withoutUnviewableMetaVersions({
+    imageId,
+    resources: await getImageResourcesFromImageId({ imageId, tx }),
+    dbClient,
+    inTransaction: !!tx,
+  });
   if (!resources.length) return null;
 
   const withModelVersionId = resources
@@ -7918,6 +8083,7 @@ export async function createImageResources({
 
 export const getMyImages = async ({
   mediaTypes,
+  publishedOnly,
   userId,
   limit,
   cursor = 0,
@@ -7926,14 +8092,29 @@ export const getMyImages = async ({
 
   try {
     const media = await dbRead.image.findMany({
-      select: { id: true, url: true, meta: true, createdAt: true, type: true },
+      // `metadata` carries a video's duration, which the crucible picker needs to grey out clips
+      // over a crucible's maxClipSeconds before the user spends a click on them.
+      select: {
+        id: true,
+        url: true,
+        meta: true,
+        metadata: true,
+        createdAt: true,
+        type: true,
+        nsfwLevel: true,
+        ingestion: true,
+      },
       where: {
         userId,
         type: {
           in: allowedMediaTypes.length ? allowedMediaTypes : [MediaType.image, MediaType.video],
         },
         postId: { not: null },
-        ingestion: ImageIngestionStatus.Scanned,
+        // Published-only callers render still-scanning images as pending rather than hiding them.
+        ingestion: publishedOnly
+          ? { in: [ImageIngestionStatus.Pending, ImageIngestionStatus.Scanned] }
+          : ImageIngestionStatus.Scanned,
+        ...(publishedOnly ? publishedImageWhere() : {}),
       },
       take: limit + 1,
       cursor: cursor ? { id: cursor } : undefined,

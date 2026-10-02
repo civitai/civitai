@@ -76,10 +76,8 @@ import {
   PoolTrigger,
   PrizeMode,
 } from '~/shared/utils/prisma/enums';
-import {
-  enqueueImageIngestion,
-  imagesForModelVersionsCache,
-} from '~/server/services/image.service';
+import { enqueueImageIngestion } from '~/server/services/image.service';
+import { getEligibleModels } from '~/server/services/eligible-models.service';
 import { resolveCoverImageId } from '~/server/services/cover-image.service';
 import {
   amIBlockedByUser,
@@ -891,44 +889,7 @@ async function buildChallengeDetail(
     getCosmeticsForUsers([createdById]),
   ]);
 
-  // Get model info for all modelVersionIds
-  let models: ChallengeDetail['models'] = [];
-  if (challenge.modelVersionIds.length > 0) {
-    const versions = await dbRead.modelVersion.findMany({
-      where: { id: { in: challenge.modelVersionIds } },
-      select: {
-        id: true,
-        name: true,
-        baseModel: true,
-        model: { select: { id: true, name: true } },
-      },
-    });
-
-    // Batch-fetch images for all versions via cache (keyed by modelVersionId)
-    const imageCache = await imagesForModelVersionsCache.fetch(challenge.modelVersionIds);
-
-    models = versions.map((v) => {
-      const img = imageCache[v.id]?.images?.[0] ?? null;
-      return {
-        id: v.model.id,
-        name: v.model.name,
-        versionId: v.id,
-        versionName: v.name,
-        baseModel: v.baseModel,
-        image: img
-          ? {
-              id: img.id,
-              url: img.url,
-              nsfwLevel: img.nsfwLevel,
-              hash: img.hash,
-              width: img.width,
-              height: img.height,
-              type: img.type,
-            }
-          : null,
-      };
-    });
-  }
+  const models = await getEligibleModels(challenge.modelVersionIds);
 
   // Fetch cover image
   const coverImage = challenge.coverImageId

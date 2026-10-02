@@ -106,6 +106,13 @@ export type ReviewedRequestCommon = {
   // snapshot — this links the mod to the canonical repo at the exact pushed sha.
   pushCommitUrl?: string | null;
   submittedBy: UserProfile;
+  /** Lifetime store opens for this app's listing, joined on slug by the list/detail
+   *  reads. Optional so a fixture need not spell it; `undefined` is "unknown", which the
+   *  queue renders identically to a null listing. */
+  playCount?: number | null;
+  /** CDN URLs for the app's store listing media, joined on slug by the same reads. */
+  iconUrl?: string | null;
+  coverUrl?: string | null;
 };
 
 export type PendingRequest = ReviewedRequestCommon;

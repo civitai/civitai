@@ -769,6 +769,7 @@ export const AppealStatus = {
   Pending: 'Pending',
   Approved: 'Approved',
   Rejected: 'Rejected',
+  Void: 'Void',
 } as const;
 export type AppealStatus = (typeof AppealStatus)[keyof typeof AppealStatus];
 export const AuctionType = {
@@ -1000,3 +1001,18 @@ export const UserHubSourceType = {
   Tag: 'Tag',
 } as const;
 export type UserHubSourceType = (typeof UserHubSourceType)[keyof typeof UserHubSourceType];
+export const CrucibleStatus = {
+  Pending: 'Pending',
+  Active: 'Active',
+  Completed: 'Completed',
+  Cancelled: 'Cancelled',
+} as const;
+export type CrucibleStatus = (typeof CrucibleStatus)[keyof typeof CrucibleStatus];
+export const CrucibleIngestionStatus = {
+  Pending: 'Pending',
+  Scanned: 'Scanned',
+  Blocked: 'Blocked',
+  Error: 'Error',
+} as const;
+export type CrucibleIngestionStatus =
+  (typeof CrucibleIngestionStatus)[keyof typeof CrucibleIngestionStatus];

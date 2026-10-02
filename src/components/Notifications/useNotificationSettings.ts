@@ -80,3 +80,30 @@ export const useToggleNotificationSetting = () => {
     },
   });
 };
+
+export const usePushNotificationSettings = (enabled = true) => {
+  // staleTime 0 (app default Infinity): per-type push rows change from other devices too.
+  const { data: pushTypes = [], isLoading } = trpc.notification.getPushSettings.useQuery(
+    undefined,
+    { enabled, staleTime: 0 }
+  );
+  return { pushTypes, isLoading };
+};
+
+export const useTogglePushSetting = () => {
+  const queryUtils = trpc.useUtils();
+
+  return trpc.notification.updatePushSettings.useMutation({
+    async onMutate({ type, enabled }) {
+      await queryUtils.notification.getPushSettings.cancel();
+      const prevPushTypes = queryUtils.notification.getPushSettings.getData() ?? [];
+      queryUtils.notification.getPushSettings.setData(undefined, (old = []) =>
+        enabled ? [...new Set([...old, ...type])] : old.filter((t) => !type.includes(t))
+      );
+      return { prevPushTypes };
+    },
+    onError(_error, _variables, context) {
+      queryUtils.notification.getPushSettings.setData(undefined, context?.prevPushTypes);
+    },
+  });
+};

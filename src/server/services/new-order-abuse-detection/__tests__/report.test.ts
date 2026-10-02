@@ -57,11 +57,25 @@ describe('renderReason', () => {
 
     expect(reason).toContain('4242'); // userId
     expect(reason).toContain('1,500'); // totalRatings
-    expect(reason).toContain('2 distinct rating value(s)'); // uniqueRatings
+    expect(reason).toContain('2 distinct rating values'); // uniqueRatings
     expect(reason).toContain('the value 5'); // dominantRating
     expect(reason).toContain('87%'); // dominantPct
-    expect(reason).toContain('12.4 rating(s) per active minute'); // avgPerMinute
+    expect(reason).toContain('12.4 ratings per active minute'); // avgPerMinute
     expect(reason).toContain(`last ${ABUSE_SCAN_WINDOW_HOURS}h`);
+  });
+
+  it('🔴 resolves the singular as well as the plural', () => {
+    // Watched at BOTH ends: a helper hardcoded to always append `s` passes every other assertion in
+    // this file and fails only here, and one hardcoded never to append it fails only above.
+    const one = renderReason(
+      suspect({ totalRatings: 1, uniqueRatings: 1, avgPerMinute: 1 }),
+      false
+    );
+    expect(one).toContain('cast 1 rating in the last 24h using 1 distinct rating value.');
+    // ⚠️ THE PACE NOUN IS DELIBERATELY NOT AGREED WITH ITS VALUE. `pace` is a one-decimal RATE, and
+    // a decimal quantity takes the plural whatever it is — `1.0 rating per active minute` is the
+    // one spelling this sentence must never produce, which is exactly what agreeing it would give.
+    expect(one).toContain('Pace 1.0 ratings per active minute.');
   });
 
   it('floors the dominant share rather than rounding it up to a stronger claim', () => {
@@ -96,8 +110,8 @@ describe('truncateReason', () => {
   it('is defence in depth: the generated reason cannot reach the cap on any input', () => {
     // ⚠️ This records HEADROOM, not a save. Every numeric field at `Number.MAX_SAFE_INTEGER` — NOT
     // a ceiling on anything ClickHouse can hand us (`JSON.parse` yields a double, and a `UInt64`
-    // exceeds this by ~2,000x), just an absurdly large input that is still a number — renders 269
-    // characters smited and 311 open, against a cap of 2,000, and a realistic finding is ~220. A
+    // exceeds this by ~2,000x), just an absurdly large input that is still a number — renders 263
+    // characters smited and 305 open, against a cap of 2,000, and a realistic finding is 210. A
     // larger magnitude would not move that much: these render through `toLocaleString`/`toFixed`, so
     // the length grows with the DIGIT COUNT, and the headroom below absorbs several more digits. So
     // `truncateReason` has never trimmed anything
@@ -116,6 +130,17 @@ describe('truncateReason', () => {
       expect(reason.length).toBeLessThan(MAX_REASON_LENGTH / 4);
       expect(reason.endsWith('…')).toBe(false); // nothing was cut
     }
+    // 🔴 THE FIGURES THE MODULE'S OWN COMMENT CALLS MEASURED, PINNED. A number a reader is told was
+    // measured has to have been, and the previous pair (269/311) survived a template edit by nobody
+    // re-running it. Re-measure and edit these when the sentence changes — that is the cost of a
+    // machine-checkable claim, and it is cheaper than a comment that quietly stops being true.
+    expect(renderReason(absurd, true)).toHaveLength(263);
+    expect(renderReason(absurd, false)).toHaveLength(305);
+    // 🔴 AND THE "TYPICAL" PAIR, which the same comment also states as measured and which was the
+    // one figure left unpinned when the worst-case pair was pinned — it went stale by two inside the
+    // sentence arguing that a measured number has to have been measured.
+    expect(renderReason(suspect(), false)).toHaveLength(210);
+    expect(renderReason(suspect(), true)).toHaveLength(168);
     expect(abuseReportInput.safeParse(reportOf([suspect()], new Set([100]))).success).toBe(true);
   });
 });
@@ -271,7 +296,8 @@ describe('buildAbuseReport', () => {
     // "already dealt with" figure a moderator reads off the summary.
     const report = reportOf([suspect({ userId: 1 }), suspect({ userId: 2 })], new Set([2, 999]));
     expect(report.counters).toMatchObject({ suspects: 2, auto_smited: 1, filed_for_review: 1 });
-    expect(report.summary).toContain('1 were auto-smited');
+    // Verb agreement too: `1 were auto-smited` was the shipped spelling of the commonest case.
+    expect(report.summary).toContain('1 was auto-smited');
   });
 
   it('publishes no threshold in counters', () => {
@@ -297,10 +323,14 @@ describe('renderSummary', () => {
       [suspect({ userId: 1, totalRatings: 10 }), suspect({ userId: 2, totalRatings: 5 })],
       1
     );
-    expect(summary).toContain('2 account(s)');
-    expect(summary).toContain('15 rating(s)');
-    expect(summary).toContain('1 were auto-smited');
-    expect(summary).toContain('1 were filed for review');
+    expect(summary).toContain('2 accounts');
+    expect(summary).toContain('15 ratings');
+    expect(summary).toContain('1 was auto-smited');
+    expect(summary).toContain('1 was filed for review');
+    // The plural arm of the same verb, so a hardcoded `was` fails as loudly as a hardcoded `were`.
+    expect(renderSummary([suspect({ userId: 1 }), suspect({ userId: 2 })], 2)).toContain(
+      '2 were auto-smited'
+    );
   });
 });
 

@@ -21,6 +21,7 @@ import {
   getUserEngagedModelVersionsHandler,
   getUserFeatureFlagsHandler,
   getUserFollowingListHandler,
+  getFollowsMeHandler,
   getUserListHandler,
   getUserListsHandler,
   getUsernameAvailableHandler,
@@ -164,6 +165,10 @@ export const userRouter = router({
   getFollowingUsers: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .query(getUserFollowingListHandler),
+  getFollowsMe: protectedProcedure
+    .meta({ requiredScope: TokenScope.UserRead })
+    .input(getByIdSchema)
+    .query(getFollowsMeHandler),
   // getHiddenUsers: protectedProcedure.query(getUserHiddenListHandler),
   getTags: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })

@@ -18,11 +18,11 @@ The external `notification-server` repo is retired.
 
 ## Database
 
-**The monolith cannot reach the notification database.** Only `UserNotificationSettings` is in the
-main Prisma schema. `Notification`, `UserNotification` and `PendingNotification` live in a
-physically separate database reached exclusively by `apps/notifications`, over its own pool
-(`NOTIFICATION_DB_URL`). Those env vars are optional in the monolith precisely because it no longer
-connects.
+**The monolith cannot reach the notification database.** Only `UserNotificationSettings` and the
+web-push tables (`PushSubscription`, `UserPushSetting`) are in the main Prisma schema.
+`Notification`, `UserNotification` and `PendingNotification` live in a physically separate database
+reached exclusively by `apps/notifications`, over its own pool (`NOTIFICATION_DB_URL`). Those env
+vars are optional in the monolith precisely because it no longer connects.
 
 If you need notification rows, add an endpoint to `apps/notifications` — do not add a Prisma model.
 
@@ -112,13 +112,41 @@ in the extraction.
 
 ## API
 
-tRPC routes in `src/server/routers/notification.router.ts` — three procedures, all scope-gated:
+tRPC routes in `src/server/routers/notification.router.ts` — all scope-gated:
 
 - `getAllByUser` — paginated notifications
 - `markRead` — mark as read
 - `updateUserSettings` — notification preferences
+- `getPushSettings` / `updatePushSettings` — per-type web-push rows
+- `subscribePush` / `unsubscribePush` — browser push subscription lifecycle
 
 **Counts do not come from this router.** The unread count is `trpc.user.checkNotifications`.
+
+## Web push
+
+**Full doc: [web-push.md](web-push.md)** — architecture, invariants, per-task change map, and an
+agent-executable local setup runbook. Summary:
+
+Push is a third state on the per-type control (Off / On / Push), stored in two main-DB tables:
+`PushSubscription` (one row per live browser subscription) and `UserPushSetting`, where **a row
+means push ON and absence means no push — for every type, always**. Do not add an `enabled`
+column or a `pushEnabled` column on `UserNotificationSettings`; the opt-out table's 40+ bare
+`NOT EXISTS` clauses would read such a row as a mute.
+
+- A short curated list (`src/server/notifications/push.constants.ts`) is **materialized** into
+  `UserPushSetting` rows on a user's first subscription. Editing that list only reaches new
+  subscribers — existing subscribers keep the rows they were granted with, deliberately.
+- The dispatcher is `apps/notifications/src/worker/push.ts`, called from the fan-out poll loop
+  after the opt-out filter, so a type set Off never pushes. It renders title/body/url via the
+  monolith's `POST /api/internal/notifications/render-push` (the processor registry lives there),
+  enforces a per-user daily cap in Redis (`system:push-quota:<userId>:<day>`, then one summary
+  push), and owns subscription rows: 404/410 deletes, 10 consecutive failures deletes.
+- The service worker (`public/sw.js`) is push-only — **no fetch handler, ever**.
+- Configured via VAPID env: `NEXT_PUBLIC_VAPID_PUBLIC_KEY` in the monolith and the matching
+  private key in `apps/notifications` (see its `.env.example`). Unset = the push UI never renders
+  and the dispatcher no-ops.
+- Stale subscriptions (no successful delivery in 180 days) are reaped weekly by
+  `push-subscription-cleanup`.
 
 ## Debugging
 

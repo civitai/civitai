@@ -434,23 +434,51 @@ export const APPS_FULL_MEASURE_PAGES = [
 
 /**
  * Routes that deliberately have NO `AppsPageLayout` container: they host a
- * full-viewport iframe (the block runtime / the moderator's live preview) or a
- * full-bleed dev shell. Wrapping these in the apps container would letterbox the
- * app being run/reviewed AND put a second chrome band over a third-party app.
+ * full-viewport iframe (the public block runtime, the PRIVATE run of a delisted app, or
+ * the moderator's live preview) or a full-bleed dev shell. Wrapping these in the apps
+ * container would letterbox the app being run/reviewed AND put a second chrome band over
+ * a third-party app.
  *
- * 🔴 "NO CONTAINER" IS NOT "NO WIDTH BOUND" — it stopped being that, and this
- * comment used to assert the stronger claim. All three of these routes mount
- * `PageBlockHost`, which caps ITSELF at `--app-page-max-width` (1600px, see
- * `APP_PAGE_MAX_WIDTH_PX` in `~/components/AppBlocks/PageBlockHost`) and centres
- * the app past that. Two different mechanisms at two very different thresholds:
- * this module's container is 2560 and applies to the apps CHROME, the host's cap
- * is 1600 and applies to the app itself, and an app can be excused from the
- * host's via the CSS ledger in `src/styles/globals.css`. Nothing here changes —
- * these routes still pass no `measure` and still render no `AppsPageLayout` — but
- * do not read this list as evidence that a run page is unbounded.
+ * 🔴 "NO CONTAINER" IS ALSO "NO WIDTH BOUND" AGAIN — AND THE INTERVENING CLAIM IS
+ * RETRACTED RATHER THAN DELETED, BECAUSE IT WAS TRUE WHILE IT STOOD. This comment
+ * first asserted no width bound; it was then corrected to say the opposite, because
+ * all four of these routes mount `PageBlockHost` and the host capped ITSELF at
+ * `--app-page-max-width` (then `1600px`) and centred the app past that. That whole
+ * mechanism is GONE — the constant, the custom property, the `var()` read, the auto
+ * margins and the per-app CSS ledger that could re-cap one app — so a run page really
+ * is unbounded once more, by an owner decision. The record is the tombstone above
+ * `PageBlockHostProps` in `~/components/AppBlocks/PageBlockHost`.
+ *
+ * ⚠️ AND THE HEDGE THAT USED TO FOLLOW IS RETRACTED TOO, BECAUSE IT NAMED A LEVER THAT
+ * NO LONGER EXISTS. It said "a per-app platform rule in that same stylesheet could cap
+ * ONE app again (the ledger there is deliberately empty), so 'no container here' has
+ * never meant 'nothing anywhere can bound this app'". There is no such rule and no
+ * ledger to write one in: nothing on the civitai side bounds a full-page app. What DOES
+ * still hold is that these remain two separate concerns — this module's container is
+ * 2560 and applies to the apps CHROME, while the third-party app's own width is the
+ * app's business and is set inside its own iframe document. Nothing about THIS module
+ * changes: these routes still pass no `measure` and still render no `AppsPageLayout`.
  */
 export const APPS_FULL_BLEED_PAGES = [
   '/apps/run/[slug]/[[...path]]',
+  /**
+   * The PRIVATE RUN of a delisted / suspended app. Full-bleed for exactly the reasons
+   * the public run route is: it mounts `PageBlockHost` with `fit="fill"` inside a
+   * `scrollable: false` page and passes no `measure`, so the two run surfaces share one
+   * layout contract deliberately — a divergence between them would be a bug.
+   *
+   * It renders one thing the others do not: a banner, as a preceding SIBLING of the host
+   * wrapper rather than inside it. That takes its own height out of the non-scrolling
+   * `<main>` and leaves the host's `flex: 1` resolving against the remainder, so it
+   * introduces no container and no second scroll surface — which is why this route
+   * belongs here and not in `APPS_FULL_MEASURE_PAGES`.
+   *
+   * ⚠️ That paragraph described the REMOVED `/apps/private-run/<slug>` route, whose
+   * banner was unconditional. The private run now renders from `/apps/run/[slug]` above
+   * (already in this list) and its banner is CONDITIONAL on the viewer's audience. The
+   * sibling-not-child placement — the part the width bucket actually depends on — is
+   * unchanged, so the reasoning still holds for the surviving route.
+   */
   '/apps/review/preview/[publishRequestId]',
   '/apps/dev/[blockId]',
 ] as const;

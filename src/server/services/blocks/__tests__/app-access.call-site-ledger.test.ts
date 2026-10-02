@@ -1,6 +1,7 @@
-import { readdirSync, readFileSync, statSync } from 'fs';
-import { join, relative, sep } from 'path';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { describe, expect, it } from 'vitest';
+import { sourceFiles } from '../../../../../test/source-scan';
 
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { stripCommentsAndStrings } from '../../../../../test/strip-comments';
@@ -123,6 +124,22 @@ const GATE_LEDGER: Record<string, string> = {
     '(D1) and none is meaningful here — this is not a gate a caller passes through, it ' +
     'is a payee resolution. If collaborator revenue-sharing is ever specified it belongs ' +
     'as an explicit split on top of this row, not as a widened owner lookup.',
+  'src/server/services/blocks/block-goods.service.ts':
+    'resolveBlockGoodForPurchase reads the app OWNER — `app?.userId` off the AppBlock ' +
+    'row — to decide who a digital-goods sale PAYS and who is barred from buying their ' +
+    'own catalog. Both uses are OWNER-ONLY and deliberately NOT widened to ACCEPTED ' +
+    'collaborators, for the same reason author-fee accrual is not: the owner is ' +
+    'snapshotted onto `block_good_purchase.app_owner_user_id` at write time so an ' +
+    'ex-owner keeps what they earned before transferring the app away, and a widened ' +
+    'lookup would make a single sale owe several people with no split anyone has ' +
+    'specified. Resolving the payee later instead would retroactively re-route earnings ' +
+    'on every ownership transfer. The self-purchase refusal is owner-only for a ' +
+    'different reason: it exists because an owner buying their own good would pay ' +
+    'themselves 70% through the bank and burn 30%, which is only true of the person the ' +
+    'payout goes to — a collaborator buying the app’s goods is an ordinary sale. NO mod ' +
+    'bypass, and none is meaningful: neither use is a gate a caller passes through. If ' +
+    'collaborator revenue-sharing is ever specified it belongs as an explicit split on ' +
+    'top of the recorded payout, not as a widened owner lookup.',
   'src/server/services/blocks/block-approval.service.ts':
     'resolveAppBlockApprovalVerdict resolves the app owner — `oauthClient.findUnique` on ' +
     '`claims.appId`, read as `app?.userId` — to decide whether a `dev` token may bypass ' +
@@ -148,6 +165,28 @@ const GATE_LEDGER: Record<string, string> = {
     'listing re-key an OFF-SITE seat contributes no block id to that set (it has no ' +
     'block), so this read is unchanged for offsite: analytics for an offsite listing is ' +
     'AppListingMetric, a different surface, not this block-scoped one.',
+  'src/server/services/blocks/private-run-access.service.ts':
+    'THE PRIVATE-RUN ACCESS PREDICATE, and the FIRST production caller resolveAppAccess ' +
+    'has ever had — until this landed, that consolidated block-keyed resolver was ' +
+    'reachable only from its own tests. COLLABORATORS ARE DELIBERATELY WIDENED HERE, and ' +
+    'this is the one entry in this ledger where an ACCEPTED seat gains access to a ' +
+    'NON-approved app: an accepted editor may privately run a DELISTED app, because a ' +
+    'collaborator diagnosing a takedown needs to see the thing that was taken down. It is ' +
+    'widened by INVOKING resolveAppAccess rather than by re-implementing a role check — ' +
+    'the SSR route and the PHASE 3 token mint both call this ONE predicate, which is what ' +
+    'stops them drifting into the SSR-allows/mint-refuses asymmetry that produced ' +
+    'tryDevTunnelOwnedNonApprovedMint. Three further decisions about collaborators, none ' +
+    'obvious: (1) editors are READ-ONLY — ai:write:budgeted is stripped in ' +
+    'clampPrivateRunScopes and re-refused per submit in blockPerCallBudget, an operator ' +
+    'decision taken against the original recommendation on reversibility grounds; (2) a ' +
+    'PENDING or REJECTED seat gets NOTHING, because the status: ACCEPTED filter inside ' +
+    'hasAcceptedSeat is the consent gate and is NOT widened here; (3) an already-accepted ' +
+    'seat SURVIVES the delist while no NEW seat can be granted on a removed listing — ' +
+    'that asymmetry is AUTHORABLE_LISTING_STATUSES gating the grant while ' +
+    'resolveAppAccess applies no listing-status filter to the READ, and it is inherited ' +
+    'deliberately rather than re-decided. The OWNER-BANNED refusal applies to owner and ' +
+    'editor only; moderators keep access to a banned publisher app by design, because ' +
+    'reviewing what a banned publisher shipped is the job.',
   'src/server/services/blocks/offsite-moderation.service.ts':
     'loadOwnedListingInTx (unpublish/republish own listing) and ' +
     'listMyListingModerationEvents are NOT widened: unpublishing a live listing and ' +
@@ -503,24 +542,7 @@ const DENORM_OWNER_HOLDOUTS: Record<string, string> = {
     'anti-abuse rule is a product decision.',
 };
 
-function walk(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    if (entry === 'node_modules' || entry === '.next' || entry === '.git') continue;
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) walk(full, out);
-    else if (/\.tsx?$/.test(entry)) out.push(full);
-  }
-  return out;
-}
-
-/** Every non-test .ts/.tsx under src/, as repo-relative POSIX-ish paths. */
-function sourceFiles(): string[] {
-  return walk(join(ROOT, 'src'))
-    .map((f) => relative(ROOT, f).split(sep).join('/'))
-    .filter((f) => !/__tests__|\.test\.tsx?$|(^|\/)src\/tests\//.test(f));
-}
-
-const FILES = sourceFiles();
+const FILES = sourceFiles(ROOT);
 
 /**
  * Source with comments AND string literals removed — there is a LOT of prose about

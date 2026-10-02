@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as EnvModule from '../env';
 
 // Behavioral coverage for the fan-out worker (closes G1 from the 2026-07-03 coverage audit). The sibling
 // poll-loop.test.ts only asserts the PENDING_CLAIM_QUERY *string*; this suite exercises the actual fan-out
@@ -57,7 +58,12 @@ vi.mock('../lib/server/metrics', () => ({
   writePoolActive: { set: vi.fn() },
 }));
 
-vi.mock('../env', () => ({ signalsEndpoint: 'http://signals.test' }));
+vi.mock('../env', async (importOriginal) => ({
+  ...(await importOriginal<typeof EnvModule>()),
+  signalsEndpoint: 'http://signals.test',
+  // Push stays off in this suite — dispatchPush is covered by push.test.ts.
+  pushEnabled: false,
+}));
 
 import { create, handleDebounce, handleNormal, run } from './poll-loop';
 import { notificationCache } from '../lib/server/cache';
@@ -442,6 +448,33 @@ describe('run (poll pass)', () => {
     expect(opts.method).toBe('POST');
     const body = JSON.parse(opts.body);
     expect(body).toMatchObject({ type: 'comment', category: 'Comment', id: 9, read: false });
+  });
+
+  it('still bumps and signals the remaining recipients when one counter bump fails', async () => {
+    const client = makeClient({
+      notifSelect: { rows: [{ id: 1 }] },
+      userInsert: {
+        rows: [
+          { id: 9, userId: 11, createdAt: 'q' },
+          { id: 10, userId: 12, createdAt: 'q' },
+        ],
+      },
+    });
+    h.state.connectClient = client;
+    h.state.pendingRows = [{ ...baseRow, users: [11, 12], debounceSeconds: null }];
+    vi.mocked(notificationCache.incrementUser).mockRejectedValueOnce(new Error('CLUSTERDOWN'));
+
+    await run();
+
+    expect(vi.mocked(notificationCache.incrementUser).mock.calls).toEqual([
+      [11, 'Comment'],
+      [12, 'Comment'],
+    ]);
+    const signalled = (globalThis.fetch as any).mock.calls.map(([url]: [string]) => url);
+    expect(signalled).toEqual([
+      expect.stringContaining('/users/11/signals/'),
+      expect.stringContaining('/users/12/signals/'),
+    ]);
   });
 
   it('does no work when there are no pending rows', async () => {

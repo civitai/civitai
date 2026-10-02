@@ -57,7 +57,9 @@ Every other app is either fully ported or blocked. These two are genuinely unbui
       Contents are not enumerated by the layout section, so **it cannot be scoped from the committed
       inventory** — needs the raw export or a screenshot first. Blocked on information, not on effort.
 - [ ] **Model-side surfaces** — `ModelReview`, `TrainingCount`, `UnpublishingReasons` (Moderation Status).
-      There is no models route in the spoke at all, so this is a new page, not an addition to one.
+      All three are dashboard COUNTS, so they want a queue surface, not a lookup. The spoke now has a
+      `Models` nav group (`/models/minor-hash-matches`) and a `/retool/model-lookup` page for one model
+      at a time — neither is where a count belongs, so this is still a new page.
       `/moderator/models` is also an open item on the *main-app* migration checklist — **check whether
       these belong on that page before building a Retool-namespace one.**
 
@@ -264,7 +266,8 @@ A queue/stat board rather than a lookup tool.
 - [ ] **The `Who is who?` tab** — contents not enumerated by the layout; needs the raw export or a
       screenshot before it can be scoped.
 - [ ] **Model-side surfaces with no page at all** — `ModelReview`, `TrainingCount`,
-      `UnpublishingReasons`. There is no models route in the app.
+      `UnpublishingReasons`. Counts, so neither the `Models` nav group's queue nor
+      `/retool/model-lookup` (one model at a time) is where they go. See section A.
 - [x] **`ActionAllPostReports`** — sweeps pending post-reports where every image is already blocked.
       `/reports/[slug]` actions one at a time; the batch *selector* is what is missing, not the verb.
 - [x] **`GetSplitQueue`/`SplitCurrent`/`SplitCatchup`** — built on `/retool/queue-stats`; both tables written in one transaction, and button69`s tooltip rule is on the page. This also recovers the FrontPageTimers column list the Front Page Audit slice recorded as unknown. Original note: forks the front-page sweep into current and
@@ -416,12 +419,29 @@ slice); the four left are unbuilt rather than blocked.
       trained, base model, status, epoch progress, image count, Buzz cost, dataset-shared.
       Retool filtered `type = Training Data OR type IS NULL` in the WHERE, which drops a version whose
       only files are of another type; moved into the JOIN so the run stays visible.
-- [x] **Buzz history** — `Receipts` and `Payments` kept as **two queries**, one per ledger side, each
-      with its own cap, plus `ReceiptsUsers`/`PaymentsUsers` for counterparty names. One cap across both
-      sides lets the busy side eat it: measured on user 2557503, all 200 rows of a 90-day window were
-      receipts spanning two days, so every one of its 128 payments was invisible. `truncated` is per
-      side (`{ payments, receipts }`) for the same reason, and `/api/user-buzz-history/[userId]` takes
-      `?limit=` (clamped 1..2000, default 200) behind a per-column "Load 200 more".
+- [x] **Buzz history** — `Receipts` and `Payments` are **two columns that share nothing**: one request
+      each (`/api/user-buzz-history/[userId]?side=`), its own cap, its own type filter, its own paging,
+      plus `ReceiptsUsers`/`PaymentsUsers` for counterparty names. `getBuzzLedgerSide` serves one side;
+      there is deliberately no both-sides call, because every version that had one coupled them again.
+
+      Each separation fixed a defect the previous one left behind. **One cap** across both sides let the
+      busy side eat it — on user 2557503 all 200 rows of a 90-day window were receipts spanning two
+      days, so its 128 payments were invisible. **One request** made either column's filter reload the
+      other and blank it meanwhile, for an answer that had not changed. `?limit=` is clamped 1..2000
+      (default 200) behind a per-column "Load 200 more", and `truncated` is per side.
+
+      🔴 **The per-column TYPE filter is the SERVER's, and the cap applies after it.** Selecting a type
+      re-queries that side for `limit` rows OF that type; filtering the fetched page could only shrink
+      it, so on a reward-heavy account a purchase behind thousands of rewards was unreachable at any
+      window — measured across 300 crypto buyers, **52% of their Buzz purchases** sat outside the newest
+      200 receipts. The options come from a separate uncapped `SELECT DISTINCT type` per side for the
+      same reason: built from the loaded rows, the dropdown could not offer a type the cap had pushed
+      out, so the one thing that would have fetched it was the one thing not on the menu. `bank` is
+      withheld from both the rows and the options unless granted, or the filter would return nothing and
+      read as "no such transactions". The value reaches ClickHouse as text (`$query` does not escape),
+      so it is shape-validated — a bare identifier — and dropped to "no filter" otherwise.
+      The DESCRIPTION search stays client-side over the page: `description` has no index.
+
       Its own endpoint: `buzzTransactions` is **1.5B rows sorted by date ASC**, so even bounded to
       90 days a descending read measures ~2.5s. The window bound is mandatory, not tuning — Retool bounded
       it too. Account id 0 is Civitai itself (generation spend, purchases, rewards).

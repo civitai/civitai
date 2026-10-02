@@ -237,8 +237,9 @@ type SettleAction =
   | 'declineByBlock'
   /**
    * The owner declined, but the host could not have shown the placement anyway —
-   * it is blocked, unscanned or under review, so approval was refused and the
-   * owner was never offered a choice. Same reasoning as a block: the fee prices
+   * it is blocked, unscanned or under review, or the sticker is SFW-only and the
+   * image is not — so approval was refused and the owner was never offered a
+   * choice. Same reasoning as a block: the fee prices
    * the owner's *attention*, and there was no judgement here to charge for.
    *
    * Recorded as a decline rather than an expiry, though the money is identical.
@@ -919,6 +920,23 @@ async function payOutPlacement(placement: PlacementRow) {
     }
   }
 }
+
+/**
+ * Whether every Buzz of a paid placement's amount has been receipted into the
+ * escrow. False while a hold is in flight or after one failed.
+ */
+export const isPlacementEscrowFunded = async ({
+  placementId,
+  amount,
+}: {
+  placementId: number;
+  amount: number;
+}) => {
+  const held = await heldAmountsFor(placementId);
+  let total = 0;
+  for (const value of held.values()) total += value;
+  return total >= amount;
+};
 
 /**
  * What is actually sitting in the escrow account for this placement.

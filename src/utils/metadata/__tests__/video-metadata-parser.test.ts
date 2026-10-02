@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { VideoMetadataParser } from '~/utils/metadata';
+import { getVideoMetadata, VideoMetadataParser } from '~/utils/metadata';
 
 const encoder = new TextEncoder();
 
@@ -115,7 +115,7 @@ function simpleTag(name: string, value: string, nested?: Uint8Array): Uint8Array
     ebmlIds.simpleTag,
     concat(
       ebmlElement(ebmlIds.tagName, encoder.encode(name)),
-      ebmlElement(ebmlIds.tagString, encoder.encode(value), 2),
+      ebmlElement(ebmlIds.tagString, encoder.encode(value)),
       nested ?? new Uint8Array()
     )
   );
@@ -275,17 +275,17 @@ describe('VideoMetadataParser MP4', () => {
     expect(await parser.getMetadata()).toEqual({});
   });
 
-  it('rejects oversized individual and combined metadata without rejecting the file', async () => {
+  it('uses the upstream 8MB container metadata cap without rejecting the file', async () => {
     const individual = await VideoMetadataParser(
-      mp4Fixture({ prompt: 'x'.repeat(2 * 1024 * 1024 + 1) })
+      mp4Fixture({ prompt: 'x'.repeat(8 * 1024 * 1024 + 1) })
     );
     expect(individual.exif).toEqual({});
 
-    const chunk = 'x'.repeat(1024 * 1024 + 1);
+    const chunk = 'x'.repeat(2 * 1024 * 1024 + 1);
     const combined = await VideoMetadataParser(
       mp4Fixture({ prompt: chunk, workflow: chunk, parameters: chunk, extraMetadata: chunk })
     );
-    expect(combined.exif).toEqual({ prompt: chunk, workflow: chunk, parameters: chunk });
+    expect(combined.exif).toEqual({});
   });
 });
 
@@ -324,14 +324,66 @@ describe('VideoMetadataParser WebM', () => {
     expect(malformed.exif).toEqual({});
 
     const oversized = await VideoMetadataParser(
-      webmFixture({ PROMPT: 'x'.repeat(2 * 1024 * 1024 + 1) })
+      webmFixture({ PROMPT: 'x'.repeat(8 * 1024 * 1024 + 1) })
     );
     expect(oversized.exif).toEqual({});
 
-    const chunk = 'x'.repeat(1024 * 1024 + 1);
+    const chunk = 'x'.repeat(2 * 1024 * 1024 + 1);
     const combined = await VideoMetadataParser(
       webmFixture({ PROMPT: chunk, WORKFLOW: chunk, PARAMETERS: chunk, EXTRAMETADATA: chunk })
     );
     expect(combined.exif).toEqual({});
   });
+});
+
+describe('video upload metadata compatibility', () => {
+  it.each([mp4Fixture, webmFixture])(
+    'keeps Automatic parameters in the upload path',
+    async (fixture) => {
+      const meta = await getVideoMetadata(
+        fixture({
+          parameters: 'uploaded video prompt\nNegative prompt: blur\nSteps: 12, Sampler: Euler',
+        })
+      );
+      expect(meta).toMatchObject({
+        prompt: 'uploaded video prompt',
+        negativePrompt: 'blur',
+        steps: 12,
+        sampler: 'Euler',
+      });
+    }
+  );
+
+  it.each([mp4Fixture, webmFixture])(
+    'keeps extraMetadata overrides in the upload path',
+    async (fixture) => {
+      const meta = await getVideoMetadata(
+        fixture({
+          prompt,
+          workflow,
+          extraMetadata: JSON.stringify({
+            prompt: 'Eclipse override',
+            sampler: 'Euler',
+            resources: [],
+          }),
+        })
+      );
+      expect(meta).toMatchObject({ prompt: 'Eclipse override', sampler: 'Euler' });
+    }
+  );
+
+  it.each([mp4Fixture, webmFixture])(
+    'keeps settings from large graphs and strips only the comfy blob',
+    async (fixture) => {
+      const file = fixture({
+        prompt,
+        workflow: JSON.stringify({ nodes: [], pad: 'x'.repeat(3 * 1024 * 1024) }),
+      });
+      const parser = await VideoMetadataParser(file);
+      expect(parser.exif.workflow).toBeDefined();
+      const meta = await getVideoMetadata(file);
+      expect(meta).toMatchObject({ prompt: 'video prompt', steps: 20 });
+      expect(meta?.comfy).toBeUndefined();
+    }
+  );
 });

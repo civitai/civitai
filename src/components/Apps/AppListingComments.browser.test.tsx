@@ -42,7 +42,11 @@ vi.mock('~/components/CommentsV2/CommentsProvider', () => ({
   }) => {
     mocks.providerMounts.push({ entityType, entityId });
     return (
-      <div data-testid="root-thread" data-entity-type={String(entityType)} data-entity-id={String(entityId)}>
+      <div
+        data-testid="root-thread"
+        data-entity-type={String(entityType)}
+        data-entity-id={String(entityId)}
+      >
         {children({
           data: [],
           created: [],
@@ -51,7 +55,6 @@ vi.mock('~/components/CommentsV2/CommentsProvider', () => ({
           isFetchingNextPage: false,
           isLocked: false,
           showMore: false,
-          hiddenCount: 0,
           toggleShowMore: () => undefined,
           sort: 'Oldest',
           setSort: () => undefined,
@@ -66,9 +69,7 @@ vi.mock('~/components/CommentsV2/CommentsProvider', () => ({
 vi.mock('~/components/CommentsV2/Comment/Comment', () => ({ Comment: () => null }));
 vi.mock('~/components/CommentsV2/Comment/CreateComment', () => ({ CreateComment: () => null }));
 vi.mock('~/components/CommentsV2/ReturnToRootThread', () => ({ ReturnToRootThread: () => null }));
-vi.mock('~/components/CommentsV2/HiddenCommentsModal', () => ({ default: () => null }));
 vi.mock('~/components/Filters', () => ({ SortFilter: () => null }));
-vi.mock('~/components/Dialog/dialogStore', () => ({ dialogStore: { trigger: vi.fn() } }));
 
 import { AppListingComments } from './AppListingComments';
 

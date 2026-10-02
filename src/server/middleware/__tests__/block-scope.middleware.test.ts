@@ -55,8 +55,12 @@ describe('parseSubjectUserId', () => {
 describe('enforceContextBinding', () => {
   it('models:read:self requires matching modelId in query', () => {
     const claims = fakeClaims({ scopes: ['models:read:self'], ctx: { modelId: 12345 } });
-    expect(() => enforceContextBinding(claims, fakeReq({ id: '12345' }), 'models:read:self')).not.toThrow();
-    expect(() => enforceContextBinding(claims, fakeReq({ id: '99999' }), 'models:read:self')).toThrow();
+    expect(() =>
+      enforceContextBinding(claims, fakeReq({ id: '12345' }), 'models:read:self')
+    ).not.toThrow();
+    expect(() =>
+      enforceContextBinding(claims, fakeReq({ id: '99999' }), 'models:read:self')
+    ).toThrow();
   });
 
   it('ai:write:budgeted requires positive buzzBudget', () => {
@@ -148,11 +152,16 @@ describe('isBlockJwt header decode (audit H-1.5 / strict)', () => {
     // We don't have direct access to isBlockJwt — but we can assert the
     // observable: a non-JWT bearer reaches the wrapped handler.
     const { withBlockScope } = await import('../block-scope.middleware');
-    const wrappedHandler = vi.fn(async (_req: unknown, res: { _status: number; status: (n: number) => unknown }) => {
-      res._status = 200;
-      res.status(200);
+    const wrappedHandler = vi.fn(
+      async (_req: unknown, res: { _status: number; status: (n: number) => unknown }) => {
+        res._status = 200;
+        res.status(200);
+      }
+    );
+    const route = withBlockScope(wrappedHandler as never, {
+      endpoint: 'models',
+      requiredScope: 'models:read:self',
     });
-    const route = withBlockScope(wrappedHandler as never, { endpoint: 'models', requiredScope: 'models:read:self' });
     const fakeReqWithApiKey = {
       method: 'GET',
       headers: { authorization: 'Bearer foo.bar.notarealjwt' },
@@ -305,6 +314,152 @@ describe('verifyBlockToken fail-closed shapes (L-VERIFY / L-M6)', () => {
     // aggregate-cap selector can trust the boolean.
     expect(await verifyBlockToken(await signRaw({ reviewRunForReal: 'true' }))).toBeNull();
     expect(await verifyBlockToken(await signRaw({ reviewRunForReal: 1 }))).toBeNull();
+  });
+
+  // ---- PRIVATE-RUN claim shape guard (the two money arms' only input) -------
+  // Mirrors the reviewRunForReal rows above deliberately: both are signed
+  // booleans that a runtime money decision keys on, so they get identical
+  // treatment and a reader can see at a glance that neither is special.
+
+  it('[INV] accepts + round-trips a boolean privateRun claim; absent is fine', async () => {
+    // [INV] by measurement: an unknown claim already rode through the verifier
+    // untouched at the base ref, so this passes there. The REGRESSION half of the
+    // shape guard is the rejection test below, which is red at base.
+    const withTrue = await verifyBlockToken(await signRaw({ privateRun: true }));
+    expect(withTrue).not.toBeNull();
+    expect(withTrue?.privateRun).toBe(true);
+    const absent = await verifyBlockToken(await signRaw({}));
+    expect(absent).not.toBeNull();
+    // 🔴 ABSENT MUST BE `undefined`, NOT `false`. Both money arms test `=== true`,
+    // so an absent claim fails toward CHARGING NORMALLY — which is the safe
+    // direction here. A verifier that defaulted it to `false` would be equivalent
+    // today but would make a future `!== false` reading silently wrong.
+    expect(absent?.privateRun).toBeUndefined();
+  });
+
+  it('[REG] rejects a token whose privateRun claim is non-boolean (forged)', async () => {
+    // 🔴 THIS IS WHY THE CLAIM IS TRUSTWORTHY AT ALL. A forged marker must be
+    // rejected OUTRIGHT rather than coerced: a truthy string would otherwise void
+    // a spend-attribution row and suppress a live author fee on an ordinary
+    // third-party run, i.e. a block could switch its own fee off.
+    expect(await verifyBlockToken(await signRaw({ privateRun: 'true' }))).toBeNull();
+    expect(await verifyBlockToken(await signRaw({ privateRun: 1 }))).toBeNull();
+    expect(await verifyBlockToken(await signRaw({ privateRun: {} }))).toBeNull();
+  });
+
+  it('[REG] REJECTS a token carrying BOTH privateRun and dev — the cap-skip pair', async () => {
+    // 🔴 THE CONSUME-SIDE HALF OF A RULE THE SIGNER ALSO ENFORCES, and it is not
+    // redundant: the signer throws at PRODUCE time, while the hazard is consumed by
+    // `reserveBlockBuzzSpendForClaims`, which skips the platform reservation on
+    // `claims.dev === true`. A `dev` token lives 4h, so a token minted before a
+    // signer regression — or by any future second signer — would spend that window
+    // uncapped per app with nothing in between. Same rationale the age cap below is
+    // re-checked under.
+    //
+    // `signRaw` bypasses `BlockTokenService.sign` entirely, which is what makes this
+    // a real test of the VERIFIER rather than a second test of the signer's throw.
+    expect(await verifyBlockToken(await signRaw({ privateRun: true, dev: true }))).toBeNull();
+  });
+
+  it('[INV] each flag ALONE still verifies — the refusal is the PAIR', async () => {
+    // The negative control. Without it, a mutant rejecting every `privateRun` token
+    // (or every `dev` token) passes the test above while breaking both features.
+    const pr = await verifyBlockToken(await signRaw({ privateRun: true }));
+    expect(pr).not.toBeNull();
+    expect(pr?.privateRun).toBe(true);
+    const dev = await verifyBlockToken(await signRaw({ dev: true }));
+    expect(dev).not.toBeNull();
+    expect(dev?.dev).toBe(true);
+  });
+
+  // ---- PRIVATE-RUN AUDIENCE claim shape guard -------------------------------
+  //
+  // ⚠️ THESE FOUR ROWS WERE ADDED BECAUSE A MUTANT SURVIVED. The initial sweep for the
+  // private-run surface deleted the verifier's `isPrivateRunAudience` check and NOTHING
+  // went red: the closed-set property was covered at the approval verdict but not at the
+  // verifier that is supposed to guarantee it. A guard nothing watches is a guard that
+  // will be deleted by the next person who finds it redundant — and this one is the
+  // reason every downstream `=== 'editor'` test is a test over three known values.
+
+  it('[REG] accepts + round-trips a valid audience, and only ALONGSIDE the marker', async () => {
+    for (const audience of ['owner', 'editor', 'moderator'] as const) {
+      const ok = await verifyBlockToken(
+        await signRaw({ privateRun: true, privateRunAudience: audience })
+      );
+      expect(ok, `audience=${audience}`).not.toBeNull();
+      expect(ok?.privateRunAudience).toBe(audience);
+    }
+    // Absent stays absent — not coerced to a default. Both readers test for a specific
+    // value, so an invented default would make one of them silently wrong.
+    const absent = await verifyBlockToken(await signRaw({ privateRun: true }));
+    expect(absent).not.toBeNull();
+    expect(absent?.privateRunAudience).toBeUndefined();
+  });
+
+  it('[REG] REJECTS an audience OUTSIDE the closed set — not merely a non-string', async () => {
+    // 🔴 THE FAILURE DIRECTION IS WHY THIS IS A REJECTION RATHER THAN A COERCION. Two
+    // consumers branch on this value: the approval verdict requires a RECOGNISED
+    // audience to grant its status exemption, and `blockPerCallBudget` zeroes the
+    // per-call ceiling when the audience `=== 'editor'`. An unrecognised STRING is not
+    // `'editor'`, so it would sail past the read-only belt carrying owner/moderator
+    // power on an app the platform has taken down. A `typeof === 'string'` guard would
+    // accept every one of these.
+    for (const bogus of ['Editor', 'OWNER', 'admin', '', 'moderator ', 'owner\n']) {
+      expect(
+        await verifyBlockToken(await signRaw({ privateRun: true, privateRunAudience: bogus })),
+        `audience=${JSON.stringify(bogus)} must be refused`
+      ).toBeNull();
+    }
+    // …and the non-string shapes too, including the prototype-chain keys that an `in`
+    // test would have let through.
+    for (const bogus of [1, true, {}, ['owner'], null, 'constructor', '__proto__']) {
+      expect(
+        await verifyBlockToken(await signRaw({ privateRun: true, privateRunAudience: bogus })),
+        `audience=${String(bogus)} must be refused`
+      ).toBeNull();
+    }
+  });
+
+  it('[REG] REJECTS a LONE audience with no privateRun marker', async () => {
+    // A half-stamped token reads like a private-run token to anyone inspecting it and is
+    // exempt from nothing. The signer refuses to produce the shape; this is the
+    // consume-side half, for the same reason the `privateRun`+`dev` pair is re-checked
+    // here — `signRaw` bypasses the signer entirely, so this tests the VERIFIER.
+    expect(await verifyBlockToken(await signRaw({ privateRunAudience: 'moderator' }))).toBeNull();
+    expect(await verifyBlockToken(await signRaw({ privateRunAudience: 'owner' }))).toBeNull();
+  });
+
+  it('[INV] NEGATIVE CONTROL: a valid pair still verifies — the refusal is the SHAPE', async () => {
+    // Without this, a mutant rejecting EVERY token carrying an audience passes all three
+    // rows above while breaking the feature completely.
+    const ok = await verifyBlockToken(
+      await signRaw({ privateRun: true, privateRunAudience: 'moderator' })
+    );
+    expect(ok).not.toBeNull();
+    expect(ok?.privateRun).toBe(true);
+    expect(ok?.privateRunAudience).toBe('moderator');
+  });
+
+  it('[INV] privateRun does NOT widen the token lifetime — only `dev` selects the 4h cap', async () => {
+    // Pinned because the two claims sit adjacent in the signer and a future reader
+    // could reasonably assume a private run needs the long TTL. It does not: the
+    // 4h cap belongs to `dev:live`, and a private run deliberately keeps the
+    // ordinary 15-minute age cap. An `iat` older than 15 minutes must therefore
+    // still be refused with privateRun set.
+    const key = await importPrivateKey();
+    const kid = await configuredKid();
+    const stale = Math.floor(Date.now() / 1000) - 60 * 30; // 30 min ago
+    const token = await new SignJWT({ ...baseClaims, sub: 'user:1', privateRun: true })
+      .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid })
+      .setIssuer('civitai')
+      .setAudience('civitai-app-block')
+      .setSubject('user:1')
+      .setJti('test-jti-private-run-stale')
+      .setIssuedAt(stale)
+      .setNotBefore(stale)
+      .setExpirationTime(stale + 60 * 60 * 4)
+      .sign(key);
+    expect(await verifyBlockToken(token)).toBeNull();
   });
 
   // ---- Maturity claim shape guard (from #2670, redundant cross-check) -----
@@ -462,7 +617,11 @@ describe('dev-token 4h lifetime + per-type max-age cap', () => {
 
   it('accepts a dev token aged 3h (under the 4h cap, exp still valid)', async () => {
     // exp must outlive the age (a 4h-lifetime token at 3h is still valid).
-    const token = await signAged({ ageSeconds: 3 * HOUR, lifetimeSeconds: 4 * HOUR, extra: { dev: true } });
+    const token = await signAged({
+      ageSeconds: 3 * HOUR,
+      lifetimeSeconds: 4 * HOUR,
+      extra: { dev: true },
+    });
     const claims = await verifyBlockToken(token);
     expect(claims).not.toBeNull();
     expect(claims?.dev).toBe(true);
@@ -524,7 +683,11 @@ describe('dev-token 4h lifetime + per-type max-age cap', () => {
     // Take a valid dev token and corrupt its signature segment. The RS256
     // signature gate (jwtVerify) runs BEFORE the dev claim is read, so a forged
     // dev:true never reaches the 4h cap.
-    const good = await signAged({ ageSeconds: 60, lifetimeSeconds: 4 * HOUR, extra: { dev: true } });
+    const good = await signAged({
+      ageSeconds: 60,
+      lifetimeSeconds: 4 * HOUR,
+      extra: { dev: true },
+    });
     const [h, p] = good.split('.');
     // Re-sign nothing — just mangle the signature so the key check fails.
     const tampered = `${h}.${p}.AAAA${good.split('.')[2].slice(4)}`;
