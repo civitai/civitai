@@ -328,9 +328,17 @@ const featureFlags = createFeatureFlags({
     availability: ['user'],
   },
   profileCollections: ['public'],
-  // Retired (see 868m4c2dn): the `images_v6` search index is no longer fed or served, and while
-  // the processor stays retired no reset runs, so the index carries no documents and no
-  // filterable attributes. Static availability is empty so image search is off for everyone.
+  // Retired (see 868m4c2dn): the `images_v6` search index is no longer fed or served. Static
+  // availability is empty so image search is off for everyone.
+  // MEASURED 2026-10-03: the index holds 0 documents and `[]` filterable attributes. That is an
+  // observation with a date on it, NOT a consequence of `retired` — 🔴 nothing holds it that way.
+  // `retired` only stops the processor writing and syncing, so no `reset` runs to configure
+  // settings ("the index is stale for as long as it is retired",
+  // `src/server/search-index/base.search-index.ts`); an index that was set up before retirement
+  // keeps the settings and documents it had. And this one is still writable from outside the
+  // processor: `src/pages/api/mod/search/images-update.ts` writes to it without consulting
+  // `retired`, as the entry note in `src/server/meilisearch/util.ts` records. So re-measure before
+  // acting on the figures above; do not infer them from the flag.
   // 🔴 This is NO LONGER a safe no-deploy toggle, and it fails quietly rather than loudly.
   // Turning on the `image-search` Flipt flag (which is still authoritative when it exists) points
   // image search at that index: filtered or sorted queries error, and the rest return zero hits.

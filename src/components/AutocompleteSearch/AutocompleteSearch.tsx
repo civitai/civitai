@@ -173,8 +173,9 @@ const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...p
 
   const resolvedIndexName = searchIndexMap[targetIndex as keyof typeof searchIndexMap];
 
-  // Images stays selectable while image search is retired, but images_v6 is gone — swap to a
-  // client that never reaches the network so the on-mount search can't hit the deleted index.
+  // Images stays selectable while image search is retired, but images_v6 is empty and declares no
+  // filterable attributes — swap to a client that never reaches the network so the on-mount search
+  // can't query it. 🔴 The index EXISTS; this swap is live protection, not dead belt-and-braces.
   const imageSearchMaintenance = targetIndex === 'images' && !features.imageSearch;
 
   // The options the selector OFFERS: every target, narrowed by feature flag. Computed once here
@@ -293,8 +294,9 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     ? reverseSearchIndexMap[results.index as ReverseSearchIndexKey]
     : indexNameProp;
 
-  // Images stays selectable while image search is retired, but the images_v6 index is gone — so
-  // show a maintenance notice in place and never refine the query against it.
+  // Images stays selectable while image search is retired, but the images_v6 index is empty and
+  // declares no filterable attributes — so show a maintenance notice in place and never refine the
+  // query against it. The index still exists; this branch is load-bearing, not dead code.
   const imageSearchMaintenance = indexName === 'images' && !features.imageSearch;
 
   const [selectedItem, setSelectedItem] = useState<ComboboxData[number] | null>(null);
