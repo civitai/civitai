@@ -175,14 +175,15 @@ describe('getJudgingPair — already-voted pairs', () => {
 
   it('gives up after a bounded number of full samples when every pair in them is judged', async () => {
     const ids = Array.from({ length: 100 }, (_, i) => i + 1);
-    queryRaw.mockResolvedValue(ids.map((id) => rawEntry(id, 1000 + id)));
+    const full = ids.map((id) => rawEntry(id, 1000 + id));
+    // Ends with a short sample after 50 calls, so dropping the attempt cap fails on the count
+    // below instead of hanging the runner.
+    queryRaw.mockImplementation(async () => (queryRaw.mock.calls.length > 50 ? [] : full));
     withVotedPairs(
       ...ids.flatMap((a) => ids.filter((b) => b > a).map((b) => [a, b] as [number, number]))
     );
 
     expect(await getJudgingPair({ crucibleId: 1, userId: 1 })).toBeNull();
-    // The retry loop is capped at MAX_SAMPLE_ATTEMPTS. Asserting the exact count means removing
-    // that cap fails here in milliseconds rather than spinning the sampler forever.
     expect(queryRaw).toHaveBeenCalledTimes(3);
   });
 });
