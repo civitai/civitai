@@ -202,19 +202,25 @@ beforeEach(() => {
  * `params[1]` makes this suite sensitive to the two SQL parameters being swapped, which
  * it previously could not see.
  *
- * ⚠️ One narrower guard does exist in this file, and it is worth stating exactly because
- * it is easy to over-read. The NULL-probe test below goes red when the probe's RESULT
- * stops being consumed — measured, dropping the `requireStoredSize` call takes exactly
- * ONE test in this file red, on EITHER write path (not just update). But a wire-term
- * reintroduction that leaves the now-dead probe call in place leaves this file FULLY
- * GREEN, on both paths. So it defends against REMOVING THE PROBE CALL, not against a
- * wire-unit term as such. The unit itself is still only observable in the behaviour
- * suite.
+ * ⚠️ TWO NARROWER GUARDS DO EXIST in this file, and they are worth stating exactly
+ * because the shape is easy to over- and under-read. Measured, per mutant:
  *
- * (Stated as "one red" / "fully green" rather than as `n/total`: two successive revisions
- * of this paragraph carried a total that the same commit had already invalidated by
- * adding tests to this file. A ratio rots on every added test; a count of failures does
- * not.)
+ *   - dropping the `requireStoredSize` CALL takes exactly one test red (the NULL-probe
+ *     test), on EITHER write path;
+ *   - a wire-unit term reintroduced while the now-dead probe call is LEFT IN PLACE takes
+ *     exactly one test red on the APPEND path (the counter test, via its exactly-on-the-
+ *     cap arm, which overrides `stored_size_bytes` and so is blind to a gate that reads
+ *     the wire size) — and leaves this file FULLY GREEN on the UPDATE path.
+ *
+ * So: the probe CALL is defended on both paths; a wire-unit TERM is caught on append and
+ * not on update. The unit as such is still only fully observable in the behaviour suite.
+ *
+ * (Stated as per-mutant red counts rather than as `n/total`: three successive revisions
+ * of this paragraph were wrong. Two carried a total the same commit had invalidated by
+ * adding tests here — a ratio rots on every added test. The third replaced the ratio with
+ * "fully green on both paths", which the SAME commit falsified by adding the arm that
+ * catches the append case: the proposition rotted where the ratio had. Name the mutant
+ * and the path, and the claim can only rot if the code changes.)
  *
  * `$2` is the serialized value on both write paths (`$1` is the app block id).
  */
@@ -1332,7 +1338,8 @@ describe('append `data` blob (opaque, unmoderated app payload)', () => {
    * written.
    */
   it('refuses the write loudly when the stored-size probe comes back NULL', async () => {
-    // 🔴 NaN IS IN THIS LOOP DELIBERATELY. `null` and `undefined` are both caught by
+    // 🔴 NaN AND Infinity ARE IN THIS LOOP DELIBERATELY. `null` and `undefined` are both
+    // caught by
     // the guard's FIRST half (`raw == null`), so without a NaN case the second half
     // (`!Number.isFinite(...)`) never decides anything and could be deleted with
     // nothing going red — measured, that mutant SURVIVED the whole suite. NaN is
@@ -1349,7 +1356,13 @@ describe('append `data` blob (opaque, unmoderated app payload)', () => {
     // that the accounting broke — which is worse, because the counter keeps looking
     // healthy. Same reasoning that justified pinning the structurally-unreachable null
     // arm.
-    for (const probeValue of [null, undefined, NaN]) {
+    //
+    // `Infinity` closes the other half of the same asymmetry, and it is here because a
+    // sibling guard's docstring started arguing against exactly this: `NaN` alone pins
+    // the finiteness check only against DELETION, not against the weakening
+    // `!Number.isFinite` -> `Number.isNaN`, which `Infinity` does not satisfy. Measured,
+    // that weakening survived the whole suite until this value was added.
+    for (const probeValue of [null, undefined, NaN, Infinity, -Infinity]) {
       mockClient.query.mockClear();
       mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
       mockPool.query.mockImplementation(async (sql: string) => {
@@ -1510,15 +1523,22 @@ describe('append `data` blob (opaque, unmoderated app payload)', () => {
 
     // (a) NON-NUMERIC, both write paths and both counters. Kills the two
     // "drop the guard at this call site" mutants and the "return 0" mutant.
-    for (const [path, counters] of [
-      ['append', { used_bytes: 'not-a-number' }],
-      ['update', { used_bytes: 'not-a-number' }],
-      ['append', { used_bytes: '0', row_count: 'not-a-number' }],
+    //
+    // 🔴 THE EXPECTED MESSAGE IS EXACT, PER CASE, NOT A DISJUNCTION. An earlier revision
+    // asserted `/app (used_bytes|row_count) is not numeric/` for all three, which left a
+    // mutant alive that had died before it: relabelling the UPDATE path's guard to
+    // `'app row_count'` then satisfied the regex and survived the whole suite. A 500
+    // naming the wrong column is the "sent to the wrong helper" failure this file warns
+    // about elsewhere, so the label is part of what the guard owes.
+    for (const [path, counters, expected] of [
+      ['append', { used_bytes: 'not-a-number' }, 'app used_bytes is not numeric'],
+      ['update', { used_bytes: 'not-a-number' }, 'app used_bytes is not numeric'],
+      ['append', { used_bytes: '0', row_count: 'not-a-number' }, 'app row_count is not numeric'],
     ] as const) {
       mockClient.query.mockClear();
       mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
       mockCounters(counters);
-      await expect(callPath(path)).rejects.toThrow(/app (used_bytes|row_count) is not numeric/);
+      await expect(callPath(path)).rejects.toThrow(expected);
       expect(mockClient.query).not.toHaveBeenCalled();
     }
 
@@ -1551,11 +1571,20 @@ describe('append `data` blob (opaque, unmoderated app payload)', () => {
       expect(mockClient.query).toHaveBeenCalled();
     }
 
-    // (d) 🔴 AND IT MUST READ AS EXACTLY ZERO, not merely "some small number". With the
-    // value sized to land the gate precisely ON the cap, a fallback of 0 accepts
-    // (`0 + CAP > CAP` is false) and any positive fallback refuses — so this is the only
-    // arm that kills changing `?? '0'` to `?? '1'`. Arm (c) cannot see that, because it
-    // asserts acceptance with megabytes of headroom.
+    // (d) 🔴 AND IT MUST READ AS EXACTLY ZERO, not merely "some small number". The
+    // mechanism is an OVERRIDDEN PROBE RESULT, not a resized value: `mockCounters`'
+    // second argument replaces `stored_size_bytes` with exactly APP_QUOTA_BYTES, so the
+    // gate is evaluated precisely ON the cap. A fallback of 0 accepts (`0 + CAP > CAP` is
+    // false) and any positive fallback refuses — so this is the only arm that kills
+    // changing `?? '0'` to `?? '1'`. Arm (c) cannot see that, because it asserts
+    // acceptance with megabytes of headroom.
+    //
+    // Two things fall out of overriding the probe rather than the value, both measured.
+    // It also kills the append gate's `>` -> `>=` (at the cap, `>=` refuses). And it is
+    // what makes this file able to see an append-path wire-unit reintroduction at all:
+    // a gate reading the wire `byteSize` ignores the override, so the CAP+1 control below
+    // stops refusing. See the note on `fixtureStoredSize` above, which records exactly
+    // how far that goes — it is one path, not both.
     mockClient.query.mockClear();
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
     mockCounters({ used_bytes: null }, APP_QUOTA_BYTES);
