@@ -167,6 +167,14 @@ describe('mergeGold — a rebuild must not keep a corrected label', () => {
     ]);
   });
 
+  it('does not let an item id containing a colon collide with another item and labeller', () => {
+    const merged = mergeGold(
+      [{ itemId: 'a:b', gold: 'x', goldSource: 's', labeler: 'c' }],
+      [{ itemId: 'a', gold: 'y', goldSource: 's', labeler: 'b:c' }]
+    );
+    expect(merged).toHaveLength(2);
+  });
+
   it('keeps several unattributed rows for one item, since they are separate votes', () => {
     const rows = [
       { itemId: 'a', gold: 'x', goldSource: 's1' },

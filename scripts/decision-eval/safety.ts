@@ -97,27 +97,51 @@ export function assertPrivateHost(
   );
 }
 
-const PII_PATTERNS: ReadonlyArray<{ name: string; pattern: RegExp }> = [
-  { name: 'email', pattern: /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i },
-  { name: 'url', pattern: /(?:\b[a-z][a-z0-9+.-]*:\/\/|\bwww\.)\S+/i },
-  // Scheme-less: a domain followed by a path, e.g. example.com/user/name.
-  { name: 'url', pattern: /\b(?:[a-z0-9-]+\.)+[a-z]{2,}\/\S+/i },
-  { name: 'handle', pattern: /(?:^|[^\w@])@[A-Za-z0-9_]{2,}/ },
+const DOMAIN_TOKEN = /^(?:[a-z0-9-]+\.)+[a-z]{2,}$/i;
+
+/**
+ * A domain followed by a path, e.g. example.com/user/name. Checked per slash
+ * rather than with one unanchored regex, which backtracks quadratically on a
+ * long dotted run with no slash in it.
+ */
+function hasSchemelessLink(value: string): boolean {
+  for (let slash = value.indexOf('/'); slash !== -1; slash = value.indexOf('/', slash + 1)) {
+    if (slash + 1 >= value.length || /\s/.test(value[slash + 1])) continue;
+    let start = slash;
+    while (start > 0 && /[a-z0-9.-]/i.test(value[start - 1])) start--;
+    if (DOMAIN_TOKEN.test(value.slice(start, slash))) return true;
+  }
+  return false;
+}
+
+// Quantifiers are bounded to RFC lengths: an unbounded run is retried from every
+// start position, which is quadratic on a long hash or base64 blob.
+const PII_CHECKS: ReadonlyArray<{ name: string; test(value: string): boolean }> = [
+  { name: 'email', test: (v) => /[A-Z0-9._%+-]{1,64}@[A-Z0-9.-]{1,253}\.[A-Z]{2,63}/i.test(v) },
+  { name: 'url', test: (v) => /(?:\b[a-z][a-z0-9+.-]{0,31}:\/\/|\bwww\.)\S/i.test(v) },
+  { name: 'url', test: hasSchemelessLink },
+  { name: 'handle', test: (v) => /(?:^|[^\w@])@[A-Za-z0-9_]{2,}/.test(v) },
 ];
 
 /**
  * Independent of each node's own redaction, so a leak needs both to fail.
- * Throws naming the item and the pattern, never the matched text.
+ * Names the field and the kind, never the matched text.
  */
-export function assertNoPii(itemId: string, state: DecisionState): void {
+export function findPii(state: DecisionState): { field: string; kind: string } | null {
   for (const [field, value] of Object.entries(state)) {
-    for (const { name, pattern } of PII_PATTERNS) {
-      if (pattern.test(value)) {
-        throw new EvalSafetyError(
-          `item ${itemId}: state.${field} contains a ${name}-shaped string; redact it in buildState`
-        );
-      }
+    for (const { name, test } of PII_CHECKS) {
+      if (test(value)) return { field, kind: name };
     }
+  }
+  return null;
+}
+
+export function assertNoPii(itemId: string, state: DecisionState): void {
+  const hit = findPii(state);
+  if (hit) {
+    throw new EvalSafetyError(
+      `item ${itemId}: state.${hit.field} contains a ${hit.kind}-shaped string; redact it in buildState`
+    );
   }
 }
 

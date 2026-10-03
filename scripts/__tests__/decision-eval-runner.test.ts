@@ -12,7 +12,6 @@ import {
   runKey,
   specHash,
 } from '../decision-eval/runner';
-import { EvalSafetyError } from '../decision-eval/safety';
 import type {
   DecisionQuestion,
   ImageDecisionModel,
@@ -116,7 +115,7 @@ describe('runItems', () => {
       model,
       imageSource: imageSource(['gone']),
     });
-    expect(summary).toEqual({ ran: 1, skipped: 0, missing: 1, errors: 0 });
+    expect(summary).toEqual({ ran: 1, skipped: 0, missing: 1, errors: 0, refused: 0 });
     expect(predictions[0]).toEqual({ itemId: 'gone', runKey: 'k', status: 'missing' });
     expect(model.decideWithImages).toHaveBeenCalledTimes(1);
   });
@@ -151,12 +150,25 @@ describe('runItems', () => {
     });
   });
 
-  it('🔴 aborts the whole run on PII in state, before any call', async () => {
+  it('🔴 refuses an item whose state carries PII without sending it, and carries on with the rest', async () => {
     const model = imageModel();
-    await expect(
-      run({ items: [item('a', { state: { context: 'from jane@example.com' } })], model })
-    ).rejects.toThrow(EvalSafetyError);
-    expect(model.decideWithImages).not.toHaveBeenCalled();
+    const source = imageSource();
+    const { summary, predictions } = await run({
+      items: [item('a', { state: { context: 'from jane@example.com' } }), item('b')],
+      model,
+      imageSource: source,
+    });
+    expect(summary).toMatchObject({ ran: 1, refused: 1, errors: 0 });
+    expect(predictions[0]).toEqual({
+      itemId: 'a',
+      runKey: 'k',
+      status: 'refused',
+      error: 'state.context contains a email-shaped string',
+    });
+    expect(model.decideWithImages).toHaveBeenCalledTimes(1);
+    expect(source.fetch).toHaveBeenCalledTimes(1);
+    // A refused item stays refused: its manifest state cannot change without a rebuild.
+    expect(doneItemIds(predictions, 'k').has('a')).toBe(true);
   });
 
   it('🔴 refuses to send moderation images to a third-party arm', async () => {

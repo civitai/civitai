@@ -182,7 +182,7 @@ describe('decision-eval CLI', () => {
     const [key] = readdirSync(runs);
     const report = readFileSync(join(runs, key, 'report-dev.md'), 'utf8');
     expect(report).toContain('planted flipped labels: 20 planted on dev; 20 became errors');
-    expect(report).toContain('| model | 40 | 0 | 0 | 40 |');
+    expect(report).toContain('| model | 40 | 0 | 0 | 0 | 40 |');
     expect(report).toContain('baseline: incumbent');
     expect(report).toContain('## Slice: parity');
     expect(report).toMatch(/^- hardware: test$/m);

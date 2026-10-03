@@ -123,6 +123,14 @@ describe('assertNoPii', () => {
     ).not.toThrow();
   });
 
+  it('🔴 checks a long dotted run in linear time, so one prompt cannot stall a run', () => {
+    const started = performance.now();
+    for (const body of ['ab.'.repeat(50_000), 'a'.repeat(150_000), 'a-'.repeat(75_000)]) {
+      expect(() => assertNoPii('item-1', { body })).not.toThrow();
+    }
+    expect(performance.now() - started).toBeLessThan(2_000);
+  });
+
   it('passes redacted text', () => {
     expect(() =>
       assertNoPii('item-1', { body: 'My Buzz purchase of 5000 did not arrive [email removed].' })

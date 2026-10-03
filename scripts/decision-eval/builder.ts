@@ -224,7 +224,9 @@ export function buildTrainManifest(
  */
 export function mergeGold(existing: readonly GoldRow[], current: readonly GoldRow[]): GoldRow[] {
   const key = (r: GoldRow) =>
-    r.labeler === undefined ? `row:${JSON.stringify(r)}` : `labeler:${r.itemId}:${r.labeler}`;
+    r.labeler === undefined
+      ? `row:${JSON.stringify(r)}`
+      : `labeler:${JSON.stringify([r.itemId, r.labeler])}`;
   const merged = new Map<string, GoldRow>();
   for (const row of existing) merged.set(key(row), row);
   for (const row of current) merged.set(key(row), row);

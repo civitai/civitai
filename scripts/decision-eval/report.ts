@@ -32,9 +32,9 @@ const pct = (n: number | null) => (n === null ? 'n/a' : `${(n * 100).toFixed(1)}
 const dec = (n: number | null) => (n === null ? 'n/a' : n.toFixed(3));
 
 function sliceRow(name: string, s: SliceScore): string {
-  return `| ${name} | ${s.total} | ${s.missing} | ${s.errors} | ${s.answered} | ${pct(
-    s.abstentionRate
-  )} | ${pct(s.accuracy)} | ${dec(s.kappa)} | ${dec(s.ece)} |`;
+  return `| ${name} | ${s.total} | ${s.missing} | ${s.refused} | ${s.errors} | ${
+    s.answered
+  } | ${pct(s.abstentionRate)} | ${pct(s.accuracy)} | ${dec(s.kappa)} | ${dec(s.ece)} |`;
 }
 
 function fitCell(fit: ThresholdFit | undefined, at: ClassAtThreshold): string {
@@ -82,8 +82,8 @@ export function renderReport(r: ReportInput): string {
     '',
     '## Agreement',
     '',
-    '| run | items | missing | errors | answered | abstained | accuracy | kappa | ECE |',
-    '|---|---|---|---|---|---|---|---|---|',
+    '| run | items | missing | refused | errors | answered | abstained | accuracy | kappa | ECE |',
+    '|---|---|---|---|---|---|---|---|---|---|',
     sliceRow('model', r.model),
     ...Object.entries(r.baselines).map(([name, s]) => sliceRow(`baseline: ${name}`, s)),
     '',
@@ -112,8 +112,8 @@ export function renderReport(r: ReportInput): string {
       '',
       `## Slice: ${dim}`,
       '',
-      '| value | items | missing | errors | answered | abstained | accuracy | kappa | ECE |',
-      '|---|---|---|---|---|---|---|---|---|',
+      '| value | items | missing | refused | errors | answered | abstained | accuracy | kappa | ECE |',
+      '|---|---|---|---|---|---|---|---|---|---|',
       ...Object.entries(values).map(([v, s]) => sliceRow(v, s))
     );
   }

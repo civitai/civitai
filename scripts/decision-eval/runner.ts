@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 
-import { assertArmAllowed, assertNoPii, EvalSafetyError } from './safety';
+import { assertArmAllowed, EvalSafetyError, findPii } from './safety';
 import type {
   DataClass,
   DecisionQuestion,
@@ -80,7 +80,13 @@ export type RunOptions = {
   onPrediction(prediction: Prediction): void | Promise<void>;
 };
 
-export type RunSummary = { ran: number; skipped: number; missing: number; errors: number };
+export type RunSummary = {
+  ran: number;
+  skipped: number;
+  missing: number;
+  errors: number;
+  refused: number;
+};
 
 function isImageModel(model: TextDecisionModel): model is ImageDecisionModel {
   return model.hosting === 'self-hosted' && 'decideWithImages' in model;
@@ -93,13 +99,25 @@ function isImageModel(model: TextDecisionModel): model is ImageDecisionModel {
  */
 export async function runItems(opts: RunOptions): Promise<RunSummary> {
   assertArmAllowed(opts.dataClass, opts.model);
-  const summary: RunSummary = { ran: 0, skipped: 0, missing: 0, errors: 0 };
+  const summary: RunSummary = { ran: 0, skipped: 0, missing: 0, errors: 0, refused: 0 };
   for (const item of opts.items) {
     if (opts.done.has(item.itemId)) {
       summary.skipped++;
       continue;
     }
-    assertNoPii(item.itemId, item.state);
+    // Refused per item rather than halting the run: one false positive would
+    // otherwise stop every later daily run at the same item.
+    const pii = findPii(item.state);
+    if (pii) {
+      summary.refused++;
+      await opts.onPrediction({
+        itemId: item.itemId,
+        runKey: opts.runKey,
+        status: 'refused',
+        error: `state.${pii.field} contains a ${pii.kind}-shaped string`,
+      });
+      continue;
+    }
     const refs = item.imageRefs ?? [];
     if (refs.length > 0 && !isImageModel(opts.model)) {
       throw new EvalSafetyError(

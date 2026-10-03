@@ -103,7 +103,8 @@ export type FormatSpec = {
   mapAnswer(answers: readonly NormalizedAnswer[]): MappedAnswer;
 };
 
-export type PredictionStatus = 'ok' | 'missing' | 'error';
+/** `refused`: the state failed the PII check, so it was never sent. */
+export type PredictionStatus = 'ok' | 'missing' | 'error' | 'refused';
 
 export type Prediction = {
   itemId: string;

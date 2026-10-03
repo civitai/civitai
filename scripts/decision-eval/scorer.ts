@@ -20,6 +20,8 @@ export type SliceScore = {
   total: number;
   /** The image was gone before the model ran. Not a model outcome. */
   missing: number;
+  /** Refused by the PII check, never sent. */
+  refused: number;
   /** The model call failed. Not a wrong answer either. */
   errors: number;
   unlabelled: number;
@@ -74,12 +76,14 @@ function scoredOf(rows: readonly Joined[]): Scored[] {
 
 function sliceScore(rows: readonly Joined[]): SliceScore {
   let missing = 0;
+  let refused = 0;
   let errors = 0;
   let unlabelled = 0;
   let abstained = 0;
   let okLabelled = 0;
   for (const { prediction: p, gold } of rows) {
     if (p?.status === 'missing') missing++;
+    else if (p?.status === 'refused') refused++;
     else if (p?.status === 'error') errors++;
     else if (p?.status === 'ok') {
       if (gold === undefined) unlabelled++;
@@ -94,6 +98,7 @@ function sliceScore(rows: readonly Joined[]): SliceScore {
   return {
     total: rows.length,
     missing,
+    refused,
     errors,
     unlabelled,
     answered: scored.length,
