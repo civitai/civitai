@@ -70,11 +70,15 @@ type BlockConsentNoticeProps = {
  * `useAppsNavSections`, which genuinely do server-render.
  *
  * The reason that DOES apply is the one two paragraphs up — but it is TWO reasons, not
- * one, and an earlier revision flattened them. A CONTAINER-measuring hook
- * (`useContainerQuery`, `useContainerSmallerThan`, bare `useIsMobile()`, a
- * `useResizeObserver`) cannot answer before it has measured: it returns `false` at
- * `inlineSize === 0`, renders the wrong shape for a frame, and then restructures a bar
- * the viewer is already reading. A VIEWPORT query has a different problem — it answers
+ * one, and an earlier revision flattened them. Anything that MEASURES cannot answer
+ * before it has measured, so it renders the wrong shape for a frame and then
+ * restructures a bar the viewer is already reading. The three container-query hooks make
+ * that concrete by returning a definite wrong answer: `useContainerQuery` yields `false`
+ * at `inlineSize === 0`, `useContainerSmallerThan` wraps it, and bare `useIsMobile()`
+ * routes to it. ⚠️ A raw `useResizeObserver` has the same timing problem by a different
+ * route — it returns a REF and reports through a callback, with no boolean and no
+ * zero-branch of its own (the guard lives in each caller, e.g. `chromeGeometry.ts`), so
+ * do not describe it as returning `false`. A VIEWPORT query has a different problem — it answers
  * at first paint but answers the WRONG QUESTION, reporting "desktop" for the ~320px
  * model sidebar. ⚠️ Do not write "they all flash": this repo's own `useMediaQuery`
  * wrapper passes `getInitialValueInEffect: false`, so it reads `matchMedia`
@@ -87,6 +91,13 @@ type BlockConsentNoticeProps = {
  * `useIsMobile`, `useContainerQuery` and `useContainerSmallerThan`. The fourth is the one
  * worth spelling out, because that rule's own header says it is the easiest to omit and
  * is the one the `CollectionsLayout` precedent everybody copies actually uses.
+ *
+ * ⚠️ THAT IS A DIFFERENT FOUR FROM THE MECHANISMS LISTED ABOVE, AND THE OVERLAP IS NOT
+ * TOTAL: the rule bans `useMediaQuery` (which the paragraph above says does NOT flash in
+ * this repo's wrapper — it is banned for answering the wrong question) and does NOT ban
+ * `useResizeObserver` (which does have the timing problem). So the lint rule is not a
+ * complete guard against the flash; it is a guard against the four spellings people
+ * actually reach for.
  *
  * 🔴 THE SWAP IS THE REPO'S OWN TAILWIND CONTAINER-QUERY PLUGIN, NOT A HAND-WRITTEN
  * MODULE. `src/tailwind/container-queries.js` (wired at `tailwind.config.js`) provides
