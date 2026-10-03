@@ -37,7 +37,6 @@ import {
   getCrucibleTotalPrizePool,
   getCrucibleUrl,
   getFreeEntriesLabel,
-  getViewableEntryImageIds,
   isFreeCrucibleEntry,
   toCrucibleBuzzType,
   parsePrizePositions,
@@ -224,14 +223,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
   const loadedEntries = entriesData?.pages.flatMap((page) => page.items) ?? [];
   const userEntries = crucible.viewerEntries;
 
-  const openEntry = async ({ imageId }: { imageId: number }) => {
-    const gridOrder = getViewableEntryImageIds({
-      viewerEntries: userEntries,
-      loadedEntries,
-      viewerId: currentUser?.id,
-      isModerator: currentUser?.isModerator ?? false,
-      status: crucible.status,
-    });
+  const openEntry = async ({ imageId }: { imageId: number }, gridOrder: number[]) => {
     const at = Math.max(0, gridOrder.indexOf(imageId));
     const nearby = gridOrder.slice(Math.max(0, at - 100), at + 100);
 

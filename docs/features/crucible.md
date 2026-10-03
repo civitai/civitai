@@ -61,7 +61,7 @@ The discovery page's Prize Pool sort uses the same pool.
 
 ## Judging is blind while a crucible runs
 
-On the crucible page, other people's entries show no creator and don't open the image detail (creator, prompt, resources) until the crucible is completed or cancelled. Entrants still see their own entries in full, and moderators see everything. This only covers the crucible's own UI. An entry is still an ordinary published image, so anyone who finds it elsewhere on the site sees its creator.
+On the crucible page, other people's entries show no creator and don't open the image detail (creator, prompt, resources) until the crucible is completed or cancelled. Entrants still see their own entries in full, and moderators see everything.
 
 ## Rankings are hidden while a crucible runs
 

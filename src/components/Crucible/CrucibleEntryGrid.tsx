@@ -68,7 +68,8 @@ export type CrucibleEntryGridProps = {
   maxUserEntries?: number;
   className?: string;
   emptyMessage?: string;
-  onEntryClick?: (entry: CrucibleEntryData) => void;
+  /** `openableImageIds` is every entry the viewer may open, in grid order, for paging. */
+  onEntryClick?: (entry: CrucibleEntryData, openableImageIds: number[]) => void;
   /** Until the crucible ends, other people's entries show no creator and don't open. */
   status: CrucibleStatus;
   /** Moderators only, while the crucible runs. */
@@ -125,6 +126,9 @@ export function CrucibleEntryGrid({
   const displayEntries = separateViewer
     ? rankedEntries.filter((e) => e.userId !== userId)
     : rankedEntries;
+  const openableImageIds = [...userEntries, ...displayEntries]
+    .filter(canSeeDetails)
+    .map((entry) => entry.imageId);
   const displayCount =
     totalCount !== undefined
       ? totalCount - (separateViewer ? userEntries.length : 0)
@@ -154,7 +158,7 @@ export function CrucibleEntryGrid({
                 rank={entry.rank}
                 isUserEntry
                 showDetails={canSeeDetails(entry)}
-                onClick={() => onEntryClick?.(entry)}
+                onClick={() => onEntryClick?.(entry, openableImageIds)}
                 onRemove={onRemoveEntry && (() => onRemoveEntry(entry))}
               />
             ))}
@@ -185,7 +189,7 @@ export function CrucibleEntryGrid({
                 entry={entry}
                 rank={entry.rank}
                 showDetails={canSeeDetails(entry)}
-                onClick={() => onEntryClick?.(entry)}
+                onClick={() => onEntryClick?.(entry, openableImageIds)}
                 onRemove={onRemoveEntry && (() => onRemoveEntry(entry))}
               />
             ))}
@@ -224,8 +228,8 @@ function EntryCard({ entry, rank, isUserEntry, showDetails, onClick, onRemove }:
   return (
     <Box
       className={clsx(
-        'group overflow-hidden rounded-lg bg-[#25262b] transition-colors hover:bg-[#2c2e33]',
-        showDetails && 'cursor-pointer'
+        'group overflow-hidden rounded-lg bg-[#25262b] transition-colors',
+        showDetails && 'cursor-pointer hover:bg-[#2c2e33]'
       )}
       onClick={showDetails ? onClick : undefined}
     >
@@ -238,7 +242,10 @@ function EntryCard({ entry, rank, isUserEntry, showDetails, onClick, onRemove }:
             type={entry.image.type}
             metadata={entry.image.metadata}
             skip={getSkipValue({ type: entry.image.type, metadata: entry.image.metadata })}
-            className="transition-transform duration-300 group-hover:scale-105"
+            className={clsx(
+              'transition-transform duration-300',
+              showDetails && 'group-hover:scale-105'
+            )}
             style={{ width: '100%', height: '100%', objectFit: 'cover' }}
             wrapperProps={{ className: 'size-full' }}
             width={320}

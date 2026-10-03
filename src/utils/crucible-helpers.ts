@@ -226,30 +226,6 @@ export function canSeeCrucibleEntryDetails({
   return isOwnEntry || isModerator || crucibleRankingsAreFinal(status);
 }
 
-/**
- * Image ids the entry detail view may page through, in grid order: the viewer's own first, then
- * everyone else's as loaded. Prev/next must not reach an entry the grid won't open.
- */
-export function getViewableEntryImageIds({
-  viewerEntries,
-  loadedEntries,
-  viewerId,
-  isModerator,
-  status,
-}: {
-  viewerEntries: { userId: number; imageId: number }[];
-  loadedEntries: { userId: number; imageId: number }[];
-  viewerId?: number;
-  isModerator: boolean;
-  status: CrucibleStatus;
-}) {
-  return [...viewerEntries, ...loadedEntries.filter((entry) => entry.userId !== viewerId)]
-    .filter((entry) =>
-      canSeeCrucibleEntryDetails({ status, isModerator, isOwnEntry: entry.userId === viewerId })
-    )
-    .map((entry) => entry.imageId);
-}
-
 export type PrizePosition = {
   position: number;
   percentage: number;

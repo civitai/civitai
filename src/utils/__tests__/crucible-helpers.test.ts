@@ -3,7 +3,6 @@ import { CrucibleIngestionStatus, CrucibleStatus, MediaType } from '~/shared/uti
 import {
   baseModelMakesMediaType,
   canSeeCrucibleEntryDetails,
-  getViewableEntryImageIds,
   getCrucibleCountdown,
   getCrucibleManageActions,
   getCrucibleMinVotes,
@@ -494,33 +493,5 @@ describe('canSeeCrucibleEntryDetails', () => {
         isOwnEntry: false,
       })
     ).toBe(true);
-  });
-});
-
-describe('getViewableEntryImageIds', () => {
-  const own = { userId: 7, imageId: 70 };
-  const loaded = [
-    { userId: 8, imageId: 80 },
-    { userId: 7, imageId: 70 },
-    { userId: 9, imageId: 90 },
-  ];
-  const args = { viewerEntries: [own], loadedEntries: loaded, viewerId: 7 };
-
-  it('pages an entrant through only their own entries while running', () => {
-    expect(
-      getViewableEntryImageIds({ ...args, isModerator: false, status: CrucibleStatus.Active })
-    ).toEqual([70]);
-  });
-
-  it('pages through every entry, own first, once completed', () => {
-    expect(
-      getViewableEntryImageIds({ ...args, isModerator: false, status: CrucibleStatus.Completed })
-    ).toEqual([70, 80, 90]);
-  });
-
-  it('pages a moderator through every entry while running', () => {
-    expect(
-      getViewableEntryImageIds({ ...args, isModerator: true, status: CrucibleStatus.Active })
-    ).toEqual([70, 80, 90]);
   });
 });
