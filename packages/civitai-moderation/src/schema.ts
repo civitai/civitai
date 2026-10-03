@@ -194,7 +194,7 @@ export type AbuseReportInput = z.infer<typeof abuseReportInput>;
 // relabel.buildBatch — one daily batch of the removal-label relabel set. Like abuseReport, the caller
 // is a scheduled job, so there is no acting moderator.
 export const MAX_RELABEL_BATCH_ITEMS = 500;
-/** One less than the blocked-image retention, which this package cannot import. */
+/** One less than the blocked-image retention, which this zod-only package does not import. */
 export const MAX_RELABEL_WINDOW_DAYS = 6;
 /** The daily batch's per-stratum caps and removal window, shared by the job and the CLI. */
 export const RELABEL_DAILY_CAPS = { removed: 100, notRemoved: 40 };

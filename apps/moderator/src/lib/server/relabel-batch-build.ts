@@ -51,12 +51,16 @@ export type RelabelBuildSummary = {
 
 export const MAX_RELABEL_DAYS = BLOCKED_IMAGE_RETENTION_DAYS - 1;
 
-/**
- * Below the size where the planner switches the exclusion's `Image` join to a full scan, measured
- * between 1,000 and 1,365 ids on prod.
- */
+/** Keeps each exclusion statement small enough to finish well inside its timeout. */
 export const CSAM_EXCLUSION_CHUNK = 250;
 const CSAM_EXCLUSION_TIMEOUT_MS = 60_000;
+/**
+ * Across all chunks. With one chunk's timeout on top it stays under the main app's five-minute
+ * client timeout, so a slow day is reported as a skip, not as a failure of a run that later wrote.
+ */
+export const CSAM_EXCLUSION_BUDGET_MS = 3 * 60_000;
+/** Bounds the scanned ids, which reach Postgres as one bind parameter each (limit 65,535). */
+export const MAX_BAND_EDGES = 4;
 
 /** `RELABEL_NOT_REMOVED_BANDS` / `--bands`: comma-separated edges in (0, 1). Empty is `null`. */
 export function parseBands(raw: string | undefined): number[] | null {
@@ -67,6 +71,7 @@ export function parseBands(raw: string | undefined): number[] | null {
   if (!parts.length) return null;
   const bands = parts.map(Number).sort((a, b) => a - b);
   if (bands.some((b) => !(b > 0 && b < 1))) throw new Error('bands must be scores in (0, 1)');
+  if (bands.length > MAX_BAND_EDGES) throw new Error(`bands allow at most ${MAX_BAND_EDGES} edges`);
   return bands;
 }
 
@@ -145,24 +150,37 @@ async function fetchMinorScores(
   );
 }
 
-const QUERY_CANCELED = '57014';
+// 57014 is also what a manual `pg_cancel_backend` or a client abort raises; only the timeout's
+// message means the exclusion was too slow, and anything else must fail the run loudly.
+const isStatementTimeout = (e: unknown) =>
+  (e as { code?: string }).code === '57014' &&
+  ((e as { message?: string }).message ?? '').includes('statement timeout');
 
-/** `null` when a chunk hit the statement timeout: the caller must then write nothing. */
-async function csamExcluded(replica: Kysely<MainDB>, ids: number[]): Promise<Set<number> | null> {
+/** `null` when the exclusion ran out of time: the caller must then write nothing. */
+async function csamExcluded(
+  replica: Kysely<MainDB>,
+  ids: number[],
+  now: () => number
+): Promise<Set<number> | null> {
   const excluded = new Set<number>();
+  const deadline = now() + CSAM_EXCLUSION_BUDGET_MS;
   try {
     for (let i = 0; i < ids.length; i += CSAM_EXCLUSION_CHUNK) {
+      if (now() > deadline) return null;
       const chunk = ids.slice(i, i + CSAM_EXCLUSION_CHUNK);
       // In a transaction so the timeout applies to this query only, and cancels it server-side
       // rather than leaving it running after the caller has given up.
-      const rows = await replica.transaction().execute(async (trx) => {
-        await sql.raw(`SET LOCAL statement_timeout = ${CSAM_EXCLUSION_TIMEOUT_MS}`).execute(trx);
-        return (await csamExcludedImageIds(chunk).execute(trx)).rows;
-      });
+      const rows = await replica
+        .transaction()
+        .setAccessMode('read only')
+        .execute(async (trx) => {
+          await sql.raw(`SET LOCAL statement_timeout = ${CSAM_EXCLUSION_TIMEOUT_MS}`).execute(trx);
+          return (await csamExcludedImageIds(chunk).execute(trx)).rows;
+        });
       for (const r of rows) excluded.add(r.id);
     }
   } catch (e) {
-    if ((e as { code?: string }).code === QUERY_CANCELED) return null;
+    if (isStatementTimeout(e)) return null;
     throw e;
   }
   return excluded;
@@ -187,7 +205,12 @@ const countBy = (cs: Candidate[]) => ({
  */
 export async function buildRelabelBatch(
   opts: RelabelBuildOptions,
-  deps: { clickhouse: ClickhouseQuery; replica: Kysely<MainDB>; moderator: Kysely<ModeratorDB> }
+  deps: {
+    clickhouse: ClickhouseQuery;
+    replica: Kysely<MainDB>;
+    moderator: Kysely<ModeratorDB>;
+    now?: () => number;
+  }
 ): Promise<RelabelBuildSummary> {
   if (!(opts.days >= 1 && opts.days <= MAX_RELABEL_DAYS))
     throw new Error(`days must be 1-${MAX_RELABEL_DAYS}: older removals are purged`);
@@ -255,7 +278,8 @@ export async function buildRelabelBatch(
   const notRemovedSkipped = opts.bands ? null : opts.bandsSkipped ?? 'bands unset';
   const excluded = await csamExcluded(
     replica,
-    candidates.map((c) => c.imageId)
+    candidates.map((c) => c.imageId),
+    deps.now ?? Date.now
   );
   if (!excluded)
     return {

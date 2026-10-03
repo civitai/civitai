@@ -10,6 +10,10 @@ import { createJob } from './job';
 /** The UTC day names the batch, so a second run that day only fills what the first left short. */
 export const relabelBatchName = (now: Date) => now.toISOString().slice(0, 10);
 
+/** The `/api/mod/[action]` envelope around the spoke's summary. */
+const skippedReason = (response: unknown) =>
+  (response as { result?: { skipped?: string | null } } | null)?.result?.skipped ?? null;
+
 export async function runRelabelBuildBatch({
   now,
   send,
@@ -26,7 +30,8 @@ export async function runRelabelBuildBatch({
     days: RELABEL_WINDOW_DAYS,
     dryRun: false,
   });
-  log({ batch, result });
+  // A skipped day writes nothing; the spoke logs why. Error here too, so it is not a green run.
+  log({ type: skippedReason(result) ? 'error' : 'info', batch, result });
   return { batch, result };
 }
 
@@ -46,7 +51,7 @@ export const relabelBuildBatchJob = createJob(
       now: new Date(),
       send: (input) => moderatorApp.relabelBuildBatch(input),
       log: (data) =>
-        void logToAxiom({ type: 'info', name: 'relabel-build-batch', ...data }, 'moderation').catch(
+        void logToAxiom({ name: 'relabel-build-batch-sent', ...data }, 'moderation').catch(
           () => undefined
         ),
     }),

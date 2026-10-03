@@ -7,7 +7,9 @@ import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DB as MainDB } from '@civitai/db-schema/kysely';
 import type { DB as ModeratorDB } from '../moderator-db/types';
 import {
+  CSAM_EXCLUSION_BUDGET_MS,
   CSAM_EXCLUSION_CHUNK,
+  MAX_BAND_EDGES,
   buildRelabelBatch,
   parseBands,
   relabelBuildBatchAction,
@@ -117,6 +119,9 @@ const clickhouse: ClickhouseQuery = async <T extends object>(query: string) => {
 };
 
 const deps = () => ({ clickhouse, replica, moderator });
+
+const statementTimeout = () =>
+  Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
 
 const build = (over: Partial<RelabelBuildOptions> = {}) =>
   buildRelabelBatch(
@@ -342,6 +347,16 @@ describe('buildRelabelBatch', () => {
     expect((await build({ bands: null })).inserted).toBe(3);
   });
 
+  // A model-only row is what the model arms run on; a labeler build that samples it must hand it
+  // to labelers, or model-only images never reach a human.
+  it('promotes a sampled model-only row to labelers', async () => {
+    await seedRemovals(1);
+    await seedItem(1, '2026-10-01', false);
+    const summary = await build({ bands: null });
+    expect(summary.promoted).toBe(1);
+    expect(await item(1)).toMatchObject({ relabel: true, batch: '2026-10-03' });
+  });
+
   it('never re-picks an image labelers already have from another batch', async () => {
     await seedRemovals(4);
     await seedItem(1, '2026-10-01', true);
@@ -352,21 +367,30 @@ describe('buildRelabelBatch', () => {
   });
 
   // On a pooled connection outside the transaction, `pg_advisory_xact_lock` is released when its
-  // own statement ends and serialises nothing. PGlite cannot show two runs racing; this pins that
-  // the lock is taken in the transaction that counts and writes the batch.
-  it('takes the per-batch lock in the transaction that counts the batch', async () => {
+  // own statement ends and serialises nothing, and writes after the commit run unlocked. PGlite
+  // cannot show two runs racing; this pins that the lock, the count and every write share the one
+  // transaction, in that order, before it commits.
+  it('locks, counts and writes the batch in one transaction', async () => {
     await seedRemovals(4);
     await build({ bands: null });
-    const lock = moderatorSql.find((q) => q.sql.includes('pg_advisory_xact_lock'));
-    const count = moderatorSql.find(
-      (q) => q.sql.includes('count(*)') && q.sql.includes('relabel_item')
-    );
-    const begin = moderatorSql.find((q) => q.sql === 'begin');
-    expect(begin).toBeDefined();
-    expect(lock?.conn).toBe(begin?.conn);
-    expect(count?.conn).toBe(begin?.conn);
-    expect(moderatorSql.indexOf(lock!)).toBeLessThan(moderatorSql.indexOf(count!));
-    expect(lock?.params).toEqual(['relabel-batch:2026-10-03']);
+    const at = (pred: (q: Logged) => boolean) => moderatorSql.findIndex(pred);
+    const begin = at((q) => q.sql === 'begin');
+    const conn = moderatorSql[begin]?.conn;
+    const lock = at((q) => q.sql.includes('pg_advisory_xact_lock'));
+    const count = at((q) => q.sql.includes('count(*)') && q.sql.includes('relabel_item'));
+    const commit = at((q) => q.sql === 'commit' && q.conn === conn);
+    const writes = moderatorSql.filter((q) => q.sql.includes('INSERT INTO relabel_item'));
+
+    expect(begin).toBeGreaterThanOrEqual(0);
+    expect(moderatorSql[lock].conn).toBe(conn);
+    expect(moderatorSql[count].conn).toBe(conn);
+    expect(lock).toBeLessThan(count);
+    expect(moderatorSql[lock].params).toEqual(['relabel-batch:2026-10-03']);
+    expect(writes).toHaveLength(3);
+    for (const w of writes) {
+      expect(w.conn).toBe(conn);
+      expect(moderatorSql.indexOf(w)).toBeLessThan(commit);
+    }
   });
 
   it('never queries the scanner pool or samples not-removed items without bands', async () => {
@@ -417,31 +441,53 @@ describe('buildRelabelBatch', () => {
     expect(await itemIds()).toEqual([2]);
   });
 
-  // A timeout set outside the exclusion's transaction would bound nothing, and an aborted caller
-  // would leave the query running on the replica.
-  it('bounds each exclusion query with a timeout in its own transaction', async () => {
-    await seedRemovals(2);
-    await build({ bands: null });
-    const timeout = replicaSql.find((q) => q.sql.startsWith('SET LOCAL statement_timeout'));
-    const exclusion = replicaSql.find((q) => q.sql.includes('"CsamReport"'));
-    expect(timeout).toBeDefined();
-    expect(exclusion?.conn).toBe(timeout?.conn);
-    expect(replicaSql.some((q) => q.sql === 'begin' && q.conn === timeout?.conn)).toBe(true);
+  // A timeout set outside the exclusion's transaction, or on the first chunk only, would bound
+  // nothing, and an aborted caller would leave the query running on the replica.
+  it('bounds every exclusion chunk with its own 60s timeout, in its own transaction', async () => {
+    await seedRemovals(CSAM_EXCLUSION_CHUNK + 10);
+    await build({ removed: 1, bands: null });
+    const exclusions = replicaSql.filter((q) => q.sql.includes('"CsamReport"'));
+    expect(exclusions).toHaveLength(2);
+    for (const e of exclusions) {
+      const onConn = replicaSql.filter((q) => q.conn === e.conn).map((q) => q.sql);
+      expect(onConn.slice(0, 3)).toEqual(['begin', 'SET LOCAL statement_timeout = 60000', e.sql]);
+    }
   });
 
   // Decision: a run whose exclusion cannot finish writes nothing at all, never a batch built
   // without it, and reports the skip rather than failing.
   it('writes nothing and reports a skip when the exclusion times out', async () => {
     await seedRemovals(3);
-    replicaFailOn = (q) =>
-      q.includes('"CsamReport"')
-        ? Object.assign(new Error('canceling statement due to statement timeout'), {
-            code: '57014',
-          })
-        : null;
+    replicaFailOn = (q) => (q.includes('"CsamReport"') ? statementTimeout() : null);
     const summary = await build({ bands: null });
     expect(summary.skipped).toBe('csam exclusion timed out');
     expect(summary.inserted).toBe(0);
+    expect(await itemIds()).toEqual([]);
+  });
+
+  // A slow day must end as a skip before the main app's client gives up on it, not run on and be
+  // recorded as a failure of a run that later wrote.
+  it('writes nothing and reports a skip when the chunks together run out of time', async () => {
+    await seedRemovals(CSAM_EXCLUSION_CHUNK + 10);
+    let t = 0;
+    const summary = await buildRelabelBatch(
+      { batch: '2026-10-03', removed: 3, notRemoved: 0, days: 5, bands: null, dryRun: false },
+      { ...deps(), now: () => (t += CSAM_EXCLUSION_BUDGET_MS) }
+    );
+    expect(summary.skipped).toBe('csam exclusion timed out');
+    expect(replicaSql.filter((q) => q.sql.includes('"CsamReport"'))).toHaveLength(1);
+    expect(await itemIds()).toEqual([]);
+  });
+
+  // 57014 is also a manual pg_cancel_backend or a client abort. Those are not a slow exclusion,
+  // and must not quietly skip the day.
+  it('fails on a cancel that is not the statement timeout', async () => {
+    await seedRemovals(3);
+    replicaFailOn = (q) =>
+      q.includes('"CsamReport"')
+        ? Object.assign(new Error('canceling statement due to user request'), { code: '57014' })
+        : null;
+    await expect(build({ bands: null })).rejects.toThrow('user request');
     expect(await itemIds()).toEqual([]);
   });
 
@@ -511,8 +557,7 @@ describe('relabelBuildBatchAction', () => {
 
   it('logs a skipped run as an error', async () => {
     await seedRemovals(2);
-    replicaFailOn = (q) =>
-      q.includes('"CsamReport"') ? Object.assign(new Error('timeout'), { code: '57014' }) : null;
+    replicaFailOn = (q) => (q.includes('"CsamReport"') ? statementTimeout() : null);
     const { logged } = await run(undefined);
     expect(logged).toEqual([
       expect.objectContaining({ type: 'error', skipped: 'csam exclusion timed out' }),
@@ -533,5 +578,15 @@ describe('parseBands', () => {
   it('refuses an edge outside (0, 1)', () => {
     expect(() => parseBands('0.2,1')).toThrow(/bands/);
     expect(() => parseBands('x')).toThrow(/bands/);
+  });
+
+  // Each band multiplies the scanned ids, which reach Postgres one bind parameter each; past the
+  // limit the whole day's run fails, removed half included.
+  it('refuses more edges than the scanned-id budget allows', () => {
+    const edges = (n: number) =>
+      Array.from({ length: n }, (_, i) => ((i + 1) / (n + 1)).toFixed(3)).join(',');
+    expect(parseBands(edges(MAX_BAND_EDGES))).toHaveLength(MAX_BAND_EDGES);
+    expect(() => parseBands(edges(MAX_BAND_EDGES + 1))).toThrow(/at most/);
+    expect(500 * 20 * (MAX_BAND_EDGES + 1)).toBeLessThan(65_535 - 5_000);
   });
 });

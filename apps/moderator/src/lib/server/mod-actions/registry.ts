@@ -45,7 +45,7 @@ const imageModerate: ModAction<z.infer<typeof imageModerateInput>> = {
 };
 
 /**
- * Backs an automated detector reporting one run. Unlike every other entry here there is NO acting
+ * Backs an automated detector reporting one run. Like `relabelBuildBatch`, there is NO acting
  * moderator: the caller is a scheduled job holding the shared token, and `WebhookEndpoint` never
  * populates `locals.user`, so there is no identity to assert and none is asked for. The `userId` on
  * each finding is the account the finding is ABOUT.

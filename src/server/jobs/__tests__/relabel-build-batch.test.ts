@@ -1,6 +1,5 @@
 import { readFileSync } from 'fs';
-import path from 'path';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   MAX_RELABEL_BATCH_ITEMS,
   MAX_RELABEL_WINDOW_DAYS,
@@ -11,35 +10,22 @@ import {
 } from '@civitai/moderation';
 import { BLOCKED_IMAGE_RETENTION_DAYS } from '@civitai/shared/job-queue';
 import { relabelBuildBatchJob, runRelabelBuildBatch } from '~/server/jobs/relabel-build-batch';
+import { RUN_JOBS_ROUTE, jobsArrayEntries } from './run-jobs-array';
 
-const RUN_JOBS_ROUTE = path.resolve(
-  __dirname,
-  '../../../pages/api/webhooks/run-jobs/[[...run]].ts'
-);
+const done = { ok: true, result: { inserted: 3, skipped: null } };
 
-async function run(now: Date) {
-  const send = vi.fn<(input: RelabelBuildBatchInput) => Promise<unknown>>(async () => ({
-    inserted: 3,
-  }));
+async function run(now: Date, response: unknown = done) {
+  const send = vi.fn<(input: RelabelBuildBatchInput) => Promise<unknown>>(async () => response);
   const log = vi.fn();
   await runRelabelBuildBatch({ now, send, log });
   expect(send).toHaveBeenCalledTimes(1);
   return { input: send.mock.calls[0][0], log };
 }
 
-/** The `jobs` array the route dispatches on, as source lines, comments dropped. */
-function jobsArrayEntries(): string[] {
-  const source = readFileSync(RUN_JOBS_ROUTE, 'utf8');
-  const start = source.indexOf('export const jobs: Job[] = [');
-  if (start === -1) throw new Error(`no \`jobs\` array in ${RUN_JOBS_ROUTE}`);
-  const end = source.indexOf('\n];', start);
-  if (end === -1) throw new Error(`unterminated \`jobs\` array in ${RUN_JOBS_ROUTE}`);
-  return source
-    .slice(start, end)
-    .split('\n')
-    .map((line) => line.trim().replace(/,$/, ''))
-    .filter((line) => line.length > 0 && !line.startsWith('//'));
-}
+const originalTz = process.env.TZ;
+afterEach(() => {
+  process.env.TZ = originalTz;
+});
 
 describe('relabel-build-batch job', () => {
   it('builds for real, under the UTC day, at the daily caps', async () => {
@@ -55,15 +41,25 @@ describe('relabel-build-batch job', () => {
   });
 
   // The batch name is what makes a same-day re-run add nothing, so two fires on one UTC day must
-  // name the same batch whatever the server's zone.
-  it('names one batch for every fire within a UTC day', async () => {
-    expect((await run(new Date('2026-10-03T17:00:00-07:00'))).input.batch).toBe('2026-10-04');
+  // name the same batch whatever the server's zone. Run in a zone where local and UTC dates differ.
+  it('names one batch for every fire within a UTC day, in any server zone', async () => {
+    process.env.TZ = 'America/Los_Angeles';
+    expect(new Date('2026-10-04T00:30:00Z').getDate()).toBe(3);
+    expect((await run(new Date('2026-10-04T00:30:00Z'))).input.batch).toBe('2026-10-04');
     expect((await run(new Date('2026-10-04T23:59:59Z'))).input.batch).toBe('2026-10-04');
   });
 
   it("logs the spoke's counts", async () => {
     const { log } = await run(new Date('2026-10-04T00:30:00Z'));
-    expect(log).toHaveBeenCalledWith({ batch: '2026-10-04', result: { inserted: 3 } });
+    expect(log).toHaveBeenCalledWith({ type: 'info', batch: '2026-10-04', result: done });
+  });
+
+  // A skipped day loses the removals that age out before the next run. It must not read as a
+  // green run on this side, where the job's own logs are.
+  it('logs a day the spoke skipped as an error', async () => {
+    const skipped = { ok: true, result: { inserted: 0, skipped: 'csam exclusion timed out' } };
+    const { log } = await run(new Date('2026-10-04T00:30:00Z'), skipped);
+    expect(log).toHaveBeenCalledWith({ type: 'error', batch: '2026-10-04', result: skipped });
   });
 
   it('draws removals only from images not yet purged, at caps the spoke accepts', () => {

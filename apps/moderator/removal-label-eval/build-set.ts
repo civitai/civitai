@@ -38,7 +38,7 @@ async function main() {
   if (!batch) throw new Error('--batch is required');
 
   // The same client the spoke uses, so a dry run here reads ClickHouse the way the job does.
-  const ch = createClickhouseClient();
+  const ch = createClickhouseClient({ host: requireEnv('CLICKHOUSE_HOST') });
   // The shared factory, not a bare pool: it registers the parsers that read `timestamp` columns
   // (Appeal.resolvedAt) as UTC rather than the machine's local time.
   const { db: replica } = createKyselyClients<MainDB>({
