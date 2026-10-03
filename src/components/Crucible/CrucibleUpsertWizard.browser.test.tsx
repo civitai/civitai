@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import type * as CurrentUserModule from '~/hooks/useCurrentUser';
@@ -14,17 +14,11 @@ import {
 } from '~/components/Crucible/crucible-create-form';
 import { IsClientProvider } from '~/providers/IsClientProvider';
 
-/**
- * Free entries are for official contests: the server refuses them from anyone but a moderator,
- * so the wizard offers the field to moderators only. Everything that needs the network is stubbed;
- * the form and the step logic are real.
- */
-
-const mocks = vi.hoisted(() => ({ isModerator: false }));
+/** Everything that needs the network is stubbed; the form and the step logic are real. */
 
 vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
   ...(await importOriginal<typeof CurrentUserModule>()),
-  useCurrentUser: () => ({ id: 4, isModerator: mocks.isModerator }),
+  useCurrentUser: () => ({ id: 4, isModerator: false }),
 }));
 
 vi.mock('~/components/Buzz/useAvailableBuzz', async (importOriginal) => ({
@@ -83,33 +77,23 @@ function Harness({ values }: { values: CrucibleCreateFormValues }) {
   );
 }
 
-const freeEntriesInput = () =>
-  [...document.querySelectorAll('label')].find((label) =>
+const freeEntriesInput = () => {
+  const label = [...document.querySelectorAll('label')].find((label) =>
     label.textContent?.includes('Free Entries per User')
   );
-
-beforeEach(() => {
-  mocks.isModerator = false;
-});
+  return label ? (document.getElementById(label.htmlFor) as HTMLInputElement | null) : undefined;
+};
 
 describe('CrucibleUpsertWizard — free entries', () => {
-  test('offers free entries to a moderator', async () => {
-    mocks.isModerator = true;
+  // Open to every host since 2026-10-02 (Justin): this used to be shown to moderators only.
+  test('offers free entries to a host who is not a moderator', async () => {
     renderWithProviders(<Harness values={valuesOnStep(2)} />);
 
     await vi.waitFor(() => expect(freeEntriesInput()).toBeTruthy());
-  });
-
-  test('does not offer them to anyone else', async () => {
-    renderWithProviders(<Harness values={valuesOnStep(2)} />);
-
-    // Rendered alongside the field it would sit under, so its absence is not a step still loading.
-    await vi.waitFor(() => expect(document.body.textContent).toContain('Entry Limit per User'));
-    expect(freeEntriesInput()).toBeUndefined();
+    expect(freeEntriesInput()!.disabled).toBe(false);
   });
 
   test('flags more free entries than the entry limit', async () => {
-    mocks.isModerator = true;
     renderWithProviders(
       <Harness values={valuesOnStep(2, { entryLimit: 1, freeEntriesPerUser: 2 })} />
     );
@@ -122,7 +106,6 @@ describe('CrucibleUpsertWizard — free entries', () => {
   });
 
   test('shows them on the review step', async () => {
-    mocks.isModerator = true;
     renderWithProviders(
       <Harness values={valuesOnStep(4, { entryLimit: 3, freeEntriesPerUser: 1 })} />
     );
