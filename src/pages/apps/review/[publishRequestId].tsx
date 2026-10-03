@@ -2,6 +2,7 @@ import { Button, Center, Group, Loader, Stack, Title } from '@mantine/core';
 import { IconArrowLeft } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
+import { useMemo } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import {
@@ -101,16 +102,33 @@ export default function ReviewDetailPage({ publishRequestId }: ReviewDetailPageP
     { enabled: !!features?.appBlocks && !!features?.appReviewPage, retry: false }
   );
 
+  /**
+   * 🔴 MEMOISED ON `query.data`, so the body's one prop is REFERENTIALLY STABLE across a page
+   * re-render. `ReviewDetailTabsView` is `memo`-wrapped specifically to keep the view's
+   * 60-second relative-time tick from re-rendering every mounted panel (including every open
+   * diff table's full row set) — and a `selection` rebuilt on every render would hand that
+   * memo a new object each time and buy nothing. The object literal was exactly that.
+   *
+   * The tick itself lives one level DOWN, in `ReviewDetailView`, so it never re-runs this
+   * component; this covers the other re-render sources — a react-query refetch that returns
+   * the same data, a flag resolving, a parent update.
+   *
+   * ⚠️ `useMemo` must sit ABOVE the early return below, or the hook order changes between
+   * renders the moment the flags resolve.
+   */
+  const selection = useMemo(
+    () =>
+      query.data != null
+        ? {
+            request: query.data.request as unknown as AnyRequest,
+            mode: query.data.mode as OnsiteReviewMode,
+          }
+        : null,
+    [query.data]
+  );
+
   // Belt-and-suspenders client gate (the SSR resolver already fail-closed).
   if (!features?.appBlocks || !features?.appReviewPage) return <NotFound />;
-
-  const selection =
-    query.data != null
-      ? {
-          request: query.data.request as unknown as AnyRequest,
-          mode: query.data.mode as OnsiteReviewMode,
-        }
-      : null;
 
   return (
     <>
