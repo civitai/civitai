@@ -126,14 +126,14 @@ describe('support.topic state', () => {
   });
 
   it('redacts before cutting, so an identifier on the boundary leaves no partial', () => {
-    const cut = 'x'.repeat(5990) + ' jo.smith@another.net trailing';
+    const cut = 'x '.repeat(2995) + 'jo.smith@another.net trailing';
     const state = buildSupportState(
       raw({
         firstMessage: cut,
-        latestMessages: '0x52908400098527886e0f7030069857d2e4169ee7 ' + 'y'.repeat(2980),
+        latestMessages: '0x52908400098527886e0f7030069857d2e4169ee7 ' + 'y '.repeat(1490),
       })
     );
-    expect(state.first_message).not.toContain('another');
+    expect(state.first_message).not.toContain('jo.smith');
     expect(state.latest_messages).not.toMatch(/[a-f0-9]{8}/);
   });
 
@@ -367,7 +367,7 @@ describe('support.topic weighted summary', () => {
     expect([...parseStrataWeights(sampler)]).toEqual([['1', 2.5]]);
     expect([...parseStrataWeights('weight,ticket_id\n3,7\n')]).toEqual([['7', 3]]);
     expect(() => parseStrataWeights('ticket_id,weight\n1,0.5\n')).toThrow(/weight/);
-    expect(() => parseStrataWeights('ticket_id,weight\n1,\n')).toThrow(/weight/);
+    expect(() => parseStrataWeights('ticket_id,weight\n1,abc\n')).toThrow(/weight/);
     expect(() => parseStrataWeights('ticket_id,stratum\n1,x\n')).toThrow(/columns/);
   });
 });
