@@ -112,12 +112,11 @@ const prizePositionsSchema = z
   );
 
 export const createCrucibleInputBaseSchema = z.object({
-  buzzType: z.enum(['green', 'yellow']).optional(),
   name: z.string().trim().nonempty().max(CRUCIBLE_NAME_MAX_LENGTH),
   description: z.string().nonempty().max(CRUCIBLE_DESCRIPTION_MAX_LENGTH),
   coverImage: crucibleImageSchema,
   heroImage: crucibleImageSchema.optional(),
-  nsfwLevel: z.number(),
+  nsfwLevel: z.number().int().positive(),
   contentType: z.enum(CRUCIBLE_CONTENT_TYPES).default(MediaType.image),
   entryFee: z.number().int().min(CRUCIBLE_MIN_ENTRY_FEE).max(CRUCIBLE_MAX_ENTRY_FEE),
   seededPrizePool: z.number().int().min(0).max(CRUCIBLE_MAX_SEEDED_PRIZE_POOL).default(0),

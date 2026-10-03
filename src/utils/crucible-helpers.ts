@@ -3,7 +3,9 @@ import { CrucibleIngestionStatus, CrucibleStatus } from '~/shared/utils/prisma/e
 import { getBaseModelConfig } from '~/shared/constants/basemodel.constants';
 import { crucibleRankingsAreFinal } from '~/shared/constants/crucible.constants';
 import {
+  allBrowsingLevelsFlag,
   browsingLevelLabels,
+  getIsSafeBrowsingLevel,
   parseBitwiseBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
 import { slugit } from '~/utils/string-helpers';
@@ -19,6 +21,26 @@ export function getCrucibleSlug(name: string) {
 
 export const toCrucibleBuzzType = (value: string): 'green' | 'yellow' =>
   value === 'green' ? 'green' : 'yellow';
+
+/** Every prize is paid in this until winners can choose their currency. */
+export const CRUCIBLE_PRIZE_BUZZ_TYPE = 'yellow' as const;
+
+/** An entrant pays in the currency of the site they enter on. */
+export const getCrucibleEntryBuzzType = (isGreen: boolean): 'green' | 'yellow' =>
+  isGreen ? 'green' : 'yellow';
+
+/** The allowed-level values a crucible listed on the green site may have. */
+export const CRUCIBLE_SFW_LEVELS = Array.from(
+  { length: allBrowsingLevelsFlag },
+  (_, i) => i + 1
+).filter(getIsSafeBrowsingLevel);
+
+/**
+ * The green site lists only crucibles that accept nothing above PG-13 and whose text is SFW. Built on
+ * the list the feed queries match, so the gates and the feed cannot disagree.
+ */
+export const isCrucibleSfw = ({ nsfwLevel, textNsfw }: { nsfwLevel: number; textNsfw: boolean }) =>
+  CRUCIBLE_SFW_LEVELS.includes(nsfwLevel) && !textNsfw;
 
 export const getCrucibleUrl = (id: number, name: string) =>
   `/crucibles/${id}/${getCrucibleSlug(name)}`;

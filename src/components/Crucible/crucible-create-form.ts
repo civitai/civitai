@@ -48,7 +48,6 @@ export const crucibleCreateFormSchema = z.object({
   duration: z.number(),
   startAt: z.date().nullish(),
   nsfwLevel: z.number(),
-  buzzType: z.enum(['green', 'yellow']).optional(),
   contentType: z.enum(CRUCIBLE_CONTENT_TYPES),
   entryFee: z
     .number({ error: 'Entry fee is required' })
@@ -115,7 +114,6 @@ export const crucibleCreateDraftSchema = crucibleCreateFormSchema.extend({
     .refine((startAt) => startAt > new Date())
     .nullish()
     .catch(null),
-  buzzType: shape.buzzType.catch(undefined),
   entryFee: shape.entryFee.catch(defaults.entryFee),
   entryLimit: shape.entryLimit.catch(defaults.entryLimit),
   freeEntriesPerUser: shape.freeEntriesPerUser.catch(defaults.freeEntriesPerUser),

@@ -533,10 +533,22 @@ describe('getCrucibles — browsing level', () => {
     expect(where.AND[0].OR[0]).toEqual({ userId: 4 });
   });
 
-  it("shows only crucibles in the site's own currency, and the viewer's own anyway", async () => {
-    expect((await whereFor({ isGreen: true })).AND.at(-1)).toEqual({ buzzType: 'green' });
-    expect((await whereFor({ isGreen: false, viewerId: 4 })).AND.at(-1)).toEqual({
-      OR: [{ userId: 4 }, { buzzType: 'yellow' }],
+  // A crucible takes entry fees in either currency, so what it was created in must not decide where
+  // it is listed: every crucible was yellow at launch, and the green site listed none of them.
+  it('lists on both sites whatever currency the creator paid in, SFW-only on green', async () => {
+    const green = await whereFor({ isGreen: true });
+    expect(JSON.stringify(green)).not.toContain('buzzType');
+    expect(green.AND.at(-1)).toEqual({ nsfwLevel: { in: [1, 2, 3] }, textNsfw: false });
+
+    const red = await whereFor({ isGreen: false, viewerId: 4 });
+    expect(JSON.stringify(red)).not.toContain('buzzType');
+    expect(red.AND).toHaveLength(1);
+  });
+
+  it("shows a signed-in viewer SFW crucibles on green, and their own even when they aren't", async () => {
+    const where = await whereFor({ isGreen: true, viewerId: 4 });
+    expect(where.AND.at(-1)).toEqual({
+      OR: [{ userId: 4 }, { nsfwLevel: { in: [1, 2, 3] }, textNsfw: false }],
     });
   });
 

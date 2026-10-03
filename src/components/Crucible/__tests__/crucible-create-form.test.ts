@@ -101,15 +101,10 @@ describe('crucible create draft restore', () => {
 });
 
 describe('crucible create draft restore — Buzz type', () => {
-  it('keeps the picked Buzz type', () => {
+  it('restores a draft saved while the form still had a Buzz type, without it', () => {
     const result = restore({ ...crucibleCreateDefaultValues, buzzType: 'green' });
-    expect(result.success && result.data.buzzType).toBe('green');
-  });
-
-  it('drops an unknown Buzz type instead of failing the restore', () => {
-    const result = restore({ ...crucibleCreateDefaultValues, buzzType: 'blue' });
     expect(result.success).toBe(true);
-    expect(result.success && result.data.buzzType).toBeUndefined();
+    expect(result.success && 'buzzType' in result.data).toBe(false);
   });
 });
 
