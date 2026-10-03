@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { JUDGE_SKIP_LIST_LIMIT, judgeSkipListReducer } from '~/components/Crucible/judge-skip-list';
+import { getJudgingPairSchema } from '~/server/schema/crucible.schema';
 
 const pair = (left: number, right: number) => ({ left: { id: left }, right: { id: right } });
 
@@ -15,6 +16,17 @@ describe('judgeSkipListReducer', () => {
     expect(next).toHaveLength(JUDGE_SKIP_LIST_LIMIT);
     expect(next.slice(-2)).toEqual([100, 101]);
     expect(next).not.toContain(1);
+  });
+
+  it('never grows past what getJudgingPair accepts, or every pair request is rejected', () => {
+    let skipped: number[] = [];
+    for (let id = 1; id < 200; id += 2) {
+      skipped = judgeSkipListReducer(skipped, { type: 'skip', pair: pair(id, id + 1) });
+    }
+
+    expect(
+      getJudgingPairSchema.safeParse({ crucibleId: 1, excludeEntryIds: skipped }).success
+    ).toBe(true);
   });
 
   it('does not list an entry twice when a pair holding it is skipped again', () => {
