@@ -266,6 +266,9 @@ describe('judgingSessionId input', () => {
     );
     expect(submitVoteSchema.safeParse(input('aaaaaaaa:999')).success).toBe(false);
     expect(submitVoteSchema.safeParse(input('aaaaaaaa*')).success).toBe(false);
+    expect(submitVoteSchema.safeParse(input('a'.repeat(7))).success).toBe(false);
+    expect(submitVoteSchema.safeParse(input('a'.repeat(65))).success).toBe(false);
+    expect(submitVoteSchema.safeParse(input('a'.repeat(64))).success).toBe(true);
   });
 });
 
