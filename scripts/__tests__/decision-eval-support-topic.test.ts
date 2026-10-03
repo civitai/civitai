@@ -691,7 +691,8 @@ describe('support.topic redaction window', () => {
   });
 
   it('cuts the head at whitespace so no identifier is split', () => {
-    const text = 'w '.repeat(3400) + 'jo.smith@another.net ' + 'z '.repeat(100);
+    // The email straddles the 7000-character window edge.
+    const text = 'w '.repeat(3495) + 'jo.smith@another.net ' + 'z '.repeat(100);
     const head = redactionWindow(text, 6000, false);
     expect(head.length).toBeLessThanOrEqual(7000);
     expect(head.endsWith('w') || head.endsWith('z') || head.endsWith('net')).toBe(true);
@@ -699,7 +700,8 @@ describe('support.topic redaction window', () => {
   });
 
   it('starts the tail after whitespace so no identifier is split', () => {
-    const text = 'jo.smith@another.net ' + 'y '.repeat(2000);
+    // The email straddles the 4000-character window edge.
+    const text = 'jo.smith@another.net ' + 'y '.repeat(1995);
     const tail = redactionWindow(text, 3000, true);
     expect(tail.length).toBeLessThanOrEqual(4000);
     expect(tail.startsWith('y')).toBe(true);
