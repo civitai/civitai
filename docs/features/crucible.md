@@ -55,7 +55,7 @@ The discovery page's Prize Pool sort uses the same pool.
 - Judges never see their own entries, and never see the same pair twice.
 - Pairs favour the entries this judge has voted on least, then those with the fewest votes overall, so new entries get ranked quickly without one late entry turning up in every pair a judge sees.
 - New entries' ratings move faster until they have enough votes.
-- Judges can skip a pair.
+- Judges can skip a pair. Skipped entries stay out for the rest of the visit (up to the last 20) and come back only once nothing else is left to judge.
 - On video crucibles with a minimum view time, only real playback counts. Skipping ahead or pausing does not add to it. A vote on an under-watched pair is rejected, and the judge keeps that pair.
 - Someone the creator has blocked can't see, enter or judge the crucible.
 
