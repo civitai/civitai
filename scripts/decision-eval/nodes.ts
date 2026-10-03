@@ -33,6 +33,8 @@ export type NodeSpec<Raw = unknown> = {
   /** Action labels the scorer reports on. Gold must use these. */
   classes: readonly string[];
   formats: Record<string, FormatSpec>;
+  /** Per-class Wilson lower-bound targets; a class not listed takes `score --target`. */
+  targets?: Readonly<Record<string, number>>;
   /** The redaction point: return only the fields the questions need. */
   buildState(raw: Raw): DecisionState;
   imageRefs?(raw: Raw): ImageRef[];
@@ -53,6 +55,12 @@ export type NodeSpec<Raw = unknown> = {
 };
 
 export const NODES: Record<string, NodeSpec<never>> = {};
+
+/** NodeSpec is covariant in Raw through source(), so the registry erases it once, here. */
+export function registerNode<Raw>(node: NodeSpec<Raw>): void {
+  if (NODES[node.id]) throw new Error(`node "${node.id}" is already registered`);
+  NODES[node.id] = node as unknown as NodeSpec<never>;
+}
 
 export function getNode(id: string): NodeSpec<never> {
   const node = NODES[id];

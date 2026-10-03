@@ -1,4 +1,6 @@
-import { resolve } from 'path';
+import { existsSync, mkdtempSync, rmdirSync, symlinkSync, unlinkSync } from 'fs';
+import { tmpdir } from 'os';
+import { join, resolve } from 'path';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -24,6 +26,27 @@ describe('assertDataDirOutsideRepo', () => {
     expect(assertDataDirOutsideRepo(resolve('/data/eval'), exists)).toBe(resolve('/data/eval'));
   });
 
+  it('🔴 refuses a link outside the checkout that points into it', () => {
+    const repoRoot = resolve(__dirname, '..', '..');
+    const link = join(mkdtempSync(join(tmpdir(), 'decision-eval-link-')), 'data');
+    // Into a subdirectory with no .git of its own, so only the real path reveals the checkout.
+    const inside = join(repoRoot, 'scripts');
+    symlinkSync(inside, link, 'junction');
+    try {
+      expect(() => assertDataDirOutsideRepo(join(link, 'not-created', 'eval'))).toThrow(
+        /inside the git checkout/
+      );
+      expect(existsSync(join(inside, 'not-created'))).toBe(false);
+    } finally {
+      try {
+        unlinkSync(link);
+      } catch {
+        rmdirSync(link);
+      }
+    }
+    expect(existsSync(join(repoRoot, '.git'))).toBe(true);
+  });
+
   it('refuses the real repository this test runs in', () => {
     expect(() => assertDataDirOutsideRepo(resolve(__dirname, 'eval-data'))).toThrow(
       EvalSafetyError
@@ -41,7 +64,14 @@ describe('assertPrivateHost', () => {
     'http://192.168.1.20:8765',
     'http://100.101.1.2:8765',
   ])('accepts %s', (url) => {
-    expect(assertPrivateHost(url).href).toContain(':8765');
+    expect(assertPrivateHost(url).url.href).toContain(':8765');
+  });
+
+  it('classifies loopback, private and allowlisted hosts apart', () => {
+    expect(assertPrivateHost('http://127.0.0.1:1').kind).toBe('loopback');
+    expect(assertPrivateHost('http://[::1]:1').kind).toBe('loopback');
+    expect(assertPrivateHost('http://10.0.0.4:1').kind).toBe('private');
+    expect(assertPrivateHost('http://10.0.0.4:1', ['10.0.0.4']).kind).toBe('allowlisted');
   });
 
   it.each([
@@ -56,7 +86,7 @@ describe('assertPrivateHost', () => {
 
   it('accepts a public-looking name only when it is allowlisted by exact name', () => {
     expect(() => assertPrivateHost('http://gpu-box:8765')).toThrow(EvalSafetyError);
-    expect(assertPrivateHost('http://gpu-box:8765', ['gpu-box']).hostname).toBe('gpu-box');
+    expect(assertPrivateHost('http://gpu-box:8765', ['gpu-box']).url.hostname).toBe('gpu-box');
     expect(() => assertPrivateHost('http://gpu-box.evil.com', ['gpu-box'])).toThrow(
       EvalSafetyError
     );
@@ -90,7 +120,12 @@ describe('assertNoPii', () => {
 });
 
 describe('assertArmAllowed', () => {
-  const selfHosted = { hosting: 'self-hosted' as const, zeroDataRetention: true };
+  const selfHosted = {
+    hosting: 'self-hosted' as const,
+    zeroDataRetention: true,
+    hostKind: 'loopback' as const,
+  };
+  const selfHostedPrivate = { ...selfHosted, hostKind: 'private' as const };
   const hostedZdr = { hosting: 'third-party' as const, zeroDataRetention: true };
   const hostedRetaining = { hosting: 'third-party' as const, zeroDataRetention: false };
 
@@ -107,7 +142,17 @@ describe('assertArmAllowed', () => {
     expect(() => assertArmAllowed('support-text', hostedZdr)).not.toThrow();
   });
 
-  it('lets any data class go to a self-hosted arm', () => {
+  it('lets any data class go to a self-hosted arm on loopback', () => {
     expect(() => assertArmAllowed('moderation-image', selfHosted)).not.toThrow();
+  });
+
+  it('🔴 refuses moderation images on a bare private range, which also covers a rented box on a VPN', () => {
+    expect(() => assertArmAllowed('moderation-image', selfHostedPrivate)).toThrow(
+      /not a bare private range/
+    );
+    expect(() =>
+      assertArmAllowed('moderation-image', { ...selfHosted, hostKind: 'allowlisted' })
+    ).not.toThrow();
+    expect(() => assertArmAllowed('support-text', selfHostedPrivate)).not.toThrow();
   });
 });

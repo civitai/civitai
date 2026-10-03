@@ -1,8 +1,8 @@
-import { existsSync } from 'fs';
-import { dirname, resolve } from 'path';
+import { existsSync, realpathSync } from 'fs';
+import { basename, dirname, join, resolve } from 'path';
 import { isIP } from 'net';
 
-import type { DataClass, DecisionState, Hosting } from './types';
+import type { DataClass, DecisionState, Hosting, HostKind } from './types';
 
 export class EvalSafetyError extends Error {
   constructor(message: string) {
@@ -11,15 +11,34 @@ export class EvalSafetyError extends Error {
   }
 }
 
+/** Resolves links on the longest existing prefix, without creating anything. */
+function realPathOfPrefix(
+  absolute: string,
+  exists: (path: string) => boolean,
+  realpath: (path: string) => string
+): string {
+  const rest: string[] = [];
+  let current = absolute;
+  while (!exists(current)) {
+    const parent = dirname(current);
+    if (parent === current) return absolute;
+    rest.unshift(basename(current));
+    current = parent;
+  }
+  return join(realpath(current), ...rest);
+}
+
 /**
  * Eval data holds user content, so it must never sit inside a git checkout —
- * this repo is public, and `_local/` is a git repo of its own.
+ * this repo is public, and `_local/` is a git repo of its own. Checked on the
+ * real path, so a junction or symlink into a checkout is caught.
  */
 export function assertDataDirOutsideRepo(
   dataDir: string,
-  exists: (path: string) => boolean = existsSync
+  exists: (path: string) => boolean = existsSync,
+  realpath: (path: string) => string = realpathSync.native
 ): string {
-  const absolute = resolve(dataDir);
+  const absolute = realPathOfPrefix(resolve(dataDir), exists, realpath);
   let current = absolute;
   for (;;) {
     if (exists(resolve(current, '.git'))) {
@@ -46,12 +65,15 @@ function ipv4InPrivateRange(ip: string): boolean {
 }
 
 /**
- * The self-hosted server has no auth and moderation images may only travel to
- * infrastructure we control, so its URL must be loopback, a private address, or
- * a host someone named explicitly. A public DNS name is refused even if it
- * happens to resolve privately — resolution can change, the allowlist cannot.
+ * Moderation images may only travel to infrastructure we control, so the URL
+ * must be loopback, a private address, or a host someone named explicitly. A
+ * public DNS name is refused even if it happens to resolve privately —
+ * resolution can change, the allowlist cannot.
  */
-export function assertPrivateHost(rawUrl: string, allowedHosts: readonly string[] = []): URL {
+export function assertPrivateHost(
+  rawUrl: string,
+  allowedHosts: readonly string[] = []
+): { url: URL; kind: HostKind } {
   let url: URL;
   try {
     url = new URL(rawUrl);
@@ -63,10 +85,13 @@ export function assertPrivateHost(rawUrl: string, allowedHosts: readonly string[
   }
   const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
   const allowed = allowedHosts.map((h) => h.toLowerCase());
-  if (host === 'localhost' || allowed.includes(host)) return url;
   const family = isIP(host);
-  if (family === 4 && ipv4InPrivateRange(host)) return url;
-  if (family === 6 && (host === '::1' || /^f[cd][0-9a-f]{2}:/.test(host))) return url;
+  if (host === 'localhost' || host === '::1' || (family === 4 && host.startsWith('127.'))) {
+    return { url, kind: 'loopback' };
+  }
+  if (allowed.includes(host)) return { url, kind: 'allowlisted' };
+  if (family === 4 && ipv4InPrivateRange(host)) return { url, kind: 'private' };
+  if (family === 6 && /^f[cd][0-9a-f]{2}:/.test(host)) return { url, kind: 'private' };
   throw new EvalSafetyError(
     `${host} is not loopback, a private address, or an allowlisted host; refusing to send eval data there`
   );
@@ -95,18 +120,28 @@ export function assertNoPii(itemId: string, state: DecisionState): void {
 }
 
 /**
- * Which arms may receive a node's data. Moderation images go to self-hosted
- * arms only. Text may go to a third party only with zero data retention, which
- * Justin approved on 2026-10-03 once org prompt logging was confirmed off.
+ * Which arms may receive a node's data. Moderation images go to a self-hosted
+ * arm on loopback or a host named with --allow-host: a bare private range also
+ * covers a rented machine on a VPN, which is not infrastructure we control.
+ * Text may go to a third party only with zero data retention, which Justin
+ * approved on 2026-10-03 once org prompt logging was confirmed off.
  */
 export function assertArmAllowed(
   dataClass: DataClass,
-  arm: { hosting: Hosting; zeroDataRetention: boolean }
+  arm: { hosting: Hosting; zeroDataRetention: boolean; hostKind?: HostKind }
 ): void {
-  if (arm.hosting === 'self-hosted') return;
   if (dataClass === 'moderation-image') {
-    throw new EvalSafetyError('moderation-image data may only go to a self-hosted arm');
+    if (arm.hosting !== 'self-hosted') {
+      throw new EvalSafetyError('moderation-image data may only go to a self-hosted arm');
+    }
+    if (arm.hostKind !== 'loopback' && arm.hostKind !== 'allowlisted') {
+      throw new EvalSafetyError(
+        'moderation-image data needs a loopback or explicitly allowlisted host, not a bare private range'
+      );
+    }
+    return;
   }
+  if (arm.hosting === 'self-hosted') return;
   if (!arm.zeroDataRetention) {
     throw new EvalSafetyError(
       `${dataClass} data may go to a third-party arm only with zero data retention`

@@ -4,7 +4,7 @@ import { join } from 'path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { main } from '../decision-eval/cli';
-import { NODES, type NodeSpec } from '../decision-eval/nodes';
+import { NODES, registerNode, type NodeSpec } from '../decision-eval/nodes';
 import { choiceMapper } from '../decision-eval/runner';
 
 /**
@@ -19,12 +19,14 @@ const ROWS: Array<{ itemId: string; raw: Raw }> = Array.from({ length: 60 }, (_,
   raw: { text: `ticket ${i}`, truth: i % 2 ? 'x' : 'y', split: i < 40 ? 'dev' : 'test' },
 }));
 let rows = ROWS.slice(0, 50);
+const excludeIds = new Set<string>();
 
 const node: NodeSpec<Raw> = {
   id: 'test.topic',
   specVersion: 1,
   dataClass: 'public-text',
   classes: ['x', 'y'],
+  targets: { x: 0.9 },
   formats: {
     A: {
       questions: [
@@ -44,6 +46,7 @@ const node: NodeSpec<Raw> = {
   buildState: (raw) => ({ text: raw.text, hint: raw.truth }),
   slices: (raw) => ({ parity: raw.truth }),
   baselines: (raw) => ({ incumbent: raw.truth === 'x' ? 'x' : null }),
+  exclude: (raw) => (excludeIds.has(raw.text.replace('ticket ', 't')) ? 'reported' : null),
   async *source() {
     for (const r of rows) {
       yield {
@@ -116,7 +119,7 @@ const readLines = (path: string) =>
 
 beforeAll(() => {
   dataDir = mkdtempSync(join(tmpdir(), 'decision-eval-cli-'));
-  (NODES as Record<string, unknown>)[node.id] = node;
+  registerNode(node);
   vi.stubGlobal('fetch', imajevStub());
   vi.spyOn(console, 'log').mockImplementation(() => undefined);
 });
@@ -178,6 +181,10 @@ describe('decision-eval CLI', () => {
     expect(report).toContain('| model | 40 | 0 | 0 | 40 |');
     expect(report).toContain('baseline: incumbent');
     expect(report).toContain('## Slice: parity');
+    const thresholds = JSON.parse(readFileSync(join(runs, key, 'thresholds-dev.json'), 'utf8'));
+    expect(thresholds.targets).toEqual({ x: 0.9, y: 0.8 });
+    expect(Object.keys(thresholds.fits).sort()).toEqual(['x', 'y']);
+    expect(() => registerNode(node)).toThrow('already registered');
   });
 
   it('🔴 refuses to score without a recorded known-answer control for the run', async () => {
@@ -228,7 +235,21 @@ describe('decision-eval CLI', () => {
       'spec typo',
     ]);
     const sealed = JSON.parse(readFileSync(join(root(), 'sealed-test.json'), 'utf8'));
-    expect(Object.values(sealed)).toEqual([expect.objectContaining({ reason: 'spec typo' })]);
+    expect(sealed.map((e: { reason: string | null }) => e.reason)).toEqual([null, 'spec typo']);
+    const runs = join(root(), 'runs');
+    const report = readFileSync(join(runs, readdirSync(runs)[0], 'report-test.md'), 'utf8');
+    expect(report).toContain('planted on test');
+    expect(report).toContain('sealed test scored 1 time(s) before this report');
+  });
+
+  it('🔴 an item excluded after it was sampled leaves the manifest and stays out', async () => {
+    excludeIds.add('t11');
+    await main(['build', ...nodeArgs()]);
+    excludeIds.clear();
+    await main(['build', ...nodeArgs()]);
+    const ids = readLines(join(root(), 'manifest.jsonl')).map((i: { itemId: string }) => i.itemId);
+    expect(ids).not.toContain('t11');
+    expect(ids).toHaveLength(59);
   });
 
   it('🔴 refuses a training manifest that contains an eval item', async () => {

@@ -9,7 +9,9 @@ export type RunConfig = {
   runKey: string;
   builds: string[];
   hardware: string | null;
-  target: number;
+  targets: Readonly<Record<string, number>>;
+  /** Earlier sealed-test scorings of this format and spec, under any model config. */
+  priorTestScorings: number;
 };
 
 export type ReportInput = {
@@ -63,8 +65,11 @@ export function renderReport(r: ReportInput): string {
       c.builds.length > 1 ? ' — **more than one build answered this run**' : ''
     }`,
     `- hardware: ${c.hardware ?? 'not recorded'}`,
+    `- sealed test scored ${c.priorTestScorings} time(s) before this report for this format and spec, across all model configs`,
     `- spec hash \`${c.specHash}\`, run key \`${c.runKey}\``,
-    `- target precision (Wilson 95% lower bound): ${pct(c.target)}`,
+    `- target precision (Wilson 95% lower bound): ${Object.entries(c.targets)
+      .map(([cls, t]) => `${cls} ${pct(t)}`)
+      .join(', ')}`,
     `- gold: ${r.gold.policy} policy; ${r.gold.unresolved} item(s) left unresolved and out of every metric`,
     `- latency p50 ${r.latency.p50 ?? 'n/a'} ms, p95 ${r.latency.p95 ?? 'n/a'} ms`,
     '',

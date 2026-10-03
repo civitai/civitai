@@ -137,6 +137,51 @@ export function buildEvalIndex(items: readonly ManifestItem[], previous?: EvalIn
   };
 }
 
+export const EXCLUSIONS_FILE = 'excluded.v1.json';
+const EXCLUSIONS_SCHEMA = 'civitai.decision-eval.excluded';
+
+export type ExclusionsFileV1 = {
+  schema: typeof EXCLUSIONS_SCHEMA;
+  version: 1;
+  nodeId: string;
+  itemIds: string[];
+};
+
+/**
+ * Exclusion is sticky: an item excluded once (say, CSAM-reported after it was
+ * sampled) leaves the manifest and can never come back, even though the
+ * manifest otherwise keeps every item it has assigned.
+ */
+export function applyExclusions(
+  items: readonly ManifestItem[],
+  previous: readonly string[],
+  newlyExcluded: readonly string[]
+): { items: ManifestItem[]; excluded: string[]; removed: number } {
+  const excluded = [...new Set([...previous, ...newlyExcluded])].sort();
+  const set = new Set(excluded);
+  const kept = items.filter((i) => !set.has(i.itemId));
+  return { items: kept, excluded, removed: items.length - kept.length };
+}
+
+export function serializeExclusions(nodeId: string, itemIds: string[]): ExclusionsFileV1 {
+  return { schema: EXCLUSIONS_SCHEMA, version: 1, nodeId, itemIds };
+}
+
+export function parseExclusions(json: unknown, nodeId: string): string[] {
+  const f = json as Partial<ExclusionsFileV1> | null;
+  if (
+    !f ||
+    f.schema !== EXCLUSIONS_SCHEMA ||
+    f.version !== 1 ||
+    f.nodeId !== nodeId ||
+    !Array.isArray(f.itemIds) ||
+    !f.itemIds.every((x) => typeof x === 'string')
+  ) {
+    throw new Error(`exclusions file is not a v1 file for node ${nodeId}; refusing to trust it`);
+  }
+  return f.itemIds;
+}
+
 /**
  * `trainer-dev` is the imajev trainer's own checkpoint-selection partition. It
  * is carved from the train window and is train-side for leakage purposes.

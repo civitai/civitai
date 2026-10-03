@@ -1,31 +1,18 @@
-import * as fs from 'fs';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type * as FsModule from 'fs';
-import type * as FsPromises from 'fs/promises';
-
-vi.mock('fs', async (importOriginal) => {
-  const real = await importOriginal<typeof FsModule>();
-  return {
-    ...real,
-    writeFileSync: vi.fn(),
-    appendFileSync: vi.fn(),
-    createWriteStream: vi.fn(),
-    writeSync: vi.fn(),
-  };
-});
-vi.mock('fs/promises', async (importOriginal) => {
-  const real = await importOriginal<typeof FsPromises>();
-  return { ...real, writeFile: vi.fn(), appendFile: vi.fn() };
-});
-
-const fsp = await import('fs/promises');
-const { solidPng } = await import('../decision-eval/controls');
-const { choiceMapper, doneItemIds, HttpImageSource, runItems, runKey, specHash } = await import(
-  '../decision-eval/runner'
-);
-const { EvalSafetyError } = await import('../decision-eval/safety');
-
+import { solidPng } from '../decision-eval/controls';
+import {
+  choiceMapper,
+  doneItemIds,
+  HttpImageSource,
+  MAX_ATTEMPTS,
+  runItems,
+  runKey,
+  specHash,
+} from '../decision-eval/runner';
+import { EvalSafetyError } from '../decision-eval/safety';
 import type {
   DecisionQuestion,
   ImageDecisionModel,
@@ -71,6 +58,7 @@ function imageModel(
     configId: 'imajev:test',
     hosting: 'self-hosted',
     zeroDataRetention: true,
+    hostKind: 'loopback',
     decide: vi.fn().mockResolvedValue(answer(value)),
     decideWithImages: vi.fn().mockResolvedValue(answer(value)),
   };
@@ -201,30 +189,83 @@ describe('runItems', () => {
     expect(predictions[0]).toMatchObject({ status: 'ok', pred: null, abstained: true });
   });
 
-  it('🔴 writes nothing to disk while handling images', async () => {
+  it('🔴 keeps image bytes out of the predictions it writes', async () => {
     const source = new HttpImageSource(
       vi.fn(
         async () =>
           new Response(MARKER.bytes, { status: 200, headers: { 'content-type': 'image/png' } })
       )
     );
-    const { predictions } = await run({ items: [item('a'), item('b')], imageSource: source });
-    expect(predictions.map((p) => p.status)).toEqual(['ok', 'ok']);
-    for (const spy of [
-      fs.writeFileSync,
-      fs.appendFileSync,
-      fs.createWriteStream,
-      fs.writeSync,
-      fsp.writeFile,
-      fsp.appendFile,
-    ]) {
-      expect(spy).not.toHaveBeenCalled();
-    }
-    expect(JSON.stringify(predictions)).not.toContain(Buffer.from(MARKER.bytes).toString('base64'));
+    const { predictions } = await run({ items: [item('a')], imageSource: source });
+    expect(predictions).toEqual([
+      {
+        itemId: 'a',
+        runKey: 'k',
+        status: 'ok',
+        pred: 'block',
+        confidence: 0.9,
+        abstained: false,
+        answers: answer('block').answers,
+        build: 'imajev-4b',
+        latencyMs: 12,
+      },
+    ]);
+  });
 
-    // Positive control: the spies do see a write made through the same modules.
-    fs.writeFileSync('x', 'y');
-    expect(fs.writeFileSync).toHaveBeenCalledTimes(1);
+  it('gives up on an item after MAX_ATTEMPTS failures, so one bad item cannot cost a timeout every day', () => {
+    const failures = (n: number): Prediction[] =>
+      Array.from({ length: n }, () => ({
+        itemId: 'x',
+        runKey: 'k',
+        status: 'error' as const,
+        error: 'e',
+      }));
+    expect(doneItemIds(failures(MAX_ATTEMPTS - 1), 'k').has('x')).toBe(false);
+    expect(doneItemIds(failures(MAX_ATTEMPTS), 'k').has('x')).toBe(true);
+  });
+});
+
+describe('🔴 the image path cannot touch the filesystem', () => {
+  const dir = join(__dirname, '..', 'decision-eval');
+  const FS_IMPORT = /(?:from\s+|import\s*\(\s*|require\s*\(\s*)['"](?:node:)?fs(?:\/promises)?['"]/;
+
+  /** Every module the image path loads, by following relative imports from its entry points. */
+  function imagePathModules(): Map<string, string> {
+    const seen = new Map<string, string>();
+    const queue = ['runner.ts', 'imajev-client.ts'];
+    while (queue.length) {
+      const file = queue.shift() as string;
+      if (seen.has(file)) continue;
+      const source = readFileSync(join(dir, file), 'utf8');
+      seen.set(file, source);
+      for (const m of source.matchAll(/from\s+['"]\.\/([\w-]+)['"]/g)) queue.push(`${m[1]}.ts`);
+    }
+    return seen;
+  }
+
+  it('imports fs nowhere on the image path except the data-dir check', () => {
+    const modules = imagePathModules();
+    expect([...modules.keys()].sort()).toEqual([
+      'imajev-client.ts',
+      'runner.ts',
+      'safety.ts',
+      'types.ts',
+    ]);
+    const importers = [...modules].filter(([, src]) => FS_IMPORT.test(src)).map(([f]) => f);
+    expect(importers).toEqual(['safety.ts']);
+    expect(modules.get('safety.ts')).toMatch(/^import \{ existsSync, realpathSync \} from 'fs';$/m);
+  });
+
+  it('the pattern does catch each spelling of an fs import (positive control)', () => {
+    for (const src of [
+      "import { promises } from 'fs';",
+      "import { writeFile } from 'node:fs';",
+      "import * as fsp from 'fs/promises';",
+      "const fs = await import('node:fs/promises');",
+      "const fs = require('fs');",
+    ]) {
+      expect(FS_IMPORT.test(src)).toBe(true);
+    }
   });
 });
 

@@ -1,16 +1,20 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { appendFileSync, mkdirSync, readFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { parseArgs } from 'util';
 
 import {
+  applyExclusions,
   buildEvalIndex,
   buildTrainManifest,
   enforceGroupIsolation,
   EVAL_INDEX_FILE,
+  EXCLUSIONS_FILE,
   mergeManifest,
   parseEvalIndex,
+  parseExclusions,
   resolveGold,
   serializeEvalIndex,
+  serializeExclusions,
   timeSplit,
   type TrainCandidate,
 } from './builder';
@@ -25,12 +29,13 @@ import {
 } from './controls';
 import { ImajevModel } from './imajev-client';
 import { JevArm } from './jev-arm';
-import { getNode, parseQuestionsFile, type NodeSpec } from './nodes';
 import { cohensKappa } from './metrics';
+import { getNode, parseQuestionsFile, type NodeSpec } from './nodes';
 import { percentile, renderReport } from './report';
 import { doneItemIds, HttpImageSource, runItems, runKey, specHash } from './runner';
 import { assertDataDirOutsideRepo } from './safety';
 import { countCorrect, fitThresholds, scoreSplit } from './scorer';
+import { readJson, readJsonl, writeFileAtomic, writeJsonl } from './store';
 import type {
   DecisionQuestion,
   GoldRow,
@@ -58,18 +63,14 @@ import type {
 const FLIP_SEED = 20261003;
 const FLIP_COUNT = 20;
 
-function readJsonl<T>(path: string): T[] {
-  if (!existsSync(path)) return [];
-  return readFileSync(path, 'utf8')
-    .split('\n')
-    .filter((l) => l.trim())
-    .map((l) => JSON.parse(l) as T);
-}
-
-function writeJsonl(path: string, rows: readonly unknown[]): void {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, rows.map((r) => JSON.stringify(r)).join('\n') + (rows.length ? '\n' : ''));
-}
+type SealedEntry = {
+  runKey: string;
+  formatId: string;
+  specHash: string;
+  modelConfigId: string;
+  at: string;
+  reason: string | null;
+};
 
 function paths(dataDir: string, nodeId: string) {
   const root = join(dataDir, nodeId);
@@ -78,10 +79,12 @@ function paths(dataDir: string, nodeId: string) {
     manifest: join(root, 'manifest.jsonl'),
     gold: join(root, 'gold.jsonl'),
     evalIndex: join(root, EVAL_INDEX_FILE),
+    exclusions: join(root, EXCLUSIONS_FILE),
     controls: join(root, 'controls.jsonl'),
     sealed: join(root, 'sealed-test.json'),
     predictions: (key: string) => join(root, 'runs', key, 'predictions.jsonl'),
     report: (key: string, split: string) => join(root, 'runs', key, `report-${split}.md`),
+    thresholds: (key: string, split: string) => join(root, 'runs', key, `thresholds-${split}.json`),
   };
 }
 
@@ -95,6 +98,11 @@ function loadQuestions(
   if (Array.isArray(format.questions)) return [...format.questions];
   const file = join(dataDir, node.id, (format.questions as { fromDataDir: string }).fromDataDir);
   return parseQuestionsFile(JSON.parse(readFileSync(file, 'utf8')), file);
+}
+
+function loadExclusions(path: string, nodeId: string): string[] {
+  const json = readJson<unknown>(path);
+  return json === undefined ? [] : parseExclusions(json, nodeId);
 }
 
 type Args = Record<string, string | boolean | string[] | undefined>;
@@ -126,10 +134,10 @@ function buildModel(args: Args): TextDecisionModel | ImageDecisionModel {
 
 async function cmdControl(args: Args) {
   const model = buildModel(args);
-  const text = await runKnownAnswerControl(model, TEXT_CONTROL);
+  const text = await runKnownAnswerControl(model, TEXT_CONTROL, 'public-text');
   console.log(`text control passed on ${text.build}`);
   if (model.hosting === 'self-hosted') {
-    const image = await runKnownAnswerControl(model, IMAGE_CONTROL);
+    const image = await runKnownAnswerControl(model, IMAGE_CONTROL, 'moderation-image');
     console.log(`image control passed on ${image.build}`);
   }
 }
@@ -141,12 +149,15 @@ async function cmdBuild(args: Args, dataDir: string) {
   }
   const ctx = { dataDir };
   const now = new Date();
+  const p = paths(dataDir, node.id);
   const items: ManifestItem[] = [];
-  const excluded = new Map<string, number>();
+  const newlyExcluded: string[] = [];
+  const excludedReasons = new Map<string, number>();
   for await (const row of node.source(ctx)) {
     const reason = node.exclude?.(row.raw) ?? null;
     if (reason) {
-      excluded.set(reason, (excluded.get(reason) ?? 0) + 1);
+      newlyExcluded.push(row.itemId);
+      excludedReasons.set(reason, (excludedReasons.get(reason) ?? 0) + 1);
       continue;
     }
     items.push({
@@ -161,18 +172,22 @@ async function cmdBuild(args: Args, dataDir: string) {
     });
   }
   const dropOverlap = args['drop-overlap'] === true;
-  const p = paths(dataDir, node.id);
-  const existing = readJsonl<ManifestItem>(p.manifest);
+  const existing = await readJsonl<ManifestItem>(p.manifest);
   const known = new Set(existing.map((i) => i.itemId));
   const isolated = enforceGroupIsolation(
     items.filter((i) => !known.has(i.itemId)),
     { dropLaterOverlap: dropOverlap }
   );
   const merged = mergeManifest(existing, isolated.items, { dropConflicts: dropOverlap });
+  const excluded = applyExclusions(
+    merged.items,
+    loadExclusions(p.exclusions, node.id),
+    newlyExcluded
+  );
 
   const goldKeys = new Set<string>();
   const gold: GoldRow[] = [];
-  for (const row of readJsonl<GoldRow>(p.gold)) {
+  for (const row of await readJsonl<GoldRow>(p.gold)) {
     goldKeys.add(JSON.stringify(row));
     gold.push(row);
   }
@@ -183,19 +198,32 @@ async function cmdBuild(args: Args, dataDir: string) {
     goldKeys.add(JSON.stringify(row));
     gold.push(row);
   }
-  const previousIndex = existsSync(p.evalIndex)
-    ? parseEvalIndex(JSON.parse(readFileSync(p.evalIndex, 'utf8')), node.id)
-    : undefined;
-  writeJsonl(p.manifest, merged.items);
-  writeJsonl(p.gold, gold);
-  writeFileSync(
+  const previousIndex = readJson<unknown>(p.evalIndex);
+
+  // The index and the exclusions only grow, so writing them first means a crash
+  // part-way leaves them a superset of the manifest, never a subset.
+  writeFileAtomic(
     p.evalIndex,
-    JSON.stringify(serializeEvalIndex(node.id, buildEvalIndex(merged.items, previousIndex), now))
+    JSON.stringify(
+      serializeEvalIndex(
+        node.id,
+        buildEvalIndex(
+          merged.items,
+          previousIndex === undefined ? undefined : parseEvalIndex(previousIndex, node.id)
+        ),
+        now
+      )
+    )
   );
+  writeFileAtomic(p.exclusions, JSON.stringify(serializeExclusions(node.id, excluded.excluded)));
+  writeJsonl(p.manifest, excluded.items);
+  writeJsonl(p.gold, gold);
   console.log(
-    `manifest ${merged.items.length} items (${merged.added} new); dropped ${
+    `manifest ${excluded.items.length} items (${merged.added} new); dropped ${
       isolated.dropped.length + merged.dropped.length
-    } for group overlap; excluded ${JSON.stringify(Object.fromEntries(excluded))}`
+    } for group overlap; removed ${excluded.removed} excluded; excluded this build ${JSON.stringify(
+      Object.fromEntries(excludedReasons)
+    )}`
   );
 }
 
@@ -214,12 +242,16 @@ async function cmdRun(args: Args, dataDir: string) {
   const p = paths(dataDir, node.id);
   const control =
     node.control ?? (node.dataClass === 'moderation-image' ? IMAGE_CONTROL : TEXT_CONTROL);
-  const passed = await runKnownAnswerControl(model, control);
+  const passed = await runKnownAnswerControl(model, control, node.dataClass);
+  mkdirSync(p.root, { recursive: true });
   appendFileSync(
     p.controls,
     `${JSON.stringify({ runKey: key, at: new Date().toISOString(), ...passed })}\n`
   );
-  const items = readJsonl<ManifestItem>(p.manifest).filter((i) => i.split === split);
+  const excluded = new Set(loadExclusions(p.exclusions, node.id));
+  const items = (await readJsonl<ManifestItem>(p.manifest)).filter(
+    (i) => i.split === split && !excluded.has(i.itemId)
+  );
   const predPath = p.predictions(key);
   mkdirSync(dirname(predPath), { recursive: true });
   const summary = await runItems({
@@ -230,7 +262,7 @@ async function cmdRun(args: Args, dataDir: string) {
     dataClass: node.dataClass,
     runKey: key,
     imageSource: new HttpImageSource(),
-    done: doneItemIds(readJsonl<Prediction>(predPath), key),
+    done: doneItemIds(await readJsonl<Prediction>(predPath), key),
     onPrediction: (pred) => appendFileSync(predPath, `${JSON.stringify(pred)}\n`),
   });
   console.log(`run ${key} (spec ${spec}): ${JSON.stringify(summary)}`);
@@ -240,30 +272,63 @@ async function cmdScore(args: Args, dataDir: string) {
   const { node, formatId, model, spec, key } = resolveRun(args, dataDir);
   const split = str(args, 'split');
   if (split !== 'dev' && split !== 'test') throw new Error('--split must be dev or test');
-  const target = Number(str(args, 'target'));
+  const fallback = Number(str(args, 'target'));
+  const targets = Object.fromEntries(
+    node.classes.map((cls) => [cls, node.targets?.[cls] ?? fallback])
+  );
+  for (const [cls, t] of Object.entries(targets)) {
+    if (!(t > 0 && t < 1)) throw new Error(`target for ${cls} must be between 0 and 1, got ${t}`);
+  }
   const p = paths(dataDir, node.id);
-  const control = readJsonl<{ runKey: string; build: string }>(p.controls).find(
+  const control = (await readJsonl<{ runKey: string; build: string }>(p.controls)).find(
     (c) => c.runKey === key
   );
   if (!control)
     throw new Error(`no passing known-answer control recorded for run ${key}; run it first`);
 
+  const sealed = readJson<SealedEntry[]>(p.sealed) ?? [];
+  const priorTestScorings = sealed.filter(
+    (e) => e.formatId === formatId && e.specHash === spec
+  ).length;
   if (split === 'test') {
-    const sealed = existsSync(p.sealed) ? JSON.parse(readFileSync(p.sealed, 'utf8')) : {};
-    if (sealed[key] && typeof args['reseal-reason'] !== 'string') {
+    const reason = typeof args['reseal-reason'] === 'string' ? args['reseal-reason'] : null;
+    const previous = sealed.find((e) => e.runKey === key);
+    if (previous && !reason) {
       throw new Error(
-        `the sealed test was already scored for ${key} at ${sealed[key].at}; pass --reseal-reason to score it again`
+        `the sealed test was already scored for ${key} at ${previous.at}; pass --reseal-reason to score it again`
       );
     }
+    // Sealed before anything is written: a crash after scoring still counts as a look.
+    writeFileAtomic(
+      p.sealed,
+      JSON.stringify(
+        [
+          ...sealed,
+          {
+            runKey: key,
+            formatId,
+            specHash: spec,
+            modelConfigId: model.configId,
+            at: new Date().toISOString(),
+            reason,
+          },
+        ],
+        null,
+        2
+      )
+    );
   }
 
-  const items = readJsonl<ManifestItem>(p.manifest);
+  const excluded = new Set(loadExclusions(p.exclusions, node.id));
+  const items = (await readJsonl<ManifestItem>(p.manifest)).filter((i) => !excluded.has(i.itemId));
   const policy = node.goldPolicy?.({ dataDir }) ?? { kind: 'majority' as const };
   if (policy.kind === 'disagreement-as' && !node.classes.includes(policy.label)) {
     throw new Error(`gold policy label "${policy.label}" is not a class of ${node.id}`);
   }
-  const resolved = resolveGold(readJsonl<GoldRow>(p.gold), policy);
-  const predictions = readJsonl<Prediction>(p.predictions(key)).filter((x) => x.runKey === key);
+  const resolved = resolveGold(await readJsonl<GoldRow>(p.gold), policy);
+  const predictions = (await readJsonl<Prediction>(p.predictions(key))).filter(
+    (x) => x.runKey === key
+  );
   const base = { items, classes: node.classes };
 
   const splitIdSet = new Set(items.filter((i) => i.split === split).map((i) => i.itemId));
@@ -279,7 +344,7 @@ async function cmdScore(args: Args, dataDir: string) {
   );
 
   const input = { ...base, predictions, gold: resolved.gold };
-  const fits = fitThresholds(input, target);
+  const fits = fitThresholds(input, targets);
   const thresholds = Object.fromEntries(
     Object.entries(fits).flatMap(([cls, f]) => (f.status === 'fitted' ? [[cls, f.threshold]] : []))
   );
@@ -329,7 +394,9 @@ async function cmdScore(args: Args, dataDir: string) {
       thresholds
     ),
   };
-  const ok = predictions.filter((x) => x.status === 'ok' && typeof x.latencyMs === 'number');
+  const latencies = predictions
+    .filter((x) => x.status === 'ok' && typeof x.latencyMs === 'number')
+    .map((x) => x.latencyMs as number);
   const report = renderReport({
     config: {
       nodeId: node.id,
@@ -337,9 +404,12 @@ async function cmdScore(args: Args, dataDir: string) {
       specHash: spec,
       modelConfigId: model.configId,
       runKey: key,
-      builds: [...new Set(ok.map((x) => x.build as string))],
+      builds: [
+        ...new Set(predictions.filter((x) => x.status === 'ok').map((x) => x.build as string)),
+      ],
       hardware: (args.hardware as string) ?? null,
-      target,
+      targets,
+      priorTestScorings,
     },
     split,
     model: scoreSplit(input, split, thresholds),
@@ -353,34 +423,25 @@ async function cmdScore(args: Args, dataDir: string) {
         : resolved.firstVsFinal.filter(([a, b]) => a === b).length / resolved.firstVsFinal.length,
     controls: {
       knownAnswer: `passed on ${control.build}`,
-      plantedFlips: `${planted.size} planted on dev; ${flips.newErrors} became errors; scorer moved by ${flips.observedDelta} as the flips imply`,
+      plantedFlips: `${planted.size} planted on ${split}; ${flips.newErrors} became errors and ${flips.newCorrect} became correct; scorer moved by ${flips.observedDelta} as the flips imply`,
     },
-    latency: {
-      p50: percentile(
-        ok.map((x) => x.latencyMs as number),
-        0.5
-      ),
-      p95: percentile(
-        ok.map((x) => x.latencyMs as number),
-        0.95
-      ),
-    },
+    latency: { p50: percentile(latencies, 0.5), p95: percentile(latencies, 0.95) },
   });
-  writeFileSync(p.report(key, split), report);
-  if (split === 'test') {
-    const sealed = existsSync(p.sealed) ? JSON.parse(readFileSync(p.sealed, 'utf8')) : {};
-    sealed[key] = { at: new Date().toISOString(), reason: args['reseal-reason'] ?? null };
-    writeFileSync(p.sealed, JSON.stringify(sealed, null, 2));
-  }
+  writeFileAtomic(p.report(key, split), report);
+  writeFileAtomic(
+    p.thresholds(key, split),
+    JSON.stringify({ runKey: key, split, fittedOn: 'dev', targets, fits }, null, 2)
+  );
   console.log(`wrote ${p.report(key, split)}`);
 }
 
-function cmdTrainManifest(args: Args, dataDir: string) {
+async function cmdTrainManifest(args: Args, dataDir: string) {
   const node = getNode(str(args, 'node'));
   const p = paths(dataDir, node.id);
-  if (!existsSync(p.evalIndex)) throw new Error(`no eval index at ${p.evalIndex}; run build first`);
-  const index = parseEvalIndex(JSON.parse(readFileSync(p.evalIndex, 'utf8')), node.id);
-  const candidates = readJsonl<TrainCandidate>(str(args, 'candidates'));
+  const json = readJson<unknown>(p.evalIndex);
+  if (json === undefined) throw new Error(`no eval index at ${p.evalIndex}; run build first`);
+  const index = parseEvalIndex(json, node.id);
+  const candidates = await readJsonl<TrainCandidate>(str(args, 'candidates'));
   const out = buildTrainManifest(candidates, index);
   writeJsonl(join(p.root, 'train-manifest.jsonl'), out);
   console.log(

@@ -17,7 +17,7 @@ A domain adds a `NodeSpec` (`nodes.ts`). The harness owns splits, routing, contr
 
 ## Data stays out of this repo
 
-Every data file lives under `--data-dir`, and the CLI refuses a directory inside any git checkout.
+Every data file lives under `--data-dir`. The CLI resolves links and refuses a directory inside any git checkout.
 
 | Data                                    | Handling                                                                                                             |
 | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
@@ -25,26 +25,34 @@ Every data file lives under `--data-dir`, and the CLI refuses a directory inside
 | Images                                  | Stored only as references. They are fetched into memory per run and never written anywhere.                          |
 | Question wording that must stay private | A format may declare `questions: { fromDataDir: '<file>.json' }`.                                                    |
 
+A node file is public. Keep anything decision-rule-shaped for content safety (label definitions, carve-outs, thresholds) in the data dir, not in the node.
+
 ## Routing
 
-| Data class         | Allowed arms                                                                                  |
-| ------------------ | --------------------------------------------------------------------------------------------- |
-| `moderation-image` | Self-hosted only. No override.                                                                |
-| Any text class     | Also allowed on a third-party arm that sends zero data retention (`provider: { zdr: true }`). |
+| Data class         | Allowed arms                                                                                                                                                        |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `moderation-image` | A self-hosted arm on loopback or a host named with `--allow-host`. A bare private range is refused, because it also matches a rented machine on a VPN. No override. |
+| Any text class     | Any self-hosted arm on a private address, or a third-party arm that sends zero data retention (`provider: { zdr: true }`).                                          |
 
-The imajev URL must be loopback, a private address, or a host named with `--allow-host`. The server has no auth and must never be bound to a public address.
+The imajev URL must be loopback, a private address or an allowlisted host, and the client refuses redirects. Bind the server to a private address only.
+
+## Exclusions
+
+A moderation node must define `exclude()`, and every item it excludes goes into `excluded.v1.json`. An excluded item leaves the manifest and never returns, even if it was sampled before it was reported. The guarantee is only as good as the node's `exclude()`.
 
 ## Layout under `<data-dir>/<node-id>/`
 
-| File                               | Contents                                                                               |
-| ---------------------------------- | -------------------------------------------------------------------------------------- |
-| `manifest.jsonl`                   | One `ManifestItem` per line. An item keeps its split for life. A rebuild only appends. |
-| `gold.jsonl`                       | `GoldRow`s. The majority wins; ties are dropped.                                       |
-| `eval-index.v1.json`               | Every item id and group key a dev or test split has held. See below.                   |
-| `controls.jsonl`                   | Each passing known-answer call, keyed by run key.                                      |
-| `sealed-test.json`                 | When each run key's sealed test was scored.                                            |
-| `runs/<run-key>/predictions.jsonl` | Appended per item, with status `ok`, `missing` or `error`.                             |
-| `runs/<run-key>/report-<split>.md` | The report for that split.                                                             |
+| File                                     | Contents                                                                                                                                                    |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `manifest.jsonl`                         | One `ManifestItem` per line. An item keeps its split for life. A rebuild appends, and removes only excluded items.                                          |
+| `gold.jsonl`                             | `GoldRow`s, resolved by the node's `goldPolicy`: majority vote (ties dropped and counted) by default, a primary labeller, or disagreement as its own class. |
+| `eval-index.v1.json`                     | Every item id and group key a dev or test split has held. See below.                                                                                        |
+| `excluded.v1.json`                       | Every item id ever excluded. Only grows.                                                                                                                    |
+| `controls.jsonl`                         | Each passing known-answer call, keyed by run key.                                                                                                           |
+| `sealed-test.json`                       | Every scoring of a sealed test split. The report shows how many came before it.                                                                             |
+| `runs/<run-key>/predictions.jsonl`       | Appended per item, with status `ok`, `missing` or `error`. A failing item is retried on later runs, up to three failures.                                   |
+| `runs/<run-key>/report-<split>.md`       | The report for that split.                                                                                                                                  |
+| `runs/<run-key>/thresholds-<split>.json` | The per-class targets and the thresholds fitted on dev that the report used.                                                                                |
 
 A run key is a hash of the model's launch configuration plus the question spec. Predictions are therefore reused only when both are unchanged.
 

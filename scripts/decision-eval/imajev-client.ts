@@ -1,6 +1,7 @@
 import { assertPrivateHost } from './safety';
 import type {
   DecisionQuestion,
+  HostKind,
   DecisionResult,
   ImageDecisionModel,
   ImageDecisionRequest,
@@ -162,12 +163,13 @@ export function parseImajevAnswer(question: DecisionQuestion, raw: unknown): Nor
 
 /**
  * Client for the self-hosted imajev playground server (`POST /v1/systemone`).
- * The server has no auth and scores one request at a time behind a lock, so the
- * runner calls it serially and the URL must be one we control.
+ * The server scores one request at a time behind a lock, so the runner calls it
+ * serially; the URL must be one we control.
  */
 export class ImajevModel implements ImageDecisionModel {
   readonly hosting = 'self-hosted' as const;
   readonly zeroDataRetention = true;
+  readonly hostKind: HostKind;
   readonly configId: string;
   private readonly endpoint: URL;
   private readonly timeoutMs: number;
@@ -175,8 +177,9 @@ export class ImajevModel implements ImageDecisionModel {
   private readonly launch: ImajevLaunch;
 
   constructor(opts: ImajevClientOptions) {
-    const base = assertPrivateHost(opts.baseUrl, opts.allowedHosts);
-    this.endpoint = new URL('/v1/systemone', base);
+    const { url, kind } = assertPrivateHost(opts.baseUrl, opts.allowedHosts);
+    this.hostKind = kind;
+    this.endpoint = new URL('/v1/systemone', url);
     this.timeoutMs = opts.timeoutMs ?? 30_000;
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.launch = opts.launch;
@@ -215,6 +218,8 @@ export class ImajevModel implements ImageDecisionModel {
     const response = await this.fetchImpl(this.endpoint, {
       method: 'POST',
       body: form,
+      // A redirect would re-send the images to a host the allowlist never saw.
+      redirect: 'error',
       signal: AbortSignal.timeout(this.timeoutMs),
     });
     const text = await response.text();

@@ -85,6 +85,8 @@ describe('ImajevModel', () => {
 
     const [url, init] = fetchImpl.mock.calls[0] as unknown as [URL, RequestInit];
     expect(String(url)).toBe('http://127.0.0.1:8765/v1/systemone');
+    // A followed redirect would re-send the images to a host the allowlist never saw.
+    expect(init.redirect).toBe('error');
     const form = init.body as FormData;
     expect(JSON.parse(form.get('request') as string)).toEqual({
       state: { a: 'b' },
@@ -269,6 +271,7 @@ describe('known-answer control', () => {
       configId: 'm',
       hosting: 'self-hosted' as const,
       zeroDataRetention: true,
+      hostKind: 'loopback' as const,
       decide: vi.fn(),
       decideWithImages: vi.fn().mockResolvedValue({
         answers: [
@@ -286,9 +289,29 @@ describe('known-answer control', () => {
         latencyMs: 1,
       }),
     };
-    await expect(runKnownAnswerControl(model, IMAGE_CONTROL)).rejects.toThrow(
+    await expect(runKnownAnswerControl(model, IMAGE_CONTROL, 'moderation-image')).rejects.toThrow(
       'expected "red", got "blue"'
     );
+  });
+
+  it('🔴 a node-supplied control passes the same arm and PII gates as its items, before any call', async () => {
+    const hosted = {
+      configId: 'jev',
+      hosting: 'third-party' as const,
+      zeroDataRetention: true,
+      decide: vi.fn(),
+    };
+    await expect(
+      runKnownAnswerControl(hosted, { ...IMAGE_CONTROL, image: undefined }, 'moderation-image')
+    ).rejects.toThrow('may only go to a self-hosted arm');
+    await expect(
+      runKnownAnswerControl(
+        hosted,
+        { ...IMAGE_CONTROL, image: undefined, state: { context: 'mail jane@example.com' } },
+        'support-text'
+      )
+    ).rejects.toThrow('email-shaped');
+    expect(hosted.decide).not.toHaveBeenCalled();
   });
 });
 
@@ -329,6 +352,7 @@ describe('planted flipped labels', () => {
       expectedDelta: -20,
       observedDelta: -20,
       newErrors: 20,
+      newCorrect: 0,
     });
   });
 
@@ -346,6 +370,43 @@ describe('planted flipped labels', () => {
     expect(() => verifyPlantedFlips(allAbstain, gold, planted, () => 0)).toThrow(
       ControlFailedError
     );
+  });
+});
+
+describe('planted flipped labels against an imperfect model', () => {
+  // Three classes, so a planted item can be answered with its flipped label.
+  const classes = ['x', 'y', 'z'];
+  const ids = Array.from({ length: 30 }, (_, i) => `i${i}`);
+  const gold = new Map(ids.map((id, i) => [id, classes[i % 3]]));
+  const items: ManifestItem[] = ids.map((itemId) => ({
+    itemId,
+    groupKey: itemId,
+    ts: '',
+    split: 'dev',
+    state: {},
+  }));
+  const { planted } = plantFlippedLabels(gold, classes, 12, 11);
+  const plantedIds = [...planted.keys()];
+  const [toFlipped, toAbstain, toAbstainWithPred] = plantedIds;
+  const predictions: Prediction[] = ids.map((itemId) => {
+    const base = { itemId, runKey: 'k', status: 'ok' as const, confidence: 0.9 };
+    if (itemId === toFlipped)
+      return { ...base, pred: planted.get(itemId)?.flipped, abstained: false };
+    if (itemId === toAbstain) return { ...base, pred: null, abstained: true };
+    // A custom mapAnswer may return a label AND abstain; both counters must skip it.
+    if (itemId === toAbstainWithPred) return { ...base, pred: gold.get(itemId), abstained: true };
+    return { ...base, pred: gold.get(itemId), abstained: false };
+  });
+  const counter = (g: ReadonlyMap<string, string>) =>
+    countCorrect({ items, predictions, classes }, g);
+
+  it('🔴 counts errors and newly correct items exactly', () => {
+    expect(verifyPlantedFlips(predictions, gold, planted, counter)).toEqual({
+      expectedDelta: 1 - 9,
+      observedDelta: 1 - 9,
+      newErrors: 9,
+      newCorrect: 1,
+    });
   });
 });
 

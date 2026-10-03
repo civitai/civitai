@@ -1,7 +1,10 @@
 import { createHash } from 'crypto';
-import { deflateSync } from 'zlib';
+import { crc32, deflateSync } from 'zlib';
 
+import { assertArmAllowed, assertNoPii, EvalSafetyError } from './safety';
+import { isAnswered } from './scorer';
 import type {
+  DataClass,
   DecisionQuestion,
   ImageDecisionModel,
   ImageInput,
@@ -26,18 +29,6 @@ export function mulberry32(seed: number): () => number {
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
-}
-
-const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
-  let c = n;
-  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-  return c >>> 0;
-});
-
-function crc32(bytes: Uint8Array): number {
-  let c = 0xffffffff;
-  for (const b of bytes) c = CRC_TABLE[(c ^ b) & 0xff] ^ (c >>> 8);
-  return (c ^ 0xffffffff) >>> 0;
 }
 
 function pngChunk(type: string, data: Uint8Array): Buffer {
@@ -111,11 +102,18 @@ export const IMAGE_CONTROL: KnownAnswerControl & { image: ImageInput } = {
 /**
  * One real call with a known answer before a run is trusted. A mocked suite
  * stayed green while the first Jev client returned 400 on every live call.
+ * A node may supply its own control, so it passes the same gates as its items.
  */
 export async function runKnownAnswerControl(
   model: TextDecisionModel | ImageDecisionModel,
-  control: KnownAnswerControl & { image?: ImageInput }
+  control: KnownAnswerControl & { image?: ImageInput },
+  dataClass: DataClass
 ): Promise<{ answer: string; build: string }> {
+  assertArmAllowed(dataClass, model);
+  assertNoPii('known-answer control', control.state);
+  if (control.image && !('decideWithImages' in model)) {
+    throw new EvalSafetyError(`${model.configId} cannot take the image control`);
+  }
   const request = { state: control.state, questions: [control.question] };
   const result = control.image
     ? await (model as ImageDecisionModel).decideWithImages({
@@ -176,13 +174,13 @@ export function verifyPlantedFlips(
   trueGold: ReadonlyMap<string, string>,
   planted: ReadonlyMap<string, { original: string; flipped: string }>,
   countCorrect: CorrectCounter
-): { expectedDelta: number; observedDelta: number; newErrors: number } {
+): { expectedDelta: number; observedDelta: number; newErrors: number; newCorrect: number } {
   const byId = new Map(predictions.map((p) => [p.itemId, p]));
   let newErrors = 0;
   let newCorrect = 0;
   for (const [id, { original, flipped }] of planted) {
     const p = byId.get(id);
-    if (!p || p.status !== 'ok' || p.pred === null || p.pred === undefined) continue;
+    if (!p || !isAnswered(p)) continue;
     if (p.pred === original) newErrors++;
     if (p.pred === flipped) newCorrect++;
   }
@@ -200,7 +198,7 @@ export function verifyPlantedFlips(
       'planted-flip control: no planted item was answered with its true label, so the control proved nothing'
     );
   }
-  return { expectedDelta, observedDelta, newErrors };
+  return { expectedDelta, observedDelta, newErrors, newCorrect };
 }
 
 export function majorityBaseline(

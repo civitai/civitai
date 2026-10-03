@@ -184,9 +184,25 @@ export function choiceMapper(
   };
 }
 
-/** Run outcomes for the latest prediction per item; errors are not "done", so they retry. */
+/**
+ * A failed call is retried on later runs, but only up to this many failures:
+ * the server works one request at a time, so a permanently failing item would
+ * otherwise spend a full timeout on every daily pass, forever.
+ */
+export const MAX_ATTEMPTS = 3;
+
+/** Items not to send again: answered, missing, or out of attempts. */
 export function doneItemIds(predictions: readonly Prediction[], key: string): Set<string> {
   const latest = new Map<string, Prediction>();
-  for (const p of predictions) if (p.runKey === key) latest.set(p.itemId, p);
-  return new Set([...latest.values()].filter((p) => p.status !== 'error').map((p) => p.itemId));
+  const failures = new Map<string, number>();
+  for (const p of predictions) {
+    if (p.runKey !== key) continue;
+    latest.set(p.itemId, p);
+    if (p.status === 'error') failures.set(p.itemId, (failures.get(p.itemId) ?? 0) + 1);
+  }
+  return new Set(
+    [...latest.values()]
+      .filter((p) => p.status !== 'error' || (failures.get(p.itemId) ?? 0) >= MAX_ATTEMPTS)
+      .map((p) => p.itemId)
+  );
 }

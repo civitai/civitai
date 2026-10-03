@@ -87,6 +87,29 @@ describe('fitClassThreshold', () => {
     expect(fitClassThreshold(items, 'x', 0.9)).toEqual({ status: 'no-threshold', available: 100 });
   });
 
+  it('🔴 the sorted sweep finds the same threshold as checking every candidate', () => {
+    let seed = 7;
+    const rand = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
+    for (let trial = 0; trial < 50; trial++) {
+      const items: Scored[] = Array.from({ length: 200 }, () => {
+        const confidence = rand() < 0.05 ? null : Math.round(rand() * 20) / 20;
+        const correct = rand() < 0.5 + 0.5 * (confidence ?? 0);
+        return { pred: 'x', gold: correct ? 'x' : 'y', confidence };
+      });
+      const target = 0.6 + rand() * 0.3;
+      const candidates = [0, ...new Set(items.map((i) => i.confidence ?? 0))].sort((a, b) => a - b);
+      const brute = candidates
+        .map((t) => classAtThreshold(items, 'x', t))
+        .find((at) => at.wilsonLower !== null && at.wilsonLower >= target);
+      const fit = fitClassThreshold(items, 'x', target);
+      if (brute) {
+        expect(fit).toEqual({ status: 'fitted', threshold: brute.threshold, atThreshold: brute });
+      } else {
+        expect(fit.status).not.toBe('fitted');
+      }
+    }
+  });
+
   it('never covers a null-confidence item above threshold 0', () => {
     const at = classAtThreshold([{ pred: 'x', gold: 'x', confidence: null }], 'x', 0.5);
     expect(at.covered).toBe(0);
@@ -164,7 +187,7 @@ describe('scorer', () => {
 
   it('fits thresholds on dev items only', () => {
     const testOnly = { ...input, items: items.map((i) => ({ ...i, split: 'test' as const })) };
-    expect(fitThresholds(testOnly, 0.5).x).toEqual({
+    expect(fitThresholds(testOnly, { x: 0.5, y: 0.5 }).x).toEqual({
       status: 'insufficient-n',
       available: 0,
       bestPossibleLower: null,

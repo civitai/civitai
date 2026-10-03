@@ -41,12 +41,16 @@ export type DecisionResult = {
 
 export type Hosting = 'self-hosted' | 'third-party';
 
+export type HostKind = 'loopback' | 'private' | 'allowlisted';
+
 export interface TextDecisionModel {
   /** Stable id for the arm AND its launch configuration; part of the run key. */
   readonly configId: string;
   readonly hosting: Hosting;
   /** True when no third party retains the request: self-hosted, or sent with a ZDR routing flag. */
   readonly zeroDataRetention: boolean;
+  /** Where a self-hosted arm lives, as far as its URL can tell. */
+  readonly hostKind?: HostKind;
   decide(request: TextDecisionRequest): Promise<DecisionResult>;
 }
 

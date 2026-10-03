@@ -57,12 +57,16 @@ function join(input: ScoreInput, itemFilter?: (item: ManifestItem) => boolean): 
     }));
 }
 
-/** Answered, labelled, non-abstained items, in the shape the metrics take. */
+/** The one rule for whether a prediction counts; the planted-flip control uses it too. */
+export function isAnswered(p: Prediction): p is Prediction & { status: 'ok'; pred: string } {
+  return p.status === 'ok' && !p.abstained && p.pred !== null && p.pred !== undefined;
+}
+
+/** Answered, labelled items, in the shape the metrics take. */
 function scoredOf(rows: readonly Joined[]): Scored[] {
   const out: Scored[] = [];
   for (const { prediction: p, gold } of rows) {
-    if (!p || p.status !== 'ok' || gold === undefined) continue;
-    if (p.abstained || p.pred === null || p.pred === undefined) continue;
+    if (!p || gold === undefined || !isAnswered(p)) continue;
     out.push({ pred: p.pred, gold, confidence: p.confidence ?? null });
   }
   return out;
@@ -81,7 +85,7 @@ function sliceScore(rows: readonly Joined[]): SliceScore {
       if (gold === undefined) unlabelled++;
       else {
         okLabelled++;
-        if (p.abstained || p.pred === null || p.pred === undefined) abstained++;
+        if (!isAnswered(p)) abstained++;
       }
     }
   }
@@ -117,24 +121,26 @@ export function scoreSplit(
   const perClass: Record<string, ClassAtThreshold> = {};
   for (const cls of input.classes)
     perClass[cls] = classAtThreshold(scored, cls, thresholds[cls] ?? 0);
-  const slices: SplitScore['slices'] = {};
+  const buckets = new Map<string, Map<string, Joined[]>>();
   for (const row of rows) {
     for (const [dim, value] of Object.entries(row.item.slices ?? {})) {
-      slices[dim] ??= {};
-      slices[dim][value] ??= sliceScore([]);
+      const byValue = buckets.get(dim) ?? new Map<string, Joined[]>();
+      buckets.set(dim, byValue);
+      const bucket = byValue.get(value) ?? [];
+      byValue.set(value, bucket);
+      bucket.push(row);
     }
   }
-  for (const dim of Object.keys(slices)) {
-    for (const value of Object.keys(slices[dim])) {
-      slices[dim][value] = sliceScore(rows.filter((r) => r.item.slices?.[dim] === value));
-    }
+  const slices: SplitScore['slices'] = {};
+  for (const [dim, byValue] of buckets) {
+    slices[dim] = Object.fromEntries([...byValue].map(([value, b]) => [value, sliceScore(b)]));
   }
   const abstentionByGold: SplitScore['abstentionByGold'] = {};
   for (const { prediction: p, gold } of rows) {
     if (p?.status !== 'ok' || gold === undefined) continue;
     const entry = (abstentionByGold[gold] ??= { n: 0, abstained: 0, rate: null });
     entry.n++;
-    if (p.abstained || p.pred === null || p.pred === undefined) entry.abstained++;
+    if (!isAnswered(p)) entry.abstained++;
   }
   for (const entry of Object.values(abstentionByGold)) entry.rate = entry.abstained / entry.n;
   const base = sliceScore(rows);
@@ -152,9 +158,16 @@ export function scoreSplit(
 }
 
 /** Per-class thresholds fitted on DEV. Never call this with test items. */
-export function fitThresholds(input: ScoreInput, target: number): Record<string, ThresholdFit> {
+export function fitThresholds(
+  input: ScoreInput,
+  targets: Readonly<Record<string, number>>
+): Record<string, ThresholdFit> {
   const scored = scoredOf(join(input, (i) => i.split === 'dev'));
   return Object.fromEntries(
-    input.classes.map((cls) => [cls, fitClassThreshold(scored, cls, target)])
+    input.classes.map((cls) => {
+      const target = targets[cls];
+      if (target === undefined) throw new Error(`no precision target for class "${cls}"`);
+      return [cls, fitClassThreshold(scored, cls, target)];
+    })
   );
 }

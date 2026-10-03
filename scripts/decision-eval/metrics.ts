@@ -117,18 +117,36 @@ export function fitClassThreshold(
   if (bestPossibleLower === null || bestPossibleLower < target) {
     return { status: 'insufficient-n', available: all.covered, bestPossibleLower };
   }
-  const candidates = [
-    0,
-    ...new Set(
-      items
-        .filter((i) => i.pred === cls && i.confidence !== null)
-        .map((i) => i.confidence as number)
-    ),
-  ].sort((a, b) => a - b);
-  for (const t of candidates) {
-    const at = classAtThreshold(items, cls, t);
-    if (at.wilsonLower !== null && at.wilsonLower >= target) {
-      return { status: 'fitted', threshold: t, atThreshold: at };
+  if (all.wilsonLower !== null && all.wilsonLower >= target) {
+    return { status: 'fitted', threshold: 0, atThreshold: all };
+  }
+  // One sorted sweep instead of re-scanning every item per candidate threshold.
+  const ranked = items
+    .filter((i): i is Scored & { confidence: number } => i.pred === cls && i.confidence !== null)
+    .sort((a, b) => a.confidence - b.confidence);
+  const correctFrom = new Array<number>(ranked.length + 1).fill(0);
+  for (let i = ranked.length - 1; i >= 0; i--) {
+    correctFrom[i] = correctFrom[i + 1] + (ranked[i].gold === cls ? 1 : 0);
+  }
+  for (let i = 0; i < ranked.length; i++) {
+    if (i > 0 && ranked[i].confidence === ranked[i - 1].confidence) continue;
+    const t = ranked[i].confidence;
+    if (t <= 0) continue;
+    const covered = ranked.length - i;
+    const correct = correctFrom[i];
+    const lower = wilsonLower(correct, covered);
+    if (lower !== null && lower >= target) {
+      return {
+        status: 'fitted',
+        threshold: t,
+        atThreshold: {
+          threshold: t,
+          covered,
+          correct,
+          precision: correct / covered,
+          wilsonLower: lower,
+        },
+      };
     }
   }
   return { status: 'no-threshold', available: all.covered };
