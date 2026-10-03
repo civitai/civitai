@@ -197,14 +197,19 @@ beforeEach(() => {
  * on EITHER write path left it **146/146 green**. The unit question is settled by the
  * behaviour suite named above, NOT here.
  *
- * What DOES discriminate, now, is the NULL-probe test below — not through the margins
- * but because it asserts the probe is called at all. Restoring the wire term on the
- * UPDATE path takes this file to **146/147**, red on that test's update arm. Treat that
- * as a second line of defence against a wire-term reintroduction rather than as
- * evidence the fixtures can see the unit; they still cannot. What this buys is that a case added later with a margin
- * BETWEEN `n` and `2n + 1` would discriminate, and — unintentionally but usefully —
- * that reading `params[1]` makes this suite sensitive to the two SQL parameters being
- * swapped, which it previously could not see.
+ * What `2n + 1` DOES buy is that a case added later with a margin BETWEEN `n` and
+ * `2n + 1` would discriminate, and — unintentionally but usefully — that reading
+ * `params[1]` makes this suite sensitive to the two SQL parameters being swapped, which
+ * it previously could not see.
+ *
+ * ⚠️ One narrower guard does exist in this file, and it is worth stating exactly because
+ * it is easy to over-read. The NULL-probe test below goes red when the probe's RESULT
+ * stops being consumed — measured, dropping the `requireStoredSize` call takes this file
+ * to **146/147** on EITHER write path (not just update), red on that test. But a
+ * wire-term reintroduction that leaves the now-dead probe call in place keeps this file
+ * at **147/147 green**, on both paths. So it defends against REMOVING THE PROBE CALL,
+ * not against a wire-unit term as such. The unit itself is still only observable in the
+ * behaviour suite.
  *
  * `$2` is the serialized value on both write paths (`$1` is the app block id).
  */
@@ -1327,8 +1332,15 @@ describe('append `data` blob (opaque, unmoderated app payload)', () => {
     // type-valid for `number | null | undefined`, and with the finiteness half gone it
     // fails open through BOTH gates: append gets `usedBytes + NaN > CAP` (false) and
     // update gets `netDelta = NaN`, where `NaN <= 0` and `NaN > CAP` are both false, so
-    // the write is ACCEPTED and charged nothing. Same reasoning that justified pinning
-    // the structurally-unreachable null arm.
+    // the write is ACCEPTED.
+    //
+    // ⚠️ "Accepted", NOT "charged nothing" — an earlier revision said the latter and the
+    // trigger DDL contradicts it. `kv_quota_trigger` charges `used_bytes + NEW.size_bytes`
+    // from the GENERATED column, which never sees `storedByteSize`, so the counter still
+    // moves by the true stored size. The harm is that the CEILING stopped binding, not
+    // that the accounting broke — which is worse, because the counter keeps looking
+    // healthy. Same reasoning that justified pinning the structurally-unreachable null
+    // arm.
     for (const probeValue of [null, undefined, NaN]) {
       mockClient.query.mockClear();
       mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
@@ -1348,32 +1360,6 @@ describe('append `data` blob (opaque, unmoderated app payload)', () => {
       // No row was written: the throw lands before the transaction opens.
       expect(mockClient.query).not.toHaveBeenCalled();
     }
-
-    // 🔴 The OTHER term of the same subtraction. `oldBytes` comes from the generated
-    // column, so a non-numeric value is unreachable with the current DDL — but a NaN
-    // there fails open through BOTH arms of the gate (`NaN <= 0` is false, so no
-    // exemption; `NaN > CAP` is false, so no refusal), which is strictly worse than the
-    // null case above. Pinned so the guard is not deleted as dead weight.
-    mockClient.query.mockClear();
-    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
-    mockPool.query.mockImplementation(async (sql: string, params?: unknown[]) => {
-      if (sql.includes('author_user_id, size_bytes'))
-        return { rows: [{ author_user_id: 42, size_bytes: 'not-a-number' }], rowCount: 1 };
-      if (sql.includes('.quota'))
-        return {
-          rows: [{ used_bytes: '0', stored_size_bytes: fixtureStoredSize(params) }],
-          rowCount: 1,
-        };
-      return { rows: [], rowCount: 0 };
-    });
-    await expect(
-      caller().update({
-        blockToken: 't',
-        key: 'ROW-KEY-1',
-        value: { title: 'ok', data: [1, 2, 3] },
-      })
-    ).rejects.toThrow('stored row size is not numeric');
-    expect(mockClient.query).not.toHaveBeenCalled();
 
     // The mirror case on the UPDATE path, where absorbing a null to 0 would make the
     // delta NEGATIVE and the exemption would then skip the ceiling entirely.
@@ -1404,6 +1390,136 @@ describe('append `data` blob (opaque, unmoderated app payload)', () => {
     await expect(
       caller().append({ blockToken: 't', value: { title: 'ok', data: [1, 2, 3] } })
     ).resolves.toMatchObject({ key: expect.any(String) });
+    expect(mockClient.query).toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 THE OTHER TERM OF THE SAME SUBTRACTION, in its own test rather than appended to
+   * the NULL-probe case above — that title says "probe" and "NULL", and this is neither,
+   * so a maintainer chasing the failure would be sent to `requireStoredSize` instead of
+   * to the `oldBytes` guard that actually failed.
+   *
+   * `oldBytes` comes from the generated `shared_kv.size_bytes` column, so a non-numeric
+   * value is unreachable with the current DDL (`integer`, non-null, generated over a
+   * `jsonb NOT NULL` column) and only a mocked pool can produce one. It is pinned anyway
+   * because a NaN there fails open through BOTH arms of the gate — `NaN <= 0` is false
+   * so no exemption fires, and `NaN > CAP` is false so no refusal fires — which is the
+   * same shape as the probe's null, on the term the probe's guard does not cover.
+   *
+   * Asserted on this guard's OWN message: the fail-open path reaches the UPDATE, matches
+   * no row, and surfaces as the lost-race `request not found`, so a test that only
+   * asserted "it throws" would pass against the removed guard.
+   */
+  it('refuses the write loudly when the stored row size is not numeric', async () => {
+    mockClient.query.mockClear();
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query.mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('author_user_id, size_bytes'))
+        return { rows: [{ author_user_id: 42, size_bytes: 'not-a-number' }], rowCount: 1 };
+      if (sql.includes('.quota'))
+        return {
+          rows: [{ used_bytes: '0', stored_size_bytes: fixtureStoredSize(params) }],
+          rowCount: 1,
+        };
+      return { rows: [], rowCount: 0 };
+    });
+    await expect(
+      caller().update({
+        blockToken: 't',
+        key: 'ROW-KEY-1',
+        value: { title: 'ok', data: [1, 2, 3] },
+      })
+    ).rejects.toThrow('stored row size is not numeric');
+    expect(mockClient.query).not.toHaveBeenCalled();
+
+    // POSITIVE CONTROL: a numeric size on the same mocks reaches the write.
+    mockClient.query.mockClear();
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query.mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('author_user_id, size_bytes'))
+        return { rows: [{ author_user_id: 42, size_bytes: 100 }], rowCount: 1 };
+      if (sql.includes('.quota'))
+        return {
+          rows: [{ used_bytes: '0', stored_size_bytes: fixtureStoredSize(params) }],
+          rowCount: 1,
+        };
+      return { rows: [], rowCount: 0 };
+    });
+    mockClient.query.mockImplementation(async (sql: string) => {
+      if (sql.trim().startsWith('UPDATE')) return { rows: [], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    });
+    await expect(
+      caller().update({
+        blockToken: 't',
+        key: 'ROW-KEY-1',
+        value: { title: 'ok', data: [1, 2, 3] },
+      })
+    ).resolves.toEqual({ ok: true });
+  });
+
+  /**
+   * 🔴 THE THIRD TERM. `usedBytes` was the only one of the three in these comparisons
+   * with no finiteness check, and the argument for the other two applies unchanged: a
+   * NaN there fails open through BOTH arms (`usedBytes + storedByteSize > CAP` is false
+   * on append; on update `netDelta` is unaffected so `usedBytes + netDelta > CAP` is
+   * false too). Pinned on BOTH write paths because the guard is called from both.
+   *
+   * The NULL case is deliberately NOT a fault and is asserted as such: the scalar
+   * subquery returns NULL when the app has no `quota` row, and the pre-existing
+   * behaviour — which the FROM-less SELECT shape exists to preserve — is to read that as
+   * zero used bytes. A guard that rejected it would turn a tolerated state into a 500.
+   */
+  it('refuses the write loudly when the app byte counter is not numeric', async () => {
+    for (const path of ['append', 'update'] as const) {
+      mockClient.query.mockClear();
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      mockPool.query.mockImplementation(async (sql: string, params?: unknown[]) => {
+        if (sql.includes('author_user_id') && sql.includes('count(*)'))
+          return { rows: [{ n: '0' }], rowCount: 1 };
+        if (sql.includes('author_user_id, size_bytes'))
+          return { rows: [{ author_user_id: 42, size_bytes: 100 }], rowCount: 1 };
+        if (sql.includes('.quota'))
+          return {
+            rows: [
+              {
+                used_bytes: 'not-a-number',
+                row_count: '0',
+                stored_size_bytes: fixtureStoredSize(params),
+              },
+            ],
+            rowCount: 1,
+          };
+        return { rows: [], rowCount: 0 };
+      });
+      const value = { title: 'ok', data: [1, 2, 3] };
+      const call =
+        path === 'append'
+          ? caller().append({ blockToken: 't', value })
+          : caller().update({ blockToken: 't', key: 'ROW-KEY-1', value });
+      await expect(call).rejects.toThrow('app used_bytes is not numeric');
+      expect(mockClient.query).not.toHaveBeenCalled();
+    }
+
+    // 🔴 NULL is NOT a fault — a missing quota row reads as zero used bytes, and the
+    // write goes through. Without this arm, tightening the guard to reject null would
+    // pass, and it would break the one property the FROM-less SELECT shape buys.
+    mockClient.query.mockClear();
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query.mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('author_user_id') && sql.includes('count(*)'))
+        return { rows: [{ n: '0' }], rowCount: 1 };
+      if (sql.includes('.quota'))
+        return {
+          rows: [
+            { used_bytes: null, row_count: null, stored_size_bytes: fixtureStoredSize(params) },
+          ],
+          rowCount: 1,
+        };
+      return { rows: [], rowCount: 0 };
+    });
+    const out = await caller().append({ blockToken: 't', value: { title: 'ok', data: [1, 2, 3] } });
+    expect(out.key).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
     expect(mockClient.query).toHaveBeenCalled();
   });
 

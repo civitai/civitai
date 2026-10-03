@@ -156,6 +156,30 @@ const STORED_SIZE_PROBE_SQL = `octet_length($2::jsonb::text) AS stored_size_byte
  * on the update path, a non-positive delta — the exact bypass). Reject the null
  * explicitly, before the coercion.
  */
+/**
+ * Read a trigger-maintained counter that is selected `::text`, treating a MISSING row as
+ * zero but a non-numeric value as a fault.
+ *
+ * 🔴 WHY THE THIRD GUARD. `usedBytes` is the one term of these comparisons that had no
+ * finiteness check, and the argument for the other two applies to it unchanged: a NaN
+ * there fails open through BOTH arms — `usedBytes + storedByteSize > CAP` is false on
+ * append, and on update `netDelta` is unaffected so the refusal `usedBytes + netDelta >
+ * CAP` is false too. Unreachable today (`used_bytes bigint NOT NULL`, read through
+ * `::text`), and leaving it as the odd one out is exactly the asymmetry a later schema
+ * or driver change turns into a hole.
+ *
+ * `null` is NOT a fault here, unlike the probe: the scalar subquery returns NULL when the
+ * app has no `quota` row, and the pre-existing behaviour is to treat that as zero used
+ * bytes. Only a value that is present and non-numeric is rejected.
+ */
+function requireFiniteCounter(raw: string | null | undefined, label: string): number {
+  const value = Number(raw ?? '0');
+  if (!Number.isFinite(value)) {
+    throw new Error(`app shared storage: ${label} is not numeric`);
+  }
+  return value;
+}
+
 function requireStoredSize(raw: number | null | undefined): number {
   const storedByteSize = Number(raw);
   if (raw == null || !Number.isFinite(storedByteSize)) {
@@ -671,7 +695,7 @@ export async function appendSharedRow(
       [appBlockId, serialized]
     )
   ).rows[0];
-  const usedBytes = Number(quota?.used_bytes ?? '0');
+  const usedBytes = requireFiniteCounter(quota?.used_bytes, 'app used_bytes');
   const rowCount = Number(quota?.row_count ?? '0');
   // 🔴 BOTH SIDES OF THIS COMPARISON MUST BE IN THE STORED UNIT. `usedBytes` is the
   // trigger-maintained sum of `shared_kv.size_bytes`; the wire `byteSize` the
@@ -805,7 +829,7 @@ export async function updateSharedRow(
       [appBlockId, serialized]
     )
   ).rows[0];
-  const usedBytes = Number(quota?.used_bytes ?? '0');
+  const usedBytes = requireFiniteCounter(quota?.used_bytes, 'app used_bytes');
   // 🔴 A SUBTRACTION IS ONLY A DELTA IF BOTH TERMS SHARE A UNIT. `oldBytes` comes
   // straight out of the generated `shared_kv.size_bytes` column, so it is already
   // in stored bytes; the new side must be too, or the difference is not a measure
@@ -878,8 +902,16 @@ export async function updateSharedRow(
   // in play. ⚠️ It is NOT bounded by the trigger "reconciling" afterwards — an earlier
   // draft claimed that, and `kv_quota_trigger` only ever applies a DELTA
   // (`used_bytes = used_bytes + (NEW.size_bytes - OLD.size_bytes)`), so it propagates
-  // this write faithfully and cannot correct pre-existing drift. Recomputation is a
-  // separate job; see the provisioner's own note on the trigger.
+  // this write faithfully and cannot correct pre-existing drift.
+  //
+  // 🔴 AND DO NOT SUBSTITUTE "a periodic recompute will fix it". The provisioner's own
+  // comment on the trigger says one exists ("the periodic recompute in P7 reconciles"),
+  // but a full enumeration of `src/` finds no job that recomputes app-level
+  // `quota.used_bytes` from the rows: the only `sum(size_bytes)` outside tests is in
+  // `user-storage-purge.service`, which sums `kv` for ONE user and cannot see
+  // `shared_kv` at all. So app-level drift, once present, is currently permanent — which
+  // is precisely why this exemption has to exist rather than being deferred to a
+  // reconciler.
   //
   // `append` needs no equivalent, for a stronger reason than a sign argument: its gate
   // is ABSOLUTE (`usedBytes + storedByteSize > CAP`), not a delta, so there is no

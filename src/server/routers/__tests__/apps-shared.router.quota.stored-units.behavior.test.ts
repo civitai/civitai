@@ -589,9 +589,15 @@ describe('shared-storage quota arithmetic vs the bytes Postgres stores', () => {
    *     exemption also fixes.
    *
    * So this test is red at `c4b553af79` (the pre-fix base) as well, and it is not purely
-   * a guard against a regression this commit introduces. ⚠️ Read "base" as that ref, not
-   * as this commit's parent: against the parent — the unit fix WITHOUT the exemption —
-   * it is arm (a) that fails, which is the regression reading. Both readings are true at different overrun
+   * a guard against a regression this commit introduces.
+   *
+   * WARNING: EVERY REF HERE IS NAMED BY SHA, because a relative word gets this wrong. An
+   * earlier revision of this very paragraph said "this commit's parent" for the
+   * no-exemption tree; by the time it landed the parent WAS the exemption commit, and
+   * the sentence was false. Measured, per ref:
+   *   - `c4b553af79` (no unit fix)               -> arm (b) fails, arm (a) passes;
+   *   - `84994429f8` (unit fix, no exemption)    -> arm (a) fails, the regression reading;
+   *   - `862452e9ac` onward (with the exemption) -> all three arms pass. Both readings are true at different overrun
    * sizes; neither alone describes it. Measured: at the base commit arm (a) PASSES and
    * the failure is on arm (b). At this commit, removing the exemption or narrowing it
    * from `netDelta <= 0` to `< 0` each make arm (a) fail instead — so (a) and (b) have
