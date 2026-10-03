@@ -3,6 +3,7 @@ import { createHash, randomBytes } from 'crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
+import type { GoldPolicy } from '../builder';
 import type { NodeContext, NodeSpec, SourceRow } from '../nodes';
 import { choiceMapper } from '../runner';
 import type { ChoiceOption, DecisionState, FormatSpec, GoldRow, MappedAnswer } from '../types';
@@ -155,7 +156,12 @@ export function parseStrataCsv(text: string): Map<string, string> {
  * the classifier version whose stored state is read, and the strata files whose
  * tickets form the sealed test split.
  */
-type SupportTopicConfig = { classifierVersion: string; testStrataFiles: string[] };
+type SupportTopicConfig = {
+  classifierVersion: string;
+  testStrataFiles: string[];
+  /** Whose label is gold when the double-labelled tickets disagree; the other feeds the human baseline. */
+  primaryLabeler?: string;
+};
 
 function nodeDir(ctx: NodeContext): string {
   return join(ctx.dataDir, NODE_ID);
@@ -346,6 +352,7 @@ export const supportTopicNode: NodeSpec<SupportTicketRaw> = {
   specVersion: 1,
   dataClass: 'support-text',
   classes: TOPIC_CLASSES,
+  targets: { billing_buzz: 0.9, crypto: 0.9, payment_refund: 0.9 },
   formats: {
     choice12: {
       questions: [
@@ -375,4 +382,8 @@ export const supportTopicNode: NodeSpec<SupportTicketRaw> = {
   }),
   source: supportSource,
   gold: supportGold,
+  goldPolicy: (ctx): GoldPolicy => {
+    const labeler = readConfig(ctx).primaryLabeler;
+    return labeler ? { kind: 'primary', labeler } : { kind: 'majority' };
+  },
 };

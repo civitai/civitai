@@ -62,9 +62,7 @@ export type NodeSpec<Raw = unknown> = {
   control?: KnownAnswerControl & { image?: ImageInput };
 };
 
-export const NODES: Record<string, NodeSpec<never>> = {
-  [supportTopicNode.id]: supportTopicNode as unknown as NodeSpec<never>,
-};
+export const NODES: Record<string, NodeSpec<never>> = {};
 
 /** NodeSpec is covariant in Raw through source(), so the registry erases it once, here. */
 export function registerNode<Raw>(node: NodeSpec<Raw>): void {
@@ -110,3 +108,5 @@ export function parseQuestionsFile(json: unknown, path: string): DecisionQuestio
   }
   return json;
 }
+
+registerNode(supportTopicNode);

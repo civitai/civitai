@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 
 import { NODES } from '../decision-eval/nodes';
@@ -305,5 +308,31 @@ describe('support.topic split isolation', () => {
 describe('support.topic gold source', () => {
   it('reads human labels only: the LLM judge rows are silver and must never become gold', () => {
     expect(HUMAN_LABELS_SQL).toMatch(/AND labeler NOT LIKE 'judge-%'/);
+  });
+});
+
+describe('support.topic bar and gold policy', () => {
+  it('holds the money topics to 0.90 and leaves every other class on the run target', () => {
+    expect(supportTopicNode.targets).toEqual({
+      billing_buzz: 0.9,
+      crypto: 0.9,
+      payment_refund: 0.9,
+    });
+  });
+
+  it('makes the configured primary labeller gold, and falls back to majority without one', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'support-topic-'));
+    const dir = join(dataDir, NODE_ID);
+    mkdirSync(dir);
+    const write = (cfg: object) => writeFileSync(join(dir, 'config.json'), JSON.stringify(cfg));
+    const base = { classifierVersion: 'v', testStrataFiles: ['s.csv'] };
+
+    write({ ...base, primaryLabeler: 'labeller-a' });
+    expect(supportTopicNode.goldPolicy?.({ dataDir })).toEqual({
+      kind: 'primary',
+      labeler: 'labeller-a',
+    });
+    write(base);
+    expect(supportTopicNode.goldPolicy?.({ dataDir })).toEqual({ kind: 'majority' });
   });
 });
