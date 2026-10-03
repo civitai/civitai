@@ -299,6 +299,14 @@ module.exports = {
         'src/components/Apps/AppsRailNav.tsx',
         'src/components/Apps/useAppsNavSections.ts',
         'src/components/Apps/appsRailState.tsx',
+        // The App Blocks missing-permissions backstop. It earns the glob on the same
+        // terms the comment above sets out: it is server-rendered on the model page,
+        // its narrow/wide swap is a container query ON PURPOSE, and its own docstring
+        // spends a paragraph saying why a hook would reintroduce the hydration
+        // divergence. That paragraph was the only thing enforcing it until now — the
+        // rule is an ENABLEMENT list, so `src/components/AppBlocks/` was outside it and
+        // a future `useIsMobile` here would have been a review note at best.
+        'src/components/AppBlocks/BlockConsentNotice.tsx',
       ],
       rules: {
         'local-rules/no-ssr-divergent-media-query': 'error',

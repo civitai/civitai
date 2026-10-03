@@ -7,18 +7,22 @@
  * The notice shipped with NO breakpoint handling of any kind: a
  * `<Group justify="space-between" wrap="nowrap">` holding a full sentence and TWO
  * full-text buttons, on a surface that is sometimes a phone and sometimes a ~320px
- * model sidebar. `wrap="nowrap"` with a non-shrinkable message is the overflow.
+ * model sidebar. ⚠️ It did NOT overflow — measured, `scrollWidth === clientWidth` at
+ * 390 — because a flex item's automatic minimum size is its min-content width, so the
+ * browser shrank the sentence and wrapped it instead. The defect is HEIGHT: six lines
+ * of text where the bar should be one strip. An overflow assertion is green on the
+ * broken component, which is why the load-bearing test here counts LINES.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * 🔴 WHY THE `geometry` PROJECT AND NOT `component`
  * ─────────────────────────────────────────────────────────────────────────────
  * Two reasons, and the first alone decides it.
  *
- *  1. THE SWAP IS A CONTAINER QUERY WHOSE BREAKPOINT IS `theme('screens.xs')`. That
- *     function is resolved by Tailwind's PostCSS plugin, and the number it resolves
- *     to is the `xs` key of `src/utils/breakpoints.json`. A tier that does not run
- *     the app cascade is not a tier that can be trusted to agree with production
- *     about which rules exist at all.
+ *  1. THE SWAP IS BUILT FROM TAILWIND CONTAINER-QUERY VARIANTS (`@container`,
+ *     `@max-xs:`, `@xs:`, `@max-xs:sr-only`), which exist only where Tailwind's
+ *     utilities are loaded. In the `component` tier they are inert — `className="flex"`
+ *     computes `display: block` there — so every assertion in this file would be
+ *     measuring a component with no responsive behaviour at all.
  *  2. THE `component` TIER HAS NO VIEWPORT OF ITS OWN. `test/geometry-setup.tsx`
  *     records the runner's silent default as 414x896 — which sits ABOVE the 390/393
  *     band real phones report AND above this notice's own 480px swap point, so a
@@ -37,23 +41,30 @@
  * Both are named in the test titles. Measuring only the narrow one passes on a
  * component that is PERMANENTLY icon-only — i.e. on a desktop regression — and
  * measuring only the wide one is the bug itself. The pair is also what makes the
- * stylesheet non-optional: with the CSS module missing, BOTH forms are visible at
- * BOTH widths, which fails the "exactly one" assertions rather than passing them.
+ * cascade non-optional: with the utilities missing, BOTH forms are visible at BOTH
+ * widths, which fails the "exactly one" assertions rather than passing them.
  *
- * ⚠️ WHAT THESE DO NOT MEASURE. The swap point itself (480px) is deliberately NOT
- * probed: both points sit a comfortable distance either side of it, so these tests
- * cannot tell 480 from 460. The claim they carry is "the narrow form is what a phone
- * gets and the wide form is what a laptop gets", which is the product claim. The
- * number lives in one place (`BlockConsentNotice.module.scss`, via `theme()`) and
+ * ⚠️ WHAT THESE DO NOT MEASURE. The swap point itself (480px, the `xs` rung of
+ * `src/utils/breakpoints.json` via `theme.containers`) is deliberately NOT probed: both
+ * points sit a comfortable distance either side of it, so these tests cannot tell 480
+ * from 460. The claim they carry is "the narrow form is what a phone gets and the wide
+ * form is what a laptop gets", which is the product claim. The number has one home and
  * nothing restates it, so there is nothing for a second assertion to catch drifting.
  *
  * ⚠️ AND THEY MEASURE THE VIEWPORT AS A PROXY FOR THE CONTAINER. The swap is a
  * CONTAINER query — the notice asks how wide IT is, not how wide the screen is,
  * because the desktop model sidebar is the narrow case that a viewport query gets
- * wrong (see `.notice` in the stylesheet). The fixture renders the notice as a
+ * wrong (see the component's docstring). The fixture renders the notice as a
  * full-width block, so container width tracks viewport width here and the two
  * coincide. The sidebar case is therefore covered by the MECHANISM, not by a
  * measurement in this file.
+ *
+ * ⚠️ AND THE RED-AT-BASE MATRIX IS AGAINST THE PRE-CHANGE COMPONENT, NOT AGAINST A
+ * CLEAN `origin/main` CHECKOUT. Several arms here read nodes that only the new markup
+ * renders, so at `origin/main` they fail structurally rather than geometrically. The one
+ * arm deliberately built to be measurable on BOTH revisions is the line-count test
+ * below, which reads the `<p>` both versions render: six lines before, one after. Say
+ * "red against the pre-change component" rather than "red at origin/main".
  */
 import { describe, expect, test } from 'vitest';
 import { page } from 'vitest/browser';
@@ -66,10 +77,6 @@ import {
   renderAtViewport,
 } from '../../../test/geometry-setup';
 import { BlockConsentNotice } from './BlockConsentNotice';
-// The REAL module mapping, so the queries below resolve the same hashed class names the
-// component renders. A `[class*="wideOnly"]` substring match would also work and would
-// keep passing if the class were renamed on one side only.
-import classes from './BlockConsentNotice.module.scss';
 
 /** A laptop. Comfortably above the notice's 480px swap point. */
 const LAPTOP_VIEWPORT = { width: 1280, height: 800 } as const;
@@ -96,46 +103,61 @@ const reviewByTestId = () => page.getByTestId('block-consent-notice-review');
 const dismissByTestId = () => page.getByTestId('block-consent-notice-dismiss');
 
 /**
- * The two SWAPPED node groups, and whether each node in them is displayed.
+ * The two SWAPPED node groups, each node read on TWO independent axes.
  *
- * 🔴 SCOPED TO THE NODES THAT CARRY THE SWAP CLASSES, NOT TO "every span in the
- * notice". The first draft of this helper read every span and was wrong in the way
- * that matters: Mantine's `Button` wraps its children in `.mantine-Button-inner` /
- * `.mantine-Button-label` spans, which are NOT display:none and whose `textContent`
- * is their hidden child's — so a correctly hidden label still reported as visible
- * text, and the file failed against a working component (and would have passed
- * against several broken ones).
+ * 🔴 SELECTED BY `data-form`, NOT BY A CLASS. The swap is now the repo's Tailwind
+ * container-query variants (`@max-xs:` / `@xs:`), whose generated class names carry
+ * escaped `@` and `:` characters; selecting on those would make the test a claim about
+ * a utility spelling. `data-form` is the component's own statement of which half a node
+ * belongs to.
+ *
+ * 🔴 AND IT IS SCOPED TO THOSE NODES, NOT TO "every span in the notice". The first draft
+ * read every span and was wrong in the way that matters: Mantine's `Button` wraps its
+ * children in `.mantine-Button-inner` / `.mantine-Button-label` spans, which are NOT
+ * display:none and whose `textContent` is their hidden child's — so a correctly hidden
+ * label still reported as visible text, and the file failed against a working component.
+ *
+ * 🔴 `visible` IS A RECT, NOT `display !== 'none'`, AND THE DIFFERENCE IS THE WHOLE
+ * `sr-only` CASE. Below the rung the long sentence is CLIPPED rather than hidden, so it
+ * stays in the accessibility tree — and a display-based reading would score that as
+ * "visible" and the narrow form as showing both messages. `sr-only` renders a 1px box;
+ * `display: none` renders a 0px one; a real line of text is tens of px wide. The 2px
+ * threshold separates the three.
  */
 function swapNodes() {
   const el = notice().element() as HTMLElement;
-  const group = (className: string) =>
-    Array.from(el.querySelectorAll<HTMLElement>(`.${className}`)).map((node) => ({
+  const group = (form: 'wide' | 'narrow') =>
+    Array.from(el.querySelectorAll<HTMLElement>(`[data-form="${form}"]`)).map((node) => ({
       node,
-      shown: getComputedStyle(node).display !== 'none',
+      /** Laid out at a size a sighted viewer can read. */
+      visible: box(node).width > 2,
+      /** In the accessibility tree: rendered at all, and not hidden from AT. */
+      announced:
+        getComputedStyle(node).display !== 'none' && node.closest('[aria-hidden="true"]') == null,
       text: (node.textContent ?? '').trim(),
     }));
-  return { wide: group(classes.wideOnly), narrow: group(classes.narrowOnly) };
+  return { wide: group('wide'), narrow: group('narrow') };
 }
 
 /**
- * Which form is on screen — `'narrow'`, `'wide'`, or a diagnosis.
+ * Which form is VISIBLE — `'narrow'`, `'wide'`, or a diagnosis.
  *
- * 🔴 IT REPORTS `'both'` AND `'neither'` RATHER THAN THROWING, so an assertion against
- * a literal names what actually happened. `'both'` is what a MISSING stylesheet
- * produces (neither at-rule exists, so nothing is hidden) and `'neither'` is what the
- * first implementation of this component produced (the wide half hidden
- * unconditionally, the narrow half hidden by the query) — two different defects that a
- * bare "the short message is visible" check cannot tell apart, and one of which it
- * would pass.
+ * 🔴 IT REPORTS `'both'`, `'neither'` AND `'mixed'` RATHER THAN THROWING, so an
+ * assertion against a literal names what actually happened. `'both'` is what a MISSING
+ * cascade produces (no variant rules exist, so nothing is hidden); `'neither'` is what
+ * an earlier implementation of this component produced (one half hidden unconditionally,
+ * the other hidden by the query); `'mixed'` is one node of a pair losing its class.
+ * Three different defects that a bare "the short message is visible" check cannot tell
+ * apart, and two of which it would pass.
  */
 function shownForm(): 'narrow' | 'wide' | 'both' | 'neither' | 'mixed' {
   const { wide, narrow } = swapNodes();
   expect(wide.length, 'no wide-form nodes rendered at all').toBeGreaterThan(0);
   expect(narrow.length, 'no narrow-form nodes rendered at all').toBeGreaterThan(0);
-  const allWide = wide.every((n) => n.shown);
-  const noWide = wide.every((n) => !n.shown);
-  const allNarrow = narrow.every((n) => n.shown);
-  const noNarrow = narrow.every((n) => !n.shown);
+  const allWide = wide.every((n) => n.visible);
+  const noWide = wide.every((n) => !n.visible);
+  const allNarrow = narrow.every((n) => n.visible);
+  const noNarrow = narrow.every((n) => !n.visible);
   if (allWide && noNarrow) return 'wide';
   if (allNarrow && noWide) return 'narrow';
   if (allWide && allNarrow) return 'both';
@@ -143,13 +165,34 @@ function shownForm(): 'narrow' | 'wide' | 'both' | 'neither' | 'mixed' {
   return 'mixed';
 }
 
-/** The text actually on screen, from the swapped nodes only (icons contribute none). */
+/** The text a sighted viewer can read, from the swapped nodes only. */
 function visibleTexts(): string[] {
   const { wide, narrow } = swapNodes();
   return [...wide, ...narrow]
-    .filter((n) => n.shown)
+    .filter((n) => n.visible)
     .map((n) => n.text)
     .filter(Boolean);
+}
+
+/**
+ * The RENDERED text inside a control, as the browser computes it.
+ *
+ * 🔴 THE ORACLE `visibleTexts()` CANNOT BE. That helper is scoped to the nodes carrying
+ * `data-form`, which is exactly what makes it blind to a label that LOST its attribute:
+ * drop `data-form`/`@max-xs:hidden` from the review button's span and the word renders
+ * at 390px while every swap-set assertion stays green, because the node is no longer in
+ * the set being read. `innerText` is defined over rendered text — a `display: none`
+ * descendant contributes nothing — so it solves the Mantine-wrapper problem that forced
+ * the scoping AND sees text that escaped the swap entirely.
+ */
+function renderedLabel(locator: ReturnType<typeof reviewByTestId>): string {
+  return ((locator.element() as HTMLElement).innerText ?? '').trim();
+}
+
+/** Is the control's icon actually LAID OUT, rather than merely present in the DOM? */
+function iconIsRendered(locator: ReturnType<typeof reviewByTestId>): boolean {
+  const icon = (locator.element() as HTMLElement).querySelector('svg');
+  return icon != null && box(icon).width > 0;
 }
 
 /**
@@ -167,7 +210,7 @@ function expectCascade() {
   expect(evidence.ruleCount, 'the app cascade did not load').toBeGreaterThan(1000);
   expect(
     evidence.tailwindFlexUtilityResolves,
-    'Tailwind did not load, so `theme()` in the module stylesheet cannot be trusted either'
+    'Tailwind did not load — the whole swap is Tailwind container-query variants'
   ).toBe(true);
 }
 
@@ -185,18 +228,64 @@ describe('the notice at 390x844 — a phone', () => {
     expect(texts).toEqual([SHORT_MESSAGE]);
     expect(texts).not.toContain(LONG_MESSAGE);
 
-    // The buttons carry NO visible word — their labels are the two `wideOnly` spans,
-    // and the icons are what is left.
+    // 🔴 THE BUTTONS CARRY NO RENDERED WORD, READ OFF `innerText` RATHER THAN OFF THE
+    // SWAP SET. `visibleTexts()` only sees nodes carrying `data-form`, which is precisely
+    // what makes it blind to a label that LOST the attribute and now renders at 390px —
+    // the assertion would pass vacuously on exactly the mutation it is about. `innerText`
+    // is the browser's own rendered-text computation and sees it.
+    expect(renderedLabel(reviewByTestId()), 'the review button renders a word at 390px').toBe('');
+    expect(renderedLabel(dismissByTestId()), 'the dismiss button renders a word at 390px').toBe('');
     for (const label of ['Review permissions', 'Dismiss']) {
-      expect(texts, `"${label}" is still rendered as text at 390px`).not.toContain(label);
+      expect(texts, `"${label}" is still in the swap set as visible text`).not.toContain(label);
     }
-    const review = reviewByTestId().element() as HTMLElement;
+
+    // 🔴 AND THE ICON IS LAID OUT, NOT MERELY PRESENT. `querySelectorAll('svg').length > 0`
+    // counts the NODE: swap the review icon's variant to the wrong half and the button
+    // renders literally nothing at 390px while the count stays 1, the swap set still reads
+    // 'narrow', and every other assertion here passes. A rect is the only reading that can
+    // tell "the icon stands in for the missing label" from "the icon exists in the DOM".
     expect(
-      review.querySelectorAll('svg').length,
-      'the review button has no icon to stand in for its missing label'
-    ).toBeGreaterThan(0);
-    const dismiss = dismissByTestId().element() as HTMLElement;
-    expect(dismiss.querySelectorAll('svg').length).toBeGreaterThan(0);
+      iconIsRendered(reviewByTestId()),
+      'the review button has no RENDERED icon to stand in for its missing label'
+    ).toBe(true);
+    expect(
+      iconIsRendered(dismissByTestId()),
+      'the dismiss button has no RENDERED icon to stand in for its missing label'
+    ).toBe(true);
+  });
+
+  test('🔴 the SCREEN READER still hears the full sentence — the swap is visual only', async () => {
+    // 🔴 THE HALF A `display: none` SWAP GETS WRONG, AND IT IS NOT VISIBLE IN A
+    // SCREENSHOT. Hiding the long sentence outright would remove it from the
+    // accessibility tree, leaving an AT user with "Missing permissions" — no app name,
+    // no "needs to work fully" — and which of the two announcements they get would
+    // depend on a rendered width they cannot perceive. The sentence is therefore
+    // CLIPPED (`sr-only`) below the rung rather than hidden, and the short form carries
+    // `aria-hidden` so the two are never announced together.
+    //
+    // This is the claim the `visible` / `announced` split in `swapNodes()` exists for:
+    // read on `display` alone, the clipped sentence scores as visible and this whole
+    // distinction is invisible.
+    const { observed } = await render(PHONE_VIEWPORT);
+    expect(observed).toEqual({ width: 390, height: 844 });
+    expectCascade();
+
+    const { wide, narrow } = swapNodes();
+    const sentence = wide.find((n) => n.text === LONG_MESSAGE);
+    const short = narrow.find((n) => n.text === SHORT_MESSAGE);
+    expect(sentence, 'the long sentence did not render').toBeTruthy();
+    expect(short, 'the short message did not render').toBeTruthy();
+
+    // Announced but not seen…
+    expect(sentence?.announced, 'the full sentence left the accessibility tree at 390px').toBe(
+      true
+    );
+    expect(sentence?.visible, 'the full sentence is visible at 390px — it should be clipped').toBe(
+      false
+    );
+    // …and seen but not announced, so exactly ONE of them reaches a screen reader.
+    expect(short?.visible).toBe(true);
+    expect(short?.announced, 'both messages are announced — the viewer hears it twice').toBe(false);
   });
 
   test('🔴 the icon-only buttons still expose an ACCESSIBLE NAME — queried by role, not testid', async () => {
@@ -307,10 +396,22 @@ describe('the notice at 1280x800 — a laptop', () => {
     expect(texts).not.toContain(SHORT_MESSAGE);
     expect(texts).toContain('Review permissions');
     expect(texts).toContain('Dismiss');
+
+    // The mirror of the narrow block's `innerText` reading: here the words must be
+    // RENDERED, and the icons must not. Without this pair, a wide form whose labels
+    // escaped the swap set would satisfy every assertion above.
+    expect(renderedLabel(reviewByTestId())).toBe('Review permissions');
+    expect(renderedLabel(dismissByTestId())).toBe('Dismiss');
+    expect(iconIsRendered(reviewByTestId()), 'the icon is still laid out at 1280').toBe(false);
+    expect(iconIsRendered(dismissByTestId()), 'the icon is still laid out at 1280').toBe(false);
   });
 
-  test('the accessible names are the SAME at both widths', async () => {
-    // 🔴 THE PAIR IS THE CLAIM. `aria-label` overrides visible text, so a label that
+  test('⚠️ INVARIANT GUARD — the accessible names are the SAME at both widths', async () => {
+    // ⚠️ GREEN ON PRE-CHANGE CODE, so this is not regression coverage: at 1280 the review
+    // button's visible text was already `Review permissions` and dismiss already carried
+    // `aria-label="Dismiss the missing-permissions notice"`, so both lookups passed.
+    //
+    // 🔴 THE PAIR IS STILL THE CLAIM. `aria-label` overrides visible text, so a label that
     // merely paraphrased the word on the button would break "label in name" for anyone
     // driving this by voice at the wide width — while every assertion in the narrow
     // block above would still pass. Asserting the identity here is what rules that out.
@@ -322,9 +423,10 @@ describe('the notice at 1280x800 — a laptop', () => {
     await expect
       .element(page.getByRole('button', { name: 'Dismiss the missing-permissions notice' }))
       .toBeVisible();
-    // …and the visible word on the review button is that exact string, not a paraphrase.
-    const review = reviewByTestId().element() as HTMLElement;
-    expect((review.textContent ?? '').trim()).toBe('Review permissions');
+    // …and the RENDERED word on the review button is that exact string, not a paraphrase.
+    // `innerText`, not `textContent`: the latter concatenates the hidden icon's span too
+    // and would keep matching if the wrong half were showing.
+    expect(renderedLabel(reviewByTestId())).toBe('Review permissions');
   });
 
   test('the actions are still on ONE row, right of the message', async () => {

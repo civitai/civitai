@@ -49,7 +49,7 @@
  * `AppsPageLayout.chromeAlignment.browser.test.tsx` carried a SECOND copy of the
  * band→body 32px gap and no longer does; that consolidation is recorded in its docstring.
  */
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { cleanup } from 'vitest-browser-react';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
@@ -182,8 +182,6 @@ function headings(): HTMLElement[] {
 }
 
 describe('the rail is EXPANDED at 1440', () => {
-  beforeEach(() => expect(true).toBe(true));
-
   test('🔴 the heading and the toggle are on ONE row, heading left, toggle right', async () => {
     const { observed } = await renderRail(false);
     expect(observed).toEqual({ width: 1440, height: 900 });
@@ -338,8 +336,8 @@ describe('the rail is COLLAPSED at 1440', () => {
   });
 });
 
-describe('🔴 the mobile DRAWER renders the same nav and NO collapse toggle', () => {
-  test('the drawer has no toggle, while the desktop rail does — both read in one run', async () => {
+describe('⚠️ the mobile DRAWER renders the same nav and NO collapse toggle', () => {
+  test('⚠️ INVARIANT GUARD — the drawer has no toggle, while the desktop rail does', async () => {
     // 🔴 THE SEAM THIS CHANGE CREATES. `AppsRailNavView` is rendered TWICE by
     // `AppsPageLayout` — desktop rail and mobile `Drawer` — so moving the toggle INTO that
     // component put it one careless prop away from appearing in a panel that is always

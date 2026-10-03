@@ -37,6 +37,12 @@
  * heading row the collapse toggle shares), which is a different subject. This file is
  * horizontal only.
  *
+ * ⚠️ WHAT THE MOVE COST, SAID PLAINLY: the copy deleted from here ran once per viewport
+ * (1440 / 2560 / 3440) and the surviving one renders at 1440 only. The gap is a
+ * non-responsive `Stack gap="xl"`, so no reachable defect is lost — but the coverage
+ * narrowed, and "a consolidation rather than a loss" would be overclaiming without this
+ * sentence.
+ *
  * 🔴 THE DEFECT THIS PINS. `AppsPageLayout` used to take a per-page container width
  * and render `AppsSubNav` INSIDE that Container, so the ONE element required to be
  * identical on every apps page inherited each page's own width and jumped sideways as

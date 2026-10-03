@@ -13,6 +13,17 @@
  * `AppsPageLayout.railSurface.browser.test.tsx` also reads vertical numbers, about the
  * painted panel's BLEED rather than about the chrome's heights; left there deliberately.
  *
+ * ⚠️ TWO HONEST QUALIFICATIONS ON THAT CONSOLIDATION, BECAUSE "A CONSOLIDATION RATHER
+ * THAN A LOSS" IS STRONGER THAN WHAT WAS MEASURED. (a) The deleted copy ran inside
+ * `describe.each(VIEWPORTS)` and so measured the gap at 1440 / 2560 / 3440; every test in
+ * THIS file renders at 1440 only. The gap is `Stack gap="xl"`, a non-responsive token, so
+ * no viewport-dependent defect is reachable — but the viewport coverage genuinely
+ * narrowed and that is the trade. (b) 🔴 THE FILENAME LIES ABOUT THE TIER: this file ends
+ * `.browser.test.tsx`, so it is collected by the `component` project, NOT by the
+ * `geometry` one, despite "geometry" being in its name. `component` matches no project
+ * selector in `.github/workflows/lint.yml`, so nothing here is run by CI outside the
+ * preview pipeline's report-only status. Do not read the name as a tier.
+ *
  * 🔴 READ THIS BEFORE TRUSTING IT AS A GATE: it is not one. This file is in the
  * Vitest browser-mode `component` project, which CI runs only as the preview
  * pipeline's `preview / component-tests` — REPORT-ONLY and non-blocking. ⚠️ AND THE

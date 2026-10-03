@@ -75,16 +75,27 @@ export function AppsRailNavView({
   /**
    * The groups that actually have sections, in registry order.
    *
-   * Resolved BEFORE the render rather than skipped inside it, because `headerAction` goes
-   * on the first group that RENDERS — which is not necessarily `appsSectionGroups[0]`. A
-   * moderator-only viewer's first rendered group is `Moderate`, and keying the action on
-   * the registry's first entry would drop the toggle for them.
+   * Resolved BEFORE the render rather than skipped inside it, so `headerAction` can go on
+   * the first group that RENDERS rather than on `appsSectionGroups[0]`. ⚠️ THOSE TWO
+   * CANNOT DISAGREE TODAY, AND AN EARLIER VERSION OF THIS COMMENT CLAIMED THEY COULD —
+   * it offered "a moderator-only viewer's first rendered group is `Moderate`", and that
+   * viewer does not exist: `useAppsNavSections` returns `[]` outright without store
+   * access, and Marketplace's only predicate is that same `canSeeStore`, so whenever
+   * `sections` is non-empty the `discover` group renders. The real reason to key on the
+   * rendered list is that it states the intent ("beside the first heading the viewer
+   * sees") instead of coupling the action to the registry's declaration order — a
+   * property that survives a reorder or a future ungated group. It is not guarding a
+   * reachable cohort, and no test pretends otherwise.
    *
    * Non-empty whenever `sections` is: `AppsSection['group']` is `AppsSectionGroupId`,
    * derived from `appsSectionGroups` itself, so every section's group matches a row here
    * by construction. There is deliberately no runtime fallback for "an action with no
    * group to put it on" — it would be an untestable branch guarding a state the type
-   * system already forbids.
+   * system already forbids. 🔴 The one thing that would make it reachable, and therefore
+   * the trigger to watch: a section whose `group` comes from DATA rather than from the
+   * registry. The collapse state is global and survives navigation, so a toggle rendered
+   * nowhere would leave a collapsed rail with no way to re-expand it on any `/apps/*`
+   * route.
    */
   const groups = appsSectionGroups
     .map((group) => ({
