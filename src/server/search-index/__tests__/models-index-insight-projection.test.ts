@@ -37,8 +37,12 @@ const flat = indexSource.replace(/\s+/g, ' ');
 const INSIGHT_SORT_ATTR = 'insight.qualityScore';
 
 describe('models search index projects insight.qualityScore', () => {
-  it('loads the labels batched over the whole read window, not per model', () => {
-    // Per-model would be one query per document across a ~718k-document rebuild.
+  it('loads the labels from the batch-wide id list, not a per-model one', () => {
+    // ⚠ Reads what it says and no more: this pins the ARGUMENT as `versionIds` — the batch-wide
+    // list — rather than a per-model one. It does NOT count queries, so it cannot by itself
+    // distinguish a per-document regression; an earlier version of this test claimed it could.
+    // What makes the per-model shape fail is that `versionIds` is built once outside the
+    // per-model builder, so naming it here is only reachable from the batched position.
     expect(flat).toMatch(/loadResourceInsights\(versionIds\)/);
   });
 
@@ -89,15 +93,23 @@ describe('models search index projects insight.qualityScore', () => {
     expect(modelsFilterableAttributes).toContain(INSIGHT_SORT_ATTR);
   });
 
-  it('🔴 keeps the attribute OUT of the displayed-attributes whitelist', async () => {
-    // Deliberate: stored-but-undisplayed, the same shape as `sortMetrics`, which
-    // ../displayed-attributes.ts documents as a privacy boundary. Sorting and filtering on
-    // an undisplayed field both verified working on v1.15.0, so listing it here would buy
-    // nothing and would widen what a search hit returns.
-    const { modelsDisplayedAttributes } = await import(
+  it('🔴 keeps the attribute OUT of displayedAttributes and ON the withheld ledger', async () => {
+    // Stored-but-undisplayed. Sorting and `EXISTS` filtering on an undisplayed field were both
+    // verified working on v1.15.0, so displaying it would buy nothing and would widen what a
+    // public search hit returns.
+    //
+    // 🔴 Both halves, because the absence alone is not the contract. ../displayed-attributes.ts
+    // keeps `MODELS_WITHHELD_ATTRIBUTES` as the deliberate record of every top-level key a
+    // document carries that the displayed list withholds — and its own history is the argument
+    // for asserting membership: that list "shipped missing `flags`", and a review round caught
+    // it rather than a test. An unlisted withheld key reads as an oversight to the next person
+    // auditing the privacy boundary, which is exactly what that file exists to prevent.
+    const { modelsDisplayedAttributes, MODELS_WITHHELD_ATTRIBUTES } = await import(
       '~/server/search-index/displayed-attributes'
     );
+    const [topLevel] = INSIGHT_SORT_ATTR.split('.');
     expect(modelsDisplayedAttributes).not.toContain(INSIGHT_SORT_ATTR);
-    expect(modelsDisplayedAttributes).not.toContain('insight');
+    expect(modelsDisplayedAttributes).not.toContain(topLevel);
+    expect(MODELS_WITHHELD_ATTRIBUTES).toContain(topLevel);
   });
 });

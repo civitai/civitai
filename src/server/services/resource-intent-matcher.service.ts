@@ -172,23 +172,14 @@ export function expandShortlist(
   return entries;
 }
 
-/**
- * The insight shape, both confidence floors and `loadResourceInsights` now live in
- * `./resource-insight.ts`, so the models search index can share the loader, the
- * promote floor and the model-level projection rule WITHOUT importing this module.
- * That direction matters: this file does `import type { ModelSearchIndexRecord }` from
- * the search index, which erases at runtime, but a value import coming back the other
- * way would close a real cycle. Read that file's header before moving any of it again.
- *
- * Re-exported from here because this was their original home and this module's callers
- * and test suite import them from this path.
- */
-export {
-  loadResourceInsights,
-  RESOURCE_INSIGHT_MIN_DEMOTE_CONFIDENCE,
-  RESOURCE_INSIGHT_MIN_PROMOTE_CONFIDENCE,
-  type ResourceIntentInsight,
-};
+// The insight shape, both confidence floors and `loadResourceInsights` now live in
+// `./resource-insight.ts` — imported above, and deliberately NOT re-exported from here.
+// A re-export was tried and removed in the same PR: its stated reason was that "existing
+// callers" imported them from this path, and an enumeration of every importer of this
+// module found none. The only consumer was one test's two constants, and two of the four
+// re-exported names had no consumer through this path at all; both production consumers
+// already import from the leaf directly. Import from `./resource-insight` — there is
+// deliberately one path, not two.
 
 const ROLE_MATCH_WEIGHT = 2;
 const STYLE_MATCH_WEIGHT = 1;

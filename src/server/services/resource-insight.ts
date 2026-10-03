@@ -4,20 +4,30 @@ import { dbRead } from '~/server/db/client';
  * `ResourceInsight` reading — the shape, the confidence floors, the loader, and the
  * model-level projection used by the search index.
  *
- * 🔴 Kept a LEAF (no `~/server/meilisearch/client`, no search-index module) because it
- * has TWO consumers that must not import each other:
+ * 🔴 Kept a LEAF because it has TWO consumers:
  *   - `./resource-intent-matcher.service.ts`, which re-ranks a shortlist, and
  *   - `~/server/search-index/models.search-index.ts`, which projects a model-level
  *     score into the index so Meilisearch can order by it.
- * The matcher already does `import type { ModelSearchIndexRecord }` from the search
- * index. That is type-only and erases at runtime, so it is not a cycle today — but a
- * VALUE import in the other direction would make it one. Hence this module: both sides
- * depend on it, neither depends on the other. Same reasoning as
- * `~/server/search-index/sortable-attributes.ts`.
  *
- * It also keeps the `stale: false` predicate and the promote floor single-sourced. Both
- * were previously readable only from inside the matcher, which is where a second
- * open-coded copy would have gone.
+ * ⚠ **The reason is DEPENDENCY DIRECTION and single-sourcing — NOT a runtime cycle.** An
+ * earlier version of this header said a value import from the search index back to the
+ * matcher "would close a real cycle", and that is WRONG: the matcher's only reference to
+ * the search index is `import type { ModelSearchIndexRecord }`, which `isolatedModules`
+ * erases unconditionally, so such an import would be ONE directed edge and no cycle at
+ * all (and `import/no-cycle` is commented out in `.eslintrc.js`, so nothing enforces it
+ * either way). Do not let that sentence stop a legitimate refactor; the cycle would only
+ * appear if the matcher's type-only import ever became a VALUE import.
+ *
+ * What DOES justify this module, and is sufficient on its own:
+ *   - a search-index BUILDER value-importing a search-CONSUMING re-ranker is backwards, and
+ *   - the alternative is open-coding the `stale: false` predicate and the promote floor a
+ *     second time — the "one rule, one place" bug-generator. Both were previously readable
+ *     only from inside the matcher, which is exactly where that second copy would have gone.
+ *
+ * ⚠ Not the same reasoning as `~/server/search-index/sortable-attributes.ts`: that one is a
+ * leaf so a test can read it WITHOUT loading `~/server/meilisearch/client`. This module
+ * imports `dbRead`, so it is not a light leaf, and its consumer already loads the meili
+ * client anyway.
  */
 export type ResourceIntentInsight = {
   role: string;

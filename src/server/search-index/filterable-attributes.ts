@@ -79,10 +79,16 @@ export const modelsFilterableAttributes = [
   // where labels actually exist (~1.1% of documents). Verified on Meilisearch v1.15.0
   // that EXISTS works on this field even though ./displayed-attributes.ts withholds it.
   //
-  // Added in the SAME change as the sortable entry on purpose: `filterableAttributes`
-  // genuinely rebuilds facet data (unlike `displayedAttributes`, measured at 6.4 ms on
-  // 718,383 documents), and both lists are written only by `onIndexSetup` from
-  // `reset()`. Landing them together means one reset covers the sort and the study.
+  // ⚠ Added in the SAME change as the sortable entry, and the reason first given for that
+  // was WRONG: it said "both lists are written only by `onIndexSetup` from `reset()`".
+  // That holds for `sortableAttributes` and NOT for this list —
+  // src/pages/api/admin/temp/apply-models-index-filterable-attributes.ts applies THIS list
+  // to the live index with no reset, and there is no sortable equivalent of that route.
+  //
+  // The decision stands on the corrected argument: a reset writes both lists into the
+  // `_NEW` index at setup, so riding the reset this change already requires is FREE,
+  // whereas deferring it means paying that route's own full facet rebuild later. So the
+  // asymmetry is a reason to land it now, not a reason the claim was harmless.
   'insight.qualityScore',
 ];
 

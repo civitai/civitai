@@ -156,8 +156,12 @@ describe('modelsDisplayedAttributes — the Creator Controls privacy boundary', 
     // MISSING. It shipped missing `flags` — written into this same index by the second writer,
     // `src/pages/api/mod/search/models-update.ts` — and a review round caught that, not a test.
     // A list that reads as the record while being incomplete is what stops the next person looking.
+    // `insight` is the models index's suitability score (`insight.qualityScore`), sort-only AND
+    // filter-only: the resource-intent matcher sorts on it and reads the scores it needs from
+    // Postgres, so no consumer reads it off a hit. Top-level key because `transformData` emits
+    // `insight: { qualityScore }`.
     expect([...MODELS_WITHHELD_ATTRIBUTES].sort().join(',')).toBe(
-      'canGenerateNext,flags,isOfficial,sortMetrics'
+      'canGenerateNext,flags,insight,isOfficial,sortMetrics'
     );
   });
 

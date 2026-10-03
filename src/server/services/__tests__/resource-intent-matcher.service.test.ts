@@ -37,9 +37,12 @@ const {
   buildResourceIntentFilter,
   expandShortlist,
   findResourceIntentCandidates,
-  RESOURCE_INSIGHT_MIN_DEMOTE_CONFIDENCE,
-  RESOURCE_INSIGHT_MIN_PROMOTE_CONFIDENCE,
 } = await import('~/server/services/resource-intent-matcher.service');
+// The two floors live in the leaf, not in the module under test, and are imported from
+// there rather than through a re-export — see that module's header for why there is one
+// import path and not two.
+const { RESOURCE_INSIGHT_MIN_DEMOTE_CONFIDENCE, RESOURCE_INSIGHT_MIN_PROMOTE_CONFIDENCE } =
+  await import('~/server/services/resource-insight');
 const { RESOURCE_INTENT_MAX_SHORTLIST } = await import('~/server/schema/resource-intent.schema');
 
 const COVERAGE = { next: false, member: false };
