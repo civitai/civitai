@@ -388,13 +388,14 @@ describe('buildRelabelBatch', () => {
 
   // A model-only row from another batch is already in the set; re-picking it would spend a cap
   // slot on an upsert that refuses it, and the model-only batch would under-fill.
+  // The cap covers every candidate, so a re-pick has to pick image 1 whatever the seed.
   it('never re-picks a model-only row in a model-only build', async () => {
-    await seedRemovals(4);
+    await seedRemovals(3);
     await seedItem(1, '2026-10-01', false);
     const summary = await build({ modelOnly: true, removed: 3, bands: null });
-    expect(summary.picked.removed).toBe(3);
+    expect(summary.picked.removed).toBe(2);
     expect(summary.alreadyPresent).toBe(0);
-    expect(summary.inserted).toBe(3);
+    expect(summary.inserted).toBe(2);
   });
 
   it("does not count today's labeler rows against a model-only cap", async () => {
@@ -550,6 +551,13 @@ describe('buildRelabelBatch', () => {
     expect(Number(scan?.match(/LIMIT (\d+)/)?.[1])).toBe(MAX_SCANNED_IDS);
   });
 
+  // The daily caps size a far smaller pool; every extra id is exclusion time against the budget.
+  it('sizes the scanner pool from the not-removed cap and the bands below the clamp', async () => {
+    await build({ notRemoved: 40, bands: [0.5] });
+    const scan = chQueries.find((q) => q.includes('FROM scanner_label_results'));
+    expect(Number(scan?.match(/LIMIT (\d+)/)?.[1])).toBe(1600);
+  });
+
   // The exclusion never writes. Read-only makes that hold on a primary too, where a read-write
   // transaction would otherwise go unnoticed.
   it('opens every exclusion transaction read-only', async () => {
@@ -645,9 +653,17 @@ describe('relabelBuildBatchAction', () => {
   it('builds removed items only when the env bands are unset', async () => {
     await seedRemovals(2);
     await seedScanned(2);
-    const { summary } = await run(undefined);
+    const { summary, logged } = await run(undefined);
     expect(summary.notRemovedSkipped).toBe('bands unset');
     expect(summary.picked.notRemoved).toBe(0);
+    // The expected state until the bands are configured: not an error every day.
+    expect(logged).toEqual([
+      expect.objectContaining({
+        type: 'info',
+        name: 'relabel-build-batch',
+        notRemovedSkipped: 'bands unset',
+      }),
+    ]);
   });
 
   it('logs a skipped run as an error', async () => {

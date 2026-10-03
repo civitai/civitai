@@ -242,9 +242,9 @@ export type RelabelBuildShortfall =
   | 'no summary';
 
 /**
- * Why a relabel build delivered less than it was asked for, `null` when it ran in full. Unset
- * bands are not a shortfall: removed-only is the expected state until the bands are configured.
- * The one rule for whether a run is logged as an error, on both sides of the wire.
+ * Whether a relabel run is logged as an error, and why: `null` when it is not. The one rule for
+ * that, on both sides of the wire. Unset bands are not a shortfall: removed-only is the expected
+ * state until the bands are configured. Nor is a stratum short of candidates; read the counts.
  */
 export function relabelSummaryShortfall(
   summary: RelabelBuildSummary

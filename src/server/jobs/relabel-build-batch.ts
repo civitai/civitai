@@ -27,7 +27,6 @@ export async function runRelabelBuildBatch({
     days: RELABEL_WINDOW_DAYS,
     dryRun: false,
   });
-  // A skipped day, or one built without its not-removed half, must not read as a green run here.
   const shortfall = relabelBuildShortfall(result);
   log({ type: shortfall ? 'error' : 'info', batch, shortfall, result });
   return { batch, result };
