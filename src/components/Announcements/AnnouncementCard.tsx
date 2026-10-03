@@ -169,7 +169,7 @@ export function AnnouncementCard({
           {content}
         </CustomMarkdown>
         {!!actions.length && (
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             {actions.map((action, index) => {
               const external = isExternalHref(action.link, internalHosts);
               const handleClick = () => {

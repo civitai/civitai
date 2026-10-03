@@ -2,7 +2,12 @@ import type { SessionUser } from '@civitai/auth';
 import { dbRead } from '$lib/server/db';
 import { callMainApp, type MainAppResult } from '$lib/server/main-app';
 import { getFlipt, fliptContext } from '$lib/server/flipt';
-import { toDomainArray, type AnnouncementAllowance } from '$lib/announcements';
+import {
+  toAnnouncementLinks,
+  toDomainArray,
+  type AnnouncementAllowance,
+  type AnnouncementLink,
+} from '$lib/announcements';
 import { allowanceSchema, type AnnouncementForm } from './announcements-schema';
 
 // Announcement writes go through the MAIN APP, not kysely: the allowance check, the creator/sitewide
@@ -44,11 +49,8 @@ export type AnnouncementRow = {
   /** A slot was spent on this announcement — deleting it does not give the slot back. */
   spentSlot: boolean;
   coverNsfwLevel: number | null;
-  link: string | null;
-  linkText: string | null;
+  links: AnnouncementLink[];
 };
-
-type AnnouncementMetadata = { actions?: { link?: string; linkText?: string }[] } | null;
 
 /** The caller's own announcements. Owner-scoped and never `userId is null`, so a platform row is unreachable. */
 export async function getMyAnnouncements(userId: number): Promise<AnnouncementRow[]> {
@@ -82,25 +84,21 @@ export async function getMyAnnouncements(userId: number): Promise<AnnouncementRo
     .limit(50)
     .execute();
 
-  return rows.map((row) => {
-    const action = (row.metadata as AnnouncementMetadata)?.actions?.[0];
-    return {
-      id: row.id,
-      title: row.title,
-      content: row.content,
-      domain: toDomainArray(row.domain),
-      startsAt: row.startsAt,
-      endsAt: row.endsAt,
-      disabled: row.disabled,
-      profileOnly: row.profileOnly,
-      createdAt: row.createdAt,
-      spentSlot: row.spentSlot === true,
-      coverUrl: row.coverUrl ?? null,
-      coverNsfwLevel: row.coverNsfwLevel ?? null,
-      link: action?.link ?? null,
-      linkText: action?.linkText ?? null,
-    };
-  });
+  return rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    content: row.content,
+    domain: toDomainArray(row.domain),
+    startsAt: row.startsAt,
+    endsAt: row.endsAt,
+    disabled: row.disabled,
+    profileOnly: row.profileOnly,
+    createdAt: row.createdAt,
+    spentSlot: row.spentSlot === true,
+    coverUrl: row.coverUrl ?? null,
+    coverNsfwLevel: row.coverNsfwLevel ?? null,
+    links: toAnnouncementLinks(row.metadata),
+  }));
 }
 
 const ENDPOINT = '/api/v1/announcements';
@@ -131,9 +129,10 @@ export function saveAnnouncement(cookie: string, form: AnnouncementForm) {
       profileOnly: form.profileOnly,
       startsAt: form.startsAt?.toISOString() ?? null,
       endsAt: form.endsAt?.toISOString() ?? null,
-      ...(form.linkUrl && form.linkText
-        ? { action: { link: form.linkUrl, linkText: form.linkText } }
-        : {}),
+      // `action` as well, so a main app still on the single-button schema keeps the first button
+      // rather than stripping `actions` as an unknown key and saving none. It ignores `action`
+      // once it reads `actions`.
+      ...(form.links.length ? { action: form.links[0], actions: form.links } : {}),
       // A key, never an `Image` id: the server mints the row so the cover gets ingested and scanned.
       ...(form.coverKey
         ? {

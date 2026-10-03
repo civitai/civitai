@@ -17,6 +17,24 @@ export const CONTENT_MAX = 500;
  */
 export const CONTENT_CEILING = 1500;
 export const LINK_TEXT_MAX = 40;
+/**
+ * Mirrors CREATOR_ANNOUNCEMENT_MAX_ACTIONS in the main app. More than one is a member feature, and the
+ * main app is what enforces that — the composer only decides whether to offer the control.
+ */
+export const LINK_BUTTONS_MAX = 3;
+
+export type AnnouncementLink = { link: string; linkText: string };
+
+/** Every button stored on an announcement, in order. Rows from before multi-button carry one. */
+export function toAnnouncementLinks(metadata: unknown): AnnouncementLink[] {
+  const actions = (metadata as { actions?: unknown } | null)?.actions;
+  if (!Array.isArray(actions)) return [];
+
+  return actions.flatMap((action) => {
+    const { link, linkText } = (action ?? {}) as { link?: unknown; linkText?: unknown };
+    return typeof link === 'string' && typeof linkText === 'string' ? [{ link, linkText }] : [];
+  });
+}
 
 export const DOMAIN_COLORS = [
   'blue',

@@ -3,7 +3,13 @@ import { z } from 'zod';
 // SvelteKit plugin and cannot resolve the alias — an aliased import fails COLLECTION, which reads as
 // zero tests rather than as a failure.
 import { checkbox, numberish } from './form-fields';
-import { CONTENT_CEILING, DOMAIN_COLORS, LINK_TEXT_MAX, TITLE_MAX } from '../announcements';
+import {
+  CONTENT_CEILING,
+  DOMAIN_COLORS,
+  LINK_BUTTONS_MAX,
+  LINK_TEXT_MAX,
+  TITLE_MAX,
+} from '../announcements';
 
 const optionalText = (max: number) =>
   z.preprocess(
@@ -22,6 +28,14 @@ const optionalDate = z.preprocess(
 
 // One comma-joined field rather than repeated inputs: the action parses with `Object.fromEntries`,
 // which keeps only the LAST value of a repeated key, so checkboxes would silently post one domain.
+// One named pair per button for the same reason: a repeated key would post only the last button.
+// Slot 1 keeps the pre-multi-button names.
+const LINK_SLOTS = [
+  ['linkUrl', 'linkText'],
+  ['linkUrl2', 'linkText2'],
+  ['linkUrl3', 'linkText3'],
+] as const satisfies { length: typeof LINK_BUTTONS_MAX };
+
 const domainList = z.preprocess(
   (v) =>
     typeof v === 'string'
@@ -46,6 +60,10 @@ export const announcementFormSchema = z
     endsAt: optionalDate,
     linkUrl: optionalText(2048),
     linkText: optionalText(LINK_TEXT_MAX),
+    linkUrl2: optionalText(2048),
+    linkText2: optionalText(LINK_TEXT_MAX),
+    linkUrl3: optionalText(2048),
+    linkText3: optionalText(LINK_TEXT_MAX),
     // The object key minted by the main app's upload endpoint. It becomes an `Image` row on the
     // server (resolveCoverImageId); this side never creates one, and the key is a UUID because
     // that endpoint mints it with randomUUID.
@@ -55,16 +73,34 @@ export const announcementFormSchema = z
     coverMimeType: optionalText(100),
     coverSizeKB: optionalNumber,
   })
-  // A path resolves on whichever site the reader is on, which is the point. `//host` is
-  // protocol-relative and leaves the site despite looking like a path, so it is not one.
-  .refine((v) => !v.linkUrl || /^https?:\/\//i.test(v.linkUrl) || /^\/(?!\/)/.test(v.linkUrl), {
-    message: 'Button link must be a full https:// URL or a path like /models/123',
-    path: ['linkUrl'],
+  .superRefine((v, ctx) => {
+    for (const [urlKey, textKey] of LINK_SLOTS) {
+      const url = v[urlKey];
+      const text = v[textKey];
+      // A path resolves on whichever site the reader is on, which is the point. `//host` is
+      // protocol-relative and leaves the site despite looking like a path, so it is not one.
+      if (url && !/^https?:\/\//i.test(url) && !/^\/(?!\/)/.test(url))
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Button link must be a full https:// URL or a path like /models/123',
+          path: [urlKey],
+        });
+      if (!!url !== !!text)
+        ctx.addIssue({
+          code: 'custom',
+          message: 'A button needs both a link and button text',
+          path: [textKey],
+        });
+    }
   })
-  .refine((v) => !!v.linkUrl === !!v.linkText, {
-    message: 'A button needs both a link and button text',
-    path: ['linkText'],
-  });
+  .transform((v) => ({
+    ...v,
+    links: LINK_SLOTS.flatMap(([urlKey, textKey]) => {
+      const link = v[urlKey];
+      const linkText = v[textKey];
+      return link && linkText ? [{ link, linkText }] : [];
+    }),
+  }));
 // No start/end ordering refine: the main app slides the end forward (clampAnnouncementWindow);
 // rejecting here means the clamp never runs.
 

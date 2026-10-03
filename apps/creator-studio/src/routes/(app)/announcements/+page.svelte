@@ -65,6 +65,7 @@
       <AnnouncementComposer
         announcement={editing}
         allowance={data.allowance}
+        isMember={data.membership.isMember}
         error={form?.scope === 'save' && form.subject === editingId ? (form.error ?? null) : null}
         onDone={close}
       />
