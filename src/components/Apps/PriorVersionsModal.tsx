@@ -24,17 +24,33 @@ export type PriorVersionsSelection = {
   title: string;
 } | null;
 
-/** One row of `blocks.listVersionHistory`. */
+/**
+ * One row of `blocks.listVersionHistory`.
+ *
+ * 🔴 BOTH USER CHIPS CARRY `deletedAt`, AND BOTH NEED IT. This modal renders `submittedBy`
+ * and `reviewedBy` through the same `UserAvatar`, which branches on `deletedAt` in two
+ * places: `UserProfileLink` suppresses `linkToProfile` for a deleted account, and `Username`
+ * renders "[deleted]" instead of a name. Omit the field and the value is `undefined` ⇒ falsy
+ * ⇒ a deleted submitter OR a deleted moderator renders as a live, linked account.
+ */
 export type VersionHistoryEntry = {
   id: string;
   version: string;
   status: string;
   submittedAt: string | Date;
   reviewedAt: string | Date | null;
-  submittedBy: { id: number; username: string | null; image: string | null } | null;
-  reviewedBy: { id: number; username: string | null; image: string | null } | null;
+  submittedBy: UserChip | null;
+  reviewedBy: UserChip | null;
   rejectionReason: string | null;
   deployState: string | null;
+};
+
+/** The shape both chips are projected as — one declaration, so they cannot drift apart. */
+type UserChip = {
+  id: number;
+  username: string | null;
+  deletedAt: Date | null;
+  image: string | null;
 };
 
 /**

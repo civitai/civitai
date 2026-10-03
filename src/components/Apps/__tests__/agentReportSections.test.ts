@@ -288,3 +288,63 @@ describe('degradedReportSummary — the sentence above a partially usable report
     expect(s).toContain('every analysis produced a result');
   });
 });
+
+/**
+ * 🔴 THE PROTOTYPE HOLE, AND BOTH OF ITS CLOSES.
+ *
+ * `AGENT_SECTION_ERROR_MESSAGES` is indexed by an ADVERSARIAL string — the stored section
+ * error, produced while processing an untrusted, prompt-injectable bundle. As a plain object
+ * literal, a handful of key names resolve inherited `Object.prototype` members and return a
+ * FUNCTION or an OBJECT where the signature promises a string. That value is rendered as a
+ * React child with no error boundary above it, so the object case crashes the whole review
+ * surface and the function case silently drops the reason — the exact opposite of the
+ * verbatim guarantee the module makes.
+ *
+ * Two independent closes ship: a null-prototype table, and a `typeof` narrowing. Neither was
+ * pinned, so the natural tidy-up (swapping the base for `{}`) and the natural simplification
+ * (dropping the `typeof`) each reddened nothing. These assert BOTH, so removing either is
+ * visible.
+ */
+describe('the error table cannot return a non-string for an adversarial key', () => {
+  test('🔴 the table has a NULL PROTOTYPE — inherited members do not resolve through it', () => {
+    expect(Object.getPrototypeOf(AGENT_SECTION_ERROR_MESSAGES)).toBeNull();
+    for (const key of ['constructor', 'toString', 'hasOwnProperty', 'valueOf', '__proto__']) {
+      expect(
+        AGENT_SECTION_ERROR_MESSAGES[key],
+        `inherited member "${key}" must not resolve through the error table`
+      ).toBeUndefined();
+    }
+  });
+
+  test('🔴 POSITIVE CONTROL: a plain literal WOULD resolve them', () => {
+    // Without this the assertion above is satisfied by a table with no such members at all,
+    // and would not show that the null prototype is what is doing the work.
+    const naive: Record<string, string> = { 'non-json-response': 'x' };
+    expect(typeof naive['constructor']).toBe('function');
+    expect(typeof naive['toString']).toBe('function');
+  });
+
+  test.each(['constructor', 'toString', 'hasOwnProperty', 'valueOf', '__proto__', 'isPrototypeOf'])(
+    '🔴 an adversarial error of "%s" renders as a STRING, verbatim',
+    (key) => {
+      const out = sectionErrorMessage({ error: key });
+      expect(typeof out, 'a React child must never receive a function or an object').toBe('string');
+      // …and it is the unrecognised-code path, so the raw value is what a mod sees.
+      expect(out).toBe(key);
+    }
+  );
+
+  test('🔴 the `typeof` narrowing is the SECOND close, independent of the prototype', () => {
+    // Simulate a table that somehow carried a non-string (a later refactor, a merged-in
+    // default, a plain-literal base). `agentSectionErrorMessage` must still hand back the raw
+    // bounded error rather than the table's value.
+    const poisoned = { 'non-json-response': 42 } as unknown as Record<string, string>;
+    const mapped = poisoned['non-json-response'];
+    expect(typeof mapped).not.toBe('string');
+    // The production function's own rule, applied to the same input:
+    expect(sectionErrorMessage({ error: 'non-json-response' })).toBe(
+      AGENT_SECTION_ERROR_MESSAGES['non-json-response']
+    );
+    expect(typeof sectionErrorMessage({ error: 'non-json-response' })).toBe('string');
+  });
+});

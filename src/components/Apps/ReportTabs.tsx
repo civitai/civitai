@@ -200,21 +200,55 @@ export function SectionFailed({
  * re-run seeds forward only the sections it is not retrying, so the new row's other slots are
  * null until the runner fills them, and a provisioning failure on that row freezes it there.
  */
-export function SectionDidNotRun({ label }: { label: string }) {
+export function SectionDidNotRun({
+  section,
+  onRerun,
+  rerunning = false,
+}: {
+  section: AgentReportSection;
+  /**
+   * Dispatch a re-run of THIS analysis.
+   *
+   * 🔴 THE CONTROL IS HERE BECAUSE THE COPY PROMISES IT. The first version of this state said
+   * "Re-run it to get a verdict" and shipped no button — and this branch short-circuits
+   * BEFORE the `error` one, so the control `SectionFailed` carries was unreachable for a
+   * missing section. Telling a moderator to take an action the screen does not offer is worse
+   * than saying nothing.
+   */
+  onRerun?: (section: AgentReportSection) => void;
+  rerunning?: boolean;
+}) {
+  const label = AGENT_REPORT_SECTION_LABELS[section];
   return (
     <Alert
       color="gray"
       variant="light"
       icon={<IconInfoCircle size={14} />}
       data-testid="apps-report-section-missing"
+      data-section={section}
     >
       <Text size="xs" fw={600}>
         This analysis did not run
       </Text>
       <Text size="xs" mt={2}>
         No {label.toLowerCase()} result was recorded for this run — which is NOT the same as finding
-        nothing. Re-run it to get a verdict.
+        nothing.
       </Text>
+      {onRerun && (
+        <Group gap="xs" mt={8}>
+          <Button
+            size="xs"
+            variant="light"
+            leftSection={<IconRefresh size={14} />}
+            loading={rerunning}
+            disabled={rerunning}
+            onClick={() => onRerun(section)}
+            data-testid="apps-report-section-rerun"
+          >
+            Run this analysis
+          </Button>
+        </Group>
+      )}
     </Alert>
   );
 }
@@ -409,19 +443,26 @@ export function FindingsCards({
  * page spelling it, and walkable by a reword of the chip; the attribute pins the state.
  */
 function TabLabel({
-  label,
   count,
   status,
   section,
 }: {
-  label: string;
   count?: number;
   status?: AgentSectionStatus;
-  section?: AgentReportSection;
+  /**
+   * 🔴 THE LABEL IS DERIVED FROM THIS, NOT PASSED. All three call sites already supplied the
+   * section, and the three strings were ALSO typed inline here — while the shared ledger's
+   * docstring claimed in the past tense that it had stopped happening. Both surfaces are on
+   * screen at once (the degraded banner reads the ledger and renders directly above this
+   * bar), and every test selects a tab by a hardcoded literal regex, so a reword of
+   * `AGENT_REPORT_SECTION_LABELS` moved the banner and the "did not run" body while this bar
+   * kept the old word, with the whole suite green.
+   */
+  section: AgentReportSection;
 }) {
   return (
     <Group gap={6} wrap="nowrap" data-section={section} data-section-status={status}>
-      <span>{label}</span>
+      <span>{AGENT_REPORT_SECTION_LABELS[section]}</span>
       {status === 'failed' ? (
         <Tooltip label="This analysis failed — open the tab for the reason" withArrow>
           <Badge size="xs" variant="filled" color="red" data-testid="apps-report-tab-failed">
@@ -474,7 +515,7 @@ export function CodeReviewTab({
   status?: AgentSectionStatus;
 }) {
   if (status === 'missing')
-    return <SectionDidNotRun label={AGENT_REPORT_SECTION_LABELS['codeReview']} />;
+    return <SectionDidNotRun section="codeReview" onRerun={onRerun} rerunning={rerunning} />;
   if (error)
     return (
       <SectionFailed error={error} section="codeReview" onRerun={onRerun} rerunning={rerunning} />
@@ -545,7 +586,7 @@ export function SecurityAuditTab({
   status?: AgentSectionStatus;
 }) {
   if (status === 'missing')
-    return <SectionDidNotRun label={AGENT_REPORT_SECTION_LABELS['securityAudit']} />;
+    return <SectionDidNotRun section="securityAudit" onRerun={onRerun} rerunning={rerunning} />;
   if (error)
     return (
       <SectionFailed
@@ -669,7 +710,7 @@ export function ScopesTab({
   const isNarrow = useMediaQuery('(max-width: 768px)');
 
   if (status === 'missing')
-    return <SectionDidNotRun label={AGENT_REPORT_SECTION_LABELS['scopeVerdicts']} />;
+    return <SectionDidNotRun section="scopeVerdicts" onRerun={onRerun} rerunning={rerunning} />;
   if (error)
     return (
       <SectionFailed
@@ -1065,7 +1106,6 @@ export function ReportTabs({
         <Tabs.List style={{ flexWrap: 'nowrap', overflowX: 'auto', overflowY: 'hidden' }}>
           <Tabs.Tab value="scopes" leftSection={<IconKey size={14} />}>
             <TabLabel
-              label="Scopes"
               count={scopeVerdicts.scopes.length}
               status={sectionStatuses.scopeVerdicts}
               section="scopeVerdicts"
@@ -1073,7 +1113,6 @@ export function ReportTabs({
           </Tabs.Tab>
           <Tabs.Tab value="security" leftSection={<IconShieldLock size={14} />}>
             <TabLabel
-              label="Security audit"
               count={securityAudit.findings.length}
               status={sectionStatuses.securityAudit}
               section="securityAudit"
@@ -1081,7 +1120,6 @@ export function ReportTabs({
           </Tabs.Tab>
           <Tabs.Tab value="code" leftSection={<IconCode size={14} />}>
             <TabLabel
-              label="Code review"
               count={codeReview.findings.length}
               status={sectionStatuses.codeReview}
               section="codeReview"

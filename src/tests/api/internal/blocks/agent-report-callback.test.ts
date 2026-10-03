@@ -14,9 +14,10 @@ import { Readable } from 'node:stream';
 
 const { mockFlag, mockVerify, mockUpdateMany, mockTs } = vi.hoisted(() => ({
   mockFlag: { enabled: true },
-  mockVerify: vi.fn(
-    (): { ok: boolean; publishRequestId?: string } => ({ ok: true, publishRequestId: 'x' })
-  ),
+  mockVerify: vi.fn((): { ok: boolean; publishRequestId?: string } => ({
+    ok: true,
+    publishRequestId: 'x',
+  })),
   mockUpdateMany: vi.fn(async (_args: { where: unknown; data: any }) => ({ count: 1 })),
   // Faithful ±300s stand-in for the reused checkCallbackTimestamp.
   mockTs: vi.fn((ts: unknown) => {
@@ -46,6 +47,7 @@ import handler, {
   buildReportUpdate,
   persistedStatusFor,
 } from '~/pages/api/internal/blocks/agent-report-callback';
+import { AGENT_REVIEW_SECTIONS } from '~/shared/constants/agent-review-section.constants';
 
 const PUBREQ = 'pubreq_0123456789ABCDEFGHJKMNPQRS';
 
@@ -66,7 +68,10 @@ function makeReqRes(body: string, opts: { method?: string; auth?: string } = {})
       return this;
     },
   };
-  return { req: stream, res: res as unknown as NextApiResponse & { statusCode: number; body: any } };
+  return {
+    req: stream,
+    res: res as unknown as NextApiResponse & { statusCode: number; body: any },
+  };
 }
 
 const goodBody = (over: Record<string, unknown> = {}) =>
@@ -120,6 +125,84 @@ describe('persistedStatusFor / buildReportUpdate (pure)', () => {
   it('drops a non-finite / negative costUsd', () => {
     expect(buildReportUpdate(JSON.parse(goodBody({ costUsd: -1 }))).costUsd).toBeUndefined();
     expect(buildReportUpdate(JSON.parse(goodBody({ costUsd: 'nope' }))).costUsd).toBeUndefined();
+  });
+
+  /**
+   * 🔴 SEAM GUARD, NOT A COMPONENT GUARD — the writable section set vs the shared ledger.
+   *
+   * `AGENT_REVIEW_SECTIONS` now has four consumers (the request schema, the service that
+   * builds the job, the renderer, and THIS writer). The writer's divergence is the silent
+   * one: a fifth analysis wired through schema + service + UI but missed here would have
+   * its results dropped on write, and every one of those surfaces would still test green
+   * in isolation. So this pins the RELATIONSHIP — it fails when the set GROWS (a new ledger
+   * section the writer ignores) and when it SHRINKS (a key the writer still accepts after
+   * the ledger dropped it).
+   *
+   * The body is built FROM the ledger rather than hand-spelled, which is what makes the
+   * growth half automatic. Values are pairwise distinct AND distinct from any literal this
+   * file asserts elsewhere, so a writer that hardcoded one key's value cannot survive.
+   */
+  it('🔴 writes EXACTLY the shared ledger’s section keys — no more, no fewer', () => {
+    const marker = (section: string) => ({ from: `ledger:${section}` });
+    const body: Record<string, unknown> = {
+      publishRequestId: PUBREQ,
+      status: 'complete',
+      // A section-shaped key the ledger does NOT contain. The negative half: an
+      // attacker-or-typo field must not reach the UPDATE `data`, because `data` is
+      // handed to Prisma as a column map.
+      licenseAudit: { from: 'not-in-ledger' },
+    };
+    for (const section of AGENT_REVIEW_SECTIONS) body[section] = marker(section);
+
+    const data = buildReportUpdate(body);
+
+    // Growth half: every ledger section is written, with ITS OWN value.
+    for (const section of AGENT_REVIEW_SECTIONS) {
+      expect(data[section], `ledger section \`${section}\` was not written`).toEqual(
+        marker(section)
+      );
+    }
+    // Shrink half: the written section-shaped keys are exactly the ledger's.
+    const ledger = new Set<string>(AGENT_REVIEW_SECTIONS);
+    const nonSection = new Set([
+      'status',
+      'completedAt',
+      'model',
+      'tokenUsage',
+      'costUsd',
+      'summaryMd',
+    ]);
+    const writtenSections = Object.keys(data).filter((k) => !nonSection.has(k));
+    expect(new Set(writtenSections)).toEqual(ledger);
+    expect(data.licenseAudit).toBeUndefined();
+
+    // 🔴 POSITIVE CONTROL — a ledger that had gone empty would satisfy both halves above
+    // while asserting nothing. Three is today's count; the bound is what matters.
+    expect(AGENT_REVIEW_SECTIONS.length).toBeGreaterThanOrEqual(3);
+  });
+
+  /**
+   * The carry-forward contract a TARGETED re-run depends on: a callback reporting on ONE
+   * section must not blank the other two. `startAgentReview` step (d') copies the previous
+   * report's untargeted sections forward precisely because this writer leaves an absent
+   * key alone — so if that ever became "write null", a one-section retry would erase the
+   * two analyses it did not re-run.
+   */
+  it('🔴 an ABSENT or NULL section is left alone — a one-section retry cannot blank the others', () => {
+    const [first, ...rest] = AGENT_REVIEW_SECTIONS;
+    const data = buildReportUpdate({
+      publishRequestId: PUBREQ,
+      status: 'complete',
+      [first]: { only: 'this one ran' },
+      // An explicit null is the runner's way of saying "no result", and must be treated
+      // as absence rather than written as a NULL column value.
+      ...(rest[0] ? { [rest[0]]: null } : {}),
+    });
+    expect(data[first]).toEqual({ only: 'this one ran' });
+    for (const section of rest) {
+      expect(data, `\`${section}\` must not be written at all`).not.toHaveProperty(section);
+    }
+    expect(rest.length, 'the fixture needs at least one untargeted section').toBeGreaterThan(0);
   });
 });
 

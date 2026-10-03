@@ -2150,7 +2150,7 @@ export async function listPendingRequests(opts: ListPendingRequestsOptions = {})
       fileSummary: true,
       manifestDiffSummary: true,
       forgejoCommitSha: true,
-      submittedBy: { select: { id: true, username: true, image: true } },
+      submittedBy: { select: { id: true, username: true, deletedAt: true, image: true } },
     },
   });
   const hasNext = rows.length > limit;
@@ -2218,8 +2218,8 @@ export async function listApprovedRequests(opts: ListPendingRequestsOptions = {}
       deployState: true,
       deployDetail: true,
       deployUpdatedAt: true,
-      submittedBy: { select: { id: true, username: true, image: true } },
-      reviewedBy: { select: { id: true, username: true, image: true } },
+      submittedBy: { select: { id: true, username: true, deletedAt: true, image: true } },
+      reviewedBy: { select: { id: true, username: true, deletedAt: true, image: true } },
     },
   });
   const hasNext = rows.length > limit;
@@ -2271,8 +2271,8 @@ export async function listRejectedRequests(opts: ListPendingRequestsOptions = {}
       fileSummary: true,
       manifestDiffSummary: true,
       forgejoCommitSha: true,
-      submittedBy: { select: { id: true, username: true, image: true } },
-      reviewedBy: { select: { id: true, username: true, image: true } },
+      submittedBy: { select: { id: true, username: true, deletedAt: true, image: true } },
+      reviewedBy: { select: { id: true, username: true, deletedAt: true, image: true } },
     },
   });
   const hasNext = rows.length > limit;
@@ -2333,8 +2333,8 @@ export async function listVersionHistory(opts: { slug: string }) {
       reviewedAt: true,
       rejectionReason: true,
       deployState: true,
-      submittedBy: { select: { id: true, username: true, image: true } },
-      reviewedBy: { select: { id: true, username: true, image: true } },
+      submittedBy: { select: { id: true, username: true, deletedAt: true, image: true } },
+      reviewedBy: { select: { id: true, username: true, deletedAt: true, image: true } },
     },
   });
   const truncated = rows.length > VERSION_HISTORY_LIMIT;
@@ -4565,8 +4565,8 @@ export async function getReviewRequestById(publishRequestId: string): Promise<{
       fileSummary: true,
       manifestDiffSummary: true,
       forgejoCommitSha: true,
-      submittedBy: { select: { id: true, username: true, image: true } },
-      reviewedBy: { select: { id: true, username: true, image: true } },
+      submittedBy: { select: { id: true, username: true, deletedAt: true, image: true } },
+      reviewedBy: { select: { id: true, username: true, deletedAt: true, image: true } },
     },
   });
   if (!r) return null;

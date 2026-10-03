@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as NotificationsModule from '~/utils/notifications';
 import type * as TrpcModule from '~/utils/trpc';
+import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 import type * as UserAvatarMod from '~/components/UserAvatar/UserAvatar';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
@@ -58,7 +59,14 @@ vi.mock('~/components/UserAvatar/UserAvatar', async (importOriginal) => ({
   ),
 }));
 
-vi.mock('~/providers/FeatureFlagsProvider', () => ({
+// 🔴 SPREAD THE ORIGINAL — same rule as the `~/utils/notifications` mock below, and this
+// module is the one most likely to bite: it exports `useOptionalFeatureFlags`,
+// `useFeatureFlagsReady` and the provider component as well, and a one-key factory makes
+// all three `undefined` for every importer in the graph. The failure is a WHOLE-FILE import
+// error, which vitest reports as 0 tests collected rather than as a failure.
+// Precedent: `src/tests/pages/apps/review/review-queue-poll.browser.test.tsx`.
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlagsMod>()),
   useFeatureFlags: () => ({ appBlocks: true }),
 }));
 
@@ -199,6 +207,23 @@ const render = (
 /** The currently-selected tab's label, read off ARIA rather than off a class name. */
 const selectedTab = () =>
   document.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.trim();
+
+/**
+ * The panel the selected tab actually controls, resolved through `aria-controls`.
+ *
+ * 🔴 NOT `[role="tabpanel"]:not([hidden])` — Mantine hides an inactive panel with CSS, not
+ * with the `hidden` ATTRIBUTE, so that selector matches every panel and `querySelector`
+ * silently returns the FIRST one. With `keepMounted` plus this view's mount-on-first-visit
+ * gate, the first panel is an UNVISITED, deliberately empty one — which made an
+ * "is the panel painted" assertion fail on four tabs for a reason that had nothing to do
+ * with the tab under test.
+ */
+const visiblePanel = () => {
+  const id = document
+    .querySelector('[role="tab"][aria-selected="true"]')
+    ?.getAttribute('aria-controls');
+  return id ? document.getElementById(id) : null;
+};
 
 beforeEach(() => {
   mocks.invalidate.mockClear();
@@ -397,16 +422,15 @@ describe('the approve/reject bar is OUTSIDE the tabs', () => {
    * self-suppresses for a decided submission; moving it out of the tabs must not have
    * turned that into an empty sticky shell on four more surfaces.
    *
-   * `test.each`, not a loop in one test: the scaffold's `afterEach` awaits `cleanup()`, and
-   * re-rendering inside one test leaves two mounted containers in `document.body` at once —
-   * a document-scoped query then resolves to 2 elements and the strict-mode violation reads
-   * as a component bug.
-   */
-  /**
    * 🔴 INVARIANT GUARD, NOT REGRESSION COVERAGE — measured, not assumed. Every case in this
    * block was run against `origin/main` with the new pure modules copied in, and PASSED there.
    * It pins behaviour this change PRESERVES; it never watched the defect it describes.
    * Do not count it toward "the redesign is tested".
+   *
+   * `test.each`, not a loop in one test: the scaffold's `afterEach` awaits `cleanup()`, and
+   * re-rendering inside one test leaves two mounted containers in `document.body` at once —
+   * a document-scoped query then resolves to 2 elements and the strict-mode violation reads
+   * as a component bug.
    */
   test.each(REVIEW_DETAIL_TAB_VALUES)(
     'no action bar on the %s tab of an approved submission',
@@ -414,6 +438,15 @@ describe('the approve/reject bar is OUTSIDE the tabs', () => {
       router.query = { tab };
       render(APPROVED, 'approved');
       await expect.element(page.getByText('Approved by @mod-user')).toBeInTheDocument();
+      // 🔴 THE ANCHOR ABOVE IS TAB-INDEPENDENT, SO IT CANNOT CARRY THIS CLAIM ALONE. The
+      // decision banner sits OUTSIDE the tabs by design, so it renders whether or not the
+      // requested tab resolved — which makes the absence assertion below satisfiable by a
+      // page whose panel is blank. Pin the panel that is supposed to be on screen: the
+      // right tab is selected AND its panel actually painted something.
+      expect(selectedTab()).toBe(REVIEW_DETAIL_TAB_LABELS[tab]);
+      const panel = visiblePanel();
+      expect(panel, `the ${tab} panel must be on screen`).not.toBeNull();
+      expect((panel!.textContent ?? '').trim().length).toBeGreaterThan(0);
       expect(page.getByRole('group', { name: 'Review actions' }).elements()).toHaveLength(0);
     }
   );
@@ -439,6 +472,68 @@ describe('the always-visible bands', () => {
       render(APPROVED, 'approved');
       await expect.element(page.getByText('Approved by @mod-user')).toBeInTheDocument();
       await expect.element(page.getByTestId('apps-review-decided-age')).toBeInTheDocument();
+    }
+  );
+});
+
+/**
+ * 🔴 THE TWO MODE-GATED SECTIONS ON THE PREVIEW TAB.
+ *
+ * Both gates MOVED in this change: they used to be spelled at the call site inside the modal
+ * body, and are now inside the components themselves (`ReviewPreviewSection`,
+ * `ReviewCurationSection`) so the page and the modal cannot disagree about them. Moving a
+ * predicate is exactly the change that can invert it silently, and `ReviewCurationSection`'s
+ * is a CONJUNCTION — `mode === 'approved' && request.appBlockId` — of which only the first
+ * clause was observable from any previous test.
+ *
+ * So all four quadrants are built here, which is what makes each clause attributable:
+ * dropping either half of the `&&` fails a DIFFERENT case below.
+ */
+describe('the Preview tab’s mode gates — one implementation, both clauses', () => {
+  const atPreview = (request: Record<string, unknown>, mode: 'pending' | 'approved') => {
+    router.query = { tab: 'preview' };
+    return render(request, mode);
+  };
+  const curation = () => page.getByText('Marketplace curation').elements();
+  const sandbox = () => page.getByText('Review preview').elements();
+
+  test('🔴 approved + an appBlockId → curation IS offered, and the pending-only sandbox is not', async () => {
+    atPreview({ ...APPROVED, appBlockId: 'block_abc' }, 'approved');
+    await expect.element(page.getByTestId('apps-review-listing-media')).toBeInTheDocument();
+    expect(curation()).toHaveLength(1);
+    expect(sandbox()).toHaveLength(0);
+  });
+
+  test('🔴 approved but NO appBlockId → curation is withheld (the second clause, previously untested)', async () => {
+    // The real case: an approved request whose `app_block` row has not resolved yet. The
+    // panel's whole form keys on `appBlockId`, so rendering it here would send
+    // `setMarketplaceMeta` an empty id.
+    atPreview({ ...APPROVED, appBlockId: null }, 'approved');
+    await expect.element(page.getByTestId('apps-review-listing-media')).toBeInTheDocument();
+    expect(curation()).toHaveLength(0);
+  });
+
+  test('🔴 pending → the sandbox IS offered and curation is withheld even WITH an appBlockId', async () => {
+    // The quadrant that separates the two clauses: `appBlockId` is present, so a gate that
+    // had lost its `mode` half would render curation on a pending submission — i.e. offer
+    // "featured" controls for an app that is not approved.
+    atPreview({ ...PENDING, appBlockId: 'block_abc' }, 'pending');
+    await expect.element(page.getByTestId('apps-review-listing-media')).toBeInTheDocument();
+    expect(sandbox()).toHaveLength(1);
+    expect(curation()).toHaveLength(0);
+  });
+
+  // POSITIVE CONTROL, one case per string. Every assertion above is a COUNT, so a typo in
+  // either query string would make all of them read zero and pass. Split into two cases
+  // rather than two renders in one, so the scaffold's `afterEach` unmount runs between them.
+  test.each([
+    ['Review preview', PENDING, 'pending', null],
+    ['Marketplace curation', APPROVED, 'approved', 'block_abc'],
+  ] as const)(
+    'POSITIVE CONTROL: "%s" IS reachable on this tab',
+    async (text, req, mode, blockId) => {
+      atPreview({ ...req, appBlockId: blockId }, mode);
+      await expect.element(page.getByText(text)).toBeInTheDocument();
     }
   );
 });

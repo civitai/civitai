@@ -15,7 +15,6 @@ import {
 } from '~/components/Apps/OnsiteReviewModal';
 import { ReviewListingMedia } from '~/components/Apps/ReviewListingMedia';
 import {
-  DEFAULT_REVIEW_DETAIL_TAB,
   isReviewDetailTab,
   resolveReviewDetailTab,
   REVIEW_DETAIL_TAB_LABELS,
@@ -196,9 +195,13 @@ function ReviewDetailTabsViewInner({
       </Tabs.Panel>
 
       {/*
-        CODE — the file summary plus the GitHub-shaped line diff. `autoOpenDiff`: arriving
-        on this tab IS the mod asking for the diff, so the fetch happens then rather than
-        behind a second click. Nothing is read while the mod is on another tab.
+        CODE — the file summary plus the GitHub-shaped line diff.
+
+        🔴 THE DIFF STAYS BEHIND ITS OWN SWITCH, and arriving on this tab does NOT fetch it.
+        An earlier revision auto-opened it here; the diff response has no total-bytes cap
+        (300 files × 256 KiB/side), so a mod who opened this tab only to read the file COUNTS
+        paid the whole fetch. The panel is still `visited`-gated, so nothing is read at all
+        until the mod comes here — the switch is the second, cheaper decision.
       */}
       <Tabs.Panel value="code" pt="md">
         {visited.has('code') && <ReviewFilesSection request={request} />}
@@ -214,7 +217,7 @@ function ReviewDetailTabsViewInner({
         review). Flattening it into this bar was considered and rejected — see the note
         on `ReportTabs` usage in the PR — because those three are SUB-VIEWS of one report
         object with their own deep-link contract (`#finding-<tab>-<n>`), and hoisting them
-        here would put five report-shaped tabs next to five submission-shaped ones with no
+        here would put three report-shaped tabs next to five submission-shaped ones with no
         visual grouping to say which is which. The outer bar is `variant="outline"` and the
         inner one is Mantine's default underline, so the two read as different levels.
       */}

@@ -5,6 +5,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 import { AGENT_SECTION_ERROR_MESSAGES } from '~/components/Apps/agentReviewReport';
 import type * as NotificationsModule from '~/utils/notifications';
 import type * as TrpcModule from '~/utils/trpc';
+import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 
 /**
  * 🔴 THE REGRESSION THAT MATTERS MOST IN THIS CHANGE: ONE FAILED ANALYSIS NO LONGER HIDES
@@ -35,7 +36,14 @@ const mocks = vi.hoisted(() => ({
   invalidate: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock('~/providers/FeatureFlagsProvider', () => ({
+// 🔴 SPREAD THE ORIGINAL — the same rule the `~/utils/notifications` mock below states, and
+// this module is the likelier trap: it also exports `useOptionalFeatureFlags`,
+// `useFeatureFlagsReady` and the provider component, so a one-key factory makes all three
+// `undefined` for every importer in the graph and the file fails at IMPORT — which vitest
+// reports as 0 tests collected, not as a failure.
+// Precedent: `src/tests/pages/apps/review/review-queue-poll.browser.test.tsx`.
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlagsMod>()),
   useFeatureFlags: () => mocks.flags,
 }));
 
@@ -447,6 +455,34 @@ describe('a report whose analyses NEVER RAN', () => {
         .querySelector('[data-section="scopeVerdicts"][data-section-status]')
         ?.getAttribute('data-section-status')
     ).toBe('complete');
+  });
+
+  /**
+   * 🔴 THE OTHER HALF OF THE SIBLING TEST'S TITLE — which that test USED TO CLAIM WITHOUT
+   * ASSERTING, and the reason this is a separate case rather than two more lines there.
+   *
+   * `0` beside a section name reads as "we looked and found nothing", which is the exact
+   * false clean verdict this change exists to remove. The count badge and the status badge
+   * are the two arms of ONE ternary, so the hazard is a reorder that lets `count != null`
+   * win — and in the sibling test an earlier `toHaveLength(2)` assertion fails first on
+   * every mutant, so the digit claim there would have been unreachable even once written.
+   */
+  test('🔴 a tab for an analysis that never ran carries NO finding count — `0` would read as a clean verdict', async () => {
+    mocks.report = NEVER_RAN;
+    render();
+    await expect.element(page.getByTestId('apps-report-status')).toBeInTheDocument();
+    const missingLabel = document.querySelector('[data-section="securityAudit"]')!;
+    expect(
+      missingLabel.textContent,
+      'a section that never ran must not be labelled with a finding count'
+    ).not.toMatch(/\d/);
+    // POSITIVE CONTROL: a count badge IS rendered for a section that DID run, so the
+    // no-digit assertion above is a fact about the missing tab and not about the component
+    // never printing digits at all.
+    expect(
+      document.querySelector('[data-section="scopeVerdicts"]')!.textContent,
+      'the control section must actually print a count, or the assertion above is vacuous'
+    ).toMatch(/\d/);
   });
 
   test('🔴 the PROVISIONING ERROR is shown — this branch used to drop it entirely', async () => {

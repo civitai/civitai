@@ -7,7 +7,8 @@
  * provisioning service (as a tuple it takes `.length` from), in the client view-model (as
  * the list every per-section derivation maps over), and as an `if` chain in the callback
  * that writes them. Each copy's docstring pointed at the others — the duplication was seen
- * and documented rather than removed.
+ * and documented rather than removed. All four now read this module — the callback included,
+ * which is the copy whose divergence is silent ON WRITE.
  *
  * 🔴 THE DIVERGENCE IS SILENT IN BOTH DIRECTIONS, which is why one place now owns it.
  * `startAgentReview` classifies a dispatch as TARGETED with
@@ -82,8 +83,14 @@ export function agentSectionFailureMessage(raw: unknown): string | null {
   // whole surface exists to remove, and a string slot is unambiguous evidence the runner
   // wrote a dump rather than a result. The message says so rather than showing empty space.
   if (typeof raw === 'string') {
-    const s = raw.trim();
-    return s ? s.slice(0, AGENT_SECTION_ERROR_MAX_CHARS) : 'the analysis returned no output';
+    // 🔴 SLICE BEFORE TRIM. The other order copies the WHOLE string first, and this runs ~15×
+    // per render of the agent surface (four section-status walks plus three message lookups,
+    // each over three slots) — so a multi-MB bare-string log dump would be duplicated fifteen
+    // times a frame to produce 500 characters. Same output for any input: trailing whitespace
+    // inside the first 500 chars is still trimmed, and a string of pure whitespace still
+    // reduces to empty.
+    const s = raw.slice(0, AGENT_SECTION_ERROR_MAX_CHARS).trim();
+    return s ? s : 'the analysis returned no output';
   }
   if (typeof raw === 'object') {
     const o = raw as Record<string, unknown>;
@@ -95,7 +102,15 @@ export function agentSectionFailureMessage(raw: unknown): string | null {
       // FAILED on a `!= null` test while every renderer's `if (error)` read it as falsy —
       // a tab badged "failed" above a body showing the clean empty state, with no retry
       // control. An error that carries no words is still an error; say so.
-      return msg.length > 0 ? msg.slice(0, AGENT_SECTION_ERROR_MAX_CHARS) : 'unspecified error';
+      // 🔴 `.trim()` BEFORE THE LENGTH TEST, or `{ error: '   ' }` returns three spaces: the
+      // section scores `failed`, the renderer's `if (error)` sees a truthy string, and the
+      // moderator gets a "failed" badge above a BLANK reason — the same no-information shape
+      // the `{ error: '' }` case two lines down exists to close, and the same decision the
+      // bare-string arm above already takes. An error that carries no words is still an error.
+      const trimmed = msg.trim();
+      return trimmed.length > 0
+        ? trimmed.slice(0, AGENT_SECTION_ERROR_MAX_CHARS)
+        : 'unspecified error';
     }
   }
   return null;

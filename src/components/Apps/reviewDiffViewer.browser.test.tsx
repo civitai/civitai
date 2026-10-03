@@ -46,6 +46,32 @@ const CHANGED: FileLineDiff = {
   ],
 };
 
+/**
+ * A file whose edit CANNOT pair evenly: one line replaced by two.
+ *
+ * 🔴 THE UNEVEN RUN IS THE POINT. `splitDiffRows` pairs each contiguous `-` run against the
+ * `+` run that follows it, so a 1-del/1-add edit pairs exactly and produces NO filler cell —
+ * which is how the split colour sweep came to run over a surface that was not on screen.
+ */
+const UNEVEN: FileLineDiff = {
+  ...CHANGED,
+  hunks: [
+    {
+      oldStart: 41,
+      oldLines: 2,
+      newStart: 41,
+      newLines: 4,
+      lines: [
+        ' const x = useState()',
+        '-const y = compute()',
+        '+const y = useMemo(() => 1, [])',
+        '+const z = useMemo(() => 2, [])',
+        ' return <div/>',
+      ],
+    },
+  ],
+};
+
 const expand = async () => {
   await page.getByText('src/App.tsx').click();
 };
@@ -88,7 +114,14 @@ describe('the per-file header', () => {
     expect(style.top, 'the file header sticks to the top of its scroller').toBe('0px');
   });
 
-  test('collapsed by default — the laziness is unchanged', async () => {
+  /**
+   * 🔴 INVARIANT GUARD, NOT REGRESSION COVERAGE — its own title says "unchanged", so label it
+   * rather than let the count read as redesign coverage. `origin/main`'s `DiffHunkView` was
+   * already collapsed by default (the brief's "don't regress the laziness"); this pins that
+   * the rewrite kept it. As with the two blocks below, it cannot be reported green at the
+   * base, because the component it renders does not exist there.
+   */
+  test('INVARIANT GUARD: collapsed by default — the laziness is unchanged', async () => {
     renderWithProviders(<FileDiffEntry file={CHANGED} />);
     await expect.element(page.getByText('src/App.tsx')).toBeInTheDocument();
     expect(document.querySelectorAll('[data-testid="apps-review-diff-unified"]')).toHaveLength(0);
@@ -157,55 +190,89 @@ describe('unified layout (the default)', () => {
   });
 
   /**
-   * 🔴 INVARIANT GUARD, NOT REGRESSION COVERAGE — measured, not assumed. Every case in this
-   * block was run against `origin/main` with the new pure modules copied in, and PASSED there.
-   * It pins behaviour this change PRESERVES; it never watched the defect it describes.
-   * Do not count it toward "the redesign is tested".
+   * 🔴 INVARIANT GUARD, NOT REGRESSION COVERAGE — and, as in the elided-files block below,
+   * NOT by the "green at `origin/main`" method, which cannot apply: `FileDiffEntry` does not
+   * exist at the base. `origin/main`'s `reviewDiffPanels.tsx` already painted every surface
+   * through `light-dark(...)` (5 occurrences, and a header note saying why), so this pins a
+   * rule the rewrite had to CARRY OVER rather than a defect anyone watched. The rewrite
+   * introduced new painted surfaces — the sticky file header, the split filler cell — which
+   * is the reason to re-pin it at all. Do not count it toward "the redesign is tested".
    */
   test('🔴 EVERY painted background is `light-dark(...)` — the "white diff box in dark mode" bug', async () => {
     // This module was corrected for that defect once; a fixed light-only shade here is the
     // regression. Asserted on the AUTHORED inline style string, which the browser preserves
     // verbatim, so it is colour-scheme independent.
     //
-    // 🔴 THE SWEEP IS OVER *EVERY* `--mantine-color-` TOKEN, not a list of the four spellings
-    // in use today. A list is walkable: a regression reaching for `gray-2`, `green-1`,
-    // `blue-0` or `white` ships the white slab and passes a four-spelling check. The rule is
-    // "no mantine colour is painted outside `light-dark(...)`" — which is a property, not an
-    // inventory.
+    // 🔴 THE TEST IS "IS THIS TOKEN FIXED IN BOTH SCHEMES", NOT "DOES IT END IN A DIGIT".
     //
-    // 🔴 BOTH LAYOUTS. `LINE_BG.empty` is painted ONLY by a split row's filler cell, so a
-    // unified-only sweep never sees it.
-    const sweep = () => {
+    // The first version of this sweep skipped anything without a trailing `-<digit>`, which
+    // skips `--mantine-color-white` — the exact spelling its own comment named as walkable.
+    // Measured: `PANEL_BG = 'var(--mantine-color-white)'` paints a literally white slab in
+    // dark mode, and that sweep printed nothing and passed.
+    //
+    // ⚠️ THE OBVIOUS REPAIR — invert it and allowlist the semantic names — OVERSHOOTS, and
+    // this is the measurement that says so rather than an opinion: it immediately red-flagged
+    // `--mantine-color-yellow-light`, which Mantine's own `Badge` writes into `--badge-bg` and
+    // which Mantine REDEFINES under `[data-mantine-color-scheme="dark"]`. The `*-light*`,
+    // `*-filled*` and `*-outline*` families are all scheme-computed, as are the semantic
+    // tokens — and none of them are ours to police anyway.
+    //
+    // What is genuinely fixed in both schemes is the NUMBERED SHADES plus `white` and `black`.
+    // That is the set, and it is derived from the hazard rather than from today's spellings.
+    const isFixedInBothSchemes = (token: string) =>
+      /^[a-z]+-[0-9]$/.test(token) || token === 'white' || token === 'black';
+
+    const sweep = (label: string) => {
       const styles = Array.from(document.querySelectorAll<HTMLElement>('[style]')).map(
         (el) => el.getAttribute('style') ?? ''
       );
-      for (const s of styles) {
-        if (!s.includes('--mantine-color-')) continue;
-        // `var(--mantine-color-default-border)` &c are SEMANTIC tokens that already remap per
-        // scheme; the hazard is a numbered SHADE, which does not.
-        if (!/--mantine-color-[a-z]+-\d/.test(s)) continue;
-        expect(s, `a numbered mantine shade painted outside light-dark(): ${s}`).toContain(
-          'light-dark('
-        );
+      let checked = 0;
+      for (const style of styles) {
+        for (const [, token] of style.matchAll(/--mantine-color-([a-z0-9-]+)/g)) {
+          if (!isFixedInBothSchemes(token)) continue;
+          checked += 1;
+          expect(
+            style,
+            `${label}: --mantine-color-${token} is painted outside light-dark(): ${style}`
+          ).toContain('light-dark(');
+        }
       }
+      // 🔴 POSITIVE CONTROL PER PASS. A sweep that matched no tokens at all would be a
+      // reassuring zero, indistinguishable from a clean one.
+      expect(checked, `${label}: the sweep examined no colour tokens`).toBeGreaterThan(0);
       return styles;
     };
 
-    renderWithProviders(<FileDiffEntry file={CHANGED} />);
-    await expand();
-    const unifiedStyles = sweep();
-    // POSITIVE CONTROL: the add/delete highlights really are painted (an empty sweep above
-    // would pass vacuously).
+    renderWithProviders(<FileDiffEntry file={UNEVEN} />);
+    await page.getByText('src/App.tsx').click();
+    await expect.element(page.getByTestId('apps-review-diff-unified')).toBeInTheDocument();
+    const unifiedStyles = sweep('unified');
     expect(unifiedStyles.some((s) => s.includes('light-dark(') && s.includes('green-9'))).toBe(
       true
     );
     expect(unifiedStyles.some((s) => s.includes('light-dark(') && s.includes('red-9'))).toBe(true);
 
-    // …and again in SPLIT, where the `empty` filler cell is the only painted surface that
-    // the unified pass cannot reach.
+    // …and again in SPLIT, where the `empty` FILLER cell is the only painted surface the
+    // unified pass cannot reach.
     await page.getByRole('radio', { name: 'Split' }).click();
     await expect.element(page.getByTestId('apps-review-diff-split')).toBeInTheDocument();
-    sweep();
+    // 🔴 STRUCTURAL CONTROL: the fixture must actually PRODUCE a filler. `UNEVEN` replaces one
+    // line with two, so the del/add runs cannot pair evenly — the earlier fixture (1 del, 1
+    // add) paired exactly and produced ZERO fillers, so that pass swept a surface that was not
+    // on screen. The cell is identified by its empty text in a split row, not by a colour
+    // string (its value is byte-identical to the gutter's).
+    const splitRows = Array.from(
+      document.querySelectorAll('[data-testid="apps-review-diff-split"] tr')
+    );
+    const fillerCells = splitRows.flatMap((tr) =>
+      Array.from(tr.querySelectorAll('td')).filter(
+        (td) => td.getAttribute('style')?.includes('light-dark(') && td.textContent === ''
+      )
+    );
+    expect(fillerCells.length, 'the split fixture produced an empty filler cell').toBeGreaterThan(
+      0
+    );
+    sweep('split');
   });
 });
 
@@ -251,10 +318,21 @@ describe('elided files keep their labels, and NO link out (#3498)', () => {
   });
 
   /**
-   * 🔴 INVARIANT GUARD, NOT REGRESSION COVERAGE — measured, not assumed. Every case in this
-   * block was run against `origin/main` with the new pure modules copied in, and PASSED there.
-   * It pins behaviour this change PRESERVES; it never watched the defect it describes.
-   * Do not count it toward "the redesign is tested".
+   * 🔴 INVARIANT GUARD, NOT REGRESSION COVERAGE — but NOT by the usual method, and the
+   * difference matters because the usual claim would be FALSE here.
+   *
+   * Every other invariant-guard label in this change says "run against `origin/main` and
+   * PASSED there". That is impossible for this block: the component under test,
+   * `FileDiffEntry`, DOES NOT EXIST on `origin/main` — it replaces `DiffHunkView`, and
+   * `SKIP_LABEL` was a module-private `const` there, so this file cannot even import what it
+   * asserts at the base. A test that cannot be RUN at the base cannot be reported red or
+   * green at it.
+   *
+   * What makes it an invariant guard anyway is the requirement, not the test: `origin/main`'s
+   * `reviewDiffPanels.tsx` already rendered `SKIP_LABEL[file.skipReason]` verbatim and already
+   * carried no anchor (#3498 removed the deep-link). So this pins a rule the redesign had to
+   * CARRY OVER into a new component — the thing a rewrite loses silently — and it never
+   * watched a defect. Do not count it toward "the redesign is tested".
    */
   test.each(Object.entries(SKIP_LABEL) as Array<[NonNullable<FileLineDiff['skipReason']>, string]>)(
     '🔴 skipReason "%s" states the reason VERBATIM and offers no anchor',
@@ -282,7 +360,13 @@ describe('elided files keep their labels, and NO link out (#3498)', () => {
 });
 
 describe('a file with no textual change', () => {
-  test('says so rather than rendering an empty table', async () => {
+  /**
+   * 🔴 INVARIANT GUARD, NOT REGRESSION COVERAGE. `origin/main` already printed this exact
+   * sentence for a file whose hunks are empty; the rewrite had to carry it over, and a table
+   * renderer that produced an empty `<table>` instead would look like a bug in the data.
+   * Not reportable at the base for the same reason as the blocks above.
+   */
+  test('INVARIANT GUARD: says so rather than rendering an empty table', async () => {
     renderWithProviders(<FileDiffEntry file={{ ...CHANGED, hunks: [], added: 0, removed: 0 }} />);
     await expand();
     await expect

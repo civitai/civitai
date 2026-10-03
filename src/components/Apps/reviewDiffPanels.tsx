@@ -4,6 +4,7 @@ import {
   splitDiffRows,
   unifiedDiffRows,
   type DiffSplitCell,
+  type DiffSplitRow,
   type DiffLineKind,
   type DiffUnifiedRow,
 } from '~/components/Apps/reviewDiffRows';
@@ -52,7 +53,10 @@ const LINE_BG: Record<DiffLineKind | 'empty', string | undefined> = {
   del: 'light-dark(var(--mantine-color-red-0), var(--mantine-color-red-9))',
   context: undefined,
   meta: undefined,
-  empty: 'light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-7))',
+  // 🔴 THE SAME SURFACE AS THE GUTTER, SO THE SAME TOKEN. A split row's filler cell and the
+  // line-number gutter are one decision — "the inactive surface" — and spelling it twice
+  // means retuning the gutter silently leaves the filler behind.
+  empty: GUTTER_BG,
 };
 
 /** Mantine colour name for a line's text, or undefined to inherit. */
@@ -283,31 +287,7 @@ export function FileDiffEntry({
             ) : layout === 'unified' ? (
               <UnifiedRowsTable rows={unified} />
             ) : (
-              <table
-                style={{ borderCollapse: 'collapse', width: 'max-content', minWidth: '100%' }}
-                data-testid="apps-review-diff-split"
-              >
-                <tbody>
-                  {split.map((row) =>
-                    row.kind === 'hunk' ? (
-                      <tr key={row.key}>
-                        <td colSpan={4} style={{ ...MONO, padding: '2px 6px' }}>
-                          <Text span size="xs" c="cyan" style={MONO}>
-                            {row.label}
-                          </Text>
-                        </td>
-                      </tr>
-                    ) : (
-                      <tr key={row.key}>
-                        <LineNumberCell value={row.left.no} />
-                        <SplitCodeCell cell={row.left} />
-                        <LineNumberCell value={row.right.no} />
-                        <SplitCodeCell cell={row.right} />
-                      </tr>
-                    )
-                  )}
-                </tbody>
-              </table>
+              <SplitRowsTable rows={split} />
             )}
           </div>
         )}
@@ -367,7 +347,17 @@ function CodeCell({ kind, raw }: { kind: DiffLineKind; raw: string }) {
   );
 }
 
-/** One side of a split row — an `empty` filler cell paints the gap, with no text. */
+/**
+ * One side of a split row — an `empty` filler cell paints the gap, with no text.
+ *
+ * 🔴 `white-space: pre` FOR THE SAME REASON AS {@link CodeCell}, and it matters MORE here:
+ * a wrapped line in one column desynchronises that column from the other for every row
+ * below it, so the two sides stop describing the same lines. The declaration is repeated
+ * rather than shared because the two cells differ in `width` (`100%` vs `50%`) and in
+ * whether they can be empty; what must not happen is one of them quietly becoming
+ * `pre-wrap`. Pinned on the unified side by the horizontal-scroll test in
+ * `src/components/Apps/reviewDiffViewer.browser.test.tsx`.
+ */
 function SplitCodeCell({ cell }: { cell: DiffSplitCell }) {
   return (
     <td
@@ -421,6 +411,48 @@ function UnifiedRowsTable({ rows }: { rows: DiffUnifiedRow[] }) {
               <LineNumberCell value={row.oldNo} />
               <LineNumberCell value={row.newNo} />
               <CodeCell kind={row.kind} raw={row.raw} />
+            </tr>
+          )
+        )}
+      </tbody>
+    </table>
+  );
+}
+
+/**
+ * The SPLIT rows as a table — hunk headers, then old-gutter / old-code / new-gutter /
+ * new-code.
+ *
+ * 🔴 EXTRACTED FOR SYMMETRY WITH {@link UnifiedRowsTable}, which is not cosmetic. These two
+ * tables must agree on `borderCollapse`, `width: max-content` and `minWidth: 100%` — that
+ * trio is what makes a long line overflow the box and scroll INSIDE it instead of widening
+ * the page. With one branch a named component and the other eleven lines inlined in
+ * `FileDiffEntry`, a change to the geometry naturally lands on the one you are looking at,
+ * and the other layout silently keeps the old values. Side by side, the pair is readable as
+ * a pair.
+ */
+function SplitRowsTable({ rows }: { rows: DiffSplitRow[] }) {
+  return (
+    <table
+      style={{ borderCollapse: 'collapse', width: 'max-content', minWidth: '100%' }}
+      data-testid="apps-review-diff-split"
+    >
+      <tbody>
+        {rows.map((row) =>
+          row.kind === 'hunk' ? (
+            <tr key={row.key}>
+              <td colSpan={4} style={{ ...MONO, padding: '2px 6px' }}>
+                <Text span size="xs" c="cyan" style={MONO}>
+                  {row.label}
+                </Text>
+              </td>
+            </tr>
+          ) : (
+            <tr key={row.key}>
+              <LineNumberCell value={row.left.no} />
+              <SplitCodeCell cell={row.left} />
+              <LineNumberCell value={row.right.no} />
+              <SplitCodeCell cell={row.right} />
             </tr>
           )
         )}

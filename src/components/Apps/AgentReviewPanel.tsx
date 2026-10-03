@@ -355,15 +355,28 @@ export function AgentReviewPanel({
           <Group gap="xs">{runButton('Run again')}</Group>
         </Stack>
       ) : hasReport ? (
-        <ReportTabs
-          report={report}
-          costCapped={status === 'cost-capped'}
-          onRerunSection={(section) => {
-            setRerunningSection(section);
-            startMut.mutate({ publishRequestId, sections: [section] });
-          }}
-          rerunningSection={startMut.isPending ? rerunningSection : null}
-        />
+        <Stack gap={6}>
+          <ReportTabs
+            report={report}
+            costCapped={status === 'cost-capped'}
+            onRerunSection={(section) => {
+              setRerunningSection(section);
+              startMut.mutate({ publishRequestId, sections: [section] });
+            }}
+            rerunningSection={startMut.isPending ? rerunningSection : null}
+          />
+          {/*
+            🔴 A `complete` REPORT CAN STILL BE MISSING AN ANALYSIS, and until this was added
+            that mod had no way to run it. `buildReportUpdate` writes only the fields the
+            callback body carries, so a runner reporting `status: 'complete'` while omitting
+            one section produces a green-badged report with a "not run" tab — and this branch
+            rendered `ReportTabs` and nothing else, so the only re-run affordance on the whole
+            panel was the per-section one inside the missing tab. It becomes the COMMON shape
+            once the pod honours `AGENT_REVIEW_SECTIONS`, because a targeted re-run's callback
+            reports on one section by design.
+          */}
+          <Group gap="xs">{runButton('Re-run all analyses')}</Group>
+        </Stack>
       ) : null}
 
       {/* AGENTIC MOD CODE-REVIEW (App Blocks P3) — chat with the agent about its report.

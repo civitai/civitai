@@ -115,6 +115,15 @@ export default function ReviewDetailPage({ publishRequestId }: ReviewDetailPageP
    *
    * ⚠️ `useMemo` must sit ABOVE the early return below, or the hook order changes between
    * renders the moment the flags resolve.
+   *
+   * ⚠️ AND IT RESTS ON `query.data` NEVER BEING REFETCHED. The client sets
+   * `staleTime: Infinity` + `refetchOnWindowFocus: false`, this query passes no
+   * `refetchInterval`, and NOTHING in the repo invalidates `blocks.getPublishRequest` — so it
+   * fetches once per mount and the identity never moves. 🔴 Add a `refetchInterval` or an
+   * `invalidate()` and this silently becomes a no-op: react-query's structural sharing cannot
+   * save it, because `replaceEqualDeep` returns a revived `Date` verbatim rather than reusing
+   * the old reference, and this payload carries `submittedAt`/`reviewedAt` through superjson.
+   * One changed nested reference is enough to rebuild the whole object.
    */
   const selection = useMemo(
     () =>

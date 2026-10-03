@@ -233,13 +233,14 @@ describe('blocks.startAgentReview — CONFLICT preservation', () => {
       modUserId: 1,
       sections: undefined,
     });
-    // 🔴 THE LINE ABOVE CANNOT SEE A WRONG `sections`. `toHaveBeenCalledWith` uses `toEqual`
-    // semantics, which IGNORE an explicitly-`undefined` property — so it is satisfied by a
-    // call carrying `sections: ['codeReview']` only because... no: it would catch that. What
-    // it CANNOT catch is the inverse — the key being absent vs present-and-undefined — and
-    // more importantly it reads as if it had asserted something about the value when it
-    // asserted nothing. Pin the VALUE, which is the thing the service branches on: anything
-    // other than `undefined` sends it down the targeted path.
+    // 🔴 WHAT THE `sections: undefined` ABOVE DOES AND DOES NOT CLAIM. `toHaveBeenCalledWith`
+    // uses `toEqual` semantics, under which an ABSENT key and an explicitly-`undefined` key
+    // are equal. So that line does catch `sections: ['codeReview']`, and it cannot
+    // distinguish "the router omitted the key" from "the router passed it as undefined" —
+    // which is fine, because the service branches on the VALUE, not on key presence.
+    // It is restated below as its own assertion for one reason: a failure there names
+    // `sections` and prints the offending value, where the matcher above fails with a whole-
+    // object diff in which the one field that matters is easy to miss.
     const call = mockStartAgentReview.mock.calls[0][0] as { sections?: unknown };
     expect(call.sections, 'a plain dispatch must be a FULL run').toBeUndefined();
   });
