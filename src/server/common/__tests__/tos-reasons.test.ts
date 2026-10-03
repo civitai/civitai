@@ -14,7 +14,11 @@ describe('tosReasonUserMessage', () => {
   it('words a minor-with-violence removal without the mature-context accusation', () => {
     // The fused "Minor in Mature Context" labels read to the owner as a CSAM accusation; this reason
     // exists so a weapon near a young-looking character is not filed or worded that way.
-    expect(tosReasonUserMessage(ViolationType.MinorViolence)).toBe('Minor with Violence');
+    const message = tosReasonUserMessage(ViolationType.MinorViolence);
+    expect(message).toBe(
+      'Violence, weapons or threats involving characters who appear young, or in settings associated with minors such as schools, are not allowed'
+    );
+    expect(message.toLowerCase()).not.toMatch(/mature|sexual/);
   });
 
   it('offers minor-with-violence in the moderator picker', () => {
