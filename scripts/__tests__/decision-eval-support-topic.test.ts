@@ -920,6 +920,8 @@ describe('support.topic final cut', () => {
     ['a scheme cut before its end', 'Zhtt', 'ps://example.com/路/john.smith.5551234'],
     ['www cut before its dot', 'Zw', 'ww.example.com/路/john.smith.5551234'],
     ['www with no slash after the domain', 'Zw', 'ww.example.com?q=路/john.smith.5551234'],
+    ['an IP host cut before its port', 'Z203.0.11', '3.7:8443/路/john.smith.5551234'],
+    ['an IP host with no port', 'Z203.0.11', '3.7/路/john.smith.5551234'],
     [
       'a bare host cut more than 64 characters before its slash',
       'Zmy-',
