@@ -52,12 +52,19 @@ const rawEntry = (id: number, userId: number, score = 1500) => ({
   user_image: null,
 });
 
-/** Each entry's vote count across all judges, where `crucibleEloRedis.getAllVoteCounts` reads it. */
-const withVoteCounts = (counts: Record<number, number>) =>
+const asHash = (counts: Record<number, number>) =>
+  Object.fromEntries(Object.entries(counts).map(([id, n]) => [id, String(n)]));
+
+/**
+ * Each entry's vote count across all judges, where `crucibleEloRedis.getAllVoteCounts` reads it,
+ * and optionally this judge's own votes per entry. Read on every call, so a test may mutate them.
+ */
+const withVoteCounts = (
+  counts: Record<number, number>,
+  { judge = {} }: { judge?: Record<number, number> } = {}
+) =>
   hGetAll.mockImplementation(async (key: string) =>
-    key.endsWith(':votes')
-      ? Object.fromEntries(Object.entries(counts).map(([id, n]) => [id, String(n)]))
-      : {}
+    key.endsWith(':votes') ? asHash(counts) : asHash(judge)
   );
 
 /** Pairs this judge has already voted on. */
@@ -204,6 +211,65 @@ describe('getJudgingPair — pairing', () => {
       const ids = pairIds(await getJudgingPair({ crucibleId: 1, userId: 7 }));
       expect(ids, 'entry 5 has no votes, so it must be in the pair').toContain(5);
     }
+  });
+
+  it('anchors on the entry this judge has voted on least, ahead of the least-voted overall', async () => {
+    queryRaw.mockResolvedValue([
+      rawEntry(1, 11),
+      rawEntry(2, 12),
+      rawEntry(3, 13),
+      rawEntry(4, 14),
+      rawEntry(5, 15),
+    ]);
+    // Entry 1 is the least-voted overall, but this judge just saw it in two pairs in a row.
+    withVoteCounts({ 1: 2, 2: 9, 3: 9, 4: 9, 5: 9 }, { judge: { 1: 2, 2: 1, 3: 1 } });
+    withVotedPairs([1, 2], [1, 3]);
+
+    for (let i = 0; i < 20; i++) {
+      const ids = pairIds(await getJudgingPair({ crucibleId: 1, userId: 7 }));
+      expect(ids, 'the judge has not seen 4 or 5 yet').toEqual([4, 5]);
+    }
+  });
+
+  it('does not put one entry in every pair as a judge votes through the crucible', async () => {
+    const entries = Array.from({ length: 8 }, (_, i) => rawEntry(i + 1, 11 + i));
+    queryRaw.mockResolvedValue(entries);
+    // A late entry: least-voted overall by a wide margin, so it stays least-voted all session.
+    const global: Record<number, number> = {
+      1: 0,
+      2: 40,
+      3: 40,
+      4: 40,
+      5: 40,
+      6: 40,
+      7: 40,
+      8: 40,
+    };
+    const judge: Record<number, number> = {};
+    const voted: [number, number][] = [];
+    withVoteCounts(global, { judge });
+    sMembers.mockImplementation(async () =>
+      voted.map(([a, b]) => `${Math.min(a, b)}:${Math.max(a, b)}`)
+    );
+
+    let streak = 0;
+    let longest = 0;
+    let served = 0;
+    for (let i = 0; i < 4; i++) {
+      const ids = pairIds(await getJudgingPair({ crucibleId: 1, userId: 7 }));
+      if (!ids) break;
+      served++;
+      streak = ids.includes(1) ? streak + 1 : 0;
+      longest = Math.max(longest, streak);
+      voted.push([ids[0], ids[1]]);
+      for (const id of ids) {
+        judge[id] = (judge[id] ?? 0) + 1;
+        global[id] += 1;
+      }
+    }
+
+    expect(served).toBe(4);
+    expect(longest, 'entry 1 anchored consecutive pairs').toBeLessThan(2);
   });
 
   it('opposes it with the nearest-rated opponent', async () => {

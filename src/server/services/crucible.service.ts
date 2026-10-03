@@ -2282,11 +2282,13 @@ export const getJudgingProgress = async ({
   };
 };
 
-type RatedEntry = EntryForJudging & { votes: number };
+type RatedEntry = EntryForJudging & { votes: number; judgeVotes: number };
 
 /**
  * The least-voted entry, against the nearest-rated of the least-voted opponents this judge hasn't
- * already paired it with. Ties break randomly.
+ * already paired it with. "Least-voted" ranks this judge's own votes on the entry before everyone's:
+ * a late entry stays least-voted overall for a long time, and ranked on that alone it anchors every
+ * pair the judge sees until it reaches their per-judge cap.
  */
 function pickUnjudgedPair(
   entries: RatedEntry[],
@@ -2295,7 +2297,12 @@ function pickUnjudgedPair(
 ) {
   const byVotes = entries
     .map((entry) => ({ entry, tieBreak: Math.random() }))
-    .sort((x, y) => x.entry.votes - y.entry.votes || x.tieBreak - y.tieBreak)
+    .sort(
+      (x, y) =>
+        x.entry.judgeVotes - y.entry.judgeVotes ||
+        x.entry.votes - y.entry.votes ||
+        x.tieBreak - y.tieBreak
+    )
     .map(({ entry }) => entry);
 
   for (const a of byVotes) {
@@ -2377,12 +2384,14 @@ export const getJudgingPair = async ({
     sysRedis.sMembers(getVotedPairsKey(crucibleId, userId)),
   ]);
   const votedPairs = new Set(votedPairKeys);
+  const judgeVotesOn = (entry: EntryForJudging) => Number(judgeEntryVotes?.[entry.id] ?? 0);
   const underJudgeCap = (entry: EntryForJudging) =>
-    Number(judgeEntryVotes?.[entry.id] ?? 0) < CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY;
+    judgeVotesOn(entry) < CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY;
   const rate = (entry: EntryForJudging): RatedEntry => ({
     ...entry,
     score: redisElos[entry.id] ?? entry.score,
     votes: voteCounts[entry.id] ?? 0,
+    judgeVotes: judgeVotesOn(entry),
   });
 
   const visibleImage = visibleEntryImageSql(

@@ -53,7 +53,7 @@ The discovery page's Prize Pool sort uses the same pool.
 ## Judging
 
 - Judges never see their own entries, and never see the same pair twice.
-- Pairs favour entries with few votes, so new entries get ranked quickly.
+- Pairs favour the entries this judge has voted on least, then those with the fewest votes overall, so new entries get ranked quickly without one late entry turning up in every pair a judge sees.
 - New entries' ratings move faster until they have enough votes.
 - Judges can skip a pair.
 - On video crucibles with a minimum view time, only real playback counts. Skipping ahead or pausing does not add to it. A vote on an under-watched pair is rejected, and the judge keeps that pair.
