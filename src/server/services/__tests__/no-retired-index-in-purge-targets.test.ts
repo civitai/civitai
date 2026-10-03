@@ -23,9 +23,17 @@ import { describe, expect, it } from 'vitest';
  *
  * 🔴 WHAT THIS DOES NOT CHECK, stated so nobody reads it as wider than it is. These are the blind
  * spots known when it was written, audited against what the body below actually does — but the
- * list is NOT asserted exhaustive, so read it as the floor and not the boundary. The one property
- * that IS closed: nothing is skipped quietly. Every entry the parse cannot decide is reported, so
- * no hole here is a target this guard looked at and waved through.
+ * list is NOT asserted exhaustive, so read it as the floor and not the boundary.
+ *
+ * ⚠️ This paragraph used to end "the one property that IS closed: nothing is skipped quietly …
+ * no hole here is a target this guard looked at and waved through", and that was too strong.
+ * Scope it instead. What IS closed is narrow and mechanical: of the entries the parse FINDS in
+ * those two arrays, none is dropped — one it cannot decide is reported, and the exact counts
+ * below go red if it stops finding one. CLAUSE-level completeness is NOT claimed in general: one
+ * filter shape (the last bullet below) is read and reported on only its first attribute, so a
+ * malformed filter can indeed be looked at and partly waved through. Nor is anything claimed
+ * about a target that never reaches those two arrays — that is the second bullet below, and it is
+ * a hole, not a closed case.
  *
  *   - It compares the purge's targets against what the REPO DECLARES — the `retired` flag on the
  *     owning processor and the filterable-attribute arrays. It cannot see the live backend, so an
@@ -51,12 +59,27 @@ import { describe, expect, it } from 'vitest';
  *     interpolated one, or that the username escaping is correct), and nothing about whether the
  *     queue is drained at all — remove every caller of `processUserContentRemovalQueue` and every
  *     assertion below still passes.
+ *   - 🔴 Clause splitting needs the connective to BE there. A filter that juxtaposes two
+ *     comparisons with nothing between them — `a IN [1] b IN [2]` — is a single clause to this
+ *     guard, and `CLAUSE`'s greedy `IN [...]` alternative matches the whole thing and reports
+ *     only `a`, so `b` is never checked. Meilisearch would reject that filter as a syntax error,
+ *     which `processIndex` then swallows, so the consequence is the same silent non-purge this
+ *     file exists to stop — it is a malformed-filter hole, not a valid-filter one, and it is the
+ *     one place a target IS read and partly waved through. Pinned by a test below so this
+ *     paragraph cannot rot. Closing it means bounding each operator's value span (requiring the
+ *     `IN` list to end the clause, and the comparison RHS to be one value), not widening the
+ *     mask — the mask cannot see a connective that was never written.
  *
  * Within those two arrays the parse is STRUCTURAL, not shape-spelled: entries are found by brace
  * matching and their fields by key, so key order, line breaks (prettier reformats past
  * `printWidth: 100`) and trailing commas are all handled. Each filter is split on its top-level
- * `AND`/`OR` connectives and EVERY attribute it names is checked, so a compound filter cannot
- * carry an undeclared attribute past on the back of a declared first one. An entry whose `name`
+ * `AND`/`OR` connectives — located on a length-preserving MASK of the filter, so a connective or
+ * an unbalanced bracket inside a quoted value can neither move the split nor collapse the filter
+ * to one clause — and every attribute the resulting clauses name is checked. For a filter whose
+ * clauses ARE joined by connectives that is enough: an undeclared second attribute cannot ride in
+ * behind a declared first one, pinned below in both the pure-function and the `violations` tests.
+ * It is NOT enough for a filter that omits the connective altogether — see the last blind spot
+ * above, which is the shape this is deliberately not claimed for. An entry whose `name`
  * or `filter` the parser cannot resolve to a literal, and a filter clause whose operator shape it
  * does not recognise, are both REPORTED, never skipped — a skip is how the counts below would
  * silently go short again.
@@ -91,10 +114,19 @@ const slice = (src: Source, from: number, to: number): Source => ({
 /**
  * Blank comment and literal CONTENTS from `text`, preserving length, newlines and delimiters.
  *
- * Deliberately started at a known-code offset by every caller (an array's `[`), because a regex
- * literal containing a quote — `.replace(/"/g, …)` appears in the purge file — would otherwise be
- * misread as opening a string. A nested template (`${`…`}`) is not modelled; one would derail the
- * parse into an unresolvable entry or a moved count, i.e. loudly, which is the point.
+ * Every caller starts it at a KNOWN boundary rather than an arbitrary offset — an array's `[` for
+ * the entry scan, the first character inside a `filter` template for the clause scan — because a
+ * regex literal containing a quote (`.replace(/"/g, …)` appears in the purge file) would otherwise
+ * be misread as opening a string.
+ *
+ * ⚠️ A nested template (`${`…`}`) is still not modelled, and the sentence that used to sit here
+ * said such a shape "would derail the parse into an unresolvable entry or a moved count, i.e.
+ * loudly, which is the point". MEASURED FALSE for the one shape tried: on
+ * `IN [${`${escapedUsernames}`}]` the inner backtick closes the mask's string early, the brackets
+ * and braces still balance, and the clause resolves to the CORRECT attribute — quietly, not
+ * loudly (pinned below). That is the right answer for that shape, but it was reached by accident
+ * rather than by modelling, and it is ONE shape: no claim is made about nested templates in
+ * general, in either direction.
  */
 function maskLiterals(text: string): string {
   const out = text.split('');
@@ -210,16 +242,39 @@ function fields(span: Source): { keys: Record<string, string>; extras: string[] 
   return { keys, extras };
 }
 
-const ATTRIBUTE_PATH = '[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*';
+const BARE_ATTRIBUTE_PATH = '[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*';
+
+/**
+ * An attribute path, bare or DOUBLE-QUOTED.
+ *
+ * The quoted form is in the repo already, against an index that IS a purge target: the
+ * `requiringMeta` branch of `src/server/services/image.service.ts` pushes `("blockedFor" = …)`
+ * against the metrics-images index, which `metricsIndexConfigs` lists and which does declare
+ * `blockedFor` filterable. Rejecting it would make this guard report a correct, in-house filter
+ * shape as unreadable — a false positive in a guard, which is worse than the hole it closed.
+ * The quotes are stripped before the name is compared against the declared list.
+ */
+const ATTRIBUTE_PATH = `(?:"${BARE_ATTRIBUTE_PATH}"|${BARE_ATTRIBUTE_PATH})`;
+
+const unquoteAttribute = (raw: string) =>
+  raw.startsWith('"') && raw.endsWith('"') ? raw.slice(1, -1) : raw;
 
 /**
  * One filter clause, with the attribute it constrains captured first.
  *
  * The operator set is Meilisearch's, narrowed to the forms this repo actually writes:
  * `IN [...]` / `NOT IN [...]` (every purge entry, and `user.service.ts`), the comparisons and
- * equality (`makeMeiliImageSearchFilter('sortAtUnix', '<= …')`), `EXISTS` / `IS NULL` and their
- * negations (`'publishedAtUnix NOT EXISTS'`, `'postId IS NOT NULL'`), and a `… TO …` range.
- * A clause outside it is REPORTED, not skipped — see `filterAttributes`.
+ * equality (`makeMeiliImageSearchFilter('sortAtUnix', '<= …')`, and the quoted-attribute
+ * `("blockedFor" = …)` in `image.service.ts`), and `EXISTS` / `IS NULL` with their negations
+ * (`'publishedAtUnix NOT EXISTS'`, `'postId IS NOT NULL'`).
+ *
+ * ⚠️ The `… TO …` range alternative below is the one form in this set that this repo does NOT
+ * currently write — a search of `src/` for a range filter outside this file's own assertion found
+ * none (round-4 review; the sentence here used to list it among the forms the repo writes, which
+ * was false). It is recognised pre-emptively because Meilisearch supports it; it is NOT evidence
+ * that such a filter exists.
+ *
+ * A clause outside this set is REPORTED, not skipped — see `filterAttributes`.
  */
 const CLAUSE = new RegExp(
   `^(${ATTRIBUTE_PATH})\\s+(?:` +
@@ -233,23 +288,43 @@ const CLAUSE = new RegExp(
 );
 
 /**
- * Top-level `AND`/`OR` connectives of a filter. Depth tracks `[]`, `()` and `{}` so a connective
- * inside an interpolated value list or a parenthesised group cannot split the filter. A quoted
- * value containing the word is not modelled: a wrong split leaves clauses that fail `CLAUSE`,
- * i.e. it fails loudly as unresolvable rather than resolving to the wrong attribute.
+ * Top-level `AND`/`OR` connectives of a filter, or `null` when its bracket nesting does not
+ * balance.
+ *
+ * The scan runs on `maskLiterals` of the filter, which blanks the CONTENTS of quoted values while
+ * preserving length — so a connective or a stray bracket inside a value cannot move the split,
+ * and clause text is still sliced out of the ORIGINAL string at the same offsets. Depth tracks
+ * `[]`, `()` and `{}` on that mask, so a connective inside an interpolated value list or a
+ * parenthesised group cannot split the filter either.
+ *
+ * ⚠️ THE SENTENCE THAT USED TO SIT HERE WAS FALSE IN BOTH DIRECTIONS, and the mask is what
+ * replaces it. It claimed a quoted value containing a connective "fails loudly as unresolvable
+ * rather than resolving to the wrong attribute". Measured against its own example, `a = "x AND
+ * b = y"` split INSIDE the value and reported `b` — text inside a value — as an attribute, a
+ * false positive. The opposite direction was worse: one unbalanced bracket inside a quoted value
+ * (`nsfwLevel IN ["X("]`) left `depth` above zero for the rest of the string, so the
+ * `depth === 0` branch never fired again, the whole filter collapsed to a single clause, and
+ * `CLAUSE`'s greedy alternatives matched it and reported only its FIRST attribute — a trailing
+ * undeclared attribute went unreported and the entry passed silently.
+ *
+ * A nesting that still does not balance (an unmatched closer, or a depth left open at the end)
+ * returns `null`, which `filterAttributes` turns into a reported violation rather than a
+ * part-read clause list.
  */
-function splitClauses(literal: string): string[] {
+function splitClauses(literal: string): string[] | null {
+  const masked = maskLiterals(literal);
   const parts: string[] = [];
   let depth = 0;
   let start = 0;
   let i = 0;
-  while (i < literal.length) {
-    const c = literal[i];
+  while (i < masked.length) {
+    const c = masked[i];
     if (c === '[' || c === '(' || c === '{') depth++;
-    else if (c === ']' || c === ')' || c === '}') depth--;
-    else if (depth === 0) {
+    else if (c === ']' || c === ')' || c === '}') {
+      if (--depth < 0) return null;
+    } else if (depth === 0) {
       // `(?=\s)` so an attribute merely BEGINNING with the word (`orderedAt`) cannot split.
-      const connective = /^\s+(?:AND|OR)(?=\s)/i.exec(literal.slice(i));
+      const connective = /^\s+(?:AND|OR)(?=\s)/i.exec(masked.slice(i));
       if (connective) {
         parts.push(literal.slice(start, i));
         i += connective[0].length;
@@ -259,6 +334,7 @@ function splitClauses(literal: string): string[] {
     }
     i++;
   }
+  if (depth !== 0) return null;
   parts.push(literal.slice(start));
   return parts;
 }
@@ -273,7 +349,9 @@ function splitClauses(literal: string): string[] {
  */
 function filterAttributes(literal: string): string[] | null {
   const found: string[] = [];
-  for (const raw of splitClauses(literal)) {
+  const clauses = splitClauses(literal);
+  if (clauses === null) return null;
+  for (const raw of clauses) {
     let clause = raw.trim();
     const negated = /^NOT\s+/i.exec(clause);
     if (negated) clause = clause.slice(negated[0].length).trim();
@@ -285,7 +363,7 @@ function filterAttributes(literal: string): string[] | null {
     }
     const m = CLAUSE.exec(clause);
     if (!m) return null;
-    found.push(m[1]);
+    found.push(unquoteAttribute(m[1]));
   }
   return found.length ? found : null;
 }
@@ -496,6 +574,79 @@ describe('the ban purge only targets live, filterable search indexes', () => {
     expect(filterAttributes('')).toBeNull();
   });
 
+  it('splits on the mask, so a quoted value cannot move or collapse the split', () => {
+    // 🔴 The round-4 hole. `splitClauses` counted brackets on the raw string, so ONE unbalanced
+    // bracket inside a quoted value pinned depth above zero for the rest of the filter: the
+    // `depth === 0` branch never fired again, every later connective was missed, the whole filter
+    // became one clause, and `CLAUSE`'s greedy `IN [...]` / comparison alternatives matched it and
+    // reported only the FIRST attribute. A trailing undeclared attribute was therefore never
+    // checked. Each of these returned just the first name before the mask was applied.
+    expect(
+      filterAttributes('user.id IN [1] AND nsfwLevel IN ["X("] AND totallyUndeclared IN [1]')
+    ).toEqual(['user.id', 'nsfwLevel', 'totallyUndeclared']);
+    expect(filterAttributes('user.id IN [1] AND user.username = "]" AND nope IN [1]')).toEqual([
+      'user.id',
+      'user.username',
+      'nope',
+    ]);
+    expect(filterAttributes('id IN [1] AND username = "a(" AND nope IN [1]')).toEqual([
+      'id',
+      'username',
+      'nope',
+    ]);
+
+    // 🔴 The OPPOSITE direction, and a false positive rather than a hole: the docstring used to
+    // claim a quoted connective "fails loudly as unresolvable rather than resolving to the wrong
+    // attribute", and on its own example it instead split inside the value and reported `b` —
+    // which is text inside a VALUE, not an attribute at all.
+    expect(filterAttributes('a = "x AND b = y"')).toEqual(['a']);
+    expect(filterAttributes('a = "x OR b = y" AND c IN [1]')).toEqual(['a', 'c']);
+
+    // A nesting that genuinely does not balance is reported, not part-read.
+    expect(filterAttributes('user.id IN [1] AND b = )')).toBeNull(); // unmatched closer
+    expect(filterAttributes('user.id IN [1] AND (b IN [2] AND c IN [3]')).toBeNull(); // left open
+
+    // 🔴 And the nested template, pinned because `maskLiterals`' docstring makes a MEASURED claim
+    // about exactly this shape: the inner backtick closes the mask's string early, the brackets
+    // still balance, and the clause resolves correctly — quietly, which is what that docstring
+    // used to deny. One shape only; nothing is claimed about nested templates in general.
+    expect(filterAttributes('user.username IN [${`${escapedUsernames}`}]')).toEqual([
+      'user.username',
+    ]);
+  });
+
+  it('reads a quoted attribute path, which this repo already writes', () => {
+    // 🔴 Precedent, against an index that IS a purge target: the `requiringMeta` branch of
+    // `src/server/services/image.service.ts` pushes `("blockedFor" = …)` at the metrics-images
+    // index, which `metricsIndexConfigs` lists and which declares `blockedFor` filterable. Before
+    // this, `ATTRIBUTE_PATH` had no leading quote, so a future purge entry written in the repo's
+    // own existing style resolved to null and was reported as unreadable — a guard false-positive.
+    expect(filterAttributes('"blockedFor" = 3')).toEqual(['blockedFor']);
+    expect(filterAttributes('("blockedFor" = 3)')).toEqual(['blockedFor']);
+    expect(filterAttributes('"user.username" IN ["a"] AND "blockedFor" = 3')).toEqual([
+      'user.username',
+      'blockedFor',
+    ]);
+
+    // And the loud behaviour is kept for shapes that only LOOK like a quoted attribute.
+    expect(filterAttributes('"${interpolatedAttr}" = 3')).toBeNull(); // not a literal name
+    expect(filterAttributes('"blockedFor = 3')).toBeNull(); // quote never closed
+    expect(filterAttributes('"blocked-for" = 3')).toBeNull(); // not an attribute path
+    expect(filterAttributes('"blockedFor"')).toBeNull(); // no operator at all
+  });
+
+  it('PINS the clause-splitting shape this guard does NOT close', () => {
+    // 🔴 Not a blessing — a pin, so the last bullet of the blind-spot list at the top of this file
+    // cannot rot. Two comparisons juxtaposed with no `AND`/`OR` between them are ONE clause here,
+    // and the greedy `IN [...]` alternative swallows the lot, so `b` is never checked. The mask
+    // cannot help: there is no connective to find. Meilisearch rejects such a filter as a syntax
+    // error and `processIndex` swallows the rejection, so the content stays indexed — same silent
+    // outcome, reached through a malformed filter rather than a valid one. If you close this (by
+    // bounding the operator's value span), update that bullet in the same commit.
+    expect(filterAttributes('a IN [1] b IN [2]')).toEqual(['a']);
+    expect(filterAttributes('a = 1 b = 2')).toEqual(['a']);
+  });
+
   it('still resolves every target to a processor and a declared attribute list', () => {
     for (const entry of [...mainEntries, ...metricsEntries]) {
       if ('unresolved' in entry) continue; // reported by its own test above
@@ -528,9 +679,45 @@ describe('the ban purge only targets live, filterable search indexes', () => {
         synthetic({ constName: 'MODELS_SEARCH_INDEX', filter: 'user.id IN [x] OR nope IN [x]' }),
       ])
     ).toEqual(['MODELS_SEARCH_INDEX: `nope` is not declared filterable']);
+    // 🔴 And the round-4 case, end to end through `violations`: a quoted value carrying ONE
+    // unbalanced bracket used to stop the split dead, so the trailing undeclared attribute was
+    // never checked and each of these three returned `[]` — a silent pass on a filter Meilisearch
+    // would reject outright. The first attribute of each IS declared, so only reading the whole
+    // filter catches them.
+    expect(
+      violations([
+        synthetic({
+          constName: 'MODELS_SEARCH_INDEX',
+          filter: 'user.id IN [1] AND nsfwLevel IN ["X("] AND totallyUndeclared IN [1]',
+        }),
+      ])
+    ).toEqual(['MODELS_SEARCH_INDEX: `totallyUndeclared` is not declared filterable']);
+    expect(
+      violations([
+        synthetic({
+          constName: 'MODELS_SEARCH_INDEX',
+          filter: 'user.id IN [1] AND user.username = "]" AND nope IN [1]',
+        }),
+      ])
+    ).toEqual(['MODELS_SEARCH_INDEX: `nope` is not declared filterable']);
+    expect(
+      violations([
+        synthetic({
+          constName: 'USERS_SEARCH_INDEX',
+          filter: 'id IN [1] AND username = "a(" AND nope IN [1]',
+        }),
+      ])
+    ).toEqual(['USERS_SEARCH_INDEX: `nope` is not declared filterable']);
+
     // An unreadable filter must be reported, not skipped.
     expect(
       violations([synthetic({ constName: 'MODELS_SEARCH_INDEX', filter: 'user.id' })])
+    ).toHaveLength(1);
+    // Including one whose brackets do not balance at all.
+    expect(
+      violations([
+        synthetic({ constName: 'MODELS_SEARCH_INDEX', filter: 'user.id IN [1] AND b = )' }),
+      ])
     ).toHaveLength(1);
   });
 
