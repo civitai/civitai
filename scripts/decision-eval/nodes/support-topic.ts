@@ -184,8 +184,7 @@ export function redactionWindow(text: string, keep: number, fromEnd: boolean): s
       (firstSeparator < 0 ? tail : tail.slice(0, firstSeparator + 1));
     if (LINK_START.test(spanning))
       return space < 0 ? '' : dropPhoneRunAtStart(tail.slice(space + 1));
-    const at = tail.search(SEPARATOR);
-    return at < 0 ? '' : dropPhoneRunAtStart(tail.slice(at + 1));
+    return firstSeparator < 0 ? '' : dropPhoneRunAtStart(tail.slice(firstSeparator + 1));
   }
   const head = text.slice(0, limit);
   let space = head.length - 1;
