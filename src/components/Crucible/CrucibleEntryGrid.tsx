@@ -20,8 +20,8 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { ProfileImage } from '~/server/selectors/image.selector';
-import type { MediaType } from '~/shared/utils/prisma/enums';
-import { rankCrucibleEntries } from '~/utils/crucible-helpers';
+import type { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
+import { canSeeCrucibleEntryDetails, rankCrucibleEntries } from '~/utils/crucible-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 
 export type CrucibleEntryData = {
@@ -68,7 +68,10 @@ export type CrucibleEntryGridProps = {
   maxUserEntries?: number;
   className?: string;
   emptyMessage?: string;
-  onEntryClick?: (entry: CrucibleEntryData) => void;
+  /** `openableImageIds` is every entry the viewer may open, in grid order, for paging. */
+  onEntryClick?: (entry: CrucibleEntryData, openableImageIds: number[]) => void;
+  /** Until the crucible ends, other people's entries show no creator and don't open. */
+  status: CrucibleStatus;
   /** Moderators only, while the crucible runs. */
   onRemoveEntry?: (entry: CrucibleEntryData) => void;
 };
@@ -100,9 +103,16 @@ export function CrucibleEntryGrid({
   emptyMessage = 'No entries yet',
   onEntryClick,
   onRemoveEntry,
+  status,
 }: CrucibleEntryGridProps) {
   const currentUser = useCurrentUser();
   const userId = currentUserId ?? currentUser?.id;
+  const canSeeDetails = (entry: CrucibleEntryData) =>
+    canSeeCrucibleEntryDetails({
+      status,
+      isModerator: currentUser?.isModerator ?? false,
+      isOwnEntry: entry.userId === userId,
+    });
 
   const rankedEntries = showRanks
     ? rankCrucibleEntries(entries, { completed })
@@ -116,6 +126,9 @@ export function CrucibleEntryGrid({
   const displayEntries = separateViewer
     ? rankedEntries.filter((e) => e.userId !== userId)
     : rankedEntries;
+  const openableImageIds = [...userEntries, ...displayEntries]
+    .filter(canSeeDetails)
+    .map((entry) => entry.imageId);
   const displayCount =
     totalCount !== undefined
       ? totalCount - (separateViewer ? userEntries.length : 0)
@@ -144,7 +157,8 @@ export function CrucibleEntryGrid({
                 entry={entry}
                 rank={entry.rank}
                 isUserEntry
-                onClick={() => onEntryClick?.(entry)}
+                showDetails={canSeeDetails(entry)}
+                onClick={() => onEntryClick?.(entry, openableImageIds)}
                 onRemove={onRemoveEntry && (() => onRemoveEntry(entry))}
               />
             ))}
@@ -174,7 +188,8 @@ export function CrucibleEntryGrid({
                 key={entry.id}
                 entry={entry}
                 rank={entry.rank}
-                onClick={() => onEntryClick?.(entry)}
+                showDetails={canSeeDetails(entry)}
+                onClick={() => onEntryClick?.(entry, openableImageIds)}
                 onRemove={onRemoveEntry && (() => onRemoveEntry(entry))}
               />
             ))}
@@ -201,6 +216,7 @@ type EntryCardProps = {
   entry: CrucibleEntryData;
   rank: number | null;
   isUserEntry?: boolean;
+  showDetails: boolean;
   onClick?: () => void;
   onRemove?: () => void;
 };
@@ -208,11 +224,14 @@ type EntryCardProps = {
 /**
  * Individual entry card with image, overlay, and position badge
  */
-function EntryCard({ entry, rank, isUserEntry, onClick, onRemove }: EntryCardProps) {
+function EntryCard({ entry, rank, isUserEntry, showDetails, onClick, onRemove }: EntryCardProps) {
   return (
     <Box
-      className="group cursor-pointer overflow-hidden rounded-lg bg-[#25262b] transition-colors hover:bg-[#2c2e33]"
-      onClick={onClick}
+      className={clsx(
+        'group overflow-hidden rounded-lg bg-[#25262b] transition-colors',
+        showDetails && 'cursor-pointer hover:bg-[#2c2e33]'
+      )}
+      onClick={showDetails ? onClick : undefined}
     >
       {/* Image container with 4:5 aspect ratio */}
       <div className="relative" style={{ aspectRatio: '4 / 5' }}>
@@ -223,7 +242,10 @@ function EntryCard({ entry, rank, isUserEntry, onClick, onRemove }: EntryCardPro
             type={entry.image.type}
             metadata={entry.image.metadata}
             skip={getSkipValue({ type: entry.image.type, metadata: entry.image.metadata })}
-            className="transition-transform duration-300 group-hover:scale-105"
+            className={clsx(
+              'transition-transform duration-300',
+              showDetails && 'group-hover:scale-105'
+            )}
             style={{ width: '100%', height: '100%', objectFit: 'cover' }}
             wrapperProps={{ className: 'size-full' }}
             width={320}
@@ -264,14 +286,16 @@ function EntryCard({ entry, rank, isUserEntry, onClick, onRemove }: EntryCardPro
         )}
 
         <div className="absolute inset-x-0 bottom-0 flex flex-col gap-1 p-3 text-white">
-          <CrucibleUserLink user={entry.user}>
-            <span className="flex min-w-0 items-center gap-1.5">
-              <UserAvatar user={entry.user} size="xs" />
-              <Text size="xs" fw={600} c="white" truncate>
-                {entry.user.deletedAt ? '[deleted]' : entry.user.username || 'anonymous'}
-              </Text>
-            </span>
-          </CrucibleUserLink>
+          {showDetails && (
+            <CrucibleUserLink user={entry.user}>
+              <span className="flex min-w-0 items-center gap-1.5">
+                <UserAvatar user={entry.user} size="xs" />
+                <Text size="xs" fw={600} c="white" truncate>
+                  {entry.user.deletedAt ? '[deleted]' : entry.user.username || 'anonymous'}
+                </Text>
+              </span>
+            </CrucibleUserLink>
+          )}
           {rank !== null && entry.score !== null && (
             <Text size="xs" c="gray.4" className="tabular-nums">
               {Math.round(entry.score).toLocaleString()} pts

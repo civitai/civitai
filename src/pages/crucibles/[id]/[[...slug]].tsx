@@ -18,7 +18,6 @@ import * as z from 'zod';
 import {
   IconBrush,
   IconCube,
-  IconGavel,
   IconUpload,
   IconBook,
   IconPencil,
@@ -53,6 +52,7 @@ import { CrucibleHeader } from '~/components/Crucible/CrucibleHeader';
 import { CrucibleLeaderboard } from '~/components/Crucible/CrucibleLeaderboard';
 import { CrucibleEntryGrid, type CrucibleEntryData } from '~/components/Crucible/CrucibleEntryGrid';
 import { CruciblePodium } from '~/components/Crucible/CruciblePodium';
+import { CrucibleStartJudgingButton } from '~/components/Crucible/CrucibleStartJudgingButton';
 import { CruciblePrizeBreakdown } from '~/components/Crucible/CruciblePrizeBreakdown';
 import { EligibleModelsList } from '~/components/EligibleModels/EligibleModelsList';
 import { crucibleRankingsAreFinal } from '~/shared/constants/crucible.constants';
@@ -223,13 +223,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
   const loadedEntries = entriesData?.pages.flatMap((page) => page.items) ?? [];
   const userEntries = crucible.viewerEntries;
 
-  // The detail view pages through the list it is handed, so hand it the entries in grid
-  // order: the viewer's own first, then everyone else's as loaded.
-  const openEntry = async ({ imageId }: { imageId: number }) => {
-    const gridOrder = [
-      ...userEntries,
-      ...loadedEntries.filter((entry) => entry.userId !== currentUser?.id),
-    ].map((entry) => entry.imageId);
+  const openEntry = async ({ imageId }: { imageId: number }, gridOrder: number[]) => {
     const at = Math.max(0, gridOrder.indexOf(imageId));
     const nearby = gridOrder.slice(Math.max(0, at - 100), at + 100);
 
@@ -393,30 +387,9 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
 
               {/* CTA Button - Start Judging */}
               {canJudge && (
-                <Button
-                  size="xl"
-                  fullWidth
-                  leftSection={<IconGavel size={24} />}
-                  className="mb-8"
-                  styles={{
-                    root: {
-                      background: 'linear-gradient(135deg, #228be6 0%, #40c057 100%)',
-                      boxShadow: '0 8px 24px rgba(34, 139, 230, 0.3)',
-                      fontWeight: 600,
-                      fontSize: '1.125rem',
-                      padding: '1.25rem 2.5rem',
-                      transition: 'all 300ms',
-                      '&:hover': {
-                        background: 'linear-gradient(135deg, #1c7ec0 0%, #37b24d 100%)',
-                        transform: 'translateY(-2px)',
-                        boxShadow: '0 12px 32px rgba(34, 139, 230, 0.4)',
-                      },
-                    },
-                  }}
+                <CrucibleStartJudgingButton
                   onClick={() => router.push(`/crucibles/${crucible.id}/judge`)}
-                >
-                  Start Judging Now
-                </Button>
+                />
               )}
 
               {/* Entry Grid with User Entries section */}
@@ -428,6 +401,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                 isLoadingMore={isLoadingMoreEntries}
                 onLoadMore={loadMoreEntries}
                 onEntryClick={openEntry}
+                status={crucible.status}
                 onRemoveEntry={canRemoveEntries ? handleRemoveEntry : undefined}
                 title="All Entries"
                 showRanks={rankingsVisible}

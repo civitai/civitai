@@ -1,6 +1,7 @@
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { CrucibleIngestionStatus, CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { getBaseModelConfig } from '~/shared/constants/basemodel.constants';
+import { crucibleRankingsAreFinal } from '~/shared/constants/crucible.constants';
 import {
   browsingLevelLabels,
   parseBitwiseBrowsingLevel,
@@ -207,6 +208,22 @@ export function getCrucibleManageActions({
     canCancel: !ended && (isModerator || (isCreator && isPending)),
     canRemoveEntries: !ended && isModerator && status === CrucibleStatus.Active,
   };
+}
+
+/**
+ * Judging is blind: until a crucible ends, other people's entries show no creator and don't open
+ * the image detail, which carries the creator, prompt and resources.
+ */
+export function canSeeCrucibleEntryDetails({
+  status,
+  isModerator,
+  isOwnEntry,
+}: {
+  status: CrucibleStatus;
+  isModerator: boolean;
+  isOwnEntry: boolean;
+}) {
+  return isOwnEntry || isModerator || crucibleRankingsAreFinal(status);
 }
 
 export type PrizePosition = {

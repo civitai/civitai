@@ -59,6 +59,10 @@ The discovery page's Prize Pool sort uses the same pool.
 - On video crucibles with a minimum view time, only real playback counts. Skipping ahead or pausing does not add to it. A vote on an under-watched pair is rejected, and the judge keeps that pair.
 - Someone the creator has blocked can't see, enter or judge the crucible.
 
+## Judging is blind while a crucible runs
+
+On the crucible page, other people's entries show no creator and don't open the image detail (creator, prompt, resources) until the crucible is completed or cancelled. Entrants still see their own entries in full, and moderators see everything.
+
 ## Rankings are hidden while a crucible runs
 
 Showing a live leaderboard would bias judges, so scores and positions stay hidden until the crucible ends. Entrants can see only their own standing. Once the crucible is completed or cancelled, the full ranking is public.
