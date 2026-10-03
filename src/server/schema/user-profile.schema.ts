@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { constants } from '~/server/common/constants';
 import { imageSchema } from '~/server/schema/image.schema';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
 import { LinkType } from '~/shared/utils/prisma/enums';
@@ -63,7 +64,7 @@ export const privacySettingsSchema = z.object({
 export type UserProfileUpdateSchema = z.infer<typeof userProfileUpdateSchema>;
 export const userProfileUpdateSchema = z.object({
   userId: z.number().optional(),
-  showcaseItems: z.array(showcaseItemSchema).optional(),
+  showcaseItems: z.array(showcaseItemSchema).max(constants.profile.showcaseItemsLimit).optional(),
   profileSectionsSettings: z.array(profileSectionSchema).optional(),
   privacySettings: privacySettingsSchema.optional(),
   message: z.string().nullish(),

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { getUserProfileSchema } from '~/server/schema/user-profile.schema';
+import { constants } from '~/server/common/constants';
+import { getUserProfileSchema, userProfileUpdateSchema } from '~/server/schema/user-profile.schema';
 
 // Regression guard for the production raw-500 landmine: `userProfile.get`/`.overview`
 // were called with `{ username: '' }` (a profile page renders before the username route
@@ -42,5 +43,24 @@ describe('getUserProfileSchema', () => {
   it('accepts both username and id present', () => {
     const res = getUserProfileSchema.safeParse({ username: 'civitai', id: 123 });
     expect(res.success).toBe(true);
+  });
+});
+
+describe('userProfileUpdateSchema showcaseItems', () => {
+  const limit = constants.profile.showcaseItemsLimit;
+  const items = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({ entityType: 'Model' as const, entityId: i + 1 }));
+
+  it('accepts a showcase at the limit', () => {
+    expect(userProfileUpdateSchema.safeParse({ showcaseItems: items(limit) }).success).toBe(true);
+  });
+
+  it('rejects a showcase over the limit', () => {
+    const res = userProfileUpdateSchema.safeParse({ showcaseItems: items(limit + 1) });
+    expect(res.success).toBe(false);
+    if (!res.success)
+      expect(
+        res.error.issues.map((issue) => ({ code: issue.code, path: issue.path }))
+      ).toContainEqual({ code: 'too_big', path: ['showcaseItems'] });
   });
 });
