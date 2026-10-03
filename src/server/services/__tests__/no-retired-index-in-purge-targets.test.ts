@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 /**
  * Every entry in the two target arrays `processUserContentRemovalQueue` filter-deletes from —
  * `mainIndexConfigs` and `metricsIndexConfigs`, named literally below — must be a LIVE search index
- * whose declared filterable attributes include the attribute the purge filters on.
+ * whose declared filterable attributes include EVERY attribute its filter names.
  *
  * 🔴 WHY. The purge is how a banned user's content leaves search. Its `processIndex` swallows
  * every failure into a log line, so a target that cannot accept the filter is silent: the batch
@@ -16,11 +16,16 @@ import { describe, expect, it } from 'vitest';
  *     path that configures an index's settings, so nothing ever gives the live index its
  *     filterable attributes and every filtered delete is rejected. `getOrCreateIndex` in the
  *     purge will happily create the index bare in the process.
- *   - the attribute is not declared filterable for that index at all.
+ *   - an attribute the filter names is not declared filterable for that index at all. ANY one of
+ *     them is enough: Meilisearch rejects the whole filter, not the offending clause.
  *
  * The images entry was the first case for two weeks and nothing went red.
  *
- * 🔴 WHAT THIS DOES NOT CHECK, stated so nobody reads it as wider than it is.
+ * 🔴 WHAT THIS DOES NOT CHECK, stated so nobody reads it as wider than it is. These are the blind
+ * spots known when it was written, audited against what the body below actually does — but the
+ * list is NOT asserted exhaustive, so read it as the floor and not the boundary. The one property
+ * that IS closed: nothing is skipped quietly. Every entry the parse cannot decide is reported, so
+ * no hole here is a target this guard looked at and waved through.
  *
  *   - It compares the purge's targets against what the REPO DECLARES — the `retired` flag on the
  *     owning processor and the filterable-attribute arrays. It cannot see the live backend, so an
@@ -30,13 +35,31 @@ import { describe, expect, it } from 'vitest';
  *     one of them, an entry spread in from elsewhere, or a target passed straight to
  *     `processIndex` is invisible to it. If you add a purge target by any route other than a
  *     literal entry in those two arrays, this guard will not see it — and the counts below will
- *     not move either.
+ *     not move either. RENAMING or RELOCATING either array is NOT in this hole: the declaration
+ *     then resolves to nothing, the lists parse to zero entries, and the exact counts go red.
+ *   - It reads `retired: true` as a line of its own, so the same flag written inline beside
+ *     another field — `retired: true, indexName: INDEX_ID,` — is not seen and the index reads as
+ *     LIVE. Left textual on purpose: deciding it structurally means parsing the processor config
+ *     object, widening this guard for a case the repo's own formatter already normalises —
+ *     prettier 2.8.8 (`package.json`) puts the flag back on its own line, and `prettier --check`
+ *     fails the inline form rather than accepting it.
+ *   - It does not check WHICH client an entry is routed through. `mainIndexConfigs` is handed the
+ *     main search client and `metricsIndexConfigs` the metrics one; an entry in the wrong array is
+ *     parsed, resolved and checked identically here, and passes.
+ *   - It checks only that each attribute a filter NAMES is declared filterable. It says nothing
+ *     about whether the filter selects the right documents (that the stored value matches the
+ *     interpolated one, or that the username escaping is correct), and nothing about whether the
+ *     queue is drained at all — remove every caller of `processUserContentRemovalQueue` and every
+ *     assertion below still passes.
  *
  * Within those two arrays the parse is STRUCTURAL, not shape-spelled: entries are found by brace
  * matching and their fields by key, so key order, line breaks (prettier reformats past
- * `printWidth: 100`) and trailing commas are all handled. An entry whose `name` or `filter` the
- * parser cannot resolve to a literal is REPORTED as unresolvable, never skipped — a skip is how
- * the counts below would silently go short again.
+ * `printWidth: 100`) and trailing commas are all handled. Each filter is split on its top-level
+ * `AND`/`OR` connectives and EVERY attribute it names is checked, so a compound filter cannot
+ * carry an undeclared attribute past on the back of a declared first one. An entry whose `name`
+ * or `filter` the parser cannot resolve to a literal, and a filter clause whose operator shape it
+ * does not recognise, are both REPORTED, never skipped — a skip is how the counts below would
+ * silently go short again.
  *
  * The entry counts are asserted exactly, so an entry added beside a guarded one in either of those
  * two arrays cannot arrive unreviewed: the count has to move in the same commit.
@@ -187,7 +210,87 @@ function fields(span: Source): { keys: Record<string, string>; extras: string[] 
   return { keys, extras };
 }
 
-type Target = { constName: string; filter: string; attribute: string };
+const ATTRIBUTE_PATH = '[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*';
+
+/**
+ * One filter clause, with the attribute it constrains captured first.
+ *
+ * The operator set is Meilisearch's, narrowed to the forms this repo actually writes:
+ * `IN [...]` / `NOT IN [...]` (every purge entry, and `user.service.ts`), the comparisons and
+ * equality (`makeMeiliImageSearchFilter('sortAtUnix', '<= …')`), `EXISTS` / `IS NULL` and their
+ * negations (`'publishedAtUnix NOT EXISTS'`, `'postId IS NOT NULL'`), and a `… TO …` range.
+ * A clause outside it is REPORTED, not skipped — see `filterAttributes`.
+ */
+const CLAUSE = new RegExp(
+  `^(${ATTRIBUTE_PATH})\\s+(?:` +
+    `(?:NOT\\s+)?IN\\s*\\[[\\s\\S]*\\]` +
+    `|(?:NOT\\s+)?EXISTS` +
+    `|IS\\s+(?:NOT\\s+)?(?:NULL|EMPTY)` +
+    `|(?:=|!=|>=|<=|>|<)\\s*[\\s\\S]+` +
+    `|\\S+\\s+TO\\s+\\S+` +
+    `)$`,
+  'i'
+);
+
+/**
+ * Top-level `AND`/`OR` connectives of a filter. Depth tracks `[]`, `()` and `{}` so a connective
+ * inside an interpolated value list or a parenthesised group cannot split the filter. A quoted
+ * value containing the word is not modelled: a wrong split leaves clauses that fail `CLAUSE`,
+ * i.e. it fails loudly as unresolvable rather than resolving to the wrong attribute.
+ */
+function splitClauses(literal: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let start = 0;
+  let i = 0;
+  while (i < literal.length) {
+    const c = literal[i];
+    if (c === '[' || c === '(' || c === '{') depth++;
+    else if (c === ']' || c === ')' || c === '}') depth--;
+    else if (depth === 0) {
+      // `(?=\s)` so an attribute merely BEGINNING with the word (`orderedAt`) cannot split.
+      const connective = /^\s+(?:AND|OR)(?=\s)/i.exec(literal.slice(i));
+      if (connective) {
+        parts.push(literal.slice(start, i));
+        i += connective[0].length;
+        start = i;
+        continue;
+      }
+    }
+    i++;
+  }
+  parts.push(literal.slice(start));
+  return parts;
+}
+
+/**
+ * EVERY attribute a filter references, or `null` when this guard cannot decide what they are.
+ *
+ * 🔴 Every one, not the first. Meilisearch rejects the WHOLE filter if any attribute in it is not
+ * filterable, and `processIndex` swallows that rejection — so resolving on the first clause alone
+ * passed `user.id IN [...] OR nope IN [...]`, which is exactly the silent failure this file
+ * exists to stop. `null` is reported as a violation by `violations`, never skipped.
+ */
+function filterAttributes(literal: string): string[] | null {
+  const found: string[] = [];
+  for (const raw of splitClauses(literal)) {
+    let clause = raw.trim();
+    const negated = /^NOT\s+/i.exec(clause);
+    if (negated) clause = clause.slice(negated[0].length).trim();
+    if (clause.length > 1 && clause.startsWith('(') && clause.endsWith(')')) {
+      const nested = filterAttributes(clause.slice(1, -1));
+      if (nested === null) return null;
+      found.push(...nested);
+      continue;
+    }
+    const m = CLAUSE.exec(clause);
+    if (!m) return null;
+    found.push(m[1]);
+  }
+  return found.length ? found : null;
+}
+
+type Target = { constName: string; filter: string };
 /** One parsed entry: either a resolved target, or the reason the parser could not resolve it. */
 type Entry = { source: string } & ({ target: Target } | { unresolved: string });
 
@@ -219,13 +322,9 @@ function parseEntry(span: Source): Entry {
         `do not leave the entry unchecked.`
     );
 
-  const literal = filter.slice(1, -1);
-  return {
-    source,
-    // `user.username IN [...]`, `id IN [...]` — the attribute Meilisearch must have declared
-    // filterable. An unparseable filter is reported rather than skipped.
-    target: { constName: name, filter: literal, attribute: literal.split(' IN ')[0].trim() },
-  };
+  // The attributes the filter names are resolved in `violations`, so a hand-written control can
+  // feed a raw filter string through the same derivation the real entries get.
+  return { source, target: { constName: name, filter: filter.slice(1, -1) } };
 }
 
 function entries(arrayName: string): Entry[] {
@@ -276,18 +375,27 @@ function violations(list: Entry[]): string[] {
       found.push(`unresolvable purge entry — ${entry.unresolved} — in \`${entry.source}\``);
       continue;
     }
-    const { constName, filter, attribute } = entry.target;
+    const { constName, filter } = entry.target;
     if (!processorsByConst[constName])
       found.push(`${constName}: no search-index processor declares it`);
     else if (isRetired(constName))
       found.push(`${constName}: the index is retired, so a filtered delete cannot succeed`);
-    if (!attribute || /[`${}]/.test(attribute) || attribute === filter)
-      found.push(`${constName}: could not read a filter attribute out of \`${filter}\``);
+    const attributes = filterAttributes(filter);
+    if (attributes === null || attributes.some((a) => /[`${}]/.test(a)))
+      found.push(
+        `${constName}: could not read the filter attributes out of \`${filter}\`. Every attribute ` +
+          `a filter names has to be checkable here, because Meilisearch rejects the whole filter ` +
+          `if any one of them is not filterable — write the filter in a clause shape this guard ` +
+          `recognises, or teach it the shape; do not leave the entry unchecked.`
+      );
     else {
       const declared = declaredFilterable(constName);
       if (declared === null) found.push(`${constName}: no declared filterable attributes found`);
-      else if (!declared.includes(attribute))
-        found.push(`${constName}: \`${attribute}\` is not declared filterable`);
+      // EVERY attribute, not just the first: one undeclared clause rejects the entire filter.
+      else
+        for (const attribute of attributes)
+          if (!declared.includes(attribute))
+            found.push(`${constName}: \`${attribute}\` is not declared filterable`);
     }
   }
   return found;
@@ -337,11 +445,7 @@ describe('the ban purge only targets live, filterable search indexes', () => {
       expect(parsed).toHaveLength(1);
       expect(parsed[0]).toEqual(
         expect.objectContaining({
-          target: {
-            constName: 'MODELS_SEARCH_INDEX',
-            filter: 'user.id IN [1]',
-            attribute: 'user.id',
-          },
+          target: { constName: 'MODELS_SEARCH_INDEX', filter: 'user.id IN [1]' },
         })
       );
     }
@@ -358,6 +462,38 @@ describe('the ban purge only targets live, filterable search indexes', () => {
     expect(indirect).toHaveLength(1);
     expect(violations(indirect)).toHaveLength(1);
     expect(violations(indirect)[0]).toContain('unresolvable purge entry');
+  });
+
+  it('reads EVERY attribute a filter names, not just the first clause', () => {
+    // 🔴 The hole this closes: resolving on the first attribute passed a compound filter whose
+    // SECOND attribute was undeclared, which Meilisearch rejects outright and `processIndex`
+    // swallows. Both connectives, either case, parenthesised groups and negation.
+    expect(filterAttributes('user.id IN [1, 2]')).toEqual(['user.id']);
+    expect(filterAttributes('user.id IN [1] OR nope IN [1]')).toEqual(['user.id', 'nope']);
+    expect(filterAttributes('user.id IN [1] AND nope IN [1]')).toEqual(['user.id', 'nope']);
+    expect(filterAttributes('user.id IN [1] and nope IN [1]')).toEqual(['user.id', 'nope']);
+    expect(filterAttributes('(a IN [1] OR b IN [1]) AND c IN [1]')).toEqual(['a', 'b', 'c']);
+    expect(filterAttributes('NOT a IN [1] AND b NOT IN [1]')).toEqual(['a', 'b']);
+
+    // The other clause shapes this repo writes, so a legitimate filter is not forced to be a lie.
+    expect(filterAttributes('sortAtUnix <= 10 AND postId IS NOT NULL')).toEqual([
+      'sortAtUnix',
+      'postId',
+    ]);
+    expect(filterAttributes('publishedAtUnix NOT EXISTS AND userId = 5')).toEqual([
+      'publishedAtUnix',
+      'userId',
+    ]);
+    expect(filterAttributes('rank 1 TO 9')).toEqual(['rank']);
+
+    // An attribute merely BEGINNING with a connective must not split the filter.
+    expect(filterAttributes('orderedAt >= 1')).toEqual(['orderedAt']);
+
+    // 🔴 And anything undecidable must come back null — reported by `violations`, never skipped.
+    expect(filterAttributes('user.id')).toBeNull(); // no operator at all
+    expect(filterAttributes('user.id IN [1] OR fnord(2)')).toBeNull(); // unrecognised clause
+    expect(filterAttributes('${interpolatedAttr} IN [1]')).toBeNull();
+    expect(filterAttributes('')).toBeNull();
   });
 
   it('still resolves every target to a processor and a declared attribute list', () => {
@@ -380,24 +516,21 @@ describe('the ban purge only targets live, filterable search indexes', () => {
 
   it('reports a retired target and an undeclared attribute when handed one', () => {
     expect(
-      violations([
-        synthetic({
-          constName: 'IMAGES_SEARCH_INDEX',
-          filter: 'user.username IN [x]',
-          attribute: 'user.username',
-        }),
-      ])
+      violations([synthetic({ constName: 'IMAGES_SEARCH_INDEX', filter: 'user.username IN [x]' })])
     ).toEqual(['IMAGES_SEARCH_INDEX: the index is retired, so a filtered delete cannot succeed']);
     expect(
+      violations([synthetic({ constName: 'MODELS_SEARCH_INDEX', filter: 'nope IN [x]' })])
+    ).toEqual(['MODELS_SEARCH_INDEX: `nope` is not declared filterable']);
+    // 🔴 The compound case, which resolved clean while only the first clause was read. The first
+    // attribute here IS declared, so nothing but reading the second one can catch it.
+    expect(
       violations([
-        synthetic({ constName: 'MODELS_SEARCH_INDEX', filter: 'nope IN [x]', attribute: 'nope' }),
+        synthetic({ constName: 'MODELS_SEARCH_INDEX', filter: 'user.id IN [x] OR nope IN [x]' }),
       ])
     ).toEqual(['MODELS_SEARCH_INDEX: `nope` is not declared filterable']);
     // An unreadable filter must be reported, not skipped.
     expect(
-      violations([
-        synthetic({ constName: 'MODELS_SEARCH_INDEX', filter: 'user.id', attribute: 'user.id' }),
-      ])
+      violations([synthetic({ constName: 'MODELS_SEARCH_INDEX', filter: 'user.id' })])
     ).toHaveLength(1);
   });
 
@@ -409,10 +542,18 @@ describe('the ban purge only targets live, filterable search indexes', () => {
         'filterable. A retired index has never had its settings applied, so the delete is\n' +
         'rejected and the banned user stays in search — silently, because processIndex logs the\n' +
         'failure and returns.\n' +
-        'Fix it by making the target work: reset the index in this change so its filterable\n' +
-        'attributes exist. Only drop the entry if that content type genuinely has nothing left to\n' +
-        'purge — a dropped entry ends ban purge for it with no other record, so if you drop one,\n' +
-        'say in a comment beside the list what is left unpurged and what re-adds it.'
+        'Three ways out. Prefer the first:\n' +
+        '  1. make the target work — reset the index in this change so its filterable attributes\n' +
+        '     exist, and keep the entry.\n' +
+        '  2. drop the entry because a filtered delete against a retired, settings-less index\n' +
+        '     cannot succeed at all, so keeping it buys nothing but a swallowed error. Legitimate,\n' +
+        '     and the reason option 1 is not always available: re-establishing an index can be a\n' +
+        '     planned reindex rather than a one-line change (see `imageSearch` in\n' +
+        '     `src/server/services/feature-flags.service.ts`). This is the branch the images entry\n' +
+        '     took, and a retired index can still hold documents, so it is NOT option 3.\n' +
+        '  3. drop the entry because that content type genuinely has nothing left to purge.\n' +
+        'Either drop ends ban purge for that content type with no other record, so if you drop\n' +
+        'one, say in a comment beside the list what is left unpurged and what re-adds it.'
     ).toEqual([]);
   });
 });
