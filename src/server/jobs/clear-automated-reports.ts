@@ -4,6 +4,10 @@ import { ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 
 export const AUTOMATED_REPORT_RETENTION_DAYS = 14;
 
+// Unactioned is what a moderator dismissal looks like too; this note is how the lookup pages tell them apart.
+export const EXPIRED_AUTOMATED_REPORT_NOTE =
+  'Expired unreviewed: the Clavata evidence was deleted after 14 days.';
+
 /**
  * Deletes the Clavata evidence for Automated reports past retention, closing each report it strips.
  * A report left Pending without its evidence can never be reviewed, which is how 1.29M accumulated.
@@ -16,7 +20,8 @@ export async function clearAutomatedReports(cutoff: Date) {
     UPDATE "Report" r
     SET status = ${ReportStatus.Unactioned}::"ReportStatus",
         "statusSetAt" = now(),
-        "statusSetBy" = ${constants.system.user.id}
+        "statusSetBy" = ${constants.system.user.id},
+        "internalNotes" = COALESCE(r."internalNotes", ${EXPIRED_AUTOMATED_REPORT_NOTE})
     FROM "ReportAutomated" ra
     WHERE ra."reportId" = r.id
       AND ra."createdAt" < ${cutoff}
