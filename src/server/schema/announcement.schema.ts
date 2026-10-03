@@ -152,7 +152,7 @@ export const CREATOR_ANNOUNCEMENT_MAX_ACTIONS = 3;
 
 /**
  * Who may put more than one link button on an announcement. A lapsed or failed-payment membership
- * does not count — the same rule Creator Studio's `resolveMembership` applies to show the control.
+ * does not count — the same rule Creator Studio's `realMembership` applies to show the control.
  */
 export function mayAddAnnouncementActions(user: {
   tier?: string | null;
