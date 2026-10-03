@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import type * as ClickhouseClient from '@clickhouse/client';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -91,7 +91,7 @@ describe('support.topic state', () => {
     expect(all).not.toContain('pat.doe');
     expect(all).not.toContain('another.net');
     expect(all).not.toContain('someotheruser');
-    expect(all).not.toContain('52908400098527886e0f');
+    expect(state.latest_messages).toContain('wallet [id]');
     expect(all).not.toContain('555-0134');
   });
 
@@ -116,6 +116,7 @@ describe('support.topic state', () => {
 
   it('does not treat a short or empty username as something to strip', () => {
     expect(redact('abc ab', ['', ' ', 'ab'])).toBe('abc ab');
+    expect(redact('hi bob', ['bob'])).toBe('hi bob');
   });
 
   it('strips a username only as a whole word, so a topic word survives', () => {
@@ -429,7 +430,7 @@ describe('support.topic weighted thresholds', () => {
 
 describe('support.topic source and gold against a fake ClickHouse', () => {
   type Q = { query: string; query_params?: Record<string, unknown> };
-  const ticket = (id: string, requester: string, ms: number) => ({
+  const ticket = (id: string, requester: string, ms: number, extra: object = {}) => ({
     ticket_id: id,
     created_ms: String(ms),
     ticket_subject: 'subject',
@@ -441,6 +442,7 @@ describe('support.topic source and gold against a fake ClickHouse', () => {
     requester_freshdesk_id: requester,
     requester_email: 'someone@example.org',
     civitai_username: null,
+    ...extra,
   });
 
   function setup(labels: object[], tickets: object[]) {
@@ -451,7 +453,7 @@ describe('support.topic source and gold against a fake ClickHouse', () => {
       join(dir, 'config.json'),
       JSON.stringify({ classifierVersion: 'v1', testStrataFiles: ['s.csv'] })
     );
-    writeFileSync(join(dir, 's.csv'), 'ticket_id,stratum,weight\n500,crypto,2\n501,_rest,5\n');
+    writeFileSync(join(dir, 's.csv'), 'weight,stratum,ticket_id\n2,crypto,500\n5,_rest,501\n');
     const queries: Q[] = [];
     clickhouse.createClient.mockImplementation(() => ({
       query: async (q: Q) => {
@@ -478,7 +480,12 @@ describe('support.topic source and gold against a fake ClickHouse', () => {
         { ticket_id: '101', label_topic: 'other', notes: '', labeler: 'h1' },
       ],
       [
-        ticket('500', 'r-test', Date.UTC(2026, 8, 30, 23, 30)),
+        ticket('500', 'r-test', Date.UTC(2026, 8, 30, 23, 30), {
+          civitai_username: 'PatCreator9',
+          requester_email: 'pat.doe@example.org',
+          body_clean: 'I am PatCreator9, also pat.doe on forums',
+          conversation_tail: 'pat.doe here again, patcreator9',
+        }),
         ticket('501', 'r-other', Date.UTC(2026, 7, 31, 23, 59)),
         ticket('100', 'r-test', Date.UTC(2026, 4, 1)),
         ticket('101', 'r-dev', Date.UTC(2026, 4, 2)),
@@ -498,6 +505,20 @@ describe('support.topic source and gold against a fake ClickHouse', () => {
     const labelQuery = queries.find((q) => q.query.includes('support_ticket_eval_labels'));
     expect(labelQuery?.query).toMatch(/AND labeler NOT LIKE 'judge-%'\s*$/);
     expect(labelQuery?.query_params).toEqual({ cv: 'v1' });
+    const ticketQuery = queries.find((q) => q.query.includes('support_tickets_classified'));
+    expect(ticketQuery?.query_params?.cv).toBe('v1');
+    expect([...(ticketQuery?.query_params?.ids as string[])].sort()).toEqual([
+      '100',
+      '101',
+      '500',
+      '501',
+    ]);
+    const t500 = rows.find((r) => r.itemId === '500');
+    expect(supportTopicNode.slices?.(t500!.raw)?.stratum).toBe('crypto');
+    // The requester's identifiers travel from the stored row into the redaction.
+    const state = Object.values(supportTopicNode.buildState(t500!.raw)).join(' ').toLowerCase();
+    expect(state).not.toContain('patcreator9');
+    expect(state).not.toContain('pat.doe');
   });
 
   it('refuses when ClickHouse returns a duplicate in place of a missing ticket', async () => {
@@ -573,5 +594,92 @@ describe('support.topic stored-row check', () => {
       for await (const _ of supportTopicNode.source({ dataDir })) void _;
     };
     await expect(drain()).rejects.toThrow(/exactly one stored row/);
+  });
+});
+
+describe('support.topic source guards', () => {
+  const t = (id: string) => ({
+    ticket_id: id,
+    created_ms: '0',
+    requester_freshdesk_id: 'r' + id,
+    requester_email: '',
+  });
+  function fresh(tickets: object[]) {
+    const dataDir = mkdtempSync(join(tmpdir(), 'support-topic-guard-'));
+    mkdirSync(join(dataDir, NODE_ID));
+    writeFileSync(
+      join(dataDir, NODE_ID, 'config.json'),
+      JSON.stringify({ classifierVersion: 'v1', testStrataFiles: ['s.csv'] })
+    );
+    writeFileSync(join(dataDir, NODE_ID, 's.csv'), 'ticket_id,stratum\n500,crypto\n501,_rest\n');
+    clickhouse.createClient.mockImplementation(() => ({
+      query: async (q: { query: string }) => ({
+        json: async () => (q.query.includes('support_ticket_eval_labels') ? [] : tickets),
+      }),
+      close: async () => undefined,
+    }));
+    return { dataDir };
+  }
+  async function drain(ctx: { dataDir: string }) {
+    const out: { groupKey: string }[] = [];
+    for await (const r of supportTopicNode.source(ctx)) out.push(r);
+    return out;
+  }
+
+  it.each([
+    ['an extra ticket beside every wanted one', ['500', '501', '999']],
+    ['a substituted ticket with the same count', ['500', '999']],
+  ])('refuses %s', async (_, ids) => {
+    vi.stubEnv('CLICKHOUSE_HOST', 'http://127.0.0.1:1');
+    await expect(drain(fresh(ids.map(t)))).rejects.toThrow(/exactly one stored row/);
+  });
+
+  it('keeps the salt across builds, and refuses to regenerate it once a manifest exists', async () => {
+    vi.stubEnv('CLICKHOUSE_HOST', 'http://127.0.0.1:1');
+    const ctx = fresh(['500', '501'].map(t));
+    const first = (await drain(ctx)).map((r) => r.groupKey);
+    expect((await drain(ctx)).map((r) => r.groupKey)).toEqual(first);
+    rmSync(join(ctx.dataDir, NODE_ID, 'group-salt'));
+    writeFileSync(join(ctx.dataDir, NODE_ID, 'manifest.jsonl'), '');
+    await expect(drain(ctx)).rejects.toThrow(/restore the salt/);
+  });
+
+  it('reads the strata stratum by header name, and refuses a file without one', () => {
+    expect([...parseStrataCsv('stratum,x,ticket_id\ncrypto,1,500\n')]).toEqual([['500', 'crypto']]);
+    expect(() => parseStrataCsv('ticket_id,x\n500,1\n')).toThrow(/columns/);
+  });
+
+  it('redacts a base58 address but not a long ordinary word', () => {
+    expect(redact('send to 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU now')).toBe(
+      'send to [id] now'
+    );
+    expect(redact('pneumonoultramicroscopicsilicovolcanoconiosis')).toBe(
+      'pneumonoultramicroscopicsilicovolcanoconiosis'
+    );
+  });
+
+  it('weighted summary skips a sampled item with no gold', () => {
+    const s = weightedSummary({
+      items: [
+        { itemId: 'a', groupKey: 'a', ts: '', split: 'test', state: {} },
+        { itemId: 'b', groupKey: 'b', ts: '', split: 'test', state: {} },
+      ],
+      gold: new Map([['a', 'crypto']]),
+      predictions: [
+        { itemId: 'a', runKey: 'k', status: 'ok', pred: 'other', confidence: 1, abstained: false },
+        { itemId: 'b', runKey: 'k', status: 'ok', pred: 'crypto', confidence: 1, abstained: false },
+      ],
+      weights: new Map([
+        ['a', 1],
+        ['b', 9],
+      ]),
+      thresholds: { crypto: 0.5, other: 0.5 },
+    });
+    expect(s).toEqual({
+      items: 1,
+      coverage: 1,
+      accuracyOnCovered: 0,
+      incumbentAccuracyOnCovered: 0,
+    });
   });
 });
