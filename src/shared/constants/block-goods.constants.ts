@@ -247,6 +247,36 @@ export function isBlockGoodKind(value: unknown): value is BlockGoodKind {
   return typeof value === 'string' && (BLOCK_GOOD_KINDS as readonly string[]).includes(value);
 }
 
+/**
+ * The `block_good_purchase.status` domain, SINGLE-SOURCED.
+ *
+ * The authority is the `block_good_purchase_status_check` CHECK in
+ * `packages/civitai-db-schema/prisma/migrations/20260927120000_block_digital_goods/migration.sql`;
+ * this object is the one spelling of it in TypeScript. It lives here, in the
+ * browser-safe constants module, rather than in `block-goods.service.ts`,
+ * because two modules now need it and neither should import the other: the
+ * purchase/refund WRITE path (`block-goods.service.ts`) and the owner-earnings
+ * READ path (`getGoodsSalesForOwner` in `buzz-attribution.service.ts`). A money
+ * status string open-coded at a second site is the shape that goes wrong at one
+ * of them — a refund filter that spells `'refund'` silently counts reversed
+ * sales as earnings, and nothing errors.
+ *
+ * The per-value meaning matters to the read path, so it is recorded here rather
+ * than only at the write sites:
+ *
+ * - `pending` — claimed, charge outcome NOT settled. The reconciliation record
+ *   for a debit whose fate is unknown. Never earnings, and deliberately not
+ *   shown to an owner: it is neither money they have nor money they are owed.
+ * - `paid` — settled. The ONLY status that is a sale.
+ * - `refunded` — reversed. Covers both a sale that was refunded and a charge
+ *   reversed before any entitlement was granted. Never earnings.
+ */
+export const BLOCK_GOOD_PURCHASE_STATUS = {
+  pending: 'pending',
+  paid: 'paid',
+  refunded: 'refunded',
+} as const;
+
 /** One entry of a manifest's `goods[]`, after validation. */
 export type BlockGoodDeclaration = {
   id: string;
