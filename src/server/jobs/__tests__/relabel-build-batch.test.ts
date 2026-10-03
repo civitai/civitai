@@ -16,7 +16,9 @@ const RUN_JOBS_ROUTE = path.resolve(
 );
 
 async function sent(now: Date) {
-  const send = vi.fn(async (_: RelabelBuildBatchInput) => ({ ok: true }));
+  const send = vi.fn<(input: RelabelBuildBatchInput) => Promise<unknown>>(async () => ({
+    ok: true,
+  }));
   await runRelabelBuildBatch({ now, send, log: () => undefined });
   expect(send).toHaveBeenCalledTimes(1);
   return send.mock.calls[0][0];
