@@ -12,13 +12,14 @@ import { logToAxiom } from '../axiom';
 import { getClickhouse } from '../clickhouse';
 import { dbRead } from '../db';
 import { getModeratorDb } from '../moderator-db';
-import { buildRelabelBatch, parseBands } from '../relabel-batch-build';
+import { relabelBuildBatchAction } from '../relabel-batch-build';
 
 // The cross-app moderator-action registry. Each entry maps an action the main app invokes over
 // `/api/mod/[action]` to a spoke handler. The input SCHEMA is the shared `@civitai/moderation` contract
 // (so the endpoint validates the exact shape the main-app client sends); the HANDLER calls the same spoke
-// services the moderator pages use, so both entry points run identical code. `userId` is the moderator id,
-// asserted by the trusted caller (the main app already gated the action behind `moderatorProcedure`).
+// services the moderator pages use, so both entry points run identical code. Where an action has an acting
+// moderator, `userId` is that moderator, asserted by the trusted caller (the main app already gated the
+// action behind `moderatorProcedure`). Scheduled callers have none.
 //
 // This is the ONE sanctioned inbound seam. Add an action here + its schema/method in @civitai/moderation;
 // don't add ad-hoc endpoints.
@@ -66,24 +67,21 @@ const abuseReport: ModAction<z.infer<typeof abuseReportInput>> = {
  * moderator. Writes only to `relabel_item`, and only when `dryRun` is false.
  *
  * The not-removed stratum's score bands come from `RELABEL_NOT_REMOVED_BANDS`, never from the
- * caller or the repo. Unset, the batch holds removed items only.
+ * caller or the repo. Unset or malformed, the batch holds removed items only.
  */
 const relabelBuildBatch: ModAction<z.infer<typeof relabelBuildBatchInput>> = {
   schema: relabelBuildBatchInput,
-  handler: async (input) => {
-    const summary = await buildRelabelBatch(
-      { ...input, bands: parseBands(env.RELABEL_NOT_REMOVED_BANDS) },
+  handler: (input) =>
+    relabelBuildBatchAction(
+      input,
+      env.RELABEL_NOT_REMOVED_BANDS,
       {
         clickhouse: (query) => getClickhouse().$query(query),
         replica: dbRead,
         moderator: getModeratorDb(),
-      }
-    );
-    void logToAxiom({ type: 'info', name: 'relabel-build-batch', ...summary }).catch(
-      () => undefined
-    );
-    return summary;
-  },
+      },
+      (data) => void logToAxiom(data).catch(() => undefined)
+    ),
 };
 
 export const modActions: Record<string, ModAction> = {

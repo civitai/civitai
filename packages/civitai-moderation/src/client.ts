@@ -106,8 +106,9 @@ export function createModeratorClient(config: ModeratorClientConfig = {}) {
     abuseReport: (input: AbuseReportInput): Promise<unknown> =>
       call(MOD_ACTION.abuseReport, abuseReportInput.parse(input)),
     /**
-     * Build the day's removal-label relabel batch. Two ClickHouse scans and a replica read take far
-     * longer than the default timeout, and an abort here would record a run that in fact completed.
+     * Build the day's removal-label relabel batch, which takes far longer than the default timeout.
+     * An abort here does not stop the spoke, so it can record a failure for a run that completed;
+     * this timeout avoids that only if the ingress in between allows as long.
      */
     relabelBuildBatch: (input: RelabelBuildBatchInput): Promise<unknown> =>
       call(MOD_ACTION.relabelBuildBatch, relabelBuildBatchInput.parse(input), {

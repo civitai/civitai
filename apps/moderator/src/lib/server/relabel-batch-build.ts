@@ -8,20 +8,9 @@ import { deprecatedNsfwName } from '../nsfw-levels';
 import { MINOR_BUCKETS } from '../removal-label/compose';
 import { allocate, isMinorBucket, scoreBand, type Candidate } from '../removal-label/sampling';
 
-/**
- * Builds one batch of the removal-label relabel set. Called daily by the main app's
- * `relabel-build-batch` job through the `relabel-build-batch` mod-action, and by
- * `removal-label-eval/build-set.ts` by hand.
- *
- * Removed images are hard-deleted `BLOCKED_IMAGE_RETENTION_DAYS` after the block, so removed items
- * are drawn from the last `days` and carry `purge_after`.
- *
- * `removed` and `notRemoved` are caps on what the batch holds, not on what one run adds: a run
- * fills only what the batch is still short of, so a re-run after a complete run adds nothing and a
- * re-run after a crashed one finishes it.
- */
-
 export type ClickhouseQuery = <T extends object>(query: string) => Promise<T[]>;
+
+type BandsSkipped = 'bands unset' | 'bands invalid';
 
 export type RelabelBuildOptions = {
   batch: string;
@@ -30,6 +19,8 @@ export type RelabelBuildOptions = {
   days: number;
   /** Ascending scanner minor-score edges. `null` skips the not-removed stratum entirely. */
   bands: number[] | null;
+  /** Why `bands` is null, for the summary. */
+  bandsSkipped?: BandsSkipped;
   seed?: string;
   dryRun: boolean;
   /** Items the model arms run on but labelers never see. */
@@ -42,19 +33,30 @@ export type RelabelBuildSummary = {
   batch: string;
   dryRun: boolean;
   modelOnly: boolean;
-  notRemovedSkipped: 'bands unset' | null;
+  /** Set when the run wrote nothing because the CSAM exclusion could not complete. */
+  skipped: 'csam exclusion timed out' | null;
+  notRemovedSkipped: BandsSkipped | null;
   candidates: Strata<number>;
   csamExcluded: Strata<number>;
   alreadyInSet: number;
   alreadyInBatch: Strata<number>;
   picked: Strata<number>;
-  /** `<stratum> <stratumKey>` → items picked. */
-  strata: Record<string, number>;
+  /** Picked per `<stratum> <stratumKey>`. A list, so new strata never add log fields. */
+  strata: { key: string; n: number }[];
   inserted: number;
   promoted: number;
+  /** Picked but already present when written: another batch's run took the image first. */
+  alreadyPresent: number;
 };
 
 export const MAX_RELABEL_DAYS = BLOCKED_IMAGE_RETENTION_DAYS - 1;
+
+/**
+ * Below the size where the planner switches the exclusion's `Image` join to a full scan, measured
+ * between 1,000 and 1,365 ids on prod.
+ */
+export const CSAM_EXCLUSION_CHUNK = 250;
+const CSAM_EXCLUSION_TIMEOUT_MS = 60_000;
 
 /** `RELABEL_NOT_REMOVED_BANDS` / `--bands`: comma-separated edges in (0, 1). Empty is `null`. */
 export function parseBands(raw: string | undefined): number[] | null {
@@ -66,6 +68,24 @@ export function parseBands(raw: string | undefined): number[] | null {
   const bands = parts.map(Number).sort((a, b) => a - b);
   if (bands.some((b) => !(b > 0 && b < 1))) throw new Error('bands must be scores in (0, 1)');
   return bands;
+}
+
+/**
+ * The scheduled build's bands, from the environment only. A malformed value builds the removed
+ * stratum alone rather than failing the run: removed items age out of the window within days, and
+ * the bands only shape the other stratum.
+ */
+export function bandsFromEnv(raw: string | undefined): {
+  bands: number[] | null;
+  bandsSkipped?: BandsSkipped;
+  error?: string;
+} {
+  try {
+    const bands = parseBands(raw);
+    return bands ? { bands } : { bands: null, bandsSkipped: 'bands unset' };
+  } catch (e) {
+    return { bands: null, bandsSkipped: 'bands invalid', error: (e as Error).message };
+  }
 }
 
 type RemovalRow = {
@@ -125,11 +145,46 @@ async function fetchMinorScores(
   );
 }
 
+const QUERY_CANCELED = '57014';
+
+/** `null` when a chunk hit the statement timeout: the caller must then write nothing. */
+async function csamExcluded(replica: Kysely<MainDB>, ids: number[]): Promise<Set<number> | null> {
+  const excluded = new Set<number>();
+  try {
+    for (let i = 0; i < ids.length; i += CSAM_EXCLUSION_CHUNK) {
+      const chunk = ids.slice(i, i + CSAM_EXCLUSION_CHUNK);
+      // In a transaction so the timeout applies to this query only, and cancels it server-side
+      // rather than leaving it running after the caller has given up.
+      const rows = await replica.transaction().execute(async (trx) => {
+        await sql.raw(`SET LOCAL statement_timeout = ${CSAM_EXCLUSION_TIMEOUT_MS}`).execute(trx);
+        return (await csamExcludedImageIds(chunk).execute(trx)).rows;
+      });
+      for (const r of rows) excluded.add(r.id);
+    }
+  } catch (e) {
+    if ((e as { code?: string }).code === QUERY_CANCELED) return null;
+    throw e;
+  }
+  return excluded;
+}
+
 const countBy = (cs: Candidate[]) => ({
   removed: cs.filter((c) => c.stratum === 'removed').length,
   notRemoved: cs.filter((c) => c.stratum === 'not_removed').length,
 });
 
+/**
+ * Builds one batch of the removal-label relabel set. Called daily by the main app's
+ * `relabel-build-batch` job through the `relabel-build-batch` mod-action, and by
+ * `removal-label-eval/build-set.ts` by hand.
+ *
+ * Removed images are hard-deleted `BLOCKED_IMAGE_RETENTION_DAYS` after the block, so removed items
+ * are drawn from the last `days` and carry `purge_after`.
+ *
+ * `removed` and `notRemoved` cap what the batch holds, not what one run adds: a run fills only what
+ * the batch is still short of, so a re-run after a complete run adds nothing and a re-run after a
+ * crashed one finishes it.
+ */
 export async function buildRelabelBatch(
   opts: RelabelBuildOptions,
   deps: { clickhouse: ClickhouseQuery; replica: Kysely<MainDB>; moderator: Kysely<ModeratorDB> }
@@ -197,13 +252,28 @@ export async function buildRelabelBatch(
   }
 
   const before = countBy(candidates);
-  const excluded = new Set(
-    candidates.length
-      ? (await csamExcludedImageIds(candidates.map((c) => c.imageId)).execute(replica)).rows.map(
-          (r) => r.id
-        )
-      : []
+  const notRemovedSkipped = opts.bands ? null : opts.bandsSkipped ?? 'bands unset';
+  const excluded = await csamExcluded(
+    replica,
+    candidates.map((c) => c.imageId)
   );
+  if (!excluded)
+    return {
+      batch: opts.batch,
+      dryRun: opts.dryRun,
+      modelOnly,
+      skipped: 'csam exclusion timed out',
+      notRemovedSkipped,
+      candidates: before,
+      csamExcluded: { removed: 0, notRemoved: 0 },
+      alreadyInSet: 0,
+      alreadyInBatch: { removed: 0, notRemoved: 0 },
+      picked: { removed: 0, notRemoved: 0 },
+      strata: [],
+      inserted: 0,
+      promoted: 0,
+      alreadyPresent: 0,
+    };
   candidates = candidates.filter((c) => !excluded.has(c.imageId));
   const after = countBy(candidates);
 
@@ -225,7 +295,7 @@ export async function buildRelabelBatch(
 
   return moderator.transaction().execute(async (trx) => {
     // Serialises two runs of one batch, which would otherwise each read the same shortfall and
-    // together overshoot the cap.
+    // together overshoot the cap. On `trx`: run anywhere else, the lock is released at once.
     await sql`SELECT pg_advisory_xact_lock(hashtext(${`relabel-batch:${opts.batch}`}))`.execute(
       trx
     );
@@ -269,10 +339,10 @@ export async function buildRelabelBatch(
       ),
     ];
 
-    const strata: Record<string, number> = {};
+    const strataCounts = new Map<string, number>();
     for (const p of picked) {
       const key = `${p.stratum} ${p.stratumKey}`;
-      strata[key] = (strata[key] ?? 0) + 1;
+      strataCounts.set(key, (strataCounts.get(key) ?? 0) + 1);
     }
 
     let inserted = 0;
@@ -312,7 +382,8 @@ export async function buildRelabelBatch(
       batch: opts.batch,
       dryRun: opts.dryRun,
       modelOnly,
-      notRemovedSkipped: opts.bands ? null : 'bands unset',
+      skipped: null,
+      notRemovedSkipped,
       candidates: before,
       csamExcluded: {
         removed: before.removed - after.removed,
@@ -321,9 +392,33 @@ export async function buildRelabelBatch(
       alreadyInSet: already.size,
       alreadyInBatch,
       picked: countBy(picked),
-      strata,
+      strata: [...strataCounts]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, n]) => ({ key, n })),
       inserted,
       promoted,
+      alreadyPresent: opts.dryRun ? 0 : picked.length - inserted - promoted,
     };
   });
+}
+
+type Log = (data: Record<string, unknown>) => void;
+
+/** The `relabel-build-batch` mod-action, given the raw `RELABEL_NOT_REMOVED_BANDS`. */
+export async function relabelBuildBatchAction(
+  input: Omit<RelabelBuildOptions, 'bands' | 'bandsSkipped' | 'seed' | 'modelOnly'>,
+  rawBands: string | undefined,
+  deps: Parameters<typeof buildRelabelBatch>[1],
+  log: Log
+): Promise<RelabelBuildSummary> {
+  const { bands, bandsSkipped, error } = bandsFromEnv(rawBands);
+  if (error)
+    log({ type: 'error', name: 'relabel-build-batch-bands-invalid', batch: input.batch, error });
+  const summary = await buildRelabelBatch({ ...input, bands, bandsSkipped }, deps);
+  log({
+    type: summary.skipped ? 'error' : 'info',
+    name: 'relabel-build-batch',
+    ...summary,
+  });
+  return summary;
 }
