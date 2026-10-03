@@ -128,18 +128,27 @@ full-corpus pass before running one.** What is verified in code:
 Two corrections to the obvious reasoning, both of which bit an earlier draft of
 this paragraph:
 
-- ⚠️ **Queue DEPTH is not "one entry per version labeled".** Within a 10-version
-  batch the version→model collapse really is near-zero on the default id-ordered
-  sweep, because a model's versions are not adjacent in id space — but the queue
-  is a redis **set** (`sAdd`, and `checkoutQueue` collects into a `Set`), so
-  depth is bounded by the number of DISTINCT models, which is necessarily below
-  the version count. Total document rebuilds across a multi-day pass is a
-  different and larger quantity, because the sync drains repeatedly.
-- ⚠️ **`--top N` DOES bound the announced set** — `topUsageVersionIds` takes at
-  most N ids in one query, so at most N models are announced. What it does not
-  bound is per-document size, and ordering by `generationCount` plausibly
-  selects larger documents (more versions, files, showcase images). That last
-  clause is a correlation nobody has measured.
+- ⚠️ **Queue DEPTH is a count of DISTINCT MODELS, not of versions labeled** —
+  which is a correction to the *mechanism*, not a cheaper cost estimate, and
+  billing it as the latter is what bit the earlier draft. The queue is a redis
+  **set** (`sAdd`, and `checkoutQueue` collects into a `Set`), so depth is
+  bounded by the number of distinct models: `≤` the version count, with
+  **equality whenever every version in the pass belongs to a distinct model** —
+  exactly the case the first half of this bullet establishes for the default
+  id-ordered sweep, where a model's versions are not adjacent in id space and
+  the collapse is near-zero. So on the default path this yields the same
+  estimate as the text it replaced; it only diverges under `--top`, where usage
+  correlates within a model. Total document rebuilds across a multi-day pass is
+  a different and larger quantity again, because the sync drains repeatedly.
+- ⚠️ **`--top N` DOES bound the announced set, PER INVOCATION** —
+  `topUsageVersionIds` takes at most N ids in one query, so one run announces at
+  most N models. It does **not** bound a resumed pass: `--cursor` re-materialises
+  the ordered list on every resume, over a `generationCount` that moves while the
+  run is in flight, so the union of models announced across the resumes of one
+  logical pass can exceed N. What it bounds even less is per-document size, and
+  ordering by `generationCount` plausibly selects larger documents (more
+  versions, files, showcase images). That last clause is a correlation nobody
+  has measured.
 
 🔴 **There is no `--no-enqueue` lever, so a corpus pass cannot be run without
 announcing**, and because the cron drains every 15 minutes a "finish with a

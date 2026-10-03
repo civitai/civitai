@@ -153,6 +153,37 @@ function queuedItems(): unknown[] {
   return queueUpdate.mock.calls.flatMap((call) => call[0] as unknown[]);
 }
 
+/**
+ * Spy a stdio stream's `write` so the drain's completion callback stays under
+ * the test's control.
+ *
+ * 🔴 `onDrainWrite` receives a `release` it MUST eventually call, because
+ * `drainStdio` awaits that callback: a plain no-op mock leaves its promise
+ * pending forever and the test HANGS instead of failing, which is the one
+ * outcome that teaches nothing.
+ *
+ * Only writes carrying the shape `drainStdio` issues — an EMPTY chunk plus a
+ * callback — are routed to `onDrainWrite`. Anything else is completed
+ * immediately and ignored, so an unrelated write from the runner cannot land in
+ * an assertion. `as never` on the implementation is the file's existing idiom
+ * for a cast past an overloaded signature.
+ */
+function spyStreamWrite(stream: NodeJS.WriteStream, onDrainWrite: (release: () => void) => void) {
+  return vi.spyOn(stream, 'write').mockImplementation(((...args: unknown[]) => {
+    const callback = args.find((arg) => typeof arg === 'function') as
+      | ((error?: Error | null) => void)
+      | undefined;
+    if (args[0] === '' && callback) onDrainWrite(() => callback());
+    else callback?.();
+    return true;
+  }) as never);
+}
+
+/** Let every already-queued microtask and I/O callback run. */
+function flushPendingWork(): Promise<void> {
+  return new Promise<void>((resolve) => setImmediate(resolve));
+}
+
 describe('label writes are announced to the models search index', () => {
   let argv: string[];
   // Captured as plain string arrays rather than kept as spy handles: reading
@@ -270,7 +301,10 @@ describe('label writes are announced to the models search index', () => {
     // deleted on its own — the summary total alone stays green when the
     // per-batch `queued N` segment is removed.
     expect(logged.join('\n')).toContain('queued 2,');
-    expect(logged.join('\n')).toContain('2 models queued for reindex');
+    // `announcements issued`, not "models queued": the summary SUMS the
+    // per-batch lists and dedupes only within a batch, so it is not a distinct
+    // model count. See the `indexQueued` comment in the script.
+    expect(logged.join('\n')).toContain('2 reindex announcements issued');
   });
 
   it('keeps the batch successful when the enqueue fails — the rows and the spend are already gone', async () => {
@@ -289,7 +323,7 @@ describe('label writes are announced to the models search index', () => {
     expect(logged.join('\n')).toContain('3 labeled, 0 failed');
     // 🔴 And the count must NOT claim the failed announcement: this is what
     // stops `enqueuedModelIds` being assigned before the call it reports on.
-    expect(logged.join('\n')).toContain('0 models queued for reindex');
+    expect(logged.join('\n')).toContain('0 reindex announcements issued');
     // Not silent either — the ids are logged, because a resumed run skips these
     // versions as already-current and will never retry the enqueue.
     expect(warned.join('\n')).toContain('enqueue FAILED for model ids 500,600');
@@ -337,15 +371,22 @@ describe('label writes are announced to the models search index', () => {
     expect(warned.join('\n')).toContain('some rows may be committed WITHOUT an index announcement');
     expect(warned.join('\n')).toContain('Candidate model ids to re-queue by hand: 500,600');
     // And the run does not pretend to have announced anything.
-    expect(logged.join('\n')).toContain('0 models queued for reindex');
+    expect(logged.join('\n')).toContain('0 reindex announcements issued');
   });
 
   describe('the queue read-back', () => {
-    it('confirms the announcement landed, and reads the RIGHT queue read-only', async () => {
+    it('corroborates the announcement, and reads the RIGHT queue read-only', async () => {
       await run('--execute', '--limit', '3');
 
       expect(logged.join('\n')).toContain('queue-verify: all 2 model id(s)');
-      expect(logged.join('\n')).toContain('announcements are landing');
+      // 🔴 CORROBORATION, NOT PROOF, and the wording is the claim: the
+      // `models_v9:Update` queue is shared with 28 other `queueUpdate` call
+      // sites and an entry survives until the next non-`readOnly` checkout, so
+      // an id put there by an unrelated edit is indistinguishable from one this
+      // run announced. A message asserting the enqueue "landed" would read as a
+      // green light over a run whose every enqueue was parked in Postgres.
+      expect(logged.join('\n')).toContain('consistent with announcements landing');
+      expect(logged.join('\n')).toContain('presence is corroboration, not proof');
       // 🔴 THE ARGUMENTS, not just the call. All three matter and none of them
       // is observable from the message: the wrong index constant reads a queue
       // this script never writes to (permanently INCONCLUSIVE, reported as a
@@ -377,7 +418,7 @@ describe('label writes are announced to the models search index', () => {
         queueUpdate.mock.invocationCallOrder[0]
       );
       // And the summary ACCUMULATES across batches rather than reporting the last.
-      expect(logged.join('\n')).toContain('4 models queued for reindex');
+      expect(logged.join('\n')).toContain('4 reindex announcements issued');
     });
 
     it('reports INCONCLUSIVE rather than success when the ids are not in the queue', async () => {
@@ -388,24 +429,24 @@ describe('label writes are announced to the models search index', () => {
 
       await run('--execute', '--limit', '3');
 
-      expect(logged.join('\n')).toContain('2 models queued for reindex');
+      expect(logged.join('\n')).toContain('2 reindex announcements issued');
       expect(logged.join('\n')).toContain('queue-verify: INCONCLUSIVE — 0/2 model id(s)');
-      expect(logged.join('\n')).not.toContain('announcements are landing');
+      expect(logged.join('\n')).not.toContain('consistent with announcements landing');
     });
 
     it('treats a PARTIAL match as inconclusive, not as success', async () => {
       // 🔴 The boundary case, and the only one that pins `found === length`
       // rather than `found > 0`: with only the all-present and none-present
       // fixtures, relaxing the comparison to `found > 0` passes both — and in
-      // production would report "announcements are landing" for a run where 1
-      // id in 500 was found, turning the one signal a fail-open enqueue has
-      // into a green light.
+      // production would report the corroborating message for a run where 1 id
+      // in 500 was found, turning the one signal a fail-open enqueue has into a
+      // green light.
       getQueue.mockResolvedValue({ content: [500], commit });
 
       await run('--execute', '--limit', '3');
 
       expect(logged.join('\n')).toContain('queue-verify: INCONCLUSIVE — 1/2 model id(s)');
-      expect(logged.join('\n')).not.toContain('announcements are landing');
+      expect(logged.join('\n')).not.toContain('consistent with announcements landing');
     });
 
     it('does not fail the run when the read-back itself throws', async () => {
@@ -440,10 +481,20 @@ describe('label writes are announced to the models search index', () => {
     // 🔴 The most operationally consequential lines in the change, and the only
     // ones unreachable through `main`: the process can no longer end on its own
     // (the redis clients connect at module load and arm a ping interval), and
-    // `process.exit` does NOT drain piped stdout — measured, a bare exit lost
-    // the final line in 3 of 3 piped runs. The final line carries the resume
+    // `process.exit` does NOT drain piped stdout — measured, a bare exit
+    // truncates INTERMITTENTLY over a pipe (two independent replications
+    // disagreed on the rate, which is why no rate is quoted here or in the
+    // script; see `runAsScript`'s docstring). The final line carries the resume
     // cursor for a run that spends vendor money per batch, so losing it means
     // re-paying. `exit` and `flush` are injected precisely so this is testable.
+    //
+    // 🔴 AND THE INJECTION IS THE TRAP. The sole production call site passes
+    // NEITHER argument, so the two tests below — which inject both — exercise
+    // the seam and not what ships. Measured at the parent commit: mutating
+    // `flush`'s default to `async () => {}` and `exit`'s to `() => {}` each left
+    // all 21 tests green, and the first silently restores the lost-resume-token
+    // defect this wrapper exists to fix. The two `default` tests after them are
+    // what kill those mutants; do not let a future refactor make them inject.
 
     it('flushes BEFORE exiting 0 on success', async () => {
       const { runAsScript } = await import('../label-resource-insights');
@@ -476,6 +527,94 @@ describe('label writes are announced to the models search index', () => {
       expect(exit).not.toHaveBeenCalledWith(0);
       // Same reason as above: a truncated stderr loses the stack.
       expect(flush.mock.invocationCallOrder[0]).toBeLessThan(exit.mock.invocationCallOrder[0]);
+    });
+
+    it('uses the REAL drainStdio when no `flush` is injected — the production default', async () => {
+      const { runAsScript } = await import('../label-resource-insights');
+      // 🔴 `exit` is still injected (the real `process.exit` would tear down the
+      // vitest worker) but `flush` deliberately is NOT, so the default binding
+      // is the thing under test. This is the mutant that mattered: with
+      // `flush: () => Promise<void> = async () => {}` a piped run exits without
+      // draining and drops the final `done: … lastId=<N>` line, so the operator
+      // resumes from a stale cursor and re-pays the vendor for everything in
+      // between.
+      const events: string[] = [];
+      const exit = vi.fn((code: number) => {
+        events.push(`exit:${code}`);
+      });
+      spyStreamWrite(process.stdout, (release) => {
+        events.push('stdout-drain');
+        release();
+      });
+      spyStreamWrite(process.stderr, (release) => {
+        events.push('stderr-drain');
+        release();
+      });
+      process.argv = ['node', 'vitest', '--execute', '--limit', '3'];
+
+      await runAsScript(exit);
+
+      // One assertion, three claims: both streams were drained, and both drains
+      // preceded the exit. `toEqual` on the ordered log is what makes the
+      // ordering observable without a second spy.
+      expect(
+        events,
+        "runAsScript's default `flush` must be the real drainStdio — expected an empty write with a callback on stdout AND stderr, both before exit"
+      ).toEqual(['stdout-drain', 'stderr-drain', 'exit:0']);
+      // Negative control: the run really happened, so this is not vacuous.
+      expect(logged.join('\n')).toContain('3 labeled, 0 failed');
+    });
+
+    it('uses the REAL process.exit when no `exit` is injected — the production default', async () => {
+      const { runAsScript } = await import('../label-resource-insights');
+      const flush = vi.fn().mockResolvedValue(undefined);
+      // Spied BEFORE the call, because the default is the expression
+      // `process.exit` evaluated at CALL time — so the spy is what the default
+      // resolves to, and the worker survives. With
+      // `exit: (code: number) => void = () => {}` this spy is never called and
+      // a finished run hangs forever on the redis ping interval, which reads as
+      // a stalled batch to any cron or `timeout` wrapper.
+      const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+      process.argv = ['node', 'vitest', '--execute', '--limit', '3'];
+
+      await runAsScript(undefined, flush);
+
+      expect(
+        exit,
+        "runAsScript's default `exit` must be process.exit — expected process.exit(0) after a successful run"
+      ).toHaveBeenCalledWith(0);
+      expect(flush).toHaveBeenCalledTimes(1);
+      // Negative control: the run really happened, so this is not vacuous.
+      expect(logged.join('\n')).toContain('3 labeled, 0 failed');
+    });
+
+    it('drainStdio resolves only AFTER both stream callbacks have fired', async () => {
+      const { drainStdio } = await import('../label-resource-insights');
+      // The property the two tests above cannot see, and the reason the export
+      // exists: a `drainStdio` that ISSUED the empty writes without AWAITING
+      // them satisfies every write assertion and still lets `process.exit` run
+      // before the pipe has flushed — i.e. the original defect, intact.
+      const pending: Array<() => void> = [];
+      spyStreamWrite(process.stdout, (release) => pending.push(release));
+      spyStreamWrite(process.stderr, (release) => pending.push(release));
+      let settled = false;
+
+      const drained = drainStdio().then(() => {
+        settled = true;
+      });
+
+      await flushPendingWork();
+      expect(pending, 'stdout is drained first, on its own').toHaveLength(1);
+      expect(settled, 'drainStdio must not resolve before stdout has drained').toBe(false);
+
+      pending[0]();
+      await flushPendingWork();
+      expect(pending, 'stderr is drained only once stdout has settled').toHaveLength(2);
+      expect(settled, 'drainStdio must not resolve before stderr has drained').toBe(false);
+
+      pending[1]();
+      await drained;
+      expect(settled).toBe(true);
     });
   });
 });

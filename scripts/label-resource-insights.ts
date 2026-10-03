@@ -84,9 +84,18 @@ import { Availability } from '~/shared/utils/prisma/enums';
  * an opt-in check is one nobody remembers to pass, and not per batch because
  * this queue reaches hundreds of thousands of ids on a large fan-out and
  * scanning it per batch is itself a hazard. The result is ONE-DIRECTIONAL, like
- * the equivalent read-back in the admin endpoint above: finding the ids present
- * PROVES they landed, while not finding them is inconclusive — the 15-minute
- * sync may have checked the queue out in between. See `verifyFirstEnqueue`.
+ * the equivalent read-back in the admin endpoint above, and WEAKER than "proof"
+ * in BOTH directions — do not report it as either. Not finding the ids is
+ * inconclusive: the 15-minute sync may have checked the queue out in between.
+ * Finding them is CORROBORATION, not proof, because the queue is SHARED — 28
+ * other files call `modelsSearchIndex.queueUpdate` at this sha, and an entry
+ * survives until the next non-`readOnly` checkout — so a model that some
+ * unrelated edit queued minutes ago is present regardless of what this run did.
+ * The case that makes the distinction real: a first batch mapping to one model,
+ * a sysRedis that fails open on every enqueue (parking ids in Postgres), and
+ * that one model independently edited a few minutes earlier — `found ===
+ * modelIds.length` holds and every announcement in the run was in fact parked.
+ * See `verifyFirstEnqueue`.
  *
  * ⚠️ THE PROCESS CANNOT EXIT ON ITS OWN ANY MORE. Importing
  * `~/server/search-index` reaches `~/server/redis/caches` → `~/server/redis/
@@ -483,8 +492,13 @@ export function partitionNeedingLabel(
  *      `src/server/services/model.service.ts` states the policy outright —
  *      "a duplicate enqueue is free: processQueues dedupes with a Set". It is
  *      done here only so the payload this script hands over names each model
- *      once, which is also what makes `enqueuedModelIds` a model count rather
- *      than a row count.
+ *      once, which is what makes `enqueuedModelIds` a model count rather than a
+ *      row count — ⚠️ PER BATCH, and only per batch. The run's total sums these
+ *      per-batch lists without deduplicating across them, so under `--top`,
+ *      where this docstring notes a model's versions cluster, a model straddling
+ *      the 10-version batch boundary is announced twice and counted twice. That
+ *      is why the summary reports `announcements issued` rather than a model
+ *      count; see the `done:` line in `main`.
  *
  * Driven by `labels` — the rows that were actually written — not by the fetched
  * page, so a version whose answers failed to map does not get its model
@@ -525,11 +539,21 @@ export function labeledModelIds(
  * current ones, so this cannot consume work the 15-minute sync is about to pick
  * up. Same call the admin reindex endpoint uses for the same purpose.
  *
- * ONE-DIRECTIONAL, and the caller must report it that way. Present ⇒ landed.
- * Absent ⇒ inconclusive: the sync may have checked the queue out between the
- * enqueue and this read. A read that itself fails open returns an empty set,
- * which is the same inconclusive answer rather than a false negative dressed up
- * as a finding.
+ * ONE-DIRECTIONAL, and the caller must report it that way — but the positive
+ * direction is CORROBORATION, NOT PROOF, and the message must not claim more.
+ * The `models_v9:Update` queue is shared with 28 other `queueUpdate` call sites
+ * at this sha, and an entry survives until the next non-`readOnly` checkout
+ * (≤15 min), so presence is consistent with this run having queued the ids and
+ * also with anything else having queued them. The shape that makes that
+ * concrete: one model in the first batch, every enqueue failing open into the
+ * Postgres parking lot, and that model edited independently four minutes
+ * earlier — `found === modelIds.length` and the run reports a healthy signal
+ * while nothing it announced propagated. The check is still worth having: it is
+ * the only observation of the fail-open case at all, and at realistic batch
+ * widths an unrelated edit for EVERY id is unlikely. Absent ⇒ inconclusive: the
+ * sync may have checked the queue out between the enqueue and this read. A read
+ * that itself fails open returns an empty set, which is the same inconclusive
+ * answer rather than a false negative dressed up as a finding.
  */
 export async function verifyFirstEnqueue(modelIds: number[]): Promise<string> {
   if (modelIds.length === 0) return 'queue-verify: nothing enqueued yet';
@@ -545,7 +569,7 @@ export async function verifyFirstEnqueue(modelIds: number[]): Promise<string> {
     const queued = new Set(queue.content);
     const found = modelIds.filter((id) => queued.has(id)).length;
     if (found === modelIds.length) {
-      return `queue-verify: all ${found} model id(s) from the first batch are in the ${MODELS_SEARCH_INDEX} update queue (depth ${queue.content.length}) — announcements are landing`;
+      return `queue-verify: all ${found} model id(s) from the first batch are in the ${MODELS_SEARCH_INDEX} update queue (depth ${queue.content.length}) — consistent with announcements landing (the queue is shared, so presence is corroboration, not proof)`;
     }
     // 🔴 THREE causes, not two. The third is the one that blames the wrong
     // half: a degraded READ also lands here with nothing actually dropped —
@@ -602,13 +626,24 @@ async function labelBatch(
       //
       // ⚠️ The committed set is WIDER than "the ones that had already finished",
       // and the precise shape matters because it is why the log is a superset
-      // rather than an exact list: `limitConcurrency` rejects and returns, but
-      // its `finally` keeps pulling from the pool, so remaining upserts are
-      // still launched and can commit AFTER this warning is printed and after
-      // `labelBatch` has returned. Those stragglers also race the explicit exit
-      // in `runAsScript`, which makes the committed set nondeterministic.
-      // Logging every label in the batch is the only description that is
-      // guaranteed to cover it.
+      // rather than an exact list. The reason is the GEOMETRY of this call site,
+      // not `limitConcurrency`'s drain behaviour: `limit` here is
+      // LABEL_BATCH_SIZE (10) and a batch carries AT MOST 10 labels, so the
+      // initial `for (let i = 0; i < limit; i++) run()` loop in
+      // src/server/utils/concurrency-helpers.ts launches EVERY upsert before any
+      // of them can reject. Each one already in flight can therefore commit
+      // AFTER this warning is printed and after `labelBatch` has returned, and
+      // they also race the explicit exit in `runAsScript`, which makes the
+      // committed set nondeterministic. Logging every label in the batch is the
+      // only description guaranteed to cover it.
+      //
+      // ⚠️ What is NOT the reason, because an earlier draft of this comment said
+      // it was: the `finally`'s re-`run()`. With the pool already exhausted it
+      // finds no task and starts nothing. That path WOULD become load-bearing if
+      // the limit and the batch size ever diverge — a batch wider than `limit`
+      // leaves queued tasks for the `finally` to pull — so the conclusion above
+      // (log every label; the set is a superset) survives either way, but do not
+      // re-derive it from a mechanism that cannot fire at these two numbers.
       console.warn(
         `[label-resource-insights] upsert batch FAILED after a partial write; some rows may be committed WITHOUT an index announcement. Candidate model ids to re-queue by hand: ${labeledModelIds(
           versions,
@@ -772,11 +807,19 @@ export async function main(): Promise<void> {
   let labeled = 0;
   let failed = 0;
   let skippedTotal = 0;
-  // Models ANNOUNCED to the search-index update queue — issued, not confirmed
-  // landed. 🔴 Do not read this as a health signal on its own: `addToQueue`
-  // fails open and the wrappers discard its boolean, so this number is
-  // identical on a healthy run and on one whose every enqueue was parked in
-  // Postgres. `queueVerified` below is the measurement; this is the volume.
+  // ANNOUNCEMENTS ISSUED to the search-index update queue — not confirmed
+  // landed, and NOT a distinct-model count. 🔴 Two separate reasons not to read
+  // it as either. (a) `addToQueue` fails open and the wrappers discard its
+  // boolean, so this number is identical on a healthy run and on one whose
+  // every enqueue was parked in Postgres; `queueVerified` below is the
+  // measurement, this is the volume. (b) It SUMS the per-batch lists, each of
+  // which is deduplicated only within its own batch, so a model announced by
+  // two batches is counted twice — reachable under `--top`, where a model's
+  // versions cluster and one straddling the 10-version batch boundary lands in
+  // both. The consequence is a mis-sized load expectation, never wrong
+  // indexing: the queue is a redis set, so the duplicate announcement is free.
+  // The printed label says `announcements issued` for exactly this reason; do
+  // not "fix" it back to a model count without deduplicating across batches.
   let indexQueued = 0;
   // One-shot, after the first batch that actually enqueues. See
   // `verifyFirstEnqueue` for why a read-back exists and why it is one-shot.
@@ -892,7 +935,7 @@ export async function main(): Promise<void> {
   }
 
   console.log(
-    `[label-resource-insights] done: ${labeled} labeled, ${failed} failed, ${skippedTotal} skipped-current, ${indexQueued} models queued for reindex, ${spend()}, ${
+    `[label-resource-insights] done: ${labeled} labeled, ${failed} failed, ${skippedTotal} skipped-current, ${indexQueued} reindex announcements issued, ${spend()}, ${
       topIds ? `index=${index}` : `lastId=${lastId}`
     }, labelSpec=${LABEL_SPEC_HASH.slice(0, 12)}` + (dryRun ? ' (dry run — nothing written)' : '')
   );
@@ -912,10 +955,17 @@ export async function main(): Promise<void> {
  *
  *   FLUSH FIRST, because `process.exit()` does NOT drain pending async writes,
  *   and stdout to a PIPE is async. Measured on node 24.19.0 with a 2001-line
- *   writer: exiting bare lost the final line in 3 of 3 piped runs (38–2000 of
- *   2000 lines arrived, non-deterministically); draining first delivered all
- *   2001 in 3 of 3; the no-exit control delivered all 2001. Redirecting to a
- *   FILE is unaffected, which is exactly what makes this easy to miss.
+ *   writer: exiting bare TRUNCATES INTERMITTENTLY over a pipe. ⚠️ No rate is
+ *   quoted on purpose — two independent replications of that setup disagreed
+ *   (one lost the final line in every piped run it tried; the other saw loss in
+ *   1 of 3 piped to `cat` and 2 of 10 piped to `wc -l`), so the honest claim is
+ *   that it is NONDETERMINISTIC, and an earlier draft of this comment asserting
+ *   "3 of 3" was overstating a figure that does not replicate. Both
+ *   replications agree on the DIRECTION: bare exit truncates, drain-then-exit
+ *   delivered every line in every run, as did the no-exit control. Intermittence
+ *   is precisely why the drain is unconditional — there is no individual run you
+ *   can look at and conclude you did not need it. Redirecting to a FILE is
+ *   unaffected, which is exactly what makes this easy to miss.
  *
  * Why that matters more here than it looks: the LAST line is the one carrying
  * `lastId=` / `index=` — the resume token — and this script spends vendor money
@@ -928,6 +978,17 @@ export async function main(): Promise<void> {
  * test files call it directly, so a real `process.exit` anywhere reachable from
  * them would kill the vitest worker. The tail guard runs only when this file is
  * the entry point, which is never true under the runner.
+ *
+ * 🔴 BOTH DEFAULTS ARE THE PRODUCTION BINDING, AND THE ONLY CALL SITE PASSES
+ * NEITHER — so a test that injects both exercises the seam and NOT what ships.
+ * Measured: replacing `= drainStdio` with `= async () => {}` and `= process.exit`
+ * with `= () => {}` each left all 21 tests of
+ * scripts/__tests__/label-resource-insights-index-enqueue.test.ts green, and the
+ * first of those two mutants silently restores the truncated-resume-token defect
+ * this wrapper exists to fix. The defaults are therefore pinned by their own
+ * tests (`runAsScript(exit)` with the real `drainStdio`; `runAsScript(undefined,
+ * flush)` against a spied `process.exit`), which is also why `drainStdio` is
+ * exported. Do not collapse the signature or "simplify" the defaults away.
  */
 export async function runAsScript(
   exit: (code: number) => void = process.exit,
@@ -947,8 +1008,16 @@ export async function runAsScript(
   exit(0);
 }
 
-/** Wait for stdout AND stderr to drain. Empty writes settle after pending ones. */
-async function drainStdio(): Promise<void> {
+/**
+ * Wait for stdout AND stderr to drain. Empty writes settle after pending ones.
+ *
+ * Exported ONLY so it is reachable from a test — nothing in the app imports it.
+ * Precisely what the export buys: a test can hold the two write callbacks and
+ * watch this function WAIT for them. The default-binding test above cannot see
+ * that — it observes the writes being issued, which a fire-and-forget version
+ * would also satisfy while leaving the original truncation defect intact.
+ */
+export async function drainStdio(): Promise<void> {
   await new Promise<void>((resolve) => process.stdout.write('', () => resolve()));
   await new Promise<void>((resolve) => process.stderr.write('', () => resolve()));
 }
