@@ -506,6 +506,11 @@ const LEDGER = [
   'src/server/services/blocks/app-listing-assets.service.ts::addListingScreenshot',
   'src/server/services/blocks/app-listing-assets.service.ts::setListingCover',
   'src/server/services/blocks/app-listing-assets.service.ts::setListingIcon',
+  // W14: moves `al.visibility`, which the cached statement's LEVEL GATE reads, so it
+  // changes which rows a given audience floor sees. Not optional — the catalog key is
+  // per-cohort, so an un-busted level change leaves one cohort's id page wrong for up to
+  // the whole TTL.
+  'src/server/services/blocks/app-listing-visibility-write.service.ts::applyVisibility',
   // Catalog membership + the live-parent scalar writes.
   'src/server/services/blocks/offsite-listing.service.ts::applyApprovedRevision',
   'src/server/services/blocks/offsite-listing.service.ts::approveExternalRequest',
