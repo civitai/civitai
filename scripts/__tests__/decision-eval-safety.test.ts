@@ -101,6 +101,8 @@ describe('assertNoPii', () => {
     ['url', 'see https://example.com/u/1'],
     ['url', 'see www.example.com'],
     ['url', 'my profile is example.com/user/SomeName'],
+    ['url', 'see ...example.com/u'],
+    ['url', 'path -example.com/u'],
     ['handle', 'ping @someuser about it'],
   ])('🔴 refuses a %s-shaped string', (name, text) => {
     expect(() => assertNoPii('item-1', { body: text })).toThrow(`contains a ${name}-shaped string`);
@@ -125,10 +127,11 @@ describe('assertNoPii', () => {
 
   it('🔴 checks a long dotted run in linear time, so one prompt cannot stall a run', () => {
     const started = performance.now();
-    for (const body of ['ab.'.repeat(50_000), 'a'.repeat(150_000), 'a-'.repeat(75_000)]) {
+    // Sized so a quadratic revert fails in seconds, not minutes; linear is sub-millisecond.
+    for (const body of ['ab.'.repeat(8_000), 'a'.repeat(25_000), 'a-'.repeat(12_000)]) {
       expect(() => assertNoPii('item-1', { body })).not.toThrow();
     }
-    expect(performance.now() - started).toBeLessThan(2_000);
+    expect(performance.now() - started).toBeLessThan(500);
   });
 
   it('passes redacted text', () => {

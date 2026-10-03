@@ -109,7 +109,7 @@ function hasSchemelessLink(value: string): boolean {
     if (slash + 1 >= value.length || /\s/.test(value[slash + 1])) continue;
     let start = slash;
     while (start > 0 && /[a-z0-9.-]/i.test(value[start - 1])) start--;
-    if (DOMAIN_TOKEN.test(value.slice(start, slash))) return true;
+    if (DOMAIN_TOKEN.test(value.slice(start, slash).replace(/^[.-]+/, ''))) return true;
   }
   return false;
 }

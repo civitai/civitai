@@ -31,7 +31,7 @@ export type ReportInput = {
 const pct = (n: number | null) => (n === null ? 'n/a' : `${(n * 100).toFixed(1)}%`);
 const dec = (n: number | null) => (n === null ? 'n/a' : n.toFixed(3));
 
-function sliceRow(name: string, s: SliceScore): string {
+export function sliceRow(name: string, s: SliceScore): string {
   return `| ${name} | ${s.total} | ${s.missing} | ${s.refused} | ${s.errors} | ${
     s.answered
   } | ${pct(s.abstentionRate)} | ${pct(s.accuracy)} | ${dec(s.kappa)} | ${dec(s.ece)} |`;

@@ -9,6 +9,7 @@ import {
   wilsonLower,
   type Scored,
 } from '../decision-eval/metrics';
+import { sliceRow } from '../decision-eval/report';
 import { countCorrect, fitThresholds, scoreSplit } from '../decision-eval/scorer';
 import type { ManifestItem, Prediction } from '../decision-eval/types';
 
@@ -121,6 +122,26 @@ describe('fitClassThreshold', () => {
   });
 });
 
+describe('report rows', () => {
+  it('🔴 puts missing, refused and errors in their own columns', () => {
+    const row = sliceRow('model', {
+      total: 10,
+      missing: 1,
+      refused: 2,
+      errors: 3,
+      unlabelled: 0,
+      answered: 4,
+      abstained: 0,
+      abstentionRate: 0,
+      correct: 4,
+      accuracy: 1,
+      kappa: null,
+      ece: null,
+    });
+    expect(row).toBe('| model | 10 | 1 | 2 | 3 | 4 | 0.0% | 100.0% | n/a | n/a |');
+  });
+});
+
 describe('scorer', () => {
   const item = (itemId: string, split: ManifestItem['split'] = 'dev'): ManifestItem => ({
     itemId,
@@ -130,13 +151,14 @@ describe('scorer', () => {
     state: {},
     slices: { lang: itemId === 'c' ? 'de' : 'en' },
   });
-  const items = ['a', 'b', 'c', 'd', 'e'].map((id) => item(id));
+  const items = ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => item(id));
   const gold = new Map([
     ['a', 'x'],
     ['b', 'y'],
     ['c', 'x'],
     ['d', 'x'],
     ['e', 'y'],
+    ['f', 'x'],
   ]);
   const predictions: Prediction[] = [
     { itemId: 'a', runKey: 'k', status: 'ok', pred: 'x', confidence: 0.9, abstained: false },
@@ -144,14 +166,21 @@ describe('scorer', () => {
     { itemId: 'c', runKey: 'k', status: 'ok', pred: null, confidence: null, abstained: true },
     { itemId: 'd', runKey: 'k', status: 'missing' },
     { itemId: 'e', runKey: 'k', status: 'error', error: 'ImajevError: imajev returned HTTP 500' },
+    {
+      itemId: 'f',
+      runKey: 'k',
+      status: 'refused',
+      error: 'state.text contains a url-shaped string',
+    },
   ];
   const input = { items, gold, predictions, classes: ['x', 'y'] };
 
   it('🔴 keeps missing images and failed calls out of every denominator', () => {
     const s = scoreSplit(input, 'dev');
     expect(s).toMatchObject({
-      total: 5,
+      total: 6,
       missing: 1,
+      refused: 1,
       errors: 1,
       answered: 2,
       abstained: 1,
@@ -182,7 +211,7 @@ describe('scorer', () => {
   it('slices by the item slice keys', () => {
     const s = scoreSplit(input, 'dev');
     expect(s.slices.lang.de).toMatchObject({ total: 1, abstained: 1, answered: 0 });
-    expect(s.slices.lang.en).toMatchObject({ total: 4, answered: 2 });
+    expect(s.slices.lang.en).toMatchObject({ total: 5, answered: 2, refused: 1 });
   });
 
   it('counts correct answers against whatever gold it is handed', () => {
