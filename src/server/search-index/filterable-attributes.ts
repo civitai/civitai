@@ -73,11 +73,26 @@ export const modelsFilterableAttributes = [
   'poi',
   'minor',
   'hasActivePaidAccess',
-  // Carried so a `insight.qualityScore EXISTS` / `NOT EXISTS` filter can split the
-  // labeled tier from the unlabeled one — which is what the pre-registered gold-set
-  // study needs to compare a purpose-query arm against a popularity arm over the slice
-  // where labels actually exist (~1.1% of documents). Verified on Meilisearch v1.15.0
-  // that EXISTS works on this field even though ./displayed-attributes.ts withholds it.
+  // Carried so a filter can split the labeled tier from the unlabeled one — which is what
+  // the pre-registered gold-set study needs to compare a purpose-query arm against a
+  // popularity arm over the slice where labels actually exist (~1.1% of documents).
+  // Verified on Meilisearch v1.15.0 that filtering works on this field even though
+  // ./displayed-attributes.ts withholds it.
+  //
+  // 🔴 THE PREDICATE IS `IS NOT NULL` / `IS NULL`, **NOT** `EXISTS` / `NOT EXISTS`, and an
+  // earlier version of this comment named the wrong pair. `models.search-index.ts` WRITES
+  // `insight: { qualityScore: null }` on every unlabeled model (it must — omitting the key
+  // cannot clear a stale score under PUT merge semantics; see that file). A written null
+  // COUNTS AS EXISTING, so once a reset has written every document:
+  //   EXISTS       -> every document          (useless as a labeled-tier arm)
+  //   NOT EXISTS   -> nothing at all          (useless as a control arm)
+  //   IS NOT NULL  -> the labeled tier        <- use this
+  //   IS NULL      -> the unlabeled remainder <- and this
+  // Measured on v1.15.0 over a mixed fixture (labeled / written-null / key-absent): EXISTS
+  // returned 5 of 7 including every written null, NOT EXISTS returned only the 2 whose key
+  // was absent, and `IS NOT NULL` returned the labeled rows plus the key-absent ones — which
+  // is why the pair above is only correct once every document carries the key, i.e. AFTER a
+  // full reset. Before then, no single predicate isolates the labeled set.
   //
   // ⚠ Added in the SAME change as the sortable entry, and the reason first given for that
   // was WRONG: it said "both lists are written only by `onIndexSetup` from `reset()`".
