@@ -114,39 +114,42 @@ export function redact(text: string, known: readonly string[] = []): string {
 
 const REDACT_MARGIN_CHARS = 1000;
 
+/** Any character that cannot be part of an email, link, handle or id; CJK text counts as a separator. */
+const SEPARATOR = /[^\w.@%+:/#=&?~-]/;
+
 /**
  * Several patterns are quadratic on a long non-matching run, so redaction gets a
- * bounded window: the kept length plus a margin, cut at whitespace so the cut
- * cannot split an identifier. Redaction then runs before the final cut.
+ * bounded window: the kept length plus a margin, cut at a separator so the cut
+ * cannot split an identifier.
  */
 export function redactionWindow(text: string, keep: number, fromEnd: boolean): string {
   const limit = keep + REDACT_MARGIN_CHARS;
   if (text.length <= limit) return text;
   if (fromEnd) {
     const tail = text.slice(-limit);
-    const ws = tail.search(/\s/);
-    return ws < 0 ? '' : tail.slice(ws + 1);
+    const at = tail.search(SEPARATOR);
+    return at < 0 ? '' : tail.slice(at + 1);
   }
   const head = text.slice(0, limit);
-  const ws = Math.max(head.lastIndexOf(' '), head.lastIndexOf('\n'), head.lastIndexOf('\t'));
-  return ws < 0 ? '' : head.slice(0, ws);
+  for (let i = head.length - 1; i >= 0; i--) if (SEPARATOR.test(head[i])) return head.slice(0, i);
+  return '';
+}
+
+/**
+ * Redact the bounded window, cut to length, then redact the cut again: the
+ * final cut can itself create a match, e.g. a tail that now starts "@name".
+ */
+function redactField(text: string, keep: number, fromEnd: boolean, known: readonly string[]) {
+  const once = redact(redactionWindow(text, keep, fromEnd), known);
+  return redact(fromEnd ? once.slice(-keep) : once.slice(0, keep), known);
 }
 
 export function buildSupportState(raw: SupportTicketRaw): DecisionState {
   const known = [raw.requesterEmail, raw.requesterEmail.split('@')[0] ?? '', raw.username];
   return {
-    subject: redact(redactionWindow(raw.subject, SUBJECT_CHARS, false), known).slice(
-      0,
-      SUBJECT_CHARS
-    ),
-    first_message: redact(
-      redactionWindow(raw.firstMessage, FIRST_MESSAGE_CHARS, false),
-      known
-    ).slice(0, FIRST_MESSAGE_CHARS),
-    latest_messages: redact(
-      redactionWindow(raw.latestMessages, LATEST_MESSAGES_CHARS, true),
-      known
-    ).slice(-LATEST_MESSAGES_CHARS),
+    subject: redactField(raw.subject, SUBJECT_CHARS, false, known),
+    first_message: redactField(raw.firstMessage, FIRST_MESSAGE_CHARS, false, known),
+    latest_messages: redactField(raw.latestMessages, LATEST_MESSAGES_CHARS, true, known),
     member_tier: raw.memberTier || 'unknown',
   };
 }

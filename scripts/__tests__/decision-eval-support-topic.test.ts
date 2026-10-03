@@ -713,7 +713,8 @@ describe('support.topic redaction window', () => {
 
   it('keeps redaction time bounded on a long run no pattern matches', () => {
     // Several patterns are quadratic here; unbounded, 32k characters takes several seconds.
-    const run = 'a.'.repeat(16_000);
+    // Spaced so each window keeps ~7k characters of the slow shape, rather than collapsing to ''.
+    const run = ('a.'.repeat(3400) + ' ').repeat(5);
     const started = performance.now();
     buildSupportState(raw({ subject: run, firstMessage: run, latestMessages: run }));
     expect(performance.now() - started).toBeLessThan(3000);
@@ -723,5 +724,22 @@ describe('support.topic redaction window', () => {
     expect(redact('sent from bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq ok')).toBe(
       'sent from [id] ok'
     );
+  });
+});
+
+describe('support.topic final cut', () => {
+  it('re-redacts after the tail cut, which can itself start a handle', () => {
+    const state = buildSupportState(
+      raw({ latestMessages: 'earlier text, ask me@discord ' + 'y '.repeat(1495) + 'y' })
+    );
+    expect(() => assertNoPii('x', state)).not.toThrow();
+    expect(state.latest_messages.startsWith('[handle]')).toBe(true);
+  });
+
+  it('cuts text without spaces at a script boundary instead of dropping it', () => {
+    const cjk = '問'.repeat(8000);
+    const state = buildSupportState(raw({ firstMessage: 'Hello\n' + cjk, latestMessages: cjk }));
+    expect(state.first_message.length).toBe(6000);
+    expect(state.latest_messages.length).toBe(3000);
   });
 });
