@@ -712,11 +712,14 @@ describe('support.topic redaction window', () => {
   });
 
   it('keeps redaction time bounded on a long run no pattern matches', () => {
-    // Several patterns are quadratic here; unbounded, 32k characters takes several seconds.
-    // Spaced so each window keeps ~7k characters of the slow shape, rather than collapsing to ''.
-    const run = ('a.'.repeat(3400) + ' ').repeat(5);
+    // Several patterns are quadratic on one contiguous run: unwindowed, 32k characters takes
+    // several seconds. A spaced run is cheap either way, so it checks only what the window keeps.
+    const contiguous = 'a.'.repeat(16_000);
+    const spaced = ('a.'.repeat(3400) + ' ').repeat(5);
     const started = performance.now();
-    buildSupportState(raw({ subject: run, firstMessage: run, latestMessages: run }));
+    buildSupportState(
+      raw({ subject: contiguous, firstMessage: contiguous, latestMessages: spaced })
+    );
     expect(performance.now() - started).toBeLessThan(3000);
   });
 
