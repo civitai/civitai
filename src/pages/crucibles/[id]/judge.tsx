@@ -39,6 +39,7 @@ import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CrucibleJudgingUI } from '~/components/Crucible/CrucibleJudgingUI';
+import { judgeSkipListReducer } from '~/components/Crucible/judge-skip-list';
 import type { JudgingPairData, WatchedMs } from '~/components/Crucible/CrucibleJudgingUI';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { getCrucibleUrl, isCrucibleSfw } from '~/utils/crucible-helpers';
@@ -133,7 +134,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
     {
       enabled: canRequestPairs,
       refetchOnWindowFocus: false,
-      // The skip list resets after every vote, so an earlier list recurs. Its cached pair is stale
+      // A skip list can recur once a vote takes an entry off it. Its cached pair is stale
       // (staleTime is Infinity app-wide), so nothing is kept once the input moves on.
       gcTime: 0,
     }
@@ -244,9 +245,10 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
         setCurrentStreak((prev) => prev + 1); // Increment streak on vote
         setLastVoteAttempt(null);
         refetchProgress();
-        if (skippedEntryIds.length) {
-          // Skips last until the next vote. Changing the input fetches the next pair on its own.
-          setSkippedEntryIds([]);
+        const nextSkipped = judgeSkipListReducer(skippedEntryIds, { type: 'vote', pair });
+        if (nextSkipped !== skippedEntryIds) {
+          // Changing the input fetches the next pair on its own.
+          setSkippedEntryIds(nextSkipped);
         } else {
           const result = await refetchPair();
           // Only an explicit null means no pairs are left; a failed refetch leaves `data` undefined.
@@ -282,8 +284,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
         setSessionSkips((prev) => prev + 1);
         setCurrentStreak(0);
       }
-      // The last 20 entries (~10 pairs); the server brings them back once nothing else is left.
-      setSkippedEntryIds((prev) => [...prev, pair.left.id, pair.right.id].slice(-20));
+      setSkippedEntryIds((prev) => judgeSkipListReducer(prev, { type: 'skip', pair }));
     },
     [isVoting, isLoadingPair, pair]
   );
