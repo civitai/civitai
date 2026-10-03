@@ -194,9 +194,9 @@ describe('🔴 askJev talks to the DECISIONS endpoint', () => {
     const body = lastRequestBody();
     expect(Object.keys(body).sort()).toEqual(['model', 'questions', 'state'].sort());
     expect(body.state).toEqual({ prompt: 'a red sports car' });
-    // Each of these was sent by the broken chat transport; none is known to be
-    // accepted here, and an alpha endpoint that validates strictly is exactly
-    // where an unverified extra key costs a 400.
+    // Each of these was sent by the broken chat transport. The endpoint ignores
+    // an undeclared key with a 200, so sending one would read as configured while
+    // doing nothing; `provider` is sent only on an explicit zero-retention opt-in.
     for (const key of [
       'messages',
       'temperature',
@@ -208,6 +208,46 @@ describe('🔴 askJev talks to the DECISIONS endpoint', () => {
     ]) {
       expect(body).not.toHaveProperty(key);
     }
+  });
+
+  it('🔴 sends provider.zdr only when zero data retention is requested', async () => {
+    respond(RECORDED_200);
+    await askJev(
+      { state: { prompt: 'p' }, questions: recordedQuestions },
+      { zeroDataRetention: true }
+    );
+    expect(lastRequestBody().provider).toEqual({ zdr: true });
+
+    respond(RECORDED_200);
+    await askJev({ state: { prompt: 'p' }, questions: recordedQuestions });
+    expect(lastRequestBody()).not.toHaveProperty('provider');
+  });
+
+  it('carries option descriptions into the wire criteria, and an undescribed option describes itself', () => {
+    const wire = buildDecisionsQuestions([
+      { ...roleQuestion, optionDescriptions: { character: 'a named character or person' } },
+    ]);
+    expect(wire.role).toEqual({
+      type: 'choice',
+      instructions: roleQuestion.prompt,
+      criteria: {
+        none: 'none',
+        concept: 'concept',
+        character: 'a named character or person',
+        style: 'style',
+      },
+    });
+  });
+
+  it('refuses a description for something that is not an option, before any spend', async () => {
+    respond(RECORDED_200);
+    await expect(
+      askJev({
+        state: { prompt: 'p' },
+        questions: [{ ...roleQuestion, optionDescriptions: { villain: 'not an option' } }],
+      })
+    ).rejects.toThrow('describes "villain", which is not an option');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('🔴 the `questions` that go ON THE WIRE are a record keyed by id, not an array', async () => {

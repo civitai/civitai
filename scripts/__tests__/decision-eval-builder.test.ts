@@ -1,0 +1,162 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+  buildEvalIndex,
+  buildTrainManifest,
+  enforceGroupIsolation,
+  LeakageError,
+  mergeManifest,
+  parseEvalIndex,
+  resolveGold,
+  serializeEvalIndex,
+  timeSplit,
+  type TrainCandidate,
+} from '../decision-eval/builder';
+import type { ManifestItem, Split } from '../decision-eval/types';
+
+const item = (itemId: string, groupKey: string, split: Split): ManifestItem => ({
+  itemId,
+  groupKey,
+  ts: '2026-09-01T00:00:00Z',
+  split,
+  state: {},
+});
+
+describe('timeSplit', () => {
+  const now = new Date('2026-10-03T00:00:00Z');
+  it('train before day -30, dev -30 to -15, test from -15', () => {
+    expect(timeSplit('2026-09-02T23:59:59Z', now)).toBe('train');
+    expect(timeSplit('2026-09-03T00:00:00Z', now)).toBe('dev');
+    expect(timeSplit('2026-09-17T23:59:59Z', now)).toBe('dev');
+    expect(timeSplit('2026-09-18T00:00:00Z', now)).toBe('test');
+  });
+});
+
+describe('enforceGroupIsolation', () => {
+  const items = [item('1', 'u1', 'dev'), item('2', 'u1', 'test'), item('3', 'u2', 'test')];
+
+  it('refuses a group that spans two splits', () => {
+    expect(() => enforceGroupIsolation(items)).toThrow(LeakageError);
+  });
+
+  it('keeps the earliest split and returns what it dropped', () => {
+    const r = enforceGroupIsolation(items, { dropLaterOverlap: true });
+    expect(r.items.map((i) => i.itemId)).toEqual(['1', '3']);
+    expect(r.dropped).toEqual([{ itemId: '2', groupKey: 'u1', split: 'test' }]);
+  });
+});
+
+describe('mergeManifest — the rolling daily build', () => {
+  it('🔴 never re-splits an item it already assigned', () => {
+    const existing = [item('1', 'u1', 'test')];
+    const incoming = [{ ...item('1', 'u1', 'dev'), state: { changed: 'yes' } }];
+    const r = mergeManifest(existing, incoming);
+    expect(r.items).toEqual(existing);
+    expect(r.added).toBe(0);
+  });
+
+  it('keeps items the source no longer returns', () => {
+    const r = mergeManifest([item('gone', 'u9', 'dev')], [item('new', 'u1', 'test')]);
+    expect(r.items.map((i) => i.itemId)).toEqual(['gone', 'new']);
+  });
+
+  it('refuses a new item whose group already sits in another split', () => {
+    expect(() => mergeManifest([item('1', 'u1', 'dev')], [item('2', 'u1', 'test')])).toThrow(
+      LeakageError
+    );
+    const r = mergeManifest([item('1', 'u1', 'dev')], [item('2', 'u1', 'test')], {
+      dropConflicts: true,
+    });
+    expect(r.dropped.map((d) => d.itemId)).toEqual(['2']);
+    expect(r.items.map((i) => i.itemId)).toEqual(['1']);
+  });
+});
+
+describe('buildTrainManifest — the leakage control', () => {
+  const index = buildEvalIndex([item('e1', 'g-eval', 'dev'), item('t1', 'g-train', 'train')]);
+  const candidate = (itemId: string, groupKey: string, partition: TrainCandidate['partition']) => ({
+    itemId,
+    groupKey,
+    ts: '2026-08-01T00:00:00Z',
+    state: {},
+    partition,
+  });
+
+  it('indexes only eval splits', () => {
+    expect(index).toEqual({ itemIds: ['e1'], groupKeys: ['g-eval'] });
+  });
+
+  it('🔴 refuses a planted eval id', () => {
+    expect(() => buildTrainManifest([candidate('e1', 'other', 'train')], index)).toThrow(
+      /1 training row\(s\) collide with the eval index \(first: item e1/
+    );
+  });
+
+  it('🔴 refuses an eval id hidden in the trainer-dev partition', () => {
+    expect(() => buildTrainManifest([candidate('e1', 'other', 'trainer-dev')], index)).toThrow(
+      /partition trainer-dev/
+    );
+  });
+
+  it('🔴 refuses a row from an eval GROUP even under a new item id', () => {
+    expect(() => buildTrainManifest([candidate('fresh', 'g-eval', 'train')], index)).toThrow(
+      LeakageError
+    );
+  });
+
+  it('builds when nothing collides', () => {
+    const rows = [candidate('t1', 'g-train', 'train'), candidate('t2', 'g-train', 'trainer-dev')];
+    expect(buildTrainManifest(rows, index)).toEqual(rows);
+  });
+
+  it('the index only grows: an id that was once eval stays eval', () => {
+    const later = buildEvalIndex([item('e2', 'g2', 'test')], index);
+    expect(later.itemIds).toEqual(['e1', 'e2']);
+  });
+});
+
+describe('eval index file (v1, read by the LoRA builder)', () => {
+  const index = { itemIds: ['e1'], groupKeys: ['g1'] };
+  const file = serializeEvalIndex('support.topic', index, new Date('2026-10-03T00:00:00Z'));
+
+  it('round-trips', () => {
+    expect(file).toEqual({
+      schema: 'civitai.decision-eval.eval-index',
+      version: 1,
+      nodeId: 'support.topic',
+      updatedAt: '2026-10-03T00:00:00.000Z',
+      itemIds: ['e1'],
+      groupKeys: ['g1'],
+    });
+    expect(parseEvalIndex(JSON.parse(JSON.stringify(file)), 'support.topic')).toEqual(index);
+  });
+
+  it.each([
+    ['another node', { ...file, nodeId: 'mod.minor' }],
+    ['another version', { ...file, version: 2 }],
+    ['a non-string id', { ...file, itemIds: [1] }],
+    ['a missing list', { ...file, groupKeys: undefined }],
+  ])('🔴 refuses an index for %s', (_, bad) => {
+    expect(() => parseEvalIndex(bad, 'support.topic')).toThrow(LeakageError);
+  });
+});
+
+describe('resolveGold', () => {
+  it('takes the majority, drops ties, and keeps human pairs', () => {
+    const r = resolveGold([
+      { itemId: 'a', gold: 'x', goldSource: 's', labeler: '1' },
+      { itemId: 'a', gold: 'x', goldSource: 's', labeler: '2' },
+      { itemId: 'a', gold: 'y', goldSource: 's', labeler: '3' },
+      { itemId: 'b', gold: 'x', goldSource: 's', labeler: '1' },
+      { itemId: 'b', gold: 'y', goldSource: 's', labeler: '2' },
+      { itemId: 'c', gold: 'y', goldSource: 's', firstHumanLabel: 'x' },
+    ]);
+    expect([...r.gold]).toEqual([
+      ['a', 'x'],
+      ['c', 'y'],
+    ]);
+    expect(r.ties).toEqual(['b']);
+    expect(r.humanPairs).toEqual([['x', 'x']]);
+    expect(r.firstVsFinal).toEqual([['x', 'y']]);
+  });
+});
