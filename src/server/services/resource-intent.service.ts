@@ -39,11 +39,17 @@ import { resourceExceedsCatalogCeiling } from '~/server/utils/block-catalog-matu
  * stage-3 parse error, a hydration error, and a matcher error OTHER than the
  * `ResourceInsight` read all return `degraded: true` with empty suggestions and
  * no thrown error, so callers treat it as "no suggestion". The exception is the
- * label read: it is caught INSIDE the matcher and yields a complete, UNdegraded
- * response carrying `insightFallback: true` (see below). ⚠️ This sentence has
- * now been wrong twice — first as "ANY error in ANY stage", then as a narrower
- * absolute that still swallowed the label read. If you are about to reword it a
- * third time, enumerate the `catch` sites instead of generalising over them. Jev
+ * label read: it is caught INSIDE the matcher and yields a response carrying
+ * `insightFallback: true`, which is undegraded UNLESS a later stage then fails
+ * (see below — the two flags are independent, and both can be true at once).
+ * ⚠️ This sentence has now been wrong THREE times — as "ANY error in ANY
+ * stage"; then as a narrower absolute that still swallowed the label read; then
+ * as an absolute on the exception itself, claiming the label read always yields
+ * an undegraded response. Each rewrite fixed the previous generalisation by
+ * writing a new one. If you are about to reword it a fourth time: enumerate the
+ * `catch` sites, do not generalise over them, and note the enumeration above
+ * names the DEGRADING ones only — several other catches here swallow without
+ * touching the degraded contract. Jev
  * output can only reorder/drop within the gate-passing shortlist; every gate
  * (availability, maturity, coverage, baseModel, celebrity) is applied in
  * deterministic code BEFORE Jev ranks, and the stage-3 option list contains
@@ -506,15 +512,18 @@ export async function getResourceIntent(
         // its lifetime are the same two fields — including on a path that rebuilt
         // the response object. `degraded` is checked first because a degraded
         // response carries no suggestions whatever the label read did.
-        // 🔴 THIS PRECEDENCE IS NOT PINNED BY ANY TEST, and measured: swapping
-        // the two arms leaves all 79 tests green. It is un-killable only because
-        // both constants are currently 60, which is exactly the coupling the
-        // separate constant exists to let you break — so if you ever give the two
-        // paths different values, this ordering becomes behaviourally
-        // load-bearing with no guard on it. Pin it in the same change that
-        // diverges them. (Same class as the promote/demote constant swap the F1
-        // test docstring discloses; a commit message in this branch said "6
-        // mutants applied, 6 killed", which read as a complete sweep and was not.)
+        // 🔴 THIS PRECEDENCE IS NOT PINNED BY ANY TEST, and while both constants
+        // are 60 the swap is a SEMANTIC NO-OP — the two orderings agree on all
+        // four (degraded, insightFallback) states, so no test anywhere can kill
+        // it, and none covers the `degraded && insightFallback` state where the
+        // order would start to matter. That overlap state IS reachable: a failed
+        // label read followed by a later-stage failure produces it. So the moment
+        // you give the two paths different values this ordering becomes
+        // behaviourally load-bearing with no guard on it — pin it in the same
+        // change that diverges them. (Same class as the promote/demote constant
+        // swap the F1 test docstring discloses. The earlier mutation sweep on
+        // this branch did not cover it; its own wording scoped itself to a re-run
+        // after the fixes, so the gap is in what was swept, not in the claim.)
         EX: response.degraded
           ? DEGRADED_CACHE_TTL_SECONDS
           : response.insightFallback
