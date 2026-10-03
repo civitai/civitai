@@ -3,10 +3,18 @@ import { TRPCError } from '@trpc/server';
 import { NsfwLevel } from '~/server/common/enums';
 import { Availability } from '~/shared/utils/prisma/enums';
 
-const { mockGetPostDetail, mockRateLimit, mockIsRegionRestricted } = vi.hoisted(() => ({
+const {
+  mockGetPostDetail,
+  mockRateLimit,
+  mockIsRegionRestricted,
+  mockRunImageSearch,
+  mockAcquire,
+} = vi.hoisted(() => ({
   mockGetPostDetail: vi.fn(),
   mockRateLimit: vi.fn(),
   mockIsRegionRestricted: vi.fn(),
+  mockRunImageSearch: vi.fn(),
+  mockAcquire: vi.fn(),
 }));
 
 vi.mock('~/server/services/post.service', () => ({ getPostDetail: mockGetPostDetail }));
@@ -21,10 +29,22 @@ vi.mock('@civitai/next-axiom', () => ({
     (...args: unknown[]) =>
       h(...args),
 }));
+vi.mock('~/server/services/image-search.service', () => ({ runImageSearch: mockRunImageSearch }));
+vi.mock('~/server/utils/request-bulkhead', async (importOriginal) => ({
+  ...(await importOriginal<typeof RequestBulkhead>()),
+  acquireBulkheadSlot: mockAcquire,
+}));
 vi.mock('~/server/auth/get-server-auth-session', () => ({ getServerAuthSession: vi.fn() }));
 vi.mock('~/server/prom/http-errors', () => ({ instrumentApiResponse: vi.fn() }));
 
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as RequestBulkhead from '~/server/utils/request-bulkhead';
+import { BulkheadFullError } from '~/server/utils/request-bulkhead';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { createRealApiPair } from '~/server/utils/__tests__/real-api-response';
 import handler from '~/pages/api/v1/posts/[id]';
 
@@ -74,11 +94,16 @@ function post(overrides: Record<string, unknown> = {}) {
   };
 }
 
+const release = vi.fn();
+
 describe('GET /api/v1/posts/[id]', () => {
   beforeEach(() => {
     mockGetPostDetail.mockReset();
     mockRateLimit.mockReset().mockResolvedValue({ allowed: true });
     mockIsRegionRestricted.mockReset().mockReturnValue(false);
+    mockRunImageSearch.mockReset().mockResolvedValue({ items: [] });
+    mockAcquire.mockReset().mockReturnValue(release);
+    release.mockClear();
   });
 
   it('returns the post’s title, description and public fields only', async () => {
@@ -96,7 +121,78 @@ describe('GET /api/v1/posts/[id]', () => {
       modelVersionId: 7,
       user: { id: 3, username: 'alice' },
       tags: [{ id: 9, name: 'landscape' }],
+      images: [],
     });
+  });
+
+  it('returns the post’s images in the post’s own order, not the search’s', async () => {
+    mockGetPostDetail.mockResolvedValue(post());
+    mockRunImageSearch.mockResolvedValue({ items: [{ id: 2 }, { id: 3 }, { id: 1 }] });
+    dbMock.dbRead.image.findMany.mockResolvedValue([
+      { id: 1, index: 0 },
+      { id: 2, index: 1 },
+      { id: 3, index: 2 },
+    ]);
+
+    const { body } = await call({ id: '55288' });
+
+    expect(body?.images).toEqual([{ id: 1 }, { id: 2 }, { id: 3 }]);
+    expect(dbMock.dbRead.image.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { postId: 55288 } })
+    );
+  });
+
+  it('searches this post’s images as anonymous, at every browsable level', async () => {
+    mockGetPostDetail.mockResolvedValue(post());
+
+    await call({ id: '55288' }, { user: { id: 3, isModerator: true } });
+
+    expect(mockRunImageSearch).toHaveBeenCalledTimes(1);
+    const [input, ctx] = mockRunImageSearch.mock.calls[0];
+    expect(input).toMatchObject({ limit: 100, withMeta: false, withTags: false });
+    expect(input.data).toMatchObject({ postId: 55288 });
+    expect(ctx.browsingLevel).toBe(allBrowsingLevelsFlag);
+    expect(ctx.user).toBeUndefined();
+  });
+
+  it('clamps the image search to SFW in a restricted region', async () => {
+    mockIsRegionRestricted.mockReturnValue(true);
+    mockGetPostDetail.mockResolvedValue(post());
+
+    await call({ id: '55288' });
+
+    expect(mockRunImageSearch.mock.calls[0][1].browsingLevel).toBe(sfwBrowsingLevelsFlag);
+  });
+
+  it('does not search for images of a post it will not serve', async () => {
+    mockGetPostDetail.mockResolvedValue(post({ publishedAt: null }));
+
+    await call({ id: '55288' });
+
+    expect(mockRunImageSearch).not.toHaveBeenCalled();
+  });
+
+  it('503s without caching when the pod has no heavy-image slot free', async () => {
+    mockGetPostDetail.mockResolvedValue(post());
+    mockAcquire.mockImplementation(() => {
+      throw new BulkheadFullError('heavy-image', 1);
+    });
+
+    const { statusCode, header } = await call({ id: '55288' });
+
+    expect(statusCode).toBe(503);
+    expect(header('Cache-Control')).toBe('no-store');
+    expect(header('Retry-After')).toBe('2');
+    expect(mockRunImageSearch).not.toHaveBeenCalled();
+  });
+
+  it('releases the heavy-image slot even when the image search fails', async () => {
+    mockGetPostDetail.mockResolvedValue(post());
+    mockRunImageSearch.mockRejectedValue(new Error('boom'));
+
+    await call({ id: '55288' });
+
+    expect(release).toHaveBeenCalledTimes(1);
   });
 
   it('looks the post up as anonymous even for a signed-in owner or moderator', async () => {
@@ -161,10 +257,16 @@ describe('GET /api/v1/posts/[id]', () => {
     expect(body?.modelVersionId).toBeNull();
   });
 
-  it('404s a private post', async () => {
-    mockGetPostDetail.mockResolvedValue(post({ availability: Availability.Private }));
+  it('serves only Public and Unsearchable posts', async () => {
+    const statusFor = async (availability: Availability) => {
+      mockGetPostDetail.mockResolvedValue(post({ availability }));
+      return (await call({ id: '55288' })).statusCode;
+    };
 
-    expect((await call({ id: '55288' })).statusCode).toBe(404);
+    expect(await statusFor(Availability.Public)).toBe(200);
+    expect(await statusFor(Availability.Unsearchable)).toBe(200);
+    expect(await statusFor(Availability.Private)).toBe(404);
+    expect(await statusFor(Availability.EarlyAccess)).toBe(404);
   });
 
   it('404s a post the anonymous lookup cannot see', async () => {
