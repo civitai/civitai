@@ -6,11 +6,13 @@ import type * as ImageService from '~/server/services/image.service';
 import type * as PostService from '~/server/services/post.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { CollectionItemRejectionReason, CollectionItemStatus } from '~/shared/utils/prisma/enums';
 import type { CollectionAiReviewSchema } from '~/server/schema/collection.schema';
 import { DEFAULT_AI_REVIEW_REASON_COPY } from '~/server/services/ai/collection-review.service';
 import {
   MAX_REVIEW_ATTEMPTS,
+  MINOR_UPGRADABLE_REVIEW_KEYS,
   UNAVAILABLE_IMAGE_REJECTION,
   recordFailedAttempt,
   resolveAutomatedRejectionReason,
@@ -99,7 +101,9 @@ const postOf = (imageId: number) => imageId * 10;
 
 function queuePending(
   items: ReturnType<typeof pendingItem>[],
-  { flagImage }: { flagImage?: (imageIds: number[]) => { id: number; postId: number }[] } = {}
+  {
+    flagImage,
+  }: { flagImage?: (imageIds: number[]) => { id: number; postId: number | null }[] } = {}
 ) {
   dbMock.dbWrite.$queryRaw.mockImplementation(async (strings: string[], ...values: unknown[]) => {
     const sql = strings.join('?');
@@ -117,6 +121,7 @@ beforeEach(() => {
   updateCollectionItemsStatus.mockReset();
   queueImageSearchIndexUpdate.mockReset().mockResolvedValue(undefined);
   bustCachesForPosts.mockReset().mockResolvedValue(undefined);
+  loggingMock.logToAxiom.mockClear();
   dbMock.dbWrite.$queryRaw.mockClear();
   redisMock.sysRedis.incrBy.mockReset();
   redisMock.sysRedis.expire.mockClear();
@@ -323,15 +328,48 @@ describe('reviewCollection: a minor-related escalation', () => {
 
   // Overwriting another queue's value would take the image out of that queue, and the job must
   // only ever add review.
-  it('only fills an empty review slot on a scanned image', async () => {
+  it('only fills an empty slot, or one minor review outranks, on a scanned image', async () => {
     queuePending([pendingItem()]);
     modelSees({ depictsMinor: true, minorIsPhotorealistic: true });
 
     await reviewCollection(COLLECTION_ID, config);
 
     expect(sqlOf(minorFlagCalls()[0]).replace(/\s+/g, ' ').trim()).toBe(
-      `UPDATE "Image" SET "needsReview" = 'minor', "updatedAt" = now() WHERE id IN (?) AND "needsReview" IS NULL AND ingestion = 'Scanned' RETURNING id, "postId"`
+      `UPDATE "Image" SET "needsReview" = 'minor', "updatedAt" = now() WHERE id IN (?) AND ("needsReview" IS NULL OR "needsReview" IN (?)) AND ingestion = 'Scanned' RETURNING id, "postId"`
     );
+  });
+
+  // The F1 decision: minor review may take an image from the new-user and tag queues, which it
+  // outranks, and from no other. Widening this moves images out of queues that exist for a
+  // different reason (poi, appeal, csam, ...), so get that decided before changing it.
+  it('upgrades to minor from exactly the new-user and tag queues', () => {
+    expect([...MINOR_UPGRADABLE_REVIEW_KEYS]).toEqual(['newUser', 'tag']);
+  });
+
+  const writableKeys = async () => {
+    queuePending([pendingItem()]);
+    modelSees({ depictsMinor: true, minorIsPhotorealistic: true });
+    await reviewCollection(COLLECTION_ID, config);
+    return (minorFlagCalls()[0][2] as { values: string[] }).values;
+  };
+
+  it.each(['newUser', 'tag'])(
+    'moves an image held for %s review into the minor queue',
+    async (key) => {
+      expect(await writableKeys()).toContain(key);
+    }
+  );
+
+  it.each(['poi', 'appeal', 'modRule', 'csam', 'remixSource', 'reported', 'bestiality'])(
+    'leaves an image held for %s review where it is',
+    async (key) => {
+      expect(await writableKeys()).not.toContain(key);
+    }
+  );
+
+  // Rewriting 'minor' with itself changes nothing, and counts an already-queued image as routed.
+  it('treats an image already in the minor queue as routed', async () => {
+    expect(await writableKeys()).toEqual(['newUser', 'tag', 'minor']);
   });
 
   it('leaves the image alone for an escalation that is not about a minor', async () => {
@@ -382,18 +420,26 @@ describe('reviewCollection: a minor-related escalation', () => {
   // Bounded like a failed model call, and then held rather than decided.
   it('stamps instead of rejecting once the flag write is out of attempts', async () => {
     redisMock.sysRedis.incrBy.mockResolvedValue(MAX_REVIEW_ATTEMPTS);
-    queuePending([pendingItem()], {
+    const clean = pendingItem({ collectionItemId: ITEM_ID + 1, imageId: IMAGE_ID + 1 });
+    queuePending([pendingItem(), clean], {
       flagImage: () => {
         throw new Error('db down');
       },
     });
-    modelSees({ depictsMinor: true, minorIsPhotorealistic: true });
+    modelSees({});
+    reviewImage.mockResolvedValueOnce({
+      observations: { ...cleanObservations, depictsMinor: true, minorIsPhotorealistic: true },
+      usage: { promptTokens: 1, completionTokens: 1 },
+    });
 
     await reviewCollection(COLLECTION_ID, config);
 
     expect(claimCalls()).toHaveLength(1);
-    expect((claimCalls()[0][3] as { values: number[] }).values).toEqual([ITEM_ID]);
-    expect(statusWrites()).toEqual([]);
+    expect((claimCalls()[0][3] as { values: number[] }).values).toEqual([ITEM_ID, ITEM_ID + 1]);
+    // Only the clean item is decided; the escalated one stays in REVIEW.
+    expect(updateCollectionItemsStatus.mock.calls.map((call) => call[0].input)).toEqual([
+      expect.objectContaining({ collectionItemIds: [ITEM_ID + 1], status: 'ACCEPTED' }),
+    ]);
   });
 
   // An image already held in another queue still gets a person; leaving the item unclaimed instead
@@ -427,7 +473,24 @@ describe('reviewCollection: a minor-related escalation', () => {
     ]);
     expect(queueImageSearchIndexUpdate).toHaveBeenCalledTimes(1);
     expect(queueImageSearchIndexUpdate).toHaveBeenCalledWith({ ids: [IMAGE_ID], action: 'Update' });
+    expect(bustCachesForPosts).toHaveBeenCalledTimes(1);
     expect(bustCachesForPosts).toHaveBeenCalledWith([postOf(IMAGE_ID)]);
+    // The unrouted one is the only trace outside ClickHouse.
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: 'Minor escalation not routed to the minor queue',
+        imageIds: [IMAGE_ID + 1],
+      })
+    );
+  });
+
+  it('skips the cache bust for an image with no post', async () => {
+    queuePending([pendingItem()], { flagImage: () => [{ id: IMAGE_ID, postId: null }] });
+    modelSees({ depictsMinor: true, minorIsPhotorealistic: true });
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(bustCachesForPosts).toHaveBeenCalledWith([]);
   });
 
   it('does not let a failed cache refresh undo the decision', async () => {

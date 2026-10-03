@@ -278,8 +278,13 @@ function logFlagError(collectionId: number, error: string, imageIds?: number[]) 
   }).catch(() => undefined);
 }
 
-// Only fills an empty slot, so an image already held in another queue stays there and nothing a
-// moderator set is cleared. Resolves false only when the write itself failed.
+// The queues minor review outranks: the image leaves them for a stricter one, and a person still
+// sees it. Every other key is left alone, so nothing a moderator set is cleared or downgraded.
+export const MINOR_UPGRADABLE_REVIEW_KEYS = ['newUser', 'tag'] as const;
+// 'minor' itself is a no-op rewrite, listed so an image already queued counts as routed.
+const MINOR_WRITABLE_REVIEW_KEYS = [...MINOR_UPGRADABLE_REVIEW_KEYS, 'minor'];
+
+// Resolves false only when the write itself failed.
 export async function flagForMinorReview({
   collectionId,
   imageIds,
@@ -295,7 +300,7 @@ export async function flagForMinorReview({
       UPDATE "Image"
       SET "needsReview" = 'minor', "updatedAt" = now()
       WHERE id IN (${Prisma.join(imageIds)})
-        AND "needsReview" IS NULL
+        AND ("needsReview" IS NULL OR "needsReview" IN (${Prisma.join(MINOR_WRITABLE_REVIEW_KEYS)}))
         AND ingestion = 'Scanned'
       RETURNING id, "postId"
     `;
@@ -308,8 +313,8 @@ export async function flagForMinorReview({
     return false;
   }
 
-  // Already held in another queue, or not scanned: a person still has to clear the image, but not
-  // through the minor queue, so the escalation is otherwise recorded only in ClickHouse.
+  // Held in a queue minor review does not outrank, or not scanned: without this the escalation is
+  // recorded only in ClickHouse.
   const flaggedIds = new Set(flagged.map((row) => row.id));
   const unrouted = imageIds.filter((id) => !flaggedIds.has(id));
   if (unrouted.length)
