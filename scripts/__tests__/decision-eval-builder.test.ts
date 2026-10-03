@@ -5,6 +5,7 @@ import {
   buildTrainManifest,
   enforceGroupIsolation,
   LeakageError,
+  mergeGold,
   mergeManifest,
   parseEvalIndex,
   resolveGold,
@@ -138,6 +139,40 @@ describe('eval index file (v1, read by the LoRA builder)', () => {
     ['a missing list', { ...file, groupKeys: undefined }],
   ])('🔴 refuses an index for %s', (_, bad) => {
     expect(() => parseEvalIndex(bad, 'support.topic')).toThrow(LeakageError);
+  });
+});
+
+describe('mergeGold — a rebuild must not keep a corrected label', () => {
+  it("🔴 a labeller's new label for an item replaces their old one", () => {
+    const merged = mergeGold(
+      [{ itemId: 'a', gold: 'x', goldSource: 's', labeler: 'lead' }],
+      [{ itemId: 'a', gold: 'y', goldSource: 's', labeler: 'lead' }]
+    );
+    expect(merged).toEqual([{ itemId: 'a', gold: 'y', goldSource: 's', labeler: 'lead' }]);
+    expect(resolveGold(merged, { kind: 'primary', labeler: 'lead' }).gold.get('a')).toBe('y');
+  });
+
+  it("keeps rows the source no longer yields, and other labellers' rows", () => {
+    const merged = mergeGold(
+      [
+        { itemId: 'gone', gold: 'x', goldSource: 's', labeler: 'lead' },
+        { itemId: 'a', gold: 'x', goldSource: 's', labeler: 'second' },
+      ],
+      [{ itemId: 'a', gold: 'y', goldSource: 's', labeler: 'lead' }]
+    );
+    expect(merged.map((r) => `${r.itemId}:${r.labeler}:${r.gold}`).sort()).toEqual([
+      'a:lead:y',
+      'a:second:x',
+      'gone:lead:x',
+    ]);
+  });
+
+  it('keeps several unattributed rows for one item, since they are separate votes', () => {
+    const rows = [
+      { itemId: 'a', gold: 'x', goldSource: 's1' },
+      { itemId: 'a', gold: 'y', goldSource: 's2' },
+    ];
+    expect(mergeGold(rows, rows)).toEqual(rows);
   });
 });
 

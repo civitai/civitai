@@ -100,6 +100,7 @@ describe('assertNoPii', () => {
     ['email', 'reach me at jane.doe+x@example.co.uk please'],
     ['url', 'see https://example.com/u/1'],
     ['url', 'see www.example.com'],
+    ['url', 'my profile is example.com/user/SomeName'],
     ['handle', 'ping @someuser about it'],
   ])('🔴 refuses a %s-shaped string', (name, text) => {
     expect(() => assertNoPii('item-1', { body: text })).toThrow(`contains a ${name}-shaped string`);
@@ -112,6 +113,14 @@ describe('assertNoPii', () => {
     } catch (error) {
       expect((error as Error).message).not.toContain('jane');
     }
+  });
+
+  it('does not take a dotted number or a plain sentence for a link', () => {
+    expect(() =>
+      assertNoPii('item-1', {
+        body: 'Version 1.2/3 failed; paid 5.00 USD for 1/2 of it. See section 4.1.',
+      })
+    ).not.toThrow();
   });
 
   it('passes redacted text', () => {

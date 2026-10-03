@@ -20,6 +20,7 @@ const ROWS: Array<{ itemId: string; raw: Raw }> = Array.from({ length: 60 }, (_,
 }));
 let rows = ROWS.slice(0, 50);
 const excludeIds = new Set<string>();
+const relabel = new Map<string, 'x' | 'y'>();
 
 const node: NodeSpec<Raw> = {
   id: 'test.topic',
@@ -59,7 +60,10 @@ const node: NodeSpec<Raw> = {
     }
   },
   async *gold() {
-    for (const r of rows) yield { itemId: r.itemId, gold: r.raw.truth, goldSource: 'test' };
+    for (const r of rows) {
+      const gold = relabel.get(r.itemId) ?? r.raw.truth;
+      yield { itemId: r.itemId, gold, goldSource: 'test', labeler: 'lead' };
+    }
   },
 };
 
@@ -248,6 +252,16 @@ describe('decision-eval CLI', () => {
     const report = readFileSync(join(runs, readdirSync(runs)[0], 'report-test.md'), 'utf8');
     expect(report).toContain('planted on test');
     expect(report).toContain('sealed test scored 1 time(s) before this report');
+  });
+
+  it('🔴 a corrected label replaces the old one on rebuild instead of adding a second vote', async () => {
+    relabel.set('t12', 'x');
+    await main(['build', ...nodeArgs()]);
+    relabel.clear();
+    const rows12 = readLines(join(root(), 'gold.jsonl')).filter(
+      (r: { itemId: string }) => r.itemId === 't12'
+    );
+    expect(rows12).toEqual([{ itemId: 't12', gold: 'x', goldSource: 'test', labeler: 'lead' }]);
   });
 
   it('🔴 an item excluded after it was sampled leaves the manifest and stays out', async () => {

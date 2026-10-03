@@ -9,6 +9,7 @@ import {
   enforceGroupIsolation,
   EVAL_INDEX_FILE,
   EXCLUSIONS_FILE,
+  mergeGold,
   mergeManifest,
   parseEvalIndex,
   parseExclusions,
@@ -207,19 +208,13 @@ async function cmdBuild(args: Args, dataDir: string) {
   const ledger = await refreshExclusions(node, dataDir, newlyExcluded);
   const excluded = applyExclusions(merged.items, [...ledger], []);
 
-  const goldKeys = new Set<string>();
-  const gold: GoldRow[] = [];
-  for (const row of await readJsonl<GoldRow>(p.gold)) {
-    goldKeys.add(JSON.stringify(row));
-    gold.push(row);
-  }
+  const currentGold: GoldRow[] = [];
   for await (const row of node.gold(ctx)) {
     if (!node.classes.includes(row.gold))
       throw new Error(`gold "${row.gold}" is not a class of ${node.id}`);
-    if (goldKeys.has(JSON.stringify(row))) continue;
-    goldKeys.add(JSON.stringify(row));
-    gold.push(row);
+    currentGold.push(row);
   }
+  const gold = mergeGold(await readJsonl<GoldRow>(p.gold), currentGold);
   const previousIndex = readJson<unknown>(p.evalIndex);
 
   // The index and the exclusions only grow, so writing them first means a crash

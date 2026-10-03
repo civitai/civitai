@@ -218,6 +218,20 @@ export function buildTrainManifest(
 }
 
 /**
+ * A labeller's current label replaces their earlier one for the same item, so a
+ * correction wins. Rows without a labeller are kept by identity, since several may
+ * legitimately exist per item. Rows the source no longer yields are kept.
+ */
+export function mergeGold(existing: readonly GoldRow[], current: readonly GoldRow[]): GoldRow[] {
+  const key = (r: GoldRow) =>
+    r.labeler === undefined ? `row:${JSON.stringify(r)}` : `labeler:${r.itemId}:${r.labeler}`;
+  const merged = new Map<string, GoldRow>();
+  for (const row of existing) merged.set(key(row), row);
+  for (const row of current) merged.set(key(row), row);
+  return [...merged.values()];
+}
+
+/**
  * How several labels for one item become gold. `majority` drops ties, which with
  * two labellers drops every disagreement — the hardest items — so a node with a
  * designated labeller, or one that treats disagreement as a class, says so here.

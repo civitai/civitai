@@ -100,6 +100,8 @@ export function assertPrivateHost(
 const PII_PATTERNS: ReadonlyArray<{ name: string; pattern: RegExp }> = [
   { name: 'email', pattern: /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i },
   { name: 'url', pattern: /(?:\b[a-z][a-z0-9+.-]*:\/\/|\bwww\.)\S+/i },
+  // Scheme-less: a domain followed by a path, e.g. example.com/user/name.
+  { name: 'url', pattern: /\b(?:[a-z0-9-]+\.)+[a-z]{2,}\/\S+/i },
   { name: 'handle', pattern: /(?:^|[^\w@])@[A-Za-z0-9_]{2,}/ },
 ];
 
