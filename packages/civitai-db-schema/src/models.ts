@@ -260,6 +260,8 @@ export type CrucibleStatus = "Pending" | "Active" | "Completed" | "Cancelled";
 
 export type CrucibleIngestionStatus = "Pending" | "Scanned" | "Blocked" | "Error";
 
+export type CrucibleEngagementType = "Notify";
+
 export interface Account {
   id: number;
   userId: number;
@@ -708,6 +710,7 @@ export interface User {
   pricingSlots?: PricingSlot[];
   crucibles?: Crucible[];
   crucibleEntries?: CrucibleEntry[];
+  crucibleEngagements?: CrucibleEngagement[];
 }
 
 export interface CustomerSubscription {
@@ -5737,6 +5740,16 @@ export interface Crucible {
   textNsfw: boolean;
   entries?: CrucibleEntry[];
   reports?: CrucibleReport[];
+  engagements?: CrucibleEngagement[];
+}
+
+export interface CrucibleEngagement {
+  userId: number;
+  user?: User;
+  crucibleId: number;
+  crucible?: Crucible;
+  type: CrucibleEngagementType;
+  createdAt: Date;
 }
 
 export interface CrucibleReport {

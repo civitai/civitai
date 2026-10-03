@@ -6,6 +6,7 @@ import dayjs from '~/shared/utils/dayjs';
 import plimit from 'p-limit';
 import {
   Availability,
+  CrucibleEngagementType,
   CrucibleIngestionStatus,
   CrucibleStatus,
   ImageIngestionStatus,
@@ -131,6 +132,64 @@ const sendCrucibleNotification = (notification: Parameters<typeof createNotifica
       key: notification.key,
     })
   );
+};
+
+/** The host and every placed entrant get their own ending notification; this reaches the rest. */
+const notifyCrucibleFollowersOfResults = async ({
+  crucible,
+  crucibleName,
+  excludeUserIds,
+}: {
+  crucible: { id: number; userId: number } & Parameters<typeof isCrucibleHiddenByScan>[0];
+  crucibleName: string | null;
+  excludeUserIds: Iterable<number>;
+}) => {
+  const crucibleId = crucible.id;
+  try {
+    // Only its host can open a crucible still hidden by its scan, and the host is excluded here.
+    if (isCrucibleHiddenByScan(crucible, {})) return;
+    const exclude = new Set(excludeUserIds);
+    const followers = await dbWrite.crucibleEngagement.findMany({
+      where: { crucibleId, type: CrucibleEngagementType.Notify },
+      select: { userId: true },
+    });
+    const candidates = followers.map((f) => f.userId).filter((id) => !exclude.has(id));
+    if (!candidates.length) return;
+    // The same pairs notBlockedBetween drops from crucible-ending-soon.
+    const blocked = await dbWrite.userEngagement.findMany({
+      where: {
+        OR: [
+          { userId: crucible.userId, targetUserId: { in: candidates }, type: 'Block' },
+          {
+            userId: { in: candidates },
+            targetUserId: crucible.userId,
+            type: { in: ['Block', 'Hide'] },
+          },
+        ],
+      },
+      select: { userId: true, targetUserId: true },
+    });
+    const blockedIds = new Set(
+      blocked.map((b) => (b.userId === crucible.userId ? b.targetUserId : b.userId))
+    );
+    const userIds = candidates.filter((id) => !blockedIds.has(id));
+    if (!userIds.length) return;
+    sendCrucibleNotification({
+      type: 'crucible-results',
+      category: NotificationCategory.Update,
+      key: `crucible-results:${crucibleId}`,
+      userIds,
+      details: { crucibleId, crucibleName },
+    });
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'crucible-notification-failed',
+      message: error instanceof Error ? error.message : String(error),
+      notificationType: 'crucible-results',
+      crucibleId,
+    });
+  }
 };
 
 /**
@@ -2653,6 +2712,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
       ingestion: true,
       textNsfw: true,
       userId: true, // Crucible creator for notification
+      image: { select: { ingestion: true } },
       status: true,
       entryFee: true,
       seededPrizePool: true,
@@ -2718,6 +2778,11 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
           prizePool: totalPrizePool,
           seedRefunded: seedRefunded ? crucible.seededPrizePool : 0,
         },
+      });
+      await notifyCrucibleFollowersOfResults({
+        crucible,
+        crucibleName: getCruciblePublishableName(crucible),
+        excludeUserIds: [crucible.userId],
       });
     }
 
@@ -2973,6 +3038,12 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
       },
     });
   }
+
+  await notifyCrucibleFollowersOfResults({
+    crucible,
+    crucibleName,
+    excludeUserIds: [crucible.userId, ...userResults.keys()],
+  });
 
   return result;
 };

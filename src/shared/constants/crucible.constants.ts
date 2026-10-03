@@ -16,6 +16,12 @@ export const CRUCIBLE_MAX_ENTRIES = 20;
 export const CRUCIBLE_MIN_TOTAL_ENTRIES = 2;
 export const CRUCIBLE_MAX_TOTAL_ENTRIES = 100_000;
 
+/** Following only buys something while the crucible still has an ending ahead of it. */
+export const CRUCIBLE_FOLLOWABLE_STATUSES: CrucibleStatus[] = [
+  CrucibleStatus.Pending,
+  CrucibleStatus.Active,
+];
+
 export const CRUCIBLE_NAME_MAX_LENGTH = 100;
 export const CRUCIBLE_DESCRIPTION_MAX_LENGTH = 500;
 

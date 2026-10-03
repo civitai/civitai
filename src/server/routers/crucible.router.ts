@@ -44,7 +44,12 @@ import {
   getUserCrucibleStatsSchema,
   submitEntrySchema,
   submitVoteSchema,
+  toggleCrucibleFollowSchema,
 } from '~/server/schema/crucible.schema';
+import {
+  getFollowedCrucibleIds,
+  toggleCrucibleFollow,
+} from '~/server/services/crucible-engagement.service';
 import {
   guardedProcedure,
   isFlagProtected,
@@ -166,4 +171,15 @@ export const crucibleRouter = router({
     .use(isFlagProtected('crucible'))
     .input(getJudgingSuggestionsSchema)
     .query(getJudgingSuggestionsHandler),
+
+  toggleFollow: guardedProcedure
+    .use(isFlagProtected('crucible'))
+    .input(toggleCrucibleFollowSchema)
+    .mutation(({ input, ctx }) =>
+      toggleCrucibleFollow({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
+
+  getFollowedIds: protectedProcedure
+    .use(isFlagProtected('crucible'))
+    .query(({ ctx }) => getFollowedCrucibleIds(ctx.user.id)),
 });
