@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { handleBlockImages } = vi.hoisted(() => ({ handleBlockImages: vi.fn() }));
+const { handleBlockImages, trackImages } = vi.hoisted(() => ({
+  handleBlockImages: vi.fn(),
+  trackImages: vi.fn(),
+}));
 
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   WebhookEndpoint: (handler: unknown) => handler,
@@ -8,7 +11,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 vi.mock('~/server/services/image.service', () => ({ handleBlockImages }));
 vi.mock('~/server/clickhouse/client', () => ({
   Tracker: class {
-    images = vi.fn();
+    images = trackImages;
   },
 }));
 
@@ -29,6 +32,7 @@ const call = async (body: unknown) => {
 
 beforeEach(() => {
   handleBlockImages.mockReset();
+  trackImages.mockReset();
 });
 
 // The moderator app releases separately and posts its own copy of the violation list here. A value
@@ -53,12 +57,15 @@ describe('/api/mod/remove-images responses', () => {
     expect(res.json).toHaveBeenCalledTimes(1);
   });
 
-  it('accepts minorViolence', async () => {
-    handleBlockImages.mockResolvedValue([]);
+  it('files a minorViolence removal under that violation in the DeleteTOS event', async () => {
+    handleBlockImages.mockResolvedValue([{ id: 1, userId: 2, nsfwLevel: 1 }]);
 
     const res = await call({ imageIds: [1], violationType: 'minorViolence' });
 
     expect(res.status).toHaveBeenCalledWith(200);
-    expect(handleBlockImages).toHaveBeenCalledTimes(1);
+    expect(trackImages).toHaveBeenCalledTimes(1);
+    expect(trackImages).toHaveBeenCalledWith([
+      expect.objectContaining({ type: 'DeleteTOS', imageId: 1, violationType: 'minorViolence' }),
+    ]);
   });
 });

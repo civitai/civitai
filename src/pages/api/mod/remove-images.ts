@@ -53,6 +53,8 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       cause: err.cause,
       stack: err.stack,
     });
-    res.status(500).json({ error: 'Failed to remove images' });
+    res
+      .status(500)
+      .json({ error: 'Removal may be incomplete; reload to see which images are blocked' });
   }
 });
