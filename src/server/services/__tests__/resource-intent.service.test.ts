@@ -161,10 +161,15 @@ beforeEach(() => {
 });
 
 describe('resolveSuggestionLimit — the one shortlist bound', () => {
-  // 🔴 The matcher used to clamp separately, and the two disagreed about exactly
-  // these inputs: `Math.min(limit, MAX)` alone passes 0, negatives and fractions
-  // straight through. Only the zod bound on the request field kept them in step,
-  // and `getResourceIntent` is reachable from tRPC without it.
+  // The matcher used to clamp separately, and the two disagreed about exactly these
+  // inputs: `Math.min(limit, MAX)` alone passes 0, negatives and fractions straight
+  // through.
+  //
+  // ⚠️ Invariant guard, and labelled as one: the only production caller of
+  // `getResourceIntent` is the REST route, which parses through
+  // `resourceIntentInputSchema` (`int().min(1).max(255)`), so 0, -4 and 9.8 are
+  // unreachable today. This pins the consolidated clamp against the next caller —
+  // it is NOT evidence of a live hole that was closed.
   it('floors at 1, truncates, and caps at the maximum', async () => {
     const { RESOURCE_INTENT_MAX_SHORTLIST, RESOURCE_INTENT_DEFAULT_LIMIT } = await import(
       '~/server/schema/resource-intent.schema'
@@ -345,25 +350,51 @@ describe('cache behavior', () => {
     expect(result.criteriaVersion).toBe(2);
     expect(result.suggestions).toEqual([]);
 
-    // And the version term specifically: a blob whose `criteria` is otherwise
-    // current is still rejected on the version alone. Kills a `z.literal` ->
-    // `z.number()` relaxation, which the v1 shape above cannot see.
-    mockAskJev.mockReset();
-    mockStage1();
-    redisMock.redis.packed.get.mockResolvedValue({
+    // 🔴 The parse has THREE independently sufficient terms — `criteria.criteriaVersion`,
+    // the response-root `criteriaVersion`, and `criteria.styleFamily` being required —
+    // so the blob above cannot attribute the rejection to any one of them, and relaxing
+    // any ONE leaves it passing. Each arm below plants a blob only one term can reject.
+    const stale = async (blob: Record<string, unknown>) => {
+      mockAskJev.mockReset();
+      mockStage1();
+      redisMock.redis.packed.get.mockResolvedValue(blob);
+      const out = await getResourceIntent(INPUT, CTX);
+      expect(mockAskJev).toHaveBeenCalledTimes(1);
+      expect(out.suggestions).toEqual([]);
+    };
+
+    const current = {
       degraded: false,
       intent: v1Intent,
-      criteria: { ...v1Criteria, styleFamily: 'anime_manga' },
+      criteria: { ...v1Criteria, criteriaVersion: 2, styleFamily: 'anime_manga' },
       suggestions: [{ versionId: 999 }],
       noneProbability: 0.1,
       model: 'typesafe/jev-1.13-20260917',
+      criteriaVersion: 2,
+    };
+
+    // Only the ROOT literal can reject this one.
+    await stale({ ...current, criteriaVersion: 1 });
+    // Only the CRITERIA literal can reject this one.
+    await stale({ ...current, criteria: { ...current.criteria, criteriaVersion: 1 } });
+    // Only the required-field term can reject this one.
+    await stale({
+      ...current,
+      criteria: (({ styleFamily: _dropped, ...rest }) => rest)(current.criteria),
+    });
+    // 🔴 And the shape where the root literal is the ONLY reachable gate, because
+    // `criteria` is nullable and both criteria-side terms are structurally
+    // unreachable: a DEGRADED pre-bump entry, which is a real production blob on
+    // the 60s TTL path.
+    await stale({
+      degraded: true,
+      intent: null,
+      criteria: null,
+      suggestions: [],
+      noneProbability: null,
+      model: 'jev-unavailable',
       criteriaVersion: 1,
     });
-
-    const stillStale = await getResourceIntent(INPUT, CTX);
-
-    expect(mockAskJev).toHaveBeenCalledTimes(1);
-    expect(stillStale.suggestions).toEqual([]);
   });
 
   it('a corrupted cached blob is ignored and recomputed', async () => {

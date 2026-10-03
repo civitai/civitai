@@ -510,33 +510,81 @@ describe('findResourceIntentCandidates — the labels change the response', () =
   // written under a superseded taxonomy is read. Demoting on a value this build
   // cannot interpret would bury the whole labeled population — the catalogue's
   // high-usage head — beneath the unlabeled majority.
-  it('🔴 a row whose taxonomy this build does not know is neutral, never a disagreement', async () => {
+  //
+  // 🔴 Each arm varies ONE field. An earlier version set both to unknown strings at
+  // once, which cannot attribute the behaviour: `styleFamily ? -1 : 0` and
+  // `role && styleFamily ? -1 : 0` both survived it, and the second of those is a
+  // DIFFERENT rule from the one the code implements.
+  it('🔴 demotion turns on the role alone, and only on a role this build recognises', async () => {
     searchWithSignal.mockResolvedValue({ hits: seed.slice(0, 2), estimatedTotalHits: 2 });
+    const confident = { confidence: 0.84, qualityScore: 0.76 };
+
+    // (i) role unrecognised, styleFamily recognised and disagreeing -> neutral.
+    // Kills `styleFamily ? -1 : 0`, which would demote here.
     dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([
       insightRow(10701, {
+        ...confident,
+        role: 'retired_role_from_an_older_spec',
+        styleFamily: 'pixel_retro',
+      }),
+    ]);
+    expect((await findResourceIntentCandidates(criteria, opts)).map((e) => e.versionId)).toEqual([
+      10701, 20802,
+    ]);
+
+    // (ii) role recognised and disagreeing, styleFamily unrecognised -> DEMOTED.
+    // The role is the evidence, so an uninterpretable style family does not rescue
+    // it. Kills `role && styleFamily ? -1 : 0`, which would stay neutral here.
+    dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([
+      insightRow(10701, {
+        ...confident,
+        role: 'control_guidance',
+        styleFamily: 'retired_style_from_an_older_spec',
+      }),
+    ]);
+    expect((await findResourceIntentCandidates(criteria, opts)).map((e) => e.versionId)).toEqual([
+      20802, 10701,
+    ]);
+
+    // (iii) both unrecognised -> neutral. The production shape of a taxonomy bump.
+    dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([
+      insightRow(10701, {
+        ...confident,
         role: 'retired_role_from_an_older_spec',
         styleFamily: 'retired_style_from_an_older_spec',
-        confidence: 0.84,
-        qualityScore: 0.76,
+      }),
+    ]);
+    expect((await findResourceIntentCandidates(criteria, opts)).map((e) => e.versionId)).toEqual([
+      10701, 20802,
+    ]);
+  });
+
+  // 🔴 `quality: insight && bucket !== 0 ? …` applies inside BOTH labeled buckets.
+  // With only ever one demoted row in a fixture, `bucket !== 0` -> `bucket > 0`
+  // changed nothing observable and the docstring's claim went unpinned.
+  it('🔴 qualityScore separates two candidates inside the DEMOTE bucket too', async () => {
+    searchWithSignal.mockResolvedValue({ hits: seed, estimatedTotalHits: 3 });
+    dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([
+      // Both disagree confidently, so both demote; the seed order says 10701 first
+      // and the quality scores say 20802 first.
+      insightRow(10701, {
+        role: 'control_guidance',
+        styleFamily: 'pixel_retro',
+        confidence: 0.71,
+        qualityScore: 0.18,
+      }),
+      insightRow(20802, {
+        role: 'clothing',
+        styleFamily: 'render_3d',
+        confidence: 0.63,
+        qualityScore: 0.86,
       }),
     ]);
 
     const entries = await findResourceIntentCandidates(criteria, opts);
 
-    expect(entries.map((e) => e.versionId)).toEqual([10701, 20802]);
-
-    // Control: a RECOGNISED disagreement on the same candidate does demote, so the
-    // arm above is about the unknown value, not about demotion being unreachable.
-    dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([
-      insightRow(10701, {
-        role: 'control_guidance',
-        styleFamily: 'pixel_retro',
-        confidence: 0.84,
-        qualityScore: 0.76,
-      }),
-    ]);
-    const recognised = await findResourceIntentCandidates(criteria, opts);
-    expect(recognised.map((e) => e.versionId)).toEqual([20802, 10701]);
+    // 30903 is unlabeled, so it leads both demotions; quality then orders them.
+    expect(entries.map((e) => e.versionId)).toEqual([30903, 20802, 10701]);
   });
 
   it('scopes the label read to exactly the pooled versions, in one query', async () => {
@@ -559,28 +607,44 @@ describe('findResourceIntentCandidates — the labels change the response', () =
     expect(dbMock.dbRead.resourceInsight.findMany).not.toHaveBeenCalled();
   });
 
-  it('🔴 the pool is twice the cap, but never wider than the shortlist maximum', async () => {
-    searchWithSignal.mockResolvedValue({ hits: seed, estimatedTotalHits: 3 });
+  // 🔴 Asserted on the POOL — the id list handed to the label read — not on the
+  // Meilisearch `limit`. An earlier version read only the limit, which at the
+  // maximum cap saturates against SEARCH_PAGE_MAX and so observed neither the
+  // multiplier nor the clamp: dropping `clampResourceIntentCap` from the pool
+  // passed it, which is the one thing its name promised to catch.
+  it('🔴 the pool is twice the cap, and the clamp binds at the shortlist maximum', async () => {
+    // More hits than any pool width, so the pool is bounded by the cap arithmetic
+    // and never by the fixture.
+    const wide = Array.from({ length: 600 }, (_, i) => hitFor(900000 + i, 500000 + i, 600 - i));
+    const pooledIds = () =>
+      (
+        dbMock.dbRead.resourceInsight.findMany.mock.calls[0][0] as {
+          where: { modelVersionId: { in: number[] } };
+        }
+      ).where.modelVersionId.in;
 
+    searchWithSignal.mockResolvedValue({ hits: wide, estimatedTotalHits: 600 });
     await findResourceIntentCandidates(criteria, { ...opts, cap: 50 });
-    expect(meiliArgsOf().limit).toBe(200);
+    expect(pooledIds()).toHaveLength(100);
+    // And the page is one document per targeted version — no multiplier.
+    expect(meiliArgsOf().limit).toBe(100);
 
-    // At the maximum accepted limit the pool collapses to the cap, so the ordering
-    // can only reshuffle the visible page. Pinned because three separate comments
-    // describe the widening as unconditional.
     searchWithSignal.mockReset();
-    searchWithSignal.mockResolvedValue({ hits: seed, estimatedTotalHits: 3 });
-    await findResourceIntentCandidates(criteria, {
-      ...opts,
-      cap: RESOURCE_INTENT_MAX_SHORTLIST,
-    });
-    expect(meiliArgsOf().limit).toBe(500);
+    searchWithSignal.mockResolvedValue({ hits: wide, estimatedTotalHits: 600 });
+    dbMock.dbRead.resourceInsight.findMany.mockReset();
+    dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([]);
+
+    // At the maximum accepted limit the clamp binds: 2 x 255 would be 510, so the
+    // pool collapses to the cap and the ordering can only reshuffle the visible page.
+    await findResourceIntentCandidates(criteria, { ...opts, cap: RESOURCE_INTENT_MAX_SHORTLIST });
+    expect(pooledIds()).toHaveLength(RESOURCE_INTENT_MAX_SHORTLIST);
+    expect(meiliArgsOf().limit).toBe(RESOURCE_INTENT_MAX_SHORTLIST);
   });
 
-  // 🔴 Not just an invariant guard: this is the only test that kills a reversed
-  // index tiebreak. Every ordering expectation above is the exact reverse of its
-  // seed, so `.sort((a, b) => b.index - a.index)` passes them all and fails here.
-  // Do not delete it in a coverage prune.
+  // 🔴 Green at `origin/main` too, so it is an invariant guard by the red/green
+  // matrix — but it is NOT dead weight: most ordering expectations in this file are
+  // the exact reverse of their seed, so `.sort((a, b) => b.index - a.index)` passes
+  // them and fails here. Do not delete it in a coverage prune.
   it('an all-unlabeled pool keeps the seed order exactly — kills a reversed index tiebreak', async () => {
     searchWithSignal.mockResolvedValue({ hits: seed, estimatedTotalHits: 3 });
     dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([]);

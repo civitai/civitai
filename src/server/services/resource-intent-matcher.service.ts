@@ -60,12 +60,15 @@ export type ResourceIntentShortlistEntry = {
   thumbsUpCount: number;
 };
 
-// One model usually contributes 1–3 baseModel-matching versions, so a page of
-// twice the VERSION target covers it (bounded by Meili's 1000-page limit);
-// expansion below still caps hard. The target is the re-rank pool, not the
-// response cap — sizing it off the cap left the page too narrow to fill the pool
-// the moment the two multipliers disagreed.
-const SEARCH_PAGE_MULTIPLIER = 2;
+// 🔴 ONE DOCUMENT PER TARGETED VERSION, derived from the POOL width rather than
+// the response cap, and no multiplier on top. A model contributes at least one
+// matching version, so a page this wide can always fill the pool, and measured
+// against the live index a 100-document page filled a 100-version pool in every
+// populated role x baseModel combination while CONSUMING only 10-48 of those
+// documents. The 2x that used to sit here fetched and parsed the other half for
+// nothing: it added zero pool members anywhere and cost 1.6-2.6x the response
+// payload and JSON.parse, plus roughly double the index's own processing time on a
+// Meilisearch shared with the resource picker.
 const SEARCH_PAGE_MAX = 500;
 
 /**
@@ -79,6 +82,12 @@ const SEARCH_PAGE_MAX = 500;
  * property of the DEFAULT cap of 50, not of every request.
  */
 const RERANK_POOL_MULTIPLIER = 2;
+
+/**
+ * Both the page and the pool are bounded by this, through `clampResourceIntentCap`
+ * — so raising `RESOURCE_INTENT_MAX_SHORTLIST` to widen responses also raises the
+ * re-rank's work bound.
+ */
 
 export function buildResourceIntentFilter({
   modelTypes,
@@ -178,11 +187,15 @@ type ResourceIntentWant = {
 };
 
 /**
- * `role` and `styleFamily` are TEXT, versioned with the label spec, so a stored
- * row can hold a value this build's taxonomy no longer contains. Narrowing here
- * is what keeps the comparison below honest — a bare string compares false
- * against every current option, which reads as disagreement rather than as a
- * value nobody can interpret.
+ * `role` and `styleFamily` are TEXT, versioned with the label spec, so a stored row
+ * can hold a value this build's taxonomy no longer contains.
+ *
+ * Only the `role` narrowing changes behaviour (it is what the demotion rule reads).
+ * On `styleFamily` it is compile-time only — an unrecognised string compares false
+ * against `want.styleFamily` exactly as `null` does — and it is kept so both sides
+ * of that comparison are the union type rather than `string` against a union, which
+ * type-checks whatever the left side can hold. Do not write a behavioural test for
+ * the style half; there is nothing to observe.
  */
 function knownValue<T extends string>(options: readonly T[], stored: string): T | null {
   return (options as readonly string[]).includes(stored) ? (stored as T) : null;
@@ -197,13 +210,14 @@ function insightBucket(insight: ResourceIntentInsight, want: ResourceIntentWant)
   const agreement =
     (role === want.role ? ROLE_MATCH_WEIGHT : 0) + (styleMatch ? STYLE_MATCH_WEIGHT : 0);
   if (agreement > 0) return agreement;
-  // 🔴 Demotion needs positive evidence the resource is for something ELSE, and
-  // only a recognised role is that. A taxonomy edit supersedes every stored row's
-  // spec AND makes its strings unmatchable in the same move, so demoting on an
-  // unrecognised value would bury the entire labeled population — the catalogue's
-  // high-usage head — beneath the unlabeled majority, silently, until a manual
-  // re-label pass caught up.
-  return role ? -1 : 0;
+  // 🔴 Demotion turns on the ROLE alone, because only a recognised role is positive
+  // evidence that the resource is for something ELSE; an unrecognised `styleFamily`
+  // beside a recognised disagreeing role does not rescue it. A taxonomy edit
+  // supersedes every stored row's spec AND makes its strings unmatchable in the same
+  // move, so demoting on a value this build cannot interpret would bury the entire
+  // labeled population — the catalogue's high-usage head — beneath the unlabeled
+  // majority, silently, until a re-label pass caught up.
+  return role !== null ? -1 : 0;
 }
 
 /**
@@ -213,13 +227,22 @@ function insightBucket(insight: ResourceIntentInsight, want: ResourceIntentWant)
  * Only ~1% of eligible versions carry a label, so this buckets rather than
  * scores: a label that agrees promotes, a confident label that disagrees demotes,
  * and everything else — unlabeled, or labeled below the confidence floor — sits
- * at a neutral bucket that preserves the seed order exactly. No candidate is
- * dropped, and an unlabeled one never sorts as if it had scored zero, which would
- * bury the unlabeled majority beneath any weakly-labeled row.
+ * at a neutral bucket that preserves the seed order exactly. An unlabeled candidate
+ * never sorts as if it had scored zero, which would bury the unlabeled majority
+ * beneath any weakly-labeled row.
  *
- * `qualityScore` separates candidates only inside a labeled bucket. Reading it
- * for a neutral one would re-introduce exactly that burial, since there is no
- * quality score to compare an unlabeled candidate against.
+ * 🔴 This returns a permutation, but its CALLER slices to the response cap, so on a
+ * pool wider than the cap the ordering decides WHICH candidates are returned and not
+ * only in what order. That is the point of the wider pool; it also means a promotion
+ * is an eviction, and the candidate evicted may be an unlabeled one.
+ *
+ * `qualityScore` separates candidates inside either labeled bucket, never for a
+ * neutral one — reading it there would re-introduce exactly that burial, since there
+ * is no quality score to compare an unlabeled candidate against.
+ *
+ * Tiebreaks on the seed order; `reorderShortlistByDistribution` in the calling
+ * service tiebreaks the same way on THIS function's output, and the pipeline's
+ * determinism claim needs both.
  */
 export function applyInsightRanking(
   entries: ResourceIntentShortlistEntry[],
@@ -272,14 +295,14 @@ export async function loadResourceInsights(
 
 async function searchShortlistModels(
   filter: string | null,
-  cap: number
+  poolCap: number
 ): Promise<ModelSearchIndexRecord[]> {
   const client = searchClient;
   if (!client) return [];
   const request: SearchParams = {
     filter: filter ?? undefined,
     sort: ['metrics.thumbsUpCount:desc'],
-    limit: Math.min(Math.max(cap * SEARCH_PAGE_MULTIPLIER, cap), SEARCH_PAGE_MAX),
+    limit: Math.min(poolCap, SEARCH_PAGE_MAX),
   };
   try {
     const results = await withMeiliResourceSelect(

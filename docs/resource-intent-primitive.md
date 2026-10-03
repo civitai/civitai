@@ -1,6 +1,6 @@
 # Resource-intent primitive (Jev)
 
-**Status:** **M1 + the M2 consume seam** — the primitive and its REST surface, dark behind `resourceIntentJev` (default-deny), with the shortlist now ordered against the `ResourceInsight` labels. The candidate POOL is still seeded by popularity; see [Label ordering](#label-ordering) for what that does and does not buy. M3 (the gold-set study) does not exist. M4/M5 are gated follow-ons — see [Rollout](#rollout).
+**Status:** **M1 + the M2 consume seam** — the primitive and its REST surface, dark behind `resourceIntentJev` (default-deny), with the shortlist now ordered against the `ResourceInsight` labels. The candidate POOL is still seeded by popularity; see [Label ordering](#label-ordering) for what that does and does not buy. M3 (the gold-set study) is committed but has never been run, and grades stage-1 agreement rather than retrieval — see [Label ordering](#label-ordering). M4/M5 are gated follow-ons — see [Rollout](#rollout).
 
 A versioned, headless API primitive: **prompt → intent + criteria → civitai resource suggestions**. A prompt becomes a typed intent (what kinds of resources it wants, with full probability distributions), the intent compiles into a deterministic shortlist over the model search index, and a second judgment ranks the shortlist. `none` is a first-class answer at every stage — most prompts need no resource.
 
@@ -43,7 +43,7 @@ POST /api/v1/blocks/resource-intent {prompt, baseModel?, limit?}
 3. **Deterministic gates always win.** Availability (no Private), the token's `maxBrowsingLevel` maturity clamp (authoritative — no client maturity field is read), region restriction, canGenerate coverage, baseModel compatibility (caller-supplied, never Jev output), and the hard-coded `celebrity` tag exclusion are applied in the matcher. Hydration re-checks exactly TWO of them — `hasAccess` and the maturity ceiling. Coverage, baseModel and the celebrity exclusion are NOT re-checked there, and `canGenerate` is present on the hydrated resource and unread. ⚠️ **No principle separates the two re-checked gates from the three that are not.** An earlier draft of this line said the re-checked ones are "the ones whose indexed value can lag"; that is false — the source comment beside the check says the _coverage_ filter is a superset that can lag, and coverage is gated on indexed Meili fields exactly like the rest. So the honest statement is that a version whose coverage lapsed since the last index build can still be suggested. Treat that as an accepted gap with no stated justification, not as a designed boundary — and if you close it, `canGenerate` is already on the object. Jev output can only reorder/drop within the gate-passing set, never add — the stage-3 option list contains exactly the shortlisted keys plus `none`, so an unknown version is unrepresentable.
 4. **`none` is a first-class answer.** Stage-1 `role` includes `none`; stage 3 includes `none`. An argmax of `none` returns empty suggestions _without_ `degraded`.
 5. **Stable question IDs + spec hash.** `QUESTION_SPEC_VERSION` plus a sha256 over the question spec ride every response and shadow row; a question edit invalidates old analytics instead of blending with them. 🔴 **The spec term in the CACHE KEY is the hash, not the version** — the hash moves on any spec edit, the hand-maintained integer only moves when someone remembers, and until that was fixed a reworded prompt would have left pre-edit entries served for their full hour under the new spec _and_ stamped into the shadow table with the new hash, which is precisely the blend this rule exists to prevent.
-6. **Reject unknown answer keys.** Every response parse rejects keys outside the question set, distributions must sum to ~1 (±0.02) over the offered options, scores/nouls must be in range. Confidence is never a permission slip: no resource is admitted or refused on one. A label row's `confidence` does gate whether that row is read for ORDERING (`RESOURCE_INSIGHT_MIN_CONFIDENCE`) — a row below the floor is treated as if the version were unlabeled, which changes rank and nothing else.
+6. **Reject unknown answer keys.** Every response parse rejects keys outside the question set, distributions must sum to ~1 (±0.02) over the offered options, scores/nouls must be in range. Confidence is never a permission slip: no resource is admitted or refused on one. A label row's `confidence` does gate whether that row is read for ORDERING (`RESOURCE_INSIGHT_MIN_CONFIDENCE`) — a row below the floor is treated as if the version were unlabeled. The precise claim is that **no deterministic gate is applied or relaxed on a confidence**: it is read at exactly one site, and no filter, drop or maturity decision reads it. It is NOT the weaker-sounding "changes rank and nothing else", because the shortlist is a fixed-width page cut out of a wider pool, so rank decides admission to the response.
 7. **Adversarial state.** The prompt is user text. The `injectionPresent` Noul is asked and logged; deterministic rules own every consequence. Jev's judgment never feeds back into state.
 8. **No invariants across calls.** Full distributions are logged; nothing probabilistic is combined in code.
 
@@ -102,11 +102,19 @@ popularity baseline has to control for. The policy:
 | no row, or `confidence` below the floor | neutral (0) — seed order preserved |
 | confident label agreeing on neither axis | demote (−1) |
 
-Nothing is dropped: the shortlist is a permutation of the pool. An unlabeled
-candidate sits **above** a confident disagreement and **below** a confirmed
-agreement; it is never scored as a zero, which would bury the unlabeled majority
-under any weakly-labeled row. `qualityScore` separates candidates only inside one
-bucket — there is no quality score to compare an unlabeled candidate against.
+Nothing is FILTERED: an absent label never disqualifies a candidate, and the
+ordering is a permutation of the pool. An unlabeled candidate sits **above** a
+confident disagreement and **below** a confirmed agreement; it is never scored as a
+zero, which would bury the unlabeled majority under any weakly-labeled row.
+`qualityScore` separates candidates only inside one bucket — there is no quality
+score to compare an unlabeled candidate against.
+
+🔴 But the permutation is then **sliced to the response cap**, so on a pool wider
+than the cap the ordering decides *which* resources are suggested, not only their
+order — a promotion into a fixed-width page is an eviction out of it, and what gets
+evicted may be an unlabeled candidate. Relative to the popularity-only behaviour
+this replaces, no candidate is excluded that the old pool would have contained; but
+"nothing is dropped" would be the wrong way to read the table above.
 
 Three details that are decisions, not oversights.
 
@@ -126,14 +134,18 @@ here can separate them.
 `stale = true` — the migration describes that flip as a manual step of a label-spec
 bump — so the clause excludes no row today, and `specHash` is deliberately not
 compared: filtering on it would make the ordering inert from the moment a spec
-moves until a manual, vendor-spend-gated re-label pass finished, and the table was
-designed so superseded rows stay readable. What protects a superseded row from
-doing harm is the demotion rule instead: a `role` or `styleFamily` value this build
-cannot interpret is treated as neutral, never as a disagreement. A taxonomy edit
-supersedes every row's spec *and* makes its strings unmatchable in one move, so
-demoting on an unrecognised value would bury the whole labeled population beneath
-the unlabeled majority. The residual, which needs the manual flip: a spec that
-keeps an option's spelling and changes its meaning.
+moves until a vendor-spend-gated re-label pass finished, and the table was designed
+so superseded rows stay readable. (`specHash` holds the LABEL spec's hash, which
+lives in `scripts/label-resource-insights.ts`, so comparing it would also make a
+server service depend on a CLI script.) What protects a superseded row from doing
+harm is the demotion rule instead: **demotion turns on the `role` alone, and only
+on a role this build recognises.** A taxonomy edit supersedes every row's spec *and*
+makes its strings unmatchable in one move, so demoting on a value nobody can
+interpret would bury the whole labeled population beneath the unlabeled majority.
+Note what that does and does not say: an unrecognised `styleFamily` beside a
+recognised *disagreeing* role still demotes, because the role is the evidence. The
+residual, resolved either by the manual `stale` flip or by re-running the labeling
+pass: a spec that keeps an option's spelling and changes its meaning.
 
 `contentTypes` is **not** read. The v1 label spec asks a singular single-`choice`
 question and wraps the answer in a one-element array, so the column has one value
@@ -149,10 +161,24 @@ M4/M5 read it.** `ShadowEvent` records no insight field, so a row produced by th
 fallback above — cached for the full hour as `degraded: false` — is indistinguishable
 from one whose pool simply held no labeled version, which is in turn indistinguishable
 from one the labels reordered. Grading "do the labels help" against that corpus is
-not possible. Closing condition: a `resourceIntentShadow` column carrying the pooled
-label count plus a fallback marker, with the matcher reporting both, verified by a
-query that separates the three cases. Harmless today only because the endpoint is
-dark.
+not possible. Harmless today only because the endpoint is dark.
+
+Two things make the obvious fix insufficient, so the closing condition has to name
+them. (a) `writeShadowEvent` fires on every call **including cache hits**, where the
+matcher never ran — which is why `shortlistCount` is already reconstructed from the
+response rather than left at 0. So a fallback-ordered response emits one marked row
+and then up to an hour of unmarked ones unless the fields ride **inside the cached
+blob**, i.e. in `resourceIntentResponseSchema`, which is itself another
+cache-invalidating shape bump. (b) A pooled label count cannot separate "the labels
+reordered this" from "every label landed neutral" — below the floor or unrecognised,
+both of which this design makes deliberately common. That needs a reorder signal, not
+a population count.
+
+**Closing condition:** columns ON the `resourceIntentShadow` table carrying (i) the
+count of pooled rows that reached a non-neutral bucket and (ii) whether the ordering
+ran at all, both carried in the cached response so a replay reports the same values
+as the computation, verified by a query that returns a non-empty, disjoint partition
+of rows into reordered / ordering-ran-but-all-neutral / ordering-did-not-run.
 
 ### The M3 study exists, has never been run, and does not grade this
 
@@ -172,8 +198,8 @@ which neither this evaluator nor this change provides.
 ## Rollout
 
 - **M1:** primitive + REST surface, dark behind `resourceIntentJev`.
-- **M2:** `ResourceInsight` + the labeling script, then the matcher ordering that reads them. Done. **The index seed is NOT part of it** — putting an insight field in `modelsSortableAttributes` and reindexing is separate, larger work, and until it happens the pool is popularity-seeded.
-- **M3 (not implemented):** the gold-set study. See the section above.
+- **M2:** `ResourceInsight` + the labeling script, then the matcher ordering that reads them. Code done. 🔴 **Two OPERATIONAL preconditions are not, and neither is automatic:** `packages/civitai-db-schema/prisma/migrations/20260929170000_resource_insights/migration.sql` is applied by hand per environment, and `scripts/label-resource-insights.ts` must have been run there. Until both hold in a given environment the ordering is wired but has nothing to read, which is a data state, not a code state — the matcher logs `resource-intent-insight-read-failed` for the first and silently preserves the seed order for the second. **The index seed is NOT part of M2 either** — putting an insight field in `modelsSortableAttributes` and reindexing is separate, larger work, and until it happens the pool is popularity-seeded.
+- **M3 (committed, never run):** the gold-set study. It does NOT grade clause (iii) above. See the section above.
 - **M4 (suggestions UI)** — NOT implemented. Closing condition: M1 merged + shadow volume ≥1k/day for 7 days + p95 end-to-end ≤2s.
 - **M5 (auto-attach)** — NOT implemented, and never before BOTH: the threshold study shows per-slice precision ≥0.9 at the chosen operating point AND ≥2 weeks of live shadow agreement ≥80%.
 

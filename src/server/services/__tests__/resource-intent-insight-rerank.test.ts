@@ -170,8 +170,11 @@ describe('resource-intent — a label changes the served response', () => {
     expect(mockGetResourceData.mock.calls[0][0]).toEqual([83003, 82002, 81001]);
   });
 
-  // The ordering test above expects the exact reverse of the seed, so a mutant that
-  // ignores the labels and reverses the tiebreak passes it. This is what fails.
+  // Green at `origin/main` too, so an invariant guard by the red/green matrix — and
+  // still load-bearing: the ordering test above expects the exact reverse of the
+  // seed, so a mutant that ignores the labels and reverses the tiebreak passes it.
+  // This is what fails. It covers BOTH tiebreaks, because the flat stage-3
+  // distribution leaves `reorderShortlistByDistribution` ordering on index too.
   it('with no labels at all the response keeps the popularity order — kills a reversed tiebreak', async () => {
     const result = await getResourceIntent(INPUT, CTX);
 
