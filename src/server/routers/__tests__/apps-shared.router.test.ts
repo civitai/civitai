@@ -28,13 +28,25 @@ const {
   mockIsRevoked,
   mockLogToAxiom,
 } = vi.hoisted(() => {
+  // 🔴 THE PARAMETERS ARE DECLARED, even though the default body ignores them. `pg`'s
+  // `query(sql, params)` is what the router calls, and `vi.fn(async () => …)` infers a
+  // ZERO-ARG signature — so every `mockImplementation(async (sql, params) => …)` below
+  // became a TS2345 under `tsconfig.tests.json` (which `pnpm typecheck` does not cover,
+  // because `tsconfig.json` excludes `src/**/__tests__/**`). Declaring them here fixes
+  // that class at its one source rather than at each call site.
   const mockClient = {
-    query: vi.fn(async () => ({ rows: [], rowCount: 0 })),
+    query: vi.fn(async (_sql: string, _params?: unknown[]) => ({
+      rows: [] as unknown[],
+      rowCount: 0,
+    })),
     release: vi.fn(),
   };
   const mockPool = {
     connect: vi.fn(async () => mockClient),
-    query: vi.fn(async () => ({ rows: [], rowCount: 0 })),
+    query: vi.fn(async (_sql: string, _params?: unknown[]) => ({
+      rows: [] as unknown[],
+      rowCount: 0,
+    })),
   };
   return {
     mockVerifyBlockToken: vi.fn(),

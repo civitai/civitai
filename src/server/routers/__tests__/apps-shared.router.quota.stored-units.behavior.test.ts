@@ -106,9 +106,19 @@ const fakePool = {
   query: (sql: string, params?: unknown[]) => runSql(sql, params),
 };
 
+// `mockIsRevoked` declares the parameters `BlockRevocation.isRevoked` is actually
+// called with — `(blockInstanceId, sub)`. `vi.fn(async () => false)` infers a zero-arg
+// signature, which makes the spread forward below a TS2556 under
+// `tsconfig.tests.json`. That program is NOT covered by `pnpm typecheck`, because
+// `tsconfig.json` excludes `src/**/__tests__/**` — so the error is invisible to the
+// command most likely to be run. The sibling `apps.router.storage.stored-units`
+// suite carries the identical error from the same copied pattern; it is left alone
+// here only because it is outside this change.
 const { mockVerifyBlockToken, mockIsRevoked } = vi.hoisted(() => ({
   mockVerifyBlockToken: vi.fn(),
-  mockIsRevoked: vi.fn(async () => false),
+  mockIsRevoked: vi.fn<(blockInstanceId: string, sub?: string) => Promise<boolean>>(
+    async () => false
+  ),
 }));
 
 // `~/server/db/client` and `~/server/logging/client` are mocked ONCE, globally, in
@@ -148,7 +158,9 @@ vi.mock('~/server/auth/session-client', () => ({
   },
 }));
 vi.mock('~/server/services/block-revocation.service', () => ({
-  BlockRevocation: { isRevoked: (...args: unknown[]) => mockIsRevoked(...args) },
+  BlockRevocation: {
+    isRevoked: (blockInstanceId: string, sub?: string) => mockIsRevoked(blockInstanceId, sub),
+  },
 }));
 vi.mock('~/server/utils/shared-storage-rate-limit', () => ({
   checkSharedAppendRateLimit: async () => ({ allowed: true }),
