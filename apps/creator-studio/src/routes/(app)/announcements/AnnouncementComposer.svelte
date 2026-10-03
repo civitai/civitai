@@ -9,13 +9,11 @@
   import { Switch } from '@civitai/ui/components/ui/switch/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { ToggleGroup, ToggleGroupItem } from '@civitai/ui/components/ui/toggle-group/index.js';
-  import { IconCheck, IconPlus, IconX } from '@tabler/icons-svelte';
+  import { IconCheck } from '@tabler/icons-svelte';
   import {
     CONTENT_MAX,
     DEFAULT_DOMAINS,
     DOMAIN_CHIPS,
-    LINK_BUTTONS_MAX,
-    LINK_TEXT_MAX,
     TITLE_MAX,
     MIN_ANNOUNCEMENT_DURATION_MS,
     allowanceState,
@@ -25,6 +23,7 @@
   } from '$lib/announcements';
   import type { AnnouncementRow } from '$lib/server/announcements';
   import CoverField from './CoverField.svelte';
+  import LinkButtonsField from './LinkButtonsField.svelte';
   import type { CoverUpload } from './cover-upload';
 
   let {
@@ -71,49 +70,6 @@
   const profileOnly = $derived(!broadcast);
   let startsLocal = $state(toLocalInput(seed?.startsAt));
   let endsLocal = $state(toLocalInput(seed?.endsAt));
-  // Field names per slot, matching the form schema: slot 1 keeps the pre-multi-button names.
-  const slotSuffix = (index: number) => (index === 0 ? '' : String(index + 1));
-
-  let links = $state(
-    seed?.links.length
-      ? seed.links.map((l) => ({ url: l.link, text: l.linkText }))
-      : [{ url: '', text: '' }]
-  );
-  // A lapsed member keeps the buttons the row already has (the main app allows saving those), so
-  // only adding is gated.
-  const canAddLink = $derived(isMember && links.length < LINK_BUTTONS_MAX);
-
-  function addLink() {
-    links.push({ url: '', text: '' });
-  }
-
-  function removeLink(index: number) {
-    links.splice(index, 1);
-  }
-
-  // Shows the creator the adaptation the server performs on save: a link to one of our own
-  // domains is stored as a path so it opens on whichever site the reader is on. This is the
-  // visible half only — `toDomainRelativeLink` on the server is what actually decides, and
-  // it reads the real host list from server env, which the browser has no business knowing.
-  const OWN_HOSTS = ['civitai.com', 'civitai.red', 'civitaired.com'];
-
-  function truncateOwnDomain(index: number) {
-    const value = links[index].url.trim();
-    if (!value) return;
-
-    let url: URL;
-    try {
-      url = new URL(value);
-    } catch {
-      return; // already a path
-    }
-
-    const host = url.host.toLowerCase();
-    const ours = OWN_HOSTS.includes(host) || host === window.location.host.toLowerCase();
-    if (!ours) return;
-
-    links[index].url = `${url.pathname}${url.search}${url.hash}` || '/';
-  }
   let cover = $state<CoverUpload | null>(null);
   let submitting = $state(false);
 
@@ -300,55 +256,7 @@
       </span>
     </div>
 
-    <div class="flex flex-col gap-3">
-      {#each links as link, index (index)}
-        {@const suffix = slotSuffix(index)}
-        <div class="grid items-end gap-4 sm:grid-cols-[1fr_1fr_auto]">
-          <div class="flex flex-col gap-1.5">
-            <Label for={`announcement-link${suffix}`}>
-              {index === 0 ? 'Button link (optional)' : `Button ${index + 1} link`}
-            </Label>
-            <Input
-              id={`announcement-link${suffix}`}
-              name={`linkUrl${suffix}`}
-              bind:value={link.url}
-              onblur={() => truncateOwnDomain(index)}
-              placeholder="/models/123 or https://…"
-            />
-          </div>
-          <div class="flex flex-col gap-1.5">
-            <Label for={`announcement-link-text${suffix}`}>Button text</Label>
-            <Input
-              id={`announcement-link-text${suffix}`}
-              name={`linkText${suffix}`}
-              bind:value={link.text}
-              maxlength={LINK_TEXT_MAX}
-              placeholder="Check it out"
-            />
-          </div>
-          {#if links.length > 1}
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label={`Remove button ${index + 1}`}
-              onclick={() => removeLink(index)}
-            >
-              <IconX size={16} />
-            </Button>
-          {/if}
-        </div>
-      {/each}
-      {#if canAddLink}
-        <Button type="button" variant="outline" size="sm" class="self-start" onclick={addLink}>
-          <IconPlus size={15} class="mr-1" /> Add button
-        </Button>
-      {:else if !isMember && links.length < LINK_BUTTONS_MAX}
-        <p class="text-xs text-dark-2">
-          Members can add up to {LINK_BUTTONS_MAX} buttons to an announcement.
-        </p>
-      {/if}
-    </div>
+    <LinkButtonsField seed={seed?.links ?? []} {isMember} />
 
     <!-- The stored column is `profileOnly`; the control is its inverse, because broadcasting is the
          thing a creator decides to do. The hidden input above still posts `profileOnly`. -->

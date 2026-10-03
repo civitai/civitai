@@ -51,6 +51,33 @@ describe('AnnouncementCard actions', () => {
     await expect.element(cta).toHaveAttribute('href', '/models/123');
   });
 
+  test('a member announcement renders every one of its three buttons', async () => {
+    const { AnnouncementCard } = await import('~/components/Announcements/AnnouncementCard');
+    const actions = [1, 2, 3].map((n) => ({ link: `/models/${n}`, linkText: `Button ${n}` }));
+    renderWithProviders(<AnnouncementCard {...base} actions={actions} />);
+
+    for (const n of [1, 2, 3])
+      await expect
+        .element(page.getByRole('link', { name: `Button ${n}` }))
+        .toHaveAttribute('href', `/models/${n}`);
+  });
+
+  // External, so the click opens the (mocked) interstitial instead of navigating the test frame away.
+  test('reports which of several buttons was pressed', async () => {
+    const { AnnouncementCard } = await import('~/components/Announcements/AnnouncementCard');
+    const onActionClick = vi.fn();
+    const actions = [1, 2, 3].map((n) => ({
+      link: `https://example.com/${n}`,
+      linkText: `Button ${n}`,
+    }));
+    renderWithProviders(
+      <AnnouncementCard {...base} actions={actions} onActionClick={onActionClick} />
+    );
+
+    await page.getByRole('button', { name: 'Button 3' }).click();
+    expect(onActionClick).toHaveBeenCalledWith(actions[2], 2);
+  });
+
   test('an external action opens the interstitial instead of navigating', async () => {
     const { AnnouncementCard } = await import('~/components/Announcements/AnnouncementCard');
     renderWithProviders(

@@ -8,7 +8,7 @@ import {
   type AnnouncementAllowance,
   type AnnouncementLink,
 } from '$lib/announcements';
-import { allowanceSchema, type AnnouncementForm } from './announcements-schema';
+import { allowanceSchema, toSaveBody, type AnnouncementForm } from './announcements-schema';
 
 // Announcement writes go through the MAIN APP, not kysely: the allowance check, the creator/sitewide
 // boundary and the cover `Image` row are all owned there, and duplicating any of them here would put a
@@ -121,31 +121,7 @@ export async function getAllowance(cookie: string): Promise<MainAppResult<Announ
 export function saveAnnouncement(cookie: string, form: AnnouncementForm) {
   return callMainApp<{ id: number }>(ENDPOINT, cookie, {
     method: 'POST',
-    body: {
-      id: form.id,
-      title: form.title,
-      content: form.content,
-      domain: form.domain,
-      profileOnly: form.profileOnly,
-      startsAt: form.startsAt?.toISOString() ?? null,
-      endsAt: form.endsAt?.toISOString() ?? null,
-      // `action` as well, so a main app still on the single-button schema keeps the first button
-      // rather than stripping `actions` as an unknown key and saving none. It ignores `action`
-      // once it reads `actions`.
-      ...(form.links.length ? { action: form.links[0], actions: form.links } : {}),
-      // A key, never an `Image` id: the server mints the row so the cover gets ingested and scanned.
-      ...(form.coverKey
-        ? {
-            coverImage: {
-              url: form.coverKey,
-              width: form.coverWidth,
-              height: form.coverHeight,
-              mimeType: form.coverMimeType,
-              sizeKB: form.coverSizeKB,
-            },
-          }
-        : {}),
-    },
+    body: toSaveBody(form),
   });
 }
 

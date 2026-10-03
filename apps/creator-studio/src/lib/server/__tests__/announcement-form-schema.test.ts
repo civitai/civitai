@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { allowanceSchema, announcementFormSchema } from '../announcements-schema';
+import { allowanceSchema, announcementFormSchema, toSaveBody } from '../announcements-schema';
 import { CONTENT_CEILING, DOMAIN_CHIPS, toAnnouncementLinks } from '../../announcements';
 
 // A complete, valid submission as the action receives it — Object.fromEntries(FormData), so every
@@ -296,5 +296,40 @@ describe('toAnnouncementLinks', () => {
     expect(toAnnouncementLinks(null)).toEqual([]);
     expect(toAnnouncementLinks({ dismissible: true })).toEqual([]);
     expect(toAnnouncementLinks({ actions: [null, { link: 3 }] })).toEqual([]);
+  });
+});
+
+describe('toSaveBody', () => {
+  const bodyFor = (over: Record<string, unknown>) => {
+    const result = parse(over);
+    if (!result.success) throw new Error(result.error.issues[0]?.message);
+    return toSaveBody(result.data);
+  };
+
+  // `actions` is what a current main app saves; `action` is what one still on the single-button
+  // schema keeps. Dropping either loses buttons on one side of a deploy.
+  it('posts every button as actions, and the first as the legacy action', () => {
+    const body = bodyFor({
+      linkUrl: '/models/1',
+      linkText: 'One',
+      linkUrl2: '/models/2',
+      linkText2: 'Two',
+      linkUrl3: '/models/3',
+      linkText3: 'Three',
+    });
+
+    expect(body.actions).toEqual([
+      { link: '/models/1', linkText: 'One' },
+      { link: '/models/2', linkText: 'Two' },
+      { link: '/models/3', linkText: 'Three' },
+    ]);
+    expect(body.action).toEqual({ link: '/models/1', linkText: 'One' });
+  });
+
+  it('posts neither when there are no buttons, so a save clears them', () => {
+    const body = bodyFor({});
+
+    expect(body).not.toHaveProperty('actions');
+    expect(body).not.toHaveProperty('action');
   });
 });

@@ -9,6 +9,7 @@ import {
 } from '$lib/server/announcements';
 import { announcementFormSchema, deleteAnnouncementSchema } from '$lib/server/announcements-schema';
 import { getAnnouncementMetrics } from '$lib/server/announcement-analytics';
+import { resolveMembership } from '$lib/server/membership';
 
 async function assertEnabled(locals: App.Locals) {
   if (!(await announcementsEnabled(locals.user))) error(404, 'Not found');
@@ -35,6 +36,9 @@ export const load: PageServerLoad = async ({ locals, request }) => {
     metrics,
     allowance: allowance.ok ? allowance.data : null,
     allowanceError: allowance.ok ? null : allowance.error,
+    // Real membership, never the moderator simulator cookie: the main app decides from the session
+    // tier alone, so a simulated member would be offered buttons it then refuses to save.
+    canAddLinkButtons: resolveMembership(locals.user).isMember,
   };
 };
 

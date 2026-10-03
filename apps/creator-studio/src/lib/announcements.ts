@@ -23,6 +23,17 @@ export const LINK_TEXT_MAX = 40;
  */
 export const LINK_BUTTONS_MAX = 3;
 
+/**
+ * The form field names for each button, in slot order. One named pair per button because the action
+ * parses with `Object.fromEntries`, which keeps only the last of a repeated key. Slot 1 keeps the
+ * pre-multi-button names.
+ */
+export const LINK_SLOTS = [
+  ['linkUrl', 'linkText'],
+  ['linkUrl2', 'linkText2'],
+  ['linkUrl3', 'linkText3'],
+] as const satisfies { length: typeof LINK_BUTTONS_MAX };
+
 export type AnnouncementLink = { link: string; linkText: string };
 
 /** Every button stored on an announcement, in order. Rows from before multi-button carry one. */

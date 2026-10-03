@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { CREATOR_ANNOUNCEMENT_CONTENT_MAX } from '~/server/schema/announcement.schema';
+import {
+  CREATOR_ANNOUNCEMENT_CONTENT_MAX,
+  CREATOR_ANNOUNCEMENT_MAX_ACTIONS,
+} from '~/server/schema/announcement.schema';
+import { LINK_BUTTONS_MAX as CREATOR_STUDIO_LINK_BUTTONS_MAX } from '../../../../apps/creator-studio/src/lib/announcements';
 import type * as BlocklistService from '~/server/services/blocklist.service';
 
 // The property under test is that a creator write cannot reach a sitewide surface, and it
@@ -938,12 +942,37 @@ describe('link buttons: up to three, more than one for members only', () => {
     expect(writtenActions()).toEqual([{ type: 'button', ...button(1) }]);
   });
 
-  it('refuses a fourth button for anyone, members included', () => {
+  // Creator Studio restates the cap to decide when to stop offering "Add button". Lowered here alone,
+  // it would offer a button this schema then refuses with a 400.
+  it('matches the cap Creator Studio offers', () => {
+    expect(CREATOR_STUDIO_LINK_BUTTONS_MAX).toBe(CREATOR_ANNOUNCEMENT_MAX_ACTIONS);
+  });
+
+  it('refuses a fourth button at the schema, for anyone, members included', () => {
     const parse = (count: number) =>
       upsertCreatorAnnouncementSchema.safeParse({ ...validInput, actions: buttons(count) }).success;
 
     expect(parse(3)).toBe(true);
     expect(parse(4)).toBe(false);
+  });
+
+  // Creator Studio sends both on every save; `action` is only for a main app that predates `actions`.
+  it('saves `actions` and ignores `action` when a client sends both', async () => {
+    dbMock.dbRead.announcement.findFirst.mockResolvedValue(null as never);
+    const parsed = upsertCreatorAnnouncementSchema.parse({
+      ...validInput,
+      action: button(9),
+      actions: buttons(3),
+    });
+
+    await upsertCreatorAnnouncement({
+      ...parsed,
+      profileOnly: true,
+      isMember: true,
+      userId: AUTHOR,
+    });
+
+    expect(writtenActions()).toEqual(buttons(3).map((b) => ({ type: 'button', ...b })));
   });
 
   it('still accepts the single `action` an older client sends', async () => {
@@ -995,6 +1024,15 @@ describe('link buttons: up to three, more than one for members only', () => {
       });
 
       expect(updatedActions()).toHaveLength(3);
+      // The previous count is read off `metadata`; the mock returns it whether or not the query
+      // asks, so without this a dropped select reads as "no buttons before" only in production.
+      expect(
+        (
+          dbMock.dbRead.announcement.findFirst.mock.calls[0][0] as {
+            select: { metadata?: boolean };
+          }
+        ).select.metadata
+      ).toBe(true);
     });
 
     it('cannot add a button beyond what the row already has', async () => {

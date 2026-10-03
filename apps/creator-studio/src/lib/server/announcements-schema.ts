@@ -6,7 +6,7 @@ import { checkbox, numberish } from './form-fields';
 import {
   CONTENT_CEILING,
   DOMAIN_COLORS,
-  LINK_BUTTONS_MAX,
+  LINK_SLOTS,
   LINK_TEXT_MAX,
   TITLE_MAX,
 } from '../announcements';
@@ -28,14 +28,6 @@ const optionalDate = z.preprocess(
 
 // One comma-joined field rather than repeated inputs: the action parses with `Object.fromEntries`,
 // which keeps only the LAST value of a repeated key, so checkboxes would silently post one domain.
-// One named pair per button for the same reason: a repeated key would post only the last button.
-// Slot 1 keeps the pre-multi-button names.
-const LINK_SLOTS = [
-  ['linkUrl', 'linkText'],
-  ['linkUrl2', 'linkText2'],
-  ['linkUrl3', 'linkText3'],
-] as const satisfies { length: typeof LINK_BUTTONS_MAX };
-
 const domainList = z.preprocess(
   (v) =>
     typeof v === 'string'
@@ -105,6 +97,35 @@ export const announcementFormSchema = z
 // rejecting here means the clamp never runs.
 
 export type AnnouncementForm = z.infer<typeof announcementFormSchema>;
+
+/** The main app's announcement endpoint body for a parsed form. */
+export function toSaveBody(form: AnnouncementForm) {
+  return {
+    id: form.id,
+    title: form.title,
+    content: form.content,
+    domain: form.domain,
+    profileOnly: form.profileOnly,
+    startsAt: form.startsAt?.toISOString() ?? null,
+    endsAt: form.endsAt?.toISOString() ?? null,
+    // `action` as well, so a main app still on the single-button schema keeps the first button
+    // rather than stripping `actions` as an unknown key and saving none. It ignores `action`
+    // once it reads `actions`.
+    ...(form.links.length ? { action: form.links[0], actions: form.links } : {}),
+    // A key, never an `Image` id: the server mints the row so the cover gets ingested and scanned.
+    ...(form.coverKey
+      ? {
+          coverImage: {
+            url: form.coverKey,
+            width: form.coverWidth,
+            height: form.coverHeight,
+            mimeType: form.coverMimeType,
+            sizeKB: form.coverSizeKB,
+          },
+        }
+      : {}),
+  };
+}
 
 export const deleteAnnouncementSchema = z.object({
   id: z.preprocess((v) => Number(v), z.number().int().positive()),
