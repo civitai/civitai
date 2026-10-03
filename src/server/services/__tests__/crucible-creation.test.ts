@@ -627,8 +627,8 @@ describe('createCrucible — prize customization fee', () => {
 });
 
 describe('createCrucible — free entries', () => {
-  // Open to every host since 2026-10-02 (Justin): this used to be moderator-only. They move no Buzz,
-  // because the pool counts only entries holding a fee transaction (see crucible-prizes.test.ts).
+  // Deliberately not moderator-only. Free entries move no Buzz: the pool counts only entries holding
+  // a fee transaction (crucible-prizes.test.ts).
   it('lets a host who is not a moderator offer free entries', async () => {
     await createCrucible(input({ entryLimit: 3, freeEntriesPerUser: 2 }));
 

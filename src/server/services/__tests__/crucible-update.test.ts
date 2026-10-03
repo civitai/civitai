@@ -427,13 +427,21 @@ describe('updateCrucible — while upcoming', () => {
 });
 
 describe('updateCrucible — free entries', () => {
-  // Open to every host since 2026-10-02 (Justin): this used to be moderator-only.
+  // Deliberately not moderator-only.
   it('lets an owner who is not a moderator set them on an upcoming crucible', async () => {
     findUnique.mockResolvedValue(upcoming({ entryLimit: 3 }));
 
     await edit({ freeEntriesPerUser: 2 });
 
     expect(written().freeEntriesPerUser).toBe(2);
+  });
+
+  it('keeps the free entries an edit leaves out', async () => {
+    findUnique.mockResolvedValue(upcoming({ entryLimit: 3, freeEntriesPerUser: 1 }));
+
+    await edit({ entryFee: 200 });
+
+    expect(written()).toMatchObject({ entryFee: 200, freeEntriesPerUser: 1 });
   });
 
   it('refuses more free entries than the entry limit', async () => {

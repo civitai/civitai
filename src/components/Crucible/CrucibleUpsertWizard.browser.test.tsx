@@ -85,7 +85,7 @@ const freeEntriesInput = () => {
 };
 
 describe('CrucibleUpsertWizard — free entries', () => {
-  // Open to every host since 2026-10-02 (Justin): this used to be shown to moderators only.
+  // Deliberately not moderator-only.
   test('offers free entries to a host who is not a moderator', async () => {
     renderWithProviders(<Harness values={valuesOnStep(2)} />);
 
