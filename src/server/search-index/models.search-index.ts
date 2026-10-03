@@ -22,6 +22,7 @@ import {
   getModelPaidAccessGates,
   getModelVersionPaidAccessTerms,
 } from '~/server/services/paid-access.service';
+import { loadResourceInsights, modelInsightQualityScore } from '~/server/services/resource-insight';
 import { modelsSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { getValidCreatorMembershipMap } from '~/server/services/creator-program.service';
 import {
@@ -216,6 +217,16 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
   const versionIds = models.flatMap((m) => m.modelVersions.map((v) => v.id));
   const paidAccessTerms = await getModelVersionPaidAccessTerms(versionIds);
 
+  // Suitability labels are VERSION-level and this index is MODEL-level, so these get
+  // collapsed to one score per model below. Batched over the whole read window like
+  // every other auxiliary lookup in this function.
+  //
+  // ⚠️ This adds one query per read batch, over a table that currently holds ~9,900
+  // rows against the ~718k documents being rebuilt — so the `in` list is wide and the
+  // result set is tiny. It is not free, but it is bounded by `READ_BATCH_SIZE`, not by
+  // the corpus.
+  const insights = await loadResourceInsights(versionIds);
+
   const indexReadyRecords = models
     .map((modelRecord) => {
       const {
@@ -265,8 +276,20 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
       const realDownloadCount = metrics?.downloadCount ?? 0;
       const realTippedAmountCount = metrics?.tippedAmountCount ?? 0;
 
+      // MAX `qualityScore` over this model's labeled versions that clear the promote
+      // confidence floor. `null` means "no qualifying label", and the key is then
+      // OMITTED rather than written as 0 or a sentinel — that omission is what puts the
+      // model in Meilisearch's trailing group instead of at a fabricated score.
+      // The rule, the alternatives considered, and the measured engine behaviour behind
+      // the omission are all in `modelInsightQualityScore`'s docstring.
+      const insightQualityScore = modelInsightQualityScore(
+        modelVersions.map((v) => v.id),
+        insights
+      );
+
       return {
         ...model,
+        ...(insightQualityScore === null ? {} : { insight: { qualityScore: insightQualityScore } }),
         earlyAccessDeadline: paidAccessGates.get(model.id)?.earlyAccessDeadline ?? null,
         hasActivePaidAccess: paidAccessGates.get(model.id)?.gated ?? false,
         nsfwLevel: parseBitwiseBrowsingLevel(model.nsfwLevel),

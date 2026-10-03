@@ -233,7 +233,7 @@ describe('findResourceIntentCandidates', () => {
     baseModel: 'SDXL 1.0',
   };
 
-  it('queries with the popularity sort and returns the capped shortlist', async () => {
+  it('seeds the pool by INSIGHT first and popularity second, and returns the capped shortlist', async () => {
     searchWithSignal.mockResolvedValue({ hits: [shortlistHit()], estimatedTotalHits: 1 });
     const { entries } = await findResourceIntentCandidates(criteria, {
       browsingLevel: 3,
@@ -241,10 +241,36 @@ describe('findResourceIntentCandidates', () => {
       cap: 50,
     });
     const args = meiliArgsOf();
-    expect(args.sort).toEqual(['metrics.thumbsUpCount:desc']);
+    expect(args.sort).toEqual(['insight.qualityScore:desc', 'metrics.thumbsUpCount:desc']);
     expect(args.limit).toBeGreaterThanOrEqual(50);
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({ versionId: 11, modelType: 'LORA', baseModel: 'SDXL 1.0' });
+  });
+
+  // 🔴 Separate from the whole-array assertion above on purpose, and it is the one that encodes
+  // the POINT of the change rather than its spelling. The arc's closing condition is that the
+  // pool stops being popularity-SEEDED; `metrics.thumbsUpCount:desc` legitimately remains in the
+  // array as the SECOND key (it is what orders the ~99% of documents that carry no label — see
+  // `modelInsightQualityScore`). So "popularity is absent" is the wrong invariant and a grep for
+  // that string is the wrong guard: what must hold is that popularity is not FIRST.
+  //
+  // Demoting insight to second, or dropping it, restores a popularity-seeded pool while the sort
+  // array still mentions insight — which reads as correct in a diff. This fails on exactly that.
+  it('🔴 never lets popularity be the FIRST sort key', async () => {
+    searchWithSignal.mockResolvedValue({ hits: [shortlistHit()], estimatedTotalHits: 1 });
+    await findResourceIntentCandidates(criteria, {
+      browsingLevel: 3,
+      coverage: COVERAGE,
+      cap: 50,
+    });
+    const sort = meiliArgsOf().sort ?? [];
+    expect(sort.length).toBeGreaterThan(0);
+    expect(sort[0]).toBe('insight.qualityScore:desc');
+    expect(sort[0]).not.toMatch(/thumbsUpCount/);
+    // A second key is REQUIRED, not optional: without one, the unlabeled documents come back in
+    // document order. Measured against Meilisearch v1.15.0 — they are not dropped and they sort
+    // last in both directions, but their internal order is arbitrary until a second key orders it.
+    expect(sort.length).toBeGreaterThanOrEqual(2);
   });
 
   it('returns [] without querying when the role is none', async () => {

@@ -1,7 +1,6 @@
 import type { SearchParams } from 'meilisearch';
 
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
-import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
   isTransientMeiliError,
@@ -16,6 +15,12 @@ import {
   type ResourceIntentRole,
   type ResourceIntentStyleFamily,
 } from '~/server/schema/resource-intent.schema';
+import {
+  loadResourceInsights,
+  RESOURCE_INSIGHT_MIN_DEMOTE_CONFIDENCE,
+  RESOURCE_INSIGHT_MIN_PROMOTE_CONFIDENCE,
+  type ResourceIntentInsight,
+} from '~/server/services/resource-insight';
 import { coverageFilter, versionGeneratableFor } from '~/shared/generation/coverage-fields';
 import { and, eq, inArray, ne, not, or } from '~/shared/utils/meili-filter';
 import { Flags } from '~/shared/utils/flags';
@@ -38,13 +43,29 @@ import type { ModelSearchIndexRecord } from '~/server/search-index/models.search
  *   - the hard-coded `celebrity` tag exclusion
  *
  * Filter conventions mirror `resource-select.service.ts` (same index, same
- * meili-filter builder, same popularity sort).
+ * meili-filter builder) — but NOT the same sort any more: see below.
  *
- * The candidate POOL is still seeded by popularity, because no insight field is
- * projected into the search index; the labels decide the ORDER within the pool.
- * The seed reaches `applyInsightRanking` only as the tiebreak index, so moving
- * the seed off `metrics.thumbsUpCount:desc` later replaces `searchShortlistModels`
- * without touching the re-rank.
+ * 🔴 The candidate POOL IS NOW SEEDED BY MEANING, not by popularity. An earlier
+ * version of this comment said the opposite ("still seeded by popularity, because no
+ * insight field is projected into the search index") and anticipated this change;
+ * `insight.qualityScore` is now projected by
+ * `~/server/search-index/models.search-index.ts`, so the seed is a TWO-TIER sort:
+ * `insight.qualityScore:desc` first, `metrics.thumbsUpCount:desc` second.
+ *
+ * Popularity is retained as the SECOND key deliberately, and it is not a hedge. Only
+ * ~1.1% of indexed models carry a label, and Meilisearch places documents missing a
+ * sortable attribute in a trailing group whose internal order is otherwise arbitrary
+ * (measured against v1.15.0 — see `modelInsightQualityScore`'s docstring). The second
+ * key is what orders that group. Without it the unlabeled ~99% would come back in
+ * document order, which is an arbitrary ordering presented as a ranked one.
+ *
+ * So the seed is "labeled models by meaning, then everything else by popularity" —
+ * NOT "popularity, re-ranked". The distinction is the whole point of the change, and
+ * the presence of `metrics.thumbsUpCount:desc` in the sort array does not contradict
+ * it: what mattered was that popularity stopped being the FIRST key.
+ *
+ * `applyInsightRanking` still re-ranks within the returned pool and still tiebreaks on
+ * the seed index, so this change does not touch the re-rank.
  */
 
 export type ResourceIntentCoverage = { next: boolean; member: boolean };
@@ -151,54 +172,23 @@ export function expandShortlist(
   return entries;
 }
 
-export type ResourceIntentInsight = {
-  role: string;
-  styleFamily: string;
-  qualityScore: number;
-  confidence: number;
+/**
+ * The insight shape, both confidence floors and `loadResourceInsights` now live in
+ * `./resource-insight.ts`, so the models search index can share the loader, the
+ * promote floor and the model-level projection rule WITHOUT importing this module.
+ * That direction matters: this file does `import type { ModelSearchIndexRecord }` from
+ * the search index, which erases at runtime, but a value import coming back the other
+ * way would close a real cycle. Read that file's header before moving any of it again.
+ *
+ * Re-exported from here because this was their original home and this module's callers
+ * and test suite import them from this path.
+ */
+export {
+  loadResourceInsights,
+  RESOURCE_INSIGHT_MIN_DEMOTE_CONFIDENCE,
+  RESOURCE_INSIGHT_MIN_PROMOTE_CONFIDENCE,
+  type ResourceIntentInsight,
 };
-
-/**
- * The floor for PROMOTION. `ResourceInsight.confidence` is the WEAKEST of a row's
- * four label judgments — including the `contentType` one this ordering never reads
- * — and the written distribution is p50 0.43 / mean 0.44 with only 3.4% of rows at
- * or above 0.70. So a 0.70 floor would discard ~96.6% of the labels and leave this
- * ordering inert; 0.30 is the measured ~12.8th percentile.
- *
- * ⚠️ Read that argument for what it weighs: the cost of a HIGH floor on this side
- * is a label that never gets to help, i.e. the feature doing nothing. It says
- * nothing about the demote side, which is why that side has its own constant below.
- */
-export const RESOURCE_INSIGHT_MIN_PROMOTE_CONFIDENCE = 0.3;
-
-/**
- * The floor for DEMOTION — a separate constant because the two directions have
- * ASYMMETRIC error costs and only the promote side has ever been argued.
- *
- * 🔴 This value is INHERITED from the promote-side argument above, not derived for
- * demotion. It is set equal to it so today's behaviour is unchanged; the split
- * exists so the demote floor can be moved in a validation window without touching
- * the promote floor, which until now it could not be.
- *
- * The asymmetry, stated so the next person does not have to re-derive it. Raising
- * THIS floor costs a missed demotion, and a row that fails to demote simply sits
- * neutral — seed order, which is the pre-feature behaviour. Raising the promote
- * floor costs the ordering its reason to exist. And the demote side's mistakes are
- * not merely reorderings: the permutation is sliced to the response cap, so a
- * demotion on a pool wider than the cap evicts a candidate from the returned page.
- *
- * Measured on a realistic approximation of a pool (not through this function): in
- * the worst cell sampled the demote bucket held 49 of 100 candidates, with median
- * confidence 0.45 and NONE at or above 0.70. So at this floor the bucket is a large
- * minority of a pool rather than a rare correction, and it is not selected by high
- * confidence — which is why neither this file nor the contract doc calls it the
- * "confident" bucket any more.
- *
- * Deliberately NOT raised here: where to put it is a product judgment about how
- * much eviction an unvalidated label is allowed to cause, and that judgment has not
- * been made.
- */
-export const RESOURCE_INSIGHT_MIN_DEMOTE_CONFIDENCE = 0.3;
 
 const ROLE_MATCH_WEIGHT = 2;
 const STYLE_MATCH_WEIGHT = 1;
@@ -326,35 +316,6 @@ export function applyInsightRanking(
     .map(({ entry }) => entry);
 }
 
-/**
- * 🔴 `stale: false` is a floor, not a freshness guarantee. Nothing in this repo
- * sets `stale = true` — the migration describes that flip as a manual step of a
- * label-spec bump — so today the clause excludes no row, and `specHash` is
- * deliberately NOT compared: filtering on it would make the whole ordering inert
- * from the moment a spec moves until a manual, vendor-spend-gated re-label pass
- * finished, and the table was designed so superseded rows stay readable. The
- * harm a superseded row could do is handled in `insightBucket` instead, by
- * refusing to demote on a value this build cannot interpret. What is NOT covered
- * either way is a spec that keeps an option's spelling and changes its meaning;
- * that one needs the manual flip.
- */
-export async function loadResourceInsights(
-  versionIds: number[]
-): Promise<Map<number, ResourceIntentInsight>> {
-  if (!versionIds.length) return new Map();
-  const rows = await dbRead.resourceInsight.findMany({
-    where: { modelVersionId: { in: versionIds }, stale: false },
-    select: {
-      modelVersionId: true,
-      role: true,
-      styleFamily: true,
-      qualityScore: true,
-      confidence: true,
-    },
-  });
-  return new Map(rows.map((row) => [row.modelVersionId, row]));
-}
-
 async function searchShortlistModels(
   filter: string | null,
   poolCap: number
@@ -363,7 +324,11 @@ async function searchShortlistModels(
   if (!client) return [];
   const request: SearchParams = {
     filter: filter ?? undefined,
-    sort: ['metrics.thumbsUpCount:desc'],
+    // 🔴 TWO-TIER, and the ORDER of these two keys is the load-bearing part — see this
+    // module's header. `insight.qualityScore` must stay FIRST; demoting it to second
+    // would silently restore a popularity-seeded pool while still mentioning insight.
+    // Pinned by `resource-intent-matcher.seed.test.ts`.
+    sort: ['insight.qualityScore:desc', 'metrics.thumbsUpCount:desc'],
     // 🔴 ONE DOCUMENT PER TARGETED VERSION — the POOL width, not the response cap,
     // and no multiplier on top. A model USUALLY contributes at least one matching
     // version, but not always: the indexed coverage and baseModel filters are both

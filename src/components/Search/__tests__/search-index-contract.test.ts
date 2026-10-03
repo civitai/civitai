@@ -128,10 +128,12 @@ describe('the models index sort contract', () => {
   // pointing the client at the new name in the same release leaves the client asking for something
   // the live index has never heard of, and every sorted model search 400s until someone runs a
   // reset. Update these two lists only together with a reset that has actually shipped.
-  it('declares exactly the sortable attributes the live models index is provisioned with', () => {
+  it('declares exactly the sortable attributes the models index is provisioned with', () => {
     expect(modelsSortableAttributes.slice().sort()).toEqual([
       'createdAt',
       'id',
+      // 🔴 NOT YET PROVISIONED ON THE LIVE INDEX — see `SORTABLE_PENDING_RESET` below.
+      'insight.qualityScore',
       'metrics.collectedCount',
       'metrics.commentCount',
       'metrics.downloadCount',
@@ -139,6 +141,36 @@ describe('the models index sort contract', () => {
       'metrics.thumbsUpCount',
       'metrics.tippedAmountCount',
     ]);
+  });
+
+  // 🔴 THE LIST ABOVE IS NO LONGER A DESCRIPTION OF THE LIVE INDEX, and this is the one place
+  // that says so. `insight.qualityScore` was added ahead of the reset that provisions it, which
+  // the sibling comment above permits for an ADDITION ("takes effect whenever a reset next
+  // happens") but which leaves a real window: until `search-index-sync-models-reset` has run,
+  // the live `models_v9` has never heard of this attribute, so ANY client that sorts on it gets
+  // `Attribute ... is not sortable` and the query 400s.
+  //
+  // Today exactly one client sorts on it — `searchShortlistModels` in
+  // ~/server/services/resource-intent-matcher.service.ts — and it is unreachable in production
+  // while the resource-intent Flipt flag is off. That flag is the ONLY thing closing this window.
+  // 🔴 So: do not enable that flag until the reset has shipped. Flipping it first turns every
+  // shortlist query into a 400.
+  //
+  // This set must go EMPTY once the reset has run. Emptying it is the mechanical signal that the
+  // ordering constraint is discharged; a non-empty set is a live deploy-ordering hazard, not a
+  // to-do. Nothing else in either repo records this.
+  const SORTABLE_PENDING_RESET = ['insight.qualityScore'];
+
+  it('flags every sortable attribute that the live index has not been provisioned with yet', () => {
+    // Guards the relationship, not the spelling: every pending entry must actually be declared
+    // (so a rename or removal cannot leave a stale name parked here), and every pending entry
+    // must be one a reset would write.
+    for (const attr of SORTABLE_PENDING_RESET) {
+      expect(modelsSortableAttributes).toContain(attr);
+    }
+    // The inverse direction, so this test fails if someone discharges the constraint by deleting
+    // the attribute instead of by running the reset.
+    expect(SORTABLE_PENDING_RESET.every((a) => modelsSortableAttributes.includes(a))).toBe(true);
   });
 
   it('offers exactly the sort options those attributes support, in label order', () => {

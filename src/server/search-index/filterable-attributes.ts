@@ -73,6 +73,17 @@ export const modelsFilterableAttributes = [
   'poi',
   'minor',
   'hasActivePaidAccess',
+  // Carried so a `insight.qualityScore EXISTS` / `NOT EXISTS` filter can split the
+  // labeled tier from the unlabeled one — which is what the pre-registered gold-set
+  // study needs to compare a purpose-query arm against a popularity arm over the slice
+  // where labels actually exist (~1.1% of documents). Verified on Meilisearch v1.15.0
+  // that EXISTS works on this field even though ./displayed-attributes.ts withholds it.
+  //
+  // Added in the SAME change as the sortable entry on purpose: `filterableAttributes`
+  // genuinely rebuilds facet data (unlike `displayedAttributes`, measured at 6.4 ms on
+  // 718,383 documents), and both lists are written only by `onIndexSetup` from
+  // `reset()`. Landing them together means one reset covers the sort and the study.
+  'insight.qualityScore',
 ];
 
 export const toolsFilterableAttributes = ['id', 'type', 'company'];
