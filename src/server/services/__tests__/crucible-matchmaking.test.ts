@@ -275,10 +275,10 @@ describe('getJudgingPair — pairing', () => {
       rawEntry(6, 16, 1900),
     ];
     queryRaw.mockImplementation(async (strings: TemplateStringsArray, ...values: unknown[]) => {
-      const excluded = values.flatMap((v) => (v as { values?: unknown[] })?.values ?? []);
-      return strings.join('').includes('NOT IN')
-        ? all.filter((e) => !excluded.includes(e.id))
-        : all;
+      const at = strings.findIndex((part) => part.trimEnd().endsWith('NOT IN ('));
+      if (at === -1) return all;
+      const excluded = (values[at] as { values: unknown[] }).values;
+      return all.filter((e) => !excluded.includes(e.id));
     });
     withVoteCounts({ 1: 0, 2: 0, 3: 5, 4: 5, 5: 8, 6: 8 });
     const serve = async (skipped: number[]) => {
@@ -302,7 +302,11 @@ describe('getJudgingPair — pairing', () => {
     withVoteCounts({ 1: 0, 2: 0, 3: 6, 4: 6, 5: 8, 6: 8 });
     skipped = judgeSkipListReducer(skipped, { type: 'vote', pair: votedPair });
 
-    expect(pairIds(await serve(skipped)), 'the pair the judge just skipped').not.toEqual([1, 2]);
+    const next = pairIds(await serve(skipped))!;
+    expect(
+      next.filter((id) => [1, 2].includes(id)),
+      'an entry the judge just skipped'
+    ).toEqual([]);
   });
 
   it('does not query again when nothing was skipped', async () => {

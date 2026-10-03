@@ -39,7 +39,7 @@ import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CrucibleJudgingUI } from '~/components/Crucible/CrucibleJudgingUI';
-import { judgeSkipListReducer } from '~/components/Crucible/judge-skip-list';
+import { useJudgeSkipList } from '~/components/Crucible/judge-skip-list';
 import type { JudgingPairData, WatchedMs } from '~/components/Crucible/CrucibleJudgingUI';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { getCrucibleUrl, isCrucibleSfw } from '~/utils/crucible-helpers';
@@ -95,7 +95,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
     watched: WatchedMs;
   } | null>(null);
 
-  const [skippedEntryIds, setSkippedEntryIds] = useState<number[]>([]);
+  const { skippedEntryIds, skip, recordVote } = useJudgeSkipList();
   // One judging session per visit to this page: leaving and coming back means watching in full again.
   const [judgingSessionId] = useState(uuidv4);
 
@@ -245,11 +245,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
         setCurrentStreak((prev) => prev + 1); // Increment streak on vote
         setLastVoteAttempt(null);
         refetchProgress();
-        const nextSkipped = judgeSkipListReducer(skippedEntryIds, { type: 'vote', pair });
-        if (nextSkipped !== skippedEntryIds) {
-          // Changing the input fetches the next pair on its own.
-          setSkippedEntryIds(nextSkipped);
-        } else {
+        if (!recordVote(pair)) {
           const result = await refetchPair();
           // Only an explicit null means no pairs are left; a failed refetch leaves `data` undefined.
           if (result.data === null) {
@@ -263,7 +259,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
         setIsVoting(false);
       }
     },
-    [pair, id, submitVoteMutation, refetchPair, refetchProgress, skippedEntryIds, judgingSessionId]
+    [pair, id, submitVoteMutation, refetchPair, refetchProgress, recordVote, judgingSessionId]
   );
 
   // Retry last vote attempt
@@ -284,9 +280,9 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
         setSessionSkips((prev) => prev + 1);
         setCurrentStreak(0);
       }
-      setSkippedEntryIds((prev) => judgeSkipListReducer(prev, { type: 'skip', pair }));
+      skip(pair);
     },
-    [isVoting, isLoadingPair, pair]
+    [isVoting, isLoadingPair, pair, skip]
   );
 
   // Check if all pairs judged on initial load
