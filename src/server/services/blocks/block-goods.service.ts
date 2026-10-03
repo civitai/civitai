@@ -12,10 +12,10 @@ import { withRetries } from '~/server/utils/errorHandling';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import type { BuzzAccountType } from '~/shared/constants/buzz.constants';
 import {
-  BLOCK_GOOD_MAX_PRICE_BUZZ,
   blueLegOfPayout,
   computeBlockGoodSplit,
   findManifestGood,
+  maxPriceBuzzForKind,
 } from '~/shared/constants/block-goods.constants';
 import type { BlockGoodDeclaration } from '~/shared/constants/block-goods.constants';
 import { newBlockGoodEntitlementId, newBlockGoodPurchaseId } from '~/server/utils/app-block-ids';
@@ -545,7 +545,23 @@ export async function purchaseBlockGood(
 
   // Re-checked here and not only at manifest validation: a manifest approved
   // before the ceiling moved would otherwise keep charging the old price.
-  if (priceBuzz > BLOCK_GOOD_MAX_PRICE_BUZZ) {
+  //
+  // 🔴 PER-KIND, via `maxPriceBuzzForKind` — NOT the general ceiling. This used to
+  // read `BLOCK_GOOD_MAX_PRICE_BUZZ`, which made it a SECOND, DISAGREEING copy of a
+  // bound the manifest parser had already narrowed: an `app_unlock` is capped at
+  // 5,000 there and this guard admitted it to 50,000, i.e. 10x its real ceiling.
+  // Worse, the guard's own stated purpose — "a manifest approved before the ceiling
+  // moved" — is EXACTLY the app_unlock case, since every manifest approved to date
+  // predates that cap, so the one kind it most needed to catch was the one it could
+  // not see.
+  //
+  // Not reachable through the HTTP endpoint today (`resolveBlockGoodForPurchase`
+  // goes through `findManifestGood`, which refuses a catalog with ANY error), and
+  // that is precisely why it had to be fixed now rather than noticed later:
+  // `purchaseBlockGood` takes `resolved` as a CALLER-SUPPLIED input by design, and
+  // the pinned-version resolution path this file's own docs promise is a new
+  // producer that will not re-parse. When that lands, this line is the only bound.
+  if (priceBuzz > maxPriceBuzzForKind(good.kind)) {
     return {
       ok: false,
       status: 400,
