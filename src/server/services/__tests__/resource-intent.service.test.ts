@@ -373,6 +373,16 @@ describe('cache behavior', () => {
       criteriaVersion: 2,
     };
 
+    // 🔴 POSITIVE CONTROL, and it is what makes the four arms below mean anything:
+    // each of them is `current` with ONE term spoiled, so if `current` itself stops
+    // parsing — the response schema is strict, so the next required field does that —
+    // every arm would still be recomputed, for the wrong reason, and stay green.
+    mockAskJev.mockReset();
+    redisMock.redis.packed.get.mockResolvedValue(current);
+    const served = await getResourceIntent(INPUT, CTX);
+    expect(mockAskJev).not.toHaveBeenCalled();
+    expect(served.suggestions).toEqual([{ versionId: 999 }]);
+
     // Only the ROOT literal can reject this one.
     await stale({ ...current, criteriaVersion: 1 });
     // Only the CRITERIA literal can reject this one.

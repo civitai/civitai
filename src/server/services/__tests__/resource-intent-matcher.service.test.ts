@@ -373,7 +373,7 @@ describe('applyInsightRanking — the label ordering policy', () => {
     ).toEqual([61001, 62002]);
   });
 
-  it('uses qualityScore only to separate candidates inside one agreement bucket', () => {
+  it('uses qualityScore to separate candidates inside one agreement bucket', () => {
     const entries = [entryOf(71001, 68), entryOf(72002, 42)];
     const insights = insightMap(
       insightRow(71001, {
@@ -598,6 +598,10 @@ describe('findResourceIntentCandidates — the labels change the response', () =
     });
   });
 
+  // Green at `origin/main` too — trivially, since the baseline reads no labels at
+  // all — so an invariant guard by the red/green matrix. It is the only cover on
+  // `loadResourceInsights`' empty-id early return, which no mutant in the battery
+  // targets, so a query on an empty `in: []` would otherwise go unnoticed.
   it('issues no label query at all when the pool is empty', async () => {
     searchWithSignal.mockResolvedValue({ hits: [], estimatedTotalHits: 0 });
 
@@ -607,10 +611,10 @@ describe('findResourceIntentCandidates — the labels change the response', () =
     expect(dbMock.dbRead.resourceInsight.findMany).not.toHaveBeenCalled();
   });
 
-  // 🔴 Asserted on the POOL — the id list handed to the label read — not on the
-  // Meilisearch `limit`. An earlier version read only the limit, which at the
-  // maximum cap saturates against SEARCH_PAGE_MAX and so observed neither the
-  // multiplier nor the clamp: dropping `clampResourceIntentCap` from the pool
+  // 🔴 Asserted on the POOL — the id list handed to the label read — as well as on
+  // the Meilisearch page. An earlier version read only the page width, which at the
+  // maximum cap saturated against a since-deleted ceiling and so observed neither
+  // the multiplier nor the clamp: dropping `clampResourceIntentCap` from the pool
   // passed it, which is the one thing its name promised to catch.
   it('🔴 the pool is twice the cap, and the clamp binds at the shortlist maximum', async () => {
     // More hits than any pool width, so the pool is bounded by the cap arithmetic
@@ -654,13 +658,17 @@ describe('findResourceIntentCandidates — the labels change the response', () =
     expect(entries.map((e) => e.versionId)).toEqual([10701, 20802, 30903]);
   });
 
-  it('🔴 keeps the seed order and logs once when the label table is unreachable', async () => {
+  // 🔴 Run at cap 2 against a 3-hit seed on purpose: the fallback has its OWN slice,
+  // and at cap 50 that slice is a no-op, so `return pool` survived. Unsliced, the
+  // fallback would hand stage 3 up to twice the caller's cap in options and hydrate
+  // the same, while the shadow row recorded the pool width as the shortlist size.
+  it('🔴 keeps the seed order, caps it, and logs once when the label table is unreachable', async () => {
     searchWithSignal.mockResolvedValue({ hits: seed, estimatedTotalHits: 3 });
     dbMock.dbRead.resourceInsight.findMany.mockRejectedValue(new Error('relation missing'));
 
-    const entries = await findResourceIntentCandidates(criteria, opts);
+    const entries = await findResourceIntentCandidates(criteria, { ...opts, cap: 2 });
 
-    expect(entries.map((e) => e.versionId)).toEqual([10701, 20802, 30903]);
+    expect(entries.map((e) => e.versionId)).toEqual([10701, 20802]);
     expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'resource-intent-insight-read-failed' }),

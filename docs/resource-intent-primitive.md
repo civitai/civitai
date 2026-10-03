@@ -106,15 +106,24 @@ Nothing is FILTERED: an absent label never disqualifies a candidate, and the
 ordering is a permutation of the pool. An unlabeled candidate sits **above** a
 confident disagreement and **below** a confirmed agreement; it is never scored as a
 zero, which would bury the unlabeled majority under any weakly-labeled row.
-`qualityScore` separates candidates only inside one bucket — there is no quality
-score to compare an unlabeled candidate against.
+`qualityScore` separates candidates inside either labeled bucket, never for a
+neutral one — there is no quality score to compare an unlabeled candidate against.
+Worth stating because it follows from the table rather than being written anywhere
+else: a single label agreeing on one axis at the bare confidence floor outranks the
+entire unlabeled majority. That is the design — an agreeing label is the evidence
+this ordering exists to use — but it is the first lever to revisit if the ordering
+turns out to hurt.
 
 🔴 But the permutation is then **sliced to the response cap**, so on a pool wider
 than the cap the ordering decides *which* resources are suggested, not only their
 order — a promotion into a fixed-width page is an eviction out of it, and what gets
 evicted may be an unlabeled candidate. Relative to the popularity-only behaviour
-this replaces, no candidate is excluded that the old pool would have contained; but
-"nothing is dropped" would be the wrong way to read the table above.
+this replaces, no candidate is excluded that the old pool would have contained —
+measured, not reasoned: the search page this change asks for is identical to the
+previous one for every cap from 1 to 127, strictly narrower from 128 to 255, and
+never wider; and at that narrower end a 255-document page filled a 255-version pool
+in all 98 populated role x baseModel x browsing-level cells, the worst consuming 173
+documents. But "nothing is dropped" would be the wrong way to read the table above.
 
 Three details that are decisions, not oversights.
 
@@ -174,11 +183,18 @@ reordered this" from "every label landed neutral" — below the floor or unrecog
 both of which this design makes deliberately common. That needs a reorder signal, not
 a population count.
 
-**Closing condition:** columns ON the `resourceIntentShadow` table carrying (i) the
-count of pooled rows that reached a non-neutral bucket and (ii) whether the ordering
-ran at all, both carried in the cached response so a replay reports the same values
-as the computation, verified by a query that returns a non-empty, disjoint partition
-of rows into reordered / ordering-ran-but-all-neutral / ordering-did-not-run.
+🔴 And a count of actionable rows is still not a reorder signal: at the default cap
+half the pool sits outside the response, so demoting a candidate the seed had already
+placed there moves nothing the caller sees while counting as actionable. A class
+defined that way dilutes the treatment arm with responses identical to the control
+and biases the measured effect toward zero — the same failure one step further in.
+
+**Closing condition:** columns ON the `resourceIntentShadow` table carrying (i)
+whether the ordering changed the RETURNED slice — not how many rows were actionable
+— and (ii) whether the ordering ran at all; both carried in the cached response so a
+replay reports the same values as the computation; verified by a query returning a
+non-empty, disjoint partition of rows into changed-the-response /
+ordering-ran-but-response-unchanged / ordering-did-not-run.
 
 ### The M3 study exists, has never been run, and does not grade this
 

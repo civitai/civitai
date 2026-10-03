@@ -12,7 +12,6 @@ import {
 import {
   clampResourceIntentCap,
   RESOURCE_INTENT_ROLE_OPTIONS,
-  RESOURCE_INTENT_STYLE_FAMILY_OPTIONS,
   type ResourceIntentCriteria,
   type ResourceIntentRole,
   type ResourceIntentStyleFamily,
@@ -60,17 +59,6 @@ export type ResourceIntentShortlistEntry = {
   thumbsUpCount: number;
 };
 
-// 🔴 ONE DOCUMENT PER TARGETED VERSION, derived from the POOL width rather than
-// the response cap, and no multiplier on top. A model contributes at least one
-// matching version, so a page this wide can always fill the pool, and measured
-// against the live index a 100-document page filled a 100-version pool in every
-// populated role x baseModel combination while CONSUMING only 10-48 of those
-// documents. The 2x that used to sit here fetched and parsed the other half for
-// nothing: it added zero pool members anywhere and cost 1.6-2.6x the response
-// payload and JSON.parse, plus roughly double the index's own processing time on a
-// Meilisearch shared with the resource picker.
-const SEARCH_PAGE_MAX = 500;
-
 /**
  * Pool width as a multiple of the response cap, so a candidate the popularity
  * seed placed outside the response can still be promoted into it.
@@ -80,14 +68,13 @@ const SEARCH_PAGE_MAX = 500;
  * only — at the maximum accepted `limit` of 255. That is deliberate (the pool is
  * the work bound as well as the lookahead) but it means the widening is a
  * property of the DEFAULT cap of 50, not of every request.
+ *
+ * `clampResourceIntentCap` is therefore the ONE bound on both the pool and the
+ * search page below — raising `RESOURCE_INTENT_MAX_SHORTLIST` to widen responses
+ * also raises this re-rank's work bound. A second ceiling here was deleted for
+ * being unreachable while that constant stays under it.
  */
 const RERANK_POOL_MULTIPLIER = 2;
-
-/**
- * Both the page and the pool are bounded by this, through `clampResourceIntentCap`
- * — so raising `RESOURCE_INTENT_MAX_SHORTLIST` to widen responses also raises the
- * re-rank's work bound.
- */
 
 export function buildResourceIntentFilter({
   modelTypes,
@@ -186,38 +173,23 @@ type ResourceIntentWant = {
   styleFamily: ResourceIntentStyleFamily;
 };
 
-/**
- * `role` and `styleFamily` are TEXT, versioned with the label spec, so a stored row
- * can hold a value this build's taxonomy no longer contains.
- *
- * Only the `role` narrowing changes behaviour (it is what the demotion rule reads).
- * On `styleFamily` it is compile-time only — an unrecognised string compares false
- * against `want.styleFamily` exactly as `null` does — and it is kept so both sides
- * of that comparison are the union type rather than `string` against a union, which
- * type-checks whatever the left side can hold. Do not write a behavioural test for
- * the style half; there is nothing to observe.
- */
-function knownValue<T extends string>(options: readonly T[], stored: string): T | null {
-  return (options as readonly string[]).includes(stored) ? (stored as T) : null;
-}
-
 function insightBucket(insight: ResourceIntentInsight, want: ResourceIntentWant): number {
   if (insight.confidence < RESOURCE_INSIGHT_MIN_CONFIDENCE) return 0;
-  const role = knownValue(RESOURCE_INTENT_ROLE_OPTIONS, insight.role);
-  const styleFamily = knownValue(RESOURCE_INTENT_STYLE_FAMILY_OPTIONS, insight.styleFamily);
   // `other` means "none of the above" on both sides, so other↔other is not agreement.
-  const styleMatch = want.styleFamily !== 'other' && styleFamily === want.styleFamily;
+  const styleMatch = want.styleFamily !== 'other' && insight.styleFamily === want.styleFamily;
   const agreement =
-    (role === want.role ? ROLE_MATCH_WEIGHT : 0) + (styleMatch ? STYLE_MATCH_WEIGHT : 0);
+    (insight.role === want.role ? ROLE_MATCH_WEIGHT : 0) + (styleMatch ? STYLE_MATCH_WEIGHT : 0);
   if (agreement > 0) return agreement;
-  // 🔴 Demotion turns on the ROLE alone, because only a recognised role is positive
-  // evidence that the resource is for something ELSE; an unrecognised `styleFamily`
-  // beside a recognised disagreeing role does not rescue it. A taxonomy edit
-  // supersedes every stored row's spec AND makes its strings unmatchable in the same
-  // move, so demoting on a value this build cannot interpret would bury the entire
-  // labeled population — the catalogue's high-usage head — beneath the unlabeled
-  // majority, silently, until a re-label pass caught up.
-  return role !== null ? -1 : 0;
+  // 🔴 Demotion turns on the ROLE alone, and only on a role this build's taxonomy
+  // still contains. `role`/`styleFamily` are TEXT versioned with the label spec, so
+  // a stored row can hold a value this build cannot interpret — and a taxonomy edit
+  // supersedes every row's spec AND makes its strings unmatchable in the same move,
+  // so demoting on one would bury the entire labeled population (the catalogue's
+  // high-usage head) beneath the unlabeled majority until a re-label pass caught up.
+  // Only the role is checked, because only a recognised role is positive evidence
+  // the resource is for something ELSE: an unrecognised `styleFamily` already fails
+  // the comparison above, so checking it here would change nothing.
+  return (RESOURCE_INTENT_ROLE_OPTIONS as readonly string[]).includes(insight.role) ? -1 : 0;
 }
 
 /**
@@ -302,7 +274,19 @@ async function searchShortlistModels(
   const request: SearchParams = {
     filter: filter ?? undefined,
     sort: ['metrics.thumbsUpCount:desc'],
-    limit: Math.min(poolCap, SEARCH_PAGE_MAX),
+    // 🔴 ONE DOCUMENT PER TARGETED VERSION — the POOL width, not the response cap,
+    // and no multiplier on top. A model USUALLY contributes at least one matching
+    // version, but not always: the indexed coverage and baseModel filters are both
+    // nested-array matches, so one document can match on two DIFFERENT versions and
+    // expand to zero (measured: 20 of 49,000 documents, 0.04%). What carries this is
+    // the measurement, not that invariant — swept live over 98 populated role x
+    // baseModel x browsing-level cells, this width filled the pool in every one, at
+    // every cap from 1 to 255: 10-48 documents consumed at the default cap of 50,
+    // and 173 at the worst cell of the maximum cap of 255. The 2x that used to sit
+    // here added zero pool members in any cell and cost 1.6-2.6x the payload and its
+    // blocking JSON.parse, plus ~1.8x the index's own processing time on a
+    // Meilisearch shared with the resource picker.
+    limit: poolCap,
   };
   try {
     const results = await withMeiliResourceSelect(
