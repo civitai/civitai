@@ -5,6 +5,7 @@ import {
   CollectionItemStatus,
   ImageIngestionStatus,
 } from '~/shared/utils/prisma/enums';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { Tracker } from '~/server/clickhouse/tracker';
 import { logToAxiom } from '~/server/logging/client';
@@ -21,10 +22,12 @@ import {
   isAiReviewAvailable,
   isNsfwLevelAllowed,
   isUnratedNsfwLevel,
+  needsMinorReview,
   resolveRejectionMessage,
   reviewImage,
 } from '~/server/services/ai/collection-review.service';
 import type { AiReviewDecision } from '~/server/services/ai/collection-review.service';
+import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { isDefined } from '~/utils/type-guards';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { getEdgeUrl } from '~/client-utils/edge-url';
@@ -116,8 +119,10 @@ export async function reviewCollection(collectionId: number, config: CollectionA
 
 type Outcome = {
   collectionItemId: number;
+  imageId: number;
   action: 'accept' | 'reject' | 'stamp';
   message?: string;
+  minorReview?: boolean;
 };
 
 async function classifyItem({
@@ -188,7 +193,7 @@ async function classifyItem({
       // attempts run out, so a permanently broken image (the CDN refuses some of them) is not
       // retried, and re-billed, on every run for the life of the collection.
       if (attempts < MAX_REVIEW_ATTEMPTS) return undefined;
-      return { collectionItemId: item.collectionItemId, action: 'stamp' };
+      return { collectionItemId: item.collectionItemId, imageId: item.imageId, action: 'stamp' };
     }
   }
 
@@ -224,7 +229,13 @@ async function classifyItem({
     completionTokens: usage.completionTokens,
   });
 
-  return { collectionItemId: item.collectionItemId, action, message };
+  return {
+    collectionItemId: item.collectionItemId,
+    imageId: item.imageId,
+    action,
+    message,
+    minorReview: applied && needsMinorReview(decision),
+  };
 }
 
 // The scanner could not fetch the file, and nothing rescans a NotFound image on its own.
@@ -256,15 +267,65 @@ export function resolveAutomatedRejectionReason({
     : undefined;
 }
 
+// Only fills an empty slot, so an image already held in another queue stays there and nothing a
+// moderator set is cleared. Resolves false only when the write itself failed.
+export async function flagForMinorReview({
+  collectionId,
+  imageIds,
+}: {
+  collectionId: number;
+  imageIds: number[];
+}) {
+  if (!imageIds.length) return true;
+
+  let flagged: { id: number }[];
+  try {
+    flagged = await dbWrite.$queryRaw<{ id: number }[]>`
+      UPDATE "Image"
+      SET "needsReview" = 'minor', "updatedAt" = now()
+      WHERE id IN (${Prisma.join(imageIds)})
+        AND "needsReview" IS NULL
+        AND ingestion = 'Scanned'
+      RETURNING id
+    `;
+  } catch (error) {
+    logToAxiom({
+      type: 'job-error',
+      name: 'collection-ai-review',
+      collectionId,
+      error: `Failed to flag ${imageIds.length} images for minor review: ${
+        (error as Error).message
+      }`,
+    }).catch(() => undefined);
+    return false;
+  }
+
+  if (flagged.length)
+    await queueImageSearchIndexUpdate({
+      ids: flagged.map((row) => row.id),
+      action: SearchIndexUpdateQueueAction.Update,
+    }).catch(() => undefined);
+  return true;
+}
+
 // Stamps before writing status: a status write can throw, and an unstamped item is reselected and
 // re-billed on the next run.
 async function applyOutcomes({
   collectionId,
-  outcomes,
+  outcomes: reviewed,
 }: {
   collectionId: number;
   outcomes: Outcome[];
 }) {
+  if (!reviewed.length) return;
+
+  // Before the claim: an item whose flag failed stays unclaimed, so the next run retries the flag
+  // instead of rejecting the item with the signal lost.
+  const flagged = await flagForMinorReview({
+    collectionId,
+    imageIds: reviewed.filter((o) => o.minorReview).map((o) => o.imageId),
+  });
+  const outcomes = flagged ? reviewed : reviewed.filter((o) => !o.minorReview);
   if (!outcomes.length) return;
 
   // Minutes can pass between selecting an item and writing its outcome. Claiming the row only

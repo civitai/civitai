@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as CollectionReviewService from '~/server/services/ai/collection-review.service';
 import type * as CollectionService from '~/server/services/collection.service';
 import type * as TrackerModule from '~/server/clickhouse/tracker';
+import type * as ImageService from '~/server/services/image.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { CollectionItemRejectionReason, CollectionItemStatus } from '~/shared/utils/prisma/enums';
@@ -15,9 +16,17 @@ import {
   reviewCollection,
 } from '~/server/jobs/collection-ai-review';
 
-const { reviewImage, updateCollectionItemsStatus } = vi.hoisted(() => ({
-  reviewImage: vi.fn(),
-  updateCollectionItemsStatus: vi.fn(),
+const { reviewImage, updateCollectionItemsStatus, queueImageSearchIndexUpdate } = vi.hoisted(
+  () => ({
+    reviewImage: vi.fn(),
+    updateCollectionItemsStatus: vi.fn(),
+    queueImageSearchIndexUpdate: vi.fn(),
+  })
+);
+
+vi.mock('~/server/services/image.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ImageService>()),
+  queueImageSearchIndexUpdate,
 }));
 
 vi.mock('~/server/services/ai/collection-review.service', async (importOriginal) => ({
@@ -67,15 +76,26 @@ function pendingItem(overrides: Record<string, unknown> = {}) {
 }
 
 const sqlOf = (call: unknown[]) => (call[0] as string[]).join('?');
+const minorFlagCalls = () =>
+  dbMock.dbWrite.$queryRaw.mock.calls.filter((call: unknown[]) =>
+    sqlOf(call).includes(`SET "needsReview" = 'minor'`)
+  );
 const claimCalls = () =>
   dbMock.dbWrite.$queryRaw.mock.calls.filter((call: unknown[]) =>
     sqlOf(call).includes('SET "reviewedById"')
   );
 
-function queuePending(...items: ReturnType<typeof pendingItem>[]) {
-  dbMock.dbWrite.$queryRaw.mockImplementation(async (strings: string[]) => {
+function queuePending(
+  items: ReturnType<typeof pendingItem>[],
+  { flagImage }: { flagImage?: (imageIds: number[]) => { id: number }[] } = {}
+) {
+  dbMock.dbWrite.$queryRaw.mockImplementation(async (strings: string[], ...values: unknown[]) => {
     const sql = strings.join('?');
     if (sql.includes('SET "reviewedById"')) return items.map((i) => ({ id: i.collectionItemId }));
+    if (sql.includes('UPDATE "Image"')) {
+      const imageIds = (values[0] as { values: number[] }).values;
+      return flagImage ? flagImage(imageIds) : imageIds.map((id) => ({ id }));
+    }
     return items;
   });
 }
@@ -83,6 +103,7 @@ function queuePending(...items: ReturnType<typeof pendingItem>[]) {
 beforeEach(() => {
   reviewImage.mockReset();
   updateCollectionItemsStatus.mockReset();
+  queueImageSearchIndexUpdate.mockReset().mockResolvedValue(undefined);
   dbMock.dbWrite.$queryRaw.mockClear();
   redisMock.sysRedis.incrBy.mockReset();
   redisMock.sysRedis.expire.mockClear();
@@ -92,7 +113,7 @@ describe('reviewCollection: a failed model call', () => {
   it.each([1, MAX_REVIEW_ATTEMPTS - 1])(
     'leaves the item unclaimed for a later run after failed attempt %i',
     async (attempts) => {
-      queuePending(pendingItem());
+      queuePending([pendingItem()]);
       reviewImage.mockRejectedValue(new Error('Response validation failed'));
       redisMock.sysRedis.incrBy.mockResolvedValue(attempts);
 
@@ -104,7 +125,7 @@ describe('reviewCollection: a failed model call', () => {
   );
 
   it('stamps the item for a human once the attempts run out', async () => {
-    queuePending(pendingItem());
+    queuePending([pendingItem()]);
     reviewImage.mockRejectedValue(new Error('Response validation failed'));
     redisMock.sysRedis.incrBy.mockResolvedValue(MAX_REVIEW_ATTEMPTS);
 
@@ -154,7 +175,7 @@ describe('recordFailedAttempt', () => {
 
 describe('reviewCollection: an image rated outside the allowed levels', () => {
   it('is rejected with the collection copy, not the unavailable-image copy', async () => {
-    queuePending(pendingItem({ nsfwLevel: 4 }));
+    queuePending([pendingItem({ nsfwLevel: 4 })]);
 
     await reviewCollection(COLLECTION_ID, config);
 
@@ -168,7 +189,7 @@ describe('reviewCollection: an image rated outside the allowed levels', () => {
 
 describe('reviewCollection: an image the scanner could not find', () => {
   it('rejects it with its own reason instead of waiting for a rating that never comes', async () => {
-    queuePending(pendingItem({ nsfwLevel: 0, ingestion: 'NotFound' }));
+    queuePending([pendingItem({ nsfwLevel: 0, ingestion: 'NotFound' })]);
 
     await reviewCollection(COLLECTION_ID, config);
 
@@ -186,7 +207,7 @@ describe('reviewCollection: an image the scanner could not find', () => {
   });
 
   it('only stamps it in a dry run', async () => {
-    queuePending(pendingItem({ nsfwLevel: 0, ingestion: 'NotFound' }));
+    queuePending([pendingItem({ nsfwLevel: 0, ingestion: 'NotFound' })]);
 
     await reviewCollection(COLLECTION_ID, { ...config, dryRun: true });
 
@@ -195,7 +216,7 @@ describe('reviewCollection: an image the scanner could not find', () => {
   });
 
   it('still skips an image that is merely not rated yet', async () => {
-    queuePending(pendingItem({ nsfwLevel: 0, ingestion: 'Pending' }));
+    queuePending([pendingItem({ nsfwLevel: 0, ingestion: 'Pending' })]);
 
     await reviewCollection(COLLECTION_ID, config);
 
@@ -215,5 +236,128 @@ describe('resolveAutomatedRejectionReason', () => {
     expect(
       resolveAutomatedRejectionReason({ status: CollectionItemStatus.ACCEPTED })
     ).toBeUndefined();
+  });
+});
+
+const IMAGE_ID = 5;
+
+const cleanObservations = {
+  sexualContent: false,
+  isPhotorealistic: false,
+  suggestiveStyling: false,
+  nsfwEstimate: 'PG',
+  depictsMinor: false,
+  minorIsPhotorealistic: false,
+  minorInappropriate: false,
+  depictsRealPerson: false,
+  otherViolations: [],
+  hasBuzzReference: true,
+};
+
+function modelSees(overrides: Record<string, unknown>) {
+  reviewImage.mockResolvedValue({
+    observations: { ...cleanObservations, ...overrides },
+    usage: { promptTokens: 1, completionTokens: 1 },
+  });
+}
+
+const statusWrites = () =>
+  updateCollectionItemsStatus.mock.calls.map((call) => call[0].input.status as string);
+
+// The Buzz Beggars Board runs with escalationAction 'reject' and deletes REJECTED items hourly, so
+// before this the minor signal reached no human. The image queue is where it has to land.
+describe('reviewCollection: a minor-related escalation', () => {
+  it.each([
+    ['photorealistic minor', { depictsMinor: true, minorIsPhotorealistic: true }, 'REJECTED'],
+    [
+      'minor depicted inappropriately',
+      { depictsMinor: true, minorInappropriate: true },
+      'REJECTED',
+    ],
+    // Our own uncertainty: never rejected, only stamped, and so still held for a person.
+    ['possible minor', { minorUncertain: true, isPhotorealistic: true }, undefined],
+  ])(
+    'sends %s to the image minor queue whatever the collection does with it',
+    async (_label, observations, collectionStatus) => {
+      queuePending([pendingItem()]);
+      modelSees(observations);
+
+      await reviewCollection(COLLECTION_ID, config);
+
+      const flags = minorFlagCalls();
+      expect(flags).toHaveLength(1);
+      expect((flags[0][1] as { values: number[] }).values).toEqual([IMAGE_ID]);
+      expect(queueImageSearchIndexUpdate).toHaveBeenCalledWith({
+        ids: [IMAGE_ID],
+        action: 'Update',
+      });
+      expect(statusWrites()).toEqual(collectionStatus ? [collectionStatus] : []);
+    }
+  );
+
+  it('flags the image even when escalations are configured to stamp', async () => {
+    queuePending([pendingItem()]);
+    modelSees({ depictsMinor: true, minorIsPhotorealistic: true });
+
+    await reviewCollection(COLLECTION_ID, { ...config, escalationAction: 'stamp' });
+
+    expect(minorFlagCalls()).toHaveLength(1);
+    expect(statusWrites()).toEqual([]);
+  });
+
+  // Overwriting another queue's value would take the image out of that queue, and the job must
+  // only ever add review.
+  it('only fills an empty review slot on a scanned image', async () => {
+    queuePending([pendingItem()]);
+    modelSees({ depictsMinor: true, minorIsPhotorealistic: true });
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(sqlOf(minorFlagCalls()[0]).replace(/\s+/g, ' ').trim()).toBe(
+      `UPDATE "Image" SET "needsReview" = 'minor', "updatedAt" = now() WHERE id IN (?) AND "needsReview" IS NULL AND ingestion = 'Scanned' RETURNING id`
+    );
+  });
+
+  it('leaves the image alone for an escalation that is not about a minor', async () => {
+    queuePending([pendingItem()]);
+    modelSees({ depictsRealPerson: true });
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(minorFlagCalls()).toHaveLength(0);
+    expect(statusWrites()).toEqual(['REJECTED']);
+  });
+
+  it('writes nothing to the image in a dry run', async () => {
+    queuePending([pendingItem()]);
+    modelSees({ depictsMinor: true, minorIsPhotorealistic: true });
+
+    await reviewCollection(COLLECTION_ID, { ...config, dryRun: true });
+
+    expect(minorFlagCalls()).toHaveLength(0);
+    expect(claimCalls()).toHaveLength(1);
+  });
+
+  // Rejecting it anyway would let the hourly sweep delete the only record of the signal.
+  it('leaves the item unclaimed for a retry when the flag cannot be written', async () => {
+    const other = pendingItem({ collectionItemId: ITEM_ID + 1, imageId: IMAGE_ID + 1 });
+    queuePending([pendingItem(), other], {
+      flagImage: () => {
+        throw new Error('db down');
+      },
+    });
+    modelSees({});
+    reviewImage.mockResolvedValueOnce({
+      observations: { ...cleanObservations, depictsMinor: true, minorIsPhotorealistic: true },
+      usage: { promptTokens: 1, completionTokens: 1 },
+    });
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(minorFlagCalls()).toHaveLength(1);
+    const claims = claimCalls();
+    expect(claims).toHaveLength(1);
+    expect((claims[0][3] as { values: number[] }).values).toEqual([ITEM_ID + 1]);
+    expect(statusWrites()).toEqual(['ACCEPTED']);
   });
 });
