@@ -126,6 +126,12 @@ describe('createCrucibleInputSchema', () => {
     expect(createCrucibleInputSchema.safeParse(validCreateInput).success).toBe(true);
   });
 
+  it.each([0, -1, 1.5])('rejects content level %s', (nsfwLevel) => {
+    expect(createCrucibleInputSchema.safeParse({ ...validCreateInput, nsfwLevel }).success).toBe(
+      false
+    );
+  });
+
   it('rejects an empty name', () => {
     expect(createCrucibleInputSchema.safeParse({ ...validCreateInput, name: '   ' }).success).toBe(
       false

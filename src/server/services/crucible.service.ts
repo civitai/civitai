@@ -455,7 +455,7 @@ const isCrucibleOffSite = (
 
 const greenSiteSql = (isGreen: boolean) =>
   isGreen
-    ? Prisma.sql`AND c."nsfwLevel" <> 0 AND (c."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0 AND NOT c."textNsfw"`
+    ? Prisma.sql`AND c."nsfwLevel" = ANY(${CRUCIBLE_SFW_LEVELS}::int[]) AND NOT c."textNsfw"`
     : Prisma.empty;
 
 /** Crucible `c` with cover `i`, as list surfaces may show it to a viewer at `viewerLevel`. */

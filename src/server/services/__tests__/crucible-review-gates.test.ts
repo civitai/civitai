@@ -259,20 +259,18 @@ describe('list surfaces — featured and judging suggestions', () => {
     await run(true);
     const green = sqlText(queryRaw.mock.calls.at(-1)!);
     expect(green).not.toContain('"buzzType"');
-    expect(green).toContain(
-      'AND c."nsfwLevel" <> 0 AND (c."nsfwLevel" & ?) = 0 AND NOT c."textNsfw"'
-    );
+    expect(green).toContain('AND c."nsfwLevel" = ANY(?::int[]) AND NOT c."textNsfw"');
     const greenSite = (queryRaw.mock.calls.at(-1)!.slice(1) as { strings?: string[] }[]).find(
       (value) => value?.strings?.join('?').includes('NOT c."textNsfw"')
     ) as { values: unknown[] };
     expect(greenSite.values).toEqual([
-      NsfwLevel.R | NsfwLevel.X | NsfwLevel.XXX | NsfwLevel.Blocked,
+      [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.PG | NsfwLevel.PG13],
     ]);
 
     await run(false);
     const red = sqlText(queryRaw.mock.calls.at(-1)!);
     expect(red).not.toContain('"buzzType"');
-    expect(red).not.toContain(') = 0 AND NOT c."textNsfw"');
+    expect(red).not.toContain('= ANY(?::int[]) AND NOT c."textNsfw"');
   });
 
   it('suggestions count only entries this judge could be shown', async () => {

@@ -788,6 +788,23 @@ describe('crucible.getById — adult text on the green site', () => {
     expect(creator).toMatchObject({ name: 'Adult name', description: 'Adult description' });
   });
 
+  it("shows a crucible's clean text on green, even one accepting mature entries", async () => {
+    findUnique.mockResolvedValue({
+      ...scanned,
+      id: CRUCIBLE_ID,
+      status: CrucibleStatus.Active,
+      name: 'Clean name',
+      description: 'Clean description',
+      textNsfw: false,
+    });
+    findEntries.mockResolvedValue([]);
+
+    const stranger = await caller(signedIn(STRANGER_ID), { isGreen: true }).getById({
+      id: CRUCIBLE_ID,
+    });
+    expect(stranger).toMatchObject({ name: 'Clean name', description: 'Clean description' });
+  });
+
   it('keeps adult text off green whatever currency the creator paid in', async () => {
     findUnique.mockResolvedValue({
       ...scanned,

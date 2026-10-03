@@ -340,7 +340,7 @@ describe('applyResult — green crucible with NSFW text, claim lost (ended or fi
   });
 });
 
-// Decided by Justin, 2026-10-03: an SFW crucible created on civitai.red is listed on civitai.com and
+// Product decision, 2026-10-03: an SFW crucible created on civitai.red is listed on civitai.com and
 // may hold green entry fees, but flagged text still raises it to R and keeps it running rather than
 // cancelling it. Its green entrants lose sight of it on .com; prizes pay yellow either way. Do not
 // "fix" this into a cancel without asking.
