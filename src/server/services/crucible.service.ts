@@ -63,6 +63,11 @@ import {
   hasEntryImage,
 } from '~/server/selectors/crucible.selector';
 import { publishedImageWhere } from '~/server/selectors/image.selector';
+import {
+  getCrucibleJudgingConfig,
+  recordSessionVote,
+  resolveWatchSeconds,
+} from '~/server/services/crucible-judging-session';
 import type { RedisKeyTemplateSys, RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, sysRedis, REDIS_SYS_KEYS, REDIS_KEYS } from '~/server/redis/client';
 import { CacheTTL, constants } from '~/server/common/constants';
@@ -1897,14 +1902,19 @@ type EntryForJudging = {
   };
 };
 
+/** Seconds of playback each side needs before a vote is accepted; null when there is no rule. */
+export type JudgingWatchSeconds = { left: number | null; right: number | null };
+
 export type JudgingPair = {
   left: EntryForJudging;
   right: EntryForJudging;
+  watchSeconds: JudgingWatchSeconds;
 } | null;
 
 export type JudgingPairForClient = {
   left: Omit<EntryForJudging, 'score'>;
   right: Omit<EntryForJudging, 'score'>;
+  watchSeconds: JudgingWatchSeconds;
 } | null;
 
 /**
@@ -1921,7 +1931,7 @@ export const withoutEntryScores = (pair: JudgingPair): JudgingPairForClient => {
     user,
   });
 
-  return { left: project(pair.left), right: project(pair.right) };
+  return { left: project(pair.left), right: project(pair.right), watchSeconds: pair.watchSeconds };
 };
 
 const SAMPLE_SIZE = 100;
@@ -2177,6 +2187,7 @@ export const getJudgingPair = async ({
   userId,
   excludeEntryIds,
   browsingLevel,
+  judgingSessionId,
   isGreen = false,
   isModerator = false,
   blockedByUserIds,
@@ -2196,6 +2207,7 @@ export const getJudgingPair = async ({
       textNsfw: true,
       nsfwLevel: true,
       ingestion: true,
+      minViewSeconds: true,
       image: { select: { ingestion: true } },
     },
   });
@@ -2275,11 +2287,18 @@ export const getJudgingPair = async ({
   await sysRedis.expire(servedKey, JUDGE_KEY_TTL_SECONDS);
 
   const swapPositions = Math.random() < 0.5;
+  const left = swapPositions ? imageB : imageA;
+  const right = swapPositions ? imageA : imageB;
 
-  return {
-    left: swapPositions ? imageB : imageA,
-    right: swapPositions ? imageA : imageB,
-  };
+  const [leftSeconds, rightSeconds] = await resolveWatchSeconds({
+    crucibleId,
+    userId,
+    sessionId: judgingSessionId,
+    minViewSeconds: crucible.minViewSeconds,
+    entryIds: [left.id, right.id],
+  });
+
+  return { left, right, watchSeconds: { left: leftSeconds, right: rightSeconds } };
 };
 
 /**
@@ -2307,6 +2326,7 @@ export const submitVote = async ({
   loserEntryId,
   winnerWatchedMs,
   loserWatchedMs,
+  judgingSessionId,
   userId,
   blockedByUserIds,
 }: SubmitVoteSchema & {
@@ -2351,13 +2371,23 @@ export const submitVote = async ({
   // The browser reports these, so a determined caller can lie. What it buys is the accidental and
   // the casual case — and failing closed on an absent field, rather than treating it as zero
   // watched or as consent, is what stops "omit the field" being the bypass.
-  if (crucible.minViewSeconds) {
-    const requiredMs = crucible.minViewSeconds * 1000;
-    if ((winnerWatchedMs ?? 0) < requiredMs || (loserWatchedMs ?? 0) < requiredMs) {
-      throw throwBadRequestError(
-        `Watch at least ${crucible.minViewSeconds}s of both clips before voting.`
-      );
-    }
+  const [winnerSeconds, loserSeconds] = await resolveWatchSeconds({
+    crucibleId,
+    userId,
+    sessionId: judgingSessionId,
+    minViewSeconds: crucible.minViewSeconds,
+    entryIds: [winnerEntryId, loserEntryId],
+  });
+  if (
+    (winnerWatchedMs ?? 0) < (winnerSeconds ?? 0) * 1000 ||
+    (loserWatchedMs ?? 0) < (loserSeconds ?? 0) * 1000
+  ) {
+    throw throwBadRequestError(
+      `Watch at least ${Math.max(
+        winnerSeconds ?? 0,
+        loserSeconds ?? 0
+      )}s of both clips before voting.`
+    );
   }
 
   const entrySelect = { id: true, crucibleId: true, userId: true, score: true, voteCount: true };
@@ -2435,6 +2465,16 @@ export const submitVote = async ({
     sysRedis.expire(judgeEntryVotesKey, JUDGE_KEY_TTL_SECONDS),
     addJudge(crucibleId, userId),
     incrementUserVoteCount(userId),
+    crucible.minViewSeconds &&
+      getCrucibleJudgingConfig().then(({ sessionIdleSeconds }) =>
+        recordSessionVote({
+          crucibleId,
+          userId,
+          sessionId: judgingSessionId,
+          entryIds: [winnerEntryId, loserEntryId],
+          idleSeconds: sessionIdleSeconds,
+        })
+      ),
   ]);
 
   // Note: Pair was already marked as voted atomically at the start of this function
