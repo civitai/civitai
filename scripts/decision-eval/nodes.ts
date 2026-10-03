@@ -1,3 +1,4 @@
+import type { GoldPolicy } from './builder';
 import type { KnownAnswerControl } from './controls';
 import type {
   DataClass,
@@ -45,6 +46,8 @@ export type NodeSpec<Raw = unknown> = {
   exclude?(raw: Raw): string | null;
   source(ctx: NodeContext): AsyncIterable<SourceRow<Raw>>;
   gold(ctx: NodeContext): AsyncIterable<GoldRow>;
+  /** Defaults to majority vote. Read from ctx so a labeller id can stay in the data dir. */
+  goldPolicy?(ctx: NodeContext): GoldPolicy;
   /** Overrides the built-in known-answer control, e.g. with a node-shaped question. */
   control?: KnownAnswerControl & { image?: ImageInput };
 };

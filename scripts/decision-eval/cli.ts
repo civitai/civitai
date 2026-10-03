@@ -258,7 +258,11 @@ async function cmdScore(args: Args, dataDir: string) {
   }
 
   const items = readJsonl<ManifestItem>(p.manifest);
-  const resolved = resolveGold(readJsonl<GoldRow>(p.gold));
+  const policy = node.goldPolicy?.({ dataDir }) ?? { kind: 'majority' as const };
+  if (policy.kind === 'disagreement-as' && !node.classes.includes(policy.label)) {
+    throw new Error(`gold policy label "${policy.label}" is not a class of ${node.id}`);
+  }
+  const resolved = resolveGold(readJsonl<GoldRow>(p.gold), policy);
   const predictions = readJsonl<Prediction>(p.predictions(key)).filter((x) => x.runKey === key);
   const base = { items, classes: node.classes };
 
@@ -342,6 +346,7 @@ async function cmdScore(args: Args, dataDir: string) {
     baselines,
     fits,
     humanKappa: cohensKappa(resolved.humanPairs),
+    gold: { policy: policy.kind, unresolved: resolved.ties.length },
     firstVsFinalAgreement:
       resolved.firstVsFinal.length === 0
         ? null

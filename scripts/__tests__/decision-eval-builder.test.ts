@@ -142,6 +142,24 @@ describe('eval index file (v1, read by the LoRA builder)', () => {
 });
 
 describe('resolveGold', () => {
+  const pair = [
+    { itemId: 'd', gold: 'x', goldSource: 's', labeler: 'lead' },
+    { itemId: 'd', gold: 'y', goldSource: 's', labeler: 'second' },
+  ];
+
+  it('🔴 a primary labeller resolves the two-labeller disagreement majority vote would drop', () => {
+    expect(resolveGold(pair).ties).toEqual(['d']);
+    const r = resolveGold(pair, { kind: 'primary', labeler: 'lead' });
+    expect(r.gold.get('d')).toBe('x');
+    expect(r.ties).toEqual([]);
+    expect(r.humanPairs).toEqual([['x', 'y']]);
+  });
+
+  it('🔴 disagreement can be its own gold class', () => {
+    const r = resolveGold(pair, { kind: 'disagreement-as', label: 'cannot_tell' });
+    expect(r.gold.get('d')).toBe('cannot_tell');
+  });
+
   it('takes the majority, drops ties, and keeps human pairs', () => {
     const r = resolveGold([
       { itemId: 'a', gold: 'x', goldSource: 's', labeler: '1' },
@@ -156,7 +174,10 @@ describe('resolveGold', () => {
       ['c', 'y'],
     ]);
     expect(r.ties).toEqual(['b']);
-    expect(r.humanPairs).toEqual([['x', 'x']]);
+    expect(r.humanPairs).toEqual([
+      ['x', 'x'],
+      ['x', 'y'],
+    ]);
     expect(r.firstVsFinal).toEqual([['x', 'y']]);
   });
 });

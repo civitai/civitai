@@ -19,6 +19,7 @@ export type ReportInput = {
   baselines: Record<string, SplitScore>;
   fits: Record<string, ThresholdFit>;
   humanKappa: number | null;
+  gold: { policy: string; unresolved: number };
   firstVsFinalAgreement: number | null;
   controls: { knownAnswer: string; plantedFlips: string };
   latency: { p50: number | null; p95: number | null };
@@ -64,6 +65,7 @@ export function renderReport(r: ReportInput): string {
     `- hardware: ${c.hardware ?? 'not recorded'}`,
     `- spec hash \`${c.specHash}\`, run key \`${c.runKey}\``,
     `- target precision (Wilson 95% lower bound): ${pct(c.target)}`,
+    `- gold: ${r.gold.policy} policy; ${r.gold.unresolved} item(s) left unresolved and out of every metric`,
     `- latency p50 ${r.latency.p50 ?? 'n/a'} ms, p95 ${r.latency.p95 ?? 'n/a'} ms`,
     '',
     '## Controls',

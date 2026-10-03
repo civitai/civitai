@@ -164,18 +164,38 @@ export function buildTrainManifest(
   return [...candidates];
 }
 
+/**
+ * How several labels for one item become gold. `majority` drops ties, which with
+ * two labellers drops every disagreement — the hardest items — so a node with a
+ * designated labeller, or one that treats disagreement as a class, says so here.
+ */
+export type GoldPolicy =
+  | { kind: 'majority' }
+  | { kind: 'primary'; labeler: string }
+  | { kind: 'disagreement-as'; label: string };
+
 export type ResolvedGold = {
   gold: Map<string, string>;
-  /** Items whose labelers tied; not ground truth, so left out. */
+  /** Items the policy could not resolve; left out of gold and counted in the report. */
   ties: string[];
-  /** First two labels per multi-labelled item, for the human-human baseline. */
+  /** First two labels per multi-labelled item, disagreements included, for the human-human baseline. */
   humanPairs: Array<[string, string]>;
   /** (first human, final) pairs where a first decision was recorded. */
   firstVsFinal: Array<[string, string]>;
 };
 
-/** Majority vote per item; a tie is dropped rather than broken arbitrarily. */
-export function resolveGold(rows: readonly GoldRow[]): ResolvedGold {
+function majorityOf(list: readonly GoldRow[]): string | null {
+  const counts = new Map<string, number>();
+  for (const row of list) counts.set(row.gold, (counts.get(row.gold) ?? 0) + 1);
+  const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  if (ranked.length > 1 && ranked[0][1] === ranked[1][1]) return null;
+  return ranked[0][0];
+}
+
+export function resolveGold(
+  rows: readonly GoldRow[],
+  policy: GoldPolicy = { kind: 'majority' }
+): ResolvedGold {
   const byItem = new Map<string, GoldRow[]>();
   for (const row of rows) {
     const list = byItem.get(row.itemId) ?? [];
@@ -187,16 +207,20 @@ export function resolveGold(rows: readonly GoldRow[]): ResolvedGold {
   const humanPairs: Array<[string, string]> = [];
   const firstVsFinal: Array<[string, string]> = [];
   for (const [itemId, list] of byItem) {
-    const counts = new Map<string, number>();
-    for (const row of list) counts.set(row.gold, (counts.get(row.gold) ?? 0) + 1);
-    const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]);
-    if (ranked.length > 1 && ranked[0][1] === ranked[1][1]) {
+    if (list.length >= 2) humanPairs.push([list[0].gold, list[1].gold]);
+    let label: string | null;
+    if (policy.kind === 'primary') {
+      label = list.find((r) => r.labeler === policy.labeler)?.gold ?? majorityOf(list);
+    } else if (policy.kind === 'disagreement-as') {
+      label = new Set(list.map((r) => r.gold)).size === 1 ? list[0].gold : policy.label;
+    } else {
+      label = majorityOf(list);
+    }
+    if (label === null) {
       ties.push(itemId);
       continue;
     }
-    const label = ranked[0][0];
     gold.set(itemId, label);
-    if (list.length >= 2) humanPairs.push([list[0].gold, list[1].gold]);
     const first = list.find((r) => r.firstHumanLabel !== undefined)?.firstHumanLabel;
     if (first !== undefined) firstVsFinal.push([first, label]);
   }
