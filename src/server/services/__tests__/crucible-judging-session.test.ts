@@ -92,7 +92,7 @@ const installRedisFake = () => {
     return chain;
   });
   // Every pair counts as served, so the served-pair claim never decides these tests.
-  sysRedis.sRem.mockResolvedValue(1);
+  sysRedis.eval.mockResolvedValue(1);
   sysRedis.sAdd.mockResolvedValue(1);
 };
 
@@ -185,7 +185,7 @@ describe('submitVote — repeat clips within a judging session', () => {
   });
 
   it('does not mark clips seen on a vote refused because the pair was not served', async () => {
-    redisMock.sysRedis.sRem.mockResolvedValueOnce(0);
+    redisMock.sysRedis.eval.mockResolvedValueOnce(0);
     await expect(vote(10, 20, FULL, FULL)).rejects.toThrow(/no longer available/);
 
     await expect(vote(10, 30, REPEAT, FULL)).rejects.toThrow(/Watch at least 6s/);
