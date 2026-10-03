@@ -546,3 +546,32 @@ describe('support.topic source and gold against a fake ClickHouse', () => {
     expect(() => supportTopicNode.goldPolicy?.({ dataDir })).toThrow(/config.json is missing/);
   });
 });
+
+describe('support.topic stored-row check', () => {
+  it('refuses a duplicated ticket even when every wanted ticket is present', async () => {
+    vi.stubEnv('CLICKHOUSE_HOST', 'http://127.0.0.1:1');
+    const dataDir = mkdtempSync(join(tmpdir(), 'support-topic-dup-'));
+    mkdirSync(join(dataDir, NODE_ID));
+    writeFileSync(
+      join(dataDir, NODE_ID, 'config.json'),
+      JSON.stringify({ classifierVersion: 'v1', testStrataFiles: ['s.csv'] })
+    );
+    writeFileSync(join(dataDir, NODE_ID, 's.csv'), 'ticket_id,stratum\n500,crypto\n');
+    const row = {
+      ticket_id: '500',
+      created_ms: '0',
+      requester_freshdesk_id: 'a',
+      requester_email: '',
+    };
+    clickhouse.createClient.mockImplementation(() => ({
+      query: async (q: { query: string }) => ({
+        json: async () => (q.query.includes('support_ticket_eval_labels') ? [] : [row, row]),
+      }),
+      close: async () => undefined,
+    }));
+    const drain = async () => {
+      for await (const _ of supportTopicNode.source({ dataDir })) void _;
+    };
+    await expect(drain()).rejects.toThrow(/exactly one stored row/);
+  });
+});
