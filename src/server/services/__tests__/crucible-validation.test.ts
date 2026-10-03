@@ -5,12 +5,14 @@ import {
   cancelCrucibleSchema,
   createCrucibleInputSchema,
   crucibleImageSchema,
+  updateCrucibleSchema,
   getCruciblesInfiniteSchema,
   getJudgingPairSchema,
   submitEntrySchema,
   submitVoteSchema,
 } from '~/server/schema/crucible.schema';
 import { constants } from '~/server/common/constants';
+import { baseModelRecords } from '~/shared/constants/basemodel.constants';
 import { CrucibleSort } from '~/server/common/enums';
 import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { dbMock, loggingMock, redisMock } from '~/__tests__/mocks';
@@ -30,6 +32,7 @@ import {
   CRUCIBLE_MIN_TOTAL_ENTRIES,
   CRUCIBLE_MIN_VIEW_SECONDS_OPTIONS,
   CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
+  CRUCIBLE_MAX_ALLOWED_BASE_MODELS,
   CRUCIBLE_MAX_ALLOWED_RESOURCES,
   CRUCIBLE_NAME_MAX_LENGTH,
   CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
@@ -1440,6 +1443,17 @@ describe('submitEntry — base model requirements', () => {
     await expect(submit()).rejects.toThrow(/allowed base models/);
   });
 
+  it('accepts an allowed checkpoint alongside resources of other base models', async () => {
+    requiring({ allowedBaseModels: ['MiniMax H3'] });
+    madeWith(
+      resource(9002, 'Checkpoint', 'Wan Video 2.2 T2V-A14B'),
+      h3FineTune,
+      resource(9003, 'LORA', 'SDXL 1.0')
+    );
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+  });
+
   it('refuses an entry with no detected resources', async () => {
     requiring({ allowedBaseModels: ['MiniMax H3'] });
     madeWith();
@@ -1515,7 +1529,21 @@ describe('createCrucibleInputSchema — base models', () => {
     expect(result.success && result.data.allowedBaseModels).toEqual(['MiniMax H3']);
   });
 
-  it('refuses a name that is not a base model', () => {
+  it('refuses a name that is not a base model, on create and on edit', () => {
     expect(parse(['MiniMax H4']).success).toBe(false);
+    expect(
+      updateCrucibleSchema.safeParse({ id: 1, allowedBaseModels: ['MiniMax H4'] }).success
+    ).toBe(false);
+    expect(
+      updateCrucibleSchema.safeParse({ id: 1, allowedBaseModels: ['MiniMax H3'] }).success
+    ).toBe(true);
+  });
+
+  it('caps how many base models a crucible can require', () => {
+    const names = baseModelRecords
+      .slice(0, CRUCIBLE_MAX_ALLOWED_BASE_MODELS + 1)
+      .map((m) => m.name);
+    expect(parse(names.slice(0, CRUCIBLE_MAX_ALLOWED_BASE_MODELS)).success).toBe(true);
+    expect(parse(names).success).toBe(false);
   });
 });
