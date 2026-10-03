@@ -192,14 +192,11 @@ describe('re-seeding is non-destructive', () => {
     // seeded counter, the Prisma series. Deleting the catch left the suite green, so the guard
     // had no case.
     //
-    // 🔴 MEMBERSHIP throughout, per this describe's header — no totals and no literal series
-    // set. An earlier draft asserted `toBe(22)`, which cannot fail (`beforeAll` has already
-    // published those series, so a count passes whether or not THIS invocation wrote anything)
-    // and which misattributed: a case appended to the first describe that incremented one pair
-    // turned this red with `expected 23 to be 22`, reading as "the scrape lost series". The
-    // ceiling half had the same defect one step smaller — `toEqual(['app','user'])` is an exact
-    // series set, so any appended quota-refusal case (real code always supplies
-    // `app_block_id`, so it creates a third child) tripped it the same way.
+    // Two earlier drafts asserted the published series here — first `toBe(22)` plus
+    // `toEqual(['app','user'])`, then membership over the same sets. The totals version also
+    // MISATTRIBUTED (a case appended to the first describe that incremented one pair turned
+    // this red as "the scrape lost series"), and membership cured that — but neither version
+    // could FAIL, for the reason at the assertion site below.
     const handle = client.register.getSingleMetric(LATENCY) as unknown as {
       get: () => Promise<unknown>;
     };
@@ -208,14 +205,17 @@ describe('re-seeding is non-destructive', () => {
     try {
       await expect(seedAppBlockStorageMetrics()).resolves.toBeUndefined();
 
-      const pairs = new Set((await valuesOf(OPS)).map((v) => `${v.labels.op}/${v.labels.outcome}`));
-      for (const { op, outcome } of REACHABLE_OPS_SERIES) {
-        expect(pairs.has(`${op}/${outcome}`), `${op}/${outcome}`).toBe(true);
-      }
-      const ceilings = new Set((await valuesOf(QUOTA_EXCEEDED)).map((v) => v.labels.ceiling));
-      for (const ceiling of APP_STORAGE_CEILINGS) {
-        expect(ceilings.has(ceiling), ceiling).toBe(true);
-      }
+      // 🔴 NO assertion on the published series here, deliberately. Any check of what is
+      // published after the call — count OR membership — is satisfied by what `beforeAll`
+      // already published, so it passes whether or not THIS invocation wrote anything.
+      // Measured: moving all three counter writes to AFTER the failing read — the exact
+      // production failure this case is titled for, where a pod's first scrape publishes
+      // nothing at all — leaves such assertions green, and only the order guard below dies.
+      // They were redundant too: describe-1's seeding case kills any dropped pair first.
+      //
+      // So this case owns exactly two claims, both of which can fail: the seeder RESOLVES
+      // rather than throwing, and it RESTORES. "The counters are already out" is the order
+      // guard's claim, and it owns it structurally.
     } finally {
       handle.get = original;
     }
@@ -238,9 +238,13 @@ describe('re-seeding is non-destructive', () => {
     // histogram leg to sit BETWEEN the two counter loops measured 17/17 green while leaving
     // `quota_exceeded` and `user_quota_untracked` unpublished on a failing first scrape. One
     // spy per counter, each required to precede the read.
-    // `{ inc: () => void }` rather than a rest-param signature: the arity is irrelevant here
-    // (vitest calls through, so the real arguments are forwarded untouched) and a `(...args:
-    // never[])` type trips `no-unused-vars` on the parameter name.
+    // `{ inc: () => void }` is the minimal shape satisfying `vi.spyOn`'s method constraint; the
+    // declared arity is irrelevant because vitest calls through, so the real arguments are
+    // forwarded untouched. (An earlier version of this comment blamed `no-unused-vars` for
+    // rejecting a rest-param type. That is false — substituting `{ inc: (...args: never[]) =>
+    // void }` lints 0 problems and typechecks, and the previous commit shipped exactly that
+    // shape in this position. What tripped the rule was a `Record<T, (...a: never[]) =>
+    // unknown>` generic form that no longer exists.)
     const incTarget = (name: string) =>
       client.register.getSingleMetric(name) as unknown as { inc: () => void };
     const opsSpy = vi.spyOn(incTarget(OPS), 'inc');
@@ -280,16 +284,42 @@ describe('re-seeding is non-destructive', () => {
  */
 describe('the seeded domain matches the service', () => {
   const SRC = path.resolve(__dirname, '../../..');
+  const SERVICE_REL = 'server/services/apps/app-storage.service.ts';
+  const SEEDER_REL = 'server/prom/app-block-storage.metrics.ts';
   /**
-   * Every counter whose emits are funnelled through a typed wrapper. Each must appear exactly
-   * twice in each writer — the import and the one use — so an alias, a `.call`, or a second raw
-   * emit has to add an occurrence.
+   * Files that NAME any of the three counters — by symbol or by wire name — but must never emit
+   * one. Both are documentation: `block-token-access.service.ts` cross-references the ops
+   * counter in a docstring, and `apps.router.ts` carries the operator contract this PR
+   * corrected. They are in the set deliberately, so that a first REAL emit in either has to
+   * move a number.
+   */
+  const DOC_ONLY_RELS = [
+    'server/services/blocks/block-token-access.service.ts',
+    'server/routers/apps.router.ts',
+  ] as const;
+  /**
+   * The three seeded counters. Each must appear exactly twice in each writer — the import and
+   * the one use — so an alias, a `.call`, or a second raw emit has to add an occurrence.
+   *
+   * NOT "every counter behind a typed wrapper": only `countStorageOutcome` and
+   * `countQuotaExceeded` exist. `appStorageUserQuotaUntrackedCounter` is emitted RAW (one site),
+   * so for it this is a single-emit-site ledger rather than a wrapper-bypass guard. The
+   * distinction is the selection criterion a future author applies to a fourth counter.
    */
   const LEDGERED_WRITERS = [
     'appStorageOpsCounter',
     'appStorageQuotaExceededCounter',
     'appStorageUserQuotaUntrackedCounter',
   ] as const;
+  /**
+   * Both reach-paths for ALL THREE counters. Keying the walk on the ops counter alone made the
+   * quota ledger unreachable for a NEW FILE: a file importing only
+   * `appStorageQuotaExceededCounter` and emitting a raw `ceiling: 'User'` never entered the
+   * reach set, so none of the per-symbol assertions below ran against it — measured 17/17
+   * green. The occurrence counts closed that hole for a new SITE inside an already-listed
+   * file; this closes it for a new file.
+   */
+  const REACH_KEYS = [...LEDGERED_WRITERS, OPS, QUOTA_EXCEEDED, USER_QUOTA_UNTRACKED] as const;
   const SERVICE = path.join(SRC, 'server/services/apps/app-storage.service.ts');
   const service = () => fs.readFileSync(SERVICE, 'utf8');
 
@@ -355,13 +385,15 @@ describe('the seeded domain matches the service', () => {
     const procedures = src.split('\nexport async function ').slice(1);
     // 🔴 Pin the PARTITION, not just its contents. Nothing else asserts the split produced five
     // chunks, and `export const <name> = async` is this repo's other export idiom — 556 sites
-    // across 72 service files, two of them in this very directory. Convert one procedure to it
+    // across 72 service files — none in this directory today, which is
+    // exactly why the partition's five-ness needs asserting rather than eyeballing. Convert one procedure to it
     // and two procedures merge into one chunk, at which point the pairing below degrades to
     // exactly the whole-file `toContain` it replaced: measured, an arrow conversion PLUS a
     // get/set label swap went 17/17 green, with no warning of any kind.
-    expect(procedures.length, 'the file partitions into the 5 storage procedures').toBe(
-      APP_STORAGE_OPS.length
-    );
+    expect(
+      procedures.length,
+      'top-level `export async function` count — 5 storage procedures and no exported async helpers'
+    ).toBe(APP_STORAGE_OPS.length);
     for (const op of APP_STORAGE_OPS) {
       const owning = procedures.filter((body) =>
         new RegExp(`resolveStorageContext\\(\\s*[^,()]+\\s*,\\s*'${op}'\\s*\\)`).test(body)
@@ -373,7 +405,7 @@ describe('the seeded domain matches the service', () => {
     }
   });
 
-  it('🔴 only three non-test files under src/ can reach the ops counter — every case above assumes that scope', () => {
+  it('🔴 only four non-test files under src/ NAME these counters, and only two may emit — every case above assumes that scope', () => {
     // Ledgers files that REACH the handle, not ones that spell `.inc`. A spelled guard is
     // walkable: `const c = appStorageOpsCounter; c.inc(…)`, `.labels(op, outcome).inc()` (live
     // production idiom in `flipt-eval-cache.metrics.ts`) and `inc.call(…)` are all first-class
@@ -392,7 +424,9 @@ describe('the seeded domain matches the service', () => {
     // is why this set is three and not the EIGHT a test-inclusive walk reports. (Seven is the
     // figure under the symbol-only predicate — i.e. before the wire-name pattern three lines
     // above existed. The eighth is `metrics-endpoint-seeds-app-block-storage.test.ts`, which
-    // matches on the wire name and never names the symbol: measured bySym=7, byWire=2,
+    // matches on the wire name and never names the symbol: measured bySym=7, byWire=3 under the
+    // CURRENT unquoted predicate (2 under the quoted one it replaced — the service names the
+    // metric in a backticked docstring),
     // either=8. A count that silently belonged to the previous version of its own predicate is
     // the whole hazard this file exists to catch, so it is spelled out rather than restated.)
     // `block-token-access.service.ts` names it in a comment only, and that is still the right
@@ -408,7 +442,7 @@ describe('the seeded domain matches the service', () => {
           if (entry.name !== 'node_modules' && entry.name !== '__tests__') walk(full);
         } else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) {
           const text = fs.readFileSync(full, 'utf8');
-          if (text.includes('appStorageOpsCounter') || text.includes(OPS)) {
+          if (REACH_KEYS.some((k) => text.includes(k))) {
             const rel = path.relative(SRC, full);
             reaching.push(rel);
             sites[rel] = (
@@ -428,11 +462,7 @@ describe('the seeded domain matches the service', () => {
       }
     };
     walk(SRC);
-    expect(reaching.sort()).toEqual([
-      'server/prom/app-block-storage.metrics.ts',
-      'server/services/apps/app-storage.service.ts',
-      'server/services/blocks/block-token-access.service.ts',
-    ]);
+    expect(reaching.sort()).toEqual([SEEDER_REL, ...DOC_ONLY_RELS, SERVICE_REL].sort());
 
     // 🔴 Per-file membership is not enough on its own: the service is permanently on that list
     // because it holds `countStorageOutcome`'s own `.inc`, so a SECOND raw emit added inside it
@@ -445,13 +475,20 @@ describe('the seeded domain matches the service', () => {
     // alias or a `.call` must add to: two CODE occurrences in each writer (the import and the
     // one use), and zero in `block-token-access.service.ts` — which is in the membership set on
     // a docstring mention alone, so a first real emit there would otherwise be uncounted.
-    const SERVICE_REL = 'server/services/apps/app-storage.service.ts';
-    const SEEDER_REL = 'server/prom/app-block-storage.metrics.ts';
     expect(sites[SERVICE_REL], `${SERVICE_REL} .inc sites`).toBe(1);
     expect(sites[SEEDER_REL], `${SEEDER_REL} .inc sites`).toBe(1);
-    expect(sites['server/services/blocks/block-token-access.service.ts'], 'comment-only file').toBe(
-      0
-    );
+    // 🔴 OCCURRENCES for the comment-only file, not `sites`. An earlier revision asserted
+    // `sites === 0` here — the `.inc`-spelling predicate this case's own comment declares
+    // walkable three lines above — while computing the occurrence count for that file and never
+    // reading it. So the one file whose whole purpose in this ledger is "catch a first real
+    // emit here" caught no alias-shaped emit on any of the three counters: measured, an
+    // `import { appStorageOpsCounter } … const c = appStorageOpsCounter; c.inc(…)` added to it
+    // left 17/17 green, and at the same time a raw quota emit there did too.
+    for (const sym of LEDGERED_WRITERS) {
+      for (const rel of DOC_ONLY_RELS) {
+        expect(perSymbol[sym]?.[rel] ?? 0, `${sym} in ${rel} (documentation only)`).toBe(0);
+      }
+    }
 
     // 🔴 All THREE counters, not just the ops one. The asymmetry was the gap: the quota counter
     // is the one with the alerting consumer AND the one whose typo is worse than absence, yet
