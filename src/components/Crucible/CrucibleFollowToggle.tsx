@@ -6,20 +6,20 @@ import {
   useToggleCrucibleFollow,
 } from '~/components/Crucible/crucible.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { CrucibleStatus } from '~/shared/utils/prisma/enums';
+import { CRUCIBLE_FOLLOWABLE_STATUSES } from '~/shared/constants/crucible.constants';
+import type { CrucibleStatus } from '~/shared/utils/prisma/enums';
 
 type Props = {
   crucible: { id: number; status: CrucibleStatus };
 };
 
-const FOLLOWABLE: CrucibleStatus[] = [CrucibleStatus.Pending, CrucibleStatus.Active];
-
 export function CrucibleFollowToggle({ crucible }: Props) {
   const currentUser = useCurrentUser();
-  const { followedIds } = useFollowedCrucibleIds();
+  const followable = CRUCIBLE_FOLLOWABLE_STATUSES.includes(crucible.status);
+  const { followedIds } = useFollowedCrucibleIds({ enabled: followable });
   const { toggleFollow, toggling } = useToggleCrucibleFollow();
 
-  if (!currentUser || !FOLLOWABLE.includes(crucible.status)) return null;
+  if (!currentUser || !followable) return null;
 
   const following = followedIds.has(crucible.id);
   const label = following ? 'Unfollow this crucible' : 'Follow: notify me before this ends';

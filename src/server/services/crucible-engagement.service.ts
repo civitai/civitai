@@ -6,13 +6,10 @@ import {
   throwBadRequestError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { CrucibleEngagementType, CrucibleStatus } from '~/shared/utils/prisma/enums';
+import { CRUCIBLE_FOLLOWABLE_STATUSES } from '~/shared/constants/crucible.constants';
+import { CrucibleEngagementType } from '~/shared/utils/prisma/enums';
 
 const NOTIFY = CrucibleEngagementType.Notify;
-
-// Following only buys something while the crucible still has an ending ahead of it. Unfollowing
-// stays open at any status so a stale follow can always be cleared.
-const FOLLOWABLE_STATUSES: CrucibleStatus[] = [CrucibleStatus.Pending, CrucibleStatus.Active];
 
 export async function toggleCrucibleFollow({
   crucibleId,
@@ -25,6 +22,21 @@ export async function toggleCrucibleFollow({
   isModerator?: boolean;
   setTo?: boolean;
 }): Promise<boolean> {
+  const row = { type: NOTIFY, crucibleId, userId };
+  const follow =
+    setTo ??
+    !(await dbWrite.crucibleEngagement.findUnique({
+      where: { type_crucibleId_userId: row },
+      select: { type: true },
+    }));
+
+  // Unfollowing reads nothing first: it answers the same for any id, hidden or not, and a row the
+  // replica has not caught up to yet is still removed.
+  if (!follow) {
+    await dbWrite.crucibleEngagement.deleteMany({ where: { type: NOTIFY, crucibleId, userId } });
+    return false;
+  }
+
   const crucible = await dbRead.crucible.findUnique({
     where: { id: crucibleId },
     select: {
@@ -35,15 +47,6 @@ export async function toggleCrucibleFollow({
     },
   });
   if (!crucible) throw throwNotFoundError('Crucible not found');
-
-  const where = { type_crucibleId_userId: { type: NOTIFY, crucibleId, userId } };
-  const existing = await dbRead.crucibleEngagement.findUnique({ where, select: { type: true } });
-  const next = setTo ?? !existing;
-
-  if (!next) {
-    if (existing) await dbWrite.crucibleEngagement.delete({ where });
-    return false;
-  }
 
   // Ids are sequential: without the detail page's own gates this would confirm, and subscribe a
   // user to, a crucible that page hides from them.
@@ -56,22 +59,19 @@ export async function toggleCrucibleFollow({
   )
     throw throwNotFoundError('Crucible not found');
 
-  if (!FOLLOWABLE_STATUSES.includes(crucible.status))
+  if (!CRUCIBLE_FOLLOWABLE_STATUSES.includes(crucible.status))
     throw throwBadRequestError('This crucible has already ended');
 
-  if (existing) return true;
-  await dbWrite.crucibleEngagement
-    .create({ data: { type: NOTIFY, crucibleId, userId } })
-    .catch((error) => {
-      // Two concurrent follows both read "absent"; the loser's row already exists.
-      if (!isPrismaUniqueViolation(error)) throw error;
-    });
+  await dbWrite.crucibleEngagement.create({ data: row }).catch((error) => {
+    // Already following, or a concurrent follow won the race.
+    if (!isPrismaUniqueViolation(error)) throw error;
+  });
   return true;
 }
 
 export async function getFollowedCrucibleIds(userId: number): Promise<number[]> {
   const rows = await dbRead.crucibleEngagement.findMany({
-    where: { userId, type: NOTIFY, crucible: { status: { in: FOLLOWABLE_STATUSES } } },
+    where: { userId, type: NOTIFY, crucible: { status: { in: CRUCIBLE_FOLLOWABLE_STATUSES } } },
     select: { crucibleId: true },
   });
   return rows.map((r) => r.crucibleId);

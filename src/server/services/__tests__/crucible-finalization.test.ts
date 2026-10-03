@@ -111,6 +111,7 @@ const setupCrucible = ({
     ingestion,
     textNsfw: false,
     userId: 4,
+    image: { ingestion: ImageIngestionStatus.Scanned },
     status,
     entryFee,
     seededPrizePool,
@@ -777,6 +778,11 @@ describe('finalizeCrucible — followers', () => {
   const results = () =>
     createNotification.mock.calls.map(([arg]) => arg).filter((n) => n.type === 'crucible-results');
 
+  beforeEach(() => {
+    follows.mockResolvedValue([]);
+    dbMock.dbWrite.userEngagement.findMany.mockResolvedValue([]);
+  });
+
   it('tells followers who are neither the host nor an entrant, once, through the opt-out path', async () => {
     // Host 4 and entrants 10-12 already get crucible-ended / crucible-won.
     follows.mockResolvedValue([10, 4, 50, 12, 51].map((userId) => ({ userId })));
@@ -823,8 +829,35 @@ describe('finalizeCrucible — followers', () => {
     createBuzzTransactionMany.mockRejectedValue(new Error('buzz down'));
     follows.mockResolvedValue([{ userId: 50 }]);
 
-    await finalizeCrucible(1).catch(() => undefined);
+    await expect(finalizeCrucible(1)).rejects.toThrow('buzz down');
+
+    expect(createBuzzTransactionMany).toHaveBeenCalled();
+    expect(results()).toEqual([]);
+  });
+
+  it('skips followers the host has blocked', async () => {
+    follows.mockResolvedValue([50, 51].map((userId) => ({ userId })));
+    dbMock.dbWrite.userEngagement.findMany.mockResolvedValue([{ targetUserId: 51 }]);
+
+    await finalizeCrucible(1);
+
+    expect(dbMock.dbWrite.userEngagement.findMany).toHaveBeenCalledWith({
+      where: { userId: 4, type: 'Block', targetUserId: { in: [50, 51] } },
+      select: { targetUserId: true },
+    });
+    expect(results().map((n) => n.userIds)).toEqual([[50]]);
+  });
+
+  it.each([
+    ['its text', { ingestion: CrucibleIngestionStatus.Pending }],
+    ['its cover', { image: { ingestion: ImageIngestionStatus.Pending } }],
+  ])('tells no follower about a crucible hidden because %s is unscanned', async (_, hidden) => {
+    findUnique.mockResolvedValue({ ...(await findUnique()), ...hidden });
+    follows.mockResolvedValue([{ userId: 50 }]);
+
+    await finalizeCrucible(1);
 
     expect(results()).toEqual([]);
+    expect(createNotification.mock.calls.map(([n]) => n.type)).toContain('crucible-ended');
   });
 });

@@ -53,10 +53,10 @@ export const useQueryCrucibles = (
   return { data, crucibles, isLoading: isLoading || loadingPreferences, ...rest };
 };
 
-export function useFollowedCrucibleIds() {
+export function useFollowedCrucibleIds({ enabled = true }: { enabled?: boolean } = {}) {
   const currentUser = useCurrentUser();
   const { data, isLoading } = trpc.crucible.getFollowedIds.useQuery(undefined, {
-    enabled: !!currentUser,
+    enabled: !!currentUser && enabled,
     staleTime: 60_000,
   });
 

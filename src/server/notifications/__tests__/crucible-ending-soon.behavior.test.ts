@@ -30,6 +30,7 @@ const FOLLOWING_ENTRANT = 4;
 const UNFOLLOWED = 5;
 const MUTED = 6;
 const MUTED_OTHER_TYPE = 7;
+const BLOCKED = 8;
 
 const run = async (lastSent: Date) =>
   (await db.query<Row>(def.prepareQuery({ lastSent: lastSent.toISOString() }))).rows;
@@ -45,6 +46,7 @@ async function seedCrucible({
   name = 'Neon Dreams',
   ingestion = 'Scanned',
   textNsfw = false,
+  coverIngestion = 'Scanned' as string | null,
 }: {
   id: number;
   status?: string;
@@ -53,10 +55,13 @@ async function seedCrucible({
   name?: string;
   ingestion?: string;
   textNsfw?: boolean;
+  coverIngestion?: string | null;
 }) {
+  if (coverIngestion)
+    await db.query(`INSERT INTO "Image" (id, ingestion) VALUES ($1, $2)`, [id, coverIngestion]);
   await db.query(
-    `INSERT INTO "Crucible" (id, "userId", name, status, ingestion, "textNsfw", "startAt", "endAt", "createdAt")
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $7)`,
+    `INSERT INTO "Crucible" (id, "userId", name, status, ingestion, "textNsfw", "startAt", "endAt", "createdAt", "imageId")
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $7, $9)`,
     [
       id,
       HOST,
@@ -66,6 +71,7 @@ async function seedCrucible({
       textNsfw,
       secondsFromNow(endsInSeconds - durationSeconds),
       secondsFromNow(endsInSeconds),
+      coverIngestion ? id : null,
     ]
   );
 }
@@ -94,6 +100,16 @@ beforeAll(async () => {
     CREATE TYPE "CrucibleStatus" AS ENUM ('Pending','Active','Completed','Cancelled');
     CREATE TYPE "CrucibleIngestionStatus" AS ENUM ('Pending','Scanned','Blocked','Error');
     CREATE TYPE "CrucibleEngagementType" AS ENUM ('Notify');
+    CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending','Scanned','Error','Blocked','NotFound','Rescan');
+    CREATE TABLE "Image" (
+      id INT PRIMARY KEY,
+      ingestion "ImageIngestionStatus" NOT NULL
+    );
+    CREATE TABLE "UserEngagement" (
+      "userId" INT NOT NULL,
+      "targetUserId" INT NOT NULL,
+      type TEXT NOT NULL
+    );
     CREATE TABLE "Crucible" (
       id INT PRIMARY KEY,
       "userId" INT NOT NULL,
@@ -103,7 +119,8 @@ beforeAll(async () => {
       "textNsfw" BOOLEAN NOT NULL DEFAULT false,
       "startAt" TIMESTAMP(3),
       "endAt" TIMESTAMP(3),
-      "createdAt" TIMESTAMP(3) NOT NULL
+      "createdAt" TIMESTAMP(3) NOT NULL,
+      "imageId" INT
     );
     CREATE TABLE "CrucibleEntry" (
       id SERIAL PRIMARY KEY,
@@ -129,7 +146,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.exec(`
-    TRUNCATE "Crucible", "CrucibleEntry", "CrucibleEngagement", "UserNotificationSettings";
+    TRUNCATE "Crucible", "CrucibleEntry", "CrucibleEngagement", "UserNotificationSettings", "Image", "UserEngagement";
   `);
   pgNow = (await db.query<{ now: Date }>('SELECT now() AS now')).rows[0].now;
 });
@@ -175,7 +192,8 @@ describe('crucible-ending-soon recipients', () => {
     expect(await run(lastRun())).toEqual([]);
   });
 
-  it('skips a user who unfollowed before the window opened', async () => {
+  // Only the query half: that an unfollow deletes this row is pinned in crucible-engagement.service.test.
+  it('skips a user whose follow row is gone, as after an unfollow', async () => {
     await seedCrucible({ id: 10, ...crossing });
     await follow(10, FOLLOWER);
     await follow(10, UNFOLLOWED);
@@ -214,10 +232,39 @@ describe('crucible-ending-soon recipients', () => {
     await seedCrucible({ id: 10, ...crossing, textNsfw: true });
     await seedCrucible({ id: 11, ...crossing, ingestion: 'Pending' });
     await follow(10, FOLLOWER);
-    await follow(11, FOLLOWER);
+    await follow(11, HOST);
 
     const rows = await run(lastRun());
 
-    expect(rows.map((r) => r.details.crucibleName)).toEqual([null, null]);
+    expect(rows.map((r) => [r.details.crucibleId, r.details.crucibleName])).toEqual([
+      [10, null],
+      [11, null],
+    ]);
+  });
+
+  it.each([
+    ['its text', { ingestion: 'Pending' }],
+    ['its cover', { coverIngestion: 'Pending' }],
+    ['it has no cover', { coverIngestion: null }],
+  ])('reaches only the host while %s keeps it hidden', async (_, hidden) => {
+    await seedCrucible({ id: 10, ...crossing, ...hidden });
+    await follow(10, FOLLOWER);
+    await enter(10, ENTRANT);
+    await follow(10, HOST);
+
+    expect(recipients(await run(lastRun()), 10)).toEqual([HOST]);
+  });
+
+  it('skips a follower or entrant the host has blocked', async () => {
+    await seedCrucible({ id: 10, ...crossing });
+    await follow(10, FOLLOWER);
+    await follow(10, BLOCKED);
+    await enter(10, ENTRANT);
+    await db.query(
+      `INSERT INTO "UserEngagement" ("userId", "targetUserId", type) VALUES ($1, $2, 'Block'), ($1, $3, 'Block'), ($1, $4, 'Follow')`,
+      [HOST, BLOCKED, ENTRANT, FOLLOWER]
+    );
+
+    expect(recipients(await run(lastRun()), 10)).toEqual([FOLLOWER]);
   });
 });

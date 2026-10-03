@@ -131,21 +131,31 @@ const sendCrucibleNotification = (notification: Parameters<typeof createNotifica
 
 /** The host and every placed entrant get their own ending notification; this reaches the rest. */
 const notifyCrucibleFollowersOfResults = async ({
-  crucibleId,
+  crucible,
   crucibleName,
   excludeUserIds,
 }: {
-  crucibleId: number;
+  crucible: { id: number; userId: number } & Parameters<typeof isCrucibleHiddenByScan>[0];
   crucibleName: string | null;
   excludeUserIds: Iterable<number>;
 }) => {
+  const crucibleId = crucible.id;
   try {
+    // Only its host can open a crucible still hidden by its scan, and the host is excluded here.
+    if (isCrucibleHiddenByScan(crucible, {})) return;
     const exclude = new Set(excludeUserIds);
     const followers = await dbWrite.crucibleEngagement.findMany({
       where: { crucibleId, type: CrucibleEngagementType.Notify },
       select: { userId: true },
     });
-    const userIds = followers.map((f) => f.userId).filter((id) => !exclude.has(id));
+    const candidates = followers.map((f) => f.userId).filter((id) => !exclude.has(id));
+    if (!candidates.length) return;
+    const blocked = await dbWrite.userEngagement.findMany({
+      where: { userId: crucible.userId, type: 'Block', targetUserId: { in: candidates } },
+      select: { targetUserId: true },
+    });
+    const blockedIds = new Set(blocked.map((b) => b.targetUserId));
+    const userIds = candidates.filter((id) => !blockedIds.has(id));
     if (!userIds.length) return;
     sendCrucibleNotification({
       type: 'crucible-results',
@@ -2634,6 +2644,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
       ingestion: true,
       textNsfw: true,
       userId: true, // Crucible creator for notification
+      image: { select: { ingestion: true } },
       status: true,
       entryFee: true,
       seededPrizePool: true,
@@ -2701,7 +2712,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
         },
       });
       await notifyCrucibleFollowersOfResults({
-        crucibleId,
+        crucible,
         crucibleName: getCruciblePublishableName(crucible),
         excludeUserIds: [crucible.userId],
       });
@@ -2961,7 +2972,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
   }
 
   await notifyCrucibleFollowersOfResults({
-    crucibleId,
+    crucible,
     crucibleName,
     excludeUserIds: [crucible.userId, ...userResults.keys()],
   });

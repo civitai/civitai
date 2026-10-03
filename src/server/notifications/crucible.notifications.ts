@@ -107,20 +107,25 @@ export const crucibleNotifications = createNotificationProcessor({
     prepareMessage: ({ details }) => ({
       message: `The crucible${quotedName(
         details.crucibleName
-      )} ends in ${CRUCIBLE_ENDING_SOON_HOURS} hours. Last chance to enter and vote!`,
+      )} ends in ${CRUCIBLE_ENDING_SOON_HOURS} hours. Last chance to enter or vote!`,
       url: `/crucibles/${details.crucibleId}`,
     }),
     prepareQuery: ({ lastSent }) => `
       WITH affected AS (
         SELECT
           c.id,
-          CASE WHEN c.ingestion = 'Scanned' AND NOT c."textNsfw" THEN c.name END "crucibleName"
+          c."userId" "hostId",
+          -- getCruciblePublishableName, which a processor query cannot call.
+          CASE WHEN c.ingestion = 'Scanned' AND NOT c."textNsfw" THEN c.name END "crucibleName",
+          -- isCrucibleHiddenByScan: until both scans pass, only the host can open the crucible.
+          (c.ingestion = 'Scanned' AND i.ingestion = 'Scanned') "visible"
         FROM "Crucible" c
+        LEFT JOIN "Image" i ON i.id = c."imageId"
         WHERE
           c.status = 'Active'
-          AND now() BETWEEN c."endAt" - interval '${CRUCIBLE_ENDING_SOON_HOURS} hours' AND c."endAt"
+          AND c."endAt" BETWEEN now() AND now() + interval '${CRUCIBLE_ENDING_SOON_HOURS} hours'
           -- The last scan was before the window opened, so this fires once, on the crossing.
-          AND '${lastSent}'::timestamptz < c."endAt" - interval '${CRUCIBLE_ENDING_SOON_HOURS} hours'
+          AND c."endAt" > '${lastSent}'::timestamptz + interval '${CRUCIBLE_ENDING_SOON_HOURS} hours'
           -- A crucible no longer than the window is inside it from the moment it opens.
           AND COALESCE(c."startAt", c."createdAt") < c."endAt" - interval '${CRUCIBLE_ENDING_SOON_HOURS} hours'
       ), target_users AS (
@@ -141,7 +146,13 @@ export const crucibleNotifications = createNotificationProcessor({
         JSONB_BUILD_OBJECT('crucibleId', a.id, 'crucibleName', a."crucibleName") "details"
       FROM affected a
       JOIN target_users tu ON tu."crucibleId" = a.id
-      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = tu."userId" AND type = 'crucible-ending-soon')
+      WHERE (a."visible" OR tu."userId" = a."hostId")
+        -- The detail page hides a crucible from anyone its host has blocked.
+        AND NOT EXISTS (
+          SELECT 1 FROM "UserEngagement" blk
+          WHERE blk."userId" = a."hostId" AND blk."targetUserId" = tu."userId" AND blk.type = 'Block'
+        )
+        AND NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = tu."userId" AND type = 'crucible-ending-soon')
     `,
   },
   // Sent to followers who are neither the host nor a placed entrant when a crucible finalizes
