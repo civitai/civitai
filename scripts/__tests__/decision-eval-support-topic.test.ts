@@ -1,7 +1,14 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'fs';
+import type * as ClickhouseClient from '@clickhouse/client';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+const clickhouse = vi.hoisted(() => ({ createClient: vi.fn() }));
+vi.mock('@clickhouse/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof ClickhouseClient>()),
+  createClient: clickhouse.createClient,
+}));
 
 import { NODES } from '../decision-eval/nodes';
 import {
@@ -10,7 +17,6 @@ import {
   dropDevSharingTestGroup,
   goldFromLabel,
   groupKeyFor,
-  HUMAN_LABELS_SQL,
   INCUMBENT_TOPIC_MAP,
   keywordBaseline,
   NODE_ID,
@@ -63,10 +69,12 @@ function choice(value: string, confidence = 0.8): NormalizedAnswer[] {
 
 describe('support.topic state', () => {
   const leaky = raw({
-    subject: 'Help for pat.doe@example.org',
+    username: 'Pat+Creator(1)',
+    subject: 'Help for pat+creator(1), pat+creator(1) here',
     firstMessage:
       'Hi, I am PatTheCreator (pat.doe on discord). Mail me at pat.doe@example.org or cc my friend jo.smith@another.net, or see https://civitai.com/user/PatTheCreator and www.example.com, ping @mod_team.',
-    latestMessages: 'Still waiting @support_lead',
+    latestMessages:
+      'Still waiting @support_lead. PAT+CREATOR(1) again: civitai.com/user/SomeOtherUser, wallet 0x52908400098527886e0f7030069857d2e4169ee7, call +1 (415) 555-0134',
   });
 
   it('control: the harness PII check rejects the unredacted text', () => {
@@ -79,9 +87,12 @@ describe('support.topic state', () => {
     const state = buildSupportState(leaky);
     expect(() => assertNoPii('x', state)).not.toThrow();
     const all = Object.values(state).join('\n').toLowerCase();
-    expect(all).not.toContain('patthecreator');
+    expect(all).not.toContain('pat+creator(1)');
     expect(all).not.toContain('pat.doe');
     expect(all).not.toContain('another.net');
+    expect(all).not.toContain('someotheruser');
+    expect(all).not.toContain('52908400098527886e0f');
+    expect(all).not.toContain('555-0134');
   });
 
   it('sends only the fields the question needs: no incumbent answer, no requester ids', () => {
@@ -93,8 +104,8 @@ describe('support.topic state', () => {
   it('keeps the start of the first message and the end of the thread', () => {
     const state = buildSupportState(
       raw({
-        firstMessage: `HEAD${'x'.repeat(10_000)}`,
-        latestMessages: `${'y'.repeat(10_000)}TAIL`,
+        firstMessage: `HEAD ${'x '.repeat(5_000)}`,
+        latestMessages: `${'y '.repeat(5_000)}TAIL`,
       })
     );
     expect(state.first_message.startsWith('HEAD')).toBe(true);
@@ -104,17 +115,60 @@ describe('support.topic state', () => {
   });
 
   it('does not treat a short or empty username as something to strip', () => {
-    expect(redact('a b c', ['', ' ', 'ab'])).toBe('a b c');
+    expect(redact('abc ab', ['', ' ', 'ab'])).toBe('abc ab');
+  });
+
+  it('strips a username only as a whole word, so a topic word survives', () => {
+    expect(redact('I bought buzz, then buzzed you; buzz.', ['buzz'])).toBe(
+      'I bought [user], then buzzed you; [user].'
+    );
+    expect(redact('xbuzz buzzy', ['buzz'])).toBe('xbuzz buzzy');
+  });
+
+  it('redacts before cutting, so an identifier on the boundary leaves no partial', () => {
+    const cut = 'x'.repeat(5990) + ' jo.smith@another.net trailing';
+    const state = buildSupportState(
+      raw({
+        firstMessage: cut,
+        latestMessages: '0x52908400098527886e0f7030069857d2e4169ee7 ' + 'y'.repeat(2980),
+      })
+    );
+    expect(state.first_message).not.toContain('another');
+    expect(state.latest_messages).not.toMatch(/[a-f0-9]{8}/);
+  });
+
+  it('leaves an amount and a short order number alone', () => {
+    expect(redact('Paid 25.00 USD for 5000 buzz, order 123456')).toBe(
+      'Paid 25.00 USD for 5000 buzz, order 123456'
+    );
   });
 });
 
 describe('support.topic labels', () => {
-  it('maps every incumbent slug onto a real topic class, never onto cannot_tell', () => {
-    expect(Object.keys(INCUMBENT_TOPIC_MAP)).toHaveLength(13);
-    for (const v of Object.values(INCUMBENT_TOPIC_MAP)) {
-      expect(TOPIC_CLASSES).toContain(v);
-      expect(v).not.toBe(CANNOT_TELL);
-    }
+  it('maps the 13 incumbent slugs exactly; the money pair must never swap', () => {
+    expect(INCUMBENT_TOPIC_MAP).toEqual({
+      'billing-buzz': 'billing_buzz',
+      crypto: 'crypto',
+      'payment-refund': 'payment_refund',
+      'account-issue': 'account',
+      'technical-bug': 'technical_bug',
+      'generation-quality': 'generation_quality',
+      'model-quality': 'model_quality',
+      'nsfw-moderation': 'moderation',
+      'image-moderation-appeal': 'moderation',
+      'abuse-report': 'abuse_report',
+      'feature-request': 'feature_request',
+      'mobile-app': 'technical_bug',
+      other: 'other',
+    });
+  });
+
+  it('declares cannot_tell as a class, so a human cannot-tell is valid gold', () => {
+    expect(TOPIC_CLASSES).toContain(CANNOT_TELL);
+  });
+
+  it('throws on a label outside the incumbent vocab instead of silently dropping it', () => {
+    expect(() => goldFromLabel('not-a-topic', '')).toThrow(/not an incumbent topic/);
   });
 
   it.each([
@@ -125,7 +179,6 @@ describe('support.topic labels', () => {
     ['', 'cannot-tell', CANNOT_TELL],
     ['', 'cannot-tell: asks two things', CANNOT_TELL],
     ['', 'come back later', null],
-    ['not-a-topic', '', null],
   ])('label %j with notes %j is gold %j', (topic, notes, gold) => {
     expect(goldFromLabel(topic, notes)).toBe(gold);
   });
@@ -184,7 +237,7 @@ describe('support.topic plumbing', () => {
   it('reads a strata sidecar by header name, with CRLF line endings', () => {
     const sampler =
       'ticket_id,stratum,stratum_population,stratum_sampled,weight,double_labelled\r\n' +
-      '101,crypto,160,60,2.666667,0\r\n102,_rest,1085,133,8.157895,1\r\n';
+      '101,crypto,50,20,2.5,0\r\n102,_rest,400,40,10,1\r\n';
     expect([...parseStrataCsv(sampler)]).toEqual([
       ['101', 'crypto'],
       ['102', '_rest'],
@@ -216,7 +269,7 @@ describe('support.topic weighted summary', () => {
   const pred = (
     itemId: string,
     p: string | null,
-    confidence: number,
+    confidence: number | null,
     extra: Partial<Prediction> = {}
   ): Prediction => ({
     itemId,
@@ -228,8 +281,16 @@ describe('support.topic weighted summary', () => {
     ...extra,
   });
 
-  // a: oversampled crypto (w=1), right; b: rest (w=4), right; c: rest (w=4), wrong;
-  // d: abstained (w=4); e: below threshold (w=1); f: class with no fitted threshold (w=4).
+  // weight, gold, prediction, and whether it is covered:
+  // a 2 crypto      crypto 0.95          covered, right, incumbent right
+  // b 4 tech_bug    tech_bug 0.9         covered, right
+  // c 4 account     tech_bug 0.9         covered, wrong
+  // d 4 account     account, ABSTAINED   not covered (even though account's threshold is 0)
+  // e 1 crypto      crypto 0.5           not covered (below threshold)
+  // f 4 moderation  moderation 0.99      not covered (no fitted threshold)
+  // g 1 crypto      crypto exactly 0.9   covered, right, incumbent right; an earlier error row must not win
+  // h 1 account     account, null conf   covered: a threshold of 0 covers everything, as the harness does
+  // z   crypto      crypto 0.99          no weight: not a sampled item, excluded entirely
   const items = [
     item('a', 'crypto'),
     item('b', 'other'),
@@ -237,6 +298,9 @@ describe('support.topic weighted summary', () => {
     item('d', 'account'),
     item('e', 'crypto'),
     item('f', 'moderation'),
+    item('g', 'crypto'),
+    item('h', null),
+    item('z', 'crypto'),
   ];
   const gold = new Map([
     ['a', 'crypto'],
@@ -245,34 +309,43 @@ describe('support.topic weighted summary', () => {
     ['d', 'account'],
     ['e', 'crypto'],
     ['f', 'moderation'],
+    ['g', 'crypto'],
+    ['h', 'account'],
+    ['z', 'crypto'],
   ]);
   const weights = new Map([
-    ['a', 1],
+    ['a', 2],
     ['b', 4],
     ['c', 4],
     ['d', 4],
     ['e', 1],
     ['f', 4],
+    ['g', 1],
+    ['h', 1],
   ]);
   const predictions = [
     pred('a', 'crypto', 0.95),
     pred('b', 'technical_bug', 0.9),
     pred('c', 'technical_bug', 0.9),
-    pred('d', null, 0.9),
+    pred('d', 'account', 0.9, { abstained: true }),
     pred('e', 'crypto', 0.5),
     pred('f', 'moderation', 0.99),
+    pred('g', null, null, { status: 'error' }),
+    pred('g', 'crypto', 0.9),
+    pred('h', 'account', null),
+    pred('z', 'crypto', 0.99),
   ];
-  const thresholds = { crypto: 0.9, technical_bug: 0.8 };
+  const thresholds = { crypto: 0.9, technical_bug: 0.8, account: 0 };
 
-  it('re-weights coverage and accuracy to the population, covering only fitted, confident, non-abstained answers', () => {
+  it('re-weights to the population, covering only fitted, confident, non-abstained answers', () => {
     const s = weightedSummary({ items, gold, predictions, weights, thresholds });
-    expect(s.items).toBe(6);
-    // covered: a (1) + b (4) + c (4) = 9 of 18
-    expect(s.coverage).toBeCloseTo(9 / 18, 10);
-    // correct among covered: a (1) + b (4) = 5 of 9; unweighted would be 2/3
-    expect(s.accuracyOnCovered).toBeCloseTo(5 / 9, 10);
-    // incumbent on the same covered set: a right (1), b wrong, c wrong
-    expect(s.incumbentAccuracyOnCovered).toBeCloseTo(1 / 9, 10);
+    expect(s.items).toBe(8);
+    // covered weight a2 + b4 + c4 + g1 + h1 = 12 of 21 (unweighted would be 5/8)
+    expect(s.coverage).toBeCloseTo(12 / 21, 10);
+    // right: a2 + b4 + g1 + h1 = 8 of 12 (unweighted 4/5)
+    expect(s.accuracyOnCovered).toBeCloseTo(8 / 12, 10);
+    // incumbent on the same covered set: a2 + g1 = 3 of 12
+    expect(s.incumbentAccuracyOnCovered).toBeCloseTo(3 / 12, 10);
   });
 
   it('treats a failed prediction as not covered', () => {
@@ -287,11 +360,15 @@ describe('support.topic weighted summary', () => {
     expect(s.accuracyOnCovered).toBeNull();
   });
 
-  it('refuses a weight below 1, which no inverse inclusion probability can be', () => {
-    expect(() => parseStrataWeights('ticket_id,stratum,weight\n1,crypto,0.5\n')).toThrow(/weight/);
-    expect([...parseStrataWeights('ticket_id,stratum,weight\r\n1,crypto,2.5\r\n')]).toEqual([
-      ['1', 2.5],
-    ]);
+  it('reads weights by header name and refuses one no inverse inclusion probability can be', () => {
+    const sampler =
+      'ticket_id,stratum,stratum_population,stratum_sampled,weight,double_labelled\r\n' +
+      '1,crypto,50,20,2.5,0\r\n';
+    expect([...parseStrataWeights(sampler)]).toEqual([['1', 2.5]]);
+    expect([...parseStrataWeights('weight,ticket_id\n3,7\n')]).toEqual([['7', 3]]);
+    expect(() => parseStrataWeights('ticket_id,weight\n1,0.5\n')).toThrow(/weight/);
+    expect(() => parseStrataWeights('ticket_id,weight\n1,\n')).toThrow(/weight/);
+    expect(() => parseStrataWeights('ticket_id,stratum\n1,x\n')).toThrow(/columns/);
   });
 });
 
@@ -306,12 +383,6 @@ describe('support.topic split isolation', () => {
     const { kept, dropped } = dropDevSharingTestGroup(rows);
     expect(kept.map((r) => r.itemId)).toEqual(['d2', 't1', 't2']);
     expect(dropped).toBe(1);
-  });
-});
-
-describe('support.topic gold source', () => {
-  it('reads human labels only: the LLM judge rows are silver and must never become gold', () => {
-    expect(HUMAN_LABELS_SQL).toMatch(/AND labeler NOT LIKE 'judge-%'/);
   });
 });
 
@@ -353,5 +424,125 @@ describe('support.topic weighted thresholds', () => {
       })
     ).toEqual({ crypto: 0.6 });
     expect(() => fittedThresholds({})).toThrow(/no fits/);
+  });
+});
+
+describe('support.topic source and gold against a fake ClickHouse', () => {
+  type Q = { query: string; query_params?: Record<string, unknown> };
+  const ticket = (id: string, requester: string, ms: number) => ({
+    ticket_id: id,
+    created_ms: String(ms),
+    ticket_subject: 'subject',
+    body_clean: 'body',
+    conversation_tail: 'tail',
+    member_tier: 'free',
+    lang: 'en',
+    topic: 'crypto',
+    requester_freshdesk_id: requester,
+    requester_email: 'someone@example.org',
+    civitai_username: null,
+  });
+
+  function setup(labels: object[], tickets: object[]) {
+    const dataDir = mkdtempSync(join(tmpdir(), 'support-topic-src-'));
+    const dir = join(dataDir, NODE_ID);
+    mkdirSync(dir);
+    writeFileSync(
+      join(dir, 'config.json'),
+      JSON.stringify({ classifierVersion: 'v1', testStrataFiles: ['s.csv'] })
+    );
+    writeFileSync(join(dir, 's.csv'), 'ticket_id,stratum,weight\n500,crypto,2\n501,_rest,5\n');
+    const queries: Q[] = [];
+    clickhouse.createClient.mockImplementation(() => ({
+      query: async (q: Q) => {
+        queries.push(q);
+        const rows = q.query.includes('support_ticket_eval_labels') ? labels : tickets;
+        return { json: async () => rows };
+      },
+      close: async () => undefined,
+    }));
+    return { ctx: { dataDir }, queries };
+  }
+
+  async function collect<T>(it: AsyncIterable<T>): Promise<T[]> {
+    const out: T[] = [];
+    for await (const x of it) out.push(x);
+    return out;
+  }
+
+  it('assigns strata tickets to test, labelled tickets to dev, and drops a dev ticket sharing a test requester', async () => {
+    vi.stubEnv('CLICKHOUSE_HOST', 'http://127.0.0.1:1');
+    const { ctx, queries } = setup(
+      [
+        { ticket_id: '100', label_topic: 'crypto', notes: '', labeler: 'h1' },
+        { ticket_id: '101', label_topic: 'other', notes: '', labeler: 'h1' },
+      ],
+      [
+        ticket('500', 'r-test', Date.UTC(2026, 8, 30, 23, 30)),
+        ticket('501', 'r-other', Date.UTC(2026, 7, 31, 23, 59)),
+        ticket('100', 'r-test', Date.UTC(2026, 4, 1)),
+        ticket('101', 'r-dev', Date.UTC(2026, 4, 2)),
+      ]
+    );
+    const rows = await collect(supportTopicNode.source(ctx));
+    expect(rows.map((r) => [r.itemId, r.split]).sort()).toEqual([
+      ['101', 'dev'],
+      ['500', 'test'],
+      ['501', 'test'],
+    ]);
+    // The month comes from the epoch, never from local time.
+    expect(rows.find((r) => r.itemId === '500')?.ts).toBe('2026-09-30T23:30:00.000Z');
+    expect(rows.find((r) => r.itemId === '501')?.ts).toBe('2026-08-31T23:59:00.000Z');
+    const keys = new Set(rows.map((r) => r.groupKey));
+    expect(keys.size).toBe(3);
+    const labelQuery = queries.find((q) => q.query.includes('support_ticket_eval_labels'));
+    expect(labelQuery?.query).toMatch(/AND labeler NOT LIKE 'judge-%'\s*$/);
+    expect(labelQuery?.query_params).toEqual({ cv: 'v1' });
+  });
+
+  it('refuses when ClickHouse returns a duplicate in place of a missing ticket', async () => {
+    vi.stubEnv('CLICKHOUSE_HOST', 'http://127.0.0.1:1');
+    const { ctx } = setup([], [ticket('500', 'a', 0), ticket('500', 'a', 0)]);
+    await expect(collect(supportTopicNode.source(ctx))).rejects.toThrow(/exactly one stored row/);
+  });
+
+  it('yields every labeller, keeps cannot-tell, and throws on an unknown label', async () => {
+    vi.stubEnv('CLICKHOUSE_HOST', 'http://127.0.0.1:1');
+    const ok = setup(
+      [
+        { ticket_id: '500', label_topic: 'billing-buzz', notes: '', labeler: 'h1' },
+        { ticket_id: '500', label_topic: 'payment-refund', notes: '', labeler: 'h2' },
+        { ticket_id: '501', label_topic: '', notes: 'cannot-tell: vague', labeler: 'h1' },
+        { ticket_id: '502', label_topic: '', notes: 'later', labeler: 'h1' },
+      ],
+      []
+    );
+    expect(await collect(supportTopicNode.gold(ok.ctx))).toEqual([
+      {
+        itemId: '500',
+        gold: 'billing_buzz',
+        goldSource: 'support_ticket_eval_labels',
+        labeler: 'h1',
+      },
+      {
+        itemId: '500',
+        gold: 'payment_refund',
+        goldSource: 'support_ticket_eval_labels',
+        labeler: 'h2',
+      },
+      { itemId: '501', gold: CANNOT_TELL, goldSource: 'support_ticket_eval_labels', labeler: 'h1' },
+    ]);
+    const bad = setup([{ ticket_id: '9', label_topic: 'billing', notes: '', labeler: 'h1' }], []);
+    await expect(collect(supportTopicNode.gold(bad.ctx))).rejects.toThrow(/not an incumbent topic/);
+  });
+
+  it('slices dev items as dev, so a --period filter never picks them up', () => {
+    expect(supportTopicNode.slices?.(raw({ stratum: undefined }))?.period).toBe('dev');
+    expect(supportTopicNode.slices?.(raw())?.period).toBe('2026-09');
+  });
+
+  it('fails loudly without a config rather than quietly using majority', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'support-topic-nocfg-'));
+    expect(() => supportTopicNode.goldPolicy?.({ dataDir })).toThrow(/config.json is missing/);
   });
 });

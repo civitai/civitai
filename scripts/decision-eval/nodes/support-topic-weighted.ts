@@ -56,7 +56,7 @@ export function weightedSummary(input: {
       p?.status === 'ok' &&
       !p.abstained &&
       threshold !== undefined &&
-      (p.confidence ?? -Infinity) >= threshold;
+      (threshold <= 0 || (p.confidence ?? -Infinity) >= threshold);
     if (!isCovered) continue;
     covered += w;
     if (p.pred === gold) correct += w;

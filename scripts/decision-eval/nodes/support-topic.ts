@@ -85,24 +85,37 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/** Removes the requester's own identifiers, then anything email-, link- or handle-shaped. */
+/**
+ * Removes the requester's own identifiers as whole words, then anything shaped
+ * like an email, a link (with or without a scheme), a handle, a long
+ * wallet/transaction id or a phone number. Real names are NOT removed: nothing
+ * stored names the requester, and free-text name detection is not attempted.
+ */
 export function redact(text: string, known: readonly string[] = []): string {
   let out = text;
   for (const k of known) {
-    if (k.trim().length >= 3) out = out.replace(new RegExp(escapeRegExp(k.trim()), 'gi'), '[user]');
+    const id = k.trim();
+    if (id.length < 4) continue;
+    const whole = String.raw`(?<![\w.])` + escapeRegExp(id) + String.raw`(?!\w)`;
+    out = out.replace(new RegExp(whole, 'gi'), '[user]');
   }
   return out
     .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[email]')
     .replace(/(?:\b[a-z][a-z0-9+.-]*:\/\/|\bwww\.)\S+/gi, '[link]')
-    .replace(/(^|[^\w@])@[A-Za-z0-9_]{2,}/g, '$1[handle]');
+    .replace(/\b(?:[a-z0-9-]+\.)+[a-z]{2,}\/\S*/gi, '[link]')
+    .replace(/(^|[^\w@])@[A-Za-z0-9_]{2,}/g, '$1[handle]')
+    .replace(/\b(?:0x)?[a-f0-9]{24,}\b/gi, '[id]')
+    .replace(/\b[1-9A-HJ-NP-Za-km-z]{26,}\b/g, '[id]')
+    .replace(/\+?\d[\d ().-]{8,}\d/g, '[number]');
 }
 
 export function buildSupportState(raw: SupportTicketRaw): DecisionState {
   const known = [raw.requesterEmail, raw.requesterEmail.split('@')[0] ?? '', raw.username];
   return {
     subject: redact(raw.subject, known),
-    first_message: redact(raw.firstMessage.slice(0, FIRST_MESSAGE_CHARS), known),
-    latest_messages: redact(raw.latestMessages.slice(-LATEST_MESSAGES_CHARS), known),
+    // Redact before cutting: a cut can split an identifier into a piece no pattern matches.
+    first_message: redact(raw.firstMessage, known).slice(0, FIRST_MESSAGE_CHARS),
+    latest_messages: redact(raw.latestMessages, known).slice(-LATEST_MESSAGES_CHARS),
     member_tier: raw.memberTier || 'unknown',
   };
 }
@@ -126,9 +139,12 @@ export function keywordBaseline(raw: SupportTicketRaw): string | null {
   return null;
 }
 
+/** null means not labelled yet; a label outside the incumbent vocab throws rather than silently leaving gold. */
 export function goldFromLabel(labelTopic: string, notes: string): string | null {
   if (!labelTopic) return notes.startsWith(CANNOT_TELL_NOTES_PREFIX) ? CANNOT_TELL : null;
-  return INCUMBENT_TOPIC_MAP[labelTopic] ?? null;
+  const gold = INCUMBENT_TOPIC_MAP[labelTopic];
+  if (!gold) throw new Error(`label_topic "${labelTopic}" is not an incumbent topic`);
+  return gold;
 }
 
 export function periodOf(raw: SupportTicketRaw): string {
@@ -185,6 +201,12 @@ function readConfig(ctx: NodeContext): SupportTopicConfig {
 function groupSalt(ctx: NodeContext): string {
   const path = join(nodeDir(ctx), 'group-salt');
   if (!existsSync(path)) {
+    // A new salt would re-key every group, and a requester could then sit in dev and test across builds.
+    if (existsSync(join(nodeDir(ctx), 'manifest.jsonl'))) {
+      throw new Error(
+        `${path} is missing but a manifest exists; restore the salt, do not regenerate it`
+      );
+    }
     mkdirSync(nodeDir(ctx), { recursive: true });
     writeFileSync(path, randomBytes(32).toString('hex'));
   }
@@ -207,7 +229,7 @@ function clickhouse() {
   });
 }
 
-export const HUMAN_LABELS_SQL = `
+const HUMAN_LABELS_SQL = `
   SELECT ticket_id, label_topic, notes, labeler
   FROM support_ticket_eval_labels FINAL
   WHERE classifier_version = {cv:String} AND labeler NOT LIKE 'judge-%'`;
@@ -230,7 +252,7 @@ async function humanLabels(cfg: SupportTopicConfig): Promise<LabelRow[]> {
 
 type TicketRow = {
   ticket_id: string;
-  ticket_created_at: string;
+  created_ms: string;
   ticket_subject: string;
   body_clean: string;
   conversation_tail: string;
@@ -243,7 +265,7 @@ type TicketRow = {
 };
 
 const TICKETS_SQL = `
-  SELECT ticket_id, ticket_created_at, ticket_subject, body_clean, conversation_tail,
+  SELECT ticket_id, toUnixTimestamp64Milli(ticket_created_at) AS created_ms, ticket_subject, body_clean, conversation_tail,
          member_tier, lang, topic, requester_freshdesk_id, requester_email, civitai_username
   FROM support_tickets_classified FINAL
   WHERE classifier_version = {cv:String} AND ticket_id IN {ids:Array(String)}`;
@@ -272,16 +294,19 @@ async function* supportSource(ctx: NodeContext): AsyncIterable<SourceRow<Support
   } finally {
     await ch.close();
   }
-  const missing = stratumOf.size + devIds.size - rows.length;
-  if (missing !== 0) {
+  const wanted = new Set([...stratumOf.keys(), ...devIds]);
+  const got = new Set(rows.map((r) => r.ticket_id));
+  if (
+    rows.length !== got.size ||
+    got.size !== wanted.size ||
+    [...wanted].some((id) => !got.has(id))
+  ) {
     throw new Error(
-      `expected one stored row per ticket, got ${rows.length} for ${
-        stratumOf.size + devIds.size
-      } ids`
+      `expected exactly one stored row per ticket: ${rows.length} rows, ${got.size} distinct, ${wanted.size} wanted`
     );
   }
   const out = rows.map((r): SourceRow<SupportTicketRaw> => {
-    const createdAt = new Date(`${r.ticket_created_at.replace(' ', 'T')}Z`).toISOString();
+    const createdAt = new Date(Number(r.created_ms)).toISOString();
     return {
       itemId: r.ticket_id,
       groupKey: groupKeyFor(salt, r.requester_freshdesk_id, r.ticket_id),
