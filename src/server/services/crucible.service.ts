@@ -1793,9 +1793,12 @@ function getVotedPairsKey(crucibleId: number, userId: number): RedisKeyTemplateS
   return `${REDIS_SYS_KEYS.CRUCIBLE.VOTED_PAIRS}:${crucibleId}:${userId}` as RedisKeyTemplateSys;
 }
 
-function getServedPairsKey(crucibleId: number, userId: number): RedisKeyTemplateSys {
-  return `${REDIS_SYS_KEYS.CRUCIBLE.SERVED_PAIRS}:${crucibleId}:${userId}` as RedisKeyTemplateSys;
+function getServedPairKey(crucibleId: number, userId: number): RedisKeyTemplateSys {
+  return `${REDIS_SYS_KEYS.CRUCIBLE.SERVED_PAIR}:${crucibleId}:${userId}` as RedisKeyTemplateSys;
 }
+
+const CLAIM_SERVED_PAIR_SCRIPT =
+  "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0";
 
 function getJudgeEntryVotesKey(crucibleId: number, userId: number): RedisKeyTemplateSys {
   return `${REDIS_SYS_KEYS.CRUCIBLE.JUDGE_ENTRY_VOTES}:${crucibleId}:${userId}` as RedisKeyTemplateSys;
@@ -1805,6 +1808,32 @@ const JUDGE_KEY_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 /** Bounds how far one judge can move a single entry. */
 export const CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY = 5;
+
+/**
+ * Counts the vote against both entries before it is processed, so concurrent votes cannot each
+ * pass a read of the same count.
+ * @returns a release that takes the counts back, or null when either entry is already at the cap
+ */
+async function reserveJudgeEntryVotes(
+  crucibleId: number,
+  userId: number,
+  entryIds: [number, number]
+): Promise<(() => Promise<void>) | null> {
+  const key = getJudgeEntryVotesKey(crucibleId, userId);
+  const fields = entryIds.map(String);
+  const release = async () => {
+    await Promise.all(fields.map((field) => sysRedis.hIncrBy(key, field, -1)));
+  };
+  const [counts] = await Promise.all([
+    Promise.all(fields.map((field) => sysRedis.hIncrBy(key, field, 1))),
+    sysRedis.expire(key, JUDGE_KEY_TTL_SECONDS),
+  ]);
+  if (counts.some((count) => count > CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY)) {
+    await release();
+    return null;
+  }
+  return release;
+}
 
 /**
  * Create a canonical pair key (always sorted so a:b == b:a)
@@ -2341,9 +2370,10 @@ export const getJudgingPair = async ({
   if (!pair) return null;
   const { a: imageA, b: imageB } = pair;
 
-  const servedKey = getServedPairsKey(crucibleId, userId);
-  await sysRedis.sAdd(servedKey, createPairKey(imageA.id, imageB.id));
-  await sysRedis.expire(servedKey, JUDGE_KEY_TTL_SECONDS);
+  // Replaces the judge's previous pair, so only the pair on screen can be voted.
+  await sysRedis.set(getServedPairKey(crucibleId, userId), createPairKey(imageA.id, imageB.id), {
+    EX: JUDGE_KEY_TTL_SECONDS,
+  });
 
   const swapPositions = Math.random() < 0.5;
   const left = swapPositions ? imageB : imageA;
@@ -2476,52 +2506,61 @@ export const submitVote = async ({
     throw throwBadRequestError('You cannot vote on your own entries');
   }
 
-  const judgeEntryVotesKey = getJudgeEntryVotesKey(crucibleId, userId);
-  const [winnerJudgeVotes, loserJudgeVotes] = await Promise.all([
-    sysRedis.hGet(judgeEntryVotesKey, winnerEntryId.toString()),
-    sysRedis.hGet(judgeEntryVotesKey, loserEntryId.toString()),
+  // Reserved before the served pair is claimed, so a refusal here does not burn the pair.
+  const releaseJudgeEntryVotes = await reserveJudgeEntryVotes(crucibleId, userId, [
+    winnerEntryId,
+    loserEntryId,
   ]);
-  if (
-    Number(winnerJudgeVotes ?? 0) >= CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY ||
-    Number(loserJudgeVotes ?? 0) >= CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY
-  ) {
+  if (!releaseJudgeEntryVotes) {
     throw throwBadRequestError(
       "You've judged one of these entries as many times as allowed. Please wait for the next pair to load."
     );
   }
 
-  const pairKey = createPairKey(winnerEntryId, loserEntryId);
-  // SREM is the atomic claim: only a pair this judge was actually served can be voted, once.
-  const served = await sysRedis.sRem(getServedPairsKey(crucibleId, userId), pairKey);
-  if (!served) {
-    throw throwBadRequestError(
-      'This pair is no longer available. Please wait for the next pair to load.'
+  let winnerElo: number;
+  let loserElo: number;
+  try {
+    const pairKey = createPairKey(winnerEntryId, loserEntryId);
+    const served = await sysRedis.eval(CLAIM_SERVED_PAIR_SCRIPT, {
+      keys: [getServedPairKey(crucibleId, userId)],
+      arguments: [pairKey],
+    });
+    if (!served) {
+      throw throwBadRequestError(
+        'This pair is no longer available. Please wait for the next pair to load.'
+      );
+    }
+
+    // Race condition protection: Atomically mark the pair as voted before processing
+    // Use SADD to add to the set - if it returns 0, the pair was already added (duplicate vote)
+    // Note: sysRedis.sAdd accepts either a single value or array (see CustomRedisClient interface)
+    const key = getVotedPairsKey(crucibleId, userId);
+    const addResult = await sysRedis.sAdd(key, pairKey);
+    await sysRedis.expire(key, 30 * 24 * 60 * 60); // 30 days TTL
+
+    if (addResult === 0) {
+      // User has already voted on this pair
+      throw throwBadRequestError(
+        'You have already voted on this pair. Please wait for the next pair to load.'
+      );
+    }
+
+    ({ winnerElo, loserElo } = await processEloVote(crucibleId, winnerEntryId, loserEntryId, {
+      winner: winnerEntry,
+      loser: loserEntry,
+    }));
+  } catch (error) {
+    await releaseJudgeEntryVotes().catch((releaseError: unknown) =>
+      log(
+        `Failed to release judge entry votes for crucible ${crucibleId}, user ${userId}: ${
+          releaseError instanceof Error ? releaseError.message : 'Unknown error'
+        }`
+      )
     );
+    throw error;
   }
-
-  // Race condition protection: Atomically mark the pair as voted before processing
-  // Use SADD to add to the set - if it returns 0, the pair was already added (duplicate vote)
-  // Note: sysRedis.sAdd accepts either a single value or array (see CustomRedisClient interface)
-  const key = getVotedPairsKey(crucibleId, userId);
-  const addResult = await sysRedis.sAdd(key, pairKey);
-  await sysRedis.expire(key, 30 * 24 * 60 * 60); // 30 days TTL
-
-  if (addResult === 0) {
-    // User has already voted on this pair
-    throw throwBadRequestError(
-      'You have already voted on this pair. Please wait for the next pair to load.'
-    );
-  }
-
-  const { winnerElo, loserElo } = await processEloVote(crucibleId, winnerEntryId, loserEntryId, {
-    winner: winnerEntry,
-    loser: loserEntry,
-  });
 
   await Promise.all([
-    sysRedis.hIncrBy(judgeEntryVotesKey, winnerEntryId.toString(), 1),
-    sysRedis.hIncrBy(judgeEntryVotesKey, loserEntryId.toString(), 1),
-    sysRedis.expire(judgeEntryVotesKey, JUDGE_KEY_TTL_SECONDS),
     addJudge(crucibleId, userId),
     incrementUserVoteCount(userId),
     crucible.minViewSeconds &&

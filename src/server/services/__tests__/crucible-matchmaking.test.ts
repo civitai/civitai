@@ -387,9 +387,10 @@ describe('getJudgingPair — vote integrity', () => {
     const pair = await getJudgingPair({ crucibleId: 1, userId: 7 });
 
     expect(pair).not.toBeNull();
-    expect(redisMock.sysRedis.sAdd).toHaveBeenCalledWith(
-      expect.stringMatching(/served:1:7$/),
-      '1:2'
+    expect(redisMock.sysRedis.set).toHaveBeenCalledWith(
+      expect.stringMatching(/served-pair:1:7$/),
+      '1:2',
+      { EX: expect.any(Number) }
     );
   });
 
