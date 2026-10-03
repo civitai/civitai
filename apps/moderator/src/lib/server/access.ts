@@ -128,6 +128,7 @@ export const NAVIGATION: NavLink[] = [
       { path: '/audit/generator-restrictions', label: 'Generator Restrictions' },
       { path: '/audit/training-models', label: 'Training Models' },
       { path: '/audit/training-data', label: 'Training Data Review' },
+      { path: '/audit/relabel', label: 'Removal Label Relabel' },
     ],
   },
   {
