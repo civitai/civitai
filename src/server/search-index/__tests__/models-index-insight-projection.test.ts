@@ -55,19 +55,39 @@ describe('models search index projects insight.qualityScore', () => {
     );
   });
 
-  it('🔴 OMITS the key when there is no qualifying label, rather than writing 0', () => {
-    // The load-bearing line. A `?? 0` here would put every unlabeled model at a real
-    // score of 0 — participating in the ordering as though it had been judged, and
-    // sorting above any negative value — instead of landing in Meilisearch's trailing
-    // group. Measured on v1.15.0: a document missing a sortable attribute is not dropped
-    // and sorts last in BOTH directions, which is the property the omission buys.
-    expect(flat).toMatch(
-      /insightQualityScore === null \? \{\} : \{ insight: \{ qualityScore: insightQualityScore \} \}/
-    );
-    // And the mutation this is really guarding against, asserted directly: no coalesce to
-    // a numeric default anywhere on this value.
+  it('🔴 WRITES the null unconditionally — never omits the key, never coalesces to 0', () => {
+    // Two distinct mutations, both of which look harmless and neither of which any other
+    // test here can see.
+    //
+    // A `?? 0` would put every unlabeled model at a real score of 0 — participating in the
+    // ordering as though it had been judged, and sorting above any negative value — instead
+    // of landing in Meilisearch's trailing group.
+    //
+    // 🔴 A CONDITIONAL SPREAD that omits the key on null is the subtler one, and it is what
+    // this originally shipped. Omitting reads as equivalent, because a missing sortable
+    // attribute and an explicit null sort the same way (measured). But every live write is
+    // `PUT /indexes/<uid>/documents`, which MERGES top-level fields — so on a document that
+    // already carries a score, omitting leaves the stale value in place and a retracted
+    // label keeps its top-of-pool seeding forever. Measured both arms on v1.15.0: the null
+    // PUT cleared a stored 0.9; the control PUT with no key left a stored 0.1 intact.
+    expect(flat).toMatch(/insight: \{ qualityScore: insightQualityScore \}/);
+    expect(flat).not.toMatch(/insightQualityScore === null \?/);
     expect(flat).not.toMatch(/insightQualityScore \?\? \d/);
     expect(flat).not.toMatch(/qualityScore: insightQualityScore \?\?/);
+  });
+
+  it('🔴 fails soft on a label-read error rather than dropping the whole index batch', () => {
+    // `ResourceInsight` is hand-applied per environment, so in any environment where that
+    // has not happened this read throws on EVERY batch. Unguarded that does not merely lose
+    // the score: the batch is scored `error`, dropped after its retries, and `setLastUpdate`
+    // advances anyway — so published models leave the index permanently, every 15 minutes,
+    // with only a console line. An optional ordering refinement must not be able to do that.
+    //
+    // Pinned on the RELATIONSHIP rather than the spelling: the call must sit inside a `try`,
+    // and the recovery must be an empty Map (which falls through to the same cleared path an
+    // unlabeled model takes) — not a rethrow and not a bare log.
+    expect(flat).toMatch(/try \{ insights = await loadResourceInsights\(versionIds\);/);
+    expect(flat).toMatch(/catch \(error\) \{ insights = new Map\(\);/);
   });
 
   it('🔴 spells the document key exactly as the sortable attribute addresses it', () => {
@@ -84,7 +104,10 @@ describe('models search index projects insight.qualityScore', () => {
     expect(leaf).toBeTruthy();
 
     // The nesting the sort path implies: a top-level `insight` object holding `qualityScore`.
-    expect(flat).toMatch(new RegExp(`\\{ ${top}: \\{ ${leaf}:`));
+    // Pins the NESTING, not the surrounding punctuation — an earlier version required a `{`
+    // immediately before the key, which was only true while the projection was a conditional
+    // spread and broke the moment that became an ordinary property.
+    expect(flat).toMatch(new RegExp(`\\b${top}: \\{ ${leaf}:`));
   });
 
   it('declares the attribute filterable too, so the labeled tier is separable', () => {

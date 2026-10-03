@@ -127,15 +127,24 @@ export async function loadResourceInsights(
  *   - MEAN: smooths vendor noise, but dilutes a genuinely excellent version and mixes
  *     sub-floor rows back into the figure the floor exists to exclude.
  *
- * 🔴 Returns `null`, and the caller must then OMIT the key rather than write a
- * sentinel or a zero. That is load-bearing and was MEASURED against the production
- * engine (Meilisearch v1.15.0), not assumed:
+ * 🔴 Returns `null`, and the caller must WRITE that null — `insight: { qualityScore: null }`
+ * — rather than a sentinel, a zero, or an omitted key. ⚠️ An earlier version of this
+ * docstring said to OMIT it, on the measured ground that a missing sortable attribute and
+ * an explicit null sort identically. They do; sorting was simply the wrong property to
+ * check. Every live write is a MERGE (`PUT /indexes/<uid>/documents`), so on a document
+ * that already carries a score, omitting the key leaves the OLD value in place — a
+ * retracted label would keep its top-of-pool seeding permanently. Measured both arms on
+ * v1.15.0: a PUT of the null cleared a stored 0.9, and the control PUT with no key at all
+ * left a stored 0.1 intact.
+ *
+ * The rest of the engine behaviour, all measured and all still true:
  *   - documents MISSING a sortable attribute are NOT dropped from a sorted result;
  *   - they sort LAST in BOTH directions (`:desc` and `:asc` alike — this is not
  *     conventional "nulls last", which would flip), so unlabeled models can never
  *     displace labeled ones at the head whichever way the sort runs;
- *   - an explicit `null` behaves identically to an absent field, so omission is the
- *     cheaper spelling of the same thing;
+ *   - an explicit `null` sorts identically to an absent field — including a NESTED one
+ *     (`insight: {qualityScore: null}`), measured separately, which is the shape actually
+ *     written — so writing the null costs nothing in ordering and additionally unsets;
  *   - a SECOND sort key fully orders that trailing group, which is what lets the
  *     caller tier insight over popularity without inventing a default.
  * A sentinel (say `-1` for every unlabeled model) would be strictly worse: ~718k

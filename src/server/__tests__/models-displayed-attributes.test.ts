@@ -165,6 +165,35 @@ describe('modelsDisplayedAttributes — the Creator Controls privacy boundary', 
     );
   });
 
+  it('🔴 is enforced on the DB-DIRECT path too, which displayedAttributes cannot reach', async () => {
+    // The gap this closes: `displayedAttributes` governs only the MEILISEARCH read path.
+    // `getModelSearchIndexRecords` builds the same records straight from the DB — its
+    // docstring says "the shape stays identical to a search hit" — and they go to
+    // `transformModelHits` (a bare `{...item}` spread) and out of `model.getResourceSelect`,
+    // a `publicProcedure` with no `.output()` schema. So every withheld attribute was
+    // returned to unauthenticated callers by the one path this whitelist cannot see,
+    // including `sortMetrics` — the REAL download/tip values for creators who hid them,
+    // i.e. exactly the leak this file exists to close.
+    //
+    // Asserted behaviourally and driven off the list, so a NEW withheld attribute is
+    // covered the moment it is added rather than needing a new case here.
+    const { withheldStripped } = await import('~/server/search-index/models.search-index');
+    const record = {
+      id: 1,
+      name: 'a model',
+      metrics: { downloadCount: null },
+      ...Object.fromEntries(MODELS_WITHHELD_ATTRIBUTES.map((a) => [a, 'LEAKED'])),
+    };
+    const out = withheldStripped(record) as Record<string, unknown>;
+    for (const attr of MODELS_WITHHELD_ATTRIBUTES) {
+      expect(out, `${attr} must not survive onto the DB-direct path`).not.toHaveProperty(attr);
+    }
+    // And it must not strip anything else — a whitelist bug here blanks the search card.
+    expect(out.id).toBe(1);
+    expect(out.name).toBe('a model');
+    expect(out.metrics).toEqual({ downloadCount: null });
+  });
+
   it('matches the exact list, so any edit has to be read by a reviewer', () => {
     // A membership test cannot see an attribute being REMOVED, and removing one silently stops a
     // field being returned to clients that read it — a break that surfaces as `undefined`, not an
