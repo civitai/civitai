@@ -286,7 +286,17 @@ describe('the seeded domain matches the service', () => {
   const SEEDER_REL = 'server/prom/app-block-storage.metrics.ts';
   /**
    * The three seeded counters. Each must appear exactly twice in each writer — the import and
-   * the one use — so an alias, a `.call`, or a second raw emit has to add an occurrence.
+   * the one use. An alias or an `inc.call(…)` adds an occurrence and is caught.
+   *
+   * 🔴 A SECOND EMIT SITE IS NOT CAUGHT if the import stops naming the symbol. Swap the named
+   * import for `import * as prom from '~/server/prom/client'` and emit twice via
+   * `prom.appStorageOpsCounter.inc(…)`: that is 0 (import) + 2 (uses) = 2, the expected total,
+   * so this ledger passes with a second wrapper-bypassing emit present — and it type-checks,
+   * since `LabelValues<T>` is `Partial<Record<T, string | number>>`. Note the bare `\b<sym>\b`
+   * pattern DOES match `prom.<sym>`; what it cannot see is the COMPOSITION, so only asserting
+   * one import occurrence AND one use separately would close it. Measured, and left open
+   * deliberately rather than reinstating the `.inc` site count, which is a spelling that three
+   * other shapes already walked.
    *
    * NOT "every counter behind a typed wrapper": only `countStorageOutcome` and
    * `countQuotaExceeded` exist. `appStorageUserQuotaUntrackedCounter` is emitted RAW at one
@@ -306,7 +316,16 @@ describe('the seeded domain matches the service', () => {
    * writable handle obtained with a declared name alone — measured, that emitted a raw
    * `ceiling: 'User'` with the suite 17/17 green. These strings are substrings of the full wire
    * names, so matching on them covers `register.getSingleMetric('civitai_app_block_storage_…')`
-   * too; the set is strictly wider and resolves to the same files.
+   * too; the KEY SET is strictly wider and resolves to the same files. 🔴 That is a claim about
+   * the keys, not about the predicate: the matching SURFACE narrowed at the same time, from raw
+   * text to comment-stripped code. A key bracketed by string constants holding block-comment
+   * delimiters, or a line-comment marker inside a string with code after it, passes here and
+   * would not have before. The trade is worth it — the raw surface false-failed on ordinary
+   * docs edits — but it is a trade.
+   *
+   * (Those shapes are described rather than quoted on purpose: an earlier revision of this
+   * paragraph spelled the closing delimiter literally, which ended this very block comment and
+   * broke the file with `Unterminated string literal`. The hazard demonstrated itself.)
    */
   const DECLARED_NAMES = [
     'block_storage_ops_total',
@@ -402,7 +421,11 @@ describe('the seeded domain matches the service', () => {
     }
   });
 
-  it('🔴 exactly two files under src/ can reach these counters in CODE — every case above assumes that scope', () => {
+  it('🔴 exactly two files under src/ name these counters in CODE today — every case above assumes that scope', () => {
+    // 🔴 "today", not "can": this is a statement about the CURRENT tree, not a decidable
+    // universal. Two residual reaches pass — `getSingleMetric(FAMILY + 'ops_total')` built by
+    // concatenation, and a template-literal metric name — so the set is a ratchet on what is
+    // there, not a proof that nothing else could get a handle.
     // Matched on CODE, not raw text. The raw-text version put two documentation files in the
     // set — `block-token-access.service.ts` names the symbol in a docstring, `apps.router.ts`
     // names the metric in the operator contract this PR corrected — so an ordinary reword in
@@ -415,12 +438,16 @@ describe('the seeded domain matches the service', () => {
     // `/appStorageOpsCounter\s*\.inc/` is walked by `const c = …; c.inc(…)`, by
     // `.labels(op, outcome).inc()` (a live idiom in `flipt-eval-cache.metrics.ts`) and by
     // `inc.call(…)`. Hence per-symbol OCCURRENCES below, which an alias or a `.call` must add
-    // to, and which subsume the `.inc` site count that used to sit beside them.
+    // to. They REPLACED the `.inc` site count rather than subsuming it — a namespace-qualified
+    // second emit site satisfies both, as the counter list above records.
     //
     // Scope: the walk root is `src/`, so a writer added under `packages/` or `apps/` is
     // invisible here — `packages/civitai-telemetry/src/client.ts` is the declaration and is
     // outside it by design. `__tests__` is excluded: a suite that stubs a handle is not a
-    // production writer.
+    // production writer. That exclusion hides four of the six files matching this predicate
+    // (`src/__tests__/setup.ts`, both prom suites, `apps.router.storage.test.ts`), so moving
+    // any of them out of a `__tests__` directory grows the set — a loud red naming the file,
+    // which is why the coupling is accepted rather than worked around.
     const reaching: string[] = [];
     const perSymbol: Record<string, Record<string, number>> = {};
     const walk = (dir: string) => {

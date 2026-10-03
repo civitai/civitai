@@ -735,10 +735,15 @@ export async function setAppStorageValue(blockToken: string, key: string, value:
       // it showed up solely as the `ok` series falling to zero. A state
       // observable only by going and reading logs has the same gap,
       // and nothing schedules the backfill that ends it, so it can persist
-      // indefinitely with no bound. The counter is the alertable half — it is
+      // indefinitely with no bound. The counter is the readable half — it is
       // the series that says "this app has been running with its per-user
-      // sub-budget unenforced", and the series that returns to zero once the
-      // backfill has actually reached every app.
+      // sub-budget unenforced".
+      //
+      // 🔴 It does NOT return to zero once the backfill reaches every app; this
+      // comment claimed that and it was false. A prom-client counter is
+      // monotonic for the process lifetime, so what falls silent is
+      // `increase()`/`rate()` over a window with no new writes, never the
+      // series itself.
       appStorageUserQuotaUntrackedCounter.inc({ app_block_id: appBlockId });
       logToAxiom({ event: 'user_quota_relation_missing', appBlockId, slug }, STORAGE_LOG).catch(
         () => undefined

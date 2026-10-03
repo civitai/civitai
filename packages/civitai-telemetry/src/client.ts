@@ -709,8 +709,13 @@ export const appStorageQuotaExceededCounter = registerCounterWithLabels({
 // civitai_app_block_storage_ops_total. A state visible only as some other series
 // changing shape is not alertable — the same argument countStorageFault makes
 // about faults being visible solely as the `ok` series falling to zero. This is
-// the series to alert on ("some app has been running unmetered for N days") and
-// the series that goes to zero when the backfill has actually reached everything.
+// the series to read for "some app has been running unmetered for N days".
+//
+// 🔴 It is a COUNTER, so it never "goes back to zero" once the backfill lands —
+// this comment claimed that and it was false. prom-client counters are monotonic
+// for the process lifetime and accumulated children keep their values; what
+// stops moving is `increase()`/`rate()` over a window with no new writes. Read
+// the window, not the series total.
 export const appStorageUserQuotaUntrackedCounter = registerCounterWithLabels({
   name: 'block_storage_user_quota_untracked_total',
   help: 'App Blocks KV writes served without a per-user quota relation (sub-budget not enforced; app needs the storage backfill)',

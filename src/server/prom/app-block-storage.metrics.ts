@@ -91,13 +91,23 @@ export async function seedAppBlockStorageMetrics(): Promise<void> {
     }
     appStorageUserQuotaUntrackedCounter.inc(0);
 
-    // Last, so that if any leg throws the three COUNTERS are already published. They are the
-    // series whose zero-vs-absent distinction this module exists to create; the histogram's is
-    // not — with no traffic there is no distribution to describe, so its absence is honest.
+    // Last because this is the only leg that AWAITS, and so the only one that can reject — the
+    // `a failing latency read costs the series, never the scrape` case drives exactly that.
+    // With it last, a failing read still leaves all 25 counter series published. This is about
+    // failure ORDER only: it is NOT a claim that the histogram goes unseeded, which
+    // `zeroMissingLatencyChildren` above contradicts by publishing a zeroed child per op.
     //
-    // 🔴 If you write a rule over any of these counters, `rate()`/`increase()` are structurally
-    // 0: prom-client creates a child AT 1 on its first `inc`, so a pod that refuses once never
-    // moves it again. Use `max_over_time`. (Same hazard `csam-archive.metrics.ts` documents.)
+    // 🔴 THE RIGHT RULE SHAPE DIFFERS PER COUNTER. The split is seeded-with-a-bounded-label-
+    // domain versus unbounded-label-domain — not "these counters" as a group.
+    //
+    // `ops_total` — all 22 children are seeded at 0 above and both labels are closed unions, so
+    // a real emit moves an EXISTING series 0→N. `increase()` is correct here, and strictly more
+    // sensitive than `max_over_time`.
+    //
+    // `quota_exceeded_total` / `user_quota_untracked_total` — `app_block_id` is unbounded, so a
+    // real refusal creates a NEW child that materialises AT 1. `increase()` cannot see a 0→1
+    // edge with no prior 0 sample, so use `max_over_time`. The seeded rows above are NOT that
+    // case: they omit `app_block_id` and stay 0 forever.
     await zeroMissingLatencyChildren();
   } catch {
     // Seeding is a readability nicety; losing it must not cost the scrape.
