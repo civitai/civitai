@@ -98,6 +98,14 @@ describe('relabel-build-batch job', () => {
     );
   });
 
+  // The client turns an unparseable 2xx body into `{}`. Nothing says the day was built, so it
+  // must not read as one that was.
+  it('logs a response with no summary as an error', async () => {
+    expect((await run(new Date('2026-10-04T00:30:00Z'), {})).log).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', shortfall: 'no summary' })
+    );
+  });
+
   // Unset bands are the approved state until the secret is set: a removed-only day is not a fault.
   it('logs a removed-only day as info while the bands are unset', async () => {
     const unset = modActionResponse(summary({ notRemovedSkipped: 'bands unset' }));

@@ -9,6 +9,7 @@ import type { DB as ModeratorDB } from '../moderator-db/types';
 import {
   CSAM_EXCLUSION_BUDGET_MS,
   CSAM_EXCLUSION_CHUNK,
+  MAX_SCANNED_IDS,
   buildRelabelBatch,
   parseBands,
   relabelBuildBatchAction,
@@ -106,12 +107,14 @@ type Removal = { imageId: number | string; bucket: string; nsfw: string };
 let removals: Removal[];
 let scores: { id: number; score: number }[];
 let chQueries: string[];
+let onRemovalsRead: (() => void) | null;
 
 const REMOVED_AT = 1_790_000_000;
 const DAY_MS = 24 * 3600 * 1000;
 
 const clickhouse: ClickhouseQuery = async <T extends object>(query: string) => {
   chQueries.push(query);
+  if (query.includes('FROM images')) onRemovalsRead?.();
   if (query.includes('FROM images'))
     return removals.map((r) => ({
       imageId: r.imageId,
@@ -228,6 +231,7 @@ beforeEach(async () => {
   removals = [];
   scores = [];
   chQueries = [];
+  onRemovalsRead = null;
   moderatorSql = [];
   replicaSql = [];
   replicaFailOn = null;
@@ -382,6 +386,17 @@ describe('buildRelabelBatch', () => {
     ]);
   });
 
+  // A model-only row from another batch is already in the set; re-picking it would spend a cap
+  // slot on an upsert that refuses it, and the model-only batch would under-fill.
+  it('never re-picks a model-only row in a model-only build', async () => {
+    await seedRemovals(4);
+    await seedItem(1, '2026-10-01', false);
+    const summary = await build({ modelOnly: true, removed: 3, bands: null });
+    expect(summary.picked.removed).toBe(3);
+    expect(summary.alreadyPresent).toBe(0);
+    expect(summary.inserted).toBe(3);
+  });
+
   it("does not count today's labeler rows against a model-only cap", async () => {
     await seedRemovals(4);
     await seedItem(99, '2026-10-03', true);
@@ -516,19 +531,27 @@ describe('buildRelabelBatch', () => {
   });
 
   // The budget runs from the start of the run, so slow reads before the exclusion use it up too.
+  // The clock moves inside the ClickHouse read: a deadline taken any later would not see it.
   it('counts the time before the exclusion against its budget', async () => {
     await seedRemovals(3);
-    let calls = 0;
+    let clock = 0;
+    onRemovalsRead = () => (clock = CSAM_EXCLUSION_BUDGET_MS + 1);
     const summary = await buildRelabelBatch(
       { batch: '2026-10-03', removed: 3, notRemoved: 0, days: 5, bands: null, dryRun: false },
-      { ...deps(), now: () => (calls++ === 0 ? 0 : CSAM_EXCLUSION_BUDGET_MS + 1) }
+      { ...deps(), now: () => clock }
     );
     expect(summary.skipped).toBe('csam exclusion timed out');
     expect(replicaSql.some((q) => q.sql.includes('"CsamReport"'))).toBe(false);
   });
 
-  // The replica is never written through this path; a read-write transaction there would be
-  // refused on a standby anyway, and say nothing on a primary.
+  it('clamps the scanner pool however many bands and items are asked for', async () => {
+    await build({ notRemoved: 500, bands: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9] });
+    const scan = chQueries.find((q) => q.includes('FROM scanner_label_results'));
+    expect(Number(scan?.match(/LIMIT (\d+)/)?.[1])).toBe(MAX_SCANNED_IDS);
+  });
+
+  // The exclusion never writes. Read-only makes that hold on a primary too, where a read-write
+  // transaction would otherwise go unnoticed.
   it('opens every exclusion transaction read-only', async () => {
     await seedRemovals(CSAM_EXCLUSION_CHUNK + 10);
     await build({ removed: 1, bands: null });
@@ -616,6 +639,7 @@ describe('relabelBuildBatchAction', () => {
     expect(summary.picked).toEqual({ removed: 2, notRemoved: 0 });
     expect(chQueries.some((q) => q.includes('scanner_label_results'))).toBe(false);
     expect(logged[0]).toMatchObject({ type: 'error', name: 'relabel-build-batch-bands-invalid' });
+    expect(logged[1]).toMatchObject({ type: 'error', name: 'relabel-build-batch' });
   });
 
   it('builds removed items only when the env bands are unset', async () => {

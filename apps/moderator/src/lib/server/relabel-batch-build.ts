@@ -1,6 +1,6 @@
 import { CompiledQuery, sql, type Kysely } from 'kysely';
 import type { DB as MainDB } from '@civitai/db-schema/kysely';
-import type { RelabelBuildSummary } from '@civitai/moderation';
+import { relabelSummaryShortfall, type RelabelBuildSummary } from '@civitai/moderation';
 import { BLOCKED_IMAGE_RETENTION_DAYS } from '@civitai/shared/job-queue';
 import type { DB as ModeratorDB } from './moderator-db/types';
 import { csamExcludedImageIds } from './relabel-csam-exclusion';
@@ -11,7 +11,7 @@ import { allocate, isMinorBucket, scoreBand, type Candidate } from '../removal-l
 
 export type ClickhouseQuery = <T extends object>(query: string) => Promise<T[]>;
 
-type BandsSkipped = 'bands unset' | 'bands invalid';
+type BandsSkipped = NonNullable<RelabelBuildSummary['notRemovedSkipped']>;
 
 export type RelabelBuildOptions = {
   batch: string;
@@ -34,10 +34,12 @@ export const MAX_RELABEL_DAYS = BLOCKED_IMAGE_RETENTION_DAYS - 1;
 export const CSAM_EXCLUSION_CHUNK = 250;
 const CSAM_EXCLUSION_TIMEOUT_MS = 60_000;
 /**
- * Measured from the start of the run: no exclusion chunk starts after it. It bounds the exclusion
- * only; the ClickHouse reads before it and the writes after it are not covered.
+ * Measured from the start of the run: no exclusion chunk starts after it. The ClickHouse reads
+ * before it spend it but are not bounded by it, and the writes after it are outside it.
  */
 export const CSAM_EXCLUSION_BUDGET_MS = 3 * 60_000;
+/** The scanner pool fetched for the not-removed stratum, whatever the bands and caps ask for. */
+export const MAX_SCANNED_IDS = 50_000;
 
 /** `RELABEL_NOT_REMOVED_BANDS` / `--bands`: comma-separated edges in (0, 1). Empty is `null`. */
 export function parseBands(raw: string | undefined): number[] | null {
@@ -208,7 +210,7 @@ export async function buildRelabelBatch(
     ? await fetchMinorScores(
         deps.clickhouse,
         opts.days,
-        Math.max(200, opts.notRemoved * 20) * (opts.bands.length + 1),
+        Math.min(MAX_SCANNED_IDS, Math.max(200, opts.notRemoved * 20) * (opts.bands.length + 1)),
         seed
       )
     : new Map<number, number>();
@@ -427,7 +429,7 @@ export async function relabelBuildBatchAction(
     log({ type: 'error', name: 'relabel-build-batch-bands-invalid', batch: input.batch, error });
   const summary = await buildRelabelBatch({ ...input, bands, bandsSkipped }, deps);
   log({
-    type: summary.skipped ? 'error' : 'info',
+    type: relabelSummaryShortfall(summary) ? 'error' : 'info',
     name: 'relabel-build-batch',
     ...summary,
   });

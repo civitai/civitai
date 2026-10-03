@@ -236,16 +236,30 @@ export type RelabelBuildSummary = {
 /** The body `/api/mod/[action]` responds with. The one place its shape is written. */
 export const modActionResponse = <T>(result: T) => ({ ok: true as const, result });
 
+export type RelabelBuildShortfall =
+  | NonNullable<RelabelBuildSummary['skipped']>
+  | 'bands invalid'
+  | 'no summary';
+
 /**
- * Why a relabel build delivered less than it was asked for, read from the action's response:
- * `null` when it ran in full. Shares `modActionResponse`'s shape by construction.
+ * Why a relabel build delivered less than it was asked for, `null` when it ran in full. Unset
+ * bands are not a shortfall: removed-only is the expected state until the bands are configured.
+ * The one rule for whether a run is logged as an error, on both sides of the wire.
  */
-export function relabelBuildShortfall(
-  response: unknown
-): RelabelBuildSummary['skipped'] | RelabelBuildSummary['notRemovedSkipped'] {
+export function relabelSummaryShortfall(
+  summary: RelabelBuildSummary
+): RelabelBuildShortfall | null {
+  if (summary.skipped) return summary.skipped;
+  if (summary.notRemovedSkipped === 'bands invalid') return 'bands invalid';
+  return null;
+}
+
+/**
+ * `relabelSummaryShortfall` read from the action's response. Typed against `modActionResponse`
+ * but not validated at runtime, so a body without a summary counts as a shortfall, never a pass.
+ */
+export function relabelBuildShortfall(response: unknown): RelabelBuildShortfall | null {
   const summary = (response as Partial<ReturnType<typeof modActionResponse<RelabelBuildSummary>>>)
     ?.result;
-  if (summary?.skipped) return summary.skipped;
-  if (summary?.notRemovedSkipped === 'bands invalid') return summary.notRemovedSkipped;
-  return null;
+  return summary ? relabelSummaryShortfall(summary) : 'no summary';
 }
