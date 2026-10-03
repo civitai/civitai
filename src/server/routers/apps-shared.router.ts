@@ -156,17 +156,31 @@ const STORED_SIZE_PROBE_SQL = `octet_length($2::jsonb::text) AS stored_size_byte
  * on the update path, a non-positive delta — the exact bypass). Reject the null
  * explicitly, before the coercion.
  */
+function requireStoredSize(raw: number | null | undefined): number {
+  const storedByteSize = Number(raw);
+  if (raw == null || !Number.isFinite(storedByteSize)) {
+    throw new Error('app shared storage: stored-size probe returned no usable value');
+  }
+  return storedByteSize;
+}
+
 /**
  * Read a trigger-maintained counter that is selected `::text`, treating a MISSING row as
  * zero but a non-numeric value as a fault.
  *
- * 🔴 WHY THE THIRD GUARD. `usedBytes` is the one term of these comparisons that had no
- * finiteness check, and the argument for the other two applies to it unchanged: a NaN
- * there fails open through BOTH arms — `usedBytes + storedByteSize > CAP` is false on
- * append, and on update `netDelta` is unaffected so the refusal `usedBytes + netDelta >
- * CAP` is false too. Unreachable today (`used_bytes bigint NOT NULL`, read through
- * `::text`), and leaving it as the odd one out is exactly the asymmetry a later schema
- * or driver change turns into a hole.
+ * 🔴 USED FOR EVERY `quota` COUNTER THESE GATES READ — `used_bytes` and `row_count`.
+ * A NaN in any of them fails open through BOTH arms of its gate: `usedBytes +
+ * storedByteSize > CAP` is false on append, on update `netDelta` is unaffected so
+ * `usedBytes + netDelta > CAP` is false too, and `rowCount + 1 > APP_ROW_LIMIT` is false
+ * as well. All are unreachable today (`bigint NOT NULL`, read through `::text`).
+ *
+ * ⚠️ `row_count` was NOT covered when this helper was introduced, and two docstrings
+ * then claimed `usedBytes` was "the one term of these comparisons" without a check —
+ * which was only true if "these comparisons" silently excluded the row gate two lines
+ * away. Covering it is behaviour-preserving (measured against the full suite), so the
+ * asymmetry had no justification beyond having been overlooked. The general point stands
+ * and now applies to all of them: leaving one term as the odd one out is exactly the
+ * asymmetry a later schema or driver change turns into a hole.
  *
  * `null` is NOT a fault here, unlike the probe: the scalar subquery returns NULL when the
  * app has no `quota` row, and the pre-existing behaviour is to treat that as zero used
@@ -178,14 +192,6 @@ function requireFiniteCounter(raw: string | null | undefined, label: string): nu
     throw new Error(`app shared storage: ${label} is not numeric`);
   }
   return value;
-}
-
-function requireStoredSize(raw: number | null | undefined): number {
-  const storedByteSize = Number(raw);
-  if (raw == null || !Number.isFinite(storedByteSize)) {
-    throw new Error('app shared storage: stored-size probe returned no usable value');
-  }
-  return storedByteSize;
 }
 
 // ── Min-trust gate (design H3 / MIN-TRUST GATE) ───────────────────────────────
@@ -696,7 +702,7 @@ export async function appendSharedRow(
     )
   ).rows[0];
   const usedBytes = requireFiniteCounter(quota?.used_bytes, 'app used_bytes');
-  const rowCount = Number(quota?.row_count ?? '0');
+  const rowCount = requireFiniteCounter(quota?.row_count, 'app row_count');
   // 🔴 BOTH SIDES OF THIS COMPARISON MUST BE IN THE STORED UNIT. `usedBytes` is the
   // trigger-maintained sum of `shared_kv.size_bytes`; the wire `byteSize` the
   // serialize helper also returns belongs only to SHARED_VALUE_BYTE_CAP, which it

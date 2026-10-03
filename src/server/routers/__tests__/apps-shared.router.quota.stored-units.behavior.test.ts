@@ -597,11 +597,12 @@ describe('shared-storage quota arithmetic vs the bytes Postgres stores', () => {
    * the sentence was false. Measured, per ref:
    *   - `c4b553af79` (no unit fix)               -> arm (b) fails, arm (a) passes;
    *   - `84994429f8` (unit fix, no exemption)    -> arm (a) fails, the regression reading;
-   *   - `862452e9ac` onward (with the exemption) -> all three arms pass. Both readings are true at different overrun
-   * sizes; neither alone describes it. Measured: at the base commit arm (a) PASSES and
-   * the failure is on arm (b). At this commit, removing the exemption or narrowing it
-   * from `netDelta <= 0` to `< 0` each make arm (a) fail instead — so (a) and (b) have
-   * different killing conditions and both are load-bearing.
+   *   - `862452e9ac` onward (with the exemption) -> all three arms pass.
+   *
+   * So both readings are true, at different overrun sizes, and neither alone describes
+   * this test. Removing the exemption, or narrowing it from `netDelta <= 0` to `< 0`,
+   * each make arm (a) fail — so (a) and (b) have distinct killing conditions and both
+   * are load-bearing.
    */
   it('lets an over-ceiling app re-save and shrink, including when the reclaim is too small', async () => {
     const key = (await append({ title: 'trap', data: ones(3000) })).key;

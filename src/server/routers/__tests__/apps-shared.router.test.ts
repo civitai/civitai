@@ -204,12 +204,17 @@ beforeEach(() => {
  *
  * ⚠️ One narrower guard does exist in this file, and it is worth stating exactly because
  * it is easy to over-read. The NULL-probe test below goes red when the probe's RESULT
- * stops being consumed — measured, dropping the `requireStoredSize` call takes this file
- * to **146/147** on EITHER write path (not just update), red on that test. But a
- * wire-term reintroduction that leaves the now-dead probe call in place keeps this file
- * at **147/147 green**, on both paths. So it defends against REMOVING THE PROBE CALL,
- * not against a wire-unit term as such. The unit itself is still only observable in the
- * behaviour suite.
+ * stops being consumed — measured, dropping the `requireStoredSize` call takes exactly
+ * ONE test in this file red, on EITHER write path (not just update). But a wire-term
+ * reintroduction that leaves the now-dead probe call in place leaves this file FULLY
+ * GREEN, on both paths. So it defends against REMOVING THE PROBE CALL, not against a
+ * wire-unit term as such. The unit itself is still only observable in the behaviour
+ * suite.
+ *
+ * (Stated as "one red" / "fully green" rather than as `n/total`: two successive revisions
+ * of this paragraph carried a total that the same commit had already invalidated by
+ * adding tests to this file. A ratio rots on every added test; a count of failures does
+ * not.)
  *
  * `$2` is the serialized value on both write paths (`$1` is the app block id).
  */
@@ -1313,7 +1318,9 @@ describe('append `data` blob (opaque, unmoderated app payload)', () => {
    * rather than absorbing it into a 0. Its own docblock calls both choices load-bearing,
    * and both were unpinned: a mutation sweep found that dropping the `raw == null` term
    * (leaving only `Number.isFinite`, which `Number(null) === 0` passes) and replacing
-   * the throw with `return 0` each SURVIVED the entire 152-test suite. Either mutant
+   * the throw with `return 0` each SURVIVED the entire suite — 152 tests at the time,
+   * being this file's 146 plus the behaviour file's 6, NOT a count of this file. Either
+   * mutant
    * reopens the bypass through the guard instead of around it — a zero-byte charge on
    * append, and a non-positive delta on update, which the non-increasing exemption then
    * waves through.
@@ -1335,9 +1342,10 @@ describe('append `data` blob (opaque, unmoderated app payload)', () => {
     // the write is ACCEPTED.
     //
     // ⚠️ "Accepted", NOT "charged nothing" — an earlier revision said the latter and the
-    // trigger DDL contradicts it. `kv_quota_trigger` charges `used_bytes + NEW.size_bytes`
-    // from the GENERATED column, which never sees `storedByteSize`, so the counter still
-    // moves by the true stored size. The harm is that the CEILING stopped binding, not
+    // trigger DDL contradicts it. `kv_quota_trigger` charges from the GENERATED column on
+    // both paths — `used_bytes + NEW.size_bytes` on INSERT and
+    // `used_bytes + (NEW.size_bytes - OLD.size_bytes)` on UPDATE — and never sees
+    // `storedByteSize`, so the counter still moves by the true stored size. The harm is that the CEILING stopped binding, not
     // that the accounting broke — which is worse, because the counter keeps looking
     // healthy. Same reasoning that justified pinning the structurally-unreachable null
     // arm.
@@ -1459,21 +1467,23 @@ describe('append `data` blob (opaque, unmoderated app payload)', () => {
   });
 
   /**
-   * 🔴 THE THIRD TERM. `usedBytes` was the only one of the three in these comparisons
-   * with no finiteness check, and the argument for the other two applies unchanged: a
-   * NaN there fails open through BOTH arms (`usedBytes + storedByteSize > CAP` is false
-   * on append; on update `netDelta` is unaffected so `usedBytes + netDelta > CAP` is
-   * false too). Pinned on BOTH write paths because the guard is called from both.
+   * 🔴 THE `quota` COUNTER GUARD, all three of its decisions pinned separately.
    *
-   * The NULL case is deliberately NOT a fault and is asserted as such: the scalar
-   * subquery returns NULL when the app has no `quota` row, and the pre-existing
-   * behaviour — which the FROM-less SELECT shape exists to preserve — is to read that as
-   * zero used bytes. A guard that rejected it would turn a tolerated state into a 500.
+   * `requireFiniteCounter` covers `used_bytes` on both write paths and `row_count` on
+   * append. A NaN in any of them fails open through both arms of its gate — on append
+   * `usedBytes + storedByteSize > CAP` and `rowCount + 1 > LIMIT` are both false against
+   * NaN; on update `netDelta` is unaffected so the refusal is false too.
+   *
+   * ⚠️ EACH ARM BELOW EXISTS BECAUSE A MUTANT SURVIVED WITHOUT IT. An earlier revision
+   * fed only `'not-a-number'` and asserted only that the null case was *accepted*, which
+   * left three mutants alive: swapping `!Number.isFinite` for `Number.isNaN` (so
+   * `'Infinity'` sails through — the very gap the sibling guard's commit existed to
+   * close, reopened on this one), dropping the `?? '0'` default, and changing it to
+   * `?? '1'`. The arms are labelled with what each one kills.
    */
-  it('refuses the write loudly when the app byte counter is not numeric', async () => {
-    for (const path of ['append', 'update'] as const) {
-      mockClient.query.mockClear();
-      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+  it('refuses the write loudly when a quota counter is not numeric', async () => {
+    const APP_QUOTA_BYTES = 50 * 1024 * 1024;
+    const mockCounters = (counters: Record<string, unknown>, storedSize?: number) =>
       mockPool.query.mockImplementation(async (sql: string, params?: unknown[]) => {
         if (sql.includes('author_user_id') && sql.includes('count(*)'))
           return { rows: [{ n: '0' }], rowCount: 1 };
@@ -1483,44 +1493,84 @@ describe('append `data` blob (opaque, unmoderated app payload)', () => {
           return {
             rows: [
               {
-                used_bytes: 'not-a-number',
                 row_count: '0',
-                stored_size_bytes: fixtureStoredSize(params),
+                ...counters,
+                stored_size_bytes: storedSize ?? fixtureStoredSize(params),
               },
             ],
             rowCount: 1,
           };
         return { rows: [], rowCount: 0 };
       });
-      const value = { title: 'ok', data: [1, 2, 3] };
-      const call =
-        path === 'append'
-          ? caller().append({ blockToken: 't', value })
-          : caller().update({ blockToken: 't', key: 'ROW-KEY-1', value });
-      await expect(call).rejects.toThrow('app used_bytes is not numeric');
+    const value = { title: 'ok', data: [1, 2, 3] };
+    const callPath = (path: 'append' | 'update') =>
+      path === 'append'
+        ? caller().append({ blockToken: 't', value })
+        : caller().update({ blockToken: 't', key: 'ROW-KEY-1', value });
+
+    // (a) NON-NUMERIC, both write paths and both counters. Kills the two
+    // "drop the guard at this call site" mutants and the "return 0" mutant.
+    for (const [path, counters] of [
+      ['append', { used_bytes: 'not-a-number' }],
+      ['update', { used_bytes: 'not-a-number' }],
+      ['append', { used_bytes: '0', row_count: 'not-a-number' }],
+    ] as const) {
+      mockClient.query.mockClear();
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      mockCounters(counters);
+      await expect(callPath(path)).rejects.toThrow(/app (used_bytes|row_count) is not numeric/);
       expect(mockClient.query).not.toHaveBeenCalled();
     }
 
-    // 🔴 NULL is NOT a fault — a missing quota row reads as zero used bytes, and the
-    // write goes through. Without this arm, tightening the guard to reject null would
-    // pass, and it would break the one property the FROM-less SELECT shape buys.
+    // (b) 🔴 NON-FINITE BUT NOT NaN. `Number('Infinity')` is Infinity, which
+    // `Number.isNaN` does NOT catch — this is the only arm that kills the
+    // `!Number.isFinite` -> `Number.isNaN` weakening.
+    for (const infinite of ['Infinity', '-Infinity', '1e400']) {
+      mockClient.query.mockClear();
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      mockCounters({ used_bytes: infinite });
+      await expect(callPath('append')).rejects.toThrow('app used_bytes is not numeric');
+      expect(mockClient.query).not.toHaveBeenCalled();
+    }
+
+    // (c) NULL AND UNDEFINED ARE NOT FAULTS. The scalar subquery returns NULL when the
+    // app has no `quota` row, and reading that as zero is the pre-existing behaviour the
+    // FROM-less SELECT shape exists to preserve. The `undefined` case is what kills
+    // dropping the `?? '0'` default, since `Number(null)` is already 0.
+    //
+    // ⚠️ Scoped claim: WITHIN THIS FILE these are the only guard on that behaviour. An
+    // earlier revision claimed the tightening would otherwise "pass", and that is false —
+    // `still accepts a write when the app has no quota row at all` in the behaviour suite
+    // also kills it. This arm is the cheap, same-file half of a two-file guard.
+    for (const absent of [null, undefined]) {
+      mockClient.query.mockClear();
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      mockCounters({ used_bytes: absent, row_count: absent });
+      const out = await caller().append({ blockToken: 't', value });
+      expect(out.key).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+      expect(mockClient.query).toHaveBeenCalled();
+    }
+
+    // (d) 🔴 AND IT MUST READ AS EXACTLY ZERO, not merely "some small number". With the
+    // value sized to land the gate precisely ON the cap, a fallback of 0 accepts
+    // (`0 + CAP > CAP` is false) and any positive fallback refuses — so this is the only
+    // arm that kills changing `?? '0'` to `?? '1'`. Arm (c) cannot see that, because it
+    // asserts acceptance with megabytes of headroom.
     mockClient.query.mockClear();
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
-    mockPool.query.mockImplementation(async (sql: string, params?: unknown[]) => {
-      if (sql.includes('author_user_id') && sql.includes('count(*)'))
-        return { rows: [{ n: '0' }], rowCount: 1 };
-      if (sql.includes('.quota'))
-        return {
-          rows: [
-            { used_bytes: null, row_count: null, stored_size_bytes: fixtureStoredSize(params) },
-          ],
-          rowCount: 1,
-        };
-      return { rows: [], rowCount: 0 };
+    mockCounters({ used_bytes: null }, APP_QUOTA_BYTES);
+    const atCap = await caller().append({ blockToken: 't', value });
+    expect(atCap.key).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+
+    // …and the control for (d): one byte more and it refuses, so (d) is not passing just
+    // because the gate was never consulted.
+    mockClient.query.mockClear();
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockCounters({ used_bytes: null }, APP_QUOTA_BYTES + 1);
+    await expect(caller().append({ blockToken: 't', value })).rejects.toMatchObject({
+      code: 'PAYLOAD_TOO_LARGE',
+      message: 'app quota exceeded',
     });
-    const out = await caller().append({ blockToken: 't', value: { title: 'ok', data: [1, 2, 3] } });
-    expect(out.key).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
-    expect(mockClient.query).toHaveBeenCalled();
   });
 
   it('counts `data` bytes toward the per-app quota', async () => {
