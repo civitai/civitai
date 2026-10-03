@@ -99,10 +99,10 @@ import {
   getCruciblePublishableName,
   type CrucibleNameScan,
   getCrucibleTransactionDescription,
-  CRUCIBLE_PRIZE_BUZZ_TYPE,
   CRUCIBLE_SFW_LEVELS,
   getCrucibleEntryBuzzType,
   isCrucibleSfw,
+  toCrucibleBuzzType,
   isFreeCrucibleEntry,
   parsePrizePositions,
   type PrizePosition,
@@ -2849,6 +2849,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
       prizePositions: true,
       endAt: true,
       nsfwLevel: true,
+      buzzType: true,
       _count: {
         select: { entries: true },
       },
@@ -2858,6 +2859,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
   if (!crucible) {
     throw throwNotFoundError('Crucible not found');
   }
+  const prizeBuzzType = toCrucibleBuzzType(crucible.buzzType);
 
   // Validate crucible can be finalized
   if (crucible.status === CrucibleStatus.Completed) {
@@ -3038,13 +3040,11 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
   );
 
   if (prizeWinners.length > 0) {
-    // Build transactions for prize distribution
-    // Transfer from central bank (account 0) to each winner's yellow account
     const prizeTransactions = prizeWinners.map((winner) => ({
       fromAccountId: 0, // Central bank
       fromAccountType: 'yellow' as const,
       toAccountId: winner.userId,
-      toAccountType: CRUCIBLE_PRIZE_BUZZ_TYPE,
+      toAccountType: prizeBuzzType,
       amount: winner.prizeAmount,
       type: TransactionType.Reward,
       description: getCrucibleTransactionDescription(
@@ -3131,6 +3131,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
       disqualifiedEntries: entryCount - finalizedEntries.length,
       prizePool: totalPrizePool,
       seedRefunded: seedRefunded ? crucible.seededPrizePool : 0,
+      buzzType: prizeBuzzType,
     },
   });
 
@@ -3164,6 +3165,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
         crucibleName,
         position: bestEntry.position,
         prizeAmount: bestEntry.prizeAmount,
+        buzzType: prizeBuzzType,
       },
     });
   }
@@ -4048,6 +4050,7 @@ export const getUserActiveCrucibles = async ({
     id: number;
     name: string;
     prizePool: number;
+    buzzType: CrucibleBuzzType;
     timeRemaining: string;
     endAt: Date | null;
     position: number | null;
@@ -4072,6 +4075,7 @@ export const getUserActiveCrucibles = async ({
           name: true,
           entryFee: true,
           seededPrizePool: true,
+          buzzType: true,
           endAt: true,
           image: {
             select: {
@@ -4108,6 +4112,7 @@ export const getUserActiveCrucibles = async ({
       id: number;
       name: string;
       prizePool: number;
+      buzzType: CrucibleBuzzType;
       timeRemaining: string;
       endAt: Date | null;
       position: number | null;
@@ -4144,6 +4149,7 @@ export const getUserActiveCrucibles = async ({
         id: entry.crucible.id,
         name: entry.crucible.name,
         prizePool,
+        buzzType: toCrucibleBuzzType(entry.crucible.buzzType),
         timeRemaining,
         endAt: entry.crucible.endAt,
         position: newBestPosition,
@@ -4206,6 +4212,7 @@ export const getFeaturedCrucible = async ({
       entryFee: number;
       seededPrizePool: number;
       endAt: Date | null;
+      buzzType: string;
       imageUrl: string | null;
       entriesCount: bigint;
       prizePool: bigint;
@@ -4218,6 +4225,7 @@ export const getFeaturedCrucible = async ({
       c."entryFee",
       c."seededPrizePool",
       c."endAt",
+      c."buzzType",
       i.url as "imageUrl",
       COUNT(ce.id) as "entriesCount",
       c."seededPrizePool" + c."entryFee" * COUNT(ce.id) FILTER (WHERE ce."buzzTransactionId" IS NOT NULL) as "prizePool"
@@ -4239,7 +4247,7 @@ export const getFeaturedCrucible = async ({
           ? Prisma.sql`AND c."userId" NOT IN (${Prisma.join(excludedUserIds)})`
           : Prisma.empty
       }
-    GROUP BY c.id, c.name, c.description, c."entryFee", c."seededPrizePool", c."endAt", i.url
+    GROUP BY c.id, c.name, c.description, c."entryFee", c."seededPrizePool", c."endAt", c."buzzType", i.url
     ORDER BY "prizePool" DESC, "entriesCount" DESC
     LIMIT 1
   `;
@@ -4258,7 +4266,7 @@ export const getFeaturedCrucible = async ({
     timeRemaining: featured.endAt ? formatTimeRemaining(featured.endAt) : 'No end date',
     entriesCount: Number(featured.entriesCount),
     imageUrl: featured.imageUrl,
-    buzzType: CRUCIBLE_PRIZE_BUZZ_TYPE,
+    buzzType: toCrucibleBuzzType(featured.buzzType),
   };
 };
 

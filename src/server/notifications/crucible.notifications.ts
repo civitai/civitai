@@ -10,6 +10,10 @@ const quotedName = (name?: string | null) => (name ? ` "${name}"` : '');
 
 const CRUCIBLE_ENDING_SOON_HOURS = 8;
 
+// Older notifications were sent before the details carried a Buzz type.
+const buzzLabel = (buzzType?: string) =>
+  buzzType === 'green' ? 'Green Buzz' : buzzType === 'yellow' ? 'Yellow Buzz' : 'Buzz';
+
 export const crucibleNotifications = createNotificationProcessor({
   // Sent to crucible creator when crucible finalizes
   'crucible-ended': {
@@ -19,7 +23,9 @@ export const crucibleNotifications = createNotificationProcessor({
     prepareMessage: ({ details }) => {
       const crucible = `Your crucible${quotedName(details.crucibleName)}`;
       const seedNote = details.seedRefunded
-        ? ` Your seeded prize pool of ${numberWithCommas(details.seedRefunded)} Buzz was refunded.`
+        ? ` Your seeded prize pool of ${numberWithCommas(details.seedRefunded)} ${buzzLabel(
+            details.buzzType
+          )} was refunded.`
         : '';
       const url = `/crucibles/${details.crucibleId}`;
       if (!details.totalEntries)
@@ -32,9 +38,9 @@ export const crucibleNotifications = createNotificationProcessor({
       return {
         message: `${crucible} has ended! ${numberWithCommas(
           details.totalEntries
-        )} entries competed for a prize pool of ${numberWithCommas(
-          details.prizePool
-        )} Buzz.${seedNote}`,
+        )} entries competed for a prize pool of ${numberWithCommas(details.prizePool)} ${buzzLabel(
+          details.buzzType
+        )}.${seedNote}`,
         url,
       };
     },
@@ -97,7 +103,7 @@ export const crucibleNotifications = createNotificationProcessor({
       return {
         message: `Congrats! You placed ${asOrdinal(details.position)} in the crucible${quotedName(
           details.crucibleName
-        )}! You've won ${numberWithCommas(details.prizeAmount)} Buzz.`,
+        )}! You've won ${numberWithCommas(details.prizeAmount)} ${buzzLabel(details.buzzType)}.`,
         url: `/crucibles/${details.crucibleId}`,
       };
     },

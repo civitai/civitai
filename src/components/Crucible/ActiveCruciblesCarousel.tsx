@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import { capitalize } from '~/utils/string-helpers';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 
 /**
@@ -87,6 +88,7 @@ type ActiveCrucibleCardProps = {
     id: number;
     name: string;
     prizePool: number;
+    buzzType: string;
     timeRemaining: string;
     position: number | null;
     imageUrl: string | null;
@@ -168,8 +170,8 @@ function ActiveCrucibleCard({ crucible, colorVariant }: ActiveCrucibleCardProps)
             <Text size="xs" c="dimmed" tt="uppercase" style={{ letterSpacing: '0.05em' }}>
               Prize Pool
             </Text>
-            <Text fw={600} c="yellow" size="sm">
-              {abbreviateNumber(crucible.prizePool)} Buzz
+            <Text fw={600} c={crucible.buzzType === 'green' ? 'green' : 'yellow'} size="sm">
+              {abbreviateNumber(crucible.prizePool)} {capitalize(crucible.buzzType)} Buzz
             </Text>
           </div>
           <div className="flex flex-col gap-1">

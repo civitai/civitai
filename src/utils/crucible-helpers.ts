@@ -22,9 +22,6 @@ export function getCrucibleSlug(name: string) {
 export const toCrucibleBuzzType = (value: string): 'green' | 'yellow' =>
   value === 'green' ? 'green' : 'yellow';
 
-/** Every prize is paid in this until winners can choose their currency. */
-export const CRUCIBLE_PRIZE_BUZZ_TYPE = 'yellow' as const;
-
 /** An entrant pays in the currency of the site they enter on. */
 export const getCrucibleEntryBuzzType = (isGreen: boolean): 'green' | 'yellow' =>
   isGreen ? 'green' : 'yellow';

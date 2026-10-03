@@ -41,7 +41,7 @@ import {
   isCrucibleSfw,
   isFreeCrucibleEntry,
   parsePrizePositions,
-  CRUCIBLE_PRIZE_BUZZ_TYPE,
+  toCrucibleBuzzType,
 } from '~/utils/crucible-helpers';
 import { Flags } from '~/shared/utils/flags';
 import type { CrucibleBuzzType } from '~/components/Crucible/crucible-create-form';
@@ -208,6 +208,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
   const judgesCount = judgesData?.count ?? 0;
 
   const prizePositions = parsePrizePositions(crucible.prizePositions);
+  const prizeBuzzType = toCrucibleBuzzType(crucible.buzzType);
   const entryCount = crucible._count?.entries ?? 0;
   const { paidEntryCount } = crucible;
   const entryFeePool = crucible.entryFee * paidEntryCount;
@@ -353,7 +354,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
             nsfwLevel: crucible.nsfwLevel,
             entryFee: crucible.entryFee,
             seededPrizePool: crucible.seededPrizePool,
-            buzzType: CRUCIBLE_PRIZE_BUZZ_TYPE,
+            buzzType: prizeBuzzType,
             startAt: crucible.startAt,
             endAt: crucible.endAt,
             contentType: crucible.contentType,
@@ -371,7 +372,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
             prizePositions={prizePositions}
             entryCount={crucible.placedEntryCount ?? entryCount}
             totalPrizePool={totalPrizePool}
-            buzzType={CRUCIBLE_PRIZE_BUZZ_TYPE}
+            buzzType={prizeBuzzType}
           />
         )}
 
@@ -534,7 +535,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                   onLoadMore={loadMoreEntries}
                   prizePositions={prizePositions}
                   totalPrizePool={totalPrizePool}
-                  buzzType={CRUCIBLE_PRIZE_BUZZ_TYPE}
+                  buzzType={prizeBuzzType}
                   awarded={crucible.status === CrucibleStatus.Completed}
                 />
               ) : (
@@ -544,7 +545,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                     totalPrizePool={totalPrizePool}
                     entryFee={crucible.entryFee}
                     hasFreeEntries={crucible.freeEntriesPerUser > 0}
-                    buzzType={CRUCIBLE_PRIZE_BUZZ_TYPE}
+                    buzzType={prizeBuzzType}
                   />
                   <YourStandingPanel entries={userEntries} hasAccount={!!currentUser} />
                 </>

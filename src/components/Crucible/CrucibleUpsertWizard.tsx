@@ -106,7 +106,6 @@ import { CrucibleStatus, Currency, MediaType } from '~/shared/utils/prisma/enums
 import type { RouterOutput } from '~/types/router';
 import {
   baseModelMakesMediaType,
-  CRUCIBLE_PRIZE_BUZZ_TYPE,
   getCrucibleUrl,
   getFreeEntriesLabel,
   toCrucibleBuzzType,
@@ -583,7 +582,7 @@ export function CrucibleUpsertWizard(props: Props) {
         label="Entry Fee per User"
         description={`How much Buzz users pay to enter their ${
           values.contentType === MediaType.video ? 'video' : 'image'
-        } (${entryFeeRangeLabel}). Entrants pay in green Buzz on civitai.com and yellow on civitai.red; prizes are paid in yellow.`}
+        } (${entryFeeRangeLabel}). Entrants pay in green Buzz on civitai.com and yellow on civitai.red; prizes are paid in ${buzzType} Buzz, the Buzz you create the crucible with.`}
         leftSection={<CurrencyIcon currency={Currency.BUZZ} type={buzzType} size={16} />}
         min={CRUCIBLE_MIN_ENTRY_FEE}
         max={CRUCIBLE_MAX_ENTRY_FEE}
@@ -770,7 +769,11 @@ export function CrucibleUpsertWizard(props: Props) {
             <Text size="xs" c="dimmed" fw={600} mb={8}>
               {prizeCustomized ? 'Custom Distribution' : 'Default Distribution'}
             </Text>
-            <PrizeDistributionChart prizePositions={values.prizePositions} placeBuzz={placeBuzz} />
+            <PrizeDistributionChart
+              prizePositions={values.prizePositions}
+              placeBuzz={placeBuzz}
+              buzzType={buzzType}
+            />
             {prizePoolNote}
           </div>
 
@@ -841,7 +844,7 @@ export function CrucibleUpsertWizard(props: Props) {
                   <Text size="sm" fw={600}>
                     {formatPlace(position)}
                   </Text>
-                  <PlaceBuzzText amount={placeBuzz[position]} buzzType={CRUCIBLE_PRIZE_BUZZ_TYPE} />
+                  <PlaceBuzzText amount={placeBuzz[position]} buzzType={buzzType} />
                 </div>
                 <Group gap="xs" wrap="nowrap">
                   <NumberInput
@@ -1102,7 +1105,11 @@ export function CrucibleUpsertWizard(props: Props) {
               <Text fw={500}>None</Text>
             )}
           </Group>
-          <PrizeDistributionChart prizePositions={values.prizePositions} placeBuzz={placeBuzz} />
+          <PrizeDistributionChart
+            prizePositions={values.prizePositions}
+            placeBuzz={placeBuzz}
+            buzzType={buzzType}
+          />
         </Stack>
       </Paper>
     </Stack>
@@ -1443,9 +1450,11 @@ function PlaceBuzzText({ amount, buzzType }: { amount?: PlaceBuzz; buzzType: Cru
 function PrizeDistributionChart({
   prizePositions,
   placeBuzz,
+  buzzType,
 }: {
   prizePositions: Record<string, number>;
   placeBuzz: Record<string, PlaceBuzz>;
+  buzzType: CrucibleBuzzType;
 }) {
   const sortedPositions = Object.entries(prizePositions).sort(
     ([a], [b]) => parseInt(a) - parseInt(b)
@@ -1487,7 +1496,7 @@ function PrizeDistributionChart({
               {percentage}%
             </Text>
             <Group justify="center">
-              <PlaceBuzzText amount={placeBuzz[position]} buzzType={CRUCIBLE_PRIZE_BUZZ_TYPE} />
+              <PlaceBuzzText amount={placeBuzz[position]} buzzType={buzzType} />
             </Group>
           </Paper>
         ))}
@@ -1509,10 +1518,7 @@ function PrizeDistributionChart({
                       <Text size="sm" c="dimmed">
                         {formatPlace(position)}
                       </Text>
-                      <PlaceBuzzText
-                        amount={placeBuzz[position]}
-                        buzzType={CRUCIBLE_PRIZE_BUZZ_TYPE}
-                      />
+                      <PlaceBuzzText amount={placeBuzz[position]} buzzType={buzzType} />
                     </div>
                   </Group>
                   <Text size="sm" fw={600} c={`${color}.4`}>
