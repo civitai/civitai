@@ -49,6 +49,7 @@ import type {
 import { calculateCrucibleSetupCost } from '../schema/crucible.schema';
 import {
   clipLengthAllowed,
+  CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
   crucibleRankingsAreFinal,
   crucibleSupportsVideoSettings,
   hasCrucibleStarted,
@@ -1888,9 +1889,6 @@ function getJudgeEntryVotesKey(crucibleId: number, userId: number): RedisKeyTemp
 }
 
 const JUDGE_KEY_TTL_SECONDS = 30 * 24 * 60 * 60;
-
-/** Bounds how far one judge can move a single entry. */
-export const CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY = 5;
 
 /**
  * Counts the vote against both entries before it is processed, so concurrent votes cannot each

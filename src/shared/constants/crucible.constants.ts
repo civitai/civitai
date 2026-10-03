@@ -166,3 +166,6 @@ export const accumulatePlaybackMs = ({
 
   return watchedMs + deltaMs;
 };
+
+/** Bounds how far one judge can move a single entry. */
+export const CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY = 5;

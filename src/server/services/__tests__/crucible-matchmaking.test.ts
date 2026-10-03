@@ -7,6 +7,7 @@ import {
 import type * as EloService from '~/server/services/crucible-elo.service';
 import { dbMock, redisMock } from '~/__tests__/mocks';
 import { judgeSkipListReducer } from '~/components/Crucible/judge-skip-list';
+import { CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY } from '~/shared/constants/crucible.constants';
 
 // `~/server/db/client` and `~/server/redis/client` are registered globally by the setup file
 // and reset per test file — see docs/testing/shared-module-mocks.md. Declare behaviour, never
@@ -508,9 +509,6 @@ describe('getJudgingPair — vote integrity', () => {
   });
 
   it('never serves an entry the judge has already voted on as often as allowed', async () => {
-    const { CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY } = await import(
-      '~/server/services/crucible.service'
-    );
     queryRaw.mockResolvedValue([rawEntry(1, 11), rawEntry(2, 12), rawEntry(3, 13)]);
     redisMock.sysRedis.hGetAll.mockResolvedValue({
       '1': String(CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY),

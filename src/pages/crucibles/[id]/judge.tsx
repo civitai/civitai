@@ -8,7 +8,6 @@ import {
   Title,
   Button,
   Box,
-  Loader,
 } from '@mantine/core';
 import type { InferGetServerSidePropsType } from 'next';
 import Link from 'next/link';
@@ -16,7 +15,6 @@ import * as z from 'zod';
 import {
   IconArrowLeft,
   IconClock,
-  IconTrophy,
   IconUsers,
   IconRefresh,
   IconAlertCircle,
@@ -28,8 +26,6 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { Page } from '~/components/AppLayout/Page';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
-import { CrucibleCard } from '~/components/Cards/CrucibleCard';
-import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -38,6 +34,7 @@ import { trpc } from '~/utils/trpc';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { CrucibleJudgingDoneState } from '~/components/Crucible/CrucibleJudgingDoneState';
 import { CrucibleJudgingUI } from '~/components/Crucible/CrucibleJudgingUI';
 import { useJudgeSkipList } from '~/components/Crucible/judge-skip-list';
 import type { JudgingPairData, WatchedMs } from '~/components/Crucible/CrucibleJudgingUI';
@@ -514,7 +511,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
 
           {showDoneState ? (
             <div className="overflow-y-auto">
-              <EndCrucibleState
+              <CrucibleJudgingDoneState
                 crucibleId={id}
                 crucibleName={crucible.name}
                 sessionVotes={sessionVotes}
@@ -597,85 +594,6 @@ function StatItem({ label, value, secondary, info }: StatItemProps) {
       {secondary && (
         <div className="text-xs" style={{ color: '#a6e3a1' }}>
           {secondary}
-        </div>
-      )}
-    </div>
-  );
-}
-
-type EndCrucibleStateProps = {
-  crucibleId: number;
-  crucibleName: string;
-  sessionVotes: number;
-  onlyOwnEntries: boolean;
-};
-
-function EndCrucibleState({
-  crucibleId,
-  crucibleName,
-  sessionVotes,
-  onlyOwnEntries,
-}: EndCrucibleStateProps) {
-  const browsingLevel = useBrowsingLevelDebounced();
-  const { data, isLoading } = trpc.crucible.getJudgingSuggestions.useQuery(
-    { excludeCrucibleId: crucibleId, browsingLevel, limit: 4 },
-    { refetchOnWindowFocus: false }
-  );
-  const { items: suggestedCrucibles } = useApplyHiddenPreferences({ type: 'crucibles', data });
-
-  return (
-    <div className="mx-auto max-w-4xl py-8 text-center">
-      <div className="mb-2 text-4xl">
-        {onlyOwnEntries ? (
-          <IconUsers className="mx-auto size-16 text-gray-500" />
-        ) : (
-          <IconTrophy className="mx-auto size-16 text-green-400" />
-        )}
-      </div>
-      <Title order={2} className="mb-2 text-white">
-        {onlyOwnEntries ? 'Nothing for you to judge yet' : "You've rated all available pairs!"}
-      </Title>
-      <Text c="dimmed" mb="xl">
-        {onlyOwnEntries
-          ? "You're never shown your own entries, so judging opens for you once at least 2 other creators have entered."
-          : sessionVotes > 0
-          ? `Great judging session! You rated ${numberWithCommas(sessionVotes)} pairs.`
-          : 'Check back soon for new pairs to judge.'}
-      </Text>
-
-      <Button
-        variant="light"
-        size="lg"
-        component={Link}
-        href={getCrucibleUrl(crucibleId, crucibleName)}
-        mb="xl"
-        maw="100%"
-        classNames={{ inner: 'min-w-0', label: 'truncate' }}
-      >
-        Back to {crucibleName}
-      </Button>
-
-      {suggestedCrucibles.length > 0 && (
-        <>
-          <Title order={4} className="mb-6 mt-8 text-left text-white">
-            Continue Judging These Crucibles
-          </Title>
-          <div className="grid grid-cols-2 gap-4 text-left lg:grid-cols-4">
-            {suggestedCrucibles.map((c) => (
-              <div key={c.id} className="flex flex-col gap-2">
-                <CrucibleCard data={c} />
-                <Button component={Link} href={`/crucibles/${c.id}/judge`} fullWidth>
-                  Start Judging
-                </Button>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
-
-      {isLoading && (
-        <div className="flex justify-center py-8">
-          <Loader size="md" />
         </div>
       )}
     </div>
