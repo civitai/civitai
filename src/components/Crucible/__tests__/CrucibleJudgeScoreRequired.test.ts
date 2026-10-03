@@ -40,7 +40,8 @@ describe('CrucibleJudgeScoreRequired', () => {
     expect(el.textContent).toContain('Judging needs a creator score of 500');
     expect(el.textContent).toContain('Your creator score is 120.');
     expect(el.textContent).toMatch(/react to and comment on your images and articles/);
-    expect(el.querySelector('a')?.getAttribute('href')).toBe('/crucibles/1/test');
+    const hrefs = [...el.querySelectorAll('a')].map((a) => a.getAttribute('href'));
+    expect(hrefs).toEqual(['/user/account#creator-score', '/crucibles/1/test']);
   });
 
   it('still explains the threshold when only the server refusal is known', () => {

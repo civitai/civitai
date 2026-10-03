@@ -95,13 +95,20 @@ describe('crucible judging requires a creator score', () => {
     expect(submitVote).toHaveBeenCalledTimes(1);
   });
 
-  it('reports the score and threshold so the judge page can explain a refusal', async () => {
+  it('tells the judge page a moderator can judge, so it does not show them the refusal', async () => {
+    withScore(0);
+
+    await expect(getJudgeEligibilityHandler({ ctx: ctxFor(true) })).resolves.toMatchObject({
+      canJudge: true,
+    });
+  });
+
+  it('reports the score so the judge page can explain a refusal', async () => {
     withScore(120);
 
     await expect(getJudgeEligibilityHandler({ ctx: ctxFor() })).resolves.toEqual({
       canJudge: false,
       score: 120,
-      minScore: CRUCIBLE_JUDGE_MIN_CREATOR_SCORE,
     });
     expect(dbMock.dbRead.user.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: 7 } })

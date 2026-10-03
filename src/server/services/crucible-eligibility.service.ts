@@ -54,7 +54,7 @@ export async function assertCanCreateCrucible(userId: number) {
   if (unmet) throw new TRPCError({ code: 'FORBIDDEN', message: unmetRequirementMessage(unmet) });
 }
 
-export type CrucibleJudgeEligibility = { canJudge: boolean; score: number; minScore: number };
+export type CrucibleJudgeEligibility = { canJudge: boolean; score: number };
 
 export async function getCrucibleJudgeEligibility({
   userId,
@@ -65,11 +65,7 @@ export async function getCrucibleJudgeEligibility({
 }): Promise<CrucibleJudgeEligibility> {
   const user = await dbRead.user.findUnique({ where: { id: userId }, select: { meta: true } });
   const score = creatorScoreFromMeta(user?.meta);
-  return {
-    canJudge: !!isModerator || score >= CRUCIBLE_JUDGE_MIN_CREATOR_SCORE,
-    score,
-    minScore: CRUCIBLE_JUDGE_MIN_CREATOR_SCORE,
-  };
+  return { canJudge: !!isModerator || score >= CRUCIBLE_JUDGE_MIN_CREATOR_SCORE, score };
 }
 
 export async function assertCanJudgeCrucible(args: { userId: number; isModerator?: boolean }) {
