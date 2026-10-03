@@ -299,6 +299,29 @@ module.exports = {
         'src/components/Apps/AppsRailNav.tsx',
         'src/components/Apps/useAppsNavSections.ts',
         'src/components/Apps/appsRailState.tsx',
+        // The App Blocks missing-permissions backstop. Its narrow/wide swap is a
+        // CONTAINER QUERY on purpose and must stay one.
+        //
+        // ⚠️ IT EARNS THE GLOB FOR THE FLASH, NOT FOR HYDRATION, AND THE DISTINCTION IS
+        // WHY THIS COMMENT IS LONGER THAN THE ENTRY. This surface is NOT server-rendered:
+        // `BlockSlot` loads the chain through `dynamic(..., { ssr: false })`, and the
+        // notice's own gate withholds it until the iframe posts `BLOCK_READY`. So the
+        // hydration-divergence argument the block comment above makes for the `/apps`
+        // chrome genuinely does not reach it, and anyone who checks will find that out.
+        // What DOES reach it is a pair of reasons, and they are NOT the same reason for
+        // all four hooks — an earlier draft said "the four hooks this rule names are
+        // exactly the ones that would [flash]", and that was false:
+        //   · CONTAINER hooks flash. `useContainerQuery` returns false while
+        //     `inlineSize === 0`, `useContainerSmallerThan` wraps it, and bare
+        //     `useIsMobile()` routes to it — so each renders the wrong shape for a frame
+        //     and then restructures the bar under a viewer already reading it.
+        //   · `useMediaQuery` imported from `@mantine/hooks` flashes too (its default is
+        //     `getInitialValueInEffect: true`), but THIS REPO'S WRAPPER DOES NOT — it
+        //     passes `false` and reads `matchMedia` synchronously on first render, and
+        //     with no SSR pass here that read IS the first paint. It is banned for the
+        //     other reason, stated at length on the component: a VIEWPORT query answers
+        //     the wrong question for a ~320px sidebar on a desktop.
+        'src/components/AppBlocks/BlockConsentNotice.tsx',
       ],
       rules: {
         'local-rules/no-ssr-divergent-media-query': 'error',
