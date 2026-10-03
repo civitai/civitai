@@ -39,6 +39,7 @@ import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CrucibleJudgingUI } from '~/components/Crucible/CrucibleJudgingUI';
+import { useJudgeSkipList } from '~/components/Crucible/judge-skip-list';
 import type { JudgingPairData, WatchedMs } from '~/components/Crucible/CrucibleJudgingUI';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { getCrucibleUrl, isCrucibleSfw } from '~/utils/crucible-helpers';
@@ -94,7 +95,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
     watched: WatchedMs;
   } | null>(null);
 
-  const [skippedEntryIds, setSkippedEntryIds] = useState<number[]>([]);
+  const { skippedEntryIds, skip, recordVote } = useJudgeSkipList();
   // One judging session per visit to this page: leaving and coming back means watching in full again.
   const [judgingSessionId] = useState(uuidv4);
 
@@ -133,7 +134,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
     {
       enabled: canRequestPairs,
       refetchOnWindowFocus: false,
-      // The skip list resets after every vote, so an earlier list recurs. Its cached pair is stale
+      // A skip list can recur once a vote takes an entry off it. Its cached pair is stale
       // (staleTime is Infinity app-wide), so nothing is kept once the input moves on.
       gcTime: 0,
     }
@@ -244,10 +245,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
         setCurrentStreak((prev) => prev + 1); // Increment streak on vote
         setLastVoteAttempt(null);
         refetchProgress();
-        if (skippedEntryIds.length) {
-          // Skips last until the next vote. Changing the input fetches the next pair on its own.
-          setSkippedEntryIds([]);
-        } else {
+        if (!recordVote(pair)) {
           const result = await refetchPair();
           // Only an explicit null means no pairs are left; a failed refetch leaves `data` undefined.
           if (result.data === null) {
@@ -261,7 +259,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
         setIsVoting(false);
       }
     },
-    [pair, id, submitVoteMutation, refetchPair, refetchProgress, skippedEntryIds, judgingSessionId]
+    [pair, id, submitVoteMutation, refetchPair, refetchProgress, recordVote, judgingSessionId]
   );
 
   // Retry last vote attempt
@@ -282,10 +280,9 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
         setSessionSkips((prev) => prev + 1);
         setCurrentStreak(0);
       }
-      // The last 20 entries (~10 pairs); the server brings them back once nothing else is left.
-      setSkippedEntryIds((prev) => [...prev, pair.left.id, pair.right.id].slice(-20));
+      skip(pair);
     },
-    [isVoting, isLoadingPair, pair]
+    [isVoting, isLoadingPair, pair, skip]
   );
 
   // Check if all pairs judged on initial load

@@ -6,6 +6,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import type * as EloService from '~/server/services/crucible-elo.service';
 import { dbMock, redisMock } from '~/__tests__/mocks';
+import { judgeSkipListReducer } from '~/components/Crucible/judge-skip-list';
 
 // `~/server/db/client` and `~/server/redis/client` are registered globally by the setup file
 // and reset per test file — see docs/testing/shared-module-mocks.md. Declare behaviour, never
@@ -260,6 +261,52 @@ describe('getJudgingPair — pairing', () => {
 
     expect(pair, 'three unjudged pairs were left, only behind the skip list').not.toBeNull();
     expect(queryRaw).toHaveBeenCalledTimes(2);
+  });
+
+  // A skip has to outlive the next vote. Pairing is near-deterministic, so clearing the skip list on
+  // a vote served the skipped pair straight back, every time (reported on the Crucibles article).
+  it('does not serve a skipped pair again after the judge votes on the next one', async () => {
+    const all = [
+      rawEntry(1, 11, 1500),
+      rawEntry(2, 12, 1500),
+      rawEntry(3, 13, 1700),
+      rawEntry(4, 14, 1700),
+      rawEntry(5, 15, 1900),
+      rawEntry(6, 16, 1900),
+    ];
+    queryRaw.mockImplementation(async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      const at = strings.findIndex((part) => part.trimEnd().endsWith('NOT IN ('));
+      if (at === -1) return all;
+      const excluded = (values[at] as { values: unknown[] }).values;
+      return all.filter((e) => !excluded.includes(e.id));
+    });
+    withVoteCounts({ 1: 0, 2: 0, 3: 5, 4: 5, 5: 8, 6: 8 });
+    const serve = async (skipped: number[]) => {
+      const pair = await getJudgingPair({
+        crucibleId: 1,
+        userId: 7,
+        excludeEntryIds: skipped.length ? skipped : undefined,
+      });
+      if (!pair) throw new Error('no pair served');
+      return pair;
+    };
+
+    let skipped: number[] = [];
+    const skippedPair = await serve(skipped);
+    expect(pairIds(skippedPair)).toEqual([1, 2]);
+    skipped = judgeSkipListReducer(skipped, { type: 'skip', pair: skippedPair });
+
+    const votedPair = await serve(skipped);
+    expect(pairIds(votedPair)).toEqual([3, 4]);
+    withVotedPairs([3, 4]);
+    withVoteCounts({ 1: 0, 2: 0, 3: 6, 4: 6, 5: 8, 6: 8 });
+    skipped = judgeSkipListReducer(skipped, { type: 'vote', pair: votedPair });
+
+    const next = pairIds(await serve(skipped))!;
+    expect(
+      next.filter((id) => [1, 2].includes(id)),
+      'an entry the judge just skipped'
+    ).toEqual([]);
   });
 
   it('does not query again when nothing was skipped', async () => {
