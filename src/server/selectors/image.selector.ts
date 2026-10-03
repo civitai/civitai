@@ -86,8 +86,23 @@ export type ImageResourceHelperModel = Prisma.ImageResourceHelperGetPayload<
   typeof imageResourceHelper
 >;
 
+const reviewedImageWhere = { needsReview: null, tosViolation: false } as const;
+
 export const publishedImageWhere = (): Prisma.ImageWhereInput => ({
-  needsReview: null,
-  tosViolation: false,
+  ...reviewedImageWhere,
   post: { publishedAt: { lte: new Date() } },
+});
+
+/** Unpublished media, held to the same review gates as published media. */
+export const draftImageWhere = (post: Prisma.PostWhereInput): Prisma.ImageWhereInput => ({
+  ...reviewedImageWhere,
+  post: { ...post, publishedAt: null },
+});
+
+/** One relation filter rather than an OR of two, so the planner can still semi-join on Post. */
+export const publishedOrDraftImageWhere = (draftPostIds: number[]): Prisma.ImageWhereInput => ({
+  ...reviewedImageWhere,
+  post: {
+    OR: [{ publishedAt: { lte: new Date() } }, { id: { in: draftPostIds }, publishedAt: null }],
+  },
 });

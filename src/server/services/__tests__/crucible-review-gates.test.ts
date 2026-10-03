@@ -239,6 +239,28 @@ describe('list surfaces — featured and judging suggestions', () => {
     }
   );
 
+  it.each(['green', 'yellow'])(
+    "featured: labels the prize in the crucible's own Buzz (%s)",
+    async (buzzType) => {
+      queryRaw.mockResolvedValue([
+        {
+          id: 1,
+          name: 'n',
+          description: null,
+          entryFee: 0,
+          seededPrizePool: 0,
+          endAt: null,
+          buzzType,
+          imageUrl: null,
+          entriesCount: BigInt(0),
+          prizePool: BigInt(0),
+        },
+      ]);
+
+      await expect(getFeaturedCrucible({ browsingLevel: 1 })).resolves.toMatchObject({ buzzType });
+    }
+  );
+
   it('featured: ranks by a pool that counts only paid entries', async () => {
     await getFeaturedCrucible({ browsingLevel: 1 });
 
@@ -258,7 +280,8 @@ describe('list surfaces — featured and judging suggestions', () => {
   ])('%s: lists any currency, and only SFW crucibles on the green site', async (_, run) => {
     await run(true);
     const green = sqlText(queryRaw.mock.calls.at(-1)!);
-    expect(green).not.toContain('"buzzType"');
+    // Featured selects the column to label its prize; filtering on it would hide a currency.
+    expect(green).not.toMatch(/"buzzType"\s*(=|<>|!=|IN\b)/i);
     expect(green).toContain('AND c."nsfwLevel" = ANY(?::int[]) AND NOT c."textNsfw"');
     const greenSite = (queryRaw.mock.calls.at(-1)!.slice(1) as { strings?: string[] }[]).find(
       (value) => value?.strings?.join('?').includes('NOT c."textNsfw"')
@@ -269,7 +292,7 @@ describe('list surfaces — featured and judging suggestions', () => {
 
     await run(false);
     const red = sqlText(queryRaw.mock.calls.at(-1)!);
-    expect(red).not.toContain('"buzzType"');
+    expect(red).not.toMatch(/"buzzType"\s*(=|<>|!=|IN\b)/i);
     expect(red).not.toContain('= ANY(?::int[]) AND NOT c."textNsfw"');
   });
 

@@ -24,6 +24,17 @@ describe('crucible-won notification message', () => {
     expect(msg!.message).toContain('1,500 Buzz');
   });
 
+  it.each([
+    ['green', '1,500 Green Buzz'],
+    ['yellow', '1,500 Yellow Buzz'],
+  ])('names the Buzz type a %s prize was paid in', (buzzType, text) => {
+    const msg = def.prepareMessage({
+      details: { crucibleId: 7, crucibleName: 'Neon', position: 1, prizeAmount: 1500, buzzType },
+    });
+
+    expect(msg!.message).toContain(text);
+  });
+
   it('says why an entry without enough votes was not placed, instead of "position null"', () => {
     const msg = def.prepareMessage({
       details: { crucibleId: 7, crucibleName: 'Neon', position: null, prizeAmount: 0 },
@@ -125,5 +136,37 @@ describe('crucible-entry-removed copy', () => {
     expect(removed({ refundedAmount: 0 })).toBe(
       'A moderator removed your entry from the crucible "Neon".'
     );
+  });
+});
+
+describe('crucible-ended notification message', () => {
+  it("names the pool's Buzz type", () => {
+    const msg = crucibleNotifications['crucible-ended'].prepareMessage({
+      details: {
+        crucibleId: 7,
+        crucibleName: 'Neon',
+        totalEntries: 3,
+        prizePool: 900,
+        seedRefunded: 0,
+        buzzType: 'green',
+      },
+    });
+
+    expect(msg!.message).toContain('prize pool of 900 Green Buzz');
+  });
+
+  it("names the refunded seed's Buzz type", () => {
+    const msg = crucibleNotifications['crucible-ended'].prepareMessage({
+      details: {
+        crucibleId: 7,
+        crucibleName: 'Neon',
+        totalEntries: 0,
+        prizePool: 0,
+        seedRefunded: 500,
+        buzzType: 'green',
+      },
+    });
+
+    expect(msg!.message).toContain('500 Green Buzz was refunded');
   });
 });

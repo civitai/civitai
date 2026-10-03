@@ -38,7 +38,7 @@ describe('assertUnderDailyCreateLimit', () => {
   it('throws when the user has hit the daily create limit', async () => {
     mockDbRead.challenge.count.mockResolvedValue(CHALLENGE_CREATE_DAILY_LIMIT);
     await expect(assertUnderDailyCreateLimit(USER_ID)).rejects.toThrow(
-      /at most 5 challenges per day/i
+      /at most 5 challenges in any 24 hours/i
     );
   });
 
@@ -79,7 +79,7 @@ describe('assertCanCreateUserChallenge (daily limit wiring)', () => {
   it('rejects creation once the daily limit is reached, even with room under the active-challenge cap', async () => {
     mockDbRead.challenge.count.mockResolvedValue(CHALLENGE_CREATE_DAILY_LIMIT);
     await expect(assertCanCreateUserChallenge(USER_ID)).rejects.toThrow(
-      /at most 5 challenges per day/i
+      /at most 5 challenges in any 24 hours/i
     );
   });
 

@@ -447,6 +447,48 @@ describe('createCrucible — base model requirements', () => {
   });
 });
 
+describe('createCrucible — required models unsuitable for mature content', () => {
+  const R = 1 | 2 | 4;
+  const PG13 = 1 | 2;
+  /** Version 123 + i carries models[i]; the media-type check's query gets []. */
+  const withModels = (...models: { minor: boolean; sfwOnly: boolean }[]) =>
+    modelVersionFindMany.mockImplementation(
+      async ({ select, where }: { select: { model?: unknown }; where: { id: { in: number[] } } }) =>
+        select.model
+          ? where.id.in.flatMap((id) => (models[id - 123] ? [{ model: models[id - 123] }] : []))
+          : []
+    );
+
+  it.each([
+    ['minor', { minor: true, sfwOnly: false }],
+    ['SFW-only', { minor: false, sfwOnly: true }],
+  ])('refuses R+ when a required model is %s, before anything is written', async (_, flags) => {
+    withModels({ minor: false, sfwOnly: false }, flags);
+
+    await expect(
+      createCrucible(input({ nsfwLevel: R, allowedResources: [123, 124] }))
+    ).rejects.toThrow(/PG and PG-13/);
+    expect(crucibleCreate).not.toHaveBeenCalled();
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('allows PG-13 with such a model', async () => {
+    withModels({ minor: true, sfwOnly: true });
+
+    await createCrucible(input({ nsfwLevel: PG13, allowedResources: [123] }));
+
+    expect(crucibleCreate).toHaveBeenCalled();
+  });
+
+  it('allows R+ when no required model is flagged', async () => {
+    withModels({ minor: false, sfwOnly: false });
+
+    await createCrucible(input({ nsfwLevel: R, allowedResources: [123] }));
+
+    expect(crucibleCreate).toHaveBeenCalled();
+  });
+});
+
 describe('activateScheduledCrucibles', () => {
   it('opens only Pending crucibles whose start has passed', async () => {
     crucibleUpdateMany.mockResolvedValue({ count: 2 });

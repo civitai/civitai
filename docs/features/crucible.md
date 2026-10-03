@@ -6,9 +6,9 @@ Crucible is separate from the Challenges platform and its judging engine.
 
 ## Lifecycle
 
-1. **Create.** The creator sets up the crucible and pays the setup cost and any seeded pool. It starts right away, or at a scheduled time up to 30 days out. A crucible runs on one Buzz type (yellow or green) and lives only on that currency's site; a green crucible is limited to PG and PG-13.
+1. **Create.** The creator sets up the crucible and pays the setup cost and any seeded pool in the Buzz of the site they create on; that becomes the crucible's Buzz type. It starts right away, or at a scheduled time up to 30 days out. A green crucible is limited to PG and PG-13. Crucibles are listed on both sites, but the green site shows only those that allow nothing above PG-13 and whose text is SFW.
 2. **Review.** The name, description and cover are checked automatically before anyone else can see the crucible. Until then only its creator and moderators can open it.
-3. **Enter.** While the crucible is active, entrants submit published media from their library, or generate or upload it from the submit dialog. Each entry pays the entry fee, except the free entries the creator offers.
+3. **Enter.** While the crucible is active, entrants submit published media from their library, or generate or upload it from the submit dialog. Media added from the dialog stays an unpublished draft until it is entered, and entering publishes it; a refused or refunded entry leaves it a draft. Each entry pays the entry fee in the Buzz of the site the entrant is on, except the free entries the creator offers.
 4. **Judge.** Signed-in users are shown two entries side by side and pick one. Every vote updates both entries' ratings.
 5. **Finish.** At the end time the crucible closes, final positions are fixed by rating, and prizes are paid out.
 
@@ -28,7 +28,6 @@ A moderator can remove an entry while the crucible runs. The entry fee is refund
 |---|---|---|
 | Duration | 8 hours, 24 hours, 3 days or 7 days | Free, 500, 1,000, 2,000 Buzz |
 | Start date | Schedule the start instead of opening immediately | Free |
-| Buzz type | Yellow or green | Free |
 | Content type | Image or video entries | Free |
 | Content rating | Which content levels entries may have | Free |
 | Entry fee | Paid by each entry; feeds the prize pool | Free |
@@ -36,7 +35,7 @@ A moderator can remove an entry while the crucible runs. The entry fee is refund
 | Free entries | The first N entries per user cost nothing | Free |
 | Seeded prize pool | Buzz the creator adds to the pool up front | The seeded amount |
 | Prize distribution | Custom split across positions (default 50 / 30 / 20) | 500 Buzz |
-| Resource requirements | Entries must be made with one of up to 10 chosen models | 500 Buzz |
+| Resource requirements | Entries must be made with one of up to 10 chosen models. If a chosen model is limited to PG and PG-13, so are the crucible and every entry | 500 Buzz |
 | Minimum view time *(video only)* | Judges must watch this long of both clips before voting | Free |
 | Maximum clip length *(video only)* | Longer clips are refused at submission | Free |
 
@@ -46,16 +45,16 @@ Settings can change only before the crucible starts; after that only the name, d
 
 The pool is the seeded amount plus the fee of every paid entry. Free entries add nothing, so a crucible with no seed and only free entries has a pool of 0.
 
-At the end, entries need a minimum share of votes to place. Those that place split the pool by the prize distribution; ties go to the earlier entry. Entries whose media was blocked, taken down or re-rated outside the crucible's levels can't place, and their fees stay in the pool. If nobody entered, or nothing could be awarded, the seed goes back to the creator.
+At the end, entries need a minimum share of votes to place. Those that place split the pool by the prize distribution; ties go to the earlier entry. Entries whose media was blocked, taken down or re-rated outside the crucible's levels can't place, and their fees stay in the pool. If nobody entered, or nothing could be awarded, the seed goes back to the creator. Prizes are paid in the crucible's Buzz type, whichever Buzz the entry fees came in.
 
 The discovery page's Prize Pool sort uses the same pool.
 
 ## Judging
 
 - Judges never see their own entries, and never see the same pair twice.
-- Pairs favour entries with few votes, so new entries get ranked quickly.
+- Pairs favour the entries this judge has voted on least, then those with the fewest votes overall, so new entries get ranked quickly without one late entry turning up in every pair a judge sees.
 - New entries' ratings move faster until they have enough votes.
-- Judges can skip a pair.
+- Judges can skip a pair. Skipped entries stay out for the rest of the visit (up to the last 20) and come back only once nothing else is left to judge.
 - On video crucibles with a minimum view time, only real playback counts. Skipping ahead or pausing does not add to it. A vote on an under-watched pair is rejected, and the judge keeps that pair.
 - Someone the creator has blocked can't see, enter or judge the crucible.
 

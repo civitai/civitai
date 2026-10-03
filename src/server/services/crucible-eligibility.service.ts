@@ -7,6 +7,7 @@ import {
   type ChallengeCreateRequirement,
 } from '~/server/services/challenge-eligibility.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
+import { describeActiveLimitsByTier } from '~/shared/constants/challenge.constants';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 
 export async function getCrucibleCreateEligibility(
@@ -35,11 +36,11 @@ function unmetRequirementMessage(requirement: ChallengeCreateRequirement) {
       if (requirement.muted) return 'Muted accounts cannot create crucibles.';
       return 'Your account has active strikes and cannot create crucibles right now.';
     case 'dailyLimit':
-      return `You can create at most ${requirement.limit} crucibles per day. Please try again later.`;
+      return `You can create at most ${requirement.limit} crucibles in any 24 hours. Please try again later.`;
     case 'activeLimit':
-      return `You've reached your limit of ${requirement.limit} active crucible${
+      return `You've reached your limit of ${requirement.limit} crucible${
         requirement.limit === 1 ? '' : 's'
-      } for your membership tier.`;
+      } running at once for your membership tier (${describeActiveLimitsByTier()}).`;
   }
 }
 

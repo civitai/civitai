@@ -569,20 +569,27 @@ describe('finalizeCrucible — single entry', () => {
     expect(result.finalEntries[0].prizeAmount).toBe(100);
   });
 
-  // Until winners choose their prize currency (the fast follow), every prize is yellow, whatever
-  // the creator paid in and whatever the entrants paid in.
-  it('pays every prize in yellow, for a crucible created on the green site too', async () => {
-    setupCrucible({ entryFee: 100 });
-    findUnique.mockResolvedValue({ ...(await findUnique()), buzzType: 'green' });
+  it.each(['green', 'yellow'] as const)(
+    "pays every prize in the crucible's own Buzz type (%s), whatever the entrants paid in",
+    async (buzzType) => {
+      setupCrucible({ entryFee: 100 });
+      findUnique.mockResolvedValue({ ...(await findUnique()), buzzType });
 
-    await finalizeCrucible(1);
+      await finalizeCrucible(1);
 
-    const [transactions] = createBuzzTransactionMany.mock.calls[0] as [
-      { toAccountType: string; fromAccountType: string }[]
-    ];
-    expect(transactions).toHaveLength(3);
-    expect(transactions.map((tx) => tx.toAccountType)).toEqual(['yellow', 'yellow', 'yellow']);
-  });
+      expect(findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ select: expect.objectContaining({ buzzType: true }) })
+      );
+      const [transactions] = createBuzzTransactionMany.mock.calls[0] as [
+        { toAccountType: string }[]
+      ];
+      expect(transactions).toHaveLength(3);
+      expect(transactions.map((tx) => tx.toAccountType)).toEqual([buzzType, buzzType, buzzType]);
+      const sent = createNotification.mock.calls.map(([arg]) => arg);
+      expect(sent.length).toBeGreaterThan(0);
+      for (const notification of sent) expect(notification.details.buzzType).toBe(buzzType);
+    }
+  );
 
   it('names and links the crucible on the prize transaction', async () => {
     setupCrucible({ entryFee: 100, entries: [dbEntry(1, 10, 1_000)], elos: { 1: 1500 } });

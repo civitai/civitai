@@ -153,7 +153,11 @@ import type {
 } from '~/server/search-index/metrics-images.search-index';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import type { ImageResourceHelperModel } from '~/server/selectors/image.selector';
-import { imageSelect, publishedImageWhere } from '~/server/selectors/image.selector';
+import {
+  imageSelect,
+  publishedImageWhere,
+  publishedOrDraftImageWhere,
+} from '~/server/selectors/image.selector';
 import type { ImageV2Model, ImageV2Stats } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
 import {
@@ -8133,6 +8137,7 @@ export async function createImageResources({
 export const getMyImages = async ({
   mediaTypes,
   publishedOnly,
+  draftPostIds,
   userId,
   limit,
   cursor = 0,
@@ -8163,7 +8168,11 @@ export const getMyImages = async ({
         ingestion: publishedOnly
           ? { in: [ImageIngestionStatus.Pending, ImageIngestionStatus.Scanned] }
           : ImageIngestionStatus.Scanned,
-        ...(publishedOnly ? publishedImageWhere() : {}),
+        ...(publishedOnly && draftPostIds?.length
+          ? publishedOrDraftImageWhere(draftPostIds)
+          : publishedOnly
+          ? publishedImageWhere()
+          : {}),
       },
       take: limit + 1,
       cursor: cursor ? { id: cursor } : undefined,

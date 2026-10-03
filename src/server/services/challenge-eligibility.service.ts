@@ -115,7 +115,7 @@ export async function assertUnderDailyCreateLimit(
 
   if (recentCount >= CHALLENGE_CREATE_DAILY_LIMIT)
     throw forbidden(
-      `You can create at most ${CHALLENGE_CREATE_DAILY_LIMIT} challenges per day. Please try again later.`
+      `You can create at most ${CHALLENGE_CREATE_DAILY_LIMIT} challenges in any 24 hours. Please try again later.`
     );
   return { limit: CHALLENGE_CREATE_DAILY_LIMIT, recentCount };
 }

@@ -461,6 +461,52 @@ describe('updateCrucible — while upcoming', () => {
   });
 });
 
+describe('updateCrucible — required models unsuitable for mature content', () => {
+  const R = 1 | 2 | 4;
+  const flaggedModel = { model: { minor: true, sfwOnly: false } };
+  /** Version 12 is flagged; the media-type check's query gets nothing back. */
+  const withFlaggedVersion12 = () =>
+    modelVersionFindMany.mockImplementation(
+      async ({ select, where }: { select: { model?: unknown }; where: { id: { in: number[] } } }) =>
+        select.model
+          ? where.id.in.map((id) =>
+              id === 12 ? flaggedModel : { model: { minor: false, sfwOnly: false } }
+            )
+          : []
+    );
+
+  it('refuses raising the content level to R+ while a flagged model is required', async () => {
+    findUnique.mockResolvedValue(upcoming({ allowedResources: [10, 12] }));
+    withFlaggedVersion12();
+
+    await expect(edit({ nsfwLevel: R })).rejects.toThrow(/PG and PG-13/);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('refuses adding a flagged model to an R+ crucible', async () => {
+    findUnique.mockResolvedValue(upcoming({ nsfwLevel: R, allowedResources: [10] }));
+    withFlaggedVersion12();
+
+    await expect(edit({ allowedResources: [10, 12] })).rejects.toThrow(/PG and PG-13/);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('still lets an R+ crucible that already requires one take an edit that changes neither', async () => {
+    findUnique.mockResolvedValue(upcoming({ nsfwLevel: R, allowedResources: [12] }));
+    withFlaggedVersion12();
+
+    await expect(edit({ name: 'Renamed' })).resolves.toBeDefined();
+    expect(update).toHaveBeenCalled();
+  });
+
+  it('lets a moderator lower it to PG-13 even though a flagged model is required', async () => {
+    findUnique.mockResolvedValue(upcoming({ nsfwLevel: R, allowedResources: [12] }));
+    withFlaggedVersion12();
+
+    await expect(edit({ nsfwLevel: 1 | 2 }, 1, true)).resolves.toBeDefined();
+  });
+});
+
 describe('updateCrucible — free entries', () => {
   // Deliberately not moderator-only.
   it('lets an owner who is not a moderator set them on an upcoming crucible', async () => {
