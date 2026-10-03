@@ -2141,7 +2141,11 @@ type RatedEntry = EntryForJudging & { votes: number };
  * The least-voted entry, against the nearest-rated of the least-voted opponents this judge hasn't
  * already paired it with. Ties break randomly.
  */
-function pickUnjudgedPair(entries: RatedEntry[], votedPairs: Set<string>) {
+function pickUnjudgedPair(
+  entries: RatedEntry[],
+  votedPairs: Set<string>,
+  { allowSameAuthor }: { allowSameAuthor: boolean }
+) {
   const byVotes = entries
     .map((entry) => ({ entry, tieBreak: Math.random() }))
     .sort((x, y) => x.entry.votes - y.entry.votes || x.tieBreak - y.tieBreak)
@@ -2149,7 +2153,12 @@ function pickUnjudgedPair(entries: RatedEntry[], votedPairs: Set<string>) {
 
   for (const a of byVotes) {
     const opponents = byVotes
-      .filter((b) => b.id !== a.id && !votedPairs.has(createPairKey(a.id, b.id)))
+      .filter(
+        (b) =>
+          b.id !== a.id &&
+          (allowSameAuthor || b.userId !== a.userId) &&
+          !votedPairs.has(createPairKey(a.id, b.id))
+      )
       .slice(0, OPPONENT_POOL_SIZE);
     if (!opponents.length) continue;
 
@@ -2231,7 +2240,10 @@ export const getJudgingPair = async ({
     crucible.nsfwLevel,
     getEffectiveBrowsingLevel({ isGreen, isLoggedIn: true, requested: browsingLevel })
   );
+  // Authors enter near-identical variants, so two entries by one author read to a judge as the
+  // same clip twice. Such a pair is served only once no cross-author pair is left.
   const search = async (exclusions?: number[]) => {
+    let sameAuthor: ReturnType<typeof pickUnjudgedPair> = null;
     for (let attempt = 0; attempt < MAX_SAMPLE_ATTEMPTS; attempt++) {
       const sample = await fetchEntrySample(
         crucibleId,
@@ -2240,16 +2252,20 @@ export const getJudgingPair = async ({
         visibleImage,
         exclusions
       );
-      const pair = pickUnjudgedPair(sample.filter(underJudgeCap).map(rate), votedPairs);
-      if (pair) return pair;
+      const candidates = sample.filter(underJudgeCap).map(rate);
+      const crossAuthor = pickUnjudgedPair(candidates, votedPairs, { allowSameAuthor: false });
+      if (crossAuthor) return crossAuthor;
+      sameAuthor ??= pickUnjudgedPair(candidates, votedPairs, { allowSameAuthor: true });
       // A short sample already held every entry, so another draw returns the same set.
-      if (sample.length < SAMPLE_SIZE) return null;
+      if (sample.length < SAMPLE_SIZE) break;
     }
-    return null;
+    return sameAuthor;
   };
 
   // A skip means "not now": once only skipped entries are left, they come back instead of the
-  // judge being told there is nothing left to judge.
+  // judge being told there is nothing left to judge. It outranks the author rule, so a same-author
+  // pair is served before a skipped entry returns: re-serving the pair just skipped makes Skip
+  // look broken.
   const pair = (await search(excludeEntryIds)) ?? (excludeEntryIds?.length ? await search() : null);
   if (!pair) return null;
   const { a: imageA, b: imageB } = pair;
