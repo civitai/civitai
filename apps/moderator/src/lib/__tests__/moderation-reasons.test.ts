@@ -50,17 +50,17 @@ describe('canned reason ToS citations', () => {
 
 describe('canned removal messages', () => {
   // The canned message is sent to the owner as typed, beside the notification built from
-  // `violationUserMessage`; a school removal reworded in one and not the other still accuses.
-  it('sends a school removal the same wording as its notification', () => {
-    const rows = TOS_REASONS.filter((r) => r.violation === 'schoolNsfw');
-    expect(rows).toHaveLength(1);
-    expect(rows[0].message).toBe(`${violationUserMessage('schoolNsfw')}.`);
-  });
+  // `violationUserMessage`; a reason reworded in one and not the other still accuses.
+  it.each(['schoolNsfw', 'minorViolence'] as const)(
+    '%s sends the same wording as its notification',
+    (violation) => {
+      const rows = TOS_REASONS.filter((r) => r.violation === violation);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].message).toBe(`${violationUserMessage(violation)}.`);
+    }
+  );
 
-  it('offers minor-with-violence without a mature-context message or the minor flag', () => {
-    const rows = TOS_REASONS.filter((r) => r.violation === 'minorViolence');
-    expect(rows).toHaveLength(1);
-    expect(rows[0].message).toBe('Depicting minors with violence is not allowed.');
-    expect(rows[0].flag).toBeUndefined();
+  it('does not set the minor flag for minor-with-violence', () => {
+    expect(TOS_REASONS.find((r) => r.violation === 'minorViolence')?.flag).toBeUndefined();
   });
 });

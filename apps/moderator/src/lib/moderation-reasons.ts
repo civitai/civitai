@@ -90,7 +90,8 @@ export const TOS_REASONS: CannedReason[] = [
   },
   {
     label: 'Minor with violence',
-    message: 'Depicting minors with violence is not allowed.',
+    message:
+      'Violence, weapons or threats involving characters who appear young, or in settings associated with minors such as schools, are not allowed.',
     violation: 'minorViolence',
     tos: '9.6',
   },
