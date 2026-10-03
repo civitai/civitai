@@ -5,7 +5,9 @@ import { join } from 'path';
 
 import type { GoldPolicy } from '../builder';
 import type { NodeContext, NodeSpec, SourceRow } from '../nodes';
+import { nodePaths } from '../paths';
 import { choiceMapper } from '../runner';
+import { readJson } from '../store';
 import type { ChoiceOption, DecisionState, FormatSpec, GoldRow, MappedAnswer } from '../types';
 
 export const NODE_ID = 'support.topic';
@@ -120,6 +122,16 @@ const REDACT_MARGIN_CHARS = 1000;
 /** Cannot be part of an email, handle or id; CJK text counts as one. A link can contain any of these but whitespace. */
 const SEPARATOR = /[^\w.@%+:/#=&?~-]/;
 
+const PHONE_CHAR = /[\d\s().+-]/;
+const LINK_START = /:\/\/|www\.|[a-z0-9-]\.[a-z]{2,}\//i;
+
+/** The whitespace-free run of `text` that ends at `end`. */
+function tokenEndingAt(text: string, end: number): string {
+  let start = end;
+  while (start > 0 && !/\s/.test(text[start - 1])) start--;
+  return text.slice(start, end);
+}
+
 /**
  * Several patterns are quadratic on a long non-matching run, so redaction gets a
  * bounded window: the kept length plus a margin, cut where no identifier is split.
@@ -127,7 +139,9 @@ const SEPARATOR = /[^\w.@%+:/#=&?~-]/;
  * Redaction can shrink the window by more than the margin, so the start of a tail
  * window can reach the output. A pattern cannot see an identifier missing its
  * start, so the tail drops the whole cut token: to whitespace (a link has none),
- * then any phone digits after it. Text without whitespace falls back to SEPARATOR.
+ * then any phone digits after it. A tail with no whitespace is dropped whole if it
+ * continues a link, since a link runs to whitespace; otherwise it is cut at
+ * SEPARATOR. The head drops any phone digits before its cut.
  */
 export function redactionWindow(text: string, keep: number, fromEnd: boolean): string {
   const limit = keep + REDACT_MARGIN_CHARS;
@@ -135,11 +149,17 @@ export function redactionWindow(text: string, keep: number, fromEnd: boolean): s
   if (fromEnd) {
     const tail = text.slice(-limit);
     const space = tail.search(/\s/);
+    if (space < 0 && LINK_START.test(tokenEndingAt(text, text.length - limit))) return '';
     const at = space >= 0 ? space : tail.search(SEPARATOR);
     return at < 0 ? '' : tail.slice(at + 1).replace(/^[\d\s().+-]+/, '');
   }
   const head = text.slice(0, limit);
-  for (let i = head.length - 1; i >= 0; i--) if (SEPARATOR.test(head[i])) return head.slice(0, i);
+  for (let i = head.length - 1; i >= 0; i--) {
+    if (!SEPARATOR.test(head[i])) continue;
+    let end = i;
+    while (end > 0 && PHONE_CHAR.test(head[end - 1])) end--;
+    return head.slice(0, end);
+  }
   return '';
 }
 
@@ -233,7 +253,7 @@ type SupportTopicConfig = {
 };
 
 function nodeDir(ctx: NodeContext): string {
-  return join(ctx.dataDir, NODE_ID);
+  return nodePaths(ctx.dataDir, NODE_ID).root;
 }
 
 export function readStrata(ctx: NodeContext, cfg: SupportTopicConfig): Map<string, StrataRow> {
@@ -248,8 +268,8 @@ export function readStrata(ctx: NodeContext, cfg: SupportTopicConfig): Map<strin
 
 export function readConfig(ctx: NodeContext): SupportTopicConfig {
   const path = join(nodeDir(ctx), 'config.json');
-  if (!existsSync(path)) throw new Error(`${path} is missing; see the support-topic node header`);
-  const cfg = JSON.parse(readFileSync(path, 'utf8')) as Partial<SupportTopicConfig>;
+  const cfg = readJson<Partial<SupportTopicConfig>>(path);
+  if (!cfg) throw new Error(`${path} is missing; see the support-topic node header`);
   if (
     !cfg.classifierVersion ||
     !Array.isArray(cfg.testStrataFiles) ||
@@ -265,7 +285,7 @@ function groupSalt(ctx: NodeContext): string {
   const path = join(nodeDir(ctx), 'group-salt');
   if (!existsSync(path)) {
     // A new salt would re-key every group, and a requester could then sit in dev and test across builds.
-    if (existsSync(join(nodeDir(ctx), 'manifest.jsonl'))) {
+    if (existsSync(nodePaths(ctx.dataDir, NODE_ID).manifest)) {
       throw new Error(
         `${path} is missing but a manifest exists; restore the salt, do not regenerate it`
       );
@@ -400,7 +420,7 @@ export function assertDevPrecedesTest(
 ) {
   const testTimes = rows.filter((r) => r.split === 'test').map((r) => Date.parse(r.ts));
   if (!testTimes.length) return;
-  const firstTest = Math.min(...testTimes);
+  const firstTest = testTimes.reduce((a, b) => Math.min(a, b));
   const late = rows.filter((r) => r.split === 'dev' && Date.parse(r.ts) >= firstTest);
   if (late.length) {
     throw new Error(

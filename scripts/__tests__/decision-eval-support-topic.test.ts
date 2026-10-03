@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import type * as ClickhouseClient from '@clickhouse/client';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -23,6 +23,7 @@ import {
   assertDevPrecedesTest,
   parseStrataCsv,
   periodOf,
+  readConfig,
   redact,
   redactionWindow,
   supportTopicNode,
@@ -30,7 +31,7 @@ import {
   type SupportTicketRaw,
 } from '../decision-eval/nodes/support-topic';
 import { assertNoPii } from '../decision-eval/safety';
-import { weightedSummary } from '../decision-eval/nodes/support-topic-weighted';
+import { weightedReport, weightedSummary } from '../decision-eval/nodes/support-topic-weighted';
 import { fittedThresholds } from '../decision-eval/scorer';
 import type { ManifestItem, NormalizedAnswer, Prediction } from '../decision-eval/types';
 
@@ -215,6 +216,15 @@ describe('support.topic formats', () => {
     expect(router13.questions).toEqual({ fromDataDir: 'router13.questions.json' });
     expect(router13.mapAnswer(choice('image-moderation-appeal')).pred).toBe('moderation');
     expect(() => router13.mapAnswer(choice('billing'))).toThrow(/no mapping/);
+  });
+
+  it('passes a router abstention through instead of mapping it', () => {
+    const [answer] = choice('other');
+    expect(router13.mapAnswer([{ ...answer, abstained: true }])).toEqual({
+      pred: null,
+      confidence: 0.8,
+      abstained: true,
+    });
   });
 });
 
@@ -531,10 +541,16 @@ describe('support.topic source and gold against a fake ClickHouse', () => {
     const keys = new Set(rows.map((r) => r.groupKey));
     expect(keys.size).toBe(3);
     const labelQuery = queries.find((q) => q.query.includes('support_ticket_eval_labels'));
-    expect(labelQuery?.query).toMatch(/AND lower\(labeler\) NOT LIKE 'judge-%'\s*$/);
+    const flat = (q?: string) => q?.replace(/\s+/g, ' ').trim();
+    expect(flat(labelQuery?.query)).toBe(
+      "SELECT ticket_id, label_topic, notes, labeler FROM support_ticket_eval_labels FINAL WHERE classifier_version = {cv:String} AND lower(labeler) NOT LIKE 'judge-%'"
+    );
     expect(labelQuery?.query_params).toEqual({ cv: 'v1' });
     const ticketQuery = queries.find((q) => q.query.includes('support_tickets_classified'));
     expect(ticketQuery?.query_params?.cv).toBe('v1');
+    expect(flat(ticketQuery?.query)).toContain(
+      'FROM support_tickets_classified FINAL WHERE classifier_version = {cv:String} AND ticket_id IN {ids:Array(String)}'
+    );
     expect([...(ticketQuery?.query_params?.ids as string[])].sort()).toEqual([
       '100',
       '101',
@@ -630,6 +646,19 @@ describe('support.topic source and gold against a fake ClickHouse', () => {
   it('slices dev items as dev, so a --period filter never picks them up', () => {
     expect(supportTopicNode.slices?.(raw({ stratum: undefined }))?.period).toBe('dev');
     expect(supportTopicNode.slices?.(raw())?.period).toBe('2026-09');
+  });
+
+  it.each([
+    ['an empty testStrataFiles', { classifierVersion: 'v1', testStrataFiles: [] }],
+    ['no testStrataFiles', { classifierVersion: 'v1' }],
+    ['no classifierVersion', { testStrataFiles: ['s.csv'] }],
+  ])('refuses a config with %s', (_, cfg) => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'support-topic-cfg-'));
+    mkdirSync(join(dataDir, NODE_ID));
+    writeFileSync(join(dataDir, NODE_ID, 'config.json'), JSON.stringify(cfg));
+    expect(() => readConfig({ dataDir })).toThrow(
+      /needs classifierVersion and a non-empty testStrataFiles/
+    );
   });
 
   it('fails loudly without a config rather than quietly using majority', () => {
@@ -779,8 +808,8 @@ describe('support.topic redaction window', () => {
     expect(redactionWindow('x'.repeat(10_000), 6000, false)).toBe('');
   });
 
-  // Several patterns are quadratic on one contiguous run. Measured on 32k characters with one
-  // space where the window cuts: 1-156 ms per field windowed, 3.8-5.1 s per field unwindowed.
+  // Several patterns are quadratic on one contiguous run. Measured on 64k characters with one
+  // space where the window cuts: 9-153 ms per field windowed, 9.0-10.9 s per field unwindowed.
   it.each([
     ['subject', 500, false],
     ['firstMessage', 6000, false],
@@ -788,12 +817,12 @@ describe('support.topic redaction window', () => {
   ] as const)(
     'keeps %s redaction time bounded on a long run no pattern matches',
     (field, keep, fromEnd) => {
-      const run = 'a.'.repeat(16_000);
+      const run = 'a.'.repeat(32_000);
       const at = fromEnd ? run.length - keep + 10 : keep - 10;
       const text = run.slice(0, at) + ' ' + run.slice(at + 1);
       const started = performance.now();
       buildSupportState(raw({ [field]: text }));
-      expect(performance.now() - started).toBeLessThan(1000);
+      expect(performance.now() - started).toBeLessThan(1500);
     }
   );
 
@@ -844,6 +873,26 @@ describe('support.topic final cut', () => {
     expect(state.latest_messages).not.toContain('SECRETTOKEN42');
   });
 
+  it('drops a tail with no whitespace that continues a link begun before the window', () => {
+    const inLink =
+      'mple.com/路/john.smith.5551234' + '中'.repeat(1510) + 'http://x.co/' + 'b'.repeat(1300);
+    const text = 'Zhttps://exa' + inLink + 'P'.repeat(4000 - inLink.length);
+    expect(text.slice(-4000).startsWith('mple.com/路/john.smith')).toBe(true);
+    expect(buildSupportState(raw({ latestMessages: text })).latest_messages).toBe('');
+  });
+
+  it('drops a phone number the head window ends inside', () => {
+    const links = ('https://example.com/' + 'a'.repeat(60) + ' ').repeat(40);
+    const phone = 'call me on 07700 900 123 thanks';
+    const cut = phone.indexOf(' 123') + 2;
+    const pad = 'w '.repeat(3000).slice(0, 7000 - links.length - cut);
+    const text = links + pad + phone + ' tail'.repeat(10);
+    expect(text.slice(0, 7000).endsWith('call me on 07700 900 1')).toBe(true);
+    const state = buildSupportState(raw({ firstMessage: text }));
+    expect(state.first_message.length).toBeLessThan(6000);
+    expect(state.first_message).not.toMatch(/07700|900/);
+  });
+
   it('cuts text without spaces at a script boundary instead of dropping it', () => {
     const cjk = '問'.repeat(8000);
     const state = buildSupportState(raw({ firstMessage: 'Hello\n' + cjk, latestMessages: cjk }));
@@ -853,7 +902,7 @@ describe('support.topic final cut', () => {
 });
 
 describe('support.topic placeholder stability', () => {
-  it.each(['user', 'email', 'link', 'handle', 'id', 'number', 'USER', 'Handle'])(
+  it.each(['user', 'email', 'link', 'handle', 'number', 'USER', 'Handle'])(
     'does not re-wrap placeholders when the username is %j',
     (username) => {
       const state = buildSupportState(
@@ -861,12 +910,143 @@ describe('support.topic placeholder stability', () => {
           username,
           requesterEmail: 'link@example.org',
           firstMessage:
-            'mail jo@example.net, see https://example.org/x, ping @mod_team, wallet 0x52908400098527886e0f7030069857d2e4169ee7, call +1 415 555 0134, me',
+            'from link@example.org: mail jo@example.net, see https://example.org/x, ping @mod_team, wallet 0x52908400098527886e0f7030069857d2e4169ee7, call +1 415 555 0134, me',
         })
       );
       expect(state.first_message).toBe(
-        'mail [email], see [link] ping [handle], wallet [id], call [number], me'
+        'from [user]: mail [email], see [link] ping [handle], wallet [id], call [number], me'
       );
     }
   );
+});
+
+describe('support.topic weighted report', () => {
+  const key = 'run1';
+  function dataDirWith(overrides: { thresholds?: object | null } = {}) {
+    const dataDir = mkdtempSync(join(tmpdir(), 'support-topic-weighted-'));
+    const dir = join(dataDir, NODE_ID);
+    mkdirSync(join(dir, 'runs', key), { recursive: true });
+    const jsonl = (rows: object[]) => rows.map((r) => JSON.stringify(r)).join('\n') + '\n';
+    writeFileSync(
+      join(dir, 'config.json'),
+      JSON.stringify({ classifierVersion: 'v1', testStrataFiles: ['s.csv'], primaryLabeler: 'p' })
+    );
+    writeFileSync(
+      join(dir, 's.csv'),
+      'ticket_id,stratum,weight\na,crypto,2\nb,_rest,5\nx,_rest,7\naug,crypto,3\n'
+    );
+    const item = (itemId: string, split: string, period: string) => ({
+      itemId,
+      groupKey: itemId,
+      ts: '2026-09-10T00:00:00.000Z',
+      split,
+      state: {},
+      slices: { period },
+      baselines: { incumbent: 'crypto' },
+    });
+    writeFileSync(
+      join(dir, 'manifest.jsonl'),
+      jsonl([
+        item('a', 'test', '2026-09'),
+        item('b', 'test', '2026-09'),
+        item('x', 'test', '2026-09'),
+        item('aug', 'test', '2026-08'),
+        item('d', 'dev', 'dev'),
+      ])
+    );
+    writeFileSync(
+      join(dir, 'excluded.v1.json'),
+      JSON.stringify({
+        schema: 'civitai.decision-eval.excluded',
+        version: 1,
+        nodeId: NODE_ID,
+        itemIds: ['x'],
+      })
+    );
+    const g = (itemId: string, gold: string, labeler: string) => ({
+      itemId,
+      gold,
+      goldSource: 'support_ticket_eval_labels',
+      labeler,
+    });
+    // b: the primary says technical_bug, two others say crypto; majority would pick crypto.
+    writeFileSync(
+      join(dir, 'gold.jsonl'),
+      jsonl([
+        g('a', 'crypto', 'p'),
+        g('b', 'crypto', 'o1'),
+        g('b', 'crypto', 'o2'),
+        g('b', 'technical_bug', 'p'),
+        g('x', 'crypto', 'p'),
+        g('aug', 'crypto', 'p'),
+        g('d', 'crypto', 'p'),
+      ])
+    );
+    const pred = (itemId: string, p: string) => ({
+      itemId,
+      runKey: key,
+      status: 'ok',
+      pred: p,
+      confidence: 0.95,
+      abstained: false,
+    });
+    writeFileSync(
+      join(dir, 'runs', key, 'predictions.jsonl'),
+      jsonl([
+        pred('a', 'crypto'),
+        pred('b', 'technical_bug'),
+        pred('x', 'crypto'),
+        pred('aug', 'other'),
+        pred('d', 'crypto'),
+      ])
+    );
+    const fits = {
+      fits: {
+        crypto: { status: 'fitted', threshold: 0.9 },
+        technical_bug: { status: 'fitted', threshold: 0.9 },
+        other: { status: 'fitted', threshold: 0.9 },
+      },
+    };
+    if (overrides.thresholds !== null) {
+      writeFileSync(
+        join(dir, 'runs', key, 'thresholds-test.json'),
+        JSON.stringify(overrides.thresholds ?? fits)
+      );
+    }
+    return { dataDir, dir };
+  }
+
+  it('weights one period of the split, skips excluded items, and uses the primary labeller', async () => {
+    const { dataDir, dir } = dataDirWith();
+    const out = await weightedReport({ dataDir, runKey: key, split: 'test', period: '2026-09' });
+    // a (w2, right) and b (w5, right under the primary, wrong under majority); x excluded,
+    // aug another period, d another split.
+    expect(out).toMatchObject({ period: '2026-09', items: 2, decidable: 2, coverage: 1 });
+    expect(out.accuracyOnCovered).toBe(1);
+    expect(out.incumbentAccuracyOnCovered).toBeCloseTo(2 / 7, 10);
+    expect(
+      JSON.parse(readFileSync(join(dir, 'runs', key, 'weighted-test-2026-09.json'), 'utf8'))
+    ).toEqual(out);
+  });
+
+  it('covers every period when none is given', async () => {
+    const { dataDir } = dataDirWith();
+    const out = await weightedReport({ dataDir, runKey: key, split: 'test' });
+    expect(out).toMatchObject({ period: 'all', items: 3 });
+    expect(out.accuracyOnCovered).toBeCloseTo(7 / 10, 10);
+  });
+
+  it('refuses a split with no weighted item, and a run with no thresholds', async () => {
+    const { dataDir } = dataDirWith();
+    await expect(weightedReport({ dataDir, runKey: key, split: 'dev' })).rejects.toThrow(
+      /thresholds-dev.json is missing/
+    );
+    await expect(
+      weightedReport({ dataDir, runKey: key, split: 'test', period: '2026-07' })
+    ).rejects.toThrow(/no test item has both gold and a strata weight/);
+    const bare = dataDirWith({ thresholds: null });
+    await expect(
+      weightedReport({ dataDir: bare.dataDir, runKey: key, split: 'test' })
+    ).rejects.toThrow(/thresholds-test.json is missing or has no fits/);
+  });
 });

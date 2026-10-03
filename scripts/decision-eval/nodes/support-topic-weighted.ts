@@ -1,6 +1,13 @@
-import type { ThresholdFit } from '../metrics';
-import { isAnswered } from '../scorer';
+import { parseArgs } from 'util';
+
+import { loadExclusions, resolveGold } from '../builder';
+import { clearsThreshold, type ThresholdFit } from '../metrics';
+import { nodePaths } from '../paths';
+import { assertDataDirOutsideRepo } from '../safety';
+import { fittedThresholds, isAnswered } from '../scorer';
+import { readJson, readJsonl, writeFileAtomic } from '../store';
 import type { ManifestItem, Prediction } from '../types';
+import { NODE_ID, readConfig, readStrata, supportTopicNode } from './support-topic';
 
 /**
  * The September sample oversamples the money topics, so coverage, accuracy and
@@ -45,9 +52,7 @@ export function weightedSummary(input: {
     total += w;
     if (!isAnswered(p)) continue;
     const threshold = input.thresholds[p.pred];
-    if (threshold === undefined) continue;
-    const confidence = p.confidence ?? null;
-    if (threshold > 0 && (confidence === null || confidence < threshold)) continue;
+    if (threshold === undefined || !clearsThreshold(p.confidence ?? null, threshold)) continue;
     covered += w;
     if (p.pred === gold) correct += w;
     if (item.baselines?.incumbent === gold) incumbentCorrect += w;
@@ -62,34 +67,18 @@ export function weightedSummary(input: {
 }
 
 /**
- *   pnpm run tsscript scripts/decision-eval/nodes/support-topic-weighted.ts \
- *     --data-dir <dir> --run-key <key> --split test --period 2026-09
- *
  * Reads the run's own thresholds-<split>.json, so the weighted figures use
- * exactly the thresholds its report used.
+ * exactly the thresholds its report used, and writes weighted-<split>[-<period>].json
+ * beside it.
  */
-async function main() {
-  const { parseArgs } = await import('util');
-  const { join } = await import('path');
-  const { loadExclusions, resolveGold } = await import('../builder');
-  const { nodePaths } = await import('../paths');
-  const { assertDataDirOutsideRepo } = await import('../safety');
-  const { fittedThresholds } = await import('../scorer');
-  const { readJson, readJsonl, writeFileAtomic } = await import('../store');
-  const { readConfig, readStrata, supportTopicNode, NODE_ID } = await import('./support-topic');
-  const { values } = parseArgs({
-    options: {
-      'data-dir': { type: 'string' },
-      'run-key': { type: 'string' },
-      split: { type: 'string' },
-      period: { type: 'string' },
-    },
-  });
-  const dataDir = assertDataDirOutsideRepo(values['data-dir'] ?? '');
-  const key = values['run-key'];
-  const split = values.split;
-  if (!key || (split !== 'dev' && split !== 'test'))
-    throw new Error('need --run-key and --split dev|test');
+export async function weightedReport(opts: {
+  dataDir: string;
+  runKey: string;
+  split: 'dev' | 'test';
+  period?: string;
+}) {
+  const { runKey: key, split, period } = opts;
+  const dataDir = assertDataDirOutsideRepo(opts.dataDir);
   const p = nodePaths(dataDir, NODE_ID);
   const ctx = { dataDir };
   const weights = new Map(
@@ -97,10 +86,7 @@ async function main() {
   );
   const excluded = new Set(loadExclusions(p.exclusions, NODE_ID));
   const items = (await readJsonl<ManifestItem>(p.manifest)).filter(
-    (i) =>
-      !excluded.has(i.itemId) &&
-      i.split === split &&
-      (!values.period || i.slices?.period === values.period)
+    (i) => !excluded.has(i.itemId) && i.split === split && (!period || i.slices?.period === period)
   );
   const gold = resolveGold(await readJsonl(p.gold), supportTopicNode.goldPolicy?.(ctx)).gold;
   const fits = readJson<{ fits?: Record<string, ThresholdFit> }>(p.thresholds(key, split))?.fits;
@@ -118,11 +104,34 @@ async function main() {
       `no ${split} item has both gold and a strata weight; only sampled test items are weighted`
     );
   }
-  const out = { runKey: key, split, period: values.period ?? 'all', thresholds, ...summary };
-  writeFileAtomic(
-    join(p.root, 'runs', key, `weighted-${split}${values.period ? `-${values.period}` : ''}.json`),
-    JSON.stringify(out, null, 2)
-  );
+  const out = { runKey: key, split, period: period ?? 'all', thresholds, ...summary };
+  writeFileAtomic(p.weighted(key, split, period), JSON.stringify(out, null, 2));
+  return out;
+}
+
+/**
+ *   pnpm run tsscript scripts/decision-eval/nodes/support-topic-weighted.ts \
+ *     --data-dir <dir> --run-key <key> --split test --period 2026-09
+ */
+async function main() {
+  const { values } = parseArgs({
+    options: {
+      'data-dir': { type: 'string' },
+      'run-key': { type: 'string' },
+      split: { type: 'string' },
+      period: { type: 'string' },
+    },
+  });
+  const runKey = values['run-key'];
+  const split = values.split;
+  if (!runKey || (split !== 'dev' && split !== 'test'))
+    throw new Error('need --run-key and --split dev|test');
+  const out = await weightedReport({
+    dataDir: values['data-dir'] ?? '',
+    runKey,
+    split,
+    period: values.period,
+  });
   console.log(JSON.stringify(out, null, 2));
 }
 

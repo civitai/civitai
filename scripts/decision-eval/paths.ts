@@ -15,5 +15,7 @@ export function nodePaths(dataDir: string, nodeId: string) {
     predictions: (key: string) => join(root, 'runs', key, 'predictions.jsonl'),
     report: (key: string, split: string) => join(root, 'runs', key, `report-${split}.md`),
     thresholds: (key: string, split: string) => join(root, 'runs', key, `thresholds-${split}.json`),
+    weighted: (key: string, split: string, period?: string) =>
+      join(root, 'runs', key, `weighted-${split}${period ? `-${period}` : ''}.json`),
   };
 }
