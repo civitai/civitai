@@ -92,8 +92,9 @@ const renderGrid = (status: CrucibleStatus, as: Viewer | null) => {
   );
 };
 
+// The grid's own cards; with no portal the open viewer's media is in the container too.
 const clickEntry = (id: number) => {
-  const media = container.querySelector<HTMLImageElement>(`img[alt="image-${id}"]`);
+  const media = container.querySelector<HTMLImageElement>(`.group img[alt="image-${id}"]`);
   if (!media) throw new Error(`entry ${id} did not render`);
   act(() => media.click());
 };
@@ -145,13 +146,16 @@ describe('CrucibleEntryGrid while judging is blind', () => {
   it('shows a judge only the media, paging through the other entries, while the crucible runs', () => {
     renderGrid(CrucibleStatus.Active, stranger);
 
-    clickEntry(2);
+    clickEntry(1);
+    expect(viewerShows()).toEqual({ media: 'image-1', position: '1 / 2' });
+    expect(shownCreators()).toEqual([]);
+
+    press('Next entry');
     expect(viewerShows()).toEqual({ media: 'image-2', position: '2 / 2' });
     expect(shownCreators()).toEqual([]);
 
-    press('Previous entry');
-    expect(viewerShows()).toEqual({ media: 'image-1', position: '1 / 2' });
-    expect(shownCreators()).toEqual([]);
+    press('Close entry viewer');
+    expect(viewerShows()).toBeNull();
     expect(onEntryClick).not.toHaveBeenCalled();
   });
 

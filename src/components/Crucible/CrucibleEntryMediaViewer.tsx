@@ -18,12 +18,15 @@ export type CrucibleEntryMedia = {
 export function CrucibleEntryMediaViewer({
   media,
   index,
+  hasMore = false,
   onIndexChange,
   onClose,
 }: {
   media: CrucibleEntryMedia[];
   /** The item on display, or `null` when the viewer is closed. */
   index: number | null;
+  /** More entries exist than `media` holds, so the count is a floor. */
+  hasMore?: boolean;
   onIndexChange: (index: number) => void;
   onClose: () => void;
 }) {
@@ -38,7 +41,9 @@ export function CrucibleEntryMediaViewer({
           ['ArrowLeft', () => prev !== undefined && onIndexChange(prev)],
           ['ArrowRight', () => next !== undefined && onIndexChange(next)],
         ]
-      : []
+      : [],
+    // A focused video's native controls seek with the arrow keys.
+    ['INPUT', 'TEXTAREA', 'SELECT', 'VIDEO']
   );
 
   return (
@@ -59,6 +64,7 @@ export function CrucibleEntryMediaViewer({
         <div data-testid="crucible-entry-media-viewer" className="flex min-h-0 flex-1 flex-col">
           <Text size="sm" c="dimmed" mb="xs">
             {index + 1} / {media.length}
+            {hasMore && '+'}
           </Text>
           <div className="relative flex min-h-0 flex-1 items-center justify-center">
             <EdgeMedia2
@@ -71,7 +77,9 @@ export function CrucibleEntryMediaViewer({
               muted
               style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
               wrapperProps={{ className: 'flex size-full items-center justify-center' }}
-              videoProps={{ hoverPlay: false }}
+              // Autoplay explicitly: EdgeVideo's in-view check watches the page scroller, which
+              // a portalled modal is outside of, so it would never start.
+              videoProps={{ autoPlay: true, hoverPlay: false }}
             />
             <NavButton
               label="Previous entry"
@@ -118,7 +126,7 @@ function NavButton({
       aria-label={label}
       disabled={disabled}
       onClick={onClick}
-      className={clsx('absolute top-1/2 -translate-y-1/2', className)}
+      className={clsx('absolute top-1/2 z-10 -translate-y-1/2', className)}
     >
       {children}
     </ActionIcon>

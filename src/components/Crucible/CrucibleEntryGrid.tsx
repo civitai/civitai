@@ -143,10 +143,12 @@ export function CrucibleEntryGrid({
     type: image.type,
     metadata: image.metadata,
   }));
-  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
+  // Keyed by entry, not position, so a list that changes under the viewer can't swap what it shows.
+  const [viewerEntryId, setViewerEntryId] = useState<number | null>(null);
+  const viewerIndex = hiddenMedia.findIndex(({ entryId }) => entryId === viewerEntryId);
   const openEntry = (entry: CrucibleEntryData) => {
     if (canSeeDetails(entry)) onEntryClick?.(entry, openableImageIds);
-    else setViewerIndex(hiddenEntries.findIndex(({ id }) => id === entry.id));
+    else setViewerEntryId(entry.id);
   };
   const displayCount =
     totalCount !== undefined
@@ -230,9 +232,10 @@ export function CrucibleEntryGrid({
 
       <CrucibleEntryMediaViewer
         media={hiddenMedia}
-        index={viewerIndex}
-        onIndexChange={setViewerIndex}
-        onClose={() => setViewerIndex(null)}
+        index={viewerIndex === -1 ? null : viewerIndex}
+        hasMore={hasMore}
+        onIndexChange={(index) => setViewerEntryId(hiddenMedia[index]?.entryId ?? null)}
+        onClose={() => setViewerEntryId(null)}
       />
     </div>
   );
