@@ -13,6 +13,7 @@ import {
 } from '~/server/services/crucible.service';
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
 import { createNotification } from '~/server/services/notification.service';
+import { isCrucibleSfw } from '~/utils/crucible-helpers';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
 import { Flags } from '~/shared/utils/flags';
 import { CrucibleIngestionStatus, CrucibleStatus } from '~/shared/utils/prisma/enums';
@@ -118,7 +119,6 @@ export async function applyCrucibleNsfwEscalation({
     select: {
       userId: true,
       nsfwLevel: true,
-      buzzType: true,
       status: true,
       textNsfw: true,
     },
@@ -134,7 +134,9 @@ export async function applyCrucibleNsfwEscalation({
     return;
   }
 
-  if (crucible.buzzType !== 'green') {
+  // A crucible listed on the green site may hold green entry fees, so it can't just be raised to R:
+  // that would strand them in a crucible its green entrants can no longer reach.
+  if (!isCrucibleSfw(crucible)) {
     await dbWrite.crucible.update({
       where: { id: entityId },
       data: {
@@ -180,7 +182,7 @@ export async function applyCrucibleNsfwEscalation({
       logToAxiom({
         type: 'error',
         name: 'crucible-nsfw-escalation-refund-failed',
-        message: `Green crucible ${entityId} was cancelled for NSFW text but ${failedRefunds.length} refund(s) failed; re-run cancelCrucible to finish.`,
+        message: `SFW crucible ${entityId} was cancelled for NSFW text but ${failedRefunds.length} refund(s) failed; re-run cancelCrucible to finish.`,
         crucibleId: entityId,
         failedRefunds,
       });
@@ -191,11 +193,11 @@ export async function applyCrucibleNsfwEscalation({
         userId: crucible.userId,
         crucibleId: entityId,
         key: 'crucible-nsfw-cancelled',
-        message: `Your crucible was cancelled because its text was flagged as adult content — green crucibles must be safe-for-work. ${
+        message: `Your crucible was cancelled because its text was flagged as adult content — crucibles open to civitai.com entrants must be safe-for-work. ${
           failedRefunds.length
             ? 'Refunds are being processed'
             : 'Your Buzz and any entry fees have been refunded'
-        }; you can recreate it on civitai.red.`,
+        }; you can recreate it with a mature rating on civitai.red.`,
       });
     return;
   }
@@ -208,7 +210,7 @@ export async function applyCrucibleNsfwEscalation({
   logToAxiom({
     type: 'error',
     name: 'crucible-nsfw-escalation-held',
-    message: `Green crucible ${entityId} scanned NSFW while ${crucible.status}; hidden and held for moderator review — not auto-refunded.`,
+    message: `SFW crucible ${entityId} scanned NSFW while ${crucible.status}; hidden and held for moderator review — not auto-refunded.`,
     crucibleId: entityId,
     status: crucible.status,
   });

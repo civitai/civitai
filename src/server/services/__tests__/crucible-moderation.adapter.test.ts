@@ -45,7 +45,6 @@ const SFW = NsfwLevel.PG | NsfwLevel.PG13;
 const crucible = (overrides: Record<string, unknown> = {}) => ({
   userId: CREATOR,
   nsfwLevel: SFW,
-  buzzType: 'green',
   status: CrucibleStatus.Pending,
   endAt: null,
   textNsfw: false,
@@ -180,9 +179,9 @@ describe('applyResult — clean', () => {
   });
 });
 
-describe('applyResult — yellow crucible with NSFW text', () => {
+describe('applyResult — crucible already accepting mature entries, with NSFW text', () => {
   it('raises it to R, flags textNsfw, and notifies the creator', async () => {
-    findUnique.mockResolvedValue(crucible({ buzzType: 'yellow' }));
+    findUnique.mockResolvedValue(crucible({ nsfwLevel: SFW | NsfwLevel.X }));
 
     await scanNsfw();
 
@@ -192,7 +191,7 @@ describe('applyResult — yellow crucible with NSFW text', () => {
         ingestion: 'Scanned',
         scannedAt: expect.any(Date),
         textNsfw: true,
-        nsfwLevel: SFW | NsfwLevel.R,
+        nsfwLevel: SFW | NsfwLevel.X | NsfwLevel.R,
       },
     });
     expect(createNotification).toHaveBeenCalledWith(
@@ -213,9 +212,7 @@ describe('applyResult — yellow crucible with NSFW text', () => {
   });
 
   it('does not notify a second time when it was already raised', async () => {
-    findUnique.mockResolvedValue(
-      crucible({ buzzType: 'yellow', textNsfw: true, nsfwLevel: SFW | NsfwLevel.R })
-    );
+    findUnique.mockResolvedValue(crucible({ textNsfw: true, nsfwLevel: SFW | NsfwLevel.R }));
 
     await scanNsfw();
 
@@ -228,7 +225,7 @@ describe('applyResult — yellow crucible with NSFW text', () => {
   });
 });
 
-describe('applyResult — green crucible with NSFW text, Pending', () => {
+describe('applyResult — SFW crucible with NSFW text, Pending', () => {
   it('cancels as the system user BEFORE the Blocked write, then notifies', async () => {
     findUnique.mockResolvedValue(crucible());
 
@@ -245,7 +242,7 @@ describe('applyResult — green crucible with NSFW text, Pending', () => {
         key: `crucible-nsfw-cancelled-${ID}`,
         details: {
           message:
-            'Your crucible was cancelled because its text was flagged as adult content — green crucibles must be safe-for-work. Your Buzz and any entry fees have been refunded; you can recreate it on civitai.red.',
+            'Your crucible was cancelled because its text was flagged as adult content — crucibles open to civitai.com entrants must be safe-for-work. Your Buzz and any entry fees have been refunded; you can recreate it with a mature rating on civitai.red.',
           url: `/crucibles/${ID}`,
         },
       })
@@ -280,7 +277,7 @@ describe('applyResult — green crucible with NSFW text, Pending', () => {
   });
 });
 
-describe('applyResult — green crucible with NSFW text, still running', () => {
+describe('applyResult — SFW crucible with NSFW text, still running', () => {
   it('claims it as Cancelled only while it is Pending, or Active before its end or unentered', async () => {
     findUnique.mockResolvedValue(crucible({ status: CrucibleStatus.Active }));
 
@@ -307,7 +304,7 @@ describe('applyResult — green crucible with NSFW text, still running', () => {
   });
 });
 
-describe('applyResult — green crucible with NSFW text, already cancelled', () => {
+describe('applyResult — SFW crucible with NSFW text, already cancelled', () => {
   it('finishes the refunds without notifying again (a redelivery after a crash, or a moderator cancel)', async () => {
     findUnique.mockResolvedValue(crucible({ status: CrucibleStatus.Cancelled }));
     updateMany.mockResolvedValue({ count: 0 });
@@ -320,7 +317,7 @@ describe('applyResult — green crucible with NSFW text, already cancelled', () 
   });
 });
 
-describe('applyResult — green crucible with NSFW text, claim lost (ended or finalizing)', () => {
+describe('applyResult — SFW crucible with NSFW text, claim lost (ended or finalizing)', () => {
   it('blocks and holds for review without refunding', async () => {
     findUnique.mockResolvedValue(crucible({ status: CrucibleStatus.Active }));
     updateMany.mockResolvedValue({ count: 0 });
@@ -336,6 +333,22 @@ describe('applyResult — green crucible with NSFW text, claim lost (ended or fi
         name: 'crucible-nsfw-escalation-held',
         crucibleId: ID,
       })
+    );
+  });
+});
+
+// A crucible created on civitai.red but rated SFW is listed on civitai.com and can take green entry
+// fees. Raising it to R would hide it from those entrants with their Buzz inside, so it is cancelled
+// and refunded, whatever its creator paid in.
+describe('applyResult — SFW crucible created on the mature site, with NSFW text', () => {
+  it('cancels and refunds it rather than raising it to R', async () => {
+    findUnique.mockResolvedValue(crucible({ buzzType: 'yellow', status: CrucibleStatus.Active }));
+
+    await scanNsfw();
+
+    expect(cancelCrucible).toHaveBeenCalledWith({ id: ID, userId: -1, isModerator: true });
+    expect(update).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ textNsfw: true }) })
     );
   });
 });

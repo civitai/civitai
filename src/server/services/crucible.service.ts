@@ -454,7 +454,7 @@ const isCrucibleOffSite = (
   { viewerId, isModerator, isGreen }: CrucibleViewer
 ) => !!isGreen && !isModerator && crucible.userId !== viewerId && !isCrucibleSfw(crucible);
 
-const SFW_ONLY_LEVELS = Array.from({ length: 63 }, (_, i) => i + 1).filter(
+const SFW_ONLY_LEVELS = Array.from({ length: 64 }, (_, i) => i).filter(
   (mask) => !Flags.intersects(mask, nsfwBrowsingLevelsFlag)
 );
 
