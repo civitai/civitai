@@ -1,5 +1,6 @@
 import type { GoldPolicy } from './builder';
 import type { KnownAnswerControl } from './controls';
+import { supportTopicNode } from './nodes/support-topic';
 import type {
   DataClass,
   DecisionQuestion,
@@ -61,7 +62,9 @@ export type NodeSpec<Raw = unknown> = {
   control?: KnownAnswerControl & { image?: ImageInput };
 };
 
-export const NODES: Record<string, NodeSpec<never>> = {};
+export const NODES: Record<string, NodeSpec<never>> = {
+  [supportTopicNode.id]: supportTopicNode as unknown as NodeSpec<never>,
+};
 
 /** NodeSpec is covariant in Raw through source(), so the registry erases it once, here. */
 export function registerNode<Raw>(node: NodeSpec<Raw>): void {
