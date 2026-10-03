@@ -279,6 +279,33 @@ export const Agent_PartialFailure = () => (
   </Shell>
 );
 
+/**
+ * AGENT REPORT — a report whose analyses NEVER RAN (the shape a targeted re-run creates).
+ *
+ * 🔴 THE POINT IS THE CONTRAST WITH THE STORY ABOVE: a `missing` section must read "did not
+ * run", never "no findings", and the header must never claim `0 analyses failed ()`.
+ */
+export const Agent_NeverRan = () => (
+  <Shell active="agent">
+    <Stack gap={6}>
+      <Alert color="orange" variant="light">
+        <Text size="xs">
+          2 analyses never ran (Security audit, Code review). What did complete is shown below.
+        </Text>
+        <Text size="xs" mt={4}>
+          Provisioning failed: no k8s target
+        </Text>
+      </Alert>
+      <ReportTabs
+        report={{ ...PARTIAL_REPORT, securityAudit: null, codeReview: null }}
+        costCapped={false}
+        onRerunSection={() => undefined}
+        rerunningSection={null}
+      />
+    </Stack>
+  </Shell>
+);
+
 /** MANIFEST — the full structured manifest WITHOUT its permissions card. */
 export const Manifest = () => (
   <Shell active="manifest">
