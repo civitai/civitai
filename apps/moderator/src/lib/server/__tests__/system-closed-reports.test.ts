@@ -29,10 +29,12 @@ vi.mock('../redis', () => ({ getRedis: () => null }));
 const { getRecentQueueActivity } = await import('../moderation-board.service');
 const { getReportHistory } = await import('../reports.service');
 const { REPORT_ENTITIES } = await import('../report-entities');
-const { SYSTEM_USER_ID } = await import('../users.service');
 const { ReportEntity } = await import('$lib/reports');
 
 const MODERATOR = 573;
+// A literal, not the app's constant: -1 is what the main-app expiry job writes, so a fixture that
+// followed a changed constant would keep passing while the filter stopped matching real rows.
+const SYSTEM = -1;
 const modelQueue = REPORT_ENTITIES.find((e) => e.reportTable === 'ModelReport')!.label;
 
 beforeAll(async () => {
@@ -49,12 +51,12 @@ beforeAll(async () => {
       (e) => `CREATE TABLE "${e.reportTable}" ("reportId" int, "${e.fk}" int);`
     ).join('\n')}
 
-    INSERT INTO "User" VALUES (${MODERATOR}, 'a-moderator'), (${SYSTEM_USER_ID}, 'civitai');
+    INSERT INTO "User" VALUES (${MODERATOR}, 'a-moderator'), (${SYSTEM}, 'civitai');
     -- Report 3 has no recorded setter and is newer than the moderator's: it must still count, so
     -- != (which drops NULLs) is not a substitute for IS DISTINCT FROM.
     INSERT INTO "Report" VALUES
       (1, 'Unactioned', '2026-09-01T10:00:00Z', ${MODERATOR}),
-      (2, 'Unactioned', '2026-10-03T06:00:00Z', ${SYSTEM_USER_ID}),
+      (2, 'Unactioned', '2026-10-03T06:00:00Z', ${SYSTEM}),
       (3, 'Actioned', '2026-09-15T10:00:00Z', NULL);
     INSERT INTO "ModelReport" VALUES (1, 11), (2, 12), (3, 13);
     INSERT INTO "PostReport" VALUES (1, 21), (2, 22), (3, 23);
