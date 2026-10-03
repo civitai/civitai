@@ -897,6 +897,7 @@ describe('support.topic final cut', () => {
   it.each([
     ['a scheme cut before its end', 'Zhtt', 'ps://example.com/路/john.smith.5551234'],
     ['www cut before its dot', 'Zw', 'ww.example.com/路/john.smith.5551234'],
+    ['www with no slash after the domain', 'Zw', 'ww.example.com?q=路/john.smith.5551234'],
     ['a bare domain cut before its slash', 'Zexample.co', 'm/路/john.smith.5551234'],
     [
       'a separator between the link start and the cut',
