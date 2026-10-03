@@ -36,6 +36,8 @@ const RULED = 4; // a moderator already actioned it -> their ruling stands
 const HUMAN = 5; // not an Automated report, even with an evidence row -> untouched
 const DISMISSED = 6; // a moderator already dismissed it -> their ruling stands
 const PROCESSING = 7; // being worked -> left alone
+const ANNOTATED = 8; // like EXPIRING, but a moderator left a note on it -> note kept, marker added
+const MOD_NOTE = 'looked at this, unsure';
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -71,13 +73,16 @@ beforeEach(async () => {
       (${HUMAN}, 'TOSViolation', 'Pending', '${daysAgo(15)}', NULL, NULL),
       (${DISMISSED}, 'Automated', 'Unactioned', '${daysAgo(15)}', '${daysAgo(14.5)}', ${MODERATOR}),
       (${PROCESSING}, 'Automated', 'Processing', '${daysAgo(15)}', NULL, NULL);
+    INSERT INTO "Report" (id, reason, status, "createdAt", "internalNotes") VALUES
+      (${ANNOTATED}, 'Automated', 'Pending', '${daysAgo(15)}', '${MOD_NOTE}');
     INSERT INTO "ReportAutomated" ("reportId", "createdAt") VALUES
       (${EXPIRING}, '${daysAgo(15)}'),
       (${FRESH}, '${daysAgo(13)}'),
       (${RULED}, '${daysAgo(15)}'),
       (${HUMAN}, '${daysAgo(15)}'),
       (${DISMISSED}, '${daysAgo(15)}'),
-      (${PROCESSING}, '${daysAgo(15)}');
+      (${PROCESSING}, '${daysAgo(15)}'),
+      (${ANNOTATED}, '${daysAgo(15)}');
   `);
 });
 
@@ -102,7 +107,7 @@ describe('clearAutomatedReports', () => {
   it('closes as Unactioned by the system exactly the Pending Automated reports whose evidence it deletes', async () => {
     const result = await clearAutomatedReports(CUTOFF);
 
-    expect(result).toEqual({ closed: 1, deleted: 5 });
+    expect(result).toEqual({ closed: 2, deleted: 6 });
     expect(await reports()).toEqual([
       { id: EXPIRING, status: 'Unactioned', statusSetBy: SYSTEM },
       { id: FRESH, status: 'Pending', statusSetBy: null },
@@ -111,6 +116,7 @@ describe('clearAutomatedReports', () => {
       { id: HUMAN, status: 'Pending', statusSetBy: null },
       { id: DISMISSED, status: 'Unactioned', statusSetBy: MODERATOR },
       { id: PROCESSING, status: 'Processing', statusSetBy: null },
+      { id: ANNOTATED, status: 'Unactioned', statusSetBy: SYSTEM },
     ]);
     expect(await evidenceFor()).toEqual([FRESH]);
   });
@@ -127,8 +133,13 @@ describe('clearAutomatedReports', () => {
     const expiring = rows.find((r) => r.id === EXPIRING);
     expect(expiring?.statusSetAt?.getTime()).toBeGreaterThanOrEqual(before.getTime());
     expect(expiring?.statusSetAt?.getTime()).toBeLessThanOrEqual(after.getTime());
-    expect(expiring?.internalNotes).toBe(EXPIRED_AUTOMATED_REPORT_NOTE);
-    expect(rows.filter((r) => r.internalNotes !== null).map((r) => r.id)).toEqual([EXPIRING]);
+    expect(rows.filter((r) => r.internalNotes !== null)).toEqual([
+      expect.objectContaining({ id: EXPIRING, internalNotes: EXPIRED_AUTOMATED_REPORT_NOTE }),
+      expect.objectContaining({
+        id: ANNOTATED,
+        internalNotes: `${MOD_NOTE} | ${EXPIRED_AUTOMATED_REPORT_NOTE}`,
+      }),
+    ]);
   });
 
   // Deliberate, and the obvious "simplification" undoes it: closing by REPORT AGE instead would also

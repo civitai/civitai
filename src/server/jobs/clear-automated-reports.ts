@@ -21,7 +21,7 @@ export async function clearAutomatedReports(cutoff: Date) {
     SET status = ${ReportStatus.Unactioned}::"ReportStatus",
         "statusSetAt" = now(),
         "statusSetBy" = ${constants.system.user.id},
-        "internalNotes" = COALESCE(r."internalNotes", ${EXPIRED_AUTOMATED_REPORT_NOTE})
+        "internalNotes" = concat_ws(' | ', r."internalNotes", ${EXPIRED_AUTOMATED_REPORT_NOTE}::text)
     FROM "ReportAutomated" ra
     WHERE ra."reportId" = r.id
       AND ra."createdAt" < ${cutoff}

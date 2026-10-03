@@ -5,6 +5,7 @@ import { dbRead, dbWrite } from './db';
 import { getRedis } from './redis';
 import { recordModActivity } from './mod-activity';
 import { REPORT_ENTITIES, reportEntity } from './report-entities';
+import { SYSTEM_USER_ID } from './users.service';
 import { rewardReportReporters } from './rewards';
 import {
   DEFAULT_REPORT_REASONS,
@@ -253,6 +254,8 @@ export async function getReportHistory(
       )} er where er."reportId" = "Report"."id")`
     )
     .where('Report.statusSetAt', 'is not', null)
+    // The daily Clavata expiry closes reports as the system user; nobody worked those.
+    .where('Report.statusSetBy', 'is distinct from', SYSTEM_USER_ID)
     .orderBy('Report.statusSetAt', 'desc')
     .limit(limit + 1)
     .execute()) as ReportHistoryRow[];
