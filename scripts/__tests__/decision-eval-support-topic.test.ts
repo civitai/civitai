@@ -174,14 +174,16 @@ describe('support.topic baselines and slices', () => {
 });
 
 describe('support.topic plumbing', () => {
-  it('reads a strata sidecar written with CRLF line endings', () => {
-    const csv =
+  it('reads a strata sidecar by header name, with CRLF line endings', () => {
+    const sampler =
       'ticket_id,stratum,stratum_population,stratum_sampled,weight,double_labelled\r\n' +
       '101,crypto,160,60,2.666667,0\r\n102,_rest,1085,133,8.157895,1\r\n';
-    expect([...parseStrataCsv(csv)]).toEqual([
+    expect([...parseStrataCsv(sampler)]).toEqual([
       ['101', 'crypto'],
       ['102', '_rest'],
     ]);
+    // With stratum as the last column, a bare '\n' split would leave '\r' on it.
+    expect([...parseStrataCsv('ticket_id,stratum\r\n101,crypto\r\n')]).toEqual([['101', 'crypto']]);
   });
 
   it('group keys depend on the salt, so they cannot be recomputed from requester ids alone', () => {
