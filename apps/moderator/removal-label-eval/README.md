@@ -11,7 +11,7 @@ The pieces:
 | question options, composer, disagreement rules | `src/lib/removal-label/` |
 | tables | `schema.sql`, in the **moderator** database |
 | blind relabel page | `/audit/relabel` |
-| batch builder | `build-set.ts` |
+| batch builder | `src/lib/server/relabel-batch-build.ts`; `build-set.ts` is a CLI over it |
 | report | `report.ts` |
 
 ## Apply order
@@ -22,7 +22,7 @@ The pieces:
    empty: the models in `schema.prisma` were written to match this SQL before it existed anywhere.
 3. On `/admin`, grant `/audit/relabel` to the two labelers. Until then only `moderator:admin` can
    open it.
-4. Build batches with `build-set.ts` (below).
+4. Set `RELABEL_NOT_REMOVED_BANDS` on the moderator app. Batches then build daily (below).
 
 ## Two strata, and why removed items are drawn daily
 
@@ -50,7 +50,19 @@ batch by batch and with the purge window would give the stratum away. Each label
 a different fixed order. A database trigger caps each item at two labelers. An image is in the set
 at most once: a labeler batch that samples a model-only image promotes that row.
 
-## Running
+## The daily batch
+
+The main app's `relabel-build-batch` job calls the spoke's `relabel-build-batch` mod-action once a
+day. The batch is named by the UTC date, and its caps (100 removed, 40 not removed) bound what the
+batch holds, so a second run that day adds nothing and a run after a failed one finishes it. Its
+counts are logged as `relabel-build-batch`.
+
+The not-removed bands come from `RELABEL_NOT_REMOVED_BANDS` (comma-separated edges) in the moderator
+app's environment. Unset, the batch holds removed items only.
+
+The mod-action takes `dryRun: true` to report what it would pick without writing.
+
+## Running by hand
 
 ```bash
 # dry run: prints per-stratum counts, writes nothing
@@ -64,7 +76,8 @@ pnpm exec tsx --env-file=.env apps/moderator/removal-label-eval/build-set.ts \
 ```
 
 `--bands` are the scanner-score edges for the not-removed stratum. Pass them at run time and keep
-them out of the repo. `MODERATOR_DATABASE_URL` needs `?sslmode=no-verify` for the cluster.
+them out of the repo. Without them the batch holds removed items only. `--removed` and
+`--not-removed` cap the batch, as above. `MODERATOR_DATABASE_URL` needs `?sslmode=no-verify` for the cluster.
 
 The eval harness writes one `relabel_prediction` row per item per arm (`image`, `image_signals`,
 `signals`). `answers` holds each question's `{ choice, confidence, abstained }`. The report then
