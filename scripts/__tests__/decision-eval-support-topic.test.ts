@@ -22,7 +22,11 @@ import {
   type SupportTicketRaw,
 } from '../decision-eval/nodes/support-topic';
 import { assertNoPii } from '../decision-eval/safety';
-import { parseStrataWeights, weightedSummary } from '../decision-eval/nodes/support-topic-weighted';
+import {
+  fittedThresholds,
+  parseStrataWeights,
+  weightedSummary,
+} from '../decision-eval/nodes/support-topic-weighted';
 import type { ManifestItem, NormalizedAnswer, Prediction } from '../decision-eval/types';
 
 function raw(overrides: Partial<SupportTicketRaw> = {}): SupportTicketRaw {
@@ -334,5 +338,20 @@ describe('support.topic bar and gold policy', () => {
     });
     write(base);
     expect(supportTopicNode.goldPolicy?.({ dataDir })).toEqual({ kind: 'majority' });
+  });
+});
+
+describe('support.topic weighted thresholds', () => {
+  it('takes only fitted classes from a thresholds file', () => {
+    expect(
+      fittedThresholds({
+        fits: {
+          crypto: { status: 'fitted', threshold: 0.6 },
+          account: { status: 'no-threshold' },
+          other: { status: 'insufficient-n', available: 3 },
+        },
+      })
+    ).toEqual({ crypto: 0.6 });
+    expect(() => fittedThresholds({})).toThrow(/no fits/);
   });
 });
