@@ -1447,12 +1447,15 @@ async function acquireEntryLock(crucibleId: number, userId: number): Promise<str
   return result === 'OK' ? token : null;
 }
 
+const DELETE_IF_EQUALS_SCRIPT =
+  "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0";
+
 async function releaseEntryLock(crucibleId: number, userId: number, token: string) {
   try {
-    await sysRedis.eval(
-      "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0",
-      { keys: [getEntryLockKey(crucibleId, userId)], arguments: [token] }
-    );
+    await sysRedis.eval(DELETE_IF_EQUALS_SCRIPT, {
+      keys: [getEntryLockKey(crucibleId, userId)],
+      arguments: [token],
+    });
   } catch (error) {
     log(
       `Failed to release entry lock for crucible ${crucibleId}, user ${userId}: ${
@@ -1796,9 +1799,6 @@ function getVotedPairsKey(crucibleId: number, userId: number): RedisKeyTemplateS
 function getServedPairKey(crucibleId: number, userId: number): RedisKeyTemplateSys {
   return `${REDIS_SYS_KEYS.CRUCIBLE.SERVED_PAIR}:${crucibleId}:${userId}` as RedisKeyTemplateSys;
 }
-
-const CLAIM_SERVED_PAIR_SCRIPT =
-  "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0";
 
 function getJudgeEntryVotesKey(crucibleId: number, userId: number): RedisKeyTemplateSys {
   return `${REDIS_SYS_KEYS.CRUCIBLE.JUDGE_ENTRY_VOTES}:${crucibleId}:${userId}` as RedisKeyTemplateSys;
@@ -2521,7 +2521,7 @@ export const submitVote = async ({
   let loserElo: number;
   try {
     const pairKey = createPairKey(winnerEntryId, loserEntryId);
-    const served = await sysRedis.eval(CLAIM_SERVED_PAIR_SCRIPT, {
+    const served = await sysRedis.eval(DELETE_IF_EQUALS_SCRIPT, {
       keys: [getServedPairKey(crucibleId, userId)],
       arguments: [pairKey],
     });

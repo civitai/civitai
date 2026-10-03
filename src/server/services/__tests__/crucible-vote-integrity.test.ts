@@ -154,7 +154,10 @@ describe('submitVote — only a pair this judge was served', () => {
   it('claims the served pair for this judge and crucible', async () => {
     await vote(20, 10);
 
-    expect(redisMock.sysRedis.eval).toHaveBeenCalledWith(expect.any(String), {
+    // The fake below emulates the script, so this pins its compare-before-delete shape.
+    const compareThenDelete =
+      /redis\.call\('GET', KEYS\[1\]\) == ARGV\[1\] then return redis\.call\('DEL', KEYS\[1\]\)/;
+    expect(redisMock.sysRedis.eval).toHaveBeenCalledWith(expect.stringMatching(compareThenDelete), {
       keys: [expect.stringMatching(new RegExp(`served-pair:1:${JUDGE}$`))],
       arguments: ['10:20'],
     });
@@ -269,6 +272,10 @@ describe('submitVote — per-judge cap on each entry', () => {
     await vote();
 
     expect([judgeVotes('10'), judgeVotes('20')]).toEqual([1, 1]);
+    expect(redisMock.sysRedis.expire).toHaveBeenCalledWith(
+      JUDGE_ENTRY_VOTES_KEY,
+      expect.any(Number)
+    );
   });
 
   it('admits only one of two concurrent votes that would take an entry past the cap', async () => {
@@ -293,11 +300,31 @@ describe('submitVote — per-judge cap on each entry', () => {
     expect(judgeVotes('20') + judgeVotes('30'), 'counts on the other entries').toBe(1);
   });
 
-  it('gives the counts back when the vote is refused after they were taken', async () => {
+  it('gives the counts back when the pair is no longer served', async () => {
     const { judgeVotes } = useFakeRedis();
     redisMock.sysRedis.eval.mockResolvedValue(0);
 
     await expect(vote()).rejects.toThrow('no longer available');
+
+    expect([judgeVotes('10'), judgeVotes('20')]).toEqual([0, 0]);
+  });
+
+  it('gives the counts back when the pair was already voted', async () => {
+    const { judgeVotes } = useFakeRedis();
+    redisMock.sysRedis.eval.mockResolvedValue(1);
+    redisMock.sysRedis.sAdd.mockResolvedValueOnce(0);
+
+    await expect(vote()).rejects.toThrow('already voted');
+
+    expect([judgeVotes('10'), judgeVotes('20')]).toEqual([0, 0]);
+  });
+
+  it('gives the counts back when the rating update fails', async () => {
+    const { judgeVotes } = useFakeRedis();
+    redisMock.sysRedis.eval.mockResolvedValue(1);
+    processVote.mockRejectedValueOnce(new Error('rating script failed'));
+
+    await expect(vote()).rejects.toThrow('rating script failed');
 
     expect([judgeVotes('10'), judgeVotes('20')]).toEqual([0, 0]);
   });
