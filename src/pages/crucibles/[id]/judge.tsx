@@ -23,6 +23,7 @@ import {
   IconInfoCircle,
 } from '@tabler/icons-react';
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { v4 as uuidv4 } from 'uuid';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { Page } from '~/components/AppLayout/Page';
@@ -94,6 +95,8 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
   } | null>(null);
 
   const [skippedEntryIds, setSkippedEntryIds] = useState<number[]>([]);
+  // One judging session per visit to this page: leaving and coming back means watching in full again.
+  const [judgingSessionId] = useState(uuidv4);
 
   // Held in state rather than derived during render: `new Date()` differs between the server and
   // the client, so deriving it inline is a hydration mismatch.
@@ -125,6 +128,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
       crucibleId: id,
       browsingLevel,
       excludeEntryIds: skippedEntryIds.length > 0 ? skippedEntryIds : undefined,
+      judgingSessionId,
     },
     {
       enabled: canRequestPairs,
@@ -174,6 +178,10 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
         // Race condition - silently fetch next pair
         setVoteError(null);
         refetchPair();
+      } else if (error.message.includes('Watch at least')) {
+        // The session idled out while this pair was open, so its shortened watch no longer holds.
+        showErrorNotification({ error: new Error(error.message) });
+        refetchPair();
       } else {
         showErrorNotification({ error: new Error(error.message) });
       }
@@ -208,6 +216,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
             image: pairData.right.user.image,
           },
         },
+        watchSeconds: pairData.watchSeconds,
       }
     : null;
 
@@ -228,6 +237,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
           winnerEntryId: winnerId,
           loserEntryId: loserId,
           ...watched,
+          judgingSessionId,
         });
 
         setSessionVotes((prev) => prev + 1);
@@ -251,7 +261,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
         setIsVoting(false);
       }
     },
-    [pair, id, submitVoteMutation, refetchPair, refetchProgress, skippedEntryIds]
+    [pair, id, submitVoteMutation, refetchPair, refetchProgress, skippedEntryIds, judgingSessionId]
   );
 
   // Retry last vote attempt

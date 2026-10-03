@@ -227,6 +227,46 @@ const skipPairButton = () =>
     b.textContent?.includes('Skip Pair')
   );
 
+describe('CrucibleJudgingUI — clip already judged this session', () => {
+  const pairWithWatch = (left: number, right: number) =>
+    ({ left: entry(left), right: entry(right), watchSeconds: { left: 1, right: 3 } } as never);
+
+  test('a clip the server marks as seen needs only its shortened watch', async () => {
+    const onVote = vi.fn();
+    renderWithProviders(
+      <CrucibleJudgingUI
+        pair={pairWithWatch(1, 2)}
+        minViewSeconds={3}
+        onVote={onVote}
+        onSkip={vi.fn()}
+      />
+    );
+    await expectBothCardsRendered();
+
+    // Two clicks = 1750ms: past the 1s repeat watch, short of the 3s minimum.
+    await advance(0, 2);
+    await advance(1, 4);
+
+    await vi.waitFor(() => expect(voteButton('left')!.disabled).toBe(false));
+    voteButton('left')!.click();
+    await vi.waitFor(() => expect(onVote).toHaveBeenCalledTimes(1));
+  });
+
+  test('the same playback leaves the gate shut when the clip is new', async () => {
+    renderWithProviders(
+      <CrucibleJudgingUI pair={pairOf(1, 2)} minViewSeconds={3} onVote={vi.fn()} onSkip={vi.fn()} />
+    );
+    await expectBothCardsRendered();
+
+    await advance(0, 2);
+    await advance(1, 4);
+
+    await vi.waitFor(() => expect(label('right')).toMatch(/^Vote/));
+    expect(label('left')).toMatch(/^Watch 2s more/);
+    expect(voteButton('left')!.disabled).toBe(true);
+  });
+});
+
 describe('CrucibleJudgingUI — skipping', () => {
   test("a skip with both entries showing is the judge's own", async () => {
     const onSkip = vi.fn();
@@ -373,7 +413,8 @@ describe('CrucibleJudgingUI — video playback', () => {
     const play = vi
       .spyOn(HTMLMediaElement.prototype, 'play')
       .mockImplementation(function (this: HTMLMediaElement) {
-        if (!this.muted) return Promise.reject(new DOMException('needs a gesture', 'NotAllowedError'));
+        if (!this.muted)
+          return Promise.reject(new DOMException('needs a gesture', 'NotAllowedError'));
         mutedPlays.push(this);
         return Promise.resolve();
       });
@@ -494,7 +535,9 @@ describe('CrucibleJudgingUI — sequenced preview', () => {
   test('does not start without a minimum view time', async () => {
     // Negative control: the sequence is driven by the rule, not by every video pair.
     const { play } = spies();
-    renderWithProviders(<CrucibleJudgingUI pair={pairOf(1, 2)} onVote={vi.fn()} onSkip={vi.fn()} />);
+    renderWithProviders(
+      <CrucibleJudgingUI pair={pairOf(1, 2)} onVote={vi.fn()} onSkip={vi.fn()} />
+    );
     await expectBothCardsRendered();
     await new Promise((resolve) => setTimeout(resolve, 300));
 
