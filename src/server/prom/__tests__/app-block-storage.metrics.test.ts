@@ -233,12 +233,12 @@ describe('re-seeding is non-destructive', () => {
     // `zeroMissingLatencyChildren()` to the top of the `try` stayed green, while on a real
     // pod's first scrape that reversal plus a failing read publishes nothing at all.
     //
-    // 🔴 BOTH counters, because spying only the ops one pinned the half that matters LEAST.
-    // The module docstring's claim is about "the series with alerting consumers", and the
-    // counter with the alerting consumer is `quota_exceeded` — yet with ops alone, moving the
-    // histogram leg to sit BETWEEN the two counter loops measured 17/17 green while leaving
-    // `quota_exceeded` and `user_quota_untracked` unpublished on a failing first scrape. One
-    // spy per counter, each required to precede the read.
+    // 🔴 ALL THREE counters, because spying only the ops one left the other two unpinned —
+    // including `quota_exceeded`, whose seeded zero is the one this family most needs to be
+    // distinguishable from absence. With ops alone, moving the histogram leg to sit BETWEEN the
+    // two counter loops measured 17/17 green while leaving `quota_exceeded` and
+    // `user_quota_untracked` unpublished on a failing first scrape. One spy per counter, each
+    // required to precede the read.
     // `{ inc: () => void }` is the minimal shape satisfying `vi.spyOn`'s method constraint; the
     // declared arity is irrelevant because vitest calls through, so the real arguments are
     // forwarded untouched. A rest-param signature would work identically — an earlier comment
@@ -444,9 +444,10 @@ describe('the seeded domain matches the service', () => {
     walk(SRC);
     expect(reaching.sort()).toEqual([SEEDER_REL, SERVICE_REL].sort());
 
-    // All THREE counters. The asymmetry was the gap: `quota_exceeded` is the counter with the
-    // alerting consumer and the one whose typo is worse than absence, yet it had no ledger at
-    // all — a raw `appStorageQuotaExceededCounter.inc({ …, ceiling: 'User' })` replacing a
+    // All THREE counters. The asymmetry was the gap: `quota_exceeded` is the one whose typo is
+    // worse than absence — a seeded zero that reads as "no app has hit a ceiling" while real
+    // refusals accumulate elsewhere — yet it had no ledger at
+    // all. A raw `appStorageQuotaExceededCounter.inc({ …, ceiling: 'User' })` replacing a
     // wrapper call left typecheck at 4 errors and the suite green, because
     // `registerCounterWithLabels` parameterises label NAMES only and prom-client types a label
     // VALUE as `string | number`, so bypassing the helper violates no type.

@@ -91,7 +91,13 @@ export async function seedAppBlockStorageMetrics(): Promise<void> {
     }
     appStorageUserQuotaUntrackedCounter.inc(0);
 
-    // Last, so that if any leg throws, the series with alerting consumers are already out.
+    // Last, so that if any leg throws the three COUNTERS are already published. They are the
+    // series whose zero-vs-absent distinction this module exists to create; the histogram's is
+    // not — with no traffic there is no distribution to describe, so its absence is honest.
+    //
+    // 🔴 If you write a rule over any of these counters, `rate()`/`increase()` are structurally
+    // 0: prom-client creates a child AT 1 on its first `inc`, so a pod that refuses once never
+    // moves it again. Use `max_over_time`. (Same hazard `csam-archive.metrics.ts` documents.)
     await zeroMissingLatencyChildren();
   } catch {
     // Seeding is a readability nicety; losing it must not cost the scrape.

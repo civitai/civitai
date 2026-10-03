@@ -255,10 +255,10 @@ function countStorageOutcome(op: StorageOp, outcome: AppStorageOutcome): void {
  * `civitai_app_block_storage_quota_exceeded_total` — the zero-seeding in
  * `~/server/prom/app-block-storage.metrics` also writes it.
  *
- * 🔴 Same reason as `countStorageOutcome`, and it matters more here: this is the counter with
- * an alerting consumer, and it is SEEDED. A mistyped `ceiling` is therefore worse than an
- * absent series — the seeded `ceiling="user"` row keeps reading a reassuring 0 forever while
- * real refusals pile up under the typo. `absent()` at least fires; a present 0 does not.
+ * 🔴 Same reason as `countStorageOutcome`, and it matters more here because this counter is
+ * SEEDED. A mistyped `ceiling` is worse than an absent series: the seeded `ceiling="user"` row
+ * keeps reading a reassuring 0 forever while real refusals pile up under the typo, and a
+ * permanent present 0 is the one state no absence check can catch.
  */
 function countQuotaExceeded(appBlockId: string, ceiling: AppStorageCeiling): void {
   appStorageQuotaExceededCounter.inc({ app_block_id: appBlockId, ceiling });
