@@ -18,7 +18,6 @@ import * as z from 'zod';
 import {
   IconBrush,
   IconCube,
-  IconGavel,
   IconUpload,
   IconBook,
   IconPencil,
@@ -54,6 +53,7 @@ import { CrucibleHeader } from '~/components/Crucible/CrucibleHeader';
 import { CrucibleLeaderboard } from '~/components/Crucible/CrucibleLeaderboard';
 import { CrucibleEntryGrid, type CrucibleEntryData } from '~/components/Crucible/CrucibleEntryGrid';
 import { CruciblePodium } from '~/components/Crucible/CruciblePodium';
+import { CrucibleStartJudgingButton } from '~/components/Crucible/CrucibleStartJudgingButton';
 import { CruciblePrizeBreakdown } from '~/components/Crucible/CruciblePrizeBreakdown';
 import { EligibleModelsList } from '~/components/EligibleModels/EligibleModelsList';
 import { crucibleRankingsAreFinal } from '~/shared/constants/crucible.constants';
@@ -395,30 +395,9 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
 
               {/* CTA Button - Start Judging */}
               {canJudge && (
-                <Button
-                  size="xl"
-                  fullWidth
-                  leftSection={<IconGavel size={24} />}
-                  className="mb-8"
-                  styles={{
-                    root: {
-                      background: 'linear-gradient(135deg, #228be6 0%, #40c057 100%)',
-                      boxShadow: '0 8px 24px rgba(34, 139, 230, 0.3)',
-                      fontWeight: 600,
-                      fontSize: '1.125rem',
-                      padding: '1.25rem 2.5rem',
-                      transition: 'all 300ms',
-                      '&:hover': {
-                        background: 'linear-gradient(135deg, #1c7ec0 0%, #37b24d 100%)',
-                        transform: 'translateY(-2px)',
-                        boxShadow: '0 12px 32px rgba(34, 139, 230, 0.4)',
-                      },
-                    },
-                  }}
+                <CrucibleStartJudgingButton
                   onClick={() => router.push(`/crucibles/${crucible.id}/judge`)}
-                >
-                  Start Judging Now
-                </Button>
+                />
               )}
 
               {/* Entry Grid with User Entries section */}
