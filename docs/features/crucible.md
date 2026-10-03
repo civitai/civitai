@@ -71,6 +71,10 @@ Showing a live leaderboard would bias judges, so scores and positions stay hidde
 
 - **Creator:** new entries, and the end (with any seed refund).
 - **Entrants:** their final position and any prize, a cancellation and its refund, and an entry removed by a moderator.
+- **Followers and entrants:** a reminder once, 8 hours before the end. A crucible that runs 8 hours or less gets none.
+- **Followers:** the results, unless they are the creator or an entrant, who already hear about the end.
+
+Anyone signed in can follow an upcoming or active crucible with the bell on its page. The reminder and the results can each be turned off in notification settings.
 
 A crucible's name appears in notifications and Buzz transaction descriptions only once its text has passed review.
 

@@ -204,6 +204,19 @@ export function choiceMapper(
 }
 
 /**
+ * The inverse of `choiceMapper` where each class is an option key of the same name.
+ * `unknownClasses` train as imajev's own unknown answer rather than as their option.
+ */
+export function choiceTargets(
+  questionId: string,
+  opts: { unknownClasses?: readonly string[] } = {}
+): NonNullable<FormatSpec['trainTargets']> {
+  return (gold) => ({
+    [questionId]: (opts.unknownClasses ?? []).includes(gold) ? null : gold,
+  });
+}
+
+/**
  * A failed call is retried on later runs, but only up to this many failures:
  * the server works one request at a time, so a permanently failing item would
  * otherwise spend a full timeout on every daily pass, forever.

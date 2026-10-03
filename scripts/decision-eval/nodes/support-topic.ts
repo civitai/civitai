@@ -6,7 +6,7 @@ import { join } from 'path';
 import type { GoldPolicy } from '../builder';
 import type { NodeContext, NodeSpec, SourceRow } from '../nodes';
 import { nodePaths } from '../paths';
-import { choiceMapper } from '../runner';
+import { choiceMapper, choiceTargets } from '../runner';
 import { readJson } from '../store';
 import type { ChoiceOption, DecisionState, FormatSpec, GoldRow, MappedAnswer } from '../types';
 
@@ -517,6 +517,7 @@ export const supportTopicNode: NodeSpec<SupportTicketRaw> = {
         },
       ],
       mapAnswer: choiceMapper('topic', { abstainOptions: [CANNOT_TELL] }),
+      trainTargets: choiceTargets('topic', { unknownClasses: [CANNOT_TELL] }),
     },
     router13: {
       questions: { fromDataDir: 'router13.questions.json' },

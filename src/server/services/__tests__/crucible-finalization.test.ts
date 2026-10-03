@@ -111,6 +111,7 @@ const setupCrucible = ({
     ingestion,
     textNsfw: false,
     userId: 4,
+    image: { ingestion: ImageIngestionStatus.Scanned },
     status,
     entryFee,
     seededPrizePool,
@@ -769,5 +770,102 @@ describe('finalizeCrucible — fewer entries than paid places', () => {
     // 50/30/20 with no third place: 50 and 30 scale to 62.5% and 37.5% of the 200 pool.
     expect(result.finalEntries.map((e) => e.prizeAmount)).toEqual([125, 75]);
     expect(result.totalPrizesDistributed).toBe(200);
+  });
+});
+
+describe('finalizeCrucible — followers', () => {
+  const follows = dbMock.dbWrite.crucibleEngagement.findMany;
+  const results = () =>
+    createNotification.mock.calls.map(([arg]) => arg).filter((n) => n.type === 'crucible-results');
+
+  beforeEach(() => {
+    follows.mockResolvedValue([]);
+    dbMock.dbWrite.userEngagement.findMany.mockResolvedValue([]);
+  });
+
+  it('tells followers who are neither the host nor an entrant, once, through the opt-out path', async () => {
+    // Host 4 and entrants 10-12 already get crucible-ended / crucible-won.
+    follows.mockResolvedValue([10, 4, 50, 12, 51].map((userId) => ({ userId })));
+
+    await finalizeCrucible(1);
+
+    expect(follows).toHaveBeenCalledWith({
+      where: { crucibleId: 1, type: 'Notify' },
+      select: { userId: true },
+    });
+    expect(results()).toEqual([
+      {
+        type: 'crucible-results',
+        category: 'Update',
+        key: 'crucible-results:1',
+        userIds: [50, 51],
+        details: { crucibleId: 1, crucibleName: 'Test Crucible' },
+      },
+    ]);
+  });
+
+  it('tells followers of a crucible nobody entered', async () => {
+    findUnique.mockResolvedValue({
+      ...(await findUnique()),
+      _count: { entries: 0 },
+    });
+    follows.mockResolvedValue([4, 60].map((userId) => ({ userId })));
+
+    await finalizeCrucible(1);
+
+    expect(results().map((n) => n.userIds)).toEqual([[60]]);
+  });
+
+  it('sends nothing when every follower already heard', async () => {
+    follows.mockResolvedValue([4, 11].map((userId) => ({ userId })));
+
+    await finalizeCrucible(1);
+
+    expect(results()).toEqual([]);
+  });
+
+  it('does not notify followers when the payout fails and the crucible stays Active', async () => {
+    setupCrucible({ entryFee: 100 });
+    createBuzzTransactionMany.mockRejectedValue(new Error('buzz down'));
+    follows.mockResolvedValue([{ userId: 50 }]);
+
+    await expect(finalizeCrucible(1)).rejects.toThrow('buzz down');
+
+    expect(createBuzzTransactionMany).toHaveBeenCalled();
+    expect(results()).toEqual([]);
+  });
+
+  it('skips followers on either side of a block with the host, or who hid the host', async () => {
+    follows.mockResolvedValue([50, 51, 52].map((userId) => ({ userId })));
+    dbMock.dbWrite.userEngagement.findMany.mockResolvedValue([
+      { userId: 4, targetUserId: 51 },
+      { userId: 52, targetUserId: 4 },
+    ]);
+
+    await finalizeCrucible(1);
+
+    expect(dbMock.dbWrite.userEngagement.findMany).toHaveBeenCalledWith({
+      where: {
+        OR: [
+          { userId: 4, targetUserId: { in: [50, 51, 52] }, type: 'Block' },
+          { userId: { in: [50, 51, 52] }, targetUserId: 4, type: { in: ['Block', 'Hide'] } },
+        ],
+      },
+      select: { userId: true, targetUserId: true },
+    });
+    expect(results().map((n) => n.userIds)).toEqual([[50]]);
+  });
+
+  it.each([
+    ['its text', { ingestion: CrucibleIngestionStatus.Pending }],
+    ['its cover', { image: { ingestion: ImageIngestionStatus.Pending } }],
+  ])('tells no follower about a crucible hidden because %s is unscanned', async (_, hidden) => {
+    findUnique.mockResolvedValue({ ...(await findUnique()), ...hidden });
+    follows.mockResolvedValue([{ userId: 50 }]);
+
+    await finalizeCrucible(1);
+
+    expect(results()).toEqual([]);
+    expect(createNotification.mock.calls.map(([n]) => n.type)).toContain('crucible-ended');
   });
 });

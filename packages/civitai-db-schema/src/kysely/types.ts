@@ -135,6 +135,7 @@ import type {
   UserHubSourceType,
   CrucibleStatus,
   CrucibleIngestionStatus,
+  CrucibleEngagementType,
 } from './enums';
 
 export type Account = {
@@ -2463,6 +2464,12 @@ export type Crucible = {
   ingestion: Generated<CrucibleIngestionStatus>;
   scannedAt: Timestamp | null;
   textNsfw: Generated<boolean>;
+};
+export type CrucibleEngagement = {
+  userId: number;
+  crucibleId: number;
+  type: CrucibleEngagementType;
+  createdAt: Generated<Timestamp>;
 };
 export type CrucibleEntry = {
   id: Generated<number>;
@@ -4909,6 +4916,7 @@ export type DB = {
   CoveredCheckpoint: CoveredCheckpoint;
   CreatorGalleryHiddenUser: CreatorGalleryHiddenUser;
   Crucible: Crucible;
+  CrucibleEngagement: CrucibleEngagement;
   CrucibleEntry: CrucibleEntry;
   CrucibleReport: CrucibleReport;
   CryptoDeposit: CryptoDeposit;

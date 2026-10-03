@@ -1,9 +1,14 @@
 import { NotificationCategory } from '~/server/common/enums';
-import { createNotificationProcessor } from '~/server/notifications/base.notifications';
+import {
+  createNotificationProcessor,
+  notBlockedBetween,
+} from '~/server/notifications/base.notifications';
 import { asOrdinal, numberWithCommas } from '~/utils/number-helpers';
 
 // `crucibleName` is null when the text hadn't passed its scan as safe for everyone.
 const quotedName = (name?: string | null) => (name ? ` "${name}"` : '');
+
+const CRUCIBLE_ENDING_SOON_HOURS = 8;
 
 export const crucibleNotifications = createNotificationProcessor({
   // Sent to crucible creator when crucible finalizes
@@ -96,6 +101,68 @@ export const crucibleNotifications = createNotificationProcessor({
         url: `/crucibles/${details.crucibleId}`,
       };
     },
+  },
+  // Sent once to followers and entrants as a crucible enters its final hours
+  'crucible-ending-soon': {
+    displayName: 'Crucible you follow or entered is ending soon',
+    category: NotificationCategory.Update,
+    toggleable: true,
+    prepareMessage: ({ details }) => ({
+      message: `The crucible${quotedName(
+        details.crucibleName
+      )} ends in ${CRUCIBLE_ENDING_SOON_HOURS} hours. Last chance to enter or vote!`,
+      url: `/crucibles/${details.crucibleId}`,
+    }),
+    prepareQuery: ({ lastSent }) => `
+      WITH affected AS (
+        SELECT
+          c.id,
+          c."userId" "hostId",
+          -- getCruciblePublishableName, which a processor query cannot call.
+          CASE WHEN c.ingestion = 'Scanned' AND NOT c."textNsfw" THEN c.name END "crucibleName",
+          -- isCrucibleHiddenByScan: until both scans pass, only the host can open the crucible.
+          (c.ingestion = 'Scanned' AND i.ingestion = 'Scanned') "visible"
+        FROM "Crucible" c
+        LEFT JOIN "Image" i ON i.id = c."imageId"
+        WHERE
+          c.status = 'Active'
+          AND c."endAt" BETWEEN now() AND now() + interval '${CRUCIBLE_ENDING_SOON_HOURS} hours'
+          -- The last scan was before the window opened, so this fires once, on the crossing.
+          AND c."endAt" > '${lastSent}'::timestamptz + interval '${CRUCIBLE_ENDING_SOON_HOURS} hours'
+          -- A crucible no longer than the window is inside it from the moment it opens.
+          AND COALESCE(c."startAt", c."createdAt") < c."endAt" - interval '${CRUCIBLE_ENDING_SOON_HOURS} hours'
+      ), target_users AS (
+        SELECT DISTINCT "crucibleId", "userId" FROM (
+          SELECT a.id "crucibleId", ce."userId"
+          FROM affected a
+          JOIN "CrucibleEngagement" ce ON ce."crucibleId" = a.id AND ce.type = 'Notify'
+          UNION ALL
+          SELECT a.id "crucibleId", e."userId"
+          FROM affected a
+          JOIN "CrucibleEntry" e ON e."crucibleId" = a.id
+        ) u
+      )
+      SELECT
+        CONCAT('crucible-ending-soon:', a.id) "key",
+        tu."userId" "userId",
+        'crucible-ending-soon' "type",
+        JSONB_BUILD_OBJECT('crucibleId', a.id, 'crucibleName', a."crucibleName") "details"
+      FROM affected a
+      JOIN target_users tu ON tu."crucibleId" = a.id
+      WHERE (a."visible" OR tu."userId" = a."hostId")
+        AND ${notBlockedBetween('tu."userId"', 'a."hostId"')}
+        AND NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = tu."userId" AND type = 'crucible-ending-soon')
+    `,
+  },
+  // Sent to followers who are neither the host nor a placed entrant when a crucible finalizes
+  'crucible-results': {
+    displayName: 'Results for a crucible you follow',
+    category: NotificationCategory.Update,
+    toggleable: true,
+    prepareMessage: ({ details }) => ({
+      message: `The crucible${quotedName(details.crucibleName)} has ended. See the results!`,
+      url: `/crucibles/${details.crucibleId}`,
+    }),
   },
   // Sent to crucible creator when someone submits an entry
   'crucible-entry-submitted': {

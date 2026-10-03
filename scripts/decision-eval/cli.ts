@@ -36,6 +36,12 @@ import { doneItemIds, HttpImageSource, runItems, runKey, specHash } from './runn
 import { assertDataDirOutsideRepo } from './safety';
 import { countCorrect, fittedThresholds, fitThresholds, scoreSplit } from './scorer';
 import { readJson, readJsonl, writeFileAtomic, writeJsonl } from './store';
+import {
+  buildTrainerRows,
+  IMAJEV_TO_REQUEST_COMMIT,
+  trainingWorkflow,
+  zipTrainerDataset,
+} from './trainer-dataset';
 import type {
   DecisionQuestion,
   GoldRow,
@@ -53,6 +59,7 @@ import type {
  *   pnpm run tsscript scripts/decision-eval/cli.ts run     --node <id> --format <f> --model <arm> --split dev --data-dir <dir>
  *   pnpm run tsscript scripts/decision-eval/cli.ts score   --node <id> --format <f> --model <arm> --split dev --target 0.95 --data-dir <dir>
  *   pnpm run tsscript scripts/decision-eval/cli.ts train-manifest --node <id> --candidates <jsonl> --data-dir <dir>
+ *   pnpm run tsscript scripts/decision-eval/cli.ts train-dataset  --node <id> --format <f> --data-dir <dir> [--epochs 1]
  *
  * Every data file lives under --data-dir, which must be outside any git checkout.
  * `run` is incremental: re-running it only sends items not yet predicted under
@@ -454,6 +461,65 @@ async function cmdTrainManifest(args: Args, dataDir: string) {
   );
 }
 
+async function cmdTrainDataset(args: Args, dataDir: string) {
+  const node = getNode(str(args, 'node'));
+  const formatId = str(args, 'format');
+  const questions = loadQuestions(node, formatId, dataDir);
+  const epochs = args.epochs === undefined ? 1 : Number(args.epochs);
+  if (!(epochs >= 0.1 && epochs <= 10))
+    throw new Error(`--epochs must be 0.1-10, got ${args.epochs}`);
+  const p = nodePaths(dataDir, node.id);
+  const json = readJson<unknown>(p.evalIndex);
+  if (json === undefined) throw new Error(`no eval index at ${p.evalIndex}; run build first`);
+  const index = parseEvalIndex(json, node.id);
+  const manifestPath = join(p.root, 'train-manifest.jsonl');
+  const candidates = await readJsonl<TrainCandidate>(manifestPath);
+  if (candidates.length === 0)
+    throw new Error(`no rows in ${manifestPath}; run train-manifest first`);
+  const excluded = await refreshExclusions(node, dataDir);
+  const policy = node.goldPolicy?.({ dataDir }) ?? { kind: 'majority' as const };
+  if (policy.kind === 'disagreement-as' && !node.classes.includes(policy.label)) {
+    throw new Error(`gold policy label "${policy.label}" is not a class of ${node.id}`);
+  }
+  const resolved = resolveGold(await readJsonl<GoldRow>(p.gold), policy);
+  const { rows, summary } = buildTrainerRows({
+    nodeId: node.id,
+    dataClass: node.dataClass,
+    candidates,
+    index,
+    excludedIds: [...excluded],
+    gold: resolved.gold,
+    questions,
+    format: node.formats[formatId],
+  });
+  const zip = await zipTrainerDataset(rows);
+  const spec = specHash(node.id, node.specVersion, formatId, questions);
+  const name = `${formatId}-${spec}-${zip.sha256.slice(0, 12)}`;
+  const zipPath = join(p.root, 'trainer-datasets', `${name}.zip`);
+  writeFileAtomic(zipPath, zip.bytes);
+  writeFileAtomic(
+    join(p.root, 'trainer-datasets', `${name}.json`),
+    JSON.stringify(
+      {
+        schema: 'civitai.decision-eval.trainer-dataset',
+        version: 1,
+        nodeId: node.id,
+        formatId,
+        specHash: spec,
+        zip: { file: `${name}.zip`, sha256: zip.sha256, bytes: zip.bytes.length },
+        imajevToRequestCommit: IMAJEV_TO_REQUEST_COMMIT,
+        evalIndex: { itemIds: index.itemIds.length, groupKeys: index.groupKeys.length },
+        excludedIds: excluded.size,
+        summary,
+        workflow: trainingWorkflow(summary.rows, { epochs }),
+      },
+      null,
+      2
+    )
+  );
+  console.log(`trainer dataset ${zipPath}: ${JSON.stringify(summary)}; not submitted`);
+}
+
 export async function main(argv = process.argv.slice(2)) {
   const [command, ...rest] = argv;
   const { values } = parseArgs({
@@ -466,6 +532,7 @@ export async function main(argv = process.argv.slice(2)) {
       target: { type: 'string' },
       'data-dir': { type: 'string' },
       candidates: { type: 'string' },
+      epochs: { type: 'string' },
       'drop-overlap': { type: 'boolean' },
       'reseal-reason': { type: 'string' },
       'imajev-url': { type: 'string' },
@@ -484,8 +551,9 @@ export async function main(argv = process.argv.slice(2)) {
   if (command === 'run') return cmdRun(args, dataDir);
   if (command === 'score') return cmdScore(args, dataDir);
   if (command === 'train-manifest') return cmdTrainManifest(args, dataDir);
+  if (command === 'train-dataset') return cmdTrainDataset(args, dataDir);
   throw new Error(
-    `unknown command "${command}"; expected control, build, run, score or train-manifest`
+    `unknown command "${command}"; expected control, build, run, score, train-manifest or train-dataset`
   );
 }
 

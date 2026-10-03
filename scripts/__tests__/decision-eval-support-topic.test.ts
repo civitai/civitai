@@ -212,6 +212,12 @@ describe('support.topic formats', () => {
     expect(choice12.mapAnswer(choice('crypto')).pred).toBe('crypto');
   });
 
+  // Decided 2026-10-03: a human cannot_tell trains as imajev's own unknown answer, not as the option.
+  it('trains a human cannot_tell as the unknown answer and every other class as its option', () => {
+    expect(choice12.trainTargets?.(CANNOT_TELL)).toEqual({ topic: null });
+    expect(choice12.trainTargets?.('crypto')).toEqual({ topic: 'crypto' });
+  });
+
   it('keeps the router wording out of the repo and maps its slugs', () => {
     expect(router13.questions).toEqual({ fromDataDir: 'router13.questions.json' });
     expect(router13.mapAnswer(choice('image-moderation-appeal')).pred).toBe('moderation');

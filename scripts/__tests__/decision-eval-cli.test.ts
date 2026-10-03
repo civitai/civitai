@@ -313,6 +313,24 @@ describe('decision-eval CLI', () => {
     expect(existsSync(join(root(), 'train-manifest.jsonl'))).toBe(false);
   });
 
+  it('🔴 refuses a training manifest row whose id is not a string, rather than reporting no collisions', async () => {
+    const candidates = join(dataDir, 'numeric-candidates.jsonl');
+    writeFileSync(
+      candidates,
+      `${JSON.stringify({
+        itemId: 7,
+        groupKey: 'g-new',
+        ts: '2026-08-01T00:00:00Z',
+        state: {},
+        partition: 'train',
+      })}\n`
+    );
+    await expect(
+      main(['train-manifest', ...nodeArgs(), '--candidates', candidates])
+    ).rejects.toThrow('training row 1: itemId must be a non-empty string');
+    expect(existsSync(join(root(), 'train-manifest.jsonl'))).toBe(false);
+  });
+
   it('refuses a data dir inside this repository', async () => {
     await expect(
       main(['build', '--node', 'test.topic', '--data-dir', join(__dirname, 'x')])

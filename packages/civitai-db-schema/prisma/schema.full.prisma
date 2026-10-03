@@ -639,6 +639,7 @@ model User {
   pricingSlots                       PricingSlot[]
   crucibles                          Crucible[]
   crucibleEntries                    CrucibleEntry[]
+  crucibleEngagements                CrucibleEngagement[]
 
   @@index([deletedAt])
 }
@@ -9006,14 +9007,32 @@ model Crucible {
   // The scan found the text adult: list surfaces show it only to viewers who browse R or above.
   textNsfw          Boolean        @default(false)
 
-  entries CrucibleEntry[]
-  reports CrucibleReport[]
+  entries     CrucibleEntry[]
+  reports     CrucibleReport[]
+  engagements CrucibleEngagement[]
 
   @@index([userId], type: Hash)
   @@index([status])
   @@index([endAt])
   @@index([startAt])
   @@index([status, ingestion])
+}
+
+enum CrucibleEngagementType {
+  Notify
+}
+
+model CrucibleEngagement {
+  userId     Int
+  user       User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  crucibleId Int
+  crucible   Crucible               @relation(fields: [crucibleId], references: [id], onDelete: Cascade)
+  type       CrucibleEngagementType
+  createdAt  DateTime               @default(now())
+
+  @@id([type, crucibleId, userId])
+  @@index([crucibleId])
+  @@index([userId], type: Hash)
 }
 
 model CrucibleReport {
