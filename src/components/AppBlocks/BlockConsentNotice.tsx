@@ -69,13 +69,24 @@ type BlockConsentNoticeProps = {
  * SSR tree for a hook to diverge from. That incident belongs to `AppsPageLayout` and
  * `useAppsNavSections`, which genuinely do server-render.
  *
- * The reason that DOES apply is the one two paragraphs up: a `useMediaQuery` or
- * `useResizeObserver` swap cannot answer before it has measured, so it renders the wrong
- * shape for a frame and then swaps — a structural DOM change on a bar the viewer is
- * already reading. CSS has the answer at first paint. ⚠️ ENFORCED rather than merely
- * documented: `local-rules/no-ssr-divergent-media-query` is switched on for this file in
- * `.eslintrc.js`, so reaching for `useIsMobile`, `useContainerQuery` or `useMediaQuery`
- * here is an error, not a review note.
+ * The reason that DOES apply is the one two paragraphs up — but it is TWO reasons, not
+ * one, and an earlier revision flattened them. A CONTAINER-measuring hook
+ * (`useContainerQuery`, `useContainerSmallerThan`, bare `useIsMobile()`, a
+ * `useResizeObserver`) cannot answer before it has measured: it returns `false` at
+ * `inlineSize === 0`, renders the wrong shape for a frame, and then restructures a bar
+ * the viewer is already reading. A VIEWPORT query has a different problem — it answers
+ * at first paint but answers the WRONG QUESTION, reporting "desktop" for the ~320px
+ * model sidebar. ⚠️ Do not write "they all flash": this repo's own `useMediaQuery`
+ * wrapper passes `getInitialValueInEffect: false`, so it reads `matchMedia`
+ * synchronously on the first render and, with no SSR pass here, does not flash at all.
+ * It is banned for the second reason. (Mantine's own `useMediaQuery`, imported directly,
+ * defaults the other way and does flash.) CSS answers both.
+ *
+ * ⚠️ ENFORCED rather than merely documented: `local-rules/no-ssr-divergent-media-query`
+ * is switched on for this file in `.eslintrc.js`. It names FOUR hooks — `useMediaQuery`,
+ * `useIsMobile`, `useContainerQuery` and `useContainerSmallerThan`. The fourth is the one
+ * worth spelling out, because that rule's own header says it is the easiest to omit and
+ * is the one the `CollectionsLayout` precedent everybody copies actually uses.
  *
  * 🔴 THE SWAP IS THE REPO'S OWN TAILWIND CONTAINER-QUERY PLUGIN, NOT A HAND-WRITTEN
  * MODULE. `src/tailwind/container-queries.js` (wired at `tailwind.config.js`) provides
@@ -129,10 +140,11 @@ type BlockConsentNoticeProps = {
  * that as "wires NO aria at all": `useRole` does put `aria-describedby` on the reference
  * while the tooltip is OPEN. What it never provides is a NAME, which is why the explicit
  * `aria-label` above is the load-bearing half and this is the complement to it.
- * ⚠️ `openDelay` matches the rail's link tooltips (`AppsRailNav.tsx`) FOR A MOUSE ONLY —
- * floating-ui returns a 0 delay for a non-mouse pointer type, so a tap opens immediately.
- * That is the behaviour you want here; it is noted because "matches the rail" would
- * otherwise read as unconditional.
+ * ⚠️ `openDelay` matches the rail's link tooltips (`AppsRailNav.tsx`) FOR A MOUSE-LIKE
+ * POINTER ONLY — floating-ui returns a 0 delay otherwise, so a TAP opens immediately.
+ * (Mouse-like deliberately includes `'pen'`, for the Chromium/Linux mice that report it,
+ * so a stylus still waits the 300ms.) Immediate-on-tap is the behaviour you want here;
+ * it is noted because "matches the rail" would otherwise read as unconditional.
  *
  * ⚠️ THE ROW STILL DOES NOT WRAP, DELIBERATELY. `wrap="nowrap"` is kept and the MESSAGE
  * is given `min-w-0` instead, so the sentence shrinks and wraps while the actions stay

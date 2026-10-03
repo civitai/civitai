@@ -308,10 +308,19 @@ module.exports = {
         // notice's own gate withholds it until the iframe posts `BLOCK_READY`. So the
         // hydration-divergence argument the block comment above makes for the `/apps`
         // chrome genuinely does not reach it, and anyone who checks will find that out.
-        // What DOES reach it is the other half: a hook cannot answer before it has
-        // measured, so a hook-driven swap renders the wrong shape for a frame and then
-        // restructures the bar under a viewer who is already reading it. The four hooks
-        // this rule names are exactly the ones that would.
+        // What DOES reach it is a pair of reasons, and they are NOT the same reason for
+        // all four hooks — an earlier draft said "the four hooks this rule names are
+        // exactly the ones that would [flash]", and that was false:
+        //   · CONTAINER hooks flash. `useContainerQuery` returns false while
+        //     `inlineSize === 0`, `useContainerSmallerThan` wraps it, and bare
+        //     `useIsMobile()` routes to it — so each renders the wrong shape for a frame
+        //     and then restructures the bar under a viewer already reading it.
+        //   · `useMediaQuery` imported from `@mantine/hooks` flashes too (its default is
+        //     `getInitialValueInEffect: true`), but THIS REPO'S WRAPPER DOES NOT — it
+        //     passes `false` and reads `matchMedia` synchronously on first render, and
+        //     with no SSR pass here that read IS the first paint. It is banned for the
+        //     other reason, stated at length on the component: a VIEWPORT query answers
+        //     the wrong question for a ~320px sidebar on a desktop.
         'src/components/AppBlocks/BlockConsentNotice.tsx',
       ],
       rules: {

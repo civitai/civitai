@@ -66,7 +66,7 @@
  * below, which reads the `<p>` both versions render: six lines before, one after. Say
  * "red against the pre-change component" rather than "red at origin/main".
  */
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { cleanup } from 'vitest-browser-react';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
@@ -230,6 +230,23 @@ function iconIsRendered(locator: ReturnType<typeof reviewByTestId>): boolean {
 }
 
 /**
+ * How many svgs inside the control are actually LAID OUT — ATTRIBUTE-INDEPENDENT.
+ *
+ * 🔴 IT EXISTS BECAUSE `iconIsRendered` TRADED ONE BLIND SPOT FOR ANOTHER, AND NEITHER
+ * SELECTOR COVERS BOTH. Scoping to `data-form="narrow"` fixed the case where a decorative
+ * icon stood in for a hidden swap icon — but it also made the helper unable to SEE an svg
+ * outside the swap set, in either direction. Add a `leftSection={<IconInfoCircle />}` to a
+ * control and it renders at BOTH widths, while `iconIsRendered()` still returns `false` at
+ * 1280 and that arm passes vacuously over a button showing its word AND an unintended
+ * glyph. A count sees it; the scoped selector cannot. Assert both.
+ */
+function laidOutIconCount(locator: ReturnType<typeof reviewByTestId>): number {
+  return Array.from((locator.element() as HTMLElement).querySelectorAll('svg')).filter(
+    (icon) => box(icon).width > 0
+  ).length;
+}
+
+/**
  * 🔴 THE CASCADE CONTROL, ASSERTED FIRST IN EVERY TEST.
  *
  * Without the app stylesheet the container query does not exist, every `display:
@@ -286,6 +303,10 @@ describe('the notice at 390x844 — a phone', () => {
       iconIsRendered(dismissByTestId()),
       'the dismiss button has no RENDERED icon to stand in for its missing label'
     ).toBe(true);
+    // …and EXACTLY one, counted without reference to the swap attribute — see
+    // `laidOutIconCount`. The scoped reading above cannot see a stray icon at all.
+    expect(laidOutIconCount(reviewByTestId()), 'the review button renders extra glyphs').toBe(1);
+    expect(laidOutIconCount(dismissByTestId()), 'the dismiss button renders extra glyphs').toBe(1);
   });
 
   test('🔴 the SCREEN READER still hears the full sentence — the swap is visual only', async () => {
@@ -436,12 +457,32 @@ describe('the notice at 390x844 — a phone', () => {
     expect(observed).toEqual({ width: 390, height: 844 });
     expectCascade();
 
-    // Nothing is open before the interaction — otherwise the assertion below is satisfied
-    // by a tooltip that is always on screen.
-    expect(document.querySelectorAll('[role="tooltip"]')).toHaveLength(0);
+    // 🔴 BOTH CONTROLS, NOT JUST THE REVIEW ONE. `events` is set on two Tooltips and the
+    // component's docstring claims it for both; driving only one leaves dropping it from
+    // the dismiss Tooltip a silent change. The loop is the whole cost of closing that.
+    for (const [label, locator] of [
+      ['review', reviewByTestId()],
+      ['dismiss', dismissByTestId()],
+    ] as const) {
+      // Nothing is open before the interaction — otherwise the assertion below is
+      // satisfied by a tooltip that is always on screen, or by one left over from the
+      // previous iteration.
+      await vi.waitFor(() =>
+        expect(
+          document.querySelectorAll('[role="tooltip"]'),
+          `a tooltip was already open before focusing ${label}`
+        ).toHaveLength(0)
+      );
 
-    (reviewByTestId().element() as HTMLElement).focus();
-    await expect.element(page.getByRole('tooltip')).toBeInTheDocument();
+      const button = locator.element() as HTMLElement;
+      button.focus();
+      // Attribute the failure: without this, "no tooltip appeared" cannot be told apart
+      // from "the focus never landed", and both print the same locator timeout.
+      expect(document.activeElement, `focus did not land on the ${label} button`).toBe(button);
+
+      await expect.element(page.getByRole('tooltip')).toBeInTheDocument();
+      button.blur();
+    }
   });
 
   test('🔴 role="status" survives the responsive rewrite — it is NOT an alert', async () => {
@@ -475,8 +516,17 @@ describe('the notice at 1280x800 — a laptop', () => {
     // escaped the swap set would satisfy every assertion above.
     expect(renderedLabel(reviewByTestId())).toBe('Review permissions');
     expect(renderedLabel(dismissByTestId())).toBe('Dismiss');
-    expect(iconIsRendered(reviewByTestId()), 'the icon is still laid out at 1280').toBe(false);
-    expect(iconIsRendered(dismissByTestId()), 'the icon is still laid out at 1280').toBe(false);
+    expect(iconIsRendered(reviewByTestId()), 'the swap icon is still laid out at 1280').toBe(false);
+    expect(iconIsRendered(dismissByTestId()), 'the swap icon is still laid out at 1280').toBe(
+      false
+    );
+    // 🔴 AND NO GLYPH AT ALL, which is the claim the two assertions above only LOOK like
+    // they make: they are scoped to the swap attribute, so an icon outside the swap set is
+    // invisible to them and renders at both widths unchallenged.
+    expect(laidOutIconCount(reviewByTestId()), 'the review button renders a glyph at 1280').toBe(0);
+    expect(laidOutIconCount(dismissByTestId()), 'the dismiss button renders a glyph at 1280').toBe(
+      0
+    );
   });
 
   test('⚠️ INVARIANT GUARD — the accessible names are the SAME at both widths', async () => {
