@@ -1035,6 +1035,22 @@ describe('link buttons: up to three, more than one for members only', () => {
       ).toBe(true);
     });
 
+    // Metadata is rebuilt on every save rather than merged, which is the only thing that lets a
+    // creator take their buttons off.
+    it('clears every stored button when a save sends none', async () => {
+      dbMock.dbRead.announcement.findFirst.mockResolvedValue(asStored(2) as never);
+
+      await upsertCreatorAnnouncement({
+        ...validInput,
+        id: 9,
+        profileOnly: true,
+        isMember: false,
+        userId: AUTHOR,
+      });
+
+      expect(updatedActions()).toBeUndefined();
+    });
+
     it('cannot add a button beyond what the row already has', async () => {
       dbMock.dbRead.announcement.findFirst.mockResolvedValue(asStored(2) as never);
 

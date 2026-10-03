@@ -292,6 +292,16 @@ describe('toAnnouncementLinks', () => {
     ).toEqual(['/m/1', '/m/2', '/m/3']);
   });
 
+  it('never returns more buttons than the composer has fields for', () => {
+    const actions = [1, 2, 3, 4].map((n) => ({
+      type: 'button',
+      link: `/m/${n}`,
+      linkText: `${n}`,
+    }));
+
+    expect(toAnnouncementLinks({ actions }).map((l) => l.link)).toEqual(['/m/1', '/m/2', '/m/3']);
+  });
+
   it('reads no buttons from null, empty or malformed metadata', () => {
     expect(toAnnouncementLinks(null)).toEqual([]);
     expect(toAnnouncementLinks({ dismissible: true })).toEqual([]);

@@ -41,10 +41,14 @@ export function toAnnouncementLinks(metadata: unknown): AnnouncementLink[] {
   const actions = (metadata as { actions?: unknown } | null)?.actions;
   if (!Array.isArray(actions)) return [];
 
-  return actions.flatMap((action) => {
-    const { link, linkText } = (action ?? {}) as { link?: unknown; linkText?: unknown };
-    return typeof link === 'string' && typeof linkText === 'string' ? [{ link, linkText }] : [];
-  });
+  // Capped because the composer has a form field pair for only that many; a longer row is not one any
+  // creator path writes, but rendering it would throw rather than drop the extra.
+  return actions
+    .flatMap((action) => {
+      const { link, linkText } = (action ?? {}) as { link?: unknown; linkText?: unknown };
+      return typeof link === 'string' && typeof linkText === 'string' ? [{ link, linkText }] : [];
+    })
+    .slice(0, LINK_BUTTONS_MAX);
 }
 
 export const DOMAIN_COLORS = [
