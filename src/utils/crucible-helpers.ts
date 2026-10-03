@@ -34,7 +34,10 @@ export const CRUCIBLE_SFW_LEVELS = Array.from(
   (_, i) => i + 1
 ).filter(getIsSafeBrowsingLevel);
 
-/** The green site lists only crucibles that accept nothing above PG-13 and whose text is SFW. */
+/**
+ * The green site lists only crucibles that accept nothing above PG-13 and whose text is SFW. Built on
+ * the list the feed queries match, so the gates and the feed cannot disagree.
+ */
 export const isCrucibleSfw = ({ nsfwLevel, textNsfw }: { nsfwLevel: number; textNsfw: boolean }) =>
   CRUCIBLE_SFW_LEVELS.includes(nsfwLevel) && !textNsfw;
 

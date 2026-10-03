@@ -42,16 +42,6 @@ describe('green-site listing rule', () => {
     expect(CRUCIBLE_SFW_LEVELS).toEqual([1, 2, 3]);
   });
 
-  // The feed filters on CRUCIBLE_SFW_LEVELS, the detail and entry gates on isCrucibleSfw: a crucible
-  // listed by one and refused by the other is listed on green but 404s there, or the reverse.
-  it('agrees with isCrucibleSfw on every allowed-level value', () => {
-    for (let nsfwLevel = 0; nsfwLevel <= 63; nsfwLevel++)
-      expect([nsfwLevel, CRUCIBLE_SFW_LEVELS.includes(nsfwLevel)]).toEqual([
-        nsfwLevel,
-        isCrucibleSfw({ nsfwLevel, textNsfw: false }),
-      ]);
-  });
-
   it('charges an entrant in the currency of the site they enter on', () => {
     expect(getCrucibleEntryBuzzType(true)).toBe('green');
     expect(getCrucibleEntryBuzzType(false)).toBe('yellow');
