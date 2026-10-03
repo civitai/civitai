@@ -133,15 +133,34 @@ function tokenEndingAt(text: string, end: number): string {
 }
 
 /**
+ * Drops the run of phone characters at a window's cut end, where a cut phone
+ * number leaves digits too few for the phone pattern. A run that ends a word
+ * (`johnsmith1990`, an id) is kept: cutting it would hide it from redaction.
+ */
+function dropPhoneRunAtEnd(s: string): string {
+  let i = s.length;
+  while (i > 0 && PHONE_CHAR.test(s[i - 1])) i--;
+  if (i === s.length) return s;
+  return i === 0 || SEPARATOR.test(s[i - 1]) || SEPARATOR.test(s[i]) ? s.slice(0, i) : s;
+}
+
+function dropPhoneRunAtStart(s: string): string {
+  let i = 0;
+  while (i < s.length && PHONE_CHAR.test(s[i])) i++;
+  if (i === 0) return s;
+  return i === s.length || SEPARATOR.test(s[i]) || SEPARATOR.test(s[i - 1]) ? s.slice(i) : s;
+}
+
+/**
  * Several patterns are quadratic on a long non-matching run, so redaction gets a
- * bounded window: the kept length plus a margin, cut where no identifier is split.
+ * bounded window: the kept length plus a margin.
  *
- * Redaction can shrink the window by more than the margin, so the start of a tail
- * window can reach the output. A pattern cannot see an identifier missing its
- * start, so the tail drops the whole cut token: to whitespace (a link has none),
- * then any phone digits after it. A tail with no whitespace is dropped whole if it
- * continues a link, since a link runs to whitespace; otherwise it is cut at
- * SEPARATOR. The head drops any phone digits before its cut.
+ * Redaction can shrink the window by more than the margin, so the window's cut
+ * end can reach the output, and a pattern cannot see an identifier missing its
+ * start. So the cut never splits a word: it is made at whitespace within the
+ * margin, then drops a cut phone number. Text with no whitespace near the cut is
+ * cut at SEPARATOR instead, which keeps CJK text; a tail is dropped whole there
+ * if the run it starts inside is a link, since a link runs to whitespace.
  */
 export function redactionWindow(text: string, keep: number, fromEnd: boolean): string {
   const limit = keep + REDACT_MARGIN_CHARS;
@@ -149,16 +168,20 @@ export function redactionWindow(text: string, keep: number, fromEnd: boolean): s
   if (fromEnd) {
     const tail = text.slice(-limit);
     const space = tail.search(/\s/);
-    if (space < 0 && LINK_START.test(tokenEndingAt(text, text.length - limit))) return '';
-    const at = space >= 0 ? space : tail.search(SEPARATOR);
-    return at < 0 ? '' : tail.slice(at + 1).replace(/^[\d\s().+-]+/, '');
+    if (space >= 0 && space < REDACT_MARGIN_CHARS)
+      return dropPhoneRunAtStart(tail.slice(space + 1));
+    const spanning = tokenEndingAt(text, text.length - limit) + tail.slice(0, 64);
+    if (LINK_START.test(spanning))
+      return space < 0 ? '' : dropPhoneRunAtStart(tail.slice(space + 1));
+    const at = tail.search(SEPARATOR);
+    return at < 0 ? '' : dropPhoneRunAtStart(tail.slice(at + 1));
   }
   const head = text.slice(0, limit);
+  let space = head.length - 1;
+  while (space >= 0 && !/\s/.test(head[space])) space--;
+  if (space >= keep) return dropPhoneRunAtEnd(head.slice(0, space));
   for (let i = head.length - 1; i >= 0; i--) {
-    if (!SEPARATOR.test(head[i])) continue;
-    let end = i;
-    while (end > 0 && PHONE_CHAR.test(head[end - 1])) end--;
-    return head.slice(0, end);
+    if (SEPARATOR.test(head[i])) return dropPhoneRunAtEnd(head.slice(0, i));
   }
   return '';
 }

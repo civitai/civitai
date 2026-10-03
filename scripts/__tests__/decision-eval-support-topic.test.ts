@@ -893,6 +893,60 @@ describe('support.topic final cut', () => {
     expect(state.first_message).not.toMatch(/07700|900/);
   });
 
+  // Each shape is a no-whitespace tail that starts inside a link begun before the window.
+  it.each([
+    ['a scheme cut before its end', 'Zhtt', 'ps://example.com/路/john.smith.5551234'],
+    ['www cut before its dot', 'Zw', 'ww.example.com/路/john.smith.5551234'],
+    ['a bare domain cut before its slash', 'Zexample.co', 'm/路/john.smith.5551234'],
+    [
+      'a separator between the link start and the cut',
+      'Zhttps://example.com/路',
+      '/john.smith.5551234',
+    ],
+  ])('drops a no-whitespace tail continuing a link: %s', (_, before, after) => {
+    const rest = after + '中'.repeat(1510) + 'http://x.co/' + 'b'.repeat(1300);
+    const text = before + rest + 'P'.repeat(4000 - rest.length);
+    expect(text.slice(-4000).startsWith(after)).toBe(true);
+    expect(buildSupportState(raw({ latestMessages: text })).latest_messages).toBe('');
+  });
+
+  it('keeps a no-whitespace tail whose run is not a link, even with a link earlier in the text', () => {
+    const state = buildSupportState(
+      raw({ latestMessages: 'see https://x.co/a then ' + '問'.repeat(8000) })
+    );
+    expect(state.latest_messages).toBe('問'.repeat(3000));
+  });
+
+  // The head window ends just inside "thanks", so its cut lands on the space after the word.
+  function headEndingAfter(phrase: string) {
+    const links = ('https://example.com/' + 'a'.repeat(60) + ' ').repeat(40);
+    const cut = phrase.indexOf(' thanks') + 3;
+    const pad = 'w '.repeat(3000).slice(0, 7000 - links.length - cut);
+    return links + pad + phrase + ' tail'.repeat(10);
+  }
+
+  it.each([
+    ['a username ending in digits', 'from johnsmith1990 thanks', 'johnsmith'],
+    ['an id ending in digits', 'tx f8e7d6c5b4a39281706f5e1234 thanks', 'f8e7d6'],
+  ])('keeps %s whole at the head cut, so it is still redacted', (_, phrase, leaked) => {
+    const state = buildSupportState(
+      raw({ username: 'johnsmith1990', firstMessage: headEndingAfter(phrase) })
+    );
+    expect(state.first_message.length).toBeLessThan(6000);
+    expect(state.first_message.toLowerCase()).not.toContain(leaked);
+  });
+
+  it('keeps an id starting with digits whole at the tail cut, so it is still redacted', () => {
+    const id = '1234abcdef0123456789abcde';
+    const links = (' https://example.com/' + 'p'.repeat(400)).repeat(3);
+    const after = ' ' + id + links + ' ' + 'y '.repeat(2000);
+    const text = 'x '.repeat(500) + 'abc' + after.slice(0, 3997);
+    expect(text.slice(-4000).startsWith('abc ' + id)).toBe(true);
+    const state = buildSupportState(raw({ latestMessages: text }));
+    expect(state.latest_messages.length).toBeLessThan(3000);
+    expect(state.latest_messages).not.toContain('abcdef0123');
+  });
+
   it('cuts text without spaces at a script boundary instead of dropping it', () => {
     const cjk = '問'.repeat(8000);
     const state = buildSupportState(raw({ firstMessage: 'Hello\n' + cjk, latestMessages: cjk }));
@@ -933,7 +987,7 @@ describe('support.topic weighted report', () => {
     );
     writeFileSync(
       join(dir, 's.csv'),
-      'ticket_id,stratum,weight\na,crypto,2\nb,_rest,5\nx,_rest,7\naug,crypto,3\n'
+      'ticket_id,stratum,weight\na,crypto,2\nb,_rest,5\nx,_rest,7\naug,crypto,3\nd,_rest,4\n'
     );
     const item = (itemId: string, split: string, period: string) => ({
       itemId,
@@ -1029,7 +1083,8 @@ describe('support.topic weighted report', () => {
     ).toEqual(out);
   });
 
-  it('covers every period when none is given', async () => {
+  // d is dev in the manifest but weighted: a strata file added after it was built keeps its old split.
+  it('covers every period when none is given, and only the requested split', async () => {
     const { dataDir } = dataDirWith();
     const out = await weightedReport({ dataDir, runKey: key, split: 'test' });
     expect(out).toMatchObject({ period: 'all', items: 3 });
