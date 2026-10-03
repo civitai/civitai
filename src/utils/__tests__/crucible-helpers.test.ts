@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { CrucibleIngestionStatus, CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import {
   baseModelMakesMediaType,
+  canSeeCrucibleEntryDetails,
+  getViewableEntryImageIds,
   getCrucibleCountdown,
   getCrucibleManageActions,
   getCrucibleMinVotes,
@@ -454,5 +456,71 @@ describe('free entries', () => {
     [3, 3, 'Free to enter'],
   ])('labels %i free of %i as %s', (freeEntriesPerUser, entryLimit, label) => {
     expect(getFreeEntriesLabel({ freeEntriesPerUser, entryLimit })).toBe(label);
+  });
+});
+
+describe('canSeeCrucibleEntryDetails', () => {
+  const stranger = { isModerator: false, isOwnEntry: false };
+
+  it.each([CrucibleStatus.Pending, CrucibleStatus.Active])(
+    "hides other people's entries from a judge while %s",
+    (status) => {
+      expect(canSeeCrucibleEntryDetails({ status, ...stranger })).toBe(false);
+    }
+  );
+
+  it.each([CrucibleStatus.Completed, CrucibleStatus.Cancelled])(
+    'reveals every entry once %s',
+    (status) => {
+      expect(canSeeCrucibleEntryDetails({ status, ...stranger })).toBe(true);
+    }
+  );
+
+  it('shows an entrant their own entries while running', () => {
+    expect(
+      canSeeCrucibleEntryDetails({
+        status: CrucibleStatus.Active,
+        isModerator: false,
+        isOwnEntry: true,
+      })
+    ).toBe(true);
+  });
+
+  it('shows moderators every entry while running', () => {
+    expect(
+      canSeeCrucibleEntryDetails({
+        status: CrucibleStatus.Active,
+        isModerator: true,
+        isOwnEntry: false,
+      })
+    ).toBe(true);
+  });
+});
+
+describe('getViewableEntryImageIds', () => {
+  const own = { userId: 7, imageId: 70 };
+  const loaded = [
+    { userId: 8, imageId: 80 },
+    { userId: 7, imageId: 70 },
+    { userId: 9, imageId: 90 },
+  ];
+  const args = { viewerEntries: [own], loadedEntries: loaded, viewerId: 7 };
+
+  it('pages an entrant through only their own entries while running', () => {
+    expect(
+      getViewableEntryImageIds({ ...args, isModerator: false, status: CrucibleStatus.Active })
+    ).toEqual([70]);
+  });
+
+  it('pages through every entry, own first, once completed', () => {
+    expect(
+      getViewableEntryImageIds({ ...args, isModerator: false, status: CrucibleStatus.Completed })
+    ).toEqual([70, 80, 90]);
+  });
+
+  it('pages a moderator through every entry while running', () => {
+    expect(
+      getViewableEntryImageIds({ ...args, isModerator: true, status: CrucibleStatus.Active })
+    ).toEqual([70, 80, 90]);
   });
 });

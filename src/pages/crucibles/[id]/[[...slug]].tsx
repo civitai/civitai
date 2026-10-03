@@ -38,6 +38,7 @@ import {
   getCrucibleTotalPrizePool,
   getCrucibleUrl,
   getFreeEntriesLabel,
+  getViewableEntryImageIds,
   isFreeCrucibleEntry,
   toCrucibleBuzzType,
   parsePrizePositions,
@@ -223,13 +224,14 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
   const loadedEntries = entriesData?.pages.flatMap((page) => page.items) ?? [];
   const userEntries = crucible.viewerEntries;
 
-  // The detail view pages through the list it is handed, so hand it the entries in grid
-  // order: the viewer's own first, then everyone else's as loaded.
   const openEntry = async ({ imageId }: { imageId: number }) => {
-    const gridOrder = [
-      ...userEntries,
-      ...loadedEntries.filter((entry) => entry.userId !== currentUser?.id),
-    ].map((entry) => entry.imageId);
+    const gridOrder = getViewableEntryImageIds({
+      viewerEntries: userEntries,
+      loadedEntries,
+      viewerId: currentUser?.id,
+      isModerator: currentUser?.isModerator ?? false,
+      status: crucible.status,
+    });
     const at = Math.max(0, gridOrder.indexOf(imageId));
     const nearby = gridOrder.slice(Math.max(0, at - 100), at + 100);
 
@@ -428,6 +430,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                 isLoadingMore={isLoadingMoreEntries}
                 onLoadMore={loadMoreEntries}
                 onEntryClick={openEntry}
+                status={crucible.status}
                 onRemoveEntry={canRemoveEntries ? handleRemoveEntry : undefined}
                 title="All Entries"
                 showRanks={rankingsVisible}

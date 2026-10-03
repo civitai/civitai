@@ -1,6 +1,7 @@
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { CrucibleIngestionStatus, CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { getBaseModelConfig } from '~/shared/constants/basemodel.constants';
+import { crucibleRankingsAreFinal } from '~/shared/constants/crucible.constants';
 import {
   browsingLevelLabels,
   parseBitwiseBrowsingLevel,
@@ -207,6 +208,46 @@ export function getCrucibleManageActions({
     canCancel: !ended && (isModerator || (isCreator && isPending)),
     canRemoveEntries: !ended && isModerator && status === CrucibleStatus.Active,
   };
+}
+
+/**
+ * Judging is blind: until a crucible ends, other people's entries show no creator and don't open
+ * the image detail, which carries the creator, prompt and resources.
+ */
+export function canSeeCrucibleEntryDetails({
+  status,
+  isModerator,
+  isOwnEntry,
+}: {
+  status: CrucibleStatus;
+  isModerator: boolean;
+  isOwnEntry: boolean;
+}) {
+  return isOwnEntry || isModerator || crucibleRankingsAreFinal(status);
+}
+
+/**
+ * Image ids the entry detail view may page through, in grid order: the viewer's own first, then
+ * everyone else's as loaded. Prev/next must not reach an entry the grid won't open.
+ */
+export function getViewableEntryImageIds({
+  viewerEntries,
+  loadedEntries,
+  viewerId,
+  isModerator,
+  status,
+}: {
+  viewerEntries: { userId: number; imageId: number }[];
+  loadedEntries: { userId: number; imageId: number }[];
+  viewerId?: number;
+  isModerator: boolean;
+  status: CrucibleStatus;
+}) {
+  return [...viewerEntries, ...loadedEntries.filter((entry) => entry.userId !== viewerId)]
+    .filter((entry) =>
+      canSeeCrucibleEntryDetails({ status, isModerator, isOwnEntry: entry.userId === viewerId })
+    )
+    .map((entry) => entry.imageId);
 }
 
 export type PrizePosition = {
