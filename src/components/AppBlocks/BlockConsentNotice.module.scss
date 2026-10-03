@@ -1,0 +1,81 @@
+/**
+ * The missing-permissions notice's NARROW form — a CONTAINER query, not a viewport one.
+ *
+ * 🔴 WHY A CONTAINER QUERY RATHER THAN `visibleFrom`/`hiddenFrom`. This notice renders on
+ * BOTH host surfaces: the full-page `/apps/run/<slug>` frame and the `model.sidebar_top`
+ * slot, which is a sidebar three to eight times narrower than the page it sits on. A
+ * VIEWPORT query answers "how wide is the screen", which is the wrong question on the
+ * model surface — it reports "desktop" for a 320px-wide bar and hands that bar the full
+ * sentence plus two text buttons, i.e. exactly the overflow this file exists to remove.
+ * The notice's own inline size is the only box that answers the question on both
+ * surfaces. That is the same conclusion `chromeGeometry.ts` reached for the chrome bar
+ * beside it ("the 360px phone AND the desktop model sidebar both land there, which is the
+ * point: they are the same layout problem") — this is its pure-CSS form.
+ *
+ * 🔴 AND WHY CSS AT ALL RATHER THAN A HOOK. `window.matchMedia` and `ResizeObserver` both
+ * have no server-side answer, so a JS-driven swap renders one shape in the SSR HTML and
+ * another on the first client paint. `AppsPageLayout.module.scss` records what that costs
+ * on this app's `/apps` root: a differing tree bailed hydration of the whole subtree and
+ * left every page inert. Both shapes are rendered unconditionally here and the BROWSER
+ * picks one, so the server HTML and the first client render are byte-identical. It also
+ * costs no post-mount reflow — `AppBlockChrome` next door pays a one-frame shape swap for
+ * its `useResizeObserver`, and this has no equivalent.
+ *
+ * 🔴 ONE BREAKPOINT SCALE, AND IT IS THE PX SCALE. `theme('screens.xs')` resolves to the
+ * `xs` key of `src/utils/breakpoints.json` (480px) through Tailwind's postcss plugin, so
+ * the number is single-sourced rather than restated — the same scale and the same `xs`
+ * rung `chromeGeometry.ts` adopts, and deliberately NOT Mantine's stock em scale, which
+ * disagrees with it on every key but `sm`.
+ *
+ * 🔴 ONLY `display: none` IS EVER DECLARED, NEVER A DISPLAY VALUE TO RESTORE — WHICH IS
+ * WHY THERE ARE TWO COMPLEMENTARY QUERIES RATHER THAN ONE. The obvious single-query form
+ * (`.wideOnly { display: none }` plus a query that hides `.narrowOnly`) has to RESTORE
+ * `.wideOnly` inside the query, and there is no honest value to restore it to: the four
+ * swapped nodes are two `span`s and two `svg`s, so a literal `inline` is a guess about
+ * each one and `revert` discards any author rule a framework might add later. That form
+ * was written first and shipped a notice whose wide half was hidden at EVERY width — the
+ * `@container` block lifted the narrow half and nothing lifted the wide one. With a
+ * `not`-guarded pair each class only ever hides ITSELF, under exactly the condition where
+ * it is wrong, and a shown node keeps whatever display it naturally has.
+ *
+ * The breakpoint token is written identically in both at-rules, so the two cannot drift to
+ * DIFFERENT numbers; `theme()` is what stops either of them drifting from the scale.
+ *
+ * Non-vacuity, for the tests: if this stylesheet fails to load, NEITHER rule exists and
+ * BOTH forms render — which fails an "exactly one form is visible" assertion rather than
+ * passing it. That is the shape `BlockConsentNotice.geometry.test.tsx` asserts.
+ */
+
+/* The query CONTAINER is the notice's own box. A container query cannot query the element
+   it is declared on, which is why this sits on the outer `Box` and the swapped nodes are
+   its descendants. */
+.notice {
+  container-type: inline-size;
+}
+
+/* The sentence must be able to SHRINK. A flex item's automatic minimum size is its
+   min-content width, so without this the message floors the row at its longest word-run
+   and the actions get pushed out instead of the text wrapping. */
+.message {
+  min-width: 0;
+}
+
+/* The actions never shrink — they are the recovery affordance, and a half-width button is
+   worse than a wrapped sentence. */
+.actions {
+  flex-shrink: 0;
+}
+
+/* Below the swap point the WIDE nodes are the wrong ones… */
+@container not (min-width: theme('screens.xs')) {
+  .wideOnly {
+    display: none;
+  }
+}
+
+/* …and at or above it, the NARROW ones are. */
+@container (min-width: theme('screens.xs')) {
+  .narrowOnly {
+    display: none;
+  }
+}
