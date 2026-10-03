@@ -132,23 +132,31 @@ function tokenEndingAt(text: string, end: number): string {
   return text.slice(start, end);
 }
 
+const WORD_CHAR = /\w/;
+
 /**
  * Drops the run of phone characters at a window's cut end, where a cut phone
- * number leaves digits too few for the phone pattern. A run that ends a word
- * (`johnsmith1990`, an id) is kept: cutting it would hide it from redaction.
+ * number leaves digits too few for the phone pattern. Only the part glued to a
+ * word with no whitespace between (`johnsmith1990`, `pat-1990`, an id) is
+ * kept: cutting it would hide the word from redaction.
  */
 function dropPhoneRunAtEnd(s: string): string {
   let i = s.length;
   while (i > 0 && PHONE_CHAR.test(s[i - 1])) i--;
   if (i === s.length) return s;
-  return i === 0 || SEPARATOR.test(s[i - 1]) || SEPARATOR.test(s[i]) ? s.slice(0, i) : s;
+  if (i === 0 || !WORD_CHAR.test(s[i - 1])) return s.slice(0, i);
+  const glued = s.slice(i).search(/\s/);
+  return glued < 0 ? s : s.slice(0, i + glued);
 }
 
 function dropPhoneRunAtStart(s: string): string {
   let i = 0;
   while (i < s.length && PHONE_CHAR.test(s[i])) i++;
   if (i === 0) return s;
-  return i === s.length || SEPARATOR.test(s[i]) || SEPARATOR.test(s[i - 1]) ? s.slice(i) : s;
+  if (i === s.length || !WORD_CHAR.test(s[i])) return s.slice(i);
+  let glued = i;
+  while (glued > 0 && !/\s/.test(s[glued - 1])) glued--;
+  return s.slice(glued);
 }
 
 /**
@@ -170,7 +178,10 @@ export function redactionWindow(text: string, keep: number, fromEnd: boolean): s
     const space = tail.search(/\s/);
     if (space >= 0 && space < REDACT_MARGIN_CHARS)
       return dropPhoneRunAtStart(tail.slice(space + 1));
-    const spanning = tokenEndingAt(text, text.length - limit) + tail.slice(0, 64);
+    const firstSeparator = tail.search(SEPARATOR);
+    const spanning =
+      tokenEndingAt(text, text.length - limit) +
+      (firstSeparator < 0 ? tail : tail.slice(0, firstSeparator + 1));
     if (LINK_START.test(spanning))
       return space < 0 ? '' : dropPhoneRunAtStart(tail.slice(space + 1));
     const at = tail.search(SEPARATOR);

@@ -904,6 +904,11 @@ describe('support.topic final cut', () => {
     ['a scheme cut before its end', 'Zhtt', 'ps://example.com/路/john.smith.5551234'],
     ['www cut before its dot', 'Zw', 'ww.example.com/路/john.smith.5551234'],
     ['www with no slash after the domain', 'Zw', 'ww.example.com?q=路/john.smith.5551234'],
+    [
+      'a bare host cut more than 64 characters before its slash',
+      'Zmy-',
+      'very-long-bucket-name-for-user-uploads.s3.dualstack.ap-southeast-2.amazonaws.com/路/john.smith.5551234',
+    ],
     ['a bare domain cut before its slash', 'Zexample.co', 'm/路/john.smith.5551234'],
     [
       'a separator between the link start and the cut',
@@ -978,6 +983,74 @@ describe('support.topic final cut', () => {
   it('keeps the kept length of a tail whose first whitespace is past the margin', () => {
     const text = '問'.repeat(1500) + '\n' + '問'.repeat(2600);
     expect(buildSupportState(raw({ latestMessages: text })).latest_messages).toHaveLength(3000);
+  });
+
+  it('drops a link tail up to its whitespace when that whitespace is past the margin', () => {
+    const rest =
+      'ps://example.com/路/john.smith.5551234' + '中'.repeat(1510) + '\nlater ' + 'b'.repeat(1300);
+    const text = 'Zhtt' + rest + 'P'.repeat(4000 - rest.length);
+    expect(text.slice(-4000).search(/\s/)).toBeGreaterThan(1000);
+    const state = buildSupportState(raw({ latestMessages: text }));
+    expect(state.latest_messages.startsWith('later ')).toBe(true);
+  });
+
+  function headCutAt(phrase: string, cut: number) {
+    const links = ('https://example.com/' + 'a'.repeat(60) + ' ').repeat(40);
+    const pad = 'w '.repeat(3000).slice(0, 7000 - links.length - cut);
+    const text = links + pad + phrase + ' tail'.repeat(10);
+    expect(text.slice(0, 7000).endsWith(phrase.slice(0, cut))).toBe(true);
+    return text;
+  }
+
+  it.each(['tel:', '#', 'ref=', 'x/', 'me,', '電話'])(
+    'drops a phone number cut at the head end after %j',
+    (prefix) => {
+      const phrase = 'ring ' + prefix + '07700 900 123 thanks';
+      const text = headCutAt(phrase, phrase.indexOf(' 123') + 2);
+      const state = buildSupportState(raw({ firstMessage: text }));
+      expect(state.first_message.length).toBeLessThan(6000);
+      expect(state.first_message).not.toMatch(/07700|900/);
+    }
+  );
+
+  it.each([
+    [
+      'a hyphenated username ending in digits',
+      'from pat-1990 thanks',
+      'from pat-1990 th',
+      'pat-1990',
+      'pat',
+    ],
+    [
+      'a username followed by a cut number',
+      'from johnsmith1990 900 123 thanks',
+      'from johnsmith1990 900 1',
+      'johnsmith1990',
+      'johnsmith',
+    ],
+  ])('keeps %s whole at the head cut', (_, phrase, cutAfter, username, leaked) => {
+    const text = headCutAt(phrase, cutAfter.length);
+    const state = buildSupportState(raw({ username, firstMessage: text }));
+    expect(state.first_message.toLowerCase()).not.toContain(leaked);
+    expect(state.first_message).toContain('[user]');
+    expect(state.first_message).not.toMatch(/900/);
+  });
+
+  it.each([
+    ['a comma', ' call 07700 900 123, thanks ', 8],
+    ['a colon', ' 07700 900 123:home ok ', 3],
+  ])('drops a phone number the tail window starts inside, followed by %s', (_, fragment, cut) => {
+    const text = straddlingTail(fragment + 'q '.repeat(40), cut);
+    const state = buildSupportState(raw({ latestMessages: text }));
+    expect(state.latest_messages.length).toBeLessThan(3000);
+    expect(state.latest_messages).not.toMatch(/900|123/);
+  });
+
+  it('drops the cut phone tokens before an id the tail window starts beside, keeping the id whole', () => {
+    const text = straddlingTail(' 07700 900 123 1234abcdef0123456789abcde ' + 'q '.repeat(40), 3);
+    const state = buildSupportState(raw({ latestMessages: text }));
+    expect(state.latest_messages.length).toBeLessThan(3000);
+    expect(state.latest_messages.startsWith('[id] q q')).toBe(true);
   });
 
   it('cuts text without spaces at a script boundary instead of dropping it', () => {
