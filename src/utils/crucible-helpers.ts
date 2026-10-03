@@ -2,11 +2,11 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import { CrucibleIngestionStatus, CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { getBaseModelConfig } from '~/shared/constants/basemodel.constants';
 import {
+  allBrowsingLevelsFlag,
   browsingLevelLabels,
-  nsfwBrowsingLevelsFlag,
+  getIsSafeBrowsingLevel,
   parseBitwiseBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
-import { Flags } from '~/shared/utils/flags';
 import { slugit } from '~/utils/string-helpers';
 
 // Static routes beside `/crucibles/[id]/[[...slug]]` win over the slug, so a crucible whose name
@@ -24,9 +24,19 @@ export const toCrucibleBuzzType = (value: string): 'green' | 'yellow' =>
 /** Every prize is paid in this until winners can choose their currency. */
 export const CRUCIBLE_PRIZE_BUZZ_TYPE = 'yellow' as const;
 
+/** An entrant pays in the currency of the site they enter on. */
+export const getCrucibleEntryBuzzType = (isGreen: boolean): 'green' | 'yellow' =>
+  isGreen ? 'green' : 'yellow';
+
 /** The green site lists only crucibles that accept nothing above PG-13 and whose text is SFW. */
 export const isCrucibleSfw = ({ nsfwLevel, textNsfw }: { nsfwLevel: number; textNsfw: boolean }) =>
-  !Flags.intersects(nsfwLevel, nsfwBrowsingLevelsFlag) && !textNsfw;
+  getIsSafeBrowsingLevel(nsfwLevel) && !textNsfw;
+
+/** `isCrucibleSfw`'s level half as the allowed-level values a query can match. */
+export const CRUCIBLE_SFW_LEVELS = Array.from(
+  { length: allBrowsingLevelsFlag },
+  (_, i) => i + 1
+).filter(getIsSafeBrowsingLevel);
 
 export const getCrucibleUrl = (id: number, name: string) =>
   `/crucibles/${id}/${getCrucibleSlug(name)}`;

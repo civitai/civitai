@@ -538,19 +538,18 @@ describe('getCrucibles — browsing level', () => {
   it('lists on both sites whatever currency the creator paid in, SFW-only on green', async () => {
     const green = await whereFor({ isGreen: true });
     expect(JSON.stringify(green)).not.toContain('buzzType');
-    const site = green.AND.at(-1);
-    expect(site.textNsfw).toBe(false);
-    expect(site.nsfwLevel.in).toContain(1 | 2);
-    expect(site.nsfwLevel.in.some((level: number) => level & 4)).toBe(false);
+    expect(green.AND.at(-1)).toEqual({ nsfwLevel: { in: [1, 2, 3] }, textNsfw: false });
 
     const red = await whereFor({ isGreen: false, viewerId: 4 });
     expect(JSON.stringify(red)).not.toContain('buzzType');
     expect(red.AND).toHaveLength(1);
   });
 
-  it("shows the viewer their own crucibles on green even when they aren't SFW", async () => {
+  it("shows a signed-in viewer SFW crucibles on green, and their own even when they aren't", async () => {
     const where = await whereFor({ isGreen: true, viewerId: 4 });
-    expect(where.AND.at(-1).OR[0]).toEqual({ userId: 4 });
+    expect(where.AND.at(-1)).toEqual({
+      OR: [{ userId: 4 }, { nsfwLevel: { in: [1, 2, 3] }, textNsfw: false }],
+    });
   });
 
   it('caps the level on green even when the client asks for everything', async () => {

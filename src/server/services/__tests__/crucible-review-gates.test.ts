@@ -6,6 +6,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as NotificationService from '~/server/services/notification.service';
+import { NsfwLevel } from '~/server/common/enums';
 import { dbMock, loggingMock } from '~/__tests__/mocks';
 
 const refundMultiAccountTransaction = vi.fn();
@@ -258,7 +259,15 @@ describe('list surfaces — featured and judging suggestions', () => {
     await run(true);
     const green = sqlText(queryRaw.mock.calls.at(-1)!);
     expect(green).not.toContain('"buzzType"');
-    expect(green).toContain('AND (c."nsfwLevel" & ?) = 0 AND NOT c."textNsfw"');
+    expect(green).toContain(
+      'AND c."nsfwLevel" <> 0 AND (c."nsfwLevel" & ?) = 0 AND NOT c."textNsfw"'
+    );
+    const greenSite = (queryRaw.mock.calls.at(-1)!.slice(1) as { strings?: string[] }[]).find(
+      (value) => value?.strings?.join('?').includes('NOT c."textNsfw"')
+    ) as { values: unknown[] };
+    expect(greenSite.values).toEqual([
+      NsfwLevel.R | NsfwLevel.X | NsfwLevel.XXX | NsfwLevel.Blocked,
+    ]);
 
     await run(false);
     const red = sqlText(queryRaw.mock.calls.at(-1)!);

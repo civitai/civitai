@@ -77,10 +77,7 @@ import { Tracker } from '~/server/clickhouse/client';
 import { createLogger } from '~/utils/logging';
 import { createNotification } from '~/server/services/notification.service';
 import { resolveCoverImageId } from '~/server/services/cover-image.service';
-import {
-  deriveDomainCurrency,
-  isNonSfwForGreen,
-} from '~/server/games/daily-challenge/challenge-currency';
+import { isNonSfwForGreen } from '~/server/games/daily-challenge/challenge-currency';
 import { getEffectiveBrowsingLevel } from '~/server/games/daily-challenge/challenge-visibility';
 import { checkCrucibleSettings } from '~/server/schema/crucible.schema';
 import { createPost } from '~/server/services/post.service';
@@ -95,6 +92,8 @@ import {
   type CrucibleNameScan,
   getCrucibleTransactionDescription,
   CRUCIBLE_PRIZE_BUZZ_TYPE,
+  CRUCIBLE_SFW_LEVELS,
+  getCrucibleEntryBuzzType,
   isCrucibleSfw,
   isFreeCrucibleEntry,
   parsePrizePositions,
@@ -454,13 +453,9 @@ const isCrucibleOffSite = (
   { viewerId, isModerator, isGreen }: CrucibleViewer
 ) => !!isGreen && !isModerator && crucible.userId !== viewerId && !isCrucibleSfw(crucible);
 
-const SFW_ONLY_LEVELS = Array.from({ length: 64 }, (_, i) => i).filter(
-  (mask) => !Flags.intersects(mask, nsfwBrowsingLevelsFlag)
-);
-
 const greenSiteSql = (isGreen: boolean) =>
   isGreen
-    ? Prisma.sql`AND (c."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0 AND NOT c."textNsfw"`
+    ? Prisma.sql`AND c."nsfwLevel" <> 0 AND (c."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0 AND NOT c."textNsfw"`
     : Prisma.empty;
 
 /** Crucible `c` with cover `i`, as list surfaces may show it to a viewer at `viewerLevel`. */
@@ -1148,7 +1143,7 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
 
   if (isGreen) {
     const onSite: Prisma.CrucibleWhereInput = {
-      nsfwLevel: { in: SFW_ONLY_LEVELS },
+      nsfwLevel: { in: CRUCIBLE_SFW_LEVELS },
       textNsfw: false,
     };
     and.push(viewerId ? { OR: [{ userId: viewerId }, onSite] } : onSite);
@@ -1469,6 +1464,11 @@ export const submitEntry = async ({
       return throwBadRequestError(CANNOT_ENTER_OWN_CRUCIBLE);
     }
 
+    // Green Buzz never pays into a crucible the green site doesn't list, moderator or not.
+    if (isGreen && !isCrucibleSfw(crucible)) {
+      return throwBadRequestError('Enter this crucible on civitai.red.');
+    }
+
     // Validate crucible is active
     if (crucible.status !== CrucibleStatus.Active) {
       return throwBadRequestError('This crucible is not accepting entries');
@@ -1588,7 +1588,7 @@ export const submitEntry = async ({
 
     if (crucible.entryFee > 0 && !isFreeEntry) {
       // Refunds reverse this transaction, so an entry is always returned in the currency it paid.
-      const entryBuzzType = deriveDomainCurrency(isGreen);
+      const entryBuzzType = getCrucibleEntryBuzzType(isGreen);
       const userAccount = await getUserBuzzAccount({
         accountId: userId,
         accountTypes: [entryBuzzType],

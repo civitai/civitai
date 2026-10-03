@@ -38,14 +38,14 @@ import {
   getCrucibleTotalPrizePool,
   getCrucibleUrl,
   getFreeEntriesLabel,
+  getCrucibleEntryBuzzType,
   isCrucibleSfw,
   isFreeCrucibleEntry,
-  toCrucibleBuzzType,
   parsePrizePositions,
   CRUCIBLE_PRIZE_BUZZ_TYPE,
 } from '~/utils/crucible-helpers';
-import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { Flags } from '~/shared/utils/flags';
+import type { CrucibleBuzzType } from '~/components/Crucible/crucible-create-form';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { env } from '~/env/client';
@@ -106,7 +106,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
   const router = useRouter();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
-  const entryBuzzType = toCrucibleBuzzType(useAvailableBuzz()[0]);
+  const entryBuzzType = getCrucibleEntryBuzzType(!!features.isGreen);
   const queryUtils = trpc.useUtils();
   const browsingLevel = useBrowsingLevelDebounced();
 
@@ -668,7 +668,7 @@ type CrucibleDetail = NonNullable<RouterOutput['crucible']['getById']>;
 
 const getMaxUserEntries = (crucible: CrucibleDetail) => crucible.entryLimit ?? 5;
 
-const getSubmitEntryProps = (crucible: CrucibleDetail, entryBuzzType: 'green' | 'yellow') => ({
+const getSubmitEntryProps = (crucible: CrucibleDetail, entryBuzzType: CrucibleBuzzType) => ({
   crucibleId: crucible.id,
   crucibleName: crucible.name,
   entryFee: crucible.entryFee,

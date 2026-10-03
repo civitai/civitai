@@ -773,6 +773,25 @@ describe('submitEntry — site', () => {
     expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
   });
 
+  it('refuses an SFW-rated crucible with adult text on the green site, before charging', async () => {
+    row({ buzzType: 'yellow', nsfwLevel: 1, textNsfw: true });
+    expect(message(await outcomeOn(true))).toContain('Crucible not found');
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it("charges no moderator's green Buzz into a crucible the green site doesn't list", async () => {
+    row({ buzzType: 'yellow', nsfwLevel: 1 | 4, entryFee: 50 });
+    const outcome = await submitEntry({
+      crucibleId: 1,
+      imageId: 7,
+      userId: 42,
+      isGreen: true,
+      isModerator: true,
+    }).catch((error: Error) => error);
+    expect(message(outcome)).toBe('Enter this crucible on civitai.red.');
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['created in yellow, on the green site', 'yellow', true],
     ['created in green, on the mature site', 'green', false],
