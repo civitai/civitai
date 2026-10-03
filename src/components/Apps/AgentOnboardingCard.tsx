@@ -263,7 +263,9 @@ function PromptPanel({
     >
       {() => (
         <div className={classes.panel}>
-          <Text size="sm" ff="monospace" className={clsx(classes.prompt, 'p-3')}>
+          {/* Padding lives in `classes.prompt`, NOT in a Tailwind `p-3` — the shorthand
+              would reset the right padding that clears the copy control. */}
+          <Text size="sm" ff="monospace" className={classes.prompt}>
             {AGENT_BUILD_PROMPT}
             {motionOn && (
               <MotionSpan
