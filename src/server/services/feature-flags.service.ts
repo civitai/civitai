@@ -328,12 +328,13 @@ const featureFlags = createFeatureFlags({
     availability: ['user'],
   },
   profileCollections: ['public'],
-  // Retired (see 868m4c2dn): the `images_v6` search index is no longer fed or served, and the
-  // index itself has now been DELETED from the search backend. Static availability is empty so
-  // image search is off for everyone.
-  // 🔴 This is NO LONGER a no-deploy toggle. Turning on the `image-search` Flipt flag (which is
-  // still authoritative when it exists) would point image search at an index that does not
-  // exist. Re-enabling requires REBUILDING the index first — a full reindex of ~64M documents
+  // Retired (see 868m4c2dn): the `images_v6` search index is no longer fed or served, and while
+  // the processor stays retired no reset runs, so the index carries no documents and no
+  // filterable attributes. Static availability is empty so image search is off for everyone.
+  // 🔴 This is NO LONGER a safe no-deploy toggle, and it fails quietly rather than loudly.
+  // Turning on the `image-search` Flipt flag (which is still authoritative when it exists) points
+  // image search at that index: filtered or sorted queries error, and the rest return zero hits.
+  // Re-enabling requires REBUILDING the index first — a full reindex of ~64M documents
   // via `imagesSearchIndex` (`/api/mod/update-index`), which saturates the search backend for
   // several days and badly degrades search for every other index while it runs. Measured on the
   // last full ingestion: p95 search latency ~4.6s and p99 above 10s, sustained over six days.

@@ -226,13 +226,10 @@ export const processUserContentRemovalQueue = async () => {
   // One combined filter per index instead of one per user per index
   const mainIndexConfigs = [
     { name: MODELS_SEARCH_INDEX, filter: `user.id IN [${userIdList}]` },
-    // NOTE: no entry for IMAGES_SEARCH_INDEX. The images_v6 index is retired (see
-    // images.search-index.ts): including it here re-created it bare via
-    // getOrCreateIndex, and because `retired` skips onIndexSetup it came back with no
-    // filterableAttributes, so every `user.username` delete task failed as
-    // invalid_document_filter (71 failed tasks 2026-09-27..10-02). The index holds no
-    // documents, so nothing is missed. Restoring image search requires re-adding the
-    // images entry here as part of the same change as the index reset.
+    // IMAGES_SEARCH_INDEX is omitted deliberately: while it is retired no reset runs, so it has
+    // no filterable attributes and a `user.username` filter errors. Re-add it only in the change
+    // that resets the index — and it can hold documents before then, because
+    // `pages/api/mod/search/images-update.ts` writes to it without consulting `retired`.
     { name: ARTICLES_SEARCH_INDEX, filter: `user.username IN [${escapedUsernames}]` },
     { name: COLLECTIONS_SEARCH_INDEX, filter: `user.username IN [${escapedUsernames}]` },
     { name: BOUNTIES_SEARCH_INDEX, filter: `user.username IN [${escapedUsernames}]` },
