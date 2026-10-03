@@ -113,7 +113,15 @@ async function refreshExclusions(
 ): Promise<Set<string>> {
   const p = paths(dataDir, node.id);
   const current: string[] = [...newlyExcluded];
-  if (node.excludedIds) for await (const id of node.excludedIds({ dataDir })) current.push(id);
+  if (node.excludedIds) {
+    for await (const id of node.excludedIds({ dataDir })) {
+      // A numeric id would never equal a manifest itemId, so the item would silently go out.
+      if (typeof id !== 'string') {
+        throw new Error(`${node.id} excludedIds() yielded a ${typeof id}; item ids are strings`);
+      }
+      current.push(id);
+    }
+  }
   const ledger = applyExclusions([], loadExclusions(p.exclusions, node.id), current).excluded;
   writeFileAtomic(p.exclusions, JSON.stringify(serializeExclusions(node.id, ledger)));
   return new Set(ledger);
@@ -251,6 +259,9 @@ function resolveRun(args: Args, dataDir: string) {
 
 async function cmdRun(args: Args, dataDir: string) {
   const { node, formatId, questions, model, spec, key } = resolveRun(args, dataDir);
+  if (node.dataClass === 'moderation-image' && !node.excludedIds) {
+    throw new Error(`${node.id} handles moderation images and must define excludedIds()`);
+  }
   const split = str(args, 'split');
   const p = paths(dataDir, node.id);
   const control =
@@ -261,9 +272,6 @@ async function cmdRun(args: Args, dataDir: string) {
     p.controls,
     `${JSON.stringify({ runKey: key, at: new Date().toISOString(), ...passed })}\n`
   );
-  if (node.dataClass === 'moderation-image' && !node.excludedIds) {
-    throw new Error(`${node.id} handles moderation images and must define excludedIds()`);
-  }
   // Re-read before sending: an item reported since the last build must not go out today.
   const excluded = await refreshExclusions(node, dataDir);
   const items = (await readJsonl<ManifestItem>(p.manifest)).filter(
@@ -458,12 +466,17 @@ async function cmdScore(args: Args, dataDir: string) {
 
 async function cmdTrainManifest(args: Args, dataDir: string) {
   const node = getNode(str(args, 'node'));
+  if (node.dataClass === 'moderation-image' && !node.excludedIds) {
+    throw new Error(`${node.id} handles moderation images and must define excludedIds()`);
+  }
   const p = paths(dataDir, node.id);
   const json = readJson<unknown>(p.evalIndex);
   if (json === undefined) throw new Error(`no eval index at ${p.evalIndex}; run build first`);
   const index = parseEvalIndex(json, node.id);
   const candidates = await readJsonl<TrainCandidate>(str(args, 'candidates'));
-  const out = buildTrainManifest(candidates, index, loadExclusions(p.exclusions, node.id));
+  // Refreshed, not read from the last build: a report since then must still keep an item out of training.
+  const excluded = await refreshExclusions(node, dataDir);
+  const out = buildTrainManifest(candidates, index, [...excluded]);
   writeJsonl(join(p.root, 'train-manifest.jsonl'), out);
   console.log(
     `train manifest: ${out.length} rows, 0 collisions with ${index.itemIds.length} eval items`

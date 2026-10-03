@@ -8,7 +8,8 @@ export type RunConfig = {
   modelConfigId: string;
   runKey: string;
   builds: string[];
-  hardware: string | null;
+  /** Every card a prediction in this run recorded. */
+  hardware: string[];
   targets: Readonly<Record<string, number>>;
   /** Earlier sealed-test scorings of this format and spec, under any model config. */
   priorTestScorings: number;
@@ -64,7 +65,9 @@ export function renderReport(r: ReportInput): string {
     `- builds observed: ${c.builds.map((b) => `\`${b}\``).join(', ') || 'none'}${
       c.builds.length > 1 ? ' — **more than one build answered this run**' : ''
     }`,
-    `- hardware: ${c.hardware ?? 'not recorded'}`,
+    `- hardware: ${c.hardware.length === 0 ? 'not recorded' : c.hardware.join(', ')}${
+      c.hardware.length > 1 ? ' — **this run spans more than one machine**' : ''
+    }`,
     `- sealed test scored ${c.priorTestScorings} time(s) before this report for this format and spec, across all model configs`,
     `- spec hash \`${c.specHash}\`, run key \`${c.runKey}\``,
     `- target precision (Wilson 95% lower bound): ${Object.entries(c.targets)

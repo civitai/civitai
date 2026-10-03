@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -135,13 +135,42 @@ afterAll(() => {
 });
 
 describe('decision-eval CLI, moderation images', () => {
-  it('🔴 refuses a moderation node that does not define exclude() and excludedIds()', async () => {
-    const bare = { ...node, id: 'test.moderation.bare', excludedIds: undefined };
+  it.each([
+    ['exclude()', { exclude: undefined }],
+    ['excludedIds()', { excludedIds: undefined }],
+  ])('🔴 refuses to build a moderation node missing %s', async (_, missing) => {
+    const bare = { ...node, ...missing, id: 'test.moderation.bare' };
     registerNode(bare);
     try {
       await expect(main(['build', '--node', bare.id, '--data-dir', dataDir])).rejects.toThrow(
         'must define exclude() and excludedIds()'
       );
+    } finally {
+      delete (NODES as Record<string, unknown>)[bare.id];
+    }
+  });
+
+  it('🔴 refuses to run or build training data for a moderation node without excludedIds()', async () => {
+    const bare = { ...node, excludedIds: undefined, id: 'test.moderation.noids' };
+    registerNode(bare);
+    try {
+      await expect(
+        main([
+          'run',
+          '--node',
+          bare.id,
+          '--data-dir',
+          dataDir,
+          '--format',
+          'A',
+          '--split',
+          'dev',
+          ...arm(),
+        ])
+      ).rejects.toThrow('must define excludedIds()');
+      await expect(
+        main(['train-manifest', '--node', bare.id, '--data-dir', dataDir, '--candidates', 'unused'])
+      ).rejects.toThrow('must define excludedIds()');
     } finally {
       delete (NODES as Record<string, unknown>)[bare.id];
     }
@@ -193,5 +222,70 @@ describe('decision-eval CLI, moderation images', () => {
       runKey: expect.any(String),
       status: 'missing',
     });
+  });
+
+  it('🔴 refuses a training row for an item excluded at build that no eval split ever held', async () => {
+    const candidates = join(dataDir, 'mod-candidates.jsonl');
+    writeFileSync(
+      candidates,
+      `${JSON.stringify({
+        itemId: 'm4',
+        groupKey: 'g-fresh',
+        ts: '2026-09-01T00:00:00Z',
+        state: {},
+        partition: 'train',
+      })}\n`
+    );
+    await expect(
+      main(['train-manifest', '--node', node.id, '--data-dir', dataDir, '--candidates', candidates])
+    ).rejects.toThrow('are excluded items');
+  });
+
+  it('🔴 train-manifest re-reads exclusions, so a report since the last build still keeps an item out', async () => {
+    reportedLater.add('never-sampled');
+    const candidates = join(dataDir, 'late-candidates.jsonl');
+    writeFileSync(
+      candidates,
+      `${JSON.stringify({
+        itemId: 'never-sampled',
+        groupKey: 'g-late',
+        ts: '2026-09-01T00:00:00Z',
+        state: {},
+        partition: 'train',
+      })}
+`
+    );
+    await expect(
+      main(['train-manifest', '--node', node.id, '--data-dir', dataDir, '--candidates', candidates])
+    ).rejects.toThrow('are excluded items');
+  });
+
+  it('🔴 refuses an excludedIds() that yields a non-string id, which would never match', async () => {
+    const numeric = {
+      ...node,
+      id: 'test.moderation.numeric',
+      async *excludedIds() {
+        yield 7 as unknown as string;
+      },
+    };
+    registerNode(numeric);
+    try {
+      await expect(
+        main([
+          'run',
+          '--node',
+          numeric.id,
+          '--data-dir',
+          dataDir,
+          '--format',
+          'A',
+          '--split',
+          'dev',
+          ...arm(),
+        ])
+      ).rejects.toThrow('yielded a number');
+    } finally {
+      delete (NODES as Record<string, unknown>)[numeric.id];
+    }
   });
 });

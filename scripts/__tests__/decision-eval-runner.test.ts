@@ -234,6 +234,10 @@ describe('🔴 the image path cannot touch the filesystem', () => {
   const ALLOWED_EXTERNAL = new Set(['crypto', 'net', 'path', 'fs']);
 
   function specifiers(source: string): string[] {
+    // A load this reader cannot resolve to a literal is a load it cannot vouch for.
+    if (/\b(?:import|require)\s*\(\s*[^'"\s]/.test(source) || /getBuiltinModule/.test(source)) {
+      throw new Error('a module is loaded by a non-literal specifier');
+    }
     return [...source.matchAll(SPECIFIER)].map((m) => m[1]);
   }
 
@@ -301,6 +305,13 @@ describe('🔴 the image path cannot touch the filesystem', () => {
       expect(FS_LIKE.test(spec)).toBe(true);
     }
     expect(FS_LIKE.test('fsevents-but-not-fs')).toBe(false);
+    for (const src of [
+      'const s = await import(`./store`);',
+      'const s = require(name);',
+      "const fs = process.getBuiltinModule('fs');",
+    ]) {
+      expect(() => specifiers(src)).toThrow('non-literal specifier');
+    }
   });
 });
 
