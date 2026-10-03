@@ -44,6 +44,12 @@ export const getCrucibleByIdSchema = z.object({
   id: z.number(),
 });
 
+export type ToggleCrucibleFollowInput = z.infer<typeof toggleCrucibleFollowSchema>;
+export const toggleCrucibleFollowSchema = z.object({
+  crucibleId: z.number(),
+  setTo: z.boolean().optional(),
+});
+
 export const getCrucibleRequiredModelsSchema = z.object({
   id: z.number(),
   browsingLevel: z.number().optional(),

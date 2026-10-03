@@ -6,6 +6,7 @@ import dayjs from '~/shared/utils/dayjs';
 import plimit from 'p-limit';
 import {
   Availability,
+  CrucibleEngagementType,
   CrucibleIngestionStatus,
   CrucibleStatus,
   ImageIngestionStatus,
@@ -126,6 +127,42 @@ const sendCrucibleNotification = (notification: Parameters<typeof createNotifica
       key: notification.key,
     })
   );
+};
+
+/** The host and every placed entrant get their own ending notification; this reaches the rest. */
+const notifyCrucibleFollowersOfResults = async ({
+  crucibleId,
+  crucibleName,
+  excludeUserIds,
+}: {
+  crucibleId: number;
+  crucibleName: string | null;
+  excludeUserIds: Iterable<number>;
+}) => {
+  try {
+    const exclude = new Set(excludeUserIds);
+    const followers = await dbWrite.crucibleEngagement.findMany({
+      where: { crucibleId, type: CrucibleEngagementType.Notify },
+      select: { userId: true },
+    });
+    const userIds = followers.map((f) => f.userId).filter((id) => !exclude.has(id));
+    if (!userIds.length) return;
+    sendCrucibleNotification({
+      type: 'crucible-results',
+      category: NotificationCategory.Update,
+      key: `crucible-results:${crucibleId}`,
+      userIds,
+      details: { crucibleId, crucibleName },
+    });
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'crucible-notification-failed',
+      message: error instanceof Error ? error.message : String(error),
+      notificationType: 'crucible-results',
+      crucibleId,
+    });
+  }
 };
 
 /**
@@ -2663,6 +2700,11 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
           seedRefunded: seedRefunded ? crucible.seededPrizePool : 0,
         },
       });
+      await notifyCrucibleFollowersOfResults({
+        crucibleId,
+        crucibleName: getCruciblePublishableName(crucible),
+        excludeUserIds: [crucible.userId],
+      });
     }
 
     return {
@@ -2917,6 +2959,12 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
       },
     });
   }
+
+  await notifyCrucibleFollowersOfResults({
+    crucibleId,
+    crucibleName,
+    excludeUserIds: [crucible.userId, ...userResults.keys()],
+  });
 
   return result;
 };

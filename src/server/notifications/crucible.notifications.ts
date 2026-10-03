@@ -5,6 +5,8 @@ import { asOrdinal, numberWithCommas } from '~/utils/number-helpers';
 // `crucibleName` is null when the text hadn't passed its scan as safe for everyone.
 const quotedName = (name?: string | null) => (name ? ` "${name}"` : '');
 
+const CRUCIBLE_ENDING_SOON_HOURS = 8;
+
 export const crucibleNotifications = createNotificationProcessor({
   // Sent to crucible creator when crucible finalizes
   'crucible-ended': {
@@ -96,6 +98,61 @@ export const crucibleNotifications = createNotificationProcessor({
         url: `/crucibles/${details.crucibleId}`,
       };
     },
+  },
+  // Sent once to followers and entrants as a crucible enters its final hours
+  'crucible-ending-soon': {
+    displayName: 'Crucible you follow or entered is ending soon',
+    category: NotificationCategory.Update,
+    toggleable: true,
+    prepareMessage: ({ details }) => ({
+      message: `The crucible${quotedName(
+        details.crucibleName
+      )} ends in ${CRUCIBLE_ENDING_SOON_HOURS} hours. Last chance to enter and vote!`,
+      url: `/crucibles/${details.crucibleId}`,
+    }),
+    prepareQuery: ({ lastSent }) => `
+      WITH affected AS (
+        SELECT
+          c.id,
+          CASE WHEN c.ingestion = 'Scanned' AND NOT c."textNsfw" THEN c.name END "crucibleName"
+        FROM "Crucible" c
+        WHERE
+          c.status = 'Active'
+          AND now() BETWEEN c."endAt" - interval '${CRUCIBLE_ENDING_SOON_HOURS} hours' AND c."endAt"
+          -- The last scan was before the window opened, so this fires once, on the crossing.
+          AND '${lastSent}'::timestamptz < c."endAt" - interval '${CRUCIBLE_ENDING_SOON_HOURS} hours'
+          -- A crucible no longer than the window is inside it from the moment it opens.
+          AND COALESCE(c."startAt", c."createdAt") < c."endAt" - interval '${CRUCIBLE_ENDING_SOON_HOURS} hours'
+      ), target_users AS (
+        SELECT DISTINCT "crucibleId", "userId" FROM (
+          SELECT a.id "crucibleId", ce."userId"
+          FROM affected a
+          JOIN "CrucibleEngagement" ce ON ce."crucibleId" = a.id AND ce.type = 'Notify'
+          UNION ALL
+          SELECT a.id "crucibleId", e."userId"
+          FROM affected a
+          JOIN "CrucibleEntry" e ON e."crucibleId" = a.id
+        ) u
+      )
+      SELECT
+        CONCAT('crucible-ending-soon:', a.id) "key",
+        tu."userId" "userId",
+        'crucible-ending-soon' "type",
+        JSONB_BUILD_OBJECT('crucibleId', a.id, 'crucibleName', a."crucibleName") "details"
+      FROM affected a
+      JOIN target_users tu ON tu."crucibleId" = a.id
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = tu."userId" AND type = 'crucible-ending-soon')
+    `,
+  },
+  // Sent to followers who are neither the host nor a placed entrant when a crucible finalizes
+  'crucible-results': {
+    displayName: 'Results for a crucible you follow',
+    category: NotificationCategory.Update,
+    toggleable: true,
+    prepareMessage: ({ details }) => ({
+      message: `The crucible${quotedName(details.crucibleName)} has ended. See the results!`,
+      url: `/crucibles/${details.crucibleId}`,
+    }),
   },
   // Sent to crucible creator when someone submits an entry
   'crucible-entry-submitted': {
