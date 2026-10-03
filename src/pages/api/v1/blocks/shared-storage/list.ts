@@ -17,8 +17,16 @@ import {
 import { getNextPage } from '~/server/utils/pagination-helpers';
 
 /**
- * GET /api/v1/blocks/shared-storage/list?prefix=&limit=N&cursor=
+ * GET /api/v1/blocks/shared-storage/list?prefix=&limit=N&cursor=&mine=true
  * Scope `apps:storage:shared:read`.
+ *
+ * `mine=true` narrows the page to rows the VIEWER authored (civitai/civitai#5354 Q3).
+ * Without it an app that wants to show someone their own submissions has to page the
+ * entire board and filter client-side, even though `shared_kv_author_idx` exists and
+ * the router already queries by author for the per-user row cap. It is a BOOLEAN, not
+ * a user id — the author filtered on is the resolved token subject, so it adds no read
+ * reach and cannot enumerate a named other user. An ANON caller passing it gets an
+ * empty page (it authored nothing), not the whole board; see `listSharedRows`.
  *
  * Cursor-paginated feed of THIS app's shared_kv rows (the "requests" list) —
  * newest-first on the ULID key, hidden rows excluded, each row carrying its
@@ -48,6 +56,15 @@ const querySchema = z.object({
     .max(SHARED_LIST_LIMIT_MAX)
     .default(SHARED_LIST_LIMIT_DEFAULT),
   cursor: z.string().max(SHARED_CURSOR_MAX).optional(),
+  // `mine=true` narrows the feed to rows the VIEWER authored. Same
+  // literal-union + transform shape blocks/models.ts uses for its boolean query
+  // params — 🔴 NOT `z.coerce.boolean()`, which maps the string "false" to TRUE
+  // and would silently invert the flag. An unrecognised value 400s rather than
+  // defaulting, so a typo is loud instead of quietly returning the whole board.
+  mine: z
+    .union([z.literal('true'), z.literal('false')])
+    .optional()
+    .transform((v) => v === 'true'),
 });
 
 function bearer(req: NextApiRequest): string {
@@ -73,10 +90,15 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     res.status(400).json({ error: 'Invalid query', details: parsed.error.flatten() });
     return;
   }
-  const { prefix, limit, cursor } = parsed.data;
+  const { prefix, limit, cursor, mine } = parsed.data;
 
   try {
-    const { items, nextCursor } = await listSharedRows(bearer(req), { prefix, limit, cursor });
+    const { items, nextCursor } = await listSharedRows(bearer(req), {
+      prefix,
+      limit,
+      cursor,
+      mine,
+    });
     const { nextPage } = getNextPage({ req, nextCursor });
     res.status(200).json({ items, metadata: { nextCursor, nextPage } });
     return;

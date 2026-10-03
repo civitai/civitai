@@ -1108,6 +1108,93 @@ describe('item 3 viewerVoted (per-viewer vote flag on list)', () => {
   });
 });
 
+// civitai/civitai#5354 Q3 — `mine`, an author filter on `list`. It is a BOOLEAN,
+// never a user id: the author it filters on is the same resolved subject ($4) that
+// `viewerVoted` keys on. These tests exist to pin that property structurally, not
+// just to show the happy path works — a later change that accepts an author from
+// the caller would keep every behavioural assertion green.
+describe('#5354 Q3 `mine` author filter on list', () => {
+  it('is INERT by default: $5 is false and the guard short-circuits the predicate', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    await caller().list({ blockToken: 't' });
+    const [sql, params] = mockPool.query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain('($5::boolean IS NOT TRUE OR s.author_user_id = $4::int)');
+    expect(params[4]).toBe(false);
+  });
+
+  it('mine:true sets $5 and filters on the RESOLVED subject uid', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims()); // sub user:42
+    mockPool.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    await caller().list({ blockToken: 't', mine: true });
+    const [, params] = mockPool.query.mock.calls[0] as [string, unknown[]];
+    expect(params[4]).toBe(true);
+    // The author filtered on is $4 — the same param viewerVoted uses, i.e. the
+    // token subject. Not a sixth param, and not anything off the input.
+    expect(params[3]).toBe(42);
+  });
+
+  it('🔴 the ONLY author comparison in the list SQL binds $4 — never a caller-supplied param', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    await caller().list({ blockToken: 't', mine: true });
+    const [sql] = mockPool.query.mock.calls[0] as [string, unknown[]];
+    // Structural, not behavioural: `author_user_id = $6` fed from input would pass
+    // every other test in this block while turning `mine` into an arbitrary-user
+    // enumeration primitive. This is the assertion that fails on that change.
+    expect(sql.match(/author_user_id\s*=\s*\$\d+/g)).toEqual(['author_user_id = $4']);
+    // And nothing in the list path may reach for an input-shaped author at all.
+    expect(sql).not.toMatch(/author_user_id\s*=\s*\$(1|2|3|5|6|7|8|9)\b/);
+  });
+
+  it('an ANON caller asking for mine gets an empty page, not the whole board', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'anon' }));
+    mockPool.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    await caller().list({ blockToken: 't', mine: true });
+    const [sql, params] = mockPool.query.mock.calls[0] as [string, unknown[]];
+    // $4 is NULL for anon, and the predicate is a bare equality — `x = NULL` is
+    // UNKNOWN, so it matches nothing. The failure mode this guards against is a
+    // refactor to COALESCE($4, s.author_user_id), which would make `mine` return
+    // the ENTIRE board to an anonymous caller while every count-based test stays
+    // green. Assert the SHAPE, because the behaviour is identical either way
+    // against an empty fixture.
+    expect(params[3]).toBeNull();
+    expect(params[4]).toBe(true);
+    expect(sql).toContain('s.author_user_id = $4::int');
+    expect(sql).not.toMatch(/COALESCE\s*\(\s*\$4/i);
+  });
+
+  it('is PER-VIEWER: a different subject filters on a different author', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:99' }));
+    mockGetSessionUser.mockResolvedValueOnce(trustedUser({ id: 99 }));
+    mockPool.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    await caller().list({ blockToken: 't', mine: true });
+    const [, params] = mockPool.query.mock.calls[0] as [string, unknown[]];
+    expect(params[3]).toBe(99);
+    expect(params[4]).toBe(true);
+  });
+
+  it('composes with prefix + cursor rather than replacing them', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    await caller().list({
+      blockToken: 't',
+      mine: true,
+      prefix: 'grid:',
+      cursor: Buffer.from('K9', 'utf8').toString('base64'),
+    });
+    const [sql, params] = mockPool.query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain("s.key LIKE $1 ESCAPE '\\'");
+    expect(sql).toContain('($2::text IS NULL OR s.key < $2)');
+    expect(sql).toContain('($5::boolean IS NOT TRUE OR s.author_user_id = $4::int)');
+    expect(params[0]).toBe('grid:%');
+    expect(params[1]).toBe('K9');
+    expect(params[4]).toBe(true);
+    // Keyset order is untouched — the filter must not change pagination semantics.
+    expect(sql).toContain('ORDER BY s.key DESC');
+  });
+});
+
 // Item 6 — single-row fetch-by-key for `?g=` deep links. READ op (anon-allowed),
 // same per-viewer visibility gate (`hidden_at IS NULL`) as `list`.
 describe('item 6 apps.shared.get (single-row fetch-by-key)', () => {

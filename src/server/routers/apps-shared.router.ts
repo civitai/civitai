@@ -496,13 +496,30 @@ function toSharedKvItem(r: SharedKvRow): SharedKvItem {
  * Hidden rows are excluded. Anon may read. Keyset cursor on the ULID key
  * (newest-first, DESC). `cursor` is an opaque base64 of the last key seen; a
  * malformed one simply decodes to a key that matches nothing, never an error.
+ *
+ * `mine` narrows the feed to rows the VIEWER authored (civitai/civitai#5354 Q3).
+ * 🔴 IT IS A BOOLEAN, NOT A USER ID, AND THAT IS THE WHOLE SECURITY ARGUMENT.
+ * The author it filters on is `resolveSharedContext`'s resolved subject — the same
+ * value `viewerVoted` already keys on — so there is no caller-supplied identity
+ * anywhere in this path and no way to enumerate a NAMED other user's submissions.
+ * Rows are world-readable either way, so this adds no read reach: it is a filter
+ * over what the caller can already page through, replacing "fetch the whole board
+ * and filter client-side" with one predicate. A `mine=<userId>` form would be a new
+ * enumeration primitive and is deliberately not what this is; widening to one later
+ * is possible, narrowing after the fact is not.
  */
 export async function listSharedRows(
   blockToken: string,
-  { prefix, limit, cursor }: { prefix?: string; limit: number; cursor?: string }
+  {
+    prefix,
+    limit,
+    cursor,
+    mine,
+  }: { prefix?: string; limit: number; cursor?: string; mine?: boolean }
 ): Promise<{ items: SharedKvItem[]; nextCursor?: string }> {
   // `userId` is the RESOLVED token subject (null for anon) — used ONLY to
-  // hydrate the per-viewer `viewerVoted` flag below. It is never client input.
+  // hydrate the per-viewer `viewerVoted` flag below, and (when `mine`) to be the
+  // author filtered on. It is never client input.
   const { schema, userId } = await resolveSharedContext(blockToken, 'list');
   const pool = requireAppsDb();
 
@@ -516,6 +533,20 @@ export async function listSharedRows(
   // `viewer_voted = false`. The join keys on votes' PK `(key, user_id)`, so it
   // is index-covered and adds no scan to the hot list path. The raw vote rows
   // are NEVER returned — only the boolean derived from the viewer's own row.
+  //
+  // `mine` ($5) reuses that same $4. 🔴 AN ANONYMOUS VIEWER ASKING FOR `mine`
+  // GETS AN EMPTY PAGE, NOT AN ERROR AND NOT THE WHOLE BOARD, and it is the SQL
+  // that guarantees it rather than a guard anyone could forget: $4 is NULL for
+  // anon, so `s.author_user_id = $4::int` is UNKNOWN and matches nothing — the
+  // identical three-valued-logic reason `viewer_voted` is always false for anon,
+  // two lines up. That is the right answer (an anonymous viewer has authored
+  // nothing) but it is right by a mechanism rather than by an `if`, so
+  // `shared-storage-list-endpoint.test.ts` pins it; deleting the test would make
+  // a later refactor to `COALESCE($4, s.author_user_id)` — which silently returns
+  // the ENTIRE board to anon under a `mine` flag — look like a cleanup.
+  // The predicate is index-covered by `shared_kv_author_idx` (author_user_id),
+  // provisioned in storage-provision.service.ts, and the per-author row cap is
+  // SHARED_KV_PER_USER_ROW_CAP, so the sort it feeds is bounded and small.
   const rows = (
     await pool.query<SharedKvRow>(
       `SELECT s.key, s.author_user_id, s.value, COALESCE(c.count, 0)::text AS count,
@@ -527,9 +558,10 @@ export async function listSharedRows(
         WHERE s.hidden_at IS NULL
           AND s.key LIKE $1 ESCAPE '\\'
           AND ($2::text IS NULL OR s.key < $2)
+          AND ($5::boolean IS NOT TRUE OR s.author_user_id = $4::int)
         ORDER BY s.key DESC
         LIMIT $3`,
-      [prefixPattern, afterKey, limit, userId]
+      [prefixPattern, afterKey, limit, userId, mine ?? false]
     )
   ).rows;
 
@@ -1177,6 +1209,11 @@ export const appsSharedRouter = router({
           .max(SHARED_LIST_LIMIT_MAX)
           .default(SHARED_LIST_LIMIT_DEFAULT),
         cursor: z.string().max(SHARED_CURSOR_MAX).optional(),
+        // Kept in lockstep with the REST route's query schema on purpose — the
+        // bridge and `GET /api/v1/blocks/shared-storage/list` are documented as
+        // non-divergent reads over this same function, so an argument added to
+        // one and not the other is the divergence that comment forbids.
+        mine: z.boolean().optional(),
       })
     )
     .query(async ({ input }) =>
@@ -1184,6 +1221,7 @@ export const appsSharedRouter = router({
         prefix: input.prefix,
         limit: input.limit,
         cursor: input.cursor,
+        mine: input.mine,
       })
     ),
 
