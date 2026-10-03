@@ -16,8 +16,9 @@ export type CrucibleJudgingConfig = {
 };
 
 const CONFIG_TTL_MS = 60_000;
-const SESSION_ID_FIELD = 'sid';
-const entryField = (entryId: number) => `e:${entryId}`;
+// Scoping each mark by session makes a new session start empty without a read-then-reset, which
+// two tabs could interleave. Old sessions' marks go when the whole key idles out.
+const seenField = (sessionId: string, entryId: number) => `${sessionId}:${entryId}`;
 
 const readNumber = (raw: unknown, min: number, max: number, fallback: number) => {
   const value = Number(raw);
@@ -46,28 +47,34 @@ export function parseCrucibleJudgingConfig(
   };
 }
 
+// An unreadable config must not hand out the default shortening: the operator may have raised it.
+const NO_SHORTENING: CrucibleJudgingConfig = {
+  repeatViewSeconds: Number.POSITIVE_INFINITY,
+  sessionIdleSeconds: CRUCIBLE_JUDGING_DEFAULTS.sessionIdleSeconds,
+};
+
 let configMemo: TtlMemo<CrucibleJudgingConfig> | undefined;
 
-/** Operator-tunable from Redis; each pod re-reads it at most once per CONFIG_TTL_MS. */
-export function getCrucibleJudgingConfig() {
+/**
+ * Operator-tunable from Redis; each pod re-reads it at most once per CONFIG_TTL_MS. A failed read is
+ * not memoized, so the next call retries.
+ */
+export async function getCrucibleJudgingConfig(): Promise<CrucibleJudgingConfig> {
   configMemo ??= createTtlMemo(
-    async () => {
-      try {
-        return parseCrucibleJudgingConfig(
-          await withSysReadDeadline(
-            sysRedis.hGetAll<string>(REDIS_SYS_KEYS.SYSTEM.CRUCIBLE_JUDGING)
-          )
-        );
-      } catch (e) {
-        log(`config read failed, using defaults: ${(e as Error).message}`);
-        return parseCrucibleJudgingConfig(null);
-      }
-      // Not the default `Date.now` reference, which is captured once and would ignore a faked clock.
-    },
+    async () =>
+      parseCrucibleJudgingConfig(
+        await withSysReadDeadline(sysRedis.hGetAll<string>(REDIS_SYS_KEYS.SYSTEM.CRUCIBLE_JUDGING))
+      ),
     CONFIG_TTL_MS,
+    // Not the default `Date.now` reference, which is captured once and would ignore a faked clock.
     () => Date.now()
   );
-  return configMemo();
+  try {
+    return await configMemo();
+  } catch (e) {
+    log(`config read failed, no shortening: ${(e as Error).message}`);
+    return NO_SHORTENING;
+  }
 }
 
 const sessionKey = (crucibleId: number, userId: number) =>
@@ -75,8 +82,8 @@ const sessionKey = (crucibleId: number, userId: number) =>
 
 /**
  * The entries among `entryIds` this judge voted on earlier in the SAME judging session, and slides
- * the session's idle expiry. A missing session id, another session's id, or an expired session all
- * yield nothing, so every way of being unsure lands on the full watch.
+ * the session's idle expiry. A missing session id, another session, or an expired session all yield
+ * nothing, so every way of being unsure lands on the full watch.
  */
 export async function getSeenThisSession({
   crucibleId,
@@ -94,20 +101,21 @@ export async function getSeenThisSession({
   if (!sessionId) return new Set();
   const key = sessionKey(crucibleId, userId);
   try {
-    const [storedSessionId, ...flags] = await sysRedis.hmGet(key, [
-      SESSION_ID_FIELD,
-      ...entryIds.map(entryField),
-    ]);
-    if (storedSessionId !== sessionId) return new Set();
-    await sysRedis.expire(key, idleSeconds);
-    return new Set(entryIds.filter((_, i) => flags[i] != null));
+    const [flags] = (await sysRedis
+      .multi()
+      .hmGet(
+        key,
+        entryIds.map((id) => seenField(sessionId, id))
+      )
+      .expire(key, idleSeconds)
+      .exec()) as unknown as [(string | null)[] | undefined, unknown];
+    return new Set(entryIds.filter((_, i) => flags?.[i] != null));
   } catch (e) {
     log(`session read failed for ${key}: ${(e as Error).message}`);
     return new Set();
   }
 }
 
-/** Starts a fresh session when `sessionId` is not the stored one: entering judging again resets it. */
 export async function recordSessionVote({
   crucibleId,
   userId,
@@ -124,13 +132,12 @@ export async function recordSessionVote({
   if (!sessionId) return;
   const key = sessionKey(crucibleId, userId);
   try {
-    const storedSessionId = await sysRedis.hGet(key, SESSION_ID_FIELD);
-    if (storedSessionId !== sessionId) await sysRedis.del(key);
-    await sysRedis.hSet(key, {
-      [SESSION_ID_FIELD]: sessionId,
-      ...Object.fromEntries(entryIds.map((id) => [entryField(id), '1'])),
-    });
-    await sysRedis.expire(key, idleSeconds);
+    // One MULTI, so the key is never left without its idle expiry.
+    await sysRedis
+      .multi()
+      .hSet(key, Object.fromEntries(entryIds.map((id) => [seenField(sessionId, id), '1'])))
+      .expire(key, idleSeconds)
+      .exec();
   } catch (e) {
     // The vote is already counted; losing the mark only costs the judge a full watch later.
     log(`session write failed for ${key}: ${(e as Error).message}`);

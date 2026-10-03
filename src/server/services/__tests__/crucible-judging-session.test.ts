@@ -70,6 +70,27 @@ const installRedisFake = () => {
     hash.expiresAt = Date.now() + seconds * 1000;
     return true;
   });
+  // Queued commands run in order through the fakes above when `exec` is called.
+  sysRedis.multi.mockImplementation(() => {
+    const queued: (() => Promise<unknown>)[] = [];
+    const chain = {
+      hmGet: (key: string, fields: string[]) => (
+        queued.push(() => sysRedis.hmGet(key, fields)), chain
+      ),
+      hSet: (key: string, value: Record<string, string>) => (
+        queued.push(() => sysRedis.hSet(key, value)), chain
+      ),
+      expire: (key: string, seconds: number) => (
+        queued.push(() => sysRedis.expire(key, seconds)), chain
+      ),
+      exec: async () => {
+        const results: unknown[] = [];
+        for (const run of queued) results.push(await run());
+        return results;
+      },
+    };
+    return chain;
+  });
   // Every pair counts as served, so the served-pair claim never decides these tests.
   sysRedis.sRem.mockResolvedValue(1);
   sysRedis.sAdd.mockResolvedValue(1);
@@ -157,6 +178,19 @@ describe('submitVote — repeat clips within a judging session', () => {
     expect(processVote).toHaveBeenCalledTimes(1);
   });
 
+  it('does not mark clips seen on a vote the watch gate rejected', async () => {
+    await expect(vote(10, 20, 0, 0)).rejects.toThrow(/6s/);
+
+    await expect(vote(10, 20, REPEAT, REPEAT)).rejects.toThrow(/Watch at least 6s/);
+  });
+
+  it('does not mark clips seen on a vote refused because the pair was not served', async () => {
+    redisMock.sysRedis.sRem.mockResolvedValueOnce(0);
+    await expect(vote(10, 20, FULL, FULL)).rejects.toThrow(/no longer available/);
+
+    await expect(vote(10, 30, REPEAT, FULL)).rejects.toThrow(/Watch at least 6s/);
+  });
+
   it('rejects a repeat watched for less than the configured seconds', async () => {
     await vote(10, 20, FULL, FULL);
 
@@ -220,6 +254,21 @@ describe('submitVote — config change without a deploy', () => {
     advanceSeconds(61);
     await expect(vote(10, 50, 1000, FULL)).rejects.toThrow(/Watch at least 6s/);
     await expect(vote(10, 50, 4000, FULL)).resolves.toBeDefined();
+  });
+
+  it('gives no shortening while the config cannot be read, and retries on the next call', async () => {
+    await vote(10, 20, FULL, FULL);
+    const realHGetAll = redisMock.sysRedis.hGetAll.getMockImplementation()!;
+    redisMock.sysRedis.hGetAll.mockImplementation(async (key: string) => {
+      if (key === CONFIG_KEY) throw new Error('sysRedis down');
+      return realHGetAll(key);
+    });
+    advanceSeconds(61);
+
+    await expect(vote(10, 30, REPEAT, FULL)).rejects.toThrow(/Watch at least 6s/);
+
+    redisMock.sysRedis.hGetAll.mockImplementation(realHGetAll);
+    await expect(vote(10, 30, REPEAT, FULL)).resolves.toBeDefined();
   });
 
   it('picks up a new idle timeout from Redis', async () => {
@@ -289,6 +338,13 @@ describe('getJudgingPair — tells the client the same requirement the vote enfo
     advanceSeconds(IDLE_SECONDS - 5);
 
     await expect(vote(10, 30, REPEAT, FULL)).resolves.toBeDefined();
+  });
+
+  it('does not count a clip that was only served, never voted on, as seen', async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue([rawEntry(30), rawEntry(40)]);
+    await fetchPair();
+
+    await expect(vote(30, 40, REPEAT, REPEAT)).rejects.toThrow(/Watch at least 6s/);
   });
 
   it('reports no rule for a crucible without a minimum', async () => {

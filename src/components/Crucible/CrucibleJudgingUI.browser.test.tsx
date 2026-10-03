@@ -252,6 +252,22 @@ describe('CrucibleJudgingUI — clip already judged this session', () => {
     await vi.waitFor(() => expect(onVote).toHaveBeenCalledTimes(1));
   });
 
+  test("the other side keeps its own requirement, not the crucible's minimum", async () => {
+    const pair = { left: entry(1), right: entry(2), watchSeconds: { left: 1, right: 3 } } as never;
+    renderWithProviders(
+      <CrucibleJudgingUI pair={pair} minViewSeconds={6} onVote={vi.fn()} onSkip={vi.fn()} />
+    );
+    await expectBothCardsRendered();
+
+    // 1750ms each: past the left's 1s, short of the right's 3s and of the 6s minimum.
+    await advance(0, 2);
+    await advance(1, 2);
+
+    await vi.waitFor(() => expect(label('left')).toMatch(/^Vote/));
+    expect(label('right')).toMatch(/^Watch 2s more/);
+    expect(voteButton('right')!.disabled).toBe(true);
+  });
+
   test('the same playback leaves the gate shut when the clip is new', async () => {
     renderWithProviders(
       <CrucibleJudgingUI pair={pairOf(1, 2)} minViewSeconds={3} onVote={vi.fn()} onSkip={vi.fn()} />
