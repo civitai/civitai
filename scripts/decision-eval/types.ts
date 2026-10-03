@@ -37,6 +37,8 @@ export type DecisionResult = {
   /** The build the server or vendor reports answered. */
   build: string;
   latencyMs: number;
+  /** The card a self-hosted arm ran on; recorded per prediction because a rolling run can span machines. */
+  hardware?: string;
 };
 
 export type Hosting = 'self-hosted' | 'third-party';
@@ -112,6 +114,7 @@ export type Prediction = {
   abstained?: boolean;
   answers?: NormalizedAnswer[];
   build?: string;
+  hardware?: string;
   latencyMs?: number;
   error?: string;
 };

@@ -205,6 +205,13 @@ describe('decision-eval CLI', () => {
     ).rejects.toThrow('no passing known-answer control recorded');
   });
 
+  it('🔴 a score that fails its controls does not consume the sealed test', async () => {
+    await expect(
+      main(['score', ...nodeArgs(), '--format', 'A', '--split', 'test', '--target', '0.8', ...arm])
+    ).rejects.toThrow('proved nothing');
+    expect(existsSync(join(root(), 'sealed-test.json'))).toBe(false);
+  });
+
   it('🔴 scores the sealed test once, and refuses a second time without a reason', async () => {
     await main(['run', ...nodeArgs(), '--format', 'A', '--split', 'test', ...arm]);
     await main([
@@ -250,6 +257,24 @@ describe('decision-eval CLI', () => {
     const ids = readLines(join(root(), 'manifest.jsonl')).map((i: { itemId: string }) => i.itemId);
     expect(ids).not.toContain('t11');
     expect(ids).toHaveLength(59);
+  });
+
+  it('🔴 refuses a training manifest that contains an excluded item', async () => {
+    const candidates = join(dataDir, 'excluded-candidates.jsonl');
+    writeFileSync(
+      candidates,
+      `${JSON.stringify({
+        itemId: 't11',
+        groupKey: 'g-other',
+        ts: '2026-08-01T00:00:00Z',
+        state: {},
+        partition: 'train',
+      })}
+`
+    );
+    await expect(
+      main(['train-manifest', ...nodeArgs(), '--candidates', candidates])
+    ).rejects.toThrow('are excluded items');
   });
 
   it('🔴 refuses a training manifest that contains an eval item', async () => {

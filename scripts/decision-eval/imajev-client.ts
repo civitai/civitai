@@ -256,6 +256,7 @@ export class ImajevModel implements ImageDecisionModel {
         parseImajevAnswer(q, (answers as Record<string, unknown>)[q.id])
       ),
       build: this.configId,
+      hardware: this.launch.hardware,
       latencyMs,
     };
   }

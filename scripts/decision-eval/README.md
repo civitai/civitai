@@ -38,7 +38,18 @@ The imajev URL must be loopback, a private address or an allowlisted host, and t
 
 ## Exclusions
 
-A moderation node must define `exclude()`, and every item it excludes goes into `excluded.v1.json`. An excluded item leaves the manifest and never returns, even if it was sampled before it was reported. The guarantee is only as good as the node's `exclude()`.
+A moderation node must define both of these:
+
+- **`exclude(raw)`:** checks each row as it is sampled.
+- **`excludedIds()`:** lists every item currently excluded, regardless of when it was sampled. A rolling source never hands an old row back, so only this catches a report that lands after sampling.
+
+The harness folds both into `excluded.v1.json` on every `build` and again before every `run`. An excluded item:
+
+- leaves the manifest and never returns;
+- is never sent to a model;
+- is refused by `train-manifest`.
+
+The guarantee is only as good as the node's two functions.
 
 ## Layout under `<data-dir>/<node-id>/`
 

@@ -227,9 +227,17 @@ describe('runItems', () => {
 
 describe('🔴 the image path cannot touch the filesystem', () => {
   const dir = join(__dirname, '..', 'decision-eval');
-  const FS_IMPORT = /(?:from\s+|import\s*\(\s*|require\s*\(\s*)['"](?:node:)?fs(?:\/promises)?['"]/;
+  const SPECIFIER =
+    /(?:\bfrom\s+|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)['"]([^'"]+)['"]/gm;
+  const FS_LIKE = /^(?:node:)?fs(?:\/|$)|^(?:fs-extra|graceful-fs|mz\/fs)$/;
+  // Builtins the image path may use; anything else (an alias, a package) would be unread code.
+  const ALLOWED_EXTERNAL = new Set(['crypto', 'net', 'path', 'fs']);
 
-  /** Every module the image path loads, by following relative imports from its entry points. */
+  function specifiers(source: string): string[] {
+    return [...source.matchAll(SPECIFIER)].map((m) => m[1]);
+  }
+
+  /** Every module the image path loads, following every relative import spelling from its entry points. */
   function imagePathModules(): Map<string, string> {
     const seen = new Map<string, string>();
     const queue = ['runner.ts', 'imajev-client.ts'];
@@ -238,12 +246,21 @@ describe('🔴 the image path cannot touch the filesystem', () => {
       if (seen.has(file)) continue;
       const source = readFileSync(join(dir, file), 'utf8');
       seen.set(file, source);
-      for (const m of source.matchAll(/from\s+['"]\.\/([\w-]+)['"]/g)) queue.push(`${m[1]}.ts`);
+      for (const spec of specifiers(source)) {
+        if (spec.startsWith('.')) {
+          const local = /^\.\/([\w-]+)(?:\.(?:js|ts))?$/.exec(spec);
+          if (!local)
+            throw new Error(`${file} imports ${spec}, outside this directory's flat layout`);
+          queue.push(`${local[1]}.ts`);
+        } else if (!ALLOWED_EXTERNAL.has(spec.replace(/^node:/, ''))) {
+          throw new Error(`${file} imports ${spec}, which this guard does not read`);
+        }
+      }
     }
     return seen;
   }
 
-  it('imports fs nowhere on the image path except the data-dir check', () => {
+  it('imports fs nowhere on the image path except one read-only line in the data-dir check', () => {
     const modules = imagePathModules();
     expect([...modules.keys()].sort()).toEqual([
       'imajev-client.ts',
@@ -251,21 +268,39 @@ describe('🔴 the image path cannot touch the filesystem', () => {
       'safety.ts',
       'types.ts',
     ]);
-    const importers = [...modules].filter(([, src]) => FS_IMPORT.test(src)).map(([f]) => f);
-    expect(importers).toEqual(['safety.ts']);
+    const fsImports = [...modules].flatMap(([file, src]) =>
+      specifiers(src)
+        .filter((s) => FS_LIKE.test(s))
+        .map(() => file)
+    );
+    expect(fsImports).toEqual(['safety.ts']);
     expect(modules.get('safety.ts')).toMatch(/^import \{ existsSync, realpathSync \} from 'fs';$/m);
   });
 
-  it('the pattern does catch each spelling of an fs import (positive control)', () => {
-    for (const src of [
-      "import { promises } from 'fs';",
-      "import { writeFile } from 'node:fs';",
-      "import * as fsp from 'fs/promises';",
-      "const fs = await import('node:fs/promises');",
-      "const fs = require('fs');",
+  it('positive control: the reader sees every import spelling, and the fs test every fs spelling', () => {
+    expect(
+      specifiers(
+        [
+          "import { a } from './a';",
+          "export * from './b.js';",
+          "const c = await import('./c');",
+          "const d = require('./d.ts');",
+          "import './e';",
+          "import x from '~/server/f';",
+        ].join('\n')
+      )
+    ).toEqual(['./a', './b.js', './c', './d.ts', './e', '~/server/f']);
+    for (const spec of [
+      'fs',
+      'node:fs',
+      'fs/promises',
+      'node:fs/promises',
+      'fs-extra',
+      'graceful-fs',
     ]) {
-      expect(FS_IMPORT.test(src)).toBe(true);
+      expect(FS_LIKE.test(spec)).toBe(true);
     }
+    expect(FS_LIKE.test('fsevents-but-not-fs')).toBe(false);
   });
 });
 

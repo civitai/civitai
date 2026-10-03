@@ -23,6 +23,7 @@ const ROWS: Raw[] = Array.from({ length: 30 }, (_, i) => ({
   reported: i === 4,
 }));
 const IMAGE = solidPng(4, 4, [10, 10, 10]);
+const reportedLater = new Set<string>();
 
 const node: NodeSpec<Raw> = {
   id: 'test.moderation',
@@ -48,6 +49,9 @@ const node: NodeSpec<Raw> = {
   buildState: (raw) => ({ hint: raw.verdict }),
   imageRefs: (raw) => [{ url: `https://images.internal/${raw.gone ? 'gone' : raw.id}` }],
   exclude: (raw) => (raw.reported ? 'csam-reported' : null),
+  async *excludedIds() {
+    yield* reportedLater;
+  },
   async *source() {
     for (const raw of ROWS) {
       yield {
@@ -77,7 +81,8 @@ const stub = vi.fn(async (input: unknown, init?: RequestInit) => {
   const [qid] = Object.keys(request.questions);
   seen.imajevCalls.push(qid);
   const hasImage = form.getAll('image').length > 0;
-  const choice = qid === 'colour' ? (hasImage ? 'red' : 'blue') : request.state.hint;
+  const choice =
+    qid === 'colour' ? (hasImage ? 'red' : 'blue') : qid === 'paid' ? 'paid' : request.state.hint;
   const keys = Object.keys(request.questions[qid].criteria);
   const probabilities = Object.fromEntries(
     keys.map((k) => [k, k === choice ? 0.9 : 0.1 / (keys.length - 1)])
@@ -130,12 +135,12 @@ afterAll(() => {
 });
 
 describe('decision-eval CLI, moderation images', () => {
-  it('🔴 refuses a moderation node that does not define exclude()', async () => {
-    const bare = { ...node, id: 'test.moderation.bare', exclude: undefined };
+  it('🔴 refuses a moderation node that does not define exclude() and excludedIds()', async () => {
+    const bare = { ...node, id: 'test.moderation.bare', excludedIds: undefined };
     registerNode(bare);
     try {
       await expect(main(['build', '--node', bare.id, '--data-dir', dataDir])).rejects.toThrow(
-        'must define exclude()'
+        'must define exclude() and excludedIds()'
       );
     } finally {
       delete (NODES as Record<string, unknown>)[bare.id];
@@ -152,6 +157,12 @@ describe('decision-eval CLI, moderation images', () => {
     expect(ids).not.toContain('m4');
   });
 
+  it('the standalone control accepts a private-range text arm, since its image is synthetic', async () => {
+    seen.imajevCalls.length = 0;
+    await main(['control', ...arm('http://10.0.0.5:8765')]);
+    expect(seen.imajevCalls).toEqual(['paid', 'colour']);
+  });
+
   it('🔴 refuses a bare private-range host before sending anything', async () => {
     seen.imajevCalls.length = 0;
     await expect(main(['run', ...nodeArgs(), ...arm('http://10.0.0.5:8765')])).rejects.toThrow(
@@ -163,16 +174,20 @@ describe('decision-eval CLI, moderation images', () => {
   it('🔴 runs the IMAGE control first, then every item with its image, recording the deleted one as missing', async () => {
     seen.imajevCalls.length = 0;
     seen.imageFetches = 0;
+    // Reported after the build sampled it; the run must re-read exclusions before sending.
+    reportedLater.add('m7');
     await main(['run', ...nodeArgs(), ...arm()]);
     expect(seen.imajevCalls[0]).toBe('colour');
-    expect(seen.imajevCalls.filter((q) => q === 'verdict')).toHaveLength(28);
-    expect(seen.imageFetches).toBe(29);
+    expect(seen.imajevCalls.filter((q) => q === 'verdict')).toHaveLength(27);
+    expect(seen.imageFetches).toBe(28);
 
     const runs = join(dataDir, node.id, 'runs');
     const lines = readFileSync(join(runs, readdirSync(runs)[0], 'predictions.jsonl'), 'utf8')
       .split('\n')
       .filter(Boolean)
       .map((l) => JSON.parse(l));
+    expect(lines.map((p) => p.itemId)).not.toContain('m7');
+    expect(lines.find((p) => p.itemId === 'm5')?.hardware).toBe('test');
     expect(lines.find((p) => p.itemId === 'm3')).toEqual({
       itemId: 'm3',
       runKey: expect.any(String),

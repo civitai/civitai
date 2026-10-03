@@ -28,7 +28,8 @@ describe('assertDataDirOutsideRepo', () => {
 
   it('🔴 refuses a link outside the checkout that points into it', () => {
     const repoRoot = resolve(__dirname, '..', '..');
-    const link = join(mkdtempSync(join(tmpdir(), 'decision-eval-link-')), 'data');
+    const parent = mkdtempSync(join(tmpdir(), 'decision-eval-link-'));
+    const link = join(parent, 'data');
     // Into a subdirectory with no .git of its own, so only the real path reveals the checkout.
     const inside = join(repoRoot, 'scripts');
     symlinkSync(inside, link, 'junction');
@@ -43,6 +44,7 @@ describe('assertDataDirOutsideRepo', () => {
       } catch {
         rmdirSync(link);
       }
+      rmdirSync(parent);
     }
     expect(existsSync(join(repoRoot, '.git'))).toBe(true);
   });

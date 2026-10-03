@@ -105,6 +105,20 @@ function loadExclusions(path: string, nodeId: string): string[] {
   return json === undefined ? [] : parseExclusions(json, nodeId);
 }
 
+/** Folds the node's current exclusions into the ledger, persists it, and returns it. */
+async function refreshExclusions(
+  node: NodeSpec<never>,
+  dataDir: string,
+  newlyExcluded: readonly string[] = []
+): Promise<Set<string>> {
+  const p = paths(dataDir, node.id);
+  const current: string[] = [...newlyExcluded];
+  if (node.excludedIds) for await (const id of node.excludedIds({ dataDir })) current.push(id);
+  const ledger = applyExclusions([], loadExclusions(p.exclusions, node.id), current).excluded;
+  writeFileAtomic(p.exclusions, JSON.stringify(serializeExclusions(node.id, ledger)));
+  return new Set(ledger);
+}
+
 type Args = Record<string, string | boolean | string[] | undefined>;
 
 function str(args: Args, name: string): string {
@@ -137,15 +151,18 @@ async function cmdControl(args: Args) {
   const text = await runKnownAnswerControl(model, TEXT_CONTROL, 'public-text');
   console.log(`text control passed on ${text.build}`);
   if (model.hosting === 'self-hosted') {
-    const image = await runKnownAnswerControl(model, IMAGE_CONTROL, 'moderation-image');
+    // The control image is synthetic, so it is not moderation data.
+    const image = await runKnownAnswerControl(model, IMAGE_CONTROL, 'public-text');
     console.log(`image control passed on ${image.build}`);
   }
 }
 
 async function cmdBuild(args: Args, dataDir: string) {
   const node = getNode(str(args, 'node'));
-  if (node.dataClass === 'moderation-image' && !node.exclude) {
-    throw new Error(`${node.id} handles moderation images and must define exclude()`);
+  if (node.dataClass === 'moderation-image' && (!node.exclude || !node.excludedIds)) {
+    throw new Error(
+      `${node.id} handles moderation images and must define exclude() and excludedIds()`
+    );
   }
   const ctx = { dataDir };
   const now = new Date();
@@ -179,11 +196,8 @@ async function cmdBuild(args: Args, dataDir: string) {
     { dropLaterOverlap: dropOverlap }
   );
   const merged = mergeManifest(existing, isolated.items, { dropConflicts: dropOverlap });
-  const excluded = applyExclusions(
-    merged.items,
-    loadExclusions(p.exclusions, node.id),
-    newlyExcluded
-  );
+  const ledger = await refreshExclusions(node, dataDir, newlyExcluded);
+  const excluded = applyExclusions(merged.items, [...ledger], []);
 
   const goldKeys = new Set<string>();
   const gold: GoldRow[] = [];
@@ -215,7 +229,6 @@ async function cmdBuild(args: Args, dataDir: string) {
       )
     )
   );
-  writeFileAtomic(p.exclusions, JSON.stringify(serializeExclusions(node.id, excluded.excluded)));
   writeJsonl(p.manifest, excluded.items);
   writeJsonl(p.gold, gold);
   console.log(
@@ -248,7 +261,11 @@ async function cmdRun(args: Args, dataDir: string) {
     p.controls,
     `${JSON.stringify({ runKey: key, at: new Date().toISOString(), ...passed })}\n`
   );
-  const excluded = new Set(loadExclusions(p.exclusions, node.id));
+  if (node.dataClass === 'moderation-image' && !node.excludedIds) {
+    throw new Error(`${node.id} handles moderation images and must define excludedIds()`);
+  }
+  // Re-read before sending: an item reported since the last build must not go out today.
+  const excluded = await refreshExclusions(node, dataDir);
   const items = (await readJsonl<ManifestItem>(p.manifest)).filter(
     (i) => i.split === split && !excluded.has(i.itemId)
   );
@@ -290,33 +307,14 @@ async function cmdScore(args: Args, dataDir: string) {
   const priorTestScorings = sealed.filter(
     (e) => e.formatId === formatId && e.specHash === spec
   ).length;
+  const reason = typeof args['reseal-reason'] === 'string' ? args['reseal-reason'] : null;
   if (split === 'test') {
-    const reason = typeof args['reseal-reason'] === 'string' ? args['reseal-reason'] : null;
     const previous = sealed.find((e) => e.runKey === key);
     if (previous && !reason) {
       throw new Error(
         `the sealed test was already scored for ${key} at ${previous.at}; pass --reseal-reason to score it again`
       );
     }
-    // Sealed before anything is written: a crash after scoring still counts as a look.
-    writeFileAtomic(
-      p.sealed,
-      JSON.stringify(
-        [
-          ...sealed,
-          {
-            runKey: key,
-            formatId,
-            specHash: spec,
-            modelConfigId: model.configId,
-            at: new Date().toISOString(),
-            reason,
-          },
-        ],
-        null,
-        2
-      )
-    );
   }
 
   const excluded = new Set(loadExclusions(p.exclusions, node.id));
@@ -342,6 +340,29 @@ async function cmdScore(args: Args, dataDir: string) {
   const flips = verifyPlantedFlips(predictions, resolved.gold, planted, (g) =>
     countCorrect({ ...base, predictions }, g)
   );
+
+  // Sealed once every input has loaded and the controls passed, before any metric is computed:
+  // a crash from here on still counts as a look, an earlier refusal does not.
+  if (split === 'test') {
+    writeFileAtomic(
+      p.sealed,
+      JSON.stringify(
+        [
+          ...sealed,
+          {
+            runKey: key,
+            formatId,
+            specHash: spec,
+            modelConfigId: model.configId,
+            at: new Date().toISOString(),
+            reason,
+          },
+        ],
+        null,
+        2
+      )
+    );
+  }
 
   const input = { ...base, predictions, gold: resolved.gold };
   const fits = fitThresholds(input, targets);
@@ -407,7 +428,7 @@ async function cmdScore(args: Args, dataDir: string) {
       builds: [
         ...new Set(predictions.filter((x) => x.status === 'ok').map((x) => x.build as string)),
       ],
-      hardware: (args.hardware as string) ?? null,
+      hardware: [...new Set(predictions.flatMap((x) => (x.hardware ? [x.hardware] : [])))],
       targets,
       priorTestScorings,
     },
@@ -442,7 +463,7 @@ async function cmdTrainManifest(args: Args, dataDir: string) {
   if (json === undefined) throw new Error(`no eval index at ${p.evalIndex}; run build first`);
   const index = parseEvalIndex(json, node.id);
   const candidates = await readJsonl<TrainCandidate>(str(args, 'candidates'));
-  const out = buildTrainManifest(candidates, index);
+  const out = buildTrainManifest(candidates, index, loadExclusions(p.exclusions, node.id));
   writeJsonl(join(p.root, 'train-manifest.jsonl'), out);
   console.log(
     `train manifest: ${out.length} rows, 0 collisions with ${index.itemIds.length} eval items`

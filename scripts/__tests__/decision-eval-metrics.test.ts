@@ -90,6 +90,7 @@ describe('fitClassThreshold', () => {
   it('🔴 the sorted sweep finds the same threshold as checking every candidate', () => {
     let seed = 7;
     const rand = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
+    let fitted = 0;
     for (let trial = 0; trial < 50; trial++) {
       const items: Scored[] = Array.from({ length: 200 }, () => {
         const confidence = rand() < 0.05 ? null : Math.round(rand() * 20) / 20;
@@ -103,11 +104,15 @@ describe('fitClassThreshold', () => {
         .find((at) => at.wilsonLower !== null && at.wilsonLower >= target);
       const fit = fitClassThreshold(items, 'x', target);
       if (brute) {
+        fitted++;
         expect(fit).toEqual({ status: 'fitted', threshold: brute.threshold, atThreshold: brute });
       } else {
         expect(fit.status).not.toBe('fitted');
       }
     }
+    // Both branches must be exercised, or the comparison proves little.
+    expect(fitted).toBeGreaterThan(10);
+    expect(fitted).toBeLessThan(50);
   });
 
   it('never covers a null-confidence item above threshold 0', () => {

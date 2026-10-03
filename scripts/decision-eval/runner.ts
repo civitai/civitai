@@ -146,6 +146,7 @@ export async function runItems(opts: RunOptions): Promise<RunSummary> {
         abstained: mapped.abstained,
         answers: result.answers,
         build: result.build,
+        ...(result.hardware ? { hardware: result.hardware } : {}),
         latencyMs: Math.round(result.latencyMs),
       });
     } catch (error) {

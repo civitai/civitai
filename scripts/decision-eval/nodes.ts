@@ -46,6 +46,13 @@ export type NodeSpec<Raw = unknown> = {
    * moderation images: CSAM-reported items never enter an eval set.
    */
   exclude?(raw: Raw): string | null;
+  /**
+   * Every item id excluded right now (CSAM-reported, say), queried independently
+   * of the sampling window: a rolling source never re-yields an old row, so
+   * `exclude()` alone cannot catch a report that lands after sampling. Re-read on
+   * every build and run. Required for moderation images.
+   */
+  excludedIds?(ctx: NodeContext): AsyncIterable<string>;
   source(ctx: NodeContext): AsyncIterable<SourceRow<Raw>>;
   gold(ctx: NodeContext): AsyncIterable<GoldRow>;
   /** Defaults to majority vote. Read from ctx so a labeller id can stay in the data dir. */

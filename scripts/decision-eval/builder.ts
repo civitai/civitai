@@ -196,8 +196,16 @@ export type TrainCandidate = Omit<ManifestItem, 'split'> & { partition: TrainPar
  */
 export function buildTrainManifest(
   candidates: readonly TrainCandidate[],
-  index: EvalIndex
+  index: EvalIndex,
+  excludedIds: readonly string[] = []
 ): TrainCandidate[] {
+  const excluded = new Set(excludedIds);
+  const barred = candidates.filter((c) => excluded.has(c.itemId));
+  if (barred.length > 0) {
+    throw new LeakageError(
+      `${barred.length} training row(s) are excluded items (first: item ${barred[0].itemId}); refusing to build`
+    );
+  }
   const ids = new Set(index.itemIds);
   const groups = new Set(index.groupKeys);
   const leaks = candidates.filter((c) => ids.has(c.itemId) || groups.has(c.groupKey));
