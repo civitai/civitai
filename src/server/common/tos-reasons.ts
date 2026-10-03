@@ -26,6 +26,10 @@ export const TOS_REASONS = [
     value: ViolationType.SchoolNsfw,
   },
   {
+    label: 'Minor with Violence',
+    value: ViolationType.MinorViolence,
+  },
+  {
     label: 'Bestiality',
     value: ViolationType.Bestiality,
   },

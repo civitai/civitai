@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ViolationType } from '~/server/common/enums';
-import { tosReasonUserMessage } from '~/server/common/tos-reasons';
+import { TOS_REASONS, tosReasonUserMessage } from '~/server/common/tos-reasons';
 
 describe('tosReasonUserMessage', () => {
   it('names the stricter standard for a school removal instead of asserting a minor', () => {
@@ -9,6 +9,16 @@ describe('tosReasonUserMessage', () => {
       'School settings are moderated more strictly, and this was removed under that stricter standard'
     );
     expect(message.toLowerCase()).not.toContain('minor');
+  });
+
+  it('words a minor-with-violence removal without the mature-context accusation', () => {
+    // The fused "Minor in Mature Context" labels read to the owner as a CSAM accusation; this reason
+    // exists so a weapon near a young-looking character is not filed or worded that way.
+    expect(tosReasonUserMessage(ViolationType.MinorViolence)).toBe('Minor with Violence');
+  });
+
+  it('offers minor-with-violence in the moderator picker', () => {
+    expect(TOS_REASONS.map((r) => r.value)).toContain(ViolationType.MinorViolence);
   });
 
   it('falls back to the label for violations without a user-facing override', () => {
