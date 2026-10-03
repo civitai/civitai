@@ -93,11 +93,14 @@ function escapeRegExp(s: string): string {
  * classified-tickets table stores no requester name, and free-text name
  * detection is not attempted.
  */
+/** A requester id equal to a placeholder word would re-wrap earlier placeholders on the second pass. */
+const PLACEHOLDER_WORDS = new Set(['user', 'email', 'link', 'handle', 'id', 'number']);
+
 export function redact(text: string, known: readonly string[] = []): string {
   let out = text;
   for (const k of known) {
     const id = k.trim();
-    if (id.length < 3) continue;
+    if (id.length < 3 || PLACEHOLDER_WORDS.has(id.toLowerCase())) continue;
     const whole = String.raw`(?<![\w.])` + escapeRegExp(id) + String.raw`(?!\w)`;
     out = out.replace(new RegExp(whole, 'gi'), '[user]');
   }

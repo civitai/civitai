@@ -715,7 +715,7 @@ describe('support.topic redaction window', () => {
     // Several patterns are quadratic on one contiguous run: unwindowed, 32k characters takes
     // several seconds. A spaced run is cheap either way, so it checks only what the window keeps.
     const contiguous = 'a.'.repeat(16_000);
-    const spaced = ('a.'.repeat(3400) + ' ').repeat(5);
+    const spaced = ('a.'.repeat(3400) + ' ').repeat(5) + 'a.'.repeat(1000);
     const started = performance.now();
     buildSupportState(
       raw({ subject: contiguous, firstMessage: contiguous, latestMessages: spaced })
@@ -744,5 +744,18 @@ describe('support.topic final cut', () => {
     const state = buildSupportState(raw({ firstMessage: 'Hello\n' + cjk, latestMessages: cjk }));
     expect(state.first_message.length).toBe(6000);
     expect(state.latest_messages.length).toBe(3000);
+  });
+});
+
+describe('support.topic placeholder stability', () => {
+  it('does not re-wrap placeholders when the requester id is a placeholder word', () => {
+    const state = buildSupportState(
+      raw({
+        username: 'user',
+        requesterEmail: 'link@example.org',
+        firstMessage: 'see https://example.org/x and me',
+      })
+    );
+    expect(state.first_message).toBe('see [link] and me');
   });
 });
