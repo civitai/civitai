@@ -71,7 +71,11 @@ afterEach(() => {
 
 // Rendered the way the crucible page renders it: the viewer's own entries arrive separately and get
 // their own section.
-const renderGrid = (status: CrucibleStatus, as: Viewer | null) => {
+const renderGrid = (
+  status: CrucibleStatus,
+  as: Viewer | null,
+  { list = entries, hasMore = false } = {}
+) => {
   signedIn.current = as;
   act(() =>
     root.render(
@@ -80,8 +84,9 @@ const renderGrid = (status: CrucibleStatus, as: Viewer | null) => {
         // No transitions or portals, so the viewer modal renders synchronously.
         { env: 'test' },
         createElement(CrucibleEntryGrid, {
-          entries,
-          viewerEntries: entries.filter((e) => e.userId === as?.id),
+          entries: list,
+          viewerEntries: list.filter((e) => e.userId === as?.id),
+          hasMore,
           showUserEntries: !!as,
           currentUserId: as?.id,
           onEntryClick,
@@ -157,6 +162,21 @@ describe('CrucibleEntryGrid while judging is blind', () => {
     press('Close entry viewer');
     expect(viewerShows()).toBeNull();
     expect(onEntryClick).not.toHaveBeenCalled();
+  });
+
+  it('keeps showing the same entry when the list changes under the viewer', () => {
+    renderGrid(CrucibleStatus.Active, stranger);
+    clickEntry(2);
+
+    renderGrid(CrucibleStatus.Active, stranger, { list: [entry(3), entry(1), entry(2)] });
+    expect(viewerShows()).toEqual({ media: 'image-2', position: '3 / 3' });
+  });
+
+  it('counts only the loaded entries as a floor while more are unloaded', () => {
+    renderGrid(CrucibleStatus.Active, stranger, { hasMore: true });
+    clickEntry(2);
+
+    expect(viewerShows()).toEqual({ media: 'image-2', position: '2 / 2+' });
   });
 
   it("opens an entrant's own entry in full and everyone else's media-only", () => {

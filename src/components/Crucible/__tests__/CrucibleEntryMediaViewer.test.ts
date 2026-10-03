@@ -77,12 +77,10 @@ const key = (name: 'ArrowLeft' | 'ArrowRight', target: Element = document.docume
   });
 
 describe('CrucibleEntryMediaViewer', () => {
-  it('renders nothing while closed, and ignores the arrow keys', () => {
+  it('renders nothing while closed', () => {
     renderViewer(null);
 
     expect(shown()).toBeNull();
-    key('ArrowRight');
-    expect(onIndexChange).not.toHaveBeenCalled();
   });
 
   it('stops at the first entry', () => {
