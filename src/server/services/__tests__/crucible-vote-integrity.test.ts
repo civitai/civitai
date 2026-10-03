@@ -154,10 +154,10 @@ describe('submitVote — only a pair this judge was served', () => {
   it('claims the served pair for this judge and crucible', async () => {
     await vote(20, 10);
 
-    // The fake below emulates the script, so this pins its compare-before-delete shape.
+    // No test executes Lua, so the script is pinned whole.
     const compareThenDelete =
-      /redis\.call\('GET', KEYS\[1\]\) == ARGV\[1\] then return redis\.call\('DEL', KEYS\[1\]\)/;
-    expect(redisMock.sysRedis.eval).toHaveBeenCalledWith(expect.stringMatching(compareThenDelete), {
+      "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0";
+    expect(redisMock.sysRedis.eval).toHaveBeenCalledWith(compareThenDelete, {
       keys: [expect.stringMatching(new RegExp(`served-pair:1:${JUDGE}$`))],
       arguments: ['10:20'],
     });
