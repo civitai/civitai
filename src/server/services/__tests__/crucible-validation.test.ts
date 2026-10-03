@@ -42,6 +42,7 @@ import {
 
 const createNotification = vi.fn();
 const createPost = vi.fn();
+const afterPostPublish = vi.fn().mockResolvedValue(undefined);
 const fetchImageResources = vi.fn();
 const getUserBuzzAccount = vi.fn();
 const createMultiAccountBuzzTransaction = vi.fn();
@@ -62,6 +63,7 @@ vi.mock('~/server/services/notification.service', async (importOriginal) => ({
 vi.mock('~/server/services/post.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PostService>()),
   createPost,
+  afterPostPublish,
 }));
 
 vi.mock('~/server/redis/caches', async (importOriginal) => ({
@@ -620,13 +622,102 @@ describe('submitEntry — content type', () => {
     expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
   });
 
-  it('rejects an image that is not published', async () => {
+  it('rejects an image that is neither published nor a draft of the caller', async () => {
     dbMock.dbRead.image.count.mockResolvedValue(0);
+    dbMock.dbRead.image.findFirst.mockResolvedValue(null);
 
     await expect(submit()).rejects.toThrow(/Only published images can be entered/);
     expect(dbMock.dbRead.image.count).toHaveBeenCalledWith({
       where: expect.objectContaining({ id: 7, post: { publishedAt: { lte: expect.any(Date) } } }),
     });
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+  });
+
+  const draftOf = (post: { images?: number; metadata?: Record<string, unknown> | null } = {}) => {
+    dbMock.dbRead.image.count.mockResolvedValue(0);
+    dbMock.dbRead.image.findFirst.mockResolvedValue({
+      postId: 300,
+      post: { metadata: post.metadata ?? null, _count: { images: post.images ?? 1 } },
+    });
+    dbMock.dbWrite.post.updateMany.mockResolvedValue({ count: 1 });
+  };
+
+  it("enters the caller's own draft image and publishes its post with the entry", async () => {
+    draftOf();
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+    expect(dbMock.dbRead.image.findFirst).toHaveBeenCalledWith({
+      where: {
+        id: 7,
+        needsReview: null,
+        tosViolation: false,
+        post: { userId: 42, publishedAt: null },
+      },
+      select: {
+        postId: true,
+        post: { select: { metadata: true, _count: { select: { images: true } } } },
+      },
+    });
+    expect(dbMock.dbWrite.post.updateMany).toHaveBeenCalledWith({
+      where: { id: 300, userId: 42, publishedAt: null },
+      data: { publishedAt: expect.any(Date) },
+    });
+    expect(afterPostPublish).toHaveBeenCalledWith({ postId: 300, userId: 42 });
+  });
+
+  it('leaves the draft unpublished when the crucible closed before the entry was saved', async () => {
+    draftOf();
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(0);
+
+    await expect(submit()).rejects.toThrow(/not accepting entries/);
+    expect(dbMock.dbWrite.post.updateMany).not.toHaveBeenCalled();
+    expect(afterPostPublish).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['holds other images, which entering one would publish', { images: 2 }],
+    [
+      'was unpublished with its model, so it keeps its original date',
+      { metadata: { prevPublishedAt: '2026-01-01' } },
+    ],
+  ])('refuses a draft that %s', async (_, post) => {
+    draftOf(post);
+
+    await expect(submit()).rejects.toThrow(/Only published images can be entered/);
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+  });
+
+  it('leaves an already published post alone', async () => {
+    await submit();
+
+    expect(dbMock.dbWrite.post.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('saves no entry when the draft was published or moved meanwhile', async () => {
+    draftOf();
+    dbMock.dbWrite.post.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(submit()).rejects.toThrow(/changed while it was being entered/);
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses an R entry once a required model is held to PG and PG-13', async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.image),
+      nsfwLevel: 1 | 2 | 4,
+      allowedResources: [12],
+    });
+    dbMock.dbRead.image.findUnique.mockResolvedValue({
+      ...imageRow(MediaType.image),
+      nsfwLevel: 4,
+    });
+    fetchImageResources.mockResolvedValue({ 7: { resources: [{ modelVersionId: 12 }] } });
+    dbMock.dbRead.modelVersion.findMany.mockImplementation(
+      async ({ where, select }: { where: { id: { in: number[] } }; select: { model?: unknown } }) =>
+        select.model && where.id.in.includes(12) ? [{ model: { minor: false, sfwOnly: true } }] : []
+    );
+
+    await expect(submit()).rejects.toThrow(/can only be PG or PG-13/);
     expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
   });
 
@@ -1205,13 +1296,9 @@ describe('createCrucibleEntryPost', () => {
     dbMock.dbRead.crucible.findUnique.mockResolvedValue(arena());
   });
 
-  it('creates a published post for the caller, so what they add can be entered', async () => {
+  it('creates an unpublished post for the caller, which goes live only when it is entered', async () => {
     await expect(create()).resolves.toEqual({ id: 900 });
-    expect(createPost).toHaveBeenCalledWith({
-      userId: 42,
-      title: 'Open Arena',
-      publishedAt: expect.any(Date),
-    });
+    expect(createPost).toHaveBeenCalledWith({ userId: 42, title: 'Open Arena' });
   });
 
   it('refuses a crucible that is no longer active', async () => {
@@ -1364,11 +1451,46 @@ describe('checkCrucibleEntryEligibility', () => {
     ]);
   });
 
+  describe('once a required model is held to PG and PG-13', () => {
+    const withRequiredModel = (flagged: boolean) => {
+      dbMock.dbRead.image.findMany.mockResolvedValue([
+        { id: 1, createdAt: after, nsfwLevel: 1 },
+        { id: 5, createdAt: after, nsfwLevel: 4 },
+      ]);
+      fetchImageResources.mockResolvedValue({
+        1: { resources: [{ modelVersionId: 500 }] },
+        5: { resources: [{ modelVersionId: 500 }] },
+      });
+      dbMock.dbRead.modelVersion.findMany.mockImplementation(
+        async ({ where }: { where: { id: { in: number[] } } }) =>
+          where.id.in.includes(500) ? [{ model: { minor: false, sfwOnly: flagged } }] : []
+      );
+    };
+
+    it('refuses the mature images and keeps the PG ones', async () => {
+      withRequiredModel(true);
+
+      await expect(check([1, 5])).resolves.toEqual([
+        { imageId: 1, eligible: true, reasons: [] },
+        { imageId: 5, eligible: false, reasons: ['required-model-level'] },
+      ]);
+    });
+
+    it('leaves mature images alone while no required model is held there', async () => {
+      withRequiredModel(false);
+
+      await expect(check([5])).resolves.toEqual([{ imageId: 5, eligible: true, reasons: [] }]);
+    });
+  });
+
   it("only looks at the caller's own images", async () => {
     await check([1]);
 
     expect(dbMock.dbRead.image.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: { in: [1] }, userId: 42 } })
+      expect.objectContaining({
+        where: { id: { in: [1] }, userId: 42 },
+        select: expect.objectContaining({ nsfwLevel: true }),
+      })
     );
   });
 
