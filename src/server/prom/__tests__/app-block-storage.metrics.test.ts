@@ -214,8 +214,9 @@ describe('re-seeding is non-destructive', () => {
       // They were redundant too: describe-1's seeding case kills any dropped pair first.
       //
       // So this case owns exactly two claims, both of which can fail: the seeder RESOLVES
-      // rather than throwing, and it RESTORES. "The counters are already out" is the order
-      // guard's claim, and it owns it structurally.
+      // rather than throwing, and this case's own `finally` puts the registry back — fixture
+      // hygiene, not seeder behaviour; `seedAppBlockStorageMetrics` never touches `handle.get`.
+      // "The counters are already out" is the order guard's claim, and it owns it structurally.
     } finally {
       handle.get = original;
     }
@@ -240,11 +241,8 @@ describe('re-seeding is non-destructive', () => {
     // spy per counter, each required to precede the read.
     // `{ inc: () => void }` is the minimal shape satisfying `vi.spyOn`'s method constraint; the
     // declared arity is irrelevant because vitest calls through, so the real arguments are
-    // forwarded untouched. (An earlier version of this comment blamed `no-unused-vars` for
-    // rejecting a rest-param type. That is false — substituting `{ inc: (...args: never[]) =>
-    // void }` lints 0 problems and typechecks, and the previous commit shipped exactly that
-    // shape in this position. What tripped the rule was a `Record<T, (...a: never[]) =>
-    // unknown>` generic form that no longer exists.)
+    // forwarded untouched. A rest-param signature would work identically — an earlier comment
+    // here claimed `no-unused-vars` rejects one, which is false.
     const incTarget = (name: string) =>
       client.register.getSingleMetric(name) as unknown as { inc: () => void };
     const opsSpy = vi.spyOn(incTarget(OPS), 'inc');
@@ -287,23 +285,12 @@ describe('the seeded domain matches the service', () => {
   const SERVICE_REL = 'server/services/apps/app-storage.service.ts';
   const SEEDER_REL = 'server/prom/app-block-storage.metrics.ts';
   /**
-   * Files that NAME any of the three counters — by symbol or by wire name — but must never emit
-   * one. Both are documentation: `block-token-access.service.ts` cross-references the ops
-   * counter in a docstring, and `apps.router.ts` carries the operator contract this PR
-   * corrected. They are in the set deliberately, so that a first REAL emit in either has to
-   * move a number.
-   */
-  const DOC_ONLY_RELS = [
-    'server/services/blocks/block-token-access.service.ts',
-    'server/routers/apps.router.ts',
-  ] as const;
-  /**
    * The three seeded counters. Each must appear exactly twice in each writer — the import and
    * the one use — so an alias, a `.call`, or a second raw emit has to add an occurrence.
    *
    * NOT "every counter behind a typed wrapper": only `countStorageOutcome` and
-   * `countQuotaExceeded` exist. `appStorageUserQuotaUntrackedCounter` is emitted RAW (one site),
-   * so for it this is a single-emit-site ledger rather than a wrapper-bypass guard. The
+   * `countQuotaExceeded` exist. `appStorageUserQuotaUntrackedCounter` is emitted RAW at one
+   * site, so for it this is a single-emit-site ledger rather than a wrapper-bypass guard. That
    * distinction is the selection criterion a future author applies to a fourth counter.
    */
   const LEDGERED_WRITERS = [
@@ -312,14 +299,23 @@ describe('the seeded domain matches the service', () => {
     'appStorageUserQuotaUntrackedCounter',
   ] as const;
   /**
-   * Both reach-paths for ALL THREE counters. Keying the walk on the ops counter alone made the
-   * quota ledger unreachable for a NEW FILE: a file importing only
-   * `appStorageQuotaExceededCounter` and emitting a raw `ceiling: 'User'` never entered the
-   * reach set, so none of the per-symbol assertions below ran against it — measured 17/17
-   * green. The occurrence counts closed that hole for a new SITE inside an already-listed
-   * file; this closes it for a new file.
+   * 🔴 PREFIX-RELATIVE declared names, not the `civitai_app_`-prefixed wire names. A third
+   * reach-path exists that names neither the symbol nor the full name: the HMR-safe registrars
+   * in `@civitai/telemetry` return the LIVE counter from their `catch` branch, so
+   * `registerCounterWithLabels({ name: 'block_storage_quota_exceeded_total', … }).inc(…)` is a
+   * writable handle obtained with a declared name alone — measured, that emitted a raw
+   * `ceiling: 'User'` with the suite 17/17 green. These strings are substrings of the full wire
+   * names, so matching on them covers `register.getSingleMetric('civitai_app_block_storage_…')`
+   * too; the set is strictly wider and resolves to the same files.
    */
-  const REACH_KEYS = [...LEDGERED_WRITERS, OPS, QUOTA_EXCEEDED, USER_QUOTA_UNTRACKED] as const;
+  const DECLARED_NAMES = [
+    'block_storage_ops_total',
+    'block_storage_quota_exceeded_total',
+    'block_storage_user_quota_untracked_total',
+  ] as const;
+  const REACH_KEYS = [...LEDGERED_WRITERS, ...DECLARED_NAMES] as const;
+  /** Comments stripped, so this guard is about reachability and never about wording. */
+  const codeOf = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
   const SERVICE = path.join(SRC, 'server/services/apps/app-storage.service.ts');
   const service = () => fs.readFileSync(SERVICE, 'utf8');
 
@@ -384,9 +380,10 @@ describe('the seeded domain matches the service', () => {
     // the same mislabel the resolver anchoring above exists to catch, on the bigger axis.
     const procedures = src.split('\nexport async function ').slice(1);
     // 🔴 Pin the PARTITION, not just its contents. Nothing else asserts the split produced five
-    // chunks, and `export const <name> = async` is this repo's other export idiom — 556 sites
-    // across 72 service files — none in this directory today, which is
-    // exactly why the partition's five-ness needs asserting rather than eyeballing. Convert one procedure to it
+    // chunks, and `export const <name> = async` is this repo's other export idiom, widespread
+    // in `src/server/` though absent from this directory today — which is exactly why the
+    // partition's five-ness needs asserting rather than eyeballing. (No site count is quoted:
+    // every scoping I measured gave a different one, so the figure would rot faster than read.) Convert one procedure to it
     // and two procedures merge into one chunk, at which point the pairing below degrades to
     // exactly the whole-file `toContain` it replaced: measured, an arrow conversion PLUS a
     // get/set label swap went 17/17 green, with no warning of any kind.
@@ -405,35 +402,26 @@ describe('the seeded domain matches the service', () => {
     }
   });
 
-  it('🔴 only four non-test files under src/ NAME these counters, and only two may emit — every case above assumes that scope', () => {
-    // Ledgers files that REACH the handle, not ones that spell `.inc`. A spelled guard is
-    // walkable: `const c = appStorageOpsCounter; c.inc(…)`, `.labels(op, outcome).inc()` (live
-    // production idiom in `flipt-eval-cache.metrics.ts`) and `inc.call(…)` are all first-class
-    // prom-client usage that a `/appStorageOpsCounter\s*\.inc/` pattern misses — measured, all
-    // three evaded it with an untyped `outcome`.
+  it('🔴 exactly two files under src/ can reach these counters in CODE — every case above assumes that scope', () => {
+    // Matched on CODE, not raw text. The raw-text version put two documentation files in the
+    // set — `block-token-access.service.ts` names the symbol in a docstring, `apps.router.ts`
+    // names the metric in the operator contract this PR corrected — so an ordinary reword in
+    // either, touching no code and no counter, failed this case with `expected [ …(3) ] to
+    // deeply equal [ …(4) ]` and named neither the file nor the cause. Code-matching removes
+    // that entirely AND widens the guard: a first real emit in a doc file enters the set and
+    // trips the membership assertion, where the raw version only caught a symbol-named one.
     //
-    // Two reach-paths, so two patterns: the symbol (which any importer must name) and the WIRE
-    // NAME via `register.getSingleMetric(...)`, which needs no import at all — this file itself
-    // obtains a writable handle that way, so "a writer cannot avoid naming the symbol" would be
-    // false as a claim about the program. Fails on growth AND shrink.
+    // Spelling-based predicates were tried and are insufficient on their own:
+    // `/appStorageOpsCounter\s*\.inc/` is walked by `const c = …; c.inc(…)`, by
+    // `.labels(op, outcome).inc()` (a live idiom in `flipt-eval-cache.metrics.ts`) and by
+    // `inc.call(…)`. Hence per-symbol OCCURRENCES below, which an alias or a `.call` must add
+    // to, and which subsume the `.inc` site count that used to sit beside them.
     //
-    // 🔴 Title says "under src/" deliberately: the walk root is `src/`, so a writer added under
-    // `packages/` or `apps/` is invisible here. `packages/civitai-telemetry/src/client.ts` is a
-    // fourth referencing file for exactly that reason — it is the declaration, and benign.
-    // `__tests__` is excluded: a suite that stubs the handle is not a production writer, which
-    // is why this set is three and not the EIGHT a test-inclusive walk reports. (Seven is the
-    // figure under the symbol-only predicate — i.e. before the wire-name pattern three lines
-    // above existed. The eighth is `metrics-endpoint-seeds-app-block-storage.test.ts`, which
-    // matches on the wire name and never names the symbol: measured bySym=7, byWire=3 under the
-    // CURRENT unquoted predicate (2 under the quoted one it replaced — the service names the
-    // metric in a backticked docstring),
-    // either=8. A count that silently belonged to the previous version of its own predicate is
-    // the whole hazard this file exists to catch, so it is spelled out rather than restated.)
-    // `block-token-access.service.ts` names it in a comment only, and that is still the right
-    // membership test, because the claim is about what can reach the counter.
+    // Scope: the walk root is `src/`, so a writer added under `packages/` or `apps/` is
+    // invisible here — `packages/civitai-telemetry/src/client.ts` is the declaration and is
+    // outside it by design. `__tests__` is excluded: a suite that stubs a handle is not a
+    // production writer.
     const reaching: string[] = [];
-    const sites: Record<string, number> = {};
-    const occurrences: Record<string, number> = {};
     const perSymbol: Record<string, Record<string, number>> = {};
     const walk = (dir: string) => {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -441,63 +429,27 @@ describe('the seeded domain matches the service', () => {
         if (entry.isDirectory()) {
           if (entry.name !== 'node_modules' && entry.name !== '__tests__') walk(full);
         } else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) {
-          const text = fs.readFileSync(full, 'utf8');
-          if (REACH_KEYS.some((k) => text.includes(k))) {
+          const code = codeOf(fs.readFileSync(full, 'utf8'));
+          if (REACH_KEYS.some((k) => code.includes(k))) {
             const rel = path.relative(SRC, full);
             reaching.push(rel);
-            sites[rel] = (
-              text.match(/appStorageOpsCounter\s*(?:\.\w+\([^)]*\))?\s*\.inc\b/g) ?? []
-            ).length;
-            // Comments stripped first: these files DISCUSS the handle in their docstrings, so
-            // a raw count reads 4 for the service and would false-fail on a prose edit —
-            // turning a guard about reachability into one about wording.
-            const code = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
             for (const sym of LEDGERED_WRITERS) {
               perSymbol[sym] ??= {};
               perSymbol[sym][rel] = (code.match(new RegExp(`\\b${sym}\\b`, 'g')) ?? []).length;
             }
-            occurrences[rel] = perSymbol.appStorageOpsCounter[rel];
           }
         }
       }
     };
     walk(SRC);
-    expect(reaching.sort()).toEqual([SEEDER_REL, ...DOC_ONLY_RELS, SERVICE_REL].sort());
+    expect(reaching.sort()).toEqual([SEEDER_REL, SERVICE_REL].sort());
 
-    // 🔴 Per-file membership is not enough on its own: the service is permanently on that list
-    // because it holds `countStorageOutcome`'s own `.inc`, so a SECOND raw emit added inside it
-    // — the likeliest place one appears — passes the set check. Measured: it survived.
-    //
-    // 🔴 But a `.inc` SITE count is itself a spelling, and it is walkable by exactly two of the
-    // three evasions this case's own comment enumerates: `const c = appStorageOpsCounter;
-    // c.inc(…)` and `inc.call(appStorageOpsCounter, …)` both leave the count at 1 inside an
-    // already-listed file. So the invariant is asserted on OCCURRENCES of the symbol, which an
-    // alias or a `.call` must add to: two CODE occurrences in each writer (the import and the
-    // one use), and zero in `block-token-access.service.ts` — which is in the membership set on
-    // a docstring mention alone, so a first real emit there would otherwise be uncounted.
-    expect(sites[SERVICE_REL], `${SERVICE_REL} .inc sites`).toBe(1);
-    expect(sites[SEEDER_REL], `${SEEDER_REL} .inc sites`).toBe(1);
-    // 🔴 OCCURRENCES for the comment-only file, not `sites`. An earlier revision asserted
-    // `sites === 0` here — the `.inc`-spelling predicate this case's own comment declares
-    // walkable three lines above — while computing the occurrence count for that file and never
-    // reading it. So the one file whose whole purpose in this ledger is "catch a first real
-    // emit here" caught no alias-shaped emit on any of the three counters: measured, an
-    // `import { appStorageOpsCounter } … const c = appStorageOpsCounter; c.inc(…)` added to it
-    // left 17/17 green, and at the same time a raw quota emit there did too.
-    for (const sym of LEDGERED_WRITERS) {
-      for (const rel of DOC_ONLY_RELS) {
-        expect(perSymbol[sym]?.[rel] ?? 0, `${sym} in ${rel} (documentation only)`).toBe(0);
-      }
-    }
-
-    // 🔴 All THREE counters, not just the ops one. The asymmetry was the gap: the quota counter
-    // is the one with the alerting consumer AND the one whose typo is worse than absence, yet
-    // it had no writer ledger at all — so `countQuotaExceeded` was bypassable at any new site
-    // and invisible on both axes. Measured: a raw
-    // `appStorageQuotaExceededCounter.inc({ app_block_id: appBlockId, ceiling: 'User' })`
-    // replacing one wrapper call left typecheck at 4 errors and the suite 17/17 green, because
-    // `registerCounterWithLabels` parameterises label NAMES only — prom-client types a label
-    // VALUE as `string | number`, so skipping the helper violates no type.
+    // All THREE counters. The asymmetry was the gap: `quota_exceeded` is the counter with the
+    // alerting consumer and the one whose typo is worse than absence, yet it had no ledger at
+    // all — a raw `appStorageQuotaExceededCounter.inc({ …, ceiling: 'User' })` replacing a
+    // wrapper call left typecheck at 4 errors and the suite green, because
+    // `registerCounterWithLabels` parameterises label NAMES only and prom-client types a label
+    // VALUE as `string | number`, so bypassing the helper violates no type.
     for (const sym of LEDGERED_WRITERS) {
       expect(perSymbol[sym]?.[SERVICE_REL], `${sym} in the service`).toBe(2);
       expect(perSymbol[sym]?.[SEEDER_REL], `${sym} in the seeder`).toBe(2);
