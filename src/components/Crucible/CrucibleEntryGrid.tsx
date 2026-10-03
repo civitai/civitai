@@ -12,9 +12,13 @@ import {
 } from '@mantine/core';
 import { IconCrown, IconPhoto, IconPlus, IconTrash, IconUsers } from '@tabler/icons-react';
 import clsx from 'clsx';
-import type { MouseEvent } from 'react';
+import { useState, type MouseEvent } from 'react';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
+import {
+  CrucibleEntryMediaViewer,
+  type CrucibleEntryMedia,
+} from '~/components/Crucible/CrucibleEntryMediaViewer';
 import { CrucibleUserLink } from '~/components/Crucible/CrucibleUserLink';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -70,7 +74,10 @@ export type CrucibleEntryGridProps = {
   emptyMessage?: string;
   /** `openableImageIds` is every entry the viewer may open, in grid order, for paging. */
   onEntryClick?: (entry: CrucibleEntryData, openableImageIds: number[]) => void;
-  /** Until the crucible ends, other people's entries show no creator and don't open. */
+  /**
+   * Until the crucible ends, other people's entries show no creator and open in a media-only
+   * viewer instead of the image detail.
+   */
   status: CrucibleStatus;
   /** Moderators only, while the crucible runs. */
   onRemoveEntry?: (entry: CrucibleEntryData) => void;
@@ -126,9 +133,23 @@ export function CrucibleEntryGrid({
   const displayEntries = separateViewer
     ? rankedEntries.filter((e) => e.userId !== userId)
     : rankedEntries;
-  const openableImageIds = [...userEntries, ...displayEntries]
-    .filter(canSeeDetails)
-    .map((entry) => entry.imageId);
+  const gridOrder = [...userEntries, ...displayEntries];
+  const openableImageIds = gridOrder.filter(canSeeDetails).map((entry) => entry.imageId);
+  const hiddenEntries = gridOrder.filter((entry) => !canSeeDetails(entry));
+  const hiddenMedia: CrucibleEntryMedia[] = hiddenEntries.map(({ id, image }) => ({
+    entryId: id,
+    url: image.url,
+    name: image.name,
+    type: image.type,
+    metadata: image.metadata,
+  }));
+  // Keyed by entry, not position, so a list that changes under the viewer can't swap what it shows.
+  const [viewerEntryId, setViewerEntryId] = useState<number | null>(null);
+  const viewerIndex = hiddenMedia.findIndex(({ entryId }) => entryId === viewerEntryId);
+  const openEntry = (entry: CrucibleEntryData) => {
+    if (canSeeDetails(entry)) onEntryClick?.(entry, openableImageIds);
+    else setViewerEntryId(entry.id);
+  };
   const displayCount =
     totalCount !== undefined
       ? totalCount - (separateViewer ? userEntries.length : 0)
@@ -158,7 +179,7 @@ export function CrucibleEntryGrid({
                 rank={entry.rank}
                 isUserEntry
                 showDetails={canSeeDetails(entry)}
-                onClick={() => onEntryClick?.(entry, openableImageIds)}
+                onClick={() => openEntry(entry)}
                 onRemove={onRemoveEntry && (() => onRemoveEntry(entry))}
               />
             ))}
@@ -189,7 +210,7 @@ export function CrucibleEntryGrid({
                 entry={entry}
                 rank={entry.rank}
                 showDetails={canSeeDetails(entry)}
-                onClick={() => onEntryClick?.(entry, openableImageIds)}
+                onClick={() => openEntry(entry)}
                 onRemove={onRemoveEntry && (() => onRemoveEntry(entry))}
               />
             ))}
@@ -208,6 +229,14 @@ export function CrucibleEntryGrid({
           </InViewLoader>
         )}
       </div>
+
+      <CrucibleEntryMediaViewer
+        media={hiddenMedia}
+        index={viewerIndex === -1 ? null : viewerIndex}
+        hasMore={hasMore}
+        onIndexChange={(index) => setViewerEntryId(hiddenMedia[index]?.entryId ?? null)}
+        onClose={() => setViewerEntryId(null)}
+      />
     </div>
   );
 }
@@ -227,11 +256,8 @@ type EntryCardProps = {
 function EntryCard({ entry, rank, isUserEntry, showDetails, onClick, onRemove }: EntryCardProps) {
   return (
     <Box
-      className={clsx(
-        'group overflow-hidden rounded-lg bg-[#25262b] transition-colors',
-        showDetails && 'cursor-pointer hover:bg-[#2c2e33]'
-      )}
-      onClick={showDetails ? onClick : undefined}
+      className="group cursor-pointer overflow-hidden rounded-lg bg-[#25262b] transition-colors hover:bg-[#2c2e33]"
+      onClick={onClick}
     >
       {/* Image container with 4:5 aspect ratio */}
       <div className="relative" style={{ aspectRatio: '4 / 5' }}>
@@ -242,10 +268,7 @@ function EntryCard({ entry, rank, isUserEntry, showDetails, onClick, onRemove }:
             type={entry.image.type}
             metadata={entry.image.metadata}
             skip={getSkipValue({ type: entry.image.type, metadata: entry.image.metadata })}
-            className={clsx(
-              'transition-transform duration-300',
-              showDetails && 'group-hover:scale-105'
-            )}
+            className="transition-transform duration-300 group-hover:scale-105"
             style={{ width: '100%', height: '100%', objectFit: 'cover' }}
             wrapperProps={{ className: 'size-full' }}
             width={320}
