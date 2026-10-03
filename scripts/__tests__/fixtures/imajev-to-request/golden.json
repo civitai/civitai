@@ -1,0 +1,582 @@
+{
+  "imajevCommit": "ccf586d43d2a580319b6535c893668904d909eb9",
+  "cases": [
+    {
+      "name": "choice with an empty option description",
+      "state": {
+        "subject": "Card declined",
+        "body": "I tried to buy Buzz and the card was refused."
+      },
+      "questions": [
+        {
+          "id": "topic",
+          "type": "choice",
+          "instructions": "What is the customer mainly asking civitai.com support about?",
+          "options": [
+            {
+              "key": "billing_buzz",
+              "description": "Buying Buzz or memberships by card or PayPal"
+            },
+            {
+              "key": "other",
+              "description": "None of the above"
+            },
+            {
+              "key": "cannot_tell",
+              "description": ""
+            }
+          ]
+        }
+      ],
+      "requestId": "case-0",
+      "jev": {
+        "topic": {
+          "type": "choice",
+          "instructions": "What is the customer mainly asking civitai.com support about?",
+          "criteria": {
+            "billing_buzz": "Buying Buzz or memberships by card or PayPal",
+            "other": "None of the above",
+            "cannot_tell": ""
+          }
+        }
+      },
+      "request": {
+        "schema_version": "1.0",
+        "request_id": "case-0",
+        "state": {
+          "subject": "Card declined",
+          "body": "I tried to buy Buzz and the card was refused."
+        },
+        "fields": [
+          {
+            "id": "topic",
+            "question": "What is the customer mainly asking civitai.com support about?",
+            "type": "choice",
+            "options": [
+              {
+                "value": "billing_buzz",
+                "description": "Buying Buzz or memberships by card or PayPal"
+              },
+              {
+                "value": "other",
+                "description": "None of the above"
+              },
+              {
+                "value": "cannot_tell",
+                "description": null
+              }
+            ]
+          }
+        ],
+        "execution": {
+          "mode": "inspect",
+          "allow_external_fallback": false
+        }
+      }
+    },
+    {
+      "name": "noul",
+      "state": {
+        "text": "refund please"
+      },
+      "questions": [
+        {
+          "id": "wants_refund",
+          "type": "noul",
+          "instructions": "Does the customer ask for money back?"
+        }
+      ],
+      "requestId": "case-1",
+      "jev": {
+        "wants_refund": {
+          "type": "noul",
+          "instructions": "Does the customer ask for money back?"
+        }
+      },
+      "request": {
+        "schema_version": "1.0",
+        "request_id": "case-1",
+        "state": {
+          "text": "refund please"
+        },
+        "fields": [
+          {
+            "id": "wants_refund",
+            "question": "Does the customer ask for money back?",
+            "type": "boolean",
+            "yes_description": null,
+            "no_description": null
+          }
+        ],
+        "execution": {
+          "mode": "inspect",
+          "allow_external_fallback": false
+        }
+      }
+    },
+    {
+      "name": "score",
+      "state": {},
+      "questions": [
+        {
+          "id": "urgency",
+          "type": "score",
+          "instructions": "How urgent is it?",
+          "criteria": [
+            "low",
+            "medium",
+            "high"
+          ]
+        }
+      ],
+      "requestId": "case-2",
+      "jev": {
+        "urgency": {
+          "type": "score",
+          "instructions": "How urgent is it?",
+          "criteria": [
+            "low",
+            "medium",
+            "high"
+          ]
+        }
+      },
+      "request": {
+        "schema_version": "1.0",
+        "request_id": "case-2",
+        "state": {},
+        "fields": [
+          {
+            "id": "urgency",
+            "question": "How urgent is it?",
+            "type": "ordinal",
+            "levels": [
+              {
+                "value": 0,
+                "description": "low"
+              },
+              {
+                "value": 1,
+                "description": "medium"
+              },
+              {
+                "value": 2,
+                "description": "high"
+              }
+            ]
+          }
+        ],
+        "execution": {
+          "mode": "inspect",
+          "allow_external_fallback": false
+        }
+      }
+    },
+    {
+      "name": "three questions, non-ASCII state",
+      "state": {
+        "subject": "Zahlung fehlgeschlagen — 返金",
+        "lang": "de"
+      },
+      "questions": [
+        {
+          "id": "topic",
+          "type": "choice",
+          "instructions": "Which topic?",
+          "options": [
+            {
+              "key": "a",
+              "description": "topic a"
+            },
+            {
+              "key": "b",
+              "description": "topic b"
+            }
+          ]
+        },
+        {
+          "id": "angry",
+          "type": "noul",
+          "instructions": "Is the customer angry?"
+        },
+        {
+          "id": "effort",
+          "type": "score",
+          "instructions": "How much effort to resolve?",
+          "criteria": [
+            "none",
+            "some"
+          ]
+        }
+      ],
+      "requestId": "case-3",
+      "jev": {
+        "topic": {
+          "type": "choice",
+          "instructions": "Which topic?",
+          "criteria": {
+            "a": "topic a",
+            "b": "topic b"
+          }
+        },
+        "angry": {
+          "type": "noul",
+          "instructions": "Is the customer angry?"
+        },
+        "effort": {
+          "type": "score",
+          "instructions": "How much effort to resolve?",
+          "criteria": [
+            "none",
+            "some"
+          ]
+        }
+      },
+      "request": {
+        "schema_version": "1.0",
+        "request_id": "case-3",
+        "state": {
+          "subject": "Zahlung fehlgeschlagen — 返金",
+          "lang": "de"
+        },
+        "fields": [
+          {
+            "id": "topic",
+            "question": "Which topic?",
+            "type": "choice",
+            "options": [
+              {
+                "value": "a",
+                "description": "topic a"
+              },
+              {
+                "value": "b",
+                "description": "topic b"
+              }
+            ]
+          },
+          {
+            "id": "angry",
+            "question": "Is the customer angry?",
+            "type": "boolean",
+            "yes_description": null,
+            "no_description": null
+          },
+          {
+            "id": "effort",
+            "question": "How much effort to resolve?",
+            "type": "ordinal",
+            "levels": [
+              {
+                "value": 0,
+                "description": "none"
+              },
+              {
+                "value": 1,
+                "description": "some"
+              }
+            ]
+          }
+        ],
+        "execution": {
+          "mode": "inspect",
+          "allow_external_fallback": false
+        }
+      }
+    },
+    {
+      "name": "error: empty instructions",
+      "state": {},
+      "questions": [
+        {
+          "id": "q",
+          "type": "noul",
+          "instructions": ""
+        }
+      ],
+      "requestId": "case-4",
+      "jev": {
+        "q": {
+          "type": "noul",
+          "instructions": ""
+        }
+      },
+      "request": null
+    },
+    {
+      "name": "error: empty score level",
+      "state": {},
+      "questions": [
+        {
+          "id": "q",
+          "type": "score",
+          "instructions": "Rate it",
+          "criteria": [
+            "low",
+            ""
+          ]
+        }
+      ],
+      "requestId": "case-5",
+      "jev": {
+        "q": {
+          "type": "score",
+          "instructions": "Rate it",
+          "criteria": [
+            "low",
+            ""
+          ]
+        }
+      },
+      "request": null
+    },
+    {
+      "name": "error: reserved option key",
+      "state": {},
+      "questions": [
+        {
+          "id": "q",
+          "type": "choice",
+          "instructions": "Pick",
+          "options": [
+            {
+              "key": "a",
+              "description": "a"
+            },
+            {
+              "key": "__unknown__",
+              "description": "u"
+            }
+          ]
+        }
+      ],
+      "requestId": "case-6",
+      "jev": {
+        "q": {
+          "type": "choice",
+          "instructions": "Pick",
+          "criteria": {
+            "a": "a",
+            "__unknown__": "u"
+          }
+        }
+      },
+      "request": null
+    },
+    {
+      "name": "error: one option",
+      "state": {},
+      "questions": [
+        {
+          "id": "q",
+          "type": "choice",
+          "instructions": "Pick",
+          "options": [
+            {
+              "key": "a",
+              "description": "a"
+            }
+          ]
+        }
+      ],
+      "requestId": "case-7",
+      "jev": {
+        "q": {
+          "type": "choice",
+          "instructions": "Pick",
+          "criteria": {
+            "a": "a"
+          }
+        }
+      },
+      "request": null
+    },
+    {
+      "name": "error: invalid field id",
+      "state": {},
+      "questions": [
+        {
+          "id": "1bad",
+          "type": "noul",
+          "instructions": "Is it?"
+        }
+      ],
+      "requestId": "case-8",
+      "jev": {
+        "1bad": {
+          "type": "noul",
+          "instructions": "Is it?"
+        }
+      },
+      "request": null
+    },
+    {
+      "name": "error: duplicate option keys",
+      "state": {},
+      "questions": [
+        {
+          "id": "q",
+          "type": "choice",
+          "instructions": "Pick",
+          "options": [
+            {
+              "key": "a",
+              "description": "a"
+            },
+            {
+              "key": "a",
+              "description": "again"
+            }
+          ]
+        }
+      ],
+      "requestId": "case-9",
+      "jev": {
+        "q": {
+          "type": "choice",
+          "instructions": "Pick",
+          "criteria": {
+            "a": "again"
+          }
+        }
+      },
+      "request": null
+    },
+    {
+      "name": "error: nine questions",
+      "state": {},
+      "questions": [
+        {
+          "id": "q1",
+          "type": "noul",
+          "instructions": "1?"
+        },
+        {
+          "id": "q2",
+          "type": "noul",
+          "instructions": "2?"
+        },
+        {
+          "id": "q3",
+          "type": "noul",
+          "instructions": "3?"
+        },
+        {
+          "id": "q4",
+          "type": "noul",
+          "instructions": "4?"
+        },
+        {
+          "id": "q5",
+          "type": "noul",
+          "instructions": "5?"
+        },
+        {
+          "id": "q6",
+          "type": "noul",
+          "instructions": "6?"
+        },
+        {
+          "id": "q7",
+          "type": "noul",
+          "instructions": "7?"
+        },
+        {
+          "id": "q8",
+          "type": "noul",
+          "instructions": "8?"
+        },
+        {
+          "id": "q9",
+          "type": "noul",
+          "instructions": "9?"
+        }
+      ],
+      "requestId": "case-10",
+      "jev": {
+        "q1": {
+          "type": "noul",
+          "instructions": "1?"
+        },
+        "q2": {
+          "type": "noul",
+          "instructions": "2?"
+        },
+        "q3": {
+          "type": "noul",
+          "instructions": "3?"
+        },
+        "q4": {
+          "type": "noul",
+          "instructions": "4?"
+        },
+        "q5": {
+          "type": "noul",
+          "instructions": "5?"
+        },
+        "q6": {
+          "type": "noul",
+          "instructions": "6?"
+        },
+        "q7": {
+          "type": "noul",
+          "instructions": "7?"
+        },
+        "q8": {
+          "type": "noul",
+          "instructions": "8?"
+        },
+        "q9": {
+          "type": "noul",
+          "instructions": "9?"
+        }
+      },
+      "request": null
+    },
+    {
+      "name": "error: eleven score levels",
+      "state": {},
+      "questions": [
+        {
+          "id": "q",
+          "type": "score",
+          "instructions": "Rate it",
+          "criteria": [
+            "0",
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9",
+            "10"
+          ]
+        }
+      ],
+      "requestId": "case-11",
+      "jev": {
+        "q": {
+          "type": "score",
+          "instructions": "Rate it",
+          "criteria": [
+            "0",
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9",
+            "10"
+          ]
+        }
+      },
+      "request": null
+    }
+  ]
+}

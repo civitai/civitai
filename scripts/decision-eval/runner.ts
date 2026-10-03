@@ -203,6 +203,11 @@ export function choiceMapper(
   };
 }
 
+/** The inverse of `choiceMapper` where each class is an option key of the same name. */
+export function choiceTargets(questionId: string): NonNullable<FormatSpec['trainTargets']> {
+  return (gold) => ({ [questionId]: gold });
+}
+
 /**
  * A failed call is retried on later runs, but only up to this many failures:
  * the server works one request at a time, so a permanently failing item would

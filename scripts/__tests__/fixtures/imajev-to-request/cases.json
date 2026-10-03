@@ -1,0 +1,126 @@
+[
+  {
+    "name": "choice with an empty option description",
+    "state": { "subject": "Card declined", "body": "I tried to buy Buzz and the card was refused." },
+    "questions": [
+      {
+        "id": "topic",
+        "type": "choice",
+        "instructions": "What is the customer mainly asking civitai.com support about?",
+        "options": [
+          { "key": "billing_buzz", "description": "Buying Buzz or memberships by card or PayPal" },
+          { "key": "other", "description": "None of the above" },
+          { "key": "cannot_tell", "description": "" }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "noul",
+    "state": { "text": "refund please" },
+    "questions": [{ "id": "wants_refund", "type": "noul", "instructions": "Does the customer ask for money back?" }]
+  },
+  {
+    "name": "score",
+    "state": {},
+    "questions": [
+      { "id": "urgency", "type": "score", "instructions": "How urgent is it?", "criteria": ["low", "medium", "high"] }
+    ]
+  },
+  {
+    "name": "three questions, non-ASCII state",
+    "state": { "subject": "Zahlung fehlgeschlagen — 返金", "lang": "de" },
+    "questions": [
+      {
+        "id": "topic",
+        "type": "choice",
+        "instructions": "Which topic?",
+        "options": [
+          { "key": "a", "description": "topic a" },
+          { "key": "b", "description": "topic b" }
+        ]
+      },
+      { "id": "angry", "type": "noul", "instructions": "Is the customer angry?" },
+      { "id": "effort", "type": "score", "instructions": "How much effort to resolve?", "criteria": ["none", "some"] }
+    ]
+  },
+  {
+    "name": "error: empty instructions",
+    "state": {},
+    "questions": [{ "id": "q", "type": "noul", "instructions": "" }]
+  },
+  {
+    "name": "error: empty score level",
+    "state": {},
+    "questions": [{ "id": "q", "type": "score", "instructions": "Rate it", "criteria": ["low", ""] }]
+  },
+  {
+    "name": "error: reserved option key",
+    "state": {},
+    "questions": [
+      {
+        "id": "q",
+        "type": "choice",
+        "instructions": "Pick",
+        "options": [
+          { "key": "a", "description": "a" },
+          { "key": "__unknown__", "description": "u" }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "error: one option",
+    "state": {},
+    "questions": [
+      { "id": "q", "type": "choice", "instructions": "Pick", "options": [{ "key": "a", "description": "a" }] }
+    ]
+  },
+  {
+    "name": "error: invalid field id",
+    "state": {},
+    "questions": [{ "id": "1bad", "type": "noul", "instructions": "Is it?" }]
+  },
+  {
+    "name": "error: duplicate option keys",
+    "state": {},
+    "questions": [
+      {
+        "id": "q",
+        "type": "choice",
+        "instructions": "Pick",
+        "options": [
+          { "key": "a", "description": "a" },
+          { "key": "a", "description": "again" }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "error: nine questions",
+    "state": {},
+    "questions": [
+      { "id": "q1", "type": "noul", "instructions": "1?" },
+      { "id": "q2", "type": "noul", "instructions": "2?" },
+      { "id": "q3", "type": "noul", "instructions": "3?" },
+      { "id": "q4", "type": "noul", "instructions": "4?" },
+      { "id": "q5", "type": "noul", "instructions": "5?" },
+      { "id": "q6", "type": "noul", "instructions": "6?" },
+      { "id": "q7", "type": "noul", "instructions": "7?" },
+      { "id": "q8", "type": "noul", "instructions": "8?" },
+      { "id": "q9", "type": "noul", "instructions": "9?" }
+    ]
+  },
+  {
+    "name": "error: eleven score levels",
+    "state": {},
+    "questions": [
+      {
+        "id": "q",
+        "type": "score",
+        "instructions": "Rate it",
+        "criteria": ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
+      }
+    ]
+  }
+]

@@ -97,10 +97,21 @@ export type MappedAnswer = {
   abstained: boolean;
 };
 
+/**
+ * What one question should answer in a training row: a choice option key, a noul boolean, a score
+ * level index, or null for "unknown".
+ */
+export type TrainTarget = string | boolean | number | null;
+
 export type FormatSpec = {
   /** `fromDataDir` loads the questions at run time from a JSON file under --data-dir. */
   questions: readonly DecisionQuestion[] | { fromDataDir: string };
   mapAnswer(answers: readonly NormalizedAnswer[]): MappedAnswer;
+  /**
+   * The inverse of `mapAnswer` for training: per question id, the answer that gold class should
+   * produce, or null when this format cannot express that class. A format without it cannot train.
+   */
+  trainTargets?(gold: string): Record<string, TrainTarget> | null;
 };
 
 /** `refused`: the state failed the PII check, so it was never sent. */

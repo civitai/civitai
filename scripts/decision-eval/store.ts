@@ -32,7 +32,7 @@ export async function readJsonl<T>(path: string): Promise<T[]> {
 }
 
 /** Write-then-rename, so a crash never leaves a half-written file. */
-export function writeFileAtomic(path: string, contents: string): void {
+export function writeFileAtomic(path: string, contents: string | Uint8Array): void {
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.tmp-${process.pid}`;
   writeFileSync(tmp, contents);
