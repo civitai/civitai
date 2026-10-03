@@ -100,7 +100,7 @@ popularity baseline has to control for. The policy:
 | label agrees on role only | promote (2) |
 | label agrees on style family only | promote (1) |
 | no row, or `confidence` below the floor | neutral (0) — seed order preserved |
-| confident label agreeing on neither axis, whose role is an actual role | demote (−1) |
+| confident label agreeing on neither axis, whose role this build recognises AS AN ACTUAL ROLE | demote (−1) |
 
 Nothing is FILTERED: an absent label never disqualifies a candidate, and the
 ordering is a permutation of the pool. An unlabeled candidate sits **above** a
@@ -127,7 +127,7 @@ data needed, just the two expressions. MEASURED: at that narrower end, a
 browsing-level cells, the worst consuming 173 documents. But "nothing is dropped"
 would be the wrong way to read the table above.
 
-Three details that are decisions, not oversights.
+Four details that are decisions, not oversights.
 
 **`other` is not agreement.** A `styleFamily` of `other` means "none of the above"
 on both sides, so `other` ↔ `other` does not count. Consequence worth knowing: for
@@ -150,13 +150,14 @@ so superseded rows stay readable. (`specHash` holds the LABEL spec's hash, which
 lives in `scripts/label-resource-insights.ts`, so comparing it would also make a
 server service depend on a CLI script.) What protects a superseded row from doing
 harm is the demotion rule instead: **demotion turns on the `role` alone, and only on
-a role this build recognises.** A taxonomy edit supersedes every row's spec *and*
-makes its strings unmatchable in one move, so demoting on a value nobody can
-interpret would bury the whole labeled population beneath the unlabeled majority.
-Note what that does and does not say: an unrecognised `styleFamily` beside a
-recognised *disagreeing* role still demotes, because the role is the evidence. The
-residual, resolved either by the manual `stale` flip or by re-running the labeling
-pass: a spec that keeps an option's spelling and changes its meaning.
+a role this build recognises AS AN ACTUAL ROLE.** A taxonomy edit supersedes every
+row's spec *and* makes its strings unmatchable in one move, so demoting on a value
+nobody can interpret would bury the whole labeled population beneath the unlabeled
+majority. Note what that does and does not say: an unrecognised `styleFamily` beside
+a recognised *disagreeing* role still demotes, because the role is the evidence; and
+the second half of the rule is the `none` decision below, not a restatement of the
+first. The residual, resolved either by the manual `stale` flip or by re-running the
+labeling pass: a spec that keeps an option's spelling and changes its meaning.
 
 **`none` is not a disagreement either.** The fourth decision, and the one that is
 easiest to get wrong, because `none` IS in the role option list — so a plain

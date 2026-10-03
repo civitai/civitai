@@ -515,7 +515,7 @@ describe('findResourceIntentCandidates — the labels change the response', () =
   // once, which cannot attribute the behaviour: `styleFamily ? -1 : 0` and
   // `role && styleFamily ? -1 : 0` both survived it, and the second of those is a
   // DIFFERENT rule from the one the code implements.
-  it('🔴 demotion turns on the role alone, and only on a recognised, ACTUAL role', async () => {
+  it('🔴 demotion turns on the role alone, and only on a recognised AND ACTUAL role', async () => {
     searchWithSignal.mockResolvedValue({ hits: seed.slice(0, 2), estimatedTotalHits: 2 });
     const confident = { confidence: 0.84, qualityScore: 0.76 };
 
@@ -569,6 +569,31 @@ describe('findResourceIntentCandidates — the labels change the response', () =
     expect((await findResourceIntentCandidates(criteria, opts)).map((e) => e.versionId)).toEqual([
       10701, 20802,
     ]);
+  });
+
+  // 🔴 The other half of the `none` decision, and the half the natural refactor
+  // deletes. "A `none` row is neutral" reads like an early `if (role === 'none')
+  // return 0` placed BEFORE the agreement is computed — which is tidier than the
+  // trailing conjunct the code uses, silently drops this promotion, and keeps every
+  // other test in the segment green, because no other fixture pairs `role: 'none'`
+  // with a MATCHING style family. The style question has its own option list with no
+  // `none` in it, so a style family here is a positive answer to a different
+  // question, not a second decline.
+  it('🔴 a `none` role still promotes when its STYLE family agrees', async () => {
+    searchWithSignal.mockResolvedValue({ hits: seed, estimatedTotalHits: 3 });
+    dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([
+      insightRow(30903, {
+        role: 'none',
+        styleFamily: 'anime_manga',
+        confidence: 0.64,
+        qualityScore: 0.19,
+      }),
+    ]);
+
+    const entries = await findResourceIntentCandidates(criteria, opts);
+
+    // 30903 is seeded LAST, so leading is only explicable by the style promotion.
+    expect(entries.map((e) => e.versionId)).toEqual([30903, 10701, 20802]);
   });
 
   // 🔴 `quality: insight && bucket !== 0 ? …` applies inside BOTH labeled buckets.

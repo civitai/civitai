@@ -316,14 +316,19 @@ async function searchShortlistModels(
     // is the hardest point, since the multi-version head is consumed first and the
     // margin narrows with depth (2.1x at cap 50 against 1.47x at 255).
     //
-    // Separately, and by arithmetic rather than measurement: this page is identical
-    // to the one BEFORE this feature for caps 1-127, strictly narrower for 128-255,
-    // and never wider. Stated against that baseline specifically, because this branch
-    // held three page widths in turn and the claim is only exact against the first. The 2x that used to sit here added zero pool members in any cell and
-    // cost 1.6-2.6x the payload and its blocking JSON.parse, plus roughly double the
-    // index's own processing time, on a Meilisearch shared with the resource picker;
-    // at the maximum cap this form is also ~1.8x cheaper than the 500-document page
-    // the pre-change arithmetic asked for there.
+    // Separately, and by ARITHMETIC rather than measurement — no data needed, just
+    // the two expressions: this page is identical to the one BEFORE this feature for
+    // caps 1-127, strictly narrower for 128-255, and never wider. Stated against
+    // that baseline specifically, because this branch held three page widths in turn
+    // and the claim is only exact against the first.
+    //
+    // And back to MEASUREMENT for what the removed 2x cost: it added zero pool
+    // members in any cell, and cost 1.6-2.6x the payload and its blocking
+    // JSON.parse plus roughly double the index's own processing time, on a
+    // Meilisearch shared with the resource picker. At the maximum cap this form is
+    // also ~1.8x cheaper than the 500-document page the old arithmetic asked for
+    // there — a 1.96x document reduction, so that saving is measured too, not a
+    // ratio of the two expressions.
     limit: poolCap,
   };
   try {
