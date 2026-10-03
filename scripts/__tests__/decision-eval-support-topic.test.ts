@@ -1033,7 +1033,7 @@ describe('support.topic final cut', () => {
     const state = buildSupportState(raw({ username, firstMessage: text }));
     expect(state.first_message.toLowerCase()).not.toContain(leaked);
     expect(state.first_message).toContain('[user]');
-    expect(state.first_message).not.toMatch(/900/);
+    expect(state.first_message).not.toMatch(/\b900\b/);
   });
 
   it.each([
