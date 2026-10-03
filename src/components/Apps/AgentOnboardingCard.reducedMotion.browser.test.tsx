@@ -90,10 +90,14 @@ describe('AgentOnboardingCard — reduced motion', () => {
     expect(writeText()).toHaveBeenCalledWith(AGENT_BUILD_PROMPT);
     expect(onCopy).toHaveBeenCalledTimes(1);
 
-    // And the body still is not one.
+    // And the body still is not one. Both readers, because `onCopy` is the funnel event and
+    // `writeText` is the clipboard — a body click that fired only the former would be a
+    // phantom funnel row this assertion would otherwise miss.
     writeText().mockClear();
+    onCopy.mockClear();
     await page.getByTestId(AGENT_PROMPT_TESTID).click();
     expect(writeText()).not.toHaveBeenCalled();
+    expect(onCopy).not.toHaveBeenCalled();
   });
 
   test('🔴 and by keyboard, still exactly once per press', async () => {

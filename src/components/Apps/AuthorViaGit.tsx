@@ -58,14 +58,16 @@ type GetMyAppRepoResult = RepoAvailable | RepoNotYet;
  * fired once by bubbling; it still fires once).
  *
  * 🔴 ONE DELIBERATE BEHAVIOUR CHANGE: `bodyClickCopies={false}`. Clicking the BLOCK no longer
- * copies — only the control does. Both bodies here are multi-line text a reader plausibly
- * selects a fragment of, and the clone URL carries `wordBreak: 'break-all'` on a string that
- * embeds a LIVE PUSH TOKEN. With a body-wide click target, the `click` that ends a
- * drag-select put that credential on the system clipboard from a gesture that was not a copy,
- * and destroyed the selection on the way (the body re-renders to "Copied"). Guarding it was
- * tried and abandoned — see `CopyAffordance`'s `bodyClickCopies` note for the three
- * timing-dependent failure modes that produced. The control is a real `<button>`, reachable
- * by Tab, and now says which of the two things it copies.
+ * copies — only the control does. Both bodies are multi-line text a reader plausibly selects
+ * a fragment of, and with a body-wide click target the `click` ending that drag-select
+ * replaced the selection with the whole value and re-rendered the body to "Copied".
+ *
+ * ⚠️ NOT AN EXFILTRATION FIX, AND WORTH NOT OVERSTATING: the value goes to the user's OWN
+ * clipboard, and the token is masked on screen either way. The harm is unexpected clipboard
+ * contents and a destroyed selection — on a block whose string happens to be a credential,
+ * which is why it is this body rather than a command one-liner. Guarding it instead was tried
+ * and abandoned; see `CopyAffordance`'s `bodyClickCopies` note. The control is a real
+ * `<button>`, reachable by Tab, and now says which of the two things it copies.
  */
 function CopyableCode({
   value,

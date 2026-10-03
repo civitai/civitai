@@ -167,25 +167,14 @@ const loadMotion = () => import('~/utils/lazy-motion').then((res) => res.default
  * behaviour. Found by the test review, which measured a 50ms retry gap as the only thing
  * separating three such assertions from vacuous.
  *
- * ⚠️ TWO ACCEPTED COSTS OF THE TWO-TREE STRUCTURE, recorded rather than discovered later.
- * (a) The element type at the root and at each row CHANGES between the two trees, so React
- * unmounts and remounts the card's ~40 nodes one commit after hydration; it is cheap, but it
- * discards a text selection or a `copied` state made in that window. (b) The caret is INLINE
- * content that exists only in the animated tree, so inserting it can push the prompt's last
- * word to a new line — a conditional post-hydration reflow of order 0.01 CLS at roughly the
- * share of viewport widths where the last line ends within ~0.55em of the wrap point. Both
- * are accepted, but the stated reason for (b) has been corrected: it used to say that
- * reserving the caret's box would put "a second, invisible spelling of is-this-animated" into
- * the DOM, and that argument is refuted by this file's own ring, which does exactly that
- * shape well — one node in both trees, a class deciding the motion.
- *
- * The real reason is that the ring's shape works there because `animation-name` is a CRISP,
- * TIME-INVARIANT state a test can read, and the caret's is not: a blink is `opacity`
- * oscillating through 0, so an assertion on a both-trees caret's opacity is either flaky or
- * absent. Reserving the box would buy ~0.009 CLS — an order of magnitude under the 0.1
- * "good" threshold — at the cost of the only crisp guard the caret has (present in the
- * animated tree, absent in the static one). Revisit if the caret ever stops blinking, or if
- * CLS on this route is ever measured as a problem rather than estimated as one.
+ * ⚠️ TWO ACCEPTED COSTS OF THE TWO-TREE STRUCTURE. (a) The element type at the root and at
+ * each row changes between the trees, so React remounts the card's ~40 nodes one commit after
+ * hydration — sub-millisecond, and the window is a single tick. (b) The caret is inline
+ * content present only in the animated tree, so it can push the prompt's last word onto a new
+ * line: ~0.009 CLS, an order of magnitude under the 0.1 threshold. Reserving its box was
+ * weighed and declined — the ring's both-trees shape works because `animation-name` is
+ * time-invariant, and a blink's opacity is not, so it would buy the box at the cost of the
+ * only crisp guard the caret has.
  */
 export function AgentOnboardingCard({
   onCopy,
@@ -339,10 +328,10 @@ function Reveal({
 /**
  * The copyable prompt.
  *
- * 🔴 THE WHOLE PANEL IS THE CLICK TARGET AND THE ICON IS THE KEYBOARD TARGET, which is
- * `CopyAffordance`'s shape rather than anything new here — including the
- * `stopPropagation()` that stops an icon press firing `onCopy` twice. The icon is a real
- * `<button>` (Mantine `ActionIcon`), so Tab reaches it and Enter/Space operate it.
+ * 🔴 THE CONTROL IS THE ONLY COPY TARGET — the prose body is deliberately not clickable
+ * (`bodyClickCopies={false}`), because a body-wide click target fights text selection. The
+ * control is a real `<button>` (Mantine `ActionIcon`), so Tab reaches it and Enter/Space
+ * operate it.
  */
 function PromptPanel({
   motionOn,

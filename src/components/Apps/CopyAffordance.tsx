@@ -15,32 +15,11 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
  * "$ Read https://…" with its words broken mid-token, and `CopyableCommand`'s `aria-label`
  * is literally `Copy command: …`.
  *
- * ⚠️ AND THE COUNT WAS ALREADY HIGHER THAN THAT STORY SAYS — TWICE OVER, WHICH IS THE HALF
- * WORTH KEEPING. This header read "SO THERE IS NOT A FOURTH COPY" until a review found a
- * fifth: `AuthorViaGit.tsx` carried a private `CopyableCode` byte-identical to
- * `CopyableCommand`'s pre-extraction body — the same `Box`, the same `Code` props, the same
- * absolutely-positioned icon at the same 8px offset — and it had ALREADY DRIFTED in exactly
- * the way `CopyableCommand`'s header warns about: `aria-label="Copy"`, rendered twice on one
- * panel, so a screen-reader user heard "Copy" and "Copy" with nothing to tell the clone URL
- * from the setup steps. It is converted here, which is what fixed that.
- *
- * 🔴 AND THEN THE CORRECTION WAS WRONG IN THE SAME WAY. "A fifth" was derived over
- * `src/components/Apps/` alone; the same shell also sits in `Account/ApiKeyModal.tsx`,
- * `Account/OAuthAppsCard.tsx` (three times) and `Collections/CollectionEditModal.tsx` —
- * several of them secret-bearing with NO accessible name at all, which is worse than the
- * bare "Copy" this change fixed. **So no total is stated here.** The scope this component
- * claims, and the only scope `__tests__/copyAffordanceLedger.test.ts` enforces, is
- * `src/components/Apps/`. Consolidating the rest is real work for another change, and the
- * lesson is the one this paragraph has now demonstrated against itself twice: a count in a
- * comment is a thing to re-derive, never to trust — including this one.
- *
- * So this is the seam instead of a `variant` prop on `CopyableCommand`: a variant would
- * make one component render two structurally unrelated shells (a `Code` block and a prose
- * panel) and carry two accessible-name schemes, which is a component doing two jobs rather
- * than a shared mechanism. What is genuinely common is exactly the four things
- * `CopyableCommand`'s header named as the drift it prevents — the `CopyButton` wiring, the
- * `aria-label`, the copied-state feedback, and the `stopPropagation()` on the inner icon —
- * and those are what live here. The BODY is a render prop; both consumers supply their own.
+ * ⚠️ NO TOTAL IS STATED HERE, DELIBERATELY. Two successive comments in this family each
+ * claimed a count ("not a fourth copy", then "a fifth") and each was wrong — the same shell
+ * also sits outside this directory, in `Account/ApiKeyModal.tsx`, `Account/OAuthAppsCard.tsx`
+ * and `Collections/CollectionEditModal.tsx`. The scope this component claims, and the only
+ * scope `__tests__/copyAffordanceLedger.test.ts` enforces, is `src/components/Apps/`.
  *
  * `onCopy` is OPTIONAL and defaults to nothing. That is what keeps `GetStartedBody`,
  * `CliSubmitCta` and {@link AgentOnboardingCard} the "pure presentational (props-only, no
@@ -147,12 +126,12 @@ export function CopyAffordance({
               variant="transparent"
               color="gray"
               aria-label={label}
-              // 🔴 STOPS PROPAGATION, WHICH THE THREE PRIVATE COPIES DID NOT. The icon sits
-              // INSIDE the Box that also handles the click, so a press on the icon ran
-              // `copy()` twice. Harmless while copying was the only effect — the second write
-              // is idempotent — but `onCopy` is not: it would post two funnel events for one
-              // press, and only for the icon, so the funnel would over-count by however many
-              // users aim at the button rather than the block.
+              // 🔴 STOPS PROPAGATION — AND ONLY MATTERS WHEN `bodyClickCopies` IS TRUE, which
+              // is the default and therefore the case to protect. The icon sits INSIDE the Box
+              // that also handles the click, so a press on it ran `copy()` twice: harmless for
+              // the clipboard (idempotent), not for `onCopy`, which would post two funnel
+              // events for one press and only for the icon. Kept unconditionally because the
+              // alternative is a second branch that is right only while the prop is false.
               onClick={(e: MouseEvent) => {
                 e.stopPropagation();
                 handleCopy();
@@ -176,14 +155,12 @@ export function CopyAffordance({
 /**
  * The icon's inset from the body's right edge, and the clearance a body must leave for it.
  *
- * 🔴 ONE COUPLING, ONE PLACE. These two numbers are not independent: the control is
- * absolutely positioned `COPY_ICON_INSET` from the right, is 16px wide, and a body that does
- * not reserve at least their sum plus breathing room renders its own text UNDER the icon.
- * That has already happened once in this component family — the agent prompt's panel had a
- * Tailwind `p-3` shorthand resetting the `padding-right` its stylesheet set, and the
- * clipboard glyph landed on the first line's last word. Before this, the pair was spelled by
- * hand in `CopyableCommand.tsx` and `AuthorViaGit.tsx` (`paddingRight: 36` beside
- * `right={8}`), so the two halves of one geometric fact lived in three files.
+ * 🔴 ONE COUPLING — FOR THE TWO `Code`-BLOCK BODIES. The control sits `COPY_ICON_INSET` from
+ * the right and is 16px wide, so a body that reserves less than their sum plus breathing room
+ * renders its text UNDER the icon. That happened once already in this family. `CopyableCommand`
+ * and `AuthorViaGit` share these; {@link AgentOnboardingCard}'s prose panel sets its own
+ * clearance in its stylesheet (its control sits top-right, not right-middle), so it is a
+ * THIRD spelling of the same idea — named here rather than implied to be covered.
  */
 export const COPY_ICON_INSET = 8;
 /** Right padding a `Code`-style body must carry so the control never overlaps its text. */

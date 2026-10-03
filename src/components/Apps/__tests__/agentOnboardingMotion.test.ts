@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   CARET_BLINK_TRANSITION,
-  GLYPH_POP_ANIMATE,
   REVEAL_ANIMATE,
   REVEAL_INITIAL,
   STAGGER_SECONDS,
@@ -61,11 +60,6 @@ describe('🔴 the stagger is the DELAY, not just the constant', () => {
 });
 
 describe('the decorative animations', () => {
-  it('the glyph pop returns to its own scale, so it leaves no residual transform', () => {
-    expect(GLYPH_POP_ANIMATE.scale[0]).toBe(1);
-    expect(GLYPH_POP_ANIMATE.scale[GLYPH_POP_ANIMATE.scale.length - 1]).toBe(1);
-  });
-
   it('🔴 the only INFINITE animation on `motion` is the one framer can accelerate', () => {
     // The caret animates `opacity`, which is literally in framer's `acceleratedValues`
     // ({opacity, clipPath, filter, transform}), and `repeatType: 'reverse'` clears the gate

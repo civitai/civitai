@@ -1,23 +1,12 @@
 /**
- * `AgentOnboardingCard`'s motion VALUES, extracted so they can be pinned in the `unit` tier.
+ * `AgentOnboardingCard`'s motion VALUES, extracted so they can be pinned in the `unit` tier —
+ * the same move, for the same reason, as `./appsBuildState`.
  *
- * 🔴 THIS FILE EXISTS BECAUSE THE TWO CLAIMS BELOW WERE DOCUMENTATION ONLY. Both survived a
- * mutation sweep with every test green:
- *   - flattening the stagger (`delay: 0` instead of `index * STAGGER_SECONDS`) printed
- *     nothing, because the suite asserted `STAGGER_SECONDS === 0.04` — an exported literal
- *     against itself — and separately that the row wrappers exist. Neither binds the constant
- *     to the delay it is multiplied into.
- *   - swapping the entrance to `initial={{ opacity: 0 }}` printed nothing, and that one is
- *     the component's own 🔴 correctness claim: `m` applies `initial` as a STATIC style, so
- *     an opacity entrance ships `opacity: 0` in the HTML a crawler reads and leaves the card
- *     invisible until the lazy `motion` chunk resolves — or forever if hydration never
- *     completes — on the one deliberately-indexable state of `/apps/build`.
- *
- * Same move, same reason as `./appsBuildState`: a value a browser-tier test asserts is a
- * value no CI check reads, because `.github/workflows/lint.yml` runs no `component` job. A
- * plain `.ts` module with no React and no stylesheet import is collectable by the `unit`
- * project (`src/**\/*.test.ts`), which CI does run. Keep this file free of both, or the
- * guards go back to being prose.
+ * Both claims below were documentation only, and a mutation sweep proved it: flattening the
+ * stagger to `delay: 0`, and swapping the entrance to an `opacity` fade, EACH left the whole
+ * browser suite green. CI runs no `component` job, so a value only a browser test asserts is
+ * a value no check reads. Keep this file free of React and of stylesheet imports, or the
+ * guards in `__tests__/agentOnboardingMotion.test.ts` go back to being prose.
  */
 
 /** ~40ms between each row's entrance, in `motion`'s seconds. */
