@@ -28,6 +28,7 @@ import {
 } from '~/server/services/ai/collection-review.service';
 import type { AiReviewDecision } from '~/server/services/ai/collection-review.service';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
+import { bustCachesForPosts } from '~/server/services/post.service';
 import { isDefined } from '~/utils/type-guards';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { getEdgeUrl } from '~/client-utils/edge-url';
@@ -267,6 +268,16 @@ export function resolveAutomatedRejectionReason({
     : undefined;
 }
 
+function logFlagError(collectionId: number, error: string, imageIds?: number[]) {
+  logToAxiom({
+    type: 'job-error',
+    name: 'collection-ai-review',
+    collectionId,
+    imageIds,
+    error,
+  }).catch(() => undefined);
+}
+
 // Only fills an empty slot, so an image already held in another queue stays there and nothing a
 // moderator set is cleared. Resolves false only when the write itself failed.
 export async function flagForMinorReview({
@@ -278,34 +289,64 @@ export async function flagForMinorReview({
 }) {
   if (!imageIds.length) return true;
 
-  let flagged: { id: number }[];
+  let flagged: { id: number; postId: number | null }[];
   try {
-    flagged = await dbWrite.$queryRaw<{ id: number }[]>`
+    flagged = await dbWrite.$queryRaw<{ id: number; postId: number | null }[]>`
       UPDATE "Image"
       SET "needsReview" = 'minor', "updatedAt" = now()
       WHERE id IN (${Prisma.join(imageIds)})
         AND "needsReview" IS NULL
         AND ingestion = 'Scanned'
-      RETURNING id
+      RETURNING id, "postId"
     `;
   } catch (error) {
-    logToAxiom({
-      type: 'job-error',
-      name: 'collection-ai-review',
+    logFlagError(
       collectionId,
-      error: `Failed to flag ${imageIds.length} images for minor review: ${
-        (error as Error).message
-      }`,
-    }).catch(() => undefined);
+      `Failed to flag images for minor review: ${(error as Error).message}`,
+      imageIds
+    );
     return false;
   }
 
-  if (flagged.length)
-    await queueImageSearchIndexUpdate({
-      ids: flagged.map((row) => row.id),
+  // Already held in another queue, or not scanned: a person still has to clear the image, but not
+  // through the minor queue, so the escalation is otherwise recorded only in ClickHouse.
+  const flaggedIds = new Set(flagged.map((row) => row.id));
+  const unrouted = imageIds.filter((id) => !flaggedIds.has(id));
+  if (unrouted.length)
+    logFlagError(collectionId, 'Minor escalation not routed to the minor queue', unrouted);
+
+  if (!flagged.length) return true;
+
+  const postIds = [...new Set(flagged.map((row) => row.postId).filter(isDefined))];
+  await Promise.all([
+    queueImageSearchIndexUpdate({
+      ids: [...flaggedIds],
       action: SearchIndexUpdateQueueAction.Update,
-    }).catch(() => undefined);
+    }).catch((error) =>
+      logFlagError(collectionId, `Search index update failed: ${(error as Error).message}`)
+    ),
+    bustCachesForPosts(postIds).catch((error) =>
+      logFlagError(collectionId, `Post cache bust failed: ${(error as Error).message}`)
+    ),
+  ]);
   return true;
+}
+
+// A rejected item can be deleted within the hour, taking the only trace of the escalation with it,
+// so an item whose flag did not land is left for the next run to retry. Out of attempts, it is
+// stamped rather than decided: never accepted on the strength of a later, different verdict.
+async function holdUnflagged(reviewed: Outcome[], minor: Outcome[]) {
+  const retry = new Set<number>();
+  const stamp = new Set<number>();
+  for (const { collectionItemId } of minor) {
+    const attempts = await recordFailedAttempt(collectionItemId);
+    (attempts < MAX_REVIEW_ATTEMPTS ? retry : stamp).add(collectionItemId);
+  }
+  return reviewed
+    .filter((o) => !retry.has(o.collectionItemId))
+    .map((o) =>
+      stamp.has(o.collectionItemId) ? { ...o, action: 'stamp' as const, message: undefined } : o
+    );
 }
 
 // Stamps before writing status: a status write can throw, and an unstamped item is reselected and
@@ -319,13 +360,12 @@ async function applyOutcomes({
 }) {
   if (!reviewed.length) return;
 
-  // Before the claim: an item whose flag failed stays unclaimed, so the next run retries the flag
-  // instead of rejecting the item with the signal lost.
+  const minor = reviewed.filter((o) => o.minorReview);
   const flagged = await flagForMinorReview({
     collectionId,
-    imageIds: reviewed.filter((o) => o.minorReview).map((o) => o.imageId),
+    imageIds: minor.map((o) => o.imageId),
   });
-  const outcomes = flagged ? reviewed : reviewed.filter((o) => !o.minorReview);
+  const outcomes = flagged ? reviewed : await holdUnflagged(reviewed, minor);
   if (!outcomes.length) return;
 
   // Minutes can pass between selecting an item and writing its outcome. Claiming the row only

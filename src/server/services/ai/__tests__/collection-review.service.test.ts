@@ -260,6 +260,14 @@ describe('needsMinorReview', () => {
     ['a photorealistic minor', { depictsMinor: true, minorIsPhotorealistic: true }],
     ['a minor depicted inappropriately', { depictsMinor: true, minorInappropriate: true }],
     ['a possible minor', { minorUncertain: true, isPhotorealistic: true }],
+    [
+      'a minor alongside a real person',
+      { depictsRealPerson: true, depictsMinor: true, minorIsPhotorealistic: true },
+    ],
+    [
+      'a possible minor after another finding',
+      { depictsRealPerson: true, minorUncertain: true, isPhotorealistic: true },
+    ],
   ])('sends %s to the minor queue', (_label, overrides) => {
     expect(needsMinorReview(decideFromObservations({ ...clean, ...overrides }))).toBe(true);
   });

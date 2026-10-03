@@ -3,6 +3,7 @@ import type * as CollectionReviewService from '~/server/services/ai/collection-r
 import type * as CollectionService from '~/server/services/collection.service';
 import type * as TrackerModule from '~/server/clickhouse/tracker';
 import type * as ImageService from '~/server/services/image.service';
+import type * as PostService from '~/server/services/post.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { CollectionItemRejectionReason, CollectionItemStatus } from '~/shared/utils/prisma/enums';
@@ -16,13 +17,22 @@ import {
   reviewCollection,
 } from '~/server/jobs/collection-ai-review';
 
-const { reviewImage, updateCollectionItemsStatus, queueImageSearchIndexUpdate } = vi.hoisted(
-  () => ({
-    reviewImage: vi.fn(),
-    updateCollectionItemsStatus: vi.fn(),
-    queueImageSearchIndexUpdate: vi.fn(),
-  })
-);
+const {
+  reviewImage,
+  updateCollectionItemsStatus,
+  queueImageSearchIndexUpdate,
+  bustCachesForPosts,
+} = vi.hoisted(() => ({
+  reviewImage: vi.fn(),
+  updateCollectionItemsStatus: vi.fn(),
+  queueImageSearchIndexUpdate: vi.fn(),
+  bustCachesForPosts: vi.fn(),
+}));
+
+vi.mock('~/server/services/post.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof PostService>()),
+  bustCachesForPosts,
+}));
 
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
@@ -85,16 +95,18 @@ const claimCalls = () =>
     sqlOf(call).includes('SET "reviewedById"')
   );
 
+const postOf = (imageId: number) => imageId * 10;
+
 function queuePending(
   items: ReturnType<typeof pendingItem>[],
-  { flagImage }: { flagImage?: (imageIds: number[]) => { id: number }[] } = {}
+  { flagImage }: { flagImage?: (imageIds: number[]) => { id: number; postId: number }[] } = {}
 ) {
   dbMock.dbWrite.$queryRaw.mockImplementation(async (strings: string[], ...values: unknown[]) => {
     const sql = strings.join('?');
     if (sql.includes('SET "reviewedById"')) return items.map((i) => ({ id: i.collectionItemId }));
     if (sql.includes('UPDATE "Image"')) {
       const imageIds = (values[0] as { values: number[] }).values;
-      return flagImage ? flagImage(imageIds) : imageIds.map((id) => ({ id }));
+      return flagImage ? flagImage(imageIds) : imageIds.map((id) => ({ id, postId: postOf(id) }));
     }
     return items;
   });
@@ -104,6 +116,7 @@ beforeEach(() => {
   reviewImage.mockReset();
   updateCollectionItemsStatus.mockReset();
   queueImageSearchIndexUpdate.mockReset().mockResolvedValue(undefined);
+  bustCachesForPosts.mockReset().mockResolvedValue(undefined);
   dbMock.dbWrite.$queryRaw.mockClear();
   redisMock.sysRedis.incrBy.mockReset();
   redisMock.sysRedis.expire.mockClear();
@@ -287,10 +300,13 @@ describe('reviewCollection: a minor-related escalation', () => {
       const flags = minorFlagCalls();
       expect(flags).toHaveLength(1);
       expect((flags[0][1] as { values: number[] }).values).toEqual([IMAGE_ID]);
+      expect(queueImageSearchIndexUpdate).toHaveBeenCalledTimes(1);
       expect(queueImageSearchIndexUpdate).toHaveBeenCalledWith({
         ids: [IMAGE_ID],
         action: 'Update',
       });
+      // A held image must also leave the cached model-version showcase and post galleries.
+      expect(bustCachesForPosts).toHaveBeenCalledWith([postOf(IMAGE_ID)]);
       expect(statusWrites()).toEqual(collectionStatus ? [collectionStatus] : []);
     }
   );
@@ -314,7 +330,7 @@ describe('reviewCollection: a minor-related escalation', () => {
     await reviewCollection(COLLECTION_ID, config);
 
     expect(sqlOf(minorFlagCalls()[0]).replace(/\s+/g, ' ').trim()).toBe(
-      `UPDATE "Image" SET "needsReview" = 'minor', "updatedAt" = now() WHERE id IN (?) AND "needsReview" IS NULL AND ingestion = 'Scanned' RETURNING id`
+      `UPDATE "Image" SET "needsReview" = 'minor', "updatedAt" = now() WHERE id IN (?) AND "needsReview" IS NULL AND ingestion = 'Scanned' RETURNING id, "postId"`
     );
   });
 
@@ -340,6 +356,7 @@ describe('reviewCollection: a minor-related escalation', () => {
 
   // Rejecting it anyway would let the hourly sweep delete the only record of the signal.
   it('leaves the item unclaimed for a retry when the flag cannot be written', async () => {
+    redisMock.sysRedis.incrBy.mockResolvedValue(1);
     const other = pendingItem({ collectionItemId: ITEM_ID + 1, imageId: IMAGE_ID + 1 });
     queuePending([pendingItem(), other], {
       flagImage: () => {
@@ -359,5 +376,79 @@ describe('reviewCollection: a minor-related escalation', () => {
     expect(claims).toHaveLength(1);
     expect((claims[0][3] as { values: number[] }).values).toEqual([ITEM_ID + 1]);
     expect(statusWrites()).toEqual(['ACCEPTED']);
+  });
+
+  // A retry reclassifies from scratch, and a later verdict could approve what this one escalated.
+  // Bounded like a failed model call, and then held rather than decided.
+  it('stamps instead of rejecting once the flag write is out of attempts', async () => {
+    redisMock.sysRedis.incrBy.mockResolvedValue(MAX_REVIEW_ATTEMPTS);
+    queuePending([pendingItem()], {
+      flagImage: () => {
+        throw new Error('db down');
+      },
+    });
+    modelSees({ depictsMinor: true, minorIsPhotorealistic: true });
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(claimCalls()).toHaveLength(1);
+    expect((claimCalls()[0][3] as { values: number[] }).values).toEqual([ITEM_ID]);
+    expect(statusWrites()).toEqual([]);
+  });
+
+  // An image already held in another queue still gets a person; leaving the item unclaimed instead
+  // would reselect and re-bill it every run, since nothing caps a successful model call.
+  it('still decides the item when the image is already held elsewhere', async () => {
+    queuePending([pendingItem()], { flagImage: () => [] });
+    modelSees({ depictsMinor: true, minorIsPhotorealistic: true });
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(minorFlagCalls()).toHaveLength(1);
+    expect((claimCalls()[0][3] as { values: number[] }).values).toEqual([ITEM_ID]);
+    expect(statusWrites()).toEqual(['REJECTED']);
+    expect(queueImageSearchIndexUpdate).not.toHaveBeenCalled();
+    expect(bustCachesForPosts).not.toHaveBeenCalled();
+    expect(redisMock.sysRedis.incrBy).not.toHaveBeenCalled();
+  });
+
+  it('reindexes only the images the write actually flagged', async () => {
+    const held = pendingItem({ collectionItemId: ITEM_ID + 1, imageId: IMAGE_ID + 1 });
+    queuePending([pendingItem(), held], {
+      flagImage: () => [{ id: IMAGE_ID, postId: postOf(IMAGE_ID) }],
+    });
+    modelSees({ depictsMinor: true, minorIsPhotorealistic: true });
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect((minorFlagCalls()[0][1] as { values: number[] }).values).toEqual([
+      IMAGE_ID,
+      IMAGE_ID + 1,
+    ]);
+    expect(queueImageSearchIndexUpdate).toHaveBeenCalledTimes(1);
+    expect(queueImageSearchIndexUpdate).toHaveBeenCalledWith({ ids: [IMAGE_ID], action: 'Update' });
+    expect(bustCachesForPosts).toHaveBeenCalledWith([postOf(IMAGE_ID)]);
+  });
+
+  it('does not let a failed cache refresh undo the decision', async () => {
+    queueImageSearchIndexUpdate.mockRejectedValue(new Error('redis down'));
+    bustCachesForPosts.mockRejectedValue(new Error('redis down'));
+    queuePending([pendingItem()]);
+    modelSees({ depictsMinor: true, minorIsPhotorealistic: true });
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(claimCalls()).toHaveLength(1);
+    expect(statusWrites()).toEqual(['REJECTED']);
+  });
+
+  // A minor alongside another finding is the realistic case, with the minor not listed first.
+  it('flags an image whose minor escalation comes after another one', async () => {
+    queuePending([pendingItem()]);
+    modelSees({ depictsRealPerson: true, minorUncertain: true, isPhotorealistic: true });
+
+    await reviewCollection(COLLECTION_ID, config);
+
+    expect(minorFlagCalls()).toHaveLength(1);
   });
 });
