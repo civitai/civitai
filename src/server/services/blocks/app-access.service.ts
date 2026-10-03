@@ -353,8 +353,16 @@ export function canonicalOwnerWhereBranches(userId: number): Array<Record<string
  * message branch requires the missing object to be named as a RELATION or TABLE, and
  * refuses anything that mentions a column at all. `app-access.service.test.ts` pins both
  * directions, including the "broadened back to `does not exist` / `not found`" mutants.
+ *
+ * 🔴 EXPORTED BECAUSE IT IS THE MEASURED SPELLING, AND A SECOND COPY WAS NARROWER.
+ * The digital-goods rail (`isMissingGoodsTableError` in `buzz-attribution.service.ts`)
+ * open-coded a code-only version of this check. On a path where Prisma leaves the
+ * SQLSTATE in the MESSAGE — the very case the sentence above records as measured — that
+ * copy returned false, the goods `.catch` rethrew, and `Promise.all` took BOTH owner
+ * revenue pages down, including the card figures that were readable. One spelling, one
+ * place: new callers delegate here rather than re-deriving the condition.
  */
-function isMissingTableError(err: unknown): boolean {
+export function isMissingTableError(err: unknown): boolean {
   const code = (err as { code?: unknown })?.code;
   if (code === 'P2021' || code === '42P01') return true;
   // Prisma wraps the driver error; the SQLSTATE is only in the message on some paths.
