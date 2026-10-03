@@ -233,8 +233,11 @@ export const checkCrucibleEntryEligibilitySchema = z.object({
 
 // Schema for submitting a vote
 // Minted by the judge page on entry. Absent (an older client) means no session, so every clip
-// needs the full watch.
-const judgingSessionIdSchema = z.string().min(8).max(64).optional();
+// needs the full watch. Charset-limited because it becomes part of a Redis key.
+const judgingSessionIdSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9-]{8,64}$/)
+  .optional();
 
 export type SubmitVoteSchema = z.infer<typeof submitVoteSchema>;
 export const submitVoteSchema = z

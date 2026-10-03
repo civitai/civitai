@@ -16,9 +16,6 @@ export type CrucibleJudgingConfig = {
 };
 
 const CONFIG_TTL_MS = 60_000;
-// Scoping each mark by session makes a new session start empty without a read-then-reset, which
-// two tabs could interleave. Old sessions' marks go when the whole key idles out.
-const seenField = (sessionId: string, entryId: number) => `${sessionId}:${entryId}`;
 
 const readNumber = (raw: unknown, min: number, max: number, fallback: number) => {
   const value = Number(raw);
@@ -77,8 +74,10 @@ export async function getCrucibleJudgingConfig(): Promise<CrucibleJudgingConfig>
   }
 }
 
-const sessionKey = (crucibleId: number, userId: number) =>
-  `${REDIS_SYS_KEYS.CRUCIBLE.JUDGING_SESSION}:${crucibleId}:${userId}` as RedisKeyTemplateSys;
+// One key per session, not per judge: each session must idle out on its own clock, so a second tab
+// that keeps judging cannot keep an abandoned session's marks alive.
+const sessionKey = (crucibleId: number, userId: number, sessionId: string) =>
+  `${REDIS_SYS_KEYS.CRUCIBLE.JUDGING_SESSION}:${crucibleId}:${userId}:${sessionId}` as RedisKeyTemplateSys;
 
 /**
  * The entries among `entryIds` this judge voted on earlier in the SAME judging session, and slides
@@ -99,14 +98,11 @@ export async function getSeenThisSession({
   idleSeconds: number;
 }): Promise<Set<number>> {
   if (!sessionId) return new Set();
-  const key = sessionKey(crucibleId, userId);
+  const key = sessionKey(crucibleId, userId, sessionId);
   try {
     const [flags] = (await sysRedis
       .multi()
-      .hmGet(
-        key,
-        entryIds.map((id) => seenField(sessionId, id))
-      )
+      .hmGet(key, entryIds.map(String))
       .expire(key, idleSeconds)
       .exec()) as unknown as [(string | null)[] | undefined, unknown];
     return new Set(entryIds.filter((_, i) => flags?.[i] != null));
@@ -130,12 +126,12 @@ export async function recordSessionVote({
   idleSeconds: number;
 }) {
   if (!sessionId) return;
-  const key = sessionKey(crucibleId, userId);
+  const key = sessionKey(crucibleId, userId, sessionId);
   try {
     // One MULTI, so the key is never left without its idle expiry.
     await sysRedis
       .multi()
-      .hSet(key, Object.fromEntries(entryIds.map((id) => [seenField(sessionId, id), '1'])))
+      .hSet(key, Object.fromEntries(entryIds.map((id) => [String(id), '1'])))
       .expire(key, idleSeconds)
       .exec();
   } catch (e) {

@@ -227,6 +227,16 @@ describe('submitVote — repeat clips within a judging session', () => {
     await expect(vote(10, 50, REPEAT, FULL, 'session-bbbbbbbb')).rejects.toThrow(/6s/);
   });
 
+  it('idles out an abandoned session even while another tab keeps judging', async () => {
+    await vote(10, 20, FULL, FULL);
+    advanceSeconds(IDLE_SECONDS - 5);
+    await vote(30, 40, FULL, FULL, 'session-bbbbbbbb');
+    advanceSeconds(IDLE_SECONDS - 5);
+    await vote(50, 60, FULL, FULL, 'session-bbbbbbbb');
+
+    await expect(vote(10, 70, REPEAT, FULL)).rejects.toThrow(/Watch at least 6s/);
+  });
+
   it('gives no shortening to a client that sends no session id', async () => {
     await vote(10, 20, FULL, FULL, null);
 
@@ -238,6 +248,24 @@ describe('submitVote — repeat clips within a judging session', () => {
     await vote(10, 20, FULL, FULL);
 
     await expect(vote(10, 30, FULL, FULL)).resolves.toMatchObject({ winnerElo: 1532 });
+  });
+});
+
+describe('judgingSessionId input', () => {
+  it('accepts a uuid and refuses characters that would reshape the Redis key', async () => {
+    const { submitVoteSchema } = await import('~/server/schema/crucible.schema');
+    const input = (judgingSessionId: string) => ({
+      crucibleId: 1,
+      winnerEntryId: 10,
+      loserEntryId: 20,
+      judgingSessionId,
+    });
+
+    expect(submitVoteSchema.safeParse(input('0b6f7a3e-5c1d-4e2a-9f10-2b7c8d9e0a11')).success).toBe(
+      true
+    );
+    expect(submitVoteSchema.safeParse(input('aaaaaaaa:999')).success).toBe(false);
+    expect(submitVoteSchema.safeParse(input('aaaaaaaa*')).success).toBe(false);
   });
 });
 
