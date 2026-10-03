@@ -5,6 +5,16 @@ import { IconSparkles } from '@tabler/icons-react';
 import { LazyMotion } from 'motion/react';
 import { div as MotionDiv, span as MotionSpan } from 'motion/react-m';
 import clsx from 'clsx';
+import {
+  CARET_BLINK_ANIMATE,
+  CARET_BLINK_TRANSITION,
+  GLYPH_POP_ANIMATE,
+  GLYPH_POP_TRANSITION,
+  REVEAL_ANIMATE,
+  REVEAL_INITIAL,
+  revealTransition,
+  STAGGER_SECONDS,
+} from '~/components/Apps/agentOnboardingMotion';
 import { AGENT_BUILD_PROMPT } from '~/components/Apps/cliCommands';
 import { CopyAffordance, CopyGlyph } from '~/components/Apps/CopyAffordance';
 import classes from './AgentOnboardingCard.module.scss';
@@ -30,8 +40,12 @@ export const AGENT_GLYPH_TESTID = 'apps-agent-onboarding-glyph';
 /** The copy control's accessible name. Exported so the suites name it rather than retype it. */
 export const AGENT_COPY_LABEL = 'Copy the agent setup prompt';
 
-/** ~40ms between each row's entrance, in `motion`'s seconds. Asserted, not just documented. */
-export const STAGGER_SECONDS = 0.04;
+/**
+ * Re-exported from `./agentOnboardingMotion`, where it is pinned in the `unit` tier along
+ * with the delay it is multiplied into — asserting the constant alone let a flattened stagger
+ * through a fully green suite.
+ */
+export { STAGGER_SECONDS };
 
 /**
  * 🔴 DEFINED HERE RATHER THAN IMPORTED FROM `~/components/Chat/util`, WHICH ALREADY EXPORTS
@@ -80,13 +94,25 @@ const loadMotion = () => import('~/utils/lazy-motion').then((res) => res.default
  * read and copy, and a typewriter effect makes both worse. The caret is decoration beside
  * settled text.
  *
- * 🔴 THE SPLIT IN THAT LIST IS THE WHOLE PERFORMANCE STORY, AND IT IS MEASURED. 1-3 animate
- * `transform` and `opacity`, which are framer's accelerable set, so they run on the
- * compositor and cost the main thread nothing. The shimmer animates `background-position`,
- * which is NOT — framer would fall back to a main-thread frameloop that, with
- * `repeat: Infinity`, never unregisters and would tick for the lifetime of the mount, on the
- * public state, off-screen included. It lives in `./AgentOnboardingCard.module.scss`
- * instead; that file's header carries the detail and the in-repo precedent. Do not move it
+ * 🔴 THE SPLIT IN THAT LIST IS THE WHOLE PERFORMANCE STORY, AND THE RULE IS NARROWER THAN
+ * "TRANSFORM AND OPACITY ARE FREE" — which is what this paragraph said until a review read
+ * the installed source. `acceleratedValues` holds the LITERAL keys
+ * `{opacity, clipPath, filter, transform}`, and framer passes the motion-value key
+ * UNNORMALISED, so `y` and `scale` are NOT in it: the row entrance and the glyph pop take the
+ * same main-thread animator the shimmer did. They are free anyway, for the other half of the
+ * rule — they are FINITE one-shots (0.3s × 3 rows at mount, 0.28s per copy), and
+ * `MainThreadAnimation` stops its driver and drops it on completion.
+ *
+ * So the dividing line is BOTH conditions, not either: the shimmer was costly because it was
+ * non-accelerable AND `repeat: Infinity`, which makes its frameloop driver register with
+ * `keepAlive: true` and never unregister. The caret is infinite and fine because its key is
+ * literally `opacity`, so it hands off to `element.animate(…)` and runs compositor-side.
+ *
+ * 🔴 THE PRACTICAL INSTRUCTION, because the old wording would have licensed the exact bug it
+ * existed to prevent: BEFORE ADDING ANY `repeat: Infinity` ANIMATION HERE, check its key is
+ * literally in that four-item set. A slow infinite `rotate`, or a pulsing `scale`, reproduces
+ * the shimmer bug verbatim while looking like it is on the safe side of "transform and
+ * opacity". The shimmer itself lives in `./AgentOnboardingCard.module.scss`; do not move it
  * back into a `motion` `animate` prop.
  *
  * 🔴 `motion` IS LOADED LAZILY, AND ON THIS ROUTE THAT IS A REQUIREMENT RATHER THAN A
@@ -148,9 +174,18 @@ const loadMotion = () => import('~/utils/lazy-motion').then((res) => res.default
  * content that exists only in the animated tree, so inserting it can push the prompt's last
  * word to a new line — a conditional post-hydration reflow of order 0.01 CLS at roughly the
  * share of viewport widths where the last line ends within ~0.55em of the wrap point. Both
- * are accepted because the alternative — reserving the caret's box in the static tree — puts
- * a second, invisible spelling of "is this animated" into the DOM, which is exactly the
- * fragile distinction the paragraph above is about.
+ * are accepted, but the stated reason for (b) has been corrected: it used to say that
+ * reserving the caret's box would put "a second, invisible spelling of is-this-animated" into
+ * the DOM, and that argument is refuted by this file's own ring, which does exactly that
+ * shape well — one node in both trees, a class deciding the motion.
+ *
+ * The real reason is that the ring's shape works there because `animation-name` is a CRISP,
+ * TIME-INVARIANT state a test can read, and the caret's is not: a blink is `opacity`
+ * oscillating through 0, so an assertion on a both-trees caret's opacity is either flaky or
+ * absent. Reserving the box would buy ~0.009 CLS — an order of magnitude under the 0.1
+ * "good" threshold — at the cost of the only crisp guard the caret has (present in the
+ * animated tree, absent in the static one). Revisit if the caret ever stops blinking, or if
+ * CLS on this route is ever measured as a problem rather than estimated as one.
  */
 export function AgentOnboardingCard({
   onCopy,
@@ -270,8 +305,13 @@ function Ring({ motionOn, children }: { motionOn: boolean; children: ReactNode }
  * printed NOTHING across the whole suite: the root still said `data-motion="on"`, and the
  * caret and the ring were still there. The index is the thing the delay is computed from, so
  * an assertion over the set of indices pins both that the wrappers exist and how many rows
- * are staggered. The duration constant is exported and asserted separately; between them the
- * stagger has a guard rather than only a docstring.
+ * are staggered.
+ *
+ * ⚠️ THAT IS ALL THE INDEX SET PINS — it says nothing about the DELAY. This note used to add
+ * "the duration constant is exported and asserted separately; between them the stagger has a
+ * guard", and that was false: the constant was asserted against its own literal, so the
+ * stagger could be flattened to `delay: 0` with the whole suite green. The delay is pinned in
+ * `__tests__/agentOnboardingMotion.test.ts`, against `revealTransition` itself.
  */
 function Reveal({
   motionOn,
@@ -287,9 +327,9 @@ function Reveal({
     <MotionDiv
       data-testid={AGENT_ROW_TESTID}
       data-reveal-index={index}
-      initial={{ y: 6 }}
-      animate={{ y: 0 }}
-      transition={{ duration: 0.3, delay: index * STAGGER_SECONDS, ease: 'easeOut' }}
+      initial={REVEAL_INITIAL}
+      animate={REVEAL_ANIMATE}
+      transition={revealTransition(index)}
     >
       {children}
     </MotionDiv>
@@ -317,6 +357,8 @@ function PromptPanel({
       label={AGENT_COPY_LABEL}
       onCopy={onCopy}
       iconClassName="absolute right-2 top-2"
+      // Prose: the control is the only copy path. See `CopyAffordance`'s `bodyClickCopies`.
+      bodyClickCopies={false}
       data-testid={AGENT_PROMPT_TESTID}
       renderGlyph={
         motionOn
@@ -333,8 +375,8 @@ function PromptPanel({
                 // the pop was gone. The wrapper's presence is the pop's only observable
                 // structural trace.
                 data-testid={AGENT_GLYPH_TESTID}
-                animate={{ scale: [1, 1.25, 1] }}
-                transition={{ duration: 0.28, ease: 'easeOut' }}
+                animate={GLYPH_POP_ANIMATE}
+                transition={GLYPH_POP_TRANSITION}
               >
                 <CopyGlyph copied={copied} />
               </MotionSpan>
@@ -353,13 +395,8 @@ function PromptPanel({
                 className={classes.caret}
                 data-testid={AGENT_CARET_TESTID}
                 aria-hidden
-                animate={{ opacity: [1, 0] }}
-                transition={{
-                  duration: 0.55,
-                  repeat: Infinity,
-                  repeatType: 'reverse',
-                  ease: 'linear',
-                }}
+                animate={CARET_BLINK_ANIMATE}
+                transition={CARET_BLINK_TRANSITION}
               />
             )}
           </Text>

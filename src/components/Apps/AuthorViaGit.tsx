@@ -1,7 +1,7 @@
 import { Alert, Button, Code, Group, Loader, Stack, Text } from '@mantine/core';
 import { IconAlertTriangle, IconBrandGit, IconEye, IconEyeOff } from '@tabler/icons-react';
 import { useState } from 'react';
-import { CopyAffordance } from '~/components/Apps/CopyAffordance';
+import { COPY_BODY_PADDING_RIGHT, CopyAffordance } from '~/components/Apps/CopyAffordance';
 import { maskCloneUrlCredential } from '~/components/Apps/git-access';
 import { trpc } from '~/utils/trpc';
 
@@ -54,9 +54,18 @@ type GetMyAppRepoResult = RepoAvailable | RepoNotYet;
  *
  * Nothing else about it changes: `value` and the displayed body were already separate here,
  * which is why `CopyAffordance`'s `value` + render-prop shape fits with no new prop. It
- * inherits two improvements — the `stopPropagation()` on the icon (this copy had no icon
- * handler at all, so it fired once by bubbling; it still fires once) and the guard that stops
- * a click ending a text selection from overwriting that selection.
+ * inherits the `stopPropagation()` on the icon (this copy had no icon handler at all, so it
+ * fired once by bubbling; it still fires once).
+ *
+ * 🔴 ONE DELIBERATE BEHAVIOUR CHANGE: `bodyClickCopies={false}`. Clicking the BLOCK no longer
+ * copies — only the control does. Both bodies here are multi-line text a reader plausibly
+ * selects a fragment of, and the clone URL carries `wordBreak: 'break-all'` on a string that
+ * embeds a LIVE PUSH TOKEN. With a body-wide click target, the `click` that ends a
+ * drag-select put that credential on the system clipboard from a gesture that was not a copy,
+ * and destroyed the selection on the way (the body re-renders to "Copied"). Guarding it was
+ * tried and abandoned — see `CopyAffordance`'s `bodyClickCopies` note for the three
+ * timing-dependent failure modes that produced. The control is a real `<button>`, reachable
+ * by Tab, and now says which of the two things it copies.
  */
 function CopyableCode({
   value,
@@ -69,12 +78,12 @@ function CopyableCode({
   label: string;
 }) {
   return (
-    <CopyAffordance value={value} label={label}>
+    <CopyAffordance value={value} label={label} bodyClickCopies={false}>
       {({ copied }) => (
         <Code
           block
           color={copied ? 'green' : undefined}
-          style={{ wordBreak: 'break-all', paddingRight: 36 }}
+          style={{ wordBreak: 'break-all', paddingRight: COPY_BODY_PADDING_RIGHT }}
         >
           {copied ? 'Copied' : display ?? value}
         </Code>

@@ -248,8 +248,9 @@ export { BLOCK_READY_TIMEOUT_MS, TOKEN_WAIT_TIMEOUT_MS };
  * does not. `src/components/Apps/AgentOnboardingCard.tsx` statically imports
  * `motion/react` and `motion/react-m` and is reached from `src/pages/apps/build.tsx`
  * with no `next/dynamic`, so `/apps/build` now carries them. It defers only the
- * `domAnimation` feature bundle via `LazyMotion`; the static half is ~6.6 KB gz and
- * is measured in that component's header.
+ * `domAnimation` feature bundle via `LazyMotion`; the static half it still pays is
+ * measured in that component's header — deliberately NOT restated here, so there is
+ * only one copy of a number to keep true.
  *
  * So the live argument is narrower and still decides this file the same way: that
  * card is one route's deliberate exception, THIS page is a different route, and a

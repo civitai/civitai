@@ -83,10 +83,17 @@ describe('AgentOnboardingCard — reduced motion', () => {
     const onCopy = vi.fn();
     await renderWithProviders(<AgentOnboardingCard onCopy={onCopy} />);
 
-    // By mouse, on the panel.
-    await page.getByTestId(AGENT_PROMPT_TESTID).click();
+    // The control is the copy path in BOTH trees — the prose body is deliberately not a click
+    // target (see `CopyAffordance`'s `bodyClickCopies`). Asserted here as well as in the
+    // animated suite, so a future change cannot make the static tree's affordance differ.
+    await page.getByRole('button', { name: AGENT_COPY_LABEL }).click();
     expect(writeText()).toHaveBeenCalledWith(AGENT_BUILD_PROMPT);
     expect(onCopy).toHaveBeenCalledTimes(1);
+
+    // And the body still is not one.
+    writeText().mockClear();
+    await page.getByTestId(AGENT_PROMPT_TESTID).click();
+    expect(writeText()).not.toHaveBeenCalled();
   });
 
   test('🔴 and by keyboard, still exactly once per press', async () => {

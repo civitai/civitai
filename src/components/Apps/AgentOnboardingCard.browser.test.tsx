@@ -49,11 +49,11 @@ const ringAnimation = () =>
   getComputedStyle(page.getByTestId(AGENT_SHIMMER_TESTID).element()).animationName;
 
 describe('AgentOnboardingCard — the prompt bytes reach the clipboard', () => {
-  test('🔴 clicking the panel copies the prompt BYTE-IDENTICALLY', async () => {
+  test('🔴 copying hands the clipboard the prompt BYTE-IDENTICALLY', async () => {
     const onCopy = vi.fn();
     await renderWithProviders(<AgentOnboardingCard onCopy={onCopy} />);
 
-    await page.getByTestId(AGENT_PROMPT_TESTID).click();
+    await page.getByRole('button', { name: AGENT_COPY_LABEL }).click();
 
     // From the clipboard call — not from the rendered text, which also contains the
     // decorative caret node.
@@ -119,45 +119,50 @@ describe('AgentOnboardingCard — the copy control', () => {
   });
 
   /**
-   * 🔴 SELECTING TEXT INSIDE THE PANEL IS NOT A COPY REQUEST. The whole panel is a click
-   * target, so the `click` that follows the `mouseup` ending a drag-select would otherwise
-   * overwrite the user's selection with the whole prompt AND post a funnel event they never
-   * asked for — and a double-click, which selects a word, would post two. Harmless on a
-   * one-line command block; the prompt is two paragraphs of prose on a public page.
+   * 🔴 THE BODY IS NOT A CLICK TARGET, AND THAT IS THE FIX RATHER THAN A LIMITATION. A
+   * body-wide click target fights text selection: the `mouseup` ending a drag-select is
+   * followed by a `click` on the same element, so the panel copied over the user's selection
+   * and posted a funnel event they never asked for. Guarding it was tried and abandoned —
+   * three timing-dependent failure modes, including one that silently disabled the panel for
+   * anyone with a stale selection. `CopyAffordance`'s `bodyClickCopies` note has the detail.
+   *
+   * One-line COMMAND blocks keep the body click; prose does not.
    */
-  test('🔴 a click that ends a selection inside the panel does NOT copy', async () => {
+  test('🔴 clicking the prompt text does NOT copy — only the control does', async () => {
     const onCopy = vi.fn();
     await renderWithProviders(<AgentOnboardingCard onCopy={onCopy} />);
+
+    await page.getByTestId(AGENT_PROMPT_TESTID).click();
+    expect(onCopy, 'the prose body should not be a copy target').not.toHaveBeenCalled();
+    expect(writeText()).not.toHaveBeenCalled();
+
+    // POSITIVE CONTROL for the absence above: the same render DOES copy from the control, so
+    // this is not satisfied by a card that never copies at all.
+    await page.getByRole('button', { name: AGENT_COPY_LABEL }).click();
+    expect(onCopy).toHaveBeenCalledTimes(1);
+    expect(writeText()).toHaveBeenCalledWith(AGENT_BUILD_PROMPT);
+  });
+
+  test('a selection inside the panel survives a click on the panel', async () => {
+    // The user-facing half of the same decision: selecting a fragment of the prompt and
+    // clicking is a normal reading gesture, and it must not clobber the selection.
+    await renderWithProviders(<AgentOnboardingCard />);
     const panel = page.getByTestId(AGENT_PROMPT_TESTID);
     await expect.element(panel).toBeInTheDocument();
 
-    // Make a real selection anchored inside the panel, as a drag-select leaves behind.
     const selection = window.getSelection();
     selection?.removeAllRanges();
     const range = document.createRange();
     range.selectNodeContents(panel.element());
     selection?.addRange(range);
+    const before = selection?.toString() ?? '';
+    expect(before.length, 'the fixture failed to select anything').toBeGreaterThan(0);
 
     await panel.click();
-    expect(onCopy, 'a click ending a selection copied anyway').not.toHaveBeenCalled();
+    // Nothing re-rendered the body into its "Copied" state, so the text node still exists.
+    expect(panel.element().textContent ?? '').toContain(AGENT_BUILD_PROMPT);
     expect(writeText()).not.toHaveBeenCalled();
-
-    // The explicit button is the escape hatch, and is deliberately NOT guarded — someone who
-    // selected text and then pressed Copy means it.
-    await page.getByRole('button', { name: AGENT_COPY_LABEL }).click();
-    expect(onCopy).toHaveBeenCalledTimes(1);
-    expect(writeText()).toHaveBeenCalledWith(AGENT_BUILD_PROMPT);
-
     selection?.removeAllRanges();
-  });
-
-  test('POSITIVE CONTROL: with NO selection, the same panel click does copy', async () => {
-    // Without this, the absence above is satisfied by a panel that never copies at all.
-    const onCopy = vi.fn();
-    await renderWithProviders(<AgentOnboardingCard onCopy={onCopy} />);
-
-    await page.getByTestId(AGENT_PROMPT_TESTID).click();
-    expect(onCopy).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -202,8 +207,15 @@ describe('AgentOnboardingCard — motion, when the viewer has not opted out', ()
       'the pre-copy glyph should be the clipboard'
     ).not.toBeNull();
 
+    // 🔴 ONE WAIT, IMMEDIATELY — `copied` DELETES ITSELF. Mantine's `CopyButton` defaults to
+    // `timeout: 1e3`, so the check glyph exists for ~1s and then reverts to the clipboard.
+    // An intervening `await expect.element(...)` on the pop wrapper (which exists in BOTH
+    // copied states, so it is not the transient) used to burn part of that budget before this
+    // read started, and `vi.waitFor`'s own default budget is also 1s — so under load the
+    // whole window could elapse and the failure read "the morph is broken" rather than "the
+    // state expired". Measured: a 1.2s stall inserted between the click and this wait turns
+    // it red with `expected null not to be null`.
     await button.click();
-    await expect.element(page.getByTestId(AGENT_GLYPH_TESTID)).toBeInTheDocument();
     await vi.waitFor(() =>
       expect(button.element().querySelector('.tabler-icon-check')).not.toBeNull()
     );

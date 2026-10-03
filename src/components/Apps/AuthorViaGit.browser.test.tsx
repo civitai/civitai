@@ -109,6 +109,27 @@ describe('AuthorViaGit — the git access panel', () => {
     expect(writeText()).toHaveBeenCalledWith(CLONE_URL);
   });
 
+  /**
+   * 🔴 THE BLOCK IS NOT A CLICK TARGET, AND HERE THAT IS A CREDENTIAL QUESTION. Both bodies
+   * are multi-line text a reader selects fragments of, and the clone URL embeds a live push
+   * token. With a body-wide click target, the `click` that ends a drag-select put that
+   * credential on the system clipboard from a gesture that was not a copy. This is a
+   * deliberate behaviour change from the private copy this component replaced.
+   */
+  test('🔴 clicking the code block does NOT copy the credential', async () => {
+    await openPanel();
+
+    await page
+      .getByText(/git\.example\.test/)
+      .first()
+      .click();
+    expect(writeText(), 'clicking the block put the token on the clipboard').not.toHaveBeenCalled();
+
+    // POSITIVE CONTROL: the control on the very same block does copy.
+    await page.getByRole('button', { name: 'Copy clone URL' }).click();
+    expect(writeText()).toHaveBeenCalledWith(CLONE_URL);
+  });
+
   test('🔴 the setup steps copy their REAL text too, not the masked display', async () => {
     await openPanel();
     await page.getByRole('button', { name: 'Copy setup steps' }).click();

@@ -20,10 +20,20 @@
  * `whileInView`). Per frame it also invalidates the ring's background paint across its entire
  * border box, ~99% of which the opaque `.surface` covers.
  *
- * In CSS the same effect is a browser-owned animation with no JS at all.
- * `src/components/Crucible/CruciblePrizeBreakdown.module.scss` is the in-repo precedent for
- * exactly this shimmer. (Measured by the perf review: everything above is a property of the
- * animator framer selects, not of the effect.)
+ * In CSS the same effect is a browser-owned animation with no JS at all, and it also gets
+ * lifecycle gating a rAF loop structurally cannot have: a CSS animation inside a
+ * `display:none` or `content-visibility`-skipped subtree generates no style updates, where
+ * the frameloop ticked regardless. (Mechanism read from the installed `motion@11.18.2`, not
+ * profiled in a browser.)
+ *
+ * ⚠️ PRECEDENT, NOT A SHARED HELPER — AND THE DISTINCTION IS THE POINT. Eight stylesheets in
+ * `src/` already animate `background-position` this way, including
+ * `src/components/Crucible/CruciblePrizeBreakdown.module.scss` and
+ * `src/components/Cards/BountyEntryCard.module.scss` (a card inside a virtualised grid, a far
+ * hotter surface than this one). This is a ninth LOCAL copy of a four-line idiom, not reuse
+ * of a shared one. That is deliberate — a shared shimmer mixin is its own change, and this
+ * file would be one of nine callers — but it should not be read as "the precedent exists, so
+ * nothing is duplicated here".
  *
  * 🔴 `background-size: 200%` AND THE KEYFRAMES' 0%→200% SWEEP HAVE TO AGREE or the gradient
  * does not travel seamlessly. The static render — reduced motion, or the collapsed workbench
@@ -64,6 +74,15 @@
   }
 }
 
+/* 🔴 A BELT, AND ALSO A DIMENSION THE BROWSER TESTS DEPEND ON WITHOUT PINNING IT. The
+ * component already short-circuits in JS, so this rule is redundant on every path we drive —
+ * but it means the suites' `getComputedStyle(ring).animationName` reads are implicitly
+ * asserting that the test runner reports `prefers-reduced-motion: no-preference`. Nothing in
+ * `vitest.config.mts` or `test/` emulates that media feature (grep: zero hits), so a runner
+ * configured to report `reduce` would turn the animated arm red against correct code AND make
+ * the reduced-motion arm pass for two reasons at once — the vacuous direction. Named here
+ * rather than removed: the rule is the right thing to ship, and the dependency is worth a
+ * reader knowing about. */
 @media (prefers-reduced-motion: reduce) {
   .ringAnimated {
     animation: none;

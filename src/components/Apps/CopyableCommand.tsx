@@ -1,5 +1,5 @@
 import { Code } from '@mantine/core';
-import { CopyAffordance } from '~/components/Apps/CopyAffordance';
+import { COPY_BODY_PADDING_RIGHT, CopyAffordance } from '~/components/Apps/CopyAffordance';
 
 /**
  * A copy-to-clipboard shell command block.
@@ -44,7 +44,7 @@ export function CopyableCommand({
         <Code
           block
           color={copied ? 'green' : undefined}
-          style={{ wordBreak: 'break-all', paddingRight: 36 }}
+          style={{ wordBreak: 'break-all', paddingRight: COPY_BODY_PADDING_RIGHT }}
         >
           {copied ? 'Copied' : `$ ${command}`}
         </Code>

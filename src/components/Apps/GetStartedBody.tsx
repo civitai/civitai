@@ -113,8 +113,18 @@ export function GetStartedBody({
         🔴 ABOVE "What you get" ON PURPOSE AND BELOW THE BANNER ON PURPOSE. This is the ONE
         indexable state of `/apps/build`, so the card must not sit above the hero image that
         is this page's LCP element — and the hero image declares a fixed `aspect-ratio`, so
-        nothing below it shifts. The card itself introduces no asynchronous content, so it
-        adds no layout shift of its own.
+        nothing below it shifts.
+
+        ⚠️ THE CARD IS NOT CLS-FREE, THOUGH, AND THIS COMMENT CLAIMED IT WAS. It read "the
+        card itself introduces no asynchronous content, so it adds no layout shift of its
+        own", which is wrong in a way worth stating here rather than only in the card: its
+        blinking caret is inline content that exists only in the ANIMATED tree, so one commit
+        after hydration it can push the prompt's last word onto a new line. Estimated at
+        ~0.009 CLS — one line of ~21px against a ~900px viewport, over the ~40% of the page
+        below this card — i.e. an order of magnitude under the 0.1 "good" threshold, and
+        accepted on that basis. See `AgentOnboardingCard`'s header for the alternative that
+        was weighed and declined. Corrected because this is the comment someone would trust
+        if a CLS regression ever shows up on this route.
       */}
       <AgentOnboardingCard onCopy={onCopyAgentPrompt} tone="prominent" />
 
