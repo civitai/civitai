@@ -11,32 +11,8 @@ export type Candidate = {
   nsfwLevel: string;
 };
 
-/**
- * Drops every candidate a CSAM report touches: the image itself, and every image of an owner with
- * any report. The second is deliberately broader than the ticket's "CSAM-reported images", in the
- * safe direction.
- */
-export function excludeCsam<T extends { imageId: number; ownerId: number }>(
-  candidates: T[],
-  reportedImageIds: Set<number>,
-  reportedOwnerIds: Set<number>
-): T[] {
-  return candidates.filter(
-    (c) => !reportedImageIds.has(c.imageId) && !reportedOwnerIds.has(c.ownerId)
-  );
-}
-
 export const isMinorBucket = (v: string | null | undefined): v is MinorBucket =>
   !!v && (MINOR_BUCKETS as readonly string[]).includes(v);
-
-/** `Image.nsfwLevel` bit flags to the ClickHouse `nsfw` names DeleteTOS rows carry. */
-export function nsfwLevelName(level: number): string {
-  if (level & 32) return 'Blocked';
-  if (level & (8 | 16)) return 'X';
-  if (level & 4) return 'Mature';
-  if (level & 2) return 'Soft';
-  return 'None';
-}
 
 /** Which band a score falls in, given ascending inner edges. `[0.2, 0.5]` gives bands 0, 1, 2. */
 export function scoreBand(score: number, edges: number[]): number {
@@ -102,4 +78,15 @@ export function allocate(candidates: Candidate[], total: number, seed: string): 
   }
 
   return pools.flatMap((p) => p.ordered.slice(0, p.taken));
+}
+
+/**
+ * The order to insert a batch in. Item ids are serial and a labeler sees them in the URL, so rows
+ * inserted stratum by stratum would let an id reveal whether an image was removed, and why.
+ */
+export function insertOrder<T extends { imageId: number }>(picked: T[], seed: string): T[] {
+  return picked
+    .map((p) => ({ p, r: rank(`${seed}:insert`, p.imageId) }))
+    .sort((a, b) => a.r.localeCompare(b.r))
+    .map((x) => x.p);
 }

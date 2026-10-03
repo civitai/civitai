@@ -1,6 +1,8 @@
 import { sql, type Kysely } from 'kysely';
+import type { DB as MainDB } from '@civitai/db-schema/kysely';
 import type { DB as ModeratorDB } from './moderator-db/types';
-import type { Answers } from '$lib/removal-label/questions';
+import { csamExcludedImageIds } from '$lib/removal-label/csam-exclusion';
+import { answersFromRow, answersToRow, type Answers } from '$lib/removal-label/questions';
 
 // Blind relabel set for the removal-label pilot. Every read a LABELER can reach returns the item id
 // and image id only: the stratum, the moderator's reason, the NSFW level and the other labeler's
@@ -25,6 +27,7 @@ export async function nextCandidates(
   let query = db
     .selectFrom('relabel_item as i')
     .select(['i.id as itemId', 'i.image_id as imageId'])
+    .where('i.relabel', '=', true)
     .where((eb) =>
       eb.or([eb('i.purge_after', 'is', null), eb('i.purge_after', '>', sql<Date>`now()`)])
     )
@@ -66,17 +69,31 @@ export async function ownAnswer(
     .where('a.item_id', '=', itemId)
     .where('a.labeler_id', '=', labelerId)
     .executeTakeFirst();
-  if (!row) return null;
-  return {
-    itemId: String(row.itemId),
-    imageId: row.imageId,
-    answers: {
-      minorPresent: row.minor_present,
-      sexualLevel: row.sexual_level,
-      violence: row.violence,
-      schoolSetting: row.school_setting,
-    } as Answers,
-  };
+  const answers = row && answersFromRow(row);
+  if (!row || !answers) return null;
+  return { itemId: String(row.itemId), imageId: row.imageId, answers };
+}
+
+/**
+ * Cloudflare keys for the images that may be shown now. Drops an image that is gone, is not a
+ * still image, or that a CSAM report or block has touched since it was sampled.
+ */
+export async function servableImageKeys(
+  mainDb: Kysely<MainDB>,
+  imageIds: number[]
+): Promise<Map<number, string>> {
+  if (!imageIds.length) return new Map();
+  const [rows, excluded] = await Promise.all([
+    mainDb
+      .selectFrom('Image')
+      .select(['id', 'url'])
+      .where('id', 'in', imageIds)
+      .where('type', '=', 'image')
+      .execute(),
+    csamExcludedImageIds(imageIds).execute(mainDb),
+  ]);
+  const blocked = new Set(excluded.rows.map((r) => r.id));
+  return new Map(rows.filter((r) => !blocked.has(r.id)).map((r) => [r.id, r.url]));
 }
 
 export async function lastAnsweredItemId(
@@ -105,19 +122,22 @@ export async function saveAnswer(
   input: { labelerId: number; itemId: string; answers: Answers; durationMs: number | null }
 ): Promise<SaveResult> {
   const { labelerId, itemId, answers, durationMs } = input;
-  const values = {
-    minor_present: answers.minorPresent,
-    sexual_level: answers.sexualLevel,
-    violence: answers.violence,
-    school_setting: answers.schoolSetting,
-    duration_ms: durationMs,
-  };
+  const columns = answersToRow(answers);
+  const item = await db
+    .selectFrom('relabel_item')
+    .select('id')
+    .where('id', '=', itemId)
+    .where('relabel', '=', true)
+    .executeTakeFirst();
+  if (!item) return { ok: false, reason: 'missing' };
   try {
     const result = await db
       .insertInto('relabel_answer')
-      .values({ item_id: itemId, labeler_id: labelerId, ...values })
+      .values({ item_id: itemId, labeler_id: labelerId, ...columns, duration_ms: durationMs })
+      // duration_ms keeps the first answer's time on item: a quick correction must not make a
+      // careful labeler read as a rubber-stamper.
       .onConflict((oc) =>
-        oc.columns(['item_id', 'labeler_id']).doUpdateSet({ ...values, updated_at: sql`now()` })
+        oc.columns(['item_id', 'labeler_id']).doUpdateSet({ ...columns, updated_at: sql`now()` })
       )
       .executeTakeFirst();
     if (Number(result.numInsertedOrUpdatedRows ?? 0) === 0) return { ok: false, reason: 'missing' };
@@ -149,6 +169,7 @@ export async function labelerProgress(
           .filterWhere(sql<boolean>`${answerCount} >= 2`)
           .as('complete'),
       ])
+      .where('i.relabel', '=', true)
       .executeTakeFirst(),
   ]);
   return {

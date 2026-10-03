@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { allocate, excludeCsam, nsfwLevelName, scoreBand, type Candidate } from '../sampling';
+import { allocate, insertOrder, scoreBand, type Candidate } from '../sampling';
 
 const c = (
   imageId: number,
@@ -14,17 +14,6 @@ const c = (
   bucket: 'realisticMinorNsfw',
   nsfwLevel: 'X',
   ...over,
-});
-
-describe('excludeCsam', () => {
-  it('drops a reported image and every image of a reported owner', () => {
-    const kept = excludeCsam(
-      [c(1, 'a', 10), c(2, 'a', 20), c(3, 'a', 20), c(4, 'a', 40)],
-      new Set([1]),
-      new Set([20])
-    );
-    expect(kept.map((x) => x.imageId)).toEqual([4]);
-  });
 });
 
 describe('allocate', () => {
@@ -75,18 +64,22 @@ describe('allocate', () => {
 });
 
 describe('helpers', () => {
-  it('maps nsfwLevel flags to the DeleteTOS level names', () => {
-    expect([1, 2, 4, 8, 16, 32, 0].map(nsfwLevelName)).toEqual([
-      'None',
-      'Soft',
-      'Mature',
-      'X',
-      'X',
-      'Blocked',
-      'None',
-    ]);
-  });
   it('bands a score by ascending edges', () => {
     expect([0.1, 0.2, 0.6, 0.99].map((s) => scoreBand(s, [0.2, 0.5]))).toEqual([0, 1, 2, 2]);
+  });
+});
+
+describe('insertOrder', () => {
+  // Decision: item ids are serial and reach the labeler's URL, so a batch inserted stratum by
+  // stratum would let an id say whether an image was removed. Do not insert in allocation order.
+  it('interleaves strata instead of keeping each one contiguous', () => {
+    const removed = Array.from({ length: 50 }, (_, i) => c(i, 'animatedMinorNsfw:X'));
+    const kept = Array.from({ length: 50 }, (_, i) =>
+      c(1000 + i, 'band1:X', 1000 + i, { stratum: 'not_removed', bucket: null })
+    );
+    const order = insertOrder([...removed, ...kept], 'seed').map((p) => p.stratum);
+    expect(order.slice(0, 50).filter((s) => s === 'removed').length).toBeLessThan(40);
+    expect(order.slice(0, 50).filter((s) => s === 'removed').length).toBeGreaterThan(10);
+    expect(order).toHaveLength(100);
   });
 });

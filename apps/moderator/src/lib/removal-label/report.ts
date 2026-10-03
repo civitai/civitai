@@ -1,11 +1,18 @@
 import {
   composeLabel,
   disagreement,
+  FLAGGING_PROPOSALS,
   type Disagreement,
   type MinorBucket,
   type ProposedLabel,
 } from './compose';
-import { parseAnswers, type Answers, type QuestionId } from './questions';
+import {
+  MINOR_ANSWERS,
+  parseAnswers,
+  QUESTION_IDS,
+  type Answers,
+  type QuestionId,
+} from './questions';
 
 export type Arm = 'image' | 'image_signals' | 'signals';
 
@@ -31,9 +38,6 @@ export type Prediction = {
 /** Private per-question thresholds; values never live in the repo. */
 export type Thresholds = Record<QuestionId, number>;
 
-const QUESTION_IDS: QuestionId[] = ['minorPresent', 'sexualLevel', 'violence', 'schoolSetting'];
-const MINOR = new Set(['appears_minor', 'ambiguous_could_be_minor']);
-
 /** Below its threshold, or abstained, an answer counts as `cannot_tell`, which blocks a proposal. */
 export function thresholdAnswers(p: Prediction, t: Thresholds): Answers | null {
   const raw: Partial<Record<QuestionId, string>> = {};
@@ -53,11 +57,7 @@ export function combineOutcome(
   proposal: ProposedLabel | null
 ): 'removed' | 'hold' | 'kept' {
   if (rule === 'removed') return 'removed';
-  return proposal === 'minor_sexual' ||
-    proposal === 'minor_sexual_school' ||
-    proposal === 'minor_violence'
-    ? 'hold'
-    : 'kept';
+  return proposal !== null && FLAGGING_PROPOSALS.has(proposal) ? 'hold' : 'kept';
 }
 
 /**
@@ -72,7 +72,7 @@ export function goldLabel(labels: HumanLabel[]): ProposedLabel | null {
 
 /** Both labelers called a minor present. The recall denominator for the A4 promotion rule. */
 export function goldMinor(labels: HumanLabel[]): boolean {
-  return labels.length === 2 && labels.every((l) => MINOR.has(l.answers.minorPresent));
+  return labels.length === 2 && labels.every((l) => MINOR_ANSWERS.has(l.answers.minorPresent));
 }
 
 export function cohenKappa(pairs: [string, string][]): number | null {
@@ -234,7 +234,7 @@ export function summarise(
         s.minorRecall.of++;
         const p = predByKey.get(`${arm}:${r.itemId}`);
         const answers = p ? thresholdAnswers(p, thresholds) : null;
-        if (answers && MINOR.has(answers.minorPresent)) s.minorRecall.hit++;
+        if (answers && MINOR_ANSWERS.has(answers.minorPresent)) s.minorRecall.hit++;
       }
     }
     s.disagreeingRightLower = wilsonLower(s.disagreeingRight, s.disagreeingWithGold);

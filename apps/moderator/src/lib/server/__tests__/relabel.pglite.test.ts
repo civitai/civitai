@@ -129,6 +129,43 @@ describe('nextCandidates', () => {
   });
 });
 
+describe('model-only items', () => {
+  it('are never served to a labeler and refuse an answer posted for them', async () => {
+    const hidden = await seedItem(1, { relabel: false });
+    const shown = await seedItem(2);
+    expect((await nextCandidates(db, 9)).map((c) => c.itemId)).toEqual([shown]);
+    expect(await save(9, hidden)).toEqual({ ok: false, reason: 'missing' });
+    expect(await labelerProgress(db, 9)).toMatchObject({ items: 1 });
+  });
+});
+
+describe('one row per image', () => {
+  // Decision: daily batches overlap, so an image may be sampled again. It is stored once, or the
+  // labeler sees it twice and the report counts it twice.
+  it('refuses the same image in a second batch', async () => {
+    await seedItem(1);
+    await expect(seedItem(1, { batch: 'later' })).rejects.toThrow();
+  });
+});
+
+describe('editing an answer', () => {
+  it('keeps the first time-on-item, so a quick correction does not read as rubber-stamping', async () => {
+    const item = await seedItem(1);
+    await saveAnswer(db, { labelerId: 1, itemId: item, answers, durationMs: 40_000 });
+    await saveAnswer(db, {
+      labelerId: 1,
+      itemId: item,
+      answers: { ...answers, violence: 'graphic_gore' },
+      durationMs: 3_000,
+    });
+    const row = await db
+      .selectFrom('relabel_answer')
+      .select(['duration_ms', 'violence'])
+      .executeTakeFirstOrThrow();
+    expect(row).toEqual({ duration_ms: 40_000, violence: 'graphic_gore' });
+  });
+});
+
 describe('labelerProgress', () => {
   it("counts the labeler's own answers and items with both labels", async () => {
     const one = await seedItem(1);

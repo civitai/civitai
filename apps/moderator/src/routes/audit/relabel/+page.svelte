@@ -2,7 +2,10 @@
   import { applyAction, enhance } from '$app/forms';
   import { goto, invalidateAll } from '$app/navigation';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Label } from '@civitai/ui/components/ui/label/index.js';
+  import { RadioGroup, RadioGroupItem } from '@civitai/ui/components/ui/radio-group/index.js';
   import EdgeImage from '$lib/components/EdgeImage.svelte';
+  import { LINK_CLASS } from '$lib/format';
   import { QUESTIONS, type QuestionId } from '$lib/removal-label/questions';
   import type { ActionData, PageData } from './$types';
 
@@ -25,6 +28,10 @@
   });
 
   const complete = $derived(QUESTIONS.every((q) => picks[q.id]));
+  // A refusal for an item the queue has since moved past is about the previous image, and must
+  // not read as being about the one on screen.
+  const errorIsForThisItem = $derived(!form?.itemId || form.itemId === data.item?.itemId);
+  const linkClass = $derived(`${LINK_CLASS} ${submitting ? 'pointer-events-none opacity-50' : ''}`);
 
   function queueHref(params: Record<string, string | null>): string {
     const q = new URLSearchParams();
@@ -56,7 +63,7 @@
   <span>{data.progress.mine} answered by you</span>
   <span>&middot; {data.progress.complete} of {data.progress.items} images have both labels</span>
   {#if data.skipped.length}
-    <a href={queueHref({ skip: null })} class="text-blue-4 hover:text-blue-3">
+    <a href={queueHref({ skip: null })} class={linkClass}>
       {data.skipped.length} skipped &middot; bring them back
     </a>
   {/if}
@@ -65,19 +72,28 @@
 {#if data.pinned}
   <div class="mb-4 flex items-center gap-3 rounded-lg bg-dark-7 px-3 py-2 text-xs text-dark-1">
     Changing your earlier answer.
-    <a href={queueHref({ item: null })} class="ml-auto text-blue-4 hover:text-blue-3">
-      Back to the queue &rarr;
-    </a>
+    <a href={queueHref({ item: null })} class="ml-auto {linkClass}">Back to the queue &rarr;</a>
+  </div>
+{:else if data.pinnedGone}
+  <div class="mb-4 rounded-lg bg-dark-7 px-3 py-2 text-xs text-dark-1">
+    That image can no longer be shown, so its answer cannot be changed. Here is the next one.
   </div>
 {/if}
 
 {#if form?.error}
-  <p class="mb-4 rounded-lg bg-red-8/20 px-3 py-2 text-sm text-red-3">{form.error}</p>
+  <p class="mb-4 rounded-lg bg-red-8/20 px-3 py-2 text-sm text-red-3">
+    {errorIsForThisItem ? form.error : `Previous image: ${form.error}`}
+  </p>
 {/if}
 
 {#if !data.item}
   <section class="rounded-xl border border-dark-4 bg-dark-6 p-8 text-center text-sm text-dark-2">
-    Nothing left for you to label.
+    {#if data.skipped.length}
+      Nothing left except the {data.skipped.length} you skipped.
+      <a href={queueHref({ skip: null })} class={linkClass}>Bring them back</a>
+    {:else}
+      Nothing left for you to label.
+    {/if}
   </section>
 {:else}
   <section class="grid gap-4 lg:grid-cols-[1fr_24rem]">
@@ -86,7 +102,7 @@
         src={data.item.imageKey}
         width={1200}
         class="max-h-[80vh] w-auto rounded object-contain"
-        alt=""
+        alt="Image to label"
       />
     </div>
 
@@ -115,26 +131,24 @@
       {#each QUESTIONS as q (q.id)}
         <fieldset class="rounded-xl border border-dark-4 bg-dark-6 p-4">
           <legend class="px-1 text-sm font-medium text-dark-0">{q.prompt}</legend>
-          <div class="mt-2 flex flex-col gap-1.5">
+          <RadioGroup
+            name={q.id}
+            class="mt-2 gap-1.5"
+            bind:value={() => picks[q.id] ?? '', (v) => (picks[q.id] = v)}
+          >
             {#each q.options as opt (opt.value)}
-              <label class="flex cursor-pointer items-center gap-2 text-sm text-dark-1">
-                <input
-                  type="radio"
-                  name={q.id}
-                  value={opt.value}
-                  checked={picks[q.id] === opt.value}
-                  onchange={() => (picks[q.id] = opt.value)}
-                />
-                {opt.label}
-              </label>
+              <div class="flex items-center gap-2">
+                <RadioGroupItem value={opt.value} id="{q.id}-{opt.value}" />
+                <Label for="{q.id}-{opt.value}" class="font-normal text-dark-1">{opt.label}</Label>
+              </div>
             {/each}
-          </div>
+          </RadioGroup>
         </fieldset>
       {/each}
 
       <div class="flex gap-2">
         <Button type="submit" class="flex-1" disabled={!complete || submitting}>
-          {data.pinned ? 'Save change' : 'Save and next'}
+          {#if submitting}Saving...{:else}{data.pinned ? 'Save change' : 'Save and next'}{/if}
         </Button>
         {#if !data.pinned}
           <Button type="button" variant="secondary" disabled={submitting} onclick={skip}>
@@ -143,7 +157,7 @@
         {/if}
       </div>
       {#if !data.pinned && data.lastItemId}
-        <a href={queueHref({ item: data.lastItemId })} class="text-xs text-blue-4 hover:text-blue-3">
+        <a href={queueHref({ item: data.lastItemId })} class="text-xs {linkClass}">
           Change my last answer
         </a>
       {/if}

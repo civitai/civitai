@@ -1,4 +1,5 @@
-import type { Answers } from './questions';
+import type { VIOLATION_TYPES } from '$lib/violations';
+import { MINOR_ANSWERS, type Answers } from './questions';
 
 /**
  * The label the four answers propose, per the design's composer table (pub.removal-label-check).
@@ -12,7 +13,6 @@ export type ProposedLabel =
   | 'gore'
   | 'no_minor';
 
-const MINOR = new Set(['appears_minor', 'ambiguous_could_be_minor']);
 const THREAT_OR_WORSE = new Set(['threat_or_aiming', 'injury_or_blood', 'graphic_gore']);
 
 /** Null when any answer is `cannot_tell`: no proposal, the moderator's pick stands. */
@@ -25,7 +25,7 @@ export function composeLabel(a: Answers): ProposedLabel | null {
   )
     return null;
 
-  if (MINOR.has(a.minorPresent)) {
+  if (MINOR_ANSWERS.has(a.minorPresent)) {
     if (a.sexualLevel !== 'none')
       return a.schoolSetting === 'school_classroom_or_campus'
         ? 'minor_sexual_school'
@@ -35,12 +35,25 @@ export function composeLabel(a: Answers): ProposedLabel | null {
   return a.violence === 'graphic_gore' ? 'gore' : 'no_minor';
 }
 
+/**
+ * The proposals that would add friction to an image enforcement let through, and how each is
+ * counted. The disagreement count and the hold outcome both read this one table.
+ */
+export const FLAGGING_PROPOSALS: ReadonlyMap<
+  ProposedLabel,
+  'flags_minor_sexual' | 'flags_minor_violence'
+> = new Map([
+  ['minor_sexual', 'flags_minor_sexual'],
+  ['minor_sexual_school', 'flags_minor_sexual'],
+  ['minor_violence', 'flags_minor_violence'],
+]);
+
 export const MINOR_BUCKETS = [
   'animatedMinorNsfw',
   'realisticMinorNsfw',
   'schoolNsfw',
   'realisticMinor',
-] as const;
+] as const satisfies readonly (typeof VIOLATION_TYPES)[number][];
 export type MinorBucket = (typeof MINOR_BUCKETS)[number];
 
 export type Stratum = 'removed' | 'not_removed';
@@ -64,12 +77,7 @@ export function disagreement(
   item: { stratum: 'removed'; bucket: MinorBucket } | { stratum: 'not_removed' },
   proposal: ProposedLabel
 ): Disagreement | null {
-  if (item.stratum === 'not_removed') {
-    if (proposal === 'minor_sexual' || proposal === 'minor_sexual_school')
-      return 'flags_minor_sexual';
-    if (proposal === 'minor_violence') return 'flags_minor_violence';
-    return null;
-  }
+  if (item.stratum === 'not_removed') return FLAGGING_PROPOSALS.get(proposal) ?? null;
 
   if (proposal === 'no_minor' || proposal === 'gore') return 'no_minor';
   // `realisticMinor` is about the minor being realistic, in any context. Style is not one of the

@@ -2,26 +2,33 @@
  * Builds one batch of the removal-label relabel set.
  *
  *   pnpm exec tsx --env-file=.env apps/moderator/removal-label-eval/build-set.ts \
- *     --batch 2026-10-06 --removed 100 --not-removed 40 --bands 0.2,0.5,0.8
+ *     --batch 2026-10-06 --removed 100 --not-removed 40 --bands <edges>
  *
  * Dry run unless `--write` is given: prints per-stratum counts and writes nothing. With `--write` it
  * inserts into the MODERATOR database only. Read-only against ClickHouse and the main replica.
  *
  * Run it daily: removed images are hard-deleted 7 days after the block, so removed items are drawn
- * from the last `--days` (default 5) and must be labelled before `purge_after`.
+ * from the last `--days` (default 5) and must be labelled before `purge_after`. An image already in
+ * the set is never added again.
+ *
+ * `--model-only` adds items the model arms run on but labelers never see, for the full-population
+ * disagreement and appeal numbers.
  *
  * `--bands` are the scanner minor-score edges for the not-removed stratum. Pass them at run time;
  * they are not written into this repo.
  */
+import { Kysely, PostgresDialect } from 'kysely';
 import pg from 'pg';
+import type { DB as MainDB } from '@civitai/db-schema/kysely';
 import { BLOCKED_IMAGE_RETENTION_DAYS } from '@civitai/shared/job-queue';
 import { clickhouse, type ClickHouseConfig } from '../xguard-lab/sample-core';
+import { deprecatedNsfwName } from '../src/lib/nsfw-levels';
 import { MINOR_BUCKETS } from '../src/lib/removal-label/compose';
+import { csamExcludedImageIds } from '../src/lib/removal-label/csam-exclusion';
 import {
   allocate,
-  excludeCsam,
+  insertOrder,
   isMinorBucket,
-  nsfwLevelName,
   scoreBand,
   type Candidate,
 } from '../src/lib/removal-label/sampling';
@@ -34,6 +41,7 @@ type Args = {
   bands: number[];
   seed: string;
   write: boolean;
+  modelOnly: boolean;
 };
 
 function parseArgs(argv: string[]): Args {
@@ -62,6 +70,7 @@ function parseArgs(argv: string[]): Args {
     bands,
     seed: get('--seed') ?? batch,
     write: argv.includes('--write'),
+    modelOnly: argv.includes('--model-only'),
   };
 }
 
@@ -84,7 +93,7 @@ function requireEnv(name: string): string {
 type Removal = {
   imageId: number;
   bucket: string;
-  removedAt: string;
+  removedAt: number;
   removedBy: number;
   nsfw: string;
 };
@@ -93,13 +102,14 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const ch = clickhouseConfig();
   const bucketList = MINOR_BUCKETS.map((b) => `'${b}'`).join(',');
+  const seedLiteral = args.seed.replace(/[^A-Za-z0-9_-]/g, '');
 
   // First removal per image: a re-removal must not move the clock or the label.
   const removals = await clickhouse<Removal>(
     `
     SELECT imageId,
            argMin(violationType, time) AS bucket,
-           toString(min(time)) AS removedAt,
+           toUnixTimestamp(min(time)) AS removedAt,
            argMin(userId, time) AS removedBy,
            toString(argMin(nsfw, time)) AS nsfw
     FROM images
@@ -111,42 +121,40 @@ async function main() {
     ch
   );
 
-  // Not-removed pool: images the scanner scored for age, oversampled per band so the uncertain
-  // middle is represented. The CSAM label in this table is never read.
+  // Not-removed pool. Rows are per content hash, so one row can stand for several images with the
+  // same bytes; all of them go through the CSAM check, and only the lowest id is sampled. The CSAM
+  // label in this table is never read.
   const perBand = Math.max(200, args.notRemoved * 20);
-  const scanned = await clickhouse<{ imageId: string; score: number }>(
+  const scanned = await clickhouse<{ ids: string[]; score: number }>(
     `
-    SELECT entityIds[1] AS imageId, score
+    SELECT groupUniqArrayArray(entityIds) AS ids, anyLast(score) AS score
     FROM scanner_label_results
     WHERE scanner = 'image_ingestion' AND entityType = 'image' AND label = 'minor'
-      AND firstSeenAt > now() - INTERVAL ${args.days} DAY
-    ORDER BY cityHash64(contentHash, '${args.seed.replace(/[^A-Za-z0-9_-]/g, '')}')
+    GROUP BY contentHash
+    HAVING min(firstSeenAt) > now() - INTERVAL ${args.days} DAY
+    ORDER BY cityHash64(contentHash, '${seedLiteral}')
     LIMIT ${perBand * (args.bands.length + 1)}
   `,
     ch
   );
-  const scoreById = new Map(scanned.map((s) => [Number(s.imageId), s.score]));
+  const hashGroups = scanned
+    .map((s) => ({ ids: s.ids.map(Number).sort((a, b) => a - b), score: s.score }))
+    .filter((g) => g.ids.length > 0);
 
-  const replica = new pg.Client({ connectionString: requireEnv('DATABASE_REPLICA_URL') });
-  await replica.connect();
+  const pool = new pg.Pool({ connectionString: requireEnv('DATABASE_REPLICA_URL') });
+  const replica = new Kysely<MainDB>({ dialect: new PostgresDialect({ pool }) });
   let removedCandidates: Candidate[] = [];
   let notRemovedCandidates: Candidate[] = [];
   const appeals = new Map<number, { status: string; resolvedAt: Date | null }>();
   try {
-    const ids = [...new Set([...removals.map((r) => r.imageId), ...scoreById.keys()])];
-    const { rows: images } = await replica.query<{
-      id: number;
-      userId: number;
-      ingestion: string;
-      needsReview: string | null;
-      blockedFor: string | null;
-      nsfwLevel: number;
-      type: string;
-    }>(
-      `SELECT id, "userId", ingestion::text AS ingestion, "needsReview", "blockedFor", "nsfwLevel", type::text AS type
-       FROM "Image" WHERE id = ANY($1::int[])`,
-      [ids]
-    );
+    const ids = [
+      ...new Set([...removals.map((r) => r.imageId), ...hashGroups.map((g) => g.ids[0])]),
+    ];
+    const images = await replica
+      .selectFrom('Image')
+      .select(['id', 'userId', 'ingestion', 'needsReview', 'blockedFor', 'nsfwLevel', 'type'])
+      .where('id', 'in', ids)
+      .execute();
     const imageById = new Map(images.map((i) => [i.id, i]));
 
     for (const r of removals) {
@@ -162,7 +170,9 @@ async function main() {
         stratumKey: `${r.bucket}:${r.nsfw}`,
       });
     }
-    for (const [imageId, score] of scoreById) {
+    const siblingsOf = new Map<number, number[]>();
+    for (const g of hashGroups) {
+      const imageId = g.ids[0];
       const img = imageById.get(imageId);
       if (
         !img ||
@@ -172,91 +182,100 @@ async function main() {
         img.blockedFor !== null
       )
         continue;
-      const level = nsfwLevelName(img.nsfwLevel);
+      const level = deprecatedNsfwName(img.nsfwLevel);
+      siblingsOf.set(imageId, g.ids);
       notRemovedCandidates.push({
         imageId,
         ownerId: img.userId,
         stratum: 'not_removed',
         bucket: null,
         nsfwLevel: level,
-        stratumKey: `band${scoreBand(score, args.bands)}:${level}`,
+        stratumKey: `band${scoreBand(g.score, args.bands)}:${level}`,
       });
     }
 
-    const all = [...removedCandidates, ...notRemovedCandidates];
-    const { rows: csamImages } = await replica.query<{ id: number }>(
-      `SELECT DISTINCT (CASE jsonb_typeof(e) WHEN 'object' THEN e->>'id' ELSE e#>>'{}' END)::int AS id
-       FROM "CsamReport", jsonb_array_elements("images"::jsonb) e
-       WHERE (CASE jsonb_typeof(e) WHEN 'object' THEN e->>'id' ELSE e#>>'{}' END) ~ '^[0-9]+$'
-         AND (CASE jsonb_typeof(e) WHEN 'object' THEN e->>'id' ELSE e#>>'{}' END)::int = ANY($1::int[])`,
-      [all.map((c) => c.imageId)]
+    const toCheck = [
+      ...removedCandidates.map((c) => c.imageId),
+      ...notRemovedCandidates.flatMap((c) => siblingsOf.get(c.imageId) ?? [c.imageId]),
+    ];
+    const excluded = new Set(
+      (await csamExcludedImageIds(toCheck).execute(replica)).rows.map((r) => r.id)
     );
-    const { rows: csamOwners } = await replica.query<{ userId: number }>(
-      `SELECT DISTINCT "userId" FROM "CsamReport" WHERE "userId" = ANY($1::int[])`,
-      [[...new Set(all.map((c) => c.ownerId))]]
-    );
-    const csamImageIds = new Set(csamImages.map((r) => r.id));
-    const csamOwnerIds = new Set(csamOwners.map((r) => r.userId));
     const before = { removed: removedCandidates.length, notRemoved: notRemovedCandidates.length };
-    removedCandidates = excludeCsam(removedCandidates, csamImageIds, csamOwnerIds);
-    notRemovedCandidates = excludeCsam(notRemovedCandidates, csamImageIds, csamOwnerIds);
+    removedCandidates = removedCandidates.filter((c) => !excluded.has(c.imageId));
+    notRemovedCandidates = notRemovedCandidates.filter(
+      (c) => !(siblingsOf.get(c.imageId) ?? [c.imageId]).some((id) => excluded.has(id))
+    );
     console.log(
       `CSAM exclusion: removed ${before.removed} -> ${removedCandidates.length}, not removed ${before.notRemoved} -> ${notRemovedCandidates.length}`
     );
 
-    const { rows: appealRows } = await replica.query<{
-      entityId: number;
-      status: string;
-      resolvedAt: Date | null;
-    }>(
-      `SELECT DISTINCT ON ("entityId") "entityId", status::text AS status, "resolvedAt"
-       FROM "Appeal" WHERE "entityType" = 'Image' AND "entityId" = ANY($1::int[])
-       ORDER BY "entityId", "createdAt" DESC`,
-      [removedCandidates.map((c) => c.imageId)]
-    );
+    const appealRows = await replica
+      .selectFrom('Appeal')
+      .distinctOn('entityId')
+      .select(['entityId', 'status', 'resolvedAt'])
+      .where('entityType', '=', 'Image')
+      .where(
+        'entityId',
+        'in',
+        removedCandidates.length ? removedCandidates.map((c) => c.imageId) : [0]
+      )
+      .orderBy('entityId')
+      .orderBy('createdAt', 'desc')
+      .execute();
     for (const a of appealRows)
       appeals.set(a.entityId, { status: a.status, resolvedAt: a.resolvedAt });
   } finally {
-    await replica.end();
-  }
-
-  const picked = [
-    ...allocate(removedCandidates, args.removed, args.seed),
-    ...allocate(notRemovedCandidates, args.notRemoved, args.seed),
-  ];
-  const removalById = new Map(removals.map((r) => [r.imageId, r]));
-
-  const counts = new Map<string, number>();
-  for (const p of picked)
-    counts.set(
-      `${p.stratum} ${p.stratumKey}`,
-      (counts.get(`${p.stratum} ${p.stratumKey}`) ?? 0) + 1
-    );
-  for (const [k, n] of [...counts].sort()) console.log(`  ${k}: ${n}`);
-  console.log(
-    `picked ${picked.length} (removed pool ${removedCandidates.length}, not-removed pool ${notRemovedCandidates.length})`
-  );
-
-  if (!args.write) {
-    console.log('dry run: nothing written. Pass --write to insert into the moderator database.');
-    return;
+    await replica.destroy();
   }
 
   // The cluster needs `?sslmode=no-verify` on this URL; a local docker Postgres needs none.
   const mod = new pg.Client({ connectionString: requireEnv('MODERATOR_DATABASE_URL') });
   await mod.connect();
   try {
+    const { rows: present } = await mod.query<{ image_id: number }>(
+      'SELECT image_id FROM relabel_item WHERE image_id = ANY($1::int[])',
+      [[...removedCandidates, ...notRemovedCandidates].map((c) => c.imageId)]
+    );
+    const already = new Set(present.map((r) => r.image_id));
+    removedCandidates = removedCandidates.filter((c) => !already.has(c.imageId));
+    notRemovedCandidates = notRemovedCandidates.filter((c) => !already.has(c.imageId));
+
+    const picked = insertOrder(
+      [
+        ...allocate(removedCandidates, args.removed, args.seed),
+        ...allocate(notRemovedCandidates, args.notRemoved, args.seed),
+      ],
+      args.seed
+    );
+    const removalById = new Map(removals.map((r) => [r.imageId, r]));
+
+    const counts = new Map<string, number>();
+    for (const p of picked) {
+      const key = `${p.stratum} ${p.stratumKey}`;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    for (const [k, n] of [...counts].sort()) console.log(`  ${k}: ${n}`);
+    console.log(
+      `picked ${picked.length} (removed pool ${removedCandidates.length}, not-removed pool ${notRemovedCandidates.length}, ${already.size} already in the set)`
+    );
+
+    if (!args.write) {
+      console.log('dry run: nothing written. Pass --write to insert into the moderator database.');
+      return;
+    }
+
     let inserted = 0;
     for (const p of picked) {
       const removal = removalById.get(p.imageId);
-      const removedAt = removal ? new Date(`${removal.removedAt.replace(' ', 'T')}Z`) : null;
+      const removedAt = removal ? new Date(removal.removedAt * 1000) : null;
       const appeal = appeals.get(p.imageId);
       const res = await mod.query(
         `INSERT INTO relabel_item
            (batch, image_id, stratum, bucket, nsfw_level, stratum_key, owner_id, removed_at, removed_by,
-            purge_after, appeal_status, appeal_resolved_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-         ON CONFLICT (batch, image_id) DO NOTHING`,
+            purge_after, appeal_status, appeal_resolved_at, relabel)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+         ON CONFLICT (image_id) DO NOTHING`,
         [
           args.batch,
           p.imageId,
@@ -272,6 +291,7 @@ async function main() {
             : null,
           appeal?.status ?? null,
           appeal?.resolvedAt ?? null,
+          !args.modelOnly,
         ]
       );
       inserted += res.rowCount ?? 0;

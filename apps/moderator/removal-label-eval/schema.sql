@@ -25,13 +25,17 @@ CREATE TABLE IF NOT EXISTS relabel_item (
   purge_after     timestamptz,
   appeal_status   text,
   appeal_resolved_at timestamptz,
+  -- False for items only the model arms run on. The full-population disagreement and appeal
+  -- numbers need every removal, which is far more than two labelers can answer.
+  relabel         boolean NOT NULL DEFAULT true,
   created_at      timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (batch, image_id),
+  -- One row per image across all batches: daily batches overlap, and a repeat would show the
+  -- labeler the same image twice and count it twice in the report.
+  UNIQUE (image_id),
   CHECK ((stratum = 'removed') = (bucket IS NOT NULL))
 );
 
 CREATE INDEX IF NOT EXISTS relabel_item_batch_idx ON relabel_item (batch);
-CREATE INDEX IF NOT EXISTS relabel_item_image_idx ON relabel_item (image_id);
 
 -- One labeler's answers for one item. Labelers never see each other's rows.
 CREATE TABLE IF NOT EXISTS relabel_answer (

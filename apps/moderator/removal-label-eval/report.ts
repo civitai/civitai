@@ -21,7 +21,7 @@ import {
   type Thresholds,
 } from '../src/lib/removal-label/report';
 import { isMinorBucket } from '../src/lib/removal-label/sampling';
-import type { Answers } from '../src/lib/removal-label/questions';
+import { answersFromRow } from '../src/lib/removal-label/questions';
 
 function arg(argv: string[], flag: string): string | undefined {
   const i = argv.indexOf(flag);
@@ -72,16 +72,13 @@ async function main() {
     }>(
       'SELECT item_id::text, labeler_id, minor_present, sexual_level, violence, school_setting FROM relabel_answer'
     );
-    labels = answerRows.rows.map((r) => ({
-      itemId: r.item_id,
-      labelerId: r.labeler_id,
-      answers: {
-        minorPresent: r.minor_present,
-        sexualLevel: r.sexual_level,
-        violence: r.violence,
-        schoolSetting: r.school_setting,
-      } as Answers,
-    }));
+    // A stored value that is no longer a valid option drops the label rather than passing as one.
+    labels = answerRows.rows.flatMap((r) => {
+      const answers = answersFromRow(r);
+      return answers ? [{ itemId: r.item_id, labelerId: r.labeler_id, answers }] : [];
+    });
+    const dropped = answerRows.rows.length - labels.length;
+    if (dropped) console.warn(`${dropped} stored answers carry retired option values; ignored`);
     const predRows = await mod.query<{
       item_id: string;
       arm: Prediction['arm'];

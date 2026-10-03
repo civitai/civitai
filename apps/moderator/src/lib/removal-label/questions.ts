@@ -113,6 +113,12 @@ export const QUESTIONS = [
   Question<SchoolSetting>
 ];
 
+/** The age answers that count as "a minor is present", for proposals, gold and recall alike. */
+export const MINOR_ANSWERS: ReadonlySet<MinorPresent> = new Set([
+  'appears_minor',
+  'ambiguous_could_be_minor',
+]);
+
 const VALUES: Record<QuestionId, readonly string[]> = {
   minorPresent: MINOR_PRESENT,
   sexualLevel: SEXUAL_LEVEL,
@@ -120,13 +126,39 @@ const VALUES: Record<QuestionId, readonly string[]> = {
   schoolSetting: SCHOOL_SETTING,
 };
 
+export const QUESTION_IDS = Object.keys(VALUES) as QuestionId[];
+
 /** A complete answer set, or null if any question is missing or carries a value outside its options. */
 export function parseAnswers(input: Partial<Record<QuestionId, unknown>>): Answers | null {
   const out: Partial<Record<QuestionId, string>> = {};
-  for (const id of Object.keys(VALUES) as QuestionId[]) {
+  for (const id of QUESTION_IDS) {
     const value = input[id];
     if (typeof value !== 'string' || !VALUES[id].includes(value)) return null;
     out[id] = value;
   }
   return out as Answers;
 }
+
+/** The `relabel_answer` columns. */
+export type AnswerColumns = {
+  minor_present: string;
+  sexual_level: string;
+  violence: string;
+  school_setting: string;
+};
+
+/** Null when a stored value is no longer a valid option, rather than a cast that hides the drift. */
+export const answersFromRow = (row: AnswerColumns): Answers | null =>
+  parseAnswers({
+    minorPresent: row.minor_present,
+    sexualLevel: row.sexual_level,
+    violence: row.violence,
+    schoolSetting: row.school_setting,
+  });
+
+export const answersToRow = (a: Answers): AnswerColumns => ({
+  minor_present: a.minorPresent,
+  sexual_level: a.sexualLevel,
+  violence: a.violence,
+  school_setting: a.schoolSetting,
+});

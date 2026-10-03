@@ -668,7 +668,7 @@ model relabel_answer {
 model relabel_item {
   id                 BigInt               @id @default(autoincrement())
   batch              String
-  image_id           Int
+  image_id           Int                  @unique
   stratum            String
   bucket             String?
   nsfw_level         String?
@@ -679,13 +679,12 @@ model relabel_item {
   purge_after        DateTime?            @db.Timestamptz(6)
   appeal_status      String?
   appeal_resolved_at DateTime?            @db.Timestamptz(6)
+  relabel            Boolean              @default(true)
   created_at         DateTime             @default(now()) @db.Timestamptz(6)
   relabel_answer     relabel_answer[]
   relabel_prediction relabel_prediction[]
 
-  @@unique([batch, image_id])
   @@index([batch], map: "relabel_item_batch_idx")
-  @@index([image_id], map: "relabel_item_image_idx")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.

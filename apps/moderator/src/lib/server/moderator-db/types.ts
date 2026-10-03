@@ -482,6 +482,7 @@ export type relabel_item = {
   purge_after: Timestamp | null;
   appeal_status: string | null;
   appeal_resolved_at: Timestamp | null;
+  relabel: Generated<boolean>;
   created_at: Generated<Timestamp>;
 };
 export type relabel_prediction = {
