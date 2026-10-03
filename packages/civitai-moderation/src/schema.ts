@@ -9,6 +9,7 @@ import { z } from 'zod';
 export const MOD_ACTION = {
   imageModerate: 'image-moderate',
   abuseReport: 'abuse-report',
+  relabelBuildBatch: 'relabel-build-batch',
 } as const;
 export type ModActionName = (typeof MOD_ACTION)[keyof typeof MOD_ACTION];
 
@@ -189,3 +190,17 @@ export const abuseReportInput = z
       });
   });
 export type AbuseReportInput = z.infer<typeof abuseReportInput>;
+
+// relabel.buildBatch — one daily batch of the removal-label relabel set. Like abuseReport, the caller
+// is a scheduled job, so there is no acting moderator.
+export const MAX_RELABEL_BATCH_ITEMS = 500;
+export const relabelBuildBatchInput = z.object({
+  /** The UTC day. It names the batch, which is what makes a second run that day add nothing. */
+  batch: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  /** Caps on what the batch holds per stratum, not on what one run adds. */
+  removed: z.number().int().min(0).max(MAX_RELABEL_BATCH_ITEMS),
+  notRemoved: z.number().int().min(0).max(MAX_RELABEL_BATCH_ITEMS),
+  days: z.number().int().min(1),
+  dryRun: z.boolean(),
+});
+export type RelabelBuildBatchInput = z.infer<typeof relabelBuildBatchInput>;

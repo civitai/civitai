@@ -1,7 +1,18 @@
 import type { z } from 'zod';
-import { MOD_ACTION, abuseReportInput, imageModerateInput } from '@civitai/moderation';
+import { env } from '$env/dynamic/private';
+import {
+  MOD_ACTION,
+  abuseReportInput,
+  imageModerateInput,
+  relabelBuildBatchInput,
+} from '@civitai/moderation';
 import { acceptImage, blockImage } from '../image-moderation.service';
 import { recordAbuseRun } from '../abuse-detection.service';
+import { logToAxiom } from '../axiom';
+import { getClickhouse } from '../clickhouse';
+import { dbRead } from '../db';
+import { getModeratorDb } from '../moderator-db';
+import { buildRelabelBatch, parseBands } from '../relabel-batch-build';
 
 // The cross-app moderator-action registry. Each entry maps an action the main app invokes over
 // `/api/mod/[action]` to a spoke handler. The input SCHEMA is the shared `@civitai/moderation` contract
@@ -50,7 +61,33 @@ const abuseReport: ModAction<z.infer<typeof abuseReportInput>> = {
   },
 };
 
+/**
+ * Backs the main app's daily `relabel-build-batch` job. A scheduled caller again, with no acting
+ * moderator. Writes only to `relabel_item`, and only when `dryRun` is false.
+ *
+ * The not-removed stratum's score bands come from `RELABEL_NOT_REMOVED_BANDS`, never from the
+ * caller or the repo. Unset, the batch holds removed items only.
+ */
+const relabelBuildBatch: ModAction<z.infer<typeof relabelBuildBatchInput>> = {
+  schema: relabelBuildBatchInput,
+  handler: async (input) => {
+    const summary = await buildRelabelBatch(
+      { ...input, bands: parseBands(env.RELABEL_NOT_REMOVED_BANDS) },
+      {
+        clickhouse: (query) => getClickhouse().$query(query),
+        replica: dbRead,
+        moderator: getModeratorDb(),
+      }
+    );
+    void logToAxiom({ type: 'info', name: 'relabel-build-batch', ...summary }).catch(
+      () => undefined
+    );
+    return summary;
+  },
+};
+
 export const modActions: Record<string, ModAction> = {
   [MOD_ACTION.imageModerate]: imageModerate,
   [MOD_ACTION.abuseReport]: abuseReport,
+  [MOD_ACTION.relabelBuildBatch]: relabelBuildBatch,
 };

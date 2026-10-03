@@ -2,9 +2,11 @@ import {
   MOD_ACTION,
   abuseReportInput,
   imageModerateInput,
+  relabelBuildBatchInput,
   type AbuseReportInput,
   type ImageModerateInput,
   type ModActionName,
+  type RelabelBuildBatchInput,
 } from './schema';
 
 export type ModeratorClientConfig = {
@@ -41,7 +43,11 @@ export class ModeratorClientError extends Error {
 export function createModeratorClient(config: ModeratorClientConfig = {}) {
   const doFetch = config.fetch ?? fetch;
 
-  async function call(action: ModActionName, body: unknown): Promise<unknown> {
+  async function call(
+    action: ModActionName,
+    body: unknown,
+    { timeoutMs = config.timeoutMs ?? 15_000 }: { timeoutMs?: number } = {}
+  ): Promise<unknown> {
     const endpoint = (config.endpoint ?? process.env.MODERATOR_APP_URL ?? '').replace(/\/$/, '');
     const token = config.token ?? process.env.WEBHOOK_TOKEN;
     try {
@@ -49,7 +55,7 @@ export function createModeratorClient(config: ModeratorClientConfig = {}) {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${token ?? ''}` },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(config.timeoutMs ?? 15_000),
+        signal: AbortSignal.timeout(timeoutMs),
       });
       if (!res.ok) {
         const text = await res.text().catch(() => '');
@@ -99,6 +105,14 @@ export function createModeratorClient(config: ModeratorClientConfig = {}) {
      */
     abuseReport: (input: AbuseReportInput): Promise<unknown> =>
       call(MOD_ACTION.abuseReport, abuseReportInput.parse(input)),
+    /**
+     * Build the day's removal-label relabel batch. Two ClickHouse scans and a replica read take far
+     * longer than the default timeout, and an abort here would record a run that in fact completed.
+     */
+    relabelBuildBatch: (input: RelabelBuildBatchInput): Promise<unknown> =>
+      call(MOD_ACTION.relabelBuildBatch, relabelBuildBatchInput.parse(input), {
+        timeoutMs: 5 * 60_000,
+      }),
   };
 }
 
