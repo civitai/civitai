@@ -2254,24 +2254,19 @@ export const getJudgingPair = async ({
       );
       const candidates = sample.filter(underJudgeCap).map(rate);
       const crossAuthor = pickUnjudgedPair(candidates, votedPairs, { allowSameAuthor: false });
-      if (crossAuthor) return { crossAuthor, sameAuthor: null };
+      if (crossAuthor) return crossAuthor;
       sameAuthor ??= pickUnjudgedPair(candidates, votedPairs, { allowSameAuthor: true });
       // A short sample already held every entry, so another draw returns the same set.
       if (sample.length < SAMPLE_SIZE) break;
     }
-    return { crossAuthor: null, sameAuthor };
+    return sameAuthor;
   };
 
   // A skip means "not now": once only skipped entries are left, they come back instead of the
-  // judge being told there is nothing left to judge.
-  const withSkips = await search(excludeEntryIds);
-  const withoutSkips =
-    !withSkips.crossAuthor && excludeEntryIds?.length ? await search() : undefined;
-  const pair =
-    withSkips.crossAuthor ??
-    withoutSkips?.crossAuthor ??
-    withSkips.sameAuthor ??
-    withoutSkips?.sameAuthor;
+  // judge being told there is nothing left to judge. It outranks the author rule, so a same-author
+  // pair is served before a skipped entry returns: re-serving the pair just skipped makes Skip
+  // look broken.
+  const pair = (await search(excludeEntryIds)) ?? (excludeEntryIds?.length ? await search() : null);
   if (!pair) return null;
   const { a: imageA, b: imageB } = pair;
 

@@ -297,7 +297,7 @@ describe('getJudgingPair — same-author pairs', () => {
   it('keeps sampling for a cross-author pair before settling for a same-author one', async () => {
     const oneAuthor = Array.from({ length: 100 }, (_, i) => rawEntry(i + 1, 50));
     const mixed = [...oneAuthor.slice(0, 99), rawEntry(101, 60)];
-    queryRaw.mockResolvedValueOnce(oneAuthor).mockResolvedValueOnce(mixed);
+    queryRaw.mockResolvedValue([]).mockResolvedValueOnce(oneAuthor).mockResolvedValueOnce(mixed);
 
     const pair = await getJudgingPair({ crucibleId: 1, userId: 7 });
 
@@ -317,7 +317,10 @@ describe('getJudgingPair — same-author pairs', () => {
     expect(queryRaw).toHaveBeenCalledTimes(3);
   });
 
-  it('brings a skipped entry back for a cross-author pair rather than serve a same-author one', async () => {
+  // A product decision, not an accident of ordering: when the only cross-author pairs left involve
+  // an entry the judge just skipped, Skip wins over the author rule, because bringing the skipped
+  // pair straight back makes the Skip button look dead. Do not reorder the fallback without asking.
+  it('serves a same-author pair before bringing a skipped entry back', async () => {
     const all = [rawEntry(1, 50), rawEntry(2, 50), rawEntry(3, 60)];
     queryRaw.mockImplementation(async (strings: TemplateStringsArray) =>
       strings.join('').includes('NOT IN') ? all.filter((e) => e.id !== 3) : all
@@ -325,7 +328,17 @@ describe('getJudgingPair — same-author pairs', () => {
 
     const pair = await getJudgingPair({ crucibleId: 1, userId: 7, excludeEntryIds: [3] });
 
-    expect(pairIds(pair)).toContain(3);
+    expect(pairIds(pair)).toEqual([1, 2]);
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not sample again without the skip list once a cross-author pair is found', async () => {
+    queryRaw.mockResolvedValue([rawEntry(1, 50), rawEntry(3, 60)]);
+
+    const pair = await getJudgingPair({ crucibleId: 1, userId: 7, excludeEntryIds: [9] });
+
+    expect(pairIds(pair)).toEqual([1, 3]);
+    expect(queryRaw).toHaveBeenCalledTimes(1);
   });
 });
 
