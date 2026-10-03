@@ -6,6 +6,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 // @typescript-eslint/consistent-type-imports rejects) so the spread below keeps the real
 // module's type.
 import type * as TrpcMod from '~/utils/trpc';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 /**
  * `AuthorViaGit` — the git-access panel, which had NO test of any kind.
@@ -42,18 +43,22 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
-  trpc: {
-    blocks: {
-      getMyAppRepo: {
-        useQuery: () => ({
-          data: mocks.repo,
-          isLoading: mocks.isLoading,
-          isError: mocks.isError,
-          error: mocks.error,
-        }),
-      },
+  // 🔴 THE SHARED PROXY, NOT A HAND-ENUMERATED OBJECT. A literal `trpc` mock answers
+  // `undefined` for every procedure nobody remembered, so the component throws during render
+  // and the test fails on "Cannot find element with locator: …" — a fixture defect wearing a
+  // component defect's error message. `test/trpcProxyStub.ts`'s header records four separate
+  // times that cost this repo. The overridden procedure keeps its own spy, so nothing below
+  // is weakened, and no assertion here reads a proxy DEFAULT (which that header forbids).
+  trpc: makeTrpcProxy({
+    'blocks.getMyAppRepo': {
+      useQuery: () => ({
+        data: mocks.repo,
+        isLoading: mocks.isLoading,
+        isError: mocks.isError,
+        error: mocks.error,
+      }),
     },
-  },
+  }),
 }));
 
 const { AuthorViaGit } = await import('./AuthorViaGit');

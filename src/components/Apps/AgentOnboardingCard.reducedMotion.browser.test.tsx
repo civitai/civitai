@@ -19,13 +19,12 @@ import type * as MantineHooks from '@mantine/hooks';
  * no shimmer animation — the pattern `wizardMotion.tsx` established and
  * `ExternalSubmitForm.reducedMotion.browser.test.tsx` already pins for the submit wizard.
  *
- * 🔴 EVERY RENDER IS AWAITED, AND WITHOUT THAT THIS WHOLE FILE IS VACUOUS. `useReducedMotion`
- * returns its initial value on the first render and reads the media query in an effect, so
- * `motionOn` is false in the first commit of an ANIMATED card too — every absence below is
- * the default state of the thing it claims to be denying. Awaiting `renderWithProviders`
- * drains that effect through `act`, so these assertions are made against a settled card.
- * Found by the test review; before it, the only thing separating these from vacuous was
- * `expect.element`'s 50ms retry gap.
+ * 🔴 EVERY RENDER IS AWAITED, AND THE REASON IS NOT THE ONE THE SIBLING SUITE GIVES. There
+ * this file mocks `useReducedMotion` to a constant, so there is no effect to drain — the
+ * awaits are load-bearing for a different reason: `off` is ALSO the real hook's first-render
+ * default, so a silently-failed `vi.mock` would leave every absence below passing for the
+ * wrong reason. Awaiting settles the tree, which means these assertions can only be satisfied
+ * by a card that is still static after the media query would have been read.
  *
  * 🔴 AND IT ASSERTS THE AFFORDANCE STILL WORKS, which is the half that matters. "No
  * animation runs" is satisfied by a card that renders nothing at all. The copy path — same

@@ -27,11 +27,29 @@ import {
   type AppsBuildState,
 } from '~/components/Apps/appsBuildState';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
+import type { TrackActionInput } from '~/server/schema/track.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsClient } from '~/providers/IsClientProvider';
 import { isAppDeveloper } from '~/shared/utils/app-blocks-access';
 import { trpc } from '~/utils/trpc';
+
+/**
+ * The funnel steps, DERIVED from the schema that validates them rather than retyped.
+ *
+ * 🔴 THIS USED TO BE A HAND-WRITTEN UNION, TWO LINES FROM A SIBLING FIELD THAT WAS ALREADY
+ * DERIVED (`AppsBuildState`). One field of the pair followed its source and the other did
+ * not, which is how they drift. This change paid for it directly: adding `agent_prompt_copy`
+ * meant editing the same set in three places. `track.schema.ts` is the authority — a value
+ * it rejects is dropped with a 200, so a local union that is WIDER than the schema fails
+ * silently in production and nowhere in CI.
+ *
+ * `agent_prompt_copy` is deliberately its own step and not folded into `cli_copy`: the page
+ * offers two routes into building an app, and which one developers take is the comparison
+ * the split exists to keep answerable. `state` does not separate them — both fire in all
+ * three states.
+ */
+type AppsBuildAction = Extract<TrackActionInput, { type: 'AppsBuild_Action' }>['details']['action'];
 
 /** Where both "start an app" affordances go. `/apps/submit` keeps its route. */
 const CREATE_FLOW_HREF = '/apps/submit';
@@ -129,21 +147,7 @@ export function AppsBuildBody() {
   });
 
   const track = useCallback(
-    (
-      action:
-        | 'view'
-        | 'request_access'
-        | 'cli_copy'
-        // 🔴 ITS OWN ACTION, NOT FOLDED INTO `cli_copy`. The page offers two routes into
-        // building an app — copy three commands and run them yourself, or hand one prompt to
-        // a coding agent — and which one developers actually take is the thing worth
-        // knowing. Reporting both as `cli_copy` would make that comparison unanswerable
-        // after the fact, and the `state` dimension does not separate them (both fire in all
-        // three states).
-        | 'agent_prompt_copy'
-        | 'create_entry',
-      forState: AppsBuildState
-    ) => {
+    (action: AppsBuildAction, forState: AppsBuildState) => {
       trackAction({ type: 'AppsBuild_Action', details: { action, state: forState } }).catch(
         () => undefined
       );

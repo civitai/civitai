@@ -11,9 +11,16 @@ import { EXCLUDE_TEST_FILES, walk } from '../../../../test/source-scan';
  * found a fifth, `AuthorViaGit.tsx`'s private `CopyableCode`, already drifted to
  * `aria-label="Copy"` on both of its instances on one panel. The correction said "a fifth",
  * and that was wrong too. A count maintained by hand in a comment is wrong by default, so
- * this is a check instead: within this directory, exactly one module may import Mantine's
- * `CopyButton`. It fails when the set GROWS (a sixth copy) and when it SHRINKS (the seam
- * moved and this ledger is stale).
+ * this is a check instead: the set of modules in this directory that reach for a clipboard
+ * primitive is pinned by enumerated equality. It fails when the set GROWS (a new private
+ * copy) and when it SHRINKS (the seam moved and this ledger is stale).
+ *
+ * 🔴 BOTH ROUTES, NOT JUST `CopyButton`. An earlier version matched Mantine's `CopyButton`
+ * alone and said it caught "a sixth copy" — it pinned one SPELLING. A copy affordance built
+ * on `useClipboard` walks it, and one already exists in this directory: `ReportTabs.tsx` is
+ * the same `copy` + copied-icon-swap shell by the other route. It is listed rather than
+ * converted — converting it is not this change's job — but it is listed, so a seventh by
+ * either route is loud instead of silent.
  *
  * ⚠️ SCOPE IS THIS DIRECTORY, NOT THE REPO. The same shell also sits in
  * `Account/ApiKeyModal.tsx`, `Account/OAuthAppsCard.tsx` (×3) and
@@ -45,23 +52,26 @@ function appsSourceFiles(): string[] {
   );
 }
 
-/** Modules under `src/components/Apps/` that import `CopyButton` from `@mantine/core`. */
-function mantineCopyButtonImporters(): string[] {
+/**
+ * The import statements specifically — not a mention in prose, and not this repo's own
+ * `~/components/CopyButton`, which is a different wrapper with the same name.
+ */
+const CLIPBOARD_PRIMITIVE =
+  /import\s*\{[^}]*\b(?:CopyButton|useClipboard)\b[^}]*\}\s*from\s*'@mantine\/(?:core|hooks)'/;
+
+/** Modules under `src/components/Apps/` that reach for a Mantine clipboard primitive. */
+function clipboardPrimitiveImporters(): string[] {
   return appsSourceFiles()
-    .filter((file) => {
-      const text = readFileSync(file, 'utf8');
-      // The import statement specifically — not a mention in prose, and not this repo's own
-      // `~/components/CopyButton`, which is a different wrapper.
-      const mantineImport = /import\s*\{[^}]*\bCopyButton\b[^}]*\}\s*from\s*'@mantine\/core'/;
-      return mantineImport.test(text);
-    })
+    .filter((file) => CLIPBOARD_PRIMITIVE.test(readFileSync(file, 'utf8')))
     .map((file) => relative(APPS_DIR, file))
     .sort();
 }
 
-describe('🔒 only the shared affordance reaches for Mantine CopyButton under Apps/', () => {
+describe('🔒 the clipboard-primitive importers under Apps/ are exactly these', () => {
   it('the ledger is exactly this', () => {
-    expect(mantineCopyButtonImporters()).toEqual(['CopyAffordance.tsx']);
+    // `ReportTabs.tsx` is a pre-existing `useClipboard` copy, listed so it cannot grow a
+    // sibling unnoticed. `CopyAffordance.tsx` is the shared seam.
+    expect(clipboardPrimitiveImporters()).toEqual(['CopyAffordance.tsx', 'ReportTabs.tsx']);
   });
 
   it('POSITIVE CONTROL: the scan reads real files and can see the importer it names', () => {
@@ -71,6 +81,6 @@ describe('🔒 only the shared affordance reaches for Mantine CopyButton under A
     const files = appsSourceFiles();
     expect(files.length, 'the walk found no source files at all').toBeGreaterThan(50);
     const shared = readFileSync(join(APPS_DIR, 'CopyAffordance.tsx'), 'utf8');
-    expect(shared).toMatch(/import\s*\{[^}]*\bCopyButton\b[^}]*\}\s*from\s*'@mantine\/core'/);
+    expect(shared).toMatch(CLIPBOARD_PRIMITIVE);
   });
 });

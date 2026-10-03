@@ -140,9 +140,9 @@ export function CopyAffordance({
               {renderGlyph ? (
                 renderGlyph(copied)
               ) : copied ? (
-                <IconCheck size={16} />
+                <IconCheck size={COPY_ICON_SIZE} />
               ) : (
-                <IconClipboard size={16} />
+                <IconClipboard size={COPY_ICON_SIZE} />
               )}
             </LegacyActionIcon>
           </Box>
@@ -163,10 +163,18 @@ export function CopyAffordance({
  * THIRD spelling of the same idea — named here rather than implied to be covered.
  */
 export const COPY_ICON_INSET = 8;
-/** Right padding a `Code`-style body must carry so the control never overlaps its text. */
-export const COPY_BODY_PADDING_RIGHT = 36;
+/** The glyph's rendered size. Was retyped at three `size={16}` call sites in this file. */
+export const COPY_ICON_SIZE = 16;
+/**
+ * Right padding a `Code`-style body must carry so the control never overlaps its text.
+ *
+ * 🔴 DERIVED, NOT A SECOND LITERAL. The doc above states the relation; stating it was not
+ * enforcing it, and a bump to the inset would silently shrink the clearance — re-arming the
+ * exact defect the constants were introduced to prevent. The `12` is breathing room.
+ */
+export const COPY_BODY_PADDING_RIGHT = COPY_ICON_INSET + COPY_ICON_SIZE + 12;
 
 /** The default glyph pair, exported so a `renderGlyph` can wrap it rather than restate it. */
-export function CopyGlyph({ copied, size = 16 }: { copied: boolean; size?: number }) {
+export function CopyGlyph({ copied, size = COPY_ICON_SIZE }: { copied: boolean; size?: number }) {
   return copied ? <IconCheck size={size} /> : <IconClipboard size={size} />;
 }

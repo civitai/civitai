@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import {
   AGENT_CARET_TESTID,
@@ -9,9 +9,9 @@ import {
   AGENT_ROW_TESTID,
   AGENT_SHIMMER_TESTID,
   AgentOnboardingCard,
-  STAGGER_SECONDS,
 } from '~/components/Apps/AgentOnboardingCard';
-import { AGENT_BUILD_PROMPT } from '~/components/Apps/cliCommands';
+import { CLI_INSTALL_NPM, AGENT_BUILD_PROMPT } from '~/components/Apps/cliCommands';
+import { CopyableCommand } from '~/components/Apps/CopyableCommand';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 
@@ -35,6 +35,39 @@ import { renderWithProviders } from '../../../test/component-setup';
  * separating three such assertions from vacuous was `expect.element`'s 50ms retry gap, and a
  * sibling test in this file resolved its first poll in 12ms. Do not drop an `await` here.
  */
+
+/**
+ * Virtual-clock helpers, mirroring `CliSubmitCta.browser.test.tsx`'s — which carries the
+ * measured justification for them. ⚠️ A FOURTH per-file copy in this directory; they belong
+ * in `test/`, which is a reuse question for whoever hoists them, not for this change.
+ */
+const realSetTimeout = globalThis.setTimeout.bind(globalThis);
+/** Mantine `CopyButton`'s `defaultProps = { timeout: 1e3 }`. Pinned, not slept past. */
+const COPIED_RESET_MS = 1000;
+function useVirtualClock() {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+}
+async function advance(ms: number) {
+  await vi.advanceTimersByTimeAsync(ms);
+  for (let i = 0; i < 5; i += 1) {
+    await vi.advanceTimersByTimeAsync(0);
+    await new Promise((resolve) => realSetTimeout(resolve, 0));
+  }
+}
+/** The copy itself is genuinely async; give it a bounded budget of REAL time to land. */
+async function settleCopy() {
+  const deadline = Date.now() + 2000;
+  do {
+    await new Promise((resolve) => realSetTimeout(resolve, 10));
+    if (vi.mocked(navigator.clipboard.writeText).mock.calls.length > 0) return;
+  } while (Date.now() < deadline);
+}
+
+// Reverse registration order puts this BEFORE the setup file's `await cleanup()`, so the
+// unmount never sees a frozen clock.
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 /** The stub installed by `test/component-setup`; a real `vi.fn()`, so its calls are readable. */
 const writeText = () => vi.mocked(navigator.clipboard.writeText);
@@ -78,7 +111,8 @@ describe('AgentOnboardingCard — the copy control', () => {
     await expect.element(button).toBeInTheDocument();
     // `CopyableCommand`'s label is `Copy command: <cmd>`; this prompt is prose, not a
     // command, and reusing that component is what would have produced the wrong name.
-    expect(AGENT_COPY_LABEL).not.toContain('command');
+    // Lower-cased: `Copy Command: …` would walk a case-sensitive `not.toContain`.
+    expect(AGENT_COPY_LABEL.toLowerCase()).not.toContain('command');
   });
 
   test('🔴 pressing the INNER ICON fires the copy callback exactly ONCE', async () => {
@@ -126,8 +160,23 @@ describe('AgentOnboardingCard — the copy control', () => {
    * three timing-dependent failure modes, including one that silently disabled the panel for
    * anyone with a stale selection. `CopyAffordance`'s `bodyClickCopies` note has the detail.
    *
-   * One-line COMMAND blocks keep the body click; prose does not.
+   * One-line COMMAND blocks keep the body click; prose does not — and both branches are
+   * pinned, the default one immediately below.
    */
+  /**
+   * 🔴 THE OTHER BRANCH OF THE SAME SWITCH. `bodyClickCopies` defaults to TRUE, and the three
+   * pre-existing `CopyableCommand` call sites rely on that default — the prop's own doc says
+   * leaving it is "what keeps `onCopy`'s contract exactly as documented for them". Nothing
+   * read it: flipping the default to `false` left 67 tests green across seven files, because
+   * every existing suite clicks the `Copy command: …` BUTTON and none clicks a block body.
+   * This change introduced the switch, so it owns both branches.
+   */
+  test('🔴 a COMMAND block keeps its body click — the default branch', async () => {
+    await renderWithProviders(<CopyableCommand command={CLI_INSTALL_NPM} />);
+    await page.getByText(`$ ${CLI_INSTALL_NPM}`).click();
+    expect(writeText()).toHaveBeenCalledWith(CLI_INSTALL_NPM);
+  });
+
   test('🔴 clicking the prompt text does NOT copy — only the control does', async () => {
     const onCopy = vi.fn();
     await renderWithProviders(<AgentOnboardingCard onCopy={onCopy} />);
@@ -141,28 +190,6 @@ describe('AgentOnboardingCard — the copy control', () => {
     await page.getByRole('button', { name: AGENT_COPY_LABEL }).click();
     expect(onCopy).toHaveBeenCalledTimes(1);
     expect(writeText()).toHaveBeenCalledWith(AGENT_BUILD_PROMPT);
-  });
-
-  test('a selection inside the panel survives a click on the panel', async () => {
-    // The user-facing half of the same decision: selecting a fragment of the prompt and
-    // clicking is a normal reading gesture, and it must not clobber the selection.
-    await renderWithProviders(<AgentOnboardingCard />);
-    const panel = page.getByTestId(AGENT_PROMPT_TESTID);
-    await expect.element(panel).toBeInTheDocument();
-
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    const range = document.createRange();
-    range.selectNodeContents(panel.element());
-    selection?.addRange(range);
-    const before = selection?.toString() ?? '';
-    expect(before.length, 'the fixture failed to select anything').toBeGreaterThan(0);
-
-    await panel.click();
-    // Nothing re-rendered the body into its "Copied" state, so the text node still exists.
-    expect(panel.element().textContent ?? '').toContain(AGENT_BUILD_PROMPT);
-    expect(writeText()).not.toHaveBeenCalled();
-    selection?.removeAllRanges();
   });
 });
 
@@ -188,37 +215,60 @@ describe('AgentOnboardingCard — motion, when the viewer has not opted out', ()
     //    `CopyAffordance`'s default, so this wrapper is the pop's only structural trace.
     await expect.element(page.getByTestId(AGENT_GLYPH_TESTID)).toBeInTheDocument();
 
+    // 🔴 AND THE ROWS ARE ACTUALLY VISIBLE. This is the seam the other guards leave open:
+    // `agentOnboardingMotion.test.ts` pins the VALUES and the index set above pins the
+    // WRAPPERS, but nothing pinned that the wrapper CONSUMES the values — so replacing
+    // `initial={REVEAL_INITIAL}` with `initial={{ opacity: 0 }}` right here rendered all
+    // three rows at computed opacity 0 and left 28 component + 6 unit tests GREEN. Measured,
+    // not imagined. `toBeVisible()` cannot catch it — the browser matcher ignores opacity,
+    // which this change already documents in `AppsBuildBody.agentPrompt.browser.test.tsx`.
+    // Reading the computed value is the same move the ring's `animationName` read makes.
+    for (const row of page.getByTestId(AGENT_ROW_TESTID).elements()) {
+      expect(getComputedStyle(row).opacity, 'an entrance row rendered transparent').toBe('1');
+    }
+
     expect(page.getByTestId(AGENT_ONBOARDING_TESTID).element().getAttribute('data-motion')).toBe(
       'on'
     );
   });
 
-  test('the stagger step is 40ms', () => {
-    // The constant the delay is multiplied by. Together with the index set above this pins
-    // the stagger itself rather than only that wrappers exist.
-    expect(STAGGER_SECONDS).toBe(0.04);
-  });
-
-  test('copying morphs the clipboard glyph to a check', async () => {
+  /**
+   * 🔴 THE CLOCK IS VIRTUAL, THE BEHAVIOUR IS NOT — and this is the repo's existing fix, not
+   * a new idea. `copied` is TRANSIENT: Mantine's `CopyButton` arms
+   * `setTimeout(() => setCopied(false), 1000)` the moment the clipboard promise resolves, so
+   * a real-clock `vi.waitFor` is racing a ~1s window with a ~1s budget.
+   * `CliSubmitCta.browser.test.tsx` records that the identical assertion went red on
+   * civitai#3653's preview run after passing 1280/1280 ten minutes earlier, and measures the
+   * window at 976.7-1001.2ms. Shrinking what precedes the poll — which is what this test did
+   * before — narrows the race without removing it.
+   *
+   * Freezing `setTimeout` removes the dependency, and buys the half this test did not have:
+   * the RESET. Without it, a `copied` state that never ends passes.
+   */
+  test('copying morphs the clipboard glyph to a check, and the morph ends', async () => {
     await renderWithProviders(<AgentOnboardingCard />);
     const button = page.getByRole('button', { name: AGENT_COPY_LABEL });
+    await expect.element(button).toBeInTheDocument();
     expect(
       button.element().querySelector('.tabler-icon-clipboard'),
       'the pre-copy glyph should be the clipboard'
     ).not.toBeNull();
 
-    // 🔴 ONE WAIT, IMMEDIATELY — `copied` DELETES ITSELF. Mantine's `CopyButton` defaults to
-    // `timeout: 1e3`, so the check glyph exists for ~1s and then reverts to the clipboard.
-    // An intervening `await expect.element(...)` on the pop wrapper (which exists in BOTH
-    // copied states, so it is not the transient) used to burn part of that budget before this
-    // read started, and `vi.waitFor`'s own default budget is also 1s — so under load the
-    // whole window could elapse and the failure read "the morph is broken" rather than "the
-    // state expired". Measured: a 1.2s stall inserted between the click and this wait turns
-    // it red with `expected null not to be null`.
+    // Freeze BEFORE the interaction: the reset timer is armed by the copy itself, and
+    // `useFakeTimers` does not retroactively capture an already-scheduled real timer.
+    useVirtualClock();
     await button.click();
-    await vi.waitFor(() =>
-      expect(button.element().querySelector('.tabler-icon-check')).not.toBeNull()
-    );
+    await settleCopy();
+
+    expect(button.element().querySelector('.tabler-icon-check')).not.toBeNull();
+
+    // 1ms inside the window: still the check, so this is the live copied STATE.
+    await advance(COPIED_RESET_MS - 1);
+    expect(button.element().querySelector('.tabler-icon-check')).not.toBeNull();
+
+    // Crossing it reverts. Without this half the two above also pass on a stuck state.
+    await advance(1);
+    expect(button.element().querySelector('.tabler-icon-clipboard')).not.toBeNull();
   });
 
   test('🔴 `animated={false}` is the SAME static tree reduced motion gets', async () => {

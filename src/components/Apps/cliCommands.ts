@@ -98,12 +98,32 @@ export const CLI_SUBMIT_COMMAND = 'civitai app submit';
  * 🔴 AND THE URL ITSELF IS TRACKED IN NEITHER REPO. It is a Cloudflare 302 to
  * `https://developer.civitai.com/agent-setup/prompt.md` — a dashboard redirect rule, not a
  * Next.js route and not a rewrite. Measured 2026-10-03: `302` with that `location:`, then
- * `200` and 7,433 bytes. `git grep agent-onboarding` over this repo returns NOTHING but this
- * block (verified with a positive control on a neighbouring constant, so that zero is a real
- * absence and not a broken search), and `next.config.mjs` defines no such redirect — unlike
+ * `200` and 7,433 bytes. `next.config.mjs` defines no such redirect — unlike
  * `APPS_REQUEST_ACCESS_HREF` above, whose `/discord` target IS a committed redirect with a
- * test asserting it exists. If the Cloudflare rule is moved or deleted, this constant
- * silently points at a 404 and nothing in either repo reports it.
+ * test asserting it exists (positive control: the same search finds `/discord`, so that zero
+ * is a real absence). If the Cloudflare rule is moved or deleted, this constant silently
+ * points at a 404 and nothing in either repo reports it.
+ *
+ * ⚠️ AN EARLIER VERSION OF THIS NOTE SAID "`git grep agent-onboarding` RETURNS NOTHING BUT
+ * THIS BLOCK" — true when written, false now that the card and three test files reference it.
+ * The substantive claim (no committed ROUTE) is what matters and still holds; the sentence is
+ * corrected because it is the evidence a future reader would lean on.
+ *
+ * 🔴 AND THE BOUNDED-NESS RESTS ON A PRECONDITION WORTH STATING. A deleted rule degrades to a
+ * 404 — rather than to an agent executing someone else's text — only because `src/pages/` has
+ * no top-level dynamic or catch-all segment and there is no `src/middleware.ts` rewrite, so
+ * the path can only fall through. Adding a root-level `[slug]`/`[...slug]` page later would
+ * silently turn this constant into a pointer at user-controllable content, and nothing in
+ * either repo would report that either.
+ *
+ * ⚠️ WHAT THIS DOES AND DOES NOT WIDEN, because the note should not read as alarmist. It does
+ * NOT widen the trust domain: `npm install -g @civitai/cli` is already on this same page as
+ * `CLI_INSTALL_NPM`, so the card adds a second route to a destination the page already asks
+ * for. What it DOES change is who can alter what gets executed — the three command blocks are
+ * code-reviewed strings, while this delegates to unpinned remote text editable from a
+ * dashboard outside code review. The mitigation that matters for informed consent is in the
+ * card and is pinned: both tone variants disclose all three side effects (CLI install, MCP
+ * registration, login state), asserted for both.
  *
  * What DOES pin the pair is `__tests__/agentPrompt.test.ts` (the exact bytes, in the unit
  * tier) plus `AgentOnboardingCard.browser.test.tsx` (that those bytes are what reaches the

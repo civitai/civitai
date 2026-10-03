@@ -9,16 +9,23 @@
  * same 1px gradient edge.
  *
  * 🔴 THE SHIMMER IS CSS KEYFRAMES, NOT `motion`, AND IT IS THE ONE ANIMATION ON THIS CARD
- * THAT HAD TO BE. The other three (`y` on the rows, `scale` on the glyph, `opacity` on the
- * caret) are all in framer's accelerable set — `opacity`, `clipPath`, `filter`, `transform`
- * (`motion/dist/es/framer-motion/dist/es/animation/animators/utils/accelerated-values.mjs`)
- * — so they run on the compositor and cost the main thread nothing. `background-position` is
- * NOT in that set, so framer falls back to `MainThreadAnimation`, whose frameloop driver
- * registers with `keepAlive: true`; with `repeat: Infinity` that tick never unregisters, so
- * it would run framer's whole per-frame pipeline for as long as the card is mounted — on the
- * public pitch state, off-screen included (`animate` has no viewport gating; that is
- * `whileInView`). Per frame it also invalidates the ring's background paint across its entire
- * border box, ~99% of which the opaque `.surface` covers.
+ * THAT HAD TO BE — because it was the only one that was BOTH non-accelerable AND infinite.
+ *
+ * ⚠️ READ THE RULE AS BOTH CONDITIONS. An earlier version of this paragraph said the other
+ * three "are all in framer's accelerable set … so they cost the main thread nothing", and
+ * that is FALSE for two of them: `acceleratedValues` is the literal set
+ * `{opacity, clipPath, filter, transform}` and framer passes the motion-value key
+ * UNNORMALISED, so `y` and `scale` are not members and take `MainThreadAnimation` exactly as
+ * the shimmer did. They are free only because they are FINITE one-shots whose driver stops
+ * and is dropped on completion. The caret is infinite and genuinely accelerated because its
+ * key is literally `opacity`.
+ *
+ * That correction matters here more than in the component, because THIS is the file someone
+ * opens when they want to move an animation back onto `motion`: the old sentence told them
+ * `scale` and `y` pass the check, and following it reproduces the bug verbatim — a
+ * `keepAlive: true` frameloop driver that never unregisters, on the public pitch state,
+ * off-screen included (`animate` has no viewport gating; that is `whileInView`), invalidating
+ * the ring's background paint across a border box ~99% of which the opaque `.surface` covers.
  *
  * In CSS the same effect is a browser-owned animation with no JS at all, and it also gets
  * lifecycle gating a rAF loop structurally cannot have: a CSS animation inside a
