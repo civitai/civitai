@@ -95,6 +95,14 @@ _(PR #5187)_.
 created without the MinIO console:
 `mc admin accesskey create <alias> minioadmin --access-key <key> --secret-key <secret>`.
 
+**Collection and user image feeds fail: "Having trouble loading images", and the server logs
+`relation "CollectionItem" does not exist`.** Several image feeds read the "datapacket" read
+replica (`DATAPACKET_DATABASE_RO_URL`, enabled for everyone by the `datapacketRead` feature flag).
+`.env-example` points it at port 15435 — the `logical-db` container, a logical-replication stub
+holding only `Image(id)` — so every such query fails. Locally there is no separate replica; point
+it at the main database, as `DATABASE_REPLICA_URL` already does:
+`DATAPACKET_DATABASE_RO_URL=postgresql://postgres:postgres@127.0.0.1:15432/civitai`.
+
 **Settings missing from `.env-example`** — see §6 (auth hub) and §7 (moderator app). Watch for a
 key that already exists further up the file: dotenv keeps the **first** occurrence, so appending a
 second `MODERATOR_APP_URL=` silently does nothing.
@@ -152,6 +160,36 @@ WHERE url LIKE 'https://loremflickr.com/%';
 
 **The seed empties the `Role` table.** It runs `TRUNCATE "User" … CASCADE`, which also truncates
 every table with a foreign key to `User` — including `Role`. Re-insert any roles you need (§7).
+
+**No articles appear anywhere** (home page, `/articles`, search), and the `articles_v5` index is
+empty. Every seeded article has `ingestion = 'Pending'`, and listing queries require `'Scanned'`;
+the content scanner doesn't run locally. Mark the published ones scanned, then re-run the search
+bootstrap:
+
+```sql
+UPDATE "Article" SET ingestion = 'Scanned', "contentScannedAt" = COALESCE("contentScannedAt", now())
+WHERE status = 'Published' AND ingestion = 'Pending';
+```
+
+**Every home-page section is empty** (only the headings render). The seed doesn't set them up, and
+they can't be fixed from the UI. Each is a `HomeBlock` row; what it needs:
+
+- `Collection` blocks (`metadata.collection.id`) — that collection needs `ACCEPTED`
+  `CollectionItem`s of the matching type. The seeded ones are empty or the wrong type (e.g. the
+  Featured Posts block points at an empty 3D-model collection). Add published, PG
+  (`"nsfwLevel" = 1`) items; for models, picking ones already in the `models_v9` index works best,
+  since the block applies further visibility checks.
+- `FeaturedModelVersion` — rows in `"FeaturedModelVersion"` whose `validFrom`/`validTo` window
+  includes now; all seeded windows are in the past.
+- `FeaturedCollections` — `metadata.featuredCollections.collectionIds` must list public collections
+  that have items.
+- The "New & Upcoming" `Feed` blocks — read the latest date of `"LeaderboardResult"` for the
+  `images-new` and `new_creators` boards (filled daily by a job that doesn't run locally; the
+  `images-new` `Leaderboard` row doesn't exist). Create the board and insert a day's rows of users
+  with PG content.
+
+Home blocks are cached in Redis: after editing, delete the `packed:*` keys (and
+`home-blocks:featured-collections:*`).
 
 **`make reseed` → bootstrap stops at the first failing job, so search stays empty**
 _(PR #5187)_. Several metrics jobs read ClickHouse tables that only exist in production. Two can
@@ -221,11 +259,18 @@ MOD_INBOUND_TOKEN=<random; same value in apps/moderator/.env>
   ignored for flags that have a `fliptKey`.
 - Generation, training, Buzz and signals — see the README's "Known limitations".
 
-**Known intermittent issue (under investigation):** sometimes every _signed-in_ request hangs
-(anonymous ones are fine) — signed-in pages take 8 s and render as signed-out, the image feed shows
-"Taking longer than usual", and `/moderator/*` loops between the page and `/login`. Restarting the
-dev server clears it (`node .claude/skills/dev-server/cli.mjs restart <session-id>`). Recompiling a
-single route only clears that route, which is misleading when diagnosing it.
+**A route that hangs forever — and survives a restart.** Symptoms: signed-in pages take exactly
+8 s and render as signed out (hydration-mismatch warnings follow), the image feed shows "Taking
+longer than usual", and `/moderator/*` loops between the page and `/login` (`ERR_TOO_MANY_REDIRECTS`).
+The cause is one route, `/api/user/settings`, which `_app` self-fetches on every SSR render with an
+8 s timeout: requests to it never reach its handler, while every other route is fast. It is a
+corrupted entry in Turbopack's persistent dev cache (`.next`), so a plain `restart` may not clear
+it. Tells: `curl --max-time 10 localhost:3000/api/user/settings` times out even anonymously, the
+server sits at ~0% CPU (waiting, not compiling), and an identical copy of the route at another path
+answers fine. Fix: `node .claude/skills/dev-server/cli.mjs unwedge <session-id>` (purges `.next`
+and restarts; the first page loads afterwards are a slow cold compile). The likely trigger is
+switching git branches or editing/reverting that file while the dev server is running — use a
+separate `git worktree` for side branches instead.
 
 ## 9. Updating an existing setup
 
@@ -238,6 +283,8 @@ single route only clears that route, which is misleading when diagnosing it.
 4. Re-check `.env-example`, `apps/*/.env.example` and `docker-compose.base.yml` for changes.
 5. To sync a fork's `main`, `gh repo sync <you>/civitai -b main` avoids the full-typecheck
    pre-push hook that runs when you push `main` yourself.
+6. Don't switch branches under a running dev server (see §8); stop it first, or work on other
+   branches in a `git worktree`.
 
 ## 10. Checklist for AI agents
 
@@ -254,6 +301,9 @@ Don't report the setup as working until each of these is verified, not assumed:
 - [ ] Signed **out**: `/`, `/models`, `/images` load in a real browser with no broken images.
 - [ ] Signed **in** (via the hub + maildev): `/api/auth/session` returns the user **quickly**,
       the image feed loads, and pages don't render signed-out.
+- [ ] `/api/user/settings` answers in well under 8 s, anonymously and signed in (§8).
+- [ ] A collection page's images load, `/articles` lists articles, and the home page sections
+      have items (§3, §5).
 - [ ] Admin links resolve to `localhost:5174`, not `moderator.civitai.com`.
 - [ ] Nothing you did is in `git status` except intended changes — the env files and the compose
       override must stay untracked.
