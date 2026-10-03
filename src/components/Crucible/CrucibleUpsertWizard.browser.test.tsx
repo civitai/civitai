@@ -4,6 +4,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 import type * as CurrentUserModule from '~/hooks/useCurrentUser';
 import type * as AvailableBuzzModule from '~/components/Buzz/useAvailableBuzz';
 import type * as UseBuzzModule from '~/components/Buzz/useBuzz';
+import type * as ContentRatingSelectModule from '~/components/Challenge/ContentRatingSelect';
 import type * as ModelVersionMultiSelectModule from '~/components/Challenge/ModelVersionMultiSelect';
 import type * as CrucibleImageUploadModule from '~/components/Crucible/CrucibleImageUpload';
 import type * as CrucibleCardModule from '~/components/Cards/CrucibleCard';
@@ -52,6 +53,12 @@ vi.mock('~/components/Buzz/useBuzz', async (importOriginal) => ({
 vi.mock('~/components/Challenge/ModelVersionMultiSelect', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelVersionMultiSelectModule>()),
   ModelVersionMultiSelect: ({ error }: { error?: string }) => (error ? <p>{error}</p> : null),
+}));
+
+// Reads feature flags, which the harness doesn't provide.
+vi.mock('~/components/Challenge/ContentRatingSelect', async (importOriginal) => ({
+  ...(await importOriginal<typeof ContentRatingSelectModule>()),
+  ContentRatingSelect: () => null,
 }));
 
 vi.mock('~/components/Crucible/CrucibleImageUpload', async (importOriginal) => ({
@@ -163,5 +170,16 @@ describe('CrucibleUpsertWizard — required models held to PG and PG-13', () => 
     await vi.waitFor(() => expect(nextButton()).toBeTruthy());
     expect(document.body.textContent).not.toContain('can only be required');
     expect(nextButton()!.disabled).toBe(false);
+  });
+});
+
+describe('CrucibleUpsertWizard — creation limits', () => {
+  test('states the running-at-once ladder and the 24-hour create cap when creating', async () => {
+    renderWithProviders(<Harness values={valuesOnStep(1)} />);
+
+    await vi.waitFor(() =>
+      expect(document.body.textContent).toContain('Free 1, Founder and Bronze 2, Silver 3, Gold 5')
+    );
+    expect(document.body.textContent).toContain('at most 5 in any 24 hours');
   });
 });
