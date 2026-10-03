@@ -5724,6 +5724,7 @@ export interface Crucible {
   maxClipSeconds: number | null;
   prizePositions: JsonValue;
   allowedResources: JsonValue | null;
+  allowedBaseModels: string[];
   duration: number;
   startAt: Date | null;
   endAt: Date | null;

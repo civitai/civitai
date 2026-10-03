@@ -11,6 +11,7 @@ import {
   ImageIngestionStatus,
   MediaType,
   ModelStatus,
+  ModelType,
 } from '~/shared/utils/prisma/enums';
 import { CrucibleSort } from '../schema/crucible.schema';
 import { dbRead, dbWrite } from '../db/client';
@@ -259,6 +260,7 @@ export const createCrucible = async ({
   maxTotalEntries,
   prizePositions,
   allowedResources,
+  allowedBaseModels = [],
   duration,
   seededPrizePool,
   minViewSeconds,
@@ -279,6 +281,7 @@ export const createCrucible = async ({
   if (!isModerator) assertSfwCrucibleText([name, description], nsfwLevel);
   await assertPublishedModelVersions(allowedResources ?? []);
   await assertRequiredModelsMakeContentType(allowedResources ?? [], contentType ?? MediaType.image);
+  assertBaseModelsMakeContentType(allowedBaseModels, contentType ?? MediaType.image);
 
   const now = new Date();
   const isScheduled = !!requestedStartAt && requestedStartAt > now;
@@ -326,6 +329,7 @@ export const createCrucible = async ({
       allowedResources: requiresResources
         ? (allowedResources as Prisma.JsonArray)
         : Prisma.JsonNull,
+      allowedBaseModels,
       duration: duration * 60, // Convert hours to minutes for storage
       startAt: null,
       endAt: null,
@@ -533,6 +537,19 @@ async function assertRequiredModelsMakeContentType(versionIds: number[], content
     throw throwBadRequestError(`Every required model must make ${contentType}s.`);
 }
 
+function assertBaseModelsMakeContentType(baseModels: string[], contentType: MediaType) {
+  if (baseModels.some((baseModel) => !baseModelMakesMediaType(baseModel, contentType)))
+    throw throwBadRequestError(`Every allowed base model must make ${contentType}s.`);
+}
+
+const hasEntryRestriction = ({
+  allowedResources,
+  allowedBaseModels,
+}: {
+  allowedResources?: number[];
+  allowedBaseModels?: string[];
+}) => (allowedResources?.length ?? 0) > 0 || (allowedBaseModels?.length ?? 0) > 0;
+
 const PRESENTATION_FIELDS = ['name', 'description', 'coverImage', 'heroImage'] as const;
 
 /**
@@ -568,6 +585,7 @@ export const updateCrucible = async ({
       maxClipSeconds: true,
       prizePositions: true,
       allowedResources: true,
+      allowedBaseModels: true,
       duration: true,
       seededPrizePool: true,
       buzzTransactionId: true,
@@ -618,6 +636,7 @@ export const updateCrucible = async ({
     allowedResources: Array.isArray(crucible.allowedResources)
       ? (crucible.allowedResources as number[])
       : [],
+    allowedBaseModels: crucible.allowedBaseModels,
     duration: crucible.duration / 60,
     seededPrizePool: crucible.seededPrizePool,
   };
@@ -649,11 +668,21 @@ export const updateCrucible = async ({
   );
   await assertPublishedModelVersions(addedResources);
   // A content type switch re-checks every pick, since an earlier one can now make the wrong media.
-  if (canEditSettings)
+  if (canEditSettings) {
+    const contentTypeChanged = next.contentType !== current.contentType;
     await assertRequiredModelsMakeContentType(
-      next.contentType !== current.contentType ? next.allowedResources : addedResources,
+      contentTypeChanged ? next.allowedResources : addedResources,
       next.contentType
     );
+    assertBaseModelsMakeContentType(
+      contentTypeChanged
+        ? next.allowedBaseModels
+        : next.allowedBaseModels.filter(
+            (baseModel) => !current.allowedBaseModels.includes(baseModel)
+          ),
+      next.contentType
+    );
+  }
 
   const imageId = changes.coverImage
     ? await resolveCoverImageId({
@@ -698,6 +727,7 @@ export const updateCrucible = async ({
       allowedResources: next.allowedResources.length
         ? (next.allowedResources as Prisma.JsonArray)
         : Prisma.JsonNull,
+      allowedBaseModels: next.allowedBaseModels,
       duration: next.duration * 60,
       seededPrizePool: next.seededPrizePool,
       // Settings change only before start, when nobody has paid in yet.
@@ -1269,6 +1299,7 @@ export type CrucibleEntryIneligibleReason =
   | 'created-before-start'
   | 'no-resources'
   | 'missing-required-resource'
+  | 'wrong-base-model'
   | 'not-found';
 
 const entryIneligibleMessages: Record<CrucibleEntryIneligibleReason, string> = {
@@ -1277,6 +1308,8 @@ const entryIneligibleMessages: Record<CrucibleEntryIneligibleReason, string> = {
     'This image has no detected resources. Images submitted to this crucible must use specific resources.',
   'missing-required-resource':
     'This image does not use any of the required resources for this crucible. Please check the crucible requirements and submit an image that uses an allowed resource.',
+  'wrong-base-model':
+    "This image wasn't made with a checkpoint of one of this crucible's allowed base models.",
   'not-found': 'Image not found',
 };
 
@@ -1284,6 +1317,7 @@ type EntryEligibilityCrucible = {
   startAt: Date | null;
   createdAt: Date;
   allowedResources: Prisma.JsonValue;
+  allowedBaseModels: string[];
 };
 
 const getAllowedResources = (crucible: EntryEligibilityCrucible) =>
@@ -1299,8 +1333,10 @@ const getEntryIneligibleReasons = async (
 ) => {
   const startedAt = crucible.startAt ?? crucible.createdAt;
   const allowedResources = getAllowedResources(crucible);
+  const { allowedBaseModels } = crucible;
+  const restricted = hasEntryRestriction({ allowedResources, allowedBaseModels });
   const resourcesByImage =
-    allowedResources.length > 0 && images.length > 0
+    restricted && images.length > 0
       ? await imageResourcesCache.fetch(images.map((image) => image.id))
       : {};
 
@@ -1309,13 +1345,25 @@ const getEntryIneligibleReasons = async (
       const reasons: CrucibleEntryIneligibleReason[] = [];
       if (image.createdAt < startedAt) reasons.push('created-before-start');
 
-      if (allowedResources.length > 0) {
-        const versionIds = (resourcesByImage[image.id]?.resources ?? []).map(
-          (resource) => resource.modelVersionId
-        );
-        if (versionIds.length === 0) reasons.push('no-resources');
-        else if (!versionIds.some((versionId) => allowedResources.includes(versionId)))
-          reasons.push('missing-required-resource');
+      if (restricted) {
+        const resources = resourcesByImage[image.id]?.resources ?? [];
+        if (resources.length === 0) reasons.push('no-resources');
+        else {
+          if (
+            allowedResources.length > 0 &&
+            !resources.some(({ modelVersionId }) => allowedResources.includes(modelVersionId))
+          )
+            reasons.push('missing-required-resource');
+          // The checkpoint is the weight class; a LoRA's base model says nothing about what ran it.
+          if (
+            allowedBaseModels.length > 0 &&
+            !resources.some(
+              ({ modelType, baseModel }) =>
+                modelType === ModelType.Checkpoint && allowedBaseModels.includes(baseModel)
+            )
+          )
+            reasons.push('wrong-base-model');
+        }
       }
 
       return [image.id, reasons];
@@ -1330,7 +1378,7 @@ export const checkCrucibleEntryEligibility = async ({
 }: CheckCrucibleEntryEligibilitySchema & { userId: number }) => {
   const crucible = await dbRead.crucible.findUnique({
     where: { id: crucibleId },
-    select: { startAt: true, createdAt: true, allowedResources: true },
+    select: { startAt: true, createdAt: true, allowedResources: true, allowedBaseModels: true },
   });
   if (!crucible) throw throwNotFoundError('Crucible not found');
 
@@ -1443,6 +1491,7 @@ export const submitEntry = async ({
         maxTotalEntries: true,
         maxClipSeconds: true,
         allowedResources: true,
+        allowedBaseModels: true,
         startAt: true,
         createdAt: true,
         endAt: true,

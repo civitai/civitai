@@ -3,6 +3,7 @@ import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { CrucibleSort } from '~/server/common/enums';
 import { baseQuerySchema, infiniteQuerySchema } from './base.schema';
 import { isUUID } from '~/utils/string-helpers';
+import { baseModelByName } from '~/shared/constants/basemodel.constants';
 import {
   CRUCIBLE_CONTENT_TYPES,
   CRUCIBLE_DESCRIPTION_MAX_LENGTH,
@@ -16,6 +17,7 @@ import {
   CRUCIBLE_MIN_TOTAL_ENTRIES,
   CRUCIBLE_MIN_VIEW_SECONDS_OPTIONS,
   CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
+  CRUCIBLE_MAX_ALLOWED_BASE_MODELS,
   CRUCIBLE_MAX_ALLOWED_RESOURCES,
   CRUCIBLE_MAX_START_LEAD_DAYS,
   CRUCIBLE_NAME_MAX_LENGTH,
@@ -90,6 +92,11 @@ export function calculateCrucibleSetupCost(
   return durationCost + prizeCustomizationCost + resourceRequirementsCost;
 }
 
+const allowedBaseModelsSchema = z
+  .array(z.string().refine((name) => baseModelByName.has(name), { message: 'Unknown base model' }))
+  .max(CRUCIBLE_MAX_ALLOWED_BASE_MODELS)
+  .transform((names) => [...new Set(names)]);
+
 // Schema for creating a new crucible
 export type CreateCrucibleInputSchema = z.infer<typeof createCrucibleInputSchema>;
 const prizePositionsSchema = z
@@ -130,6 +137,7 @@ export const createCrucibleInputBaseSchema = z.object({
     .optional(),
   prizePositions: prizePositionsSchema,
   allowedResources: z.array(z.number().int()).max(CRUCIBLE_MAX_ALLOWED_RESOURCES).optional(),
+  allowedBaseModels: allowedBaseModelsSchema.optional(),
   duration: z.number().refine((hours) => hours in CRUCIBLE_DURATION_COSTS, {
     message: 'Unsupported crucible duration',
   }), // duration in hours
@@ -301,6 +309,7 @@ export const updateCrucibleSchema = z.object({
     .nullish(),
   prizePositions: prizePositionsSchema.optional(),
   allowedResources: z.array(z.number().int()).max(CRUCIBLE_MAX_ALLOWED_RESOURCES).optional(),
+  allowedBaseModels: allowedBaseModelsSchema.optional(),
   duration: z
     .number()
     .refine((hours) => hours in CRUCIBLE_DURATION_COSTS, {

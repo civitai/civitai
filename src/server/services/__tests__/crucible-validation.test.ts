@@ -546,6 +546,7 @@ const crucibleRow = (contentType: MediaType, maxClipSeconds: number | null = nul
   minViewSeconds: null,
   maxClipSeconds,
   allowedResources: null as number[] | null,
+  allowedBaseModels: [] as string[],
   startAt: CRUCIBLE_STARTED_AT,
   createdAt: CRUCIBLE_STARTED_AT,
   endAt: new Date(Date.now() + 60_000),
@@ -1336,6 +1337,7 @@ describe('checkCrucibleEntryEligibility', () => {
       startAt: CRUCIBLE_STARTED_AT,
       createdAt: CRUCIBLE_STARTED_AT,
       allowedResources: [500],
+      allowedBaseModels: [],
     });
     dbMock.dbRead.image.findMany.mockResolvedValue([
       { id: 1, createdAt: after },
@@ -1378,9 +1380,142 @@ describe('checkCrucibleEntryEligibility', () => {
       startAt: CRUCIBLE_STARTED_AT,
       createdAt: CRUCIBLE_STARTED_AT,
       allowedResources: null,
+      allowedBaseModels: [],
     });
 
     await expect(check([3])).resolves.toEqual([{ imageId: 3, eligible: true, reasons: [] }]);
     expect(fetchImageResources).not.toHaveBeenCalled();
+  });
+});
+
+describe('submitEntry — base model requirements', () => {
+  const H3_API = 3183239;
+  const H3_COMFY = 3216500;
+  const resource = (modelVersionId: number, modelType: string, baseModel: string) => ({
+    modelVersionId,
+    modelType,
+    baseModel,
+  });
+  const h3FineTune = resource(9001, 'Checkpoint', 'MiniMax H3');
+  const requiring = (overrides: { allowedResources?: number[]; allowedBaseModels?: string[] }) =>
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.video),
+      ...overrides,
+    });
+  const madeWith = (...resources: ReturnType<typeof resource>[]) =>
+    fetchImageResources.mockResolvedValue({ 7: { resources } });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    createNotification.mockResolvedValue(undefined);
+    dbMock.dbWrite.crucibleEntry.count.mockResolvedValue(0);
+    dbMock.dbRead.crucibleEntry.findFirst.mockResolvedValue(null);
+    dbMock.dbRead.image.findUnique.mockResolvedValue(imageRow(MediaType.video));
+    dbMock.dbRead.image.count.mockResolvedValue(1);
+    dbMock.dbWrite.crucibleEntry.create.mockResolvedValue({ id: 5, user: { username: 'tester' } });
+  });
+
+  it('accepts an entry made with a fine-tuned checkpoint of an allowed base model', async () => {
+    requiring({ allowedBaseModels: ['MiniMax H3'] });
+    madeWith(h3FineTune);
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+  });
+
+  it('refuses an entry made with a checkpoint of another base model', async () => {
+    requiring({ allowedBaseModels: ['MiniMax H3'] });
+    madeWith(resource(9002, 'Checkpoint', 'Wan Video 2.2 T2V-A14B'));
+
+    await expect(submit()).rejects.toThrow(/allowed base models/);
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses an allowed base model's LoRA on another base model's checkpoint", async () => {
+    requiring({ allowedBaseModels: ['MiniMax H3'] });
+    madeWith(
+      resource(9002, 'Checkpoint', 'Wan Video 2.2 T2V-A14B'),
+      resource(9003, 'LORA', 'MiniMax H3')
+    );
+
+    await expect(submit()).rejects.toThrow(/allowed base models/);
+  });
+
+  it('refuses an entry with no detected resources', async () => {
+    requiring({ allowedBaseModels: ['MiniMax H3'] });
+    madeWith();
+
+    await expect(submit()).rejects.toThrow(/no detected resources/);
+  });
+
+  it('a version list still refuses a fine-tune of the same base model, exactly as before', async () => {
+    requiring({ allowedResources: [H3_API, H3_COMFY] });
+    madeWith(h3FineTune);
+
+    await expect(submit()).rejects.toThrow(/does not use any of the required resources/);
+  });
+
+  it('a version list still accepts a listed version, exactly as before', async () => {
+    requiring({ allowedResources: [H3_API, H3_COMFY] });
+    madeWith(resource(H3_COMFY, 'Checkpoint', 'MiniMax H3'));
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+  });
+
+  it('requires both when a crucible sets a version list and base models', async () => {
+    requiring({ allowedResources: [H3_API], allowedBaseModels: ['MiniMax H3'] });
+    madeWith(h3FineTune);
+    await expect(submit()).rejects.toThrow(/does not use any of the required resources/);
+
+    madeWith(resource(9002, 'Checkpoint', 'SDXL 1.0'), resource(H3_API, 'LORA', 'SDXL 1.0'));
+    await expect(submit()).rejects.toThrow(/allowed base models/);
+
+    madeWith(resource(H3_API, 'Checkpoint', 'MiniMax H3'));
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+  });
+});
+
+describe('checkCrucibleEntryEligibility — base model requirements', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      startAt: CRUCIBLE_STARTED_AT,
+      createdAt: CRUCIBLE_STARTED_AT,
+      allowedResources: null,
+      allowedBaseModels: ['MiniMax H3'],
+    });
+    const after = new Date(CRUCIBLE_STARTED_AT.getTime() + 60_000);
+    dbMock.dbRead.image.findMany.mockResolvedValue([
+      { id: 1, createdAt: after },
+      { id: 2, createdAt: after },
+    ]);
+    fetchImageResources.mockResolvedValue({
+      1: {
+        resources: [{ modelVersionId: 9001, modelType: 'Checkpoint', baseModel: 'MiniMax H3' }],
+      },
+      2: { resources: [{ modelVersionId: 9002, modelType: 'Checkpoint', baseModel: 'SDXL 1.0' }] },
+    });
+  });
+
+  it('tells the submit modal which images were made with the wrong base model', async () => {
+    await expect(
+      checkCrucibleEntryEligibility({ crucibleId: 1, imageIds: [1, 2], userId: 42 })
+    ).resolves.toEqual([
+      { imageId: 1, eligible: true, reasons: [] },
+      { imageId: 2, eligible: false, reasons: ['wrong-base-model'] },
+    ]);
+  });
+});
+
+describe('createCrucibleInputSchema — base models', () => {
+  const parse = (allowedBaseModels: string[]) =>
+    createCrucibleInputSchema.safeParse({ ...validCreateInput, allowedBaseModels });
+
+  it('accepts a known base model and drops repeats', () => {
+    const result = parse(['MiniMax H3', 'MiniMax H3']);
+    expect(result.success && result.data.allowedBaseModels).toEqual(['MiniMax H3']);
+  });
+
+  it('refuses a name that is not a base model', () => {
+    expect(parse(['MiniMax H4']).success).toBe(false);
   });
 });

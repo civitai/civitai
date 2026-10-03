@@ -562,6 +562,11 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                     visible: !!freeEntriesLabel,
                   },
                   {
+                    label: 'Base Model',
+                    value: `Made with a ${crucible.allowedBaseModels.join(' or ')} checkpoint`,
+                    visible: crucible.allowedBaseModels.length > 0,
+                  },
+                  {
                     label: 'Total Entry Cap',
                     value: `${numberWithCommas(crucible.maxTotalEntries ?? 0)} entries`,
                     visible: !!crucible.maxTotalEntries,
@@ -655,6 +660,7 @@ const getSubmitEntryProps = (crucible: CrucibleDetail, entryBuzzType: CrucibleBu
   maxClipSeconds: crucible.maxClipSeconds,
   requiresResources:
     Array.isArray(crucible.allowedResources) && crucible.allowedResources.length > 0,
+  allowedBaseModels: crucible.allowedBaseModels,
   startAt: crucible.startAt,
   endAt: crucible.endAt,
 });

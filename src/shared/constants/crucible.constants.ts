@@ -60,11 +60,14 @@ export const getPrizeDistributionTotal = (prizePositions: Record<string, number>
 
 /**
  * Cost in Buzz for restricting entries to specific model versions (`allowedResources`).
+ * Restricting by base model (`allowedBaseModels`) is free.
  */
 export const CRUCIBLE_RESOURCE_REQUIREMENTS_COST = 500;
 
 /** Matches ModelVersionMultiSelect's default `maxSelections`. */
 export const CRUCIBLE_MAX_ALLOWED_RESOURCES = 10;
+
+export const CRUCIBLE_MAX_ALLOWED_BASE_MODELS = 10;
 
 /** How far ahead a crucible's start may be scheduled. */
 export const CRUCIBLE_MAX_START_LEAD_DAYS = 30;

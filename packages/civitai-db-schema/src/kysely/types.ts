@@ -2452,6 +2452,7 @@ export type Crucible = {
   maxClipSeconds: number | null;
   prizePositions: Generated<unknown>;
   allowedResources: unknown | null;
+  allowedBaseModels: Generated<string[]>;
   duration: Generated<number>;
   startAt: Timestamp | null;
   endAt: Timestamp | null;

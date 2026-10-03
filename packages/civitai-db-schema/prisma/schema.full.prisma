@@ -8992,6 +8992,8 @@ model Crucible {
   maxClipSeconds    Int?
   prizePositions    Json           @default("[]")
   allowedResources  Json?
+  // Base model names (basemodel.constants); an entry's checkpoint must be one of them.
+  allowedBaseModels String[]       @default([])
   duration          Int            @default(480)
   startAt           DateTime?
   endAt             DateTime?

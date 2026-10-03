@@ -63,6 +63,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   Form,
   InputDateTimePicker,
+  InputMultiSelect,
   InputNumber,
   InputSelect,
   InputText,
@@ -76,6 +77,7 @@ import {
   CRUCIBLE_DEFAULT_PRIZE_POSITIONS,
   CRUCIBLE_DESCRIPTION_MAX_LENGTH,
   CRUCIBLE_DURATION_COSTS,
+  CRUCIBLE_MAX_ALLOWED_BASE_MODELS,
   CRUCIBLE_MAX_CLIP_SECONDS_OPTIONS,
   CRUCIBLE_MAX_ENTRIES,
   CRUCIBLE_MAX_ENTRY_FEE,
@@ -93,10 +95,12 @@ import {
   isCustomPrizeDistribution,
   type CrucibleContentType,
 } from '~/shared/constants/crucible.constants';
+import { baseModelSelectData } from '~/shared/constants/basemodel.constants';
 import { getBuzzCurrencyConfig } from '~/shared/constants/currency.constants';
 import { CrucibleStatus, Currency, MediaType } from '~/shared/utils/prisma/enums';
 import type { RouterOutput } from '~/types/router';
 import {
+  baseModelMakesMediaType,
   CRUCIBLE_PRIZE_BUZZ_TYPE,
   getCrucibleUrl,
   getFreeEntriesLabel,
@@ -106,6 +110,11 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { capitalize } from '~/utils/string-helpers';
 
 const InputContentRatingSelect = withController(ContentRatingSelect);
+
+const getCrucibleBaseModelSelectData = (contentType: CrucibleContentType) =>
+  baseModelSelectData.flatMap(({ items }) =>
+    items.filter(({ value }) => baseModelMakesMediaType(value, contentType))
+  );
 const InputModelVersionMultiSelect = withController(ModelVersionMultiSelect);
 const InputCrucibleImage = withController(CrucibleImageUpload);
 
@@ -511,6 +520,12 @@ export function CrucibleUpsertWizard(props: Props) {
                   ? undefined
                   : () => {
                       form.setValue('contentType', value);
+                      form.setValue(
+                        'allowedBaseModels',
+                        (form.getValues('allowedBaseModels') ?? []).filter((baseModel) =>
+                          baseModelMakesMediaType(baseModel, value)
+                        )
+                      );
                       if (value !== MediaType.video) {
                         form.setValue('minViewSeconds', undefined);
                         form.setValue('maxClipSeconds', undefined);
@@ -667,6 +682,18 @@ export function CrucibleUpsertWizard(props: Props) {
         disabled={rulesLocked}
         generatableOnly={false}
         mediaType={values.contentType}
+      />
+
+      <InputMultiSelect
+        name="allowedBaseModels"
+        label="Base Model Requirements"
+        description="Entries must be made with a checkpoint of one of these base models. Leave empty to allow any base model."
+        placeholder="Any base model"
+        data={getCrucibleBaseModelSelectData(values.contentType)}
+        maxValues={CRUCIBLE_MAX_ALLOWED_BASE_MODELS}
+        searchable
+        clearable
+        disabled={rulesLocked}
       />
     </Stack>
   );
@@ -997,6 +1024,14 @@ export function CrucibleUpsertWizard(props: Props) {
                     values.allowedResources.length === 1 ? 'model' : 'models'
                   }`
                 : 'Any model'}
+            </Text>
+          </Group>
+          <Group justify="space-between" wrap="nowrap">
+            <Text c="dimmed">Base Models</Text>
+            <Text fw={500} ta="right">
+              {values.allowedBaseModels?.length
+                ? values.allowedBaseModels.join(', ')
+                : 'Any base model'}
             </Text>
           </Group>
           {values.contentType === MediaType.video && (
