@@ -4,6 +4,7 @@ import {
   updateCrucibleHandler,
   checkEntryEligibilityHandler,
   getCreateEligibilityHandler,
+  getJudgeEligibilityHandler,
   createCrucibleHandler,
   createEntryPostHandler,
   getCrucibleByIdHandler,
@@ -88,6 +89,10 @@ export const crucibleRouter = router({
   getCreateEligibility: protectedProcedure
     .use(isFlagProtected('crucible'))
     .query(getCreateEligibilityHandler),
+
+  getJudgeEligibility: protectedProcedure
+    .use(isFlagProtected('crucible'))
+    .query(getJudgeEligibilityHandler),
 
   create: guardedProcedure
     .use(isFlagProtected('crucible'))

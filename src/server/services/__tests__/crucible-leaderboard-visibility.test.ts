@@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock, redisMock } from '~/__tests__/mocks';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
+import { CRUCIBLE_JUDGE_MIN_CREATOR_SCORE } from '~/shared/constants/crucible.constants';
 import type * as ImageService from '~/server/services/image.service';
 import type * as CrucibleService from '~/server/services/crucible.service';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
@@ -125,6 +126,10 @@ const ownedAndFirst = entry({ id: 2, userId: OWNER_ID, score: 1800, position: 1,
 const latestAndSecond = entry({ id: 3, userId: 103, score: 1500, position: 2, minutes: 10 });
 
 const findEntries = dbMock.dbRead.crucibleEntry.findMany;
+const judgeHasMinScore = () =>
+  dbMock.dbRead.user.findUnique.mockResolvedValue({
+    meta: { scores: { total: CRUCIBLE_JUDGE_MIN_CREATOR_SCORE } },
+  });
 const queryRaw = dbMock.dbRead.$queryRaw;
 const rows = [latestAndSecond, earliestAndLast, ownedAndFirst];
 
@@ -572,6 +577,8 @@ describe('crucible.getById', () => {
 });
 
 describe('crucible.getJudgingPair', () => {
+  beforeEach(judgeHasMinScore);
+
   const judgingEntry = (id: number, userId: number, score: number) => ({
     id,
     imageId: id * 10,
@@ -637,6 +644,7 @@ describe('crucible.removeEntry', () => {
 describe('a creator who blocked the caller', () => {
   beforeEach(() => {
     blockedBy.mockResolvedValue([{ id: scanned.userId }]);
+    judgeHasMinScore();
   });
 
   it('hides the entries from them, as the detail page does', async () => {

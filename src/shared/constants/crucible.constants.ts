@@ -22,6 +22,10 @@ export const CRUCIBLE_FOLLOWABLE_STATUSES: CrucibleStatus[] = [
   CrucibleStatus.Active,
 ];
 
+/** Throwaway accounts score 0, so a bot farm has to earn real engagement before its votes count. */
+export const CRUCIBLE_JUDGE_MIN_CREATOR_SCORE = 500;
+export const CRUCIBLE_JUDGE_SCORE_REQUIRED_MESSAGE = `You need a creator score of at least ${CRUCIBLE_JUDGE_MIN_CREATOR_SCORE} to judge crucibles.`;
+
 export const CRUCIBLE_NAME_MAX_LENGTH = 100;
 export const CRUCIBLE_DESCRIPTION_MAX_LENGTH = 500;
 
