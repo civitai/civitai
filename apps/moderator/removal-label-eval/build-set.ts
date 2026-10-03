@@ -27,6 +27,7 @@ import { clickhouse, type ClickHouseConfig } from '../xguard-lab/sample-core';
 import { deprecatedNsfwName } from '../src/lib/nsfw-levels';
 import { MINOR_BUCKETS } from '../src/lib/removal-label/compose';
 import { csamExcludedImageIds } from '../src/lib/server/relabel-csam-exclusion';
+import { UPSERT_RELABEL_ITEM_SQL } from '../src/lib/server/relabel-item-upsert';
 import {
   allocate,
   isMinorBucket,
@@ -124,11 +125,12 @@ async function main() {
 
   // Not-removed pool. An image row's contentHash is derived from its image id
   // (`scanner-audit.service.ts`), so a group holds one image; GROUP BY only folds parts the merge has
-  // not collapsed yet. The CSAM label in this table is never read.
+  // not collapsed yet, and the latest score wins so two age-model versions never blend. The CSAM
+  // label in this table is never read.
   const perBand = Math.max(200, args.notRemoved * 20);
   const scanned = await clickhouse<{ ids: string[]; score: number }>(
     `
-    SELECT groupUniqArrayArray(entityIds) AS ids, anyLast(score) AS score
+    SELECT groupUniqArrayArray(entityIds) AS ids, argMax(score, lastSeenAt) AS score
     FROM scanner_label_results
     WHERE scanner = 'image_ingestion' AND entityType = 'image' AND label = 'minor'
     GROUP BY contentHash
@@ -238,7 +240,6 @@ async function main() {
     const already = new Set(
       present.filter((r) => args.modelOnly || r.relabel).map((r) => r.image_id)
     );
-    const modelOnlyPresent = new Set(present.filter((r) => !r.relabel).map((r) => r.image_id));
     removedCandidates = removedCandidates.filter((c) => !already.has(c.imageId));
     notRemovedCandidates = notRemovedCandidates.filter((c) => !already.has(c.imageId));
 
@@ -266,42 +267,30 @@ async function main() {
     let inserted = 0;
     let promoted = 0;
     for (const p of picked) {
-      if (!args.modelOnly && modelOnlyPresent.has(p.imageId)) {
-        const res = await mod.query(
-          'UPDATE relabel_item SET relabel = true WHERE image_id = $1 AND relabel = false',
-          [p.imageId]
-        );
-        promoted += res.rowCount ?? 0;
-        continue;
-      }
       const removal = removalById.get(p.imageId);
       const removedAt = removal ? new Date(removal.removedAt * 1000) : null;
       const appeal = appeals.get(p.imageId);
-      const res = await mod.query(
-        `INSERT INTO relabel_item
-           (batch, image_id, stratum, bucket, nsfw_level, stratum_key, owner_id, removed_at, removed_by,
-            purge_after, appeal_status, appeal_resolved_at, relabel)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-         ON CONFLICT (image_id) DO NOTHING`,
-        [
-          args.batch,
-          p.imageId,
-          p.stratum,
-          p.bucket,
-          p.nsfwLevel,
-          p.stratumKey,
-          p.ownerId,
-          removedAt,
-          removal?.removedBy ?? null,
-          removedAt
-            ? new Date(removedAt.getTime() + BLOCKED_IMAGE_RETENTION_DAYS * 24 * 3600 * 1000)
-            : null,
-          appeal?.status ?? null,
-          appeal?.resolvedAt ?? null,
-          !args.modelOnly,
-        ]
-      );
-      inserted += res.rowCount ?? 0;
+      const res = await mod.query<{ inserted: boolean }>(UPSERT_RELABEL_ITEM_SQL, [
+        args.batch,
+        p.imageId,
+        p.stratum,
+        p.bucket,
+        p.nsfwLevel,
+        p.stratumKey,
+        p.ownerId,
+        removedAt,
+        removal?.removedBy ?? null,
+        removedAt
+          ? new Date(removedAt.getTime() + BLOCKED_IMAGE_RETENTION_DAYS * 24 * 3600 * 1000)
+          : null,
+        appeal?.status ?? null,
+        appeal?.resolvedAt ?? null,
+        !args.modelOnly,
+      ]);
+      for (const r of res.rows) {
+        if (r.inserted) inserted++;
+        else promoted++;
+      }
     }
     console.log(
       `batch "${args.batch}": ${inserted} inserted, ${promoted} promoted from model-only, ${

@@ -92,6 +92,19 @@ describe('csamExcludedImageIds', () => {
   });
 });
 
+// Decision: a CsamReport whose `images` is not an array makes the query THROW rather than skip that
+// report. Failing closed means the page shows nothing and the build stops, instead of sampling an
+// image the report may cover. Do not add a jsonb_typeof guard that silently drops such rows.
+describe('a CsamReport with a non-array image list', () => {
+  it.each(['{"id": 1}', 'null'])(
+    'stops the query instead of skipping the report (%s)',
+    async (v) => {
+      await pg.exec(`INSERT INTO "CsamReport" (images) VALUES ('${v}')`);
+      await expect(excluded([1])).rejects.toThrow();
+    }
+  );
+});
+
 describe('servableImageKeys', () => {
   it('re-checks at serve time: an image reported after it was sampled is no longer shown', async () => {
     const serve = async () => [...(await servableImageKeys(db as never, [1, 2])).keys()].sort();

@@ -6,6 +6,7 @@ import { Kysely } from 'kysely';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DB as ModeratorDB } from '../moderator-db/types';
 import { labelerProgress, nextCandidates, ownAnswer, saveAnswer } from '../relabel.service';
+import { UPSERT_RELABEL_ITEM_SQL } from '../relabel-item-upsert';
 import type { Answers } from '$lib/removal-label/questions';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
@@ -179,5 +180,53 @@ describe('labelerProgress', () => {
     await save(2, one);
     await save(1, two);
     expect(await labelerProgress(db, 1)).toEqual({ mine: 2, items: 2, complete: 1 });
+  });
+});
+
+describe('UPSERT_RELABEL_ITEM_SQL', () => {
+  const upsert = (imageId: number, over: { stratum?: string; relabel?: boolean } = {}) => {
+    const removed = (over.stratum ?? 'removed') === 'removed';
+    return pg.query<{ inserted: boolean }>(UPSERT_RELABEL_ITEM_SQL, [
+      'b2',
+      imageId,
+      removed ? 'removed' : 'not_removed',
+      removed ? 'schoolNsfw' : null,
+      'X',
+      removed ? 'schoolNsfw:X' : 'band1:X',
+      imageId,
+      removed ? new Date('2026-10-01T00:00:00Z') : null,
+      removed ? 7 : null,
+      removed ? new Date('2026-10-08T00:00:00Z') : null,
+      null,
+      null,
+      over.relabel ?? true,
+    ]);
+  };
+  const row = () =>
+    db
+      .selectFrom('relabel_item')
+      .select(['stratum', 'bucket', 'relabel', 'purge_after'])
+      .executeTakeFirstOrThrow();
+
+  it('a labeler build promotes a model-only row and rewrites what was sampled', async () => {
+    await upsert(1, { stratum: 'not_removed', relabel: false });
+    const res = await upsert(1, { stratum: 'removed', relabel: true });
+    expect(res.rows).toEqual([{ inserted: false }]);
+    expect(await row()).toMatchObject({ stratum: 'removed', bucket: 'schoolNsfw', relabel: true });
+    expect((await row()).purge_after).not.toBeNull();
+  });
+
+  it('a model-only build leaves an existing row alone', async () => {
+    await upsert(1, { stratum: 'removed', relabel: true });
+    const res = await upsert(1, { stratum: 'not_removed', relabel: false });
+    expect(res.rows).toEqual([]);
+    expect(await row()).toMatchObject({ stratum: 'removed', relabel: true });
+  });
+
+  it('a labeler build does not rewrite a row labelers already have', async () => {
+    await upsert(1, { stratum: 'removed', relabel: true });
+    const res = await upsert(1, { stratum: 'not_removed', relabel: true });
+    expect(res.rows).toEqual([]);
+    expect(await row()).toMatchObject({ stratum: 'removed' });
   });
 });
