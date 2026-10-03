@@ -558,6 +558,12 @@ describe('buildRelabelBatch', () => {
     expect(Number(scan?.match(/LIMIT (\d+)/)?.[1])).toBe(1600);
   });
 
+  it('keeps a floor under the scanner pool for a small not-removed cap', async () => {
+    await build({ notRemoved: 2, bands: [0.5] });
+    const scan = chQueries.find((q) => q.includes('FROM scanner_label_results'));
+    expect(Number(scan?.match(/LIMIT (\d+)/)?.[1])).toBe(400);
+  });
+
   // The exclusion never writes. Read-only makes that hold on a primary too, where a read-write
   // transaction would otherwise go unnoticed.
   it('opens every exclusion transaction read-only', async () => {
