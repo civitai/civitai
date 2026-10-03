@@ -10,6 +10,13 @@ describe('violationUserMessage', () => {
     expect(message.toLowerCase()).not.toContain('minor');
   });
 
+  it('words a minor-with-violence removal without the mature-context accusation', () => {
+    const message = violationUserMessage('minorViolence');
+    expect(message).toBe(
+      'Violence, weapons or threats involving characters who appear young, or in settings associated with minors such as schools, are not allowed'
+    );
+  });
+
   it('falls back to the label for violations without a user-facing override', () => {
     expect(violationUserMessage('bestiality')).toBe('Bestiality');
   });
