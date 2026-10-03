@@ -5,14 +5,36 @@ import {
   MAX_RELABEL_WINDOW_DAYS,
   RELABEL_DAILY_CAPS,
   RELABEL_WINDOW_DAYS,
+  modActionResponse,
   relabelBuildBatchInput,
+  relabelBuildShortfall,
   type RelabelBuildBatchInput,
+  type RelabelBuildSummary,
 } from '@civitai/moderation';
 import { BLOCKED_IMAGE_RETENTION_DAYS } from '@civitai/shared/job-queue';
 import { relabelBuildBatchJob, runRelabelBuildBatch } from '~/server/jobs/relabel-build-batch';
 import { RUN_JOBS_ROUTE, jobsArrayEntries } from './run-jobs-array';
 
-const done = { ok: true, result: { inserted: 3, skipped: null } };
+const zero = { removed: 0, notRemoved: 0 };
+const summary = (over: Partial<RelabelBuildSummary> = {}): RelabelBuildSummary => ({
+  batch: '2026-10-04',
+  dryRun: false,
+  modelOnly: false,
+  skipped: null,
+  notRemovedSkipped: null,
+  candidates: zero,
+  csamExcluded: zero,
+  alreadyInSet: 0,
+  alreadyInBatch: zero,
+  picked: zero,
+  strata: [],
+  inserted: 3,
+  promoted: 0,
+  alreadyPresent: 0,
+  ...over,
+});
+// Built with the spoke route's own envelope helper, so a change to that shape reaches this test.
+const done = modActionResponse(summary());
 
 async function run(now: Date, response: unknown = done) {
   const send = vi.fn<(input: RelabelBuildBatchInput) => Promise<unknown>>(async () => response);
@@ -24,7 +46,8 @@ async function run(now: Date, response: unknown = done) {
 
 const originalTz = process.env.TZ;
 afterEach(() => {
-  process.env.TZ = originalTz;
+  if (originalTz === undefined) delete process.env.TZ;
+  else process.env.TZ = originalTz;
 });
 
 describe('relabel-build-batch job', () => {
@@ -51,15 +74,37 @@ describe('relabel-build-batch job', () => {
 
   it("logs the spoke's counts", async () => {
     const { log } = await run(new Date('2026-10-04T00:30:00Z'));
-    expect(log).toHaveBeenCalledWith({ type: 'info', batch: '2026-10-04', result: done });
+    expect(log).toHaveBeenCalledWith({
+      type: 'info',
+      batch: '2026-10-04',
+      shortfall: null,
+      result: done,
+    });
   });
 
-  // A skipped day loses the removals that age out before the next run. It must not read as a
-  // green run on this side, where the job's own logs are.
-  it('logs a day the spoke skipped as an error', async () => {
-    const skipped = { ok: true, result: { inserted: 0, skipped: 'csam exclusion timed out' } };
-    const { log } = await run(new Date('2026-10-04T00:30:00Z'), skipped);
-    expect(log).toHaveBeenCalledWith({ type: 'error', batch: '2026-10-04', result: skipped });
+  // A skipped day loses the removals that age out before the next run, and a day without its
+  // not-removed half loses that stratum. Neither may read as a green run on this side.
+  it('logs a skipped day, or one built without bands it could read, as an error', async () => {
+    const skipped = modActionResponse(
+      summary({ inserted: 0, skipped: 'csam exclusion timed out' })
+    );
+    const halved = modActionResponse(summary({ notRemovedSkipped: 'bands invalid' }));
+    const at = new Date('2026-10-04T00:30:00Z');
+    expect((await run(at, skipped)).log).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', shortfall: 'csam exclusion timed out' })
+    );
+    expect((await run(at, halved)).log).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', shortfall: 'bands invalid' })
+    );
+  });
+
+  // Unset bands are the approved state until the secret is set: a removed-only day is not a fault.
+  it('logs a removed-only day as info while the bands are unset', async () => {
+    const unset = modActionResponse(summary({ notRemovedSkipped: 'bands unset' }));
+    expect(relabelBuildShortfall(unset)).toBeNull();
+    expect((await run(new Date('2026-10-04T00:30:00Z'), unset)).log).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'info' })
+    );
   });
 
   it('draws removals only from images not yet purged, at caps the spoke accepts', () => {

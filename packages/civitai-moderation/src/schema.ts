@@ -209,3 +209,43 @@ export const relabelBuildBatchInput = z.object({
   dryRun: z.boolean(),
 });
 export type RelabelBuildBatchInput = z.infer<typeof relabelBuildBatchInput>;
+
+type Strata<T> = { removed: T; notRemoved: T };
+
+/** What the `relabel-build-batch` action returns. Built by the spoke, read by the main-app job. */
+export type RelabelBuildSummary = {
+  batch: string;
+  dryRun: boolean;
+  modelOnly: boolean;
+  /** Set when the run wrote nothing because the CSAM exclusion could not complete. */
+  skipped: 'csam exclusion timed out' | null;
+  notRemovedSkipped: 'bands unset' | 'bands invalid' | null;
+  candidates: Strata<number>;
+  csamExcluded: Strata<number>;
+  alreadyInSet: number;
+  alreadyInBatch: Strata<number>;
+  picked: Strata<number>;
+  /** Picked per `<stratum> <stratumKey>`. A list, so new strata never add log fields. */
+  strata: { key: string; n: number }[];
+  inserted: number;
+  promoted: number;
+  /** Picked but already present when written: another batch's run took the image first. */
+  alreadyPresent: number;
+};
+
+/** The body `/api/mod/[action]` responds with. The one place its shape is written. */
+export const modActionResponse = <T>(result: T) => ({ ok: true as const, result });
+
+/**
+ * Why a relabel build delivered less than it was asked for, read from the action's response:
+ * `null` when it ran in full. Shares `modActionResponse`'s shape by construction.
+ */
+export function relabelBuildShortfall(
+  response: unknown
+): RelabelBuildSummary['skipped'] | RelabelBuildSummary['notRemovedSkipped'] {
+  const summary = (response as Partial<ReturnType<typeof modActionResponse<RelabelBuildSummary>>>)
+    ?.result;
+  if (summary?.skipped) return summary.skipped;
+  if (summary?.notRemovedSkipped === 'bands invalid') return summary.notRemovedSkipped;
+  return null;
+}

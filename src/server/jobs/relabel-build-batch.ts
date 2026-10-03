@@ -1,6 +1,7 @@
 import {
   RELABEL_DAILY_CAPS,
   RELABEL_WINDOW_DAYS,
+  relabelBuildShortfall,
   type RelabelBuildBatchInput,
 } from '@civitai/moderation';
 import { logToAxiom } from '~/server/logging/client';
@@ -9,10 +10,6 @@ import { createJob } from './job';
 
 /** The UTC day names the batch, so a second run that day only fills what the first left short. */
 export const relabelBatchName = (now: Date) => now.toISOString().slice(0, 10);
-
-/** The `/api/mod/[action]` envelope around the spoke's summary. */
-const skippedReason = (response: unknown) =>
-  (response as { result?: { skipped?: string | null } } | null)?.result?.skipped ?? null;
 
 export async function runRelabelBuildBatch({
   now,
@@ -30,8 +27,9 @@ export async function runRelabelBuildBatch({
     days: RELABEL_WINDOW_DAYS,
     dryRun: false,
   });
-  // A skipped day writes nothing; the spoke logs why. Error here too, so it is not a green run.
-  log({ type: skippedReason(result) ? 'error' : 'info', batch, result });
+  // A skipped day, or one built without its not-removed half, must not read as a green run here.
+  const shortfall = relabelBuildShortfall(result);
+  log({ type: shortfall ? 'error' : 'info', batch, shortfall, result });
   return { batch, result };
 }
 

@@ -9,7 +9,6 @@ import type { DB as ModeratorDB } from '../moderator-db/types';
 import {
   CSAM_EXCLUSION_BUDGET_MS,
   CSAM_EXCLUSION_CHUNK,
-  MAX_BAND_EDGES,
   buildRelabelBatch,
   parseBands,
   relabelBuildBatchAction,
@@ -65,13 +64,21 @@ function numberedDialect(
         init: () => inner.init(),
         destroy: () => inner.destroy(),
         releaseConnection: (c) => inner.releaseConnection(c),
-        beginTransaction: (c, s) => inner.beginTransaction(c, s),
+        beginTransaction: (c, s) => {
+          log().push({
+            conn: (c as { conn?: number }).conn ?? -1,
+            sql: `access mode: ${s.accessMode ?? 'default'}`,
+            params: [],
+          });
+          return inner.beginTransaction(c, s);
+        },
         commitTransaction: (c) => inner.commitTransaction(c),
         rollbackTransaction: (c) => inner.rollbackTransaction(c),
         async acquireConnection() {
           const real = await inner.acquireConnection();
           const conn = ++next;
-          const wrapped: DatabaseConnection = {
+          const wrapped: DatabaseConnection & { conn: number } = {
+            conn,
             async executeQuery(q) {
               log().push({ conn, sql: q.sql, params: q.parameters });
               const err = failOn()?.(q.sql);
@@ -357,6 +364,30 @@ describe('buildRelabelBatch', () => {
     expect(await item(1)).toMatchObject({ relabel: true, batch: '2026-10-03' });
   });
 
+  // Model-only rows feed the model arms; a labeler must never be shown one by a model-only build.
+  it('writes a model-only build as model-only, and never touches a labeler row', async () => {
+    await seedRemovals(3);
+    await seedItem(1, '2026-10-01', true);
+    const summary = await build({ modelOnly: true, bands: null });
+    expect(summary.inserted).toBe(2);
+    const rows = await moderator
+      .selectFrom('relabel_item')
+      .select(['image_id', 'relabel', 'batch'])
+      .orderBy('image_id')
+      .execute();
+    expect(rows).toEqual([
+      { image_id: 1, relabel: true, batch: '2026-10-01' },
+      { image_id: 2, relabel: false, batch: '2026-10-03' },
+      { image_id: 3, relabel: false, batch: '2026-10-03' },
+    ]);
+  });
+
+  it("does not count today's labeler rows against a model-only cap", async () => {
+    await seedRemovals(4);
+    await seedItem(99, '2026-10-03', true);
+    expect((await build({ modelOnly: true, bands: null })).inserted).toBe(3);
+  });
+
   it('never re-picks an image labelers already have from another batch', async () => {
     await seedRemovals(4);
     await seedItem(1, '2026-10-01', true);
@@ -378,12 +409,15 @@ describe('buildRelabelBatch', () => {
     const conn = moderatorSql[begin]?.conn;
     const lock = at((q) => q.sql.includes('pg_advisory_xact_lock'));
     const count = at((q) => q.sql.includes('count(*)') && q.sql.includes('relabel_item'));
+    const present = at((q) => q.sql.includes('select "image_id", "relabel"'));
     const commit = at((q) => q.sql === 'commit' && q.conn === conn);
     const writes = moderatorSql.filter((q) => q.sql.includes('INSERT INTO relabel_item'));
 
     expect(begin).toBeGreaterThanOrEqual(0);
     expect(moderatorSql[lock].conn).toBe(conn);
+    expect(moderatorSql[present].conn).toBe(conn);
     expect(moderatorSql[count].conn).toBe(conn);
+    expect(lock).toBeLessThan(present);
     expect(lock).toBeLessThan(count);
     expect(moderatorSql[lock].params).toEqual(['relabel-batch:2026-10-03']);
     expect(writes).toHaveLength(3);
@@ -449,7 +483,9 @@ describe('buildRelabelBatch', () => {
     const exclusions = replicaSql.filter((q) => q.sql.includes('"CsamReport"'));
     expect(exclusions).toHaveLength(2);
     for (const e of exclusions) {
-      const onConn = replicaSql.filter((q) => q.conn === e.conn).map((q) => q.sql);
+      const onConn = replicaSql
+        .filter((q) => q.conn === e.conn && !q.sql.startsWith('access mode'))
+        .map((q) => q.sql);
       expect(onConn.slice(0, 3)).toEqual(['begin', 'SET LOCAL statement_timeout = 60000', e.sql]);
     }
   });
@@ -477,6 +513,41 @@ describe('buildRelabelBatch', () => {
     expect(summary.skipped).toBe('csam exclusion timed out');
     expect(replicaSql.filter((q) => q.sql.includes('"CsamReport"'))).toHaveLength(1);
     expect(await itemIds()).toEqual([]);
+  });
+
+  // The budget runs from the start of the run, so slow reads before the exclusion use it up too.
+  it('counts the time before the exclusion against its budget', async () => {
+    await seedRemovals(3);
+    let calls = 0;
+    const summary = await buildRelabelBatch(
+      { batch: '2026-10-03', removed: 3, notRemoved: 0, days: 5, bands: null, dryRun: false },
+      { ...deps(), now: () => (calls++ === 0 ? 0 : CSAM_EXCLUSION_BUDGET_MS + 1) }
+    );
+    expect(summary.skipped).toBe('csam exclusion timed out');
+    expect(replicaSql.some((q) => q.sql.includes('"CsamReport"'))).toBe(false);
+  });
+
+  // The replica is never written through this path; a read-write transaction there would be
+  // refused on a standby anyway, and say nothing on a primary.
+  it('opens every exclusion transaction read-only', async () => {
+    await seedRemovals(CSAM_EXCLUSION_CHUNK + 10);
+    await build({ removed: 1, bands: null });
+    const modes = replicaSql.filter((q) => q.sql.startsWith('access mode'));
+    expect(modes.map((q) => q.sql)).toEqual(['access mode: read only', 'access mode: read only']);
+  });
+
+  // An `in` list takes one bind parameter per id, and scanned plus removed ids can pass
+  // Postgres's 65,535, failing the whole run. Each id list must travel as one array parameter.
+  it('sends every id list as a single parameter', async () => {
+    await seedRemovals(5);
+    await seedScanned(5);
+    await build({ removed: 5, notRemoved: 5 });
+    const image = replicaSql.find((q) => q.sql.includes('from "Image"'));
+    const appeal = replicaSql.find((q) => q.sql.includes('from "Appeal"'));
+    const present = moderatorSql.find((q) => q.sql.includes('select "image_id", "relabel"'));
+    expect(image?.params).toHaveLength(1);
+    expect(appeal?.params).toEqual(['Image', expect.any(Array)]);
+    expect(present?.params).toHaveLength(1);
   });
 
   // 57014 is also a manual pg_cancel_backend or a client abort. Those are not a slow exclusion,
@@ -578,15 +649,5 @@ describe('parseBands', () => {
   it('refuses an edge outside (0, 1)', () => {
     expect(() => parseBands('0.2,1')).toThrow(/bands/);
     expect(() => parseBands('x')).toThrow(/bands/);
-  });
-
-  // Each band multiplies the scanned ids, which reach Postgres one bind parameter each; past the
-  // limit the whole day's run fails, removed half included.
-  it('refuses more edges than the scanned-id budget allows', () => {
-    const edges = (n: number) =>
-      Array.from({ length: n }, (_, i) => ((i + 1) / (n + 1)).toFixed(3)).join(',');
-    expect(parseBands(edges(MAX_BAND_EDGES))).toHaveLength(MAX_BAND_EDGES);
-    expect(() => parseBands(edges(MAX_BAND_EDGES + 1))).toThrow(/at most/);
-    expect(500 * 20 * (MAX_BAND_EDGES + 1)).toBeLessThan(65_535 - 5_000);
   });
 });

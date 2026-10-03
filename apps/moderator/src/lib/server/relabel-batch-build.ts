@@ -1,5 +1,6 @@
 import { CompiledQuery, sql, type Kysely } from 'kysely';
 import type { DB as MainDB } from '@civitai/db-schema/kysely';
+import type { RelabelBuildSummary } from '@civitai/moderation';
 import { BLOCKED_IMAGE_RETENTION_DAYS } from '@civitai/shared/job-queue';
 import type { DB as ModeratorDB } from './moderator-db/types';
 import { csamExcludedImageIds } from './relabel-csam-exclusion';
@@ -27,40 +28,16 @@ export type RelabelBuildOptions = {
   modelOnly?: boolean;
 };
 
-type Strata<T> = { removed: T; notRemoved: T };
-
-export type RelabelBuildSummary = {
-  batch: string;
-  dryRun: boolean;
-  modelOnly: boolean;
-  /** Set when the run wrote nothing because the CSAM exclusion could not complete. */
-  skipped: 'csam exclusion timed out' | null;
-  notRemovedSkipped: BandsSkipped | null;
-  candidates: Strata<number>;
-  csamExcluded: Strata<number>;
-  alreadyInSet: number;
-  alreadyInBatch: Strata<number>;
-  picked: Strata<number>;
-  /** Picked per `<stratum> <stratumKey>`. A list, so new strata never add log fields. */
-  strata: { key: string; n: number }[];
-  inserted: number;
-  promoted: number;
-  /** Picked but already present when written: another batch's run took the image first. */
-  alreadyPresent: number;
-};
-
 export const MAX_RELABEL_DAYS = BLOCKED_IMAGE_RETENTION_DAYS - 1;
 
 /** Keeps each exclusion statement small enough to finish well inside its timeout. */
 export const CSAM_EXCLUSION_CHUNK = 250;
 const CSAM_EXCLUSION_TIMEOUT_MS = 60_000;
 /**
- * Across all chunks. With one chunk's timeout on top it stays under the main app's five-minute
- * client timeout, so a slow day is reported as a skip, not as a failure of a run that later wrote.
+ * Measured from the start of the run: no exclusion chunk starts after it. It bounds the exclusion
+ * only; the ClickHouse reads before it and the writes after it are not covered.
  */
 export const CSAM_EXCLUSION_BUDGET_MS = 3 * 60_000;
-/** Bounds the scanned ids, which reach Postgres as one bind parameter each (limit 65,535). */
-export const MAX_BAND_EDGES = 4;
 
 /** `RELABEL_NOT_REMOVED_BANDS` / `--bands`: comma-separated edges in (0, 1). Empty is `null`. */
 export function parseBands(raw: string | undefined): number[] | null {
@@ -71,7 +48,6 @@ export function parseBands(raw: string | undefined): number[] | null {
   if (!parts.length) return null;
   const bands = parts.map(Number).sort((a, b) => a - b);
   if (bands.some((b) => !(b > 0 && b < 1))) throw new Error('bands must be scores in (0, 1)');
-  if (bands.length > MAX_BAND_EDGES) throw new Error(`bands allow at most ${MAX_BAND_EDGES} edges`);
   return bands;
 }
 
@@ -160,10 +136,10 @@ const isStatementTimeout = (e: unknown) =>
 async function csamExcluded(
   replica: Kysely<MainDB>,
   ids: number[],
-  now: () => number
+  now: () => number,
+  deadline: number
 ): Promise<Set<number> | null> {
   const excluded = new Set<number>();
-  const deadline = now() + CSAM_EXCLUSION_BUDGET_MS;
   try {
     for (let i = 0; i < ids.length; i += CSAM_EXCLUSION_CHUNK) {
       if (now() > deadline) return null;
@@ -185,6 +161,13 @@ async function csamExcluded(
   }
   return excluded;
 }
+
+/**
+ * `column = ANY($1)`: one bind parameter however many ids. An `in` list takes one per id, and the
+ * scanned and removed ids together can pass Postgres's 65,535.
+ */
+const anyOf = (column: string, ids: number[]) =>
+  sql<boolean>`${sql.ref(column)} = ANY(${ids}::int[])`;
 
 const countBy = (cs: Candidate[]) => ({
   removed: cs.filter((c) => c.stratum === 'removed').length,
@@ -214,6 +197,8 @@ export async function buildRelabelBatch(
 ): Promise<RelabelBuildSummary> {
   if (!(opts.days >= 1 && opts.days <= MAX_RELABEL_DAYS))
     throw new Error(`days must be 1-${MAX_RELABEL_DAYS}: older removals are purged`);
+  const now = deps.now ?? Date.now;
+  const deadline = now() + CSAM_EXCLUSION_BUDGET_MS;
   const seed = opts.seed ?? opts.batch;
   const modelOnly = opts.modelOnly ?? false;
   const { replica, moderator } = deps;
@@ -233,7 +218,7 @@ export async function buildRelabelBatch(
     ? await replica
         .selectFrom('Image')
         .select(['id', 'userId', 'ingestion', 'needsReview', 'blockedFor', 'nsfwLevel', 'type'])
-        .where('id', 'in', ids)
+        .where(anyOf('id', ids))
         .execute()
     : [];
   const imageById = new Map(images.map((i) => [i.id, i]));
@@ -279,7 +264,8 @@ export async function buildRelabelBatch(
   const excluded = await csamExcluded(
     replica,
     candidates.map((c) => c.imageId),
-    deps.now ?? Date.now
+    now,
+    deadline
   );
   if (!excluded)
     return {
@@ -309,7 +295,7 @@ export async function buildRelabelBatch(
       .distinctOn('entityId')
       .select(['entityId', 'status', 'resolvedAt'])
       .where('entityType', '=', 'Image')
-      .where('entityId', 'in', removedIds)
+      .where(anyOf('entityId', removedIds))
       .orderBy('entityId')
       .orderBy('createdAt', 'desc')
       .execute();
@@ -329,9 +315,10 @@ export async function buildRelabelBatch(
           .selectFrom('relabel_item')
           .select(['image_id', 'relabel'])
           .where(
-            'image_id',
-            'in',
-            candidates.map((c) => c.imageId)
+            anyOf(
+              'image_id',
+              candidates.map((c) => c.imageId)
+            )
           )
           .execute()
       : [];
