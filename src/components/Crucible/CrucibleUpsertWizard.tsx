@@ -100,6 +100,10 @@ import {
   type CrucibleContentType,
 } from '~/shared/constants/crucible.constants';
 import { baseModelSelectData } from '~/shared/constants/basemodel.constants';
+import {
+  CHALLENGE_CREATE_DAILY_LIMIT,
+  describeActiveLimitsByTier,
+} from '~/shared/constants/challenge.constants';
 import { getBuzzCurrencyConfig } from '~/shared/constants/currency.constants';
 import { Flags } from '~/shared/utils/flags';
 import { CrucibleStatus, Currency, MediaType } from '~/shared/utils/prisma/enums';
@@ -432,6 +436,11 @@ export function CrucibleUpsertWizard(props: Props) {
 
   const renderStep1 = () => (
     <Stack gap="xl">
+      {!crucible && (
+        <Text size="sm" c="dimmed">
+          {`How many crucibles you can have running or scheduled at once depends on membership (${describeActiveLimitsByTier()}). Anyone can create at most ${CHALLENGE_CREATE_DAILY_LIMIT} in any 24 hours.`}
+        </Text>
+      )}
       <InputCrucibleImage
         name="coverImage"
         label="Cover Image"
