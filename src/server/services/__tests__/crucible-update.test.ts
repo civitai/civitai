@@ -427,24 +427,16 @@ describe('updateCrucible — while upcoming', () => {
 });
 
 describe('updateCrucible — free entries', () => {
-  it('lets a moderator who owns an upcoming crucible set them', async () => {
+  // Deliberately not moderator-only.
+  it('lets an owner who is not a moderator set them on an upcoming crucible', async () => {
     findUnique.mockResolvedValue(upcoming({ entryLimit: 3 }));
 
-    await edit({ freeEntriesPerUser: 1 }, OWNER, true);
+    await edit({ freeEntriesPerUser: 2 });
 
-    expect(written().freeEntriesPerUser).toBe(1);
+    expect(written().freeEntriesPerUser).toBe(2);
   });
 
-  it('refuses them from an owner who is not a moderator', async () => {
-    findUnique.mockResolvedValue(upcoming({ entryLimit: 3 }));
-
-    await expect(edit({ freeEntriesPerUser: 1 })).rejects.toThrow(
-      'Only moderators can offer free entries'
-    );
-    expect(update).not.toHaveBeenCalled();
-  });
-
-  it("still lets that owner save other changes alongside free entries they didn't change", async () => {
+  it('keeps the free entries an edit leaves out', async () => {
     findUnique.mockResolvedValue(upcoming({ entryLimit: 3, freeEntriesPerUser: 1 }));
 
     await edit({ entryFee: 200 });
@@ -452,10 +444,19 @@ describe('updateCrucible — free entries', () => {
     expect(written()).toMatchObject({ entryFee: 200, freeEntriesPerUser: 1 });
   });
 
+  it('refuses more free entries than the entry limit', async () => {
+    findUnique.mockResolvedValue(upcoming({ entryLimit: 3 }));
+
+    await expect(edit({ freeEntriesPerUser: 4 })).rejects.toThrow(
+      'Free entries cannot exceed the entry limit per user'
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it('refuses an entry limit lowered below the free entries already set', async () => {
     findUnique.mockResolvedValue(upcoming({ entryLimit: 3, freeEntriesPerUser: 2 }));
 
-    await expect(edit({ entryLimit: 1 }, OWNER, true)).rejects.toThrow(
+    await expect(edit({ entryLimit: 1 })).rejects.toThrow(
       'Free entries cannot exceed the entry limit per user'
     );
     expect(update).not.toHaveBeenCalled();
@@ -464,9 +465,10 @@ describe('updateCrucible — free entries', () => {
   it('locks them once the crucible has started', async () => {
     findUnique.mockResolvedValue(crucible({ entryLimit: 3 }));
 
-    await expect(edit({ freeEntriesPerUser: 1 }, OWNER, true)).rejects.toThrow(
+    await expect(edit({ freeEntriesPerUser: 1 })).rejects.toThrow(
       /only its name, description and images can change/
     );
+    expect(update).not.toHaveBeenCalled();
   });
 });
 

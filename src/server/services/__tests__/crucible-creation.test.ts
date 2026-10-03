@@ -627,19 +627,12 @@ describe('createCrucible — prize customization fee', () => {
 });
 
 describe('createCrucible — free entries', () => {
-  it('stores the free entries a moderator sets', async () => {
-    await createCrucible(input({ isModerator: true, entryLimit: 3, freeEntriesPerUser: 1 }));
+  // Deliberately not moderator-only. Free entries move no Buzz: the pool counts only entries holding
+  // a fee transaction (crucible-prizes.test.ts).
+  it('lets a host who is not a moderator offer free entries', async () => {
+    await createCrucible(input({ entryLimit: 3, freeEntriesPerUser: 2 }));
 
-    expect(storedData().freeEntriesPerUser).toBe(1);
-  });
-
-  it('refuses free entries from anyone else, before anything is written or charged', async () => {
-    await expect(createCrucible(input({ entryLimit: 3, freeEntriesPerUser: 1 }))).rejects.toThrow(
-      'Only moderators can offer free entries'
-    );
-
-    expect(crucibleCreate).not.toHaveBeenCalled();
-    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    expect(storedData().freeEntriesPerUser).toBe(2);
   });
 
   it('stores none when none are asked for', async () => {

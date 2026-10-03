@@ -267,7 +267,6 @@ export const createCrucible = async ({
   isModerator?: boolean;
 }) => {
   if (!isModerator) await assertCanCreateCrucible(userId);
-  if (freeEntriesPerUser > 0 && !isModerator) throw throwAuthorizationError(FREE_ENTRIES_MODS_ONLY);
   if (isNonSfwForGreen(buzzType, nsfwLevel))
     throw throwBadRequestError('A green Buzz crucible can only allow PG and PG-13 content.');
 
@@ -529,8 +528,6 @@ async function assertRequiredModelsMakeContentType(versionIds: number[], content
 
 const PRESENTATION_FIELDS = ['name', 'description', 'coverImage', 'heroImage'] as const;
 
-const FREE_ENTRIES_MODS_ONLY = 'Only moderators can offer free entries';
-
 /**
  * An upcoming crucible has no entries, so everything can change and any cost difference is
  * settled; once running only the presentation can, so the outcome stays fair.
@@ -626,12 +623,6 @@ export const updateCrucible = async ({
   if (isNonSfwForGreen(buzzType, next.nsfwLevel))
     throw throwBadRequestError('A green Buzz crucible can only allow PG and PG-13 content.');
   assertCrucibleSettings(next);
-  if (
-    !isModerator &&
-    next.freeEntriesPerUser > 0 &&
-    next.freeEntriesPerUser !== current.freeEntriesPerUser
-  )
-    throw throwAuthorizationError(FREE_ENTRIES_MODS_ONLY);
 
   const nextName = changes.name ?? crucible.name;
   const nextDescription = changes.description ?? crucible.description ?? '';

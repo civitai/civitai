@@ -232,8 +232,6 @@ export function CrucibleUpsertWizard(props: Props) {
     freeEntriesPerUser > values.entryLimit
       ? 'Free entries cannot exceed the entry limit per user'
       : null;
-  // Moderators only (official contests); anyone else sees it just to read a value already set.
-  const showFreeEntries = isModerator || freeEntriesPerUser > 0;
   const freeEntriesLabel = getFreeEntriesLabel({
     freeEntriesPerUser,
     entryLimit: values.entryLimit,
@@ -588,21 +586,19 @@ export function CrucibleUpsertWizard(props: Props) {
         withAsterisk
       />
 
-      {showFreeEntries && (
-        <InputNumber
-          name="freeEntriesPerUser"
-          label="Free Entries per User"
-          description="Each user's first entries skip the fee and add nothing to the prize pool. Official contests only."
-          min={0}
-          max={values.entryLimit}
-          clampToMax
-          allowNegative={false}
-          allowDecimal={false}
-          clampBehavior="blur"
-          error={freeEntriesError}
-          disabled={rulesLocked || !isModerator}
-        />
-      )}
+      <InputNumber
+        name="freeEntriesPerUser"
+        label="Free Entries per User"
+        description="Each user's first entries skip the fee and add nothing to the prize pool."
+        min={0}
+        max={values.entryLimit}
+        clampToMax
+        allowNegative={false}
+        allowDecimal={false}
+        clampBehavior="blur"
+        error={freeEntriesError}
+        disabled={rulesLocked}
+      />
 
       <div>
         <InputNumber
