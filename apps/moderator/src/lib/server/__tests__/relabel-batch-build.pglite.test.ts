@@ -40,7 +40,7 @@ let mainPg: PGlite;
 let modPg: PGlite;
 let replica: Kysely<MainDB>;
 let moderator: Kysely<ModeratorDB>;
-let moderatorSql: string[];
+let moderatorSql: { sql: string; params: readonly unknown[] }[];
 
 type Removal = { imageId: number | string; bucket: string; nsfw: string };
 let removals: Removal[];
@@ -115,7 +115,7 @@ beforeAll(async () => {
   moderator = new Kysely<ModeratorDB>({
     dialect: pgliteDialect(modPg),
     log: (e) => {
-      if (e.level === 'query') moderatorSql.push(e.query.sql);
+      if (e.level === 'query') moderatorSql.push({ sql: e.query.sql, params: e.query.parameters });
     },
   });
 }, 60_000);
@@ -194,12 +194,13 @@ describe('buildRelabelBatch', () => {
   it('takes the per-batch lock before counting the batch', async () => {
     await seedRemovals(4);
     await build({ bands: null });
-    const lock = moderatorSql.findIndex((q) => q.includes('pg_advisory_xact_lock'));
+    const lock = moderatorSql.findIndex((q) => q.sql.includes('pg_advisory_xact_lock'));
     const count = moderatorSql.findIndex(
-      (q) => q.includes('count(*)') && q.includes('relabel_item')
+      (q) => q.sql.includes('count(*)') && q.sql.includes('relabel_item')
     );
     expect(lock).toBeGreaterThanOrEqual(0);
     expect(count).toBeGreaterThan(lock);
+    expect(moderatorSql[lock].params).toEqual(['relabel-batch:2026-10-03']);
   });
 
   it('never queries the scanner pool or samples not-removed items without bands', async () => {
