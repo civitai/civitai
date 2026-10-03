@@ -146,7 +146,7 @@ export function CrucibleEntryGrid({
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const openEntry = (entry: CrucibleEntryData) => {
     if (canSeeDetails(entry)) onEntryClick?.(entry, openableImageIds);
-    else setViewerIndex(hiddenEntries.indexOf(entry));
+    else setViewerIndex(hiddenEntries.findIndex(({ id }) => id === entry.id));
   };
   const displayCount =
     totalCount !== undefined
