@@ -36,18 +36,19 @@ are sampled from the last few days, each carries `purge_after`, and the page sto
 once that time has passed. Labels and model predictions must land before it. Retention is not
 changed for this pilot. Not-removed items have no deadline.
 
-Anything a CSAM report or block touches is excluded from both strata (`csam-exclusion.ts`): an image
-listed in a `CsamReport` or carrying a user CSAM report, and every image of an owner with a
-`CsamReport` or any CSAM-blocked image. For a not-removed image, every image with the same bytes is
-checked too. The check runs again each time an item is served. The scanner's CSAM output is never
+Anything a CSAM report or block touches is excluded from both strata
+(`src/lib/server/relabel-csam-exclusion.ts`): an image listed in a `CsamReport` or carrying a user
+CSAM report, and every image of an owner with a `CsamReport`, a CSAM report against the user, or any
+CSAM-blocked image. The check runs again each time an item is served. The scanner's CSAM output is never
 read and is never model input: `signal-state.ts` builds model state from an allowlist.
 
 ## Blinding
 
 A labeler sees the image and nothing else: no image id, stratum, removal reason, NSFW level or the
-other labeler's answer. Each labeler gets the items in a different fixed order, and a batch is
-inserted in shuffled order so the item id in the URL says nothing about its stratum. A database
-trigger caps each item at two labelers. An image is in the set at most once.
+other labeler's answer. The page addresses items by a random token, never the serial id, which grows
+batch by batch and with the purge window would give the stratum away. Each labeler gets the items in
+a different fixed order. A database trigger caps each item at two labelers. An image is in the set
+at most once: a labeler batch that samples a model-only image promotes that row.
 
 ## Running
 

@@ -79,14 +79,3 @@ export function allocate(candidates: Candidate[], total: number, seed: string): 
 
   return pools.flatMap((p) => p.ordered.slice(0, p.taken));
 }
-
-/**
- * The order to insert a batch in. Item ids are serial and a labeler sees them in the URL, so rows
- * inserted stratum by stratum would let an id reveal whether an image was removed, and why.
- */
-export function insertOrder<T extends { imageId: number }>(picked: T[], seed: string): T[] {
-  return picked
-    .map((p) => ({ p, r: rank(`${seed}:insert`, p.imageId) }))
-    .sort((a, b) => a.r.localeCompare(b.r))
-    .map((x) => x.p);
-}

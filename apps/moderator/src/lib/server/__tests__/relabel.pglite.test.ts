@@ -36,13 +36,13 @@ async function seedItem(imageId: number, over: Record<string, unknown> = {}): Pr
       owner_id: imageId,
       ...over,
     })
-    .returning('id')
+    .returning('token')
     .executeTakeFirstOrThrow();
-  return String(row.id);
+  return row.token;
 }
 
-const save = (labelerId: number, itemId: string, a: Answers = answers) =>
-  saveAnswer(db, { labelerId, itemId, answers: a, durationMs: 1000 });
+const save = (labelerId: number, token: string, a: Answers = answers) =>
+  saveAnswer(db, { labelerId, token, answers: a, durationMs: 1000 });
 
 // One instance for the file: PGlite takes seconds to boot, which is a hook timeout per test.
 beforeAll(async () => {
@@ -83,7 +83,10 @@ describe('two labelers per item', () => {
   });
 
   it('reports a missing item instead of succeeding', async () => {
-    expect(await save(1, '999')).toEqual({ ok: false, reason: 'missing' });
+    expect(await save(1, '00000000-0000-4000-8000-000000000000')).toEqual({
+      ok: false,
+      reason: 'missing',
+    });
   });
 });
 
@@ -101,23 +104,25 @@ describe('nextCandidates', () => {
     await save(1, full);
     await save(2, full);
 
-    const ids = (await nextCandidates(db, 9)).map((c) => c.itemId);
+    const ids = (await nextCandidates(db, 9)).map((c) => c.token);
     expect(ids).toEqual([open]);
     expect(ids).not.toContain(purged);
   });
 
-  // Blinding: the queue hands the labeler an item id and an image id, nothing that says which
-  // stratum the item came from or why it was removed.
+  // Blinding: the queue hands the labeler an opaque token and an image id, nothing that says which
+  // stratum the item came from or why it was removed. Not the serial id: ids grow batch by batch, so
+  // with the purge window an old id would give the stratum away.
   it('returns no field that would unblind the labeler', async () => {
     await seedItem(1);
     const [c] = await nextCandidates(db, 9);
-    expect(Object.keys(c).sort()).toEqual(['imageId', 'itemId']);
+    expect(Object.keys(c).sort()).toEqual(['imageId', 'token']);
+    expect(c.token).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
   });
 
   it('orders the queue differently per labeler', async () => {
     for (let i = 1; i <= 20; i++) await seedItem(i);
     const order = async (labeler: number) =>
-      (await nextCandidates(db, labeler)).map((c) => c.itemId);
+      (await nextCandidates(db, labeler)).map((c) => c.token);
     expect(await order(1)).not.toEqual(await order(2));
     expect(await order(1)).toEqual(await order(1));
   });
@@ -125,7 +130,7 @@ describe('nextCandidates', () => {
   it('honours skips', async () => {
     const a = await seedItem(1);
     const b = await seedItem(2);
-    expect((await nextCandidates(db, 9, [a])).map((c) => c.itemId)).toEqual([b]);
+    expect((await nextCandidates(db, 9, [a])).map((c) => c.token)).toEqual([b]);
   });
 });
 
@@ -133,7 +138,7 @@ describe('model-only items', () => {
   it('are never served to a labeler and refuse an answer posted for them', async () => {
     const hidden = await seedItem(1, { relabel: false });
     const shown = await seedItem(2);
-    expect((await nextCandidates(db, 9)).map((c) => c.itemId)).toEqual([shown]);
+    expect((await nextCandidates(db, 9)).map((c) => c.token)).toEqual([shown]);
     expect(await save(9, hidden)).toEqual({ ok: false, reason: 'missing' });
     expect(await labelerProgress(db, 9)).toMatchObject({ items: 1 });
   });
@@ -151,10 +156,10 @@ describe('one row per image', () => {
 describe('editing an answer', () => {
   it('keeps the first time-on-item, so a quick correction does not read as rubber-stamping', async () => {
     const item = await seedItem(1);
-    await saveAnswer(db, { labelerId: 1, itemId: item, answers, durationMs: 40_000 });
+    await saveAnswer(db, { labelerId: 1, token: item, answers, durationMs: 40_000 });
     await saveAnswer(db, {
       labelerId: 1,
-      itemId: item,
+      token: item,
       answers: { ...answers, violence: 'graphic_gore' },
       durationMs: 3_000,
     });

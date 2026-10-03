@@ -8,26 +8,27 @@
  * inserts into the MODERATOR database only. Read-only against ClickHouse and the main replica.
  *
  * Run it daily: removed images are hard-deleted 7 days after the block, so removed items are drawn
- * from the last `--days` (default 5) and must be labelled before `purge_after`. An image already in
- * the set is never added again.
+ * from the last `--days` (default 5) and must be labelled before `purge_after`. An image is in the
+ * set once: a labeler batch never re-adds one already labelled, and a model-only build never adds
+ * one already present.
  *
  * `--model-only` adds items the model arms run on but labelers never see, for the full-population
- * disagreement and appeal numbers.
+ * disagreement and appeal numbers. A labeler batch that samples a model-only image promotes that
+ * row instead of competing with it, so the two kinds of build share one population.
  *
  * `--bands` are the scanner minor-score edges for the not-removed stratum. Pass them at run time;
  * they are not written into this repo.
  */
-import { Kysely, PostgresDialect } from 'kysely';
 import pg from 'pg';
+import { createKyselyClients } from '@civitai/db/kysely';
 import type { DB as MainDB } from '@civitai/db-schema/kysely';
 import { BLOCKED_IMAGE_RETENTION_DAYS } from '@civitai/shared/job-queue';
 import { clickhouse, type ClickHouseConfig } from '../xguard-lab/sample-core';
 import { deprecatedNsfwName } from '../src/lib/nsfw-levels';
 import { MINOR_BUCKETS } from '../src/lib/removal-label/compose';
-import { csamExcludedImageIds } from '../src/lib/removal-label/csam-exclusion';
+import { csamExcludedImageIds } from '../src/lib/server/relabel-csam-exclusion';
 import {
   allocate,
-  insertOrder,
   isMinorBucket,
   scoreBand,
   type Candidate,
@@ -121,9 +122,9 @@ async function main() {
     ch
   );
 
-  // Not-removed pool. Rows are per content hash, so one row can stand for several images with the
-  // same bytes; all of them go through the CSAM check, and only the lowest id is sampled. The CSAM
-  // label in this table is never read.
+  // Not-removed pool. An image row's contentHash is derived from its image id
+  // (`scanner-audit.service.ts`), so a group holds one image; GROUP BY only folds parts the merge has
+  // not collapsed yet. The CSAM label in this table is never read.
   const perBand = Math.max(200, args.notRemoved * 20);
   const scanned = await clickhouse<{ ids: string[]; score: number }>(
     `
@@ -137,19 +138,22 @@ async function main() {
   `,
     ch
   );
-  const hashGroups = scanned
-    .map((s) => ({ ids: s.ids.map(Number).sort((a, b) => a - b), score: s.score }))
-    .filter((g) => g.ids.length > 0);
+  const scoreById = new Map(
+    scanned.filter((s) => s.ids.length > 0).map((s) => [Number(s.ids[0]), s.score])
+  );
 
-  const pool = new pg.Pool({ connectionString: requireEnv('DATABASE_REPLICA_URL') });
-  const replica = new Kysely<MainDB>({ dialect: new PostgresDialect({ pool }) });
+  // The shared factory, not a bare pool: it registers the parsers that read `timestamp` columns
+  // (Appeal.resolvedAt) as UTC rather than the machine's local time.
+  const { db: replica } = createKyselyClients<MainDB>({
+    connectionString: requireEnv('DATABASE_REPLICA_URL'),
+    singleClient: true,
+    sslNoVerify: true,
+  });
   let removedCandidates: Candidate[] = [];
   let notRemovedCandidates: Candidate[] = [];
   const appeals = new Map<number, { status: string; resolvedAt: Date | null }>();
   try {
-    const ids = [
-      ...new Set([...removals.map((r) => r.imageId), ...hashGroups.map((g) => g.ids[0])]),
-    ];
+    const ids = [...new Set([...removals.map((r) => r.imageId), ...scoreById.keys()])];
     const images = await replica
       .selectFrom('Image')
       .select(['id', 'userId', 'ingestion', 'needsReview', 'blockedFor', 'nsfwLevel', 'type'])
@@ -170,9 +174,7 @@ async function main() {
         stratumKey: `${r.bucket}:${r.nsfw}`,
       });
     }
-    const siblingsOf = new Map<number, number[]>();
-    for (const g of hashGroups) {
-      const imageId = g.ids[0];
+    for (const [imageId, score] of scoreById) {
       const img = imageById.get(imageId);
       if (
         !img ||
@@ -183,29 +185,23 @@ async function main() {
       )
         continue;
       const level = deprecatedNsfwName(img.nsfwLevel);
-      siblingsOf.set(imageId, g.ids);
       notRemovedCandidates.push({
         imageId,
         ownerId: img.userId,
         stratum: 'not_removed',
         bucket: null,
         nsfwLevel: level,
-        stratumKey: `band${scoreBand(g.score, args.bands)}:${level}`,
+        stratumKey: `band${scoreBand(score, args.bands)}:${level}`,
       });
     }
 
-    const toCheck = [
-      ...removedCandidates.map((c) => c.imageId),
-      ...notRemovedCandidates.flatMap((c) => siblingsOf.get(c.imageId) ?? [c.imageId]),
-    ];
+    const toCheck = [...removedCandidates, ...notRemovedCandidates].map((c) => c.imageId);
     const excluded = new Set(
       (await csamExcludedImageIds(toCheck).execute(replica)).rows.map((r) => r.id)
     );
     const before = { removed: removedCandidates.length, notRemoved: notRemovedCandidates.length };
     removedCandidates = removedCandidates.filter((c) => !excluded.has(c.imageId));
-    notRemovedCandidates = notRemovedCandidates.filter(
-      (c) => !(siblingsOf.get(c.imageId) ?? [c.imageId]).some((id) => excluded.has(id))
-    );
+    notRemovedCandidates = notRemovedCandidates.filter((c) => !excluded.has(c.imageId));
     console.log(
       `CSAM exclusion: removed ${before.removed} -> ${removedCandidates.length}, not removed ${before.notRemoved} -> ${notRemovedCandidates.length}`
     );
@@ -233,21 +229,23 @@ async function main() {
   const mod = new pg.Client({ connectionString: requireEnv('MODERATOR_DATABASE_URL') });
   await mod.connect();
   try {
-    const { rows: present } = await mod.query<{ image_id: number }>(
-      'SELECT image_id FROM relabel_item WHERE image_id = ANY($1::int[])',
+    const { rows: present } = await mod.query<{ image_id: number; relabel: boolean }>(
+      'SELECT image_id, relabel FROM relabel_item WHERE image_id = ANY($1::int[])',
       [[...removedCandidates, ...notRemovedCandidates].map((c) => c.imageId)]
     );
-    const already = new Set(present.map((r) => r.image_id));
+    // A model-only build skips anything present; a labeler build skips only what labelers already
+    // have, so a model-only row stays available to be promoted.
+    const already = new Set(
+      present.filter((r) => args.modelOnly || r.relabel).map((r) => r.image_id)
+    );
+    const modelOnlyPresent = new Set(present.filter((r) => !r.relabel).map((r) => r.image_id));
     removedCandidates = removedCandidates.filter((c) => !already.has(c.imageId));
     notRemovedCandidates = notRemovedCandidates.filter((c) => !already.has(c.imageId));
 
-    const picked = insertOrder(
-      [
-        ...allocate(removedCandidates, args.removed, args.seed),
-        ...allocate(notRemovedCandidates, args.notRemoved, args.seed),
-      ],
-      args.seed
-    );
+    const picked = [
+      ...allocate(removedCandidates, args.removed, args.seed),
+      ...allocate(notRemovedCandidates, args.notRemoved, args.seed),
+    ];
     const removalById = new Map(removals.map((r) => [r.imageId, r]));
 
     const counts = new Map<string, number>();
@@ -266,7 +264,16 @@ async function main() {
     }
 
     let inserted = 0;
+    let promoted = 0;
     for (const p of picked) {
+      if (!args.modelOnly && modelOnlyPresent.has(p.imageId)) {
+        const res = await mod.query(
+          'UPDATE relabel_item SET relabel = true WHERE image_id = $1 AND relabel = false',
+          [p.imageId]
+        );
+        promoted += res.rowCount ?? 0;
+        continue;
+      }
       const removal = removalById.get(p.imageId);
       const removedAt = removal ? new Date(removal.removedAt * 1000) : null;
       const appeal = appeals.get(p.imageId);
@@ -297,7 +304,9 @@ async function main() {
       inserted += res.rowCount ?? 0;
     }
     console.log(
-      `batch "${args.batch}": ${inserted} inserted, ${picked.length - inserted} already present`
+      `batch "${args.batch}": ${inserted} inserted, ${promoted} promoted from model-only, ${
+        picked.length - inserted - promoted
+      } already present`
     );
   } finally {
     await mod.end();

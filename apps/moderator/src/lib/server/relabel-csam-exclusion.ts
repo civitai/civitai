@@ -25,6 +25,10 @@ export const csamExcludedImageIds = (imageIds: number[]) => sql<{ id: number }>`
        WHERE ir."imageId" = c.id AND r.reason = 'CSAM'
      )
      OR EXISTS (SELECT 1 FROM "CsamReport" cr WHERE cr."userId" = i."userId")
+     OR EXISTS (
+       SELECT 1 FROM "UserReport" ur JOIN "Report" r ON r.id = ur."reportId"
+       WHERE ur."userId" = i."userId" AND r.reason = 'CSAM'
+     )
      -- Covers the image's own CSAM block too: it is one of its owner's images.
      OR EXISTS (
        SELECT 1 FROM "Image" o WHERE o."userId" = i."userId" AND o."blockedFor" = 'CSAM'

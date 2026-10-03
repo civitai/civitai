@@ -1,11 +1,11 @@
 import { PGlite } from '@electric-sql/pglite';
 import { Kysely } from 'kysely';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { pgliteDialect } from '$lib/server/__tests__/abuse-detection-pglite.harness';
-import { servableImageKeys } from '$lib/server/relabel.service';
-import { csamExcludedImageIds } from '../csam-exclusion';
+import { servableImageKeys } from '../relabel.service';
+import { csamExcludedImageIds } from '../relabel-csam-exclusion';
+import { pgliteDialect } from './abuse-detection-pglite.harness';
 
-// Stand-ins for the four main-database tables the query reads, cut to the columns it touches.
+// Stand-ins for the five main-database tables the query reads, cut to the columns it touches.
 const TABLES = `
 CREATE TABLE "Image" (
   id int PRIMARY KEY, "userId" int NOT NULL, "blockedFor" text,
@@ -13,6 +13,7 @@ CREATE TABLE "Image" (
 );
 CREATE TABLE "Report" (id int PRIMARY KEY, reason text NOT NULL);
 CREATE TABLE "ImageReport" ("reportId" int NOT NULL, "imageId" int NOT NULL);
+CREATE TABLE "UserReport" ("reportId" int NOT NULL, "userId" int NOT NULL);
 CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, images jsonb NOT NULL DEFAULT '[]');
 `;
 
@@ -26,7 +27,7 @@ beforeAll(async () => {
 }, 60_000);
 
 beforeEach(async () => {
-  await pg.exec('TRUNCATE "Image", "Report", "ImageReport", "CsamReport"');
+  await pg.exec('TRUNCATE "Image", "Report", "ImageReport", "UserReport", "CsamReport"');
   // Image 1: clean, owner 10. Image 2: clean, owner 20. Used as the "must survive" controls.
   await pg.exec(
     `INSERT INTO "Image" (id, "userId", "blockedFor") VALUES (1, 10, NULL), (2, 20, 'moderated')`
@@ -76,6 +77,13 @@ describe('csamExcludedImageIds', () => {
   it('excludes every image of an owner with a CsamReport', async () => {
     await pg.exec(`INSERT INTO "CsamReport" ("userId") VALUES (10)`);
     expect(await excluded([1, 2])).toEqual([1]);
+  });
+
+  it('excludes every image of an owner reported to us for CSAM as a user', async () => {
+    await pg.exec(
+      `INSERT INTO "Report" VALUES (503, 'CSAM'); INSERT INTO "UserReport" VALUES (503, 20)`
+    );
+    expect(await excluded([1, 2])).toEqual([2]);
   });
 
   it('excludes every image of an owner with any image blocked for CSAM', async () => {

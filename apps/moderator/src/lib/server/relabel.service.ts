@@ -1,14 +1,14 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB as MainDB } from '@civitai/db-schema/kysely';
 import type { DB as ModeratorDB } from './moderator-db/types';
-import { csamExcludedImageIds } from '$lib/removal-label/csam-exclusion';
+import { csamExcludedImageIds } from './relabel-csam-exclusion';
 import { answersFromRow, answersToRow, type Answers } from '$lib/removal-label/questions';
 
-// Blind relabel set for the removal-label pilot. Every read a LABELER can reach returns the item id
-// and image id only: the stratum, the moderator's reason, the NSFW level and the other labeler's
-// answer are what the blinding hides, so they never leave this file on the labeling path.
+// Blind relabel set for the removal-label pilot. Every read a LABELER can reach returns the item's
+// opaque token and image id only: the stratum, the moderator's reason, the NSFW level, the other
+// labeler's answer and the serial item id are what the blinding hides.
 
-export type RelabelCandidate = { itemId: string; imageId: number };
+export type RelabelCandidate = { token: string; imageId: number };
 
 const CANDIDATE_LIMIT = 20;
 
@@ -26,7 +26,7 @@ export async function nextCandidates(
 ): Promise<RelabelCandidate[]> {
   let query = db
     .selectFrom('relabel_item as i')
-    .select(['i.id as itemId', 'i.image_id as imageId'])
+    .select(['i.token', 'i.image_id as imageId'])
     .where('i.relabel', '=', true)
     .where((eb) =>
       eb.or([eb('i.purge_after', 'is', null), eb('i.purge_after', '>', sql<Date>`now()`)])
@@ -44,34 +44,34 @@ export async function nextCandidates(
     .where(sql<boolean>`${answerCount} < 2`)
     .orderBy(sql`md5(${sql.ref('i.id')}::text || ':' || ${labelerId}::text)`)
     .limit(CANDIDATE_LIMIT);
-  if (skip.length) query = query.where('i.id', 'not in', skip);
+  if (skip.length) query = query.where('i.token', 'not in', skip);
   const rows = await query.execute();
-  return rows.map((r) => ({ itemId: String(r.itemId), imageId: r.imageId }));
+  return rows.map((r) => ({ token: r.token, imageId: r.imageId }));
 }
 
 /** The labeler's own answer to one item, for editing it. Never anyone else's. */
 export async function ownAnswer(
   db: Kysely<ModeratorDB>,
   labelerId: number,
-  itemId: string
+  token: string
 ): Promise<(RelabelCandidate & { answers: Answers }) | null> {
   const row = await db
     .selectFrom('relabel_answer as a')
     .innerJoin('relabel_item as i', 'i.id', 'a.item_id')
     .select([
-      'i.id as itemId',
+      'i.token',
       'i.image_id as imageId',
       'a.minor_present',
       'a.sexual_level',
       'a.violence',
       'a.school_setting',
     ])
-    .where('a.item_id', '=', itemId)
+    .where('i.token', '=', token)
     .where('a.labeler_id', '=', labelerId)
     .executeTakeFirst();
   const answers = row && answersFromRow(row);
   if (!row || !answers) return null;
-  return { itemId: String(row.itemId), imageId: row.imageId, answers };
+  return { token: row.token, imageId: row.imageId, answers };
 }
 
 /**
@@ -96,19 +96,20 @@ export async function servableImageKeys(
   return new Map(rows.filter((r) => !blocked.has(r.id)).map((r) => [r.id, r.url]));
 }
 
-export async function lastAnsweredItemId(
+export async function lastAnsweredToken(
   db: Kysely<ModeratorDB>,
   labelerId: number
 ): Promise<string | null> {
   const row = await db
-    .selectFrom('relabel_answer')
-    .select('item_id')
-    .where('labeler_id', '=', labelerId)
-    .orderBy('updated_at', 'desc')
-    .orderBy('id', 'desc')
+    .selectFrom('relabel_answer as a')
+    .innerJoin('relabel_item as i', 'i.id', 'a.item_id')
+    .select('i.token')
+    .where('a.labeler_id', '=', labelerId)
+    .orderBy('a.updated_at', 'desc')
+    .orderBy('a.id', 'desc')
     .limit(1)
     .executeTakeFirst();
-  return row ? String(row.item_id) : null;
+  return row?.token ?? null;
 }
 
 export type SaveResult = { ok: true } | { ok: false; reason: 'full' | 'missing' };
@@ -119,17 +120,18 @@ export type SaveResult = { ok: true } | { ok: false; reason: 'full' | 'missing' 
  */
 export async function saveAnswer(
   db: Kysely<ModeratorDB>,
-  input: { labelerId: number; itemId: string; answers: Answers; durationMs: number | null }
+  input: { labelerId: number; token: string; answers: Answers; durationMs: number | null }
 ): Promise<SaveResult> {
-  const { labelerId, itemId, answers, durationMs } = input;
+  const { labelerId, token, answers, durationMs } = input;
   const columns = answersToRow(answers);
   const item = await db
     .selectFrom('relabel_item')
     .select('id')
-    .where('id', '=', itemId)
+    .where('token', '=', token)
     .where('relabel', '=', true)
     .executeTakeFirst();
   if (!item) return { ok: false, reason: 'missing' };
+  const itemId = String(item.id);
   try {
     const result = await db
       .insertInto('relabel_answer')

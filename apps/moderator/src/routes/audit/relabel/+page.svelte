@@ -20,7 +20,7 @@
   // Reset per item, guarded on the id so an unrelated reload does not wipe half-made picks.
   let shownFor = $state<string | null>(null);
   $effect(() => {
-    const id = data.item?.itemId ?? null;
+    const id = data.item?.token ?? null;
     if (shownFor === id) return;
     shownFor = id;
     shownAt = Date.now();
@@ -30,8 +30,9 @@
   const complete = $derived(QUESTIONS.every((q) => picks[q.id]));
   // A refusal for an item the queue has since moved past is about the previous image, and must
   // not read as being about the one on screen.
-  const errorIsForThisItem = $derived(!form?.itemId || form.itemId === data.item?.itemId);
+  const errorIsForThisItem = $derived(!form?.token || form.token === data.item?.token);
   const linkClass = $derived(`${LINK_CLASS} ${submitting ? 'pointer-events-none opacity-50' : ''}`);
+  const linkLock = $derived(submitting ? { 'aria-disabled': true, tabindex: -1 } : {});
 
   function queueHref(params: Record<string, string | null>): string {
     const q = new URLSearchParams();
@@ -46,7 +47,7 @@
 
   function skip() {
     if (submitting || !data.item) return;
-    const next = [...data.skipped.filter((id) => id !== data.item?.itemId), data.item.itemId];
+    const next = [...data.skipped.filter((t) => t !== data.item?.token), data.item.token];
     void goto(`/audit/relabel?skip=${next.join(',')}`);
   }
 </script>
@@ -63,7 +64,7 @@
   <span>{data.progress.mine} answered by you</span>
   <span>&middot; {data.progress.complete} of {data.progress.items} images have both labels</span>
   {#if data.skipped.length}
-    <a href={queueHref({ skip: null })} class={linkClass}>
+    <a href={queueHref({ skip: null })} class={linkClass} {...linkLock}>
       {data.skipped.length} skipped &middot; bring them back
     </a>
   {/if}
@@ -72,7 +73,9 @@
 {#if data.pinned}
   <div class="mb-4 flex items-center gap-3 rounded-lg bg-dark-7 px-3 py-2 text-xs text-dark-1">
     Changing your earlier answer.
-    <a href={queueHref({ item: null })} class="ml-auto {linkClass}">Back to the queue &rarr;</a>
+    <a href={queueHref({ item: null })} class="ml-auto {linkClass}" {...linkLock}>
+      Back to the queue &rarr;
+    </a>
   </div>
 {:else if data.pinnedGone}
   <div class="mb-4 rounded-lg bg-dark-7 px-3 py-2 text-xs text-dark-1">
@@ -90,7 +93,7 @@
   <section class="rounded-xl border border-dark-4 bg-dark-6 p-8 text-center text-sm text-dark-2">
     {#if data.skipped.length}
       Nothing left except the {data.skipped.length} you skipped.
-      <a href={queueHref({ skip: null })} class={linkClass}>Bring them back</a>
+      <a href={queueHref({ skip: null })} class={linkClass} {...linkLock}>Bring them back</a>
     {:else}
       Nothing left for you to label.
     {/if}
@@ -113,11 +116,12 @@
       use:enhance={({ formData }) => {
         formData.set('durationMs', String(Date.now() - shownAt));
         submitting = true;
-        const wasPinned = data.pinned;
+        // Leaving `?item=` in the URL would re-show its note above every later image.
+        const leaveItem = data.pinned || data.pinnedGone;
         return async ({ result }) => {
           await applyAction(result);
           if (result.type === 'success') {
-            if (wasPinned) await goto(queueHref({ item: null }), { invalidateAll: true });
+            if (leaveItem) await goto(queueHref({ item: null }), { invalidateAll: true });
             else await invalidateAll();
           } else if (result.type === 'failure') {
             await invalidateAll();
@@ -126,7 +130,7 @@
         };
       }}
     >
-      <input type="hidden" name="itemId" value={data.item.itemId} />
+      <input type="hidden" name="token" value={data.item.token} />
 
       {#each QUESTIONS as q (q.id)}
         <fieldset class="rounded-xl border border-dark-4 bg-dark-6 p-4">
@@ -156,8 +160,8 @@
           </Button>
         {/if}
       </div>
-      {#if !data.pinned && data.lastItemId}
-        <a href={queueHref({ item: data.lastItemId })} class="text-xs {linkClass}">
+      {#if !data.pinned && data.lastToken}
+        <a href={queueHref({ item: data.lastToken })} class="text-xs {linkClass}" {...linkLock}>
           Change my last answer
         </a>
       {/if}

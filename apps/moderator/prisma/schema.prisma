@@ -667,6 +667,7 @@ model relabel_answer {
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model relabel_item {
   id                 BigInt               @id @default(autoincrement())
+  token              String               @unique @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   batch              String
   image_id           Int                  @unique
   stratum            String

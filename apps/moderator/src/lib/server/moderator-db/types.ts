@@ -470,6 +470,7 @@ export type relabel_answer = {
 };
 export type relabel_item = {
   id: Generated<string>;
+  token: Generated<string>;
   batch: string;
   image_id: number;
   stratum: string;

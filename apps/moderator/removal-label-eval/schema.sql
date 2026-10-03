@@ -8,6 +8,9 @@
 
 CREATE TABLE IF NOT EXISTS relabel_item (
   id              bigserial PRIMARY KEY,
+  -- What the page shows in place of the serial id: ids grow batch by batch, and with the purge
+  -- window an old id would say which stratum an item is in.
+  token           uuid NOT NULL DEFAULT gen_random_uuid() UNIQUE,
   batch           text NOT NULL,
   image_id        integer NOT NULL,
   stratum         text NOT NULL CHECK (stratum IN ('removed', 'not_removed')),
