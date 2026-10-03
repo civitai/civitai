@@ -944,7 +944,33 @@ describe('support.topic final cut', () => {
     expect(text.slice(-4000).startsWith('abc ' + id)).toBe(true);
     const state = buildSupportState(raw({ latestMessages: text }));
     expect(state.latest_messages.length).toBeLessThan(3000);
-    expect(state.latest_messages).not.toContain('abcdef0123');
+    expect(state.latest_messages.startsWith('[id] [link] [link] [link]')).toBe(true);
+  });
+
+  // A username can hold a separator; cutting there would leave a fragment no whole-word match sees.
+  it('drops the whole word the tail window starts inside, not just up to a separator in it', () => {
+    const text = straddlingTail(' pat(x)creator9 ' + 'q '.repeat(40), 5);
+    expect(text.slice(-4000).startsWith('x)creator9 q')).toBe(true);
+    const state = buildSupportState(raw({ username: 'pat(x)creator9', latestMessages: text }));
+    expect(state.latest_messages.length).toBeLessThan(3000);
+    expect(state.latest_messages).not.toContain('creator9');
+  });
+
+  it('drops the whole word the head window ends inside, not just back to a separator in it', () => {
+    const links = ('https://example.com/' + 'a'.repeat(60) + ' ').repeat(40);
+    const phrase = 'from pat(x)creator9 thanks';
+    const cut = phrase.indexOf('creator9') + 3;
+    const pad = 'w '.repeat(3000).slice(0, 7000 - links.length - cut);
+    const text = links + pad + phrase + ' tail'.repeat(10);
+    expect(text.slice(0, 7000).endsWith('pat(x)cre')).toBe(true);
+    const state = buildSupportState(raw({ username: 'pat(x)creator9', firstMessage: text }));
+    expect(state.first_message.length).toBeLessThan(6000);
+    expect(state.first_message).not.toContain('pat(x');
+  });
+
+  it('keeps the kept length of a tail whose first whitespace is past the margin', () => {
+    const text = '問'.repeat(1500) + '\n' + '問'.repeat(2600);
+    expect(buildSupportState(raw({ latestMessages: text })).latest_messages).toHaveLength(3000);
   });
 
   it('cuts text without spaces at a script boundary instead of dropping it', () => {
