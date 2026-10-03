@@ -62,6 +62,7 @@ export const INCUMBENT_TOPIC_MAP: Readonly<Record<string, string>> = {
 /** The label ingest stores a cannot-tell as an empty label_topic with this notes prefix. */
 const CANNOT_TELL_NOTES_PREFIX = 'cannot-tell';
 
+const SUBJECT_CHARS = 500;
 const FIRST_MESSAGE_CHARS = 6000;
 const LATEST_MESSAGES_CHARS = 3000;
 
@@ -88,14 +89,15 @@ function escapeRegExp(s: string): string {
 /**
  * Removes the requester's own identifiers as whole words, then anything shaped
  * like an email, a link (with or without a scheme), a handle, a long
- * wallet/transaction id or a phone number. Real names are NOT removed: nothing
- * stored names the requester, and free-text name detection is not attempted.
+ * wallet/transaction id or a phone number. Real names are NOT removed: the
+ * classified-tickets table stores no requester name, and free-text name
+ * detection is not attempted.
  */
 export function redact(text: string, known: readonly string[] = []): string {
   let out = text;
   for (const k of known) {
     const id = k.trim();
-    if (id.length < 4) continue;
+    if (id.length < 3) continue;
     const whole = String.raw`(?<![\w.])` + escapeRegExp(id) + String.raw`(?!\w)`;
     out = out.replace(new RegExp(whole, 'gi'), '[user]');
   }
@@ -104,18 +106,47 @@ export function redact(text: string, known: readonly string[] = []): string {
     .replace(/(?:\b[a-z][a-z0-9+.-]*:\/\/|\bwww\.)\S+/gi, '[link]')
     .replace(/\b(?:[a-z0-9-]+\.)+[a-z]{2,}\/\S*/gi, '[link]')
     .replace(/(^|[^\w@])@[A-Za-z0-9_]{2,}/g, '$1[handle]')
+    .replace(/\b(?:bc1|tb1|ltc1|addr1)[a-z0-9]{20,}\b/gi, '[id]')
     .replace(/\b(?:0x)?[a-f0-9]{24,}\b/gi, '[id]')
     .replace(/\b[1-9A-HJ-NP-Za-km-z]{26,}\b/g, '[id]')
     .replace(/\+?\d[\d ().-]{8,}\d/g, '[number]');
 }
 
+const REDACT_MARGIN_CHARS = 1000;
+
+/**
+ * Several patterns are quadratic on a long non-matching run, so redaction gets a
+ * bounded window: the kept length plus a margin, cut at whitespace so the cut
+ * cannot split an identifier. Redaction then runs before the final cut.
+ */
+export function redactionWindow(text: string, keep: number, fromEnd: boolean): string {
+  const limit = keep + REDACT_MARGIN_CHARS;
+  if (text.length <= limit) return text;
+  if (fromEnd) {
+    const tail = text.slice(-limit);
+    const ws = tail.search(/\s/);
+    return ws < 0 ? '' : tail.slice(ws + 1);
+  }
+  const head = text.slice(0, limit);
+  const ws = Math.max(head.lastIndexOf(' '), head.lastIndexOf('\n'), head.lastIndexOf('\t'));
+  return ws < 0 ? '' : head.slice(0, ws);
+}
+
 export function buildSupportState(raw: SupportTicketRaw): DecisionState {
   const known = [raw.requesterEmail, raw.requesterEmail.split('@')[0] ?? '', raw.username];
   return {
-    subject: redact(raw.subject, known),
-    // Redact before cutting: a cut can split an identifier into a piece no pattern matches.
-    first_message: redact(raw.firstMessage, known).slice(0, FIRST_MESSAGE_CHARS),
-    latest_messages: redact(raw.latestMessages, known).slice(-LATEST_MESSAGES_CHARS),
+    subject: redact(redactionWindow(raw.subject, SUBJECT_CHARS, false), known).slice(
+      0,
+      SUBJECT_CHARS
+    ),
+    first_message: redact(
+      redactionWindow(raw.firstMessage, FIRST_MESSAGE_CHARS, false),
+      known
+    ).slice(0, FIRST_MESSAGE_CHARS),
+    latest_messages: redact(
+      redactionWindow(raw.latestMessages, LATEST_MESSAGES_CHARS, true),
+      known
+    ).slice(-LATEST_MESSAGES_CHARS),
     member_tier: raw.memberTier || 'unknown',
   };
 }

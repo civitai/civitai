@@ -23,6 +23,7 @@ import {
   parseStrataCsv,
   periodOf,
   redact,
+  redactionWindow,
   supportTopicNode,
   TOPIC_CLASSES,
   type SupportTicketRaw,
@@ -116,7 +117,7 @@ describe('support.topic state', () => {
 
   it('does not treat a short or empty username as something to strip', () => {
     expect(redact('abc ab', ['', ' ', 'ab'])).toBe('abc ab');
-    expect(redact('hi bob', ['bob'])).toBe('hi bob');
+    expect(redact('hi bob here, bob.', ['bob'])).toBe('hi [user] here, [user].');
   });
 
   it('strips a username only as a whole word, so a topic word survives', () => {
@@ -681,5 +682,44 @@ describe('support.topic source guards', () => {
       accuracyOnCovered: 0,
       incumbentAccuracyOnCovered: 0,
     });
+  });
+});
+
+describe('support.topic redaction window', () => {
+  it('leaves text within the window untouched', () => {
+    expect(redactionWindow('short text', 6000, false)).toBe('short text');
+  });
+
+  it('cuts the head at whitespace so no identifier is split', () => {
+    const text = 'w '.repeat(3400) + 'jo.smith@another.net ' + 'z '.repeat(100);
+    const head = redactionWindow(text, 6000, false);
+    expect(head.length).toBeLessThanOrEqual(7000);
+    expect(head.endsWith('w') || head.endsWith('z') || head.endsWith('net')).toBe(true);
+    expect(head).not.toMatch(/\S+@\S*$/);
+  });
+
+  it('starts the tail after whitespace so no identifier is split', () => {
+    const text = 'jo.smith@another.net ' + 'y '.repeat(2000);
+    const tail = redactionWindow(text, 3000, true);
+    expect(tail.length).toBeLessThanOrEqual(4000);
+    expect(tail.startsWith('y')).toBe(true);
+  });
+
+  it('drops a window that is one unbroken token rather than cutting it', () => {
+    expect(redactionWindow('x'.repeat(10_000), 6000, false)).toBe('');
+  });
+
+  it('keeps redaction time bounded on a long run no pattern matches', () => {
+    // Several patterns are quadratic here; unbounded, 32k characters takes several seconds.
+    const run = 'a.'.repeat(16_000);
+    const started = performance.now();
+    buildSupportState(raw({ subject: run, firstMessage: run, latestMessages: run }));
+    expect(performance.now() - started).toBeLessThan(3000);
+  });
+
+  it('redacts a bech32 wallet address', () => {
+    expect(redact('sent from bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq ok')).toBe(
+      'sent from [id] ok'
+    );
   });
 });
