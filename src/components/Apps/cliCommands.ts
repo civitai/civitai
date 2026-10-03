@@ -78,3 +78,59 @@ export const CLI_CREATE_SAMPLE_COMMAND = 'civitai app create my-app';
 // host at localhost:5186 (plain `npm run dev` shows a blank screen — no host).
 export const CLI_RUN_COMMAND = 'cd my-app && npm install && npm run dev:harness';
 export const CLI_SUBMIT_COMMAND = 'civitai app submit';
+
+// --- Agent onboarding (the "let your agent build it" prompt) ---
+/**
+ * The short alias a developer's coding agent is told to read.
+ *
+ * 🔴 OWNED BY `civitai/civitai-developer-docs`, NOT BY THIS REPO.
+ * `.vitepress/agent-setup.mjs` there declares `SHORT_PROMPT_URL` with this exact value and
+ * builds its own `SETUP_PROMPT` from it, and `scripts/check-agent-setup.mjs` runs six
+ * anti-rot checks over that surface — including a SINGLE SOURCE check that the page's
+ * copy-paste string is byte-identical to the constant. That checker BLOCKS a PR there.
+ *
+ * 🔴 IT CANNOT SEE THIS FILE, AND THAT IS BY DESIGN RATHER THAN AN OVERSIGHT. Its own
+ * header states every check is repo-local — "they read committed files only, make no network
+ * request, and cannot false-fail on someone else's publish, which is the property this repo
+ * requires of anything that blocks a PR". So the copy below is unguarded upstream: changing
+ * `SHORT_PROMPT_URL` there leaves this constant behind with every check on both sides green.
+ *
+ * 🔴 AND THE URL ITSELF IS TRACKED IN NEITHER REPO. It is a Cloudflare 302 to
+ * `https://developer.civitai.com/agent-setup/prompt.md` — a dashboard redirect rule, not a
+ * Next.js route and not a rewrite. Measured 2026-10-03: `302` with that `location:`, then
+ * `200` and 7,433 bytes. `git grep agent-onboarding` over this repo returns NOTHING but this
+ * block (verified with a positive control on a neighbouring constant, so that zero is a real
+ * absence and not a broken search), and `next.config.mjs` defines no such redirect — unlike
+ * `APPS_REQUEST_ACCESS_HREF` above, whose `/discord` target IS a committed redirect with a
+ * test asserting it exists. If the Cloudflare rule is moved or deleted, this constant
+ * silently points at a 404 and nothing in either repo reports it.
+ *
+ * What DOES pin the pair is `AgentOnboardingCard.browser.test.tsx`, which asserts the bytes
+ * handed to the clipboard equal {@link AGENT_BUILD_PROMPT} and that the prompt carries this
+ * URL. That is a pin against an accidental edit HERE, not a check that upstream still agrees
+ * — nothing in this repo can make that second claim.
+ */
+export const AGENT_ONBOARDING_URL = 'https://civitai.com/agent-onboarding';
+
+/**
+ * The prompt `/apps/build` offers for pasting into a coding agent.
+ *
+ * NOT the upstream `SETUP_PROMPT`, and the difference is the point. Upstream's is
+ * setup-only ("Fetch and execute the appropriate instructions to set me up for Civitai
+ * from <url>") and its own page says the flow stops before authentication — the last thing
+ * it tells you is to run `civitai login` yourself. An agent handed the setup-only prompt
+ * therefore reaches an auth wall with no instruction to surface it, so this one asks for
+ * the login state back, then turns the session toward actually building something.
+ *
+ * The URL is interpolated rather than retyped, so the two constants cannot disagree.
+ *
+ * Wording notes, because each clause was a decision rather than prose:
+ *  - "build it", not "dispatch to implement it" — the upstream page targets Claude Code,
+ *    Cursor, Codex, opencode, Copilot, Windsurf and Zed; "dispatch" is Claude-Code subagent
+ *    jargon that reads as a no-op in the others.
+ *  - `@civitai/theme` is named so "a custom theme" is actionable against a real token
+ *    system (see the `manage-design-system` surface) rather than an invitation to invent one.
+ */
+export const AGENT_BUILD_PROMPT = `Read ${AGENT_ONBOARDING_URL} and complete the setup, then tell me if I need to run \`civitai login\`.
+
+Then ask me clarifying questions about my app idea and build it — with a custom theme built on @civitai/theme tokens, and complete test coverage.`;

@@ -1,0 +1,75 @@
+/* `AgentOnboardingCard` — the gradient ring and the prompt panel.
+ *
+ * 🔴 THE RING IS A PADDED GRADIENT WRAPPER, NOT A `mask-composite` BORDER. The mask
+ * technique is shorter but appears NOWHERE in this repo today (`git grep mask-composite`
+ * over `src/` returns nothing), so it would be the first use of a property whose
+ * `exclude`/`xor` spelling still differs between engines — on the one `/apps/build` state
+ * that is deliberately indexable and therefore the worst place to debug a renderer gap. A
+ * 1px padded wrapper with an opaque inner surface is universally supported and produces the
+ * same 1px gradient edge.
+ *
+ * 🔴 `background-size` IS SET HERE AND THE POSITION IS ANIMATED BY `motion`. Both halves
+ * have to agree or the shimmer does not move: the gradient repeats across 200% of the ring's
+ * width, and the component slides `background-position` from `0% 50%` to `200% 50%` over
+ * ~4s. A static render (reduced motion, or the collapsed workbench strip) keeps this file's
+ * default position and reads as a plain gradient edge rather than as a broken animation —
+ * which is why the gradient lives in CSS and only the position is driven from JS.
+ */
+
+.ring {
+  padding: 1px;
+  border-radius: var(--mantine-radius-md);
+  background-image: linear-gradient(
+    90deg,
+    light-dark(var(--mantine-color-blue-3), var(--mantine-color-blue-7)) 0%,
+    light-dark(var(--mantine-color-grape-3), var(--mantine-color-grape-6)) 25%,
+    light-dark(var(--mantine-color-teal-3), var(--mantine-color-teal-7)) 50%,
+    light-dark(var(--mantine-color-grape-3), var(--mantine-color-grape-6)) 75%,
+    light-dark(var(--mantine-color-blue-3), var(--mantine-color-blue-7)) 100%
+  );
+  background-size: 200% 100%;
+  background-position: 0% 50%;
+}
+
+/* The opaque surface inside the ring. Radius is one pixel tighter than the ring's so the
+ * gradient reads as an even edge rather than pooling in the corners. */
+.surface {
+  border-radius: calc(var(--mantine-radius-md) - 1px);
+  background: light-dark(var(--mantine-color-white), var(--mantine-color-dark-6));
+}
+
+/* The prompt itself.
+ *
+ * 🔴 `white-space: pre-line` IS LOAD-BEARING, NOT TYPOGRAPHY. `AGENT_BUILD_PROMPT` is two
+ * paragraphs separated by a blank line, and that blank line is part of the bytes the
+ * clipboard receives. Without `pre-line` the rendered copy collapses it and the panel
+ * silently disagrees with what the button copies — the exact "the page claims something the
+ * payload does not" failure the upstream checker's SINGLE SOURCE check exists to stop, one
+ * repo over. `pre-line` also keeps normal wrapping, so the panel still reflows.
+ */
+.prompt {
+  white-space: pre-line;
+  /* Room for the copy control, which is absolutely positioned at the panel's top-right. */
+  padding-right: 2.25rem;
+}
+
+.panel {
+  border-radius: var(--mantine-radius-sm);
+  background: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-8));
+  border: 1px solid light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-4));
+}
+
+/* The caret that sits after the settled prompt text. It is DECORATION beside text the
+ * reader has to read, never a typewriter effect on the text itself — the prompt is meant to
+ * be scanned and copied, and animating its characters would make both harder. Rendered only
+ * in the animated tree; a non-blinking block after a full stop reads as a typo, so the
+ * static tree omits it entirely rather than freezing it. */
+.caret {
+  display: inline-block;
+  width: 0.45em;
+  height: 1em;
+  margin-left: 0.1em;
+  vertical-align: text-bottom;
+  background: light-dark(var(--mantine-color-grape-6), var(--mantine-color-grape-4));
+  border-radius: 1px;
+}
