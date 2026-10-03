@@ -120,8 +120,10 @@ export const appsStorageRouter = router({
    *
    * The consequence is worth stating rather than implying: after this change
    * NOTHING reports how close an app is to its 50MB / 1M-row ceiling, so the app
-   * ceilings are observable only through `app_blocks_storage_quota_exceeded_total`
-   * (`ceiling="app"`) firing after the fact.
+   * ceilings are observable only through
+   * `civitai_app_block_storage_quota_exceeded_total` (`ceiling="app"`) firing
+   * after the fact. That is the exposed Prometheus name, not the declared one —
+   * the declaration in `@civitai/telemetry` is prefix-relative.
    *
    * Field names are unchanged, so the host bridge and the SDK's
    * APP_STORAGE_QUOTA_RESULT contract carry through untouched; what moved is the
