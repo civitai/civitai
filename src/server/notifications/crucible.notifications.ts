@@ -1,5 +1,8 @@
 import { NotificationCategory } from '~/server/common/enums';
-import { createNotificationProcessor } from '~/server/notifications/base.notifications';
+import {
+  createNotificationProcessor,
+  notBlockedBetween,
+} from '~/server/notifications/base.notifications';
 import { asOrdinal, numberWithCommas } from '~/utils/number-helpers';
 
 // `crucibleName` is null when the text hadn't passed its scan as safe for everyone.
@@ -147,11 +150,7 @@ export const crucibleNotifications = createNotificationProcessor({
       FROM affected a
       JOIN target_users tu ON tu."crucibleId" = a.id
       WHERE (a."visible" OR tu."userId" = a."hostId")
-        -- The detail page hides a crucible from anyone its host has blocked.
-        AND NOT EXISTS (
-          SELECT 1 FROM "UserEngagement" blk
-          WHERE blk."userId" = a."hostId" AND blk."targetUserId" = tu."userId" AND blk.type = 'Block'
-        )
+        AND ${notBlockedBetween('tu."userId"', 'a."hostId"')}
         AND NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = tu."userId" AND type = 'crucible-ending-soon')
     `,
   },

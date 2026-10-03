@@ -835,15 +835,23 @@ describe('finalizeCrucible — followers', () => {
     expect(results()).toEqual([]);
   });
 
-  it('skips followers the host has blocked', async () => {
-    follows.mockResolvedValue([50, 51].map((userId) => ({ userId })));
-    dbMock.dbWrite.userEngagement.findMany.mockResolvedValue([{ targetUserId: 51 }]);
+  it('skips followers on either side of a block with the host, or who hid the host', async () => {
+    follows.mockResolvedValue([50, 51, 52].map((userId) => ({ userId })));
+    dbMock.dbWrite.userEngagement.findMany.mockResolvedValue([
+      { userId: 4, targetUserId: 51 },
+      { userId: 52, targetUserId: 4 },
+    ]);
 
     await finalizeCrucible(1);
 
     expect(dbMock.dbWrite.userEngagement.findMany).toHaveBeenCalledWith({
-      where: { userId: 4, type: 'Block', targetUserId: { in: [50, 51] } },
-      select: { targetUserId: true },
+      where: {
+        OR: [
+          { userId: 4, targetUserId: { in: [50, 51, 52] }, type: 'Block' },
+          { userId: { in: [50, 51, 52] }, targetUserId: 4, type: { in: ['Block', 'Hide'] } },
+        ],
+      },
+      select: { userId: true, targetUserId: true },
     });
     expect(results().map((n) => n.userIds)).toEqual([[50]]);
   });

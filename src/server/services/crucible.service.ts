@@ -150,11 +150,23 @@ const notifyCrucibleFollowersOfResults = async ({
     });
     const candidates = followers.map((f) => f.userId).filter((id) => !exclude.has(id));
     if (!candidates.length) return;
+    // The same pairs notBlockedBetween drops from crucible-ending-soon.
     const blocked = await dbWrite.userEngagement.findMany({
-      where: { userId: crucible.userId, type: 'Block', targetUserId: { in: candidates } },
-      select: { targetUserId: true },
+      where: {
+        OR: [
+          { userId: crucible.userId, targetUserId: { in: candidates }, type: 'Block' },
+          {
+            userId: { in: candidates },
+            targetUserId: crucible.userId,
+            type: { in: ['Block', 'Hide'] },
+          },
+        ],
+      },
+      select: { userId: true, targetUserId: true },
     });
-    const blockedIds = new Set(blocked.map((b) => b.targetUserId));
+    const blockedIds = new Set(
+      blocked.map((b) => (b.userId === crucible.userId ? b.targetUserId : b.userId))
+    );
     const userIds = candidates.filter((id) => !blockedIds.has(id));
     if (!userIds.length) return;
     sendCrucibleNotification({

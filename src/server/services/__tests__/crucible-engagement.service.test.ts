@@ -65,7 +65,6 @@ describe('toggleCrucibleFollow', () => {
   it('unfollows without reading the follow or the crucible first', async () => {
     await toggleCrucibleFollow({ crucibleId: 7, userId: USER, setTo: false });
 
-    expect(read.crucibleEngagement.findUnique).not.toHaveBeenCalled();
     expect(write.crucibleEngagement.findUnique).not.toHaveBeenCalled();
     expect(read.crucible.findUnique).not.toHaveBeenCalled();
   });

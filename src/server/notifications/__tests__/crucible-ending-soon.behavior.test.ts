@@ -31,6 +31,9 @@ const UNFOLLOWED = 5;
 const MUTED = 6;
 const MUTED_OTHER_TYPE = 7;
 const BLOCKED = 8;
+const BLOCKS_HOST = 9;
+const HIDES_HOST = 11;
+const HOST_HIDES = 12;
 
 const run = async (lastSent: Date) =>
   (await db.query<Row>(def.prepareQuery({ lastSent: lastSent.toISOString() }))).rows;
@@ -236,7 +239,10 @@ describe('crucible-ending-soon recipients', () => {
 
     const rows = await run(lastRun());
 
-    expect(rows.map((r) => [r.details.crucibleId, r.details.crucibleName])).toEqual([
+    const names = rows
+      .map((r) => [r.details.crucibleId, r.details.crucibleName])
+      .sort((a, b) => Number(a[0]) - Number(b[0]));
+    expect(names).toEqual([
       [10, null],
       [11, null],
     ]);
@@ -255,16 +261,19 @@ describe('crucible-ending-soon recipients', () => {
     expect(recipients(await run(lastRun()), 10)).toEqual([HOST]);
   });
 
-  it('skips a follower or entrant the host has blocked', async () => {
+  it('skips anyone on either side of a block with the host, or who hid the host', async () => {
     await seedCrucible({ id: 10, ...crossing });
-    await follow(10, FOLLOWER);
-    await follow(10, BLOCKED);
+    for (const userId of [FOLLOWER, BLOCKED, BLOCKS_HOST, HIDES_HOST, HOST_HIDES])
+      await follow(10, userId);
     await enter(10, ENTRANT);
     await db.query(
-      `INSERT INTO "UserEngagement" ("userId", "targetUserId", type) VALUES ($1, $2, 'Block'), ($1, $3, 'Block'), ($1, $4, 'Follow')`,
-      [HOST, BLOCKED, ENTRANT, FOLLOWER]
+      `INSERT INTO "UserEngagement" ("userId", "targetUserId", type) VALUES
+        ($1, $2, 'Block'), ($1, $3, 'Block'), ($4, $1, 'Block'), ($5, $1, 'Hide'),
+        ($1, $6, 'Hide'), ($1, $7, 'Follow')`,
+      [HOST, BLOCKED, ENTRANT, BLOCKS_HOST, HIDES_HOST, HOST_HIDES, FOLLOWER]
     );
 
-    expect(recipients(await run(lastRun()), 10)).toEqual([FOLLOWER]);
+    // A Hide only counts in the recipient's own direction, so HOST_HIDES still hears.
+    expect(recipients(await run(lastRun()), 10)).toEqual([FOLLOWER, HOST_HIDES]);
   });
 });
