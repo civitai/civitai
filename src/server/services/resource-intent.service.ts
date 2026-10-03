@@ -35,12 +35,15 @@ import { resourceExceedsCatalogCeiling } from '~/server/utils/block-catalog-matu
  * Resource-intent primitive — cache → Jev stage 1 (intent/criteria) →
  * deterministic matcher → Jev stage 3 (Choice over the shortlist) → suggestions.
  *
- * Fail-closed: any JEV error in any stage — and any error in the matcher, the
- * stage-3 parse or hydration — returns `degraded: true` with empty suggestions
- * and no thrown error, so callers treat it as "no suggestion". ⚠️ Not quite "ANY
- * error in ANY stage", which is what this line used to say: a failed
- * `ResourceInsight` read is caught INSIDE the matcher and returns a complete,
- * undegraded response (see below). Jev
+ * Fail-closed, with ONE documented exception. A Jev error in any stage, a
+ * stage-3 parse error, a hydration error, and a matcher error OTHER than the
+ * `ResourceInsight` read all return `degraded: true` with empty suggestions and
+ * no thrown error, so callers treat it as "no suggestion". The exception is the
+ * label read: it is caught INSIDE the matcher and yields a complete, UNdegraded
+ * response carrying `insightFallback: true` (see below). ⚠️ This sentence has
+ * now been wrong twice — first as "ANY error in ANY stage", then as a narrower
+ * absolute that still swallowed the label read. If you are about to reword it a
+ * third time, enumerate the `catch` sites instead of generalising over them. Jev
  * output can only reorder/drop within the gate-passing shortlist; every gate
  * (availability, maturity, coverage, baseModel, celebrity) is applied in
  * deterministic code BEFORE Jev ranks, and the stage-3 option list contains
@@ -503,6 +506,15 @@ export async function getResourceIntent(
         // its lifetime are the same two fields — including on a path that rebuilt
         // the response object. `degraded` is checked first because a degraded
         // response carries no suggestions whatever the label read did.
+        // 🔴 THIS PRECEDENCE IS NOT PINNED BY ANY TEST, and measured: swapping
+        // the two arms leaves all 79 tests green. It is un-killable only because
+        // both constants are currently 60, which is exactly the coupling the
+        // separate constant exists to let you break — so if you ever give the two
+        // paths different values, this ordering becomes behaviourally
+        // load-bearing with no guard on it. Pin it in the same change that
+        // diverges them. (Same class as the promote/demote constant swap the F1
+        // test docstring discloses; a commit message in this branch said "6
+        // mutants applied, 6 killed", which read as a complete sweep and was not.)
         EX: response.degraded
           ? DEGRADED_CACHE_TTL_SECONDS
           : response.insightFallback
