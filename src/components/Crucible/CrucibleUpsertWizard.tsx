@@ -74,6 +74,10 @@ import { withController } from '~/libs/form/hoc/withController';
 import { useIsClient } from '~/providers/IsClientProvider';
 import { NsfwLevel } from '~/server/common/enums';
 import {
+  exceedsModelBrowsingLevelLimit,
+  matureBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
+import {
   CRUCIBLE_DEFAULT_PRIZE_POSITIONS,
   CRUCIBLE_DESCRIPTION_MAX_LENGTH,
   CRUCIBLE_DURATION_COSTS,
@@ -97,6 +101,7 @@ import {
 } from '~/shared/constants/crucible.constants';
 import { baseModelSelectData } from '~/shared/constants/basemodel.constants';
 import { getBuzzCurrencyConfig } from '~/shared/constants/currency.constants';
+import { Flags } from '~/shared/utils/flags';
 import { CrucibleStatus, Currency, MediaType } from '~/shared/utils/prisma/enums';
 import type { RouterOutput } from '~/types/router';
 import {
@@ -108,6 +113,7 @@ import {
 } from '~/utils/crucible-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { capitalize } from '~/utils/string-helpers';
+import { trpc } from '~/utils/trpc';
 
 const InputContentRatingSelect = withController(ContentRatingSelect);
 
@@ -244,16 +250,43 @@ export function CrucibleUpsertWizard(props: Props) {
     entryLimit: values.entryLimit,
   });
 
+  const requiredVersionIds = values.allowedResources ?? [];
+  // Mirrors the server's `assertRequiredModelsAllowContentLevel`, which stops checking once the
+  // level and models are locked.
+  const allowsMatureContent =
+    canEditContentLevels && Flags.intersects(values.nsfwLevel, matureBrowsingLevelsFlag);
+  const { data: requiredVersions } = trpc.modelVersion.getVersionsByIds.useQuery(
+    { ids: requiredVersionIds },
+    { enabled: allowsMatureContent && requiredVersionIds.length > 0 }
+  );
+  const heldToSfwModels = allowsMatureContent
+    ? (requiredVersions ?? [])
+        .filter(
+          (version) =>
+            requiredVersionIds.includes(version.id) &&
+            exceedsModelBrowsingLevelLimit(values.nsfwLevel, version)
+        )
+        .map((version) => version.modelName)
+    : [];
+  const contentLevelError = heldToSfwModels.length
+    ? `${[...new Set(heldToSfwModels)].join(
+        ', '
+      )} can only be required for PG and PG-13 content. Allow only PG and PG-13, or remove ${
+        heldToSfwModels.length === 1 ? 'it' : 'them'
+      }.`
+    : null;
+
   const isStep2Valid = () =>
-    rulesLocked ||
-    (values.entryFee != null &&
-      values.entryFee >= CRUCIBLE_MIN_ENTRY_FEE &&
-      values.entryFee <= CRUCIBLE_MAX_ENTRY_FEE &&
-      values.entryLimit >= 1 &&
-      values.entryLimit <= CRUCIBLE_MAX_ENTRIES &&
-      !entryLimitError &&
-      !freeEntriesError &&
-      !videoSettingsError);
+    !contentLevelError &&
+    (rulesLocked ||
+      (values.entryFee != null &&
+        values.entryFee >= CRUCIBLE_MIN_ENTRY_FEE &&
+        values.entryFee <= CRUCIBLE_MAX_ENTRY_FEE &&
+        values.entryLimit >= 1 &&
+        values.entryLimit <= CRUCIBLE_MAX_ENTRIES &&
+        !entryLimitError &&
+        !freeEntriesError &&
+        !videoSettingsError));
 
   const totalPrizePercentage = getPrizeDistributionTotal(values.prizePositions);
   const prizeDistributionError =
@@ -493,6 +526,7 @@ export function CrucibleUpsertWizard(props: Props) {
         }
         sfwOnly={buzzType === 'green'}
         disabled={!canEditContentLevels}
+        error={contentLevelError}
       />
     </Stack>
   );
@@ -682,6 +716,7 @@ export function CrucibleUpsertWizard(props: Props) {
         disabled={rulesLocked}
         generatableOnly={false}
         mediaType={values.contentType}
+        error={contentLevelError}
       />
 
       <InputMultiSelect

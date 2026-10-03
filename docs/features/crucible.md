@@ -36,7 +36,7 @@ A moderator can remove an entry while the crucible runs. The entry fee is refund
 | Free entries | The first N entries per user cost nothing | Free |
 | Seeded prize pool | Buzz the creator adds to the pool up front | The seeded amount |
 | Prize distribution | Custom split across positions (default 50 / 30 / 20) | 500 Buzz |
-| Resource requirements | Entries must be made with one of up to 10 chosen models | 500 Buzz |
+| Resource requirements | Entries must be made with one of up to 10 chosen models. If a chosen model is limited to PG and PG-13, so are the crucible and every entry | 500 Buzz |
 | Minimum view time *(video only)* | Judges must watch this long of both clips before voting | Free |
 | Maximum clip length *(video only)* | Longer clips are refused at submission | Free |
 

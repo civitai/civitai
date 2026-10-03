@@ -112,8 +112,10 @@ import { assertCanCreateCrucible } from '~/server/services/crucible-eligibility.
 import { getEligibleModels } from '~/server/services/eligible-models.service';
 import { getProfanityFilter } from '~/libs/profanity-simple';
 import {
+  matureBrowsingLevelsFlag,
   nsfwBrowsingLevelsFlag,
   publicBrowsingLevelsFlag,
+  exceedsModelBrowsingLevelLimit,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
@@ -341,6 +343,7 @@ export const createCrucible = async ({
   await assertPublishedModelVersions(allowedResources ?? []);
   await assertRequiredModelsMakeContentType(allowedResources ?? [], contentType ?? MediaType.image);
   assertBaseModelsMakeContentType(allowedBaseModels, contentType ?? MediaType.image);
+  await assertRequiredModelsAllowContentLevel(allowedResources ?? [], nsfwLevel);
 
   const now = new Date();
   const isScheduled = !!requestedStartAt && requestedStartAt > now;
@@ -608,6 +611,22 @@ const hasEntryRestriction = ({
   allowedResources?: number[];
   allowedBaseModels?: string[];
 }) => (allowedResources?.length ?? 0) > 0 || (allowedBaseModels?.length ?? 0) > 0;
+async function requiredModelRefusesLevel(versionIds: number[], nsfwLevel: number) {
+  const ids = [...new Set(versionIds)];
+  if (!ids.length || !Flags.intersects(nsfwLevel, matureBrowsingLevelsFlag)) return false;
+  const versions = await dbRead.modelVersion.findMany({
+    where: { id: { in: ids } },
+    select: { model: { select: { minor: true, sfwOnly: true } } },
+  });
+  return versions.some(({ model }) => exceedsModelBrowsingLevelLimit(nsfwLevel, model));
+}
+
+async function assertRequiredModelsAllowContentLevel(versionIds: number[], nsfwLevel: number) {
+  if (await requiredModelRefusesLevel(versionIds, nsfwLevel))
+    throw throwBadRequestError(
+      'A required model can only be used for PG and PG-13 content. Allow only PG and PG-13, or remove that model.'
+    );
+}
 
 const PRESENTATION_FIELDS = ['name', 'description', 'coverImage', 'heroImage'] as const;
 
@@ -742,6 +761,11 @@ export const updateCrucible = async ({
       next.contentType
     );
   }
+  // A level change re-checks every pick; otherwise only new ones, as the rest passed when added.
+  await assertRequiredModelsAllowContentLevel(
+    next.nsfwLevel !== current.nsfwLevel ? next.allowedResources : addedResources,
+    next.nsfwLevel
+  );
 
   const imageId = changes.coverImage
     ? await resolveCoverImageId({
@@ -1359,6 +1383,7 @@ export type CrucibleEntryIneligibleReason =
   | 'no-resources'
   | 'missing-required-resource'
   | 'wrong-base-model'
+  | 'required-model-level'
   | 'not-found';
 
 const entryIneligibleMessages: Record<CrucibleEntryIneligibleReason, string> = {
@@ -1369,6 +1394,8 @@ const entryIneligibleMessages: Record<CrucibleEntryIneligibleReason, string> = {
     'This image does not use any of the required resources for this crucible. Please check the crucible requirements and submit an image that uses an allowed resource.',
   'wrong-base-model':
     "This image wasn't made with a checkpoint of one of this crucible's allowed base models.",
+  'required-model-level':
+    'A model this crucible requires can only be used for PG and PG-13 content, so this entry can only be PG or PG-13.',
   'not-found': 'Image not found',
 };
 
@@ -1388,7 +1415,7 @@ const getAllowedResources = (crucible: EntryEligibilityCrucible) =>
  */
 const getEntryIneligibleReasons = async (
   crucible: EntryEligibilityCrucible,
-  images: { id: number; createdAt: Date }[]
+  images: { id: number; createdAt: Date; nsfwLevel: number }[]
 ) => {
   const startedAt = crucible.startAt ?? crucible.createdAt;
   const allowedResources = getAllowedResources(crucible);
@@ -1398,6 +1425,12 @@ const getEntryIneligibleReasons = async (
     restricted && images.length > 0
       ? await imageResourcesCache.fetch(images.map((image) => image.id))
       : {};
+  // Create and edit check this too, but a required model can be flagged after the crucible opens.
+  const isMature = (image: { nsfwLevel: number }) =>
+    Flags.intersects(image.nsfwLevel, matureBrowsingLevelsFlag);
+  const requiredModelHeldToSfw =
+    images.some(isMature) &&
+    (await requiredModelRefusesLevel(allowedResources, matureBrowsingLevelsFlag));
 
   return new Map(
     images.map((image) => {
@@ -1424,6 +1457,7 @@ const getEntryIneligibleReasons = async (
             reasons.push('wrong-base-model');
         }
       }
+      if (requiredModelHeldToSfw && isMature(image)) reasons.push('required-model-level');
 
       return [image.id, reasons];
     })
@@ -1443,7 +1477,7 @@ export const checkCrucibleEntryEligibility = async ({
 
   const images = await dbRead.image.findMany({
     where: { id: { in: imageIds }, userId },
-    select: { id: true, createdAt: true },
+    select: { id: true, createdAt: true, nsfwLevel: true },
   });
   const reasonsByImage = await getEntryIneligibleReasons(crucible, images);
 
