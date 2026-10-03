@@ -81,7 +81,16 @@ const {
     // Same source-level typing as `QueryFn` / `RateLimitFn` above: the signature lives on
     // the mock, so the passthroughs below can forward real arguments instead of spreading
     // an `unknown[]` into a zero-arg inference.
-    mockThrowOnBlockedUserContent: vi.fn<(args: unknown) => Promise<void>>(async () => undefined),
+    // 🔴 ARITY TWO, deliberately. The real `throwOnBlockedUserContent` is
+    // `(content, { isModerator, surface, onBlocked })` — blocklist.service.ts:620-628 — and
+    // shared-content-safety.ts:119 calls it with both. Declaring this arity-ONE silently
+    // DROPPED the options object before it reached the mock (measured: `mock.calls[0].length`
+    // 2 → 1), which made `onBlocked` unreachable from this suite — i.e. the link-vs-pattern
+    // distinction that shared-content-safety.ts:110-112 keeps exact could not be guarded at
+    // all. No test failed, which is what made it invisible. Keep the second parameter.
+    mockThrowOnBlockedUserContent: vi.fn<(content: unknown, options?: unknown) => Promise<void>>(
+      async () => undefined
+    ),
     mockAuditPromptServer: vi.fn<(args: unknown) => Promise<void>>(async () => undefined),
     mockIsRevoked: vi.fn<(blockInstanceId: string, sub?: string) => Promise<boolean>>(
       async () => false
@@ -121,7 +130,8 @@ vi.mock('~/server/utils/shared-storage-rate-limit', () => ({
 }));
 // Keep the content-safety belt REAL; mock only its redis-backed deps.
 vi.mock('~/server/services/blocklist.service', () => ({
-  throwOnBlockedUserContent: (args: unknown) => mockThrowOnBlockedUserContent(args),
+  throwOnBlockedUserContent: (content: unknown, options?: unknown) =>
+    mockThrowOnBlockedUserContent(content, options),
 }));
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
   auditPromptServer: (args: unknown) => mockAuditPromptServer(args),
@@ -693,6 +703,17 @@ describe('C3 content safety (blocking on append)', () => {
     await expect(
       caller().append({ blockToken: 't', value: { title: 'visit http://bad.example' } })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    // 🔴 PINS THE MOCK'S ARITY, because narrowing it is silent. The passthrough above once
+    // declared this callee arity-ONE, which dropped the options object before it reached the
+    // mock — `mock.calls[0].length` went 2 → 1 — and NO test failed, so `onBlocked` (the
+    // link-vs-pattern discriminator that shared-content-safety.ts:110-112 keeps exact) became
+    // unguardable. Watched red at the one-arg passthrough: `expected 1 to be 2`, 1 failed /
+    // 148 passed. Assert the KEYS too, not just the count: a second positional argument of the
+    // wrong shape would satisfy a bare length check.
+    expect(mockThrowOnBlockedUserContent.mock.calls[0]?.length).toBe(2);
+    expect(Object.keys((mockThrowOnBlockedUserContent.mock.calls[0]?.[1] ?? {}) as object)).toEqual(
+      expect.arrayContaining(['isModerator', 'surface', 'onBlocked'])
+    );
   });
 
   // FIX 2: escape-at-rest removed — text is stored RAW. XSS is contained at the
