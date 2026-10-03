@@ -131,11 +131,20 @@ export function ReviewDetailTabsView({
           and no history entry per click (which would turn Back into a tab-by-tab rewind out
           of the submission).
 
-          🔴 AND IT CANNOT TRIP THE PAGE'S ROUTE-LEAVE GUARD. `useCatchNavigation` returns
-          early when the destination's PATH equals the current one — a query-only change — so
-          this never prompts, even mid-approve. That is checked rather than assumed: see the
-          guard's `currentUrl === nextUrl` branch, and the tab test that switches tabs while
-          a mutation is in flight.
+          🔴 AND IT CANNOT TRIP THE PAGE'S ROUTE-LEAVE GUARD, because this is a QUERY-ONLY
+          change. `useCatchNavigation`'s `handleBrowsingAway` compares
+          `window.location.pathname` against the destination with its query stripped
+          (`url.split('?')[0]`) and returns early when they are equal — so switching tabs
+          mid-approve never prompts.
+
+          ⚠️ THAT HALF IS A CODE-READING ARGUMENT, NOT A TEST, and is written as one
+          deliberately. The premise it rests on — that a tab click produces a replace to the
+          SAME pathname — IS tested (`ReviewDetailTabs.browser.test.tsx` asserts
+          `url.pathname` is still `/apps/review/[publishRequestId]`). The early return itself
+          cannot be exercised in the component harness: the guard reads the REAL
+          `window.location.pathname`, which under vitest-browser is the runner's page, not the
+          app route, so a faithful test there would be asserting the harness's URL rather than
+          the guard's rule. Do not "fix" that by relaxing the guard to make it testable.
         */
         void router.replace(
           { pathname: router.pathname, query: reviewDetailTabQuery(value, router.query) },

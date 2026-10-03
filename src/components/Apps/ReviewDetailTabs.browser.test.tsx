@@ -334,6 +334,25 @@ describe('selecting a tab REWRITES the URL', () => {
     expect(opts?.shallow).toBe(true);
   });
 
+  test('🔴 the tabs STILL WORK while an approve/reject mutation is in flight', async () => {
+    // The page arms a route-leave guard during a mutation. A tab click is a QUERY-ONLY
+    // change, which `useCatchNavigation` returns early on — so the mod can keep reading the
+    // submission while their decision is submitting. If the bar were disabled, or the click
+    // produced a PATH change, this is where it would show.
+    mocks.pending = true;
+    router.query = { publishRequestId: 'pubreq_01HZX' };
+    render();
+    await expect.element(page.getByRole('tab', { name: 'Manifest' })).toBeInTheDocument();
+    await page.getByRole('tab', { name: 'Manifest' }).click();
+    expect(router.replace).toHaveBeenCalledTimes(1);
+    const [url] = vi.mocked(router.replace).mock.calls[0] as unknown as [
+      { pathname: string; query: Record<string, unknown> }
+    ];
+    // 🔴 SAME PATHNAME — that is the premise the guard's early return consumes.
+    expect(url.pathname).toBe('/apps/review/[publishRequestId]');
+    expect(url.query).toEqual({ publishRequestId: 'pubreq_01HZX', tab: 'manifest' });
+  });
+
   test('…and switching BACK to the default DROPS the key rather than writing it', async () => {
     router.query = { publishRequestId: 'pubreq_01HZX', tab: 'code' };
     render();
