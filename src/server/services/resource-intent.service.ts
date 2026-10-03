@@ -35,8 +35,12 @@ import { resourceExceedsCatalogCeiling } from '~/server/utils/block-catalog-matu
  * Resource-intent primitive — cache → Jev stage 1 (intent/criteria) →
  * deterministic matcher → Jev stage 3 (Choice over the shortlist) → suggestions.
  *
- * Fail-closed: ANY error in ANY stage returns `degraded: true` with empty
- * suggestions and no thrown error — callers treat it as "no suggestion". Jev
+ * Fail-closed: any JEV error in any stage — and any error in the matcher, the
+ * stage-3 parse or hydration — returns `degraded: true` with empty suggestions
+ * and no thrown error, so callers treat it as "no suggestion". ⚠️ Not quite "ANY
+ * error in ANY stage", which is what this line used to say: a failed
+ * `ResourceInsight` read is caught INSIDE the matcher and returns a complete,
+ * undegraded response (see below). Jev
  * output can only reorder/drop within the gate-passing shortlist; every gate
  * (availability, maturity, coverage, baseModel, celebrity) is applied in
  * deterministic code BEFORE Jev ranks, and the stage-3 option list contains
@@ -47,10 +51,15 @@ import { resourceExceedsCatalogCeiling } from '~/server/utils/block-catalog-matu
  * degraded — the model judged the prompt needs no resource.
  *
  * A label-read failure is NOT a degrade: the matcher falls back to the popularity
- * seed order and reports it, and the response carries `insightFallback: true` with
- * real suggestions. The only thing that changes here is the cache TTL — see
- * `DEGRADED_CACHE_TTL_SECONDS` for why those two cases share it, and
+ * seed order and reports it, and the response carries `insightFallback: true`
+ * alongside its normal suggestions. The only thing that changes here is the cache
+ * TTL — see `INSIGHT_FALLBACK_CACHE_TTL_SECONDS`, and
  * `resourceIntentResponseSchema` for why the flag is not `degraded`.
+ *
+ * ⚠️ `insightFallback: true` does NOT imply suggestions. A label read that fails
+ * and is then followed by a stage-3 or hydration failure degrades like any other,
+ * and the flag rides along on that empty response because it describes the
+ * computation. Read it only when `degraded === false`.
  *
  * Exported as a plain async function so internal (tRPC) consumers reuse this
  * exact flow; the block REST endpoint adds auth/maturity/rate-limit around it.
@@ -60,15 +69,43 @@ const CACHE_TTL_SECONDS = 60 * 60;
 // Jev failures are often transient (vendor 5xx, timeout); caching a degraded
 // response for the full hour would pin an empty result to the prompt, so
 // degrades cache briefly — a retry window without hammering the vendor.
-//
-// 🔴 The SAME argument covers a label-read failure (`insightFallback`), and that
-// is why the short TTL is not keyed on `degraded` alone. A replica blip, a pooler
-// timeout or a stale generated client is every bit as transient as a vendor 5xx,
-// and the response it produces is UNORDERED — so the full hour would pin a
-// popularity-ordered response to the cache key while the analogous vendor failure
-// got a minute. Both are "this response is worse than the one a retry would
-// produce", which is what this TTL is for.
 const DEGRADED_CACHE_TTL_SECONDS = 60;
+
+/**
+ * The same short window for a response whose LABEL read failed
+ * (`insightFallback`) — a separate constant at the same value, so today's
+ * behaviour is identical and the two can diverge later. This is the one site that
+ * owns the "why" for both short TTLs; the comments elsewhere point here rather
+ * than restating it.
+ *
+ * Why not just reuse `DEGRADED_CACHE_TTL_SECONDS`: the two paths look alike on
+ * response QUALITY and are asymmetric on RETRY COST, which is what a TTL actually
+ * buys. The label read sits BETWEEN the two Jev round trips, so an
+ * `insightFallback` miss has already paid stage 1 and goes on to pay stage 3 in
+ * full — two BILLED vendor calls, plus the Meilisearch query and hydration. The
+ * dominant degraded case is stage-1 Jev throwing, which costs ONE call and that
+ * one abandoned, with no stage 3, no search and no hydration. The benefit axis
+ * inverts too: a degraded response is useless, so retrying it fast is worth
+ * paying for, while an `insightFallback` response is fully usable and merely
+ * unranked.
+ *
+ * 🔴 So this value, applied to a RECURRING failure, is a real cost: a repeated
+ * prompt re-runs the whole pipeline up to 60x per hour instead of once. And one
+ * trigger is not transient at all — an unapplied `ResourceInsight` migration is
+ * one of M2's two named operational preconditions, is the default state of a fresh
+ * environment, and is indistinguishable here from a replica blip. Prod has the
+ * rows; dev/stage/preview may not.
+ *
+ * Deliberately NOT raised, and NOT jittered: the audit that found the silent
+ * fallback asked for the short TTL, and both of those are value judgments for
+ * whoever opens the flag. ⚠️ Before that happens, note the two things that make
+ * this measurable rather than merely reasoned, neither of which exists yet: the
+ * state has no shadow column and no metric — only a fire-and-forget
+ * `resource-intent-insight-read-failed` log — and this cache has no single-flight
+ * around its compute, so the fraction of wall clock a key spends inside a
+ * recomputable window rises by the same factor.
+ */
+const INSIGHT_FALLBACK_CACHE_TTL_SECONDS = 60;
 
 const DEGRADED_MODEL = 'jev-unavailable';
 
@@ -309,8 +346,8 @@ export async function getResourceIntent(
   let shortlistCount = 0;
   // Tracked outside the try so the degraded response below carries it too: if the
   // label read failed and THEN stage 3 failed, the fact that the ordering never ran
-  // still describes this computation. (The TTL is already 60s on that path, so this
-  // changes no behaviour there — it keeps the field honest.)
+  // still describes this computation. (A degrade already takes a short TTL, so this
+  // changes no TTL — what it keeps honest is the value a cache replay reports.)
   let insightFallback = false;
   let degradedReason: string | null = null;
   let response: ResourceIntentResponse | undefined;
@@ -464,11 +501,13 @@ export async function getResourceIntent(
       await redis.packed.set(resourceIntentCacheKey(cacheInput), response, {
         // Read off the RESPONSE, not the locals, so what is cached and what sets
         // its lifetime are the same two fields — including on a path that rebuilt
-        // the response object.
-        EX:
-          response.degraded || response.insightFallback
-            ? DEGRADED_CACHE_TTL_SECONDS
-            : CACHE_TTL_SECONDS,
+        // the response object. `degraded` is checked first because a degraded
+        // response carries no suggestions whatever the label read did.
+        EX: response.degraded
+          ? DEGRADED_CACHE_TTL_SECONDS
+          : response.insightFallback
+          ? INSIGHT_FALLBACK_CACHE_TTL_SECONDS
+          : CACHE_TTL_SECONDS,
       });
     } catch {
       // A cache write failure never fails the request.

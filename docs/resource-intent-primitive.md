@@ -39,11 +39,11 @@ POST /api/v1/blocks/resource-intent {prompt, baseModel?, limit?}
 ## Hard rules
 
 1. **Pin the model.** `typesafe/jev-1.13` (numbered). `jev-latest` never appears in code. ⚠️ **This rule used to read "the client sends `allowFallbacks: false`, so OpenRouter cannot route the call to a different model while we record ours", and that is RETRACTED** — it described the chat/completions transport, which could never have worked at all (see the transport note below). The decisions endpoint's only proven request shape is `{model, state, questions}`, and sending an unverified `provider` key to a strictly-validated alpha endpoint is how the original defect happened. The pin is now enforced on the **response** instead: the vendor reports the build that answered (`typesafe/jev-1.13-20260917` for the pinned `typesafe/jev-1.13`), `askJev` fails closed on anything that is not the pin or a dated build of it, and `JevResponse.model` carries that vendor-reported build rather than our constant. That observes what actually ran instead of requesting a routing promise.
-2. **Fail closed, fail empty.** Any Jev error/timeout/malformed response returns HTTP 200 with `degraded: true` and `suggestions: []`. Never a stack trace, never fabricated suggestions. 🔴 A **label**-read failure is deliberately NOT a degrade: it produces a complete response with a real intent and real suggestions, flagged `insightFallback: true`, and `degraded` keeps meaning "the vendor path failed" so the invariants above (`suggestions: []`, `intent`/`criteria` `null`, `model: 'jev-unavailable'`) stay true of every degraded row. The one thing the two share is the short cache TTL — see [Caching](#caching-rate-limits-flag).
+2. **Fail closed, fail empty.** Any Jev error/timeout/malformed response returns HTTP 200 with `degraded: true` and `suggestions: []`. Never a stack trace, never fabricated suggestions. 🔴 A **label**-read failure is deliberately NOT a degrade: on its own it produces a complete response with a real intent and real suggestions, flagged `insightFallback: true`, and `degraded` keeps meaning "the vendor path failed" so the invariants above (`suggestions: []`, `intent`/`criteria` `null`, `model: 'jev-unavailable'`) stay true of every degraded row. ⚠️ The two are not exclusive: a label read can fail and a LATER stage degrade anyway, giving `degraded: true` **with** `insightFallback: true` and no suggestions — so `insightFallback` is only interpretable when `degraded` is false. Both take a short cache TTL, for different reasons — see [Caching](#caching-rate-limits-flag).
 3. **Deterministic gates always win.** Availability (no Private), the token's `maxBrowsingLevel` maturity clamp (authoritative — no client maturity field is read), region restriction, canGenerate coverage, baseModel compatibility (caller-supplied, never Jev output), and the hard-coded `celebrity` tag exclusion are applied in the matcher. Hydration re-checks exactly TWO of them — `hasAccess` and the maturity ceiling. Coverage, baseModel and the celebrity exclusion are NOT re-checked there, and `canGenerate` is present on the hydrated resource and unread. ⚠️ **No principle separates the two re-checked gates from the three that are not.** An earlier draft of this line said the re-checked ones are "the ones whose indexed value can lag"; that is false — the source comment beside the check says the _coverage_ filter is a superset that can lag, and coverage is gated on indexed Meili fields exactly like the rest. So the honest statement is that a version whose coverage lapsed since the last index build can still be suggested. Treat that as an accepted gap with no stated justification, not as a designed boundary — and if you close it, `canGenerate` is already on the object. Jev output can only reorder/drop within the gate-passing set, never add — the stage-3 option list contains exactly the shortlisted keys plus `none`, so an unknown version is unrepresentable.
 4. **`none` is a first-class answer.** Stage-1 `role` includes `none`; stage 3 includes `none`. An argmax of `none` returns empty suggestions _without_ `degraded`.
 5. **Stable question IDs + spec hash.** `QUESTION_SPEC_VERSION` plus a sha256 over the question spec ride every response and shadow row; a question edit invalidates old analytics instead of blending with them. 🔴 **The spec term in the CACHE KEY is the hash, not the version** — the hash moves on any spec edit, the hand-maintained integer only moves when someone remembers, and until that was fixed a reworded prompt would have left pre-edit entries served for their full hour under the new spec _and_ stamped into the shadow table with the new hash, which is precisely the blend this rule exists to prevent.
-6. **Reject unknown answer keys.** Every response parse rejects keys outside the question set, distributions must sum to ~1 (±0.02) over the offered options, scores/nouls must be in range. Confidence is never a permission slip: no resource is admitted or refused on one. A label row's `confidence` does gate whether that row is read for ORDERING — against `RESOURCE_INSIGHT_MIN_PROMOTE_CONFIDENCE` on the promote side and `RESOURCE_INSIGHT_MIN_DEMOTE_CONFIDENCE` on the demote side, **two constants holding the same 0.30 today** — and a row below the floor for its direction is treated as if the version were unlabeled. The precise claim is that **no deterministic gate is applied or relaxed on a confidence**: no filter, drop or maturity decision reads it. It is NOT the weaker-sounding "changes rank and nothing else", because the shortlist is a fixed-width page cut out of a wider pool, so rank decides admission to the response.
+6. **Reject unknown answer keys.** Every response parse rejects keys outside the question set, distributions must sum to ~1 (±0.02) over the offered options, scores/nouls must be in range. Confidence is never a permission slip: no resource is admitted or refused on one. A label row's `confidence` does gate whether that row is read for ORDERING — against `RESOURCE_INSIGHT_MIN_PROMOTE_CONFIDENCE` on the promote side and `RESOURCE_INSIGHT_MIN_DEMOTE_CONFIDENCE` on the demote side, **two constants holding the same value today** — and a row below the floor for its direction is treated as if the version were unlabeled. The precise claim is that **no deterministic gate is applied or relaxed on a confidence**: no filter, drop or maturity decision reads it. It is NOT the weaker-sounding "changes rank and nothing else", because the shortlist is a fixed-width page cut out of a wider pool, so rank decides admission to the response.
 7. **Adversarial state.** The prompt is user text. The `injectionPresent` Noul is asked and logged; deterministic rules own every consequence. Jev's judgment never feeds back into state.
 8. **No invariants across calls.** Full distributions are logged; nothing probabilistic is combined in code.
 
@@ -64,7 +64,8 @@ The role compiles to a ModelType filter (`ROLE_MODEL_TYPES` in the schema file �
 
 ## Caching, rate limits, flag
 
-- **Cache:** full responses under `packed:caches:jev-resource-intent:v1:<sha256>`, TTL 1h. Degraded responses cache for 60s only — a transient vendor failure must not pin an empty result to a prompt for an hour. 🔴 **A label-read fallback (`insightFallback: true`) takes the same 60s**, for the same reason one step over: a replica blip or a pooler timeout is every bit as transient as a vendor 5xx, and the response it produces is *unordered*, so the full hour would pin a popularity-only response to the key. The flag rides inside the cached blob, so a replay off the cache reports what the computation did rather than a fresh `false`.
+- **Cache:** full responses under `packed:caches:jev-resource-intent:v1:<sha256>`, TTL 1h. Degraded responses cache for 60s only — a transient vendor failure must not pin an empty result to a prompt for an hour. **A label-read fallback (`insightFallback: true`) takes 60s too**, via its *own* constant `INSIGHT_FALLBACK_CACHE_TTL_SECONDS`: an unordered response must not be pinned for an hour while the analogous vendor failure gets a minute. The flag rides inside the cached blob, so a replay reports what the computation did rather than a fresh `false`.
+- 🔴 **The two short TTLs are separate constants at the same value, because their RETRY COSTS are not alike** and a TTL buys retry cost, not response quality. The label read sits *between* the two Jev round trips, so a fallback miss has already paid stage 1 and goes on to pay stage 3 in full — two billed vendor calls plus the search query and hydration — where the dominant degraded case (stage-1 Jev throwing) costs one abandoned call and nothing downstream. The benefit inverts as well: a degraded response is useless so a fast retry is worth paying for, while a fallback response is fully usable and merely unranked. **Consequence to weigh before opening the flag:** against a *recurring* fault a repeated prompt re-runs the whole pipeline up to 60× per hour instead of once, and one trigger is not transient at all — an unapplied `ResourceInsight` migration is one of M2's operational preconditions and is the default state of a fresh environment. Two things that would make this measurable rather than reasoned do not exist yet: no shadow column or metric for the state (only a fire-and-forget log), and no single-flight around the cache's compute. The value is deliberately left at 60s and un-jittered — those are judgments for whoever opens the flag.
 - **Rate limit:** per-`blockInstanceId` LLM bucket (`:llm:` sub-namespace, 30 req/60s, fail-open) — a request is up to two vendor round trips, so it does not share the catalog bucket.
 - **Flag:** `resourceIntentJev` in `feature-flags.service.ts` (`availability: []`, fliptKey `resource-intent-jev`). Flipt owns the decision; an unknown flag or unreachable Flipt denies. The flag is checked **before** the cache read — a dark endpoint never reads and never spends. The Flipt flag definition itself is a separate flipt-state change and must ship default-OFF.
 
@@ -105,8 +106,10 @@ by a popularity sort, so coverage *inside a pool* runs **~30–45× the corpus r
 | versions of the top 100 models by thumbs-up, no type filter | **33.3%** (350 of 1,050) |
 | versions of the top 100 LoRA-family models by thumbs-up | **~45%** (236 of 522) |
 
-Measured against the primary Postgres database, three times independently. Two
-consequences, and the second is the one that was being argued the wrong way round:
+Measured against the primary Postgres database three times independently — by the
+reviewer who raised the retraction and by two auditors — and ⚠️ **not reproducible
+from this repo**: the queries were not captured, so re-run them before building on
+the figures rather than citing this table. Two consequences, and the second is the one that was being argued the wrong way round:
 insight coverage correlates with popularity, which anyone grading label ordering
 against a popularity baseline has to control for; and **the ordering is active on a
 large share of requests rather than being a rare no-op**, so eviction from the
@@ -170,10 +173,13 @@ aggregate is persisted, so nothing here can separate them.
 
 🔴 The promote and demote directions read **separate constants**,
 `RESOURCE_INSIGHT_MIN_PROMOTE_CONFIDENCE` and
-`RESOURCE_INSIGHT_MIN_DEMOTE_CONFIDENCE`, both 0.30 — so behaviour is today exactly
-what a single constant gave, and the split is a lever rather than a change. The
-reason they are separate: the measured argument for 0.30 (p50 0.43, only 3.4% of
-rows at 0.70+, so a 0.70 floor leaves the ordering inert) weighs **only** the
+`RESOURCE_INSIGHT_MIN_DEMOTE_CONFIDENCE`, which hold the same value today — so
+behaviour is exactly what the single constant gave, and the split is a lever rather
+than a change. The numbers live in the code, deliberately not restated here: moving
+the demote floor is the whole point of the split, and a literal in this sentence
+would be false the moment someone does it. The
+reason they are separate: the measured argument for that value (p50 0.43, only 3.4%
+of rows at 0.70+, so a 0.70 floor leaves the ordering inert) weighs **only** the
 promote side's cost, which is a label that never gets to help. The demote side's
 error costs run the other way — raising its floor costs a *missed* demotion, and a
 row that fails to demote just sits neutral in seed order, i.e. the pre-feature
@@ -252,9 +258,12 @@ response rather than left at 0. So a fallback-ordered response emits one marked 
 and then up to an hour of unmarked ones unless the fields ride **inside the cached
 blob**, i.e. in `resourceIntentResponseSchema`, which is itself another
 cache-invalidating shape bump. ⚠️ **That bump has now been paid once**, for
-`insightFallback` — so (a) is solved for the fallback clause specifically, and any
-further column should go in the same place rather than beside the response. The
-residual on (a) is only that the field is not yet written to the ClickHouse row.
+`insightFallback` — so the PRECONDITION (a) names is met, and any further column
+should go in the same place rather than beside the response. 🔴 Read that as a
+precondition and not as the fix: (a) is a claim about what the shadow ROWS look
+like, and with no column and no `ShadowEvent` field there are still **zero** marked
+rows, which is exactly the pre-change state. What changed is that the value now
+exists and survives a cache replay.
 (b) A pooled label count cannot separate "the labels reordered this" from "every
 label landed neutral" — below the floor for its direction, or unrecognised, both of
 which this design makes deliberately common. That needs a reorder signal, not a
@@ -275,13 +284,15 @@ computation; verified by a query returning a non-empty, disjoint partition of ro
 into changed-the-response / ordering-ran-but-response-unchanged /
 ordering-did-not-run.
 
-Progress against it, stated precisely so nobody reads this as closed:
-`insightFallback` supplies ONE case of clause (ii) — "the ordering could not run
-because the label read failed" — and it is carried in the cached response as this
-condition requires. It does not distinguish *ordering ran* from *ordering ran on a
-pool with nothing to order*, and it says nothing about clause (i). Both remaining
-halves need the ClickHouse columns plus a comparison of the returned slice against
-the slice the seed order would have produced.
+Progress against it, stated precisely so nobody reads this as closed: clause (ii)
+asks for a COLUMN, and there is no column. What exists is the **value** such a
+column would carry, for one case of (ii) — "the ordering could not run because the
+label read failed" — computed, put on the response, and carried through a cache
+replay as the condition requires. It does not distinguish *ordering ran* from
+*ordering ran on a pool with nothing to order*, and it says nothing at all about
+clause (i). Closing either clause still needs the ClickHouse columns, the
+`ShadowEvent` fields to populate them, and for (i) a comparison of the returned
+slice against the slice the seed order would have produced.
 
 ### The M3 study exists, has never been run, and does not grade this
 

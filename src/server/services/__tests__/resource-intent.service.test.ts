@@ -528,6 +528,48 @@ describe('degradation — fail closed, fail empty', () => {
     expect(result.degraded).toBe(true);
     expect(result.suggestions).toEqual([]);
   });
+
+  // 🔴 The two failures COMBINED, which is the only path on which `insightFallback`
+  // is tracked outside the `try` — and the line that tracking exists for had no
+  // coverage at all: `insightFallback` → `false` in the degraded literal was green
+  // across the whole suite. The TTL cannot see it (a degrade is already short-lived),
+  // so what this pins is the CACHED BLOB, which is the one property the field's own
+  // docstring says it exists for — a replay has to report what the computation did.
+  //
+  // It is also the fixture that makes the scoping honest: `insightFallback: true`
+  // here arrives with `suggestions: []`, so anything claiming the flag implies
+  // suggestions is false, and the comments now say "only interpretable when
+  // `degraded` is false" because of this case.
+  it('🔴 a label-read fallback followed by a LATER failure degrades, and still records the fallback', async () => {
+    mockStage1();
+    mockFindCandidates.mockResolvedValue(matched(SHORTLIST, true));
+    mockStage3({ '0': 0.7, '1': 0.2, none: 0.1 });
+    mockGetResourceData.mockRejectedValue(new Error('db down'));
+
+    const result = await getResourceIntent(INPUT, CTX);
+
+    expect(result.degraded).toBe(true);
+    expect(result.suggestions).toEqual([]);
+    expect(result.insightFallback).toBe(true);
+    // Asserted on what reached redis, not only the return value.
+    expect(redisMock.redis.packed.set.mock.calls[0][1]).toMatchObject({
+      degraded: true,
+      insightFallback: true,
+    });
+
+    // Control: the identical degrade WITHOUT a label-read failure records `false`.
+    // Without this arm, hardcoding `true` in the degraded literal passes.
+    redisMock.redis.packed.set.mockClear();
+    mockAskJev.mockReset();
+    mockStage1();
+    mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
+    mockStage3({ '0': 0.7, '1': 0.2, none: 0.1 });
+
+    const plain = await getResourceIntent(INPUT, CTX);
+
+    expect(plain.degraded).toBe(true);
+    expect(plain.insightFallback).toBe(false);
+  });
 });
 
 describe('stage flow', () => {

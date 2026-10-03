@@ -248,22 +248,29 @@ describe('findResourceIntentCandidates', () => {
   });
 
   it('returns [] without querying when the role is none', async () => {
-    const { entries } = await findResourceIntentCandidates(
+    const result = await findResourceIntentCandidates(
       { ...criteria, role: 'none', modelTypes: null },
       { browsingLevel: 3, coverage: COVERAGE, cap: 50 }
     );
-    expect(entries).toEqual([]);
+    // 🔴 Asserted on the WHOLE return, not just `.entries`. When this function
+    // returned a bare array, `toEqual([])` covered everything it could report; the
+    // move to a result object silently narrowed that, and `insightFallback: true`
+    // on this early return then passed the entire suite. No label read happens
+    // here, so the only honest value is `false` — and a `true` would shorten the
+    // cache TTL for every `role: 'none'` response.
+    expect(result).toEqual({ entries: [], insightFallback: false });
     expect(searchWithSignal).not.toHaveBeenCalled();
   });
 
   it('returns [] without querying when Meilisearch is not configured', async () => {
     meiliHolder.client = null;
-    const { entries } = await findResourceIntentCandidates(criteria, {
+    const result = await findResourceIntentCandidates(criteria, {
       browsingLevel: 3,
       coverage: COVERAGE,
       cap: 50,
     });
-    expect(entries).toEqual([]);
+    // Whole return, for the same reason as the role-none case above.
+    expect(result).toEqual({ entries: [], insightFallback: false });
     expect(searchWithSignal).not.toHaveBeenCalled();
   });
 
@@ -652,9 +659,11 @@ describe('findResourceIntentCandidates — the labels change the response', () =
   it('issues no label query at all when the pool is empty', async () => {
     searchWithSignal.mockResolvedValue({ hits: [], estimatedTotalHits: 0 });
 
-    const { entries } = await findResourceIntentCandidates(criteria, opts);
+    const result = await findResourceIntentCandidates(criteria, opts);
 
-    expect(entries).toEqual([]);
+    // Whole return: an empty pool skips the label read entirely, which is NOT a
+    // fallback — the read did not fail, it never happened.
+    expect(result).toEqual({ entries: [], insightFallback: false });
     expect(dbMock.dbRead.resourceInsight.findMany).not.toHaveBeenCalled();
   });
 
@@ -773,13 +782,20 @@ describe('findResourceIntentCandidates — the labels change the response', () =
     expect(result.entries).toHaveLength(3);
   });
 
-  // 🔴 F1: the two directions now read SEPARATE constants. They hold the same value
-  // today, so this test cannot distinguish which one each branch reads — it is an
-  // invariant guard by the red/green matrix and says so. What it IS for: it derives
-  // both arms FROM the constants rather than from the literal 0.3, so whichever one
-  // moves first, the arm for the OTHER direction keeps asserting the right boundary
-  // instead of silently re-pinning 0.3. The asymmetry is argued beside the constants,
-  // not here, because a value this test could prove is not the thing under dispute.
+  // 🔴 F1: the two directions now read SEPARATE constants. 🔴 DO NOT DELETE THIS IN A
+  // COVERAGE PRUNE — mutation-measured, its demote arms are the ONLY coverage the
+  // demote branch has: deleting that branch's floor check, and flipping its `<` to
+  // `<=`, each fail exactly one test in the whole suite, this one. The branch is new
+  // code from the constant split and nothing else reaches it.
+  //
+  // What this test does NOT prove, so the label is honest in both directions: it
+  // cannot tell which constant each branch reads (a mutant swapping them is green
+  // across the whole suite while both hold the same value), and it does not pin the demote VALUE
+  // (0.3 → 0.5 is also green — deliberate, since that value is explicitly unargued).
+  // Its first arm, the promote side under its own floor, IS redundant with "a label
+  // below the promote floor is neutral" above; the demote arms are not redundant with
+  // anything. Both arms derive from the constants rather than the literal 0.3, so
+  // whichever floor moves first the other keeps asserting the right boundary.
   it('reads the promote floor on the promote side and the demote floor on the demote side', async () => {
     searchWithSignal.mockResolvedValue({ hits: seed.slice(0, 2), estimatedTotalHits: 2 });
 

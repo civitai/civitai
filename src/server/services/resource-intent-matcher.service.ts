@@ -274,18 +274,24 @@ function insightBucket(insight: ResourceIntentInsight, want: ResourceIntentWant)
  * the catalogue's high-usage head — the lowest `generationCount` among labeled
  * versions is 46,798 — so coverage INSIDE a pool runs ~30-45x the corpus rate:
  * 33.3% of the versions of the top 100 models by thumbs-up (350 of 1,050), and ~45%
- * restricted to the LoRA family (236 of 522). Measured against the primary Postgres
- * database, three times independently.
+ * restricted to the LoRA family (236 of 522). ⚠️ Provenance, because none of this
+ * is reproducible from the tree: measured against the primary Postgres database by
+ * the reviewer who raised the retraction and twice independently by auditors, NOT
+ * by anything in this change. The queries were not captured. Treat the figures as
+ * a three-way-agreeing external measurement and re-run them before building on
+ * them.
  *
- * So bucketing is not held up here by labels being rare, and this comment does not
- * substitute a fresh argument for it. What survives the retraction is a property,
- * not a justification: a labeled and an unlabeled candidate share no scale, so any
- * scoring scheme has to invent a score for the unlabeled majority, and the neutral
- * band is how this ordering avoids inventing one — which is what the paragraph
- * above describes. Whether buckets or scores serve better at the in-pool coverage
- * measured above has never been tested, and it is the first thing to revisit once
- * the shadow table can grade the ordering (see the closing condition in
- * `docs/resource-intent-primitive.md`).
+ * So bucketing is not held up here by labels being rare, and nothing here is a
+ * fresh argument minted to replace it. What survives is the sentence immediately
+ * above, which already stood before the retraction: a labeled and an unlabeled
+ * candidate share no scale, so a scoring scheme would have to invent a score for
+ * the unlabeled candidates, and the neutral band is how this ordering avoids
+ * inventing one. That is a reason, not merely a property — the honest distinction
+ * is that it was promoted from a CONSEQUENCE of the policy to the whole of what
+ * holds it up, not that it is somehow argument-free. Whether buckets or scores
+ * serve better at the in-pool coverage measured above has never been tested, and
+ * it is the first thing to revisit once the shadow table can grade the ordering
+ * (see the closing condition in `docs/resource-intent-primitive.md`).
  *
  * 🔴 This returns a permutation, but its CALLER slices to the response cap, so on a
  * pool wider than the cap the ordering decides WHICH candidates are returned and not
@@ -418,11 +424,12 @@ async function searchShortlistModels(
  * 🔴 `insightFallback` exists because the fallback is otherwise indistinguishable
  * from success at the seam: the caller receives a well-formed, correctly-capped
  * shortlist in popularity order and has no way to learn that the labels were never
- * read. That cost the caller its cache TTL decision — a label-read failure is as
- * transient as the vendor failures the service caches for 60s, and without this
- * flag its unordered response was pinned for the full hour instead.
+ * read. That cost the caller its cache TTL decision — an unordered response was
+ * cached for as long as a fully successful one. The TTL rule and the argument for
+ * it live at `INSIGHT_FALLBACK_CACHE_TTL_SECONDS` in `resource-intent.service.ts`;
+ * this comment deliberately does not restate the values.
  */
-export type ResourceIntentShortlist = {
+export type ResourceIntentMatchResult = {
   entries: ResourceIntentShortlistEntry[];
   /**
    * `true` ⇒ the `ResourceInsight` read FAILED on this call and `entries` is the
@@ -446,7 +453,7 @@ export async function findResourceIntentCandidates(
     coverage: ResourceIntentCoverage;
     cap: number;
   }
-): Promise<ResourceIntentShortlist> {
+): Promise<ResourceIntentMatchResult> {
   if (criteria.role === 'none') return { entries: [], insightFallback: false };
   const cap = clampResourceIntentCap(opts.cap);
   const poolCap = clampResourceIntentCap(cap * RERANK_POOL_MULTIPLIER);
@@ -473,6 +480,19 @@ export async function findResourceIntentCandidates(
     // but it is REPORTED, not swallowed. The log alone reached nobody who could
     // act on it inside the request: the caller decides this response's cache TTL,
     // and a silent fallback got the full-success hour.
+    //
+    // ⚠️ This catch is DELIBERATELY broader than the repo's other fail-soft reads
+    // of a hand-applied table — `isMissingTableError` in
+    // `src/server/services/blocks/app-access.service.ts` and `isUndefinedTable` in
+    // `src/server/services/apps/app-storage.service.ts` both swallow only the
+    // missing-relation error, on the argument that anything wider is a permanent
+    // silent-zero generator. Wider here because this read refines an ordering
+    // rather than deciding access, so there is no silent zero to generate: every
+    // candidate is still returned, in the order the index gave them. The cost of
+    // the breadth is that a PERMANENT fault (a query bug, a half-applied
+    // migration that renamed a column) reports as a fallback forever instead of
+    // surfacing — which is exactly what makes the fallback TTL in
+    // `resource-intent.service.ts` worth reading before the flag opens.
     logToAxiom(
       {
         type: 'resource-intent-insight-read-failed',

@@ -240,8 +240,15 @@ export type ResourceIntentSuggestion = {
 export const resourceIntentResponseSchema = z.strictObject({
   degraded: z.boolean(),
   /**
-   * The `ResourceInsight` read failed while producing this response, so the
-   * shortlist is in popularity seed order rather than label order.
+   * The `ResourceInsight` read failed while producing this response.
+   *
+   * 🔴 ONLY INTERPRETABLE WHEN `degraded === false`. On a `degraded: false`
+   * response it means the shortlist is in popularity seed order rather than label
+   * order. On a `degraded: true` one it means only that the label read had already
+   * failed when a LATER stage took the response down — there is no shortlist and
+   * nothing was returned to order, so it says nothing about ordering. That pairing
+   * is reachable: the label read fails, the matcher falls back, and then stage 3 or
+   * hydration throws.
    *
    * 🔴 Deliberately NOT folded into `degraded`. `degraded` means the vendor path
    * failed, and the invariants built on it — "fail closed, fail empty" in the
@@ -261,9 +268,20 @@ export const resourceIntentResponseSchema = z.strictObject({
    * It rides INSIDE the response, not beside it, because the response is what
    * gets cached: a replay off the cache has to report the same value as the
    * computation did, which `docs/resource-intent-primitive.md`'s closing
-   * condition names as a requirement. The `.strict()` note immediately above this
-   * schema is what makes adding it safe — a blob written before this field
-   * existed fails validation and recomputes.
+   * condition names as a requirement. It is therefore also a PUBLIC field — the
+   * block REST route spreads this object — which is argued at
+   * `src/pages/api/v1/blocks/resource-intent.ts`, not here.
+   *
+   * ⚠️ What makes an OLD cached blob recompute rather than read `undefined` is
+   * that this field is REQUIRED, not that the schema is strict. (An earlier draft
+   * of this comment credited `.strict()`, and the note above the schema is loose
+   * the same way.) Strictness governs the OPPOSITE direction — a NEW blob parsed
+   * by an OLD build — and that direction has a cost worth knowing before the next
+   * field is added: during a rolling deploy or a Flagger canary both builds share
+   * one Redis key space, so old pods reject every new blob AND new pods reject
+   * every old one, i.e. a 100% miss rate on both sides for the rollout window, at
+   * up to two vendor round trips per miss. Free for THIS field only because the
+   * route is dark behind `resourceIntentJev`.
    */
   insightFallback: z.boolean(),
   intent: resourceIntentAnswerSchema.nullable(),
