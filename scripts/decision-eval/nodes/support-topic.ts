@@ -109,7 +109,8 @@ export function redact(text: string, known: readonly string[] = []): string {
   return out
     .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[email]')
     .replace(/(?:\b[a-z][a-z0-9+.-]*:\/\/|\bwww\.)\S+/gi, '[link]')
-    .replace(/\b(?:[a-z0-9-]+\.)+[a-z]{2,}\/\S*/gi, '[link]')
+    .replace(/\b(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d+)?\/\S*/gi, '[link]')
+    .replace(/\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\/\S*/g, '[link]')
     .replace(/(^|[^\w@])@[A-Za-z0-9_]{2,}/g, '$1[handle]')
     .replace(/\b(?:bc1|tb1|ltc1|addr1)[a-z0-9]{20,}\b/gi, '[id]')
     .replace(/\b(?:0x)?[a-f0-9]{24,}\b/gi, '[id]')
@@ -123,7 +124,7 @@ const REDACT_MARGIN_CHARS = 1000;
 const SEPARATOR = /[^\w.@%+:/#=&?~-]/;
 
 const PHONE_CHAR = /[\d\s().+-]/;
-const LINK_START = /:\/\/|www\.|[a-z0-9-]\.[a-z]{2,}\//i;
+const LINK_START = /:\/\/|www\.|[a-z0-9-]\.[a-z]{2,}(?::\d+)?\/|\d\.\d{1,3}(?::\d+)?\//i;
 
 /** The whitespace-free run of `text` that ends at `end`. */
 function tokenEndingAt(text: string, end: number): string {

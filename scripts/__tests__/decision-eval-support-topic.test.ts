@@ -145,6 +145,21 @@ describe('support.topic state', () => {
     expect(state.latest_messages).not.toMatch(/[a-f0-9]{8}/);
   });
 
+  it.each([
+    ['a host with a port', 'see example.com:8080/user/janedoe for it'],
+    ['an IP host', 'see 203.0.113.7/user/janedoe for it'],
+    ['an IP host with a port', 'see 203.0.113.7:8443/user/janedoe for it'],
+  ])('redacts a link with no scheme to %s', (_, text) => {
+    expect(redact(text)).toBe('see [link] for it');
+  });
+
+  it('drops a no-whitespace tail continuing a link with a port, cut before the port', () => {
+    const after = 'ample.com:8080/路/john.smith.5551234';
+    const rest = after + '中'.repeat(1510) + 'http://x.co/' + 'b'.repeat(1300);
+    const text = 'Zex' + rest + 'P'.repeat(4000 - rest.length);
+    expect(buildSupportState(raw({ latestMessages: text })).latest_messages).toBe('');
+  });
+
   it('leaves an amount and a short order number alone', () => {
     expect(redact('Paid 25.00 USD for 5000 buzz, order 123456')).toBe(
       'Paid 25.00 USD for 5000 buzz, order 123456'
@@ -812,6 +827,7 @@ describe('support.topic redaction window', () => {
 
   it('drops a window that is one unbroken token rather than cutting it', () => {
     expect(redactionWindow('x'.repeat(10_000), 6000, false)).toBe('');
+    expect(redactionWindow('x'.repeat(10_000), 3000, true)).toBe('');
   });
 
   // Several patterns are quadratic on one contiguous run. Measured on 64k characters with one
