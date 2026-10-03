@@ -33,7 +33,7 @@ POST /api/v1/blocks/resource-intent {prompt, baseModel?, limit?}
 | `src/server/services/resource-intent.service.ts`         | Cache → stage 1 → criteria → matcher → stage 3 → hydration → shadow event. Plain async function; reusable without the REST surface. |
 | `src/server/services/resource-intent-matcher.service.ts` | Deterministic gates + popularity-seeded pool + `ResourceInsight` ordering + hard cap.                                               |
 | `src/pages/api/v1/blocks/resource-intent.ts`             | Block-token REST surface.                                                                                                           |
-| `scripts/label-resource-insights.ts`                     | The offline batch pass that WRITES `ResourceInsight`. Run manually; spends vendor budget on every invocation, dry run included.      |
+| `scripts/label-resource-insights.ts`                     | The offline batch pass that WRITES `ResourceInsight`, and enqueues the labeled MODELS for reindex. Run manually; spends vendor budget on every invocation, dry run included. |
 | `scripts/eval-resource-intent-goldset.ts`                | M3 gold-set study runner. Committed, never executed; no-ops without `--execute`. Grades stage-1 agreement, not retrieval.            |
 
 ## Hard rules
@@ -82,6 +82,50 @@ popularity-seeded index query, because no insight field is projected into
 So this ranks within a popularity-seeded pool; it is not purpose-first retrieval.
 The seed reaches `applyInsightRanking` only as the tiebreak index, so replacing it
 later is a change to `searchShortlistModels` alone.
+
+🔴 **A label write is ANNOUNCED to the models index, and that is a prerequisite
+rather than a nicety.** A model enters the incremental models-index sync on
+exactly three conditions, and they live in **two** files: `Model.createdAt >=
+lastUpdatedAt` and `Model.updatedAt >= lastUpdatedAt` are in
+`prepareModelsBatches` (`src/server/search-index/models.search-index.ts`); the
+third — the index's own update queue — is read by `update()` in
+`src/server/search-index/base.search-index.ts`, which unions the queued ids with
+that function's `updateIds`. A `ResourceInsight` upsert satisfies none of them —
+it touches neither `Model` column — so nothing about a label would reach the
+index except through the manual full re-projection, which can go a very long
+time between runs. The labeling pass therefore enqueues the affected MODEL ids
+(`ResourceInsight` is keyed per version; the index is keyed per model) on every
+batch that writes rows.
+
+⚠️ Until an insight field is actually projected into `models_v9` the rebuilt
+document is byte-identical, so today the enqueue buys nothing visible. It is
+wired now because the alternative is a projected attribute frozen at the one
+manual reset, decaying from the moment it finishes, with every newly-labeled
+model seeded as unlabeled — a defect whose symptom is indistinguishable from
+"the labels are bad". **Touching `Model.updatedAt` instead was considered and
+rejected:** it orders the "recently updated" model lists (`model.service.ts`
+already drops to raw SQL to AVOID bumping it on a non-creator edit, and says
+so), so a corpus labeling pass would misrepresent every labeled model as
+freshly updated.
+
+🔴 **The per-batch enqueue is sized for the STEADY-STATE trickle, not for the
+one-time corpus backfill — finish a corpus pass with a reset instead of letting
+the queue drain it.** The drain is `search-index-sync-models` (every 15 min),
+whose `update()` context is `dbWrite`/`pgDbWrite`, so each queued model is a
+full nested `modelSearchIndexSelect` pull **off the primary**. A corpus pass
+labels ~975k versions, and the collapse to distinct models is near-zero on the
+default id-ordered sweep (a model's versions are not adjacent in id space), so
+the queue would carry roughly one model per version labeled — against the
+~700k ungated documents this index holds, through the incremental path, to
+rewrite documents that are byte-identical today. `search-index-sync-models-reset`
+already exists as a manual-trigger job and builds the new index off the
+**replica** before swapping and clearing the queue; that is one pass instead of
+hundreds of thousands of incremental document writes. ⚠️ Also note `--top N`
+does not bound this cost, it concentrates it: ordering by `generationCount`
+selects the models with the most versions, files and showcase images, i.e. the
+largest documents in the index. These figures are read out of the code and the
+repo's own comments, not measured — a corpus run should re-derive the distinct
+model count first.
 
 The pool is wider than the response — `min(cap × 2, 255)` — so the ordering can
 promote a candidate popularity placed outside the response rather than only

@@ -1,7 +1,11 @@
 import { createHash } from 'crypto';
 import { parseArgs } from 'util';
 
+import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { modelsSearchIndex } from '~/server/search-index';
+import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 import {
   askJev,
   JEV_TIMEOUT_MS,
@@ -48,6 +52,49 @@ import { Availability } from '~/shared/utils/prisma/enums';
  *
  * Apply the migration to the target environment first (nothing auto-applies
  * it); treat any invocation, dry run included, as a spend decision.
+ *
+ * A REAL RUN ALSO ANNOUNCES ITS WRITES TO THE MODELS SEARCH INDEX, because the
+ * incremental sync cannot see a `ResourceInsight` write. A model enters that
+ * sync on exactly three conditions, and they live in TWO files: `Model.createdAt
+ * >= lastUpdatedAt` and `Model.updatedAt >= lastUpdatedAt` are in
+ * `prepareModelsBatches` (src/server/search-index/models.search-index.ts), and
+ * the third — the index's own update queue — is read by the shared processor's
+ * `update()` in src/server/search-index/base.search-index.ts, which unions the
+ * queued ids with that function's `updateIds`. Do not go looking for all three
+ * in one place. A label row satisfies none of them: it touches neither `Model`
+ * column. So every batch that writes rows enqueues the affected MODEL ids
+ * (deduplicated; `ResourceInsight` is per version while the index is per model).
+ * Without it, any insight attribute served from the index stays frozen at the
+ * last manual full re-projection. `--execute` only: a dry run writes nothing and
+ * so has nothing to announce.
+ *
+ * 🔴 `queued N` COUNTS ANNOUNCEMENTS ISSUED, NOT ANNOUNCEMENTS LANDED, and the
+ * difference is not pedantry: `addToQueue` fails open on a degraded sysRedis —
+ * it parks the ids in Postgres for `search-index-queue-drain` and returns
+ * `false` — and neither `SearchIndexUpdate.queueUpdate` nor
+ * `modelsSearchIndex.queueUpdate` propagates that boolean (stated at
+ * src/pages/api/admin/temp/queue-paid-models-reindex.ts). So the counter is
+ * identical on a healthy run and on a run whose every enqueue was parked.
+ *
+ * So a real run READS THE QUEUE BACK ONCE, after the first batch that enqueues,
+ * and prints `queue-verify: …`. Not a flag and not per batch: not a flag because
+ * an opt-in check is one nobody remembers to pass, and not per batch because
+ * this queue reaches hundreds of thousands of ids on a large fan-out and
+ * scanning it per batch is itself a hazard. The result is ONE-DIRECTIONAL, like
+ * the equivalent read-back in the admin endpoint above: finding the ids present
+ * PROVES they landed, while not finding them is inconclusive — the 15-minute
+ * sync may have checked the queue out in between. See `verifyFirstEnqueue`.
+ *
+ * ⚠️ THE PROCESS CANNOT EXIT ON ITS OWN ANY MORE. Importing
+ * `~/server/search-index` reaches `~/server/redis/caches` → `~/server/redis/
+ * client`, which CONSTRUCTS AND CONNECTS both redis clients at module load and
+ * arms a ping interval. Open sockets plus a live timer hold the event loop, so
+ * the tail guard below exits explicitly once `main()` resolves — the same thing
+ * scripts/seed-scanner-policies.ts does, and for the same reason. Without it a
+ * finished run prints its summary and then hangs, which reads as a stalled
+ * batch and makes any wrapper (a cron, a `timeout`) report failure on a run that
+ * fully succeeded. Narrowing the import does not help: the models index module
+ * pulls in the same cache module.
  *
  * Spend is REPORTED, not estimated: each progress line and the final summary
  * carry `spent=$…`, accumulated from the vendor's own per-request cost. A batch
@@ -190,9 +237,19 @@ export const LABELABLE_VERSION_FILTER = {
   model: { status: 'Published', availability: { not: Availability.Private } },
 } as const;
 
-/** The columns a label judgment is derived from. Shared by both selection paths. */
+/**
+ * The columns a label judgment is derived from. Shared by both selection paths.
+ *
+ * `modelId` is NOT a judgment input — nothing in the batch request sees it. It is
+ * selected because a written label has to be announced to the MODELS search
+ * index, which is keyed per model while `ResourceInsight` is keyed per model
+ * version. Reading the parent id off the row that is already being fetched is
+ * what keeps that mapping free; resolving it afterwards would be a second query
+ * per batch for a column the first query could have returned.
+ */
 export const LABELABLE_VERSION_SELECT = {
   id: true,
+  modelId: true,
   name: true,
   baseModel: true,
   trainedWords: true,
@@ -202,6 +259,7 @@ export const LABELABLE_VERSION_SELECT = {
 
 export type LabelableVersion = {
   id: number;
+  modelId: number;
   name: string;
   baseModel: string;
   trainedWords: string[];
@@ -220,9 +278,13 @@ export type ResourceInsightLabel = {
   model: string;
 };
 
-export type LabelBatchResult = {
+/** What a parsed vendor response yields, before anything is written or announced. */
+export type LabelParseResult = {
   labels: ResourceInsightLabel[];
   failedVersionIds: number[];
+};
+
+export type LabelBatchResult = LabelParseResult & {
   /**
    * The VENDOR'S OWN reported spend for this batch's one request, straight from
    * the decisions response — never derived from a token count and a price
@@ -235,6 +297,19 @@ export type LabelBatchResult = {
    * a budget.
    */
   costUsd?: number;
+  /**
+   * The model ids this batch HANDED TO the models search-index queue API —
+   * empty on a dry run (nothing was written, so there is nothing to re-index)
+   * and empty when that call threw.
+   *
+   * ⚠️ "Handed to" is the honest verb, not "landed". `queueUpdate` returns
+   * `void`: underneath it `addToQueue` is deadline-raced and fail-open, and a
+   * dropped id goes to a Postgres parking lot replayed by the
+   * `search-index-queue-drain` job rather than coming back as an error. So a
+   * non-zero count here says the announcement was issued and is recoverable by
+   * the platform, not that redis accepted it.
+   */
+  enqueuedModelIds: number[];
 };
 
 function resourceQuestionId(versionIndex: number, questionId: string): string {
@@ -289,7 +364,7 @@ export function buildLabelQuestions(versions: LabelableVersion[]): {
 export function parseLabelAnswers(
   versions: LabelableVersion[],
   answers: Awaited<ReturnType<typeof askJev>>['answers']
-): LabelBatchResult {
+): LabelParseResult {
   const byId = new Map(answers.map((answer) => [answer.id, answer]));
   const labels: ResourceInsightLabel[] = [];
   const failedVersionIds: number[] = [];
@@ -381,6 +456,102 @@ export function partitionNeedingLabel(
   return { toLabel, skipped: versions.length - toLabel.length };
 }
 
+/**
+ * The DISTINCT parent model ids of the versions a batch actually labeled.
+ *
+ * Two translations, both load-bearing, which is why this is a named function
+ * rather than an inline `map` at the call site:
+ *
+ *   1. VERSION → MODEL. `ResourceInsight` is keyed on `modelVersionId`; the
+ *      models search index is keyed on the MODEL. Enqueuing version ids would
+ *      queue ids that are valid-looking integers in the wrong id space — the
+ *      queue is a bare list of numbers and cannot reject them — so the pass
+ *      would re-index whichever unrelated models happened to share those ids.
+ *   2. DEDUPLICATE. The raw mapping can repeat ids. ⚠️ How often depends on the
+ *      selection path, and the honest answer is "rarely, on the default one":
+ *      under `--top` usage correlates within a model so a batch really can hold
+ *      several of its versions, but the default sweep walks version ids in
+ *      order and a model's versions are created at different times, so they are
+ *      not adjacent — expect near-zero collapse there, i.e. roughly one model
+ *      enqueued per version labeled. ⚠️ This is NOT load-bearing
+ *      for correctness or for index cost, and saying otherwise is how a false
+ *      claim about the queue gets propagated: the queue is a redis SET
+ *      (`sAdd`), `checkoutQueue` collects into a `Set`, and
+ *      `src/server/services/model.service.ts` states the policy outright —
+ *      "a duplicate enqueue is free: processQueues dedupes with a Set". It is
+ *      done here only so the payload this script hands over names each model
+ *      once, which is also what makes `enqueuedModelIds` a model count rather
+ *      than a row count.
+ *
+ * Driven by `labels` — the rows that were actually written — not by the fetched
+ * page, so a version whose answers failed to map does not get its model
+ * re-indexed on the strength of a row that does not exist.
+ */
+export function labeledModelIds(
+  versions: LabelableVersion[],
+  labels: ResourceInsightLabel[]
+): number[] {
+  const modelIdByVersionId = new Map(versions.map((version) => [version.id, version.modelId]));
+  const modelIds = new Set<number>();
+  for (const label of labels) {
+    const modelId = modelIdByVersionId.get(label.modelVersionId);
+    // A label whose version is not in the page it came from cannot happen today;
+    // skipping rather than defaulting keeps it from becoming an enqueue of
+    // `undefined` if it ever does.
+    if (modelId !== undefined) modelIds.add(modelId);
+  }
+  return [...modelIds];
+}
+
+/**
+ * ONE read-back of the models update queue, to turn "the enqueue call returned"
+ * into evidence about whether the ids are actually queued.
+ *
+ * Why this exists at all. `scripts/oneoffs/backfill-reaction-metric-exclusions.ts`
+ * carries a MEASURED note saying `queueUpdate` fails open in a standalone script
+ * — "332 ids queued, 0 of them in the queue", 2026-08-31 — and tells you not to
+ * use it from a script. This pass does use it, for two reasons: the mechanism
+ * that note blames (sysRedis never connecting) is not obviously present any
+ * more, since the client calls `connect()` eagerly at module load and it is that
+ * live socket which now stops this process exiting; and the parking lot that
+ * recovers a dropped enqueue landed the same day the note was measured. Both of
+ * those are arguments, not measurements, and an argument is not good enough for
+ * the one call the whole change consists of. So the run measures it.
+ *
+ * `readOnly` is load-bearing: it does NOT append a new bucket or retire the
+ * current ones, so this cannot consume work the 15-minute sync is about to pick
+ * up. Same call the admin reindex endpoint uses for the same purpose.
+ *
+ * ONE-DIRECTIONAL, and the caller must report it that way. Present ⇒ landed.
+ * Absent ⇒ inconclusive: the sync may have checked the queue out between the
+ * enqueue and this read. A read that itself fails open returns an empty set,
+ * which is the same inconclusive answer rather than a false negative dressed up
+ * as a finding.
+ */
+export async function verifyFirstEnqueue(modelIds: number[]): Promise<string> {
+  if (modelIds.length === 0) return 'queue-verify: nothing enqueued yet';
+  try {
+    const queue = await SearchIndexUpdate.getQueue(
+      MODELS_SEARCH_INDEX,
+      SearchIndexUpdateQueueAction.Update,
+      true
+    );
+    // A Set, not `Array.includes` per id: this queue reaches hundreds of
+    // thousands of ids on a large fan-out, and the endpoint that does the same
+    // read-back records that scanning it per id is enough to wedge a handler.
+    const queued = new Set(queue.content);
+    const found = modelIds.filter((id) => queued.has(id)).length;
+    if (found === modelIds.length) {
+      return `queue-verify: all ${found} model id(s) from the first batch are in the ${MODELS_SEARCH_INDEX} update queue (depth ${queue.content.length}) — announcements are landing`;
+    }
+    return `queue-verify: INCONCLUSIVE — ${found}/${modelIds.length} model id(s) from the first batch found in the ${MODELS_SEARCH_INDEX} update queue (depth ${queue.content.length}). Either the 15-minute sync consumed them, or the enqueue is failing open and parking ids in Postgres. Check the sysredis-fail-open signal before trusting this run's "queued" totals`;
+  } catch (error) {
+    return `queue-verify: could not read the queue back (${
+      error instanceof Error ? error.message : error
+    }) — this run's "queued" totals are unverified`;
+  }
+}
+
 async function labelBatch(
   versions: LabelableVersion[],
   dryRun: boolean
@@ -394,19 +565,96 @@ async function labelBatch(
   const result: LabelBatchResult = {
     ...parseLabelAnswers(versions, response.answers),
     ...(response.usage.costUsd !== undefined ? { costUsd: response.usage.costUsd } : {}),
+    enqueuedModelIds: [],
   };
   if (!dryRun && result.labels.length > 0) {
-    await limitConcurrency(
-      result.labels.map(
-        (label) => () =>
-          dbWrite.resourceInsight.upsert({
-            where: { modelVersionId: label.modelVersionId },
-            create: label,
-            update: { ...label, stale: false },
-          })
-      ),
-      LABEL_BATCH_SIZE
-    );
+    try {
+      await limitConcurrency(
+        result.labels.map(
+          (label) => () =>
+            dbWrite.resourceInsight.upsert({
+              where: { modelVersionId: label.modelVersionId },
+              create: label,
+              update: { ...label, stale: false },
+            })
+        ),
+        LABEL_BATCH_SIZE
+      );
+    } catch (error) {
+      // 🔴 THE PARTIAL-WRITE CASE, which is the mirror of the enqueue failure
+      // below and is otherwise SILENT. `limitConcurrency` rejects on the first
+      // task error, and there is no transaction, so the upserts that already
+      // succeeded are COMMITTED. The throw then reaches `main`'s per-batch
+      // `catch`, which counts the whole batch as failed and moves the cursor —
+      // and a resumed run skips the committed rows as already-current
+      // (`partitionNeedingLabel`), so their announcement is never attempted by
+      // anything, ever. Log the candidate model ids before rethrowing: they are
+      // a superset of what needs re-queueing by hand, which is strictly better
+      // than the empty record this path used to leave.
+      console.warn(
+        `[label-resource-insights] upsert batch FAILED after a partial write; some rows may be committed WITHOUT an index announcement. Candidate model ids to re-queue by hand: ${labeledModelIds(
+          versions,
+          result.labels
+        ).join(',')}`
+      );
+      throw error;
+    }
+    // 🔴 WRITING THE ROW IS NOT ENOUGH — ANNOUNCE IT.
+    //
+    // A model enters the incremental models-index sync on exactly three
+    // conditions, spread over two files: `Model.createdAt >= lastUpdatedAt` and
+    // `Model.updatedAt >= lastUpdatedAt` in `prepareModelsBatches`
+    // (src/server/search-index/models.search-index.ts), and the index's own
+    // update queue, which that function never touches — it is read by `update()`
+    // in src/server/search-index/base.search-index.ts and unioned with
+    // `updateIds`. A `ResourceInsight` upsert satisfies none of them: it touches
+    // neither `Model` column. So without this call a labeled model is only
+    // picked up by the manual full re-projection, which can go a very long time
+    // between runs, and every insight attribute served from the index would be
+    // a snapshot frozen at the last reset, decaying from the moment it finished.
+    //
+    // ⚠️ AFTER the upserts, and deliberately NOT part of them. There is no
+    // transaction here to join: the upserts are independent statements run
+    // through `limitConcurrency`, so there is no atomic unit an enqueue could be
+    // made to share. Ordering it after the writes is what makes the queue entry
+    // mean "a row exists to index"; enqueuing first would queue models whose
+    // upserts then failed, and the index would rebuild them off the old row.
+    //
+    // ⚠️ ONE CALL PER BATCH, not per row — `queueUpdate` already takes a list,
+    // and a batch is ~10 versions mapping to as few as one model.
+    const modelIds = labeledModelIds(versions, result.labels);
+    if (modelIds.length > 0) {
+      try {
+        await modelsSearchIndex.queueUpdate(
+          modelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+        );
+        result.enqueuedModelIds = modelIds;
+      } catch (error) {
+        // 🔴 SWALLOWED ON PURPOSE. Throwing here would reach `main`'s per-batch
+        // `catch`, which counts every version in the batch as FAILED — but the
+        // rows are already committed and the vendor has already been paid for
+        // this request, so that report is wrong twice over, and a resumed run
+        // would re-spend on versions it had in fact labeled. An un-enqueued
+        // model is stale in the index; a double-charged batch is money.
+        //
+        // ⚠️ NO KNOWN PATH REACHES THIS BLOCK, and it is worth saying so rather
+        // than letting the next reader believe a redis fault shows up here.
+        // `addToQueue` wraps every op in a deadline-raced fail-open, parks
+        // dropped ids in Postgres for `search-index-queue-drain`, and
+        // `persistDroppedEnqueue` catches even its own failure — so a degraded
+        // queue returns `false`, which the wrappers discard, and resolves
+        // normally. `queue-verify` below, not this block, is what observes that
+        // case. This is kept as defence-in-depth because the property it
+        // protects is money (never re-charge a committed batch) and the cost is
+        // a few lines, NOT because it is live.
+        console.warn(
+          `[label-resource-insights] search-index enqueue FAILED for model ids ${modelIds.join(
+            ','
+          )} — rows are written; re-queue these models by hand:`,
+          error instanceof Error ? error.message : error
+        );
+      }
+    }
   }
   return result;
 }
@@ -506,6 +754,15 @@ export async function main(): Promise<void> {
   let labeled = 0;
   let failed = 0;
   let skippedTotal = 0;
+  // Models ANNOUNCED to the search-index update queue — issued, not confirmed
+  // landed. 🔴 Do not read this as a health signal on its own: `addToQueue`
+  // fails open and the wrappers discard its boolean, so this number is
+  // identical on a healthy run and on one whose every enqueue was parked in
+  // Postgres. `queueVerified` below is the measurement; this is the volume.
+  let indexQueued = 0;
+  // One-shot, after the first batch that actually enqueues. See
+  // `verifyFirstEnqueue` for why a read-back exists and why it is one-shot.
+  let queueVerified = false;
   // Measured spend, accumulated from what the vendor reports per request.
   // `costUnreportedBatches` is tracked alongside rather than folded in as zero,
   // so the printed total can say how much of the run it actually covers — an
@@ -591,6 +848,14 @@ export async function main(): Promise<void> {
 
     labeled += batch.labels.length;
     failed += batch.failedVersionIds.length;
+    indexQueued += batch.enqueuedModelIds.length;
+    // The first batch that announced anything is the one worth measuring: if
+    // the enqueue is failing open it is failing open for every batch, so one
+    // read-back answers the question for the whole run.
+    if (!queueVerified && batch.enqueuedModelIds.length > 0) {
+      queueVerified = true;
+      console.log(`[label-resource-insights] ${await verifyFirstEnqueue(batch.enqueuedModelIds)}`);
+    }
     if (batch.costUsd === undefined) {
       costUnreportedBatches += 1;
     } else {
@@ -602,20 +867,35 @@ export async function main(): Promise<void> {
     console.log(
       `[label-resource-insights] ${dryRun ? 'DRY RUN ' : ''}labeled ${
         batch.labels.length
-      }, failed ${batch.failedVersionIds.length}, ${progress()}, ${spend()}`
+      }, failed ${batch.failedVersionIds.length}, queued ${
+        batch.enqueuedModelIds.length
+      }, ${progress()}, ${spend()}`
     );
   }
 
   console.log(
-    `[label-resource-insights] done: ${labeled} labeled, ${failed} failed, ${skippedTotal} skipped-current, ${spend()}, ${
+    `[label-resource-insights] done: ${labeled} labeled, ${failed} failed, ${skippedTotal} skipped-current, ${indexQueued} models queued for reindex, ${spend()}, ${
       topIds ? `index=${index}` : `lastId=${lastId}`
     }, labelSpec=${LABEL_SPEC_HASH.slice(0, 12)}` + (dryRun ? ' (dry run — nothing written)' : '')
   );
 }
 
 if (process.argv[1]?.endsWith('label-resource-insights.ts')) {
-  main().catch((error) => {
-    console.error(error);
-    process.exit(1);
-  });
+  main()
+    .then(() => {
+      // 🔴 EXPLICIT, and it must live HERE rather than at the end of `main()`.
+      // Announcing to the search index pulls in the redis clients, which
+      // connect at module load and arm a ping interval, so the event loop never
+      // drains and a finished run hangs after printing its summary (see the
+      // file header). `scripts/seed-scanner-policies.ts` has the same problem
+      // and the same fix — but it exits inside `main()`, which this script
+      // cannot do: `main` is exported and five test files call it directly, so
+      // an exit in there would kill the vitest worker. The tail guard only runs
+      // when the file is the entry point, which is never true under the runner.
+      process.exit(0);
+    })
+    .catch((error) => {
+      console.error(error);
+      process.exit(1);
+    });
 }
