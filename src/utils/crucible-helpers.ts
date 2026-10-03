@@ -28,15 +28,15 @@ export const CRUCIBLE_PRIZE_BUZZ_TYPE = 'yellow' as const;
 export const getCrucibleEntryBuzzType = (isGreen: boolean): 'green' | 'yellow' =>
   isGreen ? 'green' : 'yellow';
 
-/** The green site lists only crucibles that accept nothing above PG-13 and whose text is SFW. */
-export const isCrucibleSfw = ({ nsfwLevel, textNsfw }: { nsfwLevel: number; textNsfw: boolean }) =>
-  getIsSafeBrowsingLevel(nsfwLevel) && !textNsfw;
-
-/** `isCrucibleSfw`'s level half as the allowed-level values a query can match. */
+/** The allowed-level values a crucible listed on the green site may have. */
 export const CRUCIBLE_SFW_LEVELS = Array.from(
   { length: allBrowsingLevelsFlag },
   (_, i) => i + 1
 ).filter(getIsSafeBrowsingLevel);
+
+/** The green site lists only crucibles that accept nothing above PG-13 and whose text is SFW. */
+export const isCrucibleSfw = ({ nsfwLevel, textNsfw }: { nsfwLevel: number; textNsfw: boolean }) =>
+  CRUCIBLE_SFW_LEVELS.includes(nsfwLevel) && !textNsfw;
 
 export const getCrucibleUrl = (id: number, name: string) =>
   `/crucibles/${id}/${getCrucibleSlug(name)}`;

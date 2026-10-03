@@ -32,6 +32,8 @@ describe('green-site listing rule', () => {
     [16, false, false],
     [2 | 16, false, false],
     [0, false, false],
+    [64, false, false],
+    [1 | 64, false, false],
   ])('isCrucibleSfw(level %i, textNsfw %s) is %s', (nsfwLevel, textNsfw, expected) => {
     expect(isCrucibleSfw({ nsfwLevel, textNsfw })).toBe(expected);
   });
