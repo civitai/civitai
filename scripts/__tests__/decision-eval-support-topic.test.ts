@@ -20,6 +20,7 @@ import {
   INCUMBENT_TOPIC_MAP,
   keywordBaseline,
   NODE_ID,
+  assertDevPrecedesTest,
   parseStrataCsv,
   periodOf,
   redact,
@@ -29,11 +30,8 @@ import {
   type SupportTicketRaw,
 } from '../decision-eval/nodes/support-topic';
 import { assertNoPii } from '../decision-eval/safety';
-import {
-  fittedThresholds,
-  parseStrataWeights,
-  weightedSummary,
-} from '../decision-eval/nodes/support-topic-weighted';
+import { weightedSummary } from '../decision-eval/nodes/support-topic-weighted';
+import { fittedThresholds } from '../decision-eval/scorer';
 import type { ManifestItem, NormalizedAnswer, Prediction } from '../decision-eval/types';
 
 function raw(overrides: Partial<SupportTicketRaw> = {}): SupportTicketRaw {
@@ -94,6 +92,13 @@ describe('support.topic state', () => {
     expect(all).not.toContain('someotheruser');
     expect(state.latest_messages).toContain('wallet [id]');
     expect(all).not.toContain('555-0134');
+  });
+
+  it('strips the requester id where it appears in the text', () => {
+    const state = buildSupportState(
+      raw({ requesterId: '48213', firstMessage: 'my freshdesk id is 48213, ticket 48213a' })
+    );
+    expect(state.first_message).toBe('my freshdesk id is [user], ticket 48213a');
   });
 
   it('sends only the fields the question needs: no incumbent answer, no requester ids', () => {
@@ -180,6 +185,7 @@ describe('support.topic labels', () => {
     ['mobile-app', '', 'technical_bug'],
     ['', 'cannot-tell', CANNOT_TELL],
     ['', 'cannot-tell: asks two things', CANNOT_TELL],
+    ['', ' Cannot-Tell', CANNOT_TELL],
     ['', 'come back later', null],
   ])('label %j with notes %j is gold %j', (topic, notes, gold) => {
     expect(goldFromLabel(topic, notes)).toBe(gold);
@@ -241,11 +247,20 @@ describe('support.topic plumbing', () => {
       'ticket_id,stratum,stratum_population,stratum_sampled,weight,double_labelled\r\n' +
       '101,crypto,50,20,2.5,0\r\n102,_rest,400,40,10,1\r\n';
     expect([...parseStrataCsv(sampler)]).toEqual([
-      ['101', 'crypto'],
-      ['102', '_rest'],
+      ['101', { stratum: 'crypto', weight: 2.5 }],
+      ['102', { stratum: '_rest', weight: 10 }],
     ]);
     // With stratum as the last column, a bare '\n' split would leave '\r' on it.
-    expect([...parseStrataCsv('ticket_id,stratum\r\n101,crypto\r\n')]).toEqual([['101', 'crypto']]);
+    expect([...parseStrataCsv('ticket_id,weight,stratum\r\n101,3,crypto\r\n')]).toEqual([
+      ['101', { stratum: 'crypto', weight: 3 }],
+    ]);
+  });
+
+  it('refuses a weight no inverse inclusion probability can be, and a file missing a column', () => {
+    expect(() => parseStrataCsv('ticket_id,stratum,weight\n1,x,0.5\n')).toThrow(/weight 0.5/);
+    expect(() => parseStrataCsv('ticket_id,stratum,weight\n1,x,abc\n')).toThrow(/weight abc/);
+    expect(() => parseStrataCsv('ticket_id,stratum\n1,x\n')).toThrow(/columns/);
+    expect(() => parseStrataCsv('ticket_id,x,weight\n500,1,2\n')).toThrow(/columns/);
   });
 
   it('group keys depend on the salt, so they cannot be recomputed from requester ids alone', () => {
@@ -342,6 +357,7 @@ describe('support.topic weighted summary', () => {
   it('re-weights to the population, covering only fitted, confident, non-abstained answers', () => {
     const s = weightedSummary({ items, gold, predictions, weights, thresholds });
     expect(s.items).toBe(8);
+    expect(s.decidable).toBe(8);
     // covered weight a2 + b4 + c4 + g1 + h1 = 12 of 21 (unweighted would be 5/8)
     expect(s.coverage).toBeCloseTo(12 / 21, 10);
     // right: a2 + b4 + g1 + h1 = 8 of 12 (unweighted 4/5)
@@ -350,7 +366,31 @@ describe('support.topic weighted summary', () => {
     expect(s.incumbentAccuracyOnCovered).toBeCloseTo(3 / 12, 10);
   });
 
-  it('treats a failed prediction as not covered', () => {
+  it('leaves refused, failed and missing predictions out of the denominator, as the harness does', () => {
+    const s = weightedSummary({
+      items: [
+        item('a', 'crypto'),
+        item('b', 'technical_bug'),
+        item('c', 'crypto'),
+        item('d', null),
+      ],
+      gold,
+      predictions: [
+        pred('a', 'crypto', 0.99, { status: 'error' }),
+        pred('b', 'technical_bug', 0.9),
+        pred('c', null, null, { status: 'refused' }),
+      ],
+      weights,
+      thresholds,
+    });
+    expect(s.items).toBe(4);
+    expect(s.decidable).toBe(1);
+    // b alone is decidable and covered: 4 of 4, not 4 of a2 + b4 + c4 + d4 = 14
+    expect(s.coverage).toBe(1);
+    expect(s.accuracyOnCovered).toBe(1);
+  });
+
+  it('reports no coverage, rather than zero, when nothing was decidable', () => {
     const s = weightedSummary({
       items: [item('a', 'crypto')],
       gold,
@@ -358,19 +398,8 @@ describe('support.topic weighted summary', () => {
       weights,
       thresholds,
     });
-    expect(s.coverage).toBe(0);
+    expect(s.coverage).toBeNull();
     expect(s.accuracyOnCovered).toBeNull();
-  });
-
-  it('reads weights by header name and refuses one no inverse inclusion probability can be', () => {
-    const sampler =
-      'ticket_id,stratum,stratum_population,stratum_sampled,weight,double_labelled\r\n' +
-      '1,crypto,50,20,2.5,0\r\n';
-    expect([...parseStrataWeights(sampler)]).toEqual([['1', 2.5]]);
-    expect([...parseStrataWeights('weight,ticket_id\n3,7\n')]).toEqual([['7', 3]]);
-    expect(() => parseStrataWeights('ticket_id,weight\n1,0.5\n')).toThrow(/weight/);
-    expect(() => parseStrataWeights('ticket_id,weight\n1,abc\n')).toThrow(/weight/);
-    expect(() => parseStrataWeights('ticket_id,stratum\n1,x\n')).toThrow(/columns/);
   });
 });
 
@@ -397,7 +426,7 @@ describe('support.topic bar and gold policy', () => {
     });
   });
 
-  it('makes the configured primary labeller gold, and falls back to majority without one', () => {
+  it('makes the configured primary labeller gold, and refuses to score without one', () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'support-topic-'));
     const dir = join(dataDir, NODE_ID);
     mkdirSync(dir);
@@ -410,22 +439,20 @@ describe('support.topic bar and gold policy', () => {
       labeler: 'labeller-a',
     });
     write(base);
-    expect(supportTopicNode.goldPolicy?.({ dataDir })).toEqual({ kind: 'majority' });
+    expect(() => supportTopicNode.goldPolicy?.({ dataDir })).toThrow(/needs primaryLabeler/);
   });
 });
 
 describe('support.topic weighted thresholds', () => {
   it('takes only fitted classes from a thresholds file', () => {
+    const atThreshold = { threshold: 0.6, covered: 1, correct: 1, precision: 1, wilsonLower: 0.2 };
     expect(
       fittedThresholds({
-        fits: {
-          crypto: { status: 'fitted', threshold: 0.6 },
-          account: { status: 'no-threshold' },
-          other: { status: 'insufficient-n', available: 3 },
-        },
+        crypto: { status: 'fitted', threshold: 0.6, atThreshold },
+        account: { status: 'no-threshold', available: 0 },
+        other: { status: 'insufficient-n', available: 3, bestPossibleLower: null },
       })
     ).toEqual({ crypto: 0.6 });
-    expect(() => fittedThresholds({})).toThrow(/no fits/);
   });
 });
 
@@ -504,7 +531,7 @@ describe('support.topic source and gold against a fake ClickHouse', () => {
     const keys = new Set(rows.map((r) => r.groupKey));
     expect(keys.size).toBe(3);
     const labelQuery = queries.find((q) => q.query.includes('support_ticket_eval_labels'));
-    expect(labelQuery?.query).toMatch(/AND labeler NOT LIKE 'judge-%'\s*$/);
+    expect(labelQuery?.query).toMatch(/AND lower\(labeler\) NOT LIKE 'judge-%'\s*$/);
     expect(labelQuery?.query_params).toEqual({ cv: 'v1' });
     const ticketQuery = queries.find((q) => q.query.includes('support_tickets_classified'));
     expect(ticketQuery?.query_params?.cv).toBe('v1');
@@ -558,6 +585,48 @@ describe('support.topic source and gold against a fake ClickHouse', () => {
     await expect(collect(supportTopicNode.gold(bad.ctx))).rejects.toThrow(/not an incumbent topic/);
   });
 
+  it('refuses a primary labeller id that matches no label, which would silently mean majority', async () => {
+    vi.stubEnv('CLICKHOUSE_HOST', 'http://127.0.0.1:1');
+    const labels = [{ ticket_id: '500', label_topic: 'crypto', notes: '', labeler: 'ellie-x' }];
+    const { ctx } = setup(labels, []);
+    const cfg = join(ctx.dataDir, NODE_ID, 'config.json');
+    const write = (primaryLabeler: string) =>
+      writeFileSync(
+        cfg,
+        JSON.stringify({ classifierVersion: 'v1', testStrataFiles: ['s.csv'], primaryLabeler })
+      );
+    write('Ellie-x');
+    await expect(collect(supportTopicNode.gold(ctx))).rejects.toThrow(/"Ellie-x" has no labels/);
+    write('ellie-x');
+    expect(await collect(supportTopicNode.gold(ctx))).toHaveLength(1);
+  });
+
+  it('refuses a dev ticket from the test period, which means a strata file was left out', async () => {
+    vi.stubEnv('CLICKHOUSE_HOST', 'http://127.0.0.1:1');
+    const { ctx } = setup(
+      [{ ticket_id: '102', label_topic: 'crypto', notes: '', labeler: 'h1' }],
+      [
+        ticket('500', 'r1', Date.UTC(2026, 8, 1)),
+        ticket('501', 'r2', Date.UTC(2026, 7, 20)),
+        ticket('102', 'r3', Date.UTC(2026, 7, 20)),
+      ]
+    );
+    await expect(collect(supportTopicNode.source(ctx))).rejects.toThrow(
+      /1 dev ticket\(s\) created on or after the earliest test ticket \(2026-08-20T00:00:00.000Z\), e.g. 102/
+    );
+  });
+
+  it('accepts dev tickets that all precede the earliest test ticket', () => {
+    const at = (itemId: string, split: string, ts: string) => ({ itemId, split, ts });
+    expect(() =>
+      assertDevPrecedesTest([
+        at('d', 'dev', '2026-08-19T23:59:59.999Z'),
+        at('t', 'test', '2026-08-20T00:00:00.000Z'),
+      ])
+    ).not.toThrow();
+    expect(() => assertDevPrecedesTest([at('d', 'dev', '2026-09-30T00:00:00.000Z')])).not.toThrow();
+  });
+
   it('slices dev items as dev, so a --period filter never picks them up', () => {
     expect(supportTopicNode.slices?.(raw({ stratum: undefined }))?.period).toBe('dev');
     expect(supportTopicNode.slices?.(raw())?.period).toBe('2026-09');
@@ -578,7 +647,7 @@ describe('support.topic stored-row check', () => {
       join(dataDir, NODE_ID, 'config.json'),
       JSON.stringify({ classifierVersion: 'v1', testStrataFiles: ['s.csv'] })
     );
-    writeFileSync(join(dataDir, NODE_ID, 's.csv'), 'ticket_id,stratum\n500,crypto\n');
+    writeFileSync(join(dataDir, NODE_ID, 's.csv'), 'ticket_id,stratum,weight\n500,crypto,2\n');
     const row = {
       ticket_id: '500',
       created_ms: '0',
@@ -612,7 +681,10 @@ describe('support.topic source guards', () => {
       join(dataDir, NODE_ID, 'config.json'),
       JSON.stringify({ classifierVersion: 'v1', testStrataFiles: ['s.csv'] })
     );
-    writeFileSync(join(dataDir, NODE_ID, 's.csv'), 'ticket_id,stratum\n500,crypto\n501,_rest\n');
+    writeFileSync(
+      join(dataDir, NODE_ID, 's.csv'),
+      'ticket_id,stratum,weight\n500,crypto,2\n501,_rest,5\n'
+    );
     clickhouse.createClient.mockImplementation(() => ({
       query: async (q: { query: string }) => ({
         json: async () => (q.query.includes('support_ticket_eval_labels') ? [] : tickets),
@@ -645,11 +717,6 @@ describe('support.topic source guards', () => {
     await expect(drain(ctx)).rejects.toThrow(/restore the salt/);
   });
 
-  it('reads the strata stratum by header name, and refuses a file without one', () => {
-    expect([...parseStrataCsv('stratum,x,ticket_id\ncrypto,1,500\n')]).toEqual([['500', 'crypto']]);
-    expect(() => parseStrataCsv('ticket_id,x\n500,1\n')).toThrow(/columns/);
-  });
-
   it('redacts a base58 address but not a long ordinary word', () => {
     expect(redact('send to 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU now')).toBe(
       'send to [id] now'
@@ -678,6 +745,7 @@ describe('support.topic source guards', () => {
     });
     expect(s).toEqual({
       items: 1,
+      decidable: 1,
       coverage: 1,
       accuracyOnCovered: 0,
       incumbentAccuracyOnCovered: 0,
@@ -690,7 +758,7 @@ describe('support.topic redaction window', () => {
     expect(redactionWindow('short text', 6000, false)).toBe('short text');
   });
 
-  it('cuts the head at whitespace so no identifier is split', () => {
+  it('cuts the head at a separator so no identifier is split', () => {
     // The email straddles the 7000-character window edge.
     const text = 'w '.repeat(3495) + 'jo.smith@another.net ' + 'z '.repeat(100);
     const head = redactionWindow(text, 6000, false);
@@ -711,17 +779,23 @@ describe('support.topic redaction window', () => {
     expect(redactionWindow('x'.repeat(10_000), 6000, false)).toBe('');
   });
 
-  it('keeps redaction time bounded on a long run no pattern matches', () => {
-    // Several patterns are quadratic on one contiguous run: unwindowed, 32k characters takes
-    // several seconds. A spaced run is cheap either way, so it checks only what the window keeps.
-    const contiguous = 'a.'.repeat(16_000);
-    const spaced = ('a.'.repeat(3400) + ' ').repeat(5) + 'a.'.repeat(1000);
-    const started = performance.now();
-    buildSupportState(
-      raw({ subject: contiguous, firstMessage: contiguous, latestMessages: spaced })
-    );
-    expect(performance.now() - started).toBeLessThan(3000);
-  });
+  // Several patterns are quadratic on one contiguous run. Measured on 32k characters with one
+  // space where the window cuts: 1-156 ms per field windowed, 3.8-5.1 s per field unwindowed.
+  it.each([
+    ['subject', 500, false],
+    ['firstMessage', 6000, false],
+    ['latestMessages', 3000, true],
+  ] as const)(
+    'keeps %s redaction time bounded on a long run no pattern matches',
+    (field, keep, fromEnd) => {
+      const run = 'a.'.repeat(16_000);
+      const at = fromEnd ? run.length - keep + 10 : keep - 10;
+      const text = run.slice(0, at) + ' ' + run.slice(at + 1);
+      const started = performance.now();
+      buildSupportState(raw({ [field]: text }));
+      expect(performance.now() - started).toBeLessThan(1000);
+    }
+  );
 
   it('redacts a bech32 wallet address', () => {
     expect(redact('sent from bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq ok')).toBe(
@@ -739,6 +813,37 @@ describe('support.topic final cut', () => {
     expect(state.latest_messages.startsWith('[handle]')).toBe(true);
   });
 
+  it('re-redacts after the head cut, which can complete a whole-word username', () => {
+    const state = buildSupportState(raw({ subject: 'a '.repeat(243) + ',PatTheCreator' + 'Z' }));
+    expect(state.subject.endsWith(',[user]')).toBe(true);
+    expect(state.subject.toLowerCase()).not.toContain('patthecreator');
+  });
+
+  // Each link shrinks to [link], so redaction shortens the 4000-character window below the 3000
+  // kept: the window's own first characters then reach the output.
+  function straddlingTail(fragment: string, cutAfter: number) {
+    const links = ' https://example.com/'.concat('p'.repeat(400)).repeat(3);
+    const restLength = 4000 - (fragment.length - cutAfter);
+    const rest = (links + ' ' + 'y '.repeat(2000)).slice(0, restLength);
+    return 'x '.repeat(500) + fragment + rest;
+  }
+
+  it('drops a phone number the tail window starts inside', () => {
+    const text = straddlingTail(' (555) 867-5309', 3);
+    expect(text.slice(-4000).startsWith('55) 867-5309')).toBe(true);
+    const state = buildSupportState(raw({ latestMessages: text }));
+    expect(state.latest_messages.length).toBeLessThan(3000);
+    expect(state.latest_messages).not.toMatch(/867|5309/);
+  });
+
+  it('drops a link the tail window starts inside', () => {
+    const text = straddlingTail(' https://example.org/reset?a=1,SECRETTOKEN42/x', 29);
+    expect(text.slice(-4000).startsWith('1,SECRETTOKEN42')).toBe(true);
+    const state = buildSupportState(raw({ latestMessages: text }));
+    expect(state.latest_messages.length).toBeLessThan(3000);
+    expect(state.latest_messages).not.toContain('SECRETTOKEN42');
+  });
+
   it('cuts text without spaces at a script boundary instead of dropping it', () => {
     const cjk = '問'.repeat(8000);
     const state = buildSupportState(raw({ firstMessage: 'Hello\n' + cjk, latestMessages: cjk }));
@@ -748,14 +853,20 @@ describe('support.topic final cut', () => {
 });
 
 describe('support.topic placeholder stability', () => {
-  it('does not re-wrap placeholders when the requester id is a placeholder word', () => {
-    const state = buildSupportState(
-      raw({
-        username: 'user',
-        requesterEmail: 'link@example.org',
-        firstMessage: 'see https://example.org/x and me',
-      })
-    );
-    expect(state.first_message).toBe('see [link] and me');
-  });
+  it.each(['user', 'email', 'link', 'handle', 'id', 'number', 'USER', 'Handle'])(
+    'does not re-wrap placeholders when the username is %j',
+    (username) => {
+      const state = buildSupportState(
+        raw({
+          username,
+          requesterEmail: 'link@example.org',
+          firstMessage:
+            'mail jo@example.net, see https://example.org/x, ping @mod_team, wallet 0x52908400098527886e0f7030069857d2e4169ee7, call +1 415 555 0134, me',
+        })
+      );
+      expect(state.first_message).toBe(
+        'mail [email], see [link] ping [handle], wallet [id], call [number], me'
+      );
+    }
+  );
 });

@@ -162,6 +162,15 @@ export function scoreSplit(
   };
 }
 
+/** Only fitted classes carry a threshold; the rest always route to a human. */
+export function fittedThresholds(
+  fits: Readonly<Record<string, ThresholdFit>>
+): Record<string, number> {
+  return Object.fromEntries(
+    Object.entries(fits).flatMap(([cls, f]) => (f.status === 'fitted' ? [[cls, f.threshold]] : []))
+  );
+}
+
 /** Per-class thresholds fitted on DEV. Never call this with test items. */
 export function fitThresholds(
   input: ScoreInput,

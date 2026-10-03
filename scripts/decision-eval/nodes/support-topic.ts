@@ -117,21 +117,26 @@ export function redact(text: string, known: readonly string[] = []): string {
 
 const REDACT_MARGIN_CHARS = 1000;
 
-/** Any character that cannot be part of an email, link, handle or id; CJK text counts as a separator. */
+/** Cannot be part of an email, handle or id; CJK text counts as one. A link can contain any of these but whitespace. */
 const SEPARATOR = /[^\w.@%+:/#=&?~-]/;
 
 /**
  * Several patterns are quadratic on a long non-matching run, so redaction gets a
- * bounded window: the kept length plus a margin, cut at a separator so the cut
- * cannot split an identifier.
+ * bounded window: the kept length plus a margin, cut where no identifier is split.
+ *
+ * Redaction can shrink the window by more than the margin, so the start of a tail
+ * window can reach the output. A pattern cannot see an identifier missing its
+ * start, so the tail drops the whole cut token: to whitespace (a link has none),
+ * then any phone digits after it. Text without whitespace falls back to SEPARATOR.
  */
 export function redactionWindow(text: string, keep: number, fromEnd: boolean): string {
   const limit = keep + REDACT_MARGIN_CHARS;
   if (text.length <= limit) return text;
   if (fromEnd) {
     const tail = text.slice(-limit);
-    const at = tail.search(SEPARATOR);
-    return at < 0 ? '' : tail.slice(at + 1);
+    const space = tail.search(/\s/);
+    const at = space >= 0 ? space : tail.search(SEPARATOR);
+    return at < 0 ? '' : tail.slice(at + 1).replace(/^[\d\s().+-]+/, '');
   }
   const head = text.slice(0, limit);
   for (let i = head.length - 1; i >= 0; i--) if (SEPARATOR.test(head[i])) return head.slice(0, i);
@@ -148,7 +153,12 @@ function redactField(text: string, keep: number, fromEnd: boolean, known: readon
 }
 
 export function buildSupportState(raw: SupportTicketRaw): DecisionState {
-  const known = [raw.requesterEmail, raw.requesterEmail.split('@')[0] ?? '', raw.username];
+  const known = [
+    raw.requesterEmail,
+    raw.requesterEmail.split('@')[0] ?? '',
+    raw.username,
+    raw.requesterId,
+  ];
   return {
     subject: redactField(raw.subject, SUBJECT_CHARS, false, known),
     first_message: redactField(raw.firstMessage, FIRST_MESSAGE_CHARS, false, known),
@@ -178,7 +188,8 @@ export function keywordBaseline(raw: SupportTicketRaw): string | null {
 
 /** null means not labelled yet; a label outside the incumbent vocab throws rather than silently leaving gold. */
 export function goldFromLabel(labelTopic: string, notes: string): string | null {
-  if (!labelTopic) return notes.startsWith(CANNOT_TELL_NOTES_PREFIX) ? CANNOT_TELL : null;
+  if (!labelTopic)
+    return notes.trim().toLowerCase().startsWith(CANNOT_TELL_NOTES_PREFIX) ? CANNOT_TELL : null;
   const gold = INCUMBENT_TOPIC_MAP[labelTopic];
   if (!gold) throw new Error(`label_topic "${labelTopic}" is not an incumbent topic`);
   return gold;
@@ -188,18 +199,23 @@ export function periodOf(raw: SupportTicketRaw): string {
   return raw.stratum ? raw.createdAt.slice(0, 7) : 'dev';
 }
 
-/** One row per ticket in the label sampler's strata sidecar. */
-export function parseStrataCsv(text: string): Map<string, string> {
+export type StrataRow = { stratum: string; weight: number };
+
+/** One row per ticket in the label sampler's strata sidecar; the weight is the inverse inclusion probability. */
+export function parseStrataCsv(text: string): Map<string, StrataRow> {
   const [header, ...lines] = text.split(/\r?\n/).filter((l) => l.trim());
   const cols = header.split(',');
   const idCol = cols.indexOf('ticket_id');
   const stratumCol = cols.indexOf('stratum');
-  if (idCol < 0 || stratumCol < 0)
-    throw new Error('strata file needs ticket_id and stratum columns');
+  const weightCol = cols.indexOf('weight');
+  if (idCol < 0 || stratumCol < 0 || weightCol < 0)
+    throw new Error('strata file needs ticket_id, stratum and weight columns');
   return new Map(
     lines.map((l) => {
       const cells = l.split(',');
-      return [cells[idCol], cells[stratumCol]];
+      const weight = Number(cells[weightCol]);
+      if (!(weight >= 1)) throw new Error(`ticket ${cells[idCol]} has weight ${cells[weightCol]}`);
+      return [cells[idCol], { stratum: cells[stratumCol], weight }];
     })
   );
 }
@@ -212,7 +228,7 @@ export function parseStrataCsv(text: string): Map<string, string> {
 type SupportTopicConfig = {
   classifierVersion: string;
   testStrataFiles: string[];
-  /** Whose label is gold when the double-labelled tickets disagree; the other feeds the human baseline. */
+  /** Exactly the ingest id whose label is gold when the double-labelled tickets disagree. */
   primaryLabeler?: string;
 };
 
@@ -220,7 +236,17 @@ function nodeDir(ctx: NodeContext): string {
   return join(ctx.dataDir, NODE_ID);
 }
 
-function readConfig(ctx: NodeContext): SupportTopicConfig {
+export function readStrata(ctx: NodeContext, cfg: SupportTopicConfig): Map<string, StrataRow> {
+  const out = new Map<string, StrataRow>();
+  for (const file of cfg.testStrataFiles) {
+    for (const [id, row] of parseStrataCsv(readFileSync(join(nodeDir(ctx), file), 'utf8'))) {
+      out.set(id, row);
+    }
+  }
+  return out;
+}
+
+export function readConfig(ctx: NodeContext): SupportTopicConfig {
   const path = join(nodeDir(ctx), 'config.json');
   if (!existsSync(path)) throw new Error(`${path} is missing; see the support-topic node header`);
   const cfg = JSON.parse(readFileSync(path, 'utf8')) as Partial<SupportTopicConfig>;
@@ -269,7 +295,7 @@ function clickhouse() {
 const HUMAN_LABELS_SQL = `
   SELECT ticket_id, label_topic, notes, labeler
   FROM support_ticket_eval_labels FINAL
-  WHERE classifier_version = {cv:String} AND labeler NOT LIKE 'judge-%'`;
+  WHERE classifier_version = {cv:String} AND lower(labeler) NOT LIKE 'judge-%'`;
 
 type LabelRow = { ticket_id: string; label_topic: string; notes: string; labeler: string };
 
@@ -310,12 +336,8 @@ const TICKETS_SQL = `
 async function* supportSource(ctx: NodeContext): AsyncIterable<SourceRow<SupportTicketRaw>> {
   const cfg = readConfig(ctx);
   const salt = groupSalt(ctx);
-  const stratumOf = new Map<string, string>();
-  for (const file of cfg.testStrataFiles) {
-    for (const [id, s] of parseStrataCsv(readFileSync(join(nodeDir(ctx), file), 'utf8'))) {
-      stratumOf.set(id, s);
-    }
-  }
+  const strata = readStrata(ctx, cfg);
+  const stratumOf = new Map([...strata].map(([id, row]) => [id, row.stratum]));
   const devIds = new Set(
     (await humanLabels(cfg)).map((l) => l.ticket_id).filter((id) => !stratumOf.has(id))
   );
@@ -365,10 +387,28 @@ async function* supportSource(ctx: NodeContext): AsyncIterable<SourceRow<Support
       },
     };
   });
+  assertDevPrecedesTest(out);
   const { kept, dropped } = dropDevSharingTestGroup(out);
   if (dropped)
     console.error(`support.topic: ${dropped} dev item(s) dropped: their requester is in test`);
   yield* kept;
+}
+
+/** A labelled ticket from the test period that is in no strata file means a strata file was left out of the config. */
+export function assertDevPrecedesTest(
+  rows: readonly { itemId: string; split?: string; ts: string }[]
+) {
+  const testTimes = rows.filter((r) => r.split === 'test').map((r) => Date.parse(r.ts));
+  if (!testTimes.length) return;
+  const firstTest = Math.min(...testTimes);
+  const late = rows.filter((r) => r.split === 'dev' && Date.parse(r.ts) >= firstTest);
+  if (late.length) {
+    throw new Error(
+      `${late.length} dev ticket(s) created on or after the earliest test ticket (${new Date(
+        firstTest
+      ).toISOString()}), e.g. ${late[0].itemId}; is a strata file missing from testStrataFiles?`
+    );
+  }
 }
 
 /**
@@ -385,7 +425,15 @@ export function dropDevSharingTestGroup<T extends { split?: string; groupKey: st
 }
 
 async function* supportGold(ctx: NodeContext): AsyncIterable<GoldRow> {
-  for (const l of await humanLabels(readConfig(ctx))) {
+  const cfg = readConfig(ctx);
+  const labels = await humanLabels(cfg);
+  // resolveGold falls back to majority per item, so a misspelt id would silently mean no primary at all.
+  if (cfg.primaryLabeler && !labels.some((l) => l.labeler === cfg.primaryLabeler)) {
+    throw new Error(
+      `primaryLabeler "${cfg.primaryLabeler}" has no labels; use the exact ingest id`
+    );
+  }
+  for (const l of labels) {
     const gold = goldFromLabel(l.label_topic, l.notes);
     if (gold)
       yield {
@@ -446,6 +494,7 @@ export const supportTopicNode: NodeSpec<SupportTicketRaw> = {
   gold: supportGold,
   goldPolicy: (ctx): GoldPolicy => {
     const labeler = readConfig(ctx).primaryLabeler;
-    return labeler ? { kind: 'primary', labeler } : { kind: 'majority' };
+    if (!labeler) throw new Error('support.topic config.json needs primaryLabeler before scoring');
+    return { kind: 'primary', labeler };
   },
 };

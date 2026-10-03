@@ -1,3 +1,4 @@
+import { readJson } from './store';
 import type { GoldRow, ManifestItem, Split } from './types';
 
 export class LeakageError extends Error {
@@ -180,6 +181,11 @@ export function parseExclusions(json: unknown, nodeId: string): string[] {
     throw new Error(`exclusions file is not a v1 file for node ${nodeId}; refusing to trust it`);
   }
   return f.itemIds;
+}
+
+export function loadExclusions(path: string, nodeId: string): string[] {
+  const json = readJson<unknown>(path);
+  return json === undefined ? [] : parseExclusions(json, nodeId);
 }
 
 /**

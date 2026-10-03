@@ -7,12 +7,10 @@ import {
   buildEvalIndex,
   buildTrainManifest,
   enforceGroupIsolation,
-  EVAL_INDEX_FILE,
-  EXCLUSIONS_FILE,
+  loadExclusions,
   mergeGold,
   mergeManifest,
   parseEvalIndex,
-  parseExclusions,
   resolveGold,
   serializeEvalIndex,
   serializeExclusions,
@@ -32,10 +30,11 @@ import { ImajevModel } from './imajev-client';
 import { JevArm } from './jev-arm';
 import { cohensKappa } from './metrics';
 import { getNode, parseQuestionsFile, type NodeSpec } from './nodes';
+import { nodePaths } from './paths';
 import { percentile, renderReport } from './report';
 import { doneItemIds, HttpImageSource, runItems, runKey, specHash } from './runner';
 import { assertDataDirOutsideRepo } from './safety';
-import { countCorrect, fitThresholds, scoreSplit } from './scorer';
+import { countCorrect, fittedThresholds, fitThresholds, scoreSplit } from './scorer';
 import { readJson, readJsonl, writeFileAtomic, writeJsonl } from './store';
 import type {
   DecisionQuestion,
@@ -73,22 +72,6 @@ type SealedEntry = {
   reason: string | null;
 };
 
-function paths(dataDir: string, nodeId: string) {
-  const root = join(dataDir, nodeId);
-  return {
-    root,
-    manifest: join(root, 'manifest.jsonl'),
-    gold: join(root, 'gold.jsonl'),
-    evalIndex: join(root, EVAL_INDEX_FILE),
-    exclusions: join(root, EXCLUSIONS_FILE),
-    controls: join(root, 'controls.jsonl'),
-    sealed: join(root, 'sealed-test.json'),
-    predictions: (key: string) => join(root, 'runs', key, 'predictions.jsonl'),
-    report: (key: string, split: string) => join(root, 'runs', key, `report-${split}.md`),
-    thresholds: (key: string, split: string) => join(root, 'runs', key, `thresholds-${split}.json`),
-  };
-}
-
 function loadQuestions(
   node: NodeSpec<never>,
   formatId: string,
@@ -101,18 +84,13 @@ function loadQuestions(
   return parseQuestionsFile(JSON.parse(readFileSync(file, 'utf8')), file);
 }
 
-function loadExclusions(path: string, nodeId: string): string[] {
-  const json = readJson<unknown>(path);
-  return json === undefined ? [] : parseExclusions(json, nodeId);
-}
-
 /** Folds the node's current exclusions into the ledger, persists it, and returns it. */
 async function refreshExclusions(
   node: NodeSpec<never>,
   dataDir: string,
   newlyExcluded: readonly string[] = []
 ): Promise<Set<string>> {
-  const p = paths(dataDir, node.id);
+  const p = nodePaths(dataDir, node.id);
   const current: string[] = [...newlyExcluded];
   if (node.excludedIds) {
     for await (const id of node.excludedIds({ dataDir })) {
@@ -175,7 +153,7 @@ async function cmdBuild(args: Args, dataDir: string) {
   }
   const ctx = { dataDir };
   const now = new Date();
-  const p = paths(dataDir, node.id);
+  const p = nodePaths(dataDir, node.id);
   const items: ManifestItem[] = [];
   const newlyExcluded: string[] = [];
   const excludedReasons = new Map<string, number>();
@@ -258,7 +236,7 @@ async function cmdRun(args: Args, dataDir: string) {
     throw new Error(`${node.id} handles moderation images and must define excludedIds()`);
   }
   const split = str(args, 'split');
-  const p = paths(dataDir, node.id);
+  const p = nodePaths(dataDir, node.id);
   const control =
     node.control ?? (node.dataClass === 'moderation-image' ? IMAGE_CONTROL : TEXT_CONTROL);
   const passed = await runKnownAnswerControl(model, control, node.dataClass);
@@ -299,7 +277,7 @@ async function cmdScore(args: Args, dataDir: string) {
   for (const [cls, t] of Object.entries(targets)) {
     if (!(t > 0 && t < 1)) throw new Error(`target for ${cls} must be between 0 and 1, got ${t}`);
   }
-  const p = paths(dataDir, node.id);
+  const p = nodePaths(dataDir, node.id);
   const control = (await readJsonl<{ runKey: string; build: string }>(p.controls)).find(
     (c) => c.runKey === key
   );
@@ -369,9 +347,7 @@ async function cmdScore(args: Args, dataDir: string) {
 
   const input = { ...base, predictions, gold: resolved.gold };
   const fits = fitThresholds(input, targets);
-  const thresholds = Object.fromEntries(
-    Object.entries(fits).flatMap(([cls, f]) => (f.status === 'fitted' ? [[cls, f.threshold]] : []))
-  );
+  const thresholds = fittedThresholds(fits);
   // The majority class comes from train, else dev; never from the split being scored when another exists.
   const priorSplit = items.some((i) => i.split === 'train' && resolved.gold.has(i.itemId))
     ? 'train'
@@ -464,7 +440,7 @@ async function cmdTrainManifest(args: Args, dataDir: string) {
   if (node.dataClass === 'moderation-image' && !node.excludedIds) {
     throw new Error(`${node.id} handles moderation images and must define excludedIds()`);
   }
-  const p = paths(dataDir, node.id);
+  const p = nodePaths(dataDir, node.id);
   const json = readJson<unknown>(p.evalIndex);
   if (json === undefined) throw new Error(`no eval index at ${p.evalIndex}; run build first`);
   const index = parseEvalIndex(json, node.id);
