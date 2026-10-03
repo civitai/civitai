@@ -207,19 +207,16 @@ export type TrainerDatasetSummary = {
   skipped: { noGold: number; untrainable: number; pii: number };
 };
 
-/** The leakage check compares ids with Set.has, so a number where a string belongs would slip past it. */
+/** Runs before the leakage check, whose refusal names the first offending item id. */
 function assertCandidateShapes(candidates: readonly TrainCandidate[]): void {
   const groupPartition = new Map<string, string>();
   candidates.forEach((c, i) => {
     const at = `train manifest row ${i + 1}`;
-    if (typeof c.itemId !== 'string' || !c.itemId) {
-      throw new TrainerDatasetError(`${at}: itemId must be a non-empty string`);
-    }
-    if (typeof c.groupKey !== 'string' || !c.groupKey) {
-      throw new TrainerDatasetError(`${at}: groupKey must be a non-empty string`);
-    }
-    if (c.partition !== 'train' && c.partition !== 'trainer-dev') {
-      throw new TrainerDatasetError(`${at}: partition must be train or trainer-dev`);
+    const keyPii = findPii({ id: String(c.itemId), group_key: String(c.groupKey) });
+    if (keyPii) {
+      throw new TrainerDatasetError(
+        `${at}: its ${keyPii.field} is ${keyPii.kind}-shaped; a node's ids must not carry personal data`
+      );
     }
     if (
       !c.state ||
@@ -260,12 +257,6 @@ export function buildTrainerRows(input: TrainerDatasetInput): {
   const rows: TrainerRow[] = [];
   const skipped = { noGold: 0, untrainable: 0, pii: 0 };
   for (const c of candidates) {
-    const keyPii = findPii({ id: c.itemId, group_key: c.groupKey });
-    if (keyPii) {
-      throw new TrainerDatasetError(
-        `item ${keyPii.field} is ${keyPii.kind}-shaped; a node's ids must not carry personal data`
-      );
-    }
     if (c.imageRefs?.length) {
       throw new TrainerDatasetError(
         `item ${c.itemId} carries images; image datasets are not supported`

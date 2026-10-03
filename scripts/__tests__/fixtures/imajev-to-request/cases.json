@@ -2542,6 +2542,22 @@
     ]
   },
   {
+    "name": "non-ASCII state under the limit in UTF-8 bytes, over it if escaped",
+    "state": {
+      "text": {
+        "$repeat": "é",
+        "times": 30000
+      }
+    },
+    "questions": [
+      {
+        "id": "q",
+        "type": "noul",
+        "instructions": "Is it?"
+      }
+    ]
+  },
+  {
     "name": "128-character request id",
     "requestId": {
       "$repeat": "r",

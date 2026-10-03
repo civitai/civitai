@@ -2170,6 +2170,18 @@
       "request": null
     },
     {
+      "name": "non-ASCII state under the limit in UTF-8 bytes, over it if escaped",
+      "requestId": "case-26",
+      "jev": {
+        "q": {
+          "type": "noul",
+          "instructions": "Is it?"
+        }
+      },
+      "request": null,
+      "requestSha256": "2221681dae727a7b89528abf13ffdf199dc77e4a786c9ce2b57271d5b83761dd"
+    },
+    {
       "name": "128-character request id",
       "requestId": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
       "jev": {

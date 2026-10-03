@@ -101,7 +101,8 @@ The training-manifest builder reads this file to keep eval items out of any trai
 - `trainer-dev` becomes the trainer's `dev` partition, which only picks its best checkpoint. A group may sit in only one of the two partitions.
 - These are refused:
   - moderation nodes and rows with images;
-  - a train-manifest row whose ids are not strings, or whose id or group key looks like personal data.
+  - a row whose id or group key looks like personal data. This check runs before the leakage check, whose refusal names the item.
+- `buildTrainManifest`, in both `train-manifest` and `train-dataset`, refuses a row whose ids are not non-empty strings or whose partition is unknown. A number never equals the index's string ids.
 - A choice question's options are written in the order serving sends them. Serving sends `criteria` as a JS object, which lists integer-like keys first.
 - The manifest is built as one string, so a few tens of thousands of multi-KB tickets is the ceiling. `train-manifest` has the same limit at about twice the rows.
 

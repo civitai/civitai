@@ -9,7 +9,7 @@ import type { GoldPolicy, TrainCandidate } from '../decision-eval/builder';
 import { main } from '../decision-eval/cli';
 import { toImajevQuestions } from '../decision-eval/imajev-client';
 import { NODES, registerNode, type NodeSpec } from '../decision-eval/nodes';
-import { choiceMapper, choiceTargets } from '../decision-eval/runner';
+import { choiceMapper, choiceTargets, specHash } from '../decision-eval/runner';
 import {
   buildTrainerRows,
   IMAJEV_BASE_ADAPTER,
@@ -205,6 +205,9 @@ describe('train-dataset', () => {
         skipped: { noGold: 1, untrainable: 1, pii: 1 },
       },
     });
+    expect(sidecar.specHash).toBe(specHash(node.id, node.specVersion, 'A', [TOPIC]));
+    expect(sidecar.evalIndex).toEqual({ itemIds: 5, groupKeys: 5 });
+    expect(sidecar.excludedIds).toBe(0);
     expect(zipFile).toBe(`A-${sidecar.specHash}-${sidecar.zip.sha256.slice(0, 12)}.zip`);
     expect(sidecar.workflow.steps[0].input).toEqual({
       engine: 'imajev',
@@ -268,7 +271,10 @@ describe('train-dataset', () => {
   it('passes --epochs to the workflow and refuses one out of range', async () => {
     await main(['train-dataset', ...args(), '--epochs', '3']);
     expect(readDataset().sidecar.workflow.steps[0].input.epochs).toBe(3);
-    for (const bad of ['abc', '11', '0']) {
+    for (const edge of ['0.1', '10']) {
+      await expect(main(['train-dataset', ...args(), '--epochs', edge])).resolves.toBeUndefined();
+    }
+    for (const bad of ['abc', '11', '0', '0.09']) {
       await expect(main(['train-dataset', ...args(), '--epochs', bad])).rejects.toThrow(
         `--epochs must be 0.1-10, got ${bad}`
       );
@@ -424,32 +430,49 @@ describe('buildTrainerRows', () => {
   });
 
   it.each([
-    ['a numeric group key', { ...candidate('tr0', 'train'), groupKey: 7 }, 'groupKey must be'],
-    ['a numeric item id', { ...candidate('tr0', 'train'), itemId: 7 }, 'itemId must be'],
-    [
-      'an unknown partition',
-      { ...candidate('tr0', 'train'), partition: 'dev' },
-      'partition must be',
-    ],
-    ['a non-string state', { ...candidate('tr0', 'train'), state: { n: 1 } }, 'state must be'],
-  ])('refuses a train manifest row with %s', (_, row, message) => {
-    expect(() => buildTrainerRows(withCandidate(row))).toThrow(`train manifest row 1: ${message}`);
-  });
-
-  it('refuses a group in both trainer partitions', () => {
+    ['a numeric group key', { groupKey: 7 }, 'training row 1: groupKey must be'],
+    ['an empty group key', { groupKey: '' }, 'training row 1: groupKey must be'],
+    ['a numeric item id', { itemId: 7 }, 'training row 1: itemId must be'],
+    ['an empty item id', { itemId: '' }, 'training row 1: itemId must be'],
+    ['an unknown partition', { partition: 'dev' }, 'training row 1: partition must be'],
+    ['a non-string state', { state: { n: 1 } }, 'train manifest row 1: state must be'],
+    ['a null state', { state: null }, 'train manifest row 1: state must be'],
+    ['an array state', { state: ['a'] }, 'train manifest row 1: state must be'],
+  ])('refuses a train manifest row with %s', (_, over, message) => {
     expect(() =>
-      buildTrainerRows(
-        input({ candidates: [candidate('tr0', 'train'), candidate('tr1', 'trainer-dev', 'g-tr0')] })
-      )
-    ).toThrow('train manifest row 2: its group is in both trainer partitions');
+      buildTrainerRows(withCandidate({ ...candidate('tr0', 'train'), ...over }))
+    ).toThrow(message);
   });
 
-  it('refuses ids that look like personal data', () => {
-    const row = { ...candidate('tr0', 'train'), groupKey: 'requester:someone@example.com' };
-    expect(() => buildTrainerRows(withCandidate(row))).toThrow(
-      "item group_key is email-shaped; a node's ids must not carry personal data"
+  it.each([
+    ['train first', candidate('tr0', 'train'), candidate('tr1', 'trainer-dev', 'g-tr0')],
+    ['trainer-dev first', candidate('tr0', 'trainer-dev'), candidate('tr1', 'train', 'g-tr0')],
+  ])('refuses a group in both trainer partitions, %s', (_, first, second) => {
+    expect(() => buildTrainerRows(input({ candidates: [first, second] }))).toThrow(
+      'train manifest row 2: its group is in both trainer partitions'
     );
   });
+
+  it.each([
+    ['group key', { groupKey: 'requester:someone@example.com' }, 'group_key'],
+    ['item id', { itemId: 'someone@example.com' }, 'id'],
+  ])(
+    'refuses a %s that looks like personal data, before the leakage check names it',
+    (_, over, field) => {
+      // Unlabelled AND in the eval index: the refusal must come first and must not echo the value.
+      const row = { ...candidate('tr0', 'train'), ...over };
+      const run = () =>
+        buildTrainerRows({
+          ...withCandidate(row),
+          gold: new Map([['tr1', 'y']]),
+          index: { itemIds: [row.itemId], groupKeys: [row.groupKey] },
+        });
+      expect(run).toThrow(
+        `train manifest row 1: its ${field} is email-shaped; a node's ids must not carry personal data`
+      );
+      expect(run).not.toThrow(/someone@example\.com/);
+    }
+  );
 
   it('refuses a dataset with an empty partition', () => {
     expect(() =>
@@ -512,8 +535,8 @@ describe('toImajevRequest against imajev jev_api.to_request', () => {
   });
 
   it.each(cases.map((c, i) => [c.name, c, golden.cases[i]] as const))('%s', (_, c, g) => {
-    // Stringified so the comparison sees key order, which is the order serving sends options in.
-    expect(JSON.stringify(toImajevQuestions(c.questions))).toBe(JSON.stringify(g.jev));
+    expect(toImajevQuestions(c.questions)).toEqual(g.jev);
+    // Stringified so the options array is compared in order: that is the order serving sends.
     const build = () => toImajevRequest(g.requestId, c.state, c.questions);
     if (g.requestSha256) {
       expect(createHash('sha256').update(JSON.stringify(build())).digest('hex')).toBe(

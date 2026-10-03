@@ -199,6 +199,17 @@ export function buildTrainManifest(
   index: EvalIndex,
   excludedIds: readonly string[] = []
 ): TrainCandidate[] {
+  // Candidates come from an external JSONL file, and a number never equals the index's string ids.
+  candidates.forEach((c, i) => {
+    for (const key of ['itemId', 'groupKey'] as const) {
+      if (typeof c[key] !== 'string' || !c[key]) {
+        throw new LeakageError(`training row ${i + 1}: ${key} must be a non-empty string`);
+      }
+    }
+    if (c.partition !== 'train' && c.partition !== 'trainer-dev') {
+      throw new LeakageError(`training row ${i + 1}: partition must be train or trainer-dev`);
+    }
+  });
   const excluded = new Set(excludedIds);
   const barred = candidates.filter((c) => excluded.has(c.itemId));
   if (barred.length > 0) {
