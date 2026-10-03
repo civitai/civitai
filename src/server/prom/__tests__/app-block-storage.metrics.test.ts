@@ -288,15 +288,9 @@ describe('the seeded domain matches the service', () => {
    * The three seeded counters. Each must appear exactly twice in each writer — the import and
    * the one use. An alias or an `inc.call(…)` adds an occurrence and is caught.
    *
-   * 🔴 A SECOND EMIT SITE IS NOT CAUGHT if the import stops naming the symbol. Swap the named
-   * import for `import * as prom from '~/server/prom/client'` and emit twice via
-   * `prom.appStorageOpsCounter.inc(…)`: that is 0 (import) + 2 (uses) = 2, the expected total,
-   * so this ledger passes with a second wrapper-bypassing emit present — and it type-checks,
-   * since `LabelValues<T>` is `Partial<Record<T, string | number>>`. Note the bare `\b<sym>\b`
-   * pattern DOES match `prom.<sym>`; what it cannot see is the COMPOSITION, so only asserting
-   * one import occurrence AND one use separately would close it. Measured, and left open
-   * deliberately rather than reinstating the `.inc` site count, which is a spelling that three
-   * other shapes already walked.
+   * 🔴 Counted SEPARATELY, because the SUM cannot see a namespace import: dropping the symbol
+   * from the named import and emitting twice via `prom.<sym>.inc(…)` is 0 + 2 = 2, the same
+   * total as 1 + 1, with a wrapper-bypassing emit site present and type-clean.
    *
    * NOT "every counter behind a typed wrapper": only `countStorageOutcome` and
    * `countQuotaExceeded` exist. `appStorageUserQuotaUntrackedCounter` is emitted RAW at one
@@ -449,7 +443,10 @@ describe('the seeded domain matches the service', () => {
     // any of them out of a `__tests__` directory grows the set — a loud red naming the file,
     // which is why the coupling is accepted rather than worked around.
     const reaching: string[] = [];
-    const perSymbol: Record<string, Record<string, number>> = {};
+    // Import and use counted SEPARATELY, not summed: 0 imports + 2 uses and 1 import + 1 use
+    // both total 2, and the first is a wrapper-bypassing second emit site.
+    const perSymbolImports: Record<string, Record<string, number>> = {};
+    const perSymbolUses: Record<string, Record<string, number>> = {};
     const walk = (dir: string) => {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, entry.name);
@@ -460,9 +457,14 @@ describe('the seeded domain matches the service', () => {
           if (REACH_KEYS.some((k) => code.includes(k))) {
             const rel = path.relative(SRC, full);
             reaching.push(rel);
+            const imports = (code.match(/import\s[\s\S]*?from\s*'[^']*';?/g) ?? []).join('\n');
             for (const sym of LEDGERED_WRITERS) {
-              perSymbol[sym] ??= {};
-              perSymbol[sym][rel] = (code.match(new RegExp(`\\b${sym}\\b`, 'g')) ?? []).length;
+              const re = new RegExp(`\\b${sym}\\b`, 'g');
+              const total = (code.match(re) ?? []).length;
+              perSymbolImports[sym] ??= {};
+              perSymbolUses[sym] ??= {};
+              perSymbolImports[sym][rel] = (imports.match(re) ?? []).length;
+              perSymbolUses[sym][rel] = total - perSymbolImports[sym][rel];
             }
           }
         }
@@ -479,8 +481,10 @@ describe('the seeded domain matches the service', () => {
     // `registerCounterWithLabels` parameterises label NAMES only and prom-client types a label
     // VALUE as `string | number`, so bypassing the helper violates no type.
     for (const sym of LEDGERED_WRITERS) {
-      expect(perSymbol[sym]?.[SERVICE_REL], `${sym} in the service`).toBe(2);
-      expect(perSymbol[sym]?.[SEEDER_REL], `${sym} in the seeder`).toBe(2);
+      for (const rel of [SERVICE_REL, SEEDER_REL]) {
+        expect(perSymbolImports[sym]?.[rel], `${sym} imported once in ${rel}`).toBe(1);
+        expect(perSymbolUses[sym]?.[rel], `${sym} used once in ${rel}`).toBe(1);
+      }
     }
   });
 });
