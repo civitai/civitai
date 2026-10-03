@@ -228,7 +228,47 @@ describe('blocks.startAgentReview — CONFLICT preservation', () => {
     const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
     const res = await caller.startAgentReview({ publishRequestId: PUBREQ });
     expect(res).toMatchObject({ status: 'running' });
-    expect(mockStartAgentReview).toHaveBeenCalledWith({ publishRequestId: PUBREQ, modUserId: 1 });
+    expect(mockStartAgentReview).toHaveBeenCalledWith({
+      publishRequestId: PUBREQ,
+      modUserId: 1,
+      // A plain dispatch is a FULL run — `undefined`, not an empty array, so the service's
+      // "no sections ⇒ run everything" branch is the one that fires.
+      sections: undefined,
+    });
+  });
+
+  it('🔴 forwards an optional `sections` list (the targeted re-run of ONE failed analysis)', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    await caller.startAgentReview({ publishRequestId: PUBREQ, sections: ['codeReview'] });
+    expect(mockStartAgentReview).toHaveBeenCalledWith({
+      publishRequestId: PUBREQ,
+      modUserId: 1,
+      sections: ['codeReview'],
+    });
+  });
+
+  it('🔴 REFUSES a section name that is not one of the three — the input is user-supplied', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    await expect(
+      caller.startAgentReview({
+        publishRequestId: PUBREQ,
+        // @ts-expect-error — deliberately outside the enum; the zod schema is the gate.
+        sections: ['summaryMd'],
+      })
+    ).rejects.toBeInstanceOf(TRPCError);
+    expect(mockStartAgentReview).not.toHaveBeenCalled();
+  });
+
+  it('🔴 REFUSES an EMPTY section list rather than treating it as "run everything"', async () => {
+    // `[]` is an instruction to run nothing, which is not a thing the runner can do; the
+    // way to ask for a full run is to omit the field. Accepting `[]` would make the
+    // service's `length > 0` test the only thing standing between a mod and a no-op
+    // dispatch they were charged a pod for.
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    await expect(
+      caller.startAgentReview({ publishRequestId: PUBREQ, sections: [] })
+    ).rejects.toBeInstanceOf(TRPCError);
+    expect(mockStartAgentReview).not.toHaveBeenCalled();
   });
 
   it('a service CONFLICT ("already running") is preserved as CONFLICT, not flattened to BAD_REQUEST', async () => {

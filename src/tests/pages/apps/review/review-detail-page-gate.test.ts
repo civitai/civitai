@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Module scope, not a test body: from a body this transform is charged to one test's 60s
 // budget. See vitest.config.mts.
 import '~/pages/apps/review/[publishRequestId]';
+import type * as TablerIcons from '@tabler/icons-react';
 
 /**
  * PER-SUBMISSION REVIEW PAGE SSR gate (`/apps/review/<publishRequestId>`).
@@ -48,7 +49,14 @@ vi.mock('@mantine/core', () => ({
   Center: () => null,
   Loader: () => null,
 }));
-vi.mock('@tabler/icons-react', () => ({ IconArrowLeft: () => null }));
+// 🔴 SPREAD, not a one-icon factory. This file imports the PAGE, whose component graph now
+// reaches `ReviewDetailTabsView` and its five tab icons — and a factory that omits one fails
+// the whole file at import (`No "IconKey" export is defined on the … mock`), which the runner
+// reports as `Tests no tests`: a file that looks skipped rather than broken. Spreading means
+// the next icon any of these components adds costs nothing here.
+vi.mock('@tabler/icons-react', async (importOriginal) => ({
+  ...(await importOriginal<typeof TablerIcons>()),
+}));
 vi.mock('next/link', () => ({ default: () => null }));
 vi.mock('~/components/AppLayout/NotFound', () => ({ NotFound: () => null }));
 vi.mock('~/components/Apps/AppsPageLayout', () => ({ AppsPageLayout: () => null }));

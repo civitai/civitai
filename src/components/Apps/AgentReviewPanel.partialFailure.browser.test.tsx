@@ -1,0 +1,366 @@
+import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { page } from 'vitest/browser';
+// `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
+import { renderWithProviders } from '../../../test/component-setup';
+import { AGENT_SECTION_ERROR_MESSAGES } from '~/components/Apps/agentReviewReport';
+import type * as NotificationsModule from '~/utils/notifications';
+import type * as TrpcModule from '~/utils/trpc';
+
+/**
+ * 🔴 THE REGRESSION THAT MATTERS MOST IN THIS CHANGE: ONE FAILED ANALYSIS NO LONGER HIDES
+ * THE TWO THAT WORKED.
+ *
+ * The agent runner's `any_failed()` marks the WHOLE report `failed` when any ONE of its
+ * three sub-analyses fails, and this panel took that at face value: it rendered a red "the
+ * agentic review failed" banner and NOTHING ELSE. So a moderator lost a complete security
+ * audit and a complete scope trace because the code review came back as prose — and the
+ * only affordance was "Run again", which re-dispatches all three analyses.
+ *
+ * Measured on live rows at the time of writing: 4 of 11 runs were `failed`, and the most
+ * recent of them carried `code_review = {"error":"non-json-response"}` beside a completed
+ * `security_audit` and completed `scope_verdicts`. The fixture below IS that shape.
+ *
+ * The derivations (`agentReportSectionStatuses`, `hasUsableAgentReportSection`,
+ * `sectionErrorMessage`) are pinned in the node-env `unit` project — the BLOCKING tier —
+ * in `__tests__/agentReportSections.test.ts`. What only a render can show is that the panel
+ * actually paints the surviving sections instead of the banner, and that the per-section
+ * retry dispatches a TARGETED re-run rather than a whole-report one.
+ */
+
+const mocks = vi.hoisted(() => ({
+  flags: { appBlocks: true, appBlocksAgenticReview: true } as Record<string, boolean>,
+  report: null as unknown,
+  mutate: vi.fn(),
+  pending: false,
+  invalidate: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('~/providers/FeatureFlagsProvider', () => ({
+  useFeatureFlags: () => mocks.flags,
+}));
+
+// 🔴 SPREAD THE ORIGINAL, never a one-key factory. A factory that omits an export fails
+// the WHOLE FILE at import the day anything in its graph imports it — and an import failure
+// collects 0 tests rather than failing one, so it reads as a skipped file.
+// `__tests__/notificationsMockSpread.test.ts` reds on the narrow form.
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationsModule>()),
+  showSuccessNotification: vi.fn(),
+  showErrorNotification: vi.fn(),
+}));
+
+// The in-panel chat is a separate surface with its own suite; stub it so this file asserts
+// the report body only. (Its GATE is asserted below — a partially-usable report is
+// chattable, because chat grounds on the PERSISTED report and never on a live pod.)
+vi.mock('~/components/Apps/AgentReviewChat', () => ({
+  AgentReviewChat: () => <div data-testid="agent-chat-stub" />,
+}));
+
+/*
+  🔴 SPREAD THE REAL MODULE, then override `trpc`. A wholesale factory replaces
+  `~/utils/trpc` entirely, so the day it gains an export this object omits, every importer in
+  the module graph gets `undefined` and the WHOLE FILE fails to load — 0 tests collected, no
+  failing assertion, silently "green" (`trpcVanilla` disabled ~36 tests that way).
+  `local-rules/no-wholesale-module-mock` reds on the narrow form. Spreading keeps the other
+  exports real; `trpc` itself still has to be replaced wholesale, because it is a flat Proxy
+  whose `ownKeys` is empty and therefore cannot be spread.
+*/
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcModule>()),
+  trpc: {
+    useUtils: () => ({ blocks: { getAgentReview: { invalidate: mocks.invalidate } } }),
+    blocks: {
+      getAgentReview: {
+        useQuery: () => ({
+          data: mocks.report,
+          isLoading: false,
+          failureCount: 0,
+          refetch: vi.fn(),
+          state: { data: mocks.report, fetchFailureCount: 0 },
+        }),
+      },
+      startAgentReview: {
+        useMutation: () => ({
+          mutate: (vars: unknown) => mocks.mutate(vars),
+          isPending: mocks.pending,
+        }),
+      },
+    },
+  },
+}));
+
+const { AgentReviewPanel } = await import('./AgentReviewPanel');
+
+/**
+ * THE LIVE FAILURE SHAPE — two complete sections, one `{ error }`, `status: 'failed'`.
+ *
+ * Deliberately NOT a minimal fixture: each surviving section carries content whose text is
+ * asserted below, so "the sections render" means "their findings are on screen", not "a
+ * container exists".
+ */
+const PARTIAL_REPORT = {
+  status: 'failed',
+  model: 'anthropic/claude-x',
+  costUsd: 0.0612,
+  startedAt: new Date('2026-01-01T09:00:00Z'),
+  completedAt: new Date('2026-01-01T09:04:00Z'),
+  summaryMd: null,
+  scopeVerdicts: {
+    scopes: [
+      {
+        declared: 'ai:write:budgeted',
+        used: 'yes',
+        justificationAccurate: 'yes',
+        sensitive: true,
+        evidence: ['src/run.ts:88'],
+        notes: 'Spend is bounded by the host budget.',
+      },
+    ],
+    overBroad: [],
+    underDeclared: [],
+  },
+  securityAudit: {
+    findings: [
+      {
+        severity: 'medium',
+        category: 'exfiltration',
+        title: 'Posts the prompt to a third-party endpoint',
+        file: 'src/telemetry.ts',
+        line: 14,
+        evidence: ['fetch("https://metrics.example/ingest")'],
+        detail: 'The block sends the user prompt to an external host before rendering.',
+      },
+    ],
+    manifestUnexpectedKeys: [],
+    iframeSandboxGrants: [],
+    promptInjectionAttempts: [],
+  },
+  // 🔴 THE ONE THAT BROKE.
+  codeReview: { error: 'non-json-response' },
+  tokenUsage: { promptTokens: 18000, completionTokens: 2400 },
+};
+
+const ALL_FAILED = {
+  ...PARTIAL_REPORT,
+  scopeVerdicts: { error: 'non-json-response' },
+  securityAudit: { error: 'non-json-response' },
+  codeReview: { error: 'non-json-response' },
+};
+
+const render = () =>
+  renderWithProviders(<AgentReviewPanel publishRequestId="pubreq_01HZX" slug="gen-matrix" />);
+
+/**
+ * The ONE tabpanel a moderator can currently see.
+ *
+ * `ReportTabs` keeps every panel mounted (its deep-link scroll needs the target in the DOM
+ * before its tab commits), so a document-wide query answers about four panels at once.
+ * `offsetParent === null` is the cheap "this subtree is `display: none`" test.
+ */
+const visiblePanel = (): HTMLElement | null =>
+  Array.from(document.querySelectorAll<HTMLElement>('[role="tabpanel"]')).find(
+    (el) => el.offsetParent !== null
+  ) ?? null;
+
+beforeEach(() => {
+  mocks.flags = { appBlocks: true, appBlocksAgenticReview: true };
+  mocks.report = null;
+  mocks.pending = false;
+  mocks.mutate.mockClear();
+  mocks.invalidate.mockClear();
+});
+
+describe('a PARTIALLY failed report renders its surviving sections', () => {
+  test('🔴 the whole-report "agentic review failed" banner is GONE', async () => {
+    mocks.report = PARTIAL_REPORT;
+    render();
+    // The degraded header replaces it…
+    await expect.element(page.getByTestId('apps-agent-partial-failure')).toBeInTheDocument();
+    // …and the old all-or-nothing banner must NOT also be on screen.
+    expect(page.getByText('The agentic review failed.').elements()).toHaveLength(0);
+  });
+
+  test('🔴 the TWO COMPLETED SECTIONS STILL RENDER THEIR CONTENT', async () => {
+    // This is the assertion the change exists for. Not "a tab bar appeared" — the actual
+    // findings a moderator lost.
+    mocks.report = PARTIAL_REPORT;
+    render();
+    // Scopes (the default report tab).
+    await expect.element(page.getByText('ai:write:budgeted')).toBeInTheDocument();
+    await expect
+      .element(page.getByText('Spend is bounded by the host budget.'))
+      .toBeInTheDocument();
+    // Security audit.
+    await page.getByRole('tab', { name: /Security audit/ }).click();
+    await expect
+      .element(page.getByText('Posts the prompt to a third-party endpoint'))
+      .toBeInTheDocument();
+    await expect
+      .element(
+        page.getByText('The block sends the user prompt to an external host before rendering.')
+      )
+      .toBeInTheDocument();
+  });
+
+  test('🔴 the degraded header NAMES which analysis failed', async () => {
+    // "Something failed" sends a mod hunting through three tabs. The name is the next
+    // question, so it is answered up front.
+    mocks.report = PARTIAL_REPORT;
+    render();
+    await expect
+      .element(page.getByTestId('apps-agent-partial-failure'))
+      .toHaveTextContent('Code review');
+  });
+
+  test('🔴 the FAILED tab is marked failed IN THE TAB BAR, by an enumerated attribute', async () => {
+    // Without a marker on the bar, a mod would have to open all three tabs to find out
+    // which one broke. The assertion reads `data-section-status`, a value from a closed set
+    // — not the word "failed", which another feature on the page could spell and which a
+    // reword would walk straight past.
+    mocks.report = PARTIAL_REPORT;
+    render();
+    await expect.element(page.getByTestId('apps-report-tab-failed')).toBeInTheDocument();
+    const failed = document.querySelector('[data-section="codeReview"][data-section-status]');
+    expect(failed?.getAttribute('data-section-status')).toBe('failed');
+    // 🔴 THE CONTRAST. Without it, a bar that marked EVERY tab failed would pass.
+    expect(
+      document
+        .querySelector('[data-section="securityAudit"][data-section-status]')
+        ?.getAttribute('data-section-status')
+    ).toBe('complete');
+    expect(
+      document
+        .querySelector('[data-section="scopeVerdicts"][data-section-status]')
+        ?.getAttribute('data-section-status')
+    ).toBe('complete');
+  });
+
+  test('🔴 the failed SECTION shows a moderator-facing reason, not the raw machine code', async () => {
+    mocks.report = PARTIAL_REPORT;
+    render();
+    await page.getByRole('tab', { name: /Code review/ }).click();
+    await expect.element(page.getByTestId('apps-report-section-failed')).toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('apps-report-section-failed'))
+      .toHaveTextContent(AGENT_SECTION_ERROR_MESSAGES['non-json-response']);
+  });
+
+  test('a `truncated-response` gets its OWN message, not the non-JSON one', async () => {
+    // The two call for different actions — a re-run clears prose-instead-of-JSON, but a
+    // cut-off reply is a size problem that usually recurs. Degrades gracefully: before the
+    // companion runner change ships, this code simply never appears.
+    mocks.report = { ...PARTIAL_REPORT, codeReview: { error: 'truncated-response' } };
+    render();
+    await page.getByRole('tab', { name: /Code review/ }).click();
+    await expect
+      .element(page.getByTestId('apps-report-section-failed'))
+      .toHaveTextContent(AGENT_SECTION_ERROR_MESSAGES['truncated-response']);
+  });
+
+  test('an UNKNOWN error code is shown verbatim rather than swallowed', async () => {
+    mocks.report = { ...PARTIAL_REPORT, codeReview: { error: 'provider-rate-limited' } };
+    render();
+    await page.getByRole('tab', { name: /Code review/ }).click();
+    await expect
+      .element(page.getByTestId('apps-report-section-failed'))
+      .toHaveTextContent('provider-rate-limited');
+  });
+
+  test('🔴 the report is CHATTABLE — the surviving sections are what a mod would ask about', async () => {
+    // Chat grounds on the PERSISTED report, not on a live pod (the service's own
+    // `CHAT_GROUNDABLE_STATUSES` already includes `failed`), so refusing it here was the UI
+    // disagreeing with its own server.
+    mocks.report = PARTIAL_REPORT;
+    render();
+    await expect.element(page.getByTestId('agent-chat-stub')).toBeInTheDocument();
+  });
+});
+
+describe('re-running ONE analysis instead of all three', () => {
+  test('🔴 the failed section offers a targeted retry, and it dispatches ONLY that section', async () => {
+    // The cost argument: a whole-report re-run re-bills all three analyses. The narrow
+    // action sits next to the thing that broke.
+    mocks.report = PARTIAL_REPORT;
+    render();
+    await page.getByRole('tab', { name: /Code review/ }).click();
+    await page.getByTestId('apps-report-section-rerun').click();
+    expect(mocks.mutate).toHaveBeenCalledTimes(1);
+    expect(mocks.mutate).toHaveBeenCalledWith({
+      publishRequestId: 'pubreq_01HZX',
+      sections: ['codeReview'],
+    });
+  });
+
+  test('🔴 the whole-report re-run is STILL offered, and sends NO section list', async () => {
+    // A mod who thinks the whole analysis is stale must still be able to redo everything —
+    // and that path must not acquire a section filter by accident.
+    mocks.report = PARTIAL_REPORT;
+    render();
+    await page.getByRole('button', { name: 'Re-run all analyses' }).click();
+    expect(mocks.mutate).toHaveBeenCalledWith({ publishRequestId: 'pubreq_01HZX' });
+  });
+
+  test('🔴 NEGATIVE CONTROL: a COMPLETE section offers NO retry control', async () => {
+    // Without this, the retry assertions above are satisfied by a panel that puts a button
+    // on every section — which would invite a mod to re-bill an analysis that worked.
+    //
+    // ⚠️ SCOPED TO THE *VISIBLE* PANEL, NOT THE DOCUMENT. `ReportTabs` uses Mantine's
+    // `keepMounted`, so the Code review panel — and its retry button — is in the DOM while
+    // the Security tab is selected, just `display: none`. A document-wide count therefore
+    // finds it and the control fails for the wrong reason. (It really did, first run; the
+    // first version of this assertion was measuring the inactive panel.)
+    mocks.report = PARTIAL_REPORT;
+    render();
+    await page.getByRole('tab', { name: /Security audit/ }).click();
+    await expect
+      .element(page.getByText('Posts the prompt to a third-party endpoint'))
+      .toBeInTheDocument();
+    const visible = visiblePanel();
+    expect(visible, 'a visible tabpanel').not.toBeNull();
+    expect(
+      visible!.querySelectorAll('[data-testid="apps-report-section-rerun"]'),
+      'retry control inside the COMPLETED security-audit panel'
+    ).toHaveLength(0);
+    expect(
+      visible!.querySelectorAll('[data-testid="apps-report-section-failed"]'),
+      'failure state inside the COMPLETED security-audit panel'
+    ).toHaveLength(0);
+  });
+});
+
+describe('the all-or-nothing banner is still right when NOTHING survived', () => {
+  test('🔴 every section failed ⇒ the plain whole-report failure, which is then the honest surface', async () => {
+    // The gate is `hasUsableAgentReportSection`, so this is the branch that proves the
+    // partial path is not just "always show the body".
+    mocks.report = ALL_FAILED;
+    render();
+    await expect.element(page.getByText('The agentic review failed.')).toBeInTheDocument();
+    await expect.element(page.getByRole('button', { name: 'Run again' })).toBeInTheDocument();
+    expect(page.getByTestId('apps-agent-partial-failure').elements()).toHaveLength(0);
+    // …and no report body, because there is nothing in it.
+    expect(page.getByTestId('apps-report-status').elements()).toHaveLength(0);
+  });
+
+  test('a report with NO sections at all (torn down mid-run) also keeps the plain banner', async () => {
+    mocks.report = {
+      status: 'failed',
+      summaryMd: 'Provisioning failed: no k8s target',
+      scopeVerdicts: null,
+      securityAudit: null,
+      codeReview: null,
+    };
+    render();
+    await expect.element(page.getByText(/Provisioning failed/)).toBeInTheDocument();
+    expect(page.getByTestId('apps-agent-partial-failure').elements()).toHaveLength(0);
+  });
+});
+
+describe('a fully COMPLETE report is unchanged', () => {
+  test('no partial-failure header, and every tab marked complete', async () => {
+    mocks.report = { ...PARTIAL_REPORT, status: 'complete', codeReview: { findings: [] } };
+    render();
+    await expect.element(page.getByTestId('apps-report-status')).toHaveTextContent('complete');
+    expect(page.getByTestId('apps-agent-partial-failure').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-report-tab-failed').elements()).toHaveLength(0);
+  });
+});

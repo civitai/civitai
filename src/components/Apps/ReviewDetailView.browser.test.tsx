@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
+import type * as UserAvatarMod from '~/components/UserAvatar/UserAvatar';
 
 /**
  * `ReviewDetailView` — the per-submission review PAGE body (`/apps/review/<id>`),
@@ -52,6 +53,34 @@ const mocks = vi.hoisted(() => ({
   errorMode: false,
   reviewStatus: undefined as unknown,
   pending: false,
+}));
+
+/*
+  🔴 `UserAvatar` IS STUBBED, AND IT IS A NEW DEPENDENCY OF THIS TREE. The shared review
+  body's submitter line now renders the SAME avatar chip the queue list does, and the real
+  component reaches `trpc.user.getById`, `useCurrentUser`,
+  `useViewerBrowsingLevelDebounced` and `useBrowsingSettings` — none of which this harness
+  mounts, so it throws and blanks the whole render. The stub keeps the only contract this
+  suite cares about (WHICH user, and whether it links) and the real component is exercised
+  for real in `ReviewSubmitterMeta.browser.test.tsx`. Precedent:
+  `UnifiedReviewList.browser.test.tsx`, for the same component and the same reason.
+*/
+vi.mock('~/components/UserAvatar/UserAvatar', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserAvatarMod>()),
+  UserAvatar: ({
+    user,
+    linkToProfile,
+  }: {
+    user: { id: number; username?: string | null };
+    linkToProfile?: boolean;
+  }) =>
+    linkToProfile ? (
+      <a href={`/user/${user.username ?? user.id}`} data-testid="submitter-link">
+        {user.username ?? '[deleted]'}
+      </a>
+    ) : (
+      <span>{user.username ?? '[deleted]'}</span>
+    ),
 }));
 
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
@@ -133,6 +162,11 @@ beforeEach(() => {
   (router.beforePopState as any).mockClear();
   (router.push as any).mockClear();
   (router.push as any).mockResolvedValue(true);
+  (router.replace as any).mockClear();
+  // No `?tab=` ⇒ the default (Permissions). Reset per test so one case's deep link cannot
+  // leak into the next — the scaffold's router is a shared singleton.
+  router.query = {};
+  router.pathname = '/apps/review/[publishRequestId]';
 });
 
 describe('ReviewDetailView — sticky action bar', () => {
@@ -140,8 +174,12 @@ describe('ReviewDetailView — sticky action bar', () => {
     renderWithProviders(
       <ReviewDetailView selection={{ request: PENDING, mode: 'pending' }} onClose={vi.fn()} />
     );
-    // Body content is present (shared review body).
-    await expect.element(page.getByText('Show code diff')).toBeInTheDocument();
+    // Body content is present. ⚠️ The assertion moved from `getByText('Show code diff')` to
+    // the PERMISSIONS card when the page became tabbed: the code-diff affordance now lives
+    // in the Code tab, and the default tab is Permissions. The point of the assertion is
+    // unchanged — the shared review body rendered something — and the tab mechanics
+    // themselves are covered in `ReviewDetailTabsView.browser.test.tsx`.
+    await expect.element(page.getByTestId('apps-review-permissions')).toBeInTheDocument();
     // The pinned action bar (labelled group) with both terminal actions.
     const bar = page.getByRole('group', { name: 'Review actions' });
     await expect.element(bar).toBeInTheDocument();
@@ -316,6 +354,23 @@ describe('ReviewDetailView — the STORE LISTING media section', () => {
    * store card they had not seen.
    */
   const PIXEL = LOADABLE_IMAGE_DATA_URI;
+
+  /**
+   * ⚠️ THE SECTION MOVED INTO THE `Preview` TAB, so every case here selects that tab first.
+   * That is not a weakening: the panel is only reachable from there now, so a test that did
+   * not navigate would be asserting against a surface no mod can see.
+   *
+   * 🔴 VIA `router.query`, NOT A CLICK, and that is a property of the design rather than a
+   * harness workaround. The active tab is derived from `?tab=` with NO local copy — one
+   * source of truth — so the scaffold's `router.replace` (a `vi.fn()` that does not mutate
+   * `query`) cannot move it. Setting the query is also the more faithful test: it exercises
+   * the DEEP LINK a mod actually receives. The click half — that selecting a tab REWRITES
+   * the URL — is asserted in `ReviewDetailTabsView.browser.test.tsx`. Precedent:
+   * `AppActivityPage.browser.test.tsx`, same split for the same reason.
+   */
+  beforeEach(() => {
+    router.query = { tab: 'preview' };
+  });
 
   test('both assets render as sized images, and NEITHER missing-state appears', async () => {
     renderWithProviders(

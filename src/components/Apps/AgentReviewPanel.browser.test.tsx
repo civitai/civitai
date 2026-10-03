@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import type * as UserAvatarMod from '~/components/UserAvatar/UserAvatar';
 
 /**
  * AGENTIC MOD CODE-REVIEW panel (App Blocks P2) — browser-mode component tests.
@@ -39,6 +40,34 @@ const mocks = vi.hoisted(() => ({
   invalidate: vi.fn().mockResolvedValue(undefined),
   // Captures the options passed to getAgentReview.useQuery so poll wiring is asserted.
   lastAgentOpts: undefined as { refetchInterval?: (q: unknown) => unknown } | undefined,
+}));
+
+/*
+  🔴 `UserAvatar` IS STUBBED, AND IT IS A NEW DEPENDENCY OF THIS TREE. The shared review
+  body's submitter line now renders the SAME avatar chip the queue list does, and the real
+  component reaches `trpc.user.getById`, `useCurrentUser`,
+  `useViewerBrowsingLevelDebounced` and `useBrowsingSettings` — none of which this harness
+  mounts, so it throws and blanks the whole render. The stub keeps the only contract this
+  suite cares about (WHICH user, and whether it links) and the real component is exercised
+  for real in `ReviewSubmitterMeta.browser.test.tsx`. Precedent:
+  `UnifiedReviewList.browser.test.tsx`, for the same component and the same reason.
+*/
+vi.mock('~/components/UserAvatar/UserAvatar', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserAvatarMod>()),
+  UserAvatar: ({
+    user,
+    linkToProfile,
+  }: {
+    user: { id: number; username?: string | null };
+    linkToProfile?: boolean;
+  }) =>
+    linkToProfile ? (
+      <a href={`/user/${user.username ?? user.id}`} data-testid="submitter-link">
+        {user.username ?? '[deleted]'}
+      </a>
+    ) : (
+      <span>{user.username ?? '[deleted]'}</span>
+    ),
 }));
 
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
@@ -215,7 +244,9 @@ const FULL_REPORT = {
     notes: 'code notes here',
   },
   securityAudit: {
-    findings: [{ severity: 'medium', title: 'Broad fetch', description: 'Calls an external host.' }],
+    findings: [
+      { severity: 'medium', title: 'Broad fetch', description: 'Calls an external host.' },
+    ],
     manifestUnexpectedKeys: ['sneakyKey'],
     iframeSandboxGrants: ['allow-same-origin'],
     promptInjectionAttempts: [{ file: 'README.md', excerpt: 'ignore previous instructions' }],
@@ -262,8 +293,20 @@ const MULTI_REPORT = {
   },
   scopeVerdicts: {
     scopes: [
-      { declared: 'user:read', used: 'yes', justificationAccurate: 'yes', sensitive: false, evidence: [] },
-      { declared: 'buzz:read:self', used: 'yes', justificationAccurate: 'weak', sensitive: true, evidence: [] },
+      {
+        declared: 'user:read',
+        used: 'yes',
+        justificationAccurate: 'yes',
+        sensitive: false,
+        evidence: [],
+      },
+      {
+        declared: 'buzz:read:self',
+        used: 'yes',
+        justificationAccurate: 'weak',
+        sensitive: true,
+        evidence: [],
+      },
     ],
     overBroad: [],
     underDeclared: [],
@@ -311,7 +354,10 @@ describe('AgentReviewPanel — render gate (through OnsiteReviewModal)', () => {
   test('does NOT render when the agentic-review client flag is off', async () => {
     mocks.flags = { appBlocks: true }; // flag absent → fails closed
     renderWithProviders(
-      <OnsiteReviewModal selection={{ request: ONSITE_PENDING, mode: 'pending' }} onClose={vi.fn()} />
+      <OnsiteReviewModal
+        selection={{ request: ONSITE_PENDING, mode: 'pending' }}
+        onClose={vi.fn()}
+      />
     );
     // Sibling review-preview panel still renders (sanity that the modal mounted).
     await expect.element(page.getByText('Review preview')).toBeInTheDocument();
@@ -321,7 +367,10 @@ describe('AgentReviewPanel — render gate (through OnsiteReviewModal)', () => {
 
   test('does NOT render for a non-pending (approved) selection even with the flag on', async () => {
     renderWithProviders(
-      <OnsiteReviewModal selection={{ request: ONSITE_APPROVED, mode: 'approved' }} onClose={vi.fn()} />
+      <OnsiteReviewModal
+        selection={{ request: ONSITE_APPROVED, mode: 'approved' }}
+        onClose={vi.fn()}
+      />
     );
     await expect.element(page.getByText('looks good')).toBeInTheDocument();
     expect(page.getByText('Agentic code review').elements()).toHaveLength(0);
@@ -329,7 +378,10 @@ describe('AgentReviewPanel — render gate (through OnsiteReviewModal)', () => {
 
   test('does NOT render for an external/connect request even on an onsite pending flow', async () => {
     renderWithProviders(
-      <OnsiteReviewModal selection={{ request: EXTERNAL_PENDING, mode: 'pending' }} onClose={vi.fn()} />
+      <OnsiteReviewModal
+        selection={{ request: EXTERNAL_PENDING, mode: 'pending' }}
+        onClose={vi.fn()}
+      />
     );
     // The pending body mounted (Review preview shows), but the agentic panel is hidden.
     await expect.element(page.getByText('Review preview')).toBeInTheDocument();
@@ -338,7 +390,10 @@ describe('AgentReviewPanel — render gate (through OnsiteReviewModal)', () => {
 
   test('DOES render for an onsite pending request with the flag on', async () => {
     renderWithProviders(
-      <OnsiteReviewModal selection={{ request: ONSITE_PENDING, mode: 'pending' }} onClose={vi.fn()} />
+      <OnsiteReviewModal
+        selection={{ request: ONSITE_PENDING, mode: 'pending' }}
+        onClose={vi.fn()}
+      />
     );
     await expect.element(page.getByText('Agentic code review')).toBeInTheDocument();
     await expect
@@ -353,7 +408,9 @@ describe('AgentReviewPanel — render gate (through OnsiteReviewModal)', () => {
 
 describe('AgentReviewPanel — trigger', () => {
   test('clicking "Run agentic review" fires startAgentReview with the request id', async () => {
-    renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
     await page.getByRole('button', { name: 'Run agentic review' }).click();
     expect(mocks.mutate).toHaveBeenCalledWith(
       'startAgentReview',
@@ -369,7 +426,9 @@ describe('AgentReviewPanel — trigger', () => {
       message: 'a review is already running for this request',
       data: { code: 'CONFLICT' },
     };
-    renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
     await page.getByRole('button', { name: 'Run agentic review' }).click();
     // No error notification (CONFLICT is expected), and the read query is refetched
     // so the panel falls into the running state.
@@ -380,7 +439,9 @@ describe('AgentReviewPanel — trigger', () => {
 
   test('a genuine error DOES surface via showErrorNotification', async () => {
     mocks.mutationError = { message: 'boom', data: { code: 'BAD_REQUEST' } };
-    renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
     await page.getByRole('button', { name: 'Run agentic review' }).click();
     expect(showError).toHaveBeenCalledWith(
       expect.objectContaining({ title: 'Could not start agentic review' })
@@ -395,7 +456,9 @@ describe('AgentReviewPanel — trigger', () => {
 describe('AgentReviewPanel — lifecycle states', () => {
   test('running: shows the spinner + "Analyzing…" and the poll is wired (stops on terminal)', async () => {
     mocks.agentReport = { status: 'running' };
-    renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
     await expect.element(page.getByText(/Analyzing/)).toBeInTheDocument();
     // The run button is NOT shown while running.
     expect(page.getByRole('button', { name: 'Run agentic review' }).elements()).toHaveLength(0);
@@ -409,28 +472,36 @@ describe('AgentReviewPanel — lifecycle states', () => {
 
   test('complete: renders the report (advisory banner + a code finding)', async () => {
     mocks.agentReport = FULL_REPORT;
-    renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
     await expect.element(page.getByText(/Advisory only/)).toBeInTheDocument();
     await expect.element(page.getByText('Hardcoded secret')).toBeInTheDocument();
   });
 
   test('cost-capped: renders the report with the cost-capped marker', async () => {
     mocks.agentReport = { ...FULL_REPORT, status: 'cost-capped' };
-    renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
     await expect.element(page.getByText(/Advisory only/)).toBeInTheDocument();
     expect(page.getByText('cost-capped').elements().length).toBeGreaterThan(0);
   });
 
   test('failed: shows the error state + a "Run again" affordance', async () => {
     mocks.agentReport = { status: 'failed', summaryMd: 'the model errored' };
-    renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
     await expect.element(page.getByText(/agentic review failed/)).toBeInTheDocument();
     await expect.element(page.getByRole('button', { name: 'Run again' })).toBeInTheDocument();
   });
 
   test('torn-down: shows the torn-down note + rerun', async () => {
     mocks.agentReport = { status: 'torn-down' };
-    renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
     await expect.element(page.getByText(/Review was torn down/)).toBeInTheDocument();
     await expect.element(page.getByRole('button', { name: 'Run again' })).toBeInTheDocument();
   });
@@ -446,7 +517,9 @@ describe('AgentReviewPanel — poll ceiling / manual refresh', () => {
     // threshold → auto-refresh is paused (no spinner) and a manual affordance shows.
     mocks.agentReport = { status: 'running' };
     mocks.agentFailureCount = 3; // >= MAX_CONSECUTIVE_POLL_ERRORS
-    renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
 
     await expect.element(page.getByText(/automatic updates paused/)).toBeInTheDocument();
     // The spinning "Analyzing…" state is NOT shown while paused.
@@ -460,7 +533,9 @@ describe('AgentReviewPanel — poll ceiling / manual refresh', () => {
   test('a single transient poll failure does NOT pause — the spinner keeps showing', async () => {
     mocks.agentReport = { status: 'running' };
     mocks.agentFailureCount = 1; // 1 < MAX_CONSECUTIVE_POLL_ERRORS → keep polling
-    renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
     await expect.element(page.getByText(/Analyzing/)).toBeInTheDocument();
     expect(page.getByText(/automatic updates paused/).elements()).toHaveLength(0);
     expect(page.getByRole('button', { name: 'Check again' }).elements()).toHaveLength(0);
@@ -474,7 +549,9 @@ describe('AgentReviewPanel — poll ceiling / manual refresh', () => {
 describe('AgentReviewPanel — report rendering', () => {
   test('a fully-populated report renders code + security findings, the three must-flag callouts, and the scope table', async () => {
     mocks.agentReport = FULL_REPORT;
-    renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
 
     // Advisory banner (required).
     await expect.element(page.getByText(/Advisory only/)).toBeInTheDocument();
@@ -520,7 +597,9 @@ describe('AgentReviewPanel — responsive scope verdicts', () => {
   test('desktop: renders the verdicts table inside a horizontal-scroll container (not the card variant)', async () => {
     setNarrow(false);
     mocks.agentReport = FULL_REPORT;
-    renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
 
     // The scroll container wraps the table so long scope/evidence columns scroll
     // horizontally instead of squishing.
@@ -538,7 +617,9 @@ describe('AgentReviewPanel — responsive scope verdicts', () => {
   test('narrow/mobile: renders stacked per-scope cards instead of the table (same data)', async () => {
     setNarrow(true);
     mocks.agentReport = FULL_REPORT;
-    renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
 
     // The card variant renders; the table + its scroll container do NOT.
     await expect.element(page.getByTestId('scope-verdicts-cards')).toBeInTheDocument();
@@ -557,8 +638,13 @@ describe('AgentReviewPanel — responsive scope verdicts', () => {
 
   test('narrow/mobile: empty scopes still shows the "No scopes assessed" empty state', async () => {
     setNarrow(true);
-    mocks.agentReport = { ...FULL_REPORT, scopeVerdicts: { scopes: [], overBroad: [], underDeclared: [] } };
-    renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
+    mocks.agentReport = {
+      ...FULL_REPORT,
+      scopeVerdicts: { scopes: [], overBroad: [], underDeclared: [] },
+    };
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
     await expect.element(page.getByText('No scopes assessed')).toBeInTheDocument();
     expect(page.getByTestId('scope-verdicts-cards').elements()).toHaveLength(0);
   });
@@ -578,7 +664,9 @@ describe('AgentReviewPanel — defensive / empty', () => {
       securityAudit: undefined,
       scopeVerdicts: {},
     };
-    renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
     // The report still renders (advisory banner) and each tab has a tidy empty state.
     // (Panels are keepMounted, so all four are in the DOM regardless of active tab.)
     await expect.element(page.getByText(/Advisory only/)).toBeInTheDocument();
@@ -611,7 +699,9 @@ describe('AgentReviewPanel — sanitization', () => {
       securityAudit: { findings: [{ title: 'Script attempt', detail: scriptPayload }] },
       scopeVerdicts: {},
     };
-    renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
 
     // The finding still renders (its title is present).
     await expect.element(page.getByText('XSS attempt')).toBeInTheDocument();
@@ -636,7 +726,9 @@ describe('AgentReviewPanel — sanitization', () => {
 describe('AgentReviewPanel — tabbed report', () => {
   test('renders the three tabs (Scopes, Security, Code review) with finding counts, no Summary tab', async () => {
     mocks.agentReport = MULTI_REPORT;
-    renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
 
     // Tab labels carry the counts (3 code findings, 2 security, 2 scopes).
     await expect.element(page.getByRole('tab', { name: /Scopes.*2/ })).toBeInTheDocument();
@@ -650,7 +742,9 @@ describe('AgentReviewPanel — tabbed report', () => {
 
   test('switching tabs reveals the right section (one visible at a time); Scopes is the default', async () => {
     mocks.agentReport = FULL_REPORT;
-    renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
 
     // Scopes is now the default active tab; its verdicts table is visible.
     await expect.element(page.getByTestId('scope-verdicts-table')).toBeVisible();
@@ -671,7 +765,9 @@ describe('AgentReviewPanel — tabbed report', () => {
 
   test('findings render as cards sorted by severity (critical → info) regardless of input order', async () => {
     mocks.agentReport = SORT_REPORT;
-    renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
 
     // Activate the Code review tab and await a rendered card before the
     // synchronous elements() read — browser-mode render is async-committed, so a
@@ -698,7 +794,9 @@ describe('AgentReviewPanel — tabbed report', () => {
       securityAudit: { findings: [{ severity: 'high', title: 'A sec finding' }] },
       scopeVerdicts: {},
     };
-    renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
 
     // The report still mounts (advisory banner present) — no crash.
     await expect.element(page.getByText(/Advisory only/)).toBeInTheDocument();
@@ -721,7 +819,9 @@ describe('AgentReviewPanel — tabbed report', () => {
       securityAudit: { findings: [] },
       scopeVerdicts: { scopes: [] },
     };
-    renderWithProviders(<AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />);
+    renderWithProviders(
+      <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
+    );
 
     await expect.element(page.getByText('No code-review findings.')).toBeInTheDocument();
     await expect.element(page.getByText('No security-audit findings.')).toBeInTheDocument();

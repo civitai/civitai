@@ -1,8 +1,20 @@
 import { Alert, Badge, Button, Group, Loader, Stack, Text } from '@mantine/core';
-import { useEffect, useRef } from 'react';
-import { IconInfoCircle, IconRefresh, IconRobot, IconX } from '@tabler/icons-react';
+import { useEffect, useRef, useState } from 'react';
+import {
+  IconAlertTriangle,
+  IconInfoCircle,
+  IconRefresh,
+  IconRobot,
+  IconX,
+} from '@tabler/icons-react';
 import { ReportTabs } from '~/components/Apps/ReportTabs';
 import { AgentReviewChat } from '~/components/Apps/AgentReviewChat';
+import {
+  AGENT_REPORT_SECTION_LABELS,
+  failedAgentReportSections,
+  hasUsableAgentReportSection,
+  type AgentReportSection,
+} from '~/components/Apps/agentReviewReport';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -81,7 +93,12 @@ export function isOnsiteReviewRequest(request: {
   if (topKind && topKind !== 'onsite') return false;
   const m = (request.manifest ?? {}) as Record<string, unknown>;
   const mKind = typeof m.kind === 'string' ? m.kind : typeof m.type === 'string' ? m.type : null;
-  if (mKind === 'external' || mKind === 'external-link' || mKind === 'connect' || mKind === 'offsite')
+  if (
+    mKind === 'external' ||
+    mKind === 'external-link' ||
+    mKind === 'connect' ||
+    mKind === 'offsite'
+  )
     return false;
   return true;
 }
@@ -121,9 +138,14 @@ export function AgentReviewPanel({
     }
   );
 
+  // Which single analysis a targeted re-run is in flight for, so the per-section control
+  // can show its own spinner rather than the whole panel going busy.
+  const [rerunningSection, setRerunningSection] = useState<AgentReportSection | null>(null);
+
   const startMut = trpc.blocks.startAgentReview.useMutation({
     onSuccess: async () => {
       showSuccessNotification({ message: `Agentic review started for ${slug}.` });
+      setRerunningSection(null);
       await utils.blocks.getAgentReview.invalidate({ publishRequestId });
     },
     onError: (e) => {
@@ -148,6 +170,26 @@ export function AgentReviewPanel({
   const hasReport = status === 'complete' || status === 'cost-capped';
   const failed = status === 'failed';
   const tornDown = status === 'torn-down';
+
+  /**
+   * 🔴 A `failed` REPORT IS USUALLY A PARTIAL ONE, AND THIS IS THE FIX FOR IT.
+   *
+   * The runner's own `any_failed()` marks the WHOLE report `failed` when any ONE of its
+   * three analyses fails, and this panel took that at face value: it rendered a red "the
+   * agentic review failed" banner and NOTHING ELSE — so a mod lost a complete security
+   * audit and a complete scope trace because the code review came back as prose. Measured
+   * on live rows: 4 of 11 runs were `failed`, and the most recent of them had
+   * `code_review = {"error":"non-json-response"}` beside two sections with real content.
+   *
+   * So the banner is now a degraded HEADER over the report body rather than a replacement
+   * for it, whenever at least one section survived. `hasUsableAgentReportSection` reads the
+   * RAW slots (the tolerant parse would flatten an `{ error }` to an empty section and make
+   * "broken" indistinguishable from "found nothing"), so this cannot be satisfied by a
+   * report where everything failed — that case keeps the plain banner, which is then the
+   * honest surface.
+   */
+  const partiallyUsable = failed && !!report && hasUsableAgentReportSection(report);
+  const failedSections = report ? failedAgentReportSections(report) : [];
 
   // Mark / clear the per-run poll start so the time ceiling is measured per-run.
   useEffect(() => {
@@ -200,8 +242,8 @@ export function AgentReviewPanel({
         )}
       </Group>
       <Text size="xs" c="dimmed">
-        Dispatch an ephemeral, sandboxed agent to code-review + security-audit this
-        pending bundle. Advisory decision-support only.
+        Dispatch an ephemeral, sandboxed agent to code-review + security-audit this pending bundle.
+        Advisory decision-support only.
       </Text>
 
       {reportQuery.isLoading ? (
@@ -245,6 +287,40 @@ export function AgentReviewPanel({
             </Text>
           </Group>
         )
+      ) : partiallyUsable ? (
+        <Stack gap={6}>
+          {/*
+            A DEGRADED HEADER, NOT A REPLACEMENT FOR THE REPORT. It names WHICH analyses
+            failed — the mod's next question — and the body below renders the ones that did
+            not, each failed tab carrying its own reason and its own re-run control.
+          */}
+          <Alert
+            color="orange"
+            variant="light"
+            icon={<IconAlertTriangle size={14} />}
+            data-testid="apps-agent-partial-failure"
+          >
+            <Text size="xs">
+              {failedSections.length === 1
+                ? `One analysis failed (${failedSections
+                    .map((s) => AGENT_REPORT_SECTION_LABELS[s])
+                    .join(', ')}). The rest of this report completed and is shown below.`
+                : `${failedSections.length} analyses failed (${failedSections
+                    .map((s) => AGENT_REPORT_SECTION_LABELS[s])
+                    .join(', ')}). The rest of this report completed and is shown below.`}
+            </Text>
+          </Alert>
+          <ReportTabs
+            report={report}
+            costCapped={false}
+            onRerunSection={(section) => {
+              setRerunningSection(section);
+              startMut.mutate({ publishRequestId, sections: [section] });
+            }}
+            rerunningSection={startMut.isPending ? rerunningSection : null}
+          />
+          <Group gap="xs">{runButton('Re-run all analyses')}</Group>
+        </Stack>
       ) : failed ? (
         <Stack gap={6}>
           <Alert color="red" variant="light" icon={<IconX size={14} />}>
@@ -261,14 +337,28 @@ export function AgentReviewPanel({
           <Group gap="xs">{runButton('Run again')}</Group>
         </Stack>
       ) : hasReport ? (
-        <ReportTabs report={report} costCapped={status === 'cost-capped'} />
+        <ReportTabs
+          report={report}
+          costCapped={status === 'cost-capped'}
+          onRerunSection={(section) => {
+            setRerunningSection(section);
+            startMut.mutate({ publishRequestId, sections: [section] });
+          }}
+          rerunningSection={startMut.isPending ? rerunningSection : null}
+        />
       ) : null}
 
-      {/* AGENTIC MOD CODE-REVIEW (App Blocks P3) — in-modal chat with the agent.
-          Shown ONLY while the agent POD is up: running (mid-analysis), complete,
-          or cost-capped. Hidden for failed / torn-down / no-report (no pod to
-          talk to). Inherits the panel's client-flag + onsite-pending gate. */}
-      {(running || hasReport) && <AgentReviewChat publishRequestId={publishRequestId} />}
+      {/* AGENTIC MOD CODE-REVIEW (App Blocks P3) — chat with the agent about its report.
+          🔴 THE GATE IS "IS THERE SOMETHING TO GROUND ON", NOT "IS A POD UP" — chat was
+          decoupled from the live pod (it is a stateless civitai→LLM completion grounded on
+          the PERSISTED report), and the service's own `CHAT_GROUNDABLE_STATUSES` already
+          includes `failed` for exactly that reason. So a PARTIALLY failed report — whose
+          surviving sections are precisely what a mod would want to ask about — is chattable
+          too. Still hidden for no-report and torn-down: there is nothing persisted to ground
+          on. Inherits the panel's client-flag + onsite-pending gate. */}
+      {(running || hasReport || partiallyUsable) && (
+        <AgentReviewChat publishRequestId={publishRequestId} />
+      )}
     </Stack>
   );
 }

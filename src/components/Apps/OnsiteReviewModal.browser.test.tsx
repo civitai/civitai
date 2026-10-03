@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import type * as UserAvatarMod from '~/components/UserAvatar/UserAvatar';
 
 /**
  * On-site (App Block) review modal — browser-mode render test (report-only in
@@ -79,6 +80,34 @@ const mocks = vi.hoisted(() => ({
   // When true, the approve/reject mutation mocks report `isPending: true` so the
   // component's `busy` state (and the ref-published close-guard) can be exercised.
   pending: false,
+}));
+
+/*
+  🔴 `UserAvatar` IS STUBBED, AND IT IS A NEW DEPENDENCY OF THIS TREE. The shared review
+  body's submitter line now renders the SAME avatar chip the queue list does, and the real
+  component reaches `trpc.user.getById`, `useCurrentUser`,
+  `useViewerBrowsingLevelDebounced` and `useBrowsingSettings` — none of which this harness
+  mounts, so it throws and blanks the whole render. The stub keeps the only contract this
+  suite cares about (WHICH user, and whether it links) and the real component is exercised
+  for real in `ReviewSubmitterMeta.browser.test.tsx`. Precedent:
+  `UnifiedReviewList.browser.test.tsx`, for the same component and the same reason.
+*/
+vi.mock('~/components/UserAvatar/UserAvatar', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserAvatarMod>()),
+  UserAvatar: ({
+    user,
+    linkToProfile,
+  }: {
+    user: { id: number; username?: string | null };
+    linkToProfile?: boolean;
+  }) =>
+    linkToProfile ? (
+      <a href={`/user/${user.username ?? user.id}`} data-testid="submitter-link">
+        {user.username ?? '[deleted]'}
+      </a>
+    ) : (
+      <span>{user.username ?? '[deleted]'}</span>
+    ),
 }));
 
 vi.mock('~/providers/FeatureFlagsProvider', () => ({

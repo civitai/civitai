@@ -191,7 +191,9 @@ export const SEVERITY_ORDER = ['critical', 'high', 'medium', 'moderate', 'low', 
  * never above a real `low`/`info` finding.
  */
 export function severityRank(severity?: string): number {
-  const i = SEVERITY_ORDER.indexOf((severity ?? '').toLowerCase() as (typeof SEVERITY_ORDER)[number]);
+  const i = SEVERITY_ORDER.indexOf(
+    (severity ?? '').toLowerCase() as (typeof SEVERITY_ORDER)[number]
+  );
   return i === -1 ? SEVERITY_ORDER.length : i;
 }
 
@@ -221,7 +223,15 @@ export type SeverityBreakdown = {
 
 /** Count findings per severity bucket for the counts-first roll-up. */
 export function severityBreakdown(findings: AgentFinding[]): SeverityBreakdown {
-  const b: SeverityBreakdown = { total: 0, critical: 0, high: 0, medium: 0, low: 0, info: 0, other: 0 };
+  const b: SeverityBreakdown = {
+    total: 0,
+    critical: 0,
+    high: 0,
+    medium: 0,
+    low: 0,
+    info: 0,
+    other: 0,
+  };
   for (const f of findings) {
     b.total += 1;
     switch ((f.severity ?? '').toLowerCase()) {
@@ -323,4 +333,134 @@ export function sectionAnalysisError(raw: unknown): string | null {
     }
   }
   return null;
+}
+
+// --- Per-section status (pure, unit-testable) ------------------------------
+
+/**
+ * The three sub-analyses a report is made of, in DISPLAY ORDER.
+ *
+ * 🔴 ONE LEDGER, because the whole point of what follows is that a report is THREE
+ * independently-succeeding things rather than one. Every per-section derivation below maps
+ * over this list, so adding a fourth analysis cannot leave a status tally, a retry control
+ * or an error message behind.
+ */
+export const AGENT_REPORT_SECTIONS = ['scopeVerdicts', 'securityAudit', 'codeReview'] as const;
+export type AgentReportSection = (typeof AGENT_REPORT_SECTIONS)[number];
+
+export function isAgentReportSection(value: unknown): value is AgentReportSection {
+  return typeof value === 'string' && (AGENT_REPORT_SECTIONS as readonly string[]).includes(value);
+}
+
+/** The label a moderator sees for a section. */
+export const AGENT_REPORT_SECTION_LABELS: Record<AgentReportSection, string> = {
+  scopeVerdicts: 'Scopes',
+  securityAudit: 'Security audit',
+  codeReview: 'Code review',
+};
+
+/**
+ * What ONE sub-analysis did.
+ *   · `complete` — it produced a structured result (even an empty one: "no findings" IS a
+ *     finding about the bundle).
+ *   · `failed`   — the slot holds an `{ error: … }` object or a bare string log dump.
+ *   · `missing`  — the slot is absent/null. A run that was torn down, or never got this far.
+ */
+export type AgentSectionStatus = 'complete' | 'failed' | 'missing';
+
+/** Raw report slots, as stored. */
+export type AgentReportSlots = {
+  codeReview?: unknown;
+  securityAudit?: unknown;
+  scopeVerdicts?: unknown;
+};
+
+/**
+ * Per-section status for a report row.
+ *
+ * 🔴 THIS IS THE FIX FOR THE "ALL-OR-NOTHING FAILED REPORT". The runner marks the WHOLE
+ * report `failed` when ANY ONE sub-analysis fails, and the UI took that at its word: a mod
+ * saw a red "the agentic review failed" banner over a security audit and a scope trace that
+ * were perfectly good, with no way to read them and only a whole-report re-run — which
+ * re-bills all three analyses — as an affordance. Measured on live rows: 4 of 11 runs were
+ * `failed`, and the most recent of those had TWO complete sections and one broken one.
+ *
+ * 🔴 IT READS THE RAW SLOTS, NOT THE PARSED VIEW. `parseAgentReport` is deliberately
+ * tolerant: it flattens an `{ error: … }` object to an EMPTY section, which is
+ * indistinguishable from "this analysis ran and found nothing". The structural check has to
+ * run first, which is exactly what {@link sectionAnalysisError} exists for.
+ */
+export function agentReportSectionStatuses(
+  report: AgentReportSlots
+): Record<AgentReportSection, AgentSectionStatus> {
+  const out = {} as Record<AgentReportSection, AgentSectionStatus>;
+  for (const section of AGENT_REPORT_SECTIONS) {
+    const raw = report[section];
+    if (sectionAnalysisError(raw) != null) out[section] = 'failed';
+    else if (raw == null) out[section] = 'missing';
+    else out[section] = 'complete';
+  }
+  return out;
+}
+
+/** The sections that FAILED, in display order. */
+export function failedAgentReportSections(report: AgentReportSlots): AgentReportSection[] {
+  const statuses = agentReportSectionStatuses(report);
+  return AGENT_REPORT_SECTIONS.filter((s) => statuses[s] === 'failed');
+}
+
+/**
+ * Does this report carry anything a moderator can actually read?
+ *
+ * 🔴 THE GATE ON SHOWING A `failed` REPORT'S BODY AT ALL. `true` ⇒ render the sections (the
+ * complete ones show their content, the broken ones their own failure state) instead of one
+ * banner over everything. `false` ⇒ nothing survived, so the whole-report failure IS the
+ * whole story and the banner is the honest surface.
+ */
+export function hasUsableAgentReportSection(report: AgentReportSlots): boolean {
+  const statuses = agentReportSectionStatuses(report);
+  return AGENT_REPORT_SECTIONS.some((s) => statuses[s] === 'complete');
+}
+
+/**
+ * Known machine-readable section error CODES → what to tell a moderator.
+ *
+ * 🔴 KEYED ON THE EXACT STORED STRING, and `truncated-response` is a NEW code the agent
+ * script is gaining in a companion infra change. Until that ships this entry simply never
+ * matches — which is the degradation we want: an unknown code falls through to being shown
+ * VERBATIM (see {@link sectionErrorMessage}), so a code this table has never heard of is
+ * still reported rather than swallowed.
+ *
+ * The two are worth separating because they call for different actions. A non-JSON response
+ * means the model answered in prose where a schema was required — a re-run usually fixes it.
+ * A truncated response means the answer was cut off mid-structure, which is a size problem:
+ * re-running the same bundle will usually truncate again.
+ */
+export const AGENT_SECTION_ERROR_MESSAGES: Record<string, string> = {
+  'non-json-response':
+    'The analysis replied in prose instead of the structured format, so nothing could be ' +
+    'read from it. Re-running this one analysis usually clears it.',
+  'truncated-response':
+    'The analysis reply was cut off before it finished, so the structured result is ' +
+    'incomplete. This is usually a size problem rather than a transient one — re-running ' +
+    'the same bundle will often truncate again.',
+};
+
+/**
+ * The moderator-facing message for a failed section, or `null` when it did not fail.
+ *
+ * 🔴 AN UNRECOGNISED ERROR IS SHOWN VERBATIM, NEVER REPLACED BY A GENERIC LINE. The stored
+ * value is the only evidence a mod has about why an analysis produced nothing, and the codes
+ * are written by a runner in a different repo that can add one at any time. A table lookup
+ * that fell back to "the analysis failed" would turn every future code into no information
+ * at all.
+ *
+ * ⚠️ THE VALUE IS ADVERSARIAL, like everything else in a report: it is produced while
+ * processing an untrusted, prompt-injectable bundle. It is returned as a plain string and
+ * rendered as inert React text (never `dangerouslySetInnerHTML`) — see `ReportTabs`.
+ */
+export function sectionErrorMessage(raw: unknown): string | null {
+  const error = sectionAnalysisError(raw);
+  if (error == null) return null;
+  return AGENT_SECTION_ERROR_MESSAGES[error] ?? error;
 }

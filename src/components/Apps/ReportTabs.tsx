@@ -1,4 +1,17 @@
-import { ActionIcon, Alert, Badge, Card, Group, Stack, Table, Tabs, Text, ThemeIcon, Tooltip } from '@mantine/core';
+import {
+  ActionIcon,
+  Alert,
+  Badge,
+  Button,
+  Card,
+  Group,
+  Stack,
+  Table,
+  Tabs,
+  Text,
+  ThemeIcon,
+  Tooltip,
+} from '@mantine/core';
 import { useClipboard, useMediaQuery } from '@mantine/hooks';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
@@ -8,18 +21,22 @@ import {
   IconInfoCircle,
   IconKey,
   IconLink,
+  IconRefresh,
   IconShieldLock,
 } from '@tabler/icons-react';
 import {
+  agentReportSectionStatuses,
   fileLineLabel,
   findingAnchorId,
   findingBody,
   formatCostUsd,
   parseAgentReport,
   parseReportHash,
-  sectionAnalysisError,
+  sectionErrorMessage,
   sortFindingsBySeverity,
   type AgentFinding,
+  type AgentReportSection,
+  type AgentSectionStatus,
   type CodeReviewView,
   type FindingTab,
   type ReportTabValue,
@@ -103,16 +120,62 @@ function EmptyState({ label }: { label: string }) {
   );
 }
 
-/** A clear "this sub-analysis failed" state for an `{ error: … }` section. */
-function SectionFailed({ error }: { error: string }) {
+/**
+ * A clear "this sub-analysis failed" state for an `{ error: … }` section, with an optional
+ * RE-RUN-THIS-ONE control.
+ *
+ * 🔴 PER-SECTION, NOT PER-REPORT, AND THAT IS THE WHOLE POINT. The runner marks the entire
+ * report `failed` when any ONE analysis fails, so a mod was being offered "Run again" —
+ * which re-bills all three — as the only way to retry one. This offers the narrow action
+ * next to the thing that actually broke, and the two sections that succeeded keep rendering
+ * their content beside it.
+ *
+ * `error` is ADVERSARIAL (produced while processing an untrusted bundle) and is rendered as
+ * inert React text. Never `dangerouslySetInnerHTML` here.
+ */
+export function SectionFailed({
+  error,
+  section,
+  onRerun,
+  rerunning = false,
+}: {
+  error: string;
+  /** Which analysis this is — passed back to `onRerun`. Omit to render no control. */
+  section?: AgentReportSection;
+  /** Dispatch a re-run of THIS analysis. Omitted ⇒ no button (the modal path). */
+  onRerun?: (section: AgentReportSection) => void;
+  rerunning?: boolean;
+}) {
   return (
-    <Alert color="red" variant="light" icon={<IconAlertTriangle size={14} />}>
+    <Alert
+      color="red"
+      variant="light"
+      icon={<IconAlertTriangle size={14} />}
+      data-testid="apps-report-section-failed"
+      data-section={section}
+    >
       <Text size="xs" fw={600}>
         Analysis failed
       </Text>
       <Text size="xs" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }} mt={2}>
         {error}
       </Text>
+      {section && onRerun && (
+        <Group gap="xs" mt={8}>
+          <Button
+            size="xs"
+            variant="light"
+            color="red"
+            leftSection={<IconRefresh size={14} />}
+            loading={rerunning}
+            disabled={rerunning}
+            onClick={() => onRerun(section)}
+            data-testid="apps-report-section-rerun"
+          >
+            Re-run this analysis
+          </Button>
+        </Group>
+      )}
     </Alert>
   );
 }
@@ -291,15 +354,49 @@ export function FindingsCards({
   );
 }
 
-/** A count chip for a tab label (kept in the label TEXT so it's screen-readable). */
-function TabLabel({ label, count }: { label: string; count?: number }) {
+/**
+ * A count chip for a tab label (kept in the label TEXT so it's screen-readable), plus a
+ * PER-SECTION status marker.
+ *
+ * 🔴 THE STATUS IS ON THE TAB, NOT ONLY INSIDE THE PANEL, and that is what makes a partial
+ * failure findable. With the whole-report banner gone, a mod landing on a report where one
+ * analysis broke would otherwise have to open all three tabs to discover which. A `failed`
+ * section replaces its count with a red marker; `missing` dims the label.
+ *
+ * 🔴 THE MARKER CARRIES `data-section-status`, A VALUE FROM AN ENUMERATED SET — not a word.
+ * A guard that matched the string "failed" would be satisfied by any other feature on the
+ * page spelling it, and walkable by a reword of the chip; the attribute pins the state.
+ */
+function TabLabel({
+  label,
+  count,
+  status,
+  section,
+}: {
+  label: string;
+  count?: number;
+  status?: AgentSectionStatus;
+  section?: AgentReportSection;
+}) {
   return (
-    <Group gap={6} wrap="nowrap">
+    <Group gap={6} wrap="nowrap" data-section={section} data-section-status={status}>
       <span>{label}</span>
-      {count != null && (
-        <Badge size="xs" variant="light" color="gray" circle>
-          {count}
+      {status === 'failed' ? (
+        <Tooltip label="This analysis failed — open the tab for the reason" withArrow>
+          <Badge size="xs" variant="filled" color="red" data-testid="apps-report-tab-failed">
+            failed
+          </Badge>
+        </Tooltip>
+      ) : status === 'missing' ? (
+        <Badge size="xs" variant="outline" color="gray" data-testid="apps-report-tab-missing">
+          none
         </Badge>
+      ) : (
+        count != null && (
+          <Badge size="xs" variant="light" color="gray" circle>
+            {count}
+          </Badge>
+        )
       )}
     </Group>
   );
@@ -312,13 +409,21 @@ export function CodeReviewTab({
   error,
   deepLinkable,
   highlightedId,
+  onRerun,
+  rerunning,
 }: {
   codeReview: CodeReviewView;
   error: string | null;
   deepLinkable?: boolean;
   highlightedId?: string | null;
+  /** Dispatch a re-run of THIS analysis alone. Omitted ⇒ the failure state has no control. */
+  onRerun?: (section: AgentReportSection) => void;
+  rerunning?: boolean;
 }) {
-  if (error) return <SectionFailed error={error} />;
+  if (error)
+    return (
+      <SectionFailed error={error} section="codeReview" onRerun={onRerun} rerunning={rerunning} />
+    );
   return (
     <Stack gap="sm">
       <FindingsCards
@@ -363,13 +468,26 @@ export function SecurityAuditTab({
   error,
   deepLinkable,
   highlightedId,
+  onRerun,
+  rerunning,
 }: {
   securityAudit: SecurityAuditView;
   error: string | null;
   deepLinkable?: boolean;
   highlightedId?: string | null;
+  /** Dispatch a re-run of THIS analysis alone. Omitted ⇒ the failure state has no control. */
+  onRerun?: (section: AgentReportSection) => void;
+  rerunning?: boolean;
 }) {
-  if (error) return <SectionFailed error={error} />;
+  if (error)
+    return (
+      <SectionFailed
+        error={error}
+        section="securityAudit"
+        onRerun={onRerun}
+        rerunning={rerunning}
+      />
+    );
   return (
     <Stack gap="sm">
       <FindingsCards
@@ -459,16 +577,29 @@ function ScopeCardRow({ label, children }: { label: string; children: ReactNode 
 export function ScopesTab({
   scopeVerdicts,
   error,
+  onRerun,
+  rerunning,
 }: {
   scopeVerdicts: ScopeVerdictsView;
   error: string | null;
+  /** Dispatch a re-run of THIS analysis alone. Omitted ⇒ the failure state has no control. */
+  onRerun?: (section: AgentReportSection) => void;
+  rerunning?: boolean;
 }) {
   // Responsive: the 6-column table squishes at narrow widths (long monospace
   // scope ids / evidence paths wrap char-by-char). Below `sm` we render each
   // scope as a stacked label/value card; wider, the table scrolls horizontally.
   const isNarrow = useMediaQuery('(max-width: 768px)');
 
-  if (error) return <SectionFailed error={error} />;
+  if (error)
+    return (
+      <SectionFailed
+        error={error}
+        section="scopeVerdicts"
+        onRerun={onRerun}
+        rerunning={rerunning}
+      />
+    );
 
   return (
     <Stack gap="sm">
@@ -496,7 +627,12 @@ export function ScopesTab({
                 </ScopeCardRow>
                 <ScopeCardRow label="Sensitive">
                   {s.sensitive ? (
-                    <Badge size="xs" variant="filled" color="red" data-testid="scope-sensitive-badge">
+                    <Badge
+                      size="xs"
+                      variant="filled"
+                      color="red"
+                      data-testid="scope-sensitive-badge"
+                    >
                       sensitive
                     </Badge>
                   ) : (
@@ -670,7 +806,20 @@ function fmtDate(d: unknown): string | null {
 export function ReportTabs({
   report,
   costCapped,
+  onRerunSection,
+  rerunningSection = null,
 }: {
+  /**
+   * Dispatch a re-run of ONE analysis.
+   *
+   * 🔴 A PROP, NOT A MUTATION IN HERE. This renderer is deliberately tRPC-free so the
+   * offsite listing review can adopt it, so the owner of the mutation (`AgentReviewPanel`)
+   * hands the action down. Omitted ⇒ the per-section failure state renders with no control,
+   * which is the queue modal's behaviour today.
+   */
+  onRerunSection?: (section: AgentReportSection) => void;
+  /** The section whose re-run is in flight, if any. */
+  rerunningSection?: AgentReportSection | null;
   report: {
     status: string;
     model?: string | null;
@@ -777,11 +926,14 @@ export function ReportTabs({
     [deepLinkable]
   );
 
-  // Structural failed-section detection runs on the RAW slots (before the
-  // tolerant parse flattens an `{ error }` object to an empty section).
-  const codeError = sectionAnalysisError(report.codeReview);
-  const securityError = sectionAnalysisError(report.securityAudit);
-  const scopeError = sectionAnalysisError(report.scopeVerdicts);
+  // Structural failed-section detection runs on the RAW slots (before the tolerant parse
+  // flattens an `{ error }` object to an empty section). `sectionErrorMessage` maps a KNOWN
+  // machine code onto a moderator-facing sentence and passes anything else through verbatim
+  // — a code this build has never heard of is still reported rather than swallowed.
+  const codeError = sectionErrorMessage(report.codeReview);
+  const securityError = sectionErrorMessage(report.securityAudit);
+  const scopeError = sectionErrorMessage(report.scopeVerdicts);
+  const sectionStatuses = agentReportSectionStatuses(report);
 
   const cost = formatCostUsd(report.costUsd);
   const started = fmtDate(report.startedAt);
@@ -795,7 +947,18 @@ export function ReportTabs({
     <Stack gap="sm">
       {/* Header meta — always visible. */}
       <Group gap={6}>
-        <Badge size="sm" variant="light" color={costCapped ? 'orange' : 'green'}>
+        {/*
+          🔴 THE REPORT-LEVEL STATUS IS NOT THE PER-SECTION TRUTH, and this badge must not
+          be read as one. The runner writes `failed` when ANY ONE of the three analyses
+          fails, so a `failed` report routinely carries two complete sections. The per-tab
+          markers above are the authority on what actually ran; this reflects the stored row.
+        */}
+        <Badge
+          size="sm"
+          variant="light"
+          color={report.status === 'failed' ? 'red' : costCapped ? 'orange' : 'green'}
+          data-testid="apps-report-status"
+        >
           {report.status}
         </Badge>
         {report.model && (
@@ -813,26 +976,46 @@ export function ReportTabs({
 
       {/* Advisory banner — REQUIRED, always visible. */}
       <Alert color="yellow" variant="light" icon={<IconInfoCircle size={14} />}>
-        Advisory only — the moderator decision remains the control. This report is
-        generated from an untrusted bundle and may be manipulated.
+        Advisory only — the moderator decision remains the control. This report is generated from an
+        untrusted bundle and may be manipulated.
       </Alert>
 
       <Tabs value={activeTab} onChange={handleTabChange} keepMounted>
         {/* Scrollable on narrow — the list scrolls within itself, never overflowing the page. */}
         <Tabs.List style={{ flexWrap: 'nowrap', overflowX: 'auto', overflowY: 'hidden' }}>
           <Tabs.Tab value="scopes" leftSection={<IconKey size={14} />}>
-            <TabLabel label="Scopes" count={scopeVerdicts.scopes.length} />
+            <TabLabel
+              label="Scopes"
+              count={scopeVerdicts.scopes.length}
+              status={sectionStatuses.scopeVerdicts}
+              section="scopeVerdicts"
+            />
           </Tabs.Tab>
           <Tabs.Tab value="security" leftSection={<IconShieldLock size={14} />}>
-            <TabLabel label="Security audit" count={securityAudit.findings.length} />
+            <TabLabel
+              label="Security audit"
+              count={securityAudit.findings.length}
+              status={sectionStatuses.securityAudit}
+              section="securityAudit"
+            />
           </Tabs.Tab>
           <Tabs.Tab value="code" leftSection={<IconCode size={14} />}>
-            <TabLabel label="Code review" count={codeReview.findings.length} />
+            <TabLabel
+              label="Code review"
+              count={codeReview.findings.length}
+              status={sectionStatuses.codeReview}
+              section="codeReview"
+            />
           </Tabs.Tab>
         </Tabs.List>
 
         <Tabs.Panel value="scopes" pt="sm">
-          <ScopesTab scopeVerdicts={scopeVerdicts} error={scopeError} />
+          <ScopesTab
+            scopeVerdicts={scopeVerdicts}
+            error={scopeError}
+            onRerun={onRerunSection}
+            rerunning={rerunningSection === 'scopeVerdicts'}
+          />
         </Tabs.Panel>
         <Tabs.Panel value="security" pt="sm">
           <SecurityAuditTab
@@ -840,6 +1023,8 @@ export function ReportTabs({
             error={securityError}
             deepLinkable={deepLinkable}
             highlightedId={highlightedId}
+            onRerun={onRerunSection}
+            rerunning={rerunningSection === 'securityAudit'}
           />
         </Tabs.Panel>
         <Tabs.Panel value="code" pt="sm">
@@ -848,6 +1033,8 @@ export function ReportTabs({
             error={codeError}
             deepLinkable={deepLinkable}
             highlightedId={highlightedId}
+            onRerun={onRerunSection}
+            rerunning={rerunningSection === 'codeReview'}
           />
         </Tabs.Panel>
       </Tabs>

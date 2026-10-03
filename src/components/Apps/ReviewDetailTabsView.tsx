@@ -1,0 +1,276 @@
+import { Stack, Tabs, Text } from '@mantine/core';
+import { IconCode, IconFileCode, IconKey, IconRobot, IconWindow } from '@tabler/icons-react';
+import { useRouter } from 'next/router';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  CurationPanel,
+  ManifestScopes,
+  ManifestView,
+  ReviewAgentSection,
+  ReviewFilesSection,
+  ReviewManifestDiffSection,
+  ReviewPreviewPanel,
+  ScreenshotsReviewPanel,
+  type OnsiteReviewSelection,
+} from '~/components/Apps/OnsiteReviewModal';
+import { ReviewListingMedia } from '~/components/Apps/ReviewListingMedia';
+import {
+  DEFAULT_REVIEW_DETAIL_TAB,
+  isReviewDetailTab,
+  resolveReviewDetailTab,
+  REVIEW_DETAIL_TAB_LABELS,
+  REVIEW_DETAIL_TAB_QUERY_KEY,
+  REVIEW_DETAIL_TAB_VALUES,
+  reviewDetailTabQuery,
+  type ReviewDetailTab,
+} from '~/components/Apps/reviewDetailTabs';
+import { appDisplayName } from '~/shared/utils/app-display-name';
+
+/**
+ * The per-submission review PAGE's body, as FIVE TABS with PERMISSIONS FIRST.
+ *
+ * ## What moved, and why
+ *
+ * The page used to re-host `OnsiteReviewModalBody` verbatim: one `Stack` running submitter →
+ * decision alert → sandbox preview → agent report → screenshots → curation → files + code
+ * diff → manifest diff → manifest. The declared SCOPES and their developer-supplied
+ * justifications sat at the very BOTTOM of that scroll, inside the manifest card — and
+ * judging whether a requested permission is justified is the moderator's primary job on
+ * this surface. So the sections are regrouped and permissions lead.
+ *
+ * 🔴 THE SECTIONS ARE THE SHARED ONES, NOT COPIES. Every panel below is imported from
+ * `OnsiteReviewModal`, which is also what the queue modal and `CombinedReviewModal` render.
+ * The tab restructure is an ARRANGEMENT; a per-surface copy of a panel would drift, and the
+ * drift would be invisible because each surface's own tests would stay green. See that
+ * module's `OnsiteReviewModalBody` docstring.
+ *
+ * 🔴 THE TABS ARE URL-BACKED (`?tab=`), BECAUSE THAT IS THE PAGE'S REASON FOR EXISTING. Its
+ * own module docstring calls it "deep-linkable, refresh-survivable". Tabs in local state
+ * would regress exactly that. The resolver lives in `reviewDetailTabs.ts` (pure, node-env
+ * testable); an unknown or absent value falls back to the default rather than rendering an
+ * empty panel.
+ *
+ * 🔴 THE APPROVE/REJECT BAR IS NOT IN HERE. It stays outside the tabs, in
+ * `ReviewDetailView`'s sticky bottom bar, so a mod can act from ANY tab without first
+ * navigating back to the one that happens to hold the controls.
+ */
+
+/**
+ * Per-tab icon. The labels live in `reviewDetailTabs.ts`, which is React-free.
+ *
+ * Typed as `typeof IconKey` rather than a hand-written `ComponentType<{size}>`: tabler's
+ * icons are `ForwardRefExoticComponent`s whose `size` accepts `string | number`, so the
+ * narrower hand-written signature does not accept them. Same form as
+ * `ACTIVITY_TAB_ICONS` in `/apps/activity`.
+ */
+const TAB_ICONS: Record<ReviewDetailTab, typeof IconKey> = {
+  permissions: IconKey,
+  code: IconCode,
+  agent: IconRobot,
+  manifest: IconFileCode,
+  preview: IconWindow,
+};
+
+/**
+ * Which tabs have been VISITED, so a panel mounts on first arrival and stays mounted.
+ *
+ * 🔴 NEITHER MANTINE `keepMounted` SETTING IS RIGHT HERE, WHICH IS WHY THIS EXISTS.
+ *   · `keepMounted` (the default, `true`) mounts EVERY panel on every render — so landing on
+ *     Permissions would still fire the screenshots fetch (base64 image payloads), the
+ *     agent-report poll and the preview-status poll, for tabs the mod may never open.
+ *   · `keepMounted={false}` unmounts a panel the moment you leave it — which destroys the
+ *     Preview tab's `ReviewBlockPreviewHost` IFRAME. A mod running the pending app in the
+ *     sandbox, stepping to Permissions to check a scope, and coming back would find the
+ *     block reloaded and any in-app state gone.
+ * Visit-once-then-keep gives both: nothing is fetched until the mod asks for that section,
+ * and nothing they were working in is torn down behind them.
+ */
+function useVisitedTabs(active: ReviewDetailTab): ReadonlySet<ReviewDetailTab> {
+  // A ref, not state: adding the first tab during the first render must not schedule a
+  // second render, and the value is only ever read in the same render that grows it.
+  const visited = useRef<Set<ReviewDetailTab>>(new Set([active]));
+  visited.current.add(active);
+  return visited.current;
+}
+
+export function ReviewDetailTabsView({
+  selection,
+}: {
+  selection: NonNullable<OnsiteReviewSelection>;
+}) {
+  const router = useRouter();
+  const { request, mode } = selection;
+  const manifest = request.manifest as Record<string, unknown>;
+
+  /**
+   * 🔴 THE HASH IS READ IN AN EFFECT, NOT DURING RENDER, and that is an SSR requirement
+   * rather than a style choice: `window.location` does not exist on the server, and a value
+   * that differs between the server render and the first client paint is a hydration
+   * mismatch. So the first paint resolves from `?tab=` alone (which SSR *does* have, via
+   * `getServerSideProps`), and the hash fallback — the thing that keeps `ReportTabs`'
+   * existing `#finding-security-2` copy-links landing on the Agent report tab — applies
+   * after mount.
+   */
+  const [hash, setHash] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    setHash(window.location.hash);
+  }, []);
+
+  const rawTab = router.query[REVIEW_DETAIL_TAB_QUERY_KEY];
+  const activeTab = useMemo(() => resolveReviewDetailTab(rawTab, { hash }), [rawTab, hash]);
+  const visited = useVisitedTabs(activeTab);
+
+  return (
+    <Tabs
+      value={activeTab}
+      onChange={(value) => {
+        if (!isReviewDetailTab(value)) return;
+        /*
+          🔴 `replace` + `shallow`, like `/apps/activity`: no re-run of `getServerSideProps`
+          and no history entry per click (which would turn Back into a tab-by-tab rewind out
+          of the submission).
+
+          🔴 AND IT CANNOT TRIP THE PAGE'S ROUTE-LEAVE GUARD. `useCatchNavigation` returns
+          early when the destination's PATH equals the current one — a query-only change — so
+          this never prompts, even mid-approve. That is checked rather than assumed: see the
+          guard's `currentUrl === nextUrl` branch, and the tab test that switches tabs while
+          a mutation is in flight.
+        */
+        void router.replace(
+          { pathname: router.pathname, query: reviewDetailTabQuery(value, router.query) },
+          undefined,
+          { shallow: true }
+        );
+      }}
+      variant="outline"
+      // Panels are mounted by `visited` above, so Mantine's own flag is irrelevant here;
+      // pinned explicitly so a later Mantine default change cannot silently re-introduce
+      // mount-everything.
+      keepMounted
+      data-testid="apps-review-detail-tabs"
+    >
+      {/* Scrollable on narrow — the list scrolls within itself, never overflowing the page. */}
+      <Tabs.List style={{ flexWrap: 'nowrap', overflowX: 'auto', overflowY: 'hidden' }}>
+        {REVIEW_DETAIL_TAB_VALUES.map((tab) => {
+          const Icon = TAB_ICONS[tab];
+          return (
+            <Tabs.Tab key={tab} value={tab} leftSection={<Icon size={14} />}>
+              {REVIEW_DETAIL_TAB_LABELS[tab]}
+            </Tabs.Tab>
+          );
+        })}
+      </Tabs.List>
+
+      {/*
+        PERMISSIONS — the default tab. `ManifestScopes` already groups SENSITIVE scopes
+        first with warning emphasis and renders each scope's developer-supplied
+        justification; what changed is that it is now the first thing on screen instead of
+        the last thing in the manifest card. `ManifestView` below is passed
+        `includeScopes={false}` so this card appears exactly once on the page.
+      */}
+      <Tabs.Panel value="permissions" pt="md">
+        {visited.has('permissions') && (
+          <Stack gap="sm">
+            <Text size="xs" c="dimmed">
+              What this version asks to be allowed to do, and the reason its developer gave. The
+              platform does not verify these claims — your judgement is the gate.
+            </Text>
+            <ManifestScopes manifest={manifest} />
+          </Stack>
+        )}
+      </Tabs.Panel>
+
+      {/*
+        CODE — the file summary plus the GitHub-shaped line diff. `autoOpenDiff`: arriving
+        on this tab IS the mod asking for the diff, so the fetch happens then rather than
+        behind a second click. Nothing is read while the mod is on another tab.
+      */}
+      <Tabs.Panel value="code" pt="md">
+        {visited.has('code') && <ReviewFilesSection request={request} autoOpenDiff />}
+      </Tabs.Panel>
+
+      {/*
+        AGENT REPORT — `ReviewAgentSection` carries the whole gate (on-site pending +
+        the mod-only `appBlocksAgenticReview` flag, fail-closed), so this tab is simply
+        empty for a submission that has no agent surface. An empty state is rendered
+        rather than nothing at all: a tab that paints blank reads as broken.
+
+        ⚠️ NESTED TABS: `ReportTabs` is itself tabbed (Scopes / Security audit / Code
+        review). Flattening it into this bar was considered and rejected — see the note
+        on `ReportTabs` usage in the PR — because those three are SUB-VIEWS of one report
+        object with their own deep-link contract (`#finding-<tab>-<n>`), and hoisting them
+        here would put five report-shaped tabs next to five submission-shaped ones with no
+        visual grouping to say which is which. The outer bar is `variant="outline"` and the
+        inner one is Mantine's default underline, so the two read as different levels.
+      */}
+      <Tabs.Panel value="agent" pt="md">
+        {visited.has('agent') && (
+          <ReviewAgentSection
+            selection={selection}
+            fallback={
+              /*
+                ⚠️ NO KIND WORD IN THIS COPY. The App-store kind label has exactly one
+                source (`STANDALONE_KIND_LABEL`) and the previous generation of words for it
+                is retired — `standaloneWordingCallSites.test.ts` reds on a user-facing
+                string that carries one, and it caught an earlier draft of this sentence.
+                The gate's kind clause is not what a mod needs told here anyway: "this
+                submission has no agentic review" is.
+              */
+              <Text size="xs" c="dimmed" fs="italic" data-testid="apps-review-agent-empty">
+                No agentic review on this submission. It runs on a PENDING bundle only, and only for
+                reviewers it has been enabled for.
+              </Text>
+            }
+          />
+        )}
+      </Tabs.Panel>
+
+      {/* MANIFEST — the field-level diff, then the full structured manifest WITHOUT its
+          permissions card (that card is the Permissions tab). */}
+      <Tabs.Panel value="manifest" pt="md">
+        {visited.has('manifest') && (
+          <Stack gap="md">
+            <ReviewManifestDiffSection request={request} />
+            <Stack gap={4}>
+              <Text size="sm" fw={600}>
+                Manifest
+              </Text>
+              <ManifestView manifest={manifest} includeScopes={false} />
+            </Stack>
+          </Stack>
+        )}
+      </Tabs.Panel>
+
+      {/*
+        PREVIEW — everything a mod LOOKS at: the mod-only review sandbox, the store-listing
+        icon/cover, the publisher screenshots from the bundle, and (approved only) the
+        marketplace curation controls.
+
+        🔴 `ReviewListingMedia` IS DIFFERENT BYTES FROM THE SCREENSHOTS BESIDE IT. The icon
+        and cover are `AppListing` columns, authored in the store form and never present in
+        the submitted ZIP — so a mod approving a first version was approving a store card
+        they had not seen. Both belong on this tab; neither replaces the other.
+      */}
+      <Tabs.Panel value="preview" pt="md">
+        {visited.has('preview') && (
+          <Stack gap="md">
+            {mode === 'pending' && (
+              <ReviewPreviewPanel publishRequestId={request.id} slug={request.slug} />
+            )}
+            <ReviewListingMedia
+              slug={request.slug}
+              name={appDisplayName(request.manifest, request.slug)}
+              iconUrl={request.iconUrl ?? null}
+              coverUrl={request.coverUrl ?? null}
+            />
+            <ScreenshotsReviewPanel publishRequestId={request.id} />
+            {mode === 'approved' && request.appBlockId && (
+              <CurationPanel key={request.appBlockId} appBlockId={request.appBlockId} />
+            )}
+          </Stack>
+        )}
+      </Tabs.Panel>
+    </Tabs>
+  );
+}

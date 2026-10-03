@@ -32,11 +32,13 @@ import {
   IconWindow,
   IconX,
 } from '@tabler/icons-react';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AgentReviewPanel, isOnsiteReviewRequest } from '~/components/Apps/AgentReviewPanel';
 import { ReviewBlockPreviewHost } from '~/components/Apps/ReviewBlockPreviewHost';
 import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
+import { compactRelativeTime } from '~/components/Apps/reviewRelativeTime';
 import { useReviewPreview } from '~/components/Apps/useReviewPreview';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import {
   FileDiffEntry,
   FileListPreview,
@@ -163,6 +165,317 @@ export function formatDate(d: string | Date | null | undefined): string {
   return date.toLocaleString();
 }
 
+/**
+ * How often a relative timestamp on a review surface re-renders.
+ *
+ * ONE timer per mounted surface, matching `REVIEW_RELATIVE_TICK_MS` in `UnifiedReviewList`
+ * (which carries the long-form rationale): a minute is the finest granularity
+ * `compactRelativeTime` can express past its `now` rung, so a faster tick could not change
+ * a single label.
+ */
+export const REVIEW_META_TICK_MS = 60_000;
+
+function useNowTick(intervalMs: number): Date {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+  return now;
+}
+
+/**
+ * A timestamp shown as a COMPACT RELATIVE AGE with the exact instant kept on hover and
+ * exposed to a screen reader via `<time dateTime>`/`title`.
+ *
+ * 🔴 ONE LADDER FOR THE WHOLE `~/components/Apps` TREE — `compactRelativeTime`, whose own
+ * docstring records that a SECOND ladder in this directory was deleted for drifting (it
+ * stopped at days where this reads `1w`, and read the clock itself, so it needed faked
+ * timers to test). Do not write a third, and do not reach for `DaysFromNow`: that renders
+ * dayjs's long phrase, which is the width these surfaces exist to give back.
+ *
+ * 🔴 THE ABSOLUTE TIME IS KEPT, NOT REPLACED. "3h ago" is what a mod triaging a queue
+ * needs; the exact instant is what a moderation DECISION RECORD needs, and a review page is
+ * both. `UnifiedReviewList`'s age cell does exactly this, so the two surfaces agree.
+ */
+export function ReviewRelativeTime({
+  value,
+  now,
+  testId,
+}: {
+  value: string | Date | null | undefined;
+  /** Injected so every rung is reachable in a test without faking timers. */
+  now: Date;
+  testId?: string;
+}) {
+  if (!value) {
+    return (
+      <Text span size="xs" c="dimmed" data-testid={testId}>
+        —
+      </Text>
+    );
+  }
+  const date = typeof value === 'string' ? new Date(value) : value;
+  const valid = Number.isFinite(date.getTime());
+  return (
+    <Text span size="xs" c="dimmed">
+      <time
+        dateTime={valid ? date.toISOString() : undefined}
+        title={valid ? date.toLocaleString() : undefined}
+        data-testid={testId}
+      >
+        {compactRelativeTime(date, now)}
+      </time>
+    </Text>
+  );
+}
+
+/**
+ * Submitter identity + age + bundle size for one review — the line directly under the
+ * page/modal title.
+ *
+ * 🔴 THE SAME `UserAvatar` THE QUEUE RENDERS, with the same props
+ * (`size="sm" withUsername linkToProfile`), so the submitter reads identically on the list
+ * and on the submission. The queue's cell is `UnifiedReviewList.tsx`'s Submitter column;
+ * the two now differ in nothing but their surrounding layout.
+ *
+ * 🔴 `user=`, NOT `userId=`. The request already carries `{ id, username, image }`, so the
+ * `userId` form's `trpc.user.getById` per render is pure waste — and it buys nothing,
+ * because that path hardcodes `cosmetics: []` so neither form renders a decoration frame.
+ * (Same note as the queue cell's, for the same reason.)
+ *
+ * 🔴 A SUBMITTER WITH NO USERNAME STILL RENDERS AS `#<id>`, because they are still an
+ * identity a moderator acts on and an empty cell is the one outcome that is not a decision.
+ * The queue cell branches the same way; this is that branch, shared.
+ */
+export function ReviewSubmitterMeta({
+  request,
+  now,
+}: {
+  request: Pick<ReviewedRequestCommon, 'submittedBy' | 'submittedAt' | 'bundleSizeBytes'>;
+  /** Injected so the age ladder is testable without faking timers. */
+  now: Date;
+}) {
+  const submitter = request.submittedBy;
+  return (
+    <Group gap="xs" align="center" wrap="wrap" data-testid="apps-review-submitter-meta">
+      {submitter?.username ? (
+        <UserAvatar user={submitter} size="sm" withUsername linkToProfile />
+      ) : (
+        <Text size="xs" c="dimmed" data-testid="apps-review-submitter-fallback">
+          {submitter ? `#${submitter.id}` : '—'}
+        </Text>
+      )}
+      <Text span size="xs" c="dimmed">
+        ·
+      </Text>
+      <ReviewRelativeTime
+        value={request.submittedAt}
+        now={now}
+        testId="apps-review-submitted-age"
+      />
+      <Text span size="xs" c="dimmed">
+        · {formatBytes(request.bundleSizeBytes)}
+      </Text>
+    </Group>
+  );
+}
+
+/**
+ * The read-only APPROVED / REJECTED banner for a decided submission — who decided, when,
+ * and the notes or reason they left.
+ *
+ * Renders `null` for a pending request, so a caller can mount it unconditionally. Extracted
+ * from `OnsiteReviewModalBody` so the review PAGE can render it OUTSIDE its tabs (a
+ * decision is a fact about the whole submission, not about one section) while the modal
+ * keeps it inline — ONE implementation, two placements.
+ */
+export function ReviewDecisionAlert({
+  selection,
+  now,
+}: {
+  selection: NonNullable<OnsiteReviewSelection>;
+  now: Date;
+}) {
+  const { request, mode } = selection;
+  const approved = mode === 'approved' ? (request as ApprovedRequest) : null;
+  const rejected = mode === 'rejected' ? (request as RejectedRequest) : null;
+  if (!approved && !rejected) return null;
+  const decided = (approved ?? rejected)!;
+  return (
+    <Alert
+      color={approved ? 'green' : 'red'}
+      variant="light"
+      icon={approved ? <IconCheck size={16} /> : <IconX size={16} />}
+      title={
+        <Group gap={6}>
+          <Text size="sm" fw={600}>
+            {approved ? 'Approved by' : 'Rejected by'}{' '}
+            {decided.reviewedBy
+              ? decided.reviewedBy.username
+                ? `@${decided.reviewedBy.username}`
+                : `#${decided.reviewedBy.id}`
+              : 'unknown'}
+          </Text>
+          <Text span size="xs" c="dimmed">
+            ·
+          </Text>
+          <ReviewRelativeTime
+            value={decided.reviewedAt}
+            now={now}
+            testId="apps-review-decided-age"
+          />
+        </Group>
+      }
+    >
+      {approved && approved.approvalNotes && (
+        <Stack gap={2}>
+          <Text size="xs" c="dimmed">
+            Approval notes
+          </Text>
+          <Text size="sm" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            {approved.approvalNotes}
+          </Text>
+        </Stack>
+      )}
+      {approved && !approved.approvalNotes && (
+        <Text size="xs" c="dimmed" fs="italic">
+          No approval notes were recorded.
+        </Text>
+      )}
+      {rejected && rejected.rejectionReason && (
+        <Stack gap={2}>
+          <Text size="xs" c="dimmed">
+            Rejection reason
+          </Text>
+          <Text size="sm" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            {rejected.rejectionReason}
+          </Text>
+        </Stack>
+      )}
+    </Alert>
+  );
+}
+
+/**
+ * The FILES section — the per-kind counts, the file-level add/change/remove list, and the
+ * lazy line-level code diff.
+ *
+ * 🔴 NO RAW-SOURCE DEEP-LINK HERE, and that is a fixed defect rather than an omission. The
+ * link that used to sit beside the counts was retired in #3498: in-review snapshots are
+ * private now, so an anonymous click 404s and a dead link is worse than no link.
+ * `request.reviewRepoUrl` / `request.pushCommitUrl` are intentionally still carried on the
+ * payload — a richer in-app file browser is being designed separately and will reuse them.
+ */
+export function ReviewFilesSection({
+  request,
+  autoOpenDiff = false,
+}: {
+  request: Pick<ReviewedRequestCommon, 'id' | 'fileSummary' | 'manifestDiffSummary'>;
+  /**
+   * Open the line-level diff as soon as this section mounts.
+   *
+   * Used by the review PAGE's Code tab, where opening the tab IS the mod asking for the
+   * diff — so the fetch stays exactly as lazy as before (nothing is read until the mod
+   * navigates there), with one click fewer. The modal leaves it `false`: its section is one
+   * of nine in a long scroll, and auto-fetching a bundle diff for every modal open is the
+   * cost this panel was made lazy to avoid.
+   */
+  autoOpenDiff?: boolean;
+}) {
+  const fs = (request.fileSummary ?? {}) as FileSummary;
+  const mds = (request.manifestDiffSummary ?? {}) as ManifestDiffSummary;
+  return (
+    <Stack gap={4}>
+      <Text size="sm" fw={600}>
+        Files
+      </Text>
+      <Group gap={6}>
+        <Text size="sm">{fs.files?.length ?? 0} total</Text>
+        {(fs.added?.length ?? 0) > 0 && (
+          <Badge color="green" variant="light">
+            +{fs.added.length} added
+          </Badge>
+        )}
+        {(fs.changed?.length ?? 0) > 0 && (
+          <Badge color="yellow" variant="light">
+            ~{fs.changed.length} changed
+          </Badge>
+        )}
+        {(fs.removed?.length ?? 0) > 0 && (
+          <Badge color="red" variant="light">
+            −{fs.removed.length} removed
+          </Badge>
+        )}
+      </Group>
+      {mds.kind === 'update' && (
+        <FileListPreview added={fs.added} removed={fs.removed} changed={fs.changed} />
+      )}
+      <CodeDiffPanel publishRequestId={request.id} autoOpen={autoOpenDiff} />
+    </Stack>
+  );
+}
+
+/** The manifest FIELD-LEVEL diff against the previously approved version. */
+export function ReviewManifestDiffSection({
+  request,
+}: {
+  request: Pick<ReviewedRequestCommon, 'manifestDiffSummary'>;
+}) {
+  const mds = (request.manifestDiffSummary ?? {}) as ManifestDiffSummary;
+  return (
+    <Stack gap={4}>
+      <Text size="sm" fw={600}>
+        Manifest diff
+      </Text>
+      {mds.kind === 'first-version' ? (
+        <Text size="xs" c="dimmed">
+          First version — full manifest below.
+        </Text>
+      ) : (
+        <ManifestDiffPreview diff={mds} />
+      )}
+    </Stack>
+  );
+}
+
+/**
+ * The AGENTIC MOD CODE-REVIEW section, with its full gate.
+ *
+ * 🔴 THE GATE IS THE COMPONENT, so no caller can re-spell it. On-site PENDING only, and
+ * DARK unless the mod-only `app-blocks-agentic-review` CLIENT flag resolves — fail-closed,
+ * so an absent Flipt flag means this renders nothing. External/connect requests are out of
+ * scope and hidden. Two surfaces mount it now (the modal body and the page's Agent report
+ * tab); a copied `mode === 'pending' && !!features?.… && isOnsiteReviewRequest(…)` at each
+ * would be the same predicate twice, wrong at one of them eventually.
+ */
+export function ReviewAgentSection({
+  selection,
+  fallback = null,
+}: {
+  selection: NonNullable<OnsiteReviewSelection>;
+  /**
+   * Rendered INSTEAD when the gate declines.
+   *
+   * 🔴 ONE PLACE KNOWS THE GATE, INCLUDING ITS NEGATIVE BRANCH. The review page puts this
+   * section behind a TAB, and a selected tab whose content is `null` paints a blank panel —
+   * which reads as a broken page rather than as "there is nothing here". The obvious fix (a
+   * second predicate at the tab, deciding whether to show a note) would be the same gate
+   * spelled twice, and one of the two copies would be wrong about the FLAG — a client
+   * feature flag the tab would have to re-read. So the caller hands the note DOWN and this
+   * component, which already holds every clause, chooses. The modal passes nothing: an
+   * absent section in a long scroll needs no explanation.
+   */
+  fallback?: ReactNode;
+}) {
+  const features = useFeatureFlags();
+  const { request, mode } = selection;
+  if (mode !== 'pending') return <>{fallback}</>;
+  if (!features?.appBlocksAgenticReview) return <>{fallback}</>;
+  if (!isOnsiteReviewRequest(request)) return <>{fallback}</>;
+  return <AgentReviewPanel publishRequestId={request.id} slug={request.slug} />;
+}
+
 // ---------------------------------------------------------------------------
 // Review modal — pending requests get the interactive approve/reject UI;
 // history requests get a read-only view with the mod feedback surfaced
@@ -266,111 +579,51 @@ export function OnsiteReviewModalTitle({
  * state is fresh on every request switch — no manual reset needed, and the
  * `onSuccess → onClose` paths are safe because the next open remounts fresh.
  *
- * EXPORTED (with {@link OnsiteReviewModalTitle}) so the per-submission review
- * PAGE (`/apps/review/<id>`, `appReviewPage` flag) can re-host the exact same
- * body WITHOUT the `<Modal>` shell — the page passes a resolved `selection`, an
- * `onClose` that redirects to the queue (Q6), and its own `busyRef`. Keep this
- * server-graph-free and free of modal-only assumptions so the modal and page
- * stay behaviour-identical (and so an off-site page could reuse the shared
- * sub-sections later). The modal shell above remains the only caller that wraps
- * it in `<Modal>`.
+ * EXPORTED so `CombinedReviewModal` can mount the same body as its "App code
+ * review" half. The modal shell above is the only caller that wraps it in
+ * `<Modal>`.
+ *
+ * 🔴 THIS IS THE MODAL'S ARRANGEMENT — ONE LONG SCROLL — AND IT IS NO LONGER WHAT
+ * THE REVIEW PAGE RENDERS. The page (`/apps/review/<id>`, `appReviewPage` flag) used
+ * to re-host this body verbatim; it now composes the SAME exported sub-sections into
+ * five tabs with Permissions first (`ReviewDetailTabsView`). The sections are the
+ * contract the two surfaces share, not this container:
+ * {@link ReviewSubmitterMeta}, {@link ReviewDecisionAlert}, {@link ReviewPreviewPanel},
+ * {@link ReviewAgentSection}, {@link ScreenshotsReviewPanel}, {@link CurationPanel},
+ * {@link ReviewFilesSection}, {@link ReviewManifestDiffSection}, {@link ManifestView},
+ * {@link ManifestScopes}.
+ *
+ * 🔴 SO DO NOT FORK A PANEL FOR ONE SURFACE. The docstring's long-standing ask — keep the
+ * modal and the page behaviour-identical — now means: every panel has ONE
+ * implementation, rendered by both, and only the ARRANGEMENT differs. A per-surface copy
+ * of (say) the permissions card would drift, and the drift would be invisible because
+ * each surface's own tests would stay green.
+ *
+ * Keep this server-graph-free and free of modal-only assumptions.
  */
 export function OnsiteReviewModalBody({
   selection,
   onClose,
   busyRef,
   onActioned,
-  hideInlineActions = false,
 }: {
   selection: NonNullable<OnsiteReviewSelection>;
   onClose: () => void;
-  /** Modal shell close-guard ref, passed through to the inline action bar.
-   *  Omitted by the page, which renders its own (sticky) action bar. */
+  /** Modal shell close-guard ref, passed through to the inline action bar. */
   busyRef?: { current: boolean };
   /** Forwarded to the inline `ReviewActionBar` — fired after a successful
-   *  approve/reject (e.g. the review page's tab paging reset). Optional + additive. */
+   *  approve/reject (e.g. the queue page's tab paging reset). Optional + additive. */
   onActioned?: () => void | Promise<void>;
-  /** Suppress the inline approve/reject footer so the page can render the actions
-   *  in its own sticky bottom bar (the modal keeps them inline). */
-  hideInlineActions?: boolean;
 }) {
-  const features = useFeatureFlags();
-
   const { request, mode } = selection;
-
   const manifest = request.manifest as Record<string, unknown>;
-  const fs = (request.fileSummary ?? {}) as FileSummary;
-  const mds = (request.manifestDiffSummary ?? {}) as ManifestDiffSummary;
-
-  const approved = mode === 'approved' ? (request as ApprovedRequest) : null;
-  const rejected = mode === 'rejected' ? (request as RejectedRequest) : null;
+  const now = useNowTick(REVIEW_META_TICK_MS);
 
   return (
     <Stack gap="md">
-      <Group gap="xs" align="flex-start">
-        <Text size="xs" c="dimmed">
-          Submitter:
-        </Text>
-        <Text size="xs">{request.submittedBy.username ?? `#${request.submittedBy.id}`}</Text>
-        <Text size="xs" c="dimmed">
-          ·
-        </Text>
-        <Text size="xs" c="dimmed">
-          {formatDate(request.submittedAt)}
-        </Text>
-        <Text size="xs" c="dimmed">
-          · {formatBytes(request.bundleSizeBytes)}
-        </Text>
-      </Group>
+      <ReviewSubmitterMeta request={request} now={now} />
 
-      {(approved || rejected) && (
-        <Alert
-          color={approved ? 'green' : 'red'}
-          variant="light"
-          icon={approved ? <IconCheck size={16} /> : <IconX size={16} />}
-          title={
-            <Group gap={6}>
-              <Text size="sm" fw={600}>
-                {approved ? 'Approved by' : 'Rejected by'}{' '}
-                {(approved ?? rejected)?.reviewedBy
-                  ? (approved ?? rejected)!.reviewedBy!.username
-                    ? `@${(approved ?? rejected)!.reviewedBy!.username}`
-                    : `#${(approved ?? rejected)!.reviewedBy!.id}`
-                  : 'unknown'}
-              </Text>
-              <Text size="xs" c="dimmed">
-                · {formatDate((approved ?? rejected)!.reviewedAt)}
-              </Text>
-            </Group>
-          }
-        >
-          {approved && approved.approvalNotes && (
-            <Stack gap={2}>
-              <Text size="xs" c="dimmed">
-                Approval notes
-              </Text>
-              <Text size="sm" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                {approved.approvalNotes}
-              </Text>
-            </Stack>
-          )}
-          {approved && !approved.approvalNotes && (
-            <Text size="xs" c="dimmed" fs="italic">
-              No approval notes were recorded.
-            </Text>
-          )}
-          {rejected && rejected.rejectionReason && (
-            <Stack gap={2}>
-              <Text size="xs" c="dimmed">
-                Rejection reason
-              </Text>
-              <Text size="sm" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                {rejected.rejectionReason}
-              </Text>
-            </Stack>
-          )}
-        </Alert>
-      )}
+      <ReviewDecisionAlert selection={selection} now={now} />
 
       {/* MOD REVIEW SANDBOX (#2831) — run the PENDING version in a temporary,
             mod-gated preview before approving. Pending requests only; dark
@@ -380,16 +633,9 @@ export function OnsiteReviewModalBody({
       )}
 
       {/* AGENTIC MOD CODE-REVIEW (App Blocks P2) — dispatch + poll + render an
-            agent code-review/security-audit report before approving. On-site
-            PENDING only, and DARK unless the mod-only `app-blocks-agentic-review`
-            CLIENT flag is enabled (fail-closed: absent Flipt flag → does not
-            render, so the panel is inert on merge). External/connect requests are
-            out of P2 scope — hidden. */}
-      {mode === 'pending' &&
-        !!features?.appBlocksAgenticReview &&
-        isOnsiteReviewRequest(request) && (
-          <AgentReviewPanel publishRequestId={request.id} slug={request.slug} />
-        )}
+            agent code-review/security-audit report before approving. The whole
+            gate lives in `ReviewAgentSection`. */}
+      <ReviewAgentSection selection={selection} />
 
       {/* F-E E5 — publisher screenshot gallery review. Publisher-supplied
             images are an abuse vector → the mod sees them (here, derived from
@@ -404,58 +650,9 @@ export function OnsiteReviewModalBody({
         <CurationPanel key={request.appBlockId} appBlockId={request.appBlockId} />
       )}
 
-      <Stack gap={4}>
-        <Text size="sm" fw={600}>
-          Files
-        </Text>
-        <Group gap={6}>
-          <Text size="sm">{fs.files?.length ?? 0} total</Text>
-          {(fs.added?.length ?? 0) > 0 && (
-            <Badge color="green" variant="light">
-              +{fs.added.length} added
-            </Badge>
-          )}
-          {(fs.changed?.length ?? 0) > 0 && (
-            <Badge color="yellow" variant="light">
-              ~{fs.changed.length} changed
-            </Badge>
-          )}
-          {(fs.removed?.length ?? 0) > 0 && (
-            <Badge color="red" variant="light">
-              −{fs.removed.length} removed
-            </Badge>
-          )}
-        </Group>
-        {/* The raw-source deep-link that used to sit here has been retired
-              (#3498). In-review snapshots are private now, so an anonymous
-              click on it 404s — a dead link is worse than no link. Source
-              review happens in the "Show code diff" panel below, which reads
-              the submitted artifact server-side and needs no second login.
-              `request.reviewRepoUrl` / `request.pushCommitUrl` are intentionally
-              still carried on the payload: a richer in-app file browser is
-              being designed separately and will reuse them. */}
-        {mds.kind === 'update' && (
-          <FileListPreview added={fs.added} removed={fs.removed} changed={fs.changed} />
-        )}
-        {/* Line-level code diff — lazy (only fetched when the mod toggles it
-              open) so the modal stays light by default. Bounded server-side;
-              binary / oversized / huge-diff files are labelled as not-shown
-              rather than linked out. */}
-        <CodeDiffPanel publishRequestId={request.id} />
-      </Stack>
+      <ReviewFilesSection request={request} />
 
-      <Stack gap={4}>
-        <Text size="sm" fw={600}>
-          Manifest diff
-        </Text>
-        {mds.kind === 'first-version' ? (
-          <Text size="xs" c="dimmed">
-            First version — full manifest below.
-          </Text>
-        ) : (
-          <ManifestDiffPreview diff={mds} />
-        )}
-      </Stack>
+      <ReviewManifestDiffSection request={request} />
 
       <Stack gap={4}>
         <Text size="sm" fw={600}>
@@ -464,18 +661,14 @@ export function OnsiteReviewModalBody({
         <ManifestView manifest={manifest} />
       </Stack>
 
-      {/* Approve/reject controls. Rendered inline here for the modal (its
-            footer, unchanged), and SUPPRESSED on the page (`hideInlineActions`),
-            which renders the same `ReviewActionBar` pinned in a sticky bottom bar.
-            The bar self-suppresses for read-only approved/rejected history. */}
-      {!hideInlineActions && (
-        <ReviewActionBar
-          selection={selection}
-          onClose={onClose}
-          onActioned={onActioned}
-          busyRef={busyRef}
-        />
-      )}
+      {/* Approve/reject controls — the modal's footer, inline. The bar
+            self-suppresses for read-only approved/rejected history. */}
+      <ReviewActionBar
+        selection={selection}
+        onClose={onClose}
+        onActioned={onActioned}
+        busyRef={busyRef}
+      />
     </Stack>
   );
 }
@@ -490,7 +683,7 @@ export function OnsiteReviewModalBody({
 // UNAUTHORIZED and the panel surfaces a "not enabled" message instead.
 // ---------------------------------------------------------------------------
 
-function ReviewPreviewPanel({
+export function ReviewPreviewPanel({
   publishRequestId,
   slug,
 }: {
@@ -672,7 +865,7 @@ function ReviewPreviewPanel({
 // pending app has no public screenshot URL yet — it isn't approved).
 // ---------------------------------------------------------------------------
 
-function ScreenshotsReviewPanel({ publishRequestId }: { publishRequestId: string }) {
+export function ScreenshotsReviewPanel({ publishRequestId }: { publishRequestId: string }) {
   const features = useFeatureFlags();
   const { data, isLoading, error } = trpc.blocks.getPublishRequestScreenshots.useQuery(
     { publishRequestId },
@@ -747,7 +940,7 @@ const CATEGORY_SELECT_DATA = MARKETPLACE_CATEGORIES.map((c) => ({
   label: MARKETPLACE_CATEGORY_LABELS[c],
 }));
 
-function CurationPanel({ appBlockId }: { appBlockId: string }) {
+export function CurationPanel({ appBlockId }: { appBlockId: string }) {
   const features = useFeatureFlags();
   const utils = trpc.useUtils();
   const metaQuery = trpc.blocks.getMarketplaceMeta.useQuery(
@@ -891,9 +1084,25 @@ function CurationPanel({ appBlockId }: { appBlockId: string }) {
 // browser mode without importing this page's tRPC server graph.
 // ---------------------------------------------------------------------------
 
-function CodeDiffPanel({ publishRequestId }: { publishRequestId: string }) {
+export function CodeDiffPanel({
+  publishRequestId,
+  autoOpen = false,
+}: {
+  publishRequestId: string;
+  /**
+   * Start expanded (and therefore start fetching) on mount.
+   *
+   * 🔴 THIS DOES NOT MAKE THE PANEL EAGER — the laziness just moved up one level. The
+   * review page mounts its Code tab's content only once the mod NAVIGATES to that tab, so
+   * `autoOpen` there still means "fetch when the mod asks for the diff", one click fewer.
+   * The modal leaves it `false`: its diff is one section of a long scroll, so auto-fetching
+   * a bundle diff on every modal open is exactly the cost this panel was made lazy to
+   * avoid.
+   */
+  autoOpen?: boolean;
+}) {
   const features = useFeatureFlags();
-  const [show, setShow] = useState(false);
+  const [show, setShow] = useState(autoOpen);
 
   const { data, isLoading, error } = trpc.blocks.getPublishRequestDiff.useQuery(
     { publishRequestId },
@@ -980,7 +1189,27 @@ const HANDLED_MANIFEST_KEYS = new Set([
   'settings',
 ]);
 
-function ManifestView({ manifest }: { manifest: Record<string, unknown> }) {
+export function ManifestView({
+  manifest,
+  includeScopes = true,
+}: {
+  manifest: Record<string, unknown>;
+  /**
+   * Render the PERMISSIONS card inline, as part of the manifest view.
+   *
+   * 🔴 THE REVIEW PAGE PASSES `false`, AND THE CARD IS NOT LOST — it is HOISTED. Permissions
+   * are the page's DEFAULT tab (`ManifestScopes`, rendered directly), so leaving it here too
+   * would show the same card twice on one page, in two tabs, with no way to tell which one a
+   * mod was looking at. The modal keeps the default `true`: it has one scroll and no tabs,
+   * so the card's only home is here.
+   *
+   * 🔴 IT IS A BRANCH, NOT A DOCUMENTED FIELD. The page's Permissions tab and this flag are
+   * two halves of one move; flipping this to `true` without deleting the page's own card
+   * re-creates the duplicate, which is why the page's tab test asserts exactly ONE
+   * permissions card in the document.
+   */
+  includeScopes?: boolean;
+}) {
   const otherKeys = useMemo(
     () =>
       Object.keys(manifest)
@@ -1002,7 +1231,7 @@ function ManifestView({ manifest }: { manifest: Record<string, unknown> }) {
           nothing at all when the manifest declares no `goods`, which is every app
           approved to date. */}
       <ManifestGoods manifest={manifest} />
-      <ManifestScopes manifest={manifest} />
+      {includeScopes && <ManifestScopes manifest={manifest} />}
       <ManifestTargets manifest={manifest} />
       <ManifestSettings manifest={manifest} />
       {/* Iframe + other-manifest-fields are collapsed-by-default disclosures:
@@ -1168,7 +1397,7 @@ function trustColor(tier: string): string {
   }
 }
 
-function ManifestScopeRow({
+export function ManifestScopeRow({
   scope,
   justifications,
 }: {
@@ -1184,7 +1413,22 @@ function ManifestScopeRow({
       ? rawJustification.trim()
       : null;
   return (
-    <Stack gap={2}>
+    /*
+      🔴 THE SENSITIVITY IS ON THE ROW AS STATE, NOT ONLY AS A WORD. A guard that looks for
+      the string "Sensitive" is walkable by a REWORD — and worse, by any other feature that
+      happens to spell it (the consent prompt and the granted-permissions panels both render
+      the same `SensitiveScopeBadge`, so a document-wide text match cannot say WHICH scope it
+      belongs to). `data-scope` + `data-sensitive` pin the id and the attribute together, so
+      a test can assert "THIS scope is flagged and THAT one is not" against the DOM rather
+      than against copy, and the assertion survives a rewrite of the badge's label.
+    */
+    <Stack
+      gap={2}
+      data-testid="apps-review-scope-row"
+      data-scope={scope}
+      data-sensitive={sensitive ? 'true' : 'false'}
+      data-known={known ? 'true' : 'false'}
+    >
       <Group gap={8} align="flex-start" wrap="nowrap">
         <Badge
           variant={known ? 'light' : 'outline'}
@@ -1214,7 +1458,7 @@ function ManifestScopeRow({
   );
 }
 
-function ManifestScopes({ manifest }: { manifest: Record<string, unknown> }) {
+export function ManifestScopes({ manifest }: { manifest: Record<string, unknown> }) {
   const scopes = Array.isArray(manifest.scopes)
     ? (manifest.scopes as unknown[]).filter((s): s is string => typeof s === 'string')
     : [];
@@ -1234,7 +1478,7 @@ function ManifestScopes({ manifest }: { manifest: Record<string, unknown> }) {
   const sensitiveScopes = scopes.filter((s) => isSensitiveBlockScope(s));
   const normalScopes = scopes.filter((s) => !isSensitiveBlockScope(s));
   return (
-    <Card withBorder p="sm">
+    <Card withBorder p="sm" data-testid="apps-review-permissions">
       <Stack gap="xs">
         {scopes.length === 0 ? (
           <>

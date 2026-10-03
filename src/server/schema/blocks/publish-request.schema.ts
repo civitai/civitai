@@ -298,11 +298,41 @@ export const mintReviewBlockTokenSchema = z.object({
 
 export type MintReviewBlockTokenInput = z.infer<typeof mintReviewBlockTokenSchema>;
 
+/**
+ * The three sub-analyses one agent run produces.
+ *
+ * 🔴 THE SAME THREE KEYS THE REPORT ROW AND THE RENDERER USE
+ * (`AGENT_REPORT_SECTIONS` in `~/components/Apps/agentReviewReport`), spelled here as a zod
+ * enum because this is the wire boundary. They are not re-exported from there on purpose:
+ * that module is a CLIENT view-model and this is a server schema, so the dependency would
+ * run the wrong way.
+ */
+export const AGENT_REVIEW_SECTION_VALUES = [
+  'scopeVerdicts',
+  'securityAudit',
+  'codeReview',
+] as const;
+
 /** Input for the MOD-ONLY agentic code-review `blocks.startAgentReview` (P1) —
- *  dispatches an ephemeral review agent for a PENDING request. Same shape as
- *  previewRequest (the pending request id). */
+ *  dispatches an ephemeral review agent for a PENDING request. */
 export const startAgentReviewSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
+  /**
+   * Re-run only these analyses.
+   *
+   * 🔴 OMITTED MEANS ALL THREE, AND THAT IS THE DEFAULT PATH — a first dispatch and the
+   * whole-report "Re-run all analyses" both leave this out, and the provisioned Job is then
+   * byte-identical to what it was before this field existed.
+   *
+   * 🔴 WHAT A SUBSET BUYS TODAY, STATED PLAINLY SO NOBODY OVER-READS IT. Civitai-side it
+   * (a) carries the list to the agent as a contract env var, and (b) SEEDS the new report
+   * row with the previous report's surviving sections, so a targeted retry can never lose a
+   * completed analysis no matter what the runner does. Whether the runner actually SKIPS the
+   * other two — the part that saves money — depends on the agent template consuming that
+   * env var, which ships separately. Until it does, a targeted re-run costs the same as a
+   * full one; it is never WORSE than today's only option, which is a full re-run.
+   */
+  sections: z.array(z.enum(AGENT_REVIEW_SECTION_VALUES)).min(1).max(3).optional(),
 });
 
 export type StartAgentReviewInput = z.infer<typeof startAgentReviewSchema>;
