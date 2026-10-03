@@ -8,7 +8,7 @@ Crucible is separate from the Challenges platform and its judging engine.
 
 1. **Create.** The creator sets up the crucible and pays the setup cost and any seeded pool. It starts right away, or at a scheduled time up to 30 days out. A crucible runs on one Buzz type (yellow or green) and lives only on that currency's site; a green crucible is limited to PG and PG-13.
 2. **Review.** The name, description and cover are checked automatically before anyone else can see the crucible. Until then only its creator and moderators can open it.
-3. **Enter.** While the crucible is active, entrants submit published media from their library, or generate or upload it from the submit dialog. Each entry pays the entry fee, except the free entries the creator offers.
+3. **Enter.** While the crucible is active, entrants submit published media from their library, or generate or upload it from the submit dialog. Media added from the dialog stays an unpublished draft until it is entered, and entering publishes it; a refused or refunded entry leaves it a draft. Each entry pays the entry fee in the Buzz of the site the entrant is on, except the free entries the creator offers.
 4. **Judge.** Signed-in users are shown two entries side by side and pick one. Every vote updates both entries' ratings.
 5. **Finish.** At the end time the crucible closes, final positions are fixed by rating, and prizes are paid out.
 

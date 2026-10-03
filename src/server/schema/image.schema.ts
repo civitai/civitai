@@ -657,6 +657,8 @@ export const toggleImageFlagSchema = z.object({
 });
 
 export type GetMyImagesInput = z.infer<typeof getMyImagesInput>;
-export const getMyImagesInput = infiniteQuerySchema
-  .merge(imageSelectProfileFilterSchema)
-  .extend({ publishedOnly: z.boolean().optional() });
+export const getMyImagesInput = infiniteQuerySchema.merge(imageSelectProfileFilterSchema).extend({
+  publishedOnly: z.boolean().optional(),
+  /** With publishedOnly: also the caller's unpublished media in these posts. */
+  draftPostIds: z.number().int().array().max(100).optional(),
+});

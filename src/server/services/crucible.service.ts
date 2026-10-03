@@ -65,7 +65,7 @@ import {
   crucibleListSelect,
   hasEntryImage,
 } from '~/server/selectors/crucible.selector';
-import { publishedImageWhere } from '~/server/selectors/image.selector';
+import { draftImageWhere, publishedImageWhere } from '~/server/selectors/image.selector';
 import {
   getCrucibleJudgingConfig,
   recordSessionVote,
@@ -88,7 +88,7 @@ import { resolveCoverImageId } from '~/server/services/cover-image.service';
 import { isNonSfwForGreen } from '~/server/games/daily-challenge/challenge-currency';
 import { getEffectiveBrowsingLevel } from '~/server/games/daily-challenge/challenge-visibility';
 import { checkCrucibleSettings } from '~/server/schema/crucible.schema';
-import { createPost } from '~/server/services/post.service';
+import { createPost, afterPostPublish } from '~/server/services/post.service';
 import { NotificationCategory } from '~/server/common/enums';
 import { imageResourcesCache } from '~/server/redis/caches';
 import {
@@ -1369,10 +1369,10 @@ export const createCrucibleEntryPost = async ({
     throw throwBadRequestError('This crucible is not accepting entries');
   if (crucible.userId === userId) throw throwBadRequestError(CANNOT_ENTER_OWN_CRUCIBLE);
 
+  // Unpublished until an image in it is entered: adding media is not entering it.
   const post = await createPost({
     userId,
     title: getCruciblePublishableName(crucible) ?? undefined,
-    publishedAt: new Date(),
   });
   return { id: post.id };
 };
@@ -1678,7 +1678,23 @@ export const submitEntry = async ({
     const isPublished = await dbRead.image.count({
       where: { id: imageId, ...publishedImageWhere() },
     });
-    if (!isPublished) {
+    // Media added from the entry modal sits in an unpublished post, published with the entry.
+    const draft = isPublished
+      ? null
+      : await dbRead.image.findFirst({
+          where: { id: imageId, ...draftImageWhere({ userId }) },
+          select: {
+            postId: true,
+            post: { select: { metadata: true, _count: { select: { images: true } } } },
+          },
+        });
+    // Entering must publish nothing else, and a post its model unpublished keeps its original date.
+    const draftPostId =
+      draft?.post?._count.images === 1 &&
+      !(draft.post.metadata as { prevPublishedAt?: unknown } | null)?.prevPublishedAt
+        ? draft.postId
+        : null;
+    if (!isPublished && !draftPostId) {
       return throwBadRequestError('Only published images can be entered');
     }
 
@@ -1787,6 +1803,14 @@ export const submitEntry = async ({
             AND ("endAt" IS NULL OR "endAt" > statement_timestamp())
         `;
         if (!open) throw throwBadRequestError('This crucible is not accepting entries');
+        if (draftPostId) {
+          const published = await tx.post.updateMany({
+            where: { id: draftPostId, userId, publishedAt: null },
+            data: { publishedAt: new Date() },
+          });
+          if (!published.count)
+            throw throwBadRequestError('This image changed while it was being entered. Try again.');
+        }
         return tx.crucibleEntry.create({
           data: {
             crucibleId,
@@ -1812,6 +1836,17 @@ export const submitEntry = async ({
           },
         });
       });
+
+      if (draftPostId)
+        await afterPostPublish({ postId: draftPostId, userId }).catch((error) =>
+          logToAxiom({
+            type: 'error',
+            name: 'crucible-entry-post-refresh-failed',
+            message: error instanceof Error ? error.message : String(error),
+            crucibleId,
+            postId: draftPostId,
+          })
+        );
 
       if (crucible.userId !== userId) {
         sendCrucibleNotification({
