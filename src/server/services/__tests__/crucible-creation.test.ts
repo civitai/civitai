@@ -424,6 +424,29 @@ describe('createCrucible — resource requirements', () => {
   });
 });
 
+describe('createCrucible — base model requirements', () => {
+  it('stores the base models without charging the resource requirements fee', async () => {
+    await createCrucible(input({ allowedBaseModels: ['SDXL 1.0'] }));
+
+    expect(chargedAmounts()).toEqual([SETUP_FEE]);
+    expect(storedData().allowedBaseModels).toEqual(['SDXL 1.0']);
+  });
+
+  it('charges the fee once when versions are required too', async () => {
+    await createCrucible(input({ allowedResources: [123], allowedBaseModels: ['SDXL 1.0'] }));
+
+    expect(chargedAmounts()).toEqual([SETUP_FEE + CRUCIBLE_RESOURCE_REQUIREMENTS_COST]);
+  });
+
+  it('refuses a base model that makes the other media type, before anything is written', async () => {
+    await expect(createCrucible(input({ allowedBaseModels: ['MiniMax H3'] }))).rejects.toThrow(
+      /allowed base model must make images/
+    );
+    expect(crucibleCreate).not.toHaveBeenCalled();
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+});
+
 describe('activateScheduledCrucibles', () => {
   it('opens only Pending crucibles whose start has passed', async () => {
     crucibleUpdateMany.mockResolvedValue({ count: 2 });

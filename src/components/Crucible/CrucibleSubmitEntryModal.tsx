@@ -79,6 +79,8 @@ export interface CrucibleSubmitEntryModalProps {
   maxClipSeconds?: number | null;
   /** Whether entries must be made with one of the crucible's required models. */
   requiresResources?: boolean;
+  /** Entries must be made with a checkpoint of one of these base models. */
+  allowedBaseModels?: string[];
   startAt?: Date | null;
   endAt?: Date | null;
   /** Optional array of allowed resource names to display in requirements */
@@ -334,6 +336,7 @@ export default function CrucibleSubmitEntryModal({
   currentEntryCount,
   maxClipSeconds,
   requiresResources = false,
+  allowedBaseModels = [],
   allowedResourceNames,
   startAt = null,
   endAt = null,
@@ -558,6 +561,9 @@ export default function CrucibleSubmitEntryModal({
     const hasNoResources = !!ineligibleReasons?.includes('no-resources');
     const usesRequiredModel =
       !hasNoResources && !ineligibleReasons?.includes('missing-required-resource');
+    const usesAllowedBaseModel =
+      !hasNoResources && !ineligibleReasons?.includes('wrong-base-model');
+    const requiresBaseModel = allowedBaseModels.length > 0;
     const requiredModelLabel = allowedResourceNames?.length
       ? `Uses ${allowedResourceNames.join(' or ')}`
       : 'Uses a required model';
@@ -574,6 +580,20 @@ export default function CrucibleSubmitEntryModal({
                 : hasNoResources
                 ? 'No models detected on this image'
                 : 'Does not use a required model',
+            },
+          ]
+        : []),
+      ...(requiresBaseModel
+        ? [
+            {
+              label: `Made with a ${allowedBaseModels.join(' or ')} checkpoint`,
+              passes: usesAllowedBaseModel,
+              pending: eligibilityPending,
+              failReason: eligibilityPending
+                ? 'Checking the models used…'
+                : hasNoResources
+                ? 'No models detected on this image'
+                : 'Not made with an allowed base model',
             },
           ]
         : []),
@@ -620,7 +640,8 @@ export default function CrucibleSubmitEntryModal({
         !eligibilityPending &&
         ineligibleReasons.length === 0 &&
         isRecentEnough &&
-        (!requiresResources || usesRequiredModel),
+        (!requiresResources || usesRequiredModel) &&
+        (!requiresBaseModel || usesAllowedBaseModel),
       isAlreadySubmitted,
       isChecking:
         eligibilityPending &&
@@ -644,6 +665,8 @@ export default function CrucibleSubmitEntryModal({
         ? 'Created before this crucible started'
         : requiresResources && !usesRequiredModel
         ? 'Does not use a required model'
+        : requiresBaseModel && !usesAllowedBaseModel
+        ? 'Not made with an allowed base model'
         : undefined,
     };
   };
@@ -837,6 +860,11 @@ export default function CrucibleSubmitEntryModal({
               >
                 {isVideo ? 'Videos only' : 'Images only'}
               </Badge>
+              {allowedBaseModels.length > 0 && (
+                <Badge {...requirementBadgeProps} leftSection={<IconCube size={12} />}>
+                  {allowedBaseModels.join(' / ')}
+                </Badge>
+              )}
               <CrucibleContentLevelBadges nsfwLevel={nsfwLevel} className="contents" />
             </div>
           </div>

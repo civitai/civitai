@@ -74,6 +74,7 @@ const crucible = (overrides: Record<string, unknown> = {}) => ({
   maxClipSeconds: null,
   prizePositions: { '1': 50, '2': 30, '3': 20 },
   allowedResources: null,
+  allowedBaseModels: [],
   duration: 24 * 60,
   seededPrizePool: 0,
   buzzTransactionId: null,
@@ -195,6 +196,40 @@ describe('updateCrucible — while upcoming', () => {
       createMultiAccountBuzzTransaction.mock.invocationCallOrder[0]
     );
     expect(written().buzzTransactionId).toMatch(/^crucible-setup-4-(?!old)/);
+  });
+
+  it('restricts by base model for free', async () => {
+    findUnique.mockResolvedValue(upcoming());
+
+    await edit({ allowedBaseModels: ['SDXL 1.0'] });
+
+    expect(written()).toMatchObject({ allowedBaseModels: ['SDXL 1.0'] });
+    expect(charged()).toEqual([]);
+  });
+
+  it('locks the base models once the crucible has started', async () => {
+    await expect(edit({ allowedBaseModels: ['SDXL 1.0'] })).rejects.toThrow(
+      /only its name, description and images can change/
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('re-checks every allowed base model against a new content type', async () => {
+    findUnique.mockResolvedValue(upcoming({ allowedBaseModels: ['SDXL 1.0'] }));
+
+    await expect(edit({ contentType: MediaType.video })).rejects.toThrow(
+      /allowed base model must make videos/
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('refuses adding a base model that makes the other media type', async () => {
+    findUnique.mockResolvedValue(upcoming());
+
+    await expect(edit({ allowedBaseModels: ['MiniMax H3'] })).rejects.toThrow(
+      /allowed base model must make images/
+    );
+    expect(update).not.toHaveBeenCalled();
   });
 
   it('refuses swapping in a model that is not published and public', async () => {

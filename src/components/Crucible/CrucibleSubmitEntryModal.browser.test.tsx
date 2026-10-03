@@ -19,6 +19,7 @@ import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 
 const mocks = vi.hoisted(() => ({
   images: [] as { id: number }[],
+  reasonsById: {} as Record<number, string[]>,
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
@@ -45,7 +46,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         getMinVotesToPlace: { useQuery: () => ({ data: undefined }) },
         getById: { useQuery: () => ({ data: { viewerEntries: [] } }) },
         checkEntryEligibility: {
-          useQuery: () => ({ data: mocks.images.map(({ id }) => ({ imageId: id, reasons: [] })) }),
+          useQuery: () => ({
+            data: mocks.images.map(({ id }) => ({
+              imageId: id,
+              reasons: mocks.reasonsById[id] ?? [],
+            })),
+          }),
         },
       },
     },
@@ -140,6 +146,7 @@ const plainSubmit = () =>
 
 beforeEach(() => {
   mocks.images = [image(1), image(2)];
+  mocks.reasonsById = {};
 });
 
 describe('CrucibleSubmitEntryModal — free entries', () => {
@@ -178,5 +185,27 @@ describe('CrucibleSubmitEntryModal — free entries', () => {
     await vi.waitFor(() =>
       expect(document.body.textContent).toContain('First entry free, then 50 Buzz per entry')
     );
+  });
+});
+
+describe('CrucibleSubmitEntryModal — base model requirement', () => {
+  test('selects only the image the server says used an allowed base model', async () => {
+    mocks.reasonsById = { 1: ['wrong-base-model'] };
+    renderWithProviders(
+      <CrucibleSubmitEntryModal
+        crucibleId={1}
+        crucibleName="H3 only"
+        entryFee={50}
+        entryLimit={3}
+        nsfwLevel={1}
+        contentType={MediaType.image}
+        currentEntryCount={0}
+        allowedBaseModels={['MiniMax H3']}
+      />
+    );
+    await select(1, 2);
+
+    await vi.waitFor(() => expect(buzzButton()?.textContent).toContain('Submit 1 Entry'));
+    expect(buzzButton()?.dataset.amount).toBe('50');
   });
 });
