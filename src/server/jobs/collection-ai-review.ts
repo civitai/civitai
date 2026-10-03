@@ -278,12 +278,9 @@ function logFlagError(collectionId: number, error: string, imageIds?: number[]) 
   }).catch(() => undefined);
 }
 
-// The queues minor review outranks: the image leaves them for a stricter one, and a person still
-// sees it. Every other key is left alone, so nothing a moderator set is cleared or downgraded.
-export const MINOR_UPGRADABLE_REVIEW_KEYS = ['newUser', 'tag'] as const;
-// 'minor' itself is a no-op rewrite, listed so an image already queued counts as routed.
-const MINOR_WRITABLE_REVIEW_KEYS = [...MINOR_UPGRADABLE_REVIEW_KEYS, 'minor'];
-
+// Only fills an empty slot. Even the queues minor review outranks are left alone: accepting in the
+// minor queue also resolves tag reviews it never shows and can clear the scanner's minor flag, so
+// moving an image there could lower it. Rewriting 'minor' with itself counts it as routed.
 // Resolves false only when the write itself failed.
 export async function flagForMinorReview({
   collectionId,
@@ -300,7 +297,7 @@ export async function flagForMinorReview({
       UPDATE "Image"
       SET "needsReview" = 'minor', "updatedAt" = now()
       WHERE id IN (${Prisma.join(imageIds)})
-        AND ("needsReview" IS NULL OR "needsReview" IN (${Prisma.join(MINOR_WRITABLE_REVIEW_KEYS)}))
+        AND ("needsReview" IS NULL OR "needsReview" = 'minor')
         AND ingestion = 'Scanned'
       RETURNING id, "postId"
     `;

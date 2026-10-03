@@ -12,7 +12,6 @@ import type { CollectionAiReviewSchema } from '~/server/schema/collection.schema
 import { DEFAULT_AI_REVIEW_REASON_COPY } from '~/server/services/ai/collection-review.service';
 import {
   MAX_REVIEW_ATTEMPTS,
-  MINOR_UPGRADABLE_REVIEW_KEYS,
   UNAVAILABLE_IMAGE_REJECTION,
   recordFailedAttempt,
   resolveAutomatedRejectionReason,
@@ -326,50 +325,21 @@ describe('reviewCollection: a minor-related escalation', () => {
     expect(statusWrites()).toEqual([]);
   });
 
-  // Overwriting another queue's value would take the image out of that queue, and the job must
-  // only ever add review.
-  it('only fills an empty slot, or one minor review outranks, on a scanned image', async () => {
+  // F1 decision: never move an image out of another queue, not even newUser or tag, which minor
+  // review outranks. A minor-queue accept resolves tag reviews the minor view never shows and can
+  // clear the scanner's minor flag, so the move could lower the image. Decided with the
+  // coordinator after review; widening this guard reopens that.
+  it('only fills an empty slot on a scanned image, leaving every other queue alone', async () => {
     queuePending([pendingItem()]);
     modelSees({ depictsMinor: true, minorIsPhotorealistic: true });
 
     await reviewCollection(COLLECTION_ID, config);
 
     expect(sqlOf(minorFlagCalls()[0]).replace(/\s+/g, ' ').trim()).toBe(
-      `UPDATE "Image" SET "needsReview" = 'minor', "updatedAt" = now() WHERE id IN (?) AND ("needsReview" IS NULL OR "needsReview" IN (?)) AND ingestion = 'Scanned' RETURNING id, "postId"`
+      `UPDATE "Image" SET "needsReview" = 'minor', "updatedAt" = now() WHERE id IN (?) AND ("needsReview" IS NULL OR "needsReview" = 'minor') AND ingestion = 'Scanned' RETURNING id, "postId"`
     );
-  });
-
-  // The F1 decision: minor review may take an image from the new-user and tag queues, which it
-  // outranks, and from no other. Widening this moves images out of queues that exist for a
-  // different reason (poi, appeal, csam, ...), so get that decided before changing it.
-  it('upgrades to minor from exactly the new-user and tag queues', () => {
-    expect([...MINOR_UPGRADABLE_REVIEW_KEYS]).toEqual(['newUser', 'tag']);
-  });
-
-  const writableKeys = async () => {
-    queuePending([pendingItem()]);
-    modelSees({ depictsMinor: true, minorIsPhotorealistic: true });
-    await reviewCollection(COLLECTION_ID, config);
-    return (minorFlagCalls()[0][2] as { values: string[] }).values;
-  };
-
-  it.each(['newUser', 'tag'])(
-    'moves an image held for %s review into the minor queue',
-    async (key) => {
-      expect(await writableKeys()).toContain(key);
-    }
-  );
-
-  it.each(['poi', 'appeal', 'modRule', 'csam', 'remixSource', 'reported', 'bestiality'])(
-    'leaves an image held for %s review where it is',
-    async (key) => {
-      expect(await writableKeys()).not.toContain(key);
-    }
-  );
-
-  // Rewriting 'minor' with itself changes nothing, and counts an already-queued image as routed.
-  it('treats an image already in the minor queue as routed', async () => {
-    expect(await writableKeys()).toEqual(['newUser', 'tag', 'minor']);
+    // The image ids are the only bound value: no key list can reach the guard.
+    expect(minorFlagCalls()[0]).toHaveLength(2);
   });
 
   it('leaves the image alone for an escalation that is not about a minor', async () => {
@@ -484,7 +454,7 @@ describe('reviewCollection: a minor-related escalation', () => {
     );
   });
 
-  it('skips the cache bust for an image with no post', async () => {
+  it('passes no post to the cache bust for an image with no post', async () => {
     queuePending([pendingItem()], { flagImage: () => [{ id: IMAGE_ID, postId: null }] });
     modelSees({ depictsMinor: true, minorIsPhotorealistic: true });
 
