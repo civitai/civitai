@@ -1,6 +1,8 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { describe, expect, test } from 'vitest';
+// `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
+import { stripComments } from '../../../../../test/strip-comments';
 
 /**
  * THE SEAM BETWEEN THE REVIEW QUEUE'S PAYLOAD AND THE REVIEW PAGE'S.
@@ -30,13 +32,45 @@ import { describe, expect, test } from 'vitest';
 
 const SERVICE_REL = 'src/server/services/blocks/publish-request.service.ts';
 
-/** Every `submittedBy: { select: { … } }` literal in the service, as normalised text. */
+/**
+ * Every `submittedBy: { select: … }` literal in the service, as normalised text.
+ *
+ * 🔴 A BRACE-COUNTING SCAN, NOT `[^}]*`. The lazy form cannot span a NESTED object, so the
+ * moment anyone takes this file's own advice and adds `profilePicture: { select: { … } }`,
+ * every capture truncates at the inner `}` — two selects identical up to that point and
+ * divergent after it then compare EQUAL, the parity assertion passes, and so does the
+ * ≥5 positive control. The guard would go quietly blind at exactly the edit it exists to
+ * protect. (`test/component-setup.tsx` records the general version of this at length:
+ * several regexes cannot agree about where a block ends.)
+ *
+ * 🔴 COMMENTS ARE STRIPPED FIRST, via the repo's shared `stripComments`. A commented-out
+ * `submittedBy: { select: { … } }` is not a reader, and counting one would both inflate the
+ * positive control and let a stale shape vote on parity.
+ */
 function submitterSelects(source: string): string[] {
+  const code = stripComments(source);
   const out: string[] = [];
-  const re = /submittedBy:\s*\{\s*select:\s*\{([^}]*)\}\s*\}/g;
+  const opener = /submittedBy:\s*\{\s*select:\s*\{/g;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(source)) !== null) {
-    out.push(m[1].replace(/\s+/g, ' ').trim());
+  while ((m = opener.exec(code)) !== null) {
+    // Walk from just inside the `select: {` brace, counting depth, to its true match.
+    let depth = 1;
+    let i = m.index + m[0].length;
+    const start = i;
+    while (i < code.length && depth > 0) {
+      const ch = code[i];
+      if (ch === '{') depth += 1;
+      else if (ch === '}') depth -= 1;
+      i += 1;
+    }
+    if (depth !== 0) continue; // unbalanced — not a literal we can read
+    out.push(
+      code
+        .slice(start, i - 1)
+        .replace(/\s+/g, ' ')
+        .trim()
+    );
+    opener.lastIndex = i;
   }
   return out;
 }
@@ -61,6 +95,29 @@ describe('the moderator review surfaces agree about the submitter payload', () =
       submittedBy: { select: { id: true, username: true, image: true, deletedAt: true } }
     `;
     expect(new Set(submitterSelects(divergent)).size).toBe(2);
+  });
+
+  test('🔴 NEGATIVE CONTROL: it can still fail once a select carries a NESTED literal', () => {
+    // The case the old `[^}]*` form went blind on, and the exact edit this file's docstring
+    // invites. Both of these are identical up to the nested `profilePicture` and divergent
+    // after it; a scan that truncated at the inner brace would call them equal.
+    const nested = `
+      submittedBy: { select: { id: true, profilePicture: { select: { url: true } }, image: true } }
+      submittedBy: { select: { id: true, profilePicture: { select: { url: true } }, image: false } }
+    `;
+    const seen = submitterSelects(nested);
+    expect(seen, 'both nested literals are read whole').toHaveLength(2);
+    expect(seen[0]).toContain('profilePicture');
+    expect(new Set(seen).size, 'and they are told apart').toBe(2);
+  });
+
+  test('🔴 a COMMENTED-OUT select is not counted as a reader', () => {
+    const commented = `
+      // submittedBy: { select: { id: true } }
+      /* submittedBy: { select: { username: true } } */
+      submittedBy: { select: { id: true, username: true, image: true } }
+    `;
+    expect(submitterSelects(commented)).toHaveLength(1);
   });
 
   test('🔴 every `submittedBy` select in the service is IDENTICAL', () => {

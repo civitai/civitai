@@ -2,6 +2,11 @@ import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server';
 import { AI_MODELS } from '~/server/services/ai/openrouter';
 import { getDp1Target, k8sFetch, unwrap } from '~/server/services/blocks/apps-pipeline.service';
+import {
+  AGENT_REVIEW_SECTIONS,
+  isAgentSectionFailureMarker,
+  type AgentReviewSection,
+} from '~/shared/constants/agent-review-section.constants';
 
 /**
  * AGENTIC MOD CODE-REVIEW (App Blocks P1) — provisioning lane.
@@ -49,30 +54,12 @@ export function agentReviewName(publishRequestId: string): string {
 }
 
 /**
- * Is this stored section slot a FAILURE MARKER rather than a result?
- *
- * The runner persists each section verbatim and writes `{ error: … }` (or a bare string log
- * dump) when that sub-analysis failed. This is the SERVER-side twin of
- * `sectionAnalysisError` in `~/components/Apps/agentReviewReport`; it is spelled here
- * rather than imported because a server service must not depend on a client view-model, and
- * it answers a narrower question (boolean, not a message).
+ * 🔴 THE LEDGER IS SHARED, NOT RESTATED. `AGENT_REVIEW_SECTIONS` and the failure predicate
+ * live in `~/shared/constants/agent-review-section.constants` so this service, the tRPC
+ * input schema and the client renderer all read ONE list — see that module for what the
+ * four separate copies used to make possible (a full re-run silently classified as targeted,
+ * seeding stale verdicts into fresh analysis).
  */
-function isSectionFailureMarker(value: unknown): boolean {
-  if (typeof value === 'string') return value.trim().length > 0;
-  if (value !== null && typeof value === 'object') {
-    const o = value as Record<string, unknown>;
-    return 'error' in o && o.error != null;
-  }
-  return false;
-}
-
-/**
- * The three sub-analyses one run produces. Mirrors `AGENT_REVIEW_SECTION_VALUES` in the
- * input schema and `AGENT_REPORT_SECTIONS` in the client view-model — the report row has one
- * Json column per entry.
- */
-export const AGENT_REVIEW_SECTIONS = ['scopeVerdicts', 'securityAudit', 'codeReview'] as const;
-export type AgentReviewSection = (typeof AGENT_REVIEW_SECTIONS)[number];
 
 export type StartAgentReviewArgs = {
   publishRequestId: string;
@@ -237,7 +224,7 @@ export async function startAgentReview(
         // Skip a null/absent slot, and skip a slot that is itself a failure marker: seeding
         // a `{ error: … }` forward would re-report an old failure as if it were this run's.
         if (value == null) continue;
-        if (isSectionFailureMarker(value)) continue;
+        if (isAgentSectionFailureMarker(value)) continue;
         carried[section] = value;
       }
       // The model string describes the run that produced the carried content; keep it so a

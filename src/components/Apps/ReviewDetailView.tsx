@@ -1,13 +1,13 @@
 import { Stack } from '@mantine/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  REVIEW_META_TICK_MS,
   ReviewDecisionAlert,
   ReviewSubmitterMeta,
   type OnsiteReviewSelection,
 } from '~/components/Apps/OnsiteReviewModal';
 import { ReviewActionBar, type ReviewActionStatus } from '~/components/Apps/ReviewActionBar';
 import { ReviewDetailTabsView } from '~/components/Apps/ReviewDetailTabsView';
+import { useNowTick } from '~/components/Apps/reviewRelativeTime';
 import { useReviewNavigationGuard } from '~/components/Apps/useReviewNavigationGuard';
 
 /**
@@ -70,12 +70,10 @@ export function ReviewDetailView({
   // tabs can be driven mid-mutation without a spurious "leave the page?" prompt.
   const bypassGuard = useReviewNavigationGuard(status === 'submitting');
 
-  // One timer for the whole view's relative timestamps (see `REVIEW_META_TICK_MS`).
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), REVIEW_META_TICK_MS);
-    return () => clearInterval(id);
-  }, []);
+  // 🔴 ONE TIMER FOR THE WHOLE VIEW, and the SHARED hook rather than a fourth copy of its
+  // four lines. Its blast radius is bounded by `ReviewDetailTabsView` being memoised — see
+  // that component's note.
+  const now = useNowTick();
 
   // The action bar calls this after a successful approve/reject. Trip the guard's
   // bypass SYNCHRONOUSLY (before the redirect fires in `onClose`) so the guard —

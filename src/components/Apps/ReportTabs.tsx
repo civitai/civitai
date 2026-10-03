@@ -25,6 +25,7 @@ import {
   IconShieldLock,
 } from '@tabler/icons-react';
 import {
+  AGENT_REPORT_SECTION_LABELS,
   agentReportSectionStatuses,
   fileLineLabel,
   findingAnchorId,
@@ -142,7 +143,16 @@ export function SectionFailed({
   error: string;
   /** Which analysis this is — passed back to `onRerun`. Omit to render no control. */
   section?: AgentReportSection;
-  /** Dispatch a re-run of THIS analysis. Omitted ⇒ no button (the modal path). */
+  /**
+   * Dispatch a re-run of THIS analysis. Omitted ⇒ no button.
+   *
+   * ⚠️ NO PRODUCTION CALLER OMITS IT TODAY, and an earlier version of this line said
+   * "(the modal path)" — describing a modal/page difference that does not exist.
+   * `AgentReviewPanel` passes it on BOTH its branches, and the queue modal renders that same
+   * panel, so the modal gets the control too. The prop stays optional because this renderer
+   * is prop-only by design (the offsite listing review is expected to adopt it), not because
+   * one of today's surfaces goes without.
+   */
   onRerun?: (section: AgentReportSection) => void;
   rerunning?: boolean;
 }) {
@@ -176,6 +186,35 @@ export function SectionFailed({
           </Button>
         </Group>
       )}
+    </Alert>
+  );
+}
+
+/**
+ * A section that NEVER RAN — the slot is absent, not empty.
+ *
+ * 🔴 "DID NOT RUN" AND "FOUND NOTHING" ARE DIFFERENT ANSWERS, and conflating them is the
+ * worst outcome available on this surface: a moderator reading "No security-audit findings."
+ * for an audit that never executed is being told the bundle is clean by a report that never
+ * looked at it. The shape is reachable and this change is what creates it — a TARGETED
+ * re-run seeds forward only the sections it is not retrying, so the new row's other slots are
+ * null until the runner fills them, and a provisioning failure on that row freezes it there.
+ */
+export function SectionDidNotRun({ label }: { label: string }) {
+  return (
+    <Alert
+      color="gray"
+      variant="light"
+      icon={<IconInfoCircle size={14} />}
+      data-testid="apps-report-section-missing"
+    >
+      <Text size="xs" fw={600}>
+        This analysis did not run
+      </Text>
+      <Text size="xs" mt={2}>
+        No {label.toLowerCase()} result was recorded for this run — which is NOT the same as finding
+        nothing. Re-run it to get a verdict.
+      </Text>
     </Alert>
   );
 }
@@ -361,7 +400,9 @@ export function FindingsCards({
  * 🔴 THE STATUS IS ON THE TAB, NOT ONLY INSIDE THE PANEL, and that is what makes a partial
  * failure findable. With the whole-report banner gone, a mod landing on a report where one
  * analysis broke would otherwise have to open all three tabs to discover which. A `failed`
- * section replaces its count with a red marker; `missing` dims the label.
+ * section replaces its count with a red marker and a `missing` one with a grey "not run"
+ * marker — in both cases REPLACING the count, because a count of `0` for an analysis that
+ * never produced a result is the lie this whole surface exists to stop telling.
  *
  * 🔴 THE MARKER CARRIES `data-section-status`, A VALUE FROM AN ENUMERATED SET — not a word.
  * A guard that matched the string "failed" would be satisfied by any other feature on the
@@ -388,9 +429,11 @@ function TabLabel({
           </Badge>
         </Tooltip>
       ) : status === 'missing' ? (
-        <Badge size="xs" variant="outline" color="gray" data-testid="apps-report-tab-missing">
-          none
-        </Badge>
+        <Tooltip label="This analysis produced no result — it is not a clean verdict" withArrow>
+          <Badge size="xs" variant="outline" color="gray" data-testid="apps-report-tab-missing">
+            not run
+          </Badge>
+        </Tooltip>
       ) : (
         count != null && (
           <Badge size="xs" variant="light" color="gray" circle>
@@ -411,6 +454,7 @@ export function CodeReviewTab({
   highlightedId,
   onRerun,
   rerunning,
+  status,
 }: {
   codeReview: CodeReviewView;
   error: string | null;
@@ -419,7 +463,18 @@ export function CodeReviewTab({
   /** Dispatch a re-run of THIS analysis alone. Omitted ⇒ the failure state has no control. */
   onRerun?: (section: AgentReportSection) => void;
   rerunning?: boolean;
+  /**
+   * What this analysis DID — `complete` | `failed` | `missing`.
+   *
+   * 🔴 `missing` IS NOT `complete`-WITH-NOTHING. Without this prop an absent slot took the
+   * success path and rendered the "no findings" empty state for an analysis that never ran.
+   * Optional so the prop-only contract is unchanged for a caller that does not have it;
+   * absent behaves exactly as before.
+   */
+  status?: AgentSectionStatus;
 }) {
+  if (status === 'missing')
+    return <SectionDidNotRun label={AGENT_REPORT_SECTION_LABELS['codeReview']} />;
   if (error)
     return (
       <SectionFailed error={error} section="codeReview" onRerun={onRerun} rerunning={rerunning} />
@@ -470,6 +525,7 @@ export function SecurityAuditTab({
   highlightedId,
   onRerun,
   rerunning,
+  status,
 }: {
   securityAudit: SecurityAuditView;
   error: string | null;
@@ -478,7 +534,18 @@ export function SecurityAuditTab({
   /** Dispatch a re-run of THIS analysis alone. Omitted ⇒ the failure state has no control. */
   onRerun?: (section: AgentReportSection) => void;
   rerunning?: boolean;
+  /**
+   * What this analysis DID — `complete` | `failed` | `missing`.
+   *
+   * 🔴 `missing` IS NOT `complete`-WITH-NOTHING. Without this prop an absent slot took the
+   * success path and rendered the "no findings" empty state for an analysis that never ran.
+   * Optional so the prop-only contract is unchanged for a caller that does not have it;
+   * absent behaves exactly as before.
+   */
+  status?: AgentSectionStatus;
 }) {
+  if (status === 'missing')
+    return <SectionDidNotRun label={AGENT_REPORT_SECTION_LABELS['securityAudit']} />;
   if (error)
     return (
       <SectionFailed
@@ -579,18 +646,30 @@ export function ScopesTab({
   error,
   onRerun,
   rerunning,
+  status,
 }: {
   scopeVerdicts: ScopeVerdictsView;
   error: string | null;
   /** Dispatch a re-run of THIS analysis alone. Omitted ⇒ the failure state has no control. */
   onRerun?: (section: AgentReportSection) => void;
   rerunning?: boolean;
+  /**
+   * What this analysis DID — `complete` | `failed` | `missing`.
+   *
+   * 🔴 `missing` IS NOT `complete`-WITH-NOTHING. Without this prop an absent slot took the
+   * success path and rendered the "no findings" empty state for an analysis that never ran.
+   * Optional so the prop-only contract is unchanged for a caller that does not have it;
+   * absent behaves exactly as before.
+   */
+  status?: AgentSectionStatus;
 }) {
   // Responsive: the 6-column table squishes at narrow widths (long monospace
   // scope ids / evidence paths wrap char-by-char). Below `sm` we render each
   // scope as a stacked label/value card; wider, the table scrolls horizontally.
   const isNarrow = useMediaQuery('(max-width: 768px)');
 
+  if (status === 'missing')
+    return <SectionDidNotRun label={AGENT_REPORT_SECTION_LABELS['scopeVerdicts']} />;
   if (error)
     return (
       <SectionFailed
@@ -814,8 +893,9 @@ export function ReportTabs({
    *
    * 🔴 A PROP, NOT A MUTATION IN HERE. This renderer is deliberately tRPC-free so the
    * offsite listing review can adopt it, so the owner of the mutation (`AgentReviewPanel`)
-   * hands the action down. Omitted ⇒ the per-section failure state renders with no control,
-   * which is the queue modal's behaviour today.
+   * hands the action down. Omitted ⇒ the per-section failure state renders with no control —
+   * ⚠️ which no production caller does today, modal included; see `SectionFailed`'s
+   * `onRerun`.
    */
   onRerunSection?: (section: AgentReportSection) => void;
   /** The section whose re-run is in flight, if any. */
@@ -1013,6 +1093,7 @@ export function ReportTabs({
           <ScopesTab
             scopeVerdicts={scopeVerdicts}
             error={scopeError}
+            status={sectionStatuses.scopeVerdicts}
             onRerun={onRerunSection}
             rerunning={rerunningSection === 'scopeVerdicts'}
           />
@@ -1021,6 +1102,7 @@ export function ReportTabs({
           <SecurityAuditTab
             securityAudit={securityAudit}
             error={securityError}
+            status={sectionStatuses.securityAudit}
             deepLinkable={deepLinkable}
             highlightedId={highlightedId}
             onRerun={onRerunSection}
@@ -1031,6 +1113,7 @@ export function ReportTabs({
           <CodeReviewTab
             codeReview={codeReview}
             error={codeError}
+            status={sectionStatuses.codeReview}
             deepLinkable={deepLinkable}
             highlightedId={highlightedId}
             onRerun={onRerunSection}

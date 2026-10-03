@@ -178,7 +178,7 @@ describe('ReviewDetailView — sticky action bar', () => {
     // the PERMISSIONS card when the page became tabbed: the code-diff affordance now lives
     // in the Code tab, and the default tab is Permissions. The point of the assertion is
     // unchanged — the shared review body rendered something — and the tab mechanics
-    // themselves are covered in `ReviewDetailTabsView.browser.test.tsx`.
+    // themselves are covered in `ReviewDetailTabs.browser.test.tsx`.
     await expect.element(page.getByTestId('apps-review-permissions')).toBeInTheDocument();
     // The pinned action bar (labelled group) with both terminal actions.
     const bar = page.getByRole('group', { name: 'Review actions' });
@@ -365,7 +365,7 @@ describe('ReviewDetailView — the STORE LISTING media section', () => {
    * source of truth — so the scaffold's `router.replace` (a `vi.fn()` that does not mutate
    * `query`) cannot move it. Setting the query is also the more faithful test: it exercises
    * the DEEP LINK a mod actually receives. The click half — that selecting a tab REWRITES
-   * the URL — is asserted in `ReviewDetailTabsView.browser.test.tsx`. Precedent:
+   * the URL — is asserted in `ReviewDetailTabs.browser.test.tsx`. Precedent:
    * `AppActivityPage.browser.test.tsx`, same split for the same reason.
    */
   beforeEach(() => {

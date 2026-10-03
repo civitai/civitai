@@ -72,13 +72,20 @@ describe('the per-file header', () => {
     await expect.element(page.getByText('+12')).toBeInTheDocument();
     await expect.element(page.getByText('−3')).toBeInTheDocument();
     // The header must be `position: sticky` — a long file whose header scrolls away leaves
-    // the mod reading numbers with no idea which file they belong to. Asserted on the
-    // RESOLVED style, so a refactor that moved the declaration still counts.
-    const header = page.getByText('src/App.tsx').element().closest('div');
-    const sticky = Array.from(document.querySelectorAll<HTMLElement>('div')).find(
-      (el) => getComputedStyle(el).position === 'sticky' && el.contains(header!)
-    );
-    expect(sticky, 'a sticky ancestor around the file header').toBeTruthy();
+    // the mod reading numbers with no idea which file they belong to.
+    //
+    // 🔴 ON THE HEADER ELEMENT ITSELF, NOT "SOME STICKY ANCESTOR". The looser form accepted
+    // `el === header` as well as any wrapper, so moving the declaration up to the `Card` —
+    // which breaks the float-over-code behaviour entirely, since the card is not inside the
+    // scroller — still passed.
+    // 🔴 THE HEADER BY TESTID, NOT `closest('div')` FROM THE PATH TEXT. The path sits inside
+    // an inner `Group`, so `closest` returned THAT — and the first version of this assertion
+    // read `static` off it and would have been "fixed" by loosening back to "some sticky
+    // ancestor", which is the check that could not see the regression it exists for.
+    const header = page.getByTestId('apps-review-diff-file-header').element() as HTMLElement;
+    const style = getComputedStyle(header);
+    expect(style.position, 'the file header is position: sticky').toBe('sticky');
+    expect(style.top, 'the file header sticks to the top of its scroller').toBe('0px');
   });
 
   test('collapsed by default — the laziness is unchanged', async () => {
@@ -149,26 +156,56 @@ describe('unified layout (the default)', () => {
     expect(getComputedStyle(codeCell).whiteSpace).toBe('pre');
   });
 
+  /**
+   * 🔴 INVARIANT GUARD, NOT REGRESSION COVERAGE — measured, not assumed. Every case in this
+   * block was run against `origin/main` with the new pure modules copied in, and PASSED there.
+   * It pins behaviour this change PRESERVES; it never watched the defect it describes.
+   * Do not count it toward "the redesign is tested".
+   */
   test('🔴 EVERY painted background is `light-dark(...)` — the "white diff box in dark mode" bug', async () => {
-    // This module was corrected for that defect once; a fixed `green-0`/`red-0`/`gray-0`
-    // here is the regression. Asserted on the AUTHORED inline style string, which the
-    // browser preserves verbatim, so it is colour-scheme independent.
+    // This module was corrected for that defect once; a fixed light-only shade here is the
+    // regression. Asserted on the AUTHORED inline style string, which the browser preserves
+    // verbatim, so it is colour-scheme independent.
+    //
+    // 🔴 THE SWEEP IS OVER *EVERY* `--mantine-color-` TOKEN, not a list of the four spellings
+    // in use today. A list is walkable: a regression reaching for `gray-2`, `green-1`,
+    // `blue-0` or `white` ships the white slab and passes a four-spelling check. The rule is
+    // "no mantine colour is painted outside `light-dark(...)`" — which is a property, not an
+    // inventory.
+    //
+    // 🔴 BOTH LAYOUTS. `LINE_BG.empty` is painted ONLY by a split row's filler cell, so a
+    // unified-only sweep never sees it.
+    const sweep = () => {
+      const styles = Array.from(document.querySelectorAll<HTMLElement>('[style]')).map(
+        (el) => el.getAttribute('style') ?? ''
+      );
+      for (const s of styles) {
+        if (!s.includes('--mantine-color-')) continue;
+        // `var(--mantine-color-default-border)` &c are SEMANTIC tokens that already remap per
+        // scheme; the hazard is a numbered SHADE, which does not.
+        if (!/--mantine-color-[a-z]+-\d/.test(s)) continue;
+        expect(s, `a numbered mantine shade painted outside light-dark(): ${s}`).toContain(
+          'light-dark('
+        );
+      }
+      return styles;
+    };
+
     renderWithProviders(<FileDiffEntry file={CHANGED} />);
     await expand();
-    const styles = Array.from(document.querySelectorAll<HTMLElement>('[style]')).map(
-      (el) => el.getAttribute('style') ?? ''
-    );
-    for (const s of styles) {
-      for (const token of ['gray-0', 'gray-1', 'green-0', 'red-0']) {
-        if (s.includes(`var(--mantine-color-${token})`)) {
-          expect(s, `light-only ${token} must be wrapped in light-dark()`).toContain('light-dark(');
-        }
-      }
-    }
+    const unifiedStyles = sweep();
     // POSITIVE CONTROL: the add/delete highlights really are painted (an empty sweep above
     // would pass vacuously).
-    expect(styles.some((s) => s.includes('light-dark(') && s.includes('green-9'))).toBe(true);
-    expect(styles.some((s) => s.includes('light-dark(') && s.includes('red-9'))).toBe(true);
+    expect(unifiedStyles.some((s) => s.includes('light-dark(') && s.includes('green-9'))).toBe(
+      true
+    );
+    expect(unifiedStyles.some((s) => s.includes('light-dark(') && s.includes('red-9'))).toBe(true);
+
+    // …and again in SPLIT, where the `empty` filler cell is the only painted surface that
+    // the unified pass cannot reach.
+    await page.getByRole('radio', { name: 'Split' }).click();
+    await expect.element(page.getByTestId('apps-review-diff-split')).toBeInTheDocument();
+    sweep();
   });
 });
 
@@ -213,6 +250,12 @@ describe('elided files keep their labels, and NO link out (#3498)', () => {
     hunks: [],
   });
 
+  /**
+   * 🔴 INVARIANT GUARD, NOT REGRESSION COVERAGE — measured, not assumed. Every case in this
+   * block was run against `origin/main` with the new pure modules copied in, and PASSED there.
+   * It pins behaviour this change PRESERVES; it never watched the defect it describes.
+   * Do not count it toward "the redesign is tested".
+   */
   test.each(Object.entries(SKIP_LABEL) as Array<[NonNullable<FileLineDiff['skipReason']>, string]>)(
     '🔴 skipReason "%s" states the reason VERBATIM and offers no anchor',
     async (skipReason, label) => {

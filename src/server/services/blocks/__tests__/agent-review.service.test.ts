@@ -190,7 +190,10 @@ function postedJob() {
  */
 function createdRow(): Record<string, unknown> {
   const calls = mockCreate.mock.calls as unknown as Array<[{ data: Record<string, unknown> }]>;
-  expect(calls.length).toBeGreaterThan(0);
+  // 🔴 EXACTLY ONE, not "at least one". A DOUBLED insert is the plausible defect of a
+  // carry-forward that reads-then-writes, and `calls[0]` would report the first of two
+  // perfectly happily.
+  expect(calls, 'exactly one report row was created').toHaveLength(1);
   return calls[0][0].data;
 }
 
@@ -599,17 +602,21 @@ describe('startAgentReview — targeted re-run', () => {
     expect(jobEnv().AGENT_REVIEW_SECTIONS).toBe('codeReview');
   });
 
-  it('two sections join with a comma, in the order given', async () => {
+  it('two sections join with a comma, in the ORDER GIVEN', async () => {
+    // 🔴 THE ARGUMENT IS DELIBERATELY *NOT* IN DISPLAY ORDER. `['securityAudit','codeReview']`
+    // renders identically under "preserve the caller's order" and under "sort into
+    // AGENT_REVIEW_SECTIONS order", so it cannot separate the two hypotheses. Passing them
+    // reversed relative to the ledger is what makes this assertion mean something.
     mockFindUnique.mockResolvedValue(pendingRequest());
     mockGetLatest.mockResolvedValue(latestPartial);
 
     await startAgentReview({
       publishRequestId: PUBREQ,
       modUserId: 7,
-      sections: ['securityAudit', 'codeReview'],
+      sections: ['codeReview', 'securityAudit'],
     });
 
-    expect(jobEnv().AGENT_REVIEW_SECTIONS).toBe('securityAudit,codeReview');
+    expect(jobEnv().AGENT_REVIEW_SECTIONS).toBe('codeReview,securityAudit');
     // Only the untouched section is carried.
     const created = createdRow();
     expect(created.scopeVerdicts).toEqual(latestPartial.scopeVerdicts);

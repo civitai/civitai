@@ -7,8 +7,10 @@ import {
   failedAgentReportSections,
   hasUsableAgentReportSection,
   isAgentReportSection,
+  missingAgentReportSections,
   sectionAnalysisError,
   sectionErrorMessage,
+  degradedReportSummary,
 } from '~/components/Apps/agentReviewReport';
 
 /**
@@ -87,12 +89,30 @@ describe('agentReportSectionStatuses', () => {
     ).toBe('complete');
   });
 
-  test('a BARE STRING in a structured slot is a runner log dump, i.e. `failed`', () => {
+  test('🔴 a BARE STRING in a structured slot is a runner log dump — `failed`, whitespace included', () => {
     expect(agentReportSectionStatuses({ securityAudit: 'Traceback…' }).securityAudit).toBe(
       'failed'
     );
-    // …but an empty string carries no information and is not a failure claim.
-    expect(agentReportSectionStatuses({ securityAudit: '   ' }).securityAudit).toBe('complete');
+    // ⚠️ AND A BLANK ONE TOO. An earlier version of this test asserted `complete` here, with
+    // a comment rationalising it as "carries no information" — which is exactly the defect
+    // this module exists to remove, rendered as a clean verdict: the panel showed
+    // "No security-audit findings." for an analysis whose slot held whitespace. The STRING
+    // is the signal, not its contents.
+    expect(agentReportSectionStatuses({ securityAudit: '   ' }).securityAudit).toBe('failed');
+    expect(agentReportSectionStatuses({ securityAudit: '' }).securityAudit).toBe('failed');
+  });
+
+  test('🔴 `{ error: "" }` is `failed` AND carries a message the renderer can show', () => {
+    // The disagreement this closes: the extractor returned `''`, so the status check
+    // (`!= null`) scored the section FAILED while every renderer's `if (error)` read it as
+    // falsy — a tab badged "failed" above a body showing the clean empty state, with no
+    // retry control on it.
+    expect(agentReportSectionStatuses({ codeReview: { error: '' } }).codeReview).toBe('failed');
+    // 🔴 THE TWO MUST AGREE. A status of `failed` whose message is falsy is the bug: the
+    // renderer branches on `if (error)` and would paint the clean empty state under a
+    // "failed" tab badge.
+    expect(sectionErrorMessage({ error: '' })).toBe('unspecified error');
+    expect(sectionErrorMessage('   ')).toBe('the analysis returned no output');
   });
 });
 
@@ -190,5 +210,81 @@ describe('sectionErrorMessage', () => {
     expect(sectionErrorMessage({ error: { code: 'boom', retryable: false } })).toBe(
       '{"code":"boom","retryable":false}'
     );
+  });
+});
+
+describe('missingAgentReportSections', () => {
+  test('🔴 names the sections that NEVER RAN — the shape a targeted re-run creates', () => {
+    // A targeted re-run seeds forward only the sections it is not retrying, so the new row's
+    // other slots are null until the runner fills them. A provisioning failure on that row
+    // freezes it exactly here: `failed`, one complete section, two missing — and ZERO failed.
+    const afterTargetedRerun = {
+      status: 'failed',
+      scopeVerdicts: { scopes: [], overBroad: [], underDeclared: [] },
+      securityAudit: null,
+      codeReview: null,
+    };
+    expect(missingAgentReportSections(afterTargetedRerun)).toEqual(['securityAudit', 'codeReview']);
+    // 🔴 THE PAIR IS THE POINT. A banner that counted only failures printed the literal
+    // `0 analyses failed ()` over this report.
+    expect(failedAgentReportSections(afterTargetedRerun)).toEqual([]);
+    // …and the report IS still worth rendering, because one section survived.
+    expect(hasUsableAgentReportSection(afterTargetedRerun)).toBe(true);
+  });
+
+  test('🔴 NEGATIVE CONTROL: a fully-populated report names none', () => {
+    expect(missingAgentReportSections(PARTIAL)).toEqual([]);
+  });
+
+  test('failed and missing are DISJOINT — a slot is one or the other, never both', () => {
+    const mixed = {
+      scopeVerdicts: { scopes: [] },
+      securityAudit: { error: 'non-json-response' },
+      codeReview: null,
+    };
+    expect(failedAgentReportSections(mixed)).toEqual(['securityAudit']);
+    expect(missingAgentReportSections(mixed)).toEqual(['codeReview']);
+  });
+});
+
+describe('degradedReportSummary — the sentence above a partially usable report', () => {
+  test('🔴 IT NEVER PRINTS `0 analyses failed ()`', () => {
+    // The naive version did, for the commonest shape this feature itself creates (above).
+    // Asserted as a SUBSTRING ban rather than an equality so a reword cannot reintroduce it.
+    const s = degradedReportSummary([], ['securityAudit', 'codeReview']);
+    expect(s).not.toContain('0 analyses');
+    expect(s).not.toContain('()');
+    expect(s).toContain('2 analyses never ran');
+    expect(s).toContain('Security audit');
+    expect(s).toContain('Code review');
+  });
+
+  test('one failure reads as "One analysis failed", named', () => {
+    expect(degradedReportSummary(['codeReview'], [])).toContain(
+      'One analysis failed (Code review)'
+    );
+  });
+
+  test('two failures pluralise and name both', () => {
+    const s = degradedReportSummary(['scopeVerdicts', 'codeReview'], []);
+    expect(s).toContain('2 analyses failed');
+    expect(s).toContain('Scopes');
+    expect(s).toContain('Code review');
+  });
+
+  test('🔴 BOTH KINDS AT ONCE are reported, because they call for different actions', () => {
+    const s = degradedReportSummary(['codeReview'], ['securityAudit']);
+    expect(s).toContain('One analysis failed (Code review)');
+    expect(s).toContain('one analysis never ran (Security audit)');
+  });
+
+  test('🔴 the DEGENERATE case says what is true rather than inventing a count', () => {
+    // `partiallyUsable` only requires ONE complete section, so it is satisfied by a `failed`
+    // row whose every analysis is present. Saying "0 analyses failed" there would be a lie
+    // in the other direction.
+    const s = degradedReportSummary([], []);
+    expect(s).not.toContain('0');
+    expect(s).toContain('recorded as failed');
+    expect(s).toContain('every analysis produced a result');
   });
 });

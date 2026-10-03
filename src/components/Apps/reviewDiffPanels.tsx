@@ -3,9 +3,9 @@ import { useMemo, useState } from 'react';
 import {
   splitDiffRows,
   unifiedDiffRows,
-  type DiffHunk,
   type DiffSplitCell,
   type DiffLineKind,
+  type DiffUnifiedRow,
 } from '~/components/Apps/reviewDiffRows';
 
 /**
@@ -207,6 +207,7 @@ export function FileDiffEntry({
           justify="space-between"
           wrap="nowrap"
           p={8}
+          data-testid="apps-review-diff-file-header"
           style={{
             position: 'sticky',
             top: 0,
@@ -280,30 +281,7 @@ export function FileDiffEntry({
                 No textual change (whitespace/metadata only).
               </Text>
             ) : layout === 'unified' ? (
-              <table
-                style={{ borderCollapse: 'collapse', width: 'max-content', minWidth: '100%' }}
-                data-testid="apps-review-diff-unified"
-              >
-                <tbody>
-                  {unified.map((row) =>
-                    row.kind === 'hunk' ? (
-                      <tr key={row.key}>
-                        <td colSpan={3} style={{ ...MONO, padding: '2px 6px' }}>
-                          <Text span size="xs" c="cyan" style={MONO}>
-                            {row.label}
-                          </Text>
-                        </td>
-                      </tr>
-                    ) : (
-                      <tr key={row.key} data-line-kind={row.kind}>
-                        <LineNumberCell value={row.oldNo} />
-                        <LineNumberCell value={row.newNo} />
-                        <CodeCell kind={row.kind} raw={row.raw} />
-                      </tr>
-                    )
-                  )}
-                </tbody>
-              </table>
+              <UnifiedRowsTable rows={unified} />
             ) : (
               <table
                 style={{ borderCollapse: 'collapse', width: 'max-content', minWidth: '100%' }}
@@ -414,16 +392,20 @@ function SplitCodeCell({ cell }: { cell: DiffSplitCell }) {
 }
 
 /**
- * A single hunk's lines in the unified shape, with resolved line numbers.
+ * The UNIFIED rows as a table — hunk headers, both gutters, the code column.
  *
- * Kept exported (it was, before the GitHub-shaped rework) so a caller holding ONE hunk —
- * and the dark-theme guard in `review-diff-panels.browser.test.tsx` — can render it
- * without a whole `FileLineDiff`.
+ * 🔴 ONE RENDERER, NOT TWO. This was duplicated: `FileDiffEntry`'s unified branch and an
+ * exported `DiffHunkView` were the same 18-line row mapper, and `DiffHunkView` had ZERO
+ * production callers — its only consumer was the dark-theme guard, so that guard was testing
+ * the copy users never see while the structure they do see was free to change underneath it.
+ * `DiffHunkView` is deleted and the guard now renders `FileDiffEntry`.
  */
-export function DiffHunkView({ hunk }: { hunk: DiffHunk }) {
-  const rows = useMemo(() => unifiedDiffRows([hunk]), [hunk]);
+function UnifiedRowsTable({ rows }: { rows: DiffUnifiedRow[] }) {
   return (
-    <table style={{ borderCollapse: 'collapse', width: 'max-content', minWidth: '100%' }}>
+    <table
+      style={{ borderCollapse: 'collapse', width: 'max-content', minWidth: '100%' }}
+      data-testid="apps-review-diff-unified"
+    >
       <tbody>
         {rows.map((row) =>
           row.kind === 'hunk' ? (

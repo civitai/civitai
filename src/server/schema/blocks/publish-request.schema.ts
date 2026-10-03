@@ -1,5 +1,6 @@
 import * as z from 'zod';
 import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
+import { AGENT_REVIEW_SECTIONS } from '~/shared/constants/agent-review-section.constants';
 
 /**
  * Schemas for the App Blocks W1 publish-request flow.
@@ -299,19 +300,11 @@ export const mintReviewBlockTokenSchema = z.object({
 export type MintReviewBlockTokenInput = z.infer<typeof mintReviewBlockTokenSchema>;
 
 /**
- * The three sub-analyses one agent run produces.
- *
- * 🔴 THE SAME THREE KEYS THE REPORT ROW AND THE RENDERER USE
- * (`AGENT_REPORT_SECTIONS` in `~/components/Apps/agentReviewReport`), spelled here as a zod
- * enum because this is the wire boundary. They are not re-exported from there on purpose:
- * that module is a CLIENT view-model and this is a server schema, so the dependency would
- * run the wrong way.
+ * 🔴 THE ZOD ENUM IS BUILT FROM THE SHARED LEDGER, not a fourth hand-typed copy.
+ * `AGENT_REVIEW_SECTIONS` lives in `~/shared/constants/agent-review-section.constants`
+ * (zod-free, Prisma-free, React-free) so this schema, the provisioning service and the
+ * client renderer cannot disagree about which analyses exist.
  */
-export const AGENT_REVIEW_SECTION_VALUES = [
-  'scopeVerdicts',
-  'securityAudit',
-  'codeReview',
-] as const;
 
 /** Input for the MOD-ONLY agentic code-review `blocks.startAgentReview` (P1) —
  *  dispatches an ephemeral review agent for a PENDING request. */
@@ -332,7 +325,11 @@ export const startAgentReviewSchema = z.object({
    * env var, which ships separately. Until it does, a targeted re-run costs the same as a
    * full one; it is never WORSE than today's only option, which is a full re-run.
    */
-  sections: z.array(z.enum(AGENT_REVIEW_SECTION_VALUES)).min(1).max(3).optional(),
+  sections: z
+    .array(z.enum(AGENT_REVIEW_SECTIONS))
+    .min(1)
+    .max(AGENT_REVIEW_SECTIONS.length)
+    .optional(),
 });
 
 export type StartAgentReviewInput = z.infer<typeof startAgentReviewSchema>;

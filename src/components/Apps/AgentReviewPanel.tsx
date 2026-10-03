@@ -10,9 +10,10 @@ import {
 import { ReportTabs } from '~/components/Apps/ReportTabs';
 import { AgentReviewChat } from '~/components/Apps/AgentReviewChat';
 import {
-  AGENT_REPORT_SECTION_LABELS,
+  degradedReportSummary,
   failedAgentReportSections,
   hasUsableAgentReportSection,
+  missingAgentReportSections,
   type AgentReportSection,
 } from '~/components/Apps/agentReviewReport';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -149,6 +150,11 @@ export function AgentReviewPanel({
       await utils.blocks.getAgentReview.invalidate({ publishRequestId });
     },
     onError: (e) => {
+      // 🔴 CLEAR THE TARGETED MARKER ON THE ERROR PATH TOO. It was cleared only in
+      // `onSuccess`, so after a FAILED targeted re-run the stale section survived — and the
+      // next "Re-run all analyses" painted its spinner on that one section's button while a
+      // whole-report run was in flight.
+      setRerunningSection(null);
       // A CONFLICT ("a review is already running for this request") is EXPECTED
       // when a run is already in flight — refetch so the panel falls into the
       // running state instead of surfacing an error / crashing.
@@ -190,6 +196,7 @@ export function AgentReviewPanel({
    */
   const partiallyUsable = failed && !!report && hasUsableAgentReportSection(report);
   const failedSections = report ? failedAgentReportSections(report) : [];
+  const missingSections = report ? missingAgentReportSections(report) : [];
 
   // Mark / clear the per-run poll start so the time ceiling is measured per-run.
   useEffect(() => {
@@ -300,15 +307,26 @@ export function AgentReviewPanel({
             icon={<IconAlertTriangle size={14} />}
             data-testid="apps-agent-partial-failure"
           >
-            <Text size="xs">
-              {failedSections.length === 1
-                ? `One analysis failed (${failedSections
-                    .map((s) => AGENT_REPORT_SECTION_LABELS[s])
-                    .join(', ')}). The rest of this report completed and is shown below.`
-                : `${failedSections.length} analyses failed (${failedSections
-                    .map((s) => AGENT_REPORT_SECTION_LABELS[s])
-                    .join(', ')}). The rest of this report completed and is shown below.`}
-            </Text>
+            <Text size="xs">{degradedReportSummary(failedSections, missingSections)}</Text>
+            {/*
+              🔴 `summaryMd` IS RENDERED HERE AND NOWHERE ELSE ON THIS BRANCH. It is the
+              only place a PROVISIONING failure says what went wrong ("Provisioning failed:
+              …", written by `startAgentReview`'s catch), and a provisioning failure on a
+              targeted re-run produces exactly this shape — one carried-forward section
+              complete, the retried ones missing. Dropping it left the moderator with a
+              partially-rendered report and no account of why it is partial.
+              Inert text, like every other value from this row.
+            */}
+            {report.summaryMd && (
+              <Text
+                size="xs"
+                mt={4}
+                style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+                data-testid="apps-agent-partial-summary"
+              >
+                {report.summaryMd}
+              </Text>
+            )}
           </Alert>
           <ReportTabs
             report={report}

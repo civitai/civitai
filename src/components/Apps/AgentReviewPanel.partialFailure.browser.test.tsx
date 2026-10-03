@@ -329,6 +329,12 @@ describe('re-running ONE analysis instead of all three', () => {
 });
 
 describe('the all-or-nothing banner is still right when NOTHING survived', () => {
+  /**
+   * 🔴 INVARIANT GUARD, NOT REGRESSION COVERAGE — measured, not assumed. Every case in this
+   * block was run against `origin/main` with the new pure modules copied in, and PASSED there.
+   * It pins behaviour this change PRESERVES; it never watched the defect it describes.
+   * Do not count it toward "the redesign is tested".
+   */
   test('🔴 every section failed ⇒ the plain whole-report failure, which is then the honest surface', async () => {
     // The gate is `hasUsableAgentReportSection`, so this is the branch that proves the
     // partial path is not just "always show the body".
@@ -362,5 +368,107 @@ describe('a fully COMPLETE report is unchanged', () => {
     await expect.element(page.getByTestId('apps-report-status')).toHaveTextContent('complete');
     expect(page.getByTestId('apps-agent-partial-failure').elements()).toHaveLength(0);
     expect(page.getByTestId('apps-report-tab-failed').elements()).toHaveLength(0);
+  });
+});
+
+/**
+ * 🔴 THE SHAPE THIS FEATURE ITSELF CREATES, AND THE ONE IT GOT WRONG FIRST.
+ *
+ * A TARGETED re-run seeds forward only the sections it is not retrying, so the new report
+ * row's other slots are `null` until the runner fills them — and if provisioning fails, that
+ * row is flipped to `failed` and frozen exactly there. The result reaching a moderator is a
+ * `failed` report with one complete section and two MISSING ones, and ZERO failed.
+ *
+ * Before this was fixed the surface rendered: a header reading literally
+ * `0 analyses failed ()`, two tabs showing "No … findings." for analyses that never ran, no
+ * retry control on either (the control only lives inside the FAILED state), and no sign of
+ * the provisioning error. A mod made an approve/reject decision off a report that said the
+ * bundle was clean.
+ */
+describe('a report whose analyses NEVER RAN', () => {
+  const NEVER_RAN = {
+    status: 'failed',
+    model: 'anthropic/claude-x',
+    summaryMd: 'Provisioning failed: no k8s target',
+    scopeVerdicts: PARTIAL_REPORT.scopeVerdicts,
+    securityAudit: null,
+    codeReview: null,
+  };
+
+  test('🔴 the header NEVER reads "0 analyses failed ()" — it says what actually happened', async () => {
+    mocks.report = NEVER_RAN;
+    render();
+    const banner = page.getByTestId('apps-agent-partial-failure');
+    await expect.element(banner).toBeInTheDocument();
+    const text = banner.element().textContent ?? '';
+    expect(text).not.toContain('0 analyses');
+    expect(text).not.toContain('()');
+    expect(text).toContain('2 analyses never ran');
+  });
+
+  test('🔴 a MISSING section says "did not run", NOT "no findings"', async () => {
+    // The worst outcome available on this surface: telling a moderator an audit found
+    // nothing when it never looked.
+    mocks.report = NEVER_RAN;
+    render();
+    await page.getByRole('tab', { name: /Security audit/ }).click();
+    // Wait for the tab switch to COMMIT before reading the visible panel — browser mode
+    // commits asynchronously, and `visiblePanel()` is a synchronous DOM read.
+    await expect.element(page.getByTestId('apps-report-tab-missing').first()).toBeInTheDocument();
+    // ⚠️ SCOPED TO THE VISIBLE PANEL. `keepMounted` means BOTH missing sections are in the
+    // DOM, so a document-wide `getByTestId` is a strict-mode violation rather than an answer.
+    const visible = visiblePanel();
+    expect(visible, 'a visible tabpanel').not.toBeNull();
+    expect(visible!.querySelectorAll('[data-testid="apps-report-section-missing"]')).toHaveLength(
+      1
+    );
+    expect(visible!.textContent).toContain('did not run');
+    expect(
+      visible!.textContent,
+      'a section that never ran must not claim a clean verdict'
+    ).not.toContain('No security-audit findings.');
+  });
+
+  test('🔴 the TAB marks it "not run" by an enumerated attribute, and does NOT show a count of 0', async () => {
+    mocks.report = NEVER_RAN;
+    render();
+    await expect.element(page.getByTestId('apps-report-status')).toBeInTheDocument();
+    // Both missing tabs carry the marker, so count rather than locate-one.
+    expect(document.querySelectorAll('[data-testid="apps-report-tab-missing"]')).toHaveLength(2);
+    expect(
+      document
+        .querySelector('[data-section="securityAudit"][data-section-status]')
+        ?.getAttribute('data-section-status')
+    ).toBe('missing');
+    // 🔴 THE CONTRAST. The surviving section is still `complete`, so "mark everything
+    // missing" does not pass.
+    expect(
+      document
+        .querySelector('[data-section="scopeVerdicts"][data-section-status]')
+        ?.getAttribute('data-section-status')
+    ).toBe('complete');
+  });
+
+  test('🔴 the PROVISIONING ERROR is shown — this branch used to drop it entirely', async () => {
+    // `summaryMd` is the only place a provisioning failure says what went wrong, and the
+    // partial branch was the one branch that did not render it. The mod saw a partial report
+    // with no account of why it was partial.
+    mocks.report = NEVER_RAN;
+    render();
+    await expect
+      .element(page.getByTestId('apps-agent-partial-summary'))
+      .toHaveTextContent('Provisioning failed: no k8s target');
+  });
+
+  test('🔴 a `failed` row whose analyses ALL completed says THAT, not a count', async () => {
+    // `partiallyUsable` only requires one complete section, so this row reaches the same
+    // branch with nothing failed and nothing missing.
+    mocks.report = { ...PARTIAL_REPORT, codeReview: { findings: [] } };
+    render();
+    const banner = page.getByTestId('apps-agent-partial-failure');
+    await expect.element(banner).toBeInTheDocument();
+    const text = banner.element().textContent ?? '';
+    expect(text).toContain('every analysis produced a result');
+    expect(text).not.toContain('0 analyses');
   });
 });

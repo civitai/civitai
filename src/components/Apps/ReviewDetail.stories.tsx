@@ -1,12 +1,5 @@
 import { Alert, Badge, Code, Group, Stack, Tabs, Text, Title } from '@mantine/core';
-import {
-  IconArrowLeft,
-  IconCode,
-  IconFileCode,
-  IconKey,
-  IconRobot,
-  IconWindow,
-} from '@tabler/icons-react';
+import { IconArrowLeft } from '@tabler/icons-react';
 import { ManifestScopes, ManifestView } from '~/components/Apps/OnsiteReviewModal';
 import { ReportTabs } from '~/components/Apps/ReportTabs';
 import { FileDiffEntry, type FileLineDiff } from '~/components/Apps/reviewDiffPanels';
@@ -15,6 +8,10 @@ import {
   REVIEW_DETAIL_TAB_VALUES,
   type ReviewDetailTab,
 } from '~/components/Apps/reviewDetailTabs';
+// 🔴 THE ICONS ARE IMPORTED, NOT RE-DECLARED. The docstring below claims this shell cannot
+// drift from the real bar; a local copy of the icon map made that claim false for the one
+// thing a preview exists to show.
+import { TAB_ICONS } from '~/components/Apps/ReviewDetailTabsView';
 
 /**
  * Ladle previews for the redesigned per-submission review page, in the app's real Mantine +
@@ -32,14 +29,6 @@ import {
  * sitting outside them all) is covered in `ReviewDetailTabs.browser.test.tsx` against the
  * REAL view. These stories are for looking at it.
  */
-
-const TAB_ICONS: Record<ReviewDetailTab, typeof IconKey> = {
-  permissions: IconKey,
-  code: IconCode,
-  agent: IconRobot,
-  manifest: IconFileCode,
-  preview: IconWindow,
-};
 
 /** A manifest with one sensitive scope and two ordinary ones, each justified. */
 const MANIFEST = {

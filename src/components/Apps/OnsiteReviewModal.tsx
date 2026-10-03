@@ -36,7 +36,11 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AgentReviewPanel, isOnsiteReviewRequest } from '~/components/Apps/AgentReviewPanel';
 import { ReviewBlockPreviewHost } from '~/components/Apps/ReviewBlockPreviewHost';
 import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
-import { compactRelativeTime } from '~/components/Apps/reviewRelativeTime';
+import {
+  compactRelativeTime,
+  REVIEW_RELATIVE_TICK_MS,
+  useNowTick,
+} from '~/components/Apps/reviewRelativeTime';
 import { useReviewPreview } from '~/components/Apps/useReviewPreview';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import {
@@ -159,30 +163,14 @@ export function formatBytes(s: string): string {
   return `${(n / (1024 * 1024)).toFixed(2)} MiB`;
 }
 
-export function formatDate(d: string | Date | null | undefined): string {
-  if (!d) return '—';
-  const date = typeof d === 'string' ? new Date(d) : d;
-  return date.toLocaleString();
-}
-
-/**
- * How often a relative timestamp on a review surface re-renders.
- *
- * ONE timer per mounted surface, matching `REVIEW_RELATIVE_TICK_MS` in `UnifiedReviewList`
- * (which carries the long-form rationale): a minute is the finest granularity
- * `compactRelativeTime` can express past its `now` rung, so a faster tick could not change
- * a single label.
- */
-export const REVIEW_META_TICK_MS = 60_000;
-
-function useNowTick(intervalMs: number): Date {
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), intervalMs);
-    return () => clearInterval(id);
-  }, [intervalMs]);
-  return now;
-}
+/*
+  🔴 `formatDate` IS GONE, NOT MOVED. Its only two callers were the submitter line and the
+  decision alert's "· {date}", and both now render `ReviewRelativeTime` — a compact age with
+  the exact instant kept on `title` + `<time datetime>`. Leaving an exported formatter with
+  no callers is an invitation to re-introduce an absolute timestamp on one of these surfaces
+  and not the other. `~/utils/date-helpers` has the app-wide one if a caller genuinely needs
+  it.
+*/
 
 /**
  * A timestamp shown as a COMPACT RELATIVE AGE with the exact instant kept on hover and
@@ -246,7 +234,15 @@ export function ReviewRelativeTime({
  *
  * 🔴 A SUBMITTER WITH NO USERNAME STILL RENDERS AS `#<id>`, because they are still an
  * identity a moderator acts on and an empty cell is the one outcome that is not a decision.
- * The queue cell branches the same way; this is that branch, shared.
+ *
+ * ⚠️ THE COMPONENT IS SHARED WITH THE QUEUE; THIS BRANCH IS NOT — `UnifiedReviewList`'s
+ * Submitter cell still spells its own `username ? <UserAvatar/> : #id` inline, because it
+ * needs a `stopPropagation` wrapper this line does not. So the predicate exists at two
+ * sites: tighten it here (render a deleted submitter as "deleted user", say) and the queue
+ * and the submission disagree about the same person, with both surfaces' tests green. The
+ * fix is for the queue cell to consume THIS component; it is not done here only because
+ * that file is a table cell with different layout needs, and this note is the handle for
+ * whoever does it.
  */
 export function ReviewSubmitterMeta({
   request,
@@ -369,19 +365,8 @@ export function ReviewDecisionAlert({
  */
 export function ReviewFilesSection({
   request,
-  autoOpenDiff = false,
 }: {
   request: Pick<ReviewedRequestCommon, 'id' | 'fileSummary' | 'manifestDiffSummary'>;
-  /**
-   * Open the line-level diff as soon as this section mounts.
-   *
-   * Used by the review PAGE's Code tab, where opening the tab IS the mod asking for the
-   * diff — so the fetch stays exactly as lazy as before (nothing is read until the mod
-   * navigates there), with one click fewer. The modal leaves it `false`: its section is one
-   * of nine in a long scroll, and auto-fetching a bundle diff for every modal open is the
-   * cost this panel was made lazy to avoid.
-   */
-  autoOpenDiff?: boolean;
 }) {
   const fs = (request.fileSummary ?? {}) as FileSummary;
   const mds = (request.manifestDiffSummary ?? {}) as ManifestDiffSummary;
@@ -411,7 +396,11 @@ export function ReviewFilesSection({
       {mds.kind === 'update' && (
         <FileListPreview added={fs.added} removed={fs.removed} changed={fs.changed} />
       )}
-      <CodeDiffPanel publishRequestId={request.id} autoOpen={autoOpenDiff} />
+      {/* Line-level code diff — LAZY, on BOTH surfaces. It stays behind its own switch
+          rather than opening with the Code tab: the diff response has no total-bytes cap
+          (300 files × 256 KiB/side), so a mod who opened this tab only to read the file
+          counts would pay for the whole fetch. One click is the right price for that. */}
+      <CodeDiffPanel publishRequestId={request.id} />
     </Stack>
   );
 }
@@ -617,7 +606,7 @@ export function OnsiteReviewModalBody({
 }) {
   const { request, mode } = selection;
   const manifest = request.manifest as Record<string, unknown>;
-  const now = useNowTick(REVIEW_META_TICK_MS);
+  const now = useNowTick(REVIEW_RELATIVE_TICK_MS);
 
   return (
     <Stack gap="md">
@@ -626,11 +615,9 @@ export function OnsiteReviewModalBody({
       <ReviewDecisionAlert selection={selection} now={now} />
 
       {/* MOD REVIEW SANDBOX (#2831) — run the PENDING version in a temporary,
-            mod-gated preview before approving. Pending requests only; dark
-            unless the mod-only review-sandbox flag is enabled. */}
-      {mode === 'pending' && (
-        <ReviewPreviewPanel publishRequestId={request.id} slug={request.slug} />
-      )}
+            mod-gated preview before approving. The whole gate lives in
+            `ReviewPreviewSection`. */}
+      <ReviewPreviewSection selection={selection} />
 
       {/* AGENTIC MOD CODE-REVIEW (App Blocks P2) — dispatch + poll + render an
             agent code-review/security-audit report before approving. The whole
@@ -644,11 +631,8 @@ export function OnsiteReviewModalBody({
       <ScreenshotsReviewPanel publishRequestId={request.id} />
 
       {/* F-E E4 curation — marketplace metadata (category / featured / order).
-            Only for an APPROVED request that has a linked app_block: featuring
-            is approved-only, and the meta lives on the app_block row. */}
-      {mode === 'approved' && request.appBlockId && (
-        <CurationPanel key={request.appBlockId} appBlockId={request.appBlockId} />
-      )}
+            The whole gate lives in `ReviewCurationSection`. */}
+      <ReviewCurationSection selection={selection} />
 
       <ReviewFilesSection request={request} />
 
@@ -683,7 +667,25 @@ export function OnsiteReviewModalBody({
 // UNAUTHORIZED and the panel surfaces a "not enabled" message instead.
 // ---------------------------------------------------------------------------
 
-export function ReviewPreviewPanel({
+export function ReviewPreviewSection({
+  selection,
+}: {
+  selection: NonNullable<OnsiteReviewSelection>;
+}) {
+  /*
+    🔴 THE GATE IS THE COMPONENT, so no caller can re-spell it — the same rule
+    `ReviewAgentSection` already states, applied to its two siblings. Two surfaces mount this
+    now (the modal body and the page's Preview tab); a copied `mode === 'pending' &&` at each
+    is one predicate twice, and `OnsiteReviewMode` carries a fourth value (`reports`) that
+    neither copy mentioned — so a decision about it had to be made in two places.
+  */
+  if (selection.mode !== 'pending') return null;
+  return (
+    <ReviewPreviewPanel publishRequestId={selection.request.id} slug={selection.request.slug} />
+  );
+}
+
+function ReviewPreviewPanel({
   publishRequestId,
   slug,
 }: {
@@ -940,7 +942,24 @@ const CATEGORY_SELECT_DATA = MARKETPLACE_CATEGORIES.map((c) => ({
   label: MARKETPLACE_CATEGORY_LABELS[c],
 }));
 
-export function CurationPanel({ appBlockId }: { appBlockId: string }) {
+export function ReviewCurationSection({
+  selection,
+}: {
+  selection: NonNullable<OnsiteReviewSelection>;
+}) {
+  /*
+    🔴 SAME RULE AS `ReviewPreviewSection` ABOVE. Featuring is approved-only and the meta
+    lives on the `app_block` row, so BOTH clauses are required — and if an approved request
+    ever resolves its `appBlockId` later, one surface would render the panel and the other
+    silently would not.
+  */
+  const { request, mode } = selection;
+  if (mode !== 'approved' || !request.appBlockId) return null;
+  // Keyed so the form's seeded local state resets when a different app's meta arrives.
+  return <CurationPanel key={request.appBlockId} appBlockId={request.appBlockId} />;
+}
+
+function CurationPanel({ appBlockId }: { appBlockId: string }) {
   const features = useFeatureFlags();
   const utils = trpc.useUtils();
   const metaQuery = trpc.blocks.getMarketplaceMeta.useQuery(
@@ -1078,31 +1097,15 @@ export function CurationPanel({ appBlockId }: { appBlockId: string }) {
 // server-side (text-only, byte/line/file caps); elided files are labelled with
 // WHY they were skipped rather than inlining unbounded content.
 //
-// The presentational panels (FileListPreview / FileDiffEntry / DiffHunkView /
-// ManifestDiffPreview) + the FileLineDiff type live in the server-free
+// The presentational panels (FileListPreview / FileDiffEntry / ManifestDiffPreview)
+// + the FileLineDiff type live in the server-free
 // `~/components/Apps/reviewDiffPanels` module so they can be unit tested in
 // browser mode without importing this page's tRPC server graph.
 // ---------------------------------------------------------------------------
 
-export function CodeDiffPanel({
-  publishRequestId,
-  autoOpen = false,
-}: {
-  publishRequestId: string;
-  /**
-   * Start expanded (and therefore start fetching) on mount.
-   *
-   * 🔴 THIS DOES NOT MAKE THE PANEL EAGER — the laziness just moved up one level. The
-   * review page mounts its Code tab's content only once the mod NAVIGATES to that tab, so
-   * `autoOpen` there still means "fetch when the mod asks for the diff", one click fewer.
-   * The modal leaves it `false`: its diff is one section of a long scroll, so auto-fetching
-   * a bundle diff on every modal open is exactly the cost this panel was made lazy to
-   * avoid.
-   */
-  autoOpen?: boolean;
-}) {
+export function CodeDiffPanel({ publishRequestId }: { publishRequestId: string }) {
   const features = useFeatureFlags();
-  const [show, setShow] = useState(autoOpen);
+  const [show, setShow] = useState(false);
 
   const { data, isLoading, error } = trpc.blocks.getPublishRequestDiff.useQuery(
     { publishRequestId },

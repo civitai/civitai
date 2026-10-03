@@ -3,7 +3,6 @@ import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so reach it relatively (apps → pages → tests → src → root).
 import { renderWithProviders } from '../../../../test/component-setup';
 import {
-  DiffHunkView,
   FileDiffEntry,
   FileListPreview,
   ManifestDiffPreview,
@@ -44,9 +43,7 @@ const assertNoLightOnlyDiffBg = () => {
 
 describe('reviewDiffPanels — dark-theme-aware backgrounds (Bug 2)', () => {
   test('FileListPreview panel uses a light-dark background, not a fixed light gray', async () => {
-    renderWithProviders(
-      <FileListPreview added={['a.ts']} removed={['b.ts']} changed={['c.ts']} />
-    );
+    renderWithProviders(<FileListPreview added={['a.ts']} removed={['b.ts']} changed={['c.ts']} />);
     await expect.element(page.getByText('a.ts')).toBeInTheDocument();
     const panel = inlineStyles().find(
       (s) => s.includes('light-dark(') && s.includes('gray-0') && s.includes('dark-6')
@@ -67,18 +64,29 @@ describe('reviewDiffPanels — dark-theme-aware backgrounds (Bug 2)', () => {
     assertNoLightOnlyDiffBg();
   });
 
-  test('DiffHunkView +/- line highlights are dark-aware (green-9/red-9 fallbacks)', async () => {
-    renderWithProviders(
-      <DiffHunkView
-        hunk={{
+  test('+/- line highlights are dark-aware (green-9/red-9 fallbacks)', async () => {
+    // ⚠️ RENDERED THROUGH `FileDiffEntry`, NOT THE OLD `DiffHunkView`. That component was a
+    // second copy of the same row mapper with ZERO production callers — so this guard was
+    // testing a renderer no moderator ever sees, while the one they do see was free to
+    // change underneath it. `DiffHunkView` is gone; this now exercises the real path.
+    const file: FileLineDiff = {
+      path: 'src/hunk.ts',
+      changeKind: 'changed',
+      skipReason: null,
+      added: 1,
+      removed: 1,
+      hunks: [
+        {
           oldStart: 1,
           oldLines: 1,
           newStart: 1,
           newLines: 2,
           lines: ['+added line', '-removed line', ' context line'],
-        }}
-      />
-    );
+        },
+      ],
+    };
+    renderWithProviders(<FileDiffEntry file={file} />);
+    await page.getByText('src/hunk.ts').click();
     await expect.element(page.getByText('+added line')).toBeInTheDocument();
     const styles = inlineStyles();
     const added = styles.find((s) => s.includes('light-dark(') && s.includes('green-9'));
@@ -108,9 +116,9 @@ describe('reviewDiffPanels — dark-theme-aware backgrounds (Bug 2)', () => {
     renderWithProviders(<FileDiffEntry file={file} />);
 
     // Collapsed by default → no diff panel painted yet.
-    expect(
-      inlineStyles().some((s) => s.includes('light-dark(') && s.includes('dark-6'))
-    ).toBe(false);
+    expect(inlineStyles().some((s) => s.includes('light-dark(') && s.includes('dark-6'))).toBe(
+      false
+    );
 
     // Expand the entry (its header toggles the code panel).
     await page.getByText('src/changed-file.ts').click();

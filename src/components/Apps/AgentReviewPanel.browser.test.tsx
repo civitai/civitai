@@ -667,11 +667,23 @@ describe('AgentReviewPanel — defensive / empty', () => {
     renderWithProviders(
       <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
     );
-    // The report still renders (advisory banner) and each tab has a tidy empty state.
-    // (Panels are keepMounted, so all four are in the DOM regardless of active tab.)
+    // The report still renders (advisory banner) and no tab throws.
+    // (Panels are keepMounted, so all three are in the DOM regardless of active tab.)
     await expect.element(page.getByText(/Advisory only/)).toBeInTheDocument();
-    await expect.element(page.getByText('No code-review findings.')).toBeInTheDocument();
-    await expect.element(page.getByText('No security-audit findings.')).toBeInTheDocument();
+
+    /*
+      ⚠️ CHANGED DELIBERATELY: an ABSENT slot now reads "did not run", not "no findings".
+      `codeReview: null` and `securityAudit: undefined` mean those analyses produced NO
+      RESULT — which is not the same answer as running and finding nothing, and rendering
+      them as a clean verdict is the exact conflation the per-section status work exists to
+      remove. `scopeVerdicts: {}` is PRESENT-but-empty, so it keeps its genuine empty state;
+      that contrast is what makes this case worth keeping.
+    */
+    expect(document.querySelectorAll('[data-testid="apps-report-section-missing"]')).toHaveLength(
+      2
+    );
+    expect(page.getByText('No code-review findings.').elements()).toHaveLength(0);
+    expect(page.getByText('No security-audit findings.').elements()).toHaveLength(0);
     await expect.element(page.getByText('No scopes assessed.')).toBeInTheDocument();
   });
 });

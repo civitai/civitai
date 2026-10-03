@@ -1,15 +1,15 @@
 import { Stack, Tabs, Text } from '@mantine/core';
 import { IconCode, IconFileCode, IconKey, IconRobot, IconWindow } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  CurationPanel,
   ManifestScopes,
   ManifestView,
   ReviewAgentSection,
+  ReviewCurationSection,
   ReviewFilesSection,
   ReviewManifestDiffSection,
-  ReviewPreviewPanel,
+  ReviewPreviewSection,
   ScreenshotsReviewPanel,
   type OnsiteReviewSelection,
 } from '~/components/Apps/OnsiteReviewModal';
@@ -62,8 +62,13 @@ import { appDisplayName } from '~/shared/utils/app-display-name';
  * icons are `ForwardRefExoticComponent`s whose `size` accepts `string | number`, so the
  * narrower hand-written signature does not accept them. Same form as
  * `ACTIVITY_TAB_ICONS` in `/apps/activity`.
+ *
+ * 🔴 EXPORTED SO THE LADLE STORY CANNOT DRIFT FROM THE REAL BAR. That story's docstring
+ * claims it renders "the SAME tab values, labels and icons"; values and labels were imported
+ * and the icons were re-declared, so changing one here left the preview — the surface whose
+ * whole job is to look right — showing the old one.
  */
-const TAB_ICONS: Record<ReviewDetailTab, typeof IconKey> = {
+export const TAB_ICONS: Record<ReviewDetailTab, typeof IconKey> = {
   permissions: IconKey,
   code: IconCode,
   agent: IconRobot,
@@ -93,13 +98,13 @@ function useVisitedTabs(active: ReviewDetailTab): ReadonlySet<ReviewDetailTab> {
   return visited.current;
 }
 
-export function ReviewDetailTabsView({
+function ReviewDetailTabsViewInner({
   selection,
 }: {
   selection: NonNullable<OnsiteReviewSelection>;
 }) {
   const router = useRouter();
-  const { request, mode } = selection;
+  const { request } = selection;
   const manifest = request.manifest as Record<string, unknown>;
 
   /**
@@ -196,7 +201,7 @@ export function ReviewDetailTabsView({
         behind a second click. Nothing is read while the mod is on another tab.
       */}
       <Tabs.Panel value="code" pt="md">
-        {visited.has('code') && <ReviewFilesSection request={request} autoOpenDiff />}
+        {visited.has('code') && <ReviewFilesSection request={request} />}
       </Tabs.Panel>
 
       {/*
@@ -264,9 +269,7 @@ export function ReviewDetailTabsView({
       <Tabs.Panel value="preview" pt="md">
         {visited.has('preview') && (
           <Stack gap="md">
-            {mode === 'pending' && (
-              <ReviewPreviewPanel publishRequestId={request.id} slug={request.slug} />
-            )}
+            <ReviewPreviewSection selection={selection} />
             <ReviewListingMedia
               slug={request.slug}
               name={appDisplayName(request.manifest, request.slug)}
@@ -274,12 +277,24 @@ export function ReviewDetailTabsView({
               coverUrl={request.coverUrl ?? null}
             />
             <ScreenshotsReviewPanel publishRequestId={request.id} />
-            {mode === 'approved' && request.appBlockId && (
-              <CurationPanel key={request.appBlockId} appBlockId={request.appBlockId} />
-            )}
+            <ReviewCurationSection selection={selection} />
           </Stack>
         )}
       </Tabs.Panel>
     </Tabs>
   );
 }
+
+/**
+ * 🔴 MEMOISED, AND THE REASON IS THE CLOCK ONE LEVEL UP. `ReviewDetailView` owns a 60-second
+ * tick so the submitter line and the decision banner can re-render their relative ages. Those
+ * two are SIBLINGS of this subtree, but nothing between them is memoised — so every minute,
+ * to change one "3h ago" string, React re-rendered every mounted panel: up to 300 collapsed
+ * file cards, and every OPEN diff table's full row set (the `useMemo`s preserve the row
+ * ARRAYS, not the elements, so each `<tr>`/`<td>`/`<Text>` is recreated and reconciled —
+ * ~2,000 Mantine components per open file at the per-file cap, 4,000 in split).
+ *
+ * `selection` is the only prop and it does not change on a tick, so this cuts the tick's
+ * blast radius to the two components that actually consume `now`.
+ */
+export const ReviewDetailTabsView = memo(ReviewDetailTabsViewInner);

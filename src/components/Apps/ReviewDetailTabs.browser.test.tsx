@@ -342,6 +342,13 @@ describe('selecting a tab REWRITES the URL', () => {
     mocks.pending = true;
     router.query = { publishRequestId: 'pubreq_01HZX' };
     render();
+    /*
+      🔴 POSITIVE CONTROL FIRST: prove the in-flight condition is actually in effect. Without
+      it this case is outcome-identical to the plain tab-click test above and still claims
+      "while a mutation is in flight" — so a `mocks.pending` wired to the wrong hook would
+      leave it green and lying. `ReviewActionBar` renders Approve `disabled` while `busy`.
+    */
+    await expect.element(page.getByRole('button', { name: 'Approve + build' })).toBeDisabled();
     await expect.element(page.getByRole('tab', { name: 'Manifest' })).toBeInTheDocument();
     await page.getByRole('tab', { name: 'Manifest' }).click();
     expect(router.replace).toHaveBeenCalledTimes(1);
@@ -366,6 +373,12 @@ describe('selecting a tab REWRITES the URL', () => {
 });
 
 describe('the approve/reject bar is OUTSIDE the tabs', () => {
+  /**
+   * 🔴 INVARIANT GUARD, NOT REGRESSION COVERAGE — measured, not assumed. Every case in this
+   * block was run against `origin/main` with the new pure modules copied in, and PASSED there.
+   * It pins behaviour this change PRESERVES; it never watched the defect it describes.
+   * Do not count it toward "the redesign is tested".
+   */
   test.each(REVIEW_DETAIL_TAB_VALUES)(
     '🔴 reachable from the %s tab — a mod never has to find the right tab to act',
     async (tab) => {
@@ -388,6 +401,12 @@ describe('the approve/reject bar is OUTSIDE the tabs', () => {
    * re-rendering inside one test leaves two mounted containers in `document.body` at once —
    * a document-scoped query then resolves to 2 elements and the strict-mode violation reads
    * as a component bug.
+   */
+  /**
+   * 🔴 INVARIANT GUARD, NOT REGRESSION COVERAGE — measured, not assumed. Every case in this
+   * block was run against `origin/main` with the new pure modules copied in, and PASSED there.
+   * It pins behaviour this change PRESERVES; it never watched the defect it describes.
+   * Do not count it toward "the redesign is tested".
    */
   test.each(REVIEW_DETAIL_TAB_VALUES)(
     'no action bar on the %s tab of an approved submission',
