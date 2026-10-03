@@ -435,9 +435,9 @@ describe('buildTrainerRows', () => {
     ['a numeric item id', { itemId: 7 }, 'training row 1: itemId must be'],
     ['an empty item id', { itemId: '' }, 'training row 1: itemId must be'],
     ['an unknown partition', { partition: 'dev' }, 'training row 1: partition must be'],
-    ['a non-string state', { state: { n: 1 } }, 'train manifest row 1: state must be'],
-    ['a null state', { state: null }, 'train manifest row 1: state must be'],
-    ['an array state', { state: ['a'] }, 'train manifest row 1: state must be'],
+    ['a non-string state', { state: { n: 1 } }, 'training row 1: state must be'],
+    ['a null state', { state: null }, 'training row 1: state must be'],
+    ['an array state', { state: ['a'] }, 'training row 1: state must be'],
   ])('refuses a train manifest row with %s', (_, over, message) => {
     expect(() =>
       buildTrainerRows(withCandidate({ ...candidate('tr0', 'train'), ...over }))
@@ -449,7 +449,7 @@ describe('buildTrainerRows', () => {
     ['trainer-dev first', candidate('tr0', 'trainer-dev'), candidate('tr1', 'train', 'g-tr0')],
   ])('refuses a group in both trainer partitions, %s', (_, first, second) => {
     expect(() => buildTrainerRows(input({ candidates: [first, second] }))).toThrow(
-      'train manifest row 2: its group is in both trainer partitions'
+      'training row 2: its group is in both trainer partitions'
     );
   });
 
@@ -468,7 +468,7 @@ describe('buildTrainerRows', () => {
           index: { itemIds: [row.itemId], groupKeys: [row.groupKey] },
         });
       expect(run).toThrow(
-        `train manifest row 1: its ${field} is email-shaped; a node's ids must not carry personal data`
+        `training row 1: its ${field} is email-shaped; a node's ids must not carry personal data`
       );
       expect(run).not.toThrow(/someone@example\.com/);
     }
@@ -488,6 +488,21 @@ describe('buildTrainerRows', () => {
 
   it('choiceTargets trains each class as the option of the same name', () => {
     expect(choiceTargets('topic')('billing_buzz')).toEqual({ topic: 'billing_buzz' });
+    expect(choiceTargets('topic')('cannot_tell')).toEqual({ topic: 'cannot_tell' });
+  });
+
+  it('choiceTargets trains unknownClasses as imajev unknown, not as their option', () => {
+    const targets = choiceTargets('topic', { unknownClasses: ['y'] });
+    const { rows } = buildTrainerRows(
+      input({
+        questions: [TOPIC],
+        format: { questions: [TOPIC], mapAnswer: choiceMapper('topic'), trainTargets: targets },
+      })
+    );
+    expect(rows.map((r) => [r.id, r.targets])).toEqual([
+      ['tr0', { topic: 'x' }],
+      ['tr1', { topic: null }],
+    ]);
   });
 });
 
@@ -535,8 +550,9 @@ describe('toImajevRequest against imajev jev_api.to_request', () => {
   });
 
   it.each(cases.map((c, i) => [c.name, c, golden.cases[i]] as const))('%s', (_, c, g) => {
-    expect(toImajevQuestions(c.questions)).toEqual(g.jev);
-    // Stringified so the options array is compared in order: that is the order serving sends.
+    // Stringified so key order counts: criteria's key order is the option order serving sends.
+    // (JSON.parse re-sorts integer-like keys, so those cases lean on the request comparison.)
+    expect(JSON.stringify(toImajevQuestions(c.questions))).toBe(JSON.stringify(g.jev));
     const build = () => toImajevRequest(g.requestId, c.state, c.questions);
     if (g.requestSha256) {
       expect(createHash('sha256').update(JSON.stringify(build())).digest('hex')).toBe(

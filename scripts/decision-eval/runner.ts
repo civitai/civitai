@@ -203,9 +203,17 @@ export function choiceMapper(
   };
 }
 
-/** The inverse of `choiceMapper` where each class is an option key of the same name. */
-export function choiceTargets(questionId: string): NonNullable<FormatSpec['trainTargets']> {
-  return (gold) => ({ [questionId]: gold });
+/**
+ * The inverse of `choiceMapper` where each class is an option key of the same name.
+ * `unknownClasses` train as imajev's own unknown answer rather than as their option.
+ */
+export function choiceTargets(
+  questionId: string,
+  opts: { unknownClasses?: readonly string[] } = {}
+): NonNullable<FormatSpec['trainTargets']> {
+  return (gold) => ({
+    [questionId]: (opts.unknownClasses ?? []).includes(gold) ? null : gold,
+  });
 }
 
 /**

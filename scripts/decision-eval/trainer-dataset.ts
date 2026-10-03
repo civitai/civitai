@@ -207,33 +207,6 @@ export type TrainerDatasetSummary = {
   skipped: { noGold: number; untrainable: number; pii: number };
 };
 
-/** Runs before the leakage check, whose refusal names the first offending item id. */
-function assertCandidateShapes(candidates: readonly TrainCandidate[]): void {
-  const groupPartition = new Map<string, string>();
-  candidates.forEach((c, i) => {
-    const at = `train manifest row ${i + 1}`;
-    const keyPii = findPii({ id: String(c.itemId), group_key: String(c.groupKey) });
-    if (keyPii) {
-      throw new TrainerDatasetError(
-        `${at}: its ${keyPii.field} is ${keyPii.kind}-shaped; a node's ids must not carry personal data`
-      );
-    }
-    if (
-      !c.state ||
-      typeof c.state !== 'object' ||
-      Array.isArray(c.state) ||
-      !Object.values(c.state).every((v) => typeof v === 'string')
-    ) {
-      throw new TrainerDatasetError(`${at}: state must be an object of strings`);
-    }
-    const held = groupPartition.get(c.groupKey);
-    if (held !== undefined && held !== c.partition) {
-      throw new TrainerDatasetError(`${at}: its group is in both trainer partitions`);
-    }
-    groupPartition.set(c.groupKey, c.partition);
-  });
-}
-
 export function buildTrainerRows(input: TrainerDatasetInput): {
   rows: TrainerRow[];
   summary: TrainerDatasetSummary;
@@ -247,9 +220,19 @@ export function buildTrainerRows(input: TrainerDatasetInput): {
   if (!trainTargets) {
     throw new TrainerDatasetError(`this format of ${input.nodeId} defines no trainTargets`);
   }
-  assertCandidateShapes(input.candidates);
   // Re-checked against today's index: it only grows, so a manifest that passed yesterday can collide now.
   const candidates = buildTrainManifest(input.candidates, input.index, input.excludedIds);
+  // Not leakage, which the harness allows: a group on both sides would flatter checkpoint selection.
+  const groupPartition = new Map<string, string>();
+  candidates.forEach((c, i) => {
+    const held = groupPartition.get(c.groupKey);
+    if (held !== undefined && held !== c.partition) {
+      throw new TrainerDatasetError(
+        `training row ${i + 1}: its group is in both trainer partitions`
+      );
+    }
+    groupPartition.set(c.groupKey, c.partition);
+  });
 
   const fields = toImajevFields(input.questions);
   const jevQuestions = toImajevQuestions(input.questions);

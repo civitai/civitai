@@ -105,6 +105,32 @@ describe('buildTrainManifest — the leakage control', () => {
     );
   });
 
+  it.each([
+    ['a numeric item id', { itemId: 7 }, 'itemId must be a non-empty string'],
+    ['an empty item id', { itemId: '' }, 'itemId must be a non-empty string'],
+    ['a numeric group key', { groupKey: 7 }, 'groupKey must be a non-empty string'],
+    ['an empty group key', { groupKey: '' }, 'groupKey must be a non-empty string'],
+    ['an unknown partition', { partition: 'dev' }, 'partition must be train or trainer-dev'],
+    ['a non-string state', { state: { n: 1 } }, 'state must be an object of strings'],
+  ])('🔴 refuses a row with %s, which Set.has could never match', (_, over, message) => {
+    const row = { ...candidate('t9', 'g9', 'train'), ...over } as unknown as TrainCandidate;
+    expect(() => buildTrainManifest([row], index)).toThrow(`training row 1: ${message}`);
+  });
+
+  it('🔴 refuses a PII-shaped id before any refusal that names an item', () => {
+    // Also an eval id, so a collision message would echo it if this check came second.
+    const run = () =>
+      buildTrainManifest(
+        [candidate('someone@example.com', 'g9', 'train')],
+        { itemIds: ['someone@example.com'], groupKeys: [] },
+        ['someone@example.com']
+      );
+    expect(run).toThrow(
+      "training row 1: its id is email-shaped; a node's ids must not carry personal data"
+    );
+    expect(run).not.toThrow(/someone@example\.com/);
+  });
+
   it('builds when nothing collides', () => {
     const rows = [candidate('t1', 'g-train', 'train'), candidate('t2', 'g-train', 'trainer-dev')];
     expect(buildTrainManifest(rows, index)).toEqual(rows);

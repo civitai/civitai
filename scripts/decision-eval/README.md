@@ -95,14 +95,18 @@ The training-manifest builder reads this file to keep eval items out of any trai
 `train-dataset --node <id> --format <f>` turns `train-manifest.jsonl` into the dataset the orchestrator's `imajev` training engine takes:
 
 - It re-runs the leakage and exclusion checks against today's eval index and exclusions. Both only grow, so a manifest that passed yesterday can fail today.
-- Each row's targets come from the format's `trainTargets(gold)`, the inverse of `mapAnswer`. A format without it cannot train. `choiceTargets` covers a format whose classes are its option keys.
+- Each row's targets come from the format's `trainTargets(gold)`, the inverse of `mapAnswer`. A format without it cannot train. `choiceTargets` covers a format whose classes are its option keys. Its `unknownClasses` option trains the named classes as imajev's own unknown answer instead of as their option, e.g. a "cannot tell" class.
 - Gold is resolved with the node's `goldPolicy`, the same way `score` resolves it.
 - Rows with no resolved gold, a class the format cannot express, or a PII-shaped state are skipped and counted.
 - `trainer-dev` becomes the trainer's `dev` partition, which only picks its best checkpoint. A group may sit in only one of the two partitions.
 - These are refused:
   - moderation nodes and rows with images;
-  - a row whose id or group key looks like personal data. This check runs before the leakage check, whose refusal names the item.
-- `buildTrainManifest`, in both `train-manifest` and `train-dataset`, refuses a row whose ids are not non-empty strings or whose partition is unknown. A number never equals the index's string ids.
+  - a group in both trainer partitions. The harness allows it, but it would flatter checkpoint selection.
+- `buildTrainManifest` checks every row before anything else, in both `train-manifest` and `train-dataset`. It refuses a row:
+  - whose ids are not non-empty strings, since a number never equals the index's string ids;
+  - whose id or group key looks like personal data, checked before any refusal that names the item;
+  - whose partition is unknown;
+  - whose state is not an object of strings.
 - A choice question's options are written in the order serving sends them. Serving sends `criteria` as a JS object, which lists integer-like keys first.
 - The manifest is built as one string, so a few tens of thousands of multi-KB tickets is the ceiling. `train-manifest` has the same limit at about twice the rows.
 
