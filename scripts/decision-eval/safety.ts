@@ -109,7 +109,12 @@ function hasSchemelessLink(value: string): boolean {
     if (slash + 1 >= value.length || /\s/.test(value[slash + 1])) continue;
     let start = slash;
     while (start > 0 && /[a-z0-9.-]/i.test(value[start - 1])) start--;
-    if (DOMAIN_TOKEN.test(value.slice(start, slash).replace(/^[.-]+/, ''))) return true;
+    // The domain is whatever follows the last empty label; an unanchored test
+    // here would bring back the quadratic retry.
+    let token = value.slice(start, slash);
+    const emptyLabel = token.lastIndexOf('..');
+    if (emptyLabel !== -1) token = token.slice(emptyLabel + 2);
+    if (DOMAIN_TOKEN.test(token.replace(/^[.-]+/, ''))) return true;
   }
   return false;
 }

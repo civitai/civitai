@@ -186,6 +186,9 @@ describe('decision-eval CLI', () => {
     expect(report).toContain('baseline: incumbent');
     expect(report).toContain('## Slice: parity');
     expect(report).toMatch(/^- hardware: test$/m);
+    expect(report).toContain(
+      '| run | items | missing | refused | errors | answered | abstained | accuracy | kappa | ECE |'
+    );
     const thresholds = JSON.parse(readFileSync(join(runs, key, 'thresholds-dev.json'), 'utf8'));
     expect(thresholds.targets).toEqual({ x: 0.9, y: 0.8 });
     expect(Object.keys(thresholds.fits).sort()).toEqual(['x', 'y']);
