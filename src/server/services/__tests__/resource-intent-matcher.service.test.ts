@@ -515,7 +515,7 @@ describe('findResourceIntentCandidates — the labels change the response', () =
   // once, which cannot attribute the behaviour: `styleFamily ? -1 : 0` and
   // `role && styleFamily ? -1 : 0` both survived it, and the second of those is a
   // DIFFERENT rule from the one the code implements.
-  it('🔴 demotion turns on the role alone, and only on a role this build recognises', async () => {
+  it('🔴 demotion turns on the role alone, and only on a recognised, ACTUAL role', async () => {
     searchWithSignal.mockResolvedValue({ hits: seed.slice(0, 2), estimatedTotalHits: 2 });
     const confident = { confidence: 0.84, qualityScore: 0.76 };
 
@@ -677,7 +677,7 @@ describe('findResourceIntentCandidates — the labels change the response', () =
   // fallback's own `.slice`: unsliced it would hand stage 3 up to twice the caller's
   // cap in options and hydrate the same, with the shadow row recording the pool
   // width as the shortlist size. Tightening one arm must not replace the other.
-  it('🔴 keeps the seed order whole, caps it, and logs once when the label table is unreachable', async () => {
+  it('🔴 keeps the seed order whole, caps it, and logs once PER FAILURE when the label table is unreachable', async () => {
     searchWithSignal.mockResolvedValue({ hits: seed, estimatedTotalHits: 3 });
     dbMock.dbRead.resourceInsight.findMany.mockRejectedValue(new Error('relation missing'));
 

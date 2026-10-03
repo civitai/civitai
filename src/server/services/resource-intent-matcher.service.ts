@@ -199,8 +199,17 @@ function insightBucket(insight: ResourceIntentInsight, want: ResourceIntentWant)
   // taxonomy's own "no role at all" — the labeller's way of saying it could not
   // place the resource, not evidence of a different purpose. Demoting on it would
   // make being LABELLED a penalty: a resource the pass could not classify would rank
-  // below an identical one it never reached. Same treatment the style axis gives its
-  // own catch-all two lines up.
+  // below an identical one it never reached.
+  //
+  // ⚠️ That is the same INSTINCT as the style axis's `other` guard two lines up but
+  // not the same rule, so do not read them as one: `other` is excluded from
+  // AGREEMENT, `none` from DEMOTION. Each is guarded where it is reachable. A
+  // declined style family cannot agree and the style axis has no demotion branch; a
+  // `none` role cannot agree either, because `want.role` is never `none` — the
+  // caller returns before this function on that role — so demotion is the only
+  // branch it can reach. If that early return is ever relaxed, the agreement side
+  // needs the same guard or `none` meeting `none` becomes the strongest single-axis
+  // promotion out of two labels that both mean "could not place it".
   return insight.role !== 'none' &&
     (RESOURCE_INTENT_ROLE_OPTIONS as readonly string[]).includes(insight.role)
     ? -1
@@ -300,13 +309,17 @@ async function searchShortlistModels(
     // The sweep: over 98 populated role x baseModel x browsing-level cells, this
     // width filled the pool in EVERY cell at each of the caps measured — 1, 5, 50
     // and the maximum 255 — consuming 10-48 documents at the default cap of 50 and
-    // 173 in the worst cell at 255. Caps in between are not individually swept; 255
+    // 173 in the worst cell at 255. ⚠️ It queried the live index but re-implemented
+    // THIS filter and expansion rather than calling them, so it is evidence about
+    // the index's shape, not a test of this function; re-measure through the service
+    // before trusting it against a change to `expandShortlist`. Caps in between are not individually swept; 255
     // is the hardest point, since the multi-version head is consumed first and the
     // margin narrows with depth (2.1x at cap 50 against 1.47x at 255).
     //
     // Separately, and by arithmetic rather than measurement: this page is identical
-    // to the pre-change one for caps 1-127, strictly narrower for 128-255, and never
-    // wider. The 2x that used to sit here added zero pool members in any cell and
+    // to the one BEFORE this feature for caps 1-127, strictly narrower for 128-255,
+    // and never wider. Stated against that baseline specifically, because this branch
+    // held three page widths in turn and the claim is only exact against the first. The 2x that used to sit here added zero pool members in any cell and
     // cost 1.6-2.6x the payload and its blocking JSON.parse, plus roughly double the
     // index's own processing time, on a Meilisearch shared with the resource picker;
     // at the maximum cap this form is also ~1.8x cheaper than the 500-document page

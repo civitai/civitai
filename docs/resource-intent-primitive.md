@@ -19,7 +19,7 @@ POST /api/v1/blocks/resource-intent {prompt, baseModel?, limit?}
   → criteria (versioned object, criteriaVersion: 2)  (src/server/schema/resource-intent.schema.ts)
   → matcher: Meilisearch models_v9 filtered, popularity-seeded
       → version pool ≤ 2 x cap
-      → ordered against ResourceInsight (primary Postgres database)
+      → ordered against ResourceInsight via `dbRead` (the Postgres read replica)
       → shortlist ≤ min(limit||50, 255) versions
   → Jev request #2: one Choice over the shortlist, `none` fallback
   → response {intent, criteria, suggestions[], model, criteriaVersion}
@@ -100,7 +100,7 @@ popularity baseline has to control for. The policy:
 | label agrees on role only | promote (2) |
 | label agrees on style family only | promote (1) |
 | no row, or `confidence` below the floor | neutral (0) — seed order preserved |
-| confident label agreeing on neither axis | demote (−1) |
+| confident label agreeing on neither axis, whose role is an actual role | demote (−1) |
 
 Nothing is FILTERED: an absent label never disqualifies a candidate, and the
 ordering is a permutation of the pool. An unlabeled candidate sits **above** a
@@ -118,12 +118,14 @@ turns out to hurt.
 than the cap the ordering decides *which* resources are suggested, not only their
 order — a promotion into a fixed-width page is an eviction out of it, and what gets
 evicted may be an unlabeled candidate. Relative to the popularity-only behaviour
-this replaces, no candidate is excluded that the old pool would have contained —
-measured, not reasoned: the search page this change asks for is identical to the
-previous one for every cap from 1 to 127, strictly narrower from 128 to 255, and
-never wider; and at that narrower end a 255-document page filled a 255-version pool
-in all 98 populated role x baseModel x browsing-level cells, the worst consuming 173
-documents. But "nothing is dropped" would be the wrong way to read the table above.
+this replaces, no candidate is excluded that the old pool would have contained. That
+rests on two claims of different kinds, and they are worth keeping apart. By
+ARITHMETIC: the search page this change asks for is identical to the pre-feature one
+for every cap from 1 to 127, strictly narrower from 128 to 255, and never wider — no
+data needed, just the two expressions. MEASURED: at that narrower end, a
+255-document page filled a 255-version pool in all 98 populated role x baseModel x
+browsing-level cells, the worst consuming 173 documents. But "nothing is dropped"
+would be the wrong way to read the table above.
 
 Three details that are decisions, not oversights.
 
@@ -147,14 +149,26 @@ moves until a vendor-spend-gated re-label pass finished, and the table was desig
 so superseded rows stay readable. (`specHash` holds the LABEL spec's hash, which
 lives in `scripts/label-resource-insights.ts`, so comparing it would also make a
 server service depend on a CLI script.) What protects a superseded row from doing
-harm is the demotion rule instead: **demotion turns on the `role` alone, and only
-on a role this build recognises.** A taxonomy edit supersedes every row's spec *and*
+harm is the demotion rule instead: **demotion turns on the `role` alone, and only on
+a role this build recognises.** A taxonomy edit supersedes every row's spec *and*
 makes its strings unmatchable in one move, so demoting on a value nobody can
 interpret would bury the whole labeled population beneath the unlabeled majority.
 Note what that does and does not say: an unrecognised `styleFamily` beside a
 recognised *disagreeing* role still demotes, because the role is the evidence. The
 residual, resolved either by the manual `stale` flip or by re-running the labeling
 pass: a spec that keeps an option's spelling and changes its meaning.
+
+**`none` is not a disagreement either.** The fourth decision, and the one that is
+easiest to get wrong, because `none` IS in the role option list — so a plain
+membership test treats it as recognised and demotes on it. It is the taxonomy's own
+"no role at all", the labeller declining to place the resource, not evidence of a
+different purpose, and demoting on it makes being LABELLED a penalty: a resource the
+pass could not classify would rank below an identical one it never reached, and on a
+pool wider than the cap that is an eviction rather than a reorder. So a `none` row is
+neutral — indistinguishable from unlabeled, `qualityScore` included. It can still
+PROMOTE on the style axis, because the style question has its own option list with no
+`none` in it, so a style family sitting beside `role: 'none'` is a positive answer to
+a different question rather than a second decline.
 
 `contentTypes` is **not** read. The v1 label spec asks a singular single-`choice`
 question and wraps the answer in a one-element array, so the column has one value
