@@ -72,7 +72,9 @@ export type ResourceIntentShortlistEntry = {
  * `clampResourceIntentCap` is therefore the ONE bound on both the pool and the
  * search page below — raising `RESOURCE_INTENT_MAX_SHORTLIST` to widen responses
  * also raises this re-rank's work bound. A second ceiling here was deleted for
- * being unreachable while that constant stays under it.
+ * being unreachable while that constant stays under it; if it is ever raised past
+ * Meilisearch's own `maxTotalHits`, the page silently truncates and the ceiling has
+ * to come back.
  */
 const RERANK_POOL_MULTIPLIER = 2;
 
@@ -180,16 +182,29 @@ function insightBucket(insight: ResourceIntentInsight, want: ResourceIntentWant)
   const agreement =
     (insight.role === want.role ? ROLE_MATCH_WEIGHT : 0) + (styleMatch ? STYLE_MATCH_WEIGHT : 0);
   if (agreement > 0) return agreement;
-  // 🔴 Demotion turns on the ROLE alone, and only on a role this build's taxonomy
-  // still contains. `role`/`styleFamily` are TEXT versioned with the label spec, so
-  // a stored row can hold a value this build cannot interpret — and a taxonomy edit
-  // supersedes every row's spec AND makes its strings unmatchable in the same move,
-  // so demoting on one would bury the entire labeled population (the catalogue's
-  // high-usage head) beneath the unlabeled majority until a re-label pass caught up.
-  // Only the role is checked, because only a recognised role is positive evidence
-  // the resource is for something ELSE: an unrecognised `styleFamily` already fails
-  // the comparison above, so checking it here would change nothing.
-  return (RESOURCE_INTENT_ROLE_OPTIONS as readonly string[]).includes(insight.role) ? -1 : 0;
+  // 🔴 Demotion turns on the ROLE alone, and only on a role that is BOTH in this
+  // build's taxonomy AND an actual role.
+  //
+  // Only the role, because only a recognised role is positive evidence the resource
+  // is for something ELSE; an unrecognised `styleFamily` already fails the
+  // comparison above, so checking it here would change nothing.
+  //
+  // Only a value this build knows, because `role`/`styleFamily` are TEXT versioned
+  // with the label spec: a taxonomy edit supersedes every row's spec AND makes its
+  // strings unmatchable in the same move, so demoting on one would bury the entire
+  // labeled population (the catalogue's high-usage head) beneath the unlabeled
+  // majority until a re-label pass caught up.
+  //
+  // And `none` is excluded even though it IS in the option list, because it is the
+  // taxonomy's own "no role at all" — the labeller's way of saying it could not
+  // place the resource, not evidence of a different purpose. Demoting on it would
+  // make being LABELLED a penalty: a resource the pass could not classify would rank
+  // below an identical one it never reached. Same treatment the style axis gives its
+  // own catch-all two lines up.
+  return insight.role !== 'none' &&
+    (RESOURCE_INTENT_ROLE_OPTIONS as readonly string[]).includes(insight.role)
+    ? -1
+    : 0;
 }
 
 /**
@@ -278,14 +293,24 @@ async function searchShortlistModels(
     // and no multiplier on top. A model USUALLY contributes at least one matching
     // version, but not always: the indexed coverage and baseModel filters are both
     // nested-array matches, so one document can match on two DIFFERENT versions and
-    // expand to zero (measured: 20 of 49,000 documents, 0.04%). What carries this is
-    // the measurement, not that invariant — swept live over 98 populated role x
-    // baseModel x browsing-level cells, this width filled the pool in every one, at
-    // every cap from 1 to 255: 10-48 documents consumed at the default cap of 50,
-    // and 173 at the worst cell of the maximum cap of 255. The 2x that used to sit
-    // here added zero pool members in any cell and cost 1.6-2.6x the payload and its
-    // blocking JSON.parse, plus ~1.8x the index's own processing time on a
-    // Meilisearch shared with the resource picker.
+    // expand to zero (measured at 20 of the 49,000 documents the sweep below
+    // returned, 0.04%). What carries this width is that measurement, not the
+    // invariant.
+    //
+    // The sweep: over 98 populated role x baseModel x browsing-level cells, this
+    // width filled the pool in EVERY cell at each of the caps measured — 1, 5, 50
+    // and the maximum 255 — consuming 10-48 documents at the default cap of 50 and
+    // 173 in the worst cell at 255. Caps in between are not individually swept; 255
+    // is the hardest point, since the multi-version head is consumed first and the
+    // margin narrows with depth (2.1x at cap 50 against 1.47x at 255).
+    //
+    // Separately, and by arithmetic rather than measurement: this page is identical
+    // to the pre-change one for caps 1-127, strictly narrower for 128-255, and never
+    // wider. The 2x that used to sit here added zero pool members in any cell and
+    // cost 1.6-2.6x the payload and its blocking JSON.parse, plus roughly double the
+    // index's own processing time, on a Meilisearch shared with the resource picker;
+    // at the maximum cap this form is also ~1.8x cheaper than the 500-document page
+    // the pre-change arithmetic asked for there.
     limit: poolCap,
   };
   try {

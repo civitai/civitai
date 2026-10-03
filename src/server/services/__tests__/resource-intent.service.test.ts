@@ -373,10 +373,14 @@ describe('cache behavior', () => {
       criteriaVersion: 2,
     };
 
-    // 🔴 POSITIVE CONTROL, and it is what makes the four arms below mean anything:
-    // each of them is `current` with ONE term spoiled, so if `current` itself stops
-    // parsing — the response schema is strict, so the next required field does that —
-    // every arm would still be recomputed, for the wrong reason, and stay green.
+    // 🔴 POSITIVE CONTROL, and it is what makes the three single-term arms below mean
+    // anything: each of those is `current` with ONE term spoiled, so if `current`
+    // itself stops parsing — the response schema is strict, so the next required
+    // field does that — they would all still be recomputed, for the wrong reason, and
+    // stay green. It does NOT cover the fourth arm, which is a different blob shape
+    // (degraded, `criteria: null`); that one's own parse is pinned by the
+    // `shadow event` test that plants the same shape at the current version and
+    // asserts it IS served.
     mockAskJev.mockReset();
     redisMock.redis.packed.get.mockResolvedValue(current);
     const served = await getResourceIntent(INPUT, CTX);

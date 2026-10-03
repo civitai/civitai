@@ -557,6 +557,18 @@ describe('findResourceIntentCandidates — the labels change the response', () =
     expect((await findResourceIntentCandidates(criteria, opts)).map((e) => e.versionId)).toEqual([
       10701, 20802,
     ]);
+
+    // 🔴 (iv) role `none` -> neutral. It IS in the option list, so a plain membership
+    // test demotes on it — but it is the labeller's "I could not place this", not
+    // evidence of a different purpose, and demoting on it would make being labelled
+    // a penalty. The labelling pass asks with the full option list and persists the
+    // answer unfiltered, so this row shape is reachable, not hypothetical.
+    dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([
+      insightRow(10701, { ...confident, role: 'none', styleFamily: 'pixel_retro' }),
+    ]);
+    expect((await findResourceIntentCandidates(criteria, opts)).map((e) => e.versionId)).toEqual([
+      10701, 20802,
+    ]);
   });
 
   // 🔴 `quality: insight && bucket !== 0 ? …` applies inside BOTH labeled buckets.
@@ -658,18 +670,24 @@ describe('findResourceIntentCandidates — the labels change the response', () =
     expect(entries.map((e) => e.versionId)).toEqual([10701, 20802, 30903]);
   });
 
-  // 🔴 Run at cap 2 against a 3-hit seed on purpose: the fallback has its OWN slice,
-  // and at cap 50 that slice is a no-op, so `return pool` survived. Unsliced, the
-  // fallback would hand stage 3 up to twice the caller's cap in options and hydrate
-  // the same, while the shadow row recorded the pool width as the shortlist size.
-  it('🔴 keeps the seed order, caps it, and logs once when the label table is unreachable', async () => {
+  // 🔴 BOTH caps, and both are load-bearing. At cap 50 the fallback's slice is a
+  // no-op, so that arm is the one that pins "the fallback returns the pool whole" —
+  // a mutant that FILTERS the pool is invisible at cap 2, where only two of three
+  // hits are asserted. At cap 2 the slice is observable, which is what pins the
+  // fallback's own `.slice`: unsliced it would hand stage 3 up to twice the caller's
+  // cap in options and hydrate the same, with the shadow row recording the pool
+  // width as the shortlist size. Tightening one arm must not replace the other.
+  it('🔴 keeps the seed order whole, caps it, and logs once when the label table is unreachable', async () => {
     searchWithSignal.mockResolvedValue({ hits: seed, estimatedTotalHits: 3 });
     dbMock.dbRead.resourceInsight.findMany.mockRejectedValue(new Error('relation missing'));
 
-    const entries = await findResourceIntentCandidates(criteria, { ...opts, cap: 2 });
+    const whole = await findResourceIntentCandidates(criteria, opts);
+    expect(whole.map((e) => e.versionId)).toEqual([10701, 20802, 30903]);
 
-    expect(entries.map((e) => e.versionId)).toEqual([10701, 20802]);
-    expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(1);
+    const capped = await findResourceIntentCandidates(criteria, { ...opts, cap: 2 });
+    expect(capped.map((e) => e.versionId)).toEqual([10701, 20802]);
+
+    expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(2);
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'resource-intent-insight-read-failed' }),
       'temp-search'

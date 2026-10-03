@@ -187,4 +187,44 @@ describe('resource-intent — a label changes the served response', () => {
 
     expect(result.criteria).toMatchObject({ role: 'style', styleFamily: 'anime_manga' });
   });
+
+  // 🔴 SINGLE-AXIS agreement, both ways round, because every other fixture in this
+  // segment agrees on BOTH axes — which satisfies both branches and so selects
+  // neither. Measured: with both-axis fixtures only, corrupting the `want` on either
+  // axis (`styleFamily: 'other'`, or `role: 'none'`) survived all fourteen
+  // integration assertions. These two arms are what make the compiled criteria a
+  // GUARD rather than a field that merely exists: each promotes on one axis alone, so
+  // losing that axis does not just lower the row, it DEMOTES it — the recognised role
+  // then reads as a disagreement — sending it last instead of first.
+  it('🔴 a label agreeing on the STYLE axis alone still leads the response', async () => {
+    dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([
+      {
+        modelVersionId: 83003,
+        role: 'character',
+        styleFamily: 'anime_manga',
+        confidence: 0.55,
+        qualityScore: 0.24,
+      },
+    ]);
+
+    const result = await getResourceIntent(INPUT, CTX);
+
+    expect(result.suggestions.map((s) => s.versionId)).toEqual([83003, 81001, 82002]);
+  });
+
+  it('🔴 a label agreeing on the ROLE axis alone still leads the response', async () => {
+    dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([
+      {
+        modelVersionId: 83003,
+        role: 'style',
+        styleFamily: 'pixel_retro',
+        confidence: 0.55,
+        qualityScore: 0.24,
+      },
+    ]);
+
+    const result = await getResourceIntent(INPUT, CTX);
+
+    expect(result.suggestions.map((s) => s.versionId)).toEqual([83003, 81001, 82002]);
+  });
 });
