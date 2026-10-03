@@ -4,6 +4,7 @@ import JSZip from 'jszip';
 import { buildTrainManifest, type EvalIndex, type TrainCandidate } from './builder';
 import { toImajevQuestions } from './imajev-client';
 import { findPii } from './safety';
+import { toJsonl } from './store';
 import type { DataClass, DecisionQuestion, DecisionState, FormatSpec, TrainTarget } from './types';
 
 export const TRAINER_MANIFEST_PATH = 'data/manifests/decision.jsonl';
@@ -74,25 +75,17 @@ function text(value: string, path: string): string {
 }
 
 /**
- * TS port of imajev `jev_api.to_request` for the questions this harness can express: string
- * instructions, no `multi`, and a noul without criteria. Pinned to imajev by a golden fixture.
+ * imajev's fields for these questions, as `jev_api.to_request` builds them from the payload serving
+ * sends. Only what this harness can express: string instructions, no `multi`, noul without criteria.
  */
-export function toImajevRequest(
-  requestId: string,
-  state: DecisionState,
-  questions: readonly DecisionQuestion[]
-): ImajevRequest {
-  const idLength = codePoints(requestId);
-  if (idLength < 1 || idLength > MAX_REQUEST_ID) {
-    throw new TrainerDatasetError(`request id must be 1-${MAX_REQUEST_ID} characters`);
-  }
+export function toImajevFields(questions: readonly DecisionQuestion[]): ImajevField[] {
   if (questions.length === 0 || questions.length > MAX_QUESTIONS) {
     throw new TrainerDatasetError(
       `a request has 1-${MAX_QUESTIONS} questions, got ${questions.length}`
     );
   }
   const ids = new Set<string>();
-  const fields = questions.map((q): ImajevField => {
+  return questions.map((q): ImajevField => {
     if (!FIELD_ID.test(q.id))
       throw new TrainerDatasetError(`question id "${q.id}" is not a valid field id`);
     if (ids.has(q.id)) throw new TrainerDatasetError(`duplicate question id "${q.id}"`);
@@ -107,24 +100,22 @@ export function toImajevRequest(
           `${q.id} needs 2-${MAX_OPTIONS} options, got ${q.options.length}`
         );
       }
-      const keys = new Set<string>();
-      return {
-        id: q.id,
-        question,
-        type: 'choice',
-        options: q.options.map((o) => {
-          const n = codePoints(o.key);
-          if (n < 1 || n > MAX_OPTION_KEY || o.key === UNKNOWN) {
-            throw new TrainerDatasetError(`${q.id} has an invalid option key "${o.key}"`);
-          }
-          if (keys.has(o.key)) throw new TrainerDatasetError(`${q.id} repeats option "${o.key}"`);
-          keys.add(o.key);
-          return {
-            value: o.key,
-            description: o.description ? text(o.description, `${q.id}.${o.key}`) : null,
-          };
-        }),
-      };
+      const options: Record<string, { value: string; description: string | null }> =
+        Object.create(null);
+      for (const o of q.options) {
+        const n = codePoints(o.key);
+        if (n < 1 || n > MAX_OPTION_KEY || o.key === UNKNOWN) {
+          throw new TrainerDatasetError(`${q.id} has an invalid option key "${o.key}"`);
+        }
+        if (o.key in options) throw new TrainerDatasetError(`${q.id} repeats option "${o.key}"`);
+        options[o.key] = {
+          value: o.key,
+          description: o.description ? text(o.description, `${q.id}.${o.key}`) : null,
+        };
+      }
+      // Serving sends `criteria` as a JS object, which lists integer-like keys first; the
+      // trainer must see the options in that same order.
+      return { id: q.id, question, type: 'choice', options: Object.values(options) };
     }
     if (q.criteria.length < 2 || q.criteria.length > MAX_LEVELS) {
       throw new TrainerDatasetError(
@@ -141,6 +132,13 @@ export function toImajevRequest(
       })),
     };
   });
+}
+
+function requestFor(requestId: string, state: DecisionState, fields: ImajevField[]): ImajevRequest {
+  const idLength = codePoints(requestId);
+  if (idLength < 1 || idLength > MAX_REQUEST_ID) {
+    throw new TrainerDatasetError(`request id must be 1-${MAX_REQUEST_ID} characters`);
+  }
   if (Buffer.byteLength(JSON.stringify(state), 'utf8') > MAX_STATE_BYTES) {
     throw new TrainerDatasetError(`state exceeds ${MAX_STATE_BYTES} bytes`);
   }
@@ -151,6 +149,15 @@ export function toImajevRequest(
     fields,
     execution: { mode: 'inspect', allow_external_fallback: false },
   };
+}
+
+/** TS port of imajev `jev_api.to_request`, pinned to imajev by a golden fixture. */
+export function toImajevRequest(
+  requestId: string,
+  state: DecisionState,
+  questions: readonly DecisionQuestion[]
+): ImajevRequest {
+  return requestFor(requestId, state, toImajevFields(questions));
 }
 
 function assertTarget(q: DecisionQuestion, target: TrainTarget, gold: string): void {
@@ -200,6 +207,36 @@ export type TrainerDatasetSummary = {
   skipped: { noGold: number; untrainable: number; pii: number };
 };
 
+/** The leakage check compares ids with Set.has, so a number where a string belongs would slip past it. */
+function assertCandidateShapes(candidates: readonly TrainCandidate[]): void {
+  const groupPartition = new Map<string, string>();
+  candidates.forEach((c, i) => {
+    const at = `train manifest row ${i + 1}`;
+    if (typeof c.itemId !== 'string' || !c.itemId) {
+      throw new TrainerDatasetError(`${at}: itemId must be a non-empty string`);
+    }
+    if (typeof c.groupKey !== 'string' || !c.groupKey) {
+      throw new TrainerDatasetError(`${at}: groupKey must be a non-empty string`);
+    }
+    if (c.partition !== 'train' && c.partition !== 'trainer-dev') {
+      throw new TrainerDatasetError(`${at}: partition must be train or trainer-dev`);
+    }
+    if (
+      !c.state ||
+      typeof c.state !== 'object' ||
+      Array.isArray(c.state) ||
+      !Object.values(c.state).every((v) => typeof v === 'string')
+    ) {
+      throw new TrainerDatasetError(`${at}: state must be an object of strings`);
+    }
+    const held = groupPartition.get(c.groupKey);
+    if (held !== undefined && held !== c.partition) {
+      throw new TrainerDatasetError(`${at}: its group is in both trainer partitions`);
+    }
+    groupPartition.set(c.groupKey, c.partition);
+  });
+}
+
 export function buildTrainerRows(input: TrainerDatasetInput): {
   rows: TrainerRow[];
   summary: TrainerDatasetSummary;
@@ -213,13 +250,22 @@ export function buildTrainerRows(input: TrainerDatasetInput): {
   if (!trainTargets) {
     throw new TrainerDatasetError(`this format of ${input.nodeId} defines no trainTargets`);
   }
+  assertCandidateShapes(input.candidates);
   // Re-checked against today's index: it only grows, so a manifest that passed yesterday can collide now.
   const candidates = buildTrainManifest(input.candidates, input.index, input.excludedIds);
 
+  const fields = toImajevFields(input.questions);
   const jevQuestions = toImajevQuestions(input.questions);
+  const questionIds = input.questions.map((q) => q.id).sort();
   const rows: TrainerRow[] = [];
   const skipped = { noGold: 0, untrainable: 0, pii: 0 };
   for (const c of candidates) {
+    const keyPii = findPii({ id: c.itemId, group_key: c.groupKey });
+    if (keyPii) {
+      throw new TrainerDatasetError(
+        `item ${keyPii.field} is ${keyPii.kind}-shaped; a node's ids must not carry personal data`
+      );
+    }
     if (c.imageRefs?.length) {
       throw new TrainerDatasetError(
         `item ${c.itemId} carries images; image datasets are not supported`
@@ -239,11 +285,10 @@ export function buildTrainerRows(input: TrainerDatasetInput): {
       skipped.untrainable++;
       continue;
     }
-    const expected = input.questions.map((q) => q.id).sort();
     const got = Object.keys(targets).sort();
-    if (JSON.stringify(expected) !== JSON.stringify(got)) {
+    if (JSON.stringify(questionIds) !== JSON.stringify(got)) {
       throw new TrainerDatasetError(
-        `gold "${gold}" gives targets for [${got.join(', ')}], the format asks [${expected.join(
+        `gold "${gold}" gives targets for [${got.join(', ')}], the format asks [${questionIds.join(
           ', '
         )}]`
       );
@@ -253,7 +298,7 @@ export function buildTrainerRows(input: TrainerDatasetInput): {
       id: c.itemId,
       group_key: c.groupKey,
       partition: c.partition === 'trainer-dev' ? 'dev' : 'train',
-      request: toImajevRequest(c.itemId, c.state, input.questions),
+      request: requestFor(c.itemId, c.state, fields),
       jev: { state: c.state, questions: jevQuestions },
       targets,
       images: [],
@@ -275,9 +320,10 @@ export async function zipTrainerDataset(
   rows: readonly TrainerRow[]
 ): Promise<{ bytes: Buffer; sha256: string }> {
   const zip = new JSZip();
-  zip.file(TRAINER_MANIFEST_PATH, rows.map((r) => JSON.stringify(r)).join('\n') + '\n', {
-    date: ZIP_DATE,
-  });
+  // JSZip would otherwise add the parent folders itself, stamped with the current time.
+  zip.file('data/', null, { dir: true, date: ZIP_DATE });
+  zip.file('data/manifests/', null, { dir: true, date: ZIP_DATE });
+  zip.file(TRAINER_MANIFEST_PATH, toJsonl(rows), { date: ZIP_DATE });
   const bytes = await zip.generateAsync({
     type: 'nodebuffer',
     compression: 'DEFLATE',

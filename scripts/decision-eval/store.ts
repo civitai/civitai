@@ -39,8 +39,12 @@ export function writeFileAtomic(path: string, contents: string | Uint8Array): vo
   renameSync(tmp, path);
 }
 
+export function toJsonl(rows: readonly unknown[]): string {
+  return rows.map((r) => JSON.stringify(r)).join('\n') + (rows.length ? '\n' : '');
+}
+
 export function writeJsonl(path: string, rows: readonly unknown[]): void {
-  writeFileAtomic(path, rows.map((r) => JSON.stringify(r)).join('\n') + (rows.length ? '\n' : ''));
+  writeFileAtomic(path, toJsonl(rows));
 }
 
 export function readJson<T>(path: string): T | undefined {

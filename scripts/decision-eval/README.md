@@ -96,9 +96,14 @@ The training-manifest builder reads this file to keep eval items out of any trai
 
 - It re-runs the leakage and exclusion checks against today's eval index and exclusions. Both only grow, so a manifest that passed yesterday can fail today.
 - Each row's targets come from the format's `trainTargets(gold)`, the inverse of `mapAnswer`. A format without it cannot train. `choiceTargets` covers a format whose classes are its option keys.
+- Gold is resolved with the node's `goldPolicy`, the same way `score` resolves it.
 - Rows with no resolved gold, a class the format cannot express, or a PII-shaped state are skipped and counted.
-- `trainer-dev` becomes the trainer's `dev` partition, which only picks its best checkpoint.
-- Moderation nodes and rows with images are refused.
+- `trainer-dev` becomes the trainer's `dev` partition, which only picks its best checkpoint. A group may sit in only one of the two partitions.
+- These are refused:
+  - moderation nodes and rows with images;
+  - a train-manifest row whose ids are not strings, or whose id or group key looks like personal data.
+- A choice question's options are written in the order serving sends them. Serving sends `criteria` as a JS object, which lists integer-like keys first.
+- The manifest is built as one string, so a few tens of thousands of multi-KB tickets is the ceiling. `train-manifest` has the same limit at about twice the rows.
 
 The zip holds `data/manifests/decision.jsonl`. Each row carries imajev's internal request, built by `toImajevRequest`, and the Jev-style payload serving sends. `toImajevRequest` ports imajev's `jev_api.to_request`. `scripts/__tests__/fixtures/imajev-to-request/golden.json` pins it to imajev's own output at `IMAJEV_TO_REQUEST_COMMIT`; regenerate it with `generate.py` beside it when that pin moves.
 
