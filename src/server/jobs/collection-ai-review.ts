@@ -5,6 +5,7 @@ import {
   CollectionItemStatus,
   ImageIngestionStatus,
 } from '~/shared/utils/prisma/enums';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { Tracker } from '~/server/clickhouse/tracker';
 import { logToAxiom } from '~/server/logging/client';
@@ -21,10 +22,13 @@ import {
   isAiReviewAvailable,
   isNsfwLevelAllowed,
   isUnratedNsfwLevel,
+  needsMinorReview,
   resolveRejectionMessage,
   reviewImage,
 } from '~/server/services/ai/collection-review.service';
 import type { AiReviewDecision } from '~/server/services/ai/collection-review.service';
+import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
+import { bustCachesForPosts } from '~/server/services/post.service';
 import { isDefined } from '~/utils/type-guards';
 import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { getEdgeUrl } from '~/client-utils/edge-url';
@@ -116,8 +120,10 @@ export async function reviewCollection(collectionId: number, config: CollectionA
 
 type Outcome = {
   collectionItemId: number;
+  imageId: number;
   action: 'accept' | 'reject' | 'stamp';
   message?: string;
+  minorReview?: boolean;
 };
 
 async function classifyItem({
@@ -188,7 +194,7 @@ async function classifyItem({
       // attempts run out, so a permanently broken image (the CDN refuses some of them) is not
       // retried, and re-billed, on every run for the life of the collection.
       if (attempts < MAX_REVIEW_ATTEMPTS) return undefined;
-      return { collectionItemId: item.collectionItemId, action: 'stamp' };
+      return { collectionItemId: item.collectionItemId, imageId: item.imageId, action: 'stamp' };
     }
   }
 
@@ -224,7 +230,13 @@ async function classifyItem({
     completionTokens: usage.completionTokens,
   });
 
-  return { collectionItemId: item.collectionItemId, action, message };
+  return {
+    collectionItemId: item.collectionItemId,
+    imageId: item.imageId,
+    action,
+    message,
+    minorReview: applied && needsMinorReview(decision),
+  };
 }
 
 // The scanner could not fetch the file, and nothing rescans a NotFound image on its own.
@@ -256,15 +268,106 @@ export function resolveAutomatedRejectionReason({
     : undefined;
 }
 
+function logFlagError(collectionId: number, error: string, imageIds?: number[]) {
+  logToAxiom({
+    type: 'job-error',
+    name: 'collection-ai-review',
+    collectionId,
+    imageIds,
+    error,
+  }).catch(() => undefined);
+}
+
+// Only fills an empty slot. Even the queues minor review outranks are left alone: accepting in the
+// minor queue also resolves tag reviews it never shows and can clear the scanner's minor flag, so
+// moving an image there could lower it. Rewriting 'minor' with itself counts it as routed.
+// Resolves false only when the write itself failed.
+export async function flagForMinorReview({
+  collectionId,
+  imageIds,
+}: {
+  collectionId: number;
+  imageIds: number[];
+}) {
+  if (!imageIds.length) return true;
+
+  let flagged: { id: number; postId: number | null }[];
+  try {
+    flagged = await dbWrite.$queryRaw<{ id: number; postId: number | null }[]>`
+      UPDATE "Image"
+      SET "needsReview" = 'minor', "updatedAt" = now()
+      WHERE id IN (${Prisma.join(imageIds)})
+        AND ("needsReview" IS NULL OR "needsReview" = 'minor')
+        AND ingestion = 'Scanned'
+      RETURNING id, "postId"
+    `;
+  } catch (error) {
+    logFlagError(
+      collectionId,
+      `Failed to flag images for minor review: ${(error as Error).message}`,
+      imageIds
+    );
+    return false;
+  }
+
+  // Held in a queue minor review does not outrank, or not scanned: without this the escalation is
+  // recorded only in ClickHouse.
+  const flaggedIds = new Set(flagged.map((row) => row.id));
+  const unrouted = imageIds.filter((id) => !flaggedIds.has(id));
+  if (unrouted.length)
+    logFlagError(collectionId, 'Minor escalation not routed to the minor queue', unrouted);
+
+  if (!flagged.length) return true;
+
+  const postIds = [...new Set(flagged.map((row) => row.postId).filter(isDefined))];
+  await Promise.all([
+    queueImageSearchIndexUpdate({
+      ids: [...flaggedIds],
+      action: SearchIndexUpdateQueueAction.Update,
+    }).catch((error) =>
+      logFlagError(collectionId, `Search index update failed: ${(error as Error).message}`)
+    ),
+    bustCachesForPosts(postIds).catch((error) =>
+      logFlagError(collectionId, `Post cache bust failed: ${(error as Error).message}`)
+    ),
+  ]);
+  return true;
+}
+
+// A rejected item can be deleted within the hour, taking the only trace of the escalation with it,
+// so an item whose flag did not land is left for the next run to retry. Out of attempts, it is
+// stamped rather than decided: never accepted on the strength of a later, different verdict.
+async function holdUnflagged(reviewed: Outcome[], minor: Outcome[]) {
+  const retry = new Set<number>();
+  const stamp = new Set<number>();
+  for (const { collectionItemId } of minor) {
+    const attempts = await recordFailedAttempt(collectionItemId);
+    (attempts < MAX_REVIEW_ATTEMPTS ? retry : stamp).add(collectionItemId);
+  }
+  return reviewed
+    .filter((o) => !retry.has(o.collectionItemId))
+    .map((o) =>
+      stamp.has(o.collectionItemId) ? { ...o, action: 'stamp' as const, message: undefined } : o
+    );
+}
+
 // Stamps before writing status: a status write can throw, and an unstamped item is reselected and
 // re-billed on the next run.
 async function applyOutcomes({
   collectionId,
-  outcomes,
+  outcomes: reviewed,
 }: {
   collectionId: number;
   outcomes: Outcome[];
 }) {
+  if (!reviewed.length) return;
+
+  const minor = reviewed.filter((o) => o.minorReview);
+  const flagged = await flagForMinorReview({
+    collectionId,
+    imageIds: minor.map((o) => o.imageId),
+  });
+  const outcomes = flagged ? reviewed : await holdUnflagged(reviewed, minor);
   if (!outcomes.length) return;
 
   // Minutes can pass between selecting an item and writing its outcome. Claiming the row only
