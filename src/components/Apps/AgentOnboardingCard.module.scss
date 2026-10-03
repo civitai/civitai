@@ -8,12 +8,32 @@
  * 1px padded wrapper with an opaque inner surface is universally supported and produces the
  * same 1px gradient edge.
  *
- * 🔴 `background-size` IS SET HERE AND THE POSITION IS ANIMATED BY `motion`. Both halves
- * have to agree or the shimmer does not move: the gradient repeats across 200% of the ring's
- * width, and the component slides `background-position` from `0% 50%` to `200% 50%` over
- * ~4s. A static render (reduced motion, or the collapsed workbench strip) keeps this file's
- * default position and reads as a plain gradient edge rather than as a broken animation —
- * which is why the gradient lives in CSS and only the position is driven from JS.
+ * 🔴 THE SHIMMER IS CSS KEYFRAMES, NOT `motion`, AND IT IS THE ONE ANIMATION ON THIS CARD
+ * THAT HAD TO BE. The other three (`y` on the rows, `scale` on the glyph, `opacity` on the
+ * caret) are all in framer's accelerable set — `opacity`, `clipPath`, `filter`, `transform`
+ * (`motion/dist/es/framer-motion/dist/es/animation/animators/utils/accelerated-values.mjs`)
+ * — so they run on the compositor and cost the main thread nothing. `background-position` is
+ * NOT in that set, so framer falls back to `MainThreadAnimation`, whose frameloop driver
+ * registers with `keepAlive: true`; with `repeat: Infinity` that tick never unregisters, so
+ * it would run framer's whole per-frame pipeline for as long as the card is mounted — on the
+ * public pitch state, off-screen included (`animate` has no viewport gating; that is
+ * `whileInView`). Per frame it also invalidates the ring's background paint across its entire
+ * border box, ~99% of which the opaque `.surface` covers.
+ *
+ * In CSS the same effect is a browser-owned animation with no JS at all.
+ * `src/components/Crucible/CruciblePrizeBreakdown.module.scss` is the in-repo precedent for
+ * exactly this shimmer. (Measured by the perf review: everything above is a property of the
+ * animator framer selects, not of the effect.)
+ *
+ * 🔴 `background-size: 200%` AND THE KEYFRAMES' 0%→200% SWEEP HAVE TO AGREE or the gradient
+ * does not travel seamlessly. The static render — reduced motion, or the collapsed workbench
+ * strip — simply omits `.ringAnimated` and keeps the default position, so it reads as a plain
+ * gradient edge rather than as a broken animation.
+ *
+ * The `prefers-reduced-motion` media query below is a BELT, not the mechanism: the component
+ * already short-circuits in JS. It costs two lines, it is what every other shimmer consumer
+ * in this repo does, and it means a future refactor that drops the JS branch cannot silently
+ * leave a reduced-motion viewer with a moving border.
  */
 
 .ring {
@@ -29,6 +49,25 @@
   );
   background-size: 200% 100%;
   background-position: 0% 50%;
+}
+
+.ringAnimated {
+  animation: agentRingShimmer 4s linear infinite;
+}
+
+@keyframes agentRingShimmer {
+  from {
+    background-position: 0% 50%;
+  }
+  to {
+    background-position: 200% 50%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ringAnimated {
+    animation: none;
+  }
 }
 
 /* The opaque surface inside the ring. Radius is one pixel tighter than the ring's so the

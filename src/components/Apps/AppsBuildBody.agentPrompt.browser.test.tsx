@@ -123,7 +123,15 @@ const SKELETON = 'apps-build-skeleton';
 const RENDER_BARRIER = 'render-barrier';
 
 async function renderBody() {
-  renderWithProviders(
+  // 🔴 AWAITED, NOT FIRE-AND-FORGET, AND THAT IS WHAT MAKES THE STATIC CLAIMS BELOW REAL.
+  // `vitest-browser-react`'s `render` is `async` and wraps the root render in
+  // `await act(async () => …)`, which drains the effect `useReducedMotion` uses to commit the
+  // real media value. Without it, `motionOn` is false in the FIRST commit of an animated card
+  // too, so `data-motion="off"` is the default state rather than evidence of anything — the
+  // workbench-static test below would pass on a card that animates. The render barrier is a
+  // different guard, for a different hazard (an absence assertion reading an empty container),
+  // and both are needed.
+  await renderWithProviders(
     <>
       <div data-testid={RENDER_BARRIER} />
       <AppsBuildBody />
@@ -215,6 +223,24 @@ describe('the agent card renders in ALL THREE states', () => {
     const card = page.getByTestId(AGENT_ONBOARDING_TESTID);
     await expect.element(card).toBeInTheDocument();
     expect(card.element().getAttribute('data-motion')).toBe('off');
+  });
+
+  /**
+   * 🔴 POSITIVE CONTROL FOR THE ASSERTION ABOVE, AND THIS FILE HAD NONE. `data-motion` never
+   * took the value `'on'` anywhere here, so the workbench's `'off'` was a reader nobody had
+   * watched move — and `'off'` is also the component's first-render default, which is the
+   * other half of why that assertion needed propping up (see `renderBody`). State B passes no
+   * `animated` prop, so if it reported `'off'` too, the workbench result would be about the
+   * clock rather than about the prop.
+   */
+  test('POSITIVE CONTROL: the state-B card reports `data-motion="on"`', async () => {
+    mocks.isFetched = true;
+    mocks.navSummary = { ...EMPTY_SUMMARY };
+    await renderBody();
+
+    const card = page.getByTestId(AGENT_ONBOARDING_TESTID);
+    await expect.element(card).toBeInTheDocument();
+    expect(card.element().getAttribute('data-motion')).toBe('on');
   });
 
   test('🔴 the card does NOT render under the skeleton', async () => {

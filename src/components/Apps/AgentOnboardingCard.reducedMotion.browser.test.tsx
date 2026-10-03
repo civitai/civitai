@@ -15,11 +15,17 @@ import type * as MantineHooks from '@mantine/hooks';
  * `AgentOnboardingCard` must honour `prefers-reduced-motion`.
  *
  * With the shared `useReducedMotion` hook forced true, the card short-circuits to a plain
- * tree: no `LazyMotion`, no `m` components, no shimmer animation and no caret — the pattern
- * `wizardMotion.tsx` established and `ExternalSubmitForm.reducedMotion.browser.test.tsx`
- * already pins for the submit wizard. The point of the short-circuit is that the
- * reduced-motion DOM is identical to a plain render and therefore cheap to assert, so this
- * file asserts the ABSENCES structurally rather than trusting the `data-motion` attribute.
+ * tree: no `LazyMotion`, no `m` components, no caret, no stagger wrappers, no glyph pop and
+ * no shimmer animation — the pattern `wizardMotion.tsx` established and
+ * `ExternalSubmitForm.reducedMotion.browser.test.tsx` already pins for the submit wizard.
+ *
+ * 🔴 EVERY RENDER IS AWAITED, AND WITHOUT THAT THIS WHOLE FILE IS VACUOUS. `useReducedMotion`
+ * returns its initial value on the first render and reads the media query in an effect, so
+ * `motionOn` is false in the first commit of an ANIMATED card too — every absence below is
+ * the default state of the thing it claims to be denying. Awaiting `renderWithProviders`
+ * drains that effect through `act`, so these assertions are made against a settled card.
+ * Found by the test review; before it, the only thing separating these from vacuous was
+ * `expect.element`'s 50ms retry gap.
  *
  * 🔴 AND IT ASSERTS THE AFFORDANCE STILL WORKS, which is the half that matters. "No
  * animation runs" is satisfied by a card that renders nothing at all. The copy path — same
@@ -39,8 +45,10 @@ const {
   AgentOnboardingCard,
   AGENT_CARET_TESTID,
   AGENT_COPY_LABEL,
+  AGENT_GLYPH_TESTID,
   AGENT_ONBOARDING_TESTID,
   AGENT_PROMPT_TESTID,
+  AGENT_ROW_TESTID,
   AGENT_SHIMMER_TESTID,
 } = await import('./AgentOnboardingCard');
 const { AGENT_BUILD_PROMPT } = await import('./cliCommands');
@@ -49,24 +57,31 @@ const writeText = () => vi.mocked(navigator.clipboard.writeText);
 
 beforeEach(() => {
   writeText().mockClear();
+  window.getSelection()?.removeAllRanges();
 });
 
 describe('AgentOnboardingCard — reduced motion', () => {
-  test('🔴 nothing animates: no shimmer ring, no caret, and the root says so', async () => {
-    renderWithProviders(<AgentOnboardingCard />);
+  test('🔴 nothing animates: ring still, no caret, no stagger wrappers, no glyph pop', async () => {
+    await renderWithProviders(<AgentOnboardingCard />);
 
     const root = page.getByTestId(AGENT_ONBOARDING_TESTID);
     await expect.element(root).toBeInTheDocument();
-    // Structural, not spelled: the two animated-only nodes are the thing being denied.
-    expect(page.getByTestId(AGENT_SHIMMER_TESTID).elements()).toHaveLength(0);
+
+    // The ring exists in BOTH trees, so read its computed animation — the state, not the
+    // presence of a node and not a class-name spelling.
+    const ring = page.getByTestId(AGENT_SHIMMER_TESTID).element();
+    expect(getComputedStyle(ring).animationName).toBe('none');
+    // The three motion-only nodes.
     expect(page.getByTestId(AGENT_CARET_TESTID).elements()).toHaveLength(0);
-    // The attribute is a convenience on top of the two absences above, not the claim.
+    expect(page.getByTestId(AGENT_ROW_TESTID).elements()).toHaveLength(0);
+    expect(page.getByTestId(AGENT_GLYPH_TESTID).elements()).toHaveLength(0);
+    // The attribute is a convenience on top of the four reads above, not the claim.
     expect(root.element().getAttribute('data-motion')).toBe('off');
   });
 
   test('🔴 the copy affordance is FULLY USABLE with motion disabled', async () => {
     const onCopy = vi.fn();
-    renderWithProviders(<AgentOnboardingCard onCopy={onCopy} />);
+    await renderWithProviders(<AgentOnboardingCard onCopy={onCopy} />);
 
     // By mouse, on the panel.
     await page.getByTestId(AGENT_PROMPT_TESTID).click();
@@ -76,13 +91,17 @@ describe('AgentOnboardingCard — reduced motion', () => {
 
   test('🔴 and by keyboard, still exactly once per press', async () => {
     const onCopy = vi.fn();
-    renderWithProviders(<AgentOnboardingCard onCopy={onCopy} />);
+    await renderWithProviders(<AgentOnboardingCard onCopy={onCopy} />);
 
     const button = page.getByRole('button', { name: AGENT_COPY_LABEL });
     await expect.element(button).toBeInTheDocument();
     (document.activeElement as HTMLElement | null)?.blur();
-    await userEvent.tab();
-    expect(document.activeElement).toBe(button.element());
+    let reached = false;
+    for (let i = 0; i < 10 && !reached; i += 1) {
+      await userEvent.tab();
+      reached = document.activeElement === button.element();
+    }
+    expect(reached, 'the copy control was not reachable by tabbing').toBe(true);
 
     await userEvent.keyboard('{Enter}');
     expect(onCopy).toHaveBeenCalledTimes(1);
@@ -91,7 +110,7 @@ describe('AgentOnboardingCard — reduced motion', () => {
   });
 
   test('the prompt is still fully rendered — static is a degradation, not a removal', async () => {
-    renderWithProviders(<AgentOnboardingCard />);
+    await renderWithProviders(<AgentOnboardingCard />);
     const panel = page.getByTestId(AGENT_PROMPT_TESTID);
     await expect.element(panel).toBeInTheDocument();
     expect(panel.element().textContent ?? '').toContain(AGENT_BUILD_PROMPT);

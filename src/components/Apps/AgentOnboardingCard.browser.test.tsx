@@ -3,96 +3,77 @@ import { page, userEvent } from 'vitest/browser';
 import {
   AGENT_CARET_TESTID,
   AGENT_COPY_LABEL,
+  AGENT_GLYPH_TESTID,
   AGENT_ONBOARDING_TESTID,
   AGENT_PROMPT_TESTID,
+  AGENT_ROW_TESTID,
   AGENT_SHIMMER_TESTID,
   AgentOnboardingCard,
+  STAGGER_SECONDS,
 } from '~/components/Apps/AgentOnboardingCard';
-import { AGENT_BUILD_PROMPT, AGENT_ONBOARDING_URL } from '~/components/Apps/cliCommands';
+import { AGENT_BUILD_PROMPT } from '~/components/Apps/cliCommands';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 
 /**
  * `AgentOnboardingCard` — the copyable agent-onboarding prompt on `/apps/build`.
  *
- * 🔴 THE PIN IS THE WHOLE STRING, NOT KEYWORDS, AND THE COST IS DELIBERATE. A guard that
- * checked for "agent-onboarding" and "civitai login" is walkable by any reword that keeps
- * those two tokens — and a reword is exactly the change that breaks this copy, because the
- * string is an INSTRUCTION an autonomous agent executes, and the repo that owns the URL
- * cannot see this copy at all (see `./cliCommands`'s {@link AGENT_ONBOARDING_URL} note: the
- * upstream checker is repo-local by design, and the URL is a Cloudflare 302 tracked in
- * neither repo). So a cosmetic reword FAILS this file. That is the price of a
- * machine-readable claim about what we hand people's agents, and it is worth paying here.
+ * The prompt's exact bytes are pinned in `__tests__/agentPrompt.test.ts`, in the `unit` tier,
+ * because `.github/workflows/lint.yml` runs no `component` job and a claim about what we hand
+ * people's coding agents should be reported by a check a human reads. THIS file owns the half
+ * that needs a DOM: that those bytes are what reaches the clipboard, and that the affordance
+ * around them works.
  *
- * 🔴 AND IT IS PINNED AT THE CLIPBOARD, NOT AT THE CONSTANT. Asserting
- * `AGENT_BUILD_PROMPT === <literal>` alone would be satisfied by a card that renders a
- * different string, or copies the rendered text (which carries the decorative caret as a
- * sibling node) instead of the constant. The authoritative read is the bytes Mantine hands
- * `navigator.clipboard.writeText` — stubbed by `test/component-setup` as a `vi.fn()`
- * precisely so it is readable here.
+ * 🔴 EVERY RENDER IS AWAITED, AND THAT IS LOAD-BEARING RATHER THAN TIDINESS.
+ * `useReducedMotion(true)` returns `true` on the FIRST render and commits the real media
+ * value in an effect (`@mantine/hooks`' `useMediaQuery` with its default
+ * `getInitialValueInEffect: true`), so `motionOn` is false in the first commit of an ANIMATED
+ * card too. Every "this card is static" assertion is therefore satisfied by the first-render
+ * default unless the effect has been drained first — which is exactly what awaiting
+ * `renderWithProviders` does, since `vitest-browser-react`'s `render` is `async` and wraps
+ * the root render in `await act(async () => …)`. Measured by the test review: the only thing
+ * separating three such assertions from vacuous was `expect.element`'s 50ms retry gap, and a
+ * sibling test in this file resolved its first poll in 12ms. Do not drop an `await` here.
  */
-
-/**
- * The expected prompt, written from the spec rather than copied off the implementation.
- *
- * Concatenated with an explicit `'\n' + '\n'` so the blank line between the two paragraphs
- * is unambiguous in the source: it is part of the bytes the clipboard receives, and the
- * stylesheet's `white-space: pre-line` exists to render it.
- */
-const EXPECTED_PROMPT =
-  'Read https://civitai.com/agent-onboarding and complete the setup, then tell me if I need to run `civitai login`.\n' +
-  '\n' +
-  'Then ask me clarifying questions about my app idea and build it — with a custom theme built on @civitai/theme tokens, and complete test coverage.';
 
 /** The stub installed by `test/component-setup`; a real `vi.fn()`, so its calls are readable. */
 const writeText = () => vi.mocked(navigator.clipboard.writeText);
 
 beforeEach(() => {
   writeText().mockClear();
+  window.getSelection()?.removeAllRanges();
 });
 
-describe('AgentOnboardingCard — the prompt bytes', () => {
-  test('🔴 the constant is this exact string, blank line and em dash included', () => {
-    expect(AGENT_BUILD_PROMPT).toBe(EXPECTED_PROMPT);
-  });
+/** Reads the ring's computed animation — the STATE, not the class name spelling. */
+const ringAnimation = () =>
+  getComputedStyle(page.getByTestId(AGENT_SHIMMER_TESTID).element()).animationName;
 
-  test('🔴 the prompt carries the onboarding URL, so the two constants cannot disagree', () => {
-    expect(AGENT_BUILD_PROMPT).toContain(AGENT_ONBOARDING_URL);
-    expect(AGENT_ONBOARDING_URL).toBe('https://civitai.com/agent-onboarding');
-  });
-
+describe('AgentOnboardingCard — the prompt bytes reach the clipboard', () => {
   test('🔴 clicking the panel copies the prompt BYTE-IDENTICALLY', async () => {
     const onCopy = vi.fn();
-    renderWithProviders(<AgentOnboardingCard onCopy={onCopy} />);
+    await renderWithProviders(<AgentOnboardingCard onCopy={onCopy} />);
 
     await page.getByTestId(AGENT_PROMPT_TESTID).click();
 
-    // The bytes, from the clipboard call — not from the rendered text, which also contains
-    // the decorative caret node.
+    // From the clipboard call — not from the rendered text, which also contains the
+    // decorative caret node.
     expect(writeText()).toHaveBeenCalledTimes(1);
-    expect(writeText()).toHaveBeenCalledWith(EXPECTED_PROMPT);
+    expect(writeText()).toHaveBeenCalledWith(AGENT_BUILD_PROMPT);
     // And the callback the funnel is threaded through receives the same bytes.
-    expect(onCopy).toHaveBeenCalledWith(EXPECTED_PROMPT);
+    expect(onCopy).toHaveBeenCalledWith(AGENT_BUILD_PROMPT);
   });
 
   test('the rendered panel shows the prompt text a human can read before copying', async () => {
-    renderWithProviders(<AgentOnboardingCard />);
-    // Scoped to the panel and matched loosely, because the caret is a sibling node inside
-    // the same block — the byte-exact claim is the clipboard assertion above.
-    await expect
-      .element(
-        page.getByText('complete the setup, then tell me if I need to run', { exact: false })
-      )
-      .toBeInTheDocument();
-    await expect
-      .element(page.getByText('built on @civitai/theme tokens', { exact: false }))
-      .toBeInTheDocument();
+    await renderWithProviders(<AgentOnboardingCard />);
+    const panel = page.getByTestId(AGENT_PROMPT_TESTID);
+    await expect.element(panel).toBeInTheDocument();
+    expect(panel.element().textContent ?? '').toContain(AGENT_BUILD_PROMPT);
   });
 });
 
 describe('AgentOnboardingCard — the copy control', () => {
   test('the copy control has an accessible name that is not "Copy command"', async () => {
-    renderWithProviders(<AgentOnboardingCard />);
+    await renderWithProviders(<AgentOnboardingCard />);
     const button = page.getByRole('button', { name: AGENT_COPY_LABEL });
     await expect.element(button).toBeInTheDocument();
     // `CopyableCommand`'s label is `Copy command: <cmd>`; this prompt is prose, not a
@@ -105,7 +86,7 @@ describe('AgentOnboardingCard — the copy control', () => {
     // that also handles the click, so without `stopPropagation()` one press ran `copy()` and
     // `onCopy()` TWICE — over-counting the funnel by however many users aim at the button.
     const onCopy = vi.fn();
-    renderWithProviders(<AgentOnboardingCard onCopy={onCopy} />);
+    await renderWithProviders(<AgentOnboardingCard onCopy={onCopy} />);
 
     await page.getByRole('button', { name: AGENT_COPY_LABEL }).click();
 
@@ -115,60 +96,145 @@ describe('AgentOnboardingCard — the copy control', () => {
 
   test('🔴 the card is operable by KEYBOARD — Tab reaches the control, Enter copies', async () => {
     const onCopy = vi.fn();
-    renderWithProviders(<AgentOnboardingCard onCopy={onCopy} />);
+    await renderWithProviders(<AgentOnboardingCard onCopy={onCopy} />);
 
     const button = page.getByRole('button', { name: AGENT_COPY_LABEL });
     await expect.element(button).toBeInTheDocument();
-    // Focus from the document, by tabbing — not `.focus()`, which would pass even on an
-    // element Tab can never reach (a `div` with `onClick` and no `tabindex`).
+
+    // 🔴 TAB UNTIL REACHED, NOT ONE TAB. Asserting the control is the FIRST tabbable node
+    // claims more than "reachable by keyboard" — it is true only while the card holds exactly
+    // one focusable element, so adding a link later would turn a correct component into a red
+    // test that reads like a focus bug. The bounded loop pins reachability itself.
     (document.activeElement as HTMLElement | null)?.blur();
-    await userEvent.tab();
-    expect(document.activeElement).toBe(button.element());
+    let reached = false;
+    for (let i = 0; i < 10 && !reached; i += 1) {
+      await userEvent.tab();
+      reached = document.activeElement === button.element();
+    }
+    expect(reached, 'the copy control was not reachable by tabbing').toBe(true);
 
     await userEvent.keyboard('{Enter}');
     expect(onCopy).toHaveBeenCalledTimes(1);
-    expect(writeText()).toHaveBeenCalledWith(EXPECTED_PROMPT);
+    expect(writeText()).toHaveBeenCalledWith(AGENT_BUILD_PROMPT);
+  });
+
+  /**
+   * 🔴 SELECTING TEXT INSIDE THE PANEL IS NOT A COPY REQUEST. The whole panel is a click
+   * target, so the `click` that follows the `mouseup` ending a drag-select would otherwise
+   * overwrite the user's selection with the whole prompt AND post a funnel event they never
+   * asked for — and a double-click, which selects a word, would post two. Harmless on a
+   * one-line command block; the prompt is two paragraphs of prose on a public page.
+   */
+  test('🔴 a click that ends a selection inside the panel does NOT copy', async () => {
+    const onCopy = vi.fn();
+    await renderWithProviders(<AgentOnboardingCard onCopy={onCopy} />);
+    const panel = page.getByTestId(AGENT_PROMPT_TESTID);
+    await expect.element(panel).toBeInTheDocument();
+
+    // Make a real selection anchored inside the panel, as a drag-select leaves behind.
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    const range = document.createRange();
+    range.selectNodeContents(panel.element());
+    selection?.addRange(range);
+
+    await panel.click();
+    expect(onCopy, 'a click ending a selection copied anyway').not.toHaveBeenCalled();
+    expect(writeText()).not.toHaveBeenCalled();
+
+    // The explicit button is the escape hatch, and is deliberately NOT guarded — someone who
+    // selected text and then pressed Copy means it.
+    await page.getByRole('button', { name: AGENT_COPY_LABEL }).click();
+    expect(onCopy).toHaveBeenCalledTimes(1);
+    expect(writeText()).toHaveBeenCalledWith(AGENT_BUILD_PROMPT);
+
+    selection?.removeAllRanges();
+  });
+
+  test('POSITIVE CONTROL: with NO selection, the same panel click does copy', async () => {
+    // Without this, the absence above is satisfied by a panel that never copies at all.
+    const onCopy = vi.fn();
+    await renderWithProviders(<AgentOnboardingCard onCopy={onCopy} />);
+
+    await page.getByTestId(AGENT_PROMPT_TESTID).click();
+    expect(onCopy).toHaveBeenCalledTimes(1);
   });
 });
 
 describe('AgentOnboardingCard — motion, when the viewer has not opted out', () => {
-  test('the animated tree mounts: shimmer ring and blinking caret are both present', async () => {
-    renderWithProviders(<AgentOnboardingCard />);
-    // `useReducedMotion(true)` renders STATIC on the first paint and reads the media query in
-    // an effect, so this is a real mount→settle transition rather than a first-render read.
-    // The retrying element API is what waits for it.
-    await expect.element(page.getByTestId(AGENT_SHIMMER_TESTID)).toBeInTheDocument();
+  test('🔴 all four treatments are present: shimmer, caret, staggered rows, glyph pop', async () => {
+    await renderWithProviders(<AgentOnboardingCard />);
+
+    // 1. The shimmer is a CSS animation on a ring that exists in BOTH trees, so its presence
+    //    proves nothing — read the computed animation instead.
+    expect(ringAnimation(), 'the ring is not animating').not.toBe('none');
+    // 2. The caret exists only in the animated tree.
     await expect.element(page.getByTestId(AGENT_CARET_TESTID)).toBeInTheDocument();
+    // 3. One stagger wrapper per row, carrying the index the delay is computed from. Pinned
+    //    as the index SET, so deleting the wrappers or silently changing how many rows are
+    //    staggered both fail — a mutation that made `Reveal` a passthrough used to print
+    //    nothing at all across this suite.
+    const indices = page
+      .getByTestId(AGENT_ROW_TESTID)
+      .elements()
+      .map((el) => el.getAttribute('data-reveal-index'));
+    expect(indices).toEqual(['0', '1', '2']);
+    // 4. The glyph's pop wrapper. Deleting `renderGlyph` leaves the same two icons behind
+    //    `CopyAffordance`'s default, so this wrapper is the pop's only structural trace.
+    await expect.element(page.getByTestId(AGENT_GLYPH_TESTID)).toBeInTheDocument();
+
     expect(page.getByTestId(AGENT_ONBOARDING_TESTID).element().getAttribute('data-motion')).toBe(
       'on'
     );
   });
 
+  test('the stagger step is 40ms', () => {
+    // The constant the delay is multiplied by. Together with the index set above this pins
+    // the stagger itself rather than only that wrappers exist.
+    expect(STAGGER_SECONDS).toBe(0.04);
+  });
+
+  test('copying morphs the clipboard glyph to a check', async () => {
+    await renderWithProviders(<AgentOnboardingCard />);
+    const button = page.getByRole('button', { name: AGENT_COPY_LABEL });
+    expect(
+      button.element().querySelector('.tabler-icon-clipboard'),
+      'the pre-copy glyph should be the clipboard'
+    ).not.toBeNull();
+
+    await button.click();
+    await expect.element(page.getByTestId(AGENT_GLYPH_TESTID)).toBeInTheDocument();
+    await vi.waitFor(() =>
+      expect(button.element().querySelector('.tabler-icon-check')).not.toBeNull()
+    );
+  });
+
   test('🔴 `animated={false}` is the SAME static tree reduced motion gets', async () => {
-    // The workbench strip's path. Asserted here as well as in the reducedMotion suite,
-    // because this is the arm a reduced-motion mock cannot reach: it must be static for a
-    // viewer with NO motion preference at all.
-    renderWithProviders(<AgentOnboardingCard animated={false} />);
+    // The workbench strip's path, and the arm a reduced-motion mock cannot reach: it must be
+    // static for a viewer with NO motion preference at all. Awaited, so the media query has
+    // been read — otherwise this passes on the first-render default of an ANIMATED card.
+    await renderWithProviders(<AgentOnboardingCard animated={false} />);
 
     const root = page.getByTestId(AGENT_ONBOARDING_TESTID);
     await expect.element(root).toBeInTheDocument();
     expect(root.element().getAttribute('data-motion')).toBe('off');
-    expect(page.getByTestId(AGENT_SHIMMER_TESTID).elements()).toHaveLength(0);
+    expect(ringAnimation(), 'the ring should not animate in the static tree').toBe('none');
     expect(page.getByTestId(AGENT_CARET_TESTID).elements()).toHaveLength(0);
+    expect(page.getByTestId(AGENT_ROW_TESTID).elements()).toHaveLength(0);
+    expect(page.getByTestId(AGENT_GLYPH_TESTID).elements()).toHaveLength(0);
 
     // Static is not a degraded affordance — it still copies the same bytes.
     await page.getByRole('button', { name: AGENT_COPY_LABEL }).click();
-    expect(writeText()).toHaveBeenCalledWith(EXPECTED_PROMPT);
+    expect(writeText()).toHaveBeenCalledWith(AGENT_BUILD_PROMPT);
   });
 
   test('the prompt text is NOT typed out character by character', async () => {
     // The one animation deliberately excluded: this is text the reader has to read and copy.
     // A typewriter effect would mean the panel's text content grows over time, so assert the
-    // whole prompt is present in the panel on the very first observable render.
-    renderWithProviders(<AgentOnboardingCard />);
+    // whole prompt is present on the first settled render.
+    await renderWithProviders(<AgentOnboardingCard />);
     const panel = page.getByTestId(AGENT_PROMPT_TESTID);
-    await expect.element(panel).toBeInTheDocument();
-    expect(panel.element().textContent ?? '').toContain(EXPECTED_PROMPT);
+    expect(panel.element().textContent ?? '').toContain(AGENT_BUILD_PROMPT);
   });
 });
 
@@ -187,5 +253,19 @@ describe('AgentOnboardingCard — tone', () => {
     expect(page.getByRole('heading', { name: 'Let your agent build it' }).elements()).toHaveLength(
       0
     );
+  });
+
+  test('🔴 BOTH tones disclose what the prompt makes an agent do', async () => {
+    // `inline` is what both signed-in placements render, so it is the variant most readers
+    // see — and both hand the agent byte-identical instructions. A short variant that says
+    // only "it runs the setup" describes none of it.
+    const { rerender } = await renderWithProviders(<AgentOnboardingCard tone="prominent" />);
+    for (const phrase of ['installs the Civitai CLI', 'MCP servers', 'log in']) {
+      await expect.element(page.getByText(phrase, { exact: false })).toBeInTheDocument();
+    }
+    await rerender(<AgentOnboardingCard tone="inline" />);
+    for (const phrase of ['installs the Civitai CLI', 'MCP servers', 'log in']) {
+      await expect.element(page.getByText(phrase, { exact: false })).toBeInTheDocument();
+    }
   });
 });

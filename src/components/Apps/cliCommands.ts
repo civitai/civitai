@@ -105,10 +105,21 @@ export const CLI_SUBMIT_COMMAND = 'civitai app submit';
  * test asserting it exists. If the Cloudflare rule is moved or deleted, this constant
  * silently points at a 404 and nothing in either repo reports it.
  *
- * What DOES pin the pair is `AgentOnboardingCard.browser.test.tsx`, which asserts the bytes
- * handed to the clipboard equal {@link AGENT_BUILD_PROMPT} and that the prompt carries this
- * URL. That is a pin against an accidental edit HERE, not a check that upstream still agrees
- * — nothing in this repo can make that second claim.
+ * What DOES pin the pair is `__tests__/agentPrompt.test.ts` (the exact bytes, in the unit
+ * tier) plus `AgentOnboardingCard.browser.test.tsx` (that those bytes are what reaches the
+ * clipboard). That is a pin against an accidental edit HERE, not a check that upstream still
+ * agrees — nothing in this repo can make that second claim.
+ *
+ * ⚠️ THE ALTERNATIVE THAT WAS CONSIDERED AND NOT TAKEN, recorded so it is a decision rather
+ * than an oversight: the prompt could name `https://developer.civitai.com/agent-setup/prompt.md`
+ * directly — the 302's own target, which IS covered by that PR-blocking checker — and drop
+ * the alias hop entirely. It was kept because the alias is what upstream's own `SETUP_PROMPT`
+ * advertises (`SHORT_PROMPT_URL` exists precisely to be the short human copy-paste form), so
+ * using the canonical URL here would make the two surfaces disagree about what a developer is
+ * told to paste — trading an ungated hop for a guaranteed divergence. Note the gain is also
+ * smaller than it looks: both hostnames are civitai DNS, so the same CDN control plane
+ * decides both; the alias removes one separately-editable rule, not the class. Revisit
+ * together with upstream, not unilaterally.
  */
 export const AGENT_ONBOARDING_URL = 'https://civitai.com/agent-onboarding';
 
