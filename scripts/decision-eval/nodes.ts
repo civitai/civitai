@@ -1,5 +1,6 @@
 import type { GoldPolicy } from './builder';
 import type { KnownAnswerControl } from './controls';
+import { supportTopicNode } from './nodes/support-topic';
 import type {
   DataClass,
   DecisionQuestion,
@@ -107,3 +108,5 @@ export function parseQuestionsFile(json: unknown, path: string): DecisionQuestio
   }
   return json;
 }
+
+registerNode(supportTopicNode);

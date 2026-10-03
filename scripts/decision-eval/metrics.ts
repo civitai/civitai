@@ -75,6 +75,11 @@ export type ClassAtThreshold = {
 };
 
 /** Items predicted as `cls` with confidence >= threshold. A null confidence never clears a threshold above 0. */
+/** A threshold of 0 covers everything, a missing confidence included. */
+export function clearsThreshold(confidence: number | null, threshold: number): boolean {
+  return !(threshold > 0 && (confidence === null || confidence < threshold));
+}
+
 export function classAtThreshold(
   items: readonly Scored[],
   cls: string,
@@ -84,7 +89,7 @@ export function classAtThreshold(
   let correct = 0;
   for (const item of items) {
     if (item.pred !== cls) continue;
-    if (threshold > 0 && (item.confidence === null || item.confidence < threshold)) continue;
+    if (!clearsThreshold(item.confidence, threshold)) continue;
     covered++;
     if (item.gold === cls) correct++;
   }
