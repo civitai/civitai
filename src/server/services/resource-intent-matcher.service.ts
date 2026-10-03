@@ -159,13 +159,46 @@ export type ResourceIntentInsight = {
 };
 
 /**
- * `ResourceInsight.confidence` is the WEAKEST of a row's four label judgments —
- * including the `contentType` one this ordering never reads — and the written
- * distribution is p50 0.43 / mean 0.44 with only 3.4% of rows at or above 0.70.
- * So a 0.70 floor would discard ~96.6% of the labels and leave this ordering
- * inert; 0.30 is the measured ~12.8th percentile.
+ * The floor for PROMOTION. `ResourceInsight.confidence` is the WEAKEST of a row's
+ * four label judgments — including the `contentType` one this ordering never reads
+ * — and the written distribution is p50 0.43 / mean 0.44 with only 3.4% of rows at
+ * or above 0.70. So a 0.70 floor would discard ~96.6% of the labels and leave this
+ * ordering inert; 0.30 is the measured ~12.8th percentile.
+ *
+ * ⚠️ Read that argument for what it weighs: the cost of a HIGH floor on this side
+ * is a label that never gets to help, i.e. the feature doing nothing. It says
+ * nothing about the demote side, which is why that side has its own constant below.
  */
-export const RESOURCE_INSIGHT_MIN_CONFIDENCE = 0.3;
+export const RESOURCE_INSIGHT_MIN_PROMOTE_CONFIDENCE = 0.3;
+
+/**
+ * The floor for DEMOTION — a separate constant because the two directions have
+ * ASYMMETRIC error costs and only the promote side has ever been argued.
+ *
+ * 🔴 This value is INHERITED from the promote-side argument above, not derived for
+ * demotion. It is set equal to it so today's behaviour is unchanged; the split
+ * exists so the demote floor can be moved in a validation window without touching
+ * the promote floor, which until now it could not be.
+ *
+ * The asymmetry, stated so the next person does not have to re-derive it. Raising
+ * THIS floor costs a missed demotion, and a row that fails to demote simply sits
+ * neutral — seed order, which is the pre-feature behaviour. Raising the promote
+ * floor costs the ordering its reason to exist. And the demote side's mistakes are
+ * not merely reorderings: the permutation is sliced to the response cap, so a
+ * demotion on a pool wider than the cap evicts a candidate from the returned page.
+ *
+ * Measured on a realistic approximation of a pool (not through this function): in
+ * the worst cell sampled the demote bucket held 49 of 100 candidates, with median
+ * confidence 0.45 and NONE at or above 0.70. So at this floor the bucket is a large
+ * minority of a pool rather than a rare correction, and it is not selected by high
+ * confidence — which is why neither this file nor the contract doc calls it the
+ * "confident" bucket any more.
+ *
+ * Deliberately NOT raised here: where to put it is a product judgment about how
+ * much eviction an unvalidated label is allowed to cause, and that judgment has not
+ * been made.
+ */
+export const RESOURCE_INSIGHT_MIN_DEMOTE_CONFIDENCE = 0.3;
 
 const ROLE_MATCH_WEIGHT = 2;
 const STYLE_MATCH_WEIGHT = 1;
@@ -176,12 +209,18 @@ type ResourceIntentWant = {
 };
 
 function insightBucket(insight: ResourceIntentInsight, want: ResourceIntentWant): number {
-  if (insight.confidence < RESOURCE_INSIGHT_MIN_CONFIDENCE) return 0;
   // `other` means "none of the above" on both sides, so other↔other is not agreement.
   const styleMatch = want.styleFamily !== 'other' && insight.styleFamily === want.styleFamily;
   const agreement =
     (insight.role === want.role ? ROLE_MATCH_WEIGHT : 0) + (styleMatch ? STYLE_MATCH_WEIGHT : 0);
-  if (agreement > 0) return agreement;
+  // Each direction reads ITS OWN floor. The two constants are equal today, so this
+  // is one branch in behaviour and two in structure — which is the point: the
+  // directions were coupled through a single constant and the argument beside it
+  // only ever covered promotion.
+  if (agreement > 0) {
+    return insight.confidence < RESOURCE_INSIGHT_MIN_PROMOTE_CONFIDENCE ? 0 : agreement;
+  }
+  if (insight.confidence < RESOURCE_INSIGHT_MIN_DEMOTE_CONFIDENCE) return 0;
   // 🔴 Demotion turns on the ROLE alone, and only on a role that is BOTH in this
   // build's taxonomy AND an actual role.
   //
@@ -220,12 +259,33 @@ function insightBucket(insight: ResourceIntentInsight, want: ResourceIntentWant)
  * Order the pool by how far each candidate's label agrees with what the request
  * asked for.
  *
- * Only ~1% of eligible versions carry a label, so this buckets rather than
- * scores: a label that agrees promotes, a confident label that disagrees demotes,
- * and everything else — unlabeled, or labeled below the confidence floor — sits
- * at a neutral bucket that preserves the seed order exactly. An unlabeled candidate
- * never sorts as if it had scored zero, which would bury the unlabeled majority
- * beneath any weakly-labeled row.
+ * This buckets rather than scores: a label that agrees promotes, a label at or
+ * above the demote floor that disagrees demotes, and everything else — unlabeled,
+ * or labeled below the floor for its direction — sits at a neutral bucket that
+ * preserves the seed order exactly. An unlabeled candidate never sorts as if it had
+ * scored zero, which would bury the unlabeled majority beneath any weakly-labeled
+ * row.
+ *
+ * ⚠️ The stated JUSTIFICATION for bucketing used to be "only ~1% of eligible
+ * versions carry a label", and that argument is RETRACTED — not because the figure
+ * is wrong, but because it is the rate over a population this function never sees.
+ * It is corpus-wide (~1%: 9,900 labeled of ~0.94M eligible versions). The pool
+ * handed to this function is seeded by a popularity sort, and the labeled set IS
+ * the catalogue's high-usage head — the lowest `generationCount` among labeled
+ * versions is 46,798 — so coverage INSIDE a pool runs ~30-45x the corpus rate:
+ * 33.3% of the versions of the top 100 models by thumbs-up (350 of 1,050), and ~45%
+ * restricted to the LoRA family (236 of 522). Measured against the primary Postgres
+ * database, three times independently.
+ *
+ * So bucketing is not held up here by labels being rare, and this comment does not
+ * substitute a fresh argument for it. What survives the retraction is a property,
+ * not a justification: a labeled and an unlabeled candidate share no scale, so any
+ * scoring scheme has to invent a score for the unlabeled majority, and the neutral
+ * band is how this ordering avoids inventing one — which is what the paragraph
+ * above describes. Whether buckets or scores serve better at the in-pool coverage
+ * measured above has never been tested, and it is the first thing to revisit once
+ * the shadow table can grade the ordering (see the closing condition in
+ * `docs/resource-intent-primitive.md`).
  *
  * 🔴 This returns a permutation, but its CALLER slices to the response cap, so on a
  * pool wider than the cap the ordering decides WHICH candidates are returned and not
@@ -351,6 +411,34 @@ async function searchShortlistModels(
   }
 }
 
+/**
+ * What `findResourceIntentCandidates` returns, as a RESULT OBJECT rather than a
+ * bare array, so the fail-soft path below cannot be silent.
+ *
+ * 🔴 `insightFallback` exists because the fallback is otherwise indistinguishable
+ * from success at the seam: the caller receives a well-formed, correctly-capped
+ * shortlist in popularity order and has no way to learn that the labels were never
+ * read. That cost the caller its cache TTL decision — a label-read failure is as
+ * transient as the vendor failures the service caches for 60s, and without this
+ * flag its unordered response was pinned for the full hour instead.
+ */
+export type ResourceIntentShortlist = {
+  entries: ResourceIntentShortlistEntry[];
+  /**
+   * `true` ⇒ the `ResourceInsight` read FAILED on this call and `entries` is the
+   * popularity seed order, unordered by any label.
+   *
+   * `false` is the narrow claim that no such failure happened — NOT that the
+   * ordering changed anything. An empty pool, a pool with no labeled version, and
+   * a pool every label left neutral all report `false`. Separating those is the
+   * shadow-table work in `docs/resource-intent-primitive.md`'s closing condition,
+   * of whose two clauses this flag supplies ONE CASE of ONE: "the ordering could
+   * not run". It says nothing about whether the ordering changed the returned
+   * slice, and nothing about an ordering that ran with nothing to order.
+   */
+  insightFallback: boolean;
+};
+
 export async function findResourceIntentCandidates(
   criteria: ResourceIntentCriteria,
   opts: {
@@ -358,8 +446,8 @@ export async function findResourceIntentCandidates(
     coverage: ResourceIntentCoverage;
     cap: number;
   }
-): Promise<ResourceIntentShortlistEntry[]> {
-  if (criteria.role === 'none') return [];
+): Promise<ResourceIntentShortlist> {
+  if (criteria.role === 'none') return { entries: [], insightFallback: false };
   const cap = clampResourceIntentCap(opts.cap);
   const poolCap = clampResourceIntentCap(cap * RERANK_POOL_MULTIPLIER);
   const baseModels = criteria.baseModel ? [criteria.baseModel] : null;
@@ -381,7 +469,10 @@ export async function findResourceIntentCandidates(
     insights = await loadResourceInsights(pool.map((entry) => entry.versionId));
   } catch (error) {
     // The caller's only other option is a fully degraded response, so an
-    // unreachable label table costs the ordering refinement and nothing else.
+    // unreachable label table costs the ordering refinement and nothing else —
+    // but it is REPORTED, not swallowed. The log alone reached nobody who could
+    // act on it inside the request: the caller decides this response's cache TTL,
+    // and a silent fallback got the full-success hour.
     logToAxiom(
       {
         type: 'resource-intent-insight-read-failed',
@@ -389,7 +480,10 @@ export async function findResourceIntentCandidates(
       },
       'temp-search'
     ).catch(() => undefined);
-    return pool.slice(0, cap);
+    return { entries: pool.slice(0, cap), insightFallback: true };
   }
-  return applyInsightRanking(pool, insights, criteria).slice(0, cap);
+  return {
+    entries: applyInsightRanking(pool, insights, criteria).slice(0, cap),
+    insightFallback: false,
+  };
 }

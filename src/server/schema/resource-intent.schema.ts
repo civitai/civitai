@@ -239,6 +239,33 @@ export type ResourceIntentSuggestion = {
 // recomputes instead of reading `undefined` off a missing new field.
 export const resourceIntentResponseSchema = z.strictObject({
   degraded: z.boolean(),
+  /**
+   * The `ResourceInsight` read failed while producing this response, so the
+   * shortlist is in popularity seed order rather than label order.
+   *
+   * 🔴 Deliberately NOT folded into `degraded`. `degraded` means the vendor path
+   * failed, and the invariants built on it — "fail closed, fail empty" in the
+   * contract doc's hard rule 2, so `suggestions: []`, `intent`/`criteria` `null`,
+   * `model: 'jev-unavailable'` — all hold together. A label-read failure produces
+   * a complete, gate-passing response with a real intent and real suggestions, so
+   * marking it `degraded` would break that invariant for every consumer.
+   *
+   * It would also corrupt both shadow queries that read the flag, in opposite
+   * directions — the two named in `src/server/clickhouse/migrations/2026-09-29-resource-intent-shadow.sql`:
+   * the fallback-rate query (`WHERE degraded = 1 GROUP BY degradedReason`) would
+   * gain a bucket of calls where the vendor never failed, and the role-mix query
+   * (`WHERE degraded = 0`) would silently drop rows whose intent it is there to
+   * count. ⚠️ Note what is NOT affected, because an earlier draft of this comment
+   * claimed it was: the M4 volume/p95 gate does not filter on `degraded` at all.
+   *
+   * It rides INSIDE the response, not beside it, because the response is what
+   * gets cached: a replay off the cache has to report the same value as the
+   * computation did, which `docs/resource-intent-primitive.md`'s closing
+   * condition names as a requirement. The `.strict()` note immediately above this
+   * schema is what makes adding it safe — a blob written before this field
+   * existed fails validation and recomputes.
+   */
+  insightFallback: z.boolean(),
   intent: resourceIntentAnswerSchema.nullable(),
   criteria: resourceIntentCriteriaSchema.nullable(),
   suggestions: z.array(z.custom<ResourceIntentSuggestion>(() => true)),

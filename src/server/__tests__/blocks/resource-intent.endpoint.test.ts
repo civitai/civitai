@@ -73,6 +73,7 @@ const VALID_BODY = { prompt: 'a photorealistic portrait of a knight', baseModel:
 
 const SERVICE_RESULT = {
   degraded: false,
+  insightFallback: false,
   intent: null,
   criteria: null,
   suggestions: [],

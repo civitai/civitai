@@ -46,6 +46,12 @@ import { resourceExceedsCatalogCeiling } from '~/server/utils/block-catalog-matu
  * stage 3 picks `none`), the response carries empty suggestions without being
  * degraded — the model judged the prompt needs no resource.
  *
+ * A label-read failure is NOT a degrade: the matcher falls back to the popularity
+ * seed order and reports it, and the response carries `insightFallback: true` with
+ * real suggestions. The only thing that changes here is the cache TTL — see
+ * `DEGRADED_CACHE_TTL_SECONDS` for why those two cases share it, and
+ * `resourceIntentResponseSchema` for why the flag is not `degraded`.
+ *
  * Exported as a plain async function so internal (tRPC) consumers reuse this
  * exact flow; the block REST endpoint adds auth/maturity/rate-limit around it.
  */
@@ -54,6 +60,14 @@ const CACHE_TTL_SECONDS = 60 * 60;
 // Jev failures are often transient (vendor 5xx, timeout); caching a degraded
 // response for the full hour would pin an empty result to the prompt, so
 // degrades cache briefly — a retry window without hammering the vendor.
+//
+// 🔴 The SAME argument covers a label-read failure (`insightFallback`), and that
+// is why the short TTL is not keyed on `degraded` alone. A replica blip, a pooler
+// timeout or a stale generated client is every bit as transient as a vendor 5xx,
+// and the response it produces is UNORDERED — so the full hour would pin a
+// popularity-ordered response to the cache key while the analogous vendor failure
+// got a minute. Both are "this response is worse than the one a retry would
+// produce", which is what this TTL is for.
 const DEGRADED_CACHE_TTL_SECONDS = 60;
 
 const DEGRADED_MODEL = 'jev-unavailable';
@@ -293,6 +307,11 @@ export async function getResourceIntent(
 
   let stage1Model = DEGRADED_MODEL;
   let shortlistCount = 0;
+  // Tracked outside the try so the degraded response below carries it too: if the
+  // label read failed and THEN stage 3 failed, the fact that the ordering never ran
+  // still describes this computation. (The TTL is already 60s on that path, so this
+  // changes no behaviour there — it keeps the field honest.)
+  let insightFallback = false;
   let degradedReason: string | null = null;
   let response: ResourceIntentResponse | undefined;
   let cachedHit = false;
@@ -366,11 +385,13 @@ export async function getResourceIntent(
         // First-class none: the model judged the prompt needs no resource.
         suggestions = [];
       } else {
-        const shortlist = await findResourceIntentCandidates(criteria, {
+        const matched = await findResourceIntentCandidates(criteria, {
           browsingLevel: ctx.browsingLevel,
           coverage,
           cap,
         });
+        const shortlist = matched.entries;
+        insightFallback = matched.insightFallback;
         shortlistCount = shortlist.length;
         if (shortlist.length > 0) {
           const stage3 = await askJev(
@@ -395,6 +416,7 @@ export async function getResourceIntent(
 
       response = {
         degraded: false,
+        insightFallback,
         intent,
         criteria,
         suggestions,
@@ -407,6 +429,7 @@ export async function getResourceIntent(
         degradedReason ?? (error instanceof JevError ? `jev_${error.kind}` : 'jev_error');
       response = {
         degraded: true,
+        insightFallback,
         intent: null,
         criteria: null,
         suggestions: [],
@@ -439,7 +462,13 @@ export async function getResourceIntent(
   if (!cachedHit) {
     try {
       await redis.packed.set(resourceIntentCacheKey(cacheInput), response, {
-        EX: response.degraded ? DEGRADED_CACHE_TTL_SECONDS : CACHE_TTL_SECONDS,
+        // Read off the RESPONSE, not the locals, so what is cached and what sets
+        // its lifetime are the same two fields — including on a path that rebuilt
+        // the response object.
+        EX:
+          response.degraded || response.insightFallback
+            ? DEGRADED_CACHE_TTL_SECONDS
+            : CACHE_TTL_SECONDS,
       });
     } catch {
       // A cache write failure never fails the request.

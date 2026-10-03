@@ -59,6 +59,13 @@ const { getResourceIntent, resolveSuggestionLimit, resourceIntentCacheKey } = aw
   '~/server/services/resource-intent.service'
 );
 
+/**
+ * The matcher's RESULT shape. It returns `{ entries, insightFallback }` rather than
+ * a bare array precisely so its fail-soft path is not silent at this seam, and the
+ * default here is the success case — a test that wants the fallback passes `true`.
+ */
+const matched = (entries: unknown[], insightFallback = false) => ({ entries, insightFallback });
+
 const INPUT = { prompt: 'a photorealistic portrait of a knight' } as const;
 const CTX = { browsingLevel: 3, coverage: { next: false, member: false } };
 
@@ -148,7 +155,7 @@ beforeEach(() => {
   clickhouseHolder.client = { insert: mockInsert };
   mockAskJev.mockReset();
   mockFindCandidates.mockReset();
-  mockFindCandidates.mockResolvedValue([]);
+  mockFindCandidates.mockResolvedValue(matched([]));
   mockGetResourceData.mockReset();
   mockGetResourceData.mockResolvedValue([]);
   mockInsert.mockReset();
@@ -230,6 +237,7 @@ describe('cache behavior', () => {
     // serve-time truncation is what holds the contract. Planted directly.
     const wide = {
       degraded: false,
+      insightFallback: false,
       intent: {
         needsResource: 0.9,
         role: { value: 'style' as const, distribution: { style: 1 } },
@@ -269,7 +277,7 @@ describe('cache behavior', () => {
   it('passes the resolved cap to the matcher and honours limit end-to-end', async () => {
     mockStage1();
     mockStage3({ '0': 0.6, '1': 0.4, none: 0 });
-    mockFindCandidates.mockResolvedValue(SHORTLIST);
+    mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
     mockGetResourceData.mockResolvedValue([genResource(11), genResource(22)]);
 
     const result = await getResourceIntent({ ...INPUT, limit: 1 }, CTX);
@@ -281,6 +289,7 @@ describe('cache behavior', () => {
   it('a cache hit short-circuits both Jev calls and is NOT rewritten', async () => {
     const cached = {
       degraded: false,
+      insightFallback: false,
       intent: {
         needsResource: 0.9,
         role: { value: 'style', distribution: { style: 1 } },
@@ -334,6 +343,7 @@ describe('cache behavior', () => {
     };
     redisMock.redis.packed.get.mockResolvedValue({
       degraded: false,
+      insightFallback: false,
       intent: v1Intent,
       criteria: v1Criteria,
       suggestions: [{ versionId: 999 }],
@@ -342,7 +352,7 @@ describe('cache behavior', () => {
       criteriaVersion: 1,
     });
     mockStage1();
-    mockFindCandidates.mockResolvedValue([]);
+    mockFindCandidates.mockResolvedValue(matched([]));
 
     const result = await getResourceIntent(INPUT, CTX);
 
@@ -365,6 +375,7 @@ describe('cache behavior', () => {
 
     const current = {
       degraded: false,
+      insightFallback: false,
       intent: v1Intent,
       criteria: { ...v1Criteria, criteriaVersion: 2, styleFamily: 'anime_manga' },
       suggestions: [{ versionId: 999 }],
@@ -402,6 +413,7 @@ describe('cache behavior', () => {
     // the 60s TTL path.
     await stale({
       degraded: true,
+      insightFallback: false,
       intent: null,
       criteria: null,
       suggestions: [],
@@ -414,7 +426,7 @@ describe('cache behavior', () => {
   it('a corrupted cached blob is ignored and recomputed', async () => {
     redisMock.redis.packed.get.mockResolvedValue({ not: 'a response' });
     mockStage1();
-    mockFindCandidates.mockResolvedValue([]);
+    mockFindCandidates.mockResolvedValue(matched([]));
     const result = await getResourceIntent(INPUT, CTX);
     expect(result.degraded).toBe(false);
     expect(mockAskJev).toHaveBeenCalledTimes(1);
@@ -423,14 +435,14 @@ describe('cache behavior', () => {
   it('a cache read failure is a miss, never an error', async () => {
     redisMock.redis.packed.get.mockRejectedValue(new Error('redis down'));
     mockStage1();
-    mockFindCandidates.mockResolvedValue([]);
+    mockFindCandidates.mockResolvedValue(matched([]));
     const result = await getResourceIntent(INPUT, CTX);
     expect(result.degraded).toBe(false);
   });
 
   it('a successful response caches for 1h; a degraded one for 60s', async () => {
     mockStage1();
-    mockFindCandidates.mockResolvedValue([]);
+    mockFindCandidates.mockResolvedValue(matched([]));
     await getResourceIntent(INPUT, CTX);
     expect(redisMock.redis.packed.set).toHaveBeenCalledTimes(1);
     expect(redisMock.redis.packed.set.mock.calls[0][2]).toEqual({ EX: 3600 });
@@ -441,6 +453,49 @@ describe('cache behavior', () => {
     await getResourceIntent(INPUT, CTX);
     expect(redisMock.redis.packed.set).toHaveBeenCalledTimes(1);
     expect(redisMock.redis.packed.set.mock.calls[0][2]).toEqual({ EX: 60 });
+  });
+
+  // 🔴 The matcher's label-read fallback gets the SHORT TTL, and it is not degraded.
+  // Red before the fix with `EX: 3600`: the matcher swallowed its own fallback, so
+  // the service had no way to tell an unordered response from an ordered one and
+  // pinned the unordered one to this cache key for an hour — while the analogous
+  // vendor failure above got 60s.
+  //
+  // The two arms differ ONLY in the matcher's flag: same prompt, same stage-1, same
+  // stage-3, same shortlist. So nothing but the flag can move the TTL, and the
+  // control arm is what stops `EX: 60` unconditionally from passing.
+  it('🔴 a label-read fallback caches for 60s, and is NOT reported as degraded', async () => {
+    mockStage1();
+    mockStage3({ '0': 0.6, '1': 0.4, none: 0 });
+    mockFindCandidates.mockResolvedValue(matched(SHORTLIST, true));
+    mockGetResourceData.mockResolvedValue([genResource(11), genResource(22)]);
+
+    const fallback = await getResourceIntent(INPUT, CTX);
+
+    expect(redisMock.redis.packed.set).toHaveBeenCalledTimes(1);
+    expect(redisMock.redis.packed.set.mock.calls[0][2]).toEqual({ EX: 60 });
+    // Not a degrade: real suggestions, a real intent, and the vendor's own model.
+    expect(fallback.degraded).toBe(false);
+    expect(fallback.insightFallback).toBe(true);
+    expect(fallback.suggestions.map((s) => s.versionId)).toEqual([11, 22]);
+    expect(fallback.model).toBe('typesafe/jev-1.13-20260917');
+    // 🔴 The flag rides INSIDE the cached blob, so a replay reports what the
+    // computation did. Asserted on the value handed to redis, not on the return.
+    expect(redisMock.redis.packed.set.mock.calls[0][1]).toMatchObject({
+      insightFallback: true,
+    });
+
+    // Control arm: the identical request with the labels read successfully.
+    redisMock.redis.packed.set.mockClear();
+    mockAskJev.mockReset();
+    mockStage1();
+    mockStage3({ '0': 0.6, '1': 0.4, none: 0 });
+    mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
+
+    const ok = await getResourceIntent(INPUT, CTX);
+
+    expect(redisMock.redis.packed.set.mock.calls[0][2]).toEqual({ EX: 3600 });
+    expect(ok.insightFallback).toBe(false);
   });
 });
 
@@ -466,7 +521,7 @@ describe('degradation — fail closed, fail empty', () => {
 
   it('a hydration failure degrades instead of leaking a partial list', async () => {
     mockStage1();
-    mockFindCandidates.mockResolvedValue(SHORTLIST);
+    mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
     mockStage3({ '0': 0.7, '1': 0.2, none: 0.1 });
     mockGetResourceData.mockRejectedValue(new Error('db down'));
     const result = await getResourceIntent(INPUT, CTX);
@@ -495,7 +550,7 @@ describe('stage flow', () => {
 
   it('compiles criteria from the role mapping and caller-supplied baseModel', async () => {
     mockStage1();
-    mockFindCandidates.mockResolvedValue([]);
+    mockFindCandidates.mockResolvedValue(matched([]));
     const result = await getResourceIntent({ ...INPUT, baseModel: 'SDXL 1.0' }, CTX);
     expect(result.criteria).toEqual({
       criteriaVersion: 2,
@@ -520,7 +575,7 @@ describe('stage flow', () => {
 
   it('stage 3 reorders the shortlist by the distribution (gate-passing entries only)', async () => {
     mockStage1();
-    mockFindCandidates.mockResolvedValue(SHORTLIST);
+    mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
     mockStage3({ '1': 0.6, '0': 0.3, none: 0.1 }, '1');
     mockGetResourceData.mockImplementation(async (ids: number[]) =>
       ids.map((id) => genResource(id))
@@ -547,7 +602,7 @@ describe('stage flow', () => {
 
   it('a stage-3 "none" argmax returns empty suggestions without being degraded', async () => {
     mockStage1();
-    mockFindCandidates.mockResolvedValue(SHORTLIST);
+    mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
     mockStage3({ '0': 0.3, '1': 0.2, none: 0.5 }, 'none');
     const result = await getResourceIntent(INPUT, CTX);
     expect(result.degraded).toBe(false);
@@ -558,7 +613,7 @@ describe('stage flow', () => {
 
   it('an empty shortlist skips stage 3 entirely (no forced fits)', async () => {
     mockStage1();
-    mockFindCandidates.mockResolvedValue([]);
+    mockFindCandidates.mockResolvedValue(matched([]));
     const result = await getResourceIntent(INPUT, CTX);
     expect(result.degraded).toBe(false);
     expect(result.suggestions).toEqual([]);
@@ -586,7 +641,7 @@ describe('stage flow', () => {
 
   it('hydration re-applies the gates: a non-public version is dropped, not shipped', async () => {
     mockStage1();
-    mockFindCandidates.mockResolvedValue(SHORTLIST);
+    mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
     mockStage3({ '0': 0.7, '1': 0.2, none: 0.1 });
     mockGetResourceData.mockImplementation(async () => [
       // 11 is public and fine; 22 comes back without access (e.g. index lag) — it must vanish.
@@ -605,7 +660,7 @@ describe('stage flow', () => {
   // about a path that can run. The reachable case is the one below.
   it('🔴 drops a mature-FLAGGED model whose cover image is SFW', async () => {
     mockStage1();
-    mockFindCandidates.mockResolvedValue(SHORTLIST);
+    mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
     mockStage3({ '0': 0.7, '1': 0.2, none: 0.1 });
     // The reachable case the sibling test above CANNOT produce. `pickPreviewImage`
     // only ever returns an image already visible at the ceiling, so an image level
@@ -633,7 +688,7 @@ describe('stage flow', () => {
     // `modelNsfw` and reopens the hole. It also buys nothing: the projection
     // emits no image field.
     mockStage1();
-    mockFindCandidates.mockResolvedValue(SHORTLIST);
+    mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
     mockStage3({ '0': 0.7, '1': 0.2, none: 0.1 });
     mockGetResourceData.mockImplementation(async (ids: number[]) =>
       ids.map((id) => genResource(id))
@@ -655,6 +710,7 @@ describe('shadow event', () => {
     // reason, so those rows pool in a blank bucket that reads like a writer bug.
     redisMock.redis.packed.get.mockResolvedValue({
       degraded: true,
+      insightFallback: false,
       intent: null,
       criteria: null,
       suggestions: [],
@@ -676,7 +732,7 @@ describe('shadow event', () => {
 
   it('records the pinned model, spec hash and suggestion ids to ClickHouse', async () => {
     mockStage1();
-    mockFindCandidates.mockResolvedValue(SHORTLIST);
+    mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
     mockStage3({ '0': 0.7, '1': 0.2, none: 0.1 });
     mockGetResourceData.mockImplementation(async (ids: number[]) =>
       ids.map((id) => genResource(id))
@@ -721,7 +777,7 @@ describe('shadow event', () => {
 
   it('degrades the shadow row instead of failing the request when ClickHouse is down', async () => {
     mockStage1();
-    mockFindCandidates.mockResolvedValue([]);
+    mockFindCandidates.mockResolvedValue(matched([]));
     mockInsert.mockRejectedValue(new Error('clickhouse down'));
     const result = await getResourceIntent(INPUT, CTX);
     expect(result.degraded).toBe(false);
@@ -734,7 +790,7 @@ describe('shadow event', () => {
   it('falls back to the structured log when ClickHouse is not wired at all', async () => {
     clickhouseHolder.client = undefined;
     mockStage1();
-    mockFindCandidates.mockResolvedValue([]);
+    mockFindCandidates.mockResolvedValue(matched([]));
     await getResourceIntent(INPUT, CTX);
     expect(mockInsert).not.toHaveBeenCalled();
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
@@ -749,6 +805,7 @@ describe('shadow event', () => {
   it('a cache-hit shadow row records the hydrated suggestion count as shortlistCount', async () => {
     const cached = {
       degraded: false,
+      insightFallback: false,
       intent: {
         needsResource: 0.9,
         role: { value: 'style', distribution: { style: 1 } },
@@ -829,7 +886,7 @@ describe('coverage resolution', () => {
     const coverageSource = await import('~/server/services/generation/coverage-source');
     vi.mocked(coverageSource.coverageAudience).mockClear();
     mockStage1();
-    mockFindCandidates.mockResolvedValue([]);
+    mockFindCandidates.mockResolvedValue(matched([]));
     await getResourceIntent(INPUT, { browsingLevel: 3 });
     expect(coverageSource.coverageAudience).toHaveBeenCalledTimes(1);
     // The resolved audience reached the matcher.
@@ -843,6 +900,7 @@ describe('coverage resolution', () => {
     vi.mocked(coverageSource.coverageAudience).mockClear();
     redisMock.redis.packed.get.mockResolvedValue({
       degraded: false,
+      insightFallback: false,
       intent: null,
       criteria: null,
       suggestions: [],

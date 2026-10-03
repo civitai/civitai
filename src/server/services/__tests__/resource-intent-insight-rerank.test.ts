@@ -142,9 +142,9 @@ beforeEach(() => {
 describe('resource-intent — a label changes the served response', () => {
   it('🔴 serves the least popular candidate first when its label agrees with the prompt', async () => {
     dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([
-      // The most popular candidate is a confident disagreement, and carries the best
-      // qualityScore of the three, so neither popularity nor quality can produce the
-      // asserted order.
+      // The most popular candidate disagrees on both axes above the demote floor, and
+      // carries the best qualityScore of the three, so neither popularity nor quality
+      // can produce the asserted order.
       {
         modelVersionId: 81001,
         role: 'quality_enhancer',
@@ -152,7 +152,9 @@ describe('resource-intent — a label changes the served response', () => {
         confidence: 0.72,
         qualityScore: 0.91,
       },
-      // 82002 carries no row — the ~99% case — and sorts between the two.
+      // 82002 carries no row and sorts between the two. (Not "the ~99% case" an
+      // earlier version of this comment claimed — that is the corpus-wide rate, and
+      // coverage inside a popularity-seeded pool measures 33-45%.)
       {
         modelVersionId: 83003,
         role: 'style',
@@ -210,6 +212,55 @@ describe('resource-intent — a label changes the served response', () => {
     const result = await getResourceIntent(INPUT, CTX);
 
     expect(result.suggestions.map((s) => s.versionId)).toEqual([83003, 81001, 82002]);
+  });
+
+  // 🔴 THE SEAM TEST for the label-read fallback, and the reason it belongs in this
+  // suite rather than either single-module one: the defect was that the matcher's
+  // fail-soft path returned a correctly-shaped, correctly-capped shortlist and told
+  // the caller nothing, so the service — which owns the cache TTL — could not tell
+  // an UNORDERED response from an ordered one. Both suites were green throughout:
+  // the matcher suite never runs the service, and the service suite mocks the
+  // matcher, so the only thing either could have checked is the mock.
+  //
+  // Red before the fix with `EX: 3600` — an unordered, popularity-only response
+  // pinned to this cache key for an hour, where the analogous VENDOR failure is
+  // cached for 60s with the comment three lines above explaining why.
+  it('🔴 an unreachable label table serves the seed order and caches it for 60s, not an hour', async () => {
+    dbMock.dbRead.resourceInsight.findMany.mockRejectedValue(new Error('relation missing'));
+
+    const result = await getResourceIntent(INPUT, CTX);
+
+    expect(redisMock.redis.packed.set).toHaveBeenCalledTimes(1);
+    expect(redisMock.redis.packed.set.mock.calls[0][2]).toEqual({ EX: 60 });
+    // What was served is the popularity seed order, unordered by any label — which
+    // is exactly why the hour was wrong.
+    expect(result.suggestions.map((s) => s.versionId)).toEqual([81001, 82002, 83003]);
+    // And not a degrade: a real intent, real suggestions, the vendor's own model.
+    expect(result.degraded).toBe(false);
+    expect(result.insightFallback).toBe(true);
+    expect(result.intent).not.toBeNull();
+    expect(result.model).toBe('typesafe/jev-1.13-20260917');
+    // The flag is in the CACHED blob, so a replay reports it too.
+    expect(redisMock.redis.packed.set.mock.calls[0][1]).toMatchObject({ insightFallback: true });
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'resource-intent-insight-read-failed' }),
+      'temp-search'
+    );
+  });
+
+  // 🔴 The control arm the test above needs, and it is NOT the no-labels test higher
+  // up: that one asserts an order, never a TTL. A healthy label read that happens to
+  // return NOTHING must keep the full hour — otherwise `EX: 60` unconditionally, or
+  // "no usable label ⇒ fallback", passes the test above while cutting the TTL on the
+  // commonest response the endpoint produces.
+  it('🔴 a healthy label read that returns no rows keeps the 1h TTL', async () => {
+    dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([]);
+
+    const result = await getResourceIntent(INPUT, CTX);
+
+    expect(redisMock.redis.packed.set.mock.calls[0][2]).toEqual({ EX: 3600 });
+    expect(result.insightFallback).toBe(false);
+    expect(result.suggestions.map((s) => s.versionId)).toEqual([81001, 82002, 83003]);
   });
 
   it('🔴 a label agreeing on the ROLE axis alone still leads the response', async () => {

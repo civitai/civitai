@@ -22,7 +22,7 @@ POST /api/v1/blocks/resource-intent {prompt, baseModel?, limit?}
       → ordered against ResourceInsight via `dbRead` (the Postgres read replica)
       → shortlist ≤ min(limit||50, 255) versions
   → Jev request #2: one Choice over the shortlist, `none` fallback
-  → response {intent, criteria, suggestions[], model, criteriaVersion}
+  → response {intent, criteria, suggestions[], model, criteriaVersion, insightFallback}
   → shadow event → ClickHouse resourceIntentShadow   (graceful fallback to structured log)
 ```
 
@@ -39,11 +39,11 @@ POST /api/v1/blocks/resource-intent {prompt, baseModel?, limit?}
 ## Hard rules
 
 1. **Pin the model.** `typesafe/jev-1.13` (numbered). `jev-latest` never appears in code. ⚠️ **This rule used to read "the client sends `allowFallbacks: false`, so OpenRouter cannot route the call to a different model while we record ours", and that is RETRACTED** — it described the chat/completions transport, which could never have worked at all (see the transport note below). The decisions endpoint's only proven request shape is `{model, state, questions}`, and sending an unverified `provider` key to a strictly-validated alpha endpoint is how the original defect happened. The pin is now enforced on the **response** instead: the vendor reports the build that answered (`typesafe/jev-1.13-20260917` for the pinned `typesafe/jev-1.13`), `askJev` fails closed on anything that is not the pin or a dated build of it, and `JevResponse.model` carries that vendor-reported build rather than our constant. That observes what actually ran instead of requesting a routing promise.
-2. **Fail closed, fail empty.** Any Jev error/timeout/malformed response returns HTTP 200 with `degraded: true` and `suggestions: []`. Never a stack trace, never fabricated suggestions.
+2. **Fail closed, fail empty.** Any Jev error/timeout/malformed response returns HTTP 200 with `degraded: true` and `suggestions: []`. Never a stack trace, never fabricated suggestions. 🔴 A **label**-read failure is deliberately NOT a degrade: it produces a complete response with a real intent and real suggestions, flagged `insightFallback: true`, and `degraded` keeps meaning "the vendor path failed" so the invariants above (`suggestions: []`, `intent`/`criteria` `null`, `model: 'jev-unavailable'`) stay true of every degraded row. The one thing the two share is the short cache TTL — see [Caching](#caching-rate-limits-flag).
 3. **Deterministic gates always win.** Availability (no Private), the token's `maxBrowsingLevel` maturity clamp (authoritative — no client maturity field is read), region restriction, canGenerate coverage, baseModel compatibility (caller-supplied, never Jev output), and the hard-coded `celebrity` tag exclusion are applied in the matcher. Hydration re-checks exactly TWO of them — `hasAccess` and the maturity ceiling. Coverage, baseModel and the celebrity exclusion are NOT re-checked there, and `canGenerate` is present on the hydrated resource and unread. ⚠️ **No principle separates the two re-checked gates from the three that are not.** An earlier draft of this line said the re-checked ones are "the ones whose indexed value can lag"; that is false — the source comment beside the check says the _coverage_ filter is a superset that can lag, and coverage is gated on indexed Meili fields exactly like the rest. So the honest statement is that a version whose coverage lapsed since the last index build can still be suggested. Treat that as an accepted gap with no stated justification, not as a designed boundary — and if you close it, `canGenerate` is already on the object. Jev output can only reorder/drop within the gate-passing set, never add — the stage-3 option list contains exactly the shortlisted keys plus `none`, so an unknown version is unrepresentable.
 4. **`none` is a first-class answer.** Stage-1 `role` includes `none`; stage 3 includes `none`. An argmax of `none` returns empty suggestions _without_ `degraded`.
 5. **Stable question IDs + spec hash.** `QUESTION_SPEC_VERSION` plus a sha256 over the question spec ride every response and shadow row; a question edit invalidates old analytics instead of blending with them. 🔴 **The spec term in the CACHE KEY is the hash, not the version** — the hash moves on any spec edit, the hand-maintained integer only moves when someone remembers, and until that was fixed a reworded prompt would have left pre-edit entries served for their full hour under the new spec _and_ stamped into the shadow table with the new hash, which is precisely the blend this rule exists to prevent.
-6. **Reject unknown answer keys.** Every response parse rejects keys outside the question set, distributions must sum to ~1 (±0.02) over the offered options, scores/nouls must be in range. Confidence is never a permission slip: no resource is admitted or refused on one. A label row's `confidence` does gate whether that row is read for ORDERING (`RESOURCE_INSIGHT_MIN_CONFIDENCE`) — a row below the floor is treated as if the version were unlabeled. The precise claim is that **no deterministic gate is applied or relaxed on a confidence**: it is read at exactly one site, and no filter, drop or maturity decision reads it. It is NOT the weaker-sounding "changes rank and nothing else", because the shortlist is a fixed-width page cut out of a wider pool, so rank decides admission to the response.
+6. **Reject unknown answer keys.** Every response parse rejects keys outside the question set, distributions must sum to ~1 (±0.02) over the offered options, scores/nouls must be in range. Confidence is never a permission slip: no resource is admitted or refused on one. A label row's `confidence` does gate whether that row is read for ORDERING — against `RESOURCE_INSIGHT_MIN_PROMOTE_CONFIDENCE` on the promote side and `RESOURCE_INSIGHT_MIN_DEMOTE_CONFIDENCE` on the demote side, **two constants holding the same 0.30 today** — and a row below the floor for its direction is treated as if the version were unlabeled. The precise claim is that **no deterministic gate is applied or relaxed on a confidence**: no filter, drop or maturity decision reads it. It is NOT the weaker-sounding "changes rank and nothing else", because the shortlist is a fixed-width page cut out of a wider pool, so rank decides admission to the response.
 7. **Adversarial state.** The prompt is user text. The `injectionPresent` Noul is asked and logged; deterministic rules own every consequence. Jev's judgment never feeds back into state.
 8. **No invariants across calls.** Full distributions are logged; nothing probabilistic is combined in code.
 
@@ -64,7 +64,7 @@ The role compiles to a ModelType filter (`ROLE_MODEL_TYPES` in the schema file �
 
 ## Caching, rate limits, flag
 
-- **Cache:** full responses under `packed:caches:jev-resource-intent:v1:<sha256>`, TTL 1h. Degraded responses cache for 60s only — a transient vendor failure must not pin an empty result to a prompt for an hour.
+- **Cache:** full responses under `packed:caches:jev-resource-intent:v1:<sha256>`, TTL 1h. Degraded responses cache for 60s only — a transient vendor failure must not pin an empty result to a prompt for an hour. 🔴 **A label-read fallback (`insightFallback: true`) takes the same 60s**, for the same reason one step over: a replica blip or a pooler timeout is every bit as transient as a vendor 5xx, and the response it produces is *unordered*, so the full hour would pin a popularity-only response to the key. The flag rides inside the cached blob, so a replay off the cache reports what the computation did rather than a fresh `false`.
 - **Rate limit:** per-`blockInstanceId` LLM bucket (`:llm:` sub-namespace, 30 req/60s, fail-open) — a request is up to two vendor round trips, so it does not share the catalog bucket.
 - **Flag:** `resourceIntentJev` in `feature-flags.service.ts` (`availability: []`, fliptKey `resource-intent-jev`). Flipt owns the decision; an unknown flag or unreachable Flipt denies. The flag is checked **before** the cache read — a dark endpoint never reads and never spends. The Flipt flag definition itself is a separate flipt-state change and must ship default-OFF.
 
@@ -89,28 +89,55 @@ from `cap = 128` and is **1× at the maximum accepted `limit` of 255**, where th
 ordering really can only reshuffle the visible page. It is the default cap of 50
 that gets a 2× pool.
 
-**Three buckets, not a score.** Only a small fraction of eligible versions carry a
-row, and the labeled set is the high-usage head of the catalogue — so insight
-coverage correlates with popularity, which anyone grading label ordering against a
-popularity baseline has to control for. The policy:
+**Three buckets, not a score.** 🔴 **Read the coverage numbers before the table — the
+ones that used to stand here were the wrong denominator, and the argument built on
+them is withdrawn.** Coverage is ~1% over the whole eligible corpus (9,900 labeled
+versions of ~0.94M), and that figure is what an earlier version of this section used
+("only a small fraction of eligible versions carry a row"), as the *justification*
+for bucketing rather than scoring. It is the rate over a population the ordering
+never sees. The labeled set is the catalogue's high-usage head — the lowest
+`generationCount` among labeled versions is 46,798 — and the candidate pool is seeded
+by a popularity sort, so coverage *inside a pool* runs **~30–45× the corpus rate**:
+
+| Population | Label coverage |
+| --- | --- |
+| whole eligible corpus | ~1% (9,900 of ~0.94M) |
+| versions of the top 100 models by thumbs-up, no type filter | **33.3%** (350 of 1,050) |
+| versions of the top 100 LoRA-family models by thumbs-up | **~45%** (236 of 522) |
+
+Measured against the primary Postgres database, three times independently. Two
+consequences, and the second is the one that was being argued the wrong way round:
+insight coverage correlates with popularity, which anyone grading label ordering
+against a popularity baseline has to control for; and **the ordering is active on a
+large share of requests rather than being a rare no-op**, so eviction from the
+returned slice (the red-flagged paragraph below) is routine, not exceptional.
+
+**So bucketing has no coverage argument behind it any more, and this document is not
+substituting a new one.** What survives is a property rather than a justification: a
+labeled and an unlabeled candidate share no scale, so any scoring scheme has to
+invent a score for the unlabeled candidates, and the neutral band is how this
+ordering avoids inventing one. Whether buckets or scores serve better at the in-pool
+coverage above has never been tested; it is the first thing to revisit once the
+shadow table can grade the ordering (see the closing condition at the end of this
+section). The policy as it stands:
 
 | Candidate | Bucket |
 | --- | --- |
 | label agrees on role and style family | promote (3) |
 | label agrees on role only | promote (2) |
 | label agrees on style family only | promote (1) |
-| no row, or `confidence` below the floor | neutral (0) — seed order preserved |
-| confident label agreeing on neither axis, whose role this build recognises AS AN ACTUAL ROLE | demote (−1) |
+| no row, or `confidence` below the floor for its direction | neutral (0) — seed order preserved |
+| label at or above the **demote** floor agreeing on neither axis, whose role this build recognises AS AN ACTUAL ROLE | demote (−1) |
 
 Nothing is FILTERED: an absent label never disqualifies a candidate, and the
 ordering is a permutation of the pool. An unlabeled candidate sits **above** a
-confident disagreement and **below** a confirmed agreement; it is never scored as a
-zero, which would bury the unlabeled majority under any weakly-labeled row.
-`qualityScore` separates candidates inside either labeled bucket, never for a
-neutral one — there is no quality score to compare an unlabeled candidate against.
-Worth stating because it follows from the table rather than being written anywhere
-else: a single label agreeing on one axis at the bare confidence floor outranks the
-entire unlabeled majority. That is the design — an agreeing label is the evidence
+disagreement that cleared the demote floor and **below** a confirmed agreement; it is
+never scored as a zero, which would bury the unlabeled majority under any
+weakly-labeled row. `qualityScore` separates candidates inside either labeled bucket,
+never for a neutral one — there is no quality score to compare an unlabeled candidate
+against. Worth stating because it follows from the table rather than being written
+anywhere else: a single label agreeing on one axis at the bare promote floor outranks
+the entire unlabeled majority. That is the design — an agreeing label is the evidence
 this ordering exists to use — but it is the first lever to revisit if the ordering
 turns out to hurt.
 
@@ -135,11 +162,28 @@ a request whose compiled `styleFamily` is `other`, the style axis is dead and th
 "agrees on style family only" row of the table above is unreachable — that slice
 degrades to role-only.
 
-**The confidence floor is a four-axis minimum.** `ResourceInsight.confidence` is
-the weakest of a row's four label judgments, `contentType` included — the axis the
-ordering never reads. So a row can fall below the floor on the confidence of a
-question this design calls unusable. Only the aggregate is persisted, so nothing
-here can separate them.
+**The confidence floor is a four-axis minimum — and there are now two of it.**
+`ResourceInsight.confidence` is the weakest of a row's four label judgments,
+`contentType` included — the axis the ordering never reads. So a row can fall below
+the floor on the confidence of a question this design calls unusable. Only the
+aggregate is persisted, so nothing here can separate them.
+
+🔴 The promote and demote directions read **separate constants**,
+`RESOURCE_INSIGHT_MIN_PROMOTE_CONFIDENCE` and
+`RESOURCE_INSIGHT_MIN_DEMOTE_CONFIDENCE`, both 0.30 — so behaviour is today exactly
+what a single constant gave, and the split is a lever rather than a change. The
+reason they are separate: the measured argument for 0.30 (p50 0.43, only 3.4% of
+rows at 0.70+, so a 0.70 floor leaves the ordering inert) weighs **only** the
+promote side's cost, which is a label that never gets to help. The demote side's
+error costs run the other way — raising its floor costs a *missed* demotion, and a
+row that fails to demote just sits neutral in seed order, i.e. the pre-feature
+behaviour, while a demotion on a pool wider than the cap *evicts* a candidate from
+the returned page. The demote value is therefore inherited from an argument that was
+never about it. Measured on a realistic pool approximation: in the worst cell sampled
+the demote bucket held 49 of 100 candidates, median confidence 0.45, **none at
+0.70+** — which is why this document no longer calls it the "confident" bucket. It is
+deliberately NOT raised here; where to put it is a product judgment about how much
+eviction an unvalidated label may cause, and that judgment has not been made.
 
 **`stale` is a floor, not a freshness guarantee.** Nothing in this repo sets
 `stale = true` — the migration describes that flip as a manual step of a label-spec
@@ -177,15 +221,29 @@ per row and its modal value is the catch-all — there is nothing to rank on unt
 the question becomes multi-select.
 
 An unreachable label table costs the ordering and nothing else: the matcher logs
-`resource-intent-insight-read-failed` and returns the seed order, rather than
-taking the whole response down to `degraded: true`.
+`resource-intent-insight-read-failed` and returns the seed order, rather than taking
+the whole response down to `degraded: true`.
 
-🔴 **The shadow table cannot see any of this, and that gap has to close before
-M4/M5 read it.** `ShadowEvent` records no insight field, so a row produced by the
-fallback above — cached for the full hour as `degraded: false` — is indistinguishable
-from one whose pool simply held no labeled version, which is in turn indistinguishable
-from one the labels reordered. Grading "do the labels help" against that corpus is
-not possible. Harmless today only because the endpoint is dark.
+🔴 **But it REPORTS that, and it used not to.** The matcher returns
+`{ entries, insightFallback }`, the service puts `insightFallback` on the response,
+and a response carrying it **caches for 60s instead of an hour**. Before that, the
+fallback was silent at the seam: the caller received a well-formed, correctly-capped
+shortlist with no way to learn the labels were never read, so `degraded` stayed
+`false`, the full-hour TTL applied, and a replica blip or pooler timeout pinned an
+*unordered* response to that cache key for an hour — while the analogous vendor
+failure got a minute. Note what `insightFallback: false` does and does not claim: it
+says no label-read failure happened, **not** that the ordering changed anything. An
+empty pool, a pool with no labeled version, and a pool every label left neutral all
+report `false`.
+
+🔴 **The shadow table still cannot see any of this, and that gap has to close before
+M4/M5 read it.** `ShadowEvent` records no insight field — `insightFallback` is on the
+response and in the cache, not on the ClickHouse row: the table has no such column,
+so adding the field to the writer ahead of the DDL produces nothing anyone can query
+whatever ClickHouse does with it. So a shadow row produced by the fallback above is indistinguishable from one
+whose pool simply held no labeled version, which is in turn indistinguishable from one
+the labels reordered. Grading "do the labels help" against that corpus is not
+possible. Harmless today only because the endpoint is dark.
 
 Two things make the obvious fix insufficient, so the closing condition has to name
 them. (a) `writeShadowEvent` fires on every call **including cache hits**, where the
@@ -193,10 +251,15 @@ matcher never ran — which is why `shortlistCount` is already reconstructed fro
 response rather than left at 0. So a fallback-ordered response emits one marked row
 and then up to an hour of unmarked ones unless the fields ride **inside the cached
 blob**, i.e. in `resourceIntentResponseSchema`, which is itself another
-cache-invalidating shape bump. (b) A pooled label count cannot separate "the labels
-reordered this" from "every label landed neutral" — below the floor or unrecognised,
-both of which this design makes deliberately common. That needs a reorder signal, not
-a population count.
+cache-invalidating shape bump. ⚠️ **That bump has now been paid once**, for
+`insightFallback` — so (a) is solved for the fallback clause specifically, and any
+further column should go in the same place rather than beside the response. The
+residual on (a) is only that the field is not yet written to the ClickHouse row.
+(b) A pooled label count cannot separate "the labels reordered this" from "every
+label landed neutral" — below the floor for its direction, or unrecognised, both of
+which this design makes deliberately common. That needs a reorder signal, not a
+population count, and `insightFallback` is not one: it answers "could the ordering
+run", never "did it change the answer".
 
 🔴 And a count of actionable rows is still not a reorder signal: at the default cap
 half the pool sits outside the response, so demoting a candidate the seed had already
@@ -204,12 +267,21 @@ placed there moves nothing the caller sees while counting as actionable. A class
 defined that way dilutes the treatment arm with responses identical to the control
 and biases the measured effect toward zero — the same failure one step further in.
 
-**Closing condition:** columns ON the `resourceIntentShadow` table carrying (i)
-whether the ordering changed the RETURNED slice — not how many rows were actionable
-— and (ii) whether the ordering ran at all; both carried in the cached response so a
-replay reports the same values as the computation; verified by a query returning a
-non-empty, disjoint partition of rows into changed-the-response /
-ordering-ran-but-response-unchanged / ordering-did-not-run.
+**Closing condition (unchanged, and still open):** columns ON the
+`resourceIntentShadow` table carrying (i) whether the ordering changed the RETURNED
+slice — not how many rows were actionable — and (ii) whether the ordering ran at all;
+both carried in the cached response so a replay reports the same values as the
+computation; verified by a query returning a non-empty, disjoint partition of rows
+into changed-the-response / ordering-ran-but-response-unchanged /
+ordering-did-not-run.
+
+Progress against it, stated precisely so nobody reads this as closed:
+`insightFallback` supplies ONE case of clause (ii) — "the ordering could not run
+because the label read failed" — and it is carried in the cached response as this
+condition requires. It does not distinguish *ordering ran* from *ordering ran on a
+pool with nothing to order*, and it says nothing about clause (i). Both remaining
+halves need the ClickHouse columns plus a comparison of the returned slice against
+the slice the seed order would have produced.
 
 ### The M3 study exists, has never been run, and does not grade this
 
@@ -229,7 +301,7 @@ which neither this evaluator nor this change provides.
 ## Rollout
 
 - **M1:** primitive + REST surface, dark behind `resourceIntentJev`.
-- **M2:** `ResourceInsight` + the labeling script, then the matcher ordering that reads them. Code done. 🔴 **Two OPERATIONAL preconditions are not, and neither is automatic:** `packages/civitai-db-schema/prisma/migrations/20260929170000_resource_insights/migration.sql` is applied by hand per environment, and `scripts/label-resource-insights.ts` must have been run there. Until both hold in a given environment the ordering is wired but has nothing to read, which is a data state, not a code state — the matcher logs `resource-intent-insight-read-failed` for the first and silently preserves the seed order for the second. **The index seed is NOT part of M2 either** — putting an insight field in `modelsSortableAttributes` and reindexing is separate, larger work, and until it happens the pool is popularity-seeded.
+- **M2:** `ResourceInsight` + the labeling script, then the matcher ordering that reads them. Code done. 🔴 **Two OPERATIONAL preconditions are not, and neither is automatic:** `packages/civitai-db-schema/prisma/migrations/20260929170000_resource_insights/migration.sql` is applied by hand per environment, and `scripts/label-resource-insights.ts` must have been run there. Until both hold in a given environment the ordering is wired but has nothing to read, which is a data state, not a code state — and the two are distinguishable from outside: an unapplied migration makes the read FAIL, so the matcher logs `resource-intent-insight-read-failed`, sets `insightFallback: true` and the response caches for 60s; an unrun labelling pass makes the read SUCCEED and return nothing, which is `insightFallback: false` on the full-hour TTL and silently preserves the seed order. An environment stuck on the second therefore looks healthy, by design. **The index seed is NOT part of M2 either** — putting an insight field in `modelsSortableAttributes` and reindexing is separate, larger work, and until it happens the pool is popularity-seeded.
 - **M3 (committed, never run):** the gold-set study. It does NOT grade clause (iii) above. See the section above.
 - **M4 (suggestions UI)** — NOT implemented. Closing condition: M1 merged + shadow volume ≥1k/day for 7 days + p95 end-to-end ≤2s.
 - **M5 (auto-attach)** — NOT implemented, and never before BOTH: the threshold study shows per-slice precision ≥0.9 at the chosen operating point AND ≥2 weeks of live shadow agreement ≥80%.
@@ -239,7 +311,7 @@ which neither this evaluator nor this change provides.
 Unit suites (fixture-based, no external calls):
 
 - `src/server/services/ai/__tests__/jev.test.ts` — fail-closed parsing, model pin, timeout.
-- `src/server/services/__tests__/resource-intent-matcher.service.test.ts` — gates, determinism, cap, the label ordering and its confidence floor.
-- `src/server/services/__tests__/resource-intent.service.test.ts` — cache, degradation, stage flow.
-- `src/server/services/__tests__/resource-intent-insight-rerank.test.ts` — the service and the REAL matcher together: a label changes the order of a served response. The two suites above each mock the other side, so neither can see that.
+- `src/server/services/__tests__/resource-intent-matcher.service.test.ts` — gates, determinism, cap, the label ordering, its two confidence floors, and the label-read fallback it reports.
+- `src/server/services/__tests__/resource-intent.service.test.ts` — cache, degradation, stage flow, the fallback's cache TTL.
+- `src/server/services/__tests__/resource-intent-insight-rerank.test.ts` — the service and the REAL matcher together: a label changes the order of a served response, and a label-read failure takes the 60s TTL rather than the hour. The two suites above each mock the other side, so neither can see either of those.
 - `src/server/__tests__/blocks/resource-intent.endpoint.test.ts` — auth/clamp mirror, deny-before-spend.
