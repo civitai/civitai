@@ -76,7 +76,10 @@ import { Availability } from '~/shared/utils/prisma/enums';
  * src/pages/api/admin/temp/queue-paid-models-reindex.ts). So the counter is
  * identical on a healthy run and on a run whose every enqueue was parked.
  *
- * So a real run READS THE QUEUE BACK ONCE, after the first batch that enqueues,
+ * So a real run that announces anything READS THE QUEUE BACK ONCE, after the
+ * first batch that enqueues (a run whose every candidate is skipped as
+ * already-current, or whose answers never map, announces nothing and therefore
+ * prints no `queue-verify:` line at all),
  * and prints `queue-verify: …`. Not a flag and not per batch: not a flag because
  * an opt-in check is one nobody remembers to pass, and not per batch because
  * this queue reaches hundreds of thousands of ids on a large fan-out and
@@ -544,7 +547,14 @@ export async function verifyFirstEnqueue(modelIds: number[]): Promise<string> {
     if (found === modelIds.length) {
       return `queue-verify: all ${found} model id(s) from the first batch are in the ${MODELS_SEARCH_INDEX} update queue (depth ${queue.content.length}) — announcements are landing`;
     }
-    return `queue-verify: INCONCLUSIVE — ${found}/${modelIds.length} model id(s) from the first batch found in the ${MODELS_SEARCH_INDEX} update queue (depth ${queue.content.length}). Either the 15-minute sync consumed them, or the enqueue is failing open and parking ids in Postgres. Check the sysredis-fail-open signal before trusting this run's "queued" totals`;
+    // 🔴 THREE causes, not two. The third is the one that blames the wrong
+    // half: a degraded READ also lands here with nothing actually dropped —
+    // `checkoutQueue` returns empty content when the bucket-list read fails
+    // open and silently skips any bucket whose `sMembers` fails open, both
+    // without throwing. So this line must not assert that the enqueue is at
+    // fault; it lists the possibilities and names the signal that separates
+    // them.
+    return `queue-verify: INCONCLUSIVE — ${found}/${modelIds.length} model id(s) from the first batch found in the ${MODELS_SEARCH_INDEX} update queue (depth ${queue.content.length}). Any of three things: the 15-minute sync consumed them, the enqueue failed open and parked ids in Postgres, or this read itself failed open and under-reports a queue that is fine. Check the sysredis-fail-open signal to tell them apart before trusting this run's "queued" totals`;
   } catch (error) {
     return `queue-verify: could not read the queue back (${
       error instanceof Error ? error.message : error
@@ -583,14 +593,22 @@ async function labelBatch(
     } catch (error) {
       // 🔴 THE PARTIAL-WRITE CASE, which is the mirror of the enqueue failure
       // below and is otherwise SILENT. `limitConcurrency` rejects on the first
-      // task error, and there is no transaction, so the upserts that already
-      // succeeded are COMMITTED. The throw then reaches `main`'s per-batch
-      // `catch`, which counts the whole batch as failed and moves the cursor —
-      // and a resumed run skips the committed rows as already-current
+      // task error, and there is no transaction, so rows are COMMITTED while
+      // this batch is reported as failed. The throw reaches `main`'s per-batch
+      // `catch`, which counts the whole batch failed and moves the cursor — and
+      // a resumed run skips the committed rows as already-current
       // (`partitionNeedingLabel`), so their announcement is never attempted by
-      // anything, ever. Log the candidate model ids before rethrowing: they are
-      // a superset of what needs re-queueing by hand, which is strictly better
-      // than the empty record this path used to leave.
+      // anything, ever.
+      //
+      // ⚠️ The committed set is WIDER than "the ones that had already finished",
+      // and the precise shape matters because it is why the log is a superset
+      // rather than an exact list: `limitConcurrency` rejects and returns, but
+      // its `finally` keeps pulling from the pool, so remaining upserts are
+      // still launched and can commit AFTER this warning is printed and after
+      // `labelBatch` has returned. Those stragglers also race the explicit exit
+      // in `runAsScript`, which makes the committed set nondeterministic.
+      // Logging every label in the batch is the only description that is
+      // guaranteed to cover it.
       console.warn(
         `[label-resource-insights] upsert batch FAILED after a partial write; some rows may be committed WITHOUT an index announcement. Candidate model ids to re-queue by hand: ${labeledModelIds(
           versions,
@@ -880,22 +898,61 @@ export async function main(): Promise<void> {
   );
 }
 
+/**
+ * The entry-point wrapper: run `main()`, FLUSH, then exit explicitly.
+ *
+ * 🔴 BOTH HALVES ARE LOAD-BEARING AND THEY ARE IN TENSION, which is the only
+ * reason this is a function rather than two lines in the tail guard.
+ *
+ *   EXIT, because the process can no longer end on its own. Announcing to the
+ *   search index pulls in the redis clients, which connect at module load and
+ *   arm a ping interval, so the event loop never drains and a finished run
+ *   hangs after printing its summary. `scripts/seed-scanner-policies.ts` has
+ *   the same problem and the same fix.
+ *
+ *   FLUSH FIRST, because `process.exit()` does NOT drain pending async writes,
+ *   and stdout to a PIPE is async. Measured on node 24.19.0 with a 2001-line
+ *   writer: exiting bare lost the final line in 3 of 3 piped runs (38–2000 of
+ *   2000 lines arrived, non-deterministically); draining first delivered all
+ *   2001 in 3 of 3; the no-exit control delivered all 2001. Redirecting to a
+ *   FILE is unaffected, which is exactly what makes this easy to miss.
+ *
+ * Why that matters more here than it looks: the LAST line is the one carrying
+ * `lastId=` / `index=` — the resume token — and this script spends vendor money
+ * per batch. An operator who pipes the run (`| tee`, a cron harness, a log
+ * shipper) and loses that line resumes from a stale cursor and RE-PAYS for
+ * versions already labeled. The hang this exit fixes is an annoyance; a lost
+ * cursor is a bill.
+ *
+ * `exit` is injected so the behaviour is testable: `main` is exported and five
+ * test files call it directly, so a real `process.exit` anywhere reachable from
+ * them would kill the vitest worker. The tail guard runs only when this file is
+ * the entry point, which is never true under the runner.
+ */
+export async function runAsScript(
+  exit: (code: number) => void = process.exit,
+  // Injected together with `exit` so a test can assert the ORDER — a drain that
+  // runs after the exit would be inert, and nothing else could see that.
+  flush: () => Promise<void> = drainStdio
+): Promise<void> {
+  try {
+    await main();
+  } catch (error) {
+    console.error(error);
+    await flush();
+    exit(1);
+    return;
+  }
+  await flush();
+  exit(0);
+}
+
+/** Wait for stdout AND stderr to drain. Empty writes settle after pending ones. */
+async function drainStdio(): Promise<void> {
+  await new Promise<void>((resolve) => process.stdout.write('', () => resolve()));
+  await new Promise<void>((resolve) => process.stderr.write('', () => resolve()));
+}
+
 if (process.argv[1]?.endsWith('label-resource-insights.ts')) {
-  main()
-    .then(() => {
-      // 🔴 EXPLICIT, and it must live HERE rather than at the end of `main()`.
-      // Announcing to the search index pulls in the redis clients, which
-      // connect at module load and arm a ping interval, so the event loop never
-      // drains and a finished run hangs after printing its summary (see the
-      // file header). `scripts/seed-scanner-policies.ts` has the same problem
-      // and the same fix — but it exits inside `main()`, which this script
-      // cannot do: `main` is exported and five test files call it directly, so
-      // an exit in there would kill the vitest worker. The tail guard only runs
-      // when the file is the entry point, which is never true under the runner.
-      process.exit(0);
-    })
-    .catch((error) => {
-      console.error(error);
-      process.exit(1);
-    });
+  void runAsScript();
 }

@@ -108,24 +108,50 @@ already drops to raw SQL to AVOID bumping it on a non-creator edit, and says
 so), so a corpus labeling pass would misrepresent every labeled model as
 freshly updated.
 
-🔴 **The per-batch enqueue is sized for the STEADY-STATE trickle, not for the
-one-time corpus backfill — finish a corpus pass with a reset instead of letting
-the queue drain it.** The drain is `search-index-sync-models` (every 15 min),
-whose `update()` context is `dbWrite`/`pgDbWrite`, so each queued model is a
-full nested `modelSearchIndexSelect` pull **off the primary**. A corpus pass
-labels ~975k versions, and the collapse to distinct models is near-zero on the
-default id-ordered sweep (a model's versions are not adjacent in id space), so
-the queue would carry roughly one model per version labeled — against the
-~700k ungated documents this index holds, through the incremental path, to
-rewrite documents that are byte-identical today. `search-index-sync-models-reset`
-already exists as a manual-trigger job and builds the new index off the
-**replica** before swapping and clearing the queue; that is one pass instead of
-hundreds of thousands of incremental document writes. ⚠️ Also note `--top N`
-does not bound this cost, it concentrates it: ordering by `generationCount`
-selects the models with the most versions, files and showcase images, i.e. the
-largest documents in the index. These figures are read out of the code and the
-repo's own comments, not measured — a corpus run should re-derive the distinct
-model count first.
+🔴 **The per-batch enqueue is sized for the STEADY-STATE trickle. Price a
+full-corpus pass before running one.** What is verified in code:
+
+- The drain is `search-index-sync-models`, cron `*/15 * * * *`
+  (`src/server/jobs/search-index-sync.ts`), and its `update()` gate is
+  `lastUpdatedAt + updateInterval < now` with a 30-second default
+  (`src/server/search-index/base.search-index.ts`) — so **every** cron fire
+  drains, continuously, for the whole duration of a pass.
+- That `update()` runs with `db: dbWrite` / `pg: pgDbWrite`, so each drained
+  model is a full nested `modelSearchIndexSelect` pull **off the primary** — not
+  the replica. `reset()` is the one that uses `dbRead`/`pgDbRead`.
+- The documents rebuilt are byte-identical until an insight field is projected
+  into `models_v9`.
+- The index holds **~700k ungated documents** — the figure is
+  `src/pages/api/admin/temp/queue-paid-models-reindex.ts`'s own, in a comment
+  that declines to rewrite them because "rewriting them would be waste".
+
+Two corrections to the obvious reasoning, both of which bit an earlier draft of
+this paragraph:
+
+- ⚠️ **Queue DEPTH is not "one entry per version labeled".** Within a 10-version
+  batch the version→model collapse really is near-zero on the default id-ordered
+  sweep, because a model's versions are not adjacent in id space — but the queue
+  is a redis **set** (`sAdd`, and `checkoutQueue` collects into a `Set`), so
+  depth is bounded by the number of DISTINCT models, which is necessarily below
+  the version count. Total document rebuilds across a multi-day pass is a
+  different and larger quantity, because the sync drains repeatedly.
+- ⚠️ **`--top N` DOES bound the announced set** — `topUsageVersionIds` takes at
+  most N ids in one query, so at most N models are announced. What it does not
+  bound is per-document size, and ordering by `generationCount` plausibly
+  selects larger documents (more versions, files, showcase images). That last
+  clause is a correlation nobody has measured.
+
+🔴 **There is no `--no-enqueue` lever, so a corpus pass cannot be run without
+announcing**, and because the cron drains every 15 minutes a "finish with a
+reset instead" plan does not avoid the incremental cost — most of it is already
+paid by the time the pass ends. If that cost needs avoiding, it needs a flag on
+this script plus pausing the drain, neither of which exists today.
+`search-index-sync-models-reset` is still the cheap way to make the whole corpus
+consistent once an insight field IS projected: it is a manual-trigger job that
+builds off the replica, swaps, then clears the queue.
+
+None of the above is measured against the database — the distinct-model count is
+the number that decides the real cost, and a corpus run should derive it first.
 
 The pool is wider than the response — `min(cap × 2, 255)` — so the ordering can
 promote a candidate popularity placed outside the response rather than only

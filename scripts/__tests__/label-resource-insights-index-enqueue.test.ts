@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 /**
@@ -48,6 +49,9 @@ const upsert = vi.fn();
 const askJev = vi.fn();
 const queueUpdate = vi.fn();
 const getQueue = vi.fn();
+// `readOnly: true` means `checkoutQueue` hands back a no-op commit and retires
+// nothing. Spied so the claim is behavioural, not just an argument match.
+const commit = vi.fn();
 
 vi.mock('~/server/db/client', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -77,10 +81,20 @@ vi.mock('~/server/search-index', async (importOriginal) => ({
 // The read-back the run does after its first announcement. Mocked at the module
 // that owns it so the enqueue assertions below are not also asserting the
 // verification, and so no redis command is attempted.
-vi.mock('~/server/search-index/SearchIndexUpdate', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  SearchIndexUpdate: { getQueue: (...a: unknown[]) => getQueue(...a) },
-}));
+vi.mock('~/server/search-index/SearchIndexUpdate', async (importOriginal) => {
+  const original = await importOriginal<{ SearchIndexUpdate: Record<string, unknown> }>();
+  return {
+    ...original,
+    // Spread the real object, override ONE member. Replacing the whole export
+    // would drop `queueUpdate`/`clearQueue`, which the real search-index barrel
+    // (loaded here via `importOriginal`) calls — safe only by accident today,
+    // which is the hazard the spread convention exists to remove.
+    SearchIndexUpdate: {
+      ...original.SearchIndexUpdate,
+      getQueue: (...a: unknown[]) => getQueue(...a),
+    },
+  };
+});
 
 type Question = { id: string; type: 'choice' | 'score' | 'noul' };
 
@@ -155,11 +169,13 @@ describe('label writes are announced to the models search index', () => {
     askJev.mockReset();
     queueUpdate.mockReset();
     getQueue.mockReset();
+    commit.mockReset();
+    commit.mockResolvedValue(undefined);
     askJev.mockImplementation(async (request: { questions: Question[] }) =>
       answerEverything(request)
     );
     // Default: the read-back finds both announced models, i.e. the healthy case.
-    getQueue.mockResolvedValue({ content: [500, 600], commit: async () => undefined });
+    getQueue.mockResolvedValue({ content: [500, 600], commit });
     // No stored rows, so nothing is skipped as already-current.
     resourceInsightFindMany.mockResolvedValue([]);
     versionFindMany.mockResolvedValue(PAGE);
@@ -168,11 +184,14 @@ describe('label writes are announced to the models search index', () => {
     argv = process.argv;
     logged.length = 0;
     warned.length = 0;
+    // EVERY argument, joined — not just `args[0]`. The enqueue-failure warn
+    // passes the error detail as a second argument, and capturing only the
+    // first makes a mutation that drops or mislabels it unobservable.
     vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
-      logged.push(String(args[0]));
+      logged.push(args.map(String).join(' '));
     });
     vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
-      warned.push(String(args[0]));
+      warned.push(args.map(String).join(' '));
     });
   });
 
@@ -203,6 +222,10 @@ describe('label writes are announced to the models search index', () => {
     // upserts then failed. Asserted on invocation order because
     // `toHaveBeenCalledTimes` is blind to it: moving the whole enqueue block
     // above the upserts leaves every other assertion in this file green.
+    // 🔴 NEGATIVE CONTROL FIRST. `Math.max(...[])` is `-Infinity`, so if the
+    // upserts stopped happening altogether the comparison below would be
+    // SATISFIED rather than broken — the test would go green on a worse bug.
+    expect(upsert).toHaveBeenCalledTimes(3);
     expect(queueUpdate.mock.invocationCallOrder[0]).toBeGreaterThan(
       Math.max(...upsert.mock.invocationCallOrder)
     );
@@ -270,6 +293,11 @@ describe('label writes are announced to the models search index', () => {
     // Not silent either — the ids are logged, because a resumed run skips these
     // versions as already-current and will never retry the enqueue.
     expect(warned.join('\n')).toContain('enqueue FAILED for model ids 500,600');
+    // Nothing was announced, so there is nothing to verify: dropping the
+    // `enqueuedModelIds.length > 0` gate on the read-back would print a
+    // stray `queue-verify: nothing enqueued yet` here.
+    expect(logged.join('\n')).not.toContain('queue-verify');
+    expect(getQueue).not.toHaveBeenCalled();
   });
 
   it('does not announce a model whose only version in the batch failed to map', async () => {
@@ -313,26 +341,70 @@ describe('label writes are announced to the models search index', () => {
   });
 
   describe('the queue read-back', () => {
-    it('confirms the announcement landed, once, after the first announcing batch', async () => {
+    it('confirms the announcement landed, and reads the RIGHT queue read-only', async () => {
       await run('--execute', '--limit', '3');
 
-      // Exactly one read-back for the run, and it reports a confirmation rather
-      // than merely that the call returned.
-      expect(getQueue).toHaveBeenCalledTimes(1);
       expect(logged.join('\n')).toContain('queue-verify: all 2 model id(s)');
       expect(logged.join('\n')).toContain('announcements are landing');
+      // 🔴 THE ARGUMENTS, not just the call. All three matter and none of them
+      // is observable from the message: the wrong index constant reads a queue
+      // this script never writes to (permanently INCONCLUSIVE, reported as a
+      // working verifier), `Delete` likewise, and dropping `readOnly` makes
+      // `checkoutQueue` APPEND a bucket and hand back a `commit` that retires
+      // every bucket it read — i.e. the diagnostic would start consuming the
+      // work it exists to confirm.
+      expect(getQueue).toHaveBeenCalledWith(
+        MODELS_SEARCH_INDEX,
+        SearchIndexUpdateQueueAction.Update,
+        true
+      );
+      // And the behavioural half of `readOnly`: nothing is ever committed.
+      expect(commit).not.toHaveBeenCalled();
+    });
+
+    it('reads back ONCE per run, not once per announcing batch', async () => {
+      // 🔴 Two announcing batches. Every other test runs `--limit 3` against a
+      // 3-version page, which is ONE batch — and with one batch "once per run"
+      // and "once per batch" are indistinguishable, so the one-shot flag could
+      // be deleted and the suite would stay green. `versionFindMany` is a
+      // persistent mock, so `--limit 6` yields two batches.
+      await run('--execute', '--limit', '6');
+
+      expect(queueUpdate).toHaveBeenCalledTimes(2);
+      expect(getQueue).toHaveBeenCalledTimes(1);
+      // The read-back follows the announcement it is checking, not precedes it.
+      expect(getQueue.mock.invocationCallOrder[0]).toBeGreaterThan(
+        queueUpdate.mock.invocationCallOrder[0]
+      );
+      // And the summary ACCUMULATES across batches rather than reporting the last.
+      expect(logged.join('\n')).toContain('4 models queued for reindex');
     });
 
     it('reports INCONCLUSIVE rather than success when the ids are not in the queue', async () => {
       // The fail-open shape: `queueUpdate` resolved, so `queued N` is fully
       // populated, and the ids are nowhere near the queue. This is the case the
       // count alone cannot see, and the only reason the read-back exists.
-      getQueue.mockResolvedValue({ content: [], commit: async () => undefined });
+      getQueue.mockResolvedValue({ content: [], commit });
 
       await run('--execute', '--limit', '3');
 
       expect(logged.join('\n')).toContain('2 models queued for reindex');
       expect(logged.join('\n')).toContain('queue-verify: INCONCLUSIVE — 0/2 model id(s)');
+      expect(logged.join('\n')).not.toContain('announcements are landing');
+    });
+
+    it('treats a PARTIAL match as inconclusive, not as success', async () => {
+      // 🔴 The boundary case, and the only one that pins `found === length`
+      // rather than `found > 0`: with only the all-present and none-present
+      // fixtures, relaxing the comparison to `found > 0` passes both — and in
+      // production would report "announcements are landing" for a run where 1
+      // id in 500 was found, turning the one signal a fail-open enqueue has
+      // into a green light.
+      getQueue.mockResolvedValue({ content: [500], commit });
+
+      await run('--execute', '--limit', '3');
+
+      expect(logged.join('\n')).toContain('queue-verify: INCONCLUSIVE — 1/2 model id(s)');
       expect(logged.join('\n')).not.toContain('announcements are landing');
     });
 
@@ -350,6 +422,60 @@ describe('label writes are announced to the models search index', () => {
       await run('--limit', '3');
 
       expect(getQueue).not.toHaveBeenCalled();
+    });
+
+    it('says nothing-enqueued rather than claiming a verdict on an empty set', async () => {
+      const { verifyFirstEnqueue } = await import('../label-resource-insights');
+
+      // Unreachable from the call site today (it is gated on a non-empty set),
+      // so pinned directly: a guard that returns a confident "all 0 … landing"
+      // on an empty list is exactly the reassuring zero this whole read-back
+      // exists to avoid.
+      await expect(verifyFirstEnqueue([])).resolves.toContain('nothing enqueued yet');
+      expect(getQueue).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('runAsScript', () => {
+    // 🔴 The most operationally consequential lines in the change, and the only
+    // ones unreachable through `main`: the process can no longer end on its own
+    // (the redis clients connect at module load and arm a ping interval), and
+    // `process.exit` does NOT drain piped stdout — measured, a bare exit lost
+    // the final line in 3 of 3 piped runs. The final line carries the resume
+    // cursor for a run that spends vendor money per batch, so losing it means
+    // re-paying. `exit` and `flush` are injected precisely so this is testable.
+
+    it('flushes BEFORE exiting 0 on success', async () => {
+      const { runAsScript } = await import('../label-resource-insights');
+      const exit = vi.fn();
+      const flush = vi.fn().mockResolvedValue(undefined);
+      process.argv = ['node', 'vitest', '--execute', '--limit', '3'];
+
+      await runAsScript(exit, flush);
+
+      expect(exit).toHaveBeenCalledWith(0);
+      // Order is the whole point: a flush after the exit is inert, and no other
+      // assertion here could tell the difference.
+      expect(flush.mock.invocationCallOrder[0]).toBeLessThan(exit.mock.invocationCallOrder[0]);
+      // Negative control — the run really did happen, so this is not vacuous.
+      expect(logged.join('\n')).toContain('3 labeled, 0 failed');
+    });
+
+    it('flushes BEFORE exiting 1 when the run throws', async () => {
+      const { runAsScript } = await import('../label-resource-insights');
+      const exit = vi.fn();
+      const flush = vi.fn().mockResolvedValue(undefined);
+      const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      versionFindMany.mockRejectedValue(new Error('read refused'));
+      process.argv = ['node', 'vitest', '--execute', '--limit', '3'];
+
+      await runAsScript(exit, flush);
+
+      expect(error).toHaveBeenCalled();
+      expect(exit).toHaveBeenCalledWith(1);
+      expect(exit).not.toHaveBeenCalledWith(0);
+      // Same reason as above: a truncated stderr loses the stack.
+      expect(flush.mock.invocationCallOrder[0]).toBeLessThan(exit.mock.invocationCallOrder[0]);
     });
   });
 });
