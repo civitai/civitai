@@ -269,6 +269,65 @@ describe('getJudgingPair — pairing', () => {
   });
 });
 
+describe('getJudgingPair — same-author pairs', () => {
+  it('never pairs two entries by one author while a cross-author pair exists', async () => {
+    // Entries 1 and 2 are the least-voted and level on rating, so without the author rule they are
+    // always the pair.
+    queryRaw.mockResolvedValue([
+      rawEntry(1, 50, 1500),
+      rawEntry(2, 50, 1500),
+      rawEntry(3, 60, 1800),
+    ]);
+    withVoteCounts({ 1: 0, 2: 0, 3: 9 });
+
+    for (let i = 0; i < 20; i++) {
+      const pair = await getJudgingPair({ crucibleId: 1, userId: 7 });
+      expect(pair!.left.userId, `served ${pairIds(pair)}`).not.toBe(pair!.right.userId);
+    }
+  });
+
+  it('serves a same-author pair once nothing else is left for this judge', async () => {
+    queryRaw.mockResolvedValue([rawEntry(1, 50), rawEntry(2, 50), rawEntry(3, 60)]);
+    withVotedPairs([1, 3], [2, 3]);
+
+    expect(pairIds(await getJudgingPair({ crucibleId: 1, userId: 7 }))).toEqual([1, 2]);
+  });
+
+  it('keeps sampling for a cross-author pair before settling for a same-author one', async () => {
+    const oneAuthor = Array.from({ length: 100 }, (_, i) => rawEntry(i + 1, 50));
+    const mixed = [...oneAuthor.slice(0, 99), rawEntry(101, 60)];
+    queryRaw.mockResolvedValueOnce(oneAuthor).mockResolvedValueOnce(mixed);
+
+    const pair = await getJudgingPair({ crucibleId: 1, userId: 7 });
+
+    expect(pairIds(pair)).toContain(101);
+    expect(queryRaw).toHaveBeenCalledTimes(2);
+  });
+
+  it('settles for a same-author pair after a bounded number of full samples', async () => {
+    const oneAuthor = Array.from({ length: 100 }, (_, i) => rawEntry(i + 1, 50));
+    // Ends with a short sample after 50 calls, so dropping the attempt cap fails on the count
+    // below instead of hanging the runner.
+    queryRaw.mockImplementation(async () => (queryRaw.mock.calls.length > 50 ? [] : oneAuthor));
+
+    const pair = await getJudgingPair({ crucibleId: 1, userId: 7 });
+
+    expect(pair).not.toBeNull();
+    expect(queryRaw).toHaveBeenCalledTimes(3);
+  });
+
+  it('brings a skipped entry back for a cross-author pair rather than serve a same-author one', async () => {
+    const all = [rawEntry(1, 50), rawEntry(2, 50), rawEntry(3, 60)];
+    queryRaw.mockImplementation(async (strings: TemplateStringsArray) =>
+      strings.join('').includes('NOT IN') ? all.filter((e) => e.id !== 3) : all
+    );
+
+    const pair = await getJudgingPair({ crucibleId: 1, userId: 7, excludeEntryIds: [3] });
+
+    expect(pairIds(pair)).toContain(3);
+  });
+});
+
 describe('getJudgingPair — excludeEntryIds', () => {
   /** Flatten a `$queryRaw` call's interpolations, unwrapping the `Prisma.join(...)` Sql fragment. */
   const interpolatedValues = (call: unknown[]) =>
