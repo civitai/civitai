@@ -201,7 +201,7 @@ function clickhouse() {
   });
 }
 
-const HUMAN_LABELS_SQL = `
+export const HUMAN_LABELS_SQL = `
   SELECT ticket_id, label_topic, notes, labeler
   FROM support_ticket_eval_labels FINAL
   WHERE classifier_version = {cv:String} AND labeler NOT LIKE 'judge-%'`;

@@ -7,6 +7,7 @@ import {
   dropDevSharingTestGroup,
   goldFromLabel,
   groupKeyFor,
+  HUMAN_LABELS_SQL,
   INCUMBENT_TOPIC_MAP,
   keywordBaseline,
   NODE_ID,
@@ -57,7 +58,7 @@ describe('support.topic state', () => {
   const leaky = raw({
     subject: 'Help for pat.doe@example.org',
     firstMessage:
-      'Hi, I am PatTheCreator (pat.doe on discord). Mail me at pat.doe@example.org or see https://civitai.com/user/PatTheCreator and www.example.com, ping @mod_team.',
+      'Hi, I am PatTheCreator (pat.doe on discord). Mail me at pat.doe@example.org or cc my friend jo.smith@another.net, or see https://civitai.com/user/PatTheCreator and www.example.com, ping @mod_team.',
     latestMessages: 'Still waiting @support_lead',
   });
 
@@ -73,6 +74,7 @@ describe('support.topic state', () => {
     const all = Object.values(state).join('\n').toLowerCase();
     expect(all).not.toContain('patthecreator');
     expect(all).not.toContain('pat.doe');
+    expect(all).not.toContain('another.net');
   });
 
   it('sends only the fields the question needs: no incumbent answer, no requester ids', () => {
@@ -295,5 +297,11 @@ describe('support.topic split isolation', () => {
     const { kept, dropped } = dropDevSharingTestGroup(rows);
     expect(kept.map((r) => r.itemId)).toEqual(['d2', 't1', 't2']);
     expect(dropped).toBe(1);
+  });
+});
+
+describe('support.topic gold source', () => {
+  it('reads human labels only: the LLM judge rows are silver and must never become gold', () => {
+    expect(HUMAN_LABELS_SQL).toMatch(/AND labeler NOT LIKE 'judge-%'/);
   });
 });
