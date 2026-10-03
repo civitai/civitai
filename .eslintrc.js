@@ -299,13 +299,19 @@ module.exports = {
         'src/components/Apps/AppsRailNav.tsx',
         'src/components/Apps/useAppsNavSections.ts',
         'src/components/Apps/appsRailState.tsx',
-        // The App Blocks missing-permissions backstop. It earns the glob on the same
-        // terms the comment above sets out: it is server-rendered on the model page,
-        // its narrow/wide swap is a container query ON PURPOSE, and its own docstring
-        // spends a paragraph saying why a hook would reintroduce the hydration
-        // divergence. That paragraph was the only thing enforcing it until now — the
-        // rule is an ENABLEMENT list, so `src/components/AppBlocks/` was outside it and
-        // a future `useIsMobile` here would have been a review note at best.
+        // The App Blocks missing-permissions backstop. Its narrow/wide swap is a
+        // CONTAINER QUERY on purpose and must stay one.
+        //
+        // ⚠️ IT EARNS THE GLOB FOR THE FLASH, NOT FOR HYDRATION, AND THE DISTINCTION IS
+        // WHY THIS COMMENT IS LONGER THAN THE ENTRY. This surface is NOT server-rendered:
+        // `BlockSlot` loads the chain through `dynamic(..., { ssr: false })`, and the
+        // notice's own gate withholds it until the iframe posts `BLOCK_READY`. So the
+        // hydration-divergence argument the block comment above makes for the `/apps`
+        // chrome genuinely does not reach it, and anyone who checks will find that out.
+        // What DOES reach it is the other half: a hook cannot answer before it has
+        // measured, so a hook-driven swap renders the wrong shape for a frame and then
+        // restructures the bar under a viewer who is already reading it. The four hooks
+        // this rule names are exactly the ones that would.
         'src/components/AppBlocks/BlockConsentNotice.tsx',
       ],
       rules: {

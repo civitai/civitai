@@ -123,17 +123,37 @@ const dismissByTestId = () => page.getByTestId('block-consent-notice-dismiss');
  * "visible" and the narrow form as showing both messages. `sr-only` renders a 1px box;
  * `display: none` renders a 0px one; a real line of text is tens of px wide. The 2px
  * threshold separates the three.
+ *
+ * ⚠️ THAT 2px THRESHOLD DEPENDS ON THESE SPANS CARRYING NO PADDING, AND THE SIBLING FILE
+ * PAID FOR LEARNING SO. `AppsRailHeaderRow.geometry.test.tsx` records that Mantine's
+ * `px` style prop lands as an INLINE `padding-inline` which outranks `sr-only`'s
+ * `padding: 0`, so a clipped node with a Mantine pad measures ~24px and reads as VISIBLE.
+ * The notice's spans are plain `<span>`s with no style props, so the rect genuinely is
+ * 1px — but add one and this helper reports a correct component as broken. The
+ * screen-reader test therefore also pins the MECHANISM (`position: absolute`), which is
+ * padding-independent, so a future failure here is diagnosable rather than just red.
+ *
+ * 🔴 `announced` READS `getClientRects()`, NOT THE NODE'S OWN `display`. An ancestor's
+ * `display: none` removes a node from the accessibility tree while leaving its OWN
+ * computed `display` at `inline` — so the node-local reading scored a sentence hidden by
+ * a WRAPPER as announced, and the screen-reader test below stayed green on exactly the
+ * defect it is named for. A clipped node has one client rect; a node hidden at any depth
+ * has none.
  */
 function swapNodes() {
   const el = notice().element() as HTMLElement;
   const group = (form: 'wide' | 'narrow') =>
     Array.from(el.querySelectorAll<HTMLElement>(`[data-form="${form}"]`)).map((node) => ({
       node,
-      /** Laid out at a size a sighted viewer can read. */
+      /**
+       * Laid out at a size a sighted viewer could read it at. ⚠️ A RECT CANNOT SEE
+       * `visibility: hidden` OR `opacity: 0` — those score as visible here. The claim is
+       * "it occupies space", not "it is perceivable"; nothing in this component uses
+       * either property, and widening to a perceivability check is its own change.
+       */
       visible: box(node).width > 2,
-      /** In the accessibility tree: rendered at all, and not hidden from AT. */
-      announced:
-        getComputedStyle(node).display !== 'none' && node.closest('[aria-hidden="true"]') == null,
+      /** In the accessibility tree: rendered at ANY depth, and not hidden from AT. */
+      announced: node.getClientRects().length > 0 && node.closest('[aria-hidden="true"]') == null,
       text: (node.textContent ?? '').trim(),
     }));
   return { wide: group('wide'), narrow: group('narrow') };
@@ -184,14 +204,28 @@ function visibleTexts(): string[] {
  * the set being read. `innerText` is defined over rendered text — a `display: none`
  * descendant contributes nothing — so it solves the Mantine-wrapper problem that forced
  * the scoping AND sees text that escaped the swap entirely.
+ *
+ * 🔴 CALL IT ONLY ON A NODE THAT DOES NOT CONTAIN THE CLIPPED SENTENCE. `innerText`
+ * skips a `display: none` subtree but NOT an `sr-only` one — clipped text is still
+ * rendered text. The two buttons are safe because the sentence lives in the `<p>` the
+ * `Text` renders, outside both of them; widen this to the notice element and the narrow
+ * `toBe('')` assertions become wrong rather than merely loose.
  */
 function renderedLabel(locator: ReturnType<typeof reviewByTestId>): string {
   return ((locator.element() as HTMLElement).innerText ?? '').trim();
 }
 
-/** Is the control's icon actually LAID OUT, rather than merely present in the DOM? */
+/**
+ * Is the control's SWAP icon actually LAID OUT, rather than merely present in the DOM?
+ *
+ * 🔴 SELECTED BY `data-form="narrow"`, NOT BY `querySelector('svg')`. The bare form takes
+ * the first svg in tree order, which is sound only while the button has exactly one —
+ * and Mantine renders `leftSection` / `rightSection` / loading content BEFORE the label,
+ * so adding any decorative icon would let a hidden swap icon be satisfied by the wrong
+ * element. That is a false green on precisely the mutation this helper exists to kill.
+ */
 function iconIsRendered(locator: ReturnType<typeof reviewByTestId>): boolean {
-  const icon = (locator.element() as HTMLElement).querySelector('svg');
+  const icon = (locator.element() as HTMLElement).querySelector('svg[data-form="narrow"]');
   return icon != null && box(icon).width > 0;
 }
 
@@ -275,6 +309,16 @@ describe('the notice at 390x844 — a phone', () => {
     const short = narrow.find((n) => n.text === SHORT_MESSAGE);
     expect(sentence, 'the long sentence did not render').toBeTruthy();
     expect(short, 'the short message did not render').toBeTruthy();
+
+    // 🔴 THE MECHANISM, PINNED ALONGSIDE THE EFFECT. `position: absolute` is what `sr-only`
+    // does and is independent of padding, so it still diagnoses correctly in the one case
+    // the rect reading gets wrong (see `swapNodes()` on the Mantine inline-padding hazard
+    // the sibling rail file paid for). It also gives the "`@max-xs:sr-only` deleted
+    // outright" mutation a message about THIS claim rather than a bare `'mixed'`.
+    expect(
+      getComputedStyle(sentence?.node as HTMLElement).position,
+      'the sentence is not clipped by `sr-only` — the mechanism changed, not just the result'
+    ).toBe('absolute');
 
     // Announced but not seen…
     expect(sentence?.announced, 'the full sentence left the accessibility tree at 390px').toBe(
@@ -369,6 +413,35 @@ describe('the notice at 390x844 — a phone', () => {
       );
       expect(b.width, `the ${label} action collapsed to nothing`).toBeGreaterThan(0);
     }
+  });
+
+  test('🔴 the icon-only button REVEALS ITS LABEL ON KEYBOARD FOCUS — the tooltip opt-in', async () => {
+    // 🔴 THE ONE SIGHTED AFFORDANCE THE NARROW FORM HAS, AND IT WAS PROSE UNTIL NOW.
+    // Mantine's `Tooltip` defaults to `{ hover: true, focus: false, touch: false }`, so
+    // the component passes an explicit `events` — without which a keyboard or touch user
+    // meets an unlabelled glyph on the one control that lets them recover. The component
+    // docstring calls that out as "NOT COSMETIC"; deleting the prop turned nothing red,
+    // which is what this closes.
+    //
+    // FOCUS rather than touch, deliberately: it is the arm this harness can drive
+    // honestly. Emulating a tap well enough to distinguish "the tooltip opened" from
+    // "the click fired" needs pointer-event synthesis this file has no other reason to
+    // carry, and `touch` and `focus` are two keys of the same object — a regression that
+    // drops one almost certainly drops both.
+    //
+    // Not a race: `await expect.element` waits for the tooltip to ARRIVE, and the state
+    // is absorbing while focus is held, so the 300ms `openDelay` sits far inside the
+    // default timeout.
+    const { observed } = await render(PHONE_VIEWPORT);
+    expect(observed).toEqual({ width: 390, height: 844 });
+    expectCascade();
+
+    // Nothing is open before the interaction — otherwise the assertion below is satisfied
+    // by a tooltip that is always on screen.
+    expect(document.querySelectorAll('[role="tooltip"]')).toHaveLength(0);
+
+    (reviewByTestId().element() as HTMLElement).focus();
+    await expect.element(page.getByRole('tooltip')).toBeInTheDocument();
   });
 
   test('🔴 role="status" survives the responsive rewrite — it is NOT an alert', async () => {

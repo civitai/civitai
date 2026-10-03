@@ -58,15 +58,24 @@ type BlockConsentNoticeProps = {
  * layout problem"); this is its pure-CSS form, with no `ResizeObserver` and so none of
  * the one-frame post-mount shape swap that one pays.
  *
- * 🔴 AND CSS RATHER THAN A HOOK, BECAUSE `matchMedia`/`ResizeObserver` HAVE NO
- * SERVER-SIDE ANSWER. A JS-driven swap renders one shape in the SSR HTML and another on
- * the first client paint; `AppsPageLayout.module.scss` records what that already cost
- * this app once — a differing tree bailed hydration of the whole `/apps` root and left
- * every page inert. Both shapes are rendered unconditionally and the BROWSER picks, so
- * the server HTML and the first client render are byte-identical. ⚠️ This is also
- * ENFORCED rather than merely documented: `local-rules/no-ssr-divergent-media-query` is
- * switched on for this file in `.eslintrc.js`, so reaching for `useIsMobile`,
- * `useContainerQuery` or `useMediaQuery` here is an error, not a review note.
+ * 🔴 AND CSS RATHER THAN A HOOK — BUT NOT FOR THE HYDRATION REASON, WHICH DOES NOT APPLY
+ * HERE. ⚠️ An earlier revision of this paragraph said a JS swap "renders one shape in the
+ * SSR HTML and another on the first client paint" and cited the incident
+ * `AppsPageLayout.module.scss` records. That mechanism is UNREACHABLE for this component,
+ * on two independent counts: `BlockSlot` loads the whole slot chain through
+ * `dynamic(..., { ssr: false })`, and the gate in `requestConsentGate.ts` returns null
+ * until `status === 'ready'`, which is only reached from the iframe's `BLOCK_READY`
+ * post-message. This notice is never in the server HTML on either surface, so there is no
+ * SSR tree for a hook to diverge from. That incident belongs to `AppsPageLayout` and
+ * `useAppsNavSections`, which genuinely do server-render.
+ *
+ * The reason that DOES apply is the one two paragraphs up: a `useMediaQuery` or
+ * `useResizeObserver` swap cannot answer before it has measured, so it renders the wrong
+ * shape for a frame and then swaps — a structural DOM change on a bar the viewer is
+ * already reading. CSS has the answer at first paint. ⚠️ ENFORCED rather than merely
+ * documented: `local-rules/no-ssr-divergent-media-query` is switched on for this file in
+ * `.eslintrc.js`, so reaching for `useIsMobile`, `useContainerQuery` or `useMediaQuery`
+ * here is an error, not a review note.
  *
  * 🔴 THE SWAP IS THE REPO'S OWN TAILWIND CONTAINER-QUERY PLUGIN, NOT A HAND-WRITTEN
  * MODULE. `src/tailwind/container-queries.js` (wired at `tailwind.config.js`) provides
@@ -113,11 +122,17 @@ type BlockConsentNoticeProps = {
  * driving this by voice. The dismiss button keeps the longer label it already had.
  *
  * 🔴 `events` IS SET ON BOTH TOOLTIPS AND IS NOT COSMETIC. Mantine's default is
- * `{ hover: true, focus: false, touch: false }` and its `Tooltip` wires NO aria at all —
- * so on the device class the narrow form exists for, a touch user would get an icon with
- * no visible text, no tooltip and no hint, on the one control that lets a stuck viewer
- * recover. Keyboard focus was equally silent. `openDelay` matches the rail's link
- * tooltips (`AppsRailNav.tsx`).
+ * `{ hover: true, focus: false, touch: false }` — so on the device class the narrow form
+ * exists for, a touch user would get an icon with no visible text, no tooltip and no
+ * hint, on the one control that lets a stuck viewer recover. Keyboard focus was equally
+ * silent. ⚠️ The tooltip is a SIGHTED affordance only, and an earlier revision overstated
+ * that as "wires NO aria at all": `useRole` does put `aria-describedby` on the reference
+ * while the tooltip is OPEN. What it never provides is a NAME, which is why the explicit
+ * `aria-label` above is the load-bearing half and this is the complement to it.
+ * ⚠️ `openDelay` matches the rail's link tooltips (`AppsRailNav.tsx`) FOR A MOUSE ONLY —
+ * floating-ui returns a 0 delay for a non-mouse pointer type, so a tap opens immediately.
+ * That is the behaviour you want here; it is noted because "matches the rail" would
+ * otherwise read as unconditional.
  *
  * ⚠️ THE ROW STILL DOES NOT WRAP, DELIBERATELY. `wrap="nowrap"` is kept and the MESSAGE
  * is given `min-w-0` instead, so the sentence shrinks and wraps while the actions stay
