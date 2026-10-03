@@ -112,7 +112,6 @@ const prizePositionsSchema = z
   );
 
 export const createCrucibleInputBaseSchema = z.object({
-  buzzType: z.enum(['green', 'yellow']).optional(),
   name: z.string().trim().nonempty().max(CRUCIBLE_NAME_MAX_LENGTH),
   description: z.string().nonempty().max(CRUCIBLE_DESCRIPTION_MAX_LENGTH),
   coverImage: crucibleImageSchema,

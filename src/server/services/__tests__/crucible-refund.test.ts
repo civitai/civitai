@@ -262,6 +262,31 @@ describe('cancelCrucible — entry refunds', () => {
     expect(result.failedRefunds).toEqual([]);
   });
 
+  // Entries in one crucible can be paid in green and yellow. Reversing each entry's own charge is
+  // what returns it in the currency it was paid in; a refund that named a currency, or pooled the
+  // entries, would turn one into the other. Do not "simplify" this into a single payout.
+  it('refunds each entry by reversing its own charge, naming no currency', async () => {
+    findUnique.mockResolvedValue(
+      crucible({ entries: [entry(1, 10, 'green-paid-1-10'), entry(2, 11, 'yellow-paid-2-11')] })
+    );
+
+    await cancelCrucible({ id: 1, userId: 4, isModerator: true });
+
+    const entryRefunds = refundMultiAccountTransaction.mock.calls
+      .map(([arg]) => arg)
+      .filter((arg) => arg.externalTransactionIdPrefix !== 'crucible-setup-4-abc');
+    expect(entryRefunds.map((arg) => arg.externalTransactionIdPrefix)).toEqual([
+      'green-paid-1-10',
+      'yellow-paid-2-11',
+    ]);
+    for (const arg of entryRefunds)
+      expect(Object.keys(arg).sort()).toEqual([
+        'description',
+        'details',
+        'externalTransactionIdPrefix',
+      ]);
+  });
+
   it('names and links the crucible on each entry refund', async () => {
     await cancelCrucible({ id: 1, userId: 4, isModerator: true });
 

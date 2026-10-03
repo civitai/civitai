@@ -3,8 +3,10 @@ import { CrucibleIngestionStatus, CrucibleStatus } from '~/shared/utils/prisma/e
 import { getBaseModelConfig } from '~/shared/constants/basemodel.constants';
 import {
   browsingLevelLabels,
+  nsfwBrowsingLevelsFlag,
   parseBitwiseBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils/flags';
 import { slugit } from '~/utils/string-helpers';
 
 // Static routes beside `/crucibles/[id]/[[...slug]]` win over the slug, so a crucible whose name
@@ -18,6 +20,13 @@ export function getCrucibleSlug(name: string) {
 
 export const toCrucibleBuzzType = (value: string): 'green' | 'yellow' =>
   value === 'green' ? 'green' : 'yellow';
+
+/** Every prize is paid in this until winners can choose their currency. */
+export const CRUCIBLE_PRIZE_BUZZ_TYPE = 'yellow' as const;
+
+/** The green site lists only crucibles that accept nothing above PG-13 and whose text is SFW. */
+export const isCrucibleSfw = ({ nsfwLevel, textNsfw }: { nsfwLevel: number; textNsfw: boolean }) =>
+  !Flags.intersects(nsfwLevel, nsfwBrowsingLevelsFlag) && !textNsfw;
 
 export const getCrucibleUrl = (id: number, name: string) =>
   `/crucibles/${id}/${getCrucibleSlug(name)}`;

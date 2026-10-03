@@ -40,7 +40,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CrucibleJudgingUI } from '~/components/Crucible/CrucibleJudgingUI';
 import type { JudgingPairData, WatchedMs } from '~/components/Crucible/CrucibleJudgingUI';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
-import { getCrucibleUrl } from '~/utils/crucible-helpers';
+import { getCrucibleUrl, isCrucibleSfw } from '~/utils/crucible-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -304,7 +304,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
   if (!crucible) return <NotFound />;
   if (
     features.isGreen &&
-    crucible.buzzType !== 'green' &&
+    !isCrucibleSfw(crucible) &&
     !currentUser?.isModerator &&
     currentUser?.id !== crucible.userId
   )

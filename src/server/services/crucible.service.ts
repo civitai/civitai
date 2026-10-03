@@ -94,10 +94,11 @@ import {
   getCruciblePublishableName,
   type CrucibleNameScan,
   getCrucibleTransactionDescription,
+  CRUCIBLE_PRIZE_BUZZ_TYPE,
+  isCrucibleSfw,
   isFreeCrucibleEntry,
   parsePrizePositions,
   type PrizePosition,
-  toCrucibleBuzzType,
 } from '~/utils/crucible-helpers';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
@@ -426,14 +427,15 @@ type CrucibleViewer = {
 };
 type CrucibleVisibilityRow = {
   userId: number;
-  buzzType: string;
+  nsfwLevel: number;
+  textNsfw: boolean;
   ingestion: CrucibleIngestionStatus;
   image: { ingestion: ImageIngestionStatus } | null;
 };
 
 /** Until its text and cover pass their scans, only its creator and moderators see a crucible. */
 export const isCrucibleHiddenByScan = (
-  crucible: Omit<CrucibleVisibilityRow, 'buzzType'>,
+  crucible: Omit<CrucibleVisibilityRow, 'nsfwLevel' | 'textNsfw'>,
   { viewerId, isModerator }: CrucibleViewer
 ) =>
   !isModerator &&
@@ -447,14 +449,19 @@ const isCrucibleBlockedForViewer = (
   { isModerator, blockedByUserIds = [] }: CrucibleViewer
 ) => !isModerator && blockedByUserIds.includes(crucible.userId);
 
-/** As user challenges: a crucible exists only on the site whose currency it runs on. */
-const isCrucibleOffDomain = (
-  crucible: Pick<CrucibleVisibilityRow, 'userId' | 'buzzType'>,
+const isCrucibleOffSite = (
+  crucible: Pick<CrucibleVisibilityRow, 'userId' | 'nsfwLevel' | 'textNsfw'>,
   { viewerId, isModerator, isGreen }: CrucibleViewer
-) =>
-  !isModerator &&
-  crucible.userId !== viewerId &&
-  crucible.buzzType !== deriveDomainCurrency(!!isGreen);
+) => !!isGreen && !isModerator && crucible.userId !== viewerId && !isCrucibleSfw(crucible);
+
+const SFW_ONLY_LEVELS = Array.from({ length: 63 }, (_, i) => i + 1).filter(
+  (mask) => !Flags.intersects(mask, nsfwBrowsingLevelsFlag)
+);
+
+const greenSiteSql = (isGreen: boolean) =>
+  isGreen
+    ? Prisma.sql`AND (c."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0 AND NOT c."textNsfw"`
+    : Prisma.empty;
 
 /** Crucible `c` with cover `i`, as list surfaces may show it to a viewer at `viewerLevel`. */
 const crucibleListedSql = (viewerLevel: number) => Prisma.sql`
@@ -963,7 +970,7 @@ export const getCrucibleEntries = async ({
     select: {
       status: true,
       userId: true,
-      buzzType: true,
+      textNsfw: true,
       nsfwLevel: true,
       ingestion: true,
       image: { select: { ingestion: true } },
@@ -973,7 +980,7 @@ export const getCrucibleEntries = async ({
   if (
     !crucible ||
     isCrucibleHiddenByScan(crucible, viewer) ||
-    isCrucibleOffDomain(crucible, viewer) ||
+    isCrucibleOffSite(crucible, viewer) ||
     isCrucibleBlockedForViewer(crucible, viewer)
   )
     throw throwNotFoundError('Crucible not found');
@@ -1139,9 +1146,13 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
   }
   and.push(viewerId ? { OR: [{ userId: viewerId }, { AND: visible }] } : { AND: visible });
 
-  // As user challenges: a crucible shows only on the site whose currency it runs on.
-  const onDomain: Prisma.CrucibleWhereInput = { buzzType: deriveDomainCurrency(isGreen) };
-  and.push(viewerId ? { OR: [{ userId: viewerId }, onDomain] } : onDomain);
+  if (isGreen) {
+    const onSite: Prisma.CrucibleWhereInput = {
+      nsfwLevel: { in: SFW_ONLY_LEVELS },
+      textNsfw: false,
+    };
+    and.push(viewerId ? { OR: [{ userId: viewerId }, onSite] } : onSite);
+  }
   where.AND = and;
 
   // "Ending soon" only means something for crucibles still running; without this, an unfiltered
@@ -1226,7 +1237,7 @@ export const createCrucibleEntryPost = async ({
       status: true,
       endAt: true,
       userId: true,
-      buzzType: true,
+      nsfwLevel: true,
       ingestion: true,
       textNsfw: true,
       image: { select: { ingestion: true } },
@@ -1236,7 +1247,7 @@ export const createCrucibleEntryPost = async ({
   if (
     !crucible ||
     isCrucibleHiddenByScan(crucible, viewer) ||
-    isCrucibleOffDomain(crucible, viewer) ||
+    isCrucibleOffSite(crucible, viewer) ||
     isCrucibleBlockedForViewer(crucible, viewer)
   )
     throw throwNotFoundError('Crucible not found');
@@ -1432,7 +1443,6 @@ export const submitEntry = async ({
         maxTotalEntries: true,
         maxClipSeconds: true,
         allowedResources: true,
-        buzzType: true,
         startAt: true,
         createdAt: true,
         endAt: true,
@@ -1449,7 +1459,7 @@ export const submitEntry = async ({
     if (
       !crucible ||
       isCrucibleHiddenByScan(crucible, viewer) ||
-      isCrucibleOffDomain(crucible, viewer) ||
+      isCrucibleOffSite(crucible, viewer) ||
       isCrucibleBlockedForViewer(crucible, viewer)
     ) {
       return throwNotFoundError('Crucible not found');
@@ -1577,17 +1587,18 @@ export const submitEntry = async ({
     });
 
     if (crucible.entryFee > 0 && !isFreeEntry) {
-      // Check if user has sufficient Buzz
+      // Refunds reverse this transaction, so an entry is always returned in the currency it paid.
+      const entryBuzzType = deriveDomainCurrency(isGreen);
       const userAccount = await getUserBuzzAccount({
         accountId: userId,
-        accountTypes: [crucible.buzzType as 'green' | 'yellow'],
+        accountTypes: [entryBuzzType],
       });
       const totalBalance = userAccount.reduce((sum, acc) => sum + acc.balance, 0);
 
       if (totalBalance < crucible.entryFee) {
         const shortage = crucible.entryFee - totalBalance;
         return throwInsufficientFundsError(
-          `You need ${crucible.entryFee.toLocaleString()} Buzz to enter this crucible. You currently have ${totalBalance.toLocaleString()} Buzz (${shortage.toLocaleString()} Buzz short).`
+          `You need ${crucible.entryFee.toLocaleString()} ${entryBuzzType} Buzz to enter this crucible. You currently have ${totalBalance.toLocaleString()} (${shortage.toLocaleString()} short).`
         );
       }
 
@@ -1596,7 +1607,7 @@ export const submitEntry = async ({
 
       await createMultiAccountBuzzTransaction({
         fromAccountId: userId,
-        fromAccountTypes: [crucible.buzzType as 'green' | 'yellow'],
+        fromAccountTypes: [entryBuzzType],
         toAccountId: 0, // Central bank
         amount: crucible.entryFee,
         type: TransactionType.Fee,
@@ -2080,7 +2091,7 @@ export const getJudgingProgress = async ({
       status: true,
       endAt: true,
       userId: true,
-      buzzType: true,
+      textNsfw: true,
       nsfwLevel: true,
       ingestion: true,
       image: { select: { ingestion: true } },
@@ -2090,7 +2101,7 @@ export const getJudgingProgress = async ({
   if (
     !crucible ||
     isCrucibleHiddenByScan(crucible, viewer) ||
-    isCrucibleOffDomain(crucible, viewer) ||
+    isCrucibleOffSite(crucible, viewer) ||
     isCrucibleBlockedForViewer(crucible, viewer)
   )
     throw throwNotFoundError('Crucible not found');
@@ -2173,7 +2184,7 @@ export const getJudgingPair = async ({
       status: true,
       endAt: true,
       userId: true,
-      buzzType: true,
+      textNsfw: true,
       nsfwLevel: true,
       ingestion: true,
       image: { select: { ingestion: true } },
@@ -2184,7 +2195,7 @@ export const getJudgingPair = async ({
   if (
     !crucible ||
     isCrucibleHiddenByScan(crucible, viewer) ||
-    isCrucibleOffDomain(crucible, viewer) ||
+    isCrucibleOffSite(crucible, viewer) ||
     isCrucibleBlockedForViewer(crucible, viewer)
   ) {
     throwNotFoundError('Crucible not found');
@@ -2501,17 +2512,14 @@ export const getCrucibleRequiredModels = async ({
     where: { id: crucibleId },
     select: {
       userId: true,
-      buzzType: true,
+      nsfwLevel: true,
+      textNsfw: true,
       ingestion: true,
       allowedResources: true,
       image: { select: { ingestion: true } },
     },
   });
-  if (
-    !crucible ||
-    isCrucibleHiddenByScan(crucible, viewer) ||
-    isCrucibleOffDomain(crucible, viewer)
-  )
+  if (!crucible || isCrucibleHiddenByScan(crucible, viewer) || isCrucibleOffSite(crucible, viewer))
     throw throwNotFoundError('Crucible not found');
 
   const versionIds = Array.isArray(crucible.allowedResources)
@@ -2538,17 +2546,13 @@ export const getCrucibleMinVotesToPlace = async ({
     where: { id: crucibleId },
     select: {
       userId: true,
-      buzzType: true,
+      textNsfw: true,
       nsfwLevel: true,
       ingestion: true,
       image: { select: { ingestion: true } },
     },
   });
-  if (
-    !crucible ||
-    isCrucibleHiddenByScan(crucible, viewer) ||
-    isCrucibleOffDomain(crucible, viewer)
-  )
+  if (!crucible || isCrucibleHiddenByScan(crucible, viewer) || isCrucibleOffSite(crucible, viewer))
     throw throwNotFoundError('Crucible not found');
 
   const { _sum, _count } = await dbRead.crucibleEntry.aggregate({
@@ -2594,7 +2598,6 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
       textNsfw: true,
       userId: true, // Crucible creator for notification
       status: true,
-      buzzType: true,
       entryFee: true,
       seededPrizePool: true,
       seedTransactionId: true,
@@ -2791,7 +2794,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
       fromAccountId: 0, // Central bank
       fromAccountType: 'yellow' as const,
       toAccountId: winner.userId,
-      toAccountType: crucible.buzzType as 'green' | 'yellow',
+      toAccountType: CRUCIBLE_PRIZE_BUZZ_TYPE,
       amount: winner.prizeAmount,
       type: TransactionType.Reward,
       description: getCrucibleTransactionDescription(
@@ -3948,7 +3951,6 @@ export const getFeaturedCrucible = async ({
       seededPrizePool: number;
       endAt: Date | null;
       imageUrl: string | null;
-      buzzType: string;
       entriesCount: bigint;
       prizePool: bigint;
     }[]
@@ -3960,7 +3962,6 @@ export const getFeaturedCrucible = async ({
       c."entryFee",
       c."seededPrizePool",
       c."endAt",
-      c."buzzType",
       i.url as "imageUrl",
       COUNT(ce.id) as "entriesCount",
       c."seededPrizePool" + c."entryFee" * COUNT(ce.id) FILTER (WHERE ce."buzzTransactionId" IS NOT NULL) as "prizePool"
@@ -3970,7 +3971,7 @@ export const getFeaturedCrucible = async ({
     WHERE c.status = ${CrucibleStatus.Active}::"CrucibleStatus"
       -- Status lags the clock until finalize-crucibles runs; don't feature one that already ended.
       AND (c."endAt" IS NULL OR c."endAt" > now())
-      AND c."buzzType" = ${deriveDomainCurrency(isGreen)}
+      ${greenSiteSql(isGreen)}
       AND ${crucibleListedSql(effectiveLevel)}
       ${
         effectiveLevel > 0
@@ -3982,7 +3983,7 @@ export const getFeaturedCrucible = async ({
           ? Prisma.sql`AND c."userId" NOT IN (${Prisma.join(excludedUserIds)})`
           : Prisma.empty
       }
-    GROUP BY c.id, c.name, c.description, c."entryFee", c."seededPrizePool", c."endAt", c."buzzType", i.url
+    GROUP BY c.id, c.name, c.description, c."entryFee", c."seededPrizePool", c."endAt", i.url
     ORDER BY "prizePool" DESC, "entriesCount" DESC
     LIMIT 1
   `;
@@ -4001,7 +4002,7 @@ export const getFeaturedCrucible = async ({
     timeRemaining: featured.endAt ? formatTimeRemaining(featured.endAt) : 'No end date',
     entriesCount: Number(featured.entriesCount),
     imageUrl: featured.imageUrl,
-    buzzType: toCrucibleBuzzType(featured.buzzType),
+    buzzType: CRUCIBLE_PRIZE_BUZZ_TYPE,
   };
 };
 
@@ -4084,7 +4085,7 @@ export const getJudgingSuggestions = async ({
     WHERE c.status = ${CrucibleStatus.Active}::"CrucibleStatus"
       -- Status lags the clock until finalize-crucibles runs.
       AND (c."endAt" IS NULL OR c."endAt" > now())
-      AND c."buzzType" = ${deriveDomainCurrency(isGreen)}
+      ${greenSiteSql(isGreen)}
       AND (c."nsfwLevel" & ${browsingLevel}) <> 0
       AND (i."nsfwLevel" & ${browsingLevel}) <> 0
       AND ${crucibleListedSql(browsingLevel)}

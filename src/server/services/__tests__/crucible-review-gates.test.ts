@@ -247,6 +247,25 @@ describe('list surfaces — featured and judging suggestions', () => {
     expect(pool).toContain('FILTER (WHERE ce."buzzTransactionId" IS NOT NULL)');
   });
 
+  it.each([
+    ['featured', (isGreen: boolean) => getFeaturedCrucible({ browsingLevel: 1, isGreen })],
+    [
+      'judging suggestions',
+      (isGreen: boolean) =>
+        getJudgingSuggestions({ userId: 7, browsingLevel: 1, limit: 4, isGreen }),
+    ],
+  ])('%s: lists any currency, and only SFW crucibles on the green site', async (_, run) => {
+    await run(true);
+    const green = sqlText(queryRaw.mock.calls.at(-1)!);
+    expect(green).not.toContain('"buzzType"');
+    expect(green).toContain('AND (c."nsfwLevel" & ?) = 0 AND NOT c."textNsfw"');
+
+    await run(false);
+    const red = sqlText(queryRaw.mock.calls.at(-1)!);
+    expect(red).not.toContain('"buzzType"');
+    expect(red).not.toContain(') = 0 AND NOT c."textNsfw"');
+  });
+
   it('suggestions count only entries this judge could be shown', async () => {
     await getJudgingSuggestions({ userId: 7, browsingLevel: 1, limit: 4 });
 

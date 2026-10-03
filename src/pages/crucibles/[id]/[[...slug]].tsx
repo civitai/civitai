@@ -38,10 +38,13 @@ import {
   getCrucibleTotalPrizePool,
   getCrucibleUrl,
   getFreeEntriesLabel,
+  isCrucibleSfw,
   isFreeCrucibleEntry,
   toCrucibleBuzzType,
   parsePrizePositions,
+  CRUCIBLE_PRIZE_BUZZ_TYPE,
 } from '~/utils/crucible-helpers';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { Flags } from '~/shared/utils/flags';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
@@ -103,6 +106,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
   const router = useRouter();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
+  const entryBuzzType = toCrucibleBuzzType(useAvailableBuzz()[0]);
   const queryUtils = trpc.useUtils();
   const browsingLevel = useBrowsingLevelDebounced();
 
@@ -139,8 +143,8 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
       !!currentUser &&
       currentUser.id !== crucible.userId &&
       crucible.viewerEntries.length < getMaxUserEntries(crucible);
-    if (canSubmit) openCrucibleSubmitEntryModal(getSubmitEntryProps(crucible));
-  }, [crucible, router, currentUser]);
+    if (canSubmit) openCrucibleSubmitEntryModal(getSubmitEntryProps(crucible, entryBuzzType));
+  }, [crucible, router, currentUser, entryBuzzType]);
 
   const cancelMutation = trpc.crucible.cancel.useMutation({
     onSuccess: (result) => {
@@ -271,8 +275,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
     : [];
 
   const isModerator = currentUser?.isModerator ?? false;
-  const isOffDomain =
-    !!features.isGreen && crucible.buzzType !== 'green' && !isCreator && !isModerator;
+  const isOffDomain = !!features.isGreen && !isCrucibleSfw(crucible) && !isCreator && !isModerator;
   const { canEdit, canCancel, canRemoveEntries } = getCrucibleManageActions({
     status: crucible.status,
     endAt: crucible.endAt,
@@ -356,7 +359,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
             nsfwLevel: crucible.nsfwLevel,
             entryFee: crucible.entryFee,
             seededPrizePool: crucible.seededPrizePool,
-            buzzType: toCrucibleBuzzType(crucible.buzzType),
+            buzzType: CRUCIBLE_PRIZE_BUZZ_TYPE,
             startAt: crucible.startAt,
             endAt: crucible.endAt,
             contentType: crucible.contentType,
@@ -374,7 +377,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
             prizePositions={prizePositions}
             entryCount={crucible.placedEntryCount ?? entryCount}
             totalPrizePool={totalPrizePool}
-            buzzType={toCrucibleBuzzType(crucible.buzzType)}
+            buzzType={CRUCIBLE_PRIZE_BUZZ_TYPE}
           />
         )}
 
@@ -471,7 +474,9 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                         variant="light"
                         fullWidth
                         leftSection={<IconUpload size={16} />}
-                        onClick={() => openCrucibleSubmitEntryModal(getSubmitEntryProps(crucible))}
+                        onClick={() =>
+                          openCrucibleSubmitEntryModal(getSubmitEntryProps(crucible, entryBuzzType))
+                        }
                         disabled={!currentUser}
                       >
                         Submit Entry
@@ -491,7 +496,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                       ) : (
                         <CurrencyBadge
                           currency={Currency.BUZZ}
-                          type={toCrucibleBuzzType(crucible.buzzType)}
+                          type={entryBuzzType}
                           unitAmount={crucible.entryFee}
                           size="md"
                           fw={600}
@@ -555,7 +560,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                   onLoadMore={loadMoreEntries}
                   prizePositions={prizePositions}
                   totalPrizePool={totalPrizePool}
-                  buzzType={toCrucibleBuzzType(crucible.buzzType)}
+                  buzzType={CRUCIBLE_PRIZE_BUZZ_TYPE}
                   awarded={crucible.status === CrucibleStatus.Completed}
                 />
               ) : (
@@ -565,7 +570,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                     totalPrizePool={totalPrizePool}
                     entryFee={crucible.entryFee}
                     hasFreeEntries={crucible.freeEntriesPerUser > 0}
-                    buzzType={toCrucibleBuzzType(crucible.buzzType)}
+                    buzzType={CRUCIBLE_PRIZE_BUZZ_TYPE}
                   />
                   <YourStandingPanel entries={userEntries} hasAccount={!!currentUser} />
                 </>
@@ -663,11 +668,11 @@ type CrucibleDetail = NonNullable<RouterOutput['crucible']['getById']>;
 
 const getMaxUserEntries = (crucible: CrucibleDetail) => crucible.entryLimit ?? 5;
 
-const getSubmitEntryProps = (crucible: CrucibleDetail) => ({
+const getSubmitEntryProps = (crucible: CrucibleDetail, entryBuzzType: 'green' | 'yellow') => ({
   crucibleId: crucible.id,
   crucibleName: crucible.name,
   entryFee: crucible.entryFee,
-  buzzType: toCrucibleBuzzType(crucible.buzzType),
+  buzzType: entryBuzzType,
   entryLimit: getMaxUserEntries(crucible),
   freeEntriesPerUser: crucible.freeEntriesPerUser,
   nsfwLevel: crucible.nsfwLevel,

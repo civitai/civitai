@@ -63,7 +63,6 @@ const valuesOnStep = (
   ...crucibleCreateDefaultValues,
   name: 'Official contest',
   coverImage: { url: '6a1c3f3d-29e5-49c1-816f-bfc0f7c5c900', width: 512, height: 704 },
-  buzzType: 'yellow',
   step,
   ...overrides,
 });

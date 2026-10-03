@@ -64,7 +64,6 @@ import {
   Form,
   InputDateTimePicker,
   InputNumber,
-  InputSegmentedControl,
   InputSelect,
   InputText,
   InputTextArea,
@@ -97,7 +96,12 @@ import {
 import { getBuzzCurrencyConfig } from '~/shared/constants/currency.constants';
 import { CrucibleStatus, Currency, MediaType } from '~/shared/utils/prisma/enums';
 import type { RouterOutput } from '~/types/router';
-import { getCrucibleUrl, getFreeEntriesLabel, toCrucibleBuzzType } from '~/utils/crucible-helpers';
+import {
+  CRUCIBLE_PRIZE_BUZZ_TYPE,
+  getCrucibleUrl,
+  getFreeEntriesLabel,
+  toCrucibleBuzzType,
+} from '~/utils/crucible-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { capitalize } from '~/utils/string-helpers';
 
@@ -179,15 +183,9 @@ export function CrucibleUpsertWizard(props: Props) {
   const values = form.watch();
 
   const [domainBuzzType] = useAvailableBuzz();
-  // Stored on the crucible, and a moderator can edit from the other domain.
-  const buzzType = toCrucibleBuzzType(
-    crucible ? crucible.buzzType : values.buzzType ?? domainBuzzType
-  );
-
-  useEffect(() => {
-    if (!crucible && !values.buzzType)
-      form.setValue('buzzType', toCrucibleBuzzType(domainBuzzType));
-  }, [crucible, values.buzzType, domainBuzzType]); // eslint-disable-line react-hooks/exhaustive-deps
+  // What the creator pays setup and seed in. An edit settles in the currency first paid, which a
+  // moderator may be editing from the other site.
+  const buzzType = toCrucibleBuzzType(crucible ? crucible.buzzType : domainBuzzType);
 
   const isModerator = !!currentUser?.isModerator;
   const hasStarted = !!crucible && hasCrucibleStarted(crucible);
@@ -476,34 +474,12 @@ export function CrucibleUpsertWizard(props: Props) {
         clearable
       />
 
-      {!crucible && (
-        <Input.Wrapper
-          label="Buzz Type"
-          description="Green Buzz crucibles are Safe-For-Work (PG / PG-13) and run on civitai.com; Yellow Buzz crucibles run on civitai.red. It can't be changed after creation."
-        >
-          <InputSegmentedControl
-            name="buzzType"
-            fullWidth
-            mt={5}
-            data={(['yellow', 'green'] as const).map((type) => ({
-              value: type,
-              label: (
-                <Group gap={6} justify="center" wrap="nowrap">
-                  <CurrencyIcon currency={Currency.BUZZ} type={type} size={16} />
-                  <span>{type === 'green' ? 'Green Buzz' : 'Yellow Buzz'}</span>
-                </Group>
-              ),
-            }))}
-          />
-        </Input.Wrapper>
-      )}
-
       <InputContentRatingSelect
         name="nsfwLevel"
         label="Allowed Content Levels"
         description={
           buzzType === 'green'
-            ? 'Users can only submit content matching these levels. Green Buzz crucibles are SFW only.'
+            ? 'Users can only submit content matching these levels. Crucibles created on civitai.com are SFW only.'
             : 'Users can only submit content matching these levels'
         }
         sfwOnly={buzzType === 'green'}
@@ -558,7 +534,7 @@ export function CrucibleUpsertWizard(props: Props) {
         label="Entry Fee per User"
         description={`How much Buzz users pay to enter their ${
           values.contentType === MediaType.video ? 'video' : 'image'
-        } (${entryFeeRangeLabel}). Entry fees fund the prize pool.`}
+        } (${entryFeeRangeLabel}). Entrants pay in green Buzz on civitai.com and yellow on civitai.red; prizes are paid in yellow.`}
         leftSection={<CurrencyIcon currency={Currency.BUZZ} type={buzzType} size={16} />}
         min={CRUCIBLE_MIN_ENTRY_FEE}
         max={CRUCIBLE_MAX_ENTRY_FEE}
@@ -732,11 +708,7 @@ export function CrucibleUpsertWizard(props: Props) {
             <Text size="xs" c="dimmed" fw={600} mb={8}>
               {prizeCustomized ? 'Custom Distribution' : 'Default Distribution'}
             </Text>
-            <PrizeDistributionChart
-              prizePositions={values.prizePositions}
-              placeBuzz={placeBuzz}
-              buzzType={buzzType}
-            />
+            <PrizeDistributionChart prizePositions={values.prizePositions} placeBuzz={placeBuzz} />
             {prizePoolNote}
           </div>
 
@@ -807,7 +779,7 @@ export function CrucibleUpsertWizard(props: Props) {
                   <Text size="sm" fw={600}>
                     {formatPlace(position)}
                   </Text>
-                  <PlaceBuzzText amount={placeBuzz[position]} buzzType={buzzType} />
+                  <PlaceBuzzText amount={placeBuzz[position]} buzzType={CRUCIBLE_PRIZE_BUZZ_TYPE} />
                 </div>
                 <Group gap="xs" wrap="nowrap">
                   <NumberInput
@@ -1060,11 +1032,7 @@ export function CrucibleUpsertWizard(props: Props) {
               <Text fw={500}>None</Text>
             )}
           </Group>
-          <PrizeDistributionChart
-            prizePositions={values.prizePositions}
-            placeBuzz={placeBuzz}
-            buzzType={buzzType}
-          />
+          <PrizeDistributionChart prizePositions={values.prizePositions} placeBuzz={placeBuzz} />
         </Stack>
       </Paper>
     </Stack>
@@ -1405,11 +1373,9 @@ function PlaceBuzzText({ amount, buzzType }: { amount?: PlaceBuzz; buzzType: Cru
 function PrizeDistributionChart({
   prizePositions,
   placeBuzz,
-  buzzType,
 }: {
   prizePositions: Record<string, number>;
   placeBuzz: Record<string, PlaceBuzz>;
-  buzzType: CrucibleBuzzType;
 }) {
   const sortedPositions = Object.entries(prizePositions).sort(
     ([a], [b]) => parseInt(a) - parseInt(b)
@@ -1451,7 +1417,7 @@ function PrizeDistributionChart({
               {percentage}%
             </Text>
             <Group justify="center">
-              <PlaceBuzzText amount={placeBuzz[position]} buzzType={buzzType} />
+              <PlaceBuzzText amount={placeBuzz[position]} buzzType={CRUCIBLE_PRIZE_BUZZ_TYPE} />
             </Group>
           </Paper>
         ))}
@@ -1473,7 +1439,10 @@ function PrizeDistributionChart({
                       <Text size="sm" c="dimmed">
                         {formatPlace(position)}
                       </Text>
-                      <PlaceBuzzText amount={placeBuzz[position]} buzzType={buzzType} />
+                      <PlaceBuzzText
+                        amount={placeBuzz[position]}
+                        buzzType={CRUCIBLE_PRIZE_BUZZ_TYPE}
+                      />
                     </div>
                   </Group>
                   <Text size="sm" fw={600} c={`${color}.4`}>

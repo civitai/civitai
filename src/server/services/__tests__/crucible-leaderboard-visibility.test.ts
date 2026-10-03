@@ -159,11 +159,12 @@ const expectPublishedEntryImage = (sql: string) => {
   );
 };
 
-/** A crucible that passed its scans, on this (non-green) site. */
+/** A crucible that passed its scans and accepts mature entries, so only off the green site. */
 const scanned = {
   userId: 555,
   buzzType: 'yellow',
   nsfwLevel: 31,
+  textNsfw: false,
   ingestion: 'Scanned',
   image: { ingestion: 'Scanned' },
 };
@@ -349,7 +350,7 @@ describe('crucible.getRequiredModels', () => {
     imagesFetch.mockResolvedValue({ 101: { images: [cover(1, 4)] } });
     findUnique.mockResolvedValue({
       ...scanned,
-      buzzType: 'green',
+      nsfwLevel: 1 | 2,
       status: CrucibleStatus.Active,
       allowedResources: [101],
     });
@@ -554,17 +555,19 @@ describe('crucible.getById', () => {
 
     expect(await caller(signedIn(OWNER_ID)).getById({ id: CRUCIBLE_ID })).toBeNull();
   });
-  it('hides a green crucible off the green site, except from its creator', async () => {
+  it('shows a crucible created on the green site off it too', async () => {
     findUnique.mockResolvedValue({
       ...scanned,
       id: CRUCIBLE_ID,
       userId: 555,
       status: CrucibleStatus.Active,
       buzzType: 'green',
+      nsfwLevel: 1 | 2,
     });
 
-    expect(await caller(signedIn(STRANGER_ID)).getById({ id: CRUCIBLE_ID })).toBeNull();
-    expect(await caller(signedIn(555)).getById({ id: CRUCIBLE_ID })).not.toBeNull();
+    expect(await caller(signedIn(STRANGER_ID)).getById({ id: CRUCIBLE_ID })).toMatchObject({
+      id: CRUCIBLE_ID,
+    });
   });
 });
 

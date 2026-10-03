@@ -752,30 +752,33 @@ describe('createCrucibleInputSchema — video settings', () => {
 });
 
 describe('submitEntry — site', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+  const row = (overrides: Record<string, unknown>) =>
     dbMock.dbRead.crucible.findUnique.mockResolvedValue({
       ...crucibleRow(MediaType.image),
-      buzzType: 'green',
+      textNsfw: false,
+      ...overrides,
     });
+  const outcomeOn = (isGreen: boolean) =>
+    submitEntry({ crucibleId: 1, imageId: 7, userId: 42, isGreen }).catch((error: Error) => error);
+  const message = (outcome: unknown) => (outcome instanceof Error ? outcome.message : '');
+
+  beforeEach(() => {
+    vi.clearAllMocks();
     dbMock.dbRead.image.findUnique.mockResolvedValue(imageRow(MediaType.image));
   });
 
-  it("refuses a crucible from the other site before charging, as its pages don't show it", async () => {
-    await expect(
-      submitEntry({ crucibleId: 1, imageId: 7, userId: 42, isGreen: false })
-    ).rejects.toThrow('Crucible not found');
+  it('refuses a crucible that accepts mature entries on the green site, before charging', async () => {
+    row({ buzzType: 'yellow', nsfwLevel: 1 | 4 });
+    expect(message(await outcomeOn(true))).toContain('Crucible not found');
     expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
   });
 
-  it('gets past the site check on its own site', async () => {
-    const outcome = await submitEntry({
-      crucibleId: 1,
-      imageId: 7,
-      userId: 42,
-      isGreen: true,
-    }).catch((error: Error) => error);
-    expect(outcome instanceof Error ? outcome.message : '').not.toContain('Crucible not found');
+  it.each([
+    ['created in yellow, on the green site', 'yellow', true],
+    ['created in green, on the mature site', 'green', false],
+  ] as const)('lets an SFW crucible %s be entered', async (_, buzzType, isGreen) => {
+    row({ buzzType, nsfwLevel: 1 });
+    expect(message(await outcomeOn(isGreen))).not.toContain('Crucible not found');
   });
 });
 
@@ -865,6 +868,33 @@ describe('submitEntry — entry fee', () => {
         details: { entityId: 1, entityType: 'Crucible' },
       })
     );
+  });
+
+  // The entrant pays in the currency of the site they enter on, never the creator's.
+  it.each([
+    ['green on the green site, for a crucible created in yellow', true, 'yellow', 'green'],
+    ['yellow on the mature site, for a crucible created in green', false, 'green', 'yellow'],
+  ] as const)('charges %s, and pools the fee', async (_, isGreen, createdIn, charged) => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.image),
+      entryFee: 50,
+      buzzType: createdIn,
+      textNsfw: false,
+    });
+
+    await expect(
+      submitEntry({ crucibleId: 1, imageId: 7, userId: 42, isGreen })
+    ).resolves.toMatchObject({ id: 5 });
+
+    expect(getUserBuzzAccount).toHaveBeenCalledWith({ accountId: 42, accountTypes: [charged] });
+    expect(createMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
+    expect(createMultiAccountBuzzTransaction.mock.calls[0][0]).toMatchObject({
+      fromAccountId: 42,
+      fromAccountTypes: [charged],
+      amount: 50,
+    });
+    const [, poolIncrement] = dbMock.dbWrite.$executeRaw.mock.calls.at(-1) as [unknown, number];
+    expect(poolIncrement).toBe(50);
   });
 
   it('refunds the fee when the entry write fails, and logs a refund that also fails', async () => {
@@ -1133,6 +1163,7 @@ describe('createCrucibleEntryPost', () => {
     endAt: new Date(Date.now() + 60_000),
     userId: 99,
     buzzType: 'yellow',
+    nsfwLevel: 1,
     ingestion: 'Scanned',
     textNsfw: false,
     image: { ingestion: 'Scanned' },
@@ -1183,7 +1214,7 @@ describe('createCrucibleEntryPost', () => {
 
   it.each([
     ['still under review', { ingestion: 'Pending' }, {}],
-    ['on the other site', { buzzType: 'green' }, {}],
+    ['accepting mature entries, on the green site', { nsfwLevel: 1 | 4 }, { isGreen: true }],
     ['whose creator blocked the caller', {}, { blockedByUserIds: [99] }],
   ])('is not found for a crucible %s, and creates no post', async (_, crucible, viewer) => {
     dbMock.dbRead.crucible.findUnique.mockResolvedValue(arena(crucible));
