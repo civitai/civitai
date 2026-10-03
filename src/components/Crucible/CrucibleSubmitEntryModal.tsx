@@ -558,6 +558,7 @@ export default function CrucibleSubmitEntryModal({
     const ineligibleReasons = ineligibleReasonsById.get(image.id);
     const eligibilityPending = ineligibleReasons === undefined;
     const isRecentEnough = !ineligibleReasons?.includes('created-before-start');
+    const levelAllowedByModels = !ineligibleReasons?.includes('required-model-level');
     const hasNoResources = !!ineligibleReasons?.includes('no-resources');
     const usesRequiredModel =
       !hasNoResources && !ineligibleReasons?.includes('missing-required-resource');
@@ -613,9 +614,11 @@ export default function CrucibleSubmitEntryModal({
       },
       {
         label: 'Content level',
-        passes: isCompatibleNsfw,
+        passes: isCompatibleNsfw && levelAllowedByModels,
         passText: `${imageNsfwLabel} content`,
-        failReason: `${imageNsfwLabel} content (requires ${requiredNsfwLabel})`,
+        failReason: !isCompatibleNsfw
+          ? `${imageNsfwLabel} content (requires ${requiredNsfwLabel})`
+          : `${imageNsfwLabel} content (a required model allows only PG and PG-13)`,
       },
       ...(maxClipSeconds
         ? [
@@ -661,6 +664,8 @@ export default function CrucibleSubmitEntryModal({
           `Too long (${formatDuration(Math.ceil(clipSeconds ?? 0))}, max ${formatDuration(
             maxClipSeconds as number
           )})`
+        : !levelAllowedByModels
+        ? 'A required model allows only PG and PG-13'
         : !isRecentEnough
         ? 'Created before this crucible started'
         : requiresResources && !usesRequiredModel

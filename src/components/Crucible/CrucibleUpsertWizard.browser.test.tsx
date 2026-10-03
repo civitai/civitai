@@ -13,8 +13,26 @@ import {
   type CrucibleCreateFormValues,
 } from '~/components/Crucible/crucible-create-form';
 import { IsClientProvider } from '~/providers/IsClientProvider';
+import type * as TrpcModule from '~/utils/trpc';
 
 /** Everything that needs the network is stubbed; the form and the step logic are real. */
+
+type Version = { id: number; modelName: string; minor: boolean; sfwOnly: boolean };
+const mocks = vi.hoisted(() => ({ versions: [] as Version[] }));
+
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcModule>()),
+  trpc: {
+    modelVersion: {
+      getVersionsByIds: {
+        useQuery: ({ ids }: { ids: number[] }) => ({
+          data: mocks.versions.filter(({ id }) => ids.includes(id)),
+          isLoading: false,
+        }),
+      },
+    },
+  },
+}));
 
 vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
   ...(await importOriginal<typeof CurrentUserModule>()),
@@ -33,7 +51,7 @@ vi.mock('~/components/Buzz/useBuzz', async (importOriginal) => ({
 
 vi.mock('~/components/Challenge/ModelVersionMultiSelect', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelVersionMultiSelectModule>()),
-  ModelVersionMultiSelect: () => null,
+  ModelVersionMultiSelect: ({ error }: { error?: string }) => (error ? <p>{error}</p> : null),
 }));
 
 vi.mock('~/components/Crucible/CrucibleImageUpload', async (importOriginal) => ({
@@ -110,5 +128,40 @@ describe('CrucibleUpsertWizard — free entries', () => {
     );
 
     await vi.waitFor(() => expect(document.body.textContent).toContain('First entry free'));
+  });
+});
+
+describe('CrucibleUpsertWizard — required models held to PG and PG-13', () => {
+  const R = 1 | 2 | 4;
+  const nextButton = () =>
+    [...document.querySelectorAll('button')].find((button) => button.textContent === 'Next');
+
+  test('explains the conflict and holds the wizard on the requirements step', async () => {
+    mocks.versions = [
+      { id: 11, modelName: 'Fine Model', minor: false, sfwOnly: false },
+      { id: 12, modelName: 'Held Model', minor: false, sfwOnly: true },
+    ];
+    renderWithProviders(
+      <Harness values={valuesOnStep(2, { nsfwLevel: R, allowedResources: [11, 12] })} />
+    );
+
+    await vi.waitFor(() =>
+      expect(document.body.textContent).toContain(
+        'Held Model can only be required for PG and PG-13 content'
+      )
+    );
+    expect(document.body.textContent).not.toContain('Fine Model can only');
+    expect(nextButton()?.disabled).toBe(true);
+  });
+
+  test('says nothing once only PG and PG-13 are allowed', async () => {
+    mocks.versions = [{ id: 12, modelName: 'Held Model', minor: true, sfwOnly: false }];
+    renderWithProviders(
+      <Harness values={valuesOnStep(2, { nsfwLevel: 1 | 2, allowedResources: [12] })} />
+    );
+
+    await vi.waitFor(() => expect(nextButton()).toBeTruthy());
+    expect(document.body.textContent).not.toContain('can only be required');
+    expect(nextButton()!.disabled).toBe(false);
   });
 });
