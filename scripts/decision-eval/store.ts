@@ -32,15 +32,19 @@ export async function readJsonl<T>(path: string): Promise<T[]> {
 }
 
 /** Write-then-rename, so a crash never leaves a half-written file. */
-export function writeFileAtomic(path: string, contents: string): void {
+export function writeFileAtomic(path: string, contents: string | Uint8Array): void {
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.tmp-${process.pid}`;
   writeFileSync(tmp, contents);
   renameSync(tmp, path);
 }
 
+export function toJsonl(rows: readonly unknown[]): string {
+  return rows.map((r) => JSON.stringify(r)).join('\n') + (rows.length ? '\n' : '');
+}
+
 export function writeJsonl(path: string, rows: readonly unknown[]): void {
-  writeFileAtomic(path, rows.map((r) => JSON.stringify(r)).join('\n') + (rows.length ? '\n' : ''));
+  writeFileAtomic(path, toJsonl(rows));
 }
 
 export function readJson<T>(path: string): T | undefined {

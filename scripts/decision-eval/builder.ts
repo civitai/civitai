@@ -1,3 +1,4 @@
+import { findPii } from './safety';
 import type { GoldRow, ManifestItem, Split } from './types';
 
 export class LeakageError extends Error {
@@ -191,6 +192,38 @@ export type TrainPartition = 'train' | 'trainer-dev';
 export type TrainCandidate = Omit<ManifestItem, 'split'> & { partition: TrainPartition };
 
 /**
+ * Candidates come from an external JSONL file. A number never equals the index's string ids, and
+ * the refusals below name an item by id, so ids are checked first.
+ */
+function assertTrainCandidates(candidates: readonly TrainCandidate[]): void {
+  candidates.forEach((c, i) => {
+    const at = `training row ${i + 1}`;
+    for (const key of ['itemId', 'groupKey'] as const) {
+      if (typeof c[key] !== 'string' || !c[key]) {
+        throw new LeakageError(`${at}: ${key} must be a non-empty string`);
+      }
+    }
+    const pii = findPii({ id: c.itemId, group_key: c.groupKey });
+    if (pii) {
+      throw new LeakageError(
+        `${at}: its ${pii.field} is ${pii.kind}-shaped; a node's ids must not carry personal data`
+      );
+    }
+    if (c.partition !== 'train' && c.partition !== 'trainer-dev') {
+      throw new LeakageError(`${at}: partition must be train or trainer-dev`);
+    }
+    if (
+      !c.state ||
+      typeof c.state !== 'object' ||
+      Array.isArray(c.state) ||
+      !Object.values(c.state).every((v) => typeof v === 'string')
+    ) {
+      throw new LeakageError(`${at}: state must be an object of strings`);
+    }
+  });
+}
+
+/**
  * The LoRA leakage control: no training row, in either trainer partition, may
  * share an item or a group with anything a dev or test split has ever held.
  */
@@ -199,6 +232,7 @@ export function buildTrainManifest(
   index: EvalIndex,
   excludedIds: readonly string[] = []
 ): TrainCandidate[] {
+  assertTrainCandidates(candidates);
   const excluded = new Set(excludedIds);
   const barred = candidates.filter((c) => excluded.has(c.itemId));
   if (barred.length > 0) {
