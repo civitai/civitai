@@ -28,25 +28,43 @@ const {
   mockIsRevoked,
   mockLogToAxiom,
 } = vi.hoisted(() => {
-  // 🔴 THE PARAMETERS ARE DECLARED, even though the default body ignores them. `pg`'s
+  // 🔴 THE SIGNATURE IS DECLARED VIA THE GENERIC, NOT AS UNUSED PARAMETERS. `pg`'s
   // `query(sql, params)` is what the router calls, and `vi.fn(async () => …)` infers a
   // ZERO-ARG signature — so every `mockImplementation(async (sql, params) => …)` below
-  // became a TS2345 under `tsconfig.tests.json` (which `pnpm typecheck` does not cover,
-  // because `tsconfig.json` excludes `src/**/__tests__/**`). Declaring them here fixes
+  // was a TS2345 under `tsconfig.tests.json` (which `pnpm typecheck` does not cover,
+  // because `tsconfig.json` excludes `src/**/__tests__/**`). Declaring it here fixes
   // that class at its one source rather than at each call site.
+  //
+  // ⚠️ `vi.fn(async (_sql, _params) => …)` also works for the TYPE, and was the first
+  // version of this — but it introduces two `no-unused-vars` warnings per site, because
+  // `.eslintrc.js` sets that rule with no `argsIgnorePattern`, so the `_` prefix buys
+  // nothing here. The generic carries the signature with a zero-arg body, which is the
+  // same trick the behaviour suite uses on `mockIsRevoked` for the same reason.
+  type QueryFn = (
+    sql: string,
+    params?: unknown[]
+  ) => Promise<{
+    rows: unknown[];
+    rowCount: number;
+  }>;
+  // The rate limiters' real shape: `(userId, appBlockId) => { allowed, retryAfterSeconds? }`.
+  // 🔴 DECLARED AT THE SOURCE, for the same reason as `QueryFn`. `vi.fn(async () => ({
+  // allowed: true }))` infers BOTH a zero-arg signature AND a return type without
+  // `retryAfterSeconds` — which is why forwarding two arguments was a TS2554 and every
+  // `mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 60 })` was a TS2353.
+  // Typing the passthroughs instead of the mocks only moved the first error class
+  // (TS2556 -> TS2554); the callee is where it actually lives.
+  type RateLimitFn = (
+    userId: number,
+    appBlockId: string
+  ) => Promise<{ allowed: boolean; retryAfterSeconds?: number }>;
   const mockClient = {
-    query: vi.fn(async (_sql: string, _params?: unknown[]) => ({
-      rows: [] as unknown[],
-      rowCount: 0,
-    })),
+    query: vi.fn<QueryFn>(async () => ({ rows: [], rowCount: 0 })),
     release: vi.fn(),
   };
   const mockPool = {
     connect: vi.fn(async () => mockClient),
-    query: vi.fn(async (_sql: string, _params?: unknown[]) => ({
-      rows: [] as unknown[],
-      rowCount: 0,
-    })),
+    query: vi.fn<QueryFn>(async () => ({ rows: [], rowCount: 0 })),
   };
   return {
     mockVerifyBlockToken: vi.fn(),
@@ -56,14 +74,21 @@ const {
     mockPool,
     mockClient,
     mockGetSessionUser: vi.fn(),
-    mockCheckAppendRl: vi.fn(async () => ({ allowed: true })),
-    mockCheckVoteRl: vi.fn(async () => ({ allowed: true })),
-    mockCheckReportRl: vi.fn(async () => ({ allowed: true })),
-    mockCheckWithdrawRl: vi.fn(async () => ({ allowed: true })),
-    mockThrowOnBlockedUserContent: vi.fn(async () => undefined),
-    mockAuditPromptServer: vi.fn(async () => undefined),
-    mockIsRevoked: vi.fn(async () => false),
-    mockLogToAxiom: vi.fn(async () => undefined),
+    mockCheckAppendRl: vi.fn<RateLimitFn>(async () => ({ allowed: true })),
+    mockCheckVoteRl: vi.fn<RateLimitFn>(async () => ({ allowed: true })),
+    mockCheckReportRl: vi.fn<RateLimitFn>(async () => ({ allowed: true })),
+    mockCheckWithdrawRl: vi.fn<RateLimitFn>(async () => ({ allowed: true })),
+    // Same source-level typing as `QueryFn` / `RateLimitFn` above: the signature lives on
+    // the mock, so the passthroughs below can forward real arguments instead of spreading
+    // an `unknown[]` into a zero-arg inference.
+    mockThrowOnBlockedUserContent: vi.fn<(args: unknown) => Promise<void>>(async () => undefined),
+    mockAuditPromptServer: vi.fn<(args: unknown) => Promise<void>>(async () => undefined),
+    mockIsRevoked: vi.fn<(blockInstanceId: string, sub?: string) => Promise<boolean>>(
+      async () => false
+    ),
+    mockLogToAxiom: vi.fn<(payload: unknown, stream?: string) => Promise<void>>(
+      async () => undefined
+    ),
   };
 });
 
@@ -79,24 +104,35 @@ vi.mock('~/server/auth/session-client', () => ({
   sessionClient: { getSessionUserById: (...a: unknown[]) => mockGetSessionUser(...a) },
 }));
 vi.mock('~/server/db/appsDb', () => ({ requireAppsDb: () => mockPool }));
+// 🔴 THE PASSTHROUGHS FORWARD EXPLICIT ARGUMENTS, not `(...a: unknown[])`. Spreading an
+// `unknown[]` into a mock whose own signature `vi.fn()` inferred as zero-arg is a TS2556
+// under `tsconfig.tests.json` — the same root cause as the `pg` query mocks above, in a
+// second shape, and it accounted for 8 of this file's remaining type errors. Each
+// forward below declares what its real callee is actually called with.
 vi.mock('~/server/utils/shared-storage-rate-limit', () => ({
-  checkSharedAppendRateLimit: (...a: unknown[]) => mockCheckAppendRl(...a),
-  checkSharedVoteRateLimit: (...a: unknown[]) => mockCheckVoteRl(...a),
-  checkSharedReportRateLimit: (...a: unknown[]) => mockCheckReportRl(...a),
-  checkSharedWithdrawRateLimit: (...a: unknown[]) => mockCheckWithdrawRl(...a),
+  checkSharedAppendRateLimit: (userId: number, appBlockId: string) =>
+    mockCheckAppendRl(userId, appBlockId),
+  checkSharedVoteRateLimit: (userId: number, appBlockId: string) =>
+    mockCheckVoteRl(userId, appBlockId),
+  checkSharedReportRateLimit: (userId: number, appBlockId: string) =>
+    mockCheckReportRl(userId, appBlockId),
+  checkSharedWithdrawRateLimit: (userId: number, appBlockId: string) =>
+    mockCheckWithdrawRl(userId, appBlockId),
 }));
 // Keep the content-safety belt REAL; mock only its redis-backed deps.
 vi.mock('~/server/services/blocklist.service', () => ({
-  throwOnBlockedUserContent: (...a: unknown[]) => mockThrowOnBlockedUserContent(...a),
+  throwOnBlockedUserContent: (args: unknown) => mockThrowOnBlockedUserContent(args),
 }));
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
-  auditPromptServer: (...a: unknown[]) => mockAuditPromptServer(...a),
+  auditPromptServer: (args: unknown) => mockAuditPromptServer(args),
 }));
 vi.mock('~/server/services/block-revocation.service', () => ({
-  BlockRevocation: { isRevoked: (...a: unknown[]) => mockIsRevoked(...a) },
+  BlockRevocation: {
+    isRevoked: (blockInstanceId: string, sub?: string) => mockIsRevoked(blockInstanceId, sub),
+  },
 }));
 vi.mock('~/server/logging/client', () => ({
-  logToAxiom: (...a: unknown[]) => mockLogToAxiom(...a),
+  logToAxiom: (payload: unknown, stream?: string) => mockLogToAxiom(payload, stream),
 }));
 // NOTE: `report` no longer fires a mod-Discord webhook — it was redundant with the
 // Axiom emit below, so it and its reporter-free-text hardening (`sanitizeDiscordText`)
