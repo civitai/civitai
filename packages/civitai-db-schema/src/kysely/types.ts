@@ -135,6 +135,7 @@ import type {
   UserHubSourceType,
   CrucibleStatus,
   CrucibleIngestionStatus,
+  CrucibleEngagementType,
 } from './enums';
 
 export type Account = {
@@ -2485,6 +2486,7 @@ export type Crucible = {
   maxClipSeconds: number | null;
   prizePositions: Generated<unknown>;
   allowedResources: unknown | null;
+  allowedBaseModels: Generated<string[]>;
   duration: Generated<number>;
   startAt: Timestamp | null;
   endAt: Timestamp | null;
@@ -2496,6 +2498,12 @@ export type Crucible = {
   ingestion: Generated<CrucibleIngestionStatus>;
   scannedAt: Timestamp | null;
   textNsfw: Generated<boolean>;
+};
+export type CrucibleEngagement = {
+  userId: number;
+  crucibleId: number;
+  type: CrucibleEngagementType;
+  createdAt: Generated<Timestamp>;
 };
 export type CrucibleEntry = {
   id: Generated<number>;
@@ -2723,6 +2731,13 @@ export type GenerationPreset = {
 export type GenerationServiceProvider = {
   name: string;
   schedulers: GenerationSchedulers[];
+};
+export type GenerationSizePreset = {
+  id: Generated<number>;
+  userId: number;
+  width: number;
+  height: number;
+  createdAt: Generated<Timestamp>;
 };
 export type HomeBlock = {
   id: Generated<number>;
@@ -2960,6 +2975,7 @@ export type JobQueue = {
   entityType: EntityType;
   entityId: number;
   createdAt: Generated<Timestamp>;
+  data: unknown | null;
 };
 export type KeyValue = {
   key: string;
@@ -4028,6 +4044,18 @@ export type ReportAutomated = {
   metadata: Generated<unknown>;
   createdAt: Generated<Timestamp>;
 };
+export type ResourceInsight = {
+  modelVersionId: number;
+  role: string;
+  styleFamily: string;
+  contentTypes: string[];
+  qualityScore: number;
+  confidence: number;
+  specHash: string;
+  model: string;
+  createdAt: Generated<Timestamp>;
+  stale: Generated<boolean>;
+};
 export type ResourceOverride = {
   hash: string;
   modelVersionId: number;
@@ -4922,6 +4950,7 @@ export type DB = {
   CoveredCheckpoint: CoveredCheckpoint;
   CreatorGalleryHiddenUser: CreatorGalleryHiddenUser;
   Crucible: Crucible;
+  CrucibleEngagement: CrucibleEngagement;
   CrucibleEntry: CrucibleEntry;
   CrucibleReport: CrucibleReport;
   CryptoDeposit: CryptoDeposit;
@@ -4945,6 +4974,7 @@ export type DB = {
   GenerationCoverage: GenerationCoverage;
   GenerationPreset: GenerationPreset;
   GenerationServiceProvider: GenerationServiceProvider;
+  GenerationSizePreset: GenerationSizePreset;
   HomeBlock: HomeBlock;
   HuggingFaceImport: HuggingFaceImport;
   Image: Image;
@@ -5045,6 +5075,7 @@ export type DB = {
   ReferralReward: ReferralReward;
   Report: Report;
   ReportAutomated: ReportAutomated;
+  ResourceInsight: ResourceInsight;
   ResourceOverride: ResourceOverride;
   ResourceReview: ResourceReview;
   ResourceReviewHelper: ResourceReviewHelper;

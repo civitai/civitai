@@ -121,6 +121,7 @@ import { updateUserScore } from '~/server/jobs/update-user-score';
 import { userDeletedCleanup } from '~/server/jobs/user-deleted-cleanup';
 import { removeDeletedUserImages } from '~/server/jobs/remove-deleted-user-images';
 import { removeReplacedImages } from '~/server/jobs/remove-replaced-images';
+import { retryImageStorageDeletes } from '~/server/jobs/retry-image-storage-deletes';
 import { restoreUserImages } from '~/server/jobs/restore-user-images';
 import { expireStrikesJob, processTimedUnmutesJob } from '~/server/jobs/process-strikes';
 import { processEnqueuedComicPanelsJob } from '~/server/jobs/process-enqueued-comic-panels';
@@ -158,6 +159,7 @@ export const jobs: Job[] = [
   ingestImages,
   removeBlockedImages,
   removeReplacedImages,
+  retryImageStorageDeletes,
   processScheduledPublishing,
   // refreshImageGenerationCoverage,
   cleanImageResources,

@@ -456,6 +456,45 @@ export type RatingChanges = {
   rating: Generated<number | null>;
   originalRating: Generated<number>;
 };
+export type relabel_answer = {
+  id: Generated<string>;
+  item_id: string;
+  labeler_id: number;
+  minor_present: string;
+  sexual_level: string;
+  violence: string;
+  school_setting: string;
+  duration_ms: number | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+};
+export type relabel_item = {
+  id: Generated<string>;
+  token: Generated<string>;
+  batch: string;
+  image_id: number;
+  stratum: string;
+  bucket: string | null;
+  nsfw_level: string | null;
+  stratum_key: string;
+  owner_id: number;
+  removed_at: Timestamp | null;
+  removed_by: number | null;
+  purge_after: Timestamp | null;
+  appeal_status: string | null;
+  appeal_resolved_at: Timestamp | null;
+  relabel: Generated<boolean>;
+  created_at: Generated<Timestamp>;
+};
+export type relabel_prediction = {
+  id: Generated<string>;
+  item_id: string;
+  run_id: string;
+  arm: string;
+  model: string;
+  answers: unknown;
+  created_at: Generated<Timestamp>;
+};
 export type ReToolActions = {
   id: Generated<number>;
   Event: Generated<Timestamp>;
@@ -612,6 +651,9 @@ export type DB = {
   Mods_TaskTimers: Mods_TaskTimers;
   products: products;
   RatingChanges: RatingChanges;
+  relabel_answer: relabel_answer;
+  relabel_item: relabel_item;
+  relabel_prediction: relabel_prediction;
   ReToolActions: ReToolActions;
   sample: sample;
   sample_orders: sample_orders;

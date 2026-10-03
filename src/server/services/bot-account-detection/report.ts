@@ -153,11 +153,14 @@ const renderSurface = (s: SurfaceCounts) =>
  * over-claim the word "visible" was removed for.
  *
  * 🔴 IT STAYS ON EVERY FINDING WHILE THE ENUMERATION MOVES TO THE SUMMARY, AND THE SPLIT IS NOT
- * ARBITRARY. A reason is rendered on TWO surfaces, and only one of them shows a summary:
- * `apps/moderator/src/routes/abuse/[runId]/+page.svelte` renders the run summary above the findings
- * table, but `apps/moderator/src/routes/retool/user-lookup/AbuseFindingsPanel.svelte` renders
- * `{f.reason}` on its own — `getAbuseFindingsForUser` selects from `abuse_detection_finding` alone
- * and never joins the run. So anything moved to the summary is NOT ON THAT SCREEN.
+ * ARBITRARY. A reason is rendered on TWO surfaces, and only one of them shows a summary at all:
+ * `apps/moderator/src/routes/abuse/[runId]/+page.svelte` offers the run summary — ⚠️ SINCE
+ * 2026-10-01 BEHIND A COLLAPSED DISCLOSURE rather than as open prose above the findings, because at
+ * 62–963 characters it was a wall of text where the scannable facts belong — while
+ * `apps/moderator/src/routes/retool/user-lookup/AbuseFindingsPanel.svelte` renders `{f.reason}` on
+ * its own: `getAbuseFindingsForUser` selects from `abuse_detection_finding` alone and never joins the
+ * run. So anything moved to the summary is NOT ON THAT SCREEN, and is now one toggle away even on
+ * the screen that does have it.
  *
  * ⚠️ NOT "UNREACHABLE", WHICH IS WHAT THIS PARAGRAPH SAID AND OVERSTATED. That panel renders a
  * `run #{f.runId}` link to `/abuse/{runId}` beside each finding, so the summary is one click away
@@ -184,6 +187,14 @@ const PENDING_CARVE_OUT = 'Images awaiting a scan result count as on the site.';
  * why that is an acceptable trade for this half and not for the other. "Still on the site" and "no
  * longer on the site" are ordinary English that a moderator can act on without the list; the list
  * tells them WHICH states fall where, which is a refinement rather than a correction.
+ *
+ * ⚠️ AND SINCE 2026-10-01 THE RUN SUMMARY IS COLLAPSED behind a disclosure, so "reachable from the
+ * run page" now means one toggle rather than open prose. That is still within the test
+ * `PENDING_CARVE_OUT` sets out — a DEFINITION of categories named in the sentence it defines
+ * survives being a click away, which is why the cross-page click to User Lookup was already accepted
+ * for this half; a toggle on the same page is strictly cheaper than that. 🔴 THE TEST IS WHAT
+ * TRANSFERS, NOT THIS CONCLUSION: anything that would CORRECT or INVERT a reason's meaning still
+ * cannot live here, and now has one more toggle of distance to cross.
  *
  * 🔴 IT MUST STAY IN THE SUMMARY OF EVERY BATCH, not only the first. `buildReports` splits a large
  * run across several reports and each becomes its own row on the board with its own summary; a

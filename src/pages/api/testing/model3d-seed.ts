@@ -37,13 +37,11 @@ import { randomUUID } from 'crypto';
 import * as z from 'zod';
 import type { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
+import { matchesConfiguredSecret } from '~/server/utils/configured-secret';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { createImage } from '~/server/services/image.service';
 import { MediaType } from '~/shared/utils/prisma/enums';
-import {
-  publishModel3D,
-  upsertModel3DFromWorkflow,
-} from '~/server/services/model3d.service';
+import { publishModel3D, upsertModel3DFromWorkflow } from '~/server/services/model3d.service';
 
 const fileSchema = z.object({
   format: z
@@ -99,16 +97,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   // Dual auth: WEBHOOK_TOKEN query OR session moderator
-  const tokenOk =
-    typeof req.query.token === 'string' &&
-    env.WEBHOOK_TOKEN.length > 0 &&
-    req.query.token === env.WEBHOOK_TOKEN;
+  const tokenOk = matchesConfiguredSecret(req.query.token, env.WEBHOOK_TOKEN);
   let sessionUserId: number | null = null;
 
   if (!tokenOk) {
     const session = await getServerAuthSession({ req, res });
     if (!session?.user?.isModerator || session.user.bannedAt) {
-      return res.status(401).json({ error: 'Unauthorized — supply ?token=WEBHOOK_TOKEN or sign in as a moderator.' });
+      return res
+        .status(401)
+        .json({ error: 'Unauthorized — supply ?token=WEBHOOK_TOKEN or sign in as a moderator.' });
     }
     sessionUserId = session.user.id;
   }

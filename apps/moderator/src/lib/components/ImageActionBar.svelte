@@ -3,7 +3,9 @@
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
+  import { Label } from '@civitai/ui/components/ui/label/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { cn } from '@civitai/ui/utils.js';
@@ -40,6 +42,9 @@
     /** The action's id cap, when the caller has one. Submitting past it is refused server-side. */
     maxSelection?: number;
   } = $props();
+
+  // Scopes the strike checkbox's `for`/`id` pair — this bar is mounted on three routes.
+  const uid = $props.id();
 
   const ids = $derived([...selected].join(','));
   const count = $derived(selected.size);
@@ -238,19 +243,26 @@
         {/if}
         <!-- Retool's strikeCheckbox. The removal and the strike for it were one gesture there; without
              it a moderator leaves for User Lookup once per owner. -->
-        <label class="mb-2 flex items-start gap-2 text-sm text-white">
-          <input
-            type="checkbox"
+        <!-- `mt-1.5` rather than `mt-0.5`, and the value is derived rather than eyeballed. This row is
+             `items-start`, so the checkbox sits at the top and its coarse-pointer hit area reaches
+             ABOVE it: the area's top edge is 14px above the checkbox's border box (44px tall around a
+             14px padding box, centred). At `mt-0.5` that overhangs the row by 12px into an 8px `mb-2`
+             gap — 4px onto the bottom edge of the reason Input above, which stretches to fill its
+             row. `mt-1.5` (6px) puts the edge exactly flush with the gap. Tied to that `mb-2`: change
+             the spacing above and this has to move with it. -->
+        <div class="mb-2 flex items-start gap-2 text-sm text-white" data-touch-target>
+          <Checkbox
+            id="strike-owners-{uid}"
             name="strikeOwners"
             value="1"
             bind:checked={strikeOwners}
-            class="mt-0.5"
+            class="mt-1.5"
           />
-          <span>
+          <Label for="strike-owners-{uid}" class="text-sm leading-snug font-normal text-white">
             Strike {ownerCount > 1 ? `all ${ownerCount} owners` : "the owner's account"} — the reason
             above is sent as the strike's description.
-          </span>
-        </label>
+          </Label>
+        </div>
         {#if strikeNeedsReason}
           <p class="mb-2 text-xs text-amber-200">
             A strike needs a reason: pick one above, or write the message the user should be sent.
@@ -263,10 +275,17 @@
             size="sm"
             variant="destructive"
             disabled={submitting || strikeNeedsReason}
+            data-touch-target
           >
             {submitting ? 'Removing…' : `Remove ${num(count)}`}
           </Button>
-          <Button type="button" size="sm" variant="outline" onclick={() => (confirming = null)}>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onclick={() => (confirming = null)}
+            data-touch-target
+          >
             Cancel
           </Button>
         </div>

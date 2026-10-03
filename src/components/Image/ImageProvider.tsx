@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { isViewer } from '~/utils/is-viewer';
 
 type ImageCtx = {
   isOwner: boolean;
@@ -24,7 +25,7 @@ export function ImageProvider({
   return (
     <ImageContext.Provider
       value={{
-        isOwner: currentUser?.id === image.userId || currentUser?.id === image.user?.id,
+        isOwner: isViewer(currentUser, image.userId) || isViewer(currentUser, image.user?.id),
         isModerator: currentUser?.isModerator ?? false,
       }}
     >

@@ -424,6 +424,29 @@ describe('createCrucible — resource requirements', () => {
   });
 });
 
+describe('createCrucible — base model requirements', () => {
+  it('stores the base models without charging the resource requirements fee', async () => {
+    await createCrucible(input({ allowedBaseModels: ['SDXL 1.0'] }));
+
+    expect(chargedAmounts()).toEqual([SETUP_FEE]);
+    expect(storedData().allowedBaseModels).toEqual(['SDXL 1.0']);
+  });
+
+  it('charges the fee once when versions are required too', async () => {
+    await createCrucible(input({ allowedResources: [123], allowedBaseModels: ['SDXL 1.0'] }));
+
+    expect(chargedAmounts()).toEqual([SETUP_FEE + CRUCIBLE_RESOURCE_REQUIREMENTS_COST]);
+  });
+
+  it('refuses a base model that makes the other media type, before anything is written', async () => {
+    await expect(createCrucible(input({ allowedBaseModels: ['MiniMax H3'] }))).rejects.toThrow(
+      /allowed base model must make images/
+    );
+    expect(crucibleCreate).not.toHaveBeenCalled();
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+});
+
 describe('activateScheduledCrucibles', () => {
   it('opens only Pending crucibles whose start has passed', async () => {
     crucibleUpdateMany.mockResolvedValue({ count: 2 });
@@ -533,10 +556,22 @@ describe('getCrucibles — browsing level', () => {
     expect(where.AND[0].OR[0]).toEqual({ userId: 4 });
   });
 
-  it("shows only crucibles in the site's own currency, and the viewer's own anyway", async () => {
-    expect((await whereFor({ isGreen: true })).AND.at(-1)).toEqual({ buzzType: 'green' });
-    expect((await whereFor({ isGreen: false, viewerId: 4 })).AND.at(-1)).toEqual({
-      OR: [{ userId: 4 }, { buzzType: 'yellow' }],
+  // A crucible takes entry fees in either currency, so what it was created in must not decide where
+  // it is listed: every crucible was yellow at launch, and the green site listed none of them.
+  it('lists on both sites whatever currency the creator paid in, SFW-only on green', async () => {
+    const green = await whereFor({ isGreen: true });
+    expect(JSON.stringify(green)).not.toContain('buzzType');
+    expect(green.AND.at(-1)).toEqual({ nsfwLevel: { in: [1, 2, 3] }, textNsfw: false });
+
+    const red = await whereFor({ isGreen: false, viewerId: 4 });
+    expect(JSON.stringify(red)).not.toContain('buzzType');
+    expect(red.AND).toHaveLength(1);
+  });
+
+  it("shows a signed-in viewer SFW crucibles on green, and their own even when they aren't", async () => {
+    const where = await whereFor({ isGreen: true, viewerId: 4 });
+    expect(where.AND.at(-1)).toEqual({
+      OR: [{ userId: 4 }, { nsfwLevel: { in: [1, 2, 3] }, textNsfw: false }],
     });
   });
 
@@ -627,19 +662,12 @@ describe('createCrucible — prize customization fee', () => {
 });
 
 describe('createCrucible — free entries', () => {
-  it('stores the free entries a moderator sets', async () => {
-    await createCrucible(input({ isModerator: true, entryLimit: 3, freeEntriesPerUser: 1 }));
+  // Deliberately not moderator-only. Free entries move no Buzz: the pool counts only entries holding
+  // a fee transaction (crucible-prizes.test.ts).
+  it('lets a host who is not a moderator offer free entries', async () => {
+    await createCrucible(input({ entryLimit: 3, freeEntriesPerUser: 2 }));
 
-    expect(storedData().freeEntriesPerUser).toBe(1);
-  });
-
-  it('refuses free entries from anyone else, before anything is written or charged', async () => {
-    await expect(createCrucible(input({ entryLimit: 3, freeEntriesPerUser: 1 }))).rejects.toThrow(
-      'Only moderators can offer free entries'
-    );
-
-    expect(crucibleCreate).not.toHaveBeenCalled();
-    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    expect(storedData().freeEntriesPerUser).toBe(2);
   });
 
   it('stores none when none are asked for', async () => {

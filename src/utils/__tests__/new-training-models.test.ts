@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { baseModelById, BM, isModelSupported } from '@civitai/shared/basemodel.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
+import { getFeatureFliptKey } from '~/server/services/feature-flags.service';
 import {
   audioSampleOverrideSchema,
   trainingDetailsObj,
@@ -9,11 +10,14 @@ import {
 import {
   aiToolkitBatchMax,
   aiToolkitStepDefault,
+  enabledStudioModelFlags,
   getDefaultEngine,
   isAudioTrainingBaseType,
+  studioModelFlagFeatures,
   trainingModelInfo,
 } from '~/utils/training';
 import {
+  catalogFlagKeys,
   MODEL_CARDS,
   PARAM_DEFAULTS,
 } from '../../../apps/training-studio/src/lib/data/trainingModels';
@@ -61,6 +65,24 @@ describe.each(models)('%s training identity', (key, id, media) => {
       textEncoderLr: 0,
       lrScheduler: 'constant',
     });
+  });
+});
+
+describe('Training Studio embed model gates', () => {
+  it('maps every gated Studio card to a feature flag the host can evaluate', () => {
+    expect(Object.keys(studioModelFlagFeatures).sort()).toEqual(catalogFlagKeys().sort());
+  });
+
+  it('asks Flipt the same key the standalone Studio asks', () => {
+    for (const [flagKey, feature] of Object.entries(studioModelFlagFeatures))
+      expect(getFeatureFliptKey(feature)).toBe(flagKey);
+  });
+
+  it('hands the element only the gates whose feature is on', () => {
+    expect(enabledStudioModelFlags({ audioTraining: true })).toEqual([]);
+    expect(enabledStudioModelFlags({ trainingStudioAudioTraining: true })).toEqual([
+      'training-studio-audio-training',
+    ]);
   });
 });
 

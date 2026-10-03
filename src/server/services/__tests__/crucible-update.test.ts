@@ -74,6 +74,7 @@ const crucible = (overrides: Record<string, unknown> = {}) => ({
   maxClipSeconds: null,
   prizePositions: { '1': 50, '2': 30, '3': 20 },
   allowedResources: null,
+  allowedBaseModels: [],
   duration: 24 * 60,
   seededPrizePool: 0,
   buzzTransactionId: null,
@@ -195,6 +196,40 @@ describe('updateCrucible — while upcoming', () => {
       createMultiAccountBuzzTransaction.mock.invocationCallOrder[0]
     );
     expect(written().buzzTransactionId).toMatch(/^crucible-setup-4-(?!old)/);
+  });
+
+  it('restricts by base model for free', async () => {
+    findUnique.mockResolvedValue(upcoming());
+
+    await edit({ allowedBaseModels: ['SDXL 1.0'] });
+
+    expect(written()).toMatchObject({ allowedBaseModels: ['SDXL 1.0'] });
+    expect(charged()).toEqual([]);
+  });
+
+  it('locks the base models once the crucible has started', async () => {
+    await expect(edit({ allowedBaseModels: ['SDXL 1.0'] })).rejects.toThrow(
+      /only its name, description and images can change/
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('re-checks every allowed base model against a new content type', async () => {
+    findUnique.mockResolvedValue(upcoming({ allowedBaseModels: ['SDXL 1.0'] }));
+
+    await expect(edit({ contentType: MediaType.video })).rejects.toThrow(
+      /allowed base model must make videos/
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('refuses adding a base model that makes the other media type', async () => {
+    findUnique.mockResolvedValue(upcoming());
+
+    await expect(edit({ allowedBaseModels: ['MiniMax H3'] })).rejects.toThrow(
+      /allowed base model must make images/
+    );
+    expect(update).not.toHaveBeenCalled();
   });
 
   it('refuses swapping in a model that is not published and public', async () => {
@@ -427,24 +462,16 @@ describe('updateCrucible — while upcoming', () => {
 });
 
 describe('updateCrucible — free entries', () => {
-  it('lets a moderator who owns an upcoming crucible set them', async () => {
+  // Deliberately not moderator-only.
+  it('lets an owner who is not a moderator set them on an upcoming crucible', async () => {
     findUnique.mockResolvedValue(upcoming({ entryLimit: 3 }));
 
-    await edit({ freeEntriesPerUser: 1 }, OWNER, true);
+    await edit({ freeEntriesPerUser: 2 });
 
-    expect(written().freeEntriesPerUser).toBe(1);
+    expect(written().freeEntriesPerUser).toBe(2);
   });
 
-  it('refuses them from an owner who is not a moderator', async () => {
-    findUnique.mockResolvedValue(upcoming({ entryLimit: 3 }));
-
-    await expect(edit({ freeEntriesPerUser: 1 })).rejects.toThrow(
-      'Only moderators can offer free entries'
-    );
-    expect(update).not.toHaveBeenCalled();
-  });
-
-  it("still lets that owner save other changes alongside free entries they didn't change", async () => {
+  it('keeps the free entries an edit leaves out', async () => {
     findUnique.mockResolvedValue(upcoming({ entryLimit: 3, freeEntriesPerUser: 1 }));
 
     await edit({ entryFee: 200 });
@@ -452,10 +479,19 @@ describe('updateCrucible — free entries', () => {
     expect(written()).toMatchObject({ entryFee: 200, freeEntriesPerUser: 1 });
   });
 
+  it('refuses more free entries than the entry limit', async () => {
+    findUnique.mockResolvedValue(upcoming({ entryLimit: 3 }));
+
+    await expect(edit({ freeEntriesPerUser: 4 })).rejects.toThrow(
+      'Free entries cannot exceed the entry limit per user'
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it('refuses an entry limit lowered below the free entries already set', async () => {
     findUnique.mockResolvedValue(upcoming({ entryLimit: 3, freeEntriesPerUser: 2 }));
 
-    await expect(edit({ entryLimit: 1 }, OWNER, true)).rejects.toThrow(
+    await expect(edit({ entryLimit: 1 })).rejects.toThrow(
       'Free entries cannot exceed the entry limit per user'
     );
     expect(update).not.toHaveBeenCalled();
@@ -464,9 +500,10 @@ describe('updateCrucible — free entries', () => {
   it('locks them once the crucible has started', async () => {
     findUnique.mockResolvedValue(crucible({ entryLimit: 3 }));
 
-    await expect(edit({ freeEntriesPerUser: 1 }, OWNER, true)).rejects.toThrow(
+    await expect(edit({ freeEntriesPerUser: 1 })).rejects.toThrow(
       /only its name, description and images can change/
     );
+    expect(update).not.toHaveBeenCalled();
   });
 });
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { CrucibleIngestionStatus, CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import {
   baseModelMakesMediaType,
+  canSeeCrucibleEntryDetails,
   getCrucibleCountdown,
   getCrucibleManageActions,
   getCrucibleMinVotes,
@@ -13,11 +14,40 @@ import {
   getCrucibleEntriesCost,
   getCrucibleTotalPrizePool,
   getFreeEntriesLabel,
+  CRUCIBLE_SFW_LEVELS,
+  getCrucibleEntryBuzzType,
   isCrucibleFinalStretch,
+  isCrucibleSfw,
   isFreeCrucibleEntry,
   parsePrizePositions,
   rankCrucibleEntries,
 } from '~/utils/crucible-helpers';
+
+describe('green-site listing rule', () => {
+  it.each([
+    [1, false, true],
+    [1 | 2, false, true],
+    [1, true, false],
+    [1 | 4, false, false],
+    [1 | 8, false, false],
+    [16, false, false],
+    [2 | 16, false, false],
+    [0, false, false],
+    [64, false, false],
+    [1 | 64, false, false],
+  ])('isCrucibleSfw(level %i, textNsfw %s) is %s', (nsfwLevel, textNsfw, expected) => {
+    expect(isCrucibleSfw({ nsfwLevel, textNsfw })).toBe(expected);
+  });
+
+  it('lists exactly the PG / PG-13 combinations for a query to match', () => {
+    expect(CRUCIBLE_SFW_LEVELS).toEqual([1, 2, 3]);
+  });
+
+  it('charges an entrant in the currency of the site they enter on', () => {
+    expect(getCrucibleEntryBuzzType(true)).toBe('green');
+    expect(getCrucibleEntryBuzzType(false)).toBe('yellow');
+  });
+});
 
 describe('parsePrizePositions', () => {
   it('parses the object map the database actually stores', () => {
@@ -454,5 +484,43 @@ describe('free entries', () => {
     [3, 3, 'Free to enter'],
   ])('labels %i free of %i as %s', (freeEntriesPerUser, entryLimit, label) => {
     expect(getFreeEntriesLabel({ freeEntriesPerUser, entryLimit })).toBe(label);
+  });
+});
+
+describe('canSeeCrucibleEntryDetails', () => {
+  const stranger = { isModerator: false, isOwnEntry: false };
+
+  it.each([CrucibleStatus.Pending, CrucibleStatus.Active])(
+    "hides other people's entries from a judge while %s",
+    (status) => {
+      expect(canSeeCrucibleEntryDetails({ status, ...stranger })).toBe(false);
+    }
+  );
+
+  it.each([CrucibleStatus.Completed, CrucibleStatus.Cancelled])(
+    'reveals every entry once %s',
+    (status) => {
+      expect(canSeeCrucibleEntryDetails({ status, ...stranger })).toBe(true);
+    }
+  );
+
+  it('shows an entrant their own entries while running', () => {
+    expect(
+      canSeeCrucibleEntryDetails({
+        status: CrucibleStatus.Active,
+        isModerator: false,
+        isOwnEntry: true,
+      })
+    ).toBe(true);
+  });
+
+  it('shows moderators every entry while running', () => {
+    expect(
+      canSeeCrucibleEntryDetails({
+        status: CrucibleStatus.Active,
+        isModerator: true,
+        isOwnEntry: false,
+      })
+    ).toBe(true);
   });
 });

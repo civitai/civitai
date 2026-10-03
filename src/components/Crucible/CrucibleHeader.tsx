@@ -3,6 +3,7 @@ import { IconArrowLeft, IconPhoto, IconUsers, IconVideo } from '@tabler/icons-re
 import clsx from 'clsx';
 import { NavigateBack } from '~/components/BackButton/BackButton';
 import { CrucibleContextMenu } from '~/components/Crucible/CrucibleContextMenu';
+import { CrucibleFollowToggle } from '~/components/Crucible/CrucibleFollowToggle';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -139,10 +140,13 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
               </Button>
             )}
           </NavigateBack>
-          <CrucibleContextMenu
-            crucible={{ id: crucible.id, userId: crucible.user.id }}
-            position="bottom-end"
-          />
+          <div className="flex items-center gap-2">
+            <CrucibleFollowToggle crucible={{ id: crucible.id, status: crucible.status }} />
+            <CrucibleContextMenu
+              crucible={{ id: crucible.id, userId: crucible.user.id }}
+              position="bottom-end"
+            />
+          </div>
         </div>
 
         <div

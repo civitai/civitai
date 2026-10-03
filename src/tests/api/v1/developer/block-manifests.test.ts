@@ -14,18 +14,23 @@ const mockDbWrite = dbMock.dbWrite;
  *    pre-upsert check 403s on attempted change)
  */
 
-const { mockValidator } = vi.hoisted(() => {
+const { mockValidator, mockEnv } = vi.hoisted(() => {
   // The handler now calls the async submission gate (validate + settings-pattern
   // ReDoS check). Point validateSubmission at the SAME fn as validate so existing
   // `mockValidator.validate.mockReturnValue(...)` overrides drive both.
   const validate = vi.fn(() => ({ valid: true }));
   const validator = { validate, validateSubmission: validate };
-  return { mockValidator: validator };
+  return {
+    mockValidator: validator,
+    mockEnv: {
+      JOB_TOKEN: 'job-secret',
+      BLOCK_TOKEN_PRIVATE_KEY: 'x',
+      BLOCK_TOKEN_PUBLIC_KEY: 'x',
+    } as Record<string, unknown>,
+  };
 });
 
-vi.mock('~/env/server', () => ({
-  env: { JOB_TOKEN: 'job-secret', BLOCK_TOKEN_PRIVATE_KEY: 'x', BLOCK_TOKEN_PUBLIC_KEY: 'x' },
-}));
+vi.mock('~/env/server', () => ({ env: mockEnv }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: vi.fn(async () => true),
@@ -75,6 +80,7 @@ const VALID_BODY = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockEnv.JOB_TOKEN = 'job-secret';
   mockValidator.validate.mockReturnValue({ valid: true });
   mockDbRead.oauthClient.findUnique.mockResolvedValue({
     allowedScopes: 0xffffff,
@@ -200,5 +206,30 @@ describe('POST /api/v1/developer/block-manifests', () => {
     };
     expect(upsertArgs.create.renderMode).toBe('iframe');
     expect(upsertArgs.create.trustTier).toBe('unverified');
+  });
+});
+
+describe('POST /api/v1/developer/block-manifests — JOB_TOKEN not configured', () => {
+  it.each([
+    ['unset', undefined],
+    ['empty', ''],
+    ['whitespace-only', '  '],
+  ])(
+    '503s when JOB_TOKEN is %s, even for a caller presenting the same value',
+    async (_label, secret) => {
+      mockEnv.JOB_TOKEN = secret;
+      const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
+      const res = makeRes();
+      await handler(makeReq({ body: VALID_BODY, token: secret }), res);
+      expect(res._status).toBe(503);
+      expect(mockDbWrite.appBlock.upsert).not.toHaveBeenCalled();
+    }
+  );
+
+  it('POSITIVE CONTROL: a configured JOB_TOKEN still 401s a wrong header', async () => {
+    const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
+    const res = makeRes();
+    await handler(makeReq({ body: VALID_BODY, token: 'wrong' }), res);
+    expect(res._status).toBe(401);
   });
 });

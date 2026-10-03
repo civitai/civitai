@@ -315,6 +315,7 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
             label="Aspect Ratio"
             options={meta?.options ?? []}
             priorityOptions={meta?.priorityOptions}
+            custom={meta?.custom}
             maxVisible={5}
           />
         )}

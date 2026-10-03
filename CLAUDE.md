@@ -228,7 +228,7 @@ Use a top-level `import type * as PromClient` — an inline `typeof import('...'
 **Before widening a mock, check whether the import edge is needed at all.** A failing suite may be telling you the code pulled in a dependency it doesn't want, not that the mock is too narrow, and widening it would hide that. (Bit us twice in one day, Aug 2026, on two branches; one of those three suites was fixed by extracting the helpers into their own module instead.)
 
 #### Convention guards run as tests
-Several repo conventions are enforced by tests, not by eslint. 55 live in `src/server/services/__tests__/no-*.test.ts` — `no-agent-ground-truth-write`, `no-bound-make-interval` (inside `$queryRaw`/`Prisma.sql`, a `make_interval` argument must be inlined with `Prisma.raw` — Prisma binds a JS number as int8, `make_interval` takes int4, and the query throws 42883 on every call while every mocked test passes), `no-coerce-boolean-in-api`,
+Several repo conventions are enforced by tests, not by eslint. 56 live in `src/server/services/__tests__/no-*.test.ts` — `no-agent-ground-truth-write`, `no-bound-make-interval` (inside `$queryRaw`/`Prisma.sql`, a `make_interval` argument must be inlined with `Prisma.raw` — Prisma binds a JS number as int8, `make_interval` takes int4, and the query throws 42883 on every call while every mocked test passes), `no-coerce-boolean-in-api`,
 `no-direct-block-budget-claim-read` (no submit gate may read the `claims.buzzBudget` per-call ceiling directly — every one goes through `blockPerCallBudget`, so a future ceiling decision is made in one place that knows whether the compared value carries the author fee), `no-direct-shared-module-mock` (the shared-mock ratchet, see `docs/testing/shared-module-mocks.md`),
 `no-divergent-active-sales-cap` (SERVER side only: the `model.getActiveSales` parser enforces the id cap, and the chunk size a card surface splits to does not exceed it — it CANNOT see the call site, which is pinned behaviourally by `src/components/Cards/__tests__/useModelSaleBadges.test.ts`, a file in the full unit suite but NOT in `test:lint-rules`, so a `test:lint-rules` run alone does not cover that half; the procedure was rejecting every call from a scrolled feed as an input-validation 400, so no 5xx was recorded and the sale badge simply vanished from the grid), `no-divergent-author-fee-base` (every `recordSpendAttribution` call site must pass the App Blocks author fee the orchestrator's `submitted.cost.base`, never the snapshot and never the gross `buzzAmount` — the three are indistinguishable positive Buzz integers, so a percentage of the wrong one takes a cut of another creator's licensing fee),
 `no-divergent-can-generate-derivation` (coverage alone is not canGenerate — the ecosystem must also support the model TYPE, and a Checkpoint on a `modelLocked` ecosystem is held to the LIVE coverage column whichever rule the flag picks; both constants-side halves are composed only in `isGenerationEligible`),
@@ -239,7 +239,11 @@ token there is spendable on the upload path, which is the free remix-gallery sub
 `no-lint-rules-script-drift`,
 `no-menu-target-tooltip-nesting` (a `Tooltip` INSIDE `Menu.Target` steals the ref the menu needs and
 the trigger silently stops opening — six sites had it independently),
-`no-module-scope-cache`, `no-pk-addressed-engagement-write`, `no-server-infra-in-app-graph`,
+`no-module-scope-cache`, `no-pk-addressed-engagement-write`,
+`no-retired-index-in-purge-targets` (a search index the ban purge filter-deletes from must not be
+retired — a retired index never had its settings applied, so the delete is rejected and the banned
+user stays in search while `processIndex` logs the failure and returns),
+`no-server-infra-in-app-graph`,
 `no-sharp-outside-native-project`, `no-ssr-divergent-media-query`, `no-stale-moderator-route-probe`, `no-static-html2canvas-import`,
 `no-unbounded-paging-fake`, `no-unbumped-draft-status-write` (a raw-SQL write that moves a Model
 into `Draft` must set `"updatedAt" = now()`, or `remove-old-drafts` can cascade-delete it with no
@@ -280,7 +284,7 @@ was last audited, on 2026-08-24, and were wired in then. **Add a new guard to th
 you write it**, and don't read a green `test:lint-rules` as "all guards passed" without checking the directory
 against the script.
 
-`test:lint-rules` names 60 files today.
+`test:lint-rules` names 61 files today.
 
 The count above, the count in the list, and the list itself are what went stale three times, so
 `no-lint-rules-script-drift` fails when they disagree with the directory or the script. It reads two exact

@@ -26,7 +26,11 @@ import {
   getResourceGenerationSupport,
 } from '~/shared/constants/basemodel.constants';
 import type { ModelType } from '~/shared/utils/prisma/enums';
-import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
+import {
+  MEGAPIXEL,
+  findClosestAspectRatio,
+  type CustomDimensionLimits,
+} from '~/utils/aspect-ratio-helpers';
 import { findClosest, getRatio } from '~/utils/number-helpers';
 
 // Response header the orchestrator router sets when the generation client is behind; UpdateRequiredWatcher
@@ -730,6 +734,96 @@ export const sdxlFullAspectRatioBuckets = [
 export const flux1ProAspectRatioBuckets = sdxlFullAspectRatioBuckets.filter(
   (b) => b.width <= 1440 && b.height <= 1440
 );
+
+/**
+ * The `value` of a custom width × height, in place of a ratio label. An explicit
+ * marker, not "any size that isn't a bucket": remix and legacy metadata send a
+ * source image's raw size, which must keep snapping to the nearest bucket.
+ */
+export const CUSTOM_ASPECT_RATIO = 'custom';
+
+/**
+ * Custom width × height, grouped by what each model's authors document (model
+ * cards, papers, BFL's docs — checked 2026-10-01): ~1, ~2 and ~4 MP, plus Flux.1
+ * Pro and SD1. The engines accept 64–2048 /16 (Flux.2 and Klein from 512;
+ * flux1-pro 256–1440 /32); these are tighter on purpose: /32
+ * steps, sides from 512, and 2.5:1 at most, which covers the 21:9 bucket
+ * (1536×640 is 2.4:1). Areas are in MEGAPIXEL (1024²) units.
+ *
+ * No image may exceed 4 MP = 2048² — a product ceiling, not an engine one.
+ *
+ * Each group has two levels: `maxArea`, enforced on every parse, and
+ * `recommendedArea`, past which the picker only warns.
+ */
+
+/**
+ * Trained at ~1 MP, nothing larger documented: SDXL, Pony V6, Illustrious, NoobAI,
+ * Chroma, HiDream-I1 — plus Flux.2 Klein and Z-Image Turbo until a test
+ * generation confirms their family's larger figures apply to them. Illustrious
+ * v1.0+ is 1536² native, but the ecosystem can't tell it from the v0.1 merges
+ * that most checkpoints are, so the warning stays at 1 MP.
+ */
+export const sdxlCustomDimensionLimits = {
+  step: 32,
+  minSide: 512,
+  maxSide: 2048,
+  maxArea: 1536 * 1536,
+  recommendedArea: MEGAPIXEL,
+  maxRatio: 2.5,
+} as const satisfies CustomDimensionLimits;
+
+/**
+ * Documented to ~2 MP: FLUX.1 dev / Krea ("0.1 to 2.0 megapixels"), Anima
+ * (512²–1536²), Pony V7 (768–1536px, larger recommended), Boogu Base/Edit (up to
+ * 2K). Same hard cap as the ~1 MP group; only the warning moves up.
+ */
+export const twoMegapixelCustomDimensionLimits = {
+  ...sdxlCustomDimensionLimits,
+  recommendedArea: 2 * MEGAPIXEL,
+} as const satisfies CustomDimensionLimits;
+
+/**
+ * Documented to ~4 MP: FLUX.2 dev/pro/flex/max ("up to 4MP"), Ideogram 4 (256–2048
+ * /16), Z-Image Base (512²–2048² total area). Capped at the 4 MP ceiling, which is
+ * also what they recommend, so the picker never warns.
+ */
+export const fourMegapixelCustomDimensionLimits = {
+  ...sdxlCustomDimensionLimits,
+  maxArea: 4 * MEGAPIXEL,
+  recommendedArea: 4 * MEGAPIXEL,
+} as const satisfies CustomDimensionLimits;
+
+/**
+ * BFL's flux1-pro takes 256–1440 /32 per side, so 1440² (≈1.98 MP) is its most.
+ * Same 2 MP recommendation as the rest of FLUX.1, so it never warns.
+ */
+export const flux1ProCustomDimensionLimits = {
+  ...twoMegapixelCustomDimensionLimits,
+  maxSide: 1440,
+  maxArea: 1440 * 1440,
+} as const satisfies CustomDimensionLimits;
+
+/** SD1: ~512² training area; the comfy SD1 input caps each side at 1024. */
+export const sd1CustomDimensionLimits = {
+  step: 32,
+  minSide: 256,
+  maxSide: 1024,
+  maxArea: 768 * 768,
+  recommendedArea: 512 * 768,
+  maxRatio: 2.5,
+} as const satisfies CustomDimensionLimits;
+
+/**
+ * Every set of custom limits. A saved size belongs to the user, not to a model: it
+ * is shown wherever it fits, so saving one only needs some model to accept it.
+ */
+export const allCustomDimensionLimits: readonly CustomDimensionLimits[] = [
+  sdxlCustomDimensionLimits,
+  twoMegapixelCustomDimensionLimits,
+  fourMegapixelCustomDimensionLimits,
+  flux1ProCustomDimensionLimits,
+  sd1CustomDimensionLimits,
+];
 
 /** Shown before the picker's "More" button: the three buckets these pickers offered before. */
 export const sdxlFullPriorityAspectRatios = ['3:2', '1:1', '2:3'];

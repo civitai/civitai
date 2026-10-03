@@ -573,6 +573,7 @@ model User {
   issuedStrikes               UserStrike[]                    @relation("strikeIssuedBy")
   voidedStrikes               UserStrike[]                    @relation("strikeVoidedBy")
   generationPresets           GenerationPreset[]
+  generationSizePresets       GenerationSizePreset[]
   ownedWildcardSets           WildcardSet[]                   @relation("WildcardSetOwner")
   blurbs                      Blurb[]
 
@@ -638,6 +639,7 @@ model User {
   pricingSlots                       PricingSlot[]
   crucibles                          Crucible[]
   crucibleEntries                    CrucibleEntry[]
+  crucibleEngagements                CrucibleEngagement[]
 
   @@index([deletedAt])
 }
@@ -1236,6 +1238,7 @@ model ModelVersion {
   imageResources          ImageResource[]
   posts                   Post[]
   resourceReviews         ResourceReview[]
+  resourceInsight         ResourceInsight?
   hashes                  ModelHash[]
   metricsDaily            ModelMetricDaily[]
   modelVersionExploration ModelVersionExploration[]
@@ -1768,6 +1771,28 @@ model ResourceReviewReaction {
   updatedAt DateTime        @updatedAt
 
   @@unique([reviewId, userId, reaction])
+}
+
+// Jev-assigned meaning labels for a published model version (what a resource is
+// FOR: role / style family / content types). One row per version; rows carry the
+// question-spec hash that produced them, so a spec bump marks old rows `stale`
+// for re-labeling instead of silently blending two taxonomies. Written only by
+// the labeling pass (scripts/label-resource-insights.ts) — never by user traffic.
+// The migration is applied manually per environment (no prisma migrate deploy).
+model ResourceInsight {
+  modelVersionId Int          @id
+  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  role           String
+  styleFamily    String
+  contentTypes   String[]
+  qualityScore   Float
+  confidence     Float
+  specHash       String
+  model          String
+  createdAt      DateTime     @default(now())
+  stale          Boolean      @default(false)
+
+  @@index([stale])
 }
 
 enum ReviewReactions {
@@ -6136,6 +6161,7 @@ enum JobQueueType {
   BlockedImageDelete
   ImageScan
   ReplacedImageDelete
+  ImageStorageDelete
 }
 
 model JobQueue {
@@ -6143,6 +6169,7 @@ model JobQueue {
   entityType EntityType
   entityId   Int
   createdAt  DateTime     @default(now())
+  data       Json?
 
   @@id([entityType, entityId, type])
 }
@@ -6389,7 +6416,7 @@ model Appeal {
   internalNotes     String?
   buzzTransactionId String?
 
-  @@unique([entityType, entityId, userId])
+  @@index([entityType, entityId, userId])
   @@index([userId])
   @@index([status])
 }
@@ -8185,6 +8212,20 @@ model GenerationPreset {
   @@index([userId, ecosystem])
 }
 
+/// A custom width × height a user saved. One list per user, offered on every
+/// model whose limits accept the size unchanged; greyed out where they don't.
+model GenerationSizePreset {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  width     Int
+  height    Int
+  createdAt DateTime @default(now())
+
+  @@unique([userId, width, height])
+  @@index([userId])
+}
+
 enum WildcardSetKind {
   System
   User
@@ -8984,6 +9025,8 @@ model Crucible {
   maxClipSeconds    Int?
   prizePositions    Json           @default("[]")
   allowedResources  Json?
+  // Base model names (basemodel.constants); an entry's checkpoint must be one of them.
+  allowedBaseModels String[]       @default([])
   duration          Int            @default(480)
   startAt           DateTime?
   endAt             DateTime?
@@ -8998,14 +9041,32 @@ model Crucible {
   // The scan found the text adult: list surfaces show it only to viewers who browse R or above.
   textNsfw          Boolean        @default(false)
 
-  entries CrucibleEntry[]
-  reports CrucibleReport[]
+  entries     CrucibleEntry[]
+  reports     CrucibleReport[]
+  engagements CrucibleEngagement[]
 
   @@index([userId], type: Hash)
   @@index([status])
   @@index([endAt])
   @@index([startAt])
   @@index([status, ingestion])
+}
+
+enum CrucibleEngagementType {
+  Notify
+}
+
+model CrucibleEngagement {
+  userId     Int
+  user       User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  crucibleId Int
+  crucible   Crucible               @relation(fields: [crucibleId], references: [id], onDelete: Cascade)
+  type       CrucibleEngagementType
+  createdAt  DateTime               @default(now())
+
+  @@id([type, crucibleId, userId])
+  @@index([crucibleId])
+  @@index([userId], type: Hash)
 }
 
 model CrucibleReport {

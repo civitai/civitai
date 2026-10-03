@@ -21,7 +21,7 @@ All controllers/nodes rendered inside the `<AccordionLayout label="Advanced">` s
 | 15 | `enablePromptEnhancer` | Enhance prompt | `Checkbox` | Automatically improve prompt for better results | Video ecosystems |
 | 16 | `draft` | Draft Mode | `Checkbox` | Generate faster at lower quality | Wan v2.2-5b |
 | 17 | `shift` | Shift | `SliderInput` | Shift parameter | Wan v2.2, v2.2-5b |
-| 18 | `interpolatorModel` | Interpolator | `SelectInput` | Interpolator model selector | Wan v2.2 |
+| 18 | `interpolatorModel` | Interpolator | `SelectInput` | Interpolator model selector | Wan v2.2-5b |
 
 **Not in this section:** `resolution` renders in the main form body, directly above `aspectRatio` — not in Advanced. It is a quality tier on the video ecosystems and a base-resolution tier on the image ecosystems that expose it (Seedream, Nano Banana, Lens, HiDream-O1, and Krea 2's comfy builds, where 1K/2K scales the aspect-ratio dimensions).
 

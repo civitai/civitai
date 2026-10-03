@@ -19,6 +19,7 @@ import { instrumentApiResponse, reconstructApiRoute } from '~/server/prom/http-e
 import { isClientAbortError, isDriverAuthoredMessage } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
 import { PRIVATE_CACHE_CONTROL } from '~/server/middleware/middleware-utils';
+import { isConfiguredSecret } from '~/server/utils/configured-secret';
 import { logToAxiom, buildCentralErrorLog, wasServerFaultLogged } from '~/server/logging/client';
 import {
   GENERIC_CLIENT_ERROR_BY_STATUS,
@@ -306,7 +307,7 @@ export function TokenSecuredEndpoint(
   handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>
 ) {
   return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
-    if (!token || token.trim() === '') {
+    if (!isConfiguredSecret(token)) {
       res.status(503).json({ error: 'Endpoint not configured' });
       return;
     }

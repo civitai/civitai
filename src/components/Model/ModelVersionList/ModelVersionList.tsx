@@ -27,6 +27,7 @@ import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ModelUsageControl } from '~/shared/utils/prisma/enums';
 import {
+  isAdditionalResourceFeeWaived,
   isEvictable,
   isGenerationDisabled,
 } from '~/shared/constants/model-version-flags.constants';
@@ -249,6 +250,7 @@ export function ModelVersionList({
                 canGenerate={version.canGenerate}
                 generationDisabled={isGenerationDisabled(version.flags ?? 0)}
                 evictable={isEvictable(version.flags ?? 0)}
+                additionalResourceFeeWaived={isAdditionalResourceFeeWaived(version.flags ?? 0)}
                 showToggleCoverage={showToggleCoverage}
               />
             </Button.Group>

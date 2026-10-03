@@ -18,6 +18,7 @@ import { getBlocklists, type ModWordBlocklist } from '~/server/utils/moderation-
 import type { EntityType } from '~/shared/utils/prisma/enums';
 import { ChatMessageType, JobQueueType, ReportReason } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
+import { AUTOMATED_REPORT_RETENTION_DAYS, clearAutomatedReports } from './clear-automated-reports';
 import { createJob, getJobDate } from './job';
 
 // http://localhost:3000/api/webhooks/run-jobs?token=X&run=entity-moderation-queues
@@ -31,7 +32,6 @@ const jobNameClear = 'clear-automated';
 
 const chunkSize = 100; // keep an eye on this
 const minDate = '2025-06-13';
-const reportRetention = 14;
 
 // Tags that trigger auto-mute for new accounts (< autoMuteAccountAgeDays old)
 const autoMuteTags = ['Impersonating Civitai Staff'];
@@ -725,17 +725,17 @@ async function modQueue() {
   }
 }
 
-async function clearAutomatedReports() {
+async function clearAutomated() {
   const [, setLastRun] = await getJobDate(`${jobName}-${jobNameClear}`);
   log(`Starting ${jobName}-${jobNameClear}`);
   try {
-    await dbWrite.reportAutomated.deleteMany({
-      where: {
-        createdAt: { lt: dayjs().subtract(reportRetention, 'day').toDate() },
-      },
-    });
+    const { closed, deleted } = await clearAutomatedReports(
+      dayjs().subtract(AUTOMATED_REPORT_RETENTION_DAYS, 'day').toDate()
+    );
 
-    log(`Finished ${jobName}-${jobNameClear}`);
+    log(
+      `Finished ${jobName}-${jobNameClear}, closed ${closed} reports, deleted ${deleted} payloads`
+    );
     await setLastRun();
   } catch (error) {
     logAx({ message: 'Error deleting old reports', data: { error } });
@@ -746,10 +746,6 @@ async function clearAutomatedReports() {
 
 const modChatJob = createJob(`${jobName}-${jobNameChat}`, '*/5 * * * *', modChat);
 const modQueueJob = createJob(`${jobName}-${jobNameQueues}`, '*/5 * * * *', modQueue);
-const clearAutomatedJob = createJob(
-  `${jobName}-${jobNameClear}`,
-  '0 6 * * *',
-  clearAutomatedReports
-);
+const clearAutomatedJob = createJob(`${jobName}-${jobNameClear}`, '0 6 * * *', clearAutomated);
 
 export const entityModerationJobs = [modChatJob, modQueueJob, clearAutomatedJob];

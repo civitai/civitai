@@ -13,6 +13,7 @@ import {
   computePackAmountDue,
   isConsumableCosmeticType,
   isSelfAuthoredPackMember,
+  packMembersMissing,
 } from '~/server/schema/creator-shop.schema';
 import {
   createBuzzTransaction,
@@ -165,7 +166,7 @@ export const assertPackPurchasable = async ({
   userId: number;
   members: PackMemberListing[];
   /** How many members the pack was built with (`meta.packMemberCount`). */
-  memberCount: number;
+  memberCount: number | undefined;
   packCreatorId?: number | null;
   stickersEnabled?: boolean;
 }) => {
@@ -181,10 +182,7 @@ export const assertPackPurchasable = async ({
       "You can't buy your own pack — the items other creators made are on sale individually"
     );
 
-  // Compared against the count recorded when the pack was built, not against the
-  // join rows themselves: a member Cosmetic being deleted cascades its join row
-  // away, so a live count would shrink with the pack and agree with itself.
-  if (members.length !== memberCount)
+  if (packMembersMissing(memberCount, members.length) > 0)
     throw throwBadRequestError('This pack contains an item that is no longer available');
 
   if (!stickersEnabled && members.some((m) => m.type === CosmeticType.Sticker))
@@ -430,7 +428,7 @@ export const purchaseCosmeticPack = async ({
     unitAmount: number;
     addedById: number | null;
     meta: CosmeticShopItemMeta;
-    memberCount: number;
+    memberCount: number | undefined;
   };
   members: PackMemberListing[];
   payWith?: 'default' | 'blue' | 'blue-first';
@@ -483,13 +481,9 @@ export const purchaseCosmeticPack = async ({
   const paidFor = members.filter((m) => !isSelfAuthoredPackMember(m, userId, shopItem.addedById));
 
   // Ahead of both pricing guards, because an empty pack reaches them with an
-  // empty `paidFor` and would be told the pack is the buyer's own work.
-  //
-  // Only reachable once `meta.packMemberCount` goes missing: while it is set,
-  // assertPackPurchasable refuses an emptied pack on the count, and it can never
-  // be written as zero. The moderator product editor rewrites a shop item's meta
-  // wholesale, which drops it — the same precondition that lets a PARTIALLY
-  // emptied pack sell at full price, which this does not fix.
+  // empty `paidFor` and would be told the pack is the buyer's own work. Only a
+  // pack recorded as built with zero members gets past assertPackPurchasable to
+  // here.
   if (!members.length) throw throwBadRequestError('This pack has nothing left in it');
 
   // Both fire on an all-own pack priced at the floor, so this one goes first: an

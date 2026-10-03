@@ -93,6 +93,17 @@ export function resolveSuggestionLimit(limit: number | undefined): number {
  * block sends one limit for all its requests, so this is one entry per app, not
  * one per call. `resolveSuggestionLimit` is the second half of the fix — it holds
  * the contract even when an entry written under an older key shape is read back.
+ *
+ * 🔴 The spec term is `RESOURCE_INTENT_SPEC_HASH`, not `QUESTION_SPEC_VERSION`. The hash is
+ * derived from the question spec itself, so ANY edit to it — a reworded prompt, a changed
+ * option set, a new `criteria` rubric — invalidates the cache automatically. The
+ * hand-maintained integer only does that when someone remembers to bump it, and the schema's
+ * own header promises "a question edit invalidates old analytics instead of silently blending
+ * with them", which the version term cannot deliver for the CACHE half. Measured in this
+ * change: rewording the `specificity` prompt moved the hash and left the version at 1, so a
+ * pre-edit entry would have been served for its full hour under the new spec AND stamped into
+ * the shadow table with the NEW hash — exactly the blend the pair exists to prevent. The
+ * version still rides the shadow event, where it labels the spec generation.
  */
 export function resourceIntentCacheKey(input: {
   prompt: string;
@@ -107,7 +118,7 @@ export function resourceIntentCacheKey(input: {
         input.baseModel ?? '',
         String(input.browsingLevel),
         String(input.cap),
-        String(QUESTION_SPEC_VERSION),
+        RESOURCE_INTENT_SPEC_HASH,
       ].join('|')
     )
     .digest('hex');

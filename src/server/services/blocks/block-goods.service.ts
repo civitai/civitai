@@ -12,10 +12,11 @@ import { withRetries } from '~/server/utils/errorHandling';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import type { BuzzAccountType } from '~/shared/constants/buzz.constants';
 import {
-  BLOCK_GOOD_MAX_PRICE_BUZZ,
+  BLOCK_GOOD_PURCHASE_STATUS,
   blueLegOfPayout,
   computeBlockGoodSplit,
   findManifestGood,
+  maxPriceBuzzForKind,
 } from '~/shared/constants/block-goods.constants';
 import type { BlockGoodDeclaration } from '~/shared/constants/block-goods.constants';
 import { newBlockGoodEntitlementId, newBlockGoodPurchaseId } from '~/server/utils/app-block-ids';
@@ -52,10 +53,17 @@ export const BLOCK_GOODS_LOG_NAME = 'block-goods';
 // for a future non-HTTP caller (a mod tool, a job) that does not pass through the
 // middleware; it must never be the reason a purchase is allowed.
 const APP_BLOCK_APPROVED_STATUS = 'approved';
+/**
+ * Local names for the SHARED status domain, kept so the eleven call sites below
+ * read unchanged. The values are no longer declared here: the owner-earnings
+ * read in `buzz-attribution.service.ts` filters on the same three strings, and
+ * two independent spellings of a money status is how one of them ends up wrong.
+ * See `BLOCK_GOOD_PURCHASE_STATUS` for what each value means.
+ */
 /** Claimed, charge outcome not yet settled. See `purchaseBlockGood`. */
-const PURCHASE_STATUS_PENDING = 'pending';
-const PURCHASE_STATUS_PAID = 'paid';
-const PURCHASE_STATUS_REFUNDED = 'refunded';
+const PURCHASE_STATUS_PENDING = BLOCK_GOOD_PURCHASE_STATUS.pending;
+const PURCHASE_STATUS_PAID = BLOCK_GOOD_PURCHASE_STATUS.paid;
+const PURCHASE_STATUS_REFUNDED = BLOCK_GOOD_PURCHASE_STATUS.refunded;
 
 /** What was actually paid to one recipient, in one colour. */
 export type BlockGoodPayout = {
@@ -545,7 +553,23 @@ export async function purchaseBlockGood(
 
   // Re-checked here and not only at manifest validation: a manifest approved
   // before the ceiling moved would otherwise keep charging the old price.
-  if (priceBuzz > BLOCK_GOOD_MAX_PRICE_BUZZ) {
+  //
+  // 🔴 PER-KIND, via `maxPriceBuzzForKind` — NOT the general ceiling. This used to
+  // read `BLOCK_GOOD_MAX_PRICE_BUZZ`, which made it a SECOND, DISAGREEING copy of a
+  // bound the manifest parser had already narrowed: an `app_unlock` is capped at
+  // 5,000 there and this guard admitted it to 50,000, i.e. 10x its real ceiling.
+  // Worse, the guard's own stated purpose — "a manifest approved before the ceiling
+  // moved" — is EXACTLY the app_unlock case, since every manifest approved to date
+  // predates that cap, so the one kind it most needed to catch was the one it could
+  // not see.
+  //
+  // Not reachable through the HTTP endpoint today (`resolveBlockGoodForPurchase`
+  // goes through `findManifestGood`, which refuses a catalog with ANY error), and
+  // that is precisely why it had to be fixed now rather than noticed later:
+  // `purchaseBlockGood` takes `resolved` as a CALLER-SUPPLIED input by design, and
+  // the pinned-version resolution path this file's own docs promise is a new
+  // producer that will not re-parse. When that lands, this line is the only bound.
+  if (priceBuzz > maxPriceBuzzForKind(good.kind)) {
     return {
       ok: false,
       status: 400,
@@ -1191,13 +1215,40 @@ async function voidReversedClaim(purchaseId: string, reason: string): Promise<vo
 }
 
 /**
- * 🔴 GOODS REVENUE IS INVISIBLE TO THE EXISTING APP-EARNINGS SURFACES, and that
- * is a known gap. `getRevenueForOwner` / `getAppEarnings` / `blocks.getMyApps`
- * all aggregate `BlockBuzzAttribution`; this rail records into
- * `block_good_purchase.payouts` and writes no attribution row.
- * `recordSpendAttribution` is workflow-anchored so it is not a drop-in. Until
- * something bridges them, an owner's earnings page shows generation revenue and
- * not sales.
+ * ⚠️ PARTIALLY CLOSED — read which half. This block used to say goods revenue
+ * was invisible to EVERY app-earnings surface. That is no longer true of the
+ * owner's own revenue pages and is still true of the collaborator ones.
+ *
+ * - BRIDGED: `blocks.getMyRevenue` — both `/apps/revenue` and
+ *   `/apps/[appBlockId]/revenue` — now also calls `getGoodsSalesForOwner`
+ *   (`src/server/services/blocks/buzz-attribution.service.ts`), a READ-side
+ *   aggregate over `block_good_purchase` scoped by `app_owner_user_id`. This
+ *   rail still writes NO attribution row and nothing here changed: the bridge is
+ *   a second query the reporting layer runs, deliberately not a write, so it
+ *   commits to nothing about whether a sale "is an attribution".
+ * - STILL INVISIBLE: `getAppEarnings` and `blocks.getMyApps`, which read
+ *   `app-collaborator-earnings.service.ts`. Those are the COLLABORATOR surfaces.
+ *
+ * ⚠️ CORRECTION, because the first version of this note gave a reason the code
+ * contradicts. It said bridging them "needs an answer to how one sale divides
+ * among several seats — a split nobody has specified". **There is no split to
+ * specify.** `getAppEarnings` already shows the app's UNDIVIDED owner-share total
+ * to every seat — its own test asserts the accepted editor reads the same
+ * `shareCents` as the owner, and `AppEarningsPanel` says so on screen ("shared
+ * with everyone seated on it"). The split argument is real but belongs to a
+ * different axis: it is about the PAYEE on the write side, which is why
+ * `app-access.call-site-ledger.test.ts` records it for `resolveBlockGoodForPurchase`
+ * below. Carrying it over to a READ, where nobody receives anything, was wrong.
+ *
+ * The honest statement of why they are unbridged: it is UNFINISHED SCOPE, not a
+ * blocked decision. Extending the collaborator panel means a second renderer, a
+ * Buzz-vs-cents decision for `getMyAppsEarnings`'s `lifetimeShareCents` (which is
+ * a cents field a Buzz total cannot simply be added to), and a deliberate choice
+ * about whether a seated editor should see a second rail's figures. Tracked as
+ * follow-on work; it is not waiting on a product answer.
+ *
+ * `recordSpendAttribution` is workflow-anchored, so it was never a drop-in and
+ * still is not.
  *
  * Credit the app owner and RECORD what was actually paid, per colour, with each
  * leg's ledger transaction id. The record is what makes a refund a true

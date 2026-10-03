@@ -57,7 +57,6 @@ export const whatIfFingerprints: Record<string, WhatIfFingerprint> = {
   prompt: () => undefined,
   negativePrompt: () => undefined,
   seed: () => undefined,
-  denoise: () => undefined,
   musicDescription: () => undefined,
   lyrics: () => undefined,
   // A supplied score skips the billed score-planning stage.

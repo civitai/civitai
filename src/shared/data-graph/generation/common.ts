@@ -21,10 +21,13 @@ import {
   filterCompatibleResources,
 } from '~/shared/constants/basemodel.constants';
 import {
+  CUSTOM_ASPECT_RATIO,
   MAX_PROMPT_LENGTH,
   MAX_SEED,
   flux1ProAspectRatioBuckets,
+  flux1ProCustomDimensionLimits,
   samplers,
+  sdxlCustomDimensionLimits,
   sdxlFullAspectRatioBuckets,
   sdxlFullPriorityAspectRatios,
 } from '~/shared/constants/generation.constants';
@@ -32,7 +35,11 @@ import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
 import { unselectableVersionIds } from './gates';
 import type { ModelType } from '~/shared/utils/prisma/enums';
-import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
+import {
+  findClosestAspectRatio,
+  fitCustomDimensions,
+  type CustomDimensionLimits,
+} from '~/utils/aspect-ratio-helpers';
 import { isWorkflowAvailable, getWorkflowsForEcosystem, workflowConfigByKey } from './config';
 import {
   controlNetPreprocessors,
@@ -87,10 +94,13 @@ export function aspectRatioNode({
   options,
   defaultValue,
   priorityOptions,
+  custom,
 }: {
   options: AspectRatioOption[];
   defaultValue?: string;
   priorityOptions?: string[];
+  /** Accept `{ value: 'custom', width, height }`, fitted inside these limits. */
+  custom?: CustomDimensionLimits;
 }) {
   const defaultOption = options.find((o) => o.value === (defaultValue ?? '1:1')) ?? options[0];
   return {
@@ -109,6 +119,18 @@ export function aspectRatioNode({
 
         // Try exact match first
         const value = typeof val === 'string' ? val : val.value;
+
+        // A custom size is fitted inside the limits; without limits, or without a
+        // usable size, it falls through and snaps to the closest bucket like any
+        // other unknown value.
+        if (value === CUSTOM_ASPECT_RATIO && custom && typeof val === 'object') {
+          const fit =
+            val.width && val.height
+              ? fitCustomDimensions({ width: val.width, height: val.height }, custom)
+              : undefined;
+          if (fit)
+            return { label: `${fit.width}×${fit.height}`, value: CUSTOM_ASPECT_RATIO, ...fit };
+        }
         const exactMatch = options.find((o) => o.value === value);
         if (exactMatch) return exactMatch;
 
@@ -130,6 +152,7 @@ export function aspectRatioNode({
     meta: {
       options,
       priorityOptions,
+      custom,
     },
   };
 }
@@ -140,6 +163,7 @@ export const sdxlFullAspectRatioNode = () =>
     options: sdxlFullAspectRatioBuckets,
     priorityOptions: sdxlFullPriorityAspectRatios,
     defaultValue: '1:1',
+    custom: sdxlCustomDimensionLimits,
   });
 
 /** sdxlFullAspectRatioNode minus the buckets over Flux.1 Pro's 1440 side limit. */
@@ -148,6 +172,7 @@ export const flux1ProAspectRatioNode = () =>
     options: flux1ProAspectRatioBuckets,
     priorityOptions: sdxlFullPriorityAspectRatios,
     defaultValue: '1:1',
+    custom: flux1ProCustomDimensionLimits,
   });
 
 // =============================================================================

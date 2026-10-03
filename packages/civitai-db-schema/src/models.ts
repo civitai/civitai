@@ -180,7 +180,7 @@ export type PurchasableRewardUsage = "SingleUse" | "MultiUse";
 
 export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection" | "Comment" | "CommentV2" | "User" | "UserProfile" | "ResourceReview" | "ChatMessage" | "Model3D";
 
-export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete";
+export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete";
 
 export type VaultItemStatus = "Pending" | "Stored" | "Failed";
 
@@ -259,6 +259,8 @@ export type UserHubSourceType = "User" | "Model" | "ModelVersion" | "Collection"
 export type CrucibleStatus = "Pending" | "Active" | "Completed" | "Cancelled";
 
 export type CrucibleIngestionStatus = "Pending" | "Scanned" | "Blocked" | "Error";
+
+export type CrucibleEngagementType = "Notify";
 
 export interface Account {
   id: number;
@@ -650,6 +652,7 @@ export interface User {
   issuedStrikes?: UserStrike[];
   voidedStrikes?: UserStrike[];
   generationPresets?: GenerationPreset[];
+  generationSizePresets?: GenerationSizePreset[];
   ownedWildcardSets?: WildcardSet[];
   blurbs?: Blurb[];
   model3ds?: Model3D[];
@@ -707,6 +710,7 @@ export interface User {
   pricingSlots?: PricingSlot[];
   crucibles?: Crucible[];
   crucibleEntries?: CrucibleEntry[];
+  crucibleEngagements?: CrucibleEngagement[];
 }
 
 export interface CustomerSubscription {
@@ -1061,6 +1065,7 @@ export interface ModelVersion {
   imageResources?: ImageResource[];
   posts?: Post[];
   resourceReviews?: ResourceReview[];
+  resourceInsight?: ResourceInsight | null;
   hashes?: ModelHash[];
   metricsDaily?: ModelMetricDaily[];
   modelVersionExploration?: ModelVersionExploration[];
@@ -1414,6 +1419,20 @@ export interface ResourceReviewReaction {
   reaction: ReviewReactions;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface ResourceInsight {
+  modelVersionId: number;
+  modelVersion?: ModelVersion;
+  role: string;
+  styleFamily: string;
+  contentTypes: string[];
+  qualityScore: number;
+  confidence: number;
+  specHash: string;
+  model: string;
+  createdAt: Date;
+  stale: boolean;
 }
 
 export interface Post {
@@ -3770,6 +3789,7 @@ export interface JobQueue {
   entityType: EntityType;
   entityId: number;
   createdAt: Date;
+  data: JsonValue | null;
 }
 
 export interface VaultItem {
@@ -5301,6 +5321,15 @@ export interface GenerationPreset {
   updatedAt: Date;
 }
 
+export interface GenerationSizePreset {
+  id: number;
+  userId: number;
+  user?: User;
+  width: number;
+  height: number;
+  createdAt: Date;
+}
+
 export interface WildcardSet {
   id: number;
   kind: WildcardSetKind;
@@ -5698,6 +5727,7 @@ export interface Crucible {
   maxClipSeconds: number | null;
   prizePositions: JsonValue;
   allowedResources: JsonValue | null;
+  allowedBaseModels: string[];
   duration: number;
   startAt: Date | null;
   endAt: Date | null;
@@ -5711,6 +5741,16 @@ export interface Crucible {
   textNsfw: boolean;
   entries?: CrucibleEntry[];
   reports?: CrucibleReport[];
+  engagements?: CrucibleEngagement[];
+}
+
+export interface CrucibleEngagement {
+  userId: number;
+  user?: User;
+  crucibleId: number;
+  crucible?: Crucible;
+  type: CrucibleEngagementType;
+  createdAt: Date;
 }
 
 export interface CrucibleReport {

@@ -48,6 +48,12 @@ export const sponsoredBrowsingLevel = ({
   servingLevel: number;
 }) => Flags.intersection(preCapBrowsingLevel ?? browsingLevel, servingLevel);
 
+/** What a buyer is told a decline costs them, from the host's percent and the fee in Buzz. */
+export const promotionDeclineTerms = (percent: number, fee: number) =>
+  fee > 0
+    ? `If they decline, they keep ${percent}% (${fee} Buzz) and the rest comes back.`
+    : 'If they decline, all of it comes back.';
+
 export const promotionRunLabel = (days: number) => (days === 1 ? '1 day' : `${days} days`);
 
 /** How many rows a promotion queue returns. */

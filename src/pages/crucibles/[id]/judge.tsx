@@ -23,6 +23,7 @@ import {
   IconInfoCircle,
 } from '@tabler/icons-react';
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { v4 as uuidv4 } from 'uuid';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { Page } from '~/components/AppLayout/Page';
@@ -38,9 +39,10 @@ import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CrucibleJudgingUI } from '~/components/Crucible/CrucibleJudgingUI';
+import { useJudgeSkipList } from '~/components/Crucible/judge-skip-list';
 import type { JudgingPairData, WatchedMs } from '~/components/Crucible/CrucibleJudgingUI';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
-import { getCrucibleUrl } from '~/utils/crucible-helpers';
+import { getCrucibleUrl, isCrucibleSfw } from '~/utils/crucible-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -93,7 +95,9 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
     watched: WatchedMs;
   } | null>(null);
 
-  const [skippedEntryIds, setSkippedEntryIds] = useState<number[]>([]);
+  const { skippedEntryIds, skip, recordVote } = useJudgeSkipList();
+  // One judging session per visit to this page: leaving and coming back means watching in full again.
+  const [judgingSessionId] = useState(uuidv4);
 
   // Held in state rather than derived during render: `new Date()` differs between the server and
   // the client, so deriving it inline is a hydration mismatch.
@@ -125,11 +129,12 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
       crucibleId: id,
       browsingLevel,
       excludeEntryIds: skippedEntryIds.length > 0 ? skippedEntryIds : undefined,
+      judgingSessionId,
     },
     {
       enabled: canRequestPairs,
       refetchOnWindowFocus: false,
-      // The skip list resets after every vote, so an earlier list recurs. Its cached pair is stale
+      // A skip list can recur once a vote takes an entry off it. Its cached pair is stale
       // (staleTime is Infinity app-wide), so nothing is kept once the input moves on.
       gcTime: 0,
     }
@@ -174,6 +179,10 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
         // Race condition - silently fetch next pair
         setVoteError(null);
         refetchPair();
+      } else if (error.message.includes('Watch at least')) {
+        // The session idled out while this pair was open, so its shortened watch no longer holds.
+        showErrorNotification({ error: new Error(error.message) });
+        refetchPair();
       } else {
         showErrorNotification({ error: new Error(error.message) });
       }
@@ -208,6 +217,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
             image: pairData.right.user.image,
           },
         },
+        watchSeconds: pairData.watchSeconds,
       }
     : null;
 
@@ -228,16 +238,14 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
           winnerEntryId: winnerId,
           loserEntryId: loserId,
           ...watched,
+          judgingSessionId,
         });
 
         setSessionVotes((prev) => prev + 1);
         setCurrentStreak((prev) => prev + 1); // Increment streak on vote
         setLastVoteAttempt(null);
         refetchProgress();
-        if (skippedEntryIds.length) {
-          // Skips last until the next vote. Changing the input fetches the next pair on its own.
-          setSkippedEntryIds([]);
-        } else {
+        if (!recordVote(pair)) {
           const result = await refetchPair();
           // Only an explicit null means no pairs are left; a failed refetch leaves `data` undefined.
           if (result.data === null) {
@@ -251,7 +259,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
         setIsVoting(false);
       }
     },
-    [pair, id, submitVoteMutation, refetchPair, refetchProgress, skippedEntryIds]
+    [pair, id, submitVoteMutation, refetchPair, refetchProgress, recordVote, judgingSessionId]
   );
 
   // Retry last vote attempt
@@ -272,10 +280,9 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
         setSessionSkips((prev) => prev + 1);
         setCurrentStreak(0);
       }
-      // The last 20 entries (~10 pairs); the server brings them back once nothing else is left.
-      setSkippedEntryIds((prev) => [...prev, pair.left.id, pair.right.id].slice(-20));
+      skip(pair);
     },
-    [isVoting, isLoadingPair, pair]
+    [isVoting, isLoadingPair, pair, skip]
   );
 
   // Check if all pairs judged on initial load
@@ -304,7 +311,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
   if (!crucible) return <NotFound />;
   if (
     features.isGreen &&
-    crucible.buzzType !== 'green' &&
+    !isCrucibleSfw(crucible) &&
     !currentUser?.isModerator &&
     currentUser?.id !== crucible.userId
   )

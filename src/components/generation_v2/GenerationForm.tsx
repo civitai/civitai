@@ -2509,7 +2509,7 @@ export function GenerationForm() {
                 )}
               />
 
-              {/* Wan: Interpolator model selector (v2.2) */}
+              {/* Wan: Interpolator model selector (v2.2-5b) */}
               <Controller
                 graph={graph}
                 name="interpolatorModel"
@@ -2522,20 +2522,6 @@ export function GenerationForm() {
                   />
                 )}
               />
-
-              {/* Wan: Draft mode toggle (v2.2) */}
-              {/* <Controller
-              graph={graph}
-              name="draft"
-              render={({ value, onChange }) => (
-                <Checkbox
-                  checked={value}
-                  onChange={(e) => onChange(e.target.checked)}
-                  label="Turbo Mode"
-                  description="Generate faster with optimized settings"
-                />
-              )}
-            /> */}
 
               {/* Image ControlNets — txt2img only, per ecosystem graph */}
               <Controller

@@ -5,12 +5,14 @@ import {
   cancelCrucibleSchema,
   createCrucibleInputSchema,
   crucibleImageSchema,
+  updateCrucibleSchema,
   getCruciblesInfiniteSchema,
   getJudgingPairSchema,
   submitEntrySchema,
   submitVoteSchema,
 } from '~/server/schema/crucible.schema';
 import { constants } from '~/server/common/constants';
+import { baseModelRecords } from '~/shared/constants/basemodel.constants';
 import { CrucibleSort } from '~/server/common/enums';
 import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { dbMock, loggingMock, redisMock } from '~/__tests__/mocks';
@@ -30,6 +32,7 @@ import {
   CRUCIBLE_MIN_TOTAL_ENTRIES,
   CRUCIBLE_MIN_VIEW_SECONDS_OPTIONS,
   CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
+  CRUCIBLE_MAX_ALLOWED_BASE_MODELS,
   CRUCIBLE_MAX_ALLOWED_RESOURCES,
   CRUCIBLE_NAME_MAX_LENGTH,
   CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
@@ -124,6 +127,12 @@ describe('crucibleImageSchema', () => {
 describe('createCrucibleInputSchema', () => {
   it('accepts a well-formed crucible', () => {
     expect(createCrucibleInputSchema.safeParse(validCreateInput).success).toBe(true);
+  });
+
+  it.each([0, -1, 1.5])('rejects content level %s', (nsfwLevel) => {
+    expect(createCrucibleInputSchema.safeParse({ ...validCreateInput, nsfwLevel }).success).toBe(
+      false
+    );
   });
 
   it('rejects an empty name', () => {
@@ -540,6 +549,7 @@ const crucibleRow = (contentType: MediaType, maxClipSeconds: number | null = nul
   minViewSeconds: null,
   maxClipSeconds,
   allowedResources: null as number[] | null,
+  allowedBaseModels: [] as string[],
   startAt: CRUCIBLE_STARTED_AT,
   createdAt: CRUCIBLE_STARTED_AT,
   endAt: new Date(Date.now() + 60_000),
@@ -752,30 +762,52 @@ describe('createCrucibleInputSchema — video settings', () => {
 });
 
 describe('submitEntry — site', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+  const row = (overrides: Record<string, unknown>) =>
     dbMock.dbRead.crucible.findUnique.mockResolvedValue({
       ...crucibleRow(MediaType.image),
-      buzzType: 'green',
+      textNsfw: false,
+      ...overrides,
     });
+  const outcomeOn = (isGreen: boolean) =>
+    submitEntry({ crucibleId: 1, imageId: 7, userId: 42, isGreen }).catch((error: Error) => error);
+  const message = (outcome: unknown) => (outcome instanceof Error ? outcome.message : '');
+
+  beforeEach(() => {
+    vi.clearAllMocks();
     dbMock.dbRead.image.findUnique.mockResolvedValue(imageRow(MediaType.image));
   });
 
-  it("refuses a crucible from the other site before charging, as its pages don't show it", async () => {
-    await expect(
-      submitEntry({ crucibleId: 1, imageId: 7, userId: 42, isGreen: false })
-    ).rejects.toThrow('Crucible not found');
+  it('refuses a crucible that accepts mature entries on the green site, before charging', async () => {
+    row({ buzzType: 'yellow', nsfwLevel: 1 | 4 });
+    expect(message(await outcomeOn(true))).toContain('Crucible not found');
     expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
   });
 
-  it('gets past the site check on its own site', async () => {
+  it('refuses an SFW-rated crucible with adult text on the green site, before charging', async () => {
+    row({ buzzType: 'yellow', nsfwLevel: 1, textNsfw: true });
+    expect(message(await outcomeOn(true))).toContain('Crucible not found');
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it("charges no moderator's green Buzz into a crucible the green site doesn't list", async () => {
+    row({ buzzType: 'yellow', nsfwLevel: 1 | 4, entryFee: 50 });
     const outcome = await submitEntry({
       crucibleId: 1,
       imageId: 7,
       userId: 42,
       isGreen: true,
+      isModerator: true,
     }).catch((error: Error) => error);
-    expect(outcome instanceof Error ? outcome.message : '').not.toContain('Crucible not found');
+    expect(message(outcome)).toBe('Enter this crucible on civitai.red.');
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['created in yellow, on the green site', 'yellow', true],
+    ['created in green, on the mature site', 'green', false],
+  ] as const)('lets an SFW crucible %s be entered', async (_, buzzType, isGreen) => {
+    row({ buzzType, nsfwLevel: 1 });
+    expect(message(await outcomeOn(isGreen))).not.toContain('Crucible not found');
   });
 });
 
@@ -865,6 +897,33 @@ describe('submitEntry — entry fee', () => {
         details: { entityId: 1, entityType: 'Crucible' },
       })
     );
+  });
+
+  // The entrant pays in the currency of the site they enter on, never the creator's.
+  it.each([
+    ['green on the green site, for a crucible created in yellow', true, 'yellow', 'green'],
+    ['yellow on the mature site, for a crucible created in green', false, 'green', 'yellow'],
+  ] as const)('charges %s, and pools the fee', async (_, isGreen, createdIn, charged) => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.image),
+      entryFee: 50,
+      buzzType: createdIn,
+      textNsfw: false,
+    });
+
+    await expect(
+      submitEntry({ crucibleId: 1, imageId: 7, userId: 42, isGreen })
+    ).resolves.toMatchObject({ id: 5 });
+
+    expect(getUserBuzzAccount).toHaveBeenCalledWith({ accountId: 42, accountTypes: [charged] });
+    expect(createMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
+    expect(createMultiAccountBuzzTransaction.mock.calls[0][0]).toMatchObject({
+      fromAccountId: 42,
+      fromAccountTypes: [charged],
+      amount: 50,
+    });
+    const [, poolIncrement] = dbMock.dbWrite.$executeRaw.mock.calls.at(-1) as [unknown, number];
+    expect(poolIncrement).toBe(50);
   });
 
   it('refunds the fee when the entry write fails, and logs a refund that also fails', async () => {
@@ -1133,6 +1192,7 @@ describe('createCrucibleEntryPost', () => {
     endAt: new Date(Date.now() + 60_000),
     userId: 99,
     buzzType: 'yellow',
+    nsfwLevel: 1,
     ingestion: 'Scanned',
     textNsfw: false,
     image: { ingestion: 'Scanned' },
@@ -1183,7 +1243,7 @@ describe('createCrucibleEntryPost', () => {
 
   it.each([
     ['still under review', { ingestion: 'Pending' }, {}],
-    ['on the other site', { buzzType: 'green' }, {}],
+    ['accepting mature entries, on the green site', { nsfwLevel: 1 | 4 }, { isGreen: true }],
     ['whose creator blocked the caller', {}, { blockedByUserIds: [99] }],
   ])('is not found for a crucible %s, and creates no post', async (_, crucible, viewer) => {
     dbMock.dbRead.crucible.findUnique.mockResolvedValue(arena(crucible));
@@ -1280,6 +1340,7 @@ describe('checkCrucibleEntryEligibility', () => {
       startAt: CRUCIBLE_STARTED_AT,
       createdAt: CRUCIBLE_STARTED_AT,
       allowedResources: [500],
+      allowedBaseModels: [],
     });
     dbMock.dbRead.image.findMany.mockResolvedValue([
       { id: 1, createdAt: after },
@@ -1322,9 +1383,167 @@ describe('checkCrucibleEntryEligibility', () => {
       startAt: CRUCIBLE_STARTED_AT,
       createdAt: CRUCIBLE_STARTED_AT,
       allowedResources: null,
+      allowedBaseModels: [],
     });
 
     await expect(check([3])).resolves.toEqual([{ imageId: 3, eligible: true, reasons: [] }]);
     expect(fetchImageResources).not.toHaveBeenCalled();
+  });
+});
+
+describe('submitEntry — base model requirements', () => {
+  const H3_API = 3183239;
+  const H3_COMFY = 3216500;
+  const resource = (modelVersionId: number, modelType: string, baseModel: string) => ({
+    modelVersionId,
+    modelType,
+    baseModel,
+  });
+  const h3FineTune = resource(9001, 'Checkpoint', 'MiniMax H3');
+  const requiring = (overrides: { allowedResources?: number[]; allowedBaseModels?: string[] }) =>
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.video),
+      ...overrides,
+    });
+  const madeWith = (...resources: ReturnType<typeof resource>[]) =>
+    fetchImageResources.mockResolvedValue({ 7: { resources } });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    createNotification.mockResolvedValue(undefined);
+    dbMock.dbWrite.crucibleEntry.count.mockResolvedValue(0);
+    dbMock.dbRead.crucibleEntry.findFirst.mockResolvedValue(null);
+    dbMock.dbRead.image.findUnique.mockResolvedValue(imageRow(MediaType.video));
+    dbMock.dbRead.image.count.mockResolvedValue(1);
+    dbMock.dbWrite.crucibleEntry.create.mockResolvedValue({ id: 5, user: { username: 'tester' } });
+  });
+
+  it('accepts an entry made with a fine-tuned checkpoint of an allowed base model', async () => {
+    requiring({ allowedBaseModels: ['MiniMax H3'] });
+    madeWith(h3FineTune);
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+  });
+
+  it('refuses an entry made with a checkpoint of another base model', async () => {
+    requiring({ allowedBaseModels: ['MiniMax H3'] });
+    madeWith(resource(9002, 'Checkpoint', 'Wan Video 2.2 T2V-A14B'));
+
+    await expect(submit()).rejects.toThrow(/allowed base models/);
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses an allowed base model's LoRA on another base model's checkpoint", async () => {
+    requiring({ allowedBaseModels: ['MiniMax H3'] });
+    madeWith(
+      resource(9002, 'Checkpoint', 'Wan Video 2.2 T2V-A14B'),
+      resource(9003, 'LORA', 'MiniMax H3')
+    );
+
+    await expect(submit()).rejects.toThrow(/allowed base models/);
+  });
+
+  it('accepts an allowed checkpoint alongside resources of other base models', async () => {
+    requiring({ allowedBaseModels: ['MiniMax H3'] });
+    madeWith(
+      resource(9002, 'Checkpoint', 'Wan Video 2.2 T2V-A14B'),
+      h3FineTune,
+      resource(9003, 'LORA', 'SDXL 1.0')
+    );
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+  });
+
+  it('refuses an entry with no detected resources', async () => {
+    requiring({ allowedBaseModels: ['MiniMax H3'] });
+    madeWith();
+
+    await expect(submit()).rejects.toThrow(/no detected resources/);
+  });
+
+  it('a version list still refuses a fine-tune of the same base model, exactly as before', async () => {
+    requiring({ allowedResources: [H3_API, H3_COMFY] });
+    madeWith(h3FineTune);
+
+    await expect(submit()).rejects.toThrow(/does not use any of the required resources/);
+  });
+
+  it('a version list still accepts a listed version, exactly as before', async () => {
+    requiring({ allowedResources: [H3_API, H3_COMFY] });
+    madeWith(resource(H3_COMFY, 'Checkpoint', 'MiniMax H3'));
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+  });
+
+  it('requires both when a crucible sets a version list and base models', async () => {
+    requiring({ allowedResources: [H3_API], allowedBaseModels: ['MiniMax H3'] });
+    madeWith(h3FineTune);
+    await expect(submit()).rejects.toThrow(/does not use any of the required resources/);
+
+    madeWith(resource(9002, 'Checkpoint', 'SDXL 1.0'), resource(H3_API, 'LORA', 'SDXL 1.0'));
+    await expect(submit()).rejects.toThrow(/allowed base models/);
+
+    madeWith(resource(H3_API, 'Checkpoint', 'MiniMax H3'));
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+  });
+});
+
+describe('checkCrucibleEntryEligibility — base model requirements', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      startAt: CRUCIBLE_STARTED_AT,
+      createdAt: CRUCIBLE_STARTED_AT,
+      allowedResources: null,
+      allowedBaseModels: ['MiniMax H3'],
+    });
+    const after = new Date(CRUCIBLE_STARTED_AT.getTime() + 60_000);
+    dbMock.dbRead.image.findMany.mockResolvedValue([
+      { id: 1, createdAt: after },
+      { id: 2, createdAt: after },
+    ]);
+    fetchImageResources.mockResolvedValue({
+      1: {
+        resources: [{ modelVersionId: 9001, modelType: 'Checkpoint', baseModel: 'MiniMax H3' }],
+      },
+      2: { resources: [{ modelVersionId: 9002, modelType: 'Checkpoint', baseModel: 'SDXL 1.0' }] },
+    });
+  });
+
+  it('tells the submit modal which images were made with the wrong base model', async () => {
+    await expect(
+      checkCrucibleEntryEligibility({ crucibleId: 1, imageIds: [1, 2], userId: 42 })
+    ).resolves.toEqual([
+      { imageId: 1, eligible: true, reasons: [] },
+      { imageId: 2, eligible: false, reasons: ['wrong-base-model'] },
+    ]);
+  });
+});
+
+describe('createCrucibleInputSchema — base models', () => {
+  const parse = (allowedBaseModels: string[]) =>
+    createCrucibleInputSchema.safeParse({ ...validCreateInput, allowedBaseModels });
+
+  it('accepts a known base model and drops repeats', () => {
+    const result = parse(['MiniMax H3', 'MiniMax H3']);
+    expect(result.success && result.data.allowedBaseModels).toEqual(['MiniMax H3']);
+  });
+
+  it('refuses a name that is not a base model, on create and on edit', () => {
+    expect(parse(['MiniMax H4']).success).toBe(false);
+    expect(
+      updateCrucibleSchema.safeParse({ id: 1, allowedBaseModels: ['MiniMax H4'] }).success
+    ).toBe(false);
+    expect(
+      updateCrucibleSchema.safeParse({ id: 1, allowedBaseModels: ['MiniMax H3'] }).success
+    ).toBe(true);
+  });
+
+  it('caps how many base models a crucible can require', () => {
+    const names = baseModelRecords
+      .slice(0, CRUCIBLE_MAX_ALLOWED_BASE_MODELS + 1)
+      .map((m) => m.name);
+    expect(parse(names.slice(0, CRUCIBLE_MAX_ALLOWED_BASE_MODELS)).success).toBe(true);
+    expect(parse(names).success).toBe(false);
   });
 });

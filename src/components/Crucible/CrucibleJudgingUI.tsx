@@ -23,7 +23,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import type { RouterOutput } from '~/types/router';
 import { MediaType } from '~/shared/utils/prisma/enums';
-import { accumulatePlaybackMs } from '~/shared/constants/crucible.constants';
+import {
+  accumulatePlaybackMs,
+  CRUCIBLE_PLAYBACK_SAMPLE_CEILING_MS,
+} from '~/shared/constants/crucible.constants';
 
 /**
  * Type inferred from tRPC router output - stays in sync with backend automatically
@@ -43,6 +46,8 @@ type MediaStatus = 'loading' | 'loaded' | 'error';
 const IMAGE_LOAD_TIMEOUT_MS = 12_000;
 const VIDEO_LOAD_TIMEOUT_MS = 20_000;
 const bothLoading = { left: 'loading', right: 'loading' } as const;
+const notPlayedThrough = { left: false, right: false };
+const LOOP_WRAP_WINDOW_SECONDS = CRUCIBLE_PLAYBACK_SAMPLE_CEILING_MS / 1000;
 
 // Below md the pair gets fixed heights and the page scrolls: squeezed into the space left under
 // the header, a phone (landscape especially) cropped each entry to a strip.
@@ -60,7 +65,10 @@ export type CrucibleJudgingUIProps = {
   pair: JudgingPairData;
   isLoading?: boolean;
   disabled?: boolean;
-  /** Playback each clip needs before either vote unlocks. Null or absent means no rule. */
+  /**
+   * Playback each clip needs before either vote unlocks. Null or absent means no rule. Overridden
+   * per side by `pair.watchSeconds`, which shortens a clip already judged this session.
+   */
   minViewSeconds?: number | null;
   onVote: (winnerId: number, loserId: number, watched: WatchedMs) => void;
   /** `unavailable`: an entry in the pair didn't load, so skipping wasn't the judge's choice. */
@@ -79,16 +87,27 @@ export function CrucibleJudgingUI({
 }: CrucibleJudgingUIProps) {
   const [selectedSide, setSelectedSide] = useState<Side | null>(null);
   const [watchedMs, setWatchedMs] = useState<Record<Side, number>>(emptyWatched);
+  const [playedThrough, setPlayedThrough] = useState<Record<Side, boolean>>(notPlayedThrough);
   const [mediaStatus, setMediaStatus] = useState<
     { pairKey: string | null } & Record<Side, MediaStatus>
   >({ pairKey: null, ...bothLoading });
   const [playingSide, setPlayingSide] = useState<Side | null>(null);
-  const [soundOn, setSoundOn] = useState(false);
+  const [soundWanted, setSoundWanted] = useState(true);
+  const [soundBlockedPairKey, setSoundBlockedPairKey] = useState<string | null>(null);
   const isDisabled = disabled || isLoading || !pair;
 
   const pairKey = pair ? `${pair.left.id}:${pair.right.id}` : null;
+  // A browser refusal is retried on the next pair: the judge has usually clicked something by
+  // then, which is what the browser was waiting for. Only the judge's own mute sticks.
+  const soundOn = soundWanted && soundBlockedPairKey !== pairKey;
+  const handleSoundChange = useCallback((on: boolean) => {
+    setSoundWanted(on);
+    if (on) setSoundBlockedPairKey(null);
+  }, []);
+  const handleSoundBlocked = useCallback(() => setSoundBlockedPairKey(pairKey), [pairKey]);
   useEffect(() => {
     setWatchedMs(emptyWatched);
+    setPlayedThrough(notPlayedThrough);
   }, [pairKey]);
 
   // Keyed on the pair so a new pair reads as loading from its first render, not after an effect.
@@ -104,15 +123,37 @@ export function CrucibleJudgingUI({
     [pairKey]
   );
 
-  const requiredMs = (minViewSeconds ?? 0) * 1000;
-  const remainingMs = requiredMs
-    ? Math.max(0, requiredMs - watchedMs.left) + Math.max(0, requiredMs - watchedMs.right)
-    : 0;
+  const ruleSeconds = (side: Side) =>
+    (pair?.watchSeconds ? pair.watchSeconds[side] : minViewSeconds) ?? 0;
+  const requiredMs: Record<Side, number> = {
+    left: ruleSeconds('left') * 1000,
+    right: ruleSeconds('right') * 1000,
+  };
+  // A clip shorter than the rule can never reach it, so playing it to its end once is enough.
+  const sideDone = (side: Side) => playedThrough[side] || watchedMs[side] >= requiredMs[side];
+  // The server checks the rule, not the clip's length, so a played-through short clip reports it.
+  const reportedMs = (side: Side) =>
+    playedThrough[side] ? Math.max(watchedMs[side], requiredMs[side]) : watchedMs[side];
+  const remainingMs = (['left', 'right'] as const).reduce(
+    (sum, side) => sum + (sideDone(side) ? 0 : Math.max(0, requiredMs[side] - watchedMs[side])),
+    0
+  );
   const watchGateOpen = remainingMs === 0;
+
+  // Left plays its share, then right, then the judge is on their own. Derived from the watched
+  // totals so a judge who plays a clip by hand is counted rather than fought.
+  const isVideoPair =
+    pair?.left.image.type === MediaType.video && pair?.right.image.type === MediaType.video;
+  const sequencing = isVideoPair && mediaReady && !watchGateOpen;
+  const autoplaySide: Side | null = !sequencing ? null : !sideDone('left') ? 'left' : 'right';
   const voteLocked = isDisabled || !mediaReady || !watchGateOpen;
 
   const handleWatched = useCallback((side: Side, ms: number) => {
     setWatchedMs((prev) => (ms > prev[side] ? { ...prev, [side]: ms } : prev));
+  }, []);
+
+  const handlePlayedThrough = useCallback((side: Side) => {
+    setPlayedThrough((prev) => (prev[side] ? prev : { ...prev, [side]: true }));
   }, []);
 
   // The parent locks only once `onVote` runs, so clicks inside the feedback delay would each vote.
@@ -130,13 +171,14 @@ export function CrucibleJudgingUI({
         const winnerId = side === 'left' ? pair.left.id : pair.right.id;
         const loserId = side === 'left' ? pair.right.id : pair.left.id;
         onVote(winnerId, loserId, {
-          winnerWatchedMs: side === 'left' ? watchedMs.left : watchedMs.right,
-          loserWatchedMs: side === 'left' ? watchedMs.right : watchedMs.left,
+          winnerWatchedMs: reportedMs(side),
+          loserWatchedMs: reportedMs(side === 'left' ? 'right' : 'left'),
         });
         setSelectedSide(null);
       }, 200);
     },
-    [voteLocked, pair, onVote, watchedMs]
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `reportedMs` reads only the deps below
+    [voteLocked, pair, onVote, watchedMs, playedThrough, requiredMs.left, requiredMs.right]
   );
 
   const anyUnavailable = media.left === 'error' || media.right === 'error';
@@ -187,16 +229,20 @@ export function CrucibleJudgingUI({
           isLoading={isLoading}
           disabled={voteLocked}
           pairKey={pairKey}
-          watchedMs={watchedMs.left}
-          requiredMs={requiredMs}
+          watchedMs={sideDone('left') ? Math.max(watchedMs.left, requiredMs.left) : watchedMs.left}
+          requiredMs={requiredMs.left}
+          autoplay={autoplaySide === 'left'}
+          sequencing={sequencing}
           onWatched={(ms) => handleWatched('left', ms)}
+          onPlayedThrough={() => handlePlayedThrough('left')}
           onVote={() => handleVote('left')}
           onSkip={handleSkip}
           onMediaStatus={handleMediaStatus}
           otherPlaying={playingSide === 'right'}
           onPlay={setPlayingSide}
           soundOn={soundOn}
-          onSoundChange={setSoundOn}
+          onSoundChange={handleSoundChange}
+          onSoundBlocked={handleSoundBlocked}
           hotkeyLabel="1"
         />
 
@@ -207,16 +253,22 @@ export function CrucibleJudgingUI({
           isLoading={isLoading}
           disabled={voteLocked}
           pairKey={pairKey}
-          watchedMs={watchedMs.right}
-          requiredMs={requiredMs}
+          watchedMs={
+            sideDone('right') ? Math.max(watchedMs.right, requiredMs.right) : watchedMs.right
+          }
+          requiredMs={requiredMs.right}
+          autoplay={autoplaySide === 'right'}
+          sequencing={sequencing}
           onWatched={(ms) => handleWatched('right', ms)}
+          onPlayedThrough={() => handlePlayedThrough('right')}
           onVote={() => handleVote('right')}
           onSkip={handleSkip}
           onMediaStatus={handleMediaStatus}
           otherPlaying={playingSide === 'left'}
           onPlay={setPlayingSide}
           soundOn={soundOn}
-          onSoundChange={setSoundOn}
+          onSoundChange={handleSoundChange}
+          onSoundBlocked={handleSoundBlocked}
           hotkeyLabel="2"
         />
       </div>
@@ -274,7 +326,10 @@ type ImageCardProps = {
   pairKey: string | null;
   watchedMs: number;
   requiredMs: number;
+  autoplay: boolean;
+  sequencing: boolean;
   onWatched: (ms: number) => void;
+  onPlayedThrough: () => void;
   onVote: () => void;
   onSkip: () => void;
   onMediaStatus: (side: Side, status: MediaStatus) => void;
@@ -282,6 +337,7 @@ type ImageCardProps = {
   onPlay: (side: Side) => void;
   soundOn: boolean;
   onSoundChange: (soundOn: boolean) => void;
+  onSoundBlocked: () => void;
   hotkeyLabel: string;
 };
 
@@ -297,7 +353,10 @@ function ImageCard({
   pairKey,
   watchedMs,
   requiredMs,
+  autoplay,
+  sequencing,
   onWatched,
+  onPlayedThrough,
   onVote,
   onSkip,
   onMediaStatus,
@@ -305,6 +364,7 @@ function ImageCard({
   onPlay,
   soundOn,
   onSoundChange,
+  onSoundBlocked,
   hotkeyLabel,
 }: ImageCardProps) {
   const [attempt, setAttempt] = useState(0);
@@ -330,7 +390,18 @@ function ImageCard({
   }, [entry?.id, pairKey]);
 
   const handleTimeUpdate = (e: React.SyntheticEvent<HTMLVideoElement>) => {
-    const currentTime = e.currentTarget.currentTime;
+    const { currentTime, duration } = e.currentTarget;
+    const previousTime = lastTimeRef.current;
+    // The player loops, so `ended` never fires: reaching the end shows up as the playhead wrapping.
+    // The element's decoded duration, not the uploader-reported one, decides what counts as short.
+    if (
+      previousTime != null &&
+      duration * 1000 < requiredMs &&
+      currentTime < previousTime &&
+      previousTime >= duration - LOOP_WRAP_WINDOW_SECONDS &&
+      currentTime <= LOOP_WRAP_WINDOW_SECONDS
+    )
+      onPlayedThrough();
     watchedRef.current = accumulatePlaybackMs({
       watchedMs: watchedRef.current,
       previousTime: lastTimeRef.current,
@@ -388,9 +459,12 @@ function ImageCard({
             onRetry={() => setAttempt((n) => n + 1)}
             onSkip={onSkip}
             otherPlaying={otherPlaying}
+            autoplay={autoplay}
+            sequencing={sequencing}
             onPlay={onPlay}
             soundOn={soundOn}
             onSoundChange={onSoundChange}
+            onSoundBlocked={onSoundBlocked}
             onTimeUpdate={handleTimeUpdate}
           />
         )}
@@ -441,9 +515,12 @@ type JudgingMediaProps = {
   onRetry: () => void;
   onSkip: () => void;
   otherPlaying: boolean;
+  autoplay: boolean;
+  sequencing: boolean;
   onPlay: (side: Side) => void;
   soundOn: boolean;
   onSoundChange: (soundOn: boolean) => void;
+  onSoundBlocked: () => void;
   onTimeUpdate: (e: React.SyntheticEvent<HTMLVideoElement>) => void;
 };
 
@@ -454,9 +531,12 @@ function JudgingMedia({
   onRetry,
   onSkip,
   otherPlaying,
+  autoplay,
+  sequencing,
   onPlay,
   soundOn,
   onSoundChange,
+  onSoundBlocked,
   onTimeUpdate,
 }: JudgingMediaProps) {
   const ref = useRef<HTMLDivElement>(null);
@@ -484,9 +564,41 @@ function JudgingMedia({
   }, [soundOn]);
   useEffect(applySound, [applySound]);
 
+  // Browsers refuse sound until the judge has interacted with the page (Safari, per element), so a
+  // refused clip falls back to muted, and the toggle shows it, rather than not playing at all.
+  // The retry un-pauses the clip before its `volumechange` is dispatched, so without this the
+  // fallback's own mute reads as the judge pressing mute, and sound never comes back.
+  const fallbackMuted = useRef(false);
+  const play = useCallback(
+    (video: HTMLVideoElement) => {
+      video.play().catch((error: unknown) => {
+        if ((error as Error)?.name !== 'NotAllowedError' || video.muted) return;
+        fallbackMuted.current = true;
+        video.muted = true;
+        onSoundBlocked();
+        video.play().catch(() => undefined);
+      });
+    },
+    [onSoundBlocked]
+  );
+
   useEffect(() => {
     if (otherPlaying) ref.current?.querySelector('video')?.pause();
   }, [otherPlaying]);
+
+  const wasAutoplaying = useRef(false);
+  useEffect(() => {
+    const video = getVideo();
+    if (!video) return;
+    if (autoplay) {
+      applySound();
+      play(video);
+    } else if (wasAutoplaying.current) {
+      video.pause();
+    }
+    wasAutoplaying.current = autoplay;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `getVideo` only reads the ref
+  }, [autoplay, applySound, play]);
 
   const handleLoaded = () => {
     setStatus('loaded');
@@ -502,19 +614,23 @@ function JudgingMedia({
   };
 
   const handlePointerEnter = (e: React.PointerEvent) => {
-    if (e.pointerType !== 'mouse') return;
+    if (e.pointerType !== 'mouse' || sequencing) return;
     const video = getVideo();
     if (!video) return;
     video.muted = !soundOn;
-    video.play().catch(() => undefined);
+    play(video);
   };
 
   const handlePointerLeave = (e: React.PointerEvent) => {
-    if (e.pointerType === 'mouse') getVideo()?.pause();
+    if (e.pointerType === 'mouse' && !sequencing) getVideo()?.pause();
   };
 
   const handleVolumeChange = (e: React.SyntheticEvent) => {
     const video = e.target as HTMLVideoElement;
+    if (fallbackMuted.current) {
+      fallbackMuted.current = false;
+      return;
+    }
     // A paused element's `muted` is also rewritten by EdgeVideo itself, so only a playing clip's
     // native mute button is taken as the judge's choice.
     if (!video.paused) onSoundChange(!video.muted);

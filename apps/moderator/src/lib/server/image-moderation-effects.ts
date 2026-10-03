@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { civitaiAppUrl } from './civitai-url';
 import { sql } from '@civitai/db/kysely';
-import { NsfwLevel } from '@civitai/shared';
 import { violationUserMessage } from '$lib/violations';
+import { deprecatedNsfwName } from '$lib/nsfw-levels';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '@civitai/redis';
 import { NotificationCategory } from '@civitai/notifications';
 import { dbRead } from './db';
@@ -149,15 +149,6 @@ export async function removeImagesFromBlocklist(pHashes: (string | null)[]): Pro
   });
 }
 
-const NSFW_LEVEL_TO_DEPRECATED: Record<number, 'None' | 'Soft' | 'Mature' | 'X' | 'Blocked'> = {
-  [NsfwLevel.PG]: 'None',
-  [NsfwLevel.PG13]: 'Soft',
-  [NsfwLevel.R]: 'Mature',
-  [NsfwLevel.X]: 'X',
-  [NsfwLevel.XXX]: 'X',
-  [NsfwLevel.Blocked]: 'Blocked',
-};
-
 const NEEDS_REVIEW_TO_VIOLATION: Record<string, string> = {
   minor: 'realisticMinor',
   poi: 'realPerson',
@@ -239,7 +230,7 @@ export async function trackImageDeleteTos(input: ImageDeleteTosInput): Promise<v
           userId: actorUserId,
           imageId,
           tags: tagRows.map((r) => r.name),
-          nsfw: NSFW_LEVEL_TO_DEPRECATED[nsfwLevel] ?? 'None',
+          nsfw: deprecatedNsfwName(nsfwLevel),
           ip: input.ip ?? 'unknown',
           userAgent: input.userAgent ?? 'unknown',
           ownerId,
@@ -383,17 +374,18 @@ export async function refundAppealFee(appeal: {
 }
 
 export async function notifyAppealResolved(input: {
-  userId: number;
+  appeal: { id: number; userId: number };
   entityId: number;
   status: 'Approved' | 'Rejected';
   resolvedMessage?: string;
 }): Promise<void> {
   try {
     await getNotifications().createNotification({
-      userId: input.userId,
+      userId: input.appeal.userId,
       type: 'entity-appeal-resolved',
       category: NotificationCategory.Other,
-      key: `entity-appeal-resolved:Image:${input.entityId}`,
+      // Per appeal, matching the main app: a repeated key reuses the first decision's notification.
+      key: `entity-appeal-resolved:Image:${input.entityId}:${input.appeal.id}`,
       details: {
         entityType: 'Image',
         entityId: input.entityId,

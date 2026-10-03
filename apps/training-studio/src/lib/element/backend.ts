@@ -47,6 +47,9 @@ export interface StudioElementHost {
     /** The host's membership-plans page, linked from that explanation. Relative = same-tab
      *  in-host navigation, absolute = new tab. Omit to render the explanation without a link. */
     pricingUrl?: string;
+    /** The per-model catalog gates (`ModelCard.flagKey`) this user may see — the embed's stand-in
+     *  for the shell's server-side `allowedModelFlags`. Omitted => every gated model stays hidden. */
+    enabledModelFlags?: string[];
   };
   hrefFor(loc: StudioLocation): string;
   navigate(loc: StudioLocation, opts?: { refreshAll?: boolean }): Promise<void>;

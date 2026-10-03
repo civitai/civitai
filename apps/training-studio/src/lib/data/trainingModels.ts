@@ -89,9 +89,11 @@ export interface ModelCard {
    *  Independent of `TYPES[].recommended`, which picks the default selection rather than labelling it. */
   flag?: string;
   /** Flipt gate key. Absent → the card is shown to everyone (the default for established models). Present
-   *  → the card is offered only to users the server evaluated the flag `true` for (a new model ships dark,
+   *  → the card is offered only to users the host evaluated the flag `true` for (a new model ships dark,
    *  moderators-only, until its flag opens — mirrors the main-app trainer's `<name>Training` flag). The
-   *  server resolves this per user in `/new`'s load; the client filters on the resolved set. Card resolution
+   *  host resolves this per user — the shell in `/new`'s load, the main-app embed through
+   *  `studioModelFlagFeatures` (`src/utils/training.ts`), which must list every key used here; the client
+   *  filters on the resolved set. Card resolution
    *  by id/AIR (`cardByType`, `findByAir`) is NOT gated — only the offer surfaces are. */
   flagKey?: string;
   /** Public release of the NEWEST selectable version, `YYYY-MM-DD` or `YYYY-MM` where only the month
@@ -760,12 +762,11 @@ export const cardByType = (type: string): ModelCard | undefined =>
   MODEL_CARDS.find((c) => c.type === type);
 
 /** A gated card is visible only when its `flagKey` is in the viewer's enabled set; an ungated card always
- *  is. Pass the set the server resolved for this user. */
+ *  is. */
 export const isCardVisible = (card: ModelCard, enabledFlags: ReadonlySet<string>): boolean =>
   !card.flagKey || enabledFlags.has(card.flagKey);
 
-/** The distinct Flipt gate keys used across the catalog — the set the server evaluates per user in the
- *  `/new` load. Empty when no card is gated. */
+/** The distinct gate keys used across the catalog. Empty when no card is gated. */
 export const catalogFlagKeys = (): string[] => [
   ...new Set(MODEL_CARDS.map((c) => c.flagKey).filter((k): k is string => !!k)),
 ];

@@ -101,15 +101,10 @@ describe('crucible create draft restore', () => {
 });
 
 describe('crucible create draft restore — Buzz type', () => {
-  it('keeps the picked Buzz type', () => {
+  it('restores a draft saved while the form still had a Buzz type, without it', () => {
     const result = restore({ ...crucibleCreateDefaultValues, buzzType: 'green' });
-    expect(result.success && result.data.buzzType).toBe('green');
-  });
-
-  it('drops an unknown Buzz type instead of failing the restore', () => {
-    const result = restore({ ...crucibleCreateDefaultValues, buzzType: 'blue' });
     expect(result.success).toBe(true);
-    expect(result.success && result.data.buzzType).toBeUndefined();
+    expect(result.success && 'buzzType' in result.data).toBe(false);
   });
 });
 
@@ -272,6 +267,7 @@ describe('crucible edit', () => {
     seededPrizePool: 1000,
     prizePositions: { '1': 70, '2': 30, '3': 0 },
     allowedResources: [10, 20],
+    allowedBaseModels: ['MiniMax H3'],
     image: cover,
     heroImage: { url: '9b2d4f6a-1c3e-4a5b-8d7f-0e1a2b3c4d5e', width: null, height: null },
   };
@@ -291,6 +287,17 @@ describe('crucible edit', () => {
         editableFields: allFields,
       })
     ).toEqual({ freeEntriesPerUser: 2 });
+  });
+
+  it('sends cleared base models as an empty list, which the server reads as no restriction', () => {
+    expect(initial.allowedBaseModels).toEqual(['MiniMax H3']);
+    expect(
+      getCrucibleUpdateChanges({
+        initial,
+        values: { ...initial, allowedBaseModels: [] },
+        editableFields: allFields,
+      })
+    ).toEqual({ allowedBaseModels: [] });
   });
 
   it('keeps a 0% place, so a stored custom split does not read as the default', () => {
