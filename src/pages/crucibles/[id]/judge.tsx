@@ -38,9 +38,11 @@ import { trpc } from '~/utils/trpc';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { CrucibleJudgeScoreRequired } from '~/components/Crucible/CrucibleJudgeScoreRequired';
 import { CrucibleJudgingUI } from '~/components/Crucible/CrucibleJudgingUI';
 import { useJudgeSkipList } from '~/components/Crucible/judge-skip-list';
 import type { JudgingPairData, WatchedMs } from '~/components/Crucible/CrucibleJudgingUI';
+import { CRUCIBLE_JUDGE_SCORE_REQUIRED_MESSAGE } from '~/shared/constants/crucible.constants';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { getCrucibleUrl, isCrucibleSfw } from '~/utils/crucible-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -88,6 +90,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
   const [isVoting, setIsVoting] = useState(false);
   const [allPairsJudged, setAllPairsJudged] = useState(false);
   const [closedByServer, setClosedByServer] = useState(false);
+  const [refusedForScore, setRefusedForScore] = useState(false);
   const [voteError, setVoteError] = useState<string | null>(null);
   const [lastVoteAttempt, setLastVoteAttempt] = useState<{
     winnerId: number;
@@ -106,6 +109,9 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
 
   // Fetch crucible details
   const { data: crucible, isLoading: isLoadingCrucible } = trpc.crucible.getById.useQuery({ id });
+  const { data: judgeEligibility } = trpc.crucible.getJudgeEligibility.useQuery(undefined, {
+    enabled: !!currentUser,
+  });
 
   const entryCount = crucible?._count?.entries ?? 0;
   // A judge is never shown their own entries.
@@ -115,7 +121,9 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
     crucible?.status === CrucibleStatus.Active &&
     judgeableEntryCount >= 2 &&
     !hasEnded &&
-    !closedByServer;
+    !closedByServer &&
+    judgeEligibility?.canJudge !== false &&
+    !refusedForScore;
 
   // Fetch judging pair (exclude recently skipped entries)
   const {
@@ -169,6 +177,8 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
 
       if (isClosedCrucibleError(error.message)) {
         setClosedByServer(true);
+      } else if (error.message === CRUCIBLE_JUDGE_SCORE_REQUIRED_MESSAGE) {
+        setRefusedForScore(true);
       } else if (isNetworkError) {
         setVoteError('Network error. Please check your connection and try again.');
       } else if (
@@ -358,6 +368,19 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
           Back to Crucible
         </Button>
       </Container>
+    );
+  }
+
+  if (
+    judgeEligibility?.canJudge === false ||
+    refusedForScore ||
+    pairError?.message === CRUCIBLE_JUDGE_SCORE_REQUIRED_MESSAGE
+  ) {
+    return (
+      <CrucibleJudgeScoreRequired
+        score={judgeEligibility?.score}
+        backHref={getCrucibleUrl(id, crucible.name)}
+      />
     );
   }
 
