@@ -83,10 +83,13 @@ export const modelsFilterableAttributes = [
   //
   // 🔴 THE PREDICATE IS `IS NOT NULL` / `IS NULL`, **NOT** `EXISTS` / `NOT EXISTS`, and an
   // earlier version of this comment named the wrong pair. `models.search-index.ts` WRITES
-  // `insight: { qualityScore: null, role: null, styleFamily: null }` whenever the projection
-  // returns null (it must — omitting a key cannot clear a stale value under PUT merge
-  // semantics; see that file). All three nulls come from the SAME branch of the SAME
-  // projection, so they can never disagree about whether a model has a usable label.
+  // `insight: { qualityScore: null, role: null, styleFamily: null, modelVersionId: null }`
+  // whenever the projection returns null (it must — omitting a key cannot clear a stale value
+  // under PUT merge semantics; see that file). All FOUR nulls come from the SAME branch of the
+  // SAME projection, so they can never disagree about whether a model has a usable label.
+  // ⚠️ `modelVersionId` is written but is NOT in this list and must not be added — it is
+  // unreadable by any search path by design, argued at the projection site. Nothing below
+  // describes it; the predicate table is about `insight.qualityScore`.
   // A written null COUNTS AS EXISTING, so once a reset has written every document:
   //   EXISTS       -> every document (useless as a labeled-tier arm)
   //   NOT EXISTS   -> nothing at all (useless as a control arm)

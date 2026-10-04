@@ -109,16 +109,32 @@ export async function loadResourceInsights(
 }
 
 /**
- * The three meaning axes a model's search document carries under `insight`, all taken
- * from ONE version's label row. See `modelInsightProjection` for why that matters.
+ * What a model's search document carries under `insight`: the three meaning axes, all taken
+ * from ONE version's label row, plus the id of the version that row came from. See
+ * `modelInsightProjection` for why the row travelling together matters.
  *
- * Expressed as `Omit<…, 'confidence'>` rather than three restated fields, so the
- * relationship — "the document carries the whole label row EXCEPT the internal
+ * The axes half is expressed as `Omit<…, 'confidence'>` rather than three restated fields, so
+ * the relationship — "the document carries the whole label row EXCEPT the internal
  * label-quality judgment" — is machine-checked instead of prose. Adding a column to
  * `ResourceIntentInsight` then fails the projection's own `return` until someone decides
  * whether the document should carry it, which is the decision that ought to be forced.
+ *
+ * 🔴 `modelVersionId` IS DELIBERATELY AN INTERSECTION, NOT A WIDENED `Omit`, BECAUSE THE ROW
+ * TYPE DOES NOT DECLARE IT. `ResourceIntentInsight` has four fields and that is not one of
+ * them — `loadResourceInsights` does select the `modelVersionId` COLUMN, but it is spent as
+ * the map KEY and never surfaces in the value type. So the id this projection returns is read
+ * off that key, which is the only id the function is typed to see, and it cannot be obtained
+ * by relaxing the `Omit`. Writing it as `Omit<ResourceIntentInsight, 'confidence' | …>` would
+ * also quietly stop forcing the add-a-column decision the paragraph above buys.
  */
-export type ModelInsightProjection = Omit<ResourceIntentInsight, 'confidence'>;
+export type ModelInsightProjection = Omit<ResourceIntentInsight, 'confidence'> & {
+  /**
+   * The version whose label row the three axes above came from — the MAP KEY of the winner,
+   * not a column of the row. `null` is impossible here: a non-null projection means some
+   * version won, and the caller's `?? null` covers the whole-object-null case.
+   */
+  modelVersionId: number;
+};
 
 /**
  * The model-level projection: what ONE `insight` object a model's search document
@@ -167,7 +183,7 @@ export type ModelInsightProjection = Omit<ResourceIntentInsight, 'confidence'>;
  * the behavioural test assert order-independence for the ROW, not just the number.
  *
  * 🔴 Returns `null`, and the caller must WRITE that null — `insight: { qualityScore: null,
- * role: null, styleFamily: null }`, every key present
+ * role: null, styleFamily: null, modelVersionId: null }`, every key present
  * — rather than a sentinel, a zero, or an omitted key. ⚠️ An earlier version of this
  * docstring said to OMIT it, on the measured ground that a missing sortable attribute and
  * an explicit null sort identically. They do; sorting was simply the wrong property to
@@ -196,6 +212,13 @@ export type ModelInsightProjection = Omit<ResourceIntentInsight, 'confidence'>;
  * sortable, because an ordering over an unordered category has no meaning — so nothing
  * above describes them. What does apply to them is the merge argument: they are written
  * on every document, null included, for the same reason the score is.
+ *
+ * 🔴 AND `insight.modelVersionId` IS NEITHER SORTABLE NOR FILTERABLE NOR DISPLAYED — it is
+ * written and, as of this change, READ BY NOTHING. That is deliberate and it is argued at the
+ * projection site in ~/server/search-index/models.search-index.ts, which is where a reader
+ * who finds the field arrives; it is not restated here. The merge argument is the one thing
+ * that does apply: it is written on every document, null included, for the same reason the
+ * other three are.
  */
 export function modelInsightProjection(
   versionIds: number[],
@@ -220,10 +243,13 @@ export function modelInsightProjection(
     }
   }
   if (best === null) return null;
-  // Copied field-by-field rather than spread: `loadResourceInsights` selects
-  // `modelVersionId` too, so the row object carries a column the index document has no
-  // business holding, and a spread would quietly project it — along with `confidence`, the
-  // internal label-quality judgment.
+  // Copied field-by-field rather than spread, and that is now MORE load-bearing rather than
+  // less. `loadResourceInsights` selects the `modelVersionId` column too, so the row object
+  // carries one — but the id below is `bestVersionId`, the MAP KEY, and the two are not the
+  // same claim: a spread would take the row's own column, which is untyped on
+  // `ResourceIntentInsight` (so nothing type-checks it), and would additionally project
+  // `confidence`, the internal label-quality judgment. Pinned by a case whose fixture row
+  // carries a `modelVersionId` column DISAGREEING with its map key.
   //
   // ⚠️ NO VALUE GUARD HERE, and the asymmetry with the re-ranker is deliberate rather than an
   // oversight. `insightBucket` in ./resource-intent-matcher.service.ts refuses to ACT on a
@@ -234,7 +260,12 @@ export function modelInsightProjection(
   // such model until a manual re-label pass finished. Today the two cannot disagree — the
   // write side validates against the same option lists (scripts/label-resource-insights.ts) —
   // but after a spec rename they would, and the index is the side that should keep the value.
-  return { qualityScore: best.qualityScore, role: best.role, styleFamily: best.styleFamily };
+  return {
+    qualityScore: best.qualityScore,
+    role: best.role,
+    styleFamily: best.styleFamily,
+    modelVersionId: bestVersionId,
+  };
 }
 
 /**

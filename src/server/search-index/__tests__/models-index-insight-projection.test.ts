@@ -7,10 +7,12 @@ import { modelsFilterableAttributes } from '~/server/search-index/filterable-att
 import { modelsSortableAttributes } from '~/server/search-index/sortable-attributes';
 
 /**
- * `insight.qualityScore` is the attribute the resource-intent pool is SEEDED by, and
+ * `insight.qualityScore` is the attribute the resource-intent pool is SEEDED by,
  * `insight.role` / `insight.styleFamily` are the two MEANING axes — filterable, not
- * sortable, nothing reads them yet. This file pins the wiring that puts all three on a
- * document.
+ * sortable, nothing reads them yet — and `insight.modelVersionId` is the id of the version
+ * all three were taken from, projected but declared in NO attribute list, so no search path
+ * can return it at all (argued at the projection site in ../models.search-index.ts; the three
+ * absences are pinned below). This file pins the wiring that puts all four on a document.
  *
  * ⚠️ WHAT THIS FILE DELIBERATELY DOES NOT PIN: the seed's sort array. Adding the axes to the
  * projection changed `searchShortlistModels` not at all — what the index WRITES and how the
@@ -122,6 +124,19 @@ const INSIGHT_SORT_ATTR = 'insight.qualityScore';
 const INSIGHT_AXIS_ATTRS = ['insight.role', 'insight.styleFamily'];
 
 /**
+ * The winning version's id: PROJECTED onto every document, and declared NOWHERE — not
+ * sortable, not filterable, not displayed. So no search path can return it and it is not even
+ * reachable as a per-document oracle; it records which version the index decided for at reset
+ * time, which is not recoverable from Postgres later. The full argument, and the two routes
+ * that would make it readable (neither approved), is at the projection site in
+ * ../models.search-index.ts.
+ *
+ * 🔴 Three assertions below pin all three absences. If one of them is in your way, making this
+ * field readable is the decision you are taking — it is not an obstacle to route around.
+ */
+const INSIGHT_WRITE_ONLY_ATTR = 'insight.modelVersionId';
+
+/**
  * The exact `name: value` list of the `insight` object literal `transformData` emits, read
  * from the AST so punctuation and comments are out of scope.
  *
@@ -138,6 +153,7 @@ const INSIGHT_PROPERTIES = [
   'qualityScore: insightProjection?.qualityScore ?? null',
   'role: insightProjection?.role ?? null',
   'styleFamily: insightProjection?.styleFamily ?? null',
+  'modelVersionId: insightProjection?.modelVersionId ?? null',
 ];
 
 describe('models search index projects insight.qualityScore', () => {
@@ -162,10 +178,15 @@ describe('models search index projects insight.qualityScore', () => {
     expect(calls[0].args).toEqual(['modelVersions.map((v) => v.id)', 'insights']);
   });
 
-  it('🔴 takes all three axes from ONE projection call, so the winning row cannot be split', () => {
+  it('🔴 takes all four values from ONE projection call, so the winning row cannot be split', () => {
     // The defect with no downstream symptom: score from the best-scoring version, `role` from
     // some other one. The document validates, the index answers normally, and a purpose filter
     // then matches a model on a role no version of it that scored well actually has.
+    //
+    // `modelVersionId` is in the same literal and therefore the same contract: an id sourced
+    // from anywhere but `insightProjection` would name a version the axes do not describe,
+    // which is worse than omitting it — a consumer post-stratifying on that id would be
+    // partitioning by the wrong thing while every value looked well-formed.
     //
     // The whole emitted literal, pinned from the AST. Any key reading off anything other than
     // the single `insightProjection` binding changes this string.
@@ -216,17 +237,20 @@ describe('models search index projects insight.qualityScore', () => {
     // label keeps its top-of-pool seeding forever. Measured both arms on v1.15.0: the null
     // PUT cleared a stored 0.9; the control PUT with no key left a stored 0.1 intact.
     //
-    // 🔴 All THREE keys, for the same reason: `role` and `styleFamily` are written on every
-    // document too, so a retracted label cannot leave a stale role behind. A single
-    // projection returning `null` has to become three written nulls, which is why the
-    // literal spells each key out rather than spreading an object that may be absent.
+    // 🔴 All FOUR keys, for the same reason: `role`, `styleFamily` and `modelVersionId` are
+    // written on every document too, so a retracted label cannot leave a stale role — or a
+    // stale winning id — behind. A single projection returning `null` has to become FOUR
+    // written nulls, which is why the literal spells each key out rather than spreading an
+    // object that may be absent. `modelVersionId` is the no-qualifying-version null for the
+    // id: the projection has no separate null for it (the whole object is null), so this
+    // `?? null` is the only place that null is produced, and this is where it is pinned.
     //
     // ⚠️ This is the per-leaf DIAGNOSTIC, not the contract — the ordered AST list above is
     // the contract, and it subsumes every assertion here. The value of this loop is the
     // failure MESSAGE: it names which leaf went wrong instead of printing a list diff. It is
     // allowed to stay textual only because the AST pin sits beside it.
     const members = insightProperty().only.initializer.replace(/\s+/g, ' ');
-    for (const leaf of ['qualityScore', 'role', 'styleFamily']) {
+    for (const leaf of ['qualityScore', 'role', 'styleFamily', 'modelVersionId']) {
       expect(members, `${leaf} must be written as \`?? null\`, never \`?? 0\` or omitted`).toMatch(
         new RegExp(`${leaf}: insightProjection\\?\\.${leaf} \\?\\? null`)
       );
@@ -298,19 +322,79 @@ describe('models search index projects insight.qualityScore', () => {
     // this shape already; the axes had none, and `INSIGHT_AXIS_ATTRS` above is a restated
     // literal, so this is the assertion that makes the pairing machine-checked.
     //
-    // Both directions, deliberately: a declared-but-unprojected attribute is the inert half,
-    // and a projected-but-undeclared key is a field written to every document for nothing.
+    // Both directions, deliberately — but they are no longer the SAME assertion, and the
+    // asymmetry is the point rather than a loosening.
+    //
+    // 🔴 DECLARED ⊆ PROJECTED IS ABSOLUTE: an attribute declared filterable or sortable with
+    // no matching document key is the inert half of a half-change, and there is no legitimate
+    // reason to have one.
+    //
+    // 🔴 PROJECTED ⊆ DECLARED IS NOT, AND IT USED TO BE ASSERTED AS SET EQUALITY, WHICH THIS
+    // CHANGE BROKE. `insight.modelVersionId` is projected on purpose and declared nowhere on
+    // purpose (../models.search-index.ts argues it; the three absences are pinned below). The
+    // old equality read that as "a field written to every document for nothing" — a reasonable
+    // default that is simply wrong for a field whose value IS the write. So the undeclared
+    // side is now an asserted LEDGER rather than a prohibition: exactly the keys named here may
+    // be written-but-unreadable, and the assertion fails when that set GROWS *or* SHRINKS.
+    // Growing means somebody added another unreadable field without arguing for it; shrinking
+    // means somebody declared this one readable, which is the decision the projection site says
+    // is not approved. Either way a human reads the diff — which set equality also achieved,
+    // but only by blocking the legitimate case outright.
     const declared = [...modelsFilterableAttributes, ...modelsSortableAttributes]
       .filter((a) => a.startsWith('insight.'))
       .map((a) => a.slice('insight.'.length));
     const projected = (insightProperty().only.node as ts.ObjectLiteralExpression).properties.map(
       (p) => (p as ts.PropertyAssignment).name.getText(indexAst)
     );
+    const writeOnlyLeaf = INSIGHT_WRITE_ONLY_ATTR.slice('insight.'.length);
 
-    // Positive control: a zero on either side would make the comparison vacuously true.
+    // Positive control: a zero on either side would make the comparisons vacuously true.
     expect(declared.length, 'no insight.* attribute is declared at all').toBeGreaterThan(0);
     expect(projected.length, 'the document emits no insight key at all').toBeGreaterThan(0);
-    expect([...new Set(declared)].sort()).toEqual([...projected].sort());
+
+    // Direction 1 — every declared attribute is carried by a document key.
+    const declaredSet = [...new Set(declared)].sort();
+    expect(
+      declaredSet.filter((leaf) => !projected.includes(leaf)),
+      'these insight.* attributes are declared but no document key carries them — inert'
+    ).toEqual([]);
+
+    // Direction 2 — the written-but-undeclared set is exactly the ledger, no more and no less.
+    expect(
+      projected.filter((leaf) => !declaredSet.includes(leaf)).sort(),
+      `the write-only insight ledger must be exactly [${writeOnlyLeaf}] — a key added here is an unargued unreadable field, a key missing is a readability decision`
+    ).toEqual([writeOnlyLeaf]);
+  });
+
+  it('🔴 keeps the winning version id OFF filterableAttributes and OFF sortableAttributes', () => {
+    // The approved payload is filterable `insight.role` + `insight.styleFamily`, and nothing
+    // more. This pins the half of that decision a list-membership test can actually check.
+    //
+    // 🔴 FILTERABLE IS THE ONE THAT MATTERS, and it is not symmetry-for-its-own-sake.
+    // ../displayed-attributes.ts records, measured on v1.15.0, that filtering works on an
+    // attribute this index WITHHOLDS from a hit, and `src/components/Search/search.client.ts`
+    // points the browser at this index with a key published in `src/env/client-schema.ts`. So a
+    // filterable attribute is a per-document ORACLE for anyone holding that key, one equality
+    // at a time — the existing class with `insight.qualityScore`, which is accepted there.
+    // Declaring the winning id filterable would WIDEN that oracle to reveal which of a model's
+    // versions scored highest, i.e. a signal about internal labels, and that was not approved.
+    //
+    // Sortable would additionally be meaningless: an ordering over primary keys is an ordering
+    // by insertion age wearing the costume of a ranking.
+    expect(
+      modelsFilterableAttributes,
+      `${INSIGHT_WRITE_ONLY_ATTR} must NOT be filterable — it would widen the per-document oracle to internal label outcomes`
+    ).not.toContain(INSIGHT_WRITE_ONLY_ATTR);
+    expect(
+      modelsSortableAttributes,
+      `${INSIGHT_WRITE_ONLY_ATTR} must NOT be sortable`
+    ).not.toContain(INSIGHT_WRITE_ONLY_ATTR);
+
+    // And the positive half, so this case cannot pass by the attribute lists being empty or by
+    // `insight.*` having silently left them altogether.
+    expect(modelsFilterableAttributes.filter((a) => a.startsWith('insight.')).sort()).toEqual(
+      [...INSIGHT_AXIS_ATTRS, INSIGHT_SORT_ATTR].sort()
+    );
   });
 
   it('🔴 keeps the meaning axes OUT of sortableAttributes — they are unordered categories', () => {
@@ -319,14 +403,28 @@ describe('models search index projects insight.qualityScore', () => {
     // as such — it pins a decision for the next person rather than catching a defect that
     // shipped.
     //
-    // 🔴 And the honest account of what WAS red at `origin/main`, because an earlier version of
-    // this comment overstated it. Four cases in THIS file failed by their own assertions there:
-    // the projection call, the ordered literal, the `?? null` diagnostic and the filterable
-    // membership of the two axes. The twelve `modelInsightProjection` cases in
-    // ~/server/services/__tests__/resource-insight.test.ts also went red, but on
-    // `TypeError: modelInsightProjection is not a function` — a missing symbol, which is
-    // evidence the function is NEW, not evidence the behaviour regressed. Their teeth come
-    // from the mutation battery run at HEAD, not from that red.
+    // 🔴 And the honest account of what WAS red at `origin/main`. RE-DERIVED at this commit by
+    // running this file over `origin/main`'s four non-test sources with `--reporter=verbose`,
+    // and both figures below MOVED when they were re-derived:
+    //
+    //   - **SIX** of this file's 12 cases failed there, every one by its OWN assertion and none
+    //     by a thrown error: the projection call (`expected [] to have a length of 1`), the
+    //     ordered literal, the `?? null` diagnostic, the filterable membership of the two axes,
+    //     the declared/projected pairing, and the write-only-id absence case. ⚠️ This said
+    //     "Four cases" and listed the first four — correct when written, and invalidated by the
+    //     same commit that corrected the other number here: the pairing case was GREEN at base
+    //     until its undeclared-side assertion became a ledger, and the id-absence case is new.
+    //     That is this comment's own stated lesson biting a third time.
+    //   - **ELEVEN** of the 13 `modelInsightProjection` cases in
+    //     ~/server/services/__tests__/resource-insight.test.ts went red, on
+    //     `TypeError: modelInsightProjection is not a function`. ⚠️ This said "twelve", which
+    //     was wrong twice over: the describe holds 13 cases, and 2 of them are GREEN at base
+    //     because they do not call the new symbol. The authoritative breakdown is in that
+    //     file's own describe docstring; it is not restated here beyond the count.
+    //
+    // A missing-symbol red is evidence the function is NEW, not evidence the behaviour
+    // regressed. Those cases' teeth come from the mutation battery run at HEAD, not from that
+    // red.
     //
     // Not symmetry-for-its-own-sake: a declared-but-meaningless sortable attribute is a
     // SILENT trap. Meilisearch accepts `insight.role:desc` on any declared sortable attribute
@@ -343,7 +441,7 @@ describe('models search index projects insight.qualityScore', () => {
     ]);
   });
 
-  it('🔴 keeps all three axes OFF displayedAttributes, ON the withheld ledger, and OFF the DB-direct path', async () => {
+  it('🔴 keeps all four insight keys OFF displayedAttributes, ON the withheld ledger, and OFF the DB-direct path', async () => {
     // ⚠️ ALSO AN INVARIANT GUARD for the two new axes, and that is the POINT rather than a
     // weakness: it is green on `origin/main` because both withholding mechanisms key on the
     // top-level `insight`, so the axes were already covered before they existed. The guard
@@ -380,7 +478,14 @@ describe('models search index projects insight.qualityScore', () => {
         import('~/server/search-index/models.search-index'),
       ]);
 
-    for (const attr of [INSIGHT_SORT_ATTR, ...INSIGHT_AXIS_ATTRS]) {
+    // 🔴 `INSIGHT_WRITE_ONLY_ATTR` is swept here too, and for it this is not a ride-along note
+    // but THE assertion that makes "no search path can return it" machine-checked. Being
+    // undisplayed is what makes it unreadable: `attributesToRetrieve` can only narrow WITHIN
+    // the displayed set, so it cannot re-admit a withheld attribute, and the id is declared in
+    // neither the filterable nor the sortable list either (pinned above). Remove `insight` from
+    // the withheld ledger and this case goes red — which is the intended cost of the DISPLAY
+    // route named at the projection site.
+    for (const attr of [INSIGHT_SORT_ATTR, ...INSIGHT_AXIS_ATTRS, INSIGHT_WRITE_ONLY_ATTR]) {
       const [topLevel] = attr.split('.');
       expect(modelsDisplayedAttributes, `${attr} must not be displayed`).not.toContain(attr);
       expect(modelsDisplayedAttributes, `${topLevel} must not be displayed`).not.toContain(
@@ -399,7 +504,12 @@ describe('models search index projects insight.qualityScore', () => {
     expect(
       withheldStripped({
         id: 1,
-        insight: { qualityScore: 0.9, role: 'style', styleFamily: 'photorealistic' },
+        insight: {
+          qualityScore: 0.9,
+          role: 'style',
+          styleFamily: 'photorealistic',
+          modelVersionId: 42,
+        },
       })
     ).toEqual({ id: 1 });
   });

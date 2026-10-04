@@ -305,11 +305,11 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
       const realDownloadCount = metrics?.downloadCount ?? 0;
       const realTippedAmountCount = metrics?.tippedAmountCount ?? 0;
 
-      // The winning version's WHOLE label row — `qualityScore`, `role`, `styleFamily` —
-      // chosen by MAX `qualityScore` over this model's labeled versions that clear the
-      // promote confidence floor, ties broken on the lowest version id; `null` when none
-      // qualifies. The rule, the alternatives considered and the tiebreak argument are in
-      // `modelInsightProjection`'s docstring.
+      // The winning version's WHOLE label row — `qualityScore`, `role`, `styleFamily` — plus
+      // the id of the version it came from, chosen by MAX `qualityScore` over this model's
+      // labeled versions that clear the promote confidence floor, ties broken on the lowest
+      // version id; `null` when none qualifies. The rule, the alternatives considered and the
+      // tiebreak argument are in `modelInsightProjection`'s docstring.
       //
       // 🔴 ONE CALL, ONE ROW — DO NOT SPLIT THIS INTO A PER-AXIS LOOKUP. The three axes
       // must describe the SAME version: taking the score from the best-scoring version and
@@ -328,13 +328,39 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
       // `insight.role = "style" AND version.baseModel = "SDXL 1.0"` can match a model whose
       // role came from one version and whose base model came from another.
       //
-      // Left as-is rather than reconciled, deliberately: `version.*` is the card-display
-      // version and predates all of this, the winning version id is NOT projected (see
-      // `modelInsightProjection`, which drops it), and today's only consumer filters on the
-      // ARRAY form `versions.baseModel` rather than `version.baseModel`, so nothing currently
-      // ANDs the two. 🔴 A consumer that wants both axes to describe one version must project
-      // the winning `modelVersionId` first — do not assume the existing `version.*` keys
-      // already agree with `insight.*`.
+      // 🔴 AND THAT MISMATCH IS NOT OPT-IN — A LIVE, MANDATORY CLAUSE ON THE SINGULAR
+      // `version.baseModel` ALREADY SHIPS ON THE ONE PAGE A PURPOSE FILTER WOULD LIVE ON.
+      // ⚠️ An earlier version of this paragraph claimed the opposite — "today's only consumer
+      // filters on the ARRAY form `versions.baseModel` rather than `version.baseModel`, so
+      // nothing currently ANDs the two" — and that was FALSE. `src/pages/search/models.tsx`
+      // builds `NOT (nsfwLevel IN [...] AND version.baseModel IN [...])` into the `filters`
+      // array it hands `<BrowsingLevelFilter indexKey="models" filters={filters} />`; that
+      // forwards to `ApplyCustomFilter`, which runs the array through `joinFilterClauses`
+      // (`src/components/Search/search-filters.ts` — parenthesise each clause, join with
+      // ` AND `) and into `useConfigure`. The clause is unconditional, so the predicate is on
+      // EVERY `/search/models` request. The page does ALSO expose a `versions.baseModel`
+      // refinement widget, which is where the array form in the retracted claim came from —
+      // the two coexist, and reading only the widget is how the singular one was missed.
+      //
+      // So the two are un-ANDed today for one reason only: nothing reads `insight.*` at all
+      // yet. That is the half about to change. The FIRST `insight.*` filter added to that page
+      // inherits a cross-version `version.*` predicate whether its author asks for one or not,
+      // and the disagreement probability rises with a model's version count — which correlates
+      // with maturity, i.e. with whatever outcome such a filter is being judged on.
+      //
+      // 🔴 WHAT A CONSUMER SHOULD DO ABOUT IT, now that the winning id IS projected: do not
+      // assume the existing `version.*` keys agree with `insight.*`, and do not try to AND
+      // them into agreement — `version.*` is flattened from a DIFFERENT version and no filter
+      // expression can reconcile them. Instead treat `insight.modelVersionId` as the id the
+      // `insight.*` axes speak for, and resolve any version-level fact a purpose query needs
+      // (base model, availability, generation coverage) against THAT id — from `versions[]` on
+      // the hit or from Postgres — rather than against `version.*`. For a measurement rather
+      // than a filter, post-stratify on `insight.modelVersionId == version.id` to quantify the
+      // disagreement instead of inheriting it silently. ⚠️ Doing any of this from the browser
+      // needs the field READABLE first, which it is not — see the note at the key below.
+      //
+      // `version.*` itself is left as-is rather than reconciled: it is the card-display
+      // version and predates all of this.
       //
       // 🔴 THE NULL IS WRITTEN, NOT OMITTED, AND THE DIFFERENCE IS A STALE-SCORE BUG.
       // An earlier version of this omitted the key on `null`, on the measured ground that
@@ -361,13 +387,49 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
 
       return {
         ...model,
-        // All three keys written unconditionally — see the merge argument above. `?? null`
+        // All four keys written unconditionally — see the merge argument above. `?? null`
         // and never `?? 0`: a version can legitimately be judged 0 with high confidence,
         // and `?.qualityScore ?? null` keeps that 0 while still clearing an absent label.
+        //
+        // 🔴 `modelVersionId` IS WRITE-ONLY TODAY — NO SEARCH PATH CAN RETURN IT, AND THAT IS
+        // RECORDED HERE ON PURPOSE SO THE NEXT READER DOES NOT FILE IT AS DEAD CODE. The
+        // top-level `insight` key is withheld from `modelsDisplayedAttributes` (see
+        // ./displayed-attributes.ts) and `attributesToRetrieve` can only narrow WITHIN the
+        // displayed set, so it cannot re-admit a withheld attribute: no search response
+        // serialises this field. It is also neither filterable nor sortable, so it is not even
+        // reachable as a per-document oracle the way `insight.qualityScore` and the two axes
+        // are. Written by nothing else, read by nothing at all.
+        //
+        // WHY WRITE IT ANYWAY. It records WHICH VERSION THE INDEX DECIDED FOR at reset time,
+        // and that fact is NOT recoverable from Postgres afterwards: the labels move
+        // (`scripts/label-resource-insights.ts` rewrites rows), the `stale` flag moves, and the
+        // promote floor (`RESOURCE_INSIGHT_MIN_PROMOTE_CONFIDENCE`) moves — so re-running the
+        // rule later answers for the label state of LATER, not of the document. Without the id,
+        // the `version.*` vs `insight.*` disagreement argued above is not merely unfixed, it is
+        // UNMEASURABLE: a study cannot post-stratify on something no document carries. And the
+        // cost of adding it now is one more leaf on a write that is already happening, against a
+        // second authorisation-gated full reset later — `filterableAttributes` genuinely rebuilds
+        // facet data, so that reset is not a formality. Same cost asymmetry that justified
+        // projecting `role`/`styleFamily` at all.
+        //
+        // 🔴 MAKING IT READABLE IS A LATER, SEPARATE DECISION — NEITHER ROUTE IS APPROVED, AND
+        // DO NOT TAKE EITHER AS A DRIVE-BY. (a) DISPLAY the leaf: remove `insight` from
+        // `MODELS_WITHHELD_ATTRIBUTES` / add it to the displayed list — which would expose the
+        // whole `insight` object, score included, because both withholding mechanisms key on the
+        // TOP-LEVEL attribute, so there is no "just this leaf" version of this route. (b)
+        // FILTER-ORACLE it: add `insight.modelVersionId` to ./filterable-attributes.ts — which
+        // widens the existing per-document oracle (argued in ./displayed-attributes.ts) to
+        // reveal which of a model's versions scored highest, i.e. a signal about internal
+        // labels, for anyone holding the browser-published search key. The approved payload is
+        // filterable `insight.role` + `insight.styleFamily` and nothing more. Both routes are
+        // pinned shut by ./__tests__/models-index-insight-projection.test.ts, which asserts this
+        // leaf is absent from all three lists — if one of those assertions is in your way, that
+        // is the decision, not an obstacle.
         insight: {
           qualityScore: insightProjection?.qualityScore ?? null,
           role: insightProjection?.role ?? null,
           styleFamily: insightProjection?.styleFamily ?? null,
+          modelVersionId: insightProjection?.modelVersionId ?? null,
         },
         earlyAccessDeadline: paidAccessGates.get(model.id)?.earlyAccessDeadline ?? null,
         hasActivePaidAccess: paidAccessGates.get(model.id)?.gated ?? false,

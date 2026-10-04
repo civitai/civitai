@@ -82,14 +82,24 @@ export const MODELS_WITHHELD_ATTRIBUTES = [
   // `modelsFilterableAttributes`, and no consumer reads it off a hit — the resource-intent matcher
   // sorts on it and reads the scores it needs from Postgres via `loadResourceInsights`. The
   // top-level key is `insight` because `transformData` emits
-  // `insight: { qualityScore, role, styleFamily }`, and this list is keyed on top-level attributes
-  // (nested children ride along with their parent).
+  // `insight: { qualityScore, role, styleFamily, modelVersionId }`, and this list is keyed on
+  // top-level attributes (nested children ride along with their parent).
   // 🔴 That ride-along is what keeps the two MEANING axes — `insight.role` and
   // `insight.styleFamily`, filter-only, added later than the score — out of a serialised hit
   // with no edit here. Confirmed on the OTHER path too, which this whitelist cannot reach:
   // `withheldStripped` in ./models.search-index.ts `delete`s the top-level `insight` key, taking
   // the whole object with it. Neither needed an entry per axis — which is also why a future axis
   // promoted to a TOP-LEVEL key WOULD need its own entry here.
+  //
+  // 🔴 AND FOR `insight.modelVersionId` THE RIDE-ALONG IS LOAD-BEARING RATHER THAN CONVENIENT.
+  // That leaf is in NO attribute list — not filterable, not sortable — so unlike the three
+  // beside it, this entry is the ONLY thing keeping it unreadable: `attributesToRetrieve` can
+  // narrow within the displayed set but cannot re-admit a withheld attribute, so withholding
+  // `insight` is what makes "no search path returns the winning version id" true. Removing
+  // `insight` from this list to expose something else therefore also publishes that id, and it
+  // cannot be done per-leaf — both mechanisms key on the top-level attribute. The argument for
+  // why the id is written at all, and the two routes that would make it readable (neither
+  // approved), are at the projection site in ./models.search-index.ts.
   //
   // 🔴 BUT READ "WITHHELD" AS **NOT SERIALISED INTO A HIT**, NEVER AS NOT DETERMINABLE, and do
   // not let the word do work it cannot do. These two mechanisms are the complete boundary on
