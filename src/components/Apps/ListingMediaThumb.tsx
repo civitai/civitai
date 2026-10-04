@@ -104,7 +104,8 @@ const iconBoxStyle = (box: number, size: ListingThumbSize): CSSProperties => ({
   // binding today at any width measured, but nothing structural stops it.
   // It is also redundant on the img branch specifically, where Tailwind preflight already
   // ships `img { max-width: 100% }`; the placeholder is a `div` and drops to `none` without
-  // it, which is the pair the parity arm reports as `expected 'none' to be '100%'`.
+  // it — which the literal-anchor arm reports as `expected 'none' to be '100%'` (it runs
+  // before the agreement arm, which yields the same comparison under a different label).
   // Kept so the two branches cannot diverge, not because it does work today.
   maxWidth: '100%',
 });

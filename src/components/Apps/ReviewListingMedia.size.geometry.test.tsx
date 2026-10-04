@@ -153,7 +153,10 @@ const NON_SQUARE_IMAGE_DATA_URI =
  *   THE TWO REAL NEVER-SETTLING PATHS ARE BOTH ON THE `load` AWAIT. A non-`<img>` has
  *   `complete === undefined`, so the await IS entered and no `load` ever fires — that is
  *   `toBeInstanceOf`'s job, and it is the one measured: delete it, aim one `settled()` at a
- *   placeholder id, and the file goes from 0 timeouts to 3, tests phase 0.98 s to 15.62 s.
+ *   placeholder id, and ONE test times out at 15 s, taking the tests phase from ~0.6 s to
+ *   ~15.6 s. (An earlier draft said "0 timeouts to 3" — that 3 was the number of LINES
+ *   matching "Test timed out", which vitest prints three times for one timeout. Three 15 s
+ *   timeouts could not fit in the 15.6 s phase quoted in the same sentence.)
  *   The second path is an `<img>` in flight whose load FAILS, firing `error` rather than
  *   `load` — that is the `error` listener's job, and it is REACHABLE TODAY. An earlier draft
  *   called it unreachable "because data URIs complete synchronously", which is true only of a
