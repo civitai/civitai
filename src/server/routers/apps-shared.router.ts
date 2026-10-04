@@ -553,9 +553,20 @@ export async function listSharedRows(
   // against an empty fixture a refactor to `COALESCE($4, s.author_user_id)` —
   // which silently returns the ENTIRE board to anon under a `mine` flag — is
   // behaviourally indistinguishable, so only a shape assertion can see it.
-  // The predicate is index-covered by `shared_kv_author_idx` (author_user_id),
-  // provisioned in storage-provision.service.ts, and the per-author row cap is
-  // SHARED_KV_PER_USER_ROW_CAP, so the sort it feeds is bounded and small.
+  // The predicate is SUPPORTED by `shared_kv_author_idx` (author_user_id) —
+  // supported, not covering; the index holds only that column — and the
+  // per-author row cap is SHARED_KV_PER_USER_ROW_CAP, so the sort it feeds is
+  // bounded and small. The index is created by the same migration that creates
+  // `shared_kv`, so every provisioned schema has it.
+  //
+  // 🔴 `NOT COALESCE($5, false)` RATHER THAN `$5 IS NOT TRUE`, and the difference
+  // is the FAILURE DIRECTION. Both are inert for `false`, but `IS NOT TRUE` is
+  // ALSO inert for NULL — so an unexpected NULL `$5` returns the ENTIRE BOARD
+  // under a `mine` request. Nothing can send NULL today (`mine ?? false` below,
+  // and both callers are zod-typed `boolean | undefined`), but that made the
+  // invariant depend on a `??` three lines away rather than on the predicate.
+  // The COALESCE puts it in the SQL, where the default direction is "filter"
+  // instead of "no filter".
   const rows = (
     await pool.query<SharedKvRow>(
       `SELECT s.key, s.author_user_id, s.value, COALESCE(c.count, 0)::text AS count,
@@ -567,7 +578,7 @@ export async function listSharedRows(
         WHERE s.hidden_at IS NULL
           AND s.key LIKE $1 ESCAPE '\\'
           AND ($2::text IS NULL OR s.key < $2)
-          AND ($5::boolean IS NOT TRUE OR s.author_user_id = $4::int)
+          AND (NOT COALESCE($5::boolean, false) OR s.author_user_id = $4::int)
         ORDER BY s.key DESC
         LIMIT $3`,
       [prefixPattern, afterKey, limit, userId, mine ?? false]

@@ -2707,10 +2707,19 @@ export function IframeHost({
             ? Math.min(Math.max(Math.floor(raw.limit), 1), 100)
             : 50;
         const cursor = typeof raw.cursor === 'string' ? raw.cursor : undefined;
-        // civitai/civitai#5354 Q3 — kept byte-identical to PageBlockHost's arm.
-        // 🔴 Forwarded ONLY when literally `true`, so a malformed payload cannot
-        // silently narrow someone's feed. The server decides WHOSE rows; this
-        // message carries no user id and cannot name an author.
+        // civitai/civitai#5354 Q3. 🔴 Forwarded ONLY when literally `true`, so a
+        // malformed payload cannot silently narrow someone's feed. The server
+        // decides WHOSE rows; this message carries no user id and cannot name an
+        // author.
+        //
+        // ⚠ The FORWARDING STATEMENT is identical to PageBlockHost's; the two
+        // SHARED_LIST arms are NOT. An earlier version of this comment claimed
+        // byte-identity, and a maintainer acting on that would "re-align" them
+        // and change behaviour: PageBlockHost nacks on a missing token before
+        // anything else and carries `nack` in its effect deps, and this one does
+        // neither. Key-set parity between the two call sites is asserted
+        // mechanically in `sharedListArgParity.test.ts` — rely on that, not on a
+        // sentence.
         const mine = raw.mine === true ? true : undefined;
         const result = await trpcUtils.apps.shared.list.fetch(
           {

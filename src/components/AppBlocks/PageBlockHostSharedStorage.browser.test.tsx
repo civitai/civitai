@@ -347,9 +347,18 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     const replies = listenForReply();
 
     // The string "true" is the shape a hand-rolled postMessage or a querystring
-    // round-trip produces. `raw.mine === true` rejects it; a `!!raw.mine` or a
-    // truthiness check would narrow the feed on it. Asserting `mine: undefined`
-    // rather than merely "not true" pins which of those the host does.
+    // round-trip produces. `raw.mine === true` rejects it; a `!!raw.mine` or any
+    // truthiness check would narrow the feed on it.
+    //
+    // 🔴 THE `in` CHECK IS LOAD-BEARING AND AN EARLIER VERSION OF THIS TEST
+    // LACKED IT. It asserted `toHaveBeenCalledWith({…, mine: undefined})`, and
+    // `toHaveBeenCalledWith` uses `toEqual` semantics under which an explicit
+    // `undefined` property EQUALS an absent one. Measured: with both hosts
+    // reverted to pre-change, that version still PASSED — it could not tell
+    // "the host dropped a non-literal-true" (key present, value undefined) from
+    // "the host never forwards mine at all" (key absent), which is the whole
+    // thing it claims to pin. `'mine' in arg` is the only assertion that
+    // separates them.
     postFromBlock('SHARED_LIST', { requestId: 'rq_mine_str', mine: 'true' });
 
     await vi.waitFor(() => {
@@ -364,6 +373,9 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
         { staleTime: BLOCK_STORAGE_READ_STALE_TIME_MS }
       );
     });
+    const arg = mocks.list.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect('mine' in arg, 'the host must REACH the mine arm, not skip it').toBe(true);
+    expect(arg.mine, 'and resolve a non-literal-true to undefined').toBeUndefined();
     replies.stop();
   });
 
