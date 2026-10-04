@@ -26,9 +26,11 @@ import {
  * `<Code block>` computes `white-space: pre` / `nowrap`, so nothing soft-wraps and the
  * property is INERT here — measured in
  * `src/components/CopyAffordance/CopyAffordance.geometry.test.tsx`, where this component's own
- * long-command fixture scrolls (`scrollWidth` 572 against `clientWidth` 390). It is left on
- * the body below because removing it would touch other bodies' styles for no rendered effect,
- * not because it does anything. Do not cite it as a reason this body is special.
+ * long-command fixture scrolls (`scrollWidth` 572 against `clientWidth` 390, computed
+ * `white-space: pre` / `text-wrap-mode: nowrap` / `overflow-x: auto`). It is LEFT on the body
+ * below rather than deleted: inert under the geometry measured here is not the same claim as
+ * output-neutral to remove at every call site, and nobody has measured the second. Do not
+ * cite it as a reason this body is special; do not read its presence as a reason either.
  *
  * This file's rendered output is UNCHANGED by that move: the same `Box` click target, the
  * same absolutely-positioned icon at the same 8px offset, the same `aria-label`, the same

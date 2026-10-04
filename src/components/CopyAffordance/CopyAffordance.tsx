@@ -19,10 +19,10 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
  * soft wrap happens and `break-all` has nothing to act on — measured in
  * `src/components/CopyAffordance/CopyAffordance.geometry.test.tsx`, where `CopyableCommand`'s
  * own long-command fixture SCROLLS (`scrollWidth` 572 against `clientWidth` 390) instead of
- * wrapping. The property is still set on the bodies that carried it; it is inert there, not
- * load-bearing — and no count of them is given here, for the reason the next paragraph gives.
- * The conclusion above is unaffected: it rests on the sigil and the `aria-label`, both of
- * which are rendered output.
+ * wrapping. The property is still set on the bodies that carried it — inert there, not
+ * load-bearing, and deliberately not deleted; no count of them is given here, for the reason
+ * the next paragraph gives. The conclusion above is unaffected: it rests on the sigil and the
+ * `aria-label`, both of which are rendered output.
  *
  * ⚠️ NO TOTAL IS STATED HERE, DELIBERATELY. Two successive comments in this family each
  * claimed a count ("not a fourth copy", then "a fifth") and each was wrong, and a third
