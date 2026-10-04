@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
@@ -25,9 +26,13 @@ import { renderWithProviders } from '../../../../test/component-setup';
 // -----------------------------------------------------------------------------
 // Same shape as VideoInput's `vi.mock('~/utils/trpc', ...)`, but the factory
 // declares EVERY procedure the component touches, each with its own vi.fn()
-// useQuery so the two queries are driven INDEPENDENTLY per test:
+// useQuery so the two queries are driven INDEPENDENTLY per test — over an
+// `importOriginal` spread, so only `trpc` is substituted and every other export
+// of the module stays real:
 //
-//   vi.mock('~/utils/trpc', () => ({
+//   import type * as TrpcModule from '~/utils/trpc';
+//   vi.mock('~/utils/trpc', async (importOriginal) => ({
+//     ...(await importOriginal<typeof TrpcModule>()),
 //     trpc: { generation: {
 //       getGenerationData: { useQuery: vi.fn() },   // server-side (on-site drop) path
 //       resolveImageMeta:  { useQuery: vi.fn() },    // client-side EXIF path
@@ -98,28 +103,36 @@ import { renderWithProviders } from '../../../../test/component-setup';
 //     it thin so the "Resources (N)" header/count branch is testable without
 //     standing up the whole app-context provider stack. Stub shows the resource
 //     id so the per-resource mapping is still observable.
+//   - `~/components/ResourceLoad/ResourceResidency`: `ResidencyBatchProvider`
+//     wraps the same list and is a REQUIRED-CONTEXT component (it calls
+//     `useCurrentUser()` and `trpc.useQueries`). Stubbed to a passthrough — see
+//     the long note on its `vi.mock` for what leaving it real cost.
 // We do NOT mock Mantine (resolve.dedupe handles dual-React at the scaffold).
 
-// NOTE: vi.mock replaces the WHOLE module, so any OTHER importer of a
-// `~/utils/trpc` export in this component's import chain breaks unless mocked.
-// `generation-graph.store` (imported transitively for the "add to generation"
-// flow) uses `trpcVanilla.generation.getGenerationData.query`, so we stub
-// `trpcVanilla` too (and the other named exports for safety). VideoInput didn't
-// need this because its chain doesn't reach generation-graph.store.
-vi.mock('~/utils/trpc', () => ({
+// 🔴 `importOriginal` SPREAD, not a hand-written module object — and the switch is part of
+// the civitai#5364 fix rather than tidying beside it.
+//
+// This mock used to name its exports by hand (`trpc`, `trpcVanilla`, `queryClient`,
+// `handleTRPCError`), which `local-rules/no-wholesale-module-mock` flags at
+// error severity for precisely the failure this file suffered: the day the module — or any
+// consumer in this component's import chain — reaches for an export the factory omits, the
+// omission surfaces as `undefined`, and the whole FILE fails to load with 0 tests collected
+// and no failing assertion. The hand-named list was already one round of that whack-a-mole
+// (`trpcVanilla` was added for `generation-graph.store`'s
+// `trpcVanilla.generation.getGenerationData.query`).
+//
+// Spreading the real module keeps every export this file does not drive REAL, so only
+// `trpc` itself is substituted. That is still a substitution, so the two queries the
+// component drives are declared below — but a NEW transitive consumer of some other export
+// now gets a working binding instead of silently zeroing the suite.
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcModule>()),
   trpc: {
     generation: {
       getGenerationData: { useQuery: vi.fn() },
       resolveImageMeta: { useQuery: vi.fn() },
     },
   },
-  trpcVanilla: {
-    generation: {
-      getGenerationData: { query: vi.fn() },
-    },
-  },
-  queryClient: {},
-  handleTRPCError: vi.fn(),
 }));
 
 vi.mock('~/store/metadata-extraction.store', () => ({
@@ -130,6 +143,27 @@ vi.mock('~/components/EdgeMedia/EdgeVideo', () => ({
   EdgeVideo: ({ src }: { src: string }) => <div data-testid="edge-video" data-src={src} />,
 }));
 
+// 🔴 ResidencyBatchProvider is a REQUIRED-CONTEXT wrapper, and leaving it real is
+// what made the `store.resolvedResources` test permanently red (civitai#5364).
+//
+// The panel grew a `<ResidencyBatchProvider>` around the resolved-resources list
+// (MetadataExtractionPanel.tsx:447) after this file was written. That provider calls
+// `useCurrentUser()` -> `useCivitaiSessionContext()`, which THROWS
+// `missing CivitaiSessionContext` under this network-free scaffold, and
+// `trpc.useQueries`, which the wholesale `~/utils/trpc` mock above does not declare.
+// Either one alone kills the render, so `document.body` is EMPTY and the
+// `Resources (2)` assertion burns its full 15s locator timeout — reported as
+// "Cannot find element", i.e. pointing at the assertion rather than the cause.
+// It is the one failing test of the eight in this file.
+//
+// Stubbed to a transparent passthrough: this file asserts the Resources card's
+// COUNT and per-resource mapping, never residency. `importOriginal` keeps every
+// other export real so a future child cannot be silently satisfied by `undefined`.
+vi.mock('~/components/ResourceLoad/ResourceResidency', async (importOriginal) => ({
+  ...(await importOriginal<typeof ResourceResidencyModule>()),
+  ResidencyBatchProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
+}));
+
 vi.mock('./ResourceItemContent', () => ({
   ResourceItemContent: ({ resource, actions }: { resource: { id: number }; actions: any }) => (
     <div data-testid="resource-item" data-resource-id={resource.id}>
@@ -138,6 +172,8 @@ vi.mock('./ResourceItemContent', () => ({
   ),
 }));
 
+import type * as ResourceResidencyModule from '~/components/ResourceLoad/ResourceResidency';
+import type * as TrpcModule from '~/utils/trpc';
 import { MetadataExtractionPanel } from '~/components/generation_v2/inputs/MetadataExtractionPanel';
 import { trpc } from '~/utils/trpc';
 import { useMetadataExtractionStore } from '~/store/metadata-extraction.store';

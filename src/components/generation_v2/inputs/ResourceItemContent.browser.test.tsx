@@ -44,6 +44,12 @@ import { renderWithProviders } from '../../../../test/component-setup';
 //     thin <img> echoing `src`, just enough to confirm the image branch renders.
 //     SHADOWS: all real CF-image URL building / animation logic.
 //
+//   * ResourceResidencyStatus (`~/components/ResourceLoad/ResourceResidency`) — a
+//     REQUIRED-CONTEXT leaf added to the component after this file was written.
+//     See the long note on its `vi.mock` below for why it has to be stubbed and
+//     what it cost not to be. SHADOWS: the residency dot/label and its live
+//     `resourceLoad.getResidency` read — asserted nowhere here.
+//
 //   Mantine is NOT mocked (resolve.dedupe handles dual-React at the scaffold).
 //
 // SCOPE CAVEATS (so nobody over-trusts Layer 2):
@@ -102,6 +108,35 @@ vi.mock('~/providers/AppProvider', () => ({
   useAppContext: vi.fn(),
 }));
 
+// 🔴 ResourceResidencyStatus is a REQUIRED-CONTEXT leaf, and leaving it real is what
+// made this file permanently red (civitai#5364).
+//
+// The component grew a `<ResourceResidencyStatus>` row (ResourceItemContent.tsx:306)
+// after this file was written. That leaf calls `useCurrentUser()`, which calls
+// `useCivitaiSessionContext()` — a hook that THROWS `missing CivitaiSessionContext`
+// when there is no <CivitaiSessionProvider>, which this network-free scaffold
+// deliberately does not supply. The throw happens during render, so `document.body`
+// stays EMPTY and every `expect.element(...)` in Layer 2 below burns its full 15s
+// locator timeout before failing with `Cannot find element with locator` — a message
+// that points at the assertion rather than at the cause. 19 tests × 15s = ~285s of
+// red per CI run, for one missing mock.
+//
+// The leaf ALSO issues `trpc.resourceLoad.getResidency.useQuery`, so mocking only
+// `~/hooks/useCurrentUser` would move the throw to "Unable to find tRPC Context"
+// rather than remove it. One boundary stub closes both, and residency has its own
+// coverage — nothing in this file asserts it.
+//
+// `importOriginal` rather than a bare factory on purpose: the other exports of that
+// module stay REAL, so a future child reaching for one is not silently satisfied by
+// an `undefined`.
+vi.mock('~/components/ResourceLoad/ResourceResidency', async (importOriginal) => ({
+  ...(await importOriginal<typeof ResourceResidencyModule>()),
+  ResourceResidencyStatus: ({ modelVersionId }: { modelVersionId: number }) => (
+    <div data-testid="residency-status" data-model-version-id={String(modelVersionId)} />
+  ),
+}));
+
+import type * as ResourceResidencyModule from '~/components/ResourceLoad/ResourceResidency';
 import {
   ResourceItemContent,
   getResourceCompatibility,
