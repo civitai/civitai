@@ -368,14 +368,26 @@ describe('the seeded domain matches the service', () => {
    * 🔴 ONE ALTERNATION, NOT TWO CHAINED REPLACES, AND THE ORDER WAS A LIVE HOLE. Stripping
    * block comments FIRST lets a block-comment OPENER sitting inside a `//` LINE comment open a
    * pseudo block comment that runs to the next real block-comment CLOSER — swallowing every
-   * line of code between them. The span is NOT local: measured on the service, inserting one
-   * line comment ending in a path glob of a shape that already appears in two of the three
-   * guarded files swallowed a **155-line span, 75 non-blank lines** (the stripper's output went
-   * 571 non-blank lines to 496). An earlier version of this paragraph said "four", which
-   * understated it ~19x and contradicted the mechanism sentence above it.
+   * line of code between them. The span is NOT local: measured on the service, a single
+   * inserted line comment carrying a block-comment opener swallowed roughly **75 non-blank
+   * lines over a ~155-line span** — two orders of magnitude more than the "four" an earlier
+   * version of this paragraph claimed, which also contradicted the mechanism sentence directly
+   * above it.
+   *
+   * ⚠️ NO ABSOLUTE BEFORE/AFTER LINE TOTALS ARE QUOTED, DELIBERATELY. A previous revision gave
+   * a specific pair and it was not reproducible: the endpoints shift by a line or two with the
+   * exact text and position of the inserted comment, so two people measuring "the same" mutant
+   * from this paragraph got different totals and the figure read as wrong rather than as
+   * fixture-dependent. The DELTA and the direction are the stable, reproducible part; if you
+   * need the absolutes, measure them from the recipe below and record the inserted text with
+   * them.
    *
    * It takes TWO mutants to blind both flat-zero loops below, and an earlier version claimed
-   * one did — so they are separated here, each measured:
+   * one did — so they are separated here, each measured. For both: insert at the service's
+   * REVOKED-INSTANCE refusal (`countStorageOutcome(op, 'unauthorized')` in the revocation
+   * branch of `resolveStorageContext`), the line comment FIRST and the emit second — reversing
+   * the two lines puts the emit ahead of the swallow, where it is still counted and nothing is
+   * blinded, which is a useful control that the span and not the file is what matters.
    *   - second line `appStorageSessionGateRefusalsCounter.inc({ op })` → the SYMBOL arm of the
    *     universal-half loop goes 1 hit to 0. Declared-name hits are 0 in BOTH arms, so the
    *     names loop was never at 1 for this mutant.
