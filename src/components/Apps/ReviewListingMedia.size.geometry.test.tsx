@@ -140,20 +140,34 @@ const NON_SQUARE_IMAGE_DATA_URI =
  * by a LATER test, off a decode the earlier one had warmed. The protection was file ORDER: a
  * reorder, a dropped arm, a `.only` or a `-t` filter and the defect ships green.
  *
- * 🔴 A DEAD FIXTURE MUST NAME ITSELF, AND THE `naturalWidth` CHECK IS THE HALF THAT DOES IT.
- * On a broken image Chromium sets `complete === true` with `naturalWidth === 0`, so the `load`
- * branch is skipped and `decode()` can sit unresolved. Measured by destroying the fixture's
- * base64 payload: with the guard every one of the 6 failures NAMES the testid; without it the
- * failures are bare `EncodingError`s that name nothing, and on at least one run three arms
- * reached the 15 s per-test timeout instead. **The name is the value here, not a number.**
+ * 🔴 EACH OF THE THREE GUARDS BELOW STOPS A DIFFERENT THING, AND THREE DRAFTS OF THIS
+ * PARAGRAPH CREDITED THE WRONG ONE. Measured directly, by probing every corruption class:
  *
- * ⚠️ NO TIMING FIGURE IS QUOTED, DELIBERATELY — two earlier drafts quoted some and neither
- * reproduced. The unguarded path is timing-dependent (a decode that hangs under load merely
- * rejects when the box is quiet), and this repo's browser pin is not what runs here: the
- * `vitest` config pins chromium **1200**, no 1200 build exists on a NixOS host, and the local
- * shim maps that name onto **1228**. So every geometry number in this file was measured on a
- * browser the pin does not name, and a wall-clock claim attributed to "the pinned browser"
- * was wrong twice over. What survives on every revision measured is the named failure.
+ *   `decode()` NEVER HANGS. On a dead payload Chromium sets `complete === true` with
+ *   `naturalWidth === 0` and `decode()` REJECTS — `EncodingError`, in 0 ms — for a
+ *   not-a-PNG, an empty payload and a dead IHDR alike. So `naturalWidth` prevents no hang.
+ *   Its entire benefit is the NAME: without it the six failures are bare `EncodingError`s
+ *   identifying nothing; with it each one says which testid. Time cost of the difference,
+ *   measured: 1.04x. It is a legibility guard, not a liveness one.
+ *
+ *   THE TWO REAL NEVER-SETTLING PATHS ARE BOTH ON THE `load` AWAIT. A non-`<img>` has
+ *   `complete === undefined`, so the await IS entered and no `load` ever fires — that is
+ *   `toBeInstanceOf`'s job, and it is the one measured: delete it, aim one `settled()` at a
+ *   placeholder id, and the file goes from 0 timeouts to 3, tests phase 0.98 s to 15.62 s.
+ *   The second path is an `<img>` in flight whose load FAILS, firing `error` rather than
+ *   `load` — that is the `error` listener's job. ⚠️ It is UNREACHABLE with the data-URI
+ *   fixtures here, which complete synchronously, so that listener is defensive against a
+ *   future http(s) fixture and is pinned by nothing today. Said plainly rather than left to
+ *   read as covered.
+ *
+ * That arithmetic is also what reconciles two retracted figures from earlier rounds — 75.4 s
+ * and 15.96 s are 5 and 1 of those 15.1 s timeouts, measured at heads where the hang-capable
+ * arms were unguarded. Neither was ever a decode hang, and neither was load-dependent.
+ *
+ * ⚠️ NO TIMING FIGURE FOR THE `naturalWidth` ARM IS QUOTED, deliberately: the ratio is 1.04x,
+ * i.e. noise. And note the browser these were taken on is not the one named anywhere: the
+ * `vitest` config pins chromium **1200**, no 1200 build exists on this host, and the local
+ * shim directory — itself named `1200` — resolves to **1228**.
  *
  * ⚠️ IT CATCHES A HEADER-DEAD FIXTURE, NOT A PIXEL-DEAD ONE, and the narrower claim is the
  * true one. `naturalWidth` comes from the PNG IHDR, so corrupting only the IDAT run leaves a
