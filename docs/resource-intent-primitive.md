@@ -138,17 +138,29 @@ this paragraph:
   other `queueUpdate` caller, so standing depth is a per-drain-interval quantity
   this pass only contributes to. Within such a window depth is `≤` the version
   count, with **equality only if every version announced in it belongs to a
-  distinct model**. ⚠️ Non-adjacency in id space does NOT establish that case:
-  it is a **within-batch** property — it is why the script's own per-batch
-  `labeledModelIds` collapse is near-zero on the default id-ordered sweep — and
-  says nothing about distinctness across a window spanning many batches. Any
-  multi-version model in the corpus breaks the equality by
-  (versions − models): a pass labelling versions 1 and 1,000,000 of model 500
-  contributes 2 versions and 1 distinct model. So the **default** path is where
-  the version and model counts diverge, and `--top` — which clusters a model's
-  versions into one batch — is where the collapse actually happens. Total
-  document rebuilds across a multi-day pass is a different and larger quantity
-  again, because the sync drains repeatedly.
+  distinct model** — and on the **default** sweep that is very nearly the case,
+  so size for it. One 15-minute window covers a few hundred to a few thousand
+  **consecutive** labelable ids (`id > cursor`, `orderBy: { id: 'asc' }`,
+  `take ≤ 10` per batch — `scripts/label-resource-insights.ts`), and a model's
+  versions are created at different times and so are not adjacent in id space,
+  so almost every model in such a window contributes exactly **one** version:
+  standing depth ≈ the version count, i.e. **near-EQUALITY, not divergence**.
+  `--top` is the path where depth collapses below the version count, because
+  usage-correlated ordering is what can land several versions of one model in
+  the same window. ⚠️ A **pass**-scoped example cannot bear on this bound at
+  all, which is why the earlier draft's one is gone: versions 1 and 1,000,000 of
+  one model are hundreds of thousands of labelable ids apart on an ascending-id
+  sweep, so they necessarily fall in **different** drain windows and can never
+  both sit in one standing-depth measurement. 🔴 **And do not read standing
+  depth off the script's `indexQueued` total: the two quantities move in
+  OPPOSITE directions between the two selection paths.** `indexQueued` is a
+  **pass**-total sum of per-batch announcement lists, so it double-counts
+  near-certainly on the default sweep and mostly collapses under `--top`;
+  standing depth is the **per-drain-window** count of distinct models, near the
+  version count on the default sweep and below it under `--top`. A figure read
+  off one is a wrong answer about the other. Total document rebuilds across a
+  multi-day pass is a third and larger quantity again, because the sync drains
+  repeatedly.
 - ⚠️ **`--top N` DOES bound the announced set, PER INVOCATION** —
   `topUsageVersionIds` takes at most N ids in one query, so one run announces at
   most N models. It does **not** bound a resumed pass: `--cursor` re-materialises

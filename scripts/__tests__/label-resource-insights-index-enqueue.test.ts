@@ -380,8 +380,8 @@ describe('label writes are announced to the models search index', () => {
 
       expect(logged.join('\n')).toContain('queue-verify: all 2 model id(s)');
       // 🔴 CORROBORATION, NOT PROOF, and the wording is the claim: the
-      // `models_v9:Update` queue is shared with 46 other `queueUpdate` call
-      // sites across 26 files and an entry survives until the next
+      // `models_v9:Update` queue is shared with many other `queueUpdate` call
+      // sites across the codebase and an entry survives until the next
       // non-`readOnly` checkout, so an id put there by an unrelated edit is
       // indistinguishable from one this run announced. A message asserting the
       // enqueue "landed" would read as a green light over a run whose every

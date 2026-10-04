@@ -87,9 +87,9 @@ import { Availability } from '~/shared/utils/prisma/enums';
  * the equivalent read-back in the admin endpoint above, and WEAKER than "proof"
  * in BOTH directions — do not report it as either. Not finding the ids is
  * inconclusive: the 15-minute sync may have checked the queue out in between.
- * Finding them is CORROBORATION, not proof, because the queue is SHARED — 46
- * other call sites across 26 files call `modelsSearchIndex.queueUpdate` at this
- * sha, and an entry survives until the next non-`readOnly` checkout — so a
+ * Finding them is CORROBORATION, not proof, because the queue is SHARED — many
+ * other call sites across the codebase call `modelsSearchIndex.queueUpdate`,
+ * and an entry survives until the next non-`readOnly` checkout — so a
  * model that some unrelated edit queued minutes ago is present regardless of
  * what this run did.
  * The case that makes the distinction real: a first batch mapping to one model,
@@ -499,10 +499,16 @@ export function partitionNeedingLabel(
  *      double count INVERTS the collapse rates stated just above: it is
  *      near-certain on the default sweep, where a model's versions are not
  *      adjacent in id space and so land in different batches that each announce
- *      the model, and rarest under `--top`, where clustering puts them in one
- *      batch and only a straddle of the 10-version boundary escapes. That
- *      is why the summary reports `announcements issued` rather than a model
- *      count; see the `done:` line in `main`.
+ *      the model, and rarest under `--top`, where usage correlating within a
+ *      model CAN put several of its versions in one batch, which this function
+ *      then collapses. ⚠️ That clustering is statistical, not guaranteed:
+ *      `topUsageVersionIds` orders by `generationCount` desc then
+ *      `modelVersionId` asc, and nothing in it groups by model. So the escape
+ *      is not a narrow boundary straddle — two versions of one model whose
+ *      usage ranks differ by more than a batch width land in different batches
+ *      and are each announced, which an early lightly-used v1 beside a popular
+ *      v3 does routinely. That is why the summary reports `announcements
+ *      issued` rather than a model count; see the `done:` line in `main`.
  *
  * Driven by `labels` — the rows that were actually written — not by the fetched
  * page, so a version whose answers failed to map does not get its model
@@ -545,8 +551,10 @@ export function labeledModelIds(
  *
  * ONE-DIRECTIONAL, and the caller must report it that way — but the positive
  * direction is CORROBORATION, NOT PROOF, and the message must not claim more.
- * The `models_v9:Update` queue is shared with 46 other `queueUpdate` call sites
- * across 26 files at this sha, and an entry survives until the next
+ * The `models_v9:Update` queue is shared with many other `queueUpdate` call
+ * sites across the codebase — deliberately no count: it carries none of the
+ * argument, and three successive attempts to state it precisely were each
+ * wrong, so do not re-add one. An entry survives until the next
  * non-`readOnly` checkout (≤15 min), so presence is consistent with this run
  * having queued the ids and also with anything else having queued them. The
  * shape that makes that
@@ -823,9 +831,12 @@ export async function main(): Promise<void> {
   // walks version ids in order, so a model's versions are not adjacent and land
   // in different batches that each announce it; expect this to track the
   // labeled-VERSION count there rather than the distinct-model count. `--top`
-  // is where it is RAREST, because clustering puts a model's versions in one
-  // batch where `labeledModelIds` collapses them, bar a straddle of the
-  // 10-version boundary. See `labeledModelIds` for why the two paths differ.
+  // is where it is RAREST, because usage correlating within a model can put
+  // several of its versions in one batch where `labeledModelIds` collapses
+  // them — statistically, not by construction: nothing in the `--top` ordering
+  // groups by model, so versions whose usage ranks differ by more than a batch
+  // width still land in different batches. See `labeledModelIds` for why the
+  // two paths differ.
   // The consequence is a mis-sized load expectation, never wrong
   // indexing: the queue is a redis set, so the duplicate announcement is free.
   // The printed label says `announcements issued` for exactly this reason; do
