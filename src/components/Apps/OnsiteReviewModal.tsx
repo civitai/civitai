@@ -561,33 +561,20 @@ export function OnsiteReviewModalTitle({
 }
 
 /**
- * Interactive review body. Holds the transient approve/reject UI state
- * (`approvalNotes` / `rejectionReason` / `actionMode`) plus the approve/reject
- * mutations. The parent keys this on `selection.request.id`, so all of that
- * state is fresh on every request switch — no manual reset needed, and the
- * `onSuccess → onClose` paths are safe because the next open remounts fresh.
+ * ⚠️ THE SECTION ORDER BELOW WAS VERIFIED ONCE AGAINST `origin/main`, AND NOTHING PINS IT.
  *
- * EXPORTED so `CombinedReviewModal` can mount the same body as its "App code
- * review" half. The modal shell above is the only caller that wraps it in
- * `<Modal>`.
+ * Measured by reading both: at the base this function rendered an inline submitter line, an
+ * inline decision alert, then `ReviewPreviewPanel` → `AgentReviewPanel` →
+ * `ScreenshotsReviewPanel` → `CurationPanel` → `FileListPreview` → `ManifestDiffPreview` →
+ * `ManifestView` → `ReviewActionBar`. Every one of those is now an extracted component
+ * sitting in the same position, so the arrangement is unchanged while the leaves are shared
+ * with the review PAGE.
  *
- * 🔴 THIS IS THE MODAL'S ARRANGEMENT — ONE LONG SCROLL — AND IT IS NO LONGER WHAT
- * THE REVIEW PAGE RENDERS. The page (`/apps/review/<id>`, `appReviewPage` flag) used
- * to re-host this body verbatim; it now composes the SAME exported sub-sections into
- * five tabs with Permissions first (`ReviewDetailTabsView`). The sections are the
- * contract the two surfaces share, not this container:
- * {@link ReviewSubmitterMeta}, {@link ReviewDecisionAlert}, {@link ReviewPreviewPanel},
- * {@link ReviewAgentSection}, {@link ScreenshotsReviewPanel}, {@link CurationPanel},
- * {@link ReviewFilesSection}, {@link ReviewManifestDiffSection}, {@link ManifestView},
- * {@link ManifestScopes}.
- *
- * 🔴 SO DO NOT FORK A PANEL FOR ONE SURFACE. The docstring's long-standing ask — keep the
- * modal and the page behaviour-identical — now means: every panel has ONE
- * implementation, rendered by both, and only the ARRANGEMENT differs. A per-surface copy
- * of (say) the permissions card would drift, and the drift would be invisible because
- * each surface's own tests would stay green.
- *
- * Keep this server-graph-free and free of modal-only assumptions.
+ * 🔴 THAT IS A ONE-TIME MEASUREMENT, NOT A GUARANTEE, and saying so is the point. No test
+ * asserts this sequence: the modal exposes only three stable test ids, so pinning it would
+ * mean adding production attributes for a guard alone — considered and rejected as more
+ * scaffolding than the risk earns. If you reorder these, nothing will stop you; what IS
+ * covered is the leaves, which both surfaces render for real in their own suites.
  */
 export function OnsiteReviewModalBody({
   selection,
