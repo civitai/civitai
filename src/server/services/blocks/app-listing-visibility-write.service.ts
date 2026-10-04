@@ -7,14 +7,23 @@
  * `dbWrite` and the role resolver. Putting the write beside the read would drag both into
  * the hot read path's module graph.
  *
- * ⚠️ THE OWNER PATH IS THE ONLY ONE HERE, AND THAT IS SEQUENCING RATHER THAN CAPABILITY.
- * A moderator path — settable on ANY listing, writing a `set-visibility` moderation event
- * — is operator-asked (D2) and was built, then DEFERRED to the follow-up PR that adds the
- * UI: every part of it existed for a verb no surface could invoke, and it obliged a human
- * to hand-apply a SECOND production DDL (the moderation-action CHECK widen) for a code
- * path nothing reached. It lands with the surface that writes it.
+ * ✅ BOTH PATHS LIVE HERE NOW: {@link setListingVisibilityAsOwner} and
+ * {@link setListingVisibilityAsModerator}. They share {@link applyVisibility}, which is
+ * where D1, the review ceiling, the shadow refusal and the compare-and-set live; what
+ * differs is the gate (a resolved role vs `moderatorProcedure` at the router) and the audit
+ * event, which only the moderator path writes.
  *
- * 🔴 WHEN IT COMES BACK IT MUST BE ITS OWN EXPORTED FUNCTION — never an `asModerator` flag
+ * ⚠️ THIS PARAGRAPH SAID "THE OWNER PATH IS THE ONLY ONE HERE" UNTIL ROUND 2 OF THE AUDIT,
+ * AND IT IS THE MOST-READ SITE IN THE FILE. The moderator path landed ~350 lines below while
+ * this header still told a reader it had been deferred — and, worse, told them the
+ * moderation-action CHECK widen was deliberately NOT needed, which is the one manual DDL
+ * this file's shipping now depends on (`20261004120000_app_listing_mod_action_set_visibility`;
+ * without it the first live use changes a level and then fails with 23514). A round of this
+ * ladder corrected four other sites making the same claim and did not sweep upward within
+ * its own file. Recorded rather than quietly rewritten: a retraction is a tree-wide sweep,
+ * and the site a reader meets FIRST is the one that matters most.
+ *
+ * 🔴 EACH IS ITS OWN EXPORTED FUNCTION — never an `asModerator` flag
  * on this one. A boolean that selects between "resolve the caller's role" and "trust the
  * caller" is an authorization decision the CALLER makes, and every call site then has to be
  * audited to see which it passed. Separate symbols make the gate a property of which one
@@ -37,7 +46,7 @@ import {
   readListingVisibility,
 } from '~/server/services/blocks/app-listing-visibility.service';
 import { newAppListingModerationEventId } from '~/server/utils/app-block-ids';
-import { APP_LISTING_MODERATION_ACTIONS } from '~/server/schema/blocks/offsite-moderation.schema';
+import type { APP_LISTING_MODERATION_ACTIONS } from '~/server/schema/blocks/offsite-moderation.schema';
 import type { AppListingVisibility } from '~/shared/utils/app-listing-visibility';
 import {
   isVisibilityEligibleListingStatus,
@@ -151,8 +160,8 @@ async function applyVisibility(
    * `offsite-moderation.service.ts` wraps mutation + event in one `$transaction` for this
    * reason, and that file's summary states it as an invariant.
    */
-  db: VisibilityWriteClient = dbWrite
-): Promise<SetListingVisibilityResult & { slug: string }> {
+  db: VisibilityWriteClient
+): Promise<SetListingVisibilityResult & { slug: string; before: AppListingVisibility | null }> {
   const { appListingId, visibility } = args;
 
   // 🔴 THE PRIMARY, NOT THE REPLICA. A freshly-delisted or freshly-relisted row read
@@ -169,12 +178,39 @@ async function applyVisibility(
       id: true,
       slug: true,
       status: true,
+      // 🔴 THE SHADOW DISCRIMINATOR. See the refusal below.
+      revisionOfId: true,
       // The backing block's own suspension. Null for an offsite listing, which has no
       // block and therefore no block-level suspension to respect.
       appBlock: { select: { status: true } },
     },
   });
   if (!listing) throw new TRPCError({ code: 'NOT_FOUND', message: 'Listing not found' });
+
+  /**
+   * 🔴 A SHADOW REVISION IS REFUSED HERE, AT THE ONE SITE THAT COVERS BOTH PATHS.
+   *
+   * A shadow is created `status: 'draft'`, and `draft` IS level-eligible with a ceiling of
+   * `moderators` — so every gate below passes, the CAS flips the shadow row, and the caller
+   * is told `changed: true` for a write NOTHING reads: the store filters `revisionOfId: null`
+   * and the approve path's scalar copy does not include `visibility`. On the moderator path
+   * it is worse than a no-op, because the audit row is then filed under the shadow's id with
+   * its synthetic `rev-<ulid>` slug, so the event that exists to tell an OWNER a moderator
+   * changed their discoverability is invisible in the owner's own history.
+   *
+   * 🔴 WHY HERE AND NOT AT EACH CALLER. An earlier revision fixed only the owner path, by
+   * keying it on `access.seatListingId`. That left the moderator path — the audited one —
+   * still taking the caller-supplied id, i.e. the same defect on the path where it matters
+   * more. One refusal in the shared core cannot be half-applied like that.
+   *
+   * ⚠️ "The sibling mod procs also take the raw id" is NOT a defence: `delistListing`'s CAS
+   * is `status IN ('approved','removed')`, which a `draft` shadow can never match, so the
+   * siblings are refused by construction. This proc's eligible set INCLUDES `draft`, which is
+   * what makes it the one that would succeed.
+   */
+  if (listing.revisionOfId != null) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: VISIBILITY_STATUS_INELIGIBLE_MESSAGE });
+  }
 
   // D1, half one: the listing's own lifecycle. `removed` and `rejected` are refused.
   if (!isVisibilityEligibleListingStatus(listing.status)) {
@@ -211,7 +247,13 @@ async function applyVisibility(
   const before = await readListingVisibility(appListingId, db);
   assertVisibilityWritable(before.available);
   if (before.visibility === visibility) {
-    return { appListingId, visibility, changed: false, slug: listing.slug };
+    return {
+      appListingId,
+      visibility,
+      changed: false,
+      slug: listing.slug,
+      before: before.visibility,
+    };
   }
 
   // 🔴 THE COMPARE-AND-SET, IN RAW SQL FOR THE SAME REASON — `data: { visibility }` is not
@@ -253,7 +295,7 @@ async function applyVisibility(
   // before that transaction COMMITS would advertise a change that may still roll back — the
   // cache would then serve the new audience for a write that never landed. Each caller busts
   // after its own write is durable; see {@link bustCatalogAfterVisibilityWrite}.
-  return { appListingId, visibility, changed: true, slug: listing.slug };
+  return { appListingId, visibility, changed: true, slug: listing.slug, before: before.visibility };
 }
 
 /**
@@ -321,10 +363,15 @@ export async function setListingVisibilityAsOwner(args: {
   // still showed the parent's old level. The READ path documents this id class as reachable
   // and keys on the parent for the same reason; the write did not, which made the two
   // disagree about which row the feature is about.
-  const result = await applyVisibility({
-    appListingId: access.seatListingId,
-    visibility: args.visibility,
-  });
+  const result = await applyVisibility(
+    { appListingId: access.seatListingId, visibility: args.visibility },
+    // 🔴 EXPLICIT, because the parameter no longer has a default. It used to default to
+    // `dbWrite`, which meant a future caller inside a transaction could forget the argument
+    // and silently escape it — and nothing could see that: `local-rules/no-io-in-transaction`
+    // is a call-NAME denylist and contains none of these functions. Required costs one token
+    // here and makes that mistake a compile error. `readListingVisibility` already does this.
+    dbWrite
+  );
   if (result.changed) await bustCatalogAfterVisibilityWrite();
   return {
     appListingId: result.appListingId,
@@ -391,12 +438,41 @@ export async function setListingVisibilityAsModerator(args: {
    * the level back with it, which is what every sibling mod proc in
    * `offsite-moderation.service.ts` does and what that file's summary states as an invariant.
    *
-   * The pre-state read is INSIDE the transaction too, so the `before` snapshot and the write
-   * cannot be separated by a concurrent change.
+   * ⚠️ WHAT THIS DOES **NOT** BUY: snapshot isolation. These transactions run at READ
+   * COMMITTED (nothing sets `isolationLevel`), so the pre-state read and the CAS are still
+   * two snapshots and a concurrent owner write between them is possible — the `before` in the
+   * audit row is "the value this transaction last observed", not "the value the CAS
+   * overwrote". The CAS itself is still safe (it re-asserts eligibility in its own `WHERE`).
+   * An earlier revision of this paragraph asserted the stronger property; it was false, and
+   * the fix is to state the weaker true one rather than to reach for `isolationLevel`.
    */
   const result = await dbWrite.$transaction(async (tx) => {
-    const before = await readListingVisibility(args.appListingId, tx);
-
+    /**
+     * 🔴 THE PRE-STATE COMES OUT OF `applyVisibility`, NOT A SECOND READ, AND THE SECOND READ
+     * WAS A REAL DEFECT RATHER THAN A REDUNDANCY.
+     *
+     * It ran FIRST inside the transaction and called `readListingVisibility`, which SWALLOWS
+     * a missing-column 42703 and returns `VISIBILITY_UNAVAILABLE` — correct for a read, fatal
+     * here: the Postgres transaction is already ABORTED, so the very next statement raises
+     * `25P02 current transaction is aborted`, which nothing catches. The designed refusal
+     * (`assertVisibilityWritable` → VISIBILITY_UNAVAILABLE_MESSAGE) was never reached and the
+     * moderator got an opaque 500 instead. Measured by audit at two layers — raw psql and
+     * this repo's own generated Prisma client — each against a no-transaction control that
+     * returns the row. Prisma does not savepoint interactive-transaction statements.
+     *
+     * ⚠️ LATENT, NOT LIVE, and the distinction is measured rather than assumed: the column is
+     * present on both the prod primary and the dev clone (re-checked 2026-10-04 with a
+     * positive control). It would fire in a fresh or un-migrated environment, which is
+     * exactly where a manual-apply column spends its early life.
+     *
+     * 🔴 AND IT ALSO FIXES A FALSE INVARIANT. The old comment claimed the `before` snapshot
+     * and the write "cannot be separated by a concurrent change". Prisma's interactive
+     * transactions run at READ COMMITTED here (no `isolationLevel` is set anywhere), so each
+     * statement takes a FRESH snapshot: the outer read, the inner read and the CAS were three
+     * of them, and an owner committing a level change between the first two would have the
+     * audit row record a pre-state that was never the value overwritten. One read inside the
+     * same function as the CAS is one fewer snapshot, and the honest claim is below.
+     */
     const applied = await applyVisibility(
       { appListingId: args.appListingId, visibility: args.visibility },
       tx
@@ -422,7 +498,7 @@ export async function setListingVisibilityAsModerator(args: {
         // 🔴 THE LEVELS, NOT THE STATUS. This act changes neither the status nor anything
         // else, so recording `status` would describe a transition that did not happen. And
         // `null` is a REAL pre-state meaning "no choice expressed" — not the `private` level.
-        before: { visibility: before.visibility },
+        before: { visibility: applied.before },
         after: { visibility: args.visibility },
       },
     });

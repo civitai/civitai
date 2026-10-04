@@ -351,8 +351,9 @@ describe('🔴 Publishing is offered only where a control exists, and only to th
       // `showUnpublish`/`showRepublish`'s job, and `listingPublishingActions.test.ts` pins
       // the empty takedown cell for `inactive`. Asserted here so the widening above cannot
       // be read as having loosened the takedown rule too.
-      expect(listingPublishingActions({ status, lastModerationAction: null, role: 'owner' }))
-        .not.toContain('unpublish');
+      expect(
+        listingPublishingActions({ status, lastModerationAction: null, role: 'owner' })
+      ).not.toContain('unpublish');
       // The content tabs ARE there, so this is not an empty render.
       expect(tabs).toContain('details');
       expect(tabs).toContain('collaborators');

@@ -32,8 +32,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * `no-direct-shared-module-mock` is the ratchet that stops a new one being added.
  */
 
+const { mockBustCatalog } = vi.hoisted(() => ({
+  mockBustCatalog: vi.fn(async (): Promise<undefined> => undefined),
+}));
 vi.mock('~/server/services/blocks/app-listing.service', () => ({
-  bustAppListingCatalogCache: vi.fn(async () => undefined),
+  bustAppListingCatalogCache: () => mockBustCatalog(),
 }));
 
 const { mockResolveListingAccess } = vi.hoisted(() => ({
@@ -74,7 +77,15 @@ let flipped: number;
 type MockFn = { mockImplementation: (f: (...a: unknown[]) => unknown) => void };
 
 function installDefaults() {
-  row = { id: 'apl_1', slug: 'an-app', status: 'approved', appBlock: { status: 'approved' } };
+  row = {
+    id: 'apl_1',
+    slug: 'an-app',
+    status: 'approved',
+    // A TOP-LEVEL listing: `null` means "not a shadow revision". The shadow case has its
+    // own fixture — see the refusal test.
+    revisionOfId: null,
+    appBlock: { status: 'approved' },
+  };
   stored = null;
   flipped = 1;
   // The Prisma delegate answers the STATUS read and the post-CAS existence probe only. It
@@ -95,7 +106,10 @@ function installDefaults() {
     return [{ visibility: stored }];
   });
   (dbMock.dbWrite.$executeRaw as unknown as MockFn).mockImplementation(async () => flipped);
-  mockResolveListingAccess.mockImplementation(async () => ({ role: 'owner', seatListingId: 'apl_1' }));
+  mockResolveListingAccess.mockImplementation(async () => ({
+    role: 'owner',
+    seatListingId: 'apl_1',
+  }));
   // 🔴 THE MODERATION-EVENT CREATE IS RESET HERE TOO, and omitting it cost a debugging round.
   // `clearAllMocks` clears CALLS but not IMPLEMENTATIONS (see `beforeEach`), so the case that
   // makes `create` THROW — modelling the 23514 the action CHECK produced in production — left
@@ -105,6 +119,13 @@ function installDefaults() {
   (dbMock.dbWrite.appListingModerationEvent.create as unknown as MockFn).mockImplementation(
     async () => ({ id: 'almev_1' })
   );
+  // `$transaction` too: the which-client case overrides it with a distinct tx client, and
+  // `clearAllMocks` would leave that installed for every case after it.
+  (dbMock.dbWrite.$transaction as unknown as MockFn).mockImplementation(async (...a: unknown[]) => {
+    const arg = a[0];
+    if (typeof arg === 'function') return (arg as (tx: unknown) => unknown)(dbMock.dbWrite);
+    return undefined;
+  });
 }
 
 beforeEach(() => {
@@ -128,7 +149,10 @@ describe('the OWNER path — authorization', () => {
   it('[INV] a row that resolves with a NULL role is refused', async () => {
     // The other shape `resolveListingAccess` can return: a row exists but the caller holds
     // no accepted seat on it. `{ role: null }` must be refused exactly like `null`.
-    mockResolveListingAccess.mockImplementation(async () => ({ role: null, seatListingId: 'apl_1' }));
+    mockResolveListingAccess.mockImplementation(async () => ({
+      role: null,
+      seatListingId: 'apl_1',
+    }));
     await expect(
       setListingVisibilityAsOwner({ appListingId: 'apl_1', visibility: 'testers', userId: 9 })
     ).rejects.toThrow(VISIBILITY_NOT_OWNED_MESSAGE);
@@ -153,7 +177,10 @@ describe('the OWNER path — authorization', () => {
   });
 
   it('[NEW] an accepted EDITOR may set the level, not only the owner', async () => {
-    mockResolveListingAccess.mockImplementation(async () => ({ role: 'editor', seatListingId: 'apl_1' }));
+    mockResolveListingAccess.mockImplementation(async () => ({
+      role: 'editor',
+      seatListingId: 'apl_1',
+    }));
     await expect(
       setListingVisibilityAsOwner({ appListingId: 'apl_1', visibility: 'testers', userId: 9 })
     ).resolves.toMatchObject({ visibility: 'testers', changed: true });
@@ -416,6 +443,74 @@ describe('a missing listing', () => {
  *   · writing an event for an idempotent no-op, filling that history with noise;
  *   · attributing the event to the listing owner instead of the acting moderator.
  */
+/**
+ * 🔴 THE CATALOG BUST, ASSERTED BEHAVIOURALLY ON **BOTH** PATHS.
+ *
+ * The bust used to live INSIDE `applyVisibility`, where it was structurally unskippable for
+ * every caller. It had to move out — running it inside an interactive transaction would
+ * advertise an audience change for a write that may still roll back — but moving it turned
+ * one unskippable call into TWO REMEMBERED CALL SITES, and nothing noticed: deleting the bust
+ * from the owner path left the whole behavioural suite AND the catalog-bust call-site ledger
+ * green, because that ledger pins the DECLARING function, not its callers.
+ *
+ * These cases are the replacement. A stale `/apps` grid after a level change is the exact
+ * harm the ledger exists to prevent, and the level write is a write that moves which rows a
+ * cohort sees — so both paths must bust, and neither must bust on a no-op.
+ */
+describe('the catalog bust — both paths, and only on a real change', () => {
+  it('[INV] the OWNER path busts the catalog after a changed write', () => {
+    return (async () => {
+      stored = 'moderators';
+      await setListingVisibilityAsOwner({
+        appListingId: 'apl_1',
+        visibility: 'public',
+        userId: 9,
+      });
+      expect(mockBustCatalog).toHaveBeenCalledTimes(1);
+    })();
+  });
+
+  it('[INV] the MODERATOR path busts the catalog after a changed write', async () => {
+    stored = 'moderators';
+    await setListingVisibilityAsModerator({
+      appListingId: 'apl_1',
+      visibility: 'public',
+      reason: 'audited',
+      moderatorUserId: 77,
+    });
+    expect(mockBustCatalog).toHaveBeenCalledTimes(1);
+  });
+
+  it('[INV] NEITHER path busts on an idempotent no-op', async () => {
+    // Nothing moved, so nothing downstream is stale — and a bust per no-op is a cache
+    // stampede the TTL exists to avoid.
+    stored = 'public';
+    await setListingVisibilityAsOwner({ appListingId: 'apl_1', visibility: 'public', userId: 9 });
+    await setListingVisibilityAsModerator({
+      appListingId: 'apl_1',
+      visibility: 'public',
+      reason: 'no-op',
+      moderatorUserId: 77,
+    });
+    expect(mockBustCatalog).not.toHaveBeenCalled();
+  });
+
+  it('[INV] a REFUSED write busts nothing', async () => {
+    // The refusal path must not advertise a change that did not happen.
+    row = {
+      id: 'apl_1',
+      slug: 'an-app',
+      status: 'removed',
+      revisionOfId: null,
+      appBlock: { status: 'approved' },
+    };
+    await expect(
+      setListingVisibilityAsOwner({ appListingId: 'apl_1', visibility: 'public', userId: 9 })
+    ).rejects.toThrow(VISIBILITY_STATUS_INELIGIBLE_MESSAGE);
+    expect(mockBustCatalog).not.toHaveBeenCalled();
+  });
+});
+
 describe('the MODERATOR path', () => {
   const event = () => dbMock.dbWrite.appListingModerationEvent.create;
 
@@ -429,8 +524,9 @@ describe('the MODERATOR path', () => {
     });
     expect(res).toEqual({ appListingId: 'apl_1', visibility: 'public', changed: true });
     expect(event()).toHaveBeenCalledTimes(1);
-    const data = (event() as unknown as { mock: { calls: { 0: { data: Record<string, unknown> } }[] } })
-      .mock.calls[0][0].data;
+    const data = (
+      event() as unknown as { mock: { calls: { 0: { data: Record<string, unknown> } }[] } }
+    ).mock.calls[0][0].data;
     expect(data.action).toBe('set-visibility');
     // 🔴 THE ACTOR IS THE MODERATOR. A mutant attributing this to the listing's owner
     // produces an audit row that blames the victim, and nothing else would notice.
@@ -454,8 +550,9 @@ describe('the MODERATOR path', () => {
       reason: 'promoting to testers',
       moderatorUserId: 77,
     });
-    const data = (event() as unknown as { mock: { calls: { 0: { data: Record<string, unknown> } }[] } })
-      .mock.calls[0][0].data;
+    const data = (
+      event() as unknown as { mock: { calls: { 0: { data: Record<string, unknown> } }[] } }
+    ).mock.calls[0][0].data;
     expect(data.before).toEqual({ visibility: null });
   });
 
@@ -538,33 +635,58 @@ describe('the MODERATOR path', () => {
     expect(mockResolveListingAccess).not.toHaveBeenCalled();
   });
 
-  it('[NEW] 🔴 the event and the level write go through ONE transaction client', async () => {
-    // 🔴 THE REGRESSION TEST FOR A SHIPPED DEFECT, and it is precise about what a MOCK can
-    // prove. The revision that shipped did the level write and the event in two separate
-    // round trips while its own header claimed a moderator write was "structurally incapable
-    // of happening without an event row". It was not: the event insert was rejected by the
-    // action CHECK (`set-visibility` was unregistered) AFTER the level had committed, so a
-    // stranger's app discoverability changed with no audit row — and the retry then
-    // short-circuited `changed: false` and returned 200 over the unrecorded act.
+  it('[NEW] 🔴 the event lands on the TRANSACTION client, never on the top-level one', async () => {
+    // 🔴 THIS CASE USED TO BE UNABLE TO SEE THE DEFECT IT NAMES, which is worth stating
+    // because it read as coverage. It asserted three independent tallies — `$transaction`
+    // once, `$executeRaw` once, `create` once — and a mutant that KEEPS the transaction
+    // around the reads and the CAS but moves the event OUT onto `dbWrite` afterwards
+    // satisfies all three. That mutant IS the shipped defect (the level commits, the audit
+    // row is a separate round trip), so the guard was blind to exactly the regression it
+    // existed to prevent. Only removing `$transaction` entirely turned it red.
     //
-    // ⚠️ A MOCKED `$transaction` CANNOT PROVE ROLLBACK — the shared mock runs the callback
-    // and has no transactional semantics, so nothing here demonstrates the level reverting.
-    // What IS assertable, and what actually guarantees atomicity in production, is that both
-    // statements are issued on the SAME client the transaction handed the callback. That is
-    // the structural property; the rollback follows from Postgres.
+    // The shared mock hands the callback `dbWrite` ITSELF, so the two are indistinguishable
+    // there — and widening the canonical mock would touch every transactional suite in the
+    // repo. So the transaction client is overridden LOCALLY with a distinct object whose
+    // `create` is its own spy: the event must land on THAT, and the top-level client's
+    // `create` must never be called.
     stored = 'moderators';
+    const txCreate = vi.fn(async () => ({ id: 'almev_tx' }));
+    (dbMock.dbWrite.$transaction as unknown as MockFn).mockImplementation(
+      async (...a: unknown[]) => {
+        const cb = a[0] as (tx: unknown) => unknown;
+        // Everything else delegates to the shared mock; only the event create is distinct,
+        // so this stays a test about WHICH CLIENT, not a reimplementation of the db.
+        //
+        // ⚠️ A PROXY, NOT A SPREAD. `dbMock.dbWrite` IS a proxy that materialises nodes on
+        // access, so `{ ...dbMock.dbWrite }` copies no properties at all and the tx client
+        // arrives with no `appListing` — which fails as a TypeError inside the code under
+        // test and reads like a defect in it.
+        const tx = new Proxy(
+          {},
+          {
+            get: (_t, prop) =>
+              prop === 'appListingModerationEvent'
+                ? { create: txCreate }
+                : (dbMock.dbWrite as unknown as Record<string | symbol, unknown>)[prop],
+          }
+        );
+        return cb(tx);
+      }
+    );
+
     await setListingVisibilityAsModerator({
       appListingId: 'apl_1',
       visibility: 'public',
       reason: 'audited change',
       moderatorUserId: 77,
     });
+
+    // The event went through the client the transaction handed the callback…
+    expect(txCreate).toHaveBeenCalledTimes(1);
+    // …and NOT through the top-level client. This is the assertion the old tally could not
+    // make, and it is what fails when the create is moved out of the transaction.
+    expect(event()).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.$transaction).toHaveBeenCalledTimes(1);
-    // The write and the event both ran — and the event's own client is the tx's, not a
-    // second top-level call. The shared mock hands the callback `dbWrite` itself, so the
-    // observable is that BOTH landed inside the single `$transaction` invocation.
-    expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
-    expect(event()).toHaveBeenCalledTimes(1);
   });
 
   it('[NEW] 🔴 a REJECTED event propagates — the proc must not report success', async () => {
@@ -606,8 +728,71 @@ describe('the MODERATOR path', () => {
     ).mock.calls[0][0].data.action;
     expect(written).toBe(SET_VISIBILITY_ACTION);
     // 🔴 The round trip that matters: whatever the create site actually wrote is a MEMBER of
-    // the taxonomy. A literal would satisfy the line above and fail this one.
+    // the taxonomy.
+    //
+    // ⚠️ SCOPE, STATED EXACTLY, BECAUSE AN EARLIER WORDING OVERCLAIMED IT. This does NOT
+    // block an inline literal: an inline `'set-visibility'` is EQUAL to the constant and
+    // satisfies both assertions (measured — the mutant is green). What it blocks is an
+    // UNREGISTERED value, which is the harm class that actually shipped and 23514'd in
+    // production. The claim that a literal fails here was false; the constant's value is
+    // enforced by its own `satisfies` clause at the declaration, not by this test.
     expect(APP_LISTING_MODERATION_ACTIONS as readonly string[]).toContain(written);
+  });
+
+  it('[INV] 🔴 the OWNER write is keyed on the PARENT, not the id the caller passed', async () => {
+    // 🔴 THE MOCK USED TO MAKE THIS UNFALSIFIABLE. Every `resolveListingAccess` fake returned
+    // `seatListingId` EQUAL to the id under test, and the raw fakes ignore their arguments —
+    // so reverting the fix (`access.seatListingId` → `args.appListingId`) was fully green.
+    // "The access mocks now carry `seatListingId` so the suite exercises it" was true about
+    // the mock and false as coverage. A DIFFERING pair is what arms it.
+    mockResolveListingAccess.mockImplementation(async () => ({
+      role: 'owner',
+      seatListingId: 'apl_parent',
+    }));
+    const res = await setListingVisibilityAsOwner({
+      appListingId: 'apl_shadow',
+      visibility: 'testers',
+      userId: 9,
+    });
+    // The result names the PARENT — the row the feature is about — not the caller's id.
+    expect(res.appListingId).toBe('apl_parent');
+    // And the statement bound the parent id, which is the half a return value cannot prove.
+    const sql = JSON.stringify(
+      (dbMock.dbWrite.$executeRaw as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][0]
+    );
+    expect(sql).toContain('apl_parent');
+    expect(sql).not.toContain('apl_shadow');
+  });
+
+  it('[INV] 🔴 a SHADOW revision is refused on BOTH paths', async () => {
+    // A shadow is `draft`, which IS level-eligible, so every other gate passes: without this
+    // refusal the CAS flips a row nothing reads and reports success — and on the moderator
+    // path files the audit row under the shadow, invisible in the owner's own history. The
+    // refusal lives in the shared core precisely so it cannot be half-applied to one path.
+    row = {
+      id: 'apl_shadow',
+      slug: 'rev-01J',
+      status: 'draft',
+      revisionOfId: 'apl_parent',
+      appBlock: { status: 'approved' },
+    };
+    await expect(
+      setListingVisibilityAsOwner({
+        appListingId: 'apl_shadow',
+        visibility: 'moderators',
+        userId: 9,
+      })
+    ).rejects.toThrow(VISIBILITY_STATUS_INELIGIBLE_MESSAGE);
+    await expect(
+      setListingVisibilityAsModerator({
+        appListingId: 'apl_shadow',
+        visibility: 'moderators',
+        reason: 'should be refused',
+        moderatorUserId: 77,
+      })
+    ).rejects.toThrow(VISIBILITY_STATUS_INELIGIBLE_MESSAGE);
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(event()).not.toHaveBeenCalled();
   });
 
   it('[INV] refuses on an UNAPPLIED migration, and records nothing', async () => {

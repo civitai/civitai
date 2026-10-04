@@ -652,7 +652,10 @@ describe('getAppListingAuthoringContext', () => {
    * offer publishing content no moderator has reviewed (D6).
    */
   describe('the visibility level behind the Publishing tab', () => {
-    const rawRows = () => mockDb.$queryRaw as unknown as { mockImplementation: (f: (...a: unknown[]) => unknown) => void };
+    const rawRows = () =>
+      mockDb.$queryRaw as unknown as {
+        mockImplementation: (f: (...a: unknown[]) => unknown) => void;
+      };
 
     /** The same approved-listing fixture the sibling cases install. */
     function installListing() {

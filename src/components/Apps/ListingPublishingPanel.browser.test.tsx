@@ -221,9 +221,7 @@ describe('the ledger — the SET of publishing controls the panel offers, per st
     // COMPOSED. Comparing against the table alone would have been wrong in the dangerous
     // direction — it declares `['unpublish']` here, so the growth arm would fire on a
     // correctly-rendered panel and the honest fix would look like deleting the assertion.
-    expect(renderedActions()).toEqual(
-      sortPublishingActions(listingPublishingActions(LIVE_ONSITE))
-    );
+    expect(renderedActions()).toEqual(sortPublishingActions(listingPublishingActions(LIVE_ONSITE)));
     // The literal, restated independently of the derivation — a mutant that empties either
     // half would otherwise make the assertion above trivially true.
     expect(renderedActions()).toEqual(['unpublish', 'visibility']);
@@ -263,9 +261,7 @@ describe('the ledger — the SET of publishing controls the panel offers, per st
     renderWithProviders(<ListingPublishingPanel {...MOD_REMOVED} />);
     await expect.element(page.getByTestId('apps-publishing-panel')).toBeInTheDocument();
 
-    expect(renderedActions()).toEqual(
-      sortPublishingActions(listingPublishingActions(MOD_REMOVED))
-    );
+    expect(renderedActions()).toEqual(sortPublishingActions(listingPublishingActions(MOD_REMOVED)));
     expect(renderedActions()).toEqual([]);
     // Not level-eligible either — the empty set here must stay genuinely empty.
     expect(page.getByTestId('apps-publishing-visibility').query()).toBeNull();
