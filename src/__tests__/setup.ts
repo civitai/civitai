@@ -272,6 +272,11 @@ vi.mock('~/server/prom/client', () => ({
   // App-Blocks W4 KV storage metrics (apps.router). promMetricStub() covers the
   // .inc()/.labels()/.observe()/.startTimer() surface these tests exercise.
   appStorageOpsCounter: promMetricStub(),
+  // The session-user gate discriminator (`enforceAppBlocksFlag` in apps.router). Its call
+  // site is NOT wrapped in a try/catch, unlike the author-fee incs above, so omitting this
+  // entry fails LOUDLY rather than silently — but it fails in the middleware, i.e. on every
+  // storage suite's flag-dark case rather than on the assertion that cares.
+  appStorageSessionGateRefusalsCounter: promMetricStub(),
   appStorageQuotaExceededCounter: promMetricStub(),
   appStorageUserQuotaUntrackedCounter: promMetricStub(),
   appStorageLatencyHistogram: promMetricStub(),

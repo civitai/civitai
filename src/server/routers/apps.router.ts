@@ -14,6 +14,8 @@ import {
   setAppStorageValue,
 } from '~/server/services/apps/app-storage.service';
 import { middleware, publicProcedure, router } from '~/server/trpc';
+import { appStorageSessionGateRefusalsCounter } from '~/server/prom/client';
+import type { AppStorageOp } from '~/server/prom/app-block-storage.metrics';
 
 /**
  * The postMessage-BRIDGE adapter for per-viewer app storage.
@@ -41,16 +43,58 @@ import { middleware, publicProcedure, router } from '~/server/trpc';
  * `block-workflow-rest.ts` records for narrowing its caller to `blocksRouter`.
  */
 
-const enforceAppBlocksFlag = middleware(async ({ ctx, next, type }) => {
-  if (await isAppBlocksEnabled({ user: ctx.user })) return next();
-  // Mutations + queries both refuse when the flag is dark — anything else
-  // gives the block a misleading-success path. The block already gates
-  // its own UI on host signals, so a clean UNAUTHORIZED is fine.
-  if (type === 'query') {
+/**
+ * The SESSION-user capability gate. Evaluates `app-blocks-enabled` against `ctx.user` —
+ * the browser session on the host page — and runs BEFORE the resolver, so before any
+ * block-token verification and before any `AppBlock` lookup.
+ *
+ * 🔴 THIS IS ONE OF TWO GATES ON THIS PATH THAT THROW A BYTE-IDENTICAL ERROR, AND THE
+ * COUNTER BELOW IS THE ONLY THING THAT TELLS THEM APART. The other is
+ * `assertAppBlocksEnabledForTokenUser` in `~/server/services/apps/app-storage.service`,
+ * which gates the same capability against the block token's SUBJECT. Both throw
+ * `UNAUTHORIZED: 'Apps are not enabled'`; both map to HTTP 401 with the same
+ * `error.data.code` and `error.data.path`; neither sets a `cause`, and
+ * `~/server/trpc/error-formatter` surfaces nothing else at 401 (`getClientSafeError`
+ * fires only at `status >= 500 && status !== 503`). So the response cannot distinguish
+ * them — which cost a real debugging session: a token-authenticated call was read as
+ * proof the app did not exist server-side, when the refusal was THIS gate and the token's
+ * scopes were never consulted.
+ *
+ * 🔴 WHAT THE COUNTER SEPARATES, AND WHAT IT DOES NOT. A refusal here increments
+ * `civitai_app_block_storage_session_gate_refusals_total{op}` and never
+ * `..._ops_total`, because the resolver — where every `countStorageOutcome` lives — does
+ * not run. A subject-gate refusal is the mirror: `..._ops_total{outcome="unauthorized"}`
+ * moves and this series does not. That pair is the whole discriminator. It does NOT
+ * narrow which refusal inside the resolver fired: `outcome="unauthorized"` is shared
+ * there with ~8 others (bad token, revoked instance, missing scope, unhydratable subject,
+ * anon write, …).
+ *
+ * 🔴 `op` IS PASSED, NOT DERIVED. The middleware's `path` is not a stable spelling of the
+ * op — it carries whatever router prefix the procedure is mounted under — so the op is a
+ * code-owned argument type-checked against `AppStorageOp` at each of the five call sites,
+ * rather than a string parsed out of `path` with a fallback bucket.
+ *
+ * The refusal covers queries AND mutations: anything else gives the block a
+ * misleading-success path. The block already gates its own UI on host signals, so a clean
+ * UNAUTHORIZED is fine. (There used to be a `type === 'query'` branch here throwing a
+ * byte-identical error to the fall-through — no `cause`, no different code, no different
+ * message — so it produced no outcome a caller or an operator could tell apart. Removed:
+ * a branch with one observable outcome reads as a behavioural difference that is not there.)
+ *
+ * NOT fail-closed on an anon viewer, and deliberately so: these are `publicProcedure`s, so
+ * `ctx.user` may be undefined and `isAppBlocksEnabled` then performs a GLOBAL eval. Flipt
+ * answers an unmatched rollout with the flag's own base `enabled` value, so that branch
+ * refuses today only because `app-blocks-enabled` is base-`false`, and would ADMIT at a
+ * base-`enabled: true` flip. Measured against the real wasm engine in
+ * `~/server/services/__tests__/app-blocks-flag.base-enabled-flip.test.ts`; the service's
+ * subject gate null-checks explicitly for exactly this reason.
+ */
+const enforceAppBlocksFlag = (op: AppStorageOp) =>
+  middleware(async ({ ctx, next }) => {
+    if (await isAppBlocksEnabled({ user: ctx.user })) return next();
+    appStorageSessionGateRefusalsCounter.inc({ op });
     throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
-  }
-  throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
-});
+  });
 
 /**
  * `blockToken` rides INSIDE the input on this transport; on REST it rides in the
@@ -68,7 +112,7 @@ export const appsStorageRouter = router({
    * defaults without a 401 round-trip.
    */
   get: publicProcedure
-    .use(enforceAppBlocksFlag)
+    .use(enforceAppBlocksFlag('get'))
     .input(blockTokenInput.merge(appStorageKeyInput))
     .query(async ({ input }) => getAppStorageValue(input.blockToken, input.key)),
 
@@ -80,12 +124,12 @@ export const appsStorageRouter = router({
    * to scope writes to.
    */
   set: publicProcedure
-    .use(enforceAppBlocksFlag)
+    .use(enforceAppBlocksFlag('set'))
     .input(blockTokenInput.merge(appStorageSetInput))
     .mutation(async ({ input }) => setAppStorageValue(input.blockToken, input.key, input.value)),
 
   delete: publicProcedure
-    .use(enforceAppBlocksFlag)
+    .use(enforceAppBlocksFlag('delete'))
     .input(blockTokenInput.merge(appStorageKeyInput))
     .mutation(async ({ input }) => deleteAppStorageValue(input.blockToken, input.key)),
 
@@ -96,7 +140,7 @@ export const appsStorageRouter = router({
    * `nextCursor` is undefined when fewer than `limit` rows came back.
    */
   list: publicProcedure
-    .use(enforceAppBlocksFlag)
+    .use(enforceAppBlocksFlag('list'))
     .input(blockTokenInput.merge(appStorageListInput))
     .query(async ({ input }) => listAppStorageKeys(input.blockToken, input)),
 
@@ -130,7 +174,7 @@ export const appsStorageRouter = router({
    * scope each number describes.
    */
   getQuota: publicProcedure
-    .use(enforceAppBlocksFlag)
+    .use(enforceAppBlocksFlag('getQuota'))
     .input(blockTokenInput)
     .query(async ({ input }) => getAppStorageQuota(input.blockToken)),
 });

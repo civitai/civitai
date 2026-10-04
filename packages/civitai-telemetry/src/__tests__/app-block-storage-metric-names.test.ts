@@ -6,15 +6,16 @@ import {
   appStorageLatencyHistogram,
   appStorageOpsCounter,
   appStorageQuotaExceededCounter,
+  appStorageSessionGateRefusalsCounter,
   appStorageUserQuotaUntrackedCounter,
 } from '../client';
 
 /**
- * NAME LEDGER for the four App Blocks KV storage metrics.
+ * NAME LEDGER for the five App Blocks KV storage metrics.
  *
  * 🔴 WHY A LEDGER AND NOT A HEURISTIC. The declared names in `../client` are
  * PREFIX-RELATIVE — the register helpers construct with `PROM_PREFIX + name` —
- * and these four were declared already carrying `app_blocks_`, so the wire names
+ * and four of them were declared already carrying `app_blocks_`, so the wire names
  * stuttered: `civitai_app_app_blocks_storage_ops_total`. That shipped and was
  * scraped for months. The sibling guard `prom-prefix-not-doubled.test.ts`
  * CANNOT see it: it rejects only a literal `PROM_PREFIX + PROM_PREFIX`, and
@@ -41,6 +42,11 @@ const OPS = 'civitai_app_block_storage_ops_total';
 const QUOTA_EXCEEDED = 'civitai_app_block_storage_quota_exceeded_total';
 const USER_QUOTA_UNTRACKED = 'civitai_app_block_storage_user_quota_untracked_total';
 const LATENCY = 'civitai_app_block_storage_latency_seconds';
+// The session-user gate discriminator. Ledgered here for the growth reason stated in the
+// first case below, and because this is the ONLY surface that makes an ABSENCE of it
+// readable: the counter is deliberately not zero-seeded, so "absent" has to mean "has
+// never refused" rather than "the handle was renamed and nothing noticed".
+const SESSION_GATE_REFUSALS = 'civitai_app_block_storage_session_gate_refusals_total';
 
 /** The pre-fix stuttering spellings. Retired 2026-10-02; must never come back. */
 const OLD_NAMES = [
@@ -51,25 +57,36 @@ const OLD_NAMES = [
 ];
 
 describe('App Blocks storage metric names', () => {
-  it('exposes exactly these four names on the default registry', () => {
-    for (const name of [OPS, QUOTA_EXCEEDED, USER_QUOTA_UNTRACKED, LATENCY]) {
+  it('exposes exactly these five names on the default registry', () => {
+    for (const name of [
+      OPS,
+      SESSION_GATE_REFUSALS,
+      QUOTA_EXCEEDED,
+      USER_QUOTA_UNTRACKED,
+      LATENCY,
+    ]) {
       expect(promClient.register.getSingleMetric(name), name).toBeDefined();
     }
 
-    // Fails on GROWTH too, not only on a rename: a fifth `block_storage_*` metric would
+    // Fails on GROWTH too, not only on a rename: a sixth `block_storage_*` metric would
     // otherwise join the family with its exposed name pinned nowhere.
     const family = promClient.register
       .getMetricsAsArray()
       .map((m) => (m as { name: string }).name)
       .filter((n) => n.startsWith('civitai_app_block_storage_'));
-    expect(family.sort()).toEqual([LATENCY, OPS, QUOTA_EXCEEDED, USER_QUOTA_UNTRACKED].sort());
+    expect(family.sort()).toEqual(
+      [LATENCY, OPS, QUOTA_EXCEEDED, SESSION_GATE_REFUSALS, USER_QUOTA_UNTRACKED].sort()
+    );
   });
 
-  it('the exported handles ARE those four metrics — not same-named strangers', () => {
+  it('the exported handles ARE those five metrics — not same-named strangers', () => {
     // Pins handle -> name. Without this, the case above stays green if someone
     // registers these names from somewhere else while the handles the service
     // actually calls `.inc()` on keep stuttering.
     expect((appStorageOpsCounter as unknown as { name: string }).name).toBe(OPS);
+    expect((appStorageSessionGateRefusalsCounter as unknown as { name: string }).name).toBe(
+      SESSION_GATE_REFUSALS
+    );
     expect((appStorageQuotaExceededCounter as unknown as { name: string }).name).toBe(
       QUOTA_EXCEEDED
     );
@@ -104,6 +121,7 @@ describe('App Blocks storage metric names', () => {
         ).labelNames ?? []),
       ].sort();
     expect(declared(OPS)).toEqual(['op', 'outcome']);
+    expect(declared(SESSION_GATE_REFUSALS)).toEqual(['op']);
     expect(declared(QUOTA_EXCEEDED)).toEqual(['app_block_id', 'ceiling']);
     expect(declared(USER_QUOTA_UNTRACKED)).toEqual(['app_block_id']);
     expect(declared(LATENCY)).toEqual(['op']);

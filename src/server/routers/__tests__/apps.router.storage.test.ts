@@ -116,6 +116,7 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 import {
   appStorageOpsCounter,
   appStorageQuotaExceededCounter,
+  appStorageSessionGateRefusalsCounter,
   appStorageUserQuotaUntrackedCounter,
 } from '~/server/prom/client';
 
@@ -300,6 +301,165 @@ describe('apps.storage shared gates', () => {
     await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toBeInstanceOf(
       TRPCError
     );
+  });
+
+  /**
+   * 🔴 INVARIANT GUARDS, NOT REGRESSION TESTS. No bug has violated either of the two
+   * properties below; nothing has ever drifted here. They exist because the properties were
+   * pinned NOWHERE and are load-bearing for diagnosability.
+   *
+   * The storage path has two gates that refuse with a byte-identical error — this
+   * `enforceAppBlocksFlag` middleware (on the SESSION user, `ctx.user`) and
+   * `assertAppBlocksEnabledForTokenUser` in `app-storage.service` (on the token SUBJECT).
+   * Same `UNAUTHORIZED`, same `'Apps are not enabled'`, same 401, same `error.data.code` and
+   * `error.data.path`, no `cause` on either. The case above asserts only
+   * `toBeInstanceOf(TRPCError)`, so repo-wide the MIDDLEWARE producer's message was
+   * unpinned: the two gates could drift apart, or drift together, and nothing would notice.
+   */
+  describe('the SESSION-user gate is identifiable (invariant guards)', () => {
+    it('INVARIANT: pins the middleware producer\u2019s exact code and message', async () => {
+      mockIsAppBlocksEnabled.mockImplementation(async () => false);
+      const caller = appsRouter.createCaller(fakeCtx() as never);
+
+      await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+        code: 'UNAUTHORIZED',
+        message: 'Apps are not enabled',
+      });
+
+      // ATTRIBUTION, and the reason this is not just the case above with a message added:
+      // the middleware runs BEFORE the resolver, so a refusal here cannot have verified the
+      // token or looked the app up. Without these two the assertion would be satisfied just
+      // as well by the subject gate, which throws the same thing from the other side of the
+      // seam.
+      expect(mockVerifyBlockToken).not.toHaveBeenCalled();
+      expect(mockDbRead.appBlock.findUnique).not.toHaveBeenCalled();
+    });
+
+    // One case per procedure: `enforceAppBlocksFlag` is a FACTORY taking the op, so each of
+    // the five call sites hand-writes its own literal. A transposed pair (`set` labelled
+    // `get`) is invisible in any single-op test, and would silently mis-attribute every
+    // refusal this series exists to attribute.
+    it.each([
+      [
+        'get',
+        (c: ReturnType<typeof appsRouter.createCaller>) =>
+          c.storage.get({ blockToken: 't', key: 'k' }),
+      ],
+      [
+        'set',
+        (c: ReturnType<typeof appsRouter.createCaller>) =>
+          c.storage.set({ blockToken: 't', key: 'k', value: 'v' }),
+      ],
+      [
+        'delete',
+        (c: ReturnType<typeof appsRouter.createCaller>) =>
+          c.storage.delete({ blockToken: 't', key: 'k' }),
+      ],
+      [
+        'list',
+        (c: ReturnType<typeof appsRouter.createCaller>) => c.storage.list({ blockToken: 't' }),
+      ],
+      [
+        'getQuota',
+        (c: ReturnType<typeof appsRouter.createCaller>) => c.storage.getQuota({ blockToken: 't' }),
+      ],
+    ] as const)(
+      'INVARIANT: a %s refusal counts on the session-gate series and NOT on the ops counter',
+      async (op, call) => {
+        const sessionGateInc = vi.mocked(appStorageSessionGateRefusalsCounter.inc);
+        const opsInc = vi.mocked(appStorageOpsCounter.inc);
+        sessionGateInc.mockClear();
+        opsInc.mockClear();
+        mockIsAppBlocksEnabled.mockImplementation(async () => false);
+
+        const caller = appsRouter.createCaller(fakeCtx() as never);
+        await expect(call(caller)).rejects.toBeInstanceOf(TRPCError);
+
+        // The discriminator is the PAIR, in both directions. `ops_total` staying still is
+        // half the signal: it is what lets an operator read a moved session-gate series as
+        // "the middleware refused" rather than "something refused".
+        expect(sessionGateInc).toHaveBeenCalledWith({ op });
+        expect(sessionGateInc).toHaveBeenCalledTimes(1);
+        expect(opsInc).not.toHaveBeenCalled();
+      }
+    );
+
+    // The MIRROR arm, and the control that makes the pair above attributable: a SUBJECT-gate
+    // refusal must move `ops_total` and leave the session-gate series untouched. Without it,
+    // a session-gate counter that fired on every refusal regardless of producer would pass
+    // every case above.
+    it('INVARIANT: a SUBJECT-gate refusal moves ops_total and NOT the session-gate series', async () => {
+      const sessionGateInc = vi.mocked(appStorageSessionGateRefusalsCounter.inc);
+      const opsInc = vi.mocked(appStorageOpsCounter.inc);
+      sessionGateInc.mockClear();
+      opsInc.mockClear();
+      // Session user (id 1) keeps the capability so the middleware passes; the token
+      // subject (77) does not, so only the per-subject gate can refuse.
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:77' }));
+      mockParseSubjectUserId.mockImplementation(() => 77);
+      mockGetSessionUser.mockResolvedValue({ id: 77, isModerator: false });
+      runEnabledUserIds.delete(77);
+
+      const caller = appsRouter.createCaller(fakeCtx() as never);
+      await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+        code: 'UNAUTHORIZED',
+        message: 'Apps are not enabled',
+      });
+
+      expect(opsInc).toHaveBeenCalledWith({ op: 'get', outcome: 'unauthorized' });
+      expect(sessionGateInc).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * 🔴 INVARIANT GUARD, NOT A REGRESSION TEST. The ordering below has never been wrong; it
+   * was simply pinned by nothing, and it is the single fact that made the original
+   * misdiagnosis resolvable. `resolveStorageContext` looks the `AppBlock` up and throws
+   * `NOT_FOUND: 'app block not found'` BEFORE it reaches the per-subject capability gate.
+   * So on a token naming no backing row, "the app does not exist" is the answer a caller
+   * gets even when the subject also lacks the capability — and conversely, an
+   * `Apps are not enabled` on such a token is proof the row DOES exist and the refusal came
+   * from a capability gate, not from a missing app.
+   *
+   * Reverse the two and the diagnosis inverts: every unknown app would answer
+   * `Apps are not enabled`, which is exactly the message the session gate also produces,
+   * collapsing three distinct facts into one string.
+   */
+  describe('gate ORDERING: app existence precedes the subject capability gate (invariant guard)', () => {
+    it('INVARIANT: no AppBlock row + a subject without the run capability answers NOT_FOUND', async () => {
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:77' }));
+      mockParseSubjectUserId.mockImplementation(() => 77);
+      mockGetSessionUser.mockResolvedValue({ id: 77, isModerator: false });
+      runEnabledUserIds.delete(77); // the SUBJECT gate would also refuse, if reached
+      mockDbRead.appBlock.findUnique.mockResolvedValue(null);
+
+      const caller = appsRouter.createCaller(fakeCtx() as never);
+      await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+        code: 'NOT_FOUND',
+        message: 'app block not found',
+      });
+      // Ordering, stated structurally rather than inferred from the message: the subject was
+      // never hydrated, so the capability gate cannot have run.
+      expect(mockGetSessionUser).not.toHaveBeenCalled();
+    });
+
+    it('POSITIVE CONTROL: the same subject on an APPROVED app reaches the capability gate', async () => {
+      // Identical to the case above except that the row exists. If the subject gate were
+      // inert, this would answer the `get` happy path instead of refusing — which is what
+      // makes the first case evidence about ORDERING rather than about a dead gate.
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:77' }));
+      mockParseSubjectUserId.mockImplementation(() => 77);
+      mockGetSessionUser.mockResolvedValue({ id: 77, isModerator: false });
+      runEnabledUserIds.delete(77);
+      mockDbRead.appBlock.findUnique.mockResolvedValue({ id: 'apb_test', status: 'approved' });
+
+      const caller = appsRouter.createCaller(fakeCtx() as never);
+      await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+        code: 'UNAUTHORIZED',
+        message: 'Apps are not enabled',
+      });
+      expect(mockGetSessionUser).toHaveBeenCalledWith(77);
+    });
   });
 
   it('rejects an invalid block token with UNAUTHORIZED', async () => {
