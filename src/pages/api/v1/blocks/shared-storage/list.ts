@@ -22,11 +22,8 @@ import { getNextPage } from '~/server/utils/pagination-helpers';
  *
  * `mine=true` narrows the page to rows the VIEWER authored (civitai/civitai#5354 Q3).
  * Without it an app that wants to show someone their own submissions has to page the
- * entire board and filter client-side, even though `shared_kv_author_idx` exists and
- * the router already queries by author for the per-user row cap. It is a BOOLEAN, not
- * a user id — the author filtered on is the resolved token subject, so it adds no read
- * reach and cannot enumerate a named other user. An ANON caller passing it gets an
- * empty page (it authored nothing), not the whole board; see `listSharedRows`.
+ * entire board and filter client-side. Why it is a boolean rather than a user id, and
+ * what an ANON caller gets, are stated once on `listSharedRows` — not repeated here.
  *
  * Cursor-paginated feed of THIS app's shared_kv rows (the "requests" list) —
  * newest-first on the ULID key, hidden rows excluded, each row carrying its

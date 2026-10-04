@@ -498,15 +498,22 @@ function toSharedKvItem(r: SharedKvRow): SharedKvItem {
  * malformed one simply decodes to a key that matches nothing, never an error.
  *
  * `mine` narrows the feed to rows the VIEWER authored (civitai/civitai#5354 Q3).
- * 🔴 IT IS A BOOLEAN, NOT A USER ID, AND THAT IS THE WHOLE SECURITY ARGUMENT.
- * The author it filters on is `resolveSharedContext`'s resolved subject — the same
- * value `viewerVoted` already keys on — so there is no caller-supplied identity
- * anywhere in this path and no way to enumerate a NAMED other user's submissions.
- * Rows are world-readable either way, so this adds no read reach: it is a filter
- * over what the caller can already page through, replacing "fetch the whole board
- * and filter client-side" with one predicate. A `mine=<userId>` form would be a new
- * enumeration primitive and is deliberately not what this is; widening to one later
- * is possible, narrowing after the fact is not.
+ * It is a BOOLEAN, not a user id: the author it filters on is
+ * `resolveSharedContext`'s resolved subject — the same value `viewerVoted` already
+ * keys on — so no caller-supplied identity enters this path. Rows are world-readable
+ * either way, so this adds no read reach: it replaces "page the whole board and
+ * filter client-side" with one predicate over the same set.
+ *
+ * ⚠ THE REASON FOR THE BOOLEAN IS YAGNI, NOT A CAPABILITY BOUNDARY — an earlier
+ * draft of this comment claimed a `mine=<userId>` form "would be a new enumeration
+ * primitive", and that is FALSE: `toSharedKvItem` returns `authorUserId` on every
+ * listed row, so enumerating a named user's submissions is ALREADY possible by
+ * paging the board — which is the very cost this parameter exists to remove. A
+ * userId form would make it CHEAP, not POSSIBLE. The real argument is narrower and
+ * still sufficient: nothing asks for it, and widening a boolean to an id later is
+ * easy while narrowing an id to a boolean after clients depend on it is not.
+ * Do not restore the security framing; it would read as an invariant that the
+ * response shape contradicts two functions up.
  */
 export async function listSharedRows(
   blockToken: string,
@@ -534,16 +541,18 @@ export async function listSharedRows(
   // is index-covered and adds no scan to the hot list path. The raw vote rows
   // are NEVER returned — only the boolean derived from the viewer's own row.
   //
-  // `mine` ($5) reuses that same $4. 🔴 AN ANONYMOUS VIEWER ASKING FOR `mine`
-  // GETS AN EMPTY PAGE, NOT AN ERROR AND NOT THE WHOLE BOARD, and it is the SQL
-  // that guarantees it rather than a guard anyone could forget: $4 is NULL for
-  // anon, so `s.author_user_id = $4::int` is UNKNOWN and matches nothing — the
+  // `mine` ($5) reuses that same $4 — see this function's JSDoc for why it is a
+  // boolean rather than a user id. 🔴 AN ANONYMOUS VIEWER ASKING FOR `mine` GETS
+  // AN EMPTY PAGE, NOT AN ERROR AND NOT THE WHOLE BOARD, and it is the SQL that
+  // guarantees it rather than a guard anyone could forget: $4 is NULL for anon,
+  // so `s.author_user_id = $4::int` is UNKNOWN and matches nothing — the
   // identical three-valued-logic reason `viewer_voted` is always false for anon,
   // two lines up. That is the right answer (an anonymous viewer has authored
-  // nothing) but it is right by a mechanism rather than by an `if`, so
-  // `shared-storage-list-endpoint.test.ts` pins it; deleting the test would make
-  // a later refactor to `COALESCE($4, s.author_user_id)` — which silently returns
-  // the ENTIRE board to anon under a `mine` flag — look like a cleanup.
+  // nothing) but it is right by a MECHANISM rather than by an `if`, so
+  // `apps-shared.router.test.ts` pins the SQL SHAPE and not just the row count:
+  // against an empty fixture a refactor to `COALESCE($4, s.author_user_id)` —
+  // which silently returns the ENTIRE board to anon under a `mine` flag — is
+  // behaviourally indistinguishable, so only a shape assertion can see it.
   // The predicate is index-covered by `shared_kv_author_idx` (author_user_id),
   // provisioned in storage-provision.service.ts, and the per-author row cap is
   // SHARED_KV_PER_USER_ROW_CAP, so the sort it feeds is bounded and small.
@@ -1209,10 +1218,14 @@ export const appsSharedRouter = router({
           .max(SHARED_LIST_LIMIT_MAX)
           .default(SHARED_LIST_LIMIT_DEFAULT),
         cursor: z.string().max(SHARED_CURSOR_MAX).optional(),
-        // Kept in lockstep with the REST route's query schema on purpose — the
-        // bridge and `GET /api/v1/blocks/shared-storage/list` are documented as
-        // non-divergent reads over this same function, so an argument added to
-        // one and not the other is the divergence that comment forbids.
+        // civitai/civitai#5354 Q3 — see `listSharedRows`' JSDoc.
+        // ⚠ NOT justified by the REST/bridge non-divergence rule, which an earlier
+        // draft of this comment cited. That rule holds because both paths call
+        // THIS function with the same authz and SQL, and it keeps holding whether
+        // or not the argument lists match — it is about the shared callee, not
+        // about parity of inputs. `mine` is here because the bridge hosts forward
+        // it (PageBlockHost.tsx / IframeHost.tsx, both in this change), which is
+        // what makes the parameter reachable by a block at all.
         mine: z.boolean().optional(),
       })
     )

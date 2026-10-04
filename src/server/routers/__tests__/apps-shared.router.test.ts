@@ -1123,17 +1123,10 @@ describe('#5354 Q3 `mine` author filter on list', () => {
     expect(params[4]).toBe(false);
   });
 
-  it('mine:true sets $5 and filters on the RESOLVED subject uid', async () => {
-    mockVerifyBlockToken.mockResolvedValueOnce(validClaims()); // sub user:42
-    mockPool.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
-    await caller().list({ blockToken: 't', mine: true });
-    const [, params] = mockPool.query.mock.calls[0] as [string, unknown[]];
-    expect(params[4]).toBe(true);
-    // The author filtered on is $4 — the same param viewerVoted uses, i.e. the
-    // token subject. Not a sixth param, and not anything off the input.
-    expect(params[3]).toBe(42);
-  });
-
+  // 🔴 There is deliberately NO test here using the DEFAULT fixture subject
+  // (user:42). It would assert the same two things as the PER-VIEWER case below
+  // and be strictly weaker: a mutant that hardcoded the default uid would survive
+  // it. The non-default subject is the only version that is a real control.
   it('🔴 the ONLY author comparison in the list SQL binds $4 — never a caller-supplied param', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
     mockPool.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });

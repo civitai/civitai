@@ -3153,6 +3153,7 @@ export function PageBlockHost({
           prefix?: unknown;
           limit?: unknown;
           cursor?: unknown;
+          mine?: unknown;
         }
       | undefined
     >('SHARED_LIST', async (raw) => {
@@ -3171,12 +3172,20 @@ export function PageBlockHost({
             ? Math.min(Math.max(Math.floor(raw.limit), 1), 100)
             : 50;
         const cursor = typeof raw.cursor === 'string' ? raw.cursor : undefined;
+        // civitai/civitai#5354 Q3. Narrow to the viewer's own rows. 🔴 Forwarded
+        // ONLY when it is literally `true`: every other value — absent, `false`,
+        // the string "true", a truthy object — resolves to `undefined`, so a
+        // malformed payload cannot silently narrow someone's feed. The server
+        // still decides WHOSE rows (the resolved token subject); the block never
+        // names an author, and this message carries no user id to name one with.
+        const mine = raw.mine === true ? true : undefined;
         const result = await trpcUtils.apps.shared.list.fetch(
           {
             blockToken: token,
             prefix,
             limit,
             cursor,
+            mine,
           },
           BLOCK_STORAGE_READ_OPTS
         );

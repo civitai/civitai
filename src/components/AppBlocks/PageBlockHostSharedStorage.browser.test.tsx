@@ -312,6 +312,61 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     replies.stop();
   });
 
+  // civitai/civitai#5354 Q3 — `mine` forwarding. The test above is the control:
+  // it posts no `mine` and asserts a call object without one, so these two cover
+  // the arm it cannot see. Without the host forwarding it, the server parameter
+  // is reachable by no block at all, which is the defect round 0 of /audit-pr
+  // caught — the capability existed end-to-end except for this line.
+  test('SHARED_LIST forwards mine:true', async () => {
+    mocks.list.mockResolvedValue({ items: [], nextCursor: undefined });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SHARED_LIST', { requestId: 'rq_mine', mine: true });
+
+    await vi.waitFor(() => {
+      expect(mocks.list).toHaveBeenCalledWith(
+        {
+          blockToken: 'tok_abc',
+          prefix: undefined,
+          limit: 50,
+          cursor: undefined,
+          mine: true,
+        },
+        { staleTime: BLOCK_STORAGE_READ_STALE_TIME_MS }
+      );
+    });
+    replies.stop();
+  });
+
+  test('🔴 SHARED_LIST forwards mine ONLY for a literal true — a truthy value is dropped', async () => {
+    mocks.list.mockResolvedValue({ items: [], nextCursor: undefined });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    // The string "true" is the shape a hand-rolled postMessage or a querystring
+    // round-trip produces. `raw.mine === true` rejects it; a `!!raw.mine` or a
+    // truthiness check would narrow the feed on it. Asserting `mine: undefined`
+    // rather than merely "not true" pins which of those the host does.
+    postFromBlock('SHARED_LIST', { requestId: 'rq_mine_str', mine: 'true' });
+
+    await vi.waitFor(() => {
+      expect(mocks.list).toHaveBeenCalledWith(
+        {
+          blockToken: 'tok_abc',
+          prefix: undefined,
+          limit: 50,
+          cursor: undefined,
+          mine: undefined,
+        },
+        { staleTime: BLOCK_STORAGE_READ_STALE_TIME_MS }
+      );
+    });
+    replies.stop();
+  });
+
   test('SHARED_LIST error path posts { requestId, error } (no hang)', async () => {
     mocks.list.mockRejectedValue(new Error('shared storage is not enabled'));
     renderWithProviders(<PageBlockHost {...baseProps} />);
