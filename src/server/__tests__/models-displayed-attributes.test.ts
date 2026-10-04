@@ -164,9 +164,31 @@ describe('modelsDisplayedAttributes — the Creator Controls privacy boundary', 
     // `transformData` emits `insight: { qualityScore, role, styleFamily, modelVersionId }` and both
     // withholding paths are keyed on the top-level attribute — Meili's `displayedAttributes` (where
     // nested children ride along with their parent) and `withheldStripped`'s `delete out[attr]`.
-    // 🔴 For `modelVersionId` that ride-along is not incidental: being undisplayed is the ONLY
-    // thing making it unreadable, since it is not filterable either, so removing `insight` from
-    // this list would publish a field the projection site argues must stay unreadable.
+    // 🔴 For `modelVersionId` that ride-along is not incidental: removing `insight` from this
+    // list would publish a field the projection site argues must stay unreadable, and it is the
+    // only one of the four with no other list keeping it out of a serialised hit.
+    // ⚠️ THAT USED TO READ "being undisplayed is the ONLY thing making it unreadable, since it is
+    // not filterable either", AND THAT ENUMERATION WAS INCOMPLETE — the same incompleteness this
+    // change corrected at the projection site. There are FOUR attribute lists, not two:
+    // `displayedAttributes`, `filterableAttributes`, `sortableAttributes`, and the
+    // `searchableAttributes` whitelist declared in `onIndexSetup`. The fourth is a whitelist
+    // standing in for Meili's `["*"]` default, so widening it is a live route to reachability
+    // with no edit to this file at all. Measured on a local Meilisearch 1.54.0, two documents
+    // carrying `42` and `77`, with positive and negative controls: with the real whitelist
+    // `q=42` returns 0 hits; with `["*"]` it returns 1, `q=77` returns the OTHER document
+    // (per-document discrimination), and `q=999` returns 0.
+    // 🔴 WHY THAT MATTERS TO A READER OF THIS LINE: a search-relevance change that widens
+    // `searchableAttributes` to `["*"]`, justified by "the field is undisplayed and unfilterable,
+    // so this is safety-neutral", ships a working MEMBERSHIP ORACLE on internal label outcomes
+    // to anyone holding the browser-published client key in `src/env/client-schema.ts`. It is an
+    // oracle, not a value leak — "which model carries this value", one guess at a time — because
+    // the hit body still withholds `insight`: measured, the hit stays `{"id":1,"name":"a model"}`
+    // even under `attributesToRetrieve: ["*"]`.
+    // ⚠️ AND A BARE `'insight'` PARENT ENTRY IS A REAL ROUTE, not only a leaf one: with
+    // `searchableAttributes: ["name","insight"]` — the parent alone — `q=42` returns 1 hit and
+    // `q=render_3d` returns 1 hit, while the leaf-only `["name","insight.role"]` returns 0 for
+    // `42`. That is why the projection guard's filter is `startsWith('insight')` and NOT
+    // `startsWith('insight.')`: the dotless parent would slip a `'insight.'` test.
     expect([...MODELS_WITHHELD_ATTRIBUTES].sort().join(',')).toBe(
       'canGenerateNext,flags,insight,isOfficial,sortMetrics'
     );

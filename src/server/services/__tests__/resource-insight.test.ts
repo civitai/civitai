@@ -65,19 +65,46 @@ import {
  * walk read its key with `node.name.getText()`, which for a StringLiteral name returns the
  * QUOTES as well, so a quoted key matched nothing and was SKIPPED, not failed: planting
  * `'styleFamily': 'rendr_9d'` left the suite fully green. A computed key `['styleFamily']` was
- * green for the same reason. Both are now closed — `.text` for the quoted form, an explicit
- * loud failure for the computed form — and both cures carry their controls at the guard.
+ * green for the same reason. Both are now closed — `.text` for the quoted form, and for the
+ * computed form a loud failure on the NODE KIND, so `ts.ComputedPropertyName` fails whatever its
+ * source span says — and both cures carry their controls at the guard.
+ *
+ * ⚠️ AND THE COMPUTED CURE ITSELF WAS SPELLED BEFORE IT WAS STRUCTURAL, which is the third time
+ * a claim in this header outran its implementation. The first version tested
+ * `labelKeys.every((k) => !text.includes(k))` — a substring test on the computed name's source
+ * span — and said the guard "refuses the shape instead of guessing". It guessed: measured at this
+ * head, `const __auditKeys = ['role', 'styleFamily'] as const;` with
+ * `{ [__auditKeys[1]]: 'rendr_9d' }` resolves to `styleFamily` carrying an invented non-option
+ * and left the suite fully green, because that span mentions neither key. Asserting the node kind
+ * has no such hole, and its false-fail set is a strict superset of the substring version's — the
+ * only class it adds is the escape set itself. Worked measurements are at the guard.
  *
  * 🔴 THE NARROWINGS THAT ACTUALLY REMAIN, each measured at this head rather than reasoned:
  *   (a) THE FILE LIST. A suite not named in `FIXTURE_SUITES` is not scanned at all.
  *   (b) PROPERTY ASSIGNMENTS WITH LITERAL NAMES AND LITERAL VALUES ARE THE WHOLE SCOPE. A
  *       SHORTHAND property is NOT a `ts.PropertyAssignment`, so a label reaching a fixture as
- *       `insight({ role, styleFamily })` off a hoisted `const` is invisible: measured, a
- *       `const styleFamily = 'rendr_9d'` plus the shorthand reference left the suite
- *       `Test Files 5 passed (5)` / `Tests 143 passed (143)`. The same hole covers any value
- *       the walk cannot see as a literal in place — a whole overrides object passed as a
- *       variable, or a value spread in from elsewhere. A non-literal value under a key the
- *       walk DOES see still fails loudly; it is the key form and the indirection that escape.
+ *       `insight({ role, styleFamily })` off a hoisted `const` is invisible: RE-MEASURED at
+ *       this head, a `const styleFamily = 'rendr_9d'` plus the shorthand reference leaves the
+ *       suite `Test Files 5 passed (5)` / `Tests 144 passed (144)` — the figure was 143 before
+ *       the whitelist-verbatim case was added next door, so read the count as "all of them",
+ *       not as a constant. The same hole covers any value
+ *       the walk cannot see as a literal in place — a `SpreadAssignment`, `insight({ ...src })`,
+ *       being the other shape with no in-place name/value pair to read. A non-literal value
+ *       under a key the walk DOES see still fails loudly; it is the key form and the
+ *       indirection that escape.
+ *       ⚠️ This used to offer "a whole overrides object passed as a variable" as an instance,
+ *       and that OVERSTATED the hole: measured at this head,
+ *       `const __auditOverrides = { styleFamily: 'rendr_9d' }; insight(__auditOverrides);` is
+ *       CAUGHT with this guard's own message, because the walk scans the whole FILE rather than
+ *       `insight(...)` arguments, so that object literal is still a `PropertyAssignment` with a
+ *       literal name and a literal value. Define it in a file outside `FIXTURE_SUITES` and it
+ *       escapes — but that is narrowing (a), not this one.
+ *       🔴 AND THE ASYMMETRY WITH THE COMPUTED-KEY CASE IS DELIBERATE — do not "fix" this half
+ *       to match it. A computed key is refused outright because a plain key is a free,
+ *       always-available alternative. A `ShorthandPropertyAssignment` has no in-place value the
+ *       walk could read and no equally free rewrite to demand, so failing loudly on it would
+ *       reject a legal fixture shape rather than redirect it. Documented as a narrowing on
+ *       purpose; refusing the computed form is not the precedent for refusing this one.
  *   (c) IT GRADES THE SOURCE ON DISK at `process.cwd()`, not the module the suite imported.
  *
  * ⚠️ ONE COMPENSATING CONTROL, RECORDED RATHER THAN RELIED ON SILENTLY: this repo's prettier
@@ -659,17 +686,51 @@ describe('modelInsightProjection — the winning version’s whole row', () => {
           const name = node.name;
           const line = ast.getLineAndCharacterOfPosition(node.getStart(ast)).line + 1;
           if (ts.isComputedPropertyName(name)) {
-            // 🔴 A COMPUTED KEY FAILS RATHER THAN BEING SKIPPED, and that choice is deliberate:
-            // `['styleFamily']: 'rendr_9d'` was ALSO fully green before this branch existed
-            // (measured, same `143 passed (143)`), because a ComputedPropertyName has no `.text`
-            // and its source span carries the brackets. Resolving one in general means
-            // evaluating an arbitrary expression, which an AST walk cannot do — so the guard
-            // refuses the shape instead of guessing, and says so loudly. Write a plain key.
-            const text = name.getText(ast);
+            // 🔴 ANY COMPUTED KEY FAILS, REGARDLESS OF WHAT ITS SOURCE SPAN SAYS. A
+            // ComputedPropertyName has no `.text` and its span carries the brackets, so
+            // `['styleFamily']: 'rendr_9d'` was fully green before this branch existed at all
+            // (measured, `143 passed (143)`). Resolving one in general means evaluating an
+            // arbitrary expression, which an AST walk cannot do — so the guard refuses the
+            // shape instead of guessing. Write a plain key.
+            //
+            // 🔴 AND IT ASSERTS THE NODE KIND, NOT THE TEXT — the earlier version of this
+            // branch was `labelKeys.every((k) => !text.includes(k))`, a SUBSTRING test on the
+            // computed name's source span, i.e. a SPELLED guard that another construct can
+            // simply not spell. Measured at this head: planting
+            // `const __auditKeys = ['role', 'styleFamily'] as const;` and
+            // `{ [__auditKeys[1]]: 'rendr_9d' }` left the suite fully green at
+            // `Tests 144 passed (144)` — the key resolves to `styleFamily`, the value is an
+            // invented non-option, and nothing was said,
+            // while this comment claimed the guard "refuses the shape instead of guessing". It
+            // guessed. The span `[__auditKeys[1]]` mentions neither key, which is the whole
+            // escape.
+            //
+            // WHY THE WIDENING IS FREE, measured rather than reasoned:
+            //   - The old branch's false-fail set is a STRICT SUBSET of this one's: `['roleplay']`
+            //     failed before (its span contains `role`) and fails now. The only class this
+            //     ADDS is "a computed name mentioning neither key" — which IS the silent-escape
+            //     set above, so there is no trade-off to weigh.
+            //   - That set is EMPTY today: an AST sweep of both `FIXTURE_SUITES` found 0
+            //     `ComputedPropertyName` nodes against 146 `PropertyAssignment` nodes (the
+            //     positive control — the sweep was non-vacuous, and planting one took the count
+            //     to 1). So the widening costs nothing now.
+            //   - The remedy for a future legitimate one is "write a plain key", which is free
+            //     and is already the style at every collected site.
+            //   - One condition fewer, and it asserts the STATE — a node kind this walk
+            //     provably cannot resolve — rather than a word another construct can spell.
+            //
+            // ⚠️ DO NOT DO THE SAME TO THE SHORTHAND HOLE, narrowing (b) in this file's header.
+            // The asymmetry is justified in THIS direction only. A ShorthandPropertyAssignment
+            // is not a `ts.PropertyAssignment` at all and carries no in-place value the walk
+            // could read, so failing loudly there would reject a legal fixture shape with no
+            // resolvable alternative to offer. A computed key has one — a plain key — which is
+            // exactly why refusing it is free here and would not be there.
             expect(
-              labelKeys.every((k) => !text.includes(k)),
-              `${rel}:${line} — a label fixture must use a plain \`role:\` / \`styleFamily:\` property name; this guard cannot resolve the computed name \`${text}\`, and skipping it would be the silent escape defect (1) was`
-            ).toBe(true);
+              ts.SyntaxKind[name.kind],
+              `${rel}:${line} — a label fixture must use a plain \`role:\` / \`styleFamily:\` property name; this guard cannot resolve ANY computed name, including \`${name.getText(
+                ast
+              )}\`, and skipping it would be the silent escape defect (1) was`
+            ).not.toBe('ComputedPropertyName');
           } else if ((labelKeys as readonly string[]).includes(name.text)) {
             const key = name.text;
             // 🔴 An unreadable fixture must FAIL, not be skipped — a skipped fixture is exactly

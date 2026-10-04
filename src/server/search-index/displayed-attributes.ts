@@ -92,14 +92,36 @@ export const MODELS_WITHHELD_ATTRIBUTES = [
   // promoted to a TOP-LEVEL key WOULD need its own entry here.
   //
   // 🔴 AND FOR `insight.modelVersionId` THE RIDE-ALONG IS LOAD-BEARING RATHER THAN CONVENIENT.
-  // That leaf is in NO attribute list — not filterable, not sortable — so unlike the three
-  // beside it, this entry is the ONLY thing keeping it unreadable: `attributesToRetrieve` can
-  // narrow within the displayed set but cannot re-admit a withheld attribute, so withholding
-  // `insight` is what makes "no search path returns the winning version id" true. Removing
-  // `insight` from this list to expose something else therefore also publishes that id, and it
-  // cannot be done per-leaf — both mechanisms key on the top-level attribute. The argument for
-  // why the id is written at all, and the two routes that would make it readable (neither
-  // approved), are at the projection site in ./models.search-index.ts.
+  // That leaf is in no OTHER attribute list — not filterable, not sortable, and not in the
+  // `searchableAttributes` whitelist — so unlike the three beside it, this entry is the only one
+  // of the four lists keeping it out of a serialised hit: `attributesToRetrieve` can narrow
+  // within the displayed set but cannot re-admit a withheld attribute, so withholding `insight`
+  // is what makes "no search path returns the winning version id" true. Removing `insight` from
+  // this list to expose something else therefore also publishes that id, and it cannot be done
+  // per-leaf — both mechanisms key on the top-level attribute. The argument for why the id is
+  // written at all, and the two routes that would make it readable (neither approved), are at
+  // the projection site in ./models.search-index.ts.
+  //
+  // ⚠️ "THE ONLY THING KEEPING IT UNREADABLE" IS WHAT THIS USED TO SAY, over an enumeration of
+  // "not filterable, not sortable" — the same incomplete enumeration this change corrected at
+  // the projection site, where the fourth list was missing too. There are FOUR: the three
+  // exported constants plus the `searchableAttributes` whitelist declared in `onIndexSetup` in
+  // ./models.search-index.ts, which stands in for Meili's `["*"]` default. Widening that
+  // whitelist is a route to reachability with no edit to THIS file, so it is not covered by the
+  // sentence above. Measured on a local Meilisearch 1.54.0, two documents carrying `42` and
+  // `77`, with positive and negative controls: with the real whitelist `q=42` returns 0 hits;
+  // with `["*"]` it returns 1, `q=77` returns the OTHER document (per-document discrimination)
+  // and `q=999` returns 0. ⚠️ A BARE `'insight'` PARENT ENTRY IS A REAL ROUTE, not only a leaf
+  // one — `["name","insight"]` makes `q=42` and `q=render_3d` each return 1 hit, while the
+  // leaf-only `["name","insight.role"]` returns 0 for `42` — which is why the projection guard
+  // filters on `startsWith('insight')` and not `startsWith('insight.')`.
+  //
+  // What widening buys is a per-document MEMBERSHIP ORACLE, not a value leak — "which model
+  // carries this value", one guess at a time — because the hit body still withholds `insight`:
+  // measured, the hit stays `{"id":1,"name":"a model"}` even under `attributesToRetrieve: ["*"]`.
+  // The hazard is that the two-mechanism reading makes a search-relevance change widening
+  // `searchableAttributes` look safety-neutral ("undisplayed and unfilterable"), when it ships
+  // that oracle on internal label outcomes to anyone holding the client key named below.
   //
   // 🔴 BUT READ "WITHHELD" AS **NOT SERIALISED INTO A HIT**, NEVER AS NOT DETERMINABLE, and do
   // not let the word do work it cannot do. These two mechanisms are the complete boundary on

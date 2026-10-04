@@ -419,10 +419,27 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
         // time. That is the same shape and the same accepted class as the filterable oracle
         // argued above, and it is equally true of the three PRE-EXISTING `insight.*` leaves, so
         // this is NOT new exposure introduced by projecting the id. What was wrong was the
-        // completeness of the enumeration. The fourth list is now machine-checked alongside the
-        // other three in ./__tests__/models-index-insight-projection.test.ts — it is read from
-        // this file's AST rather than imported, because unlike the sortable, displayed and
-        // filterable lists it is a function-local literal and not an exported constant.
+        // completeness of the enumeration. The fourth list is machine-checked in
+        // ./__tests__/models-index-insight-projection.test.ts — it is read from this file's AST
+        // rather than imported, because unlike the sortable, displayed and filterable lists it is
+        // a function-local literal and not an exported constant.
+        //
+        // ⚠️ "ALONGSIDE THE OTHER THREE" IS WHAT THIS SENTENCE USED TO SAY, AND IT OVERSTATED
+        // PARITY — corrected after two mutants escaped a fully green suite. The three membership
+        // assertions read the DECLARATION at the top of `onIndexSetup`; pinning a declaration is
+        // not pinning what reaches the engine, so a `searchableAttributes.push('*', …)` on the
+        // next line, and a `updateSearchableAttributes([...searchableAttributes, '*', …])` at
+        // the call site, both declared exactly what those assertions forbid and both passed.
+        // That is the same defect the displayed-list guard already shipped and fixed, recorded
+        // in `src/server/__tests__/models-displayed-attributes.test.ts`. What is pinned now, and
+        // the difference that remains: the displayed list pins the write ARGUMENT and bans a
+        // local binding outright (it is an exported module constant, passed straight through);
+        // this list pins the write ARGUMENT too, but cannot ban the local — it IS a local — so
+        // it instead bans any member access on it and pins the reference count inside
+        // `onIndexSetup`. Equivalent property, bought differently. Making the fourth list
+        // structurally parallel would mean hoisting this array to an exported constant beside
+        // the other three; that is a production change and is deliberately left as a follow-up,
+        // argued at the guard.
         //
         // WHY WRITE IT ANYWAY. It records WHICH VERSION THE INDEX DECIDED FOR at reset time,
         // and that fact is NOT recoverable from Postgres afterwards: the labels move
