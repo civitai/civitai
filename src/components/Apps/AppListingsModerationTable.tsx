@@ -17,6 +17,7 @@ import { keepPreviousData } from '@tanstack/react-query';
 import { Fragment, useMemo, useState } from 'react';
 import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
 import { MessageAppOwnerModal } from '~/components/Apps/MessageAppOwnerModal';
+import { ModListingVisibilityModal } from '~/components/Apps/ModListingVisibilityModal';
 import { ModQueryError, isModAuthzError } from '~/components/Apps/ModQuerySurface';
 import { ReasonGatedActionModal } from '~/components/Apps/ReasonGatedActionModal';
 import { listingStatusChip } from '~/components/Apps/appListingModerationView';
@@ -24,6 +25,7 @@ import { AppsTableColgroup, APPS_MOD_LISTINGS_COLUMNS } from '~/components/Apps/
 import { LISTING_KIND_LABELS } from '~/components/Apps/listingKindLabels';
 import {
   actionOpensOwnerMessage,
+  actionOpensVisibility,
   actionRequiresReason,
   effectiveModerationStatus,
   isDestructiveListingModAction,
@@ -166,6 +168,10 @@ export function AppListingsModerationTable({
   // `MessageAppOwnerModal`), and keeping the two apart means a lifecycle action can
   // never render the message form's gate, or vice versa.
   const [messageRow, setMessageRow] = useState<ModerationListingRow | null>(null);
+  // Kept apart from `pendingAction` for the same reason `messageRow` is: this modal has its
+  // own input shape (a level + a reason), so sharing the lifecycle-action slot would mean
+  // one state holding two unrelated payloads.
+  const [visibilityRow, setVisibilityRow] = useState<ModerationListingRow | null>(null);
 
   // A filter/search change = a NEW result set → reset pagination SYNCHRONOUSLY in the
   // onChange handler (batched with the filter state change in the same React event) so
@@ -308,6 +314,14 @@ export function AppListingsModerationTable({
     // so an action absent from it answers `false` to BOTH and reaches nothing; while
     // `actionRequiresReason` was written as a negation, a new union member defaulted to
     // `true` and landed here regardless of how carefully this branch was written.
+    // 🔴 THE FOURTH ROUTE. It is a separate modal because this act needs a LEVEL as well as
+    // a reason, and the shared reason-gated modal has exactly one free-text field. Placed
+    // before the reason branch for no functional reason — the route table makes the two
+    // mutually exclusive — but reading top-to-bottom in table order.
+    if (actionOpensVisibility(action)) {
+      setVisibilityRow(row);
+      return;
+    }
     if (actionRequiresReason(action)) setPendingAction({ action, row });
   };
 
@@ -588,6 +602,21 @@ export function AppListingsModerationTable({
       <MessageAppOwnerModal
         listing={messageRow ? { appListingId: messageRow.id, slug: messageRow.slug } : null}
         onClose={() => setMessageRow(null)}
+      />
+
+      {/*
+        The fourth route's modal. `invalidate` rather than a narrower refetch, matching the
+        lifecycle modal: a level change moves which rows a cohort sees, so the table's own
+        paging is reset the same way a hide/relist resets it.
+      */}
+      <ModListingVisibilityModal
+        target={
+          visibilityRow
+            ? { id: visibilityRow.id, slug: visibilityRow.slug, status: visibilityRow.status }
+            : null
+        }
+        onClose={() => setVisibilityRow(null)}
+        onDone={invalidate}
       />
     </Stack>
   );

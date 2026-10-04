@@ -49,6 +49,7 @@ vi.mock('~/server/services/blocks/app-access.service', () => ({
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import {
+  setListingVisibilityAsModerator,
   setListingVisibilityAsOwner,
   VISIBILITY_BLOCK_SUSPENDED_MESSAGE,
   VISIBILITY_EXCEEDS_REVIEW_CEILING_MESSAGE,
@@ -388,5 +389,156 @@ describe('a missing listing', () => {
       setListingVisibilityAsOwner({ appListingId: 'apl_gone', visibility: 'public', userId: 9 })
     ).rejects.toThrow('Listing not found');
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 🔴 THE MODERATOR PATH — a SEPARATE audience, not a relaxation of the owner gate.
+ *
+ * The owner path has no mod bypass and this one has no owner gate; they share only
+ * `applyVisibility`, which is where D1 and the review ceiling live. The cases below are
+ * the behavioural half of four mutants that a structural ledger cannot see:
+ *
+ *   · dropping the moderation event entirely — a moderator silently changes a stranger's
+ *     discoverability with nothing in the owner-readable history;
+ *   · writing the event BEFORE the level, so a refused act is logged as if it happened;
+ *   · writing an event for an idempotent no-op, filling that history with noise;
+ *   · attributing the event to the listing owner instead of the acting moderator.
+ */
+describe('the MODERATOR path', () => {
+  const event = () => dbMock.dbWrite.appListingModerationEvent.create;
+
+  it('[NEW] writes a `set-visibility` event attributed to the MODERATOR, with both levels', async () => {
+    stored = 'moderators';
+    const res = await setListingVisibilityAsModerator({
+      appListingId: 'apl_1',
+      visibility: 'public',
+      reason: 'owner asked in ticket 123',
+      moderatorUserId: 77,
+    });
+    expect(res).toEqual({ appListingId: 'apl_1', visibility: 'public', changed: true });
+    expect(event()).toHaveBeenCalledTimes(1);
+    const data = (event() as unknown as { mock: { calls: { 0: { data: Record<string, unknown> } }[] } })
+      .mock.calls[0][0].data;
+    expect(data.action).toBe('set-visibility');
+    // 🔴 THE ACTOR IS THE MODERATOR. A mutant attributing this to the listing's owner
+    // produces an audit row that blames the victim, and nothing else would notice.
+    expect(data.actorUserId).toBe(77);
+    expect(data.reason).toBe('owner asked in ticket 123');
+    expect(data.appListingId).toBe('apl_1');
+    // 🔴 THE LEVELS, NOT A STATUS. This act changes neither the status nor anything else,
+    // so a `status` transition here would describe something that did not happen.
+    expect(data.before).toEqual({ visibility: 'moderators' });
+    expect(data.after).toEqual({ visibility: 'public' });
+  });
+
+  it('[NEW] records an UNSET pre-state as null rather than inventing `private`', async () => {
+    // The three-states rule reaching the audit trail: `null` means "no choice expressed",
+    // which is NOT the `private` level, and an event claiming otherwise would misreport
+    // what the moderator changed.
+    stored = null;
+    await setListingVisibilityAsModerator({
+      appListingId: 'apl_1',
+      visibility: 'testers',
+      reason: 'promoting to testers',
+      moderatorUserId: 77,
+    });
+    const data = (event() as unknown as { mock: { calls: { 0: { data: Record<string, unknown> } }[] } })
+      .mock.calls[0][0].data;
+    expect(data.before).toEqual({ visibility: null });
+  });
+
+  it('[INV] writes NO event when the level is already the requested one', async () => {
+    // Idempotent success. An event row here would fill the owner's visible history with
+    // no-ops, and the history is the only place they learn a moderator touched this.
+    stored = 'public';
+    const res = await setListingVisibilityAsModerator({
+      appListingId: 'apl_1',
+      visibility: 'public',
+      reason: 'no-op',
+      moderatorUserId: 77,
+    });
+    expect(res.changed).toBe(false);
+    expect(event()).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('[INV] writes NO event when the write is REFUSED — apply first, record second', async () => {
+    // 🔴 THE ORDERING MUTANT. Recording before applying would log moderator acts that were
+    // refused, which is worse than not logging at all on a surface whose job is to be
+    // believed. Driven through D1 (a `removed` listing refuses a level for a mod too).
+    row = { id: 'apl_1', slug: 'an-app', status: 'removed', appBlock: { status: 'approved' } };
+    await expect(
+      setListingVisibilityAsModerator({
+        appListingId: 'apl_1',
+        visibility: 'public',
+        reason: 'should not land',
+        moderatorUserId: 77,
+      })
+    ).rejects.toThrow(VISIBILITY_STATUS_INELIGIBLE_MESSAGE);
+    expect(event()).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('[INV] the REVIEW CEILING binds a moderator too — a draft cannot be made public', async () => {
+    // 🔴 D7 APPLIES TO WHOEVER IS ASKING. The ceiling is a property of what has been
+    // REVIEWED, not of the caller's role: a moderator who wants a draft public approves it
+    // rather than relabelling it. A mutant exempting moderators from the ceiling would
+    // serve a listing no moderator had reviewed to the anonymous catalog.
+    row = { id: 'apl_1', slug: 'an-app', status: 'draft', appBlock: { status: 'approved' } };
+    expect(maxVisibilityForStatus('draft')).toBe('moderators');
+    await expect(
+      setListingVisibilityAsModerator({
+        appListingId: 'apl_1',
+        visibility: 'public',
+        reason: 'tries to bypass review',
+        moderatorUserId: 77,
+      })
+    ).rejects.toThrow(VISIBILITY_EXCEEDS_REVIEW_CEILING_MESSAGE);
+    expect(event()).not.toHaveBeenCalled();
+    // The POSITIVE CONTROL for the same status: `moderators` is AT the ceiling and lands,
+    // so the refusal above is about the level and not about drafts being unwritable.
+    await expect(
+      setListingVisibilityAsModerator({
+        appListingId: 'apl_1',
+        visibility: 'moderators',
+        reason: 'within the ceiling',
+        moderatorUserId: 77,
+      })
+    ).resolves.toMatchObject({ changed: true });
+    expect(event()).toHaveBeenCalledTimes(1);
+  });
+
+  it('[INV] does NOT consult the owner access resolver — the two audiences are separate', async () => {
+    // 🔴 THE SHAPE THAT WOULD UNDO THE DESIGN. If this path ever routed through
+    // `resolveListingAccess`, a moderator would need a ROLE on the listing to moderate it —
+    // and the obvious "fix" for that is a mod bypass inside the owner gate, which is the
+    // unaudited write the separate proc exists to prevent. The router's
+    // `moderatorProcedure` is the gate here; the service owns the lifecycle rules only.
+    mockResolveListingAccess.mockImplementation(async () => null);
+    await expect(
+      setListingVisibilityAsModerator({
+        appListingId: 'apl_1',
+        visibility: 'public',
+        reason: 'a mod holds no seat on this app',
+        moderatorUserId: 77,
+      })
+    ).resolves.toMatchObject({ changed: true });
+    expect(mockResolveListingAccess).not.toHaveBeenCalled();
+  });
+
+  it('[INV] refuses on an UNAPPLIED migration, and records nothing', async () => {
+    // `assertVisibilityWritable` is shared, but the event half is new: a refusal here must
+    // not leave an audit row claiming a level the database cannot hold.
+    stored = 'THROW_P2022';
+    await expect(
+      setListingVisibilityAsModerator({
+        appListingId: 'apl_1',
+        visibility: 'public',
+        reason: 'migration pending',
+        moderatorUserId: 77,
+      })
+    ).rejects.toThrow(VISIBILITY_UNAVAILABLE_MESSAGE);
+    expect(event()).not.toHaveBeenCalled();
   });
 });

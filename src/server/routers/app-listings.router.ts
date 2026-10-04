@@ -57,6 +57,7 @@ import {
   republishOwnListingSchema,
   resetListingToPendingSchema,
   resolveReportSchema,
+  setListingVisibilityAsModeratorSchema,
   unpublishOwnListingSchema,
 } from '~/server/schema/blocks/offsite-moderation.schema';
 import { messageAppOwnerSchema } from '~/server/schema/blocks/app-moderator-message.schema';
@@ -1870,6 +1871,44 @@ export const appListingsRouter = router({
         appListingId: input.listingId,
         visibility: input.visibility,
         userId: ctx.user.id,
+      });
+    }),
+
+  /**
+   * MOD: set the per-listing VISIBILITY LEVEL on ANY listing — D2's moderator half, which
+   * the backend PR deferred to this one.
+   *
+   * 🔴 A SEPARATE PROC RATHER THAN A MOD BYPASS IN `setListingVisibility`, and the write
+   * service's header says why: admitting a moderator to the owner path would be an
+   * unaudited write on someone else's listing. This one takes a REQUIRED `reason` and
+   * lands a `set-visibility` moderation event, so a moderator cannot change a stranger's
+   * discoverability without leaving a row the OWNER can read in their own listing history.
+   *
+   * 🔴 `moderatorProcedure` IS THE GATE, AND THE SERVICE DOES NOT RE-CHECK IT. That matches
+   * every other mod proc in this file (`delistListing`, `relistListing`, `claimListing`,
+   * `purgeListing`): the router owns the role test, the service owns the lifecycle rules.
+   * The acting moderator is bound to `ctx.user.id` and is never supplied by the client.
+   *
+   * 🔴 THE REVIEW CEILING AND D1 STILL BIND. `applyVisibility` enforces both for every
+   * caller, so a moderator cannot make a `draft` public (they approve it instead) and
+   * cannot set a level on a `removed`/`rejected` listing. Moderator-ness buys the right to
+   * act on someone else's listing, not the right to skip the lifecycle.
+   *
+   * NOT rate-limited, matching its mod siblings — a moderator acting through the queue is
+   * not the abuse shape the owner path's 30/hour budget exists for.
+   */
+  setListingVisibilityAsModerator: moderatorProcedure
+    .input(setListingVisibilityAsModeratorSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { setListingVisibilityAsModerator } = await import(
+        '~/server/services/blocks/app-listing-visibility-write.service'
+      );
+      return setListingVisibilityAsModerator({
+        appListingId: input.appListingId,
+        visibility: input.visibility,
+        reason: input.reason,
+        moderatorUserId: ctx.user.id,
       });
     }),
 

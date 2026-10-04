@@ -36,6 +36,7 @@ import {
   assertVisibilityWritable,
   readListingVisibility,
 } from '~/server/services/blocks/app-listing-visibility.service';
+import { newAppListingModerationEventId } from '~/server/utils/app-block-ids';
 import type { AppListingVisibility } from '~/shared/utils/app-listing-visibility';
 import {
   isVisibilityEligibleListingStatus,
@@ -258,4 +259,84 @@ export async function setListingVisibilityAsOwner(args: {
     throw new TRPCError({ code: 'FORBIDDEN', message: VISIBILITY_NOT_OWNED_MESSAGE });
   }
   return applyVisibility({ appListingId: args.appListingId, visibility: args.visibility });
+}
+
+/**
+ * MODERATOR path — set the level on ANY listing, with a mandatory audited reason (D2).
+ *
+ * 🔴 IT DOES NOT WIDEN THE OWNER PATH, AND THAT SEPARATION IS THE WHOLE DESIGN. The
+ * previous revision of this module's header recorded that letting a moderator through
+ * `setListingVisibilityAsOwner` "would be an unaudited moderator write on someone else's
+ * listing", and closed the gap by deferring a dedicated proc rather than relaxing the
+ * resolver. This is that proc. The owner path is untouched and still has no mod bypass, so
+ * the two audiences cannot be confused at a call site, and a moderator write is
+ * structurally incapable of happening without an event row.
+ *
+ * 🔴 THE REVIEW CEILING STILL BINDS (D7). {@link applyVisibility} enforces it for every
+ * caller — a moderator who wants a draft public APPROVES it rather than relabelling it,
+ * because the ceiling is a property of what has been reviewed and not of who is asking.
+ * Same for D1: a `removed`/`rejected` listing refuses a level for a moderator too.
+ * Moderator-ness buys the right to act on someone else's listing, nothing more.
+ *
+ * 🔴 THE EVENT IS WRITTEN BEFORE THE LEVEL, AND ONLY IF THE LEVEL LANDS. The order below
+ * is read-then-apply-then-record: `applyVisibility` throws on every refusal (D1, the
+ * ceiling, an unapplied migration, a lost CAS race), so no event row is created for an act
+ * that did not happen. The alternative — event first — would log moderator actions that
+ * were refused, which is worse than not logging in a surface whose job is to be believed.
+ *
+ * 🔴 `changed: false` STILL RECORDS NOTHING. Setting the level to what it already is is an
+ * idempotent success; an event row there would fill an owner's visible history with
+ * no-ops, and the history is the only place the owner learns a moderator touched their
+ * listing's discoverability.
+ *
+ * 🔴 WHY A NEW EVENT ACTION CANNOT BREAK THE OWNER'S REPUBLISH, checked rather than
+ * assumed. `republishOwnListing` gates on the LAST moderation event being
+ * `owner-unpublish`, so a new action kind that could land last on a `removed` listing
+ * would silently convert an owner-reversible unpublish into a mod-removed dead end. This
+ * one cannot: `applyVisibility` refuses every status outside
+ * `VISIBILITY_ELIGIBLE_LISTING_STATUSES`, and `removed` is not in it — so a
+ * `set-visibility` row can never be written to a removed listing, and therefore can never
+ * be the newest event on one. (`normalizeLastModerationAction` would also collapse it to
+ * `other`, which is the refusing side — the status gate is what makes it unreachable.)
+ */
+export async function setListingVisibilityAsModerator(args: {
+  appListingId: string;
+  visibility: AppListingVisibility;
+  reason: string;
+  moderatorUserId: number;
+}): Promise<SetListingVisibilityResult> {
+  // The pre-state, for the event's `before`. Read through the raw reader for the same
+  // reason the write path does — the column is not on the Prisma model. A refusal below
+  // discards this, which costs one cheap read on the failure path and keeps the happy path
+  // honest about what it changed.
+  const before = await readListingVisibility(args.appListingId, dbWrite);
+
+  const result = await applyVisibility({
+    appListingId: args.appListingId,
+    visibility: args.visibility,
+  });
+
+  if (!result.changed) return result;
+
+  const listing = await dbWrite.appListing.findUnique({
+    where: { id: args.appListingId },
+    select: { slug: true },
+  });
+  await dbWrite.appListingModerationEvent.create({
+    data: {
+      id: newAppListingModerationEventId(),
+      appListingId: args.appListingId,
+      slug: listing?.slug ?? '',
+      action: 'set-visibility',
+      actorUserId: args.moderatorUserId,
+      reason: args.reason,
+      // 🔴 THE LEVEL, NOT THE STATUS. Every sibling event records a `status` transition
+      // because that is what it changed; this one changes neither the status nor anything
+      // else, so recording `status` here would describe a transition that did not happen.
+      before: { visibility: before.visibility },
+      after: { visibility: args.visibility },
+    },
+  });
+
+  return result;
 }

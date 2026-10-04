@@ -1,5 +1,7 @@
 import * as z from 'zod';
 
+import { APP_LISTING_VISIBILITIES } from '~/shared/utils/app-listing-visibility';
+
 /**
  * App Store Listings (W13) — P3b OFF-SITE MODERATION schemas.
  *
@@ -162,6 +164,29 @@ export const relistListingSchema = z.object({
   reason: modReason,
 });
 export type RelistListingInput = z.infer<typeof relistListingSchema>;
+
+/**
+ * MOD set the per-listing VISIBILITY LEVEL on ANY listing (D2's moderator half).
+ *
+ * 🔴 `reason` IS REQUIRED HERE AND OPTIONAL ON THE OWNER PATH, AND THAT ASYMMETRY IS THE
+ * POINT. This is a moderator writing a discoverability change to someone else's app — the
+ * same class of act as `delist`/`relist`/`claim`, every one of which takes a `modReason`
+ * and lands a moderation event. An owner changing their own listing's level owes nobody an
+ * explanation; a moderator doing it to a stranger's app owes an audit trail, and the
+ * `reason` is what makes the resulting event legible in the listing history the OWNER can
+ * read (`listMyListingModerationEvents`).
+ *
+ * The acting moderator is bound to `ctx.user.id` in the service and is never supplied by
+ * the client, matching every other proc in this file.
+ */
+export const setListingVisibilityAsModeratorSchema = z.object({
+  appListingId: z.string().min(1).max(64),
+  visibility: z.enum(APP_LISTING_VISIBILITIES),
+  reason: modReason,
+});
+export type SetListingVisibilityAsModeratorInput = z.infer<
+  typeof setListingVisibilityAsModeratorSchema
+>;
 
 /**
  * MOD claim (reassign ownership of) an off-site listing (PR4) — mod-arbitrated

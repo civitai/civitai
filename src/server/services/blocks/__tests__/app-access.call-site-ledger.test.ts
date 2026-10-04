@@ -100,11 +100,19 @@ const GATE_LEDGER: Record<string, string> = {
     'setListingVisibilityAsOwner is THE gate on the owner path for the per-listing ' +
     'VISIBILITY LEVEL: owner | ACCEPTED collaborator, resolved by resolveListingAccess ' +
     'through dbWrite so a seat accepted moments ago is visible. NO mod bypass, ' +
-    'deliberately. NOTE: moderators have NO visibility path at all today — the moderator ' +
-    'proc was deferred to the UI PR, and an earlier version of THIS ledger entry asserted ' +
-    'a setListingVisibilityAsModerator that does not exist, which is worse in a ledger ' +
-    'than in prose because a ledger is the authoritative in-tree record. Admitting a ' +
-    "moderator here would be an unaudited write on someone else's listing. A missing row " +
+    'deliberately — and the moderator half is a SEPARATE proc rather than a bypass here. ' +
+    'setListingVisibilityAsModerator now EXISTS (added with the owner-facing UI): ' +
+    'moderatorProcedure at the router, a REQUIRED audited reason, and a `set-visibility` ' +
+    'moderation event written only after the level actually lands, so a moderator cannot ' +
+    "change a stranger's discoverability without a row the OWNER can read in their own " +
+    'listing history. The earlier ledger entry asserted this proc while it did NOT exist ' +
+    '(it had been deferred), which is worse in a ledger than in prose because a ledger is ' +
+    'the authoritative in-tree record — so note that the claim is now TRUE and was ' +
+    'verified against the router and the service, not inferred from this sentence. ' +
+    'Admitting a moderator to the OWNER path would still be an unaudited write, which is ' +
+    'why that path is unchanged and has no mod bypass. D1 and the review ceiling bind for ' +
+    'moderators too (applyVisibility enforces both for every caller), so a mod cannot ' +
+    'make a draft public — they approve it instead. A missing row ' +
     'and a caller ' +
     'with no role produce the SAME refusal, so the proc is not an existence oracle over ' +
     'listing ids. The resolver is NOT status-aware (its own header says so), so D1 ' +
