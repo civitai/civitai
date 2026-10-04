@@ -506,8 +506,7 @@ export function partitionNeedingLabel(
  *      `modelVersionId` asc, and nothing in it groups by model. So the escape
  *      is not a narrow boundary straddle — two versions of one model whose
  *      usage ranks differ by more than a batch width land in different batches
- *      and are each announced, which an early lightly-used v1 beside a popular
- *      v3 does routinely. That is why the summary reports `announcements
+ *      and are each announced. That is why the summary reports `announcements
  *      issued` rather than a model count; see the `done:` line in `main`.
  *
  * Driven by `labels` — the rows that were actually written — not by the fetched
@@ -553,8 +552,12 @@ export function labeledModelIds(
  * direction is CORROBORATION, NOT PROOF, and the message must not claim more.
  * The `models_v9:Update` queue is shared with many other `queueUpdate` call
  * sites across the codebase — deliberately no count: it carries none of the
- * argument, and three successive attempts to state it precisely were each
- * wrong, so do not re-add one. An entry survives until the next
+ * argument, and any count is corpus-dependent and not reproducible (it moves
+ * with `src` vs `src`+`scripts`, with or without `__tests__`, `.ts` vs
+ * `.ts`+`.tsx`, and a grep counts a string literal as a hit — see the
+ * `invalidation('modelsSearchIndex.queueUpdate', …)` label sitting on the line
+ * above its own call in `src/server/services/model.service.ts`), so do not
+ * re-add a figure. An entry survives until the next
  * non-`readOnly` checkout (≤15 min), so presence is consistent with this run
  * having queued the ids and also with anything else having queued them. The
  * shape that makes that

@@ -131,36 +131,27 @@ this paragraph:
 - ⚠️ **Queue DEPTH is a count of DISTINCT MODELS, not of versions labeled** —
   which is a correction to the _mechanism_, not a cheaper cost estimate, and
   billing it as the latter is what bit the earlier draft. The queue is a redis
-  **set** (`sAdd`, and `checkoutQueue` collects into a `Set`), so depth is
-  bounded by the number of distinct models announced **since the last drain** —
-  not per pass: the `models` sync runs `*/15 * * * *`
-  (`src/server/jobs/search-index-sync.ts`), and the queue is shared with every
-  other `queueUpdate` caller, so standing depth is a per-drain-interval quantity
-  this pass only contributes to. Within such a window depth is `≤` the version
-  count, with **equality only if every version announced in it belongs to a
-  distinct model** — and on the **default** sweep that is very nearly the case,
-  so size for it. One 15-minute window covers a few hundred to a few thousand
-  **consecutive** labelable ids (`id > cursor`, `orderBy: { id: 'asc' }`,
-  `take ≤ 10` per batch — `scripts/label-resource-insights.ts`), and a model's
-  versions are created at different times and so are not adjacent in id space,
-  so almost every model in such a window contributes exactly **one** version:
-  standing depth ≈ the version count, i.e. **near-EQUALITY, not divergence**.
-  `--top` is the path where depth collapses below the version count, because
-  usage-correlated ordering is what can land several versions of one model in
-  the same window. ⚠️ A **pass**-scoped example cannot bear on this bound at
-  all, which is why the earlier draft's one is gone: versions 1 and 1,000,000 of
-  one model are hundreds of thousands of labelable ids apart on an ascending-id
-  sweep, so they necessarily fall in **different** drain windows and can never
-  both sit in one standing-depth measurement. 🔴 **And do not read standing
-  depth off the script's `indexQueued` total: the two quantities move in
-  OPPOSITE directions between the two selection paths.** `indexQueued` is a
-  **pass**-total sum of per-batch announcement lists, so it double-counts
-  near-certainly on the default sweep and mostly collapses under `--top`;
-  standing depth is the **per-drain-window** count of distinct models, near the
-  version count on the default sweep and below it under `--top`. A figure read
-  off one is a wrong answer about the other. Total document rebuilds across a
-  multi-day pass is a third and larger quantity again, because the sync drains
-  repeatedly.
+  **set** (`sAdd`, and `checkoutQueue` collects into a `Set`). 🔴 **It is a
+  different quantity from the script's `indexQueued` total, so do not read
+  either off the other.** `indexQueued` is a **pass**-scoped sum of per-batch
+  announcement lists, deduplicated only _within_ each batch, so a model
+  announced by two batches is counted twice. Standing depth is a
+  **per-drain-window** quantity that this pass only _contributes_ to: the queue
+  is shared with every other `queueUpdate` caller, and the `models` sync drains
+  it every 15 minutes (`src/server/jobs/search-index-sync.ts`,
+  `models: '*/15 * * * *'`). Which batch a model's versions land in follows from
+  the ordering: on the **default** sweep (`id > cursor`,
+  `orderBy: { id: 'asc' }`, `take ≤ 10` per batch —
+  `scripts/label-resource-insights.ts`) a model's versions are created at
+  different times and so are not adjacent in id space, which is why they can
+  land in different batches; under `--top`
+  (`orderBy: [{ generationCount: 'desc' }, { modelVersionId: 'asc' }]`) nothing
+  groups by model, so any clustering is statistical, not guaranteed. Hence the
+  double count is near-certain on the default sweep and rarest under `--top`.
+  🔴 **None of these quantities has been measured** — not batch throughput, not
+  per-model version-id spacing, not actual standing depth, not the corpus's
+  versions-per-model distribution — so nothing may be sized on them until they
+  are.
 - ⚠️ **`--top N` DOES bound the announced set, PER INVOCATION** —
   `topUsageVersionIds` takes at most N ids in one query, so one run announces at
   most N models. It does **not** bound a resumed pass: `--cursor` re-materialises
