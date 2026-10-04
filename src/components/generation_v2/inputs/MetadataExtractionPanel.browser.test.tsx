@@ -109,8 +109,21 @@ import { renderWithProviders } from '../../../../test/component-setup';
 //     the long note on its `vi.mock` for what leaving it real cost.
 // We do NOT mock Mantine (resolve.dedupe handles dual-React at the scaffold).
 
-// 🔴 `importOriginal` SPREAD, not a hand-written module object — and the switch is part of
-// the civitai#5364 fix rather than tidying beside it.
+// 🔴 `importOriginal` SPREAD, not a hand-written module object.
+//
+// SCOPE OF THIS SWITCH, stated precisely: it closes this file's one ERROR-severity lint
+// finding, which is a real half of civitai#5364 — but NOT the half that was making tests
+// red. The `ResidencyBatchProvider` stub below removes both the
+// `missing CivitaiSessionContext` throw and the undeclared `trpc.useQueries` access on
+// its own; verified by putting the hand-written factory back with that stub in place and
+// watching this file still pass 8/8. Two independent fixes in one commit, not one fix
+// with a prerequisite.
+//
+// It is also NOT a consolidation of the class. Measured at the time of writing, 57 other
+// test files still mock `~/utils/trpc` with a bare factory (60 counting three that use
+// both forms), 52 of them with no `eslint-disable` — so the mechanism survives everywhere
+// but here. Derive rather than trust that figure:
+//   grep -rl "vi.mock('~/utils/trpc'" src --include='*.test.ts*'
 //
 // This mock used to name its exports by hand (`trpc`, `trpcVanilla`, `queryClient`,
 // `handleTRPCError`), which `local-rules/no-wholesale-module-mock` flags at
@@ -125,6 +138,18 @@ import { renderWithProviders } from '../../../../test/component-setup';
 // `trpc` itself is substituted. That is still a substitution, so the two queries the
 // component drives are declared below — but a NEW transitive consumer of some other export
 // now gets a working binding instead of silently zeroing the suite.
+//
+// 🔴 THE COST OF THE SPREAD, so nobody is surprised by it: `queryClient`, `trpcVanilla`
+// and `handleTRPCError` now resolve to the REAL module, where the hand-written factory
+// replaced them with `{}` / a `vi.fn()`. Nothing this file renders reaches any of them
+// today, so this is latent — but for two of them it converts LOUD-wrong into
+// SILENT-wrong if something ever does. The real `queryClient` (`src/utils/trpc.ts:420`)
+// is a lazy Proxy over the browser QueryClient, so `setQueriesData` used to THROW on
+// `{}` and would now quietly mutate a cache no test observes; and the real `trpcVanilla`
+// (`src/utils/trpc.ts:452`) carries a terminating link to `/api/trpc`, i.e. it is one
+// interaction away from a live `fetch` in a scaffold whose own header promises to stay
+// network-free (`test/component-setup.tsx:12`). If a consumer in this chain starts
+// touching either, re-declare that export here rather than leaving it real.
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcModule>()),
   trpc: {
@@ -161,9 +186,23 @@ vi.mock('~/components/EdgeMedia/EdgeVideo', () => ({
 // other export real so a future child cannot be silently satisfied by `undefined`.
 vi.mock('~/components/ResourceLoad/ResourceResidency', async (importOriginal) => ({
   ...(await importOriginal<typeof ResourceResidencyModule>()),
+  // The passthrough DISCARDS `modelVersionIds`, so the panel's
+  // `store.resolvedResources.map((r) => r.id)` -> provider wiring
+  // (MetadataExtractionPanel.tsx:447-448) is NOT observable from this file — the
+  // per-resource mapping that IS observable is the `./ResourceItemContent` stub's
+  // `data-resource-id` below, which is a different edge. To pin the provider's
+  // argument, echo the ids onto a wrapper element here instead of returning a
+  // bare fragment.
   ResidencyBatchProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
+// 🔴 LOAD-BEARING BEYOND THE "Resources (N)" BRANCH — do not delete this stub to
+// "widen coverage". The residency mock above overrides only `ResidencyBatchProvider`,
+// so its `importOriginal` spread re-exports the REAL `ResourceResidencyStatus`, which
+// the real `ResourceItemContent` renders (ResourceItemContent.tsx:306-312). Dropping
+// this stub therefore re-introduces the civitai#5364 render throw and takes the whole
+// file red again — with the same misleading "Cannot find element" message. If you want
+// the real child here, stub `ResourceResidencyStatus` in the mock above first.
 vi.mock('./ResourceItemContent', () => ({
   ResourceItemContent: ({ resource, actions }: { resource: { id: number }; actions: any }) => (
     <div data-testid="resource-item" data-resource-id={resource.id}>
