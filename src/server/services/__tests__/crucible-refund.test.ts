@@ -564,7 +564,6 @@ describe('cancelCrucible — entry posts', () => {
     return { sql: query.text, values: query.values };
   };
 
-  // They were scheduled for an end that will now never come as a result.
   it("publishes this crucible's still-hidden entry posts now and reindexes them", async () => {
     dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 300, userId: 10 }]);
 

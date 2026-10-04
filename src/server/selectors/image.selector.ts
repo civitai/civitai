@@ -108,8 +108,8 @@ export const draftImageWhere = (post: Prisma.PostWhereInput): Prisma.ImageWhereI
 });
 
 /**
- * Marks a post the crucible entry modal created, so its unentered media stays pickable later and an
- * entered one can be revealed when its crucible ends.
+ * Marks a post the crucible entry modal created, so its unentered media stays pickable later and
+ * `revealCrucibleEntryPosts` can find an entered one's scheduled post.
  */
 export const CRUCIBLE_ENTRY_DRAFT_METADATA_KEY = 'crucibleEntryDraft';
 

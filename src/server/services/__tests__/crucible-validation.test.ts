@@ -646,7 +646,6 @@ describe('submitEntry — content type', () => {
     dbMock.dbWrite.post.updateMany.mockResolvedValue({ count: 1 });
   };
 
-  // Blind judging: the post publishes by the clock when the crucible ends, not on entry.
   it("enters the caller's own draft image and schedules its post for the crucible's end", async () => {
     const endAt = new Date(Date.now() + 3 * 24 * 60 * 60_000);
     dbMock.dbRead.crucible.findUnique.mockResolvedValue({

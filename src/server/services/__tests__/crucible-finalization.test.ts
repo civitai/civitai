@@ -998,8 +998,6 @@ describe('finalizeCrucible — entry posts', () => {
     return { sql: query.text, values: query.values };
   };
 
-  // Entry posts were scheduled for the crucible's end; the clock revealed them, but images_v6
-  // refused them while future-dated, so only this reindex puts them into search.
   it("reveals this crucible's entry-modal posts and reindexes each one once it completes", async () => {
     dbMock.dbWrite.$queryRaw.mockImplementation(async (strings: string[]) =>
       strings.join('').includes('entry_posts')

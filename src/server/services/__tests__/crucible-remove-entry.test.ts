@@ -225,7 +225,6 @@ describe('removeCrucibleEntry — entry post', () => {
     return { sql: query.text, values: query.values };
   };
 
-  // Out of the crucible, nothing is judged blind any more, so it behaves like any post.
   it("publishes the removed entry's hidden post now, after the entry is gone", async () => {
     dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 300, userId: 42 }]);
 

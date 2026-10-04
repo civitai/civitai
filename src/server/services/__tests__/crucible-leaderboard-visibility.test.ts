@@ -156,11 +156,10 @@ const lastRawQuery = () => {
 };
 
 /**
- * A review hold, a ToS flag or an unpublished post after submission takes the entry out. A post
- * scheduled for the crucible's end does not: that is how `submitEntry` keeps entries off the
- * entrant's profile while judging is blind.
+ * A review hold, a ToS flag or an unpublished post after submission takes the entry out; a post
+ * scheduled for the crucible's end does not.
  */
-const expectPublishedEntryImage = (sql: string) => {
+const expectEnteredEntryImage = (sql: string) => {
   expect(sql).toContain('i."needsReview" IS NULL');
   expect(sql).toContain('NOT i."tosViolation"');
   expect(sql).toMatch(
@@ -349,7 +348,7 @@ describe('crucible.getEntries — podium', () => {
     const sql = podiumQuery();
     expect(sql).toBeDefined();
     expect(sql).toMatch(/WHERE ce\.id = ANY\(\$\d+::int\[\]\) AND \( ?\(/);
-    expectPublishedEntryImage(sql!);
+    expectEnteredEntryImage(sql!);
   });
 
   it('leaves a winner the viewer cannot see off the podium', async () => {
@@ -860,7 +859,7 @@ describe('crucible.getEntries — what a viewer may see', () => {
     expect(sql).toContain('JOIN "Image" i');
     expect(sql).toContain('ce."userId" =');
     expect(sql).toContain('i.ingestion =');
-    expectPublishedEntryImage(sql);
+    expectEnteredEntryImage(sql);
   });
 
   it('once over, applies the same rule in the entries query', async () => {
@@ -873,7 +872,7 @@ describe('crucible.getEntries — what a viewer may see', () => {
     expect(sql).toContain('JOIN "Image" i');
     expect(sql).toContain('ce."userId" =');
     expect(sql).toContain('i.ingestion =');
-    expectPublishedEntryImage(sql);
+    expectEnteredEntryImage(sql);
   });
 
   it('is not found for others while the crucible is under review', async () => {

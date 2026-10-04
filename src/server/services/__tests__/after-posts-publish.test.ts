@@ -32,7 +32,6 @@ beforeEach(() => {
 });
 
 describe('afterPostsPublish', () => {
-  // A crucible reveal hands over every entrant's post at once; each must reach search and counts.
   it("reindexes every post's images and refreshes each owner's counts once", async () => {
     await afterPostsPublish([
       { postId: 300, userId: 10 },

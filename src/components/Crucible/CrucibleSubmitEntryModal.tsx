@@ -430,7 +430,7 @@ export default function CrucibleSubmitEntryModal({
     if (!fileData.length || currentUser?.muted) return 0;
     const postIds: number[] = [];
     try {
-      // A post per file, so entering one image publishes only that image.
+      // A post per file, so entering one image schedules only that image.
       for (const file of fileData) {
         const post = await createEntryPostMutation.mutateAsync({ crucibleId });
         postIds.push(post.id);

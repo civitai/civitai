@@ -549,7 +549,7 @@ const crucibleListedSql = (viewerLevel: number) => Prisma.sql`
 `;
 
 /** `enteredImageWhere` for entry image `i`. */
-const publishedEntryImageSql = Prisma.sql`
+const enteredEntryImageSql = Prisma.sql`
   i."needsReview" IS NULL
   AND NOT i."tosViolation"
   AND EXISTS (SELECT 1 FROM "Post" ep WHERE ep.id = i."postId" AND ep."publishedAt" IS NOT NULL)
@@ -565,7 +565,7 @@ const visibleEntryImageSql = (
   viewerLevel: number
 ) => Prisma.sql`
   i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
-  AND ${publishedEntryImageSql}
+  AND ${enteredEntryImageSql}
   AND (i."nsfwLevel" & ${crucibleLevel}) <> 0
   ${viewerLevel > 0 ? Prisma.sql`AND (i."nsfwLevel" & ${viewerLevel}) <> 0` : Prisma.empty}
 `;
@@ -1780,7 +1780,6 @@ export const submitEntry = async ({
     const isPublished = await dbRead.image.count({
       where: { id: imageId, ...publishedImageWhere() },
     });
-    // Media added from the entry modal sits in an unpublished post, scheduled with the entry.
     const draft = isPublished
       ? null
       : await dbRead.image.findFirst({
@@ -1790,9 +1789,9 @@ export const submitEntry = async ({
             post: { select: { metadata: true, _count: { select: { images: true } } } },
           },
         });
-    // Only the modal's own drafts: entering publishes the post without the checks a post, collection
-    // or model-showcase publish goes through. Entering must publish nothing else, and a post its model
-    // unpublished keeps its original date.
+    // Only the modal's own drafts: entering schedules the post without the checks a post,
+    // collection or model-showcase publish goes through. Entering must schedule nothing else, and a
+    // post its model unpublished keeps its original date.
     const draftMetadata = draft?.post?.metadata as Record<string, unknown> | null | undefined;
     const draftPostId =
       draft?.post?._count.images === 1 &&
@@ -1910,8 +1909,8 @@ export const submitEntry = async ({
         `;
         if (!open) throw throwBadRequestError('This crucible is not accepting entries');
         if (draftPostId) {
-          // Hidden from the entrant's profile, feeds and search until the end, so judging stays
-          // blind. The insert's lock above means endAt is still ahead.
+          // Scheduled for the end so the entry stays off the entrant's profile, feeds and search while
+          // judging is blind. The UPDATE above refused an ended crucible, so endAt is still ahead.
           const published = await tx.post.updateMany({
             where: { id: draftPostId, userId, publishedAt: null },
             data: { publishedAt: crucible.endAt ?? new Date() },
@@ -3681,10 +3680,10 @@ const NOT_RUNNING = 'Entries can only be removed while the crucible is running';
  * refund that fails leaves the entry, and its record of what was paid, in place to try again.
  */
 /**
- * Publishes now the entry-modal posts `submitEntry` scheduled for the crucible's end, and reindexes
- * them all: images_v6 refused them while future-dated, and the scheduled-publishing sweep skips a post
- * entered within its schedule minimum of the end and never refreshes post counts. Fail-soft, because
- * the clock still reveals them at the original end.
+ * Publishes the entry-modal posts `submitEntry` scheduled for the crucible's end, and reindexes all of
+ * them: images_v6 refused them while future-dated, and the scheduled-publishing sweep neither picks up
+ * a post created within its schedule minimum of the end nor refreshes post counts. Fail-soft: the
+ * clock still reveals them at the original end.
  */
 async function revealCrucibleEntryPosts(entries: { crucibleId: number } | { imageId: number }) {
   const imageFilter =
