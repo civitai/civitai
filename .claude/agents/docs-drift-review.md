@@ -54,6 +54,13 @@ Every one is cheap to catch mechanically and expensive to hit.
 6. **Check the doc's own conventions.** Several files here state how they must be maintained — dated
    feedback rounds carry "the newest file is the only one with open boxes"; the migration checklist
    names itself the tracker and the skill the process. A change that breaks the convention is a finding.
+7. **Keep the indexes in step.** When the change adds, renames or deletes a doc or rule, check the index
+   that lists it:
+   - `docs/features/README.md` — a renamed or deleted doc still listed is a finding. A new doc for a
+     **core system** (one other docs, code comments or agents point at) that is missing from the table is
+     a finding; give the row. The table is curated, not exhaustive — don't flag every unlisted doc.
+   - Root `CLAUDE.md` → "Where knowledge lives" — every file in `.claude/rules/` and `docs/dev/` must be
+     named there, and nothing it names may be gone.
 
 ## Concision
 
