@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as PrizeService from '~/server/services/prize.service';
 import client from 'prom-client';
 // Namespace type-imports (erased at compile time, so they are safe above the hoisted vi.mock calls)
 // — the repo forbids inline `typeof import(...)` annotations.
@@ -15,12 +16,12 @@ const mockDbWriteChallengeFindUnique = dbMock.dbWrite.challenge.findUnique;
 dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
 dbMock.dbWrite.challenge.update.mockResolvedValue(undefined);
 dbMock.dbWrite.challenge.findUnique.mockResolvedValue({
-    prizePool: 0,
-    prizeDistribution: null,
-  });
+  prizePool: 0,
+  prizeDistribution: null,
+});
 
 // Winner-prize payouts are deduped ONLY by their externalTransactionId, which embeds the winner's
-// PLACE (`challenge-winner-prize-{challengeId}-{userId}-place-{place}`) — `createBuzzTransactionMany`
+// PLACE (`challenge-winner-prize-{challengeId}-{userId}-place-{place}`) — `createPrizes`
 // adds no dedupe of its own, and nothing downstream checks whether a challenge already paid. So if a
 // completion re-picks winners over an existing `ChallengeWinner` record and lands the same user on a
 // DIFFERENT place, the payout goes out under a brand-new key and mints a second prize.
@@ -32,8 +33,8 @@ dbMock.dbWrite.challenge.findUnique.mockResolvedValue({
 // challenge's own in-flight winners stay eligible, which is what makes the re-pick a PERMUTATION of
 // the same users rather than a fresh set.
 //
-// These tests assert on the real externalTransactionId strings handed to `createBuzzTransactionMany`
-// — the actual money keys — so the real `buildWinnerPayoutTransactions` is left unmocked.
+// These tests assert on the real externalTransactionId strings handed to `createPrizes`
+// — the actual money keys — so the real `buildWinnerPrizes` is left unmocked.
 //
 // Mocking otherwise mirrors challenge-winner-mapping.test.ts.
 
@@ -49,9 +50,9 @@ const {
   mockRefundUserChallengeFunds,
   mockCreateChallengeWinner,
   mockGetChallengeById,
-  mockCreateBuzzTransactionMany,
+  mockCreatePrizes,
   mockWithRetries,
-  mockBuildWinnerPayoutTransactions,
+  mockBuildWinnerPrizes,
 } = vi.hoisted(() => ({
   mockGetChallengeConfig: vi.fn(),
   mockGetJudgingConfig: vi.fn(),
@@ -64,13 +65,13 @@ const {
   mockRefundUserChallengeFunds: vi.fn().mockResolvedValue({ refundedEntries: 0 }),
   mockCreateChallengeWinner: vi.fn(),
   mockGetChallengeById: vi.fn().mockResolvedValue(null),
-  mockCreateBuzzTransactionMany: vi.fn().mockResolvedValue(undefined),
+  mockCreatePrizes: vi.fn().mockResolvedValue([]),
   // Real `withRetries` re-invokes its closure up to 4 times on a flaky payout. Doubled so a test can
   // drive that deterministically instead of making the buzz mock throw and waiting on real retries.
   mockWithRetries: vi.fn(),
   // A SPY that delegates to the real (pure) builder — assertions still run against genuine
   // externalTransactionId strings, but the number of times the payout is BUILT becomes observable.
-  mockBuildWinnerPayoutTransactions: vi.fn(),
+  mockBuildWinnerPrizes: vi.fn(),
 }));
 
 vi.mock('~/server/events', () => ({
@@ -134,9 +135,14 @@ vi.mock('~/server/games/daily-challenge/generative-content', () => ({
 
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: vi.fn().mockResolvedValue(undefined),
-  createBuzzTransactionMany: mockCreateBuzzTransactionMany,
+  createBuzzTransactionMany: vi.fn().mockResolvedValue(undefined),
   getTransactionByExternalId: vi.fn().mockResolvedValue(null),
   refundMultiAccountTransaction: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('~/server/services/prize.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof PrizeService>()),
+  createPrizes: mockCreatePrizes,
 }));
 
 vi.mock('~/server/services/commentsv2.service', () => ({
@@ -151,14 +157,14 @@ vi.mock('~/server/services/reaction.service', () => ({
   toggleReaction: vi.fn().mockResolvedValue(undefined),
 }));
 
-// NOTE: `buildWinnerPayoutTransactions` is deliberately left REAL (it is a pure function) so the
+// NOTE: `buildWinnerPrizes` is deliberately left REAL (it is a pure function) so the
 // assertions below run against the genuine externalTransactionId strings.
 vi.mock('~/server/games/daily-challenge/challenge-funding', async (importOriginal) => {
   const actual = await importOriginal<typeof ChallengeFunding>();
-  mockBuildWinnerPayoutTransactions.mockImplementation(actual.buildWinnerPayoutTransactions);
+  mockBuildWinnerPrizes.mockImplementation(actual.buildWinnerPrizes);
   return {
     ...actual,
-    buildWinnerPayoutTransactions: mockBuildWinnerPayoutTransactions,
+    buildWinnerPrizes: mockBuildWinnerPrizes,
     refundUserChallengeFunds: mockRefundUserChallengeFunds,
     getChallengeBuzzType: vi.fn().mockResolvedValue('yellow'),
     reportPoolFundingShortfall: vi.fn().mockResolvedValue(undefined),
@@ -270,8 +276,8 @@ function mockJudgedEntryRows(rows: Array<{ imageId: number; userId: number; user
 
 /** The externalTransactionIds actually submitted to the buzz ledger, in submission order. */
 function paidExternalIds(): string[] {
-  expect(mockCreateBuzzTransactionMany).toHaveBeenCalledTimes(1);
-  const [transactions] = mockCreateBuzzTransactionMany.mock.calls[0];
+  expect(mockCreatePrizes).toHaveBeenCalledTimes(1);
+  const [transactions] = mockCreatePrizes.mock.calls[0];
   return (transactions as Array<{ externalTransactionId: string }>).map(
     (t) => t.externalTransactionId
   );
@@ -279,7 +285,7 @@ function paidExternalIds(): string[] {
 
 /** externalTransactionId -> amount, so a reconciled place can be checked to pay its recorded prize. */
 function paidAmountsById(): Record<string, number> {
-  const [transactions] = mockCreateBuzzTransactionMany.mock.calls[0];
+  const [transactions] = mockCreatePrizes.mock.calls[0];
   return Object.fromEntries(
     (transactions as Array<{ externalTransactionId: string; amount: number }>).map((t) => [
       t.externalTransactionId,
@@ -334,7 +340,7 @@ beforeEach(() => {
   mockRefundUserChallengeFunds.mockResolvedValue({ refundedEntries: 0 });
   mockDbWriteChallengeFindUnique.mockResolvedValue({ prizePool: 0, prizeDistribution: null });
   mockGetChallengeById.mockResolvedValue(null);
-  mockCreateBuzzTransactionMany.mockResolvedValue(undefined);
+  mockCreatePrizes.mockResolvedValue([]);
   // Default: the happy path, one invocation — same as real `withRetries` when nothing throws.
   mockWithRetries.mockImplementation((fn: (remaining: number) => unknown) => fn(3));
 });
@@ -722,7 +728,7 @@ describe('one creator named twice in a single pick is paid once (duplicate-pick 
   });
 });
 
-// `buildWinnerPayoutTransactions` is called OUTSIDE the `withRetries` closure. The output is
+// `buildWinnerPrizes` is called OUTSIDE the `withRetries` closure. The output is
 // deterministic so rebuilding it would not move different money — but the builder increments the
 // duplicate-pick counter on its drop branch, and `withRetries` re-invokes up to 4 times. Inside the
 // closure, a flaky payout would record up to 4x the placements actually dropped, on exactly the run
@@ -754,28 +760,28 @@ describe('the winner payout is built ONCE, outside the retry closure', () => {
     mockWithRetries.mockImplementation(async (fn: (remaining: number) => Promise<unknown>) => {
       await fn(3);
       await fn(2);
-      await fn(1);
+      return fn(1);
     });
 
     await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
 
     // The retry itself must still happen — otherwise this test would pass on a build that never
     // retries at all, which is a different bug.
-    expect(mockCreateBuzzTransactionMany).toHaveBeenCalledTimes(3);
-    expect(mockBuildWinnerPayoutTransactions).toHaveBeenCalledTimes(1);
+    expect(mockCreatePrizes).toHaveBeenCalledTimes(3);
+    expect(mockBuildWinnerPrizes).toHaveBeenCalledTimes(1);
   });
 
   it('every retry submits the SAME transaction array instance, not a rebuilt one', async () => {
     wireCleanTwoWinnerPick();
     mockWithRetries.mockImplementation(async (fn: (remaining: number) => Promise<unknown>) => {
       await fn(3);
-      await fn(2);
+      return fn(2);
     });
 
     await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
 
-    const [first] = mockCreateBuzzTransactionMany.mock.calls[0];
-    const [second] = mockCreateBuzzTransactionMany.mock.calls[1];
+    const [first] = mockCreatePrizes.mock.calls[0];
+    const [second] = mockCreatePrizes.mock.calls[1];
     // Identity, not deep equality: a rebuild produces an equal-but-distinct array, so `toEqual`
     // would pass on the very mutation this pins.
     expect(second).toBe(first);
@@ -786,7 +792,26 @@ describe('the winner payout is built ONCE, outside the retry closure', () => {
 
     await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
 
-    expect(mockCreateBuzzTransactionMany).toHaveBeenCalledTimes(1);
-    expect(mockBuildWinnerPayoutTransactions).toHaveBeenCalledTimes(1);
+    expect(mockCreatePrizes).toHaveBeenCalledTimes(1);
+    expect(mockBuildWinnerPrizes).toHaveBeenCalledTimes(1);
+  });
+
+  it("links each winner's notification to their own prize", async () => {
+    wireCleanTwoWinnerPick();
+    mockCreatePrizes.mockImplementation(async (prizes: { userId: number }[]) =>
+      prizes.map((prize) => ({ ...prize, id: prize.userId + 1000 }))
+    );
+
+    await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
+
+    const { createNotification } = await import('~/server/services/notification.service');
+    const sent = vi
+      .mocked(createNotification)
+      .mock.calls.map(([n]) => n as { type: string; userId: number; details: { prizeId?: number } })
+      .filter((n) => n.type === 'challenge-winner');
+    expect(sent.map((n) => [n.userId, n.details.prizeId])).toEqual([
+      [100, 1100],
+      [200, 1200],
+    ]);
   });
 });

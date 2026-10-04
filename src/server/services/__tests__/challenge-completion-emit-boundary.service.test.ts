@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as PrizeService from '~/server/services/prize.service';
 import client from 'prom-client';
 import type { PersistedChallengeWinner } from '~/server/games/daily-challenge/challenge-winner-reconcile';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -37,7 +38,7 @@ const {
   mockCompleteChallengeIfClaimHeld,
   mockGetChallengeById,
   mockGetExistingWinnersForRetry,
-  mockCreateBuzzTransactionMany,
+  mockCreatePrizes,
   mockCreateNotification,
   mockGetChallengeBuzzType,
   mockEndChallenge,
@@ -48,7 +49,7 @@ const {
   mockCompleteChallengeIfClaimHeld: vi.fn().mockResolvedValue(true),
   mockGetChallengeById: vi.fn(),
   mockGetExistingWinnersForRetry: vi.fn(),
-  mockCreateBuzzTransactionMany: vi.fn().mockResolvedValue(undefined),
+  mockCreatePrizes: vi.fn().mockResolvedValue([]),
   mockCreateNotification: vi.fn().mockResolvedValue(undefined),
   mockGetChallengeBuzzType: vi.fn().mockResolvedValue('green'),
   mockEndChallenge: vi.fn().mockResolvedValue(undefined),
@@ -136,7 +137,7 @@ vi.mock('~/server/games/daily-challenge/challenge-rewards', () => ({
 }));
 
 vi.mock('~/server/games/daily-challenge/challenge-funding', () => ({
-  buildWinnerPayoutTransactions: vi.fn().mockReturnValue([]),
+  buildWinnerPrizes: vi.fn().mockReturnValue([]),
   chargeInitialPrize: vi.fn(),
   getChallengeBuzzType: mockGetChallengeBuzzType,
   refundUserChallengeFunds: vi.fn().mockResolvedValue({ refundedEntries: 0 }),
@@ -154,8 +155,13 @@ vi.mock('~/server/games/daily-challenge/generative-content', () => ({
 
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: vi.fn(),
-  createBuzzTransactionMany: mockCreateBuzzTransactionMany,
+  createBuzzTransactionMany: vi.fn().mockResolvedValue(undefined),
   getTransactionByExternalId: vi.fn().mockResolvedValue(null),
+}));
+
+vi.mock('~/server/services/prize.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof PrizeService>()),
+  createPrizes: mockCreatePrizes,
 }));
 
 vi.mock('~/server/services/notification.service', () => ({
@@ -307,7 +313,7 @@ beforeEach(() => {
   mockDbWriteChallengeFindUnique.mockResolvedValue({ prizePool: 0, prizeDistribution: null });
   mockGetChallengeById.mockResolvedValue(challengeRow);
   mockGetExistingWinnersForRetry.mockResolvedValue(EXISTING_WINNERS);
-  mockCreateBuzzTransactionMany.mockResolvedValue(undefined);
+  mockCreatePrizes.mockResolvedValue([]);
   mockCreateNotification.mockResolvedValue(undefined);
   mockGetChallengeBuzzType.mockResolvedValue('green');
   mockEndChallenge.mockResolvedValue(undefined);
@@ -327,7 +333,7 @@ describe('mod -> job completion boundary — prize Buzz is counted exactly once'
     await expect(endChallengeAndPickWinners(1)).rejects.toThrow('notification service down');
 
     // The winner payout DID happen...
-    expect(mockCreateBuzzTransactionMany).toHaveBeenCalled();
+    expect(mockCreatePrizes).toHaveBeenCalled();
     // ...the Completed write did NOT (challenge is left in Completing for recovery)...
     expect(mockDbWriteChallengeUpdate).not.toHaveBeenCalled();
     // ...so nothing may have been counted yet. This is the assertion the old emit placement broke.
@@ -349,7 +355,7 @@ describe('mod -> job completion boundary — prize Buzz is counted exactly once'
     await pickWinnersForChallenge(jobChallenge, JOB_CONFIG);
 
     // The payout call really was made twice across the two runs — one settlement, two attempts.
-    expect(mockCreateBuzzTransactionMany.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(mockCreatePrizes.mock.calls.length).toBeGreaterThanOrEqual(2);
     // The job's claim-conditional Completed write landed.
     expect(mockCompleteChallengeIfClaimHeld).toHaveBeenCalledTimes(1);
 

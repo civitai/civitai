@@ -107,7 +107,7 @@ import {
   challengeCreatorBlockSql,
 } from '~/server/services/challenge-block.service';
 import {
-  buildWinnerPayoutTransactions,
+  buildWinnerPrizes,
   chargeInitialPrize,
   refundUserChallengeFunds,
   reportPoolFundingShortfall,
@@ -180,6 +180,7 @@ import {
   getTransactionByExternalId,
 } from '~/server/services/buzz.service';
 import { createNotification } from '~/server/services/notification.service';
+import { createPrizes } from '~/server/services/prize.service';
 import { sendChallengeResultsNotification } from '~/server/services/challenge-engagement.service';
 import { withRetries } from '~/utils/errorHandling';
 import { getEdgeUrl } from '~/client-utils/edge-url';
@@ -2798,14 +2799,13 @@ export async function endChallengeAndPickWinners(challengeId: number): Promise<E
     // (challenge-winner-prize-{cid}-{uid}-place-{n}) keeps retries idempotent.
     // Built OUTSIDE the retry closure — see the matching note on the cron path. The builder emits
     // the duplicate-pick counter on its drop branch, and `withRetries` re-invokes up to 4 times.
-    const winnerPayoutTransactions = buildWinnerPayoutTransactions({
+    const winnerPrizes = buildWinnerPrizes({
       challengeId,
       title: challenge.title,
-      buzzType: challenge.buzzType,
       winners: winningEntries,
     });
-    await withRetries(() => createBuzzTransactionMany(winnerPayoutTransactions));
-    log('Prizes sent');
+    const awardedPrizes = await withRetries(() => createPrizes(winnerPrizes));
+    log('Prizes awarded');
 
     // Send entry participation prizes to all eligible users
     // Hoisted so it's still in scope for sendChallengeResultsNotification's excludeUserIds below,
@@ -2922,10 +2922,9 @@ export async function endChallengeAndPickWinners(challengeId: number): Promise<E
     // Completing reset can never retry it and the count would otherwise be lost forever), and both
     // helpers are never-throw no-ops for business logic, so nothing outside telemetry changes.
     //
-    // Prize amount is Buzz ATTEMPTED for winner prizes, not confirmed-settled:
-    // `createBuzzTransactionMany` silently drops any non-success, non-conflict result (e.g.
-    // insufficientFunds) from both result arrays, so a leg that never moved money is invisible here
-    // and is still counted. Entry-participation prizes are a separate blue-Buzz reward, not counted.
+    // Prize amount is winner Buzz AWARDED, not paid: each winner claims theirs later, in the
+    // currency they pick, so `buzzType` here is the pool's. Entry-participation prizes are a
+    // separate blue-Buzz reward, not counted.
     recordChallengeCompleted({ source: challenge.source });
     recordChallengePrizePaidBuzz({
       source: challenge.source,
@@ -2945,6 +2944,7 @@ export async function endChallengeAndPickWinners(challengeId: number): Promise<E
           challengeName: challenge.title,
           position: entry.position,
           prize: entry.prize,
+          prizeId: awardedPrizes.find((prize) => prize.userId === entry.userId)?.id,
         },
       });
     }

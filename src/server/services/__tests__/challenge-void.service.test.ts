@@ -9,7 +9,7 @@ const { mockGetChallengeById, mockCloseCollection, mockRefund } = vi.hoisted(() 
 }));
 
 vi.mock('~/server/games/daily-challenge/challenge-funding', () => ({
-  buildWinnerPayoutTransactions: vi.fn(),
+  buildWinnerPrizes: vi.fn(),
   chargeInitialPrize: vi.fn(),
   refundUserChallengeFunds: mockRefund,
 }));
