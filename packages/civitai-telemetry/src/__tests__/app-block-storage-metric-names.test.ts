@@ -43,9 +43,8 @@ const QUOTA_EXCEEDED = 'civitai_app_block_storage_quota_exceeded_total';
 const USER_QUOTA_UNTRACKED = 'civitai_app_block_storage_user_quota_untracked_total';
 const LATENCY = 'civitai_app_block_storage_latency_seconds';
 // The session-user gate discriminator. Ledgered here for the growth reason stated in the
-// first case below, and because this is the ONLY surface that makes an ABSENCE of it
-// readable: the counter is deliberately not zero-seeded, so "absent" has to mean "has
-// never refused" rather than "the handle was renamed and nothing noticed".
+// first case below: this file is the only place the EXPOSED string is pinned, and the
+// declared name is only half of it.
 const SESSION_GATE_REFUSALS = 'civitai_app_block_storage_session_gate_refusals_total';
 
 /** The pre-fix stuttering spellings. Retired 2026-10-02; must never come back. */

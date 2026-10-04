@@ -666,8 +666,7 @@ export const sysredisSentinelClientErrorsCounter = registerSysredisCounter({
 // `civitai_app_block_*` family the rest of App Blocks already uses. Pinned by
 // `__tests__/app-block-storage-metric-names.test.ts`, which fails on GROWTH as well as on a
 // rename — a sixth member must be ledgered there.
-// Seeded to 0 by `src/server/prom/app-block-storage.metrics.ts` — all but
-// `session_gate_refusals_total`, whose own note below says why it is deliberately unseeded.
+// All five are seeded to 0 by `src/server/prom/app-block-storage.metrics.ts`.
 export const appStorageOpsCounter = registerCounterWithLabels({
   name: 'block_storage_ops_total',
   help: 'App Blocks KV datastore tRPC operations',
@@ -694,34 +693,48 @@ export const appStorageOpsCounter = registerCounterWithLabels({
 // is the mirror: `..._ops_total{outcome="unauthorized"}` moves and this series does not.
 // Read the PAIR on a shared `op`.
 //
-// 🔴 WHAT IT DOES NOT SEPARATE. It says nothing about which refusal inside the resolver
-// fired: `outcome="unauthorized"` is shared with ~8 other refusals there (bad token,
-// revoked instance, missing scope, unhydratable subject, anon write, …), and this series
-// cannot narrow that. It also carries no app, block or user label, so it attributes a
-// MECHANISM and never a viewer — same cardinality discipline as the two counters below,
-// and for the same reason: prom-client retains every distinct label set in the Node heap
-// for the process lifetime, on every scraped pod. `op` is the only label, over the closed
-// code-owned `AppStorageOp` union (5 values, type-checked at every call site), chosen
-// because it is the join key against `..._ops_total{op}`.
+// 🔴 WHAT IT DOES NOT SEPARATE, and the numbers are measured, not estimated. It says
+// nothing about which refusal inside the resolver fired: `outcome="unauthorized"` is
+// emitted from TWELVE sites in `app-storage.service.ts`, so the subject gate shares it
+// with eleven others (bad token, revoked instance, missing scope, unhydratable subject,
+// anon write, …). Nor is this the only producer of the STRING: `'Apps are not enabled'`
+// is thrown from five places platform-wide (`apps.router.ts`, `blocks.router.ts`,
+// `app-listings.router.ts`, `app-storage.service.ts`, `block-token-access.service.ts`),
+// and this counter attributes exactly one of them, on one of the two storage transports —
+// the REST twins under `/api/v1/blocks/app-storage/` never run this middleware. It also
+// carries no app, block or user label, so it attributes a MECHANISM and never a viewer:
+// prom-client retains every distinct label set in the Node heap for the process lifetime,
+// on every scraped pod. `op` is the only label, over the closed code-owned `AppStorageOp`
+// union (5 values, type-checked at every call site), chosen because it is the join key
+// against `..._ops_total{op}`.
 //
-// 🔴 WHY NOT A LOG LINE. Application-container stdout is not collected into the log store
-// for this deployment, so a `console.error` here is unreadable to any later investigator —
-// the same constraint recorded for `civitai_app_block_post_subject_refusals_total` in
-// `src/server/metrics/app-block-runtime.metrics.ts`, whose comment block documents this
-// exact conflation class.
+// 🔴 WHY NOT A NEW `outcome` VALUE ON `..._ops_total` INSTEAD — the obvious cheaper move,
+// and the reason is NOT that `outcome="unauthorized"` is crowded (a new value such as
+// `session_gate` would separate the producers on one series perfectly well). It is that
+// `ops_total` means "storage operations that reached the resolver", and a pre-resolver
+// refusal would change that denominator for every existing consumer of it. The pair-read
+// above also depends on the two being separate series: "`ops_total` did not move" is half
+// the signal, and it cannot be expressed as a value OF `ops_total`.
 //
-// 🔴 WHAT A ZERO MEANS, AND HOW TO QUERY IT. Deliberately NOT zero-seeded by
-// `src/server/prom/app-block-storage.metrics.ts`: its children materialise AT 1 on the
-// first refusal, so `increase()` cannot see the 0→1 edge and `max_over_time` is the
-// correct reader — the same rule that file's own comment states for the two unseeded
-// counters below. An absence therefore means "this gate has never refused", and that
-// reading is only load-bearing because the REGISTRATION is pinned independently, by
-// `__tests__/app-block-storage-metric-names.test.ts` — on a refusal counter whose healthy
-// steady state is zero, a flat zero cannot by itself tell "nothing was refused" from "the
-// emitter is inert", so the ledger is what closes that gap.
+// 🔴 WHY NOT A LOG LINE. A `console.error` here is unreadable to any later investigator,
+// for a reason local to this repo rather than inherited: `src/pages/api/trpc/[trpc].ts`'s
+// `onError` returns early for `UNAUTHORIZED` (alongside FORBIDDEN / TOO_MANY_REQUESTS /
+// SERVICE_UNAVAILABLE), skipping the Axiom ingest entirely and by design. So a `cause` or
+// a log line on this branch reaches no store. A scraped counter is the only surface that
+// exists. The same conflation class, with the deployment-side version of this argument, is
+// documented on `civitai_app_block_post_subject_refusals_total` in
+// `src/server/metrics/app-block-runtime.metrics.ts`.
+//
+// 🔴 SEEDED, DELIBERATELY, AND THE PAIR IS WHY. `src/server/prom/app-block-storage.metrics.ts`
+// splits seeding on BOUNDED-vs-UNBOUNDED label domain; `op` is bounded, so all 5 children
+// are published at 0 and `increase()` is the correct reader — the same one `ops_total`
+// wants. Matching readers across a deliberately-correlated pair is the point: an unseeded
+// child materialises at 1, which `increase()` cannot see, and a half-and-half pair is how
+// the correlated read goes wrong under pressure. Seeding also makes `absent()` mean "the
+// instrument is gone" rather than "this gate has never refused".
 export const appStorageSessionGateRefusalsCounter = registerCounterWithLabels({
   name: 'block_storage_session_gate_refusals_total',
-  help: 'App Blocks KV requests refused by the SESSION-user capability gate in the tRPC bridge middleware, before any block-token verification or app lookup. The DISCRIMINATOR for a 401 "Apps are not enabled": the per-SUBJECT capability gate inside the storage service throws a byte-identical error, so the two producers are indistinguishable from the response alone. A middleware refusal moves ONLY this series and never civitai_app_block_storage_ops_total; a subject-gate refusal moves ONLY ops_total{outcome="unauthorized"} — read the pair on a shared op. It does NOT separate the subject gate from the ~8 other refusals sharing outcome="unauthorized", and it carries no app or user label, so it attributes a MECHANISM, never a viewer. Not zero-seeded: a child materialises at 1, so query it with max_over_time rather than increase, and read an absence as "never refused" — the registration itself is pinned by a name-ledger test',
+  help: 'App Blocks KV requests refused by the SESSION-user capability gate in the tRPC bridge middleware, before any block-token verification or app lookup. The DISCRIMINATOR for a 401 "Apps are not enabled": the per-SUBJECT capability gate inside the storage service throws a byte-identical error, so the two producers are indistinguishable from the response alone. A middleware refusal moves ONLY this series; a subject-gate refusal moves ONLY civitai_app_block_storage_ops_total{outcome="unauthorized"} — read the pair on a shared op. It does NOT separate the subject gate from the eleven other emits sharing that outcome, and carries no app or user label, so it attributes a MECHANISM, never a viewer. Zero-seeded, so read it with increase()',
   labelNames: ['op'] as const,
 });
 

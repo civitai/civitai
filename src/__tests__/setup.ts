@@ -272,10 +272,21 @@ vi.mock('~/server/prom/client', () => ({
   // App-Blocks W4 KV storage metrics (apps.router). promMetricStub() covers the
   // .inc()/.labels()/.observe()/.startTimer() surface these tests exercise.
   appStorageOpsCounter: promMetricStub(),
-  // The session-user gate discriminator (`enforceAppBlocksFlag` in apps.router). Its call
-  // site is NOT wrapped in a try/catch, unlike the author-fee incs above, so omitting this
-  // entry fails LOUDLY rather than silently — but it fails in the middleware, i.e. on every
-  // storage suite's flag-dark case rather than on the assertion that cares.
+  // The session-user gate discriminator (`enforceAppBlocksFlag` in apps.router).
+  //
+  // 🔴 DO NOT reason about this one from "the call site has no try/catch". An earlier revision
+  // of this comment did, and concluded the omission "fails LOUDLY" — which is false, and false
+  // in the reassuring direction. tRPC wraps EVERY middleware in a catch
+  // (`callRecursive` in @trpc/server 11.17.0 funnels any throw through
+  // `getTRPCErrorFromUnknown`), so with this entry missing the refusal still arrives as a
+  // `TRPCError` — just `INTERNAL_SERVER_ERROR` with a `Cannot read properties of undefined`
+  // message instead of `UNAUTHORIZED`. Measured against the installed version, both arms.
+  //
+  // So every case asserting only `rejects.toBeInstanceOf(TRPCError)` stays GREEN — which is
+  // exactly the author-fee failure mode documented 70 lines above. What actually goes red is
+  // a suite that pins the CODE/MESSAGE, or one that reads this counter's `.inc` through
+  // `vi.mocked` (that throws at the property access). `apps.router.storage.test.ts` does both;
+  // nothing guarantees the next suite will.
   appStorageSessionGateRefusalsCounter: promMetricStub(),
   appStorageQuotaExceededCounter: promMetricStub(),
   appStorageUserQuotaUntrackedCounter: promMetricStub(),

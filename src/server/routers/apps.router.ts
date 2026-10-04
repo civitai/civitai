@@ -66,10 +66,21 @@ import type { AppStorageOp } from '~/server/prom/app-block-storage.metrics';
  * `civitai_app_block_storage_session_gate_refusals_total{op}` and never
  * `..._ops_total`, because the resolver — where every `countStorageOutcome` lives — does
  * not run. A subject-gate refusal is the mirror: `..._ops_total{outcome="unauthorized"}`
- * moves and this series does not. That pair is the whole discriminator. It does NOT
- * narrow which refusal inside the resolver fired: `outcome="unauthorized"` is shared
- * there with ~8 others (bad token, revoked instance, missing scope, unhydratable subject,
- * anon write, …).
+ * moves and this series does not. That pair is the whole discriminator.
+ *
+ * It does NOT narrow which refusal inside the resolver fired: `outcome="unauthorized"` is
+ * emitted from TWELVE sites in `app-storage.service.ts` (counted, not estimated), so the
+ * subject gate shares it with eleven others — bad token, revoked instance, missing scope,
+ * unhydratable subject, anon write, and more. Nor is this the only producer of the string:
+ * `'Apps are not enabled'` is thrown from five places platform-wide, and this counter
+ * attributes exactly one of them, on one of the two storage transports. The REST twins
+ * under `/api/v1/blocks/app-storage/` never run this middleware.
+ *
+ * 🔴 AND THE NAME IS SHARED BY THREE DIFFERENT MIDDLEWARES — do not assume they behave
+ * alike. `app-listings.router.ts`'s `enforceAppBlocksFlag` is this one's twin (same
+ * hard-throw body); `blocks.router.ts`'s is a DIFFERENT function wearing the same name — on
+ * a query it falls through with `next({ ctx: { _appBlocksDisabled: true } })` instead of
+ * throwing. Only this one emits the counter.
  *
  * 🔴 `op` IS PASSED, NOT DERIVED. The middleware's `path` is not a stable spelling of the
  * op — it carries whatever router prefix the procedure is mounted under — so the op is a

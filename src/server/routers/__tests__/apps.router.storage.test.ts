@@ -109,7 +109,7 @@ vi.mock('~/server/services/user.service', () => ({
   getUserById: (...args: unknown[]) => mockGetUserById(...args),
 }));
 
-import { appsRouter } from '../apps.router';
+import { appsRouter, appsStorageRouter } from '../apps.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 // Globally stubbed in src/__tests__/setup.ts (promMetricStub) — `.inc` is a
 // vi.fn(), so the refusal-instrumentation assertions below can read it.
@@ -316,6 +316,36 @@ describe('apps.storage shared gates', () => {
    * `toBeInstanceOf(TRPCError)`, so repo-wide the MIDDLEWARE producer's message was
    * unpinned: the two gates could drift apart, or drift together, and nothing would notice.
    */
+  /**
+   * The five storage procedures, each with a minimal call. Shared by the per-op cases and by
+   * the growth ledger below, so the two cannot disagree about what "every procedure" means.
+   */
+  const STORAGE_CALLS = [
+    [
+      'get',
+      (c: ReturnType<typeof appsRouter.createCaller>) =>
+        c.storage.get({ blockToken: 't', key: 'k' }),
+    ],
+    [
+      'set',
+      (c: ReturnType<typeof appsRouter.createCaller>) =>
+        c.storage.set({ blockToken: 't', key: 'k', value: 'v' }),
+    ],
+    [
+      'delete',
+      (c: ReturnType<typeof appsRouter.createCaller>) =>
+        c.storage.delete({ blockToken: 't', key: 'k' }),
+    ],
+    [
+      'list',
+      (c: ReturnType<typeof appsRouter.createCaller>) => c.storage.list({ blockToken: 't' }),
+    ],
+    [
+      'getQuota',
+      (c: ReturnType<typeof appsRouter.createCaller>) => c.storage.getQuota({ blockToken: 't' }),
+    ],
+  ] as const;
+
   describe('the SESSION-user gate is identifiable (invariant guards)', () => {
     it('INVARIANT: pins the middleware producer\u2019s exact code and message', async () => {
       mockIsAppBlocksEnabled.mockImplementation(async () => false);
@@ -339,31 +369,13 @@ describe('apps.storage shared gates', () => {
     // the five call sites hand-writes its own literal. A transposed pair (`set` labelled
     // `get`) is invisible in any single-op test, and would silently mis-attribute every
     // refusal this series exists to attribute.
-    it.each([
-      [
-        'get',
-        (c: ReturnType<typeof appsRouter.createCaller>) =>
-          c.storage.get({ blockToken: 't', key: 'k' }),
-      ],
-      [
-        'set',
-        (c: ReturnType<typeof appsRouter.createCaller>) =>
-          c.storage.set({ blockToken: 't', key: 'k', value: 'v' }),
-      ],
-      [
-        'delete',
-        (c: ReturnType<typeof appsRouter.createCaller>) =>
-          c.storage.delete({ blockToken: 't', key: 'k' }),
-      ],
-      [
-        'list',
-        (c: ReturnType<typeof appsRouter.createCaller>) => c.storage.list({ blockToken: 't' }),
-      ],
-      [
-        'getQuota',
-        (c: ReturnType<typeof appsRouter.createCaller>) => c.storage.getQuota({ blockToken: 't' }),
-      ],
-    ] as const)(
+    //
+    // 🔴 ONE LIST, TWO USES. The growth ledger after these cases asserts this list covers
+    // EVERY procedure on `appsStorageRouter`, so the pair composes: a sixth procedure fails
+    // the ledger, which forces a case here, which then fails unless the procedure is gated
+    // and labelled. Enumerating the five by hand in the `it.each` alone would not have done
+    // that — it would have gone on passing while an ungated sixth shipped.
+    it.each(STORAGE_CALLS)(
       'INVARIANT: a %s refusal counts on the session-gate series and NOT on the ops counter',
       async (op, call) => {
         const sessionGateInc = vi.mocked(appStorageSessionGateRefusalsCounter.inc);
@@ -384,10 +396,43 @@ describe('apps.storage shared gates', () => {
       }
     );
 
+    /**
+     * 🔴 GROWTH LEDGER — the only thing here that can see a procedure that does not exist yet.
+     * Everything else in this describe enumerates the five ops by hand, so all of it goes on
+     * passing if a SIXTH storage procedure is added without `.use(enforceAppBlocksFlag(...))`.
+     * That procedure would be ungated AND uncounted, and because this series is read as "did
+     * the session gate refuse?", its silence would read as "the gate did not fire" rather than
+     * "the gate is not there".
+     *
+     * Asserted against the ROUTER rather than a hand-written list, and on EQUALITY rather than
+     * containment, so it fails on growth as well as on a rename — the same shape as the metric
+     * name ledger in `@civitai/telemetry`, and as `promotion.router.flag-gate.test.ts`.
+     *
+     * An INVARIANT guard like its neighbours: no procedure has ever shipped ungated here.
+     */
+    it('INVARIANT: the per-op cases cover EVERY procedure on appsStorageRouter', () => {
+      const declared = Object.keys(
+        (appsStorageRouter as unknown as { _def: { procedures: Record<string, unknown> } })._def
+          .procedures
+      ).sort();
+
+      expect(declared).toEqual([...STORAGE_CALLS.map(([op]) => op)].sort());
+      // A vacuity belt, not an independent check: the equality above already fails on a
+      // rename or on growth. This covers the one case it cannot — BOTH sides empty, which is
+      // what a tRPC upgrade moving `_def.procedures` would produce — and makes "the
+      // introspection read nothing" fail as itself rather than as a confusing diff.
+      expect(declared).toHaveLength(5);
+    });
+
     // The MIRROR arm, and the control that makes the pair above attributable: a SUBJECT-gate
-    // refusal must move `ops_total` and leave the session-gate series untouched. Without it,
-    // a session-gate counter that fired on every refusal regardless of producer would pass
-    // every case above.
+    // refusal must move `ops_total` and leave the session-gate series untouched. Without it, a
+    // session-gate counter that also fired on the SUBJECT gate would pass every case above.
+    //
+    // 🔴 Scope, stated rather than implied: this covers ONE other producer on ONE op. The
+    // resolver has eleven further `outcome="unauthorized"` emits, and a stray session-gate inc
+    // in any of them is not visible here. The `invalid block token` case above carries the same
+    // one-line assertion for a second producer on a different branch; the remaining nine are
+    // uncovered, deliberately — a per-producer sweep would be a third copy of this fixture.
     it('INVARIANT: a SUBJECT-gate refusal moves ops_total and NOT the session-gate series', async () => {
       const sessionGateInc = vi.mocked(appStorageSessionGateRefusalsCounter.inc);
       const opsInc = vi.mocked(appStorageOpsCounter.inc);
@@ -407,6 +452,9 @@ describe('apps.storage shared gates', () => {
       });
 
       expect(opsInc).toHaveBeenCalledWith({ op: 'get', outcome: 'unauthorized' });
+      // Exactly once is the true value: `countStorageFault` early-returns on a `TRPCError`, so
+      // a counted refusal is never double-counted by the fault path.
+      expect(opsInc).toHaveBeenCalledTimes(1);
       expect(sessionGateInc).not.toHaveBeenCalled();
     });
   });
@@ -463,41 +511,28 @@ describe('apps.storage shared gates', () => {
   });
 
   it('rejects an invalid block token with UNAUTHORIZED', async () => {
+    const sessionGateInc = vi.mocked(appStorageSessionGateRefusalsCounter.inc);
+    sessionGateInc.mockClear();
     mockVerifyBlockToken.mockResolvedValueOnce(null);
     const caller = appsRouter.createCaller(fakeCtx() as never);
     await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
       code: 'UNAUTHORIZED',
     });
+    // A SECOND producer on a DIFFERENT branch, for the session-gate series' sake: this refusal
+    // comes from the token verifier inside the resolver, so the session-gate counter must stay
+    // still. Without a case like this the mirror arm below would be the only evidence that the
+    // series does not simply fire on every `UNAUTHORIZED` the path can produce.
+    expect(sessionGateInc).not.toHaveBeenCalled();
   });
 
   // A revoked instance must lose storage access IMMEDIATELY, not at token expiry.
   // Every op, not just the writes: a read of the user's own rows is still access
   // granted by an install that no longer exists.
-  it.each([
-    [
-      'get',
-      (c: ReturnType<typeof appsRouter.createCaller>) =>
-        c.storage.get({ blockToken: 't', key: 'k' }),
-    ],
-    [
-      'set',
-      (c: ReturnType<typeof appsRouter.createCaller>) =>
-        c.storage.set({ blockToken: 't', key: 'k', value: 'v' }),
-    ],
-    [
-      'delete',
-      (c: ReturnType<typeof appsRouter.createCaller>) =>
-        c.storage.delete({ blockToken: 't', key: 'k' }),
-    ],
-    [
-      'list',
-      (c: ReturnType<typeof appsRouter.createCaller>) => c.storage.list({ blockToken: 't' }),
-    ],
-    [
-      'getQuota',
-      (c: ReturnType<typeof appsRouter.createCaller>) => c.storage.getQuota({ blockToken: 't' }),
-    ],
-  ] as const)('rejects a revoked block instance on %s', async (_op, call) => {
+  // Reuses STORAGE_CALLS: this table was byte-identical to the one the session-gate cases
+  // need, and two copies of a per-procedure list have to be updated in lockstep or one of them
+  // silently stops covering a procedure. Sharing it also puts this case under the growth ledger
+  // for free — a sixth procedure now reaches the revocation sweep too, not just the gate cases.
+  it.each(STORAGE_CALLS)('rejects a revoked block instance on %s', async (_op, call) => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
     mockIsRevoked.mockResolvedValueOnce(true);
     const caller = appsRouter.createCaller(fakeCtx() as never);

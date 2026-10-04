@@ -13,27 +13,21 @@ import {
 } from '../app-block-storage.metrics';
 
 /**
- * Zero-seeding of the four SEEDED App Blocks KV storage metrics, against the REAL prom-client
- * default registry — `@civitai/telemetry/client` is not stubbed by `src/__tests__/setup.ts`,
- * which replaces only `~/server/prom/client`. Nothing here may call `client.register.clear()`:
- * these four are constructed once at package module scope, so clearing drops them irrecoverably
- * and every later assertion would be about an empty registry.
- *
- * 🔴 THE FAMILY HAS A FIFTH MEMBER THAT IS DELIBERATELY NOT SEEDED, so "four" above is the
- * seeded count, not the family size. `civitai_app_block_storage_session_gate_refusals_total`
- * (the `enforceAppBlocksFlag` session-gate discriminator) materialises its children AT 1 on a
- * refusal, which is why it is absent from `seedAppBlockStorageMetrics` and from every total
- * below. Consequence for the budget figure in the headline case: the SEEDED cardinality is
- * exactly 90, and a pod that has refused on all five ops carries up to 5 more — so 90 is the
- * floor and 95 the ceiling. Read `increase()` on the seeded series and `max_over_time` on that
- * one; the reasoning is on its declaration in `@civitai/telemetry`, and its registration is
- * pinned by that package's name ledger rather than by a seeded zero here.
+ * Zero-seeding of the five App Blocks KV storage metrics, against the REAL prom-client default
+ * registry — `@civitai/telemetry/client` is not stubbed by `src/__tests__/setup.ts`, which
+ * replaces only `~/server/prom/client`. Nothing here may call `client.register.clear()`: these
+ * five are constructed once at package module scope, so clearing drops them irrecoverably and
+ * every later assertion would be about an empty registry.
  */
 
 const OPS = 'civitai_app_block_storage_ops_total';
 const QUOTA_EXCEEDED = 'civitai_app_block_storage_quota_exceeded_total';
 const USER_QUOTA_UNTRACKED = 'civitai_app_block_storage_user_quota_untracked_total';
 const LATENCY = 'civitai_app_block_storage_latency_seconds';
+// The session-user gate discriminator (`enforceAppBlocksFlag` in apps.router). Seeded on the
+// SAME rule as `ops_total` — its only label is the closed `APP_STORAGE_OPS` union — which is
+// what lets the two be read together with one reader (`increase()`) on a shared `op`.
+const SESSION_GATE_REFUSALS = 'civitai_app_block_storage_session_gate_refusals_total';
 
 type Values = Array<{ labels: Record<string, string>; value: number; metricName?: string }>;
 
@@ -89,19 +83,25 @@ describe('seedAppBlockStorageMetrics', () => {
     }
   });
 
-  it('🔴 publishes 90 SEEDED series per scraped pod — 22 of them (op, outcome) PAIRS', async () => {
+  it('🔴 publishes 95 series per scraped pod — 22 of them (op, outcome) PAIRS', async () => {
     // Literal, because this is the figure a cardinality budget is sized against, and the pair
     // count is NOT it: the histogram contributes 5 children x (10 buckets + `+Inf` + `_sum` +
-    // `_count`) = 65, against 22 + 2 + 1 = 25 counter series. Quoting 22 as the budget
+    // `_count`) = 65, against 22 + 5 + 2 + 1 = 30 counter series. Quoting 22 as the budget
     // understates the change fourfold.
+    //
+    // The 5 is `session_gate_refusals_total`, one child per op. It is INSIDE the budget rather
+    // than a footnote to it precisely because it is seeded: an unseeded counter would leave the
+    // figure here reading 90 while a pod that had refused carried 95, i.e. a budget whose own
+    // test could not see the difference.
     expect(REACHABLE_OPS_SERIES.length).toBe(22);
 
     const total =
       (await valuesOf(OPS)).length +
+      (await valuesOf(SESSION_GATE_REFUSALS)).length +
       (await valuesOf(QUOTA_EXCEEDED)).length +
       (await valuesOf(USER_QUOTA_UNTRACKED)).length +
       (await valuesOf(LATENCY)).length;
-    expect(total).toBe(90);
+    expect(total).toBe(95);
 
     expect([...APP_STORAGE_OPS]).toEqual(['get', 'set', 'delete', 'list', 'getQuota']);
     expect([...APP_STORAGE_OUTCOMES_ALL_OPS]).toEqual(['ok', 'unauthorized', 'not_found', 'error']);
@@ -136,6 +136,7 @@ describe('seedAppBlockStorageMetrics', () => {
   it('appears in the scrape output under the exact names an operator queries', async () => {
     const scrape = await client.register.metrics();
     expect(scrape).toContain(`${OPS}{op="set",outcome="quota_exceeded"} 0`);
+    expect(scrape).toContain(`${SESSION_GATE_REFUSALS}{op="getQuota"} 0`);
     expect(scrape).toContain(`${QUOTA_EXCEEDED}{ceiling="app"} 0`);
     expect(scrape).toContain(`${USER_QUOTA_UNTRACKED} 0`);
     expect(scrape).toContain(`${LATENCY}_count{op="getQuota"} 0`);
@@ -294,24 +295,37 @@ describe('the seeded domain matches the service', () => {
   const SRC = path.resolve(__dirname, '../../..');
   const SERVICE_REL = 'server/services/apps/app-storage.service.ts';
   const SEEDER_REL = 'server/prom/app-block-storage.metrics.ts';
+  const ROUTER_REL = 'server/routers/apps.router.ts';
   /**
-   * The three seeded counters. Each must appear exactly twice in each writer — the import and
-   * the one use. An alias or an `inc.call(…)` adds an occurrence and is caught.
+   * The four seeded counters, each against ITS OWN writers. Each must appear exactly twice in
+   * each of them — the import and the one use. An alias or an `inc.call(…)` adds an occurrence
+   * and is caught.
    *
    * 🔴 Counted SEPARATELY, because the SUM cannot see a namespace import: dropping the symbol
    * from the named import and emitting twice via `prom.<sym>.inc(…)` is 0 + 2 = 2, the same
    * total as 1 + 1, with a wrapper-bypassing emit site present and type-clean.
    *
+   * 🔴 PER-SYMBOL WRITERS, not one shared pair, because the writers genuinely differ now. The
+   * first three are emitted from the SERVICE; `appStorageSessionGateRefusalsCounter` is emitted
+   * from the ROUTER's `enforceAppBlocksFlag` middleware and never from the service — that is
+   * the whole point of it, since the middleware refuses before the resolver runs. A shared pair
+   * would have demanded a service emit that must not exist.
+   *
    * NOT "every counter behind a typed wrapper": only `countStorageOutcome` and
-   * `countQuotaExceeded` exist. `appStorageUserQuotaUntrackedCounter` is emitted RAW at one
-   * site, so for it this is a single-emit-site ledger rather than a wrapper-bypass guard. That
-   * distinction is the selection criterion a future author applies to a fourth counter.
+   * `countQuotaExceeded` exist. `appStorageUserQuotaUntrackedCounter` and
+   * `appStorageSessionGateRefusalsCounter` are each emitted RAW at one site, so for those two
+   * this is a single-emit-site ledger rather than a wrapper-bypass guard. That distinction is
+   * the selection criterion a future author applies to a fifth counter — and it is why the
+   * session-gate counter is ledgered here at all: one raw emit site is exactly the shape the
+   * untracked counter was admitted on.
    */
-  const LEDGERED_WRITERS = [
-    'appStorageOpsCounter',
-    'appStorageQuotaExceededCounter',
-    'appStorageUserQuotaUntrackedCounter',
-  ] as const;
+  const LEDGERED_WRITERS = {
+    appStorageOpsCounter: [SERVICE_REL, SEEDER_REL],
+    appStorageQuotaExceededCounter: [SERVICE_REL, SEEDER_REL],
+    appStorageUserQuotaUntrackedCounter: [SERVICE_REL, SEEDER_REL],
+    appStorageSessionGateRefusalsCounter: [ROUTER_REL, SEEDER_REL],
+  } as const;
+  const LEDGERED_SYMBOLS = Object.keys(LEDGERED_WRITERS) as Array<keyof typeof LEDGERED_WRITERS>;
   /**
    * 🔴 PREFIX-RELATIVE declared names, not the `civitai_app_`-prefixed wire names. A third
    * reach-path exists that names neither the symbol nor the full name: the HMR-safe registrars
@@ -335,8 +349,9 @@ describe('the seeded domain matches the service', () => {
     'block_storage_ops_total',
     'block_storage_quota_exceeded_total',
     'block_storage_user_quota_untracked_total',
+    'block_storage_session_gate_refusals_total',
   ] as const;
-  const REACH_KEYS = [...LEDGERED_WRITERS, ...DECLARED_NAMES] as const;
+  const REACH_KEYS = [...LEDGERED_SYMBOLS, ...DECLARED_NAMES] as const;
   /** Comments stripped, so this guard is about reachability and never about wording. */
   const codeOf = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
   const SERVICE = path.join(SRC, 'server/services/apps/app-storage.service.ts');
@@ -425,18 +440,21 @@ describe('the seeded domain matches the service', () => {
     }
   });
 
-  it('🔴 exactly two files under src/ name these counters in CODE today — every case above assumes that scope', () => {
+  it('🔴 exactly three files under src/ name these counters in CODE today — every case above assumes that scope', () => {
     // 🔴 "today", not "can": this is a statement about the CURRENT tree, not a decidable
     // universal. Two residual reaches pass — `getSingleMetric(FAMILY + 'ops_total')` built by
     // concatenation, and a template-literal metric name — so the set is a ratchet on what is
     // there, not a proof that nothing else could get a handle.
     // Matched on CODE, not raw text. The raw-text version put two documentation files in the
-    // set — `block-token-access.service.ts` names the symbol in a docstring, `apps.router.ts`
-    // names the metric in the operator contract this PR corrected — so an ordinary reword in
-    // either, touching no code and no counter, failed this case with `expected [ …(3) ] to
-    // deeply equal [ …(4) ]` and named neither the file nor the cause. Code-matching removes
-    // that entirely AND widens the guard: a first real emit in a doc file enters the set and
-    // trips the membership assertion, where the raw version only caught a symbol-named one.
+    // set — `block-token-access.service.ts` names the symbol in a docstring, and
+    // `apps.router.ts` then named the metric only in prose — so an ordinary reword in either,
+    // touching no code and no counter, failed this case with `expected [ …(3) ] to deeply equal
+    // [ …(4) ]` and named neither the file nor the cause. Code-matching removes that entirely
+    // AND widens the guard: a first real emit in a doc file enters the set and trips the
+    // membership assertion, where the raw version only caught a symbol-named one. 🔴 That is
+    // no longer hypothetical for `apps.router.ts`: it became a REAL writer when the
+    // session-gate counter landed, and is in the set on its code rather than its prose. Its
+    // comments still name three of these keys and are still stripped.
     //
     // Spelling-based predicates were tried and are insufficient on their own:
     // `/appStorageOpsCounter\s*\.inc/` is walked by `const c = …; c.inc(…)`, by
@@ -468,7 +486,7 @@ describe('the seeded domain matches the service', () => {
             const rel = path.relative(SRC, full);
             reaching.push(rel);
             const imports = (code.match(/import\s[\s\S]*?from\s*'[^']*';?/g) ?? []).join('\n');
-            for (const sym of LEDGERED_WRITERS) {
+            for (const sym of LEDGERED_SYMBOLS) {
               const re = new RegExp(`\\b${sym}\\b`, 'g');
               const total = (code.match(re) ?? []).length;
               perSymbolImports[sym] ??= {};
@@ -481,17 +499,17 @@ describe('the seeded domain matches the service', () => {
       }
     };
     walk(SRC);
-    expect(reaching.sort()).toEqual([SEEDER_REL, SERVICE_REL].sort());
+    expect(reaching.sort()).toEqual([SEEDER_REL, SERVICE_REL, ROUTER_REL].sort());
 
-    // All THREE counters. The asymmetry was the gap: `quota_exceeded` is the one whose typo is
+    // All FOUR counters. The asymmetry was the gap: `quota_exceeded` is the one whose typo is
     // worse than absence — a seeded zero that reads as "no app has hit a ceiling" while real
     // refusals accumulate elsewhere — yet it had no ledger at
     // all. A raw `appStorageQuotaExceededCounter.inc({ …, ceiling: 'User' })` replacing a
     // wrapper call left typecheck at 4 errors and the suite green, because
     // `registerCounterWithLabels` parameterises label NAMES only and prom-client types a label
     // VALUE as `string | number`, so bypassing the helper violates no type.
-    for (const sym of LEDGERED_WRITERS) {
-      for (const rel of [SERVICE_REL, SEEDER_REL]) {
+    for (const sym of LEDGERED_SYMBOLS) {
+      for (const rel of LEDGERED_WRITERS[sym]) {
         expect(perSymbolImports[sym]?.[rel], `${sym} imported once in ${rel}`).toBe(1);
         expect(perSymbolUses[sym]?.[rel], `${sym} used once in ${rel}`).toBe(1);
       }
