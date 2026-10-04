@@ -56,7 +56,7 @@ import {
   isCustomPrizeDistribution,
 } from '~/shared/constants/crucible.constants';
 import type { VideoMetadata } from '~/server/schema/media.schema';
-import { formatDuration } from '~/utils/number-helpers';
+import { asOrdinal, formatDuration } from '~/utils/number-helpers';
 import {
   crucibleDetailSelect,
   type CrucibleDetailRow,
@@ -109,6 +109,7 @@ import {
   isCrucibleSfw,
   isFreeCrucibleEntry,
   parsePrizePositions,
+  type CrucibleDisplayPrize,
   type CruciblePrizeWinner,
   type PrizePosition,
 } from '~/utils/crucible-helpers';
@@ -567,6 +568,12 @@ const visibleEntryImageSql = (
   AND (i."nsfwLevel" & ${crucibleLevel}) <> 0
   ${viewerLevel > 0 ? Prisma.sql`AND (i."nsfwLevel" & ${viewerLevel}) <> 0` : Prisma.empty}
 `;
+
+/** A viewer always sees their own entries, whatever the image filter hides. */
+const entryVisibleToViewerSql = (viewerId: number | undefined, visibleImage: Prisma.Sql) =>
+  Prisma.sql`(${
+    viewerId ? Prisma.sql`ce."userId" = ${viewerId} OR` : Prisma.empty
+  } (${visibleImage}))`;
 
 // throwOnBlockedUserContent doesn't catch profanity, so SFW-only crucibles check it here.
 function assertSfwCrucibleText(texts: string[], nsfwLevel: number) {
@@ -1029,44 +1036,30 @@ export type CrucibleDetail = CrucibleDetailRow & {
   paidEntryCount: number;
   /** The caller's own entries; everyone else's are paged through `getCrucibleEntries`. */
   viewerEntries: CrucibleEntryRow[];
-  /** Empty until completed. */
-  prizeWinners: CruciblePrizeWinner[];
+  /** Empty until completed. No user ids: a winner's entry may be hidden from this viewer. */
+  prizeWinners: CrucibleDisplayPrize[];
 };
 
 type PrizeCrucible = { id: number; prizePositions: PrizePosition[]; totalPrizePool: number };
 
 /** From the stored placings, so it agrees with what finalize paid. */
 export const getCruciblesPrizeWinners = async (crucibles: PrizeCrucible[]) => {
-  const lastPrizePlace = Math.max(
-    0,
-    ...crucibles.flatMap(({ prizePositions }) => prizePositions.map((p) => p.position))
-  );
   const winners = new Map<number, CruciblePrizeWinner[]>(crucibles.map(({ id }) => [id, []]));
-  if (!crucibles.length || !lastPrizePlace) return winners;
+  if (!crucibles.some(({ prizePositions }) => prizePositions.length)) return winners;
 
-  // Each creator's best placing, cut at the last prize place: nothing below it can win.
-  const contenders = await dbRead.$queryRaw<
+  const placed = await dbRead.$queryRaw<
     { crucibleId: number; entryId: number; userId: number; position: number }[]
   >`
-    SELECT "crucibleId", "entryId", "userId", position
-    FROM (
-      SELECT best.*, ROW_NUMBER() OVER (PARTITION BY best."crucibleId" ORDER BY best.position) AS rn
-      FROM (
-        SELECT DISTINCT ON (ce."crucibleId", ce."userId")
-          ce."crucibleId", ce.id AS "entryId", ce."userId", ce.position
-        FROM "CrucibleEntry" ce
-        WHERE ce."crucibleId" = ANY(${crucibles.map(({ id }) => id)}::int[])
-          AND ce.position IS NOT NULL
-        ORDER BY ce."crucibleId", ce."userId", ce.position
-      ) best
-    ) ranked
-    WHERE rn <= ${lastPrizePlace}
+    SELECT ce."crucibleId", ce.id AS "entryId", ce."userId", ce.position
+    FROM "CrucibleEntry" ce
+    WHERE ce."crucibleId" = ANY(${crucibles.map(({ id }) => id)}::int[])
+      AND ce.position IS NOT NULL
   `;
   for (const { id, prizePositions, totalPrizePool } of crucibles)
     winners.set(
       id,
       getCruciblePrizeWinners({
-        placed: contenders.filter(({ crucibleId }) => crucibleId === id),
+        placed: placed.filter(({ crucibleId }) => crucibleId === id),
         prizePositions,
         totalPrizePool,
       })
@@ -1113,7 +1106,9 @@ export const getCrucibleDetail = async ({
               }),
             },
           ])
-        ).get(id) ?? []
+        )
+          .get(id)
+          ?.map(({ userId, ...prize }) => prize) ?? []
       : [];
 
   return {
@@ -1222,11 +1217,14 @@ const getPodiumEntries = async ({
     FROM "CrucibleEntry" ce
     JOIN "Image" i ON i.id = ce."imageId"
     WHERE ce.id = ANY(${winners.map(({ entryId }) => entryId)}::int[])
-      AND (${viewerId ? Prisma.sql`ce."userId" = ${viewerId} OR` : Prisma.empty} (${visibleImage}))
+      AND ${entryVisibleToViewerSql(viewerId, visibleImage)}
   `;
   const prizePlaceById = new Map(winners.map(({ entryId, prizePlace }) => [entryId, prizePlace]));
   return (await loadEntriesInOrder(ids))
-    .map((entry) => ({ ...entry, prizePlace: prizePlaceById.get(entry.id) ?? 0 }))
+    .flatMap((entry) => {
+      const prizePlace = prizePlaceById.get(entry.id);
+      return prizePlace ? [{ ...entry, prizePlace }] : [];
+    })
     .sort((a, b) => a.prizePlace - b.prizePlace);
 };
 
@@ -1276,7 +1274,7 @@ const getRankedEntries = async ({
     FROM "CrucibleEntry" ce
     JOIN "Image" i ON i.id = ce."imageId"
     WHERE ce."crucibleId" = ${crucibleId}
-      AND (${viewerId ? Prisma.sql`ce."userId" = ${viewerId} OR` : Prisma.empty} (${visibleImage}))
+      AND ${entryVisibleToViewerSql(viewerId, visibleImage)}
       ${
         cursor
           ? Prisma.sql`AND (${rankKeySql('ce')}) >= (SELECT ${rankKeySql(
@@ -1308,7 +1306,7 @@ const getShuffledEntries = async ({
     FROM "CrucibleEntry" ce
     JOIN "Image" i ON i.id = ce."imageId"
     WHERE ce."crucibleId" = ${crucibleId}
-      AND (${viewerId ? Prisma.sql`ce."userId" = ${viewerId} OR` : Prisma.empty} (${visibleImage}))
+      AND ${entryVisibleToViewerSql(viewerId, visibleImage)}
       ${
         cursor
           ? Prisma.sql`AND (md5(ce.id::text || ${salt}), ce.id) >= (md5(${cursor}::int::text || ${salt}), ${cursor}::int)`
@@ -2862,17 +2860,6 @@ export type FinalizeCrucibleResult = {
 };
 
 /**
- * Get ordinal suffix for a position (1st, 2nd, 3rd, etc.)
- */
-function getOrdinalPosition(position: number): string {
-  const suffixes = ['th', 'st', 'nd', 'rd'];
-  const remainder = position % 100;
-  const suffix =
-    remainder >= 11 && remainder <= 13 ? 'th' : suffixes[Math.min(position % 10, 4)] || 'th';
-  return `${position}${suffix}`;
-}
-
-/**
  * An entry whose image was blocked, held for review, flagged, unpublished, or re-rated outside the
  * crucible's levels can't place; its fee stays in the pool. A scan still in progress doesn't
  * disqualify.
@@ -3194,7 +3181,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
       amount: winner.prizeAmount,
       type: TransactionType.Reward,
       description: getCrucibleTransactionDescription(
-        `Crucible ${getOrdinalPosition(winner.prizePlace)} prize`,
+        `Crucible ${asOrdinal(winner.prizePlace)} prize`,
         crucible
       ),
       details: {

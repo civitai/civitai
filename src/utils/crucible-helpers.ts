@@ -286,6 +286,7 @@ export type CruciblePrizeWinner = {
   prizePlace: number;
   prizeAmount: number;
 };
+export type CrucibleDisplayPrize = Omit<CruciblePrizeWinner, 'userId'>;
 
 /**
  * A creator takes at most one prize: their best-placed entry. Prize places go to creators in
@@ -309,7 +310,7 @@ export function getCruciblePrizeWinners({
     if (creatorsBest.length >= lastPrizePlace) break;
     if (seen.has(entry.userId)) continue;
     seen.add(entry.userId);
-    creatorsBest.push(entry);
+    creatorsBest.push({ entryId: entry.entryId, userId: entry.userId, position: entry.position });
   }
 
   return creatorsBest

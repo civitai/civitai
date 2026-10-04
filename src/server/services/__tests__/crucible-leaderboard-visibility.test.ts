@@ -278,22 +278,37 @@ describe('crucible.getEntries — podium', () => {
   const first = entry({ id: 1, userId: OWNER_ID, score: 1800, position: 1, minutes: 0 });
   const second = entry({ id: 2, userId: OWNER_ID, score: 1700, position: 2, minutes: 5 });
   const third = entry({ id: 3, userId: 103, score: 1500, position: 3, minutes: 10 });
-  const completed = {
-    ...scanned,
-    status: CrucibleStatus.Completed,
-    prizePositions: { '1': 60, '2': 40 },
-  };
+  const fourth = entry({ id: 4, userId: 104, score: 1400, position: 4, minutes: 15 });
+  const fifth = entry({ id: 5, userId: 105, score: 1300, position: 5, minutes: 20 });
+  const all = [first, second, third, fourth, fifth];
+  const placings = all.map(({ id, userId, position }) => ({
+    crucibleId: CRUCIBLE_ID,
+    entryId: id,
+    userId,
+    position,
+  }));
+  const rendered = ([strings, ...values]: unknown[]) =>
+    Prisma.sql(strings as TemplateStringsArray, ...values).text.replace(/\s+/g, ' ');
+  const isPlacingsQuery = (sql: string) => sql.includes('ce.position IS NOT NULL');
+  const isPodiumQuery = (sql: string) => /WHERE ce\.id = ANY\(\$\d+::int\[\]\)/.test(sql);
+  const podiumQuery = () => queryRaw.mock.calls.map(rendered).find(isPodiumQuery);
+  const completedWith = (prizePositions: Record<string, number>) =>
+    findUnique.mockResolvedValue({ ...scanned, status: CrucibleStatus.Completed, prizePositions });
 
   beforeEach(() => {
-    findUnique.mockResolvedValue(completed);
-    findEntries.mockImplementation(async () => [first, second, third]);
-    queryRaw
-      .mockResolvedValueOnce([first, second, third].map(({ id }) => ({ id })))
-      .mockResolvedValueOnce([
-        { crucibleId: CRUCIBLE_ID, entryId: 1, userId: OWNER_ID, position: 1 },
-        { crucibleId: CRUCIBLE_ID, entryId: 3, userId: 103, position: 3 },
-      ])
-      .mockResolvedValueOnce([{ id: 3 }, { id: 1 }]);
+    completedWith({ '1': 60, '2': 40 });
+    findEntries.mockImplementation(async () => all);
+    queryRaw.mockImplementation(async (...call: unknown[]) => {
+      const sql = rendered(call);
+      if (isPlacingsQuery(sql)) return placings;
+      // Every requested winner is visible; returned out of prize order.
+      if (isPodiumQuery(sql)) {
+        const [strings, ...values] = call;
+        const [ids] = Prisma.sql(strings as TemplateStringsArray, ...values).values as [number[]];
+        return [...ids].reverse().map((id) => ({ id }));
+      }
+      return all.map(({ id }) => ({ id }));
+    });
   });
 
   it("puts the next creator on the podium in place of a creator's second entry", async () => {
@@ -303,6 +318,8 @@ describe('crucible.getEntries — podium', () => {
       [1, 1],
       [2, 2],
       [3, 3],
+      [4, 4],
+      [5, 5],
     ]);
     expect(podium.map((e) => [e.id, e.position, e.prizePlace])).toEqual([
       [1, 1, 1],
@@ -310,23 +327,44 @@ describe('crucible.getEntries — podium', () => {
     ]);
   });
 
+  it('caps the podium at three prizes when more are paid', async () => {
+    completedWith({ '1': 40, '2': 30, '3': 20, '4': 10 });
+
+    const { podium } = await caller(undefined).getEntries({ crucibleId: CRUCIBLE_ID });
+
+    expect(podium.map((e) => [e.id, e.prizePlace])).toEqual([
+      [1, 1],
+      [3, 2],
+      [4, 3],
+    ]);
+  });
+
   it('loads podium entries through the same image visibility as the page', async () => {
     await caller(undefined).getEntries({ crucibleId: CRUCIBLE_ID });
 
-    const [strings, ...values] = queryRaw.mock.calls[2] as [TemplateStringsArray, ...unknown[]];
-    const sql = Prisma.sql(strings, ...values).text.replace(/\s+/g, ' ');
-    expect(sql).toMatch(/WHERE ce\.id = ANY\(\$\d+::int\[\]\)/);
-    expectPublishedEntryImage(sql);
+    const sql = podiumQuery();
+    expect(sql).toBeDefined();
+    expect(sql).toMatch(/WHERE ce\.id = ANY\(\$\d+::int\[\]\) AND \( ?\(/);
+    expectPublishedEntryImage(sql!);
+  });
+
+  it('shows a signed-in creator their own podium entry, inside the id filter', async () => {
+    await caller(signedIn(OWNER_ID)).getEntries({ crucibleId: CRUCIBLE_ID });
+
+    expect(podiumQuery()).toMatch(
+      /WHERE ce\.id = ANY\(\$\d+::int\[\]\) AND \(ce\."userId" = \$\d+ OR \(/
+    );
+    const call = queryRaw.mock.calls.find((c) => isPodiumQuery(rendered(c)))!;
+    expect(Prisma.sql(call[0] as TemplateStringsArray, ...call.slice(1)).values).toContain(
+      OWNER_ID
+    );
   });
 
   it('sends no podium with a later page', async () => {
-    queryRaw.mockReset();
-    queryRaw.mockResolvedValue([{ id: 3 }]);
-
     const { podium } = await caller(undefined).getEntries({ crucibleId: CRUCIBLE_ID, cursor: 3 });
 
     expect(podium).toEqual([]);
-    expect(queryRaw).toHaveBeenCalledTimes(1);
+    expect(podiumQuery()).toBeUndefined();
   });
 });
 
@@ -345,26 +383,33 @@ describe('crucible.getById — prize winners', () => {
     dbMock.dbRead.crucibleEntry.groupBy.mockResolvedValue([
       { crucibleId: CRUCIBLE_ID, _count: { _all: 6 } },
     ]);
-    // Each creator's best placing; user 10's entries at 2nd and 3rd are not among them.
-    queryRaw.mockResolvedValue([
-      { crucibleId: CRUCIBLE_ID, entryId: 1, userId: 10, position: 1 },
-      { crucibleId: CRUCIBLE_ID, entryId: 4, userId: 11, position: 4 },
-      { crucibleId: CRUCIBLE_ID, entryId: 5, userId: 12, position: 5 },
-    ]);
+    queryRaw.mockResolvedValue(
+      [
+        [1, 10, 1],
+        [2, 10, 2],
+        [3, 10, 3],
+        [4, 11, 4],
+        [5, 12, 5],
+        [6, 13, 6],
+      ].map(([entryId, userId, position]) => ({
+        crucibleId: CRUCIBLE_ID,
+        entryId,
+        userId,
+        position,
+      }))
+    );
 
     const crucible = await caller(undefined).getById({ id: CRUCIBLE_ID });
 
-    expect(
-      crucible?.prizeWinners.map((w) => [w.entryId, w.position, w.prizePlace, w.prizeAmount])
-    ).toEqual([
-      [1, 1, 1, 300],
-      [4, 4, 2, 180],
-      [5, 5, 3, 120],
+    expect(crucible?.prizeWinners).toEqual([
+      { entryId: 1, position: 1, prizePlace: 1, prizeAmount: 300 },
+      { entryId: 4, position: 4, prizePlace: 2, prizeAmount: 180 },
+      { entryId: 5, position: 5, prizePlace: 3, prizeAmount: 120 },
     ]);
-    const { text, values } = lastRawQuery();
-    expect(text).toMatch(/SELECT DISTINCT ON \(ce\."crucibleId", ce\."userId"\)/);
-    expect(text).toMatch(/ORDER BY ce\."crucibleId", ce\."userId", ce\.position/);
-    expect(values).toEqual([[CRUCIBLE_ID], 3]);
+    expect(lastRenderedSql()).toMatch(
+      /WHERE ce\."crucibleId" = ANY\(\$1::int\[\]\) AND ce\.position IS NOT NULL\s*$/
+    );
+    expect(lastRendered().values).toEqual([[CRUCIBLE_ID]]);
   });
 
   it('has no prize winners while the crucible runs', async () => {

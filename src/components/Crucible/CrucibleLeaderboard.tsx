@@ -8,7 +8,7 @@ import { Currency } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   rankCrucibleEntries,
-  type CruciblePrizeWinner,
+  type CrucibleDisplayPrize,
   type PrizePosition,
 } from '~/utils/crucible-helpers';
 import { useState } from 'react';
@@ -48,7 +48,7 @@ export type CrucibleLeaderboardProps = {
   /** Every ranked entry, loaded or not; defaults to the loaded count. */
   totalCount?: number;
   /** Empty unless awarded. */
-  prizeWinners: CruciblePrizeWinner[];
+  prizeWinners: CrucibleDisplayPrize[];
   hasMore?: boolean;
   onLoadMore?: () => void;
 };

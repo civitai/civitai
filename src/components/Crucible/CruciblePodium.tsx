@@ -2,7 +2,7 @@ import { Container, Group, Stack, Title } from '@mantine/core';
 import { IconTrophy } from '@tabler/icons-react';
 import { WinnerPodiumCard, type WinnerPodiumData } from '~/components/Challenge/WinnerPodiumCard';
 import type { RouterOutput } from '~/types/router';
-import type { CruciblePrizeWinner } from '~/utils/crucible-helpers';
+import type { CrucibleDisplayPrize } from '~/utils/crucible-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 export function CruciblePodium({
@@ -11,7 +11,7 @@ export function CruciblePodium({
   buzzType,
 }: {
   entries: RouterOutput['crucible']['getEntries']['podium'];
-  prizeWinners: CruciblePrizeWinner[];
+  prizeWinners: CrucibleDisplayPrize[];
   buzzType: 'green' | 'yellow';
 }) {
   const prizeByEntryId = new Map(prizeWinners.map((w) => [w.entryId, w.prizeAmount]));
