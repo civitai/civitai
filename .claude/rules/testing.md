@@ -9,24 +9,13 @@ paths:
 
 # Testing
 
-## Which suites to run
+Root CLAUDE.md → Tests has the core rules (suite selection, `--project 'unit*'`, covering suites, `vitest related`, `test:lint-rules`, `src/pages`). This file has the rest.
 
-- **The suites are separate and cover disjoint directories.** `test:unit:run` runs nothing under `packages/` or `apps/` (the `unit` project's `include` is root-relative); use `test:packages:run` and `test:apps:run` for those.
-- **Select the unit suite with `--project 'unit*'`, never `--project unit`.** The six `unit-native` files are excluded from `unit`, so `--project unit` silently runs a subset and exits 0.
-- **Which suites CI runs, and which can fail a check, differs per suite.** See the job comments in `.github/workflows/lint.yml`. `main` has no required status checks, so no suite blocks a merge, and a `continue-on-error` job doesn't even render red.
+## Running and reading suites
 
-## Run covering suites while editing; the whole suite once at the end
-
-Name the covering suites before you start editing and run those each iteration; run the full suite once before committing.
-
-```bash
-pnpm exec vitest run --project 'unit*' src/server/services/__tests__/strike.service.test.ts
-```
-
-- **Find covering suites by grepping for the symbol:** `grep -rln '<fn>' src --include=*.test.ts`.
-- **Add `pnpm run test:lint-rules` (~1s) whenever you touch a transaction, a mock, or a module-scope constant.** Those guards are tests, not eslint rules.
-- **The final full run is not optional.** A change in a widely imported service (`src/server/services/`) can surface failures anywhere. Why not run it between edits: it is ~41,600 tests, and `test:unit:run` is serialised through the dev-server queue, so it blocks everyone else's runs for minutes.
-- **Do not use `vitest related` to narrow.** It walks the importer graph transitively and `user.service.ts` is a hub: a new leaf module imported by three files selected 473 test files (40% of the suite), for the same wall-clock as a full run.
+- **CI coverage differs per suite.** See the job comments in `.github/workflows/lint.yml`. `main` has no required status checks, so no suite blocks a merge, and a `continue-on-error` job doesn't even render red.
+- **Example covering run:** `pnpm exec vitest run --project 'unit*' src/server/services/__tests__/strike.service.test.ts`
+- **Why the final full run matters, and why not between edits:** a change in a widely imported service (`src/server/services/`) can surface failures anywhere; but the suite is ~41,600 tests serialised through the dev-server queue, so running it between edits blocks everyone else's runs.
 - **A green full run can still hide a failure you caused.** Read the failing-file list, not the count. If tests fail, re-run those same files on `main` (in a separate worktree; don't `git stash` here) to see whether they already failed.
 
 ## Worker count
@@ -56,11 +45,11 @@ When the dev-server queue has the cache on (`cli.mjs test config --cache on`), a
 - Environment variables are not part of the cache key.
 - Never on in CI; a run that filters files (filename, directory, substring) is never trimmed. Code: `scripts/test-cache/`.
 
-## Never put unit tests under `src/pages`
+## Where handler tests go
 
 Keep handler tests in a `__tests__/` directory outside `src/pages` (e.g. `src/server/__tests__/`) and import the handler via the `~/pages/...` alias.
 
-Why: Next.js 16 treats every `.ts`/`.tsx` under `src/pages` as a route. A test file there fails `next build` (`Type '...test' does not satisfy the constraint 'ApiRouteConfig'`), and only `next build` catches it; typecheck, vitest and CI tasks pass (PR #2653).
+A test file under `src/pages` fails `next build` (`Type '...test' does not satisfy the constraint 'ApiRouteConfig'`), and only `next build` catches it; typecheck, vitest and CI tasks pass (PR #2653).
 
 ## Prefer `importOriginal` over hand-listed `vi.mock` exports
 

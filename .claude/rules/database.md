@@ -15,18 +15,15 @@ pnpm run db:check-generated  # Fail if the committed generated client is stale
 pnpm run db:moderator:pull   # Re-introspect the moderator DB into apps/moderator/prisma/schema.prisma
 ```
 
-- **Edit only `packages/civitai-db-schema/prisma/schema.full.prisma`.** It is the single tracked schema. `pnpm run db:generate` runs `scripts/generate-slim-schema.js`, which strips `@no-type` models/enums into `packages/civitai-db-schema/prisma/schema.prisma` (what `package.json`'s `prisma.schema` points at), then runs `prisma generate`.
+- **How generation works:** `pnpm run db:generate` runs `scripts/generate-slim-schema.js`, which strips `@no-type` models/enums into `packages/civitai-db-schema/prisma/schema.prisma` (what `package.json`'s `prisma.schema` points at), then runs `prisma generate`.
 - **Never edit the main app's generated `schema.prisma` files.** That one and the leftover `prisma/schema.prisma` at the repo root are gitignored build artifacts, overwritten on the next generate.
 - **`apps/moderator/prisma/schema.prisma` is separate and tracked.** It is introspected, never authored: run `pnpm run db:moderator:pull` then `pnpm run db:moderator:generate` (see `apps/moderator/CLAUDE.md`). `db:generate` does not produce it.
 - **Run `pnpm run db:check-generated` after touching `schema.full.prisma`.** It regenerates and diffs `packages/civitai-db-schema/src`, so a forgotten regen fails there.
 
-## Migrations are applied manually
-
-We do NOT use `prisma migrate deploy`. Never suggest `prisma migrate deploy`, `prisma migrate resolve`, or any auto-apply path.
+## Migration details
 
 - Migration files live in `packages/civitai-db-schema/prisma/migrations/` for review/history and are never auto-run. It is the only directory Prisma reads; the root `prisma/migrations/` path predates the monorepo, no longer exists, and CI blocks re-creating it.
 - A human applies each environment's SQL directly (psql, retool, etc.). The `_prisma_migrations` table is not the source of truth; don't rely on it.
-- When you add a migration: write the SQL, commit it, and tell the user it must be applied manually, naming where (preview / staging / prod).
 
 ## Adding an enum value: deploy first, then migrate, then write
 

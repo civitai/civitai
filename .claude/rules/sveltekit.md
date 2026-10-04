@@ -7,12 +7,11 @@ paths:
 
 # SvelteKit apps
 
-`apps/moderator`, `apps/auth` and `apps/creator-studio` are SvelteKit 5 + Kysely + shadcn-svelte + Tailwind v4. The Mantine/tRPC/Prisma guidance in root CLAUDE.md does not apply.
+Root CLAUDE.md covers the stack, the `typecheck`-not-`check` rule and the prettier-svelte ban; this file has the detail. Each app's `CLAUDE.md` records only its deltas from [`docs/svelte-app-standard.md`](../../docs/svelte-app-standard.md).
 
-- Shared conventions: [`docs/svelte-app-standard.md`](../../docs/svelte-app-standard.md). Each app's `CLAUDE.md` records only its deltas.
 - Review a segment with `svelte-correctness-review`, `svelte-idiom-review` and `svelte-abstraction-review`.
 
-## Use `typecheck`, never `check`
+## `typecheck` vs `check`
 
 `typecheck` is `svelte-check` alone and writes nothing. `check` prefixes it with `svelte-kit sync`, which regenerates ~690 files under `.svelte-kit/`, a directory the Vite dev server watches.
 
@@ -22,9 +21,9 @@ Why: in an edit-verify loop, Vite re-optimising the module graph collided with `
 - `build` runs `svelte-kit sync` too (`svelte-kit sync && vite build`), so it has the same cost and catches nothing `svelte-check` doesn't. It is not a check.
 - Read `svelte-check`'s WARNING lines, not just ERROR. `state_referenced_locally` (`let x = $state(data.foo)` capturing only the first value, so the UI shows stale data after navigation) appears there and nowhere else. Filtering to `ERROR` hides it.
 
-## Never run `npx prettier --plugin=prettier-plugin-svelte` on `.svelte` files
+## Formatting `.svelte` files
 
-It empties every file it touches to zero bytes and reports success (28 components in one command, 2026-08-07). The first symptom is `svelte-check` reporting props as `never`, which looks like stale `$types`.
+`prettier --plugin=prettier-plugin-svelte` empties every file it touches to zero bytes and reports success (28 components in one command, 2026-08-07). The first symptom is `svelte-check` reporting props as `never`, which looks like stale `$types`.
 
 - The root Prettier is 2.8.8 and globs `.ts`/`.tsx` only, so `pnpm run prettier:write` never formats `.svelte`.
 - `apps/creator-studio` formats itself with its own Prettier 3 + plugin (`.prettierignore` explains why ownership must be exclusive). The other SvelteKit apps' `.svelte` files are hand-formatted.

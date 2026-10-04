@@ -42,12 +42,15 @@ Everything else lives where it loads on demand (see "Where knowledge lives").
 - **Worktrees: create with `node .claude/skills/dev-server/cli.mjs wt new <name> <branch>`**, remove with
   `wt stale` / `wt rm`. Never the `EnterWorktree` tool or a hand-rolled `git worktree add`.
 - `pnpm run typecheck` (authoritative; `typecheck:fast` is edit-loop only), `pnpm run lint`.
-  In SvelteKit apps use `typecheck`, never `check`.
+  In SvelteKit apps use `typecheck`, never `check` (details: `.claude/rules/sveltekit.md`).
 - **Formatting:** `pnpm run prettier:write` formats uncommitted files only. Never run a repo-wide
   `prettier --write`, and never `prettier --plugin=prettier-plugin-svelte` (it empties `.svelte` files).
 - **Releases** (`pnpm run release[:minor|:major]`) need explicit user approval — they bump, tag and push.
 
 ## Tests
+More in `.claude/rules/testing.md` (loads when you touch a test file) and
+`.claude/rules/convention-guards.md`.
+
 ```bash
 pnpm run test:unit:run     # unit suite over src/ + scripts/
 pnpm run test:packages:run # packages/*      pnpm run test:apps:run   # apps/*
@@ -65,13 +68,14 @@ pnpm test                  # Playwright e2e (pnpm run test:ui for the UI)
 - Never put unit tests under `src/pages` — `next build` treats them as routes and fails.
 
 ## Database
+Commands, generation and migration details: `.claude/rules/database.md`.
+
 - **`packages/civitai-db-schema/prisma/schema.full.prisma` is the only schema you edit**; then
   `pnpm run db:generate`. Every other `schema.prisma` is generated or introspected.
 - **Migrations are applied by hand. Never suggest `prisma migrate deploy`, `migrate resolve` or any
   auto-apply path.** Write the SQL under `packages/civitai-db-schema/prisma/migrations/`, commit it, and
   tell the user it needs applying manually (preview / staging / prod).
-- Adding an enum value: deploy the regenerated client **before** the migration and any backfill —
-  see `.claude/rules/database.md`.
+- Adding an enum value: deploy the regenerated client **before** the migration and any backfill.
 
 ## Security — this repository is public
 Everything committed is permanently world-readable, including `docs/`, `claudedocs/`, `.claude/` and
@@ -97,11 +101,14 @@ Documenting why a guard exists is one sentence from naming the bypass. Removal i
 anything committed counts as disclosed and must be fixed and rotated.
 
 ## Before committing
-1. `pnpm run typecheck` and `pnpm run lint`
-2. `pnpm run prettier:write`
+1. `pnpm run prettier:write`
+2. Lint what you changed: `pnpm exec eslint <changed .ts/.tsx files>`. Skip the full `pnpm run typecheck`
+   and `pnpm run lint` on feature/fix/chore/docs branches — PR CI runs both on every PR to `main`.
+   Run them in full only when committing directly to `main`. (Typecheck can't be scoped to files.)
 3. The unit suite (`pnpm run test:unit:run`); `pnpm run db:check-generated` if you touched the schema
 4. Test the change locally
-5. Run `comment-review` over the diff and `docs-drift-review` over the commits — the two lanes with no
+5. Before merging, check the PR's CI — `main` has no required checks, so a red run doesn't block.
+6. Run `comment-review` over the diff and `docs-drift-review` over the commits — the two lanes with no
    automated gate. Required when you moved a file, renamed a script or command, retired an env var, or
    completed a tracked item.
 
