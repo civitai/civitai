@@ -40,7 +40,7 @@ function onsite(over: Partial<OnsiteReviewRequest> & { id: string }): OnsiteRevi
     fileSummary: {},
     manifestDiffSummary: {},
     reviewRepoUrl: 'https://forgejo.example/repo',
-    submittedBy: { id: 7, username: 'onsite-dev', image: null },
+    submittedBy: { id: 7, username: 'onsite-dev', deletedAt: null, image: null },
     ...over,
   } as OnsiteReviewRequest;
 }
@@ -59,7 +59,7 @@ function offsite(over: Partial<OffsiteReviewRequest> & { id: string }): OffsiteR
       category: 'utility',
       contentRating: 'g',
     },
-    submittedBy: { id: 9, username: 'offsite-dev', image: null },
+    submittedBy: { id: 9, username: 'offsite-dev', deletedAt: null, image: null },
     ...over,
   };
 }
@@ -78,7 +78,7 @@ describe('onsiteRequestToUnifiedRow', () => {
     expect(row.badgeColor).toBe('blue');
     expect(row.title).toBe('My Block');
     expect(row.slug).toBe('my-block');
-    expect(row.submitter).toEqual({ id: 7, username: 'onsite-dev', image: null });
+    expect(row.submitter).toEqual({ id: 7, username: 'onsite-dev', deletedAt: null, image: null });
   });
 
   it('falls back to the slug when the manifest has no usable name', () => {
@@ -140,7 +140,7 @@ describe('offsiteRequestToUnifiedRow', () => {
     expect(row.badgeColor).toBe('grape');
     expect(row.title).toBe('External App');
     expect(row.slug).toBe('ext-app');
-    expect(row.submitter).toEqual({ id: 9, username: 'offsite-dev', image: null });
+    expect(row.submitter).toEqual({ id: 9, username: 'offsite-dev', deletedAt: null, image: null });
   });
 
   it('falls back to the slug when the listing (or its name) is absent', () => {
@@ -207,7 +207,12 @@ describe('offsiteRequestToUnifiedRow', () => {
       connectScopeJustifications: { READ: 'why' },
       connectClient: { name: 'Client' },
     });
-    expect(passed.submittedBy).toEqual({ id: 9, username: 'offsite-dev', image: null });
+    expect(passed.submittedBy).toEqual({
+      id: 9,
+      username: 'offsite-dev',
+      deletedAt: null,
+      image: null,
+    });
   });
 
   it('defaults absent connect fields to null (external-link listing)', () => {

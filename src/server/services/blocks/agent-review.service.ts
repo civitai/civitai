@@ -1,11 +1,12 @@
 import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server';
 import { AI_MODELS } from '~/server/services/ai/openrouter';
+import { getDp1Target, k8sFetch, unwrap } from '~/server/services/blocks/apps-pipeline.service';
 import {
-  getDp1Target,
-  k8sFetch,
-  unwrap,
-} from '~/server/services/blocks/apps-pipeline.service';
+  AGENT_REVIEW_SECTIONS,
+  isAgentSectionFailureMarker,
+  type AgentReviewSection,
+} from '~/shared/constants/agent-review-section.constants';
 
 /**
  * AGENTIC MOD CODE-REVIEW (App Blocks P1) — provisioning lane.
@@ -52,11 +53,26 @@ export function agentReviewName(publishRequestId: string): string {
   return `review-agent-${hash}`;
 }
 
+/**
+ * 🔴 THE LEDGER IS SHARED, NOT RESTATED. `AGENT_REVIEW_SECTIONS` and the failure predicate
+ * live in `~/shared/constants/agent-review-section.constants` so this service, the tRPC
+ * input schema and the client renderer all read ONE list — see that module for what the
+ * four separate copies used to make possible (a full re-run silently classified as targeted,
+ * seeding stale verdicts into fresh analysis).
+ */
+
 export type StartAgentReviewArgs = {
   publishRequestId: string;
   /** Calling moderator's id — recorded for audit; the agent produces mod
    *  decision-support, so the trigger is always moderator-bound. */
   modUserId: number;
+  /**
+   * Re-run only these analyses. Omitted (or all three) ⇒ a full run.
+   *
+   * See {@link startAgentReview} step (d') for what a SUBSET does on this side, and
+   * `startAgentReviewSchema` for what it does not yet buy.
+   */
+  sections?: readonly AgentReviewSection[];
 };
 
 export type StartAgentReviewResult = {
@@ -88,6 +104,11 @@ export async function startAgentReview(
   args: StartAgentReviewArgs
 ): Promise<StartAgentReviewResult> {
   const { publishRequestId } = args;
+  // A list naming every section is a FULL run, not a targeted one — so an exhaustive
+  // selection cannot accidentally take the carry-forward path below (there would be
+  // nothing to carry) nor stamp a pointless env var on the Job.
+  const requested = args.sections ? Array.from(new Set(args.sections)) : [];
+  const targeted = requested.length > 0 && requested.length < AGENT_REVIEW_SECTIONS.length;
   const { dbRead, dbWrite } = await import('~/server/db/client');
 
   // (a) Load the pending on-site publish request. The whole review lane
@@ -177,9 +198,40 @@ export async function startAgentReview(
   // Keyed by the stable slug so the chain resolves for a first version too.
   const { getPriorAgentReport } = await import('./app-review-report.service');
   const prior = await getPriorAgentReport({ slug: request.slug, version: request.version });
-  const priorReportJsonB64 = prior
-    ? Buffer.from(JSON.stringify(prior)).toString('base64')
-    : '';
+  const priorReportJsonB64 = prior ? Buffer.from(JSON.stringify(prior)).toString('base64') : '';
+
+  // (d') TARGETED RE-RUN — carry forward the sections we are NOT re-running.
+  //
+  // 🔴 WITHOUT THIS, A TARGETED RETRY WOULD DESTROY THE VERY THING IT EXISTS TO PRESERVE.
+  // A re-run inserts a NEW report row and `getAgentReport` returns the most recently
+  // started one, so retrying one analysis would replace a report holding two good sections
+  // with a report holding one. Seeding the new row from the LATEST report's surviving
+  // sections makes a targeted retry strictly additive: the runner's callback then
+  // overwrites whatever it actually produced (`buildReportUpdate` writes only the fields
+  // the body carries, so an omitted section keeps the seeded value), and the mod never
+  // loses a completed analysis — whether or not the agent honours the section list.
+  //
+  // Only on the targeted path. A full re-run is a fresh analysis of the same bundle and
+  // must not inherit stale verdicts from the run it replaces.
+  const carried: Record<string, unknown> = {};
+  if (targeted) {
+    const { getAgentReport } = await import('./app-review-report.service');
+    const latest = await getAgentReport(publishRequestId);
+    if (latest) {
+      const keep = AGENT_REVIEW_SECTIONS.filter((s) => !requested.includes(s));
+      for (const section of keep) {
+        const value = latest[section];
+        // Skip a null/absent slot, and skip a slot that is itself a failure marker: seeding
+        // a `{ error: … }` forward would re-report an old failure as if it were this run's.
+        if (value == null) continue;
+        if (isAgentSectionFailureMarker(value)) continue;
+        carried[section] = value;
+      }
+      // The model string describes the run that produced the carried content; keep it so a
+      // partially-seeded report is not attributed to nothing.
+      if (Object.keys(carried).length > 0 && latest.model) carried.model = latest.model;
+    }
+  }
 
   // (d) Insert the running report row. Keyed by `slug` (+ kind='onsite'); the
   // `appBlockId` column is informational (populated when resolvable, else null —
@@ -189,6 +241,7 @@ export async function startAgentReview(
   const reportId = newAppReviewAgentReportId();
   await dbWrite.appReviewAgentReport.create({
     data: {
+      ...carried,
       id: reportId,
       publishRequestId,
       slug: request.slug,
@@ -243,6 +296,10 @@ export async function startAgentReview(
       priorReportJsonB64,
       costCapUsd: env.AGENT_REVIEW_COST_CAP_USD,
       hooksToken,
+      // Only on a targeted re-run, so a full dispatch's Job body is byte-identical to what
+      // it was before this contract var existed (and the orchestration test's exact env
+      // ledger keeps proving that).
+      sections: targeted ? requested : undefined,
     });
   } catch (err) {
     await dbWrite.appReviewAgentReport
@@ -278,6 +335,18 @@ type ProvisionAgentReviewJobArgs = {
    *  infra template feeds this into the pod's fetch-bundle init as the gateway
    *  secret; the chat proxy recomputes `sha256("gw-"+hooksToken)` to authenticate. */
   hooksToken: string;
+  /**
+   * The analyses to run, for a TARGETED re-run. Omitted ⇒ a full run, and then no
+   * `AGENT_REVIEW_SECTIONS` var is set at all, so the Job body is unchanged from before
+   * this existed.
+   *
+   * 🔴 THE POD SIDE OF THIS CONTRACT SHIPS SEPARATELY. The agent template has to read
+   * `${AGENT_REVIEW_SECTIONS}` and skip the analyses it does not name; until it does, the
+   * var is inert and a targeted re-run simply runs everything. That is never worse than the
+   * whole-report re-run it replaces, and the carry-forward in `startAgentReview` step (d')
+   * means the mod's surviving sections are safe either way.
+   */
+  sections?: readonly AgentReviewSection[];
 };
 
 /**
@@ -356,6 +425,10 @@ export async function provisionAgentReviewJob(
                 // Derived per-review gateway secret for the in-modal chat proxy
                 // (P3). The infra review-agent.yaml.tmpl consumes ${HOOKS_TOKEN}.
                 { name: 'HOOKS_TOKEN', value: args.hooksToken },
+                // Targeted re-run only — absent on a full run (see the arg's docstring).
+                ...(args.sections && args.sections.length > 0
+                  ? [{ name: 'AGENT_REVIEW_SECTIONS', value: args.sections.join(',') }]
+                  : []),
               ],
               securityContext: {
                 allowPrivilegeEscalation: false,
@@ -530,10 +603,9 @@ export async function deleteAgentReviewResources(args: {
           const body = await listRes.text().catch(() => '');
           // eslint-disable-next-line no-console
           console.warn(
-            `[agent-review] deleteAgentReviewResources list ${k.label} ${listRes.status}: ${body.slice(
-              0,
-              160
-            )}`
+            `[agent-review] deleteAgentReviewResources list ${k.label} ${
+              listRes.status
+            }: ${body.slice(0, 160)}`
           );
         }
         continue;
@@ -554,10 +626,9 @@ export async function deleteAgentReviewResources(args: {
             const body = await delRes.text().catch(() => '');
             // eslint-disable-next-line no-console
             console.warn(
-              `[agent-review] deleteAgentReviewResources delete ${k.label}/${name} ${delRes.status}: ${body.slice(
-                0,
-                160
-              )}`
+              `[agent-review] deleteAgentReviewResources delete ${k.label}/${name} ${
+                delRes.status
+              }: ${body.slice(0, 160)}`
             );
           }
         } catch (err) {
@@ -669,7 +740,8 @@ function buildAgentReviewChatSystemMessage(report: {
   } catch {
     groundingJson = JSON.stringify({ status: report.status, summaryMd: report.summaryMd ?? null });
   }
-  if (groundingJson.length > MAX_CTX) groundingJson = `${groundingJson.slice(0, MAX_CTX)}…(truncated)`;
+  if (groundingJson.length > MAX_CTX)
+    groundingJson = `${groundingJson.slice(0, MAX_CTX)}…(truncated)`;
 
   return [
     'You are the App Blocks review agent. You already produced a code-review / ' +
@@ -703,9 +775,7 @@ function buildAgentReviewChatSystemMessage(report: {
  * a clean TRPCError ("the review agent did not respond") — never a 500 and never
  * leaking internal detail.
  */
-export async function agentReviewChat(
-  args: AgentReviewChatArgs
-): Promise<AgentReviewChatResult> {
+export async function agentReviewChat(args: AgentReviewChatArgs): Promise<AgentReviewChatResult> {
   const { publishRequestId, messages } = args;
 
   const { getAgentReport } = await import('./app-review-report.service');

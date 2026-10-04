@@ -24,7 +24,9 @@ describe('parseAgentReport — tolerant shaping', () => {
   it('a fully-populated report parses into typed view-models (unknown keys stripped)', () => {
     const v = parseAgentReport({
       codeReview: {
-        findings: [{ file: 'a.js', line: 3, severity: 'high', title: 'X', description: 'd', extra: 1 }],
+        findings: [
+          { file: 'a.js', line: 3, severity: 'high', title: 'X', description: 'd', extra: 1 },
+        ],
         priorFindingsReconciled: [{ title: 'old', status: 'resolved' }],
         notes: 'n',
         bogusTopKey: true,
@@ -93,7 +95,10 @@ describe('parseAgentReport — tolerant shaping', () => {
     const v = parseAgentReport({
       // findings is a string, severity is an object, evidence is a number
       codeReview: { findings: 'not-an-array', notes: 42 },
-      securityAudit: { findings: [{ severity: { nested: true }, title: 5 }], iframeSandboxGrants: 'x' },
+      securityAudit: {
+        findings: [{ severity: { nested: true }, title: 5 }],
+        iframeSandboxGrants: 'x',
+      },
       scopeVerdicts: { scopes: [{ declared: 'ok', evidence: 7, sensitive: 'yes' }] },
       tokenUsage: { promptTokens: 'lots' },
     });
@@ -304,6 +309,15 @@ describe('sectionAnalysisError', () => {
     expect(sectionAnalysisError(null)).toBeNull();
     expect(sectionAnalysisError(undefined)).toBeNull();
     expect(sectionAnalysisError({ error: null })).toBeNull();
-    expect(sectionAnalysisError('   ')).toBeNull();
+  });
+
+  it('🔴 a WHITESPACE-ONLY string is a FAILURE, not an empty well-formed section', () => {
+    // ⚠️ CHANGED DELIBERATELY. This used to return `null`, which scored the slot `complete`
+    // and rendered "No security-audit findings." for an analysis that returned nothing but
+    // blanks — the same "did it run, or did it find nothing?" conflation the per-section
+    // status work exists to remove. A STRING in a structured slot is unambiguous evidence the
+    // runner wrote a dump rather than a result, whatever the string contains.
+    expect(sectionAnalysisError('   ')).toBe('the analysis returned no output');
+    expect(sectionAnalysisError('')).toBe('the analysis returned no output');
   });
 });
