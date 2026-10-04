@@ -193,9 +193,19 @@ function Header() {
   );
 }
 
+/**
+ * 🔴 1200, NOT 980 — the width the real page gives these panels, and the difference is not
+ * just a smaller picture. The agent report's scope table is laid out by a PROPORTIONAL
+ * `<colgroup>` (`APPS_AGENT_REPORT_SCOPE_COLUMNS`, `[7, 5, 6, 6, 22, null]` percent), so at
+ * 980 the 5% "Used" column is ~49px and its "Yes" badge renders as "Y…" — which reads as a
+ * rendering defect in a component that is fine. A story that misrepresents the layout is
+ * worse than no story.
+ */
+const SHELL_WIDTH = 1200;
+
 function Shell({ active, children }: { active: ReviewDetailTab; children: React.ReactNode }) {
   return (
-    <div style={{ width: 980 }}>
+    <div style={{ width: SHELL_WIDTH }}>
       <Stack gap="md">
         <Header />
         <Tabs value={active} variant="outline">

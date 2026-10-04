@@ -72,8 +72,15 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 
 const { ReviewSubmitterMeta } = await import('./OnsiteReviewModal');
 
-/** The exact submitter shape BOTH reads select: `{ id, username, image }`. */
-const SUBMITTER = { id: 7, username: 'dev-user', image: null };
+/**
+ * The exact submitter shape BOTH reads select: `{ id, username, deletedAt, image }`.
+ *
+ * 🔴 `deletedAt` IS IN THE SELECT BECAUSE SOMETHING BRANCHES ON IT, and the deleted case
+ * below is that branch. Its parity across every reader of the chip is pinned structurally in
+ * `src/server/services/blocks/__tests__/review-submitter-select-parity.test.ts`; what only a
+ * render can show is that the field changes what a moderator sees.
+ */
+const SUBMITTER = { id: 7, username: 'dev-user', deletedAt: null, image: null };
 
 const REQUEST = {
   submittedBy: SUBMITTER,
@@ -117,6 +124,34 @@ describe('ReviewSubmitterMeta — the real UserAvatar', () => {
       .element(page.getByTestId('apps-review-submitter-fallback'))
       .toHaveTextContent('#42');
     // …and NO profile link, because there is no profile to link to.
+    expect(document.querySelectorAll('a[href^="/user/"]')).toHaveLength(0);
+  });
+
+  test('🔴 a DELETED submitter is named "[deleted]" and is NOT linked — the `deletedAt` branch', async () => {
+    // The consumer branch the select exists for, and the reason omitting the field was a live
+    // defect rather than a missing nicety. `UserAvatar` reads `deletedAt` in two places:
+    // `UserProfileLink` returns its children unwrapped (no anchor) and `Username` renders
+    // "[deleted]" instead of the name. With the field absent from the select the value is
+    // `undefined` ⇒ falsy ⇒ a closed account rendered as a live, clickable profile.
+    //
+    // 🔴 THE FIXTURE KEEPS ITS USERNAME. A deleted account whose username were also null
+    // would be caught by the `#<id>` fallback case above, so the two tests would not be
+    // distinguishable — and the real rows keep the name, which is exactly why this branch
+    // exists.
+    renderWithProviders(
+      <ReviewSubmitterMeta
+        request={{
+          ...REQUEST,
+          submittedBy: { ...SUBMITTER, deletedAt: new Date('2026-01-01T00:00:00Z') },
+        }}
+        now={NOW}
+      />
+    );
+    await expect.element(page.getByTestId('apps-review-submitter-meta')).toBeInTheDocument();
+    await expect.element(page.getByText('[deleted]')).toBeInTheDocument();
+    // 🔴 THE NAME IS GONE, not merely accompanied by a marker.
+    expect(page.getByText('dev-user').elements()).toHaveLength(0);
+    // …and there is no profile to click through to.
     expect(document.querySelectorAll('a[href^="/user/"]')).toHaveLength(0);
   });
 
