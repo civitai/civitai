@@ -177,6 +177,8 @@ const NON_SQUARE_IMAGE_DATA_URI =
  * fail in one second with a sentence, not in ninety with a timeout.
  */
 const settled = async (testId: string) => {
+  // The cast is unchecked and is safe ONLY because `toBeInstanceOf` runs immediately below —
+  // that ordering is load-bearing, not incidental.
   const img = at(testId) as HTMLImageElement;
   // A `div`'s `.complete` is `undefined` ⇒ falsy ⇒ this would await a `load` that never fires
   // and die on the test timeout with nothing naming the id. The placeholder testids in this

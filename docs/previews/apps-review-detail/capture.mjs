@@ -14,6 +14,13 @@
 //   · the rendered text must not contain "Story not found" (a wrong story id),
 //   · it must be at least MIN_CHARS long (a crashed story renders Ladle's chrome only), and
 //   · the page must not scroll horizontally.
+// 🔴 `playwright`, THE DECLARED PACKAGE — not `playwright-core`. That is a fix, not a style
+// choice: `playwright-core` is undeclared here and present only as a transitive of
+// `playwright`, and `.npmrc` hoists nothing but `@types/*`, so under pnpm's strict layout it
+// is not resolvable from repo code. Measured from a clean clone: `playwright` resolves,
+// `playwright-core` gives ERR_MODULE_NOT_FOUND. The committed script would have failed for
+// anyone running it; it only worked where a stray ambient `node_modules` sat above the
+// checkout, which is exactly the kind of thing a scratch worktree provides and CI does not.
 import { chromium } from 'playwright';
 import { mkdirSync, statSync } from 'fs';
 

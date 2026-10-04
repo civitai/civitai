@@ -827,7 +827,8 @@ jobs:
     # 2-core runner. This tier has no import/transform phase to blame, unlike
     # `unit`, so a red is either the code or the browser — both worth someone's
     # attention. (Runner wall time has not been re-measured since the tier was
-    # 10 tests; it is 73 now.)
+    # 10 tests. Derive the current count rather than reading one here — every figure
+    # written into this file has gone stale within a commit or two.)
     continue-on-error: ${{ github.event_name == 'pull_request' }}
     timeout-minutes: 15
     steps:
