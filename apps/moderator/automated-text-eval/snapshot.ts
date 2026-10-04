@@ -58,7 +58,6 @@ async function main() {
       const summary = await snapshotAutomatedText(
         {
           batch,
-          // The seed fixes which pairs are drawn while the window is unchanged.
           seed: get('--seed') ?? batch,
           dryRun: !argv.includes('--write'),
           purgeDays,

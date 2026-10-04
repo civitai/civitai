@@ -1,7 +1,6 @@
 /**
- * The answer a labeler gives for one (report, tag) pair on the automated text relabel page. The four
- * values are the ticket's vocabulary verbatim, so the set doubles as the decision-model eval's gold.
- * They are STORED values: renaming one orphans every answer already recorded under it.
+ * The answer a labeler gives for one (report, tag) pair. STORED values, also in schema.sql's CHECK:
+ * renaming one orphans every recorded answer.
  */
 export const TEXT_LABELS = [
   {
@@ -31,12 +30,25 @@ export const parseTextLabel = (raw: unknown): TextLabel | null =>
 
 export const MAX_NOTE_LENGTH = 1000;
 
-/**
- * A labeler's clear_violation on one of these tags is a live case, not only a label: the page hands it
- * to the existing report and lookup pages instead of moving on. Which tags belong here is a product
- * decision; Sex Trafficking and Exploitation are the obvious candidates to add.
- */
+/** A clear violation on one of these is a live case, not only a label: the page hands it off. */
 export const HAND_OFF_TAGS: ReadonlySet<string> = new Set(['CSAM', 'Grooming']);
 
 export const needsHandOff = (tag: string, label: TextLabel): boolean =>
   label === 'clear_violation' && HAND_OFF_TAGS.has(tag);
+
+/**
+ * `entity-moderation` sends Clavata a chat as `[<userId>]: <message> | [<userId>]: ...`. The ids say
+ * who wrote it, which the labeler must not see; turn order survives as Speaker A, B, ...
+ */
+export function maskChatSpeakers(text: string): string {
+  const speakers = new Map<string, string>();
+  return text.replace(/(^|\s\|\s)\[(\d+)\]:\s/g, (_, lead: string, id: string) => {
+    if (!speakers.has(id)) speakers.set(id, `Speaker ${speakerName(speakers.size)}`);
+    return `${lead}[${speakers.get(id)}]: `;
+  });
+}
+
+const speakerName = (i: number): string =>
+  i < 26
+    ? String.fromCharCode(65 + i)
+    : `${speakerName(Math.floor(i / 26) - 1)}${speakerName(i % 26)}`;

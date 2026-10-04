@@ -7,9 +7,8 @@ import type { DB as ModeratorDB } from './moderator-db/types';
  * Copies a stratified sample of Clavata "Automated" report hits into the moderator database before
  * `clear-automated-reports` deletes their text at 14 days. The unit is a (report, tag) pair.
  *
- * 🔴 The flagged text moves replica -> moderator DB inside this process and nowhere else. Nothing
- * here returns, logs or throws it: the summary is counts, and `describeSnapshotError` drops the
- * driver's message and detail, which can quote the failing row.
+ * 🔴 Flagged text moves replica -> moderator DB in this process only. The summary is counts. A thrown
+ * driver error CAN quote the row: print errors only through `describeSnapshotError`.
  */
 
 export type ConfidenceBand = 'low' | 'mid' | 'high';
@@ -44,7 +43,8 @@ export const POOL_QUOTAS: Readonly<Record<string, number>> = {
   'Impersonating Civitai Staff': Infinity,
 };
 
-/** The first-labelled wave: 205 pairs, weighted toward the tags where a miss costs most. */
+/** The first-labelled wave, weighted toward the tags where a miss costs most. `Infinity` takes the
+ *  tag's whole pool. */
 export const WAVE_ONE_QUOTAS: Readonly<Record<string, number>> = {
   CSAM: 50,
   Grooming: 50,
@@ -60,7 +60,6 @@ export const DEFAULT_PURGE_DAYS = 90;
 export const confidenceBand = (confidence: number): ConfidenceBand =>
   confidence >= 95 ? 'high' : confidence >= 80 ? 'mid' : 'low';
 
-// Chat is a private conversation; every other entity Clavata scans is published text.
 export const visibilityOf = (entityType: string): Visibility =>
   entityType === 'chat' ? 'private' : 'public';
 
@@ -145,19 +144,28 @@ export function allocate(candidates: readonly SnapshotCandidate[], seed: string)
   return { picks, unknownTags };
 }
 
-// ReportEntity values (`$lib/reports`), so the page can build the existing report and entity links.
-const ENTITY_JOINS = [
+// [report table, fk, ReportEntity] for every report type. Kept here rather than read from
+// `REPORT_ENTITIES`, whose import graph the tsx CLI cannot load; a test holds the two equal. A type
+// missing here would arrive as 'unknown', with no report link.
+export const ENTITY_JOINS = [
+  ['ImageReport', 'imageId', 'image'],
   ['ModelReport', 'modelId', 'model'],
+  ['PostReport', 'postId', 'post'],
+  ['ArticleReport', 'articleId', 'article'],
   ['CommentReport', 'commentId', 'comment'],
   ['CommentV2Report', 'commentV2Id', 'commentV2'],
-  ['PostReport', 'postId', 'post'],
-  ['UserReport', 'userId', 'reportedUser'],
-  ['ArticleReport', 'articleId', 'article'],
-  ['CollectionReport', 'collectionId', 'collection'],
   ['BountyReport', 'bountyId', 'bounty'],
   ['BountyEntryReport', 'bountyEntryId', 'bountyEntry'],
-  ['ChatReport', 'chatId', 'chat'],
+  ['CollectionReport', 'collectionId', 'collection'],
   ['ResourceReviewReport', 'resourceReviewId', 'resourceReview'],
+  ['ComicProjectReport', 'comicProjectId', 'comicProject'],
+  ['Model3DReport', 'model3dId', 'model3d'],
+  ['Model3DReviewReport', 'model3dReviewId', 'model3dReview'],
+  ['AnnouncementReport', 'announcementId', 'announcement'],
+  ['CrucibleReport', 'crucibleId', 'crucible'],
+  ['ChallengeReport', 'challengeId', 'challenge'],
+  ['ChatReport', 'chatId', 'chat'],
+  ['UserReport', 'userId', 'reportedUser'],
 ] as const;
 
 type CandidateRow = {
@@ -242,7 +250,7 @@ export type SnapshotSummary = {
   unknownTags: Record<string, number>;
   perTag: Record<string, { window: number; pool: number; waveOne: number }>;
   perStratum: Record<string, { population: number; pool: number; waveOne: number }>;
-  /** Picked, but the evidence row had no text by the time it was read (purged mid-run). */
+  /** Picked, but retention deleted its ReportAutomated row before the text was read. */
   textMissing: number;
   inserted: number;
   alreadyPresent: number;
@@ -346,7 +354,7 @@ export async function snapshotAutomatedText(
   return summary;
 }
 
-/** Drops the text of items past `purge_after`. Labels and strata stay, for the report. */
+/** Nulls the text only; rows and answers must survive so the counts do. */
 export async function purgeExpiredText(moderator: Kysely<ModeratorDB>, now = new Date()) {
   const result = await moderator
     .updateTable('text_relabel_item')

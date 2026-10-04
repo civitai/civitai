@@ -77,7 +77,7 @@ describe('the schema', () => {
 
 describe('two labelers per item', () => {
   // Decision: at most two labels per item, so a second labeller gives an agreement number rather
-  // than a vote. The cap lives in the trigger because two labelers racing both pass an app count.
+  // than a vote.
   it('refuses a third labeler and keeps the first two', async () => {
     const token = await seedItem();
     expect(await save(1, token)).toEqual({ ok: true, tag: 'CSAM' });
@@ -101,8 +101,7 @@ describe('two labelers per item', () => {
 });
 
 describe('nextItem', () => {
-  // Blinding: the page must not receive confidence, stratum, wave, report or author ids. Anything
-  // added to what the labeler gets changes what this assertion sees.
+  // Blinding: the page must not receive confidence, stratum, wave, report or author ids.
   it('hands the labeler the token, tag, text and content kind, and nothing else', async () => {
     const token = await seedItem();
     expect(await nextItem(db, 1)).toEqual({
@@ -113,7 +112,7 @@ describe('nextItem', () => {
     });
   });
 
-  // Decision: the first 205 are labelled before the rest of the pool is touched.
+  // Decision: wave 1 is labelled before the rest of the pool is touched.
   it('serves every wave-1 item before any wave-2 item', async () => {
     const waveTwo = await Promise.all(Array.from({ length: 10 }, () => seedItem({ wave: 2 })));
     const waveOne = await seedItem({ wave: 1 });
@@ -133,6 +132,19 @@ describe('nextItem', () => {
     expect((await nextItem(db, 1, [skipped]))?.token).toBe(open);
   });
 
+  it('shows a chat with its speakers as letters, not user ids', async () => {
+    await seedItem({ entity_type: 'chat', text_value: '[4411]: hi | [9002]: hey | [4411]: bye' });
+    expect((await nextItem(db, 1))?.text).toBe(
+      '[Speaker A]: hi | [Speaker B]: hey | [Speaker A]: bye'
+    );
+  });
+
+  // "Deleted content" would tell the labeler someone already acted on it.
+  it('names no content kind when the reported entity is gone', async () => {
+    await seedItem({ entity_type: 'unknown' });
+    expect((await nextItem(db, 1))?.entityLabel).toBeNull();
+  });
+
   it('does not serve purged or expired text', async () => {
     await seedItem({ text_value: null });
     await seedItem({ purge_after: new Date('2020-01-01T00:00:00Z') });
@@ -145,11 +157,35 @@ describe('saveAnswer', () => {
     const token = await seedItem({ text_value: null });
     expect(await save(1, token)).toEqual({ ok: false, reason: 'missing' });
   });
+
+  it('refuses an answer to text past purge_after that is not yet purged', async () => {
+    const token = await seedItem({ purge_after: new Date('2020-01-01T00:00:00Z') });
+    expect(await save(1, token)).toEqual({ ok: false, reason: 'missing' });
+  });
+
+  // An edit after a hand-off was made with the report in view; the first hand-off time is what lets
+  // the eval tell that edit from a blind label.
+  it('keeps the first hand-off time through later edits', async () => {
+    const token = await seedItem({ tag: 'CSAM' });
+    await save(1, token, 'borderline');
+    const handedOffAt = async () =>
+      (await db.selectFrom('text_relabel_answer').select('handed_off_at').executeTakeFirstOrThrow())
+        .handed_off_at;
+    expect(await handedOffAt()).toBeNull();
+    await save(1, token, 'clear_violation');
+    expect(await handedOffAt()).not.toBeNull();
+    // Pinned far in the past, so a re-stamp by a later save cannot land on the same instant.
+    const first = new Date('2026-01-01T00:00:00Z');
+    await db.updateTable('text_relabel_answer').set({ handed_off_at: first }).execute();
+    await save(1, token, 'false_positive');
+    await save(1, token, 'clear_violation');
+    expect(new Date(String(await handedOffAt())).toISOString()).toBe(first.toISOString());
+  });
 });
 
 describe('ownHandOffs', () => {
-  // Decision (open, Justin's): a clear violation on CSAM or Grooming text is handed to the existing
-  // report and lookup pages. A labeller's other answers, and other labellers' answers, are not.
+  // Decision: a clear violation on a hand-off tag is linked to the report and lookup pages; other
+  // answers, and other labellers' answers, are not.
   it('lists only this labeler’s clear violations on hand-off tags', async () => {
     const csam = await seedItem({ tag: 'CSAM' });
     const grooming = await seedItem({ tag: 'Grooming' });

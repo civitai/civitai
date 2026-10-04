@@ -567,6 +567,7 @@ export type text_relabel_answer = {
   label: string;
   note: string | null;
   duration_ms: number | null;
+  handed_off_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 };

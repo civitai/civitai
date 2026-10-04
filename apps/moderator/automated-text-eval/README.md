@@ -17,7 +17,8 @@ moderation decision or Clavata.
 2. Run `pnpm run db:moderator:pull`, then `pnpm run db:moderator:generate`. The diff should be empty:
    the models in `schema.prisma` were written to match this SQL.
 3. On `/admin`, grant `/audit/text-relabel` to the labeller. Until then only `moderator:admin` can
-   open it.
+   open it. The hand-off links (below) open `/reports`, `/retool/user-lookup` and `/retool/chat-audit`;
+   a labeller without those grants is shown the report id to pass on instead of the links.
 4. Run the snapshot (below), dry run first.
 
 ## The snapshot
@@ -27,9 +28,10 @@ copies a pool of (report, tag) pairs from the replica into `text_relabel_item` b
 
 - **Unit:** a (report, tag) pair. A report flagged with three tags can be up to three items, each
   judged against one tag, so precision comes out per tag.
-- **Pool:** every CSAM pair in the window, plus up to a fixed number per other tag (`POOL_QUOTAS`).
-- **Wave 1:** the first 205 to label (`WAVE_ONE_QUOTAS`). The page serves all of wave 1 before any of
-  wave 2.
+- **Pool:** every CSAM and staff-impersonation pair in the window, plus up to a fixed number per
+  other tag (`POOL_QUOTAS`).
+- **Wave 1:** the first ~200 to label plus every staff-impersonation pair (`WAVE_ONE_QUOTAS`). The
+  page serves all of wave 1 before any of wave 2.
 - **Strata:** within a tag, picks are spread evenly over Clavata confidence band and public vs
   private (chat), and each item records its stratum's population so totals can be re-weighted.
 - **Draw:** seeded. The same seed over the same window draws the same pairs.
@@ -42,7 +44,7 @@ pnpm exec tsx --env-file=.env apps/moderator/automated-text-eval/snapshot.ts --b
 # then the same with --write; --purge-days sets purge_after (default 90)
 ```
 
-It needs `DATABASE_REPLICA_URL` and `MODERATOR_DATABASE_URL` (with `?sslmode=no-verify` for the cluster).
+It needs `DATABASE_REPLICA_URL` and `MODERATOR_DATABASE_URL`, set up as for `removal-label-eval/build-set.ts`.
 
 🔴 **The CLI prints counts only.** The text moves replica to moderator database inside the process. A
 database error is printed by its code and constraint, never its message, because Postgres quotes the
@@ -63,7 +65,10 @@ It sets `text_value` to null and keeps the row and its answers, so the counts su
 ## Blinding
 
 The labeller sees the text, the one tag and the kind of content (comment, chat, model…). Not
-Clavata's confidence, the stratum, the wave, the report or author id, or another labeller's answer.
+Clavata's confidence, the stratum, the wave, the report or author id, or another labeller's answer,
+until they mark a hand-off tag a clear violation (see Hand-off). A chat reaches Clavata with each
+message prefixed by its author's user id; the page shows those as Speaker A, B, … instead. When the
+reported content has since been deleted, the kind of content is not shown.
 Items are addressed by a random token, and each labeller walks them in a different fixed order. A
 database trigger caps each item at two labellers, so a second labeller can be added later for an
 agreement number.
@@ -73,5 +78,10 @@ agreement number.
 A `clear_violation` on a CSAM or Grooming item is a case, not only a label. After saving one, the
 page links to the Automated report's own action view (`/reports/<type>?report=<id>`, which opens a
 single report whatever its status), to the content, and to the author in User Lookup, which shows
-their CSAM reports and account actions. The page lists every such answer of the labeller's, so a case
-is still one click away after the queue moves on.
+their CSAM reports and account actions. Each link is shown only if the labeller's grants open it;
+otherwise the page names the report id to pass to someone who can. When the content has been
+deleted, no report page can show the report, so only the author link remains. The page lists the
+labeller's 20 most recent such answers, so a case is still reachable after the queue moves on.
+
+The answer records when it first handed a case off (`handed_off_at`). The report is visible from
+that moment, so an edit made later (`updated_at` after it) is not a blind label.

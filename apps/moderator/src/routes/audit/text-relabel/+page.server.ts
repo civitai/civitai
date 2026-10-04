@@ -1,7 +1,13 @@
 import { error, fail } from '@sveltejs/kit';
+import { sql } from '@civitai/db/kysely';
 import type { Actions, PageServerLoad } from './$types';
-import { requireAccess } from '$lib/server/access';
+import type { SessionUser } from '@civitai/auth';
+import { canAccess, requireAccess } from '$lib/server/access';
+import { civitaiLinkUrl } from '$lib/server/civitai-url';
+import { dbRead } from '$lib/server/db';
 import { getModeratorDb } from '$lib/server/moderator-db';
+import { CONTEXT_ENTITIES, reportContextUrl } from '$lib/server/reports.service';
+import { resolveHandOffs } from '$lib/server/text-relabel-hand-off';
 import {
   labelerProgress,
   lastAnsweredToken,
@@ -9,12 +15,10 @@ import {
   ownAnswer,
   ownHandOffs,
   saveAnswer,
+  type HandOffItem,
 } from '$lib/server/text-relabel.service';
 import { MAX_NOTE_LENGTH, needsHandOff, parseTextLabel } from '$lib/automated-text/labels';
-
-// Blind relabel of Clavata "Automated" text hits. The labeler sees the text, the one tag it is
-// judged against and the kind of content, nothing else, until they call a hand-off tag a clear
-// violation; then the report, the content and the author are linked so the case is not a dead end.
+import type { ReportEntity } from '$lib/reports';
 
 const MAX_SKIPS = 100;
 
@@ -33,6 +37,26 @@ function parseSkips(raw: string | null): string[] {
     .slice(-MAX_SKIPS);
 }
 
+const CONTEXT = new Set<string>(CONTEXT_ENTITIES);
+
+async function contextUrlFromMain(item: HandOffItem): Promise<string | null> {
+  if (!item.entityId || !CONTEXT.has(item.entityType)) return null;
+  const { rows } = await sql<{ url: string | null }>`
+    SELECT ${reportContextUrl(
+      item.entityType as ReportEntity,
+      sql<number>`${item.entityId}::int`
+    )} AS url
+  `.execute(dbRead);
+  return rows[0]?.url ?? null;
+}
+
+const handOffsFor = (user: SessionUser | null | undefined, items: HandOffItem[]) =>
+  resolveHandOffs(items, {
+    civitaiUrl: civitaiLinkUrl(),
+    canOpen: (path) => canAccess(user ?? null, path),
+    contextUrl: contextUrlFromMain,
+  });
+
 export const load: PageServerLoad = async ({ locals, url }) => {
   requireAccess(locals.user, url.pathname);
   if (!locals.user) error(401, 'Not signed in');
@@ -41,13 +65,16 @@ export const load: PageServerLoad = async ({ locals, url }) => {
   const pinnedToken = asToken(url.searchParams.get('item'));
   const skipped = parseSkips(url.searchParams.get('skip'));
 
-  const [pinned, progress, lastToken, handOffs] = await Promise.all([
+  const [pinned, progress, lastToken, handOffItems] = await Promise.all([
     pinnedToken ? ownAnswer(db, labelerId, pinnedToken) : Promise.resolve(null),
     labelerProgress(db, labelerId),
     lastAnsweredToken(db, labelerId),
     ownHandOffs(db, labelerId),
   ]);
-  const item = pinned ?? (await nextItem(db, labelerId, skipped));
+  const [item, handOffs] = await Promise.all([
+    pinned ?? nextItem(db, labelerId, skipped),
+    handOffsFor(locals.user, handOffItems),
+  ]);
 
   return {
     item: item && {
@@ -84,7 +111,8 @@ export const actions: Actions = {
       return fail(400, { error: `Keep the note under ${MAX_NOTE_LENGTH} characters`, token });
 
     const durationMs = Number(form.get('durationMs')) || null;
-    const result = await saveAnswer(getModeratorDb(), {
+    const db = getModeratorDb();
+    const result = await saveAnswer(db, {
       labelerId,
       token,
       label,
@@ -99,6 +127,11 @@ export const actions: Actions = {
             : 'That item no longer exists, so your answer was not saved.',
         token,
       });
-    return { success: true, handOff: needsHandOff(result.tag, label) ? token : null };
+    // Returned whole rather than looked up from page data: a save from a pinned item navigates
+    // away, and the page keeps this result across that navigation.
+    const handOff = needsHandOff(result.tag, label)
+      ? (await handOffsFor(locals.user, await ownHandOffs(db, labelerId, { token })))[0] ?? null
+      : null;
+    return { success: true, handOff };
   },
 };

@@ -125,7 +125,10 @@ const CONTEXT_RESOLVERS: Partial<Record<ReportEntity, ContextResolver>> = {
  *  and then left unselected by the queries that render links. */
 export const CONTEXT_ENTITIES = Object.keys(CONTEXT_RESOLVERS) as ReportEntity[];
 
-function reportContextUrl(type: ReportEntity, entityId: ReturnType<typeof sql<number | null>>) {
+export function reportContextUrl(
+  type: ReportEntity,
+  entityId: ReturnType<typeof sql<number | null>>
+) {
   return CONTEXT_RESOLVERS[type]?.(entityId) ?? sql<string | null>`null::text`;
 }
 

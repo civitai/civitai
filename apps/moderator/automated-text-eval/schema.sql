@@ -1,10 +1,5 @@
 -- Automated text relabel: a blind, human-labelled sample of Clavata "Automated" report hits.
--- MODERATOR database (internal_tools), beside the removal-label relabel tables.
---
--- Applied BY HAND. Then `pnpm run db:moderator:pull` and `pnpm run db:moderator:generate` to confirm
--- the hand-written models in schema.prisma match. Idempotent, so re-running it is harmless.
---
--- No foreign keys into the Civitai database: report, entity and user ids are plain values.
+-- MODERATOR database (internal_tools). Applied by hand; idempotent. Apply order: README.md.
 
 CREATE TABLE IF NOT EXISTS text_relabel_item (
   id              bigserial PRIMARY KEY,
@@ -12,12 +7,11 @@ CREATE TABLE IF NOT EXISTS text_relabel_item (
   token           uuid NOT NULL DEFAULT gen_random_uuid() UNIQUE,
   batch           text NOT NULL,
   report_id       integer NOT NULL,
-  -- The one Clavata tag the labeler judges the text against. A report with three tags can hold up to
-  -- three items, one per tag, so precision is measured per tag.
+  -- The one Clavata tag the labeler judges the text against.
   tag             text NOT NULL,
   -- 1 is labelled first; 2 is the rest of the pool, served only once wave 1 is exhausted.
   wave            smallint NOT NULL CHECK (wave IN (1, 2)),
-  -- ReportEntity value from the moderator app (`commentV2`, `chat`, ...), for the hand-off links.
+  -- ReportEntity value (`$lib/reports`) or 'unknown', for the hand-off links.
   entity_type     text NOT NULL,
   entity_id       integer,
   -- Eval split group key: one author's texts never sit on both sides of a split. Never shown.
@@ -46,6 +40,9 @@ CREATE TABLE IF NOT EXISTS text_relabel_answer (
   label           text NOT NULL CHECK (label IN ('clear_violation', 'borderline', 'false_positive', 'cannot_tell')),
   note            text CHECK (char_length(note) <= 1000),
   duration_ms     integer,
+  -- First time this answer handed the case off. The page then links the report, so an edit after it
+  -- (updated_at later than this) was not made blind.
+  handed_off_at   timestamptz,
   created_at      timestamptz NOT NULL DEFAULT now(),
   updated_at      timestamptz NOT NULL DEFAULT now(),
   UNIQUE (item_id, labeler_id)

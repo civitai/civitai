@@ -1,23 +1,44 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB as ModeratorDB } from './moderator-db/types';
-import { HAND_OFF_TAGS, type TextLabel } from '$lib/automated-text/labels';
+import {
+  HAND_OFF_TAGS,
+  maskChatSpeakers,
+  needsHandOff,
+  type TextLabel,
+} from '$lib/automated-text/labels';
 import type { HandOffSource } from '$lib/automated-text/hand-off';
 import { reportEntityLabels, type ReportEntity } from '$lib/reports';
 
-// Blind relabel of Clavata text hits. What a labeler can reach is the token, the text, the one tag it
-// is judged against and the kind of content it came from. Confidence, stratum, wave, report and
-// author ids and the other labeler's answer are what the blinding hides, until a hand-off.
+// Blind relabel: a labeler gets the token, text, tag and content kind. Confidence, stratum, wave,
+// report/author ids and other labelers' answers stay hidden until a hand-off.
 
-export type TextRelabelItem = { token: string; tag: string; text: string; entityLabel: string };
+export type TextRelabelItem = {
+  token: string;
+  tag: string;
+  text: string;
+  /** Null when the reported entity is gone: "deleted" would tell the labeler someone acted on it. */
+  entityLabel: string | null;
+};
 
 const answerCount = sql`(SELECT count(*) FROM text_relabel_answer a WHERE a.item_id = i.id)`;
 
-const entityLabel = (type: string) => reportEntityLabels[type as ReportEntity] ?? 'Unknown content';
+function toItem(row: {
+  token: string;
+  tag: string;
+  text_value: string;
+  entity_type: string;
+}): TextRelabelItem {
+  return {
+    token: row.token,
+    tag: row.tag,
+    text: row.entity_type === 'chat' ? maskChatSpeakers(row.text_value) : row.text_value,
+    entityLabel: reportEntityLabels[row.entity_type as ReportEntity] ?? null,
+  };
+}
 
 /**
- * The next item for this labeler. Wave 1 is served before any of wave 2; within a wave the order is
- * a hash of item and labeler, so two labelers do not walk the set in the same sequence. Skips items
- * already holding two answers and items whose text has been purged.
+ * Wave 1 before wave 2; within a wave, ordered by a hash of item and labeler so two labelers do not
+ * walk the set in the same sequence.
  */
 export async function nextItem(
   db: Kysely<ModeratorDB>,
@@ -46,12 +67,7 @@ export async function nextItem(
   if (skip.length) query = query.where('i.token', 'not in', skip);
   const row = await query.executeTakeFirst();
   if (!row || row.text_value === null) return null;
-  return {
-    token: row.token,
-    tag: row.tag,
-    text: row.text_value,
-    entityLabel: entityLabel(row.entity_type),
-  };
+  return toItem({ ...row, text_value: row.text_value });
 }
 
 /** The labeler's own answer to one item, for editing it. Never anyone else's. */
@@ -71,10 +87,7 @@ export async function ownAnswer(
     .executeTakeFirst();
   if (!row || row.text_value === null) return null;
   return {
-    token: row.token,
-    tag: row.tag,
-    text: row.text_value,
-    entityLabel: entityLabel(row.entity_type),
+    ...toItem({ ...row, text_value: row.text_value }),
     label: row.label as TextLabel,
     note: row.note,
   };
@@ -100,7 +113,8 @@ export type SaveResult = { ok: true; tag: string } | { ok: false; reason: 'full'
 
 /**
  * Inserts or replaces this labeler's answer. `full` when two OTHER labelers already answered: the
- * database trigger refuses a third. A purged item is `missing`, since its text can no longer be seen.
+ * database trigger refuses a third. Purged or expired text is `missing`, since it can no longer be
+ * shown.
  */
 export async function saveAnswer(
   db: Kysely<ModeratorDB>,
@@ -118,8 +132,10 @@ export async function saveAnswer(
     .select(['id', 'tag'])
     .where('token', '=', token)
     .where('text_value', 'is not', null)
+    .where('purge_after', '>', sql<Date>`now()`)
     .executeTakeFirst();
   if (!item) return { ok: false, reason: 'missing' };
+  const handedOffAt = needsHandOff(item.tag, label) ? sql<Date>`now()` : null;
   try {
     await db
       .insertInto('text_relabel_answer')
@@ -129,10 +145,18 @@ export async function saveAnswer(
         label,
         note,
         duration_ms: durationMs,
+        handed_off_at: handedOffAt,
       })
-      // duration_ms keeps the first answer's time on item, as on the image relabel page.
+      // duration_ms keeps the first answer's time: a quick correction must not read as a
+      // rubber-stamp. handed_off_at keeps the first hand-off: any later edit was made after the
+      // labeler could see the report, so it is no longer a blind label.
       .onConflict((oc) =>
-        oc.columns(['item_id', 'labeler_id']).doUpdateSet({ label, note, updated_at: sql`now()` })
+        oc.columns(['item_id', 'labeler_id']).doUpdateSet({
+          label,
+          note,
+          updated_at: sql`now()`,
+          handed_off_at: sql`coalesce(text_relabel_answer.handed_off_at, excluded.handed_off_at)`,
+        })
       )
       .executeTakeFirst();
     return { ok: true, tag: item.tag };
@@ -176,16 +200,14 @@ export async function labelerProgress(
 
 export type HandOffItem = HandOffSource & { token: string; tag: string; answeredAt: Date };
 
-/**
- * This labeler's clear violations on hand-off tags, newest first, so a case judged real stays one
- * click from the report and the author after the page has moved on, and after a reload.
- */
+/** This labeler's clear violations on hand-off tags, newest first, so a case stays reachable after
+ *  the queue moves on. */
 export async function ownHandOffs(
   db: Kysely<ModeratorDB>,
   labelerId: number,
-  limit = 20
+  opts: { limit?: number; token?: string } = {}
 ): Promise<HandOffItem[]> {
-  const rows = await db
+  let query = db
     .selectFrom('text_relabel_answer as a')
     .innerJoin('text_relabel_item as i', 'i.id', 'a.item_id')
     .select([
@@ -202,8 +224,9 @@ export async function ownHandOffs(
     .where('i.tag', 'in', [...HAND_OFF_TAGS])
     .orderBy('a.updated_at', 'desc')
     .orderBy('a.id', 'desc')
-    .limit(limit)
-    .execute();
+    .limit(opts.limit ?? 20);
+  if (opts.token) query = query.where('i.token', '=', opts.token);
+  const rows = await query.execute();
   return rows.map((r) => ({
     token: r.token,
     tag: r.tag,

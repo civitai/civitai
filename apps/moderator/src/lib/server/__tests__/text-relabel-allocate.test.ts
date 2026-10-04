@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { REPORT_ENTITIES } from '../report-entities';
 import {
   allocate,
+  ENTITY_JOINS,
   POOL_QUOTAS,
   WAVE_ONE_QUOTAS,
   waterFill,
@@ -38,8 +40,8 @@ describe('waterFill', () => {
 });
 
 describe('allocate', () => {
-  // Decision (B6 pool, 2026-10-03): every CSAM-tagged pair the window holds is kept. It is the rarest
-  // tag (~35 a day) and the one whose precision matters most; a quota here would thin it for nothing.
+  // Decision: every CSAM pair the window holds is kept; a quota would thin the tag whose precision
+  // matters most.
   it('keeps every CSAM pair in the pool', () => {
     const { picks } = allocate(pairs('CSAM', 700), 'seed');
     expect(count(picks, (p) => p.tag === 'CSAM')).toBe(700);
@@ -50,8 +52,8 @@ describe('allocate', () => {
     expect(count(picks, (p) => p.tag === 'Grooming')).toBe(POOL_QUOTAS.Grooming);
   });
 
-  // The first-labelled set is 205: CSAM 50, Grooming 50, Sex Trafficking 30, Exploitation 25,
-  // Illegal Trade 25, NSFW 20, and all five staff impersonations.
+  // Wave 1 is CSAM 50, Grooming 50, Sex Trafficking 30, Exploitation 25, Illegal Trade 25, NSFW 20,
+  // and every staff impersonation (five in this fixture).
   it('marks the first wave per tag, inside the pool', () => {
     const all = [
       ...pairs('CSAM', 500),
@@ -120,5 +122,12 @@ describe('allocate', () => {
     );
     expect(picks.map((p) => p.tag)).toEqual(['CSAM', 'CSAM']);
     expect(unknownTags).toEqual({ 'Brand New Label': 3 });
+  });
+});
+
+describe('ENTITY_JOINS', () => {
+  it('lists exactly the report types the app knows', () => {
+    const app = REPORT_ENTITIES.map((e) => [e.reportTable, e.fk, e.type].join(':')).sort();
+    expect(ENTITY_JOINS.map((j) => j.join(':')).sort()).toEqual(app);
   });
 });

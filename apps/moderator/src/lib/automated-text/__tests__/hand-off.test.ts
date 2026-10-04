@@ -1,41 +1,92 @@
 import { describe, expect, it } from 'vitest';
 import { handOffLinks } from '../hand-off';
-import { needsHandOff, parseTextLabel } from '../labels';
+import { maskChatSpeakers, needsHandOff, parseTextLabel } from '../labels';
+import { resolveHandOffs } from '$lib/server/text-relabel-hand-off';
+import type { HandOffItem } from '$lib/server/text-relabel.service';
 
 const SITE = 'https://civitai.example';
+
+const item = (over: Partial<HandOffItem> = {}): HandOffItem => ({
+  token: 't',
+  tag: 'CSAM',
+  answeredAt: new Date('2026-10-04T00:00:00Z'),
+  reportId: 42,
+  entityType: 'commentV2',
+  entityId: 7,
+  authorId: 9,
+  ...over,
+});
 
 describe('handOffLinks', () => {
   // The page must never be a dead end for a real case: every hand-off opens the Automated report
   // itself, where a moderator can action it whatever its status.
-  it('opens the report, the comment and the author for a comment hit', () => {
+  it('opens the report, the comment in its thread and the author', () => {
     expect(
-      handOffLinks(SITE, { reportId: 42, entityType: 'commentV2', entityId: 7, authorId: 9 })
+      handOffLinks(SITE, { ...item(), contextUrl: '/posts/3?highlight=7' }).map((l) => l.href)
     ).toEqual([
-      { label: 'Open the report', href: '/reports/comment?report=42', external: false },
-      { label: 'Open the content', href: `${SITE}/comments/v2/7`, external: true },
-      { label: 'Author in User Lookup', href: expect.stringContaining('9'), external: false },
+      '/reports/comment?report=42',
+      `${SITE}/posts/3?highlight=7`,
+      expect.stringContaining('9'),
     ]);
   });
 
-  it('opens a chat in Chat Audit, since a chat has no page on the site', () => {
+  // A legacy model comment has no page of its own; without its context URL it would get no content
+  // link at all.
+  it('links a legacy model comment through its context URL', () => {
     const links = handOffLinks(SITE, {
-      reportId: 1,
-      entityType: 'chat',
-      entityId: 5,
-      authorId: null,
+      ...item({ entityType: 'comment' }),
+      contextUrl: '/models/1?dialog=commentThread&highlight=7',
     });
+    expect(links.find((l) => l.label === 'Open the content')?.href).toBe(
+      `${SITE}/models/1?dialog=commentThread&highlight=7`
+    );
+  });
+
+  it('opens a chat in Chat Audit, since a chat has no page on the site', () => {
+    const links = handOffLinks(SITE, item({ entityType: 'chat', entityId: 5, authorId: null }));
     expect(links).toEqual([
-      { label: 'Open the report', href: '/reports/chat?report=1', external: false },
+      { label: 'Open the report', href: '/reports/chat?report=42', external: false },
       { label: 'Open the content', href: '/retool/chat-audit/chats?chat=5', external: false },
     ]);
   });
 
-  it('still offers the author when the entity type is unknown', () => {
+  it('still offers the author when the entity is gone', () => {
     expect(
-      handOffLinks(SITE, { reportId: 1, entityType: 'unknown', entityId: null, authorId: 3 }).map(
+      handOffLinks(SITE, item({ entityType: 'unknown', entityId: null, authorId: 3 })).map(
         (l) => l.label
       )
     ).toEqual(['Author in User Lookup']);
+  });
+});
+
+describe('resolveHandOffs', () => {
+  const resolve = (canOpen: (path: string) => boolean, over: Partial<HandOffItem> = {}) =>
+    resolveHandOffs([item(over)], {
+      civitaiUrl: SITE,
+      canOpen,
+      contextUrl: async () => '/posts/3?highlight=7',
+    }).then((r) => r[0]);
+
+  // A labeller granted only this page would otherwise be handed links that all end at a 403.
+  it('names the links this viewer cannot open instead of offering them', async () => {
+    const r = await resolve(() => false);
+    expect(r.links.map((l) => l.label)).toEqual(['Open the content']);
+    expect(r.blocked).toEqual(['Open the report', 'Author in User Lookup']);
+    expect(r.reportId).toBe(42);
+  });
+
+  it('offers every link to a viewer with the grants', async () => {
+    const r = await resolve(() => true);
+    expect(r.links.map((l) => l.label)).toEqual([
+      'Open the report',
+      'Open the content',
+      'Author in User Lookup',
+    ]);
+    expect(r.blocked).toEqual([]);
+  });
+
+  it('flags a report whose content is gone', async () => {
+    expect((await resolve(() => true, { entityType: 'unknown' })).contentGone).toBe(true);
   });
 });
 
@@ -53,5 +104,17 @@ describe('labels', () => {
     expect(needsHandOff('Grooming', 'clear_violation')).toBe(true);
     expect(needsHandOff('CSAM', 'borderline')).toBe(false);
     expect(needsHandOff('NSFW', 'clear_violation')).toBe(false);
+  });
+});
+
+describe('maskChatSpeakers', () => {
+  it('replaces each author id with a letter in order of first appearance', () => {
+    expect(maskChatSpeakers('[30]: a | [12]: b | [30]: c | [7]: d')).toBe(
+      '[Speaker A]: a | [Speaker B]: b | [Speaker A]: c | [Speaker C]: d'
+    );
+  });
+
+  it('leaves a bracketed number inside a message alone', () => {
+    expect(maskChatSpeakers('[30]: see [2]: below')).toBe('[Speaker A]: see [2]: below');
   });
 });

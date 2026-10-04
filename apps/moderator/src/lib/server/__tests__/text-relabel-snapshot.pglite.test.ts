@@ -12,6 +12,7 @@ import {
   purgeExpiredText,
   snapshotAutomatedText,
 } from '../text-relabel-snapshot';
+import { REPORT_ENTITIES } from '../report-entities';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -27,17 +28,9 @@ CREATE TABLE "ReportAutomated" (
   id serial PRIMARY KEY, "reportId" int NOT NULL UNIQUE, metadata jsonb NOT NULL DEFAULT '{}',
   "createdAt" timestamp NOT NULL DEFAULT now()
 );
-CREATE TABLE "ModelReport" ("reportId" int NOT NULL, "modelId" int NOT NULL);
-CREATE TABLE "CommentReport" ("reportId" int NOT NULL, "commentId" int NOT NULL);
-CREATE TABLE "CommentV2Report" ("reportId" int NOT NULL, "commentV2Id" int NOT NULL);
-CREATE TABLE "PostReport" ("reportId" int NOT NULL, "postId" int NOT NULL);
-CREATE TABLE "UserReport" ("reportId" int NOT NULL, "userId" int NOT NULL);
-CREATE TABLE "ArticleReport" ("reportId" int NOT NULL, "articleId" int NOT NULL);
-CREATE TABLE "CollectionReport" ("reportId" int NOT NULL, "collectionId" int NOT NULL);
-CREATE TABLE "BountyReport" ("reportId" int NOT NULL, "bountyId" int NOT NULL);
-CREATE TABLE "BountyEntryReport" ("reportId" int NOT NULL, "bountyEntryId" int NOT NULL);
-CREATE TABLE "ChatReport" ("reportId" int NOT NULL, "chatId" int NOT NULL);
-CREATE TABLE "ResourceReviewReport" ("reportId" int NOT NULL, "resourceReviewId" int NOT NULL);
+${REPORT_ENTITIES.map(
+  (e) => `CREATE TABLE "${e.reportTable}" ("reportId" int NOT NULL, "${e.fk}" int NOT NULL);`
+).join('\n')}
 `;
 
 const SECRET = 'flagged-text-that-must-never-be-printed';
@@ -91,7 +84,9 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await mainPg.exec(
-    `TRUNCATE "Report", "ReportAutomated", "ModelReport", "CommentV2Report", "ChatReport", "UserReport"`
+    `TRUNCATE "Report", "ReportAutomated", ${REPORT_ENTITIES.map((e) => `"${e.reportTable}"`).join(
+      ', '
+    )}`
   );
   await modPg.exec('TRUNCATE text_relabel_item RESTART IDENTITY CASCADE');
 });
@@ -137,6 +132,18 @@ describe('fetchCandidates', () => {
         entityId: 555,
       },
     ]);
+  });
+
+  // Every report type the app knows, not a hand-kept subset: a type missing here would arrive as
+  // 'unknown', and its hand-off would lose the report link.
+  it('resolves report types beyond the common text ones', async () => {
+    await seedHit(1, [{ tag: 'CSAM', confidence: '70' }], {
+      table: 'ChallengeReport',
+      col: 'challengeId',
+      id: 9,
+    });
+    const { candidates } = await fetchCandidates(main);
+    expect(candidates.map((c) => [c.entityType, c.entityId])).toEqual([['challenge', 9]]);
   });
 
   // Clavata stores confidence as a string. Taking the max of the strings ranks '99' above '100',
