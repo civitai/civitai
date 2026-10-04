@@ -131,8 +131,16 @@ const INSIGHT_AXIS_ATTRS = ['insight.role', 'insight.styleFamily'];
  * that would make it readable (neither approved), is at the projection site in
  * ../models.search-index.ts.
  *
- * 🔴 Three assertions below pin all three absences. If one of them is in your way, making this
- * field readable is the decision you are taking — it is not an obstacle to route around.
+ * 🔴 All three absences are pinned below, across TWO cases rather than one — the
+ * filterable and sortable absences in `keeps the winning version id OFF …`, the displayed
+ * absence in the withheld-ledger sweep, which reaches it by iterating this constant alongside
+ * the other attributes. A fourth assertion, the write-only ledger in the declared/projected
+ * pairing case, is what keeps the field PRESENT in the document while absent from the lists.
+ * No count is given for "the assertions" because that is the kind of restated figure this
+ * file has already had to correct twice; the cases are named instead.
+ *
+ * If one of them is in your way, making this field readable is the decision you are taking —
+ * it is not an obstacle to route around.
  */
 const INSIGHT_WRITE_ONLY_ATTR = 'insight.modelVersionId';
 
