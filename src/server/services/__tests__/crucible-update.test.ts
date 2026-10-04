@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { modelFlagsFindMany } from '~/server/services/__tests__/fixtures/model-flags-find-many';
 import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { dbMock, loggingMock } from '~/__tests__/mocks';
 import {
@@ -463,16 +464,10 @@ describe('updateCrucible — while upcoming', () => {
 
 describe('updateCrucible — required models unsuitable for mature content', () => {
   const R = 1 | 2 | 4;
-  const flaggedModel = { model: { minor: true, sfwOnly: false } };
   /** Version 12 is flagged; the media-type check's query gets nothing back. */
   const withFlaggedVersion12 = () =>
     modelVersionFindMany.mockImplementation(
-      async ({ select, where }: { select: { model?: unknown }; where: { id: { in: number[] } } }) =>
-        select.model
-          ? where.id.in.map((id) =>
-              id === 12 ? flaggedModel : { model: { minor: false, sfwOnly: false } }
-            )
-          : []
+      modelFlagsFindMany((id) => ({ minor: id === 12, sfwOnly: false }))
     );
 
   it('refuses raising the content level to R+ while a flagged model is required', async () => {

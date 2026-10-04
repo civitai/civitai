@@ -14,6 +14,7 @@ type Props = {
   crucibleName: string;
   sessionVotes: number;
   onlyOwnEntries: boolean;
+  votesUsedUp: boolean;
 };
 
 export function CrucibleJudgingDoneState({
@@ -21,6 +22,7 @@ export function CrucibleJudgingDoneState({
   crucibleName,
   sessionVotes,
   onlyOwnEntries,
+  votesUsedUp,
 }: Props) {
   const browsingLevel = useBrowsingLevelDebounced();
   const { data, isLoading } = trpc.crucible.getJudgingSuggestions.useQuery(
@@ -39,12 +41,21 @@ export function CrucibleJudgingDoneState({
         )}
       </div>
       <Title order={2} className="mb-2 text-white">
-        {onlyOwnEntries ? 'Nothing for you to judge yet' : "You've used all your votes here"}
+        {onlyOwnEntries
+          ? 'Nothing for you to judge yet'
+          : votesUsedUp
+          ? "You've used all your votes here"
+          : 'Nothing to judge right now'}
       </Title>
       {onlyOwnEntries ? (
         <Text c="dimmed" mb="xl">
           You&apos;re never shown your own entries, so judging opens for you once at least 2 other
           creators have entered.
+        </Text>
+      ) : !votesUsedUp ? (
+        <Text c="dimmed" mb="xl">
+          There are no pairs for you to judge right now. Some entries may be hidden by your content
+          settings, and new entries open new pairs until the crucible ends.
         </Text>
       ) : (
         <Stack gap={4} mb="xl" align="center">

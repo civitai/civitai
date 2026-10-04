@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { modelFlagsFindMany } from '~/server/services/__tests__/fixtures/model-flags-find-many';
 import {
   CrucibleIngestionStatus,
   CrucibleStatus,
@@ -452,12 +453,7 @@ describe('createCrucible — required models unsuitable for mature content', () 
   const PG13 = 1 | 2;
   /** Version 123 + i carries models[i]; the media-type check's query gets []. */
   const withModels = (...models: { minor: boolean; sfwOnly: boolean }[]) =>
-    modelVersionFindMany.mockImplementation(
-      async ({ select, where }: { select: { model?: unknown }; where: { id: { in: number[] } } }) =>
-        select.model
-          ? where.id.in.flatMap((id) => (models[id - 123] ? [{ model: models[id - 123] }] : []))
-          : []
-    );
+    modelVersionFindMany.mockImplementation(modelFlagsFindMany((id) => models[id - 123]));
 
   it.each([
     ['minor', { minor: true, sfwOnly: false }],

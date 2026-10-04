@@ -65,7 +65,11 @@ import {
   crucibleListSelect,
   hasEntryImage,
 } from '~/server/selectors/crucible.selector';
-import { draftImageWhere, publishedImageWhere } from '~/server/selectors/image.selector';
+import {
+  CRUCIBLE_ENTRY_DRAFT_METADATA_KEY,
+  draftImageWhere,
+  publishedImageWhere,
+} from '~/server/selectors/image.selector';
 import {
   getCrucibleJudgingConfig,
   recordSessionVote,
@@ -1329,8 +1333,8 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
 };
 
 /**
- * Entries must be published images, so media added from inside the submit modal goes into a
- * published post first and becomes enterable once its scan settles.
+ * Media added from inside the submit modal goes into its own unpublished post, marked so the picker
+ * still lists it in a later session. Entering the image publishes the post.
  */
 export const createCrucibleEntryPost = async ({
   crucibleId,
@@ -1369,10 +1373,10 @@ export const createCrucibleEntryPost = async ({
     throw throwBadRequestError('This crucible is not accepting entries');
   if (crucible.userId === userId) throw throwBadRequestError(CANNOT_ENTER_OWN_CRUCIBLE);
 
-  // Unpublished until an image in it is entered: adding media is not entering it.
   const post = await createPost({
     userId,
     title: getCruciblePublishableName(crucible) ?? undefined,
+    metadata: { [CRUCIBLE_ENTRY_DRAFT_METADATA_KEY]: true },
   });
   return { id: post.id };
 };
@@ -2320,7 +2324,7 @@ export const getJudgingProgress = async ({
   )
     throw throwNotFoundError('Crucible not found');
   if (crucible.status !== CrucibleStatus.Active || (crucible.endAt && crucible.endAt <= new Date()))
-    return { remainingPairs: 0 };
+    return { remainingPairs: 0, votesUsedUp: false };
 
   const visibleImage = visibleEntryImageSql(
     crucible.nsfwLevel,
@@ -2339,14 +2343,15 @@ export const getJudgingProgress = async ({
     sysRedis.sMembers(getVotedPairsKey(crucibleId, userId)),
   ]);
 
-  return {
-    remainingPairs: countRemainingPairs({
-      entryIds: entries.map(({ id }) => id),
-      judgeEntryVotes: (judgeEntryVotes ?? {}) as Record<string, string>,
-      votedPairKeys,
-      maxVotesPerEntry: CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
-    }),
-  };
+  const remainingPairs = countRemainingPairs({
+    entryIds: entries.map(({ id }) => id),
+    judgeEntryVotes: (judgeEntryVotes ?? {}) as Record<string, string>,
+    votedPairKeys,
+    maxVotesPerEntry: CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
+  });
+  // Fewer than two visible entries also counts zero pairs, but that is the browsing level
+  // hiding entries, not this judge's votes running out.
+  return { remainingPairs, votesUsedUp: remainingPairs === 0 && entries.length >= 2 };
 };
 
 type RatedEntry = EntryForJudging & { votes: number; judgeVotes: number };

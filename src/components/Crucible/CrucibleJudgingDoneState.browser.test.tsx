@@ -27,19 +27,22 @@ vi.mock('~/components/HiddenPreferences/useApplyHiddenPreferences', async (impor
 
 const { CrucibleJudgingDoneState } = await import('~/components/Crucible/CrucibleJudgingDoneState');
 
-const render = (props: { sessionVotes?: number; onlyOwnEntries?: boolean } = {}) =>
+const render = (
+  props: { sessionVotes?: number; onlyOwnEntries?: boolean; votesUsedUp?: boolean } = {}
+) =>
   renderWithProviders(
     <CrucibleJudgingDoneState
       crucibleId={1}
       crucibleName="Test Crucible"
       sessionVotes={props.sessionVotes ?? 0}
       onlyOwnEntries={props.onlyOwnEntries ?? false}
+      votesUsedUp={props.votesUsedUp ?? false}
     />
   );
 
 describe('CrucibleJudgingDoneState', () => {
   test('says the judge is done because of the per-judge vote limit, naming it', async () => {
-    render({ sessionVotes: 47 });
+    render({ sessionVotes: 47, votesUsedUp: true });
 
     await vi.waitFor(() =>
       expect(document.body.textContent).toContain(
@@ -57,5 +60,18 @@ describe('CrucibleJudgingDoneState', () => {
       expect(document.body.textContent).toContain("You're never shown your own entries")
     );
     expect(document.body.textContent).not.toContain('times');
+  });
+
+  // A null pair also comes from the browsing level hiding entries; that judge has votes left.
+  test('does not claim the votes are used up when the server says they are not', async () => {
+    render({ sessionVotes: 3, votesUsedUp: false });
+
+    await vi.waitFor(() =>
+      expect(document.body.textContent).toContain('There are no pairs for you to judge right now')
+    );
+    expect(document.body.textContent).not.toContain("You've used all your votes");
+    expect(document.body.textContent).not.toContain(
+      `up to ${CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY} times`
+    );
   });
 });

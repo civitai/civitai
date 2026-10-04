@@ -256,6 +256,8 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
           const result = await refetchPair();
           // Only an explicit null means no pairs are left; a failed refetch leaves `data` undefined.
           if (result.data === null) {
+            // The done screen's copy depends on whether this vote used up the judge's last pair.
+            await refetchProgress();
             setAllPairsJudged(true);
           }
         }
@@ -539,6 +541,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
                 crucibleName={crucible.name}
                 sessionVotes={sessionVotes}
                 onlyOwnEntries={onlyOwnEntries}
+                votesUsedUp={progress?.votesUsedUp ?? false}
               />
             </div>
           ) : pairError ? (

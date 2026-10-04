@@ -838,6 +838,7 @@ export const createPost = async ({
 }: PostCreateInput & {
   userId: number;
   isModerator?: boolean;
+  metadata?: Prisma.InputJsonObject;
 }): Promise<PostDetailEditable> => {
   await throwOnBlockedUserContent([data.title, data.detail], { surface: 'post' });
 

@@ -156,7 +156,7 @@ import type { ImageResourceHelperModel } from '~/server/selectors/image.selector
 import {
   imageSelect,
   publishedImageWhere,
-  publishedOrDraftImageWhere,
+  publishedOrEntryDraftImageWhere,
 } from '~/server/selectors/image.selector';
 import type { ImageV2Model, ImageV2Stats } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
@@ -8137,7 +8137,7 @@ export async function createImageResources({
 export const getMyImages = async ({
   mediaTypes,
   publishedOnly,
-  draftPostIds,
+  includeEntryDrafts,
   userId,
   limit,
   cursor = 0,
@@ -8168,8 +8168,8 @@ export const getMyImages = async ({
         ingestion: publishedOnly
           ? { in: [ImageIngestionStatus.Pending, ImageIngestionStatus.Scanned] }
           : ImageIngestionStatus.Scanned,
-        ...(publishedOnly && draftPostIds?.length
-          ? publishedOrDraftImageWhere(draftPostIds)
+        ...(publishedOnly && includeEntryDrafts
+          ? publishedOrEntryDraftImageWhere()
           : publishedOnly
           ? publishedImageWhere()
           : {}),

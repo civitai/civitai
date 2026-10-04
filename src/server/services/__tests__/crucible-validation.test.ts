@@ -1,5 +1,6 @@
 import { BuzzApiError } from '@civitai/buzz';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { modelFlagsFindMany } from '~/server/services/__tests__/fixtures/model-flags-find-many';
 import {
   calculateCrucibleSetupCost,
   cancelCrucibleSchema,
@@ -713,8 +714,7 @@ describe('submitEntry — content type', () => {
     });
     fetchImageResources.mockResolvedValue({ 7: { resources: [{ modelVersionId: 12 }] } });
     dbMock.dbRead.modelVersion.findMany.mockImplementation(
-      async ({ where, select }: { where: { id: { in: number[] } }; select: { model?: unknown } }) =>
-        select.model && where.id.in.includes(12) ? [{ model: { minor: false, sfwOnly: true } }] : []
+      modelFlagsFindMany((id) => (id === 12 ? { minor: false, sfwOnly: true } : undefined))
     );
 
     await expect(submit()).rejects.toThrow(/can only be PG or PG-13/);
@@ -1296,9 +1296,13 @@ describe('createCrucibleEntryPost', () => {
     dbMock.dbRead.crucible.findUnique.mockResolvedValue(arena());
   });
 
-  it('creates an unpublished post for the caller, which goes live only when it is entered', async () => {
+  it('creates an unpublished post for the caller, marked so the picker lists it in a later session', async () => {
     await expect(create()).resolves.toEqual({ id: 900 });
-    expect(createPost).toHaveBeenCalledWith({ userId: 42, title: 'Open Arena' });
+    expect(createPost).toHaveBeenCalledWith({
+      userId: 42,
+      title: 'Open Arena',
+      metadata: { crucibleEntryDraft: true },
+    });
   });
 
   it('refuses a crucible that is no longer active', async () => {
@@ -1462,8 +1466,7 @@ describe('checkCrucibleEntryEligibility', () => {
         5: { resources: [{ modelVersionId: 500 }] },
       });
       dbMock.dbRead.modelVersion.findMany.mockImplementation(
-        async ({ where }: { where: { id: { in: number[] } } }) =>
-          where.id.in.includes(500) ? [{ model: { minor: false, sfwOnly: flagged } }] : []
+        modelFlagsFindMany((id) => (id === 500 ? { minor: false, sfwOnly: flagged } : undefined))
       );
     };
 

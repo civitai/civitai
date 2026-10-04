@@ -280,7 +280,7 @@ describe('CrucibleSubmitEntryModal — from the generator', () => {
     expect(document.body.textContent).not.toMatch(/to library/i);
   });
 
-  test('puts each generated image in its own unpublished post, and lists those drafts', async () => {
+  test('puts each generated image in its own unpublished post', async () => {
     useGeneratorSelectionStore.setState({ selected: generated(2) });
     renderModal({ freeEntriesPerUser: 3 });
     await openGeneratorTab();
@@ -293,12 +293,18 @@ describe('CrucibleSubmitEntryModal — from the generator', () => {
       { postId: 300 },
       { postId: 301 },
     ]);
-    await vi.waitFor(() =>
-      expect(mocks.myImagesInputs.at(-1)).toMatchObject({
-        publishedOnly: true,
-        draftPostIds: [300, 301],
-      })
-    );
+  });
+
+  // Uploads that were never entered stay unpublished; they must still be pickable after the modal
+  // closes and reopens, so the very first library query asks for them.
+  test('lists the caller entry-modal drafts from the first query, before anything is uploaded', async () => {
+    renderModal();
+
+    await vi.waitFor(() => expect(mocks.myImagesInputs.length).toBeGreaterThan(0));
+    expect(mocks.myImagesInputs[0]).toMatchObject({
+      publishedOnly: true,
+      includeEntryDrafts: true,
+    });
   });
 });
 

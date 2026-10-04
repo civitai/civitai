@@ -353,8 +353,6 @@ export default function CrucibleSubmitEntryModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadedCount, setUploadedCount] = useState(0);
   const [activeTab, setActiveTab] = useState<string | null>('library');
-  // Unpublished posts holding media added here; entering an image publishes its post.
-  const [draftPostIds, setDraftPostIds] = useState<number[]>([]);
   const [isImporting, setIsImporting] = useState(false);
   // Media added from this modal is selected for the user once its scan settles.
   const [awaitingScan, setAwaitingScan] = useState<number[]>([]);
@@ -445,7 +443,6 @@ export default function CrucibleSubmitEntryModal({
       });
     }
     if (postIds.length) {
-      setDraftPostIds((prev) => [...prev, ...postIds]);
       setActiveTab('library');
     }
     return postIds.length;
@@ -498,7 +495,8 @@ export default function CrucibleSubmitEntryModal({
       mediaTypes: [contentType],
       limit: 40,
       publishedOnly: true,
-      draftPostIds: draftPostIds.length ? draftPostIds : undefined,
+      // Media added here sits in an unpublished post until it is entered.
+      includeEntryDrafts: true,
     },
     {
       enabled: !!currentUser,

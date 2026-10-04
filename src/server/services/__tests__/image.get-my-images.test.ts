@@ -28,13 +28,13 @@ describe('getMyImages — published only', () => {
     expect(whereOf().OR).toBeUndefined();
   });
 
-  it('also lists unpublished media in the named drafts, still only the caller own', async () => {
+  it("also lists unpublished media from the crucible entry modal's drafts, still only the caller's own", async () => {
     await getMyImages({
       userId: 42,
       mediaTypes: [MediaType.image],
       limit: 10,
       publishedOnly: true,
-      draftPostIds: [300, 301],
+      includeEntryDrafts: true,
     });
 
     const where = whereOf();
@@ -47,7 +47,7 @@ describe('getMyImages — published only', () => {
       post: {
         OR: [
           { publishedAt: { lte: expect.any(Date) } },
-          { id: { in: [300, 301] }, publishedAt: null },
+          { publishedAt: null, metadata: { path: ['crucibleEntryDraft'], equals: true } },
         ],
       },
     });
