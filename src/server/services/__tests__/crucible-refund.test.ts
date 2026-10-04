@@ -583,6 +583,7 @@ describe('cancelCrucible — entry posts', () => {
   it('reveals only after every refund has been attempted', async () => {
     await cancelCrucible({ id: 1, userId: 99, isModerator: true });
 
+    expect(refundMultiAccountTransaction).toHaveBeenCalledTimes(3);
     const revealOrder = dbMock.dbWrite.$queryRaw.mock.invocationCallOrder.at(-1)!;
     for (const refundOrder of refundMultiAccountTransaction.mock.invocationCallOrder)
       expect(refundOrder).toBeLessThan(revealOrder);
