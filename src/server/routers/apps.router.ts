@@ -49,7 +49,9 @@ import type { AppStorageOp } from '~/server/prom/app-block-storage.metrics';
  * block-token verification and before any `AppBlock` lookup.
  *
  * 🔴 THIS IS ONE OF TWO GATES ON THIS PATH THAT THROW A BYTE-IDENTICAL ERROR, AND THE
- * COUNTER BELOW IS THE ONLY THING THAT TELLS THEM APART. The other is
+ * COUNTER BELOW IS THE ONLY THING THAT TELLS THEM APART — SERVER-SIDE ONLY. Nothing in the
+ * response does, deliberately: that is a behaviour change needing product sign-off, and
+ * existing tests assert the exact string. The other gate is
  * `assertAppBlocksEnabledForTokenUser` in `~/server/services/apps/app-storage.service`,
  * which gates the same capability against the block token's SUBJECT. Both throw
  * `UNAUTHORIZED: 'Apps are not enabled'`; both map to HTTP 401 with the same
@@ -79,7 +81,10 @@ import type { AppStorageOp } from '~/server/prom/app-block-storage.metrics';
  * UNAUTHORIZED is fine. (There used to be a `type === 'query'` branch here throwing a
  * byte-identical error to the fall-through — no `cause`, no different code, no different
  * message — so it produced no outcome a caller or an operator could tell apart. Removed:
- * a branch with one observable outcome reads as a behavioural difference that is not there.)
+ * a branch whose two arms share one observable outcome reads as a behavioural difference
+ * that is not there. The sibling middleware in `blocks.router.ts` is where a query genuinely
+ * diverges — it falls through with a flag on the context instead of throwing — which is
+ * probably where this shape was copied from.)
  *
  * NOT fail-closed on an anon viewer, and deliberately so: these are `publicProcedure`s, so
  * `ctx.user` may be undefined and `isAppBlocksEnabled` then performs a GLOBAL eval. Flipt
