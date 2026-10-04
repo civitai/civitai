@@ -560,6 +560,36 @@ export type test_import = {
 export type testForm = {
   id: Generated<number>;
 };
+export type text_relabel_answer = {
+  id: Generated<string>;
+  item_id: string;
+  labeler_id: number;
+  label: string;
+  note: string | null;
+  duration_ms: number | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+};
+export type text_relabel_item = {
+  id: Generated<string>;
+  token: Generated<string>;
+  batch: string;
+  report_id: number;
+  tag: string;
+  wave: number;
+  entity_type: string;
+  entity_id: number | null;
+  author_id: number | null;
+  visibility: string;
+  confidence: number;
+  confidence_band: string;
+  stratum_key: string;
+  cell_population: number;
+  text_value: string | null;
+  flagged_at: Timestamp;
+  purge_after: Timestamp;
+  created_at: Generated<Timestamp>;
+};
 export type TimedMutes = {
   id: Generated<number>;
   userId: string | null;
@@ -662,6 +692,8 @@ export type DB = {
   Temp_FailedLoRATrain: Temp_FailedLoRATrain;
   test_import: test_import;
   testForm: testForm;
+  text_relabel_answer: text_relabel_answer;
+  text_relabel_item: text_relabel_item;
   TimedMutes: TimedMutes;
   TrainingDataReview: TrainingDataReview;
   User: User;
