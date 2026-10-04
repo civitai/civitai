@@ -42,6 +42,17 @@ function sharedListArgKeys(src: string): string[] {
   const marker = 'apps.shared.list.fetch(';
   const at = src.indexOf(marker);
   if (at === -1) throw new Error('no apps.shared.list.fetch( call site found');
+  // 🔴 A SECOND CALL SITE MAKES THIS GUARD BLIND, so refuse rather than read the
+  // first. Measured: with an earlier `fetch(` carrying the full key set, dropping
+  // `mine` from the REAL serving call left this test green with a live fork in
+  // the file — `indexOf` had already stopped looking. Throwing converts the
+  // silent pass into a loud failure that says what to do (teach the parser which
+  // site is the serving one).
+  if (src.indexOf(marker) !== src.lastIndexOf(marker)) {
+    throw new Error(
+      'more than one apps.shared.list.fetch( call site — this parser reads only the first, so it can no longer see a divergence; teach it which site serves SHARED_LIST'
+    );
+  }
   const open = src.indexOf('{', at + marker.length);
   if (open === -1) throw new Error('no object literal after apps.shared.list.fetch(');
 
@@ -70,18 +81,41 @@ function sharedListArgKeys(src: string): string[] {
       else if (ch === '}' || ch === ']' || ch === ')') d--;
     }
     if (before !== 0) continue;
+    // 🔴 A SPREAD DEFEATS KEY COMPARISON, so refuse rather than drop it. Measured:
+    // adding `...extraArgs` to ONE host's literal left this test green — the key
+    // regex below requires an identifier at segment start, so `...x` matched
+    // nothing and vanished. A spread in one host and not the other is precisely
+    // the divergence this file exists to catch, and it was the invisible case.
+    if (/^\s*\.\.\./.test(segment)) {
+      throw new Error(
+        'a spread in the apps.shared.list.fetch( argument — key comparison cannot see through it; inline the keys or teach this parser to resolve the spread'
+      );
+    }
     const m = segment.match(/^\s*([A-Za-z_$][\w$]*)\s*(?::|$)/);
     if (m) keys.push(m[1]);
   }
   return keys.sort();
 }
 
-describe('host parity: trpc.apps.shared.list argument keys', () => {
-  const keys = Object.fromEntries(
-    HOSTS.map((h) => [h, sharedListArgKeys(stripSourceComments(readFileSync(join(HOST_DIR, h), 'utf8')))])
-  ) as Record<(typeof HOSTS)[number], string[]>;
+/**
+ * 🔴 PARSED INSIDE THE TESTS, NOT AT MODULE SCOPE, AND THAT IS NOT A STYLE CHOICE.
+ * `sharedListArgKeys` THROWS on the two shapes it cannot see through (a spread, a
+ * second call site). Computed in the `describe` body, those throws are a
+ * COLLECTION error: vitest reports `Tests  no tests` — a reassuring zero that a
+ * report-only lane renders as "nothing to see" rather than as a failure. Measured
+ * that exact output before moving it. Inside an `it`, the same throw is a failed
+ * test with the message attached.
+ */
+function keysFor(host: (typeof HOSTS)[number]): string[] {
+  return sharedListArgKeys(stripSourceComments(readFileSync(join(HOST_DIR, host), 'utf8')));
+}
 
+describe('host parity: trpc.apps.shared.list argument keys', () => {
   it('parses a non-trivial key set out of BOTH hosts (positive control)', () => {
+    const keys = Object.fromEntries(HOSTS.map((h) => [h, keysFor(h)])) as Record<
+      (typeof HOSTS)[number],
+      string[]
+    >;
     // Without this, a parser that silently returned [] for both would make the
     // parity assertion below pass vacuously — the reassuring-zero failure mode.
     // `blockToken` must be there: it is the one key neither host can omit.
@@ -92,6 +126,6 @@ describe('host parity: trpc.apps.shared.list argument keys', () => {
   });
 
   it('🔴 both hosts pass the SAME key set — a key added to or dropped from one is a silent behaviour fork', () => {
-    expect(keys['IframeHost.tsx']).toEqual(keys['PageBlockHost.tsx']);
+    expect(keysFor('IframeHost.tsx')).toEqual(keysFor('PageBlockHost.tsx'));
   });
 });
