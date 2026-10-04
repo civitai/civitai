@@ -98,7 +98,7 @@ import { imageResourcesCache } from '~/server/redis/caches';
 import {
   getCrucibleMinVotes,
   baseModelMakesMediaType,
-  getCruciblePrizeAmount,
+  getCruciblePrizeWinners,
   getCrucibleTotalPrizePool,
   getCruciblePublishableName,
   type CrucibleNameScan,
@@ -109,6 +109,7 @@ import {
   isCrucibleSfw,
   isFreeCrucibleEntry,
   parsePrizePositions,
+  type CruciblePrizeWinner,
   type PrizePosition,
 } from '~/utils/crucible-helpers';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
@@ -1028,8 +1029,49 @@ export type CrucibleDetail = CrucibleDetailRow & {
   paidEntryCount: number;
   /** The caller's own entries; everyone else's are paged through `getCrucibleEntries`. */
   viewerEntries: CrucibleEntryRow[];
-  /** Entries that got enough votes to place, once completed; prizes split among these. */
-  placedEntryCount: number | null;
+  /** Empty until completed. */
+  prizeWinners: CruciblePrizeWinner[];
+};
+
+type PrizeCrucible = { id: number; prizePositions: PrizePosition[]; totalPrizePool: number };
+
+/** From the stored placings, so it agrees with what finalize paid. */
+export const getCruciblesPrizeWinners = async (crucibles: PrizeCrucible[]) => {
+  const lastPrizePlace = Math.max(
+    0,
+    ...crucibles.flatMap(({ prizePositions }) => prizePositions.map((p) => p.position))
+  );
+  const winners = new Map<number, CruciblePrizeWinner[]>(crucibles.map(({ id }) => [id, []]));
+  if (!crucibles.length || !lastPrizePlace) return winners;
+
+  // Each creator's best placing, cut at the last prize place: nothing below it can win.
+  const contenders = await dbRead.$queryRaw<
+    { crucibleId: number; entryId: number; userId: number; position: number }[]
+  >`
+    SELECT "crucibleId", "entryId", "userId", position
+    FROM (
+      SELECT best.*, ROW_NUMBER() OVER (PARTITION BY best."crucibleId" ORDER BY best.position) AS rn
+      FROM (
+        SELECT DISTINCT ON (ce."crucibleId", ce."userId")
+          ce."crucibleId", ce.id AS "entryId", ce."userId", ce.position
+        FROM "CrucibleEntry" ce
+        WHERE ce."crucibleId" = ANY(${crucibles.map(({ id }) => id)}::int[])
+          AND ce.position IS NOT NULL
+        ORDER BY ce."crucibleId", ce."userId", ce.position
+      ) best
+    ) ranked
+    WHERE rn <= ${lastPrizePlace}
+  `;
+  for (const { id, prizePositions, totalPrizePool } of crucibles)
+    winners.set(
+      id,
+      getCruciblePrizeWinners({
+        placed: contenders.filter(({ crucibleId }) => crucibleId === id),
+        prizePositions,
+        totalPrizePool,
+      })
+    );
+  return winners;
 };
 
 export const getCrucibleDetail = async ({
@@ -1043,7 +1085,7 @@ export const getCrucibleDetail = async ({
 
   if (!crucible) return null;
 
-  const [paidEntryCounts, viewerEntries, placedEntryCount] = await Promise.all([
+  const [paidEntryCounts, viewerEntries] = await Promise.all([
     getPaidEntryCounts([id]),
     userId
       ? dbRead.crucibleEntry
@@ -1054,16 +1096,31 @@ export const getCrucibleDetail = async ({
           })
           .then((entries) => entries.filter(hasEntryImage))
       : [],
-    crucible.status === CrucibleStatus.Completed
-      ? dbRead.crucibleEntry.count({ where: { crucibleId: id, position: { not: null } } })
-      : null,
   ]);
+
+  const paidEntryCount = paidEntryCounts.get(id) ?? 0;
+  const prizeWinners =
+    crucible.status === CrucibleStatus.Completed
+      ? (
+          await getCruciblesPrizeWinners([
+            {
+              id,
+              prizePositions: parsePrizePositions(crucible.prizePositions),
+              totalPrizePool: getCrucibleTotalPrizePool({
+                entryFee: crucible.entryFee,
+                paidEntryCount,
+                seededPrizePool: crucible.seededPrizePool,
+              }),
+            },
+          ])
+        ).get(id) ?? []
+      : [];
 
   return {
     ...crucible,
-    paidEntryCount: paidEntryCounts.get(id) ?? 0,
+    paidEntryCount,
     viewerEntries,
-    placedEntryCount,
+    prizeWinners,
   };
 };
 
@@ -1091,6 +1148,7 @@ export const getCrucibleEntries = async ({
       textNsfw: true,
       nsfwLevel: true,
       ingestion: true,
+      prizePositions: true,
       image: { select: { ingestion: true } },
     },
   });
@@ -1128,7 +1186,48 @@ export const getCrucibleEntries = async ({
         entry.userId === userId ? entry : { ...entry, score: null, position: null }
       );
 
-  return { items, nextCursor };
+  // A podium winner can place far below the first page, so it comes with that page.
+  const podium =
+    crucible.status === CrucibleStatus.Completed && !cursor
+      ? await getPodiumEntries({
+          crucibleId,
+          prizePositions: parsePrizePositions(crucible.prizePositions),
+          viewerId: userId,
+          visibleImage: page.visibleImage,
+        })
+      : [];
+
+  return { items, nextCursor, podium };
+};
+
+const PODIUM_PLACES = 3;
+
+const getPodiumEntries = async ({
+  crucibleId,
+  prizePositions,
+  viewerId,
+  visibleImage,
+}: Pick<EntryPageArgs, 'crucibleId' | 'viewerId' | 'visibleImage'> & {
+  prizePositions: PrizePosition[];
+}) => {
+  const winners = (
+    (await getCruciblesPrizeWinners([{ id: crucibleId, prizePositions, totalPrizePool: 0 }])).get(
+      crucibleId
+    ) ?? []
+  ).filter(({ prizePlace }) => prizePlace <= PODIUM_PLACES);
+  if (!winners.length) return [];
+
+  const ids = await dbRead.$queryRaw<{ id: number }[]>`
+    SELECT ce.id
+    FROM "CrucibleEntry" ce
+    JOIN "Image" i ON i.id = ce."imageId"
+    WHERE ce.id = ANY(${winners.map(({ entryId }) => entryId)}::int[])
+      AND (${viewerId ? Prisma.sql`ce."userId" = ${viewerId} OR` : Prisma.empty} (${visibleImage}))
+  `;
+  const prizePlaceById = new Map(winners.map(({ entryId, prizePlace }) => [entryId, prizePlace]));
+  return (await loadEntriesInOrder(ids))
+    .map((entry) => ({ ...entry, prizePlace: prizePlaceById.get(entry.id) ?? 0 }))
+    .sort((a, b) => a.prizePlace - b.prizePlace);
 };
 
 type EntryPageArgs = {
@@ -2747,6 +2846,8 @@ export type FinalizedEntry = {
   voteCount: number;
   /** Null when the entry didn't get enough votes to place. */
   position: number | null;
+  /** Null unless this entry won a prize; can differ from `position` (one prize per creator). */
+  prizePlace: number | null;
   prizeAmount: number;
 };
 
@@ -3078,8 +3179,8 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
   // Distribute prizes to winners
   // Filter entries that have a prize amount > 0
   const prizeWinners = finalizedEntries.filter(
-    (entry): entry is FinalizedEntry & { position: number } =>
-      entry.position !== null && entry.prizeAmount > 0
+    (entry): entry is FinalizedEntry & { position: number; prizePlace: number } =>
+      entry.position !== null && entry.prizePlace !== null && entry.prizeAmount > 0
   );
 
   if (prizeWinners.length > 0) {
@@ -3093,13 +3194,14 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
       amount: winner.prizeAmount,
       type: TransactionType.Reward,
       description: getCrucibleTransactionDescription(
-        `Crucible prize - ${getOrdinalPosition(winner.position)} place`,
+        `Crucible ${getOrdinalPosition(winner.prizePlace)} prize`,
         crucible
       ),
       details: {
         entityId: crucibleId,
         entityType: 'Crucible',
         position: winner.position,
+        prizePlace: winner.prizePlace,
       },
       externalTransactionId: `crucible-prize-${crucibleId}-${winner.entryId}-${winner.position}`,
     }));
@@ -3208,6 +3310,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
         crucibleId,
         crucibleName,
         position: bestEntry.position,
+        prizePlace: bestEntry.prizePlace,
         prizeAmount: bestEntry.prizeAmount,
       },
     });
@@ -3264,23 +3367,36 @@ function rankEntries(
     .filter((entry) => entry.voteCount < minVotes)
     .sort(byScoreThenEntryTime);
 
-  return [
-    ...placedEntries.map(({ createdAt, ...entry }, index) => ({
+  return withPrizes(
+    [
+      ...placedEntries.map(({ createdAt, ...entry }, index) => ({ ...entry, position: index + 1 })),
+      ...unplacedEntries.map(({ createdAt, ...entry }) => ({ ...entry, position: null })),
+    ],
+    { prizePositions, totalPrizePool }
+  );
+}
+
+function withPrizes(
+  entries: Omit<FinalizedEntry, 'prizePlace' | 'prizeAmount'>[],
+  { prizePositions, totalPrizePool }: PrizeContext
+): FinalizedEntry[] {
+  const placed = entries.flatMap(({ entryId, userId, position }) =>
+    position === null ? [] : [{ entryId, userId, position }]
+  );
+  const winners = new Map(
+    getCruciblePrizeWinners({ placed, prizePositions, totalPrizePool }).map((winner) => [
+      winner.entryId,
+      winner,
+    ])
+  );
+  return entries.map((entry) => {
+    const winner = winners.get(entry.entryId);
+    return {
       ...entry,
-      position: index + 1,
-      prizeAmount: getCruciblePrizeAmount({
-        position: index + 1,
-        prizePositions,
-        entryCount: placedEntries.length,
-        totalPrizePool,
-      }),
-    })),
-    ...unplacedEntries.map(({ createdAt, ...entry }) => ({
-      ...entry,
-      position: null,
-      prizeAmount: 0,
-    })),
-  ];
+      prizePlace: winner?.prizePlace ?? null,
+      prizeAmount: winner?.prizeAmount ?? 0,
+    };
+  });
 }
 
 /** The stored places, paid as stored; this run's ranking supplies only the unplaced rest. */
@@ -3296,24 +3412,21 @@ function withStoredPlaces(
   { prizePositions, totalPrizePool }: PrizeContext
 ): FinalizedEntry[] {
   const placed = new Set(places.map((place) => place.id));
-  return [
-    ...places.map((place) => ({
-      entryId: place.id,
-      userId: place.userId,
-      finalScore: place.score,
-      voteCount: place.voteCount,
-      position: place.position,
-      prizeAmount: getCruciblePrizeAmount({
-        position: place.position ?? 0,
-        prizePositions,
-        entryCount: places.length,
-        totalPrizePool,
-      }),
-    })),
-    ...ranking
-      .filter((entry) => !placed.has(entry.entryId))
-      .map((entry) => ({ ...entry, position: null, prizeAmount: 0 })),
-  ];
+  return withPrizes(
+    [
+      ...places.map((place) => ({
+        entryId: place.id,
+        userId: place.userId,
+        finalScore: place.score,
+        voteCount: place.voteCount,
+        position: place.position,
+      })),
+      ...ranking
+        .filter((entry) => !placed.has(entry.entryId))
+        .map(({ prizePlace, prizeAmount, ...entry }) => ({ ...entry, position: null })),
+    ],
+    { prizePositions, totalPrizePool }
+  );
 }
 
 /**
@@ -3992,32 +4105,24 @@ export const getUserCrucibleStats = async ({
   const positions = entries.map((e) => e.position).filter((p): p is number => p !== null);
   const bestPlacement = positions.length > 0 ? Math.min(...positions) : null;
 
-  // Calculate win rate (per crucible, not per entry)
-  // Get the best entry per crucible
-  const bestEntryPerCrucible = new Map<number, number | null>();
-  for (const entry of entries) {
-    const current = bestEntryPerCrucible.get(entry.crucibleId);
-    if (
-      current === undefined ||
-      (entry.position !== null && (current === null || entry.position < current))
-    ) {
-      bestEntryPerCrucible.set(entry.crucibleId, entry.position);
-    }
-  }
-
-  let cruciblesWon = 0;
-  for (const [crucibleId, bestPosition] of bestEntryPerCrucible) {
-    if (bestPosition !== null) {
-      const entry = entries.find((e) => e.crucibleId === crucibleId);
-      if (entry) {
-        const prizePositions = parsePrizePositions(entry.crucible.prizePositions);
-        const isWinner = prizePositions.some((p) => p.position === bestPosition);
-        if (isWinner) {
-          cruciblesWon++;
-        }
-      }
-    }
-  }
+  // Win rate is per crucible: a creator holds at most one prize, which may sit below their best
+  // placing's position number.
+  const prizePositionsByCrucible = new Map(
+    entries.map((e) => [e.crucibleId, parsePrizePositions(e.crucible.prizePositions)])
+  );
+  const placedCrucibleIds = [
+    ...new Set(entries.filter((e) => e.position !== null).map((e) => e.crucibleId)),
+  ];
+  const winnersByCrucible = await getCruciblesPrizeWinners(
+    placedCrucibleIds.map((id) => ({
+      id,
+      prizePositions: prizePositionsByCrucible.get(id) ?? [],
+      totalPrizePool: 0,
+    }))
+  );
+  const cruciblesWon = placedCrucibleIds.filter((id) =>
+    winnersByCrucible.get(id)?.some((winner) => winner.userId === userId)
+  ).length;
 
   const winRate = totalCrucibles > 0 ? Math.round((cruciblesWon / totalCrucibles) * 100) : 0;
 

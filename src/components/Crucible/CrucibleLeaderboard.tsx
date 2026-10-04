@@ -7,8 +7,8 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
-  getCruciblePrizeAmount,
   rankCrucibleEntries,
+  type CruciblePrizeWinner,
   type PrizePosition,
 } from '~/utils/crucible-helpers';
 import { useState } from 'react';
@@ -47,8 +47,8 @@ export type CrucibleLeaderboardProps = {
   pageSize?: number;
   /** Every ranked entry, loaded or not; defaults to the loaded count. */
   totalCount?: number;
-  /** Entries that placed, which prizes split among; defaults to `totalCount`. */
-  placedCount?: number | null;
+  /** Empty unless awarded. */
+  prizeWinners: CruciblePrizeWinner[];
   hasMore?: boolean;
   onLoadMore?: () => void;
 };
@@ -72,13 +72,14 @@ export function CrucibleLeaderboard({
   className,
   pageSize = 10,
   totalCount,
-  placedCount,
+  prizeWinners: awardedPrizeWinners,
   hasMore = false,
   onLoadMore,
 }: CrucibleLeaderboardProps) {
   // A cancelled crucible paid nobody, so it has no prize rows, no placings and no pool to show —
   // only the scores the entries finished on.
   const prizePositions = awarded ? awardedPrizePositions : [];
+  const prizeWinners = awarded ? awardedPrizeWinners : [];
   const currentUser = useCurrentUser();
   const [page, setPage] = useState(0);
 
@@ -99,12 +100,12 @@ export function CrucibleLeaderboard({
   const prizeMap = new Map<number, PrizePosition>();
   prizePositions.forEach((prize) => prizeMap.set(prize.position, prize));
 
-  const entryCount = placedCount ?? totalCount ?? rankedEntries.length;
-  const prizeFor = (position: number) =>
-    getCruciblePrizeAmount({ position, prizePositions, entryCount, totalPrizePool });
+  const prizeByEntryId = new Map(prizeWinners.map((winner) => [winner.entryId, winner]));
 
   const remainingPositions = prizePositions.filter((p) => p.position > 3);
-  const remainingPrizeAmount = remainingPositions.reduce((sum, p) => sum + prizeFor(p.position), 0);
+  const remainingPrizeAmount = prizeWinners
+    .filter((winner) => winner.prizePlace > 3)
+    .reduce((sum, winner) => sum + winner.prizeAmount, 0);
   const hasRemainingPrize = remainingPrizeAmount > 0;
   const minRemainingPos =
     remainingPositions.length > 0 ? Math.min(...remainingPositions.map((p) => p.position)) : 4;
@@ -114,8 +115,8 @@ export function CrucibleLeaderboard({
   const remainingPosLabel = remainingIsRange
     ? `${minRemainingPos}${getOrdinalSuffix(
         minRemainingPos
-      )} - ${maxRemainingPos}${getOrdinalSuffix(maxRemainingPos)} Place`
-    : `${minRemainingPos}${getOrdinalSuffix(minRemainingPos)} Place`;
+      )} - ${maxRemainingPos}${getOrdinalSuffix(maxRemainingPos)} Prize`
+    : `${minRemainingPos}${getOrdinalSuffix(minRemainingPos)} Prize`;
 
   return (
     <Paper className={clsx('rounded-lg p-6', className)} bg="dark.6">
@@ -151,17 +152,21 @@ export function CrucibleLeaderboard({
             No entries yet
           </Text>
         ) : (
-          paginatedEntries.map((entry) => (
-            <LeaderboardEntryItem
-              key={entry.id}
-              entry={entry}
-              rank={entry.rank}
-              prizeInfo={entry.rank ? prizeMap.get(entry.rank) : undefined}
-              prizeAmount={entry.rank ? prizeFor(entry.rank) : 0}
-              buzzType={buzzType}
-              isCurrentUser={currentUser?.id === entry.userId}
-            />
-          ))
+          paginatedEntries.map((entry) => {
+            const prize = prizeByEntryId.get(entry.id);
+            return (
+              <LeaderboardEntryItem
+                key={entry.id}
+                entry={entry}
+                rank={entry.rank}
+                prizePlace={prize?.prizePlace ?? null}
+                prizeInfo={prize ? prizeMap.get(prize.prizePlace) : undefined}
+                prizeAmount={prize?.prizeAmount ?? 0}
+                buzzType={buzzType}
+                isCurrentUser={currentUser?.id === entry.userId}
+              />
+            );
+          })
         )}
       </Stack>
 
@@ -211,6 +216,8 @@ type LeaderboardEntryItemProps = {
   entry: LeaderboardEntry;
   /** Null for an entry that didn't get enough votes to place. */
   rank: number | null;
+  /** Can sit below `rank`: a creator takes one prize, so the next creator moves up. */
+  prizePlace: number | null;
   prizeInfo?: PrizePosition;
   prizeAmount: number;
   buzzType: 'green' | 'yellow';
@@ -223,16 +230,16 @@ type LeaderboardEntryItemProps = {
 function LeaderboardEntryItem({
   entry,
   rank,
+  prizePlace,
   prizeInfo,
   prizeAmount,
   buzzType,
   isCurrentUser,
 }: LeaderboardEntryItemProps) {
-  const isTopThree = rank !== null && rank <= 3;
+  const isTopThreePrize = prizePlace !== null && prizePlace <= 3;
 
-  // Medal colors based on position
   const getMedalStyle = () => {
-    switch (rank) {
+    switch (prizePlace) {
       case 1:
         return {
           borderColor: '#fab005', // Gold
@@ -259,7 +266,7 @@ function LeaderboardEntryItem({
           borderColor: 'transparent',
           bgColor: 'rgba(201, 203, 207, 0.1)',
           textColor: '#909296',
-          label: rank === null ? '' : `${rank}${getOrdinalSuffix(rank)}`,
+          label: prizePlace === null ? '' : `${prizePlace}${getOrdinalSuffix(prizePlace)}`,
         };
     }
   };
@@ -276,7 +283,7 @@ function LeaderboardEntryItem({
       }}
     >
       {/* Prize position header for top 3 */}
-      {isTopThree && prizeInfo && (
+      {isTopThreePrize && prizeInfo && (
         <div className="mb-3 flex items-center justify-between gap-2">
           <Group gap="sm" wrap="nowrap">
             {/* Medal badge */}
@@ -292,7 +299,7 @@ function LeaderboardEntryItem({
             </Box>
 
             <Text size="sm" fw={600} c="white">
-              {style.label} Place
+              {style.label} Prize
             </Text>
             <Text size="xs" c="dimmed">
               {prizeInfo.percentage}%

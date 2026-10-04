@@ -279,6 +279,53 @@ export function getCruciblePrizeAmount({
   return Math.floor((prize.percentage / 100) * totalPrizePool * (configured / filled));
 }
 
+export type CruciblePrizeWinner = {
+  entryId: number;
+  userId: number;
+  position: number;
+  prizePlace: number;
+  prizeAmount: number;
+};
+
+/**
+ * A creator takes at most one prize: their best-placed entry. Prize places go to creators in
+ * placing order, so a creator's other entries keep their positions but the next creator moves up
+ * a prize. Placings below the prize places don't change the result, so `placed` may be cut short
+ * after the last prize place's creator.
+ */
+export function getCruciblePrizeWinners({
+  placed,
+  prizePositions,
+  totalPrizePool,
+}: {
+  placed: { entryId: number; userId: number; position: number }[];
+  prizePositions: PrizePosition[];
+  totalPrizePool: number;
+}): CruciblePrizeWinner[] {
+  const lastPrizePlace = Math.max(0, ...prizePositions.map((p) => p.position));
+  const creatorsBest: { entryId: number; userId: number; position: number }[] = [];
+  const seen = new Set<number>();
+  for (const entry of [...placed].sort((a, b) => a.position - b.position)) {
+    if (creatorsBest.length >= lastPrizePlace) break;
+    if (seen.has(entry.userId)) continue;
+    seen.add(entry.userId);
+    creatorsBest.push(entry);
+  }
+
+  return creatorsBest
+    .map((entry, index) => ({ ...entry, prizePlace: index + 1 }))
+    .filter(({ prizePlace }) => prizePositions.some((p) => p.position === prizePlace))
+    .map((winner) => ({
+      ...winner,
+      prizeAmount: getCruciblePrizeAmount({
+        position: winner.prizePlace,
+        prizePositions,
+        entryCount: creatorsBest.length,
+        totalPrizePool,
+      }),
+    }));
+}
+
 export const CRUCIBLE_MIN_VOTES_PERCENT = 75;
 
 /** Votes an entry needs to place: a share of the average per entry, so late entries can't win unjudged. */
