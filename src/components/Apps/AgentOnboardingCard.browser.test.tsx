@@ -271,6 +271,24 @@ describe('AgentOnboardingCard — motion, when the viewer has not opted out', ()
     expect(button.element().querySelector('.tabler-icon-clipboard')).not.toBeNull();
   });
 
+  test('🔴 the panel PRESERVES the blank line the clipboard sends', async () => {
+    // The only assertable form of "the panel agrees with the button". Every other assertion
+    // in this file reads `textContent` or the clipboard, and both keep `\n\n` whatever the CSS
+    // does — so deleting `white-space: pre-line` from the stylesheet left all 27 green while
+    // the rendered prompt collapsed to one paragraph. Same move as the ring's
+    // `animationName` read: the computed STATE, not a class-name spelling.
+    //
+    // Read at the caret's parent, which is the prompt element itself (the caret is rendered
+    // inside that `Text`); `white-space` inherits, so this answers for the whole panel.
+    await renderWithProviders(<AgentOnboardingCard />);
+    const caret = page.getByTestId(AGENT_CARET_TESTID);
+    await expect.element(caret).toBeInTheDocument();
+    expect(
+      getComputedStyle(caret.element().parentElement!).whiteSpace,
+      'the panel collapses the blank line that is part of the copied bytes'
+    ).toBe('pre-line');
+  });
+
   test('🔴 `animated={false}` is the SAME static tree reduced motion gets', async () => {
     // The workbench strip's path, and the arm a reduced-motion mock cannot reach: it must be
     // static for a viewer with NO motion preference at all. Awaited, so the media query has

@@ -6,6 +6,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 // @typescript-eslint/consistent-type-imports rejects) so the spread below keeps the real
 // module's type.
 import type * as TrpcMod from '~/utils/trpc';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 /**
  * The agent-onboarding card's PLACEMENT across `/apps/build`'s three states, and its funnel
@@ -69,36 +70,29 @@ vi.mock('~/components/TrackView/track.utils', () => ({
   }),
 }));
 
-// Spread the REAL module and override only `trpc` (local-rules/no-wholesale-module-mock).
+// Spread the REAL module and override only `trpc` (local-rules/no-wholesale-module-mock), and
+// build that override as a PROXY rather than a hand-enumerated literal — `test/trpcProxyStub`
+// records the four measured times the literal form cost this repo, and the only thing named
+// here is what this suite measures. The inert defaults are never asserted through.
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
-  trpc: {
-    blocks: {
-      getNavSummary: {
-        useQuery: (_input: unknown, opts?: { enabled?: boolean }) => {
-          if (opts?.enabled === false) return { data: undefined, isFetched: false };
-          return { data: mocks.navSummary, isFetched: mocks.isFetched };
-        },
-      },
-      withdrawPublishRequest: {
-        useMutation: () => ({ mutate: () => undefined, isPending: false }),
+  trpc: makeTrpcProxy({
+    // Honours `enabled`, which is load-bearing — see `AppsBuildBody.browser.test.tsx`'s header.
+    'blocks.getNavSummary': {
+      useQuery: (_input: unknown, opts?: { enabled?: boolean }) => {
+        if (opts?.enabled === false) return { data: undefined, isFetched: false };
+        return { data: mocks.navSummary, isFetched: mocks.isFetched };
       },
     },
     // `MyAppsBody` — mounted by the workbench state. Held in its loading branch; this suite
     // is about WHERE the card renders, not about the table's contents.
-    appListings: {
-      listMine: { useQuery: () => ({ data: undefined, isLoading: true, error: null }) },
-      listMyOrphanedSubmissions: {
-        useQuery: () => ({ data: undefined, isLoading: true, error: null }),
-      },
+    'appListings.listMine': {
+      useQuery: () => ({ data: undefined, isLoading: true, error: null }),
     },
-    useUtils: () => ({
-      appListings: {
-        listMine: { invalidate: () => undefined },
-        listMyOrphanedSubmissions: { invalidate: () => undefined },
-      },
-    }),
-  },
+    'appListings.listMyOrphanedSubmissions': {
+      useQuery: () => ({ data: undefined, isLoading: true, error: null }),
+    },
+  }),
 }));
 
 const { AppsBuildBody } = await import('./AppsBuildBody');
