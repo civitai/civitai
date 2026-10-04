@@ -751,21 +751,31 @@ export const appStorageOpsCounter = registerCounterWithLabels({
 // 🔴 WHY NOT A LOG LINE — AND NOT FOR THE REASON THE PRECEDENT GIVES, WHICH IS FALSE.
 // `civitai_app_block_post_subject_refusals_total`'s shipped help string
 // (`src/server/metrics/app-block-runtime.metrics.ts`) asserts that application-container logs
-// "are not collected" for this deployment. MEASURED against prod and it is not true: this
-// namespace's app container is in the collector's namespace allowlist, and a 15-minute window
-// held ~510k collected lines, ~368k of them plain non-JSON `console` output with live stack
-// frames. Do not repeat that claim; it is an availability argument resting on a condition that
-// does not hold.
+// "are not collected" for this deployment, and three further comments in that same file give
+// it as the DECIDING reason for a design choice. Checked against the running deployment on
+// 2026-10-04, with a positive and a negative control on the query: it does not hold — this
+// app container's plain `console` output IS collected, stack frames included. Do not repeat
+// the claim; it is an availability argument resting on a condition that is not true.
+// (Figures and collection topology deliberately omitted: this repo is public, they are not
+// load-bearing for the argument, and that config is mutable — so treat this as time-scoped
+// and re-check it rather than trusting this line.)
 //
-// The reasons that DO hold are cost and aggregation. (a) A `console.error` on this branch adds
-// per-request noise to a stream already carrying hundreds of thousands of plain lines per
-// quarter-hour, and yields no rate to alert on or to correlate with `ops_total` — which is the
-// whole job here. (b) A server-side-only `cause` on the thrown error would not be ingested at
-// all: `src/pages/api/trpc/[trpc].ts`'s `onError` returns early for `UNAUTHORIZED` (alongside
+// 🔴 THE REASON THAT DOES HOLD IS THE JOIN, NOT AVAILABILITY — and specifically NOT "there is
+// no rate to alert on", which an earlier revision of this paragraph asserted two sentences
+// after proving the logs ARE collected. A collected stream is rate-queryable. What a log line
+// cannot do is be read AGAINST `..._ops_total{op}` with one `increase()` on a shared label,
+// which is this counter's entire job: the discriminator is a PAIR of series moving in opposite
+// directions, and half a pair in a different store is not a pair. Secondary and honest: a
+// per-request line on this branch is unstructured noise in an already-busy stream.
+//
+// Separately, a server-side-only `cause` on the thrown error would not be ingested at all:
+// `src/pages/api/trpc/[trpc].ts`'s `onError` returns early for `UNAUTHORIZED` (alongside
 // FORBIDDEN / TOO_MANY_REQUESTS / SERVICE_UNAVAILABLE) ahead of its `logToAxiom` call — inside
-// that handler's `if (isProd)`, so it is a production claim. A scraped counter is the right
-// surface because it aggregates, not because the alternatives are unreadable. The conflation
-// CLASS is still well documented at that precedent; its deployment claim is not.
+// that handler's `if (isProd)`, so that one is a production claim. So: a scraped counter is the
+// right surface because it JOINS, not because the alternatives are unreadable. The conflation
+// CLASS is still well documented at that precedent; its deployment claim is not — and this PR
+// corrects only the copy it would otherwise have repeated. The help string and the three
+// comment copies there are left as they are: a decision, not an oversight.
 //
 // 🔴 SEEDED, DELIBERATELY, AND THE PAIR IS WHY. All five members of this family are seeded;
 // what `src/server/prom/app-block-storage.metrics.ts` splits on BOUNDED-vs-UNBOUNDED label
