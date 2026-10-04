@@ -294,14 +294,6 @@ beforeEach(() => {
 });
 
 describe('apps.storage shared gates', () => {
-  it('rejects when the Flipt flag is dark', async () => {
-    mockIsAppBlocksEnabled.mockImplementation(async () => false);
-    const caller = appsRouter.createCaller(fakeCtx() as never);
-    await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toBeInstanceOf(
-      TRPCError
-    );
-  });
-
   /**
    * The five storage procedures, each with a minimal call. Shared by the revocation sweep
    * below and by the growth ledger, so the two cannot disagree about what "every procedure"
@@ -345,17 +337,15 @@ describe('apps.storage shared gates', () => {
    * now carry different messages and the message IS the discriminator, so BOTH halves are
    * pinned: the first case below fixes the middleware's message, the ordering block's
    * POSITIVE CONTROL fixes the subject gate's. Re-spell either to match the other and one of
-   * the two goes red. (The `Flipt flag is dark` case above asserts only
-   * `toBeInstanceOf(TRPCError)`, so the middleware's message was unpinned repo-wide.)
+   * the two goes red.
    */
   describe('the SESSION-user gate is identifiable (invariant guards)', () => {
     // ONE CASE PER PROCEDURE, over the shared list. Both halves are load-bearing: the
-    // MESSAGE is the discriminator, and the per-procedure sweep is what sees a procedure
-    // that lost its `.use(enforceAppBlocksFlag)` — measured, dropping it from `set` alone
-    // is green across every suite that names this router when only `get` is covered, and
-    // that gap predates this PR. It composes with the growth ledger below: a sixth
-    // procedure fails the ledger, which forces an entry here, which fails unless the
-    // procedure is gated.
+    // MESSAGE is the discriminator, and the per-procedure sweep is the only thing that sees
+    // a procedure not attached to `appStorageProcedure`. No such procedure has ever shipped
+    // — the gap was in COVERAGE, not in the router: measured, dropping the gate from `set`
+    // alone was green across every suite that names this router while only `get` was
+    // covered, and that was equally true before this change.
     it.each(STORAGE_CALLS)(
       'INVARIANT: %s refuses with the middleware producer\u2019s exact code and message',
       async (_op, call) => {
@@ -364,7 +354,7 @@ describe('apps.storage shared gates', () => {
 
         await expect(call(caller)).rejects.toMatchObject({
           code: 'UNAUTHORIZED',
-          message: 'session user does not have apps enabled',
+          message: 'Apps access is not enabled for this browser session',
         });
 
         // ATTRIBUTION: the middleware runs BEFORE the resolver, so a refusal here cannot
@@ -392,10 +382,13 @@ describe('apps.storage shared gates', () => {
       ).sort();
 
       expect(declared).toEqual([...STORAGE_CALLS.map(([op]) => op)].sort());
-      // Load-bearing in exactly one input, and reachable there: when a procedure is added
-      // WITH its `STORAGE_CALLS` entry, both sides agree and the equality above passes, so
-      // this line is the only thing that fails. The two likelier mistakes (one side grows,
-      // the other does not) fail the equality first, whose diff names the new op.
+      // A PROMPT TO RE-READ THIS BLOCK, not a protection — and reachable, which is the
+      // part worth stating. When a procedure is added WITH its `STORAGE_CALLS` entry both
+      // sides agree, the equality passes, and this is the only line left to fail; the
+      // correct remedy is to edit the literal. It exists because the equality above
+      // compares LABELS, so growth is exactly when someone must look at the thunks.
+      // (The two likelier mistakes — one side grows, the other does not — fail the
+      // equality first, whose diff names the new op.)
       expect(declared).toHaveLength(5);
     });
   });
@@ -458,9 +451,9 @@ describe('apps.storage shared gates', () => {
   // A revoked instance must lose storage access IMMEDIATELY, not at token expiry.
   // Every op, not just the writes: a read of the user's own rows is still access
   // granted by an install that no longer exists.
-  // Reuses STORAGE_CALLS so the growth ledger above covers this sweep too: a sixth procedure
-  // fails the ledger rather than silently escaping the revocation table.
-  it.each(STORAGE_CALLS)('rejects a revoked block instance on %s', async (_op, call) => {
+  it.each(STORAGE_CALLS)('rejects a revoked block instance on %s', async (op, call) => {
+    const opsInc = vi.mocked(appStorageOpsCounter.inc);
+    opsInc.mockClear();
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
     mockIsRevoked.mockResolvedValueOnce(true);
     const caller = appsRouter.createCaller(fakeCtx() as never);
@@ -468,6 +461,15 @@ describe('apps.storage shared gates', () => {
       code: 'FORBIDDEN',
       message: 'block instance revoked',
     });
+    // 🔴 THE LABEL-TO-PROCEDURE BINDING, and nothing else in this file provides it. The
+    // growth ledger above compares the LABELS on both sides, so an entry spelled `set`
+    // whose thunk calls `c.storage.delete` — or an ungated sixth procedure paired with an
+    // entry that re-runs `get` — satisfies it, and the message arms assert one constant
+    // string that carries no per-procedure information either. This assertion closes both:
+    // the revocation refusal routes through `countStorageOutcome(op, …)` with the SERVICE's
+    // own per-procedure literal, which is byte-identical to these labels, so a mislabelled
+    // or re-pointed thunk fails here.
+    expect(opsInc).toHaveBeenCalledWith({ op, outcome: 'unauthorized' });
     // Refused before any datastore access — not merely refused on the way out.
     expect(mockPool.query).not.toHaveBeenCalled();
     expect(mockPool.connect).not.toHaveBeenCalled();
