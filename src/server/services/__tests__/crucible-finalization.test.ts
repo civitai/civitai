@@ -592,7 +592,7 @@ describe('finalizeCrucible — single entry', () => {
     expect(createBuzzTransactionMany).toHaveBeenCalledWith([
       expect.objectContaining({
         toAccountId: 10,
-        description: 'Crucible prize - 1st place: Test Crucible',
+        description: 'Crucible 1st prize: Test Crucible',
         details: expect.objectContaining({ entityId: 1, entityType: 'Crucible' }),
       }),
     ]);
@@ -609,7 +609,7 @@ describe('finalizeCrucible — single entry', () => {
     await finalizeCrucible(1);
 
     expect(createBuzzTransactionMany).toHaveBeenCalledWith([
-      expect.objectContaining({ description: 'Crucible prize - 1st place' }),
+      expect.objectContaining({ description: 'Crucible 1st prize' }),
     ]);
   });
 
@@ -770,6 +770,113 @@ describe('finalizeCrucible — fewer entries than paid places', () => {
     // 50/30/20 with no third place: 50 and 30 scale to 62.5% and 37.5% of the 200 pool.
     expect(result.finalEntries.map((e) => e.prizeAmount)).toEqual([125, 75]);
     expect(result.totalPrizesDistributed).toBe(200);
+  });
+});
+
+// Product decision (2026-10-04): a creator takes at most one prize. Their other entries keep their
+// positions on the leaderboard, and the next creator takes the prize they would have had. Do not
+// "simplify" prizes back to being paid by position.
+describe('finalizeCrucible — one prize per creator', () => {
+  // User 10 holds the top three scores; users 11, 12 and 13 follow.
+  const sweep = [
+    dbEntry(1, 10, 1_000),
+    dbEntry(2, 10, 2_000),
+    dbEntry(3, 10, 3_000),
+    dbEntry(4, 11, 4_000),
+    dbEntry(5, 12, 5_000),
+    dbEntry(6, 13, 6_000),
+  ];
+  const sweepElos = { 1: 1700, 2: 1650, 3: 1600, 4: 1550, 5: 1500, 6: 1450 };
+  const paid = () =>
+    (
+      createBuzzTransactionMany.mock.calls[0] as [
+        { toAccountId: number; amount: number; description: string }[]
+      ]
+    )[0].map((tx) => [tx.toAccountId, tx.amount, tx.description]);
+
+  it('pays a creator holding the top three scores one prize, and moves the next creators up', async () => {
+    setupCrucible({ entryFee: 100, entries: sweep, elos: sweepElos });
+
+    const result = await finalizeCrucible(1);
+
+    // 50/30/20 of a 600 pool.
+    expect(paid()).toEqual([
+      [10, 300, 'Crucible 1st prize: Test Crucible'],
+      [11, 180, 'Crucible 2nd prize: Test Crucible'],
+      [12, 120, 'Crucible 3rd prize: Test Crucible'],
+    ]);
+    expect(
+      result.finalEntries.map((e) => [e.entryId, e.position, e.prizePlace, e.prizeAmount])
+    ).toEqual([
+      [1, 1, 1, 300],
+      [2, 2, null, 0],
+      [3, 3, null, 0],
+      [4, 4, 2, 180],
+      [5, 5, 3, 120],
+      [6, 6, null, 0],
+    ]);
+    expect(result.totalPrizesDistributed).toBe(600);
+  });
+
+  it("keeps every position as ranked, including the creator's unpaid entries", async () => {
+    setupCrucible({ entryFee: 100, entries: sweep, elos: sweepElos });
+
+    await finalizeCrucible(1);
+
+    const values = entryWrites().flatMap(([, rows]) => (rows as { values: unknown[] }).values);
+    // (entryId, score, position, voteCount) per entry.
+    const positions = Array.from({ length: 6 }, (_, i) => [values[i * 4], values[i * 4 + 2]]);
+    expect(positions).toEqual([
+      [1, 1],
+      [2, 2],
+      [3, 3],
+      [4, 4],
+      [5, 5],
+      [6, 6],
+    ]);
+  });
+
+  it('tells the creator who moved up which prize they took, alongside their position', async () => {
+    setupCrucible({ entryFee: 100, entries: sweep, elos: sweepElos });
+
+    await finalizeCrucible(1);
+
+    const won = (userId: number) =>
+      createNotification.mock.calls
+        .map(([arg]) => arg)
+        .find((arg) => arg.type === 'crucible-won' && arg.userId === userId)?.details;
+    expect(won(10)).toMatchObject({ position: 1, prizePlace: 1, prizeAmount: 300 });
+    expect(won(11)).toMatchObject({ position: 4, prizePlace: 2, prizeAmount: 180 });
+    expect(won(13)).toMatchObject({ position: 6, prizePlace: null, prizeAmount: 0 });
+  });
+
+  it('gives a lone creator the whole pool once, as when the places go unfilled', async () => {
+    setupCrucible({
+      entryFee: 100,
+      entries: sweep.slice(0, 3),
+      elos: { 1: 1700, 2: 1650, 3: 1600 },
+    });
+
+    await finalizeCrucible(1);
+
+    expect(paid()).toEqual([[10, 300, 'Crucible 1st prize: Test Crucible']]);
+  });
+
+  it('pays from the stored positions on a retry, one prize per creator', async () => {
+    setupCrucible({
+      entryFee: 100,
+      entries: sweep.map((entry, i) => ({ ...entry, position: i + 1 })),
+      elos: { 1: 1400, 2: 1400, 3: 1400, 4: 1700, 5: 1400, 6: 1400 },
+    });
+    dbMock.dbWrite.crucibleEntry.count.mockResolvedValue(6);
+
+    await finalizeCrucible(1);
+
+    expect(paid().map(([userId, amount]) => [userId, amount])).toEqual([
+      [10, 300],
+      [11, 180],
+      [12, 120],
+    ]);
   });
 });
 
