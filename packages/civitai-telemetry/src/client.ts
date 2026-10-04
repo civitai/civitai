@@ -698,8 +698,9 @@ export const appStorageOpsCounter = registerCounterWithLabels({
 // emitted from TWELVE sites in `app-storage.service.ts`, so the subject gate shares it
 // with eleven others (bad token, revoked instance, missing scope, unhydratable subject,
 // anon write, …). Nor is this the only producer of the STRING: `'Apps are not enabled'`
-// is thrown from five places platform-wide (`apps.router.ts`, `blocks.router.ts`,
-// `app-listings.router.ts`, `app-storage.service.ts`, `block-token-access.service.ts`),
+// is thrown from SIX sites across five files (`apps.router.ts`, `blocks.router.ts`,
+// `app-listings.router.ts` — twice, from two different middlewares —
+// `app-storage.service.ts`, `block-token-access.service.ts`),
 // and this counter attributes exactly one of them, on one of the two storage transports —
 // the REST twins under `/api/v1/blocks/app-storage/` never run this middleware. It also
 // carries no app, block or user label, so it attributes a MECHANISM and never a viewer:
@@ -708,13 +709,18 @@ export const appStorageOpsCounter = registerCounterWithLabels({
 // union (5 values, type-checked at every call site), chosen because it is the join key
 // against `..._ops_total{op}`.
 //
-// 🔴 HOW TO BOUND THE STRING WHEN CHASING IT, because "five places" alone under-counts in the
-// reassuring direction. Counted: the string is THROWN from SIX sites across FIVE files
-// (`app-listings.router.ts` throws it from two different middlewares), and SERVED — not thrown
-// — by TWELVE REST handlers under `src/pages/api/`, almost all at HTTP 503. So the useful
-// discriminator for an investigator is the STATUS: 401 + this string ⇒ one of the six throw
-// sites, of which this counter attributes exactly one; 503 + this string ⇒ a REST handler that
-// is neither gate.
+// 🔴 HOW TO BOUND THE STRING WHEN CHASING IT. Counted: THROWN from SIX sites across five
+// files, and SERVED — not thrown — by TWELVE REST handlers under `src/pages/api/`, eleven of
+// them at a hardcoded HTTP 503.
+//
+// 🔴 THE STATUS NARROWS IN ONE DIRECTION ONLY. 503 ⇒ a REST handler that is neither gate. A
+// 401 narrows NOTHING: `src/pages/api/v1/blocks/me.ts` derives its status from the `TRPCError`
+// it catches, so it serves this string at 401 — and for one of its two refusals the thrown
+// message is `'runtime block token subject could not be resolved'`, deliberately made distinct
+// upstream and then discarded by that route. So a 401 plus this string may be none of the six
+// throw sites, and this counter is silent there. An earlier revision asserted 401 ⇒ a throw
+// site; in a comment whose job is to aim an investigator, that error is worse than the
+// under-count it replaced.
 //
 // 🔴 WHY NOT A NEW `outcome` VALUE ON `..._ops_total` INSTEAD — the obvious cheaper move, and
 // NOT for the two reasons that first suggest themselves. It is not that
@@ -725,30 +731,39 @@ export const appStorageOpsCounter = registerCounterWithLabels({
 // earlier version of this comment claiming otherwise was simply wrong.
 //
 // The reason that decides it is TYPE REACH. Every service emit routes through
-// `countStorageOutcome(op, outcome: AppStorageOutcome)`, and that union is
-// `APP_STORAGE_OUTCOMES_ALL_OPS`. Adding `session_gate` to it makes the session-gate outcome
+// `countStorageOutcome(op, outcome: AppStorageOutcome)` — and that type is the WHOLE union
+// `APP_STORAGE_OUTCOMES_ALL_OPS | APP_STORAGE_OUTCOMES_SET_ONLY`, six values, not either half
+// alone. Adding `session_gate` to either constant makes the session-gate outcome
 // TYPE-LEGAL to emit from all twelve service refusal sites — precisely the conflation this
-// counter exists to prevent. A separate counter is UNFORGEABLE from the service: `tsc` cannot
-// stop it, but the reach ledger in `src/server/prom/__tests__/app-block-storage.metrics.test.ts`
-// asserts this symbol has zero uses there, and a new outcome VALUE would have no equivalent.
+// counter exists to prevent. A separate counter is not forgeable from the service WITHOUT
+// FAILING A GUARD — deliberately not "unforgeable", because `tsc` cannot stop it: the detection
+// is the reach ledger in `src/server/prom/__tests__/app-block-storage.metrics.test.ts`, which
+// asserts this symbol AND its declared name have zero code occurrences there. A new outcome
+// VALUE would have no equivalent, because the type would make it legal everywhere.
 //
 // Secondary, and weaker than it sounds: `ops_total` means "storage operations that reached the
 // resolver", so a pre-resolver outcome widens that population. Measured, this repo has NO
 // in-repo consumer of `ops_total` — no dashboard, alert or recording rule, here or in the infra
 // repo — so that is an argument about future readers, not about breaking a known one.
 //
-// 🔴 WHY NOT A LOG LINE — TWO mechanisms, and they cover DIFFERENT halves, so neither alone
-// establishes it. (a) A hand-written `console.error` here is unreadable because
-// application-container stdout is not collected into the log store for this deployment — that
-// is the half an earlier revision deleted as "inherited", and it is the only half that speaks
-// to a log line at all. (b) A server-side-only `cause` on the thrown error is unreadable for a
-// reason local to this repo: `src/pages/api/trpc/[trpc].ts`'s `onError` returns early for
-// `UNAUTHORIZED` (alongside FORBIDDEN / TOO_MANY_REQUESTS / SERVICE_UNAVAILABLE) ahead of its
-// `logToAxiom` call, so the automatic ingest never sees it. Note (b) sits inside that handler's
-// `if (isProd)`, so it is a production claim. Together: a scraped counter is the only surface
-// that exists. The same conflation class is documented on
-// `civitai_app_block_post_subject_refusals_total` in
-// `src/server/metrics/app-block-runtime.metrics.ts`.
+// 🔴 WHY NOT A LOG LINE — AND NOT FOR THE REASON THE PRECEDENT GIVES, WHICH IS FALSE.
+// `civitai_app_block_post_subject_refusals_total`'s shipped help string
+// (`src/server/metrics/app-block-runtime.metrics.ts`) asserts that application-container logs
+// "are not collected" for this deployment. MEASURED against prod and it is not true: this
+// namespace's app container is in the collector's namespace allowlist, and a 15-minute window
+// held ~510k collected lines, ~368k of them plain non-JSON `console` output with live stack
+// frames. Do not repeat that claim; it is an availability argument resting on a condition that
+// does not hold.
+//
+// The reasons that DO hold are cost and aggregation. (a) A `console.error` on this branch adds
+// per-request noise to a stream already carrying hundreds of thousands of plain lines per
+// quarter-hour, and yields no rate to alert on or to correlate with `ops_total` — which is the
+// whole job here. (b) A server-side-only `cause` on the thrown error would not be ingested at
+// all: `src/pages/api/trpc/[trpc].ts`'s `onError` returns early for `UNAUTHORIZED` (alongside
+// FORBIDDEN / TOO_MANY_REQUESTS / SERVICE_UNAVAILABLE) ahead of its `logToAxiom` call — inside
+// that handler's `if (isProd)`, so it is a production claim. A scraped counter is the right
+// surface because it aggregates, not because the alternatives are unreadable. The conflation
+// CLASS is still well documented at that precedent; its deployment claim is not.
 //
 // 🔴 SEEDED, DELIBERATELY, AND THE PAIR IS WHY. All five members of this family are seeded;
 // what `src/server/prom/app-block-storage.metrics.ts` splits on BOUNDED-vs-UNBOUNDED label

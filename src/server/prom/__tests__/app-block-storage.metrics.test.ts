@@ -543,14 +543,38 @@ describe('the seeded domain matches the service', () => {
     //     comment says it exists to catch.
     // The first is why this matters most: the exposed `help` string asserts "A middleware
     // refusal moves ONLY this series", and a service-side emit makes that sentence false while
-    // every behavioural case stays green — ten of the twelve service refusal sites have no
-    // behavioural counter assertion over them at all.
+    // every behavioural case stays green. Stated precisely, because a looser version of this
+    // was an overclaim: some of those twelve DO have a case asserting `ops_total` was
+    // incremented — what ten of them lack is any assertion that the SESSION-GATE series stays
+    // STILL, which is the direction that matters here.
     for (const sym of LEDGERED_SYMBOLS) {
       const declared: readonly string[] = LEDGERED_WRITERS[sym];
       for (const rel of reaching) {
         if (declared.includes(rel)) continue;
         expect(perSymbolImports[sym]?.[rel] ?? 0, `${sym} NOT imported in ${rel}`).toBe(0);
         expect(perSymbolUses[sym]?.[rel] ?? 0, `${sym} NOT used in ${rel}`).toBe(0);
+      }
+    }
+
+    // 🔴 AND THE SAME COUNT OVER THE DECLARED NAMES, because the loop above keys on the SYMBOL
+    // and a string literal does not contain it. `DECLARED_NAMES` feed `REACH_KEYS`, which
+    // decides MEMBERSHIP only — useless for the three files already in `reaching`. So all three
+    // of these evaded every assertion in this file, each MEASURED green:
+    //   - `getSingleMetric('civitai_app_block_storage_session_gate_refusals_total').inc({op})`
+    //     at the service's revoked-instance refusal — the F1 mutation by a different handle;
+    //   - the same shape for `..._ops_total` inside `apps.router.ts`;
+    //   - `registerCounterWithLabels({ name: 'block_storage_session_gate_refusals_total' }).inc()`
+    //     in the service — a writable handle obtained from a declared name alone, which the
+    //     `DECLARED_NAMES` docblock above records as having shipped once already.
+    // A flat 0 needs no writer exceptions: the DECLARATIONS live in `packages/`, outside this
+    // walk, so a declared name appearing in CODE anywhere under `src/` is by definition a
+    // by-name handle. Measured on this tree: zero occurrences in all three files (every hit is
+    // a comment, and `codeOf` strips those).
+    for (const name of DECLARED_NAMES) {
+      for (const rel of reaching) {
+        const code = codeOf(fs.readFileSync(path.join(SRC, rel), 'utf8'));
+        const hits = code.split(name).length - 1;
+        expect(hits, `declared name ${name} must not appear in CODE in ${rel}`).toBe(0);
       }
     }
   });

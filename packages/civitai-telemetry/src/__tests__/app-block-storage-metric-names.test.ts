@@ -29,10 +29,16 @@ import {
  * literal would be green on exactly the defect this file exists to catch.
  * Importing `../client` is what performs the registrations.
  *
- * This is also the ONLY layer where these names are checkable at all. Every
- * app-side consumer imports them through `~/server/prom/client`, which
- * `src/__tests__/setup.ts` replaces wholesale with `vi.fn()` stubs — so no
- * app-side assertion can see a metric name, correct or not.
+ * ⚠️ WHAT THIS FILE IS **NOT**. An earlier revision of this paragraph claimed this is "the
+ * ONLY layer where these names are checkable at all", because every app-side consumer goes
+ * through the `~/server/prom/client` shim that `src/__tests__/setup.ts` stubs wholesale. That
+ * premise is true of the SHIM and false as a conclusion:
+ * `src/server/prom/app-block-storage.metrics.ts` deliberately imports the handles from
+ * `@civitai/telemetry/client` instead, precisely so it stays testable, and says so in its own
+ * header — so both suites under `src/server/prom/__tests__/` do assert these exact wire names,
+ * against the real registry and the real scrape body. This file's unique property is narrower,
+ * and is the one its first case tests: it fails on family GROWTH, so a new member cannot join
+ * unledgered.
  */
 
 // Literal, not derived from PROM_PREFIX or from the declarations. These are the
@@ -48,9 +54,12 @@ const LATENCY = 'civitai_app_block_storage_latency_seconds';
 //
 // ⚠️ Do NOT justify this entry as "the only place the exposed string is pinned". That was an
 // earlier wording and it is false: the two suites under `src/server/prom/__tests__/` pin this
-// same wire name against the real registry and the real scrape body, and they can, because they
-// import from `@civitai/telemetry/client` rather than the `~/server/prom/client` shim that
-// `src/__tests__/setup.ts` stubs. Each of the three is an independent pin; none is redundant.
+// same wire name against the real registry and the real scrape body. The mechanism is NOT that
+// they import the telemetry package themselves — they import `prom-client` plus the module under
+// test — it is that `@civitai/telemetry/client` is never stubbed (`src/__tests__/setup.ts`
+// replaces only the `~/server/prom/client` shim), so the seeder they exercise holds the REAL
+// handles and the default registry carries the real names. Each of the three pins is
+// independent; none is redundant.
 const SESSION_GATE_REFUSALS = 'civitai_app_block_storage_session_gate_refusals_total';
 
 /** The pre-fix stuttering spellings. Retired 2026-10-02; must never come back. */

@@ -49,8 +49,9 @@ import { ensureRegisterImageUploadRelayMetrics } from '~/server/prom/image-uploa
 import { ensureRegisterCsamArchiveMetrics } from '~/server/metrics/csam-archive.metrics';
 // Same reason as the three neighbours above, for the App Blocks KV storage counters: two of
 // the then-four were absent in production purely because nothing had ever incremented them, and
-// one of those exists to be alerted on. (History, not the current count — the family is five
-// now, all seeded; the fifth is the session-user gate discriminator, added for the same reason.) Called from the handler rather than here because it must
+// one of those exists to be alerted on. (History, not the current count — the family is
+// five now, all seeded; the fifth is the session-user gate discriminator, added for the
+// same reason.) Called from the handler rather than here because it must
 // await a read of the latency histogram's existing children before zeroing any of them.
 import { seedAppBlockStorageMetrics } from '~/server/prom/app-block-storage.metrics';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';

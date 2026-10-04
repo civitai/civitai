@@ -418,15 +418,17 @@ describe('apps.storage shared gates', () => {
           .procedures
       ).sort();
 
-      expect(declared).toEqual([...STORAGE_CALLS.map(([op]) => op)].sort());
-      // 🔴 WHAT THIS ACTUALLY BUYS — stated as the effect, because an earlier draft claimed a
-      // case it cannot reach. It is NOT a both-sides-empty guard: `STORAGE_CALLS` is a 5-entry
-      // literal so its side can never empty, and if `_def.procedures` moved, `Object.keys`
-      // THROWS rather than yielding `[]` (the cast is compile-time only). What the line does is
-      // hard-pin the count at five, so a legitimately-added sixth procedure goes red HERE as
-      // well as on the equality — a second, differently-worded nudge at the author. Do not
-      // delete it as inert.
+      // 🔴 THE LENGTH PIN GOES FIRST, AND THE ORDER IS THE WHOLE POINT. Two earlier drafts of
+      // this block got it wrong in opposite directions — one claimed a both-sides-empty case
+      // that cannot occur, the other claimed this line fires "as well as" the equality. It
+      // cannot fire *after* it: array `toEqual` already requires equal length, so below the
+      // equality this assertion is unreachable in every failing input and its message is never
+      // the one the author sees. Above it, it owns the one case the equality is silent on — a
+      // CONSISTENT growth of both sides, i.e. exactly what a legitimately-added sixth procedure
+      // plus its `STORAGE_CALLS` entry looks like — and it fails with a length diff that names
+      // the count rather than the op.
       expect(declared).toHaveLength(5);
+      expect(declared).toEqual([...STORAGE_CALLS.map(([op]) => op)].sort());
     });
 
     // The MIRROR arm, and the control that makes the pair above attributable: a SUBJECT-gate
