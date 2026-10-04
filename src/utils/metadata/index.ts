@@ -13,7 +13,7 @@ import { civitai, readCivitaiMetadata } from '@civitai/generation-metadata/civit
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { imageMetaSchema } from '~/server/schema/image.schema';
 import { calculateSizeInMegabytes } from '~/utils/json-helpers';
-import { readVideoTags } from '~/utils/metadata/video-tags';
+import { readVideoMetadata } from '~/utils/metadata/video-metadata';
 
 /**
  * Thin adapter over @civitai/generation-metadata, keeping this module's historical
@@ -82,7 +82,7 @@ export async function getMetadata(file: File | string) {
  * (video) go through its parser registry directly — the same detect/parse walk, the same civitai
  * plugin, then the same imageMetaSchema pass as getMetadata().
  */
-function getMetadataFromTags(tags: Record<string, string>): ImageMetaProps | undefined {
+function parseMetadataFromTags(tags: Record<string, unknown>) {
   try {
     const { parsers, context } = applyPlugins(PLUGINS, defaultParsers);
     const ctx = createParserContext(context);
@@ -94,15 +94,26 @@ function getMetadataFromTags(tags: Record<string, string>): ImageMetaProps | und
         continue;
       }
       if (!state) continue;
-      const raw = generationMetadataSchema.safeParse(parser.parse(state, ctx));
-      if (!raw.success) return undefined;
-      const result = imageMetaSchema.safeParse(raw.data);
+      const result = generationMetadataSchema.safeParse(parser.parse(state, ctx));
       return result.success ? result.data : undefined;
     }
   } catch {
     return undefined;
   }
   return undefined;
+}
+
+export async function VideoMetadataParser(file: Blob) {
+  const exif = await readVideoMetadata(file);
+  const raw = parseMetadataFromTags(exif);
+  return {
+    exif,
+    parse: () => raw,
+    getMetadata: async () => {
+      const result = imageMetaSchema.safeParse(raw ?? {});
+      return result.success ? result.data : {};
+    },
+  };
 }
 
 const MAX_VIDEO_COMFY_MB = 1;
@@ -112,7 +123,11 @@ const MAX_VIDEO_COMFY_MB = 1;
  * prompt, settings and resources and loses only the `comfy` blob.
  */
 export async function getVideoMetadata(file: Blob) {
-  const meta = getMetadataFromTags(await readVideoTags(file));
+  const parser = await VideoMetadataParser(file);
+  if (!parser.parse()) return undefined;
+  const result = imageMetaSchema.safeParse(parser.parse());
+  if (!result.success) return undefined;
+  const meta = result.data;
   if (meta?.comfy && calculateSizeInMegabytes(meta.comfy) > MAX_VIDEO_COMFY_MB) {
     const { comfy: _, ...rest } = meta;
     return rest;
