@@ -36,6 +36,7 @@ import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { AgentReviewPanel, isOnsiteReviewRequest } from '~/components/Apps/AgentReviewPanel';
 import { ReviewBlockPreviewHost } from '~/components/Apps/ReviewBlockPreviewHost';
 import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
+import type { ReviewUserChip } from '~/components/Apps/unifiedReviewRow';
 import {
   compactRelativeTime,
   REVIEW_RELATIVE_TICK_MS,
@@ -101,24 +102,13 @@ export type FileSummary = {
 /**
  * The submitter/reviewer shape every review read selects.
  *
- * 🔴 `deletedAt` IS LOAD-BEARING, NOT DECORATION. `UserAvatar` branches on it four times, and
- * the one that matters here is `UserProfileLink`: it suppresses `linkToProfile` for a deleted
- * account. With the field absent from the select it is `undefined` ⇒ falsy ⇒ a DELETED
- * submitter rendered as a live, linked account on both the queue and the submission page —
- * on a moderation surface, where who submitted a bundle is the fact being judged.
- * `Username` reads it too, to render "[deleted]" instead of a name.
- *
- * ⚠️ `profilePicture` is deliberately NOT here. It is the other field `UserAvatar` wants, but
- * it is a nested select — a joined image row PER ROW on three list paths — for a cosmetic
- * gain. `deletedAt` is a scalar on a row already being fetched and costs nothing.
+ * 🔴 AN ALIAS, NOT A DECLARATION — and the two it replaced had already drifted. This file and
+ * `PriorVersionsModal` each declared their own four-field chip for the same `UserAvatar`, and
+ * they disagreed at birth about whether `deletedAt` was optional: the optional one could not
+ * catch an omission the required one would. `ReviewUserChip` is the single declaration, in
+ * the React-free `unifiedReviewRow` module so all three surfaces can reach it.
  */
-export type UserProfile = {
-  id: number;
-  username: string | null;
-  /** `null` for a live account; a `Date` for a deleted one (superjson revives it). */
-  deletedAt?: Date | null;
-  image: string | null;
-};
+export type UserProfile = ReviewUserChip;
 
 export type ReviewedRequestCommon = {
   id: string;

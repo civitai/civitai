@@ -21,6 +21,9 @@ const state = vi.hoisted(() => ({
   query: { data: undefined as unknown, isLoading: false, isError: false, error: null as unknown },
   // Captured props the page passes to the (stubbed) review body.
   bodyProps: { last: null as null | { selection: any; onClose: () => void } },
+  // Every `selection` IDENTITY the page has handed the body, in order — so a test can ask
+  // whether the object was rebuilt rather than whether it merely looks the same.
+  selections: [] as unknown[],
   // Feature-flags the page sees (switchable per test).
   flags: { appBlocks: true, appReviewPage: true } as Record<string, boolean>,
 }));
@@ -43,6 +46,7 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 vi.mock('~/components/Apps/ReviewDetailView', () => ({
   ReviewDetailView: (props: { selection: any; onClose: () => void }) => {
     state.bodyProps.last = props;
+    state.selections.push(props.selection);
     return (
       <div data-testid="review-body">
         body:{props.selection.request.id}:{props.selection.mode}
@@ -88,7 +92,7 @@ const REQUEST = {
   version: '1.2.0',
   submittedAt: new Date('2026-01-01T00:00:00Z'),
   bundleSizeBytes: '2048',
-  submittedBy: { id: 7, username: 'dev-user', image: null },
+  submittedBy: { id: 7, username: 'dev-user', deletedAt: null, image: null },
   manifest: {},
   fileSummary: {},
   manifestDiffSummary: { kind: 'first-version', fields: [] },
@@ -202,5 +206,80 @@ describe('ReviewDetailPage — the listing-media seam', () => {
     // Every key, not only the two this change added — that is what makes it a pass-through
     // assertion rather than a list someone has to remember to extend.
     expect(state.bodyProps.last?.selection.request).toEqual(request);
+  });
+});
+
+describe('ReviewDetailPage — the `selection` identity the memo downstream depends on', () => {
+  /**
+   * 🔴 THE PAGE'S `useMemo` IS A LOAD-BEARING PERF CONTRACT WITH A SUBTLE SCOPE, and this is
+   * the only test of it.
+   *
+   * `ReviewDetailTabsView` is `memo()`d, and its single prop is this `selection` object — so
+   * a page that rebuilds the object on every render hands the memo a new identity each time
+   * and buys nothing. `ReviewDetailTabsMemo.browser.test.tsx` pins the memo's side of that
+   * bargain against a synthetic parent; this pins the PAGE's side against the real page.
+   *
+   * ⚠️ IT IS NOT ABOUT THE 60-SECOND TICK, and an earlier draft of the memo test's header
+   * said it was. The tick lives one level DOWN in `ReviewDetailView`, and a child's state
+   * update never re-renders its parent — so the page does not re-render on a tick and
+   * `memo()` alone covers that case. What the `useMemo` covers is every OTHER re-render of
+   * the page: the feature flags resolving, a react-query refetch that returns equal data, a
+   * parent update. Those are the ones that would otherwise rebuild the object.
+   */
+  test('🔴 a page re-render hands the body the SAME `selection` object, not an equal one', async () => {
+    state.query = {
+      data: { mode: 'pending', request: REQUEST },
+      isLoading: false,
+      isError: false,
+      error: null,
+    };
+    state.selections = [];
+    const { rerender } = await renderWithProviders(
+      <ReviewDetailPage publishRequestId="pubreq_1" />
+    );
+    await expect.element(page.getByTestId('review-body')).toBeInTheDocument();
+    const first = state.selections.length;
+    expect(first, 'the body rendered at all').toBeGreaterThan(0);
+
+    await rerender(<ReviewDetailPage publishRequestId="pubreq_1" />);
+    await expect.element(page.getByTestId('review-body')).toBeInTheDocument();
+    expect(
+      state.selections.length,
+      'the page re-rendered, so the body was handed a selection again'
+    ).toBeGreaterThan(first);
+
+    // 🔴 IDENTITY, NOT EQUALITY. `toEqual` would pass against a freshly-built twin, which is
+    // exactly the defect: `memo` compares by reference.
+    const distinct = new Set(state.selections);
+    expect(
+      distinct.size,
+      `the page rebuilt \`selection\` across ${state.selections.length} renders`
+    ).toBe(1);
+  });
+
+  test('POSITIVE CONTROL: a DIFFERENT payload does produce a new `selection`', async () => {
+    // Without this, the identity assertion above is satisfied by a page that never rebuilds
+    // because it never re-reads the query at all.
+    state.query = {
+      data: { mode: 'pending', request: REQUEST },
+      isLoading: false,
+      isError: false,
+      error: null,
+    };
+    state.selections = [];
+    const { rerender } = await renderWithProviders(
+      <ReviewDetailPage publishRequestId="pubreq_1" />
+    );
+    await expect.element(page.getByTestId('review-body')).toBeInTheDocument();
+    state.query = {
+      data: { mode: 'approved', request: { ...REQUEST, id: 'pubreq_2' } },
+      isLoading: false,
+      isError: false,
+      error: null,
+    };
+    await rerender(<ReviewDetailPage publishRequestId="pubreq_1" />);
+    await expect.element(page.getByTestId('review-body')).toBeInTheDocument();
+    expect(new Set(state.selections).size, 'new data must yield a new object').toBeGreaterThan(1);
+    expect(state.bodyProps.last?.selection.request.id).toBe('pubreq_2');
   });
 });

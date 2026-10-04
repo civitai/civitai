@@ -14,13 +14,22 @@ import { renderWithProviders } from '../../../test/component-setup';
  * between them was memoised — so every minute, to change one string, React re-rendered every
  * mounted panel: up to 300 collapsed file cards, and every open diff table's full row set
  * (the row `useMemo`s preserve the ARRAYS, not the elements, so each `<tr>`/`<td>`/`<Text>`
- * is recreated and reconciled).
+ * is recreated and reconciled). `memo()` on the subtree is what stops that.
  *
- * `memo()` alone does not fix that. It compares props, and the view's single prop is a
- * `selection` OBJECT that the page used to build fresh in its render body — so the identity
- * changed on every tick and the memo bailed out of nothing. The fix was to `useMemo` it, and
- * nothing in the suite could see the difference, because "`memo()` is present" and "`memo()`
- * does work" are different claims and only the first is greppable.
+ * 🔴 TWO HALVES, AND AN EARLIER DRAFT OF THIS HEADER CONFLATED THEM. The tick lives one level
+ * DOWN, inside `ReviewDetailView`, and a child's state update never re-renders its parent —
+ * so the PAGE does not re-render on a tick, `selection` keeps its identity whatever built it,
+ * and `memo()` alone covers the tick. The page's `useMemo` covers the OTHER re-render
+ * sources — the feature flags resolving, a refetch that returns equal data, a parent update —
+ * where a `selection` rebuilt in the render body would hand this memo a new object and buy
+ * nothing.
+ *
+ * This file pins the MEMO's half: given a stable prop it bails out, and given an unstable one
+ * it does not. The PAGE's half — that the real page keeps the identity across its own
+ * re-renders — is pinned behaviourally in
+ * `src/tests/pages/apps/review/review-detail-page.browser.test.tsx`, because only the real
+ * page can be wrong about it. Neither claim is greppable: "`memo()` is present" and "`memo()`
+ * does work" are different statements and only the first is a search.
  *
  * 🔴 WHY THE COUNTER IS A MOCKED CHILD AND NOT A `<Profiler>`. A Profiler wrapped around the
  * memoised element was the obvious instrument and it CANNOT MEASURE THIS: the Profiler
@@ -79,9 +88,9 @@ const REQUEST = {
 const TICKS = 3;
 
 /**
- * Re-renders a parent `TICKS` times, handing the tabs view either a stable `selection` (the
- * page's `useMemo`) or a fresh object each render (what the page did before the fix), and
- * returns how many times the memoised subtree actually re-rendered.
+ * Re-renders a parent `TICKS` times, handing the tabs view either a stable `selection` (what
+ * the page's `useMemo` produces) or a fresh object each render (what an inline literal would
+ * produce), and returns how many times the memoised subtree actually re-rendered.
  *
  * Each tick is awaited separately: three synchronous `setState` calls are BATCHED into one
  * render, which would make the broken arm look like one re-render instead of three.
@@ -100,7 +109,8 @@ const countSubtreeRenders = async (stable: boolean) => {
     const selection = stable ? pinned : { request: REQUEST as never, mode: 'pending' as const };
     return (
       <>
-        {/* A sibling that DOES re-render on every tick, standing in for the relative-age line. */}
+        {/* A sibling that re-renders on every parent render, standing in for whatever made
+            the page re-render — flags resolving, a refetch, a parent update. */}
         <span data-testid="memo-harness-tick">{n}</span>
         <ReviewDetailTabsView selection={selection} />
       </>

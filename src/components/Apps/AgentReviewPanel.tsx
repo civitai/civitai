@@ -218,13 +218,28 @@ export function AgentReviewPanel({
       elapsedMs: pollStartedAt.current != null ? Date.now() - pollStartedAt.current : 0,
     }) === false;
 
+  /**
+   * 🔴 THE BUSY WINDOW EXTENDS PAST `isPending`, AND THAT IS THE EXPENSIVE CLICK.
+   *
+   * `onSuccess` clears `isPending` and THEN awaits the report invalidation, so for a full
+   * round trip the panel still holds the stale `complete` row and renders this button
+   * enabled. A moderator who sees nothing change clicks again — and the service's own
+   * duplicate pre-check is a REPLICA read, so it cannot see the `running` row the first call
+   * just wrote to the primary. The remaining backstop is a partial unique index whose
+   * migration is marked manual-apply, so a second click in that window can provision a
+   * second ephemeral agent and a second full LLM run. This is the one dollar-denominated
+   * action on the surface; keep it disabled until the refetch that would change what the
+   * panel shows has actually landed.
+   */
+  const dispatchBusy = startMut.isPending || reportQuery.isFetching;
+
   const runButton = (label: string) => (
     <Button
       size="xs"
       variant="light"
       leftSection={<IconRobot size={14} />}
-      loading={startMut.isPending}
-      disabled={startMut.isPending}
+      loading={dispatchBusy}
+      disabled={dispatchBusy}
       onClick={() => startMut.mutate({ publishRequestId })}
     >
       {label}
@@ -335,7 +350,7 @@ export function AgentReviewPanel({
               setRerunningSection(section);
               startMut.mutate({ publishRequestId, sections: [section] });
             }}
-            rerunningSection={startMut.isPending ? rerunningSection : null}
+            rerunningSection={dispatchBusy ? rerunningSection : null}
           />
           <Group gap="xs">{runButton('Re-run all analyses')}</Group>
         </Stack>
@@ -363,7 +378,7 @@ export function AgentReviewPanel({
               setRerunningSection(section);
               startMut.mutate({ publishRequestId, sections: [section] });
             }}
-            rerunningSection={startMut.isPending ? rerunningSection : null}
+            rerunningSection={dispatchBusy ? rerunningSection : null}
           />
           {/*
             🔴 A `complete` REPORT CAN STILL BE MISSING AN ANALYSIS, and until this was added

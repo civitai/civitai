@@ -116,7 +116,10 @@ describe('ReviewSubmitterMeta — the real UserAvatar', () => {
     // cell shows exactly this; so does the submission.
     renderWithProviders(
       <ReviewSubmitterMeta
-        request={{ ...REQUEST, submittedBy: { id: 42, username: null, image: null } }}
+        request={{
+          ...REQUEST,
+          submittedBy: { id: 42, username: null, deletedAt: null, image: null },
+        }}
         now={NOW}
       />
     );

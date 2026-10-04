@@ -115,6 +115,12 @@ describe('projectModerationListing', () => {
         ],
       }) as never
     );
+    // ⚠️ NO `deletedAt` HERE, DELIBERATELY. `creatorChip` projects `{ id, username, image }`
+    // EXPLICITLY, so it drops the field even when the row carries it — unlike the review
+    // adapters, which pass the user object through whole. That is a real gap on this
+    // surface and it is NOT this PR's: the moderator LISTINGS table is a different screen
+    // from the review queue, and widening it means widening `moderationListingSelect` too.
+    // Asserted as-is so the test keeps describing what the projection does.
     expect(dto.pendingRequest).toEqual({
       id: 'alpr_1',
       submittedAt: new Date('2026-01-02T00:00:00Z'),

@@ -114,6 +114,53 @@ describe('agentReportSectionStatuses', () => {
     expect(sectionErrorMessage({ error: '' })).toBe('unspecified error');
     expect(sectionErrorMessage('   ')).toBe('the analysis returned no output');
   });
+
+  /**
+   * 🔴 THE REASON SURVIVES LEADING BLANK LINES, which is the whole value of the slot.
+   *
+   * An earlier revision sliced to the 500-character bound BEFORE trimming, on a perf
+   * argument that was later benchmarked at zero (V8's `trim()` returns the original string,
+   * or a constant-size view — it never copies). The cost was real though: the budget got
+   * spent on whitespace, so a runner dump that starts with blank lines reduced to the
+   * generic "returned no output" line. That is the only evidence a moderator has about WHY
+   * an analysis produced nothing, and losing it re-opens the "did it run, or did it find
+   * nothing?" conflation this whole surface exists to close.
+   *
+   * Both fixtures overshoot the bound deliberately — 600 and 400 are not multiples of the
+   * 500-character step, so neither can land exactly on it and pass by accident.
+   */
+  test('🔴 a dump that STARTS with whitespace keeps its reason — the budget is not spent on blanks', () => {
+    const reason = 'Traceback: OOM in sandbox runner';
+    expect(sectionErrorMessage('\n'.repeat(600) + reason)).toBe(reason);
+    // …and a long message behind leading spaces is surfaced in full, not truncated to what
+    // was left over after the padding.
+    const long = 'E'.repeat(400);
+    expect(sectionErrorMessage(' '.repeat(400) + long)).toBe(long);
+    // The bound itself still applies to the TRIMMED text.
+    expect(sectionErrorMessage('X'.repeat(900))).toHaveLength(500);
+  });
+
+  /**
+   * 🔴 A SCALAR OR AN ARRAY IN A STRUCTURED SLOT IS NOT A RESULT EITHER.
+   *
+   * Every one of the three analyses stores an object with named fields, so `0`, `false` and
+   * `[]` can only come from a runner that wrote the wrong thing. They used to fall through
+   * to `null`, which scores the slot `complete` and renders the clean "no findings" empty
+   * state — the same false clean verdict as the whitespace case above, arriving by a
+   * different route.
+   */
+  test('🔴 a NON-OBJECT or ARRAY slot is a failure, not a clean section', () => {
+    for (const bogus of [0, false, [], 'x'.length - 1]) {
+      expect(agentReportSectionStatuses({ codeReview: bogus }).codeReview).toBe('failed');
+      expect(sectionErrorMessage(bogus)).toBe('the analysis returned no result');
+    }
+    // 🔴 THE CONTRAST, or the rule above would be satisfied by scoring EVERYTHING failed:
+    // a plain object with no `error` key is the legitimate completed shape and stays clean.
+    expect(agentReportSectionStatuses({ codeReview: { findings: [] } }).codeReview).toBe(
+      'complete'
+    );
+    expect(sectionErrorMessage({ findings: [] })).toBeNull();
+  });
 });
 
 describe('failedAgentReportSections', () => {

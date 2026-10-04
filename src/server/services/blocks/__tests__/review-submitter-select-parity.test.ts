@@ -3,250 +3,128 @@ import { join } from 'path';
 import { describe, expect, test } from 'vitest';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { stripCommentsAndStrings } from '../../../../../test/strip-comments';
+import { reviewUserChipSelect, simpleUserSelect } from '~/server/selectors/user.selector';
 
 /**
- * THE SEAM BETWEEN THE REVIEW QUEUE'S PAYLOAD AND THE REVIEW PAGE'S.
+ * THE SEAM BETWEEN EVERY MODERATOR REVIEW SURFACE'S USER CHIP.
  *
- * The queue list and the per-submission page now render the SAME `UserAvatar` chip for the
- * submitter. That component reads `username`, `image`, `deletedAt`, `profilePicture` and
- * `cosmetics` off whatever object it is handed — so the two surfaces look identical only
- * while their `submittedBy` SELECTS agree. Measured at the time of writing: they do, to the
- * character, across all five readers.
+ * The `/apps/review` queue (on-site AND off-site rows, interleaved in ONE list), the
+ * per-submission page, and the prior-versions modal all render the SAME `UserAvatar` for the
+ * submitter and the reviewer. That component reads `username`, `image`, `deletedAt`,
+ * `profilePicture` and `cosmetics` off whatever object it is handed — so the surfaces agree
+ * only while their selects do.
  *
- * 🔴 AND `reviewedBy` IS THE SAME CHIP, WHICH THE FIRST VERSION OF THIS GUARD MISSED.
- * `PriorVersionsModal` renders BOTH through `UserAvatar`, side by side in one row — so a
- * `deletedAt` added to one and not the other means a deleted submitter is handled and a
- * deleted MODERATOR still renders as a live, linked account, in the same list. One rule,
- * one place: the cases below run over both keys.
+ * 🔴 THIS FILE USED TO BE A 230-LINE SOURCE SCAN, AND DELETING IT WAS THE FIX.
  *
- * 🔴 NOTHING ELSE CAN SEE THIS. Each surface's own browser test renders its own fixture, so
- * widening one select (or narrowing another) leaves every one of them green while the two
- * screens start showing different things for one person — an avatar on the queue and
- * initials on the submission, or vice versa. The defect lives in the seam, which is exactly
- * where no component test looks.
+ * The literal `{ id, username, deletedAt, image }` was spelled inline at NINE sites in
+ * `publish-request.service.ts` plus one in `offsite-listing.service.ts`, and the scan existed
+ * to assert the ten agreed. They did not: `deletedAt` reached the five `submittedBy` ones a
+ * whole round before the four `reviewedBy` ones, and the off-site chip after both — so for a
+ * while the queue rendered a closed account as `[deleted]` on an on-site row and as a live,
+ * linked profile on the off-site row directly beneath. A predicate open-coded at ten sites is
+ * typically wrong at most of them in the same direction, and a scan can only ever report that
+ * after the fact.
  *
- * 🔴 WHY A SOURCE SCAN RATHER THAN A RUNTIME ASSERTION. These are Prisma `select` literals
- * inside five different functions; there is no exported value to compare. The alternative —
- * calling each function against a mocked client and diffing the recorded `select` — needs
- * five bespoke mock setups and would then assert what the mock was told, not what the five
- * literals say. The literal text IS the contract here.
+ * There is now ONE declaration — `reviewUserChipSelect` — so parity is an identity rather
+ * than a text property, and the scan's whole subject is gone. What survives is the smaller
+ * question the const cannot answer by itself: does it still carry the fields the chip
+ * BRANCHES on, and has anyone re-introduced an inline copy?
  *
- * Deliberately NOT a "this exact field list" assertion: the list is allowed to grow (adding
- * `profilePicture` to every reader of a chip would be an improvement). What may never happen
- * is a chip's readers DISAGREEING with each other.
+ * ⚠️ The scan is not "replaced by types". A Prisma select is structurally typed, so a
+ * NARROWER inline literal is still assignable — nothing in the type system objects to
+ * someone writing the four fields out again, minus one. That is what the third case checks.
  */
 
-const SERVICE_REL = 'src/server/services/blocks/publish-request.service.ts';
-
-/**
- * Every `submittedBy: { select: … }` literal in the service, as normalised text.
- *
- * 🔴 A BRACE-COUNTING SCAN, NOT `[^}]*`. The lazy form cannot span a NESTED object, so the
- * moment anyone takes this file's own advice and adds `profilePicture: { select: { … } }`,
- * every capture truncates at the inner `}` — two selects identical up to that point and
- * divergent after it then compare EQUAL, the parity assertion passes, and so does the
- * ≥5 positive control. The guard would go quietly blind at exactly the edit it exists to
- * protect. (`test/component-setup.tsx` records the general version of this at length:
- * several regexes cannot agree about where a block ends.)
- *
- * 🔴 COMMENTS **AND STRING LITERALS** ARE STRIPPED FIRST, via the repo's shared
- * `stripCommentsAndStrings`. A commented-out `submittedBy: { select: { … } }` is not a
- * reader, and counting one would both inflate the positive control and let a stale shape
- * vote on parity. Strings are the same class one syntax over: this service builds raw SQL
- * and error copy, and a `submittedBy: { select: {` appearing inside a template literal is
- * documentation, not a query. `stripComments` alone — which is what this scan used first —
- * leaves that case counted. Nothing legitimate is lost: a real Prisma select is never
- * inside a quote.
- */
-function chipSelects(source: string, key: ChipKey = 'submittedBy'): string[] {
-  const code = stripCommentsAndStrings(source);
-  const out: string[] = [];
-  const opener = new RegExp(`${key}:\\s*\\{\\s*select:\\s*\\{`, 'g');
-  let m: RegExpExecArray | null;
-  while ((m = opener.exec(code)) !== null) {
-    // Walk from just inside the `select: {` brace, counting depth, to its true match.
-    let depth = 1;
-    let i = m.index + m[0].length;
-    const start = i;
-    while (i < code.length && depth > 0) {
-      const ch = code[i];
-      if (ch === '{') depth += 1;
-      else if (ch === '}') depth -= 1;
-      i += 1;
-    }
-    if (depth !== 0) continue; // unbalanced — not a literal we can read
-    out.push(
-      code
-        .slice(start, i - 1)
-        .replace(/\s+/g, ' ')
-        .trim()
-    );
-    opener.lastIndex = i;
-  }
-  return out;
-}
-
-const source = readFileSync(join(process.cwd(), SERVICE_REL), 'utf8');
-
-/**
- * The two user chips the moderator review reads, and what the scan must account for on each.
- *
- * `nonReaders` is an asserted LEDGER of every `<key>:` mention that is NOT a Prisma select —
- * see the positive control below for why a count cannot do this job.
- */
-const CHIPS = [
-  {
-    // The three list builders (pending / approved / rejected), `listVersionHistory`, and the
-    // page's single-request `getReviewRequestById`.
-    key: 'submittedBy',
-    floor: 5,
-    // `ListingJoinSubject`'s TYPE annotation — it declares the request columns the
-    // listing-ownership join reads rather than querying anything.
-    nonReaders: ['{ id: number } | null'],
-  },
-  {
-    // The three list builders and `listVersionHistory`. `getReviewRequestById` resolves the
-    // reviewer separately, which is why this floor is one lower than the submitter's.
-    key: 'reviewedBy',
-    floor: 4,
-    nonReaders: [] as string[],
-  },
+const SERVICE_FILES = [
+  'src/server/services/blocks/publish-request.service.ts',
+  'src/server/services/blocks/offsite-listing.service.ts',
 ] as const;
 
-type ChipKey = (typeof CHIPS)[number]['key'];
+/**
+ * An inline `{ select: { … } }` literal on any of the chip-bearing names.
+ *
+ * `[:=]` covers both spellings that have existed here: the property form
+ * (`submittedBy: { select: { … } }`) and the hoisted-const form
+ * (`const submitterChip = { select: { … } }`), which is how the off-site service wrote it.
+ * A site that reads the shared const has no `{` after `select:` and cannot match.
+ */
+const INLINE_CHIP = /(submittedBy|reviewedBy|submitter(?:Chip)?)\s*[:=]\s*\{\s*select\s*:\s*\{/g;
 
-describe.each(CHIPS)('the moderator review surfaces agree about the $key payload', (chip) => {
-  const { key, floor, nonReaders } = chip;
-
-  test('🔴 POSITIVE CONTROL: the scan read EVERY mention in the service, not just the ones it could parse', () => {
-    // Two claims, and the first is the one a hardcoded floor cannot make.
-    //
-    // 🔴 DERIVED, NOT A MAGIC 5 — and the measurement that says why. The control used to be
-    // `parsed >= 5`, today's reader count. That does catch a reader CONVERTED to a shape the
-    // scan cannot read (parsed drops to 4). What it cannot see is a reader ADDED in such a
-    // shape: measured by mutation, inserting a sixth `submittedBy: SUBMITTER_SELECT` beside
-    // the five leaves parsed at 5, so `>= 5` stays green while the new reader never votes on
-    // parity. Hoisting the literal into a shared constant is the natural next refactor here,
-    // which is exactly how that mutant gets written for real. So every `submittedBy:` MENTION
-    // in the stripped source must be accounted for — a reader the scan cannot read is a
-    // failure of the scan, and must say so rather than being quietly excluded.
-    const code = stripCommentsAndStrings(source);
-    const selects = chipSelects(source, key);
-
-    // Every `submittedBy:` in the file, classified. One that the select scan did NOT parse
-    // is kept as a short normalised snippet so it has to be ACCOUNTED FOR here rather than
-    // silently excluded.
-    const unparsed: string[] = [];
-    const mention = new RegExp(`\\b${key}:`, 'g');
-    let m: RegExpExecArray | null;
-    let mentions = 0;
-    while ((m = mention.exec(code)) !== null) {
-      mentions += 1;
-      const tail = code.slice(m.index + m[0].length, m.index + m[0].length + 60);
-      if (/^\s*\{\s*select:\s*\{/.test(tail)) continue;
-      // Cut at the statement terminator, or the window runs into the NEXT declaration and
-      // the ledger entry changes whenever an unrelated line moves.
-      unparsed.push(tail.split(';')[0].replace(/\s+/g, ' ').trim().slice(0, 40));
-    }
-
-    // 🔴 AN ASSERTED LEDGER OF THE NON-READERS, not a count. It fails when the set GROWS
-    // (a reader written in a shape the scan cannot read — `submittedBy: SELECT`, or
-    // `submittedBy: { select: { ...base } }`) and when it SHRINKS (the type named below
-    // stops existing, so this entry is stale and nobody would otherwise notice).
-    //
-    // The one legitimate non-reader: the `ListingJoinSubject` TYPE annotation, which declares
-    // the request columns the listing-ownership join reads rather than querying anything.
-    expect(unparsed, `every \`${key}:\` is a parsed select or a known non-reader`).toEqual([
-      ...nonReaders,
-    ]);
-    expect(
-      selects.length,
-      `the service mentions \`${key}:\` ${mentions} time(s), ${unparsed.length} of them accounted for as non-readers`
-    ).toBe(mentions - unparsed.length);
-    // …and an absolute floor, so a file that had lost every reader (or a scan matching
-    // nothing at all) cannot satisfy the equality above with 0 === 0. The per-chip counts
-    // are in `CHIPS` above.
-    expect(selects.length).toBeGreaterThanOrEqual(floor);
-  });
-
-  test('🔴 every select for this chip in the service is IDENTICAL', () => {
-    const selects = chipSelects(source, key);
-    const distinct = [...new Set(selects)];
-    // One assertion over the whole set, so a failure prints every variant rather than
-    // stopping at the first pair.
-    expect(distinct).toHaveLength(1);
-  });
-
-  test('…and it carries the fields the shared avatar chip actually BRANCHES on', () => {
+describe('the review user chip is one declaration', () => {
+  test('🔴 it carries the fields `UserAvatar` actually BRANCHES on', () => {
     // `UserAvatar` falls back to initials from `username` and to `user.image` when there is
     // no `profilePicture` row, so those two plus `id` are the floor for the chip rendering at
     // all. `id` is additionally what the no-username branch shows (`#<id>`).
     //
     // 🔴 `deletedAt` IS REQUIRED, AND ITS ABSENCE WAS A LIVE DEFECT RATHER THAN A GAP.
     // `UserProfileLink` suppresses `linkToProfile` for a deleted account, and `Username`
-    // renders "[deleted]" instead of a name — both read this field. Without it in the select
-    // the value is `undefined` ⇒ falsy ⇒ a DELETED submitter rendered as a live, linked
-    // account, on both the queue and the submission page. A field that exists in a DTO is not
-    // a guard; this is the consumer that BRANCHES on it, which is why the floor names it.
+    // renders "[deleted]" instead of a name — both read this field. Without it the value is
+    // `undefined` ⇒ falsy ⇒ a DELETED submitter rendered as a live, linked account, on the
+    // surface where who submitted a bundle is the fact being judged. A field that exists in a
+    // DTO is not a guard; those are the consumers that BRANCH on it, which is why the floor
+    // names it. The render itself is pinned in `ReviewSubmitterMeta.browser.test.tsx`.
+    expect(reviewUserChipSelect).toEqual({
+      id: true,
+      username: true,
+      deletedAt: true,
+      image: true,
+    });
+  });
+
+  test('🔴 it is `simpleUserSelect` MINUS `profilePicture` — an asserted relationship, not a coincidence', () => {
+    // The repo's house chip is `simpleUserSelect`, and this one is deliberately one field
+    // narrower: `profilePicture` is a NESTED select, so Prisma issues an extra batched query
+    // against one of the largest tables in the database per list call — on three mod-queue
+    // list paths, for a gain `UserAvatar` already falls back from.
     //
-    // ⚠️ `profilePicture` is deliberately NOT required. It is the one remaining field
-    // `UserAvatar` reads, but it is a NESTED select — a joined image row per row on three
-    // list paths — for a cosmetic gain. Adding it later is still allowed (the parity rule is
-    // that the readers AGREE, not what they contain), and the brace-counting scan above was
-    // written specifically so that edit cannot blind this guard.
-    const [select] = [...new Set(chipSelects(source, key))];
-    for (const field of ['id: true', 'username: true', 'image: true', 'deletedAt: true']) {
-      expect(select).toContain(field);
+    // 🔴 ASSERTED RATHER THAN DERIVED. Writing `const { profilePicture, ...rest } =
+    // simpleUserSelect` in the SOURCE would make a new field on the house chip propagate here
+    // silently, onto exactly those list paths. Asserting it instead means a widening of
+    // `simpleUserSelect` turns this case RED and forces someone to decide. That is the point.
+    const { profilePicture, ...rest } = simpleUserSelect;
+    expect(
+      profilePicture,
+      'the field this chip exists to omit must still be on the house chip'
+    ).toBeDefined();
+    expect(rest).toEqual(reviewUserChipSelect);
+  });
+
+  test('🔴 no service re-introduces an INLINE chip literal — the type system cannot see one', () => {
+    // The failure this replaces the old scan for: a narrower literal written out again at a
+    // new call site. Prisma selects are structurally typed, so `{ id: true, username: true,
+    // image: true }` is perfectly assignable — it just silently drops the branch.
+    //
+    // Comments and strings are stripped first: a select spelled in a docstring or an error
+    // message is prose, not a query, and counting one would fail this for no reason.
+    const offenders: string[] = [];
+    for (const rel of SERVICE_FILES) {
+      const code = stripCommentsAndStrings(readFileSync(join(process.cwd(), rel), 'utf8'));
+      for (const m of code.matchAll(INLINE_CHIP)) {
+        offenders.push(`${rel}: ${m[0].replace(/\s+/g, ' ')}`);
+      }
     }
-  });
-});
-
-/**
- * THE SCANNER'S OWN CONTROLS — about `chipSelects`, not about either chip, so they run ONCE
- * rather than per chip. They are what make the parity assertions above readable as tests: a
- * scan that matched nothing, or truncated at a nested brace, would report agreement over an
- * empty or mangled set.
- */
-describe('the select scanner', () => {
-  test('🔴 NEGATIVE CONTROL: the comparison can actually fail', () => {
-    // Proves the parity test is a test. Feed it two deliberately different literals and
-    // watch the same derivation report a disagreement.
-    const divergent = `
-      submittedBy: { select: { id: true, username: true, image: true } }
-      submittedBy: { select: { id: true, username: true, image: true, deletedAt: true } }
-    `;
-    expect(new Set(chipSelects(divergent)).size).toBe(2);
+    expect(offenders, 'every review user chip must read `reviewUserChipSelect`').toEqual([]);
   });
 
-  test('🔴 NEGATIVE CONTROL: it can still fail once a select carries a NESTED literal', () => {
-    // The case the old `[^}]*` form went blind on, and the exact edit this file's docstring
-    // invites. Both of these are identical up to the nested `profilePicture` and divergent
-    // after it; a scan that truncated at the inner brace would call them equal.
-    const nested = `
-      submittedBy: { select: { id: true, profilePicture: { select: { url: true } }, image: true } }
-      submittedBy: { select: { id: true, profilePicture: { select: { url: true } }, image: false } }
-    `;
-    const seen = chipSelects(nested);
-    expect(seen, 'both nested literals are read whole').toHaveLength(2);
-    expect(seen[0]).toContain('profilePicture');
-    expect(new Set(seen).size, 'and they are told apart').toBe(2);
-  });
-
-  test('🔴 a COMMENTED-OUT or QUOTED select is not counted as a reader', () => {
-    // Prose and copy are not queries. The quoted cases are why the scan upgraded from
-    // `stripComments` to `stripCommentsAndStrings`: a select spelled inside a template
-    // literal or an error string used to be counted, which both inflated the positive
-    // control and let a shape nobody executes vote on parity.
-    const commented = [
-      '      // submittedBy: { select: { id: true } }',
-      '      /* submittedBy: { select: { username: true } } */',
-      '      const doc = `submittedBy: { select: { id: true, bogus: true } }`;',
-      "      throw new Error('submittedBy: { select: { nope: true } }');",
-      '      submittedBy: { select: { id: true, username: true, image: true } }',
-    ].join('\n');
-    const seen = chipSelects(commented);
-    expect(seen).toHaveLength(1);
-    // …and it is the LIVE one, not one of the four decoys.
-    expect(seen[0]).toBe('id: true, username: true, image: true');
+  test('🔴 POSITIVE CONTROL: the services DO reference the shared const, and the pattern CAN match', () => {
+    // Two reassuring zeros to disprove. (a) An empty `offenders` above is indistinguishable
+    // from a scan pointed at the wrong files, so prove both services actually name the const.
+    // (b) Prove the pattern matches when an inline literal IS present — otherwise the case
+    // above is a regex that may never have matched anything in its life.
+    for (const rel of SERVICE_FILES) {
+      const code = readFileSync(join(process.cwd(), rel), 'utf8');
+      expect(code, `${rel} must consume the shared select`).toContain('reviewUserChipSelect');
+    }
+    const planted = [
+      'submittedBy: { select: { id: true, username: true, image: true } },',
+      'reviewedBy: { select: { id: true } },',
+      'const submitterChip = { select: { id: true } } as const;',
+    ];
+    for (const p of planted) {
+      expect(
+        new RegExp(INLINE_CHIP.source).test(p),
+        `the inline-literal pattern must match \`${p}\``
+      ).toBe(true);
+    }
   });
 });

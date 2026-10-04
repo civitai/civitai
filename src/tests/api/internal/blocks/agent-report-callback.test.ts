@@ -135,8 +135,18 @@ describe('persistedStatusFor / buildReportUpdate (pure)', () => {
    * one: a fifth analysis wired through schema + service + UI but missed here would have
    * its results dropped on write, and every one of those surfaces would still test green
    * in isolation. So this pins the RELATIONSHIP — it fails when the set GROWS (a new ledger
-   * section the writer ignores) and when it SHRINKS (a key the writer still accepts after
-   * the ledger dropped it).
+   * section the writer ignores) and when the writer ACCEPTS a key the ledger does not list.
+   *
+   * 🔴 THE TWO HALVES ARE NOT EQUALLY STRONG, AND AN EARLIER DOCSTRING CLAIMED THEY WERE.
+   * The growth half is universal: the body is built FROM the ledger, so any section the
+   * writer ignores fails. The other half cannot be — a key the ledger does not contain is
+   * never in a ledger-built fixture, so `writtenSections` equals the ledger by construction
+   * and a hand-spelled branch for an UNPLANTED key survives. Measured: adding one for
+   * `licenceAudit` left all 16 cases green. It is therefore a BATTERY, not a proof: the
+   * decoys below cover a plausible fourth analysis, two near-misses of real section names,
+   * and the two prototype members an adversarial body would reach for. A branch for a key
+   * outside the battery is not caught here; the structural backstop is that the writer has
+   * exactly one assignment site, the ledger loop.
    *
    * The body is built FROM the ledger rather than hand-spelled, which is what makes the
    * growth half automatic. Values are pairwise distinct AND distinct from any literal this
@@ -150,15 +160,38 @@ describe('persistedStatusFor / buildReportUpdate (pure)', () => {
    */
   it('🔴 writes EXACTLY the shared ledger’s section keys — no more, no fewer', () => {
     const marker = (section: string) => ({ from: `ledger:${section}` });
-    const body: Record<string, unknown> = {
-      publishRequestId: PUBREQ,
-      status: 'complete',
-      // A section-shaped key the ledger does NOT contain. The negative half: an
-      // attacker-or-typo field must not reach the UPDATE `data`, because `data` is
-      // handed to Prisma as a column map.
-      licenseAudit: { from: 'not-in-ledger' },
-    };
-    for (const section of AGENT_REVIEW_SECTIONS) body[section] = marker(section);
+    // The decoy battery. A plausible fourth analysis, two NEAR-MISSES of real section names
+    // (the shape a typo takes), and the two prototype members an adversarial body reaches
+    // for — none of which may reach the UPDATE `data`, because `data` is handed to Prisma as
+    // a column map.
+    const DECOYS = [
+      'licenseAudit',
+      'license_audit',
+      'codeReviews',
+      'scopeVerdict',
+      '__proto__',
+      'constructor',
+    ] as const;
+
+    // 🔴 BUILT THROUGH `JSON.parse`, NOT AS AN OBJECT LITERAL, because the handler's body
+    // arrives that way and the two are not equivalent for this fixture: assigning
+    // `obj.__proto__ = …` on a literal invokes the SETTER and replaces the prototype, so the
+    // decoy would never become a key at all and the case would pass while testing nothing.
+    // `JSON.parse` materialises it as an ordinary OWN property — which is exactly the shape
+    // an adversarial request body has.
+    // The JSON TEXT is assembled directly: round-tripping a literal through
+    // `JSON.stringify` does not work either, because `payload.__proto__ = …` already went to
+    // the setter and the key was never there to serialise.
+    const members = [
+      `"publishRequestId":${JSON.stringify(PUBREQ)}`,
+      `"status":"complete"`,
+      ...DECOYS.map((d) => `${JSON.stringify(d)}:${JSON.stringify({ from: `decoy:${d}` })}`),
+      ...AGENT_REVIEW_SECTIONS.map((x) => `${JSON.stringify(x)}:${JSON.stringify(marker(x))}`),
+    ];
+    const body = JSON.parse(`{${members.join(',')}}`) as Record<string, unknown>;
+    // The fixture must actually carry the hostile key as an own property, or the two
+    // prototype decoys are decorative.
+    expect(Object.prototype.hasOwnProperty.call(body, '__proto__')).toBe(true);
 
     const data = buildReportUpdate(body);
 
@@ -180,7 +213,17 @@ describe('persistedStatusFor / buildReportUpdate (pure)', () => {
     ]);
     const writtenSections = Object.keys(data).filter((k) => !nonSection.has(k));
     expect(new Set(writtenSections)).toEqual(ledger);
-    expect(data.licenseAudit).toBeUndefined();
+    for (const decoy of DECOYS) {
+      // 🔴 OWN-PROPERTY, NOT `toBeUndefined()`. `data.__proto__` resolves to
+      // `Object.prototype` through the chain, so a value check reports a hit for a key
+      // nobody wrote — and `data.constructor` likewise. Presence is the question.
+      expect(
+        Object.prototype.hasOwnProperty.call(data, decoy),
+        `decoy key \`${decoy}\` must not reach the column map`
+      ).toBe(false);
+    }
+    // …and the writer did not swap the object's prototype on the way through.
+    expect(Object.getPrototypeOf(data)).toBe(Object.prototype);
 
     // 🔴 POSITIVE CONTROL — a ledger that had gone empty would satisfy both halves above
     // while asserting nothing. Three is today's count; the bound is what matters.

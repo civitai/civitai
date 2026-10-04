@@ -49,7 +49,7 @@ const ONSITE_PENDING = {
   manifestDiffSummary: { kind: 'first-version', fields: ['name'] },
   reviewRepoUrl: 'https://forgejo.example/repo',
   pushCommitUrl: null as string | null,
-  submittedBy: { id: 7, username: 'dev-user', image: null },
+  submittedBy: { id: 7, username: 'dev-user', deletedAt: null, image: null },
 };
 
 const ONSITE_APPROVED = {
@@ -58,7 +58,7 @@ const ONSITE_APPROVED = {
   slug: 'approved-block',
   reviewedAt: new Date('2026-01-02T00:00:00Z'),
   approvalNotes: 'looks good, shipping it',
-  reviewedBy: { id: 99, username: 'mod-user', image: null },
+  reviewedBy: { id: 99, username: 'mod-user', deletedAt: null, image: null },
 };
 
 // A SECOND pending request (distinct `id`) used to prove the transient

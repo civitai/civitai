@@ -83,13 +83,24 @@ export function agentSectionFailureMessage(raw: unknown): string | null {
   // whole surface exists to remove, and a string slot is unambiguous evidence the runner
   // wrote a dump rather than a result. The message says so rather than showing empty space.
   if (typeof raw === 'string') {
-    // 🔴 SLICE BEFORE TRIM. The other order copies the WHOLE string first, and this runs ~15×
-    // per render of the agent surface (four section-status walks plus three message lookups,
-    // each over three slots) — so a multi-MB bare-string log dump would be duplicated fifteen
-    // times a frame to produce 500 characters. Same output for any input: trailing whitespace
-    // inside the first 500 chars is still trimmed, and a string of pure whitespace still
-    // reduces to empty.
-    const s = raw.slice(0, AGENT_SECTION_ERROR_MAX_CHARS).trim();
+    // 🔴 TRIM BEFORE SLICE, AND THE "PERF" ARGUMENT FOR THE OTHER ORDER WAS MEASURED AT ZERO.
+    //
+    // An earlier revision sliced first, with a comment claiming the other order "copies the
+    // WHOLE string first" so that a multi-MB dump "would be duplicated fifteen times a
+    // frame". Benchmarked on a 4 MiB string, 15 calls, under `--expose-gc`: the two orders
+    // are indistinguishable (0.002–0.008 ms, heapΔ ~4 KiB either way), and in the
+    // leading-whitespace case slice-first allocated MORE. V8's `trim()` returns the ORIGINAL
+    // string when there is no edge whitespace and a constant-size sliced view when there is;
+    // it never flattens a copy. There was nothing to buy.
+    //
+    // 🔴 AND THE ORDER IS NOT OUTPUT-NEUTRAL, which the old comment asserted it was. Slicing
+    // first spends the 500-character budget on whitespace: a dump of 600 newlines followed by
+    // `Traceback: OOM in sandbox runner` reduced to the generic "returned no output" line, and
+    // 400 spaces + 400 characters of message surfaced 100 of them. The stored value is the
+    // only evidence a moderator has about why an analysis produced nothing, so losing it to
+    // leading blank lines re-opens the exact "did it run, or did it find nothing?" conflation
+    // this surface exists to close. Trimming first also agrees with the object arm below.
+    const s = raw.trim().slice(0, AGENT_SECTION_ERROR_MAX_CHARS);
     return s ? s : 'the analysis returned no output';
   }
   if (typeof raw === 'object') {
@@ -113,6 +124,17 @@ export function agentSectionFailureMessage(raw: unknown): string | null {
         : 'unspecified error';
     }
   }
+  // 🔴 A SLOT THAT IS NEITHER A STRING NOR AN `{ error }` OBJECT IS NOT A RESULT EITHER.
+  // `0`, `false`, `[]` and `{ findings: … }`-shaped-but-errorless values all land here. The
+  // last one is the legitimate case — a completed analysis — and must stay `null`, because
+  // `null` is what scores a slot `complete`. The others are the hazard: a runner that writes
+  // a scalar into a structured column would score `complete` and render the clean "no
+  // findings" empty state for a section whose stored value is not a result at all.
+  //
+  // Discriminated on SHAPE rather than on truthiness: an array and a primitive cannot be a
+  // section result (every one of the three is an object with named fields), so they are
+  // failures; a plain object without `error` is a result and stays `null`.
+  if (Array.isArray(raw) || typeof raw !== 'object') return 'the analysis returned no result';
   return null;
 }
 

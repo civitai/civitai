@@ -116,10 +116,18 @@ describe('the per-file header', () => {
 
   /**
    * 🔴 INVARIANT GUARD, NOT REGRESSION COVERAGE — its own title says "unchanged", so label it
-   * rather than let the count read as redesign coverage. `origin/main`'s `DiffHunkView` was
-   * already collapsed by default (the brief's "don't regress the laziness"); this pins that
-   * the rewrite kept it. As with the two blocks below, it cannot be reported green at the
-   * base, because the component it renders does not exist there.
+   * rather than let the count read as redesign coverage. `origin/main`'s `FileDiffEntry` was
+   * already `useState(false)` (the brief's "don't regress the laziness"); this pins that the
+   * rewrite kept it.
+   *
+   * ⚠️ NOT REPORTABLE AT THE BASE, and the reason is NOT the one an earlier draft gave. That
+   * draft said `FileDiffEntry` "does not exist" on `origin/main` — it does, at
+   * `reviewDiffPanels.tsx:86`, with `DiffHunkView` as its CHILD. What actually stops this
+   * file loading there is that `SKIP_LABEL` is a module-private `const` on main while this
+   * file imports it at module scope. And had it loaded, THIS case would have passed
+   * VACUOUSLY: the testid it asserts zero of does not exist on main at all, so "green at the
+   * base" would have been the wrong grade even where it was reachable. See the two blocks
+   * below, which carry the same correction.
    */
   test('INVARIANT GUARD: collapsed by default — the laziness is unchanged', async () => {
     renderWithProviders(<FileDiffEntry file={CHANGED} />);
@@ -190,13 +198,16 @@ describe('unified layout (the default)', () => {
   });
 
   /**
-   * 🔴 INVARIANT GUARD, NOT REGRESSION COVERAGE — and, as in the elided-files block below,
-   * NOT by the "green at `origin/main`" method, which cannot apply: `FileDiffEntry` does not
-   * exist at the base. `origin/main`'s `reviewDiffPanels.tsx` already painted every surface
-   * through `light-dark(...)` (5 occurrences, and a header note saying why), so this pins a
-   * rule the rewrite had to CARRY OVER rather than a defect anyone watched. The rewrite
-   * introduced new painted surfaces — the sticky file header, the split filler cell — which
-   * is the reason to re-pin it at all. Do not count it toward "the redesign is tested".
+   * 🔴 INVARIANT GUARD, NOT REGRESSION COVERAGE — and not by the "green at `origin/main`"
+   * method, which cannot apply here. `origin/main`'s `reviewDiffPanels.tsx` already painted
+   * every surface through `light-dark(...)` (5 occurrences, and a header note saying why), so
+   * this pins a rule the rewrite had to CARRY OVER rather than a defect anyone watched. The
+   * rewrite introduced new painted surfaces — the sticky file header, the split filler cell —
+   * which is the reason to re-pin it at all. Do not count it toward "the redesign is tested".
+   *
+   * ⚠️ WHY IT CANNOT BE RUN AT THE BASE, corrected: not because `FileDiffEntry` is absent —
+   * it is present on main at `reviewDiffPanels.tsx:86` — but because this file imports the
+   * module-private `SKIP_LABEL` at module scope, so the whole file fails to load there.
    */
   test('🔴 EVERY painted background is `light-dark(...)` — the "white diff box in dark mode" bug', async () => {
     // This module was corrected for that defect once; a fixed light-only shade here is the
@@ -228,13 +239,24 @@ describe('unified layout (the default)', () => {
       );
       let checked = 0;
       for (const style of styles) {
-        for (const [, token] of style.matchAll(/--mantine-color-([a-z0-9-]+)/g)) {
-          if (!isFixedInBothSchemes(token)) continue;
-          checked += 1;
-          expect(
-            style,
-            `${label}: --mantine-color-${token} is painted outside light-dark(): ${style}`
-          ).toContain('light-dark(');
+        // 🔴 PER DECLARATION, NOT PER ELEMENT — measured, not a refinement for its own sake.
+        // Asserting `style.includes('light-dark(')` for the whole attribute passes as soon as
+        // ANY declaration on that element is scheme-aware. Mutation: painting the gutter
+        // cell's `color` a fixed `gray-6` while its `background` kept `GUTTER_BG` printed
+        // `1 passed | 15 skipped` — the token was matched and counted, and the assertion
+        // still read the sibling declaration's `light-dark(`. Every painted element happens
+        // to carry exactly one colour declaration today, which is the only reason that gap
+        // was closed; it opens on the first element that gains a border or a text colour,
+        // i.e. exactly the edit this guard exists to police.
+        for (const decl of style.split(';')) {
+          for (const [, token] of decl.matchAll(/--mantine-color-([a-z0-9-]+)/g)) {
+            if (!isFixedInBothSchemes(token)) continue;
+            checked += 1;
+            expect(
+              decl,
+              `${label}: --mantine-color-${token} is painted outside light-dark() in \`${decl.trim()}\` (full style: ${style})`
+            ).toContain('light-dark(');
+          }
         }
       }
       // 🔴 POSITIVE CONTROL PER PASS. A sweep that matched no tokens at all would be a
@@ -322,16 +344,22 @@ describe('elided files keep their labels, and NO link out (#3498)', () => {
    * difference matters because the usual claim would be FALSE here.
    *
    * Every other invariant-guard label in this change says "run against `origin/main` and
-   * PASSED there". That is impossible for this block: the component under test,
-   * `FileDiffEntry`, DOES NOT EXIST on `origin/main` — it replaces `DiffHunkView`, and
-   * `SKIP_LABEL` was a module-private `const` there, so this file cannot even import what it
-   * asserts at the base. A test that cannot be RUN at the base cannot be reported red or
-   * green at it.
+   * PASSED there". That is impossible for this block — but ⚠️ NOT for the reason an earlier
+   * draft gave. It said `FileDiffEntry` "does not exist" on `origin/main` and "replaces
+   * `DiffHunkView`". Both are false: `FileDiffEntry` is exported on main at
+   * `reviewDiffPanels.tsx:86`, and `DiffHunkView` is its CHILD there, called from its body.
+   * The rewrite replaced `FileDiffEntry`'s INNARDS and deleted the child.
    *
-   * What makes it an invariant guard anyway is the requirement, not the test: `origin/main`'s
-   * `reviewDiffPanels.tsx` already rendered `SKIP_LABEL[file.skipReason]` verbatim and already
-   * carried no anchor (#3498 removed the deep-link). So this pins a rule the redesign had to
-   * CARRY OVER into a new component — the thing a rewrite loses silently — and it never
+   * What really stops the run is narrower and checkable: `SKIP_LABEL` is a module-private
+   * `const` on main (`reviewDiffPanels.tsx:79`) and this file imports it at module scope, so
+   * the whole file fails to load — and separately none of the testids, the `SegmentedControl`
+   * or the sticky header exist there to assert against. A test that cannot be RUN at the base
+   * cannot be reported red or green at it.
+   *
+   * What makes it an invariant guard anyway is the requirement, not the test: `origin/main`
+   * already rendered `SKIP_LABEL[file.skipReason]` verbatim and already carried no anchor
+   * (#3498 removed the deep-link). So this pins a rule the redesign had to CARRY OVER through
+   * a rewrite of the component's body — the thing a rewrite loses silently — and it never
    * watched a defect. Do not count it toward "the redesign is tested".
    */
   test.each(Object.entries(SKIP_LABEL) as Array<[NonNullable<FileLineDiff['skipReason']>, string]>)(
@@ -364,7 +392,8 @@ describe('a file with no textual change', () => {
    * 🔴 INVARIANT GUARD, NOT REGRESSION COVERAGE. `origin/main` already printed this exact
    * sentence for a file whose hunks are empty; the rewrite had to carry it over, and a table
    * renderer that produced an empty `<table>` instead would look like a bug in the data.
-   * Not reportable at the base for the same reason as the blocks above.
+   * Not reportable at the base for the same reason as the blocks above — the module-scope
+   * `SKIP_LABEL` import, not an absent component.
    */
   test('INVARIANT GUARD: says so rather than rendering an empty table', async () => {
     renderWithProviders(<FileDiffEntry file={{ ...CHANGED, hunks: [], added: 0, removed: 0 }} />);

@@ -471,7 +471,15 @@ describe('a report whose analyses NEVER RAN', () => {
     mocks.report = NEVER_RAN;
     render();
     await expect.element(page.getByTestId('apps-report-status')).toBeInTheDocument();
-    const missingLabel = document.querySelector('[data-section="securityAudit"]')!;
+    // 🔴 `[data-section-status]` DISAMBIGUATES. `data-section` is now on the "did not run"
+    // ALERT BODY as well as on the tab label, and `keepMounted` means both missing panels are
+    // in the DOM — so the bare attribute matches two element kinds. Document order puts the
+    // tab first today, which is the only reason the bare selector works; the Alert body
+    // carries no digit, so if resolution ever flipped this case would pass VACUOUSLY. Pin
+    // the tab by the attribute only the tab label carries.
+    const missingLabel = document.querySelector(
+      '[data-section="securityAudit"][data-section-status]'
+    )!;
     expect(
       missingLabel.textContent,
       'a section that never ran must not be labelled with a finding count'
@@ -480,7 +488,7 @@ describe('a report whose analyses NEVER RAN', () => {
     // no-digit assertion above is a fact about the missing tab and not about the component
     // never printing digits at all.
     expect(
-      document.querySelector('[data-section="scopeVerdicts"]')!.textContent,
+      document.querySelector('[data-section="scopeVerdicts"][data-section-status]')!.textContent,
       'the control section must actually print a count, or the assertion above is vacuous'
     ).toMatch(/\d/);
   });

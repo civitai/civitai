@@ -289,6 +289,15 @@ function ReviewDetailTabsViewInner({
 }
 
 /**
+ * ⚠️ THE QUEUE MODAL HAS NO EQUIVALENT, AND IT RENDERS THE SAME PANELS. `OnsiteReviewModalBody`
+ * calls the same `useNowTick` and then renders `ReviewAgentSection` / `ReviewFilesSection` as
+ * flat siblings with nothing memoised between the tick and them — so the per-minute re-render
+ * described below is still live there. That is accepted for now (mod-only, one submission
+ * open at a time), but the shared body's docstring promises the two surfaces stay
+ * behaviour-identical through one implementation per panel, and THIS is the one thing that is
+ * not shared. Said here so the next reader does not assume `ReviewDetailTabsMemo`'s test
+ * covers the modal; it does not.
+ *
  * 🔴 MEMOISED, AND THE REASON IS THE CLOCK ONE LEVEL UP. `ReviewDetailView` owns a 60-second
  * tick so the submitter line and the decision banner can re-render their relative ages. Those
  * two are SIBLINGS of this subtree, but nothing between them is memoised — so every minute,

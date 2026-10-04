@@ -44,8 +44,8 @@ function historyRow(over: Partial<Record<string, unknown>> & { id: string }) {
     reviewedAt: new Date('2026-03-02T00:00:00Z'),
     rejectionReason: null,
     deployState: 'live',
-    submittedBy: { id: 7, username: 'author', image: null },
-    reviewedBy: { id: 9, username: 'mod', image: null },
+    submittedBy: { id: 7, username: 'author', deletedAt: null, image: null },
+    reviewedBy: { id: 9, username: 'mod', deletedAt: null, image: null },
     ...over,
   };
 }
@@ -62,7 +62,7 @@ function queueRow(over: Partial<Record<string, unknown>> & { id: string; slug: s
     fileSummary: {},
     manifestDiffSummary: {},
     forgejoCommitSha: null,
-    submittedBy: { id: 7, username: 'author', image: null },
+    submittedBy: { id: 7, username: 'author', deletedAt: null, image: null },
     ...over,
   };
 }
@@ -481,7 +481,7 @@ describe('the mod queue rows carry the app store listing, joined on SLUG', () =>
           deployState: 'live',
           deployDetail: null,
           deployUpdatedAt: null,
-          reviewedBy: { id: 9, username: 'mod', image: null },
+          reviewedBy: { id: 9, username: 'mod', deletedAt: null, image: null },
         },
       ]);
       mockDbRead.appListing.findMany.mockResolvedValue([

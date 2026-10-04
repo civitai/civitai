@@ -483,7 +483,7 @@ const ONSITE: OnsiteReviewRequest = {
   iconUrl: PIXEL,
   coverUrl: PIXEL,
   reviewRepoUrl: 'https://forgejo.example/repo',
-  submittedBy: { id: 7, username: SUBMITTER_USERNAME, image: null },
+  submittedBy: { id: 7, username: SUBMITTER_USERNAME, deletedAt: null, image: null },
 } as OnsiteReviewRequest;
 
 const OFFSITE: OffsiteReviewRequest = {
@@ -499,7 +499,7 @@ const OFFSITE: OffsiteReviewRequest = {
     category: 'utility',
     contentRating: 'g',
   },
-  submittedBy: { id: 9, username: 'offsite-dev', image: null },
+  submittedBy: { id: 9, username: 'offsite-dev', deletedAt: null, image: null },
   playCount: 7,
   iconUrl: PIXEL,
   coverUrl: null,

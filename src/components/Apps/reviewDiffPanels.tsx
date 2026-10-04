@@ -36,6 +36,23 @@ const PANEL_BG = 'light-dark(var(--mantine-color-gray-0), var(--mantine-color-da
  */
 const FILE_HEADER_BG = 'light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-5))';
 
+/**
+ * The geometry BOTH diff tables must share.
+ *
+ * 🔴 THE TRIO IS ONE DECISION, NOT THREE PROPERTIES. `width: max-content` + `minWidth: 100%`
+ * is what makes a long line overflow its own box so the code area's `overflow-x: auto` has
+ * something to scroll, while a short file still fills the panel; `borderCollapse` keeps the
+ * gutter flush against the code. Change one of the three on one table only and that layout
+ * stops scrolling inside the box — the page body scrolls sideways instead, which is the one
+ * thing the brief says must never happen. Pinned for the unified table by the
+ * horizontal-scroll case in `src/components/Apps/reviewDiffViewer.browser.test.tsx`.
+ */
+const DIFF_TABLE_STYLE = {
+  borderCollapse: 'collapse',
+  width: 'max-content',
+  minWidth: '100%',
+} as const;
+
 /** Line-number gutter surface — fainter than the header, still distinct from the code. */
 const GUTTER_BG = 'light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-7))';
 
@@ -384,18 +401,19 @@ function SplitCodeCell({ cell }: { cell: DiffSplitCell }) {
 /**
  * The UNIFIED rows as a table — hunk headers, both gutters, the code column.
  *
- * 🔴 ONE RENDERER, NOT TWO. This was duplicated: `FileDiffEntry`'s unified branch and an
- * exported `DiffHunkView` were the same 18-line row mapper, and `DiffHunkView` had ZERO
- * production callers — its only consumer was the dark-theme guard, so that guard was testing
- * the copy users never see while the structure they do see was free to change underneath it.
- * `DiffHunkView` is deleted and the guard now renders `FileDiffEntry`.
+ * 🔴 ONE RENDERER, NOT TWO, and the precise history because an earlier draft of this note
+ * got it wrong. On `origin/main` `FileDiffEntry` RENDERED the exported `DiffHunkView` — it
+ * was its child, not a rival copy — and the only consumer from outside this module was the
+ * dark-theme guard. Rewriting `FileDiffEntry`'s body around this table left `DiffHunkView`
+ * with no production caller at all, so that guard became a test of a renderer no moderator
+ * would ever see while the structure they DO see was free to change underneath it. The
+ * export is deleted and the guard now renders `FileDiffEntry`. (The earlier wording said it
+ * had "ZERO production callers" without the "after the rewrite", which reads as a claim
+ * about the base and is false there.)
  */
 function UnifiedRowsTable({ rows }: { rows: DiffUnifiedRow[] }) {
   return (
-    <table
-      style={{ borderCollapse: 'collapse', width: 'max-content', minWidth: '100%' }}
-      data-testid="apps-review-diff-unified"
-    >
+    <table style={DIFF_TABLE_STYLE} data-testid="apps-review-diff-unified">
       <tbody>
         {rows.map((row) =>
           row.kind === 'hunk' ? (
@@ -423,20 +441,15 @@ function UnifiedRowsTable({ rows }: { rows: DiffUnifiedRow[] }) {
  * The SPLIT rows as a table — hunk headers, then old-gutter / old-code / new-gutter /
  * new-code.
  *
- * 🔴 EXTRACTED FOR SYMMETRY WITH {@link UnifiedRowsTable}, which is not cosmetic. These two
- * tables must agree on `borderCollapse`, `width: max-content` and `minWidth: 100%` — that
- * trio is what makes a long line overflow the box and scroll INSIDE it instead of widening
- * the page. With one branch a named component and the other eleven lines inlined in
- * `FileDiffEntry`, a change to the geometry naturally lands on the one you are looking at,
- * and the other layout silently keeps the old values. Side by side, the pair is readable as
- * a pair.
+ * 🔴 EXTRACTED FOR SYMMETRY WITH {@link UnifiedRowsTable}, which is not cosmetic: a change
+ * to one layout that misses the other is invisible until someone switches the toggle. The
+ * geometry the two must share is now {@link DIFF_TABLE_STYLE} rather than a note asking
+ * them to agree — a docstring cannot make disagreement impossible, and this file already
+ * takes that move everywhere else (`MONO`, `GUTTER_BG`, `LINE_BG.empty = GUTTER_BG`).
  */
 function SplitRowsTable({ rows }: { rows: DiffSplitRow[] }) {
   return (
-    <table
-      style={{ borderCollapse: 'collapse', width: 'max-content', minWidth: '100%' }}
-      data-testid="apps-review-diff-split"
-    >
+    <table style={DIFF_TABLE_STYLE} data-testid="apps-review-diff-split">
       <tbody>
         {rows.map((row) =>
           row.kind === 'hunk' ? (

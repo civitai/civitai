@@ -52,7 +52,7 @@ const CODE_REQUEST = {
   manifestDiffSummary: { kind: 'first-version', fields: ['name'] },
   reviewRepoUrl: 'https://forgejo.example/repo',
   pushCommitUrl: null as string | null,
-  submittedBy: { id: 7, username: 'dev-user', image: null },
+  submittedBy: { id: 7, username: 'dev-user', deletedAt: null, image: null },
 };
 
 const LISTING_ROW = {
@@ -69,7 +69,7 @@ const LISTING_ROW = {
     category: 'utility',
     contentRating: 'PG',
   },
-  submittedBy: { id: 7, username: 'dev-user', image: null },
+  submittedBy: { id: 7, username: 'dev-user', deletedAt: null, image: null },
 };
 
 const SELECTION = {

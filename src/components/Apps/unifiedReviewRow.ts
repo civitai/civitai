@@ -38,12 +38,39 @@ export type CombinedReviewPayload = {
   listingRow: OffsitePendingRow;
 };
 
-/** Minimal user chip carried on a unified row (rendered by the list). */
-export type ReviewSubmitterChip = {
+/**
+ * THE user chip every moderator review surface carries — the queue list, the per-submission
+ * page, the prior-versions modal and the off-site rows. ONE declaration, because all four
+ * hand it to the same `UserAvatar`.
+ *
+ * 🔴 `deletedAt` IS LOAD-BEARING, NOT DECORATION, and its absence here was a real hole rather
+ * than a missing nicety. `UserAvatar` BRANCHES on it twice — `UserProfileLink` suppresses
+ * `linkToProfile` for a closed account, and `Username` renders "[deleted]" instead of a name.
+ * Omit it and the value is `undefined` ⇒ falsy ⇒ a deleted account renders as a live, linked
+ * one, on the surface where who submitted a bundle is the fact being judged. It reached the
+ * on-site selects a round before the off-site one, so for a while the queue disagreed with
+ * itself between two adjacent rows; this type is what stops a narrower projection being
+ * type-legal again. The server side is one `reviewUserChipSelect` in
+ * `src/server/selectors/user.selector.ts`.
+ *
+ * ⚠️ `profilePicture` is deliberately NOT here — the other field `UserAvatar` reads, but a
+ * NESTED select (a joined image row per row on three list paths) for a cosmetic gain that
+ * `UserAvatar` already falls back from. The reasoning lives beside the select.
+ *
+ * 🔴 THIS MODULE IS REACT-FREE ON PURPOSE, which is why the type lives here rather than in
+ * one of the three components that render it: a component module cannot be imported by the
+ * other two without dragging their trees along.
+ */
+export type ReviewUserChip = {
   id: number;
   username: string | null;
+  /** `null` for a live account; a `Date` for a deleted one (superjson revives it). */
+  deletedAt: Date | null;
   image: string | null;
-} | null;
+};
+
+/** The same chip where the relation is nullable (an undecided request has no reviewer). */
+export type ReviewSubmitterChip = ReviewUserChip | null;
 
 export type UnifiedReviewRow = {
   /** GLOBALLY-unique dedup key, namespaced by SOURCE — `onsite:<id>` (App Block
@@ -234,7 +261,10 @@ export type OffsiteReviewRequest = {
     connectScopeJustifications?: Record<string, string> | null;
     connectClient?: { name: string | null } | null;
   } | null;
-  submittedBy: { id: number; username: string | null; image: string | null } | null;
+  /** 🔴 THE SHARED CHIP, not a fourth inline spelling. This one omitted `deletedAt` while
+   *  the on-site rows beside it carried it, so the same list rendered a closed account as
+   *  `[deleted]` on one row and as a live, linked profile on the next. */
+  submittedBy: ReviewSubmitterChip;
   /** Lifetime store opens for the backing listing — see `UnifiedReviewRow.playCount` for
    *  the three caveats. Absent on an older payload → treated as unknown (`null`). */
   playCount?: number | null;
