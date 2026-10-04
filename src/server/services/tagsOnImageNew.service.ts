@@ -1,5 +1,5 @@
 import { dbWrite } from '~/server/db/client';
-import { tagIdsForImagesCache, thumbnailCache, imageTagsCache } from '~/server/redis/caches';
+import { tagIdsForImagesCache, refreshThumbnailCache, imageTagsCache } from '~/server/redis/caches';
 import type { TagSource } from '~/shared/utils/prisma/enums';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { Limiter } from '~/server/utils/concurrency-helpers';
@@ -118,7 +118,7 @@ async function updateImageNsfwLevels(args: { imageId: number; tagId: number }[])
 
   await Limiter().process(imageIds, async (imageIds) => {
     await dbWrite.$executeRawUnsafe(`SELECT update_nsfw_levels_new(ARRAY[${imageIds.join(',')}])`);
-    await thumbnailCache.refresh(imageIds);
+    await refreshThumbnailCache(imageIds);
   });
 
   const blockedTagIds = new Set(

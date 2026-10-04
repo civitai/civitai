@@ -14,7 +14,7 @@ vi.mock('~/server/db/pgDb', () => ({
 }));
 vi.mock('~/server/redis/caches', () => ({
   tagIdsForImagesCache: { bust: vi.fn() },
-  thumbnailCache: { refresh: vi.fn() },
+  refreshThumbnailCache: vi.fn(),
   imageTagsCache: { bust: vi.fn() },
 }));
 vi.mock('~/server/services/image.service', () => ({

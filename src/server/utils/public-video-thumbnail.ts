@@ -1,0 +1,68 @@
+import { getEdgeUrl } from '~/client-utils/edge-url';
+import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils/flags';
+import { MediaType } from '~/shared/utils/prisma/enums';
+
+type VideoThumbnailSource = {
+  type: MediaType;
+  url: string;
+  width?: number | null;
+  height?: number | null;
+  metadata?: MixedObject | null;
+};
+
+type CustomThumbnail = {
+  url: string;
+  width?: number | null;
+  height?: number | null;
+  nsfwLevel: number;
+};
+
+export type PublicVideoThumbnail = { url: string; width: number | null; height: number | null };
+
+/**
+ * A still for a video, for public API consumers that cannot render one themselves.
+ *
+ * `original=false` is load-bearing on both branches: with no width, `getEdgeUrl` otherwise asks for
+ * the original, which is the MP4 whatever the filename says. The cacher returns the source's native
+ * size, so the dimensions are the source's own.
+ */
+export function getPublicVideoThumbnail({
+  image,
+  customThumbnail,
+  browsingLevel,
+}: {
+  image: VideoThumbnailSource;
+  customThumbnail?: CustomThumbnail | null;
+  browsingLevel: number;
+}): PublicVideoThumbnail | null {
+  if (image.type !== MediaType.video) return null;
+
+  // The public endpoint passes the caller's raw `browsingLevel`, which can include Blocked.
+  const allowed = Flags.intersection(browsingLevel, allBrowsingLevelsFlag);
+  if (customThumbnail?.nsfwLevel && Flags.intersects(customThumbnail.nsfwLevel, allowed)) {
+    return {
+      url: getEdgeUrl(customThumbnail.url, {
+        original: false,
+        optimized: true,
+        type: MediaType.image,
+      }),
+      width: customThumbnail.width ?? null,
+      height: customThumbnail.height ?? null,
+    };
+  }
+
+  return {
+    url: getEdgeUrl(image.url, {
+      anim: false,
+      transcode: true,
+      original: false,
+      optimized: true,
+      skip: getSkipValue({ type: image.type, metadata: image.metadata }),
+      type: MediaType.image,
+    }),
+    width: image.width ?? null,
+    height: image.height ?? null,
+  };
+}
