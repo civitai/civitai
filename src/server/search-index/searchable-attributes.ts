@@ -24,9 +24,23 @@
 //
 // 🔴 DO NOT WRITE DOWN HOW MANY MECHANISMS KEEP `insight.modelVersionId` UNREACHABLE WITHOUT
 // COUNTING TO FOUR. An earlier draft of THIS paragraph said "one of only two things", which is
-// the same truncated enumeration this file was created to stop — three separate comments in this
-// tree have had to be corrected for it, and one of them was being corrected in the same commit
-// that introduced this one. There are FOUR attribute lists and each absence does different work:
+// the same truncated enumeration this file was created to stop; more than one comment in this tree
+// has had to be corrected for it, and one of them was being corrected in the same commit that
+// introduced this one.
+//
+// ⚠️ A LIVE TALLY OF THOSE CORRECTIONS IS DELIBERATELY NOT MAINTAINED HERE, AND THAT IS THIS
+// PARAGRAPH APPLIED TO ITSELF. It read "three separate comments"; the marked corrections of this
+// enumeration were in fact FOUR when counted — ./displayed-attributes.ts, ./models.search-index.ts,
+// ~/server/__tests__/models-displayed-attributes.test.ts and
+// ./__tests__/models-index-insight-projection.test.ts — i.e. the third undercount of this exact
+// thing to ship, in the commit whose entire purpose was to fix an undercount in this file. That
+// figure is recorded as a one-off MEASUREMENT over a named corpus, not as a number anyone is
+// expected to keep current: a prose tally has no mechanical check behind it and rots on the next
+// edit, which is how it has now gone wrong three times running. What replaces it is the thing that
+// cannot rot — the FOUR lists are four FILES with one export each, so the enumeration below is
+// derivable: `ls src/server/search-index/*-attributes.ts`. Count the files, never the prose.
+//
+// There are FOUR attribute lists and each absence does different work:
 // ./displayed-attributes.ts is the only one keeping the leaf out of a SERIALISED hit;
 // ./filterable-attributes.ts and ./sortable-attributes.ts keep it out of the filter/sort oracle;
 // and THIS list keeps it out of free-text matching. The argument for writing that id at all is at

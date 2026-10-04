@@ -93,7 +93,12 @@ export const MODELS_WITHHELD_ATTRIBUTES = [
   //
   // 🔴 AND FOR `insight.modelVersionId` THE RIDE-ALONG IS LOAD-BEARING RATHER THAN CONVENIENT.
   // That leaf is in no OTHER attribute list — not filterable, not sortable, and not in the
-  // `searchableAttributes` whitelist — so unlike the three beside it, this entry is the only one
+  // `modelsSearchableAttributes` whitelist (./searchable-attributes.ts). ⚠️ THIS NAMED THE LIST
+  // `searchableAttributes`, which sends a reader looking for a function-local inside
+  // `onIndexSetup` that no longer exists — and it did so UPSTREAM of the marked note further down
+  // this block that explains why older comments spell it that way, so the reader hits the dead
+  // name first and the explanation second. The export's name is the one to write.
+  // So unlike the three beside it, this entry is the only one
   // of the four lists keeping it out of a serialised hit: `attributesToRetrieve` can narrow
   // within the displayed set but cannot re-admit a withheld attribute, so withholding `insight`
   // is what makes "no search path returns the winning version id" true. Removing `insight` from

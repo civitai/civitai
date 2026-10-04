@@ -1,11 +1,89 @@
 import fs from 'fs';
 import path from 'path';
 import ts from 'typescript';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { modelsFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { modelsSearchableAttributes } from '~/server/search-index/searchable-attributes';
 import { modelsSortableAttributes } from '~/server/search-index/sortable-attributes';
+
+import type * as MeiliClientModule from '~/server/meilisearch/client';
+import type * as MeiliUtilModule from '~/server/meilisearch/util';
+import type * as BaseSearchIndexModule from '~/server/search-index/base.search-index';
+
+/**
+ * 🔴 THE BEHAVIOURAL SEAM. Everything else in this file is a SYNTACTIC claim about
+ * ../models.search-index.ts, and a syntactic claim cannot say what the engine was handed.
+ *
+ * Measured premise for why that gap existed and had to be closed here rather than assumed away:
+ * across the 2,969 tracked test files at this head, NOTHING calls `.reset(` or `.setup(` on any
+ * search-index processor, and all 57 `modelsSearchIndex` references are `vi.mock` stubs. So
+ * "the engine receives the frozen list" was proven STRUCTURALLY and never once BEHAVIOURALLY.
+ *
+ * 🔴 AND THE ROUTE IN, BECAUSE THE OBVIOUS ONE DOES NOT EXIST AND READS AS IF IT DOES.
+ * `onIndexSetup` is module-private, and `modelsSearchIndex.setup` is NOT a thing:
+ * `createSearchIndexUpdateProcessor` DESTRUCTURES `setup` out of its argument
+ * (../base.search-index.ts, `const { indexName, setup, prepareBatches, … } = processor`) and the
+ * object it RETURNS carries only `indexName`, `updateSyncChunkSize`, `getHandledIds`,
+ * `prepareBatches`, `getData`, `update`, `reset`, `updateSync`, `queueUpdate` and `processQueues`.
+ * Reading the destructuring as part of the return is an easy mistake — they are 26 lines apart —
+ * and it matters because the conclusion flips: `modelsSearchIndex.setup({ … })` is `undefined`.
+ *
+ * The only production path to `setup` is `reset()` (../base.search-index.ts, `await setup({
+ * indexName: swapIndexName })`), which then pulls batches off a live DB — not reachable from a
+ * unit test. So this suite reaches the function the one way that needs NO production export:
+ * `createSearchIndexUpdateProcessor` is replaced with identity, which makes the module's
+ * `modelsSearchIndex` the processor OBJECT LITERAL it already writes — and that literal carries
+ * `setup: onIndexSetup` (../models.search-index.ts). The function under test is the real one;
+ * only the wrapper around it is stubbed. Exporting `onIndexSetup` from production to make a test
+ * possible was the alternative and was rejected.
+ *
+ * Each factory spreads `importOriginal()` and overrides exactly one export, per
+ * `local-rules/no-wholesale-module-mock`: a hand-written replacement object pins the module's
+ * export surface to the day it was written, and the next export added to it resolves to
+ * `undefined`, taking the whole file out at COLLECTION — `Tests no tests`, nothing red.
+ */
+const setupProbe = vi.hoisted(() => {
+  const received: { method: string; arg: unknown }[] = [];
+  const record = (method: string) => async (arg: unknown) => {
+    received.push({ method, arg });
+    return { taskUid: 0 };
+  };
+  return {
+    received,
+    // `getSettings` returning `{}` makes every `JSON.stringify(list) !== JSON.stringify(settings.x)`
+    // guard in `onIndexSetup` true, so every write fires. A fixture that happened to MATCH the
+    // current settings would skip the writes and leave this case vacuously green.
+    index: {
+      getSettings: async () => ({}),
+      updateSearchableAttributes: record('updateSearchableAttributes'),
+      updateSortableAttributes: record('updateSortableAttributes'),
+      updateDisplayedAttributes: record('updateDisplayedAttributes'),
+      updateRankingRules: record('updateRankingRules'),
+      updateFilterableAttributes: record('updateFilterableAttributes'),
+      updateTypoTolerance: record('updateTypoTolerance'),
+    },
+  };
+});
+
+vi.mock('~/server/meilisearch/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof MeiliClientModule>()),
+  // `onIndexSetup` opens with `if (!client) return;`, and the real `searchClient` is `null`
+  // unless SEARCH_HOST and SEARCH_API_KEY are both set — which they are not in this
+  // environment. Without this override the function returns before touching anything and the
+  // case below passes having measured nothing.
+  searchClient: {} as unknown as typeof MeiliClientModule.searchClient,
+}));
+
+vi.mock('~/server/meilisearch/util', async (importOriginal) => ({
+  ...(await importOriginal<typeof MeiliUtilModule>()),
+  getOrCreateIndex: async () => setupProbe.index,
+}));
+
+vi.mock('~/server/search-index/base.search-index', async (importOriginal) => ({
+  ...(await importOriginal<typeof BaseSearchIndexModule>()),
+  createSearchIndexUpdateProcessor: (processor: unknown) => processor,
+}));
 
 /**
  * `insight.qualityScore` is the attribute the resource-intent pool is SEEDED by,
@@ -548,11 +626,30 @@ describe('models search index projects insight.qualityScore', () => {
     // displayed list already proved applies verbatim: with NO local binding there is nothing to
     // mutate between a declaration and the write, which closes the helper route by construction
     // instead of detecting one shape of it.
+    //
+    // ⚠️ "THE REMEDY … APPLIES VERBATIM" WAS AN OVERSTATEMENT WHEN WRITTEN, AND THE GAP WAS LIVE.
+    // The displayed list's shape is THREE guards, not one remedy and not two: a tree-wide WRITER
+    // LEDGER, this argument pin, and the no-local ban. Only the latter two were copied here, and
+    // both walk `models.search-index.ts` alone — so the one tree-wide member was missing and a
+    // writer in a SECOND FILE was invisible to the whole set. Measured: a new
+    // `src/pages/api/admin/temp/apply-models-index-searchable-attributes.ts` doing
+    // `index.updateSearchableAttributes(['*'])` left this suite at `Tests 144 passed (144)` and
+    // typecheck at 0 errors while the live index would take `["*"]`. The third guard now exists —
+    // `has exactly nine writers of searchableAttributes, tree-wide` in
+    // ~/server/__tests__/models-displayed-attributes.test.ts, beside the displayed list's own
+    // ledger and the tree-wide mutation ledger, which is where the tree-wide walks live.
     const calls = callExpressions().filter((c) => c.method === 'updateSearchableAttributes');
 
-    // Pin the ARGUMENT, which is the only thing that decides what the live index ends up with.
+    // Pin the ARGUMENT, which is what decides what THIS writer hands the engine.
     // Exactly one write, and its argument is the BARE module name — not a spread, not an inline
     // array, not a concatenation, not a helper call.
+    //
+    // ⚠️ THIS SAID "the only thing that decides what the live index ends up with", AND THAT IS
+    // FALSE in exactly the direction that matters: the walk is scoped to this ONE file, so it says
+    // nothing about any other writer of the setting. What the live index ends up with is decided by
+    // the argument of EVERY `updateSearchableAttributes` call in the tree — which is the claim the
+    // writer ledger makes, not this one. Neither is sufficient alone, and reading this as
+    // sufficient is what left the second-file route open.
     expect(calls, 'exactly one updateSearchableAttributes write must exist').toHaveLength(1);
     expect(
       calls[0].args,
@@ -737,5 +834,92 @@ describe('models search index projects insight.qualityScore', () => {
         },
       })
     ).toEqual({ id: 1 });
+  });
+});
+
+describe('🔴 onIndexSetup hands the ENGINE the frozen lists — behaviourally, not structurally', () => {
+  // ⚠️ DELIBERATELY LAST IN THE FILE. `onIndexSetup` sorts `modelsFilterableAttributes` IN PLACE
+  // ("Meilisearch stores sorted"), and that list is deliberately unfrozen for exactly that reason.
+  // Running this before the membership cases above would reorder an imported array underneath
+  // them. They happen to be order-insensitive today; this placement means they do not have to be.
+  afterEach(() => {
+    setupProbe.received.length = 0;
+    vi.restoreAllMocks();
+  });
+
+  async function runSetup() {
+    // `onIndexSetup` logs a line per write; silenced so a failure's output is the assertion.
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const { modelsSearchIndex } = await import('~/server/search-index/models.search-index');
+    const processor = modelsSearchIndex as unknown as {
+      setup: (args: { indexName: string }) => Promise<void>;
+    };
+    expect(
+      typeof processor.setup,
+      'the processor literal must carry `setup` — if this is `undefined` the identity mock of `createSearchIndexUpdateProcessor` did not take effect and every assertion below is vacuous'
+    ).toBe('function');
+    await processor.setup({ indexName: 'models_v9_TEST' });
+    return setupProbe.received;
+  }
+
+  it('calls the engine at all — the probe is wired to something', async () => {
+    // 🔴 The non-vacuity assertion the rest of this describe rests on. A stub that is never
+    // called records nothing, and `received.find(...) === undefined` would then read as a clean
+    // absence in every case below. Pinned as its own case so the failure names the cause.
+    const received = await runSetup();
+    expect(
+      received.map((r) => r.method).sort(),
+      'onIndexSetup wrote nothing — the client/index mocks are not reaching it'
+    ).toEqual([
+      'updateDisplayedAttributes',
+      'updateFilterableAttributes',
+      'updateRankingRules',
+      'updateSearchableAttributes',
+      'updateSortableAttributes',
+      'updateTypoTolerance',
+    ]);
+  });
+
+  it('🔴 gives the searchable write the frozen export ITSELF, with no `*` in it', async () => {
+    // Identity, not equality — and the difference is the whole point of asserting behaviourally.
+    // `toBe` says the engine received THE frozen module object, so there is no copy, no spread,
+    // no helper return and no shadowing local anywhere between the declaration and the call. The
+    // argument pin above can only say the call site SPELLS the module's name.
+    //
+    // 🔴 This is also what moves the two routes the freeze covers from RESET time to TEST time.
+    // An alias (`const alias = modelsSearchableAttributes; alias.push('*')`) and the bag
+    // shorthand (`const bag = { modelsSearchableAttributes }; bag.…push('*')`) are invisible to
+    // every syntactic guard in this file and only THROW when `onIndexSetup` runs — which happens
+    // in an `UNRUNNABLE_JOB_CRON` reset, where a throw could go years unobserved. This case runs
+    // the function, so the throw lands in CI instead.
+    const received = await runSetup();
+    const write = received.find((r) => r.method === 'updateSearchableAttributes');
+    expect(write, 'no searchableAttributes write reached the engine').toBeDefined();
+    expect(
+      write?.arg,
+      'the engine must receive the frozen module export itself, not a copy of it'
+    ).toBe(modelsSearchableAttributes);
+    expect(write?.arg as string[]).not.toContain('*');
+    expect((write?.arg as string[]).filter((a) => a.startsWith('insight'))).toEqual([]);
+  });
+
+  it('🔴 gives the displayed write the frozen export ITSELF, withholding sortMetrics', async () => {
+    // The Creator Controls privacy boundary, finally asserted at the engine rather than at the
+    // call site's source text. This subsumes the no-local ban in
+    // ~/server/__tests__/models-displayed-attributes.test.ts BEHAVIOURALLY: a shadowing
+    // `const modelsDisplayedAttributes = ['id', 'sortMetrics']` inside `onIndexSetup` is what the
+    // engine would then be handed, and it is recorded here. That hole was live at this head —
+    // one line, suite green at 144/144, typecheck clean — which is why both guards exist.
+    const { modelsDisplayedAttributes } = await import(
+      '~/server/search-index/displayed-attributes'
+    );
+    const received = await runSetup();
+    const write = received.find((r) => r.method === 'updateDisplayedAttributes');
+    expect(write, 'no displayedAttributes write reached the engine').toBeDefined();
+    expect(
+      write?.arg,
+      'the engine must receive the frozen module export itself — a local copy or shadow is how the real download/tip figures of creators who hid them get published'
+    ).toBe(modelsDisplayedAttributes);
+    expect(write?.arg as string[]).not.toContain('sortMetrics');
   });
 });

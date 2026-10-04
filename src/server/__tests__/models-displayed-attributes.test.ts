@@ -299,6 +299,75 @@ describe('the writer seam', () => {
     }
   });
 
+  it('has exactly nine writers of searchableAttributes, tree-wide', () => {
+    // 🔴 THE MISSING THIRD GUARD, AND THE ONLY TREE-WIDE ONE. The displayed list is protected by
+    // three guards of different SHAPES — this writer ledger, the write-argument pin, and the
+    // no-local ban — and when the same protection was built for the searchable whitelist in
+    // ~/server/search-index/__tests__/models-index-insight-projection.test.ts only the latter two
+    // were copied. Both of those walk `models.search-index.ts` and nothing else, so a writer in a
+    // SECOND file was invisible to every guard in the set.
+    //
+    // 🔴 Measured, not hypothesised. Adding
+    // `src/pages/api/admin/temp/apply-models-index-searchable-attributes.ts` — the exact analogue
+    // of the two admin routes already in this tree (`apply-models-index-filterable-attributes.ts`
+    // and `apply-models-index-displayed-attributes.ts`) — with
+    //     const index = searchClient.index(MODELS_SEARCH_INDEX);
+    //     const task = await index.updateSearchableAttributes(['*']);
+    // left `Test Files 5 passed (5)` / `Tests 144 passed (144)` and `pnpm typecheck` at 0 errors,
+    // while the LIVE models index would end up with `searchableAttributes: ["*"]` — i.e. every
+    // `insight.*` leaf, `insight.modelVersionId` included, becomes a per-document free-text
+    // MEMBERSHIP ORACLE to any holder of the browser-published client key in
+    // `src/env/client-schema.ts`. Nothing fired: the freeze is untouched (a fresh array literal),
+    // the argument pin and the local ban walk only the index file, the membership case reads the
+    // unmodified export, and the MUTATOR ledger above matches only `<name>.<mutator>`.
+    // The positive control that makes this an omission rather than an impossibility: the identical
+    // shape against the DISPLAYED list IS caught, by the ledger directly above this one.
+    //
+    // 🔴 WHY IT LIVES IN THIS FILE RATHER THAN BESIDE THE OTHER SEARCHABLE GUARDS. Same reason the
+    // MUTATOR regex above covers `modelsSearchableAttributes`: the tree-wide walks have ONE home,
+    // so `walk`/`callsIn` are not duplicated and a reviewer finds every tree-wide ledger together.
+    //
+    // 🔴 AND WHY THE SET IS THE NINE INDEX FILES RATHER THAN "the models index's writers". Which
+    // index a `*.search-index.ts` writes is decided by a runtime `indexName`, so no syntactic walk
+    // can scope this ledger to the models index — the honest scope is every caller of the setter,
+    // anywhere. The cost is that it also moves when an unrelated index gains or loses a searchable
+    // write, which is the review event we want: a NEW writer is the hazard, and a writer
+    // DISAPPEARING means an index stopped having its whitelist applied at all and silently fell
+    // back to Meili's `["*"]`.
+    const writers = walk(SRC)
+      .map((f) => f.slice(SRC.length + 1).replaceAll('\\', '/'))
+      .filter((rel) => !rel.includes('__tests__/') && !/\.test\.tsx?$/.test(rel))
+      .filter((rel) =>
+        callsIn(rel).some((c) => c.callee.split('.').pop() === 'updateSearchableAttributes')
+      )
+      .sort();
+
+    expect(writers).toEqual([
+      'server/search-index/articles.search-index.ts',
+      'server/search-index/bounties.search-index.ts',
+      'server/search-index/collections.search-index.ts',
+      'server/search-index/comics.search-index.ts',
+      'server/search-index/images.search-index.ts',
+      'server/search-index/metrics-images.search-index.ts',
+      'server/search-index/models.search-index.ts',
+      'server/search-index/tools.search-index.ts',
+      'server/search-index/users.search-index.ts',
+    ]);
+
+    // 🔴 ONLY the models index is required to read the shared export, and that asymmetry is
+    // DELIBERATE and documented: the other eight index files each declare their own inline
+    // `searchableAttributes` literal, which is out of scope here and not a defect to be swept up.
+    // Asserting the shared read across all nine would be a redesign of eight unrelated indexes
+    // dressed up as a guard.
+    // Note `~/server/search-index/searchable-attributes.ts` is correctly ABSENT from the ledger
+    // above: it names `updateSearchableAttributes` in a prose comment, and a comment is not a call
+    // expression, which is the whole reason these walks ask the parser instead of the text.
+    expect(
+      readFileSync(join(SRC, 'server/search-index/models.search-index.ts'), 'utf8'),
+      'models.search-index.ts must read the shared whitelist, not its own copy'
+    ).toContain('modelsSearchableAttributes');
+  });
+
   it('passes the shared module STRAIGHT to the processor write, with no local in between', () => {
     // Pin the ARGUMENT, which is the only thing that decides what the live index ends up with.
     //
@@ -322,6 +391,44 @@ describe('the writer seam', () => {
     expect(calls[0].args).toEqual(['modelsDisplayedAttributes']);
 
     // And no local binding to shadow it, which is how the mutate-the-copy shape got in.
-    expect(declaredNames(PROC)).not.toContain('displayedAttributes');
+    //
+    // 🔴 BOTH NAMES, and the second one was MISSING until it was measured. Banning only the old
+    // function-local's name (`displayedAttributes`) leaves the argument pin above as a claim about
+    // a NAME rather than about a LIST: a
+    //   `const modelsDisplayedAttributes = ['id', 'sortMetrics'];`
+    // inserted after `const settings = await index.getSettings();` shadows the frozen import inside
+    // `onIndexSetup`, satisfies the pin (the argument text is still the bare module name), and hands
+    // the engine `['id','sortMetrics']` — i.e. it PUBLISHES the real download and tipped figures of
+    // every creator who hid them, the single thing this module exists to prevent. Measured at this
+    // head with that one line planted: `Test Files 5 passed (5)` / `Tests 144 passed (144)` and
+    // `pnpm typecheck` 0 errors. Nothing else could see it — the freeze does not apply to a fresh
+    // local, the tree-wide mutation ledger sees no mutation, and the whole-list pin reads the
+    // IMPORT, not what the function resolved.
+    //
+    // The two halves buy different things, so they are listed rather than merged:
+    //   - `modelsDisplayedAttributes`: the STRUCTURAL half — it is the name the write argument
+    //     actually resolves, so this is what makes the pin above mean the frozen export.
+    //   - `displayedAttributes`: the SPELLED half, and it is honest to call it that. It blocks a
+    //     revert to the old function-local shape and an alias reusing that name; it does NOT close
+    //     the alias class (`const alias = modelsDisplayedAttributes` is not caught by it).
+    //
+    // An ImportSpecifier is not a VariableDeclaration, so `declaredNames` does not see this file's
+    // own import of the export and the ban cannot false-fire on it.
+    // The same pair, for the same reason, guards the searchable whitelist in
+    // ~/server/search-index/__tests__/models-index-insight-projection.test.ts.
+    const declared = declaredNames(PROC);
+    // 🔴 Positive control, because a reassuring zero and a walk wired to nothing are
+    // indistinguishable: if `declaredNames` resolved nothing, every `not.toContain` below would be
+    // vacuously true. The projection file's copy of this helper asserts the same thing internally.
+    expect(
+      declared.length,
+      `declarations must be readable in ${PROC} — 0 means this walk is wired to nothing and every \`not.toContain\` over it is vacuous`
+    ).toBeGreaterThan(0);
+    for (const name of ['displayedAttributes', 'modelsDisplayedAttributes']) {
+      expect(
+        declared,
+        `${PROC} must declare no local \`${name}\` — the frozen export is passed straight through, so a local binding of EITHER name is the one thing that could stand between its declaration and the write`
+      ).not.toContain(name);
+    }
   });
 });
