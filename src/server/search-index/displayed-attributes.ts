@@ -104,9 +104,12 @@ export const MODELS_WITHHELD_ATTRIBUTES = [
   //
   // ⚠️ "THE ONLY THING KEEPING IT UNREADABLE" IS WHAT THIS USED TO SAY, over an enumeration of
   // "not filterable, not sortable" — the same incomplete enumeration this change corrected at
-  // the projection site, where the fourth list was missing too. There are FOUR: the three
-  // exported constants plus the `searchableAttributes` whitelist declared in `onIndexSetup` in
-  // ./models.search-index.ts, which stands in for Meili's `["*"]` default. Widening that
+  // the projection site, where the fourth list was missing too. There are FOUR exported
+  // constants, not three: this one, ./filterable-attributes.ts, ./sortable-attributes.ts and
+  // ./searchable-attributes.ts, the last of which stands in for Meili's `["*"]` default.
+  // (⚠️ It was a function-local literal inside `onIndexSetup` when this paragraph was written,
+  // which is why older comments describe it that way — and that asymmetry is exactly what made
+  // it the one an enumeration keeps missing.) Widening that
   // whitelist is a route to reachability with no edit to THIS file, so it is not covered by the
   // sentence above. Measured on a local Meilisearch 1.54.0, two documents carrying `42` and
   // `77`, with positive and negative controls: with the real whitelist `q=42` returns 0 hits;

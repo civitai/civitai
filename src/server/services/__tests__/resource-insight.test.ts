@@ -278,7 +278,19 @@ describe('modelInsightQualityScore — one model-level score from many version l
  *   - the describe ABOVE holds **12** cases, not seven, and all 12 stayed GREEN in the same run.
  *
  * Suite totals in that run, the runner's own lines, across the five files this arc touches:
- * `Test Files 2 failed | 3 passed (5)` / `Tests 17 failed | 126 passed (143)`.
+ * `Test Files 2 failed | 3 passed (5)` / `Tests 18 failed | 126 passed (144)` — 11 from this
+ * file and 7 from ../../search-index/__tests__/models-index-insight-projection.test.ts.
+ * ⚠️ RE-DERIVED, and BOTH halves moved since this paragraph was written. The denominator went
+ * 143 → 144 for the sibling-suite reason the provenance case below now records. The failure
+ * count went 17 → 18 for a REAL reason, not an arithmetic one: the searchable whitelist was
+ * hoisted out of `onIndexSetup` into
+ * ../../search-index/searchable-attributes.ts, so the guard that pins what the engine is given
+ * now fails at base too (base passes a function-local, which is exactly what the guard bans).
+ * A changing failure count is therefore evidence about the GUARDS, not only about the
+ * measurement — read it before assuming a stale total.
+ *
+ * ⚠️ Also re-derived and also stale: "the describe ABOVE holds 12 cases" is right, but the
+ * projection suite next door holds **13** cases, not the 12 its own comment claimed.
  *
  * 🔴 AND THE REASON THOSE NUMBERS WERE WRONG IS THE INSTRUCTION THIS DOCSTRING ALREADY
  * CARRIES, ONE FUNCTION BELOW: "a sweep that fixes a claim must re-derive it AFTER its own
@@ -559,14 +571,20 @@ describe('modelInsightProjection — the winning version’s whole row', () => {
     // rejects as an extra defined key; and every neighbouring row is built by the `insight()`
     // helper, which emits NO `modelVersionId` column at all, so a bare column read yields
     // `undefined` against an expected number. Measured at this head, over the five suites this
-    // change touches: `modelVersionId: best.modelVersionId` → `9 failed | 134 passed (143)`, and
-    // `return { ...best }` → `9 failed | 134 passed (143)` — the same nine, of which this case
+    // change touches: `modelVersionId: best.modelVersionId` → `9 failed | 135 passed (144)`, and
+    // `return { ...best }` → `9 failed | 135 passed (144)` — the same nine, of which this case
     // is one.
+    // ⚠️ Both denominators read `(143)` until they were re-derived; the KILL COUNTS were right
+    // and only the totals had moved, because an `it` added in a sibling suite changes the
+    // five-suite total without touching this measurement. That is the trap this file's own
+    // docstring warns about, two paragraphs of it, and it still caught the sweep that wrote
+    // these lines — the author updated the same figure in two other places and missed this
+    // block. Re-derive, never restate.
     //
     // The mutant this case is genuinely the SOLE guard for is the FALLBACK form,
     // `best.modelVersionId ?? bestVersionId`: on a helper-built row the absent column falls
     // through to the correct map key, so all eight neighbours stay green, and only a row whose
-    // column DISAGREES with its key can see it. Measured: `1 failed | 142 passed (143)`, failing
+    // column DISAGREES with its key can see it. Measured: `1 failed | 143 passed (144)`, failing
     // here with this case's own assertion message.
     //
     // 🔴 SO DO NOT TRIM THE NEIGHBOURING `toEqual`s TO PER-FIELD `toBe`s ON THE THEORY THAT THIS
@@ -682,6 +700,11 @@ describe('modelInsightProjection — the winning version’s whole row', () => {
           // row no expectation names) left the suite `Test Files 5 passed (5)` /
           // `Tests 143 passed (143)` — fully green — while the same plant with a BARE key went
           // red with this case's own `fixture styleFamily 'rendr_9d' is not a real option`.
+          // ⚠️ THAT `(143)` IS A PRIOR HEAD'S TOTAL, NOT THIS ONE'S — the five-suite total is 144
+          // here, and the figure is left unconverted because it dates a measurement taken against
+          // the pre-`.text` code, which this tree no longer contains, so it cannot be re-run
+          // without reverting the fix. "Fully green" is the load-bearing half and is unaffected;
+          // read the denominator as the case count of the head it was taken at.
           // `.text` is quote-free for an Identifier and a StringLiteral alike, which is the fix.
           const name = node.name;
           const line = ast.getLineAndCharacterOfPosition(node.getStart(ast)).line + 1;
@@ -689,7 +712,8 @@ describe('modelInsightProjection — the winning version’s whole row', () => {
             // 🔴 ANY COMPUTED KEY FAILS, REGARDLESS OF WHAT ITS SOURCE SPAN SAYS. A
             // ComputedPropertyName has no `.text` and its span carries the brackets, so
             // `['styleFamily']: 'rendr_9d'` was fully green before this branch existed at all
-            // (measured, `143 passed (143)`). Resolving one in general means evaluating an
+            // (measured, `143 passed (143)` — again a PRIOR head's total, for the same reason as
+            // the paragraph above; the current total is 144). Resolving one in general means evaluating an
             // arbitrary expression, which an AST walk cannot do — so the guard refuses the
             // shape instead of guessing. Write a plain key.
             //

@@ -113,13 +113,26 @@ describe('modelsDisplayedAttributes — the Creator Controls privacy boundary', 
     expect(modelsDisplayedAttributes).not.toContain('sortMetrics');
   });
 
-  it('is mutated in place by nobody', () => {
+  it('is mutated in place by nobody — nor is any other FROZEN attribute-list export', () => {
     // Belt to the freeze's braces, and it covers the whole tree rather than one file: the freeze
-    // makes a mutation THROW at runtime, this makes the attempt visible at review time. Scoped to
-    // the two exports by name, because the hazard is mutation of THESE arrays, not of arrays in
-    // general — `models.search-index.ts` legitimately sorts `modelsFilterableAttributes` in place.
+    // makes a mutation THROW at runtime, this makes the attempt visible at review time. Which
+    // matters more than it sounds for these lists — their only writer runs inside an
+    // `UNRUNNABLE_JOB_CRON` reset, so a throw placed there could go years unobserved.
+    //
+    // Scoped to the frozen exports BY NAME, because the hazard is mutation of THESE arrays, not of
+    // arrays in general — `models.search-index.ts` legitimately sorts `modelsFilterableAttributes`
+    // in place, which is also why that list is not frozen and must not be added here.
+    //
+    // 🔴 `modelsSearchableAttributes` lives in `~/server/search-index/searchable-attributes.ts` and
+    // is covered here rather than in its own file's guard, so the rule has ONE home. It is the
+    // fourth attribute list, hoisted out of `onIndexSetup` because being a function-local `const`
+    // while the other three were module exports is what made a mutation guard on it escapable; it
+    // inherited this file's by-reference hazard in the same move, and is frozen for the same
+    // reason. Its other guards — the write-argument pin, the no-local-binding ban and the freeze
+    // assertion — are in
+    // `~/server/search-index/__tests__/models-index-insight-projection.test.ts`.
     const MUTATOR =
-      /^(modelsDisplayedAttributes|MODELS_WITHHELD_ATTRIBUTES)\.(push|pop|shift|unshift|splice|sort|reverse|fill|copyWithin)$/;
+      /^(modelsDisplayedAttributes|MODELS_WITHHELD_ATTRIBUTES|modelsSearchableAttributes)\.(push|pop|shift|unshift|splice|sort|reverse|fill|copyWithin)$/;
     const offenders = walk(SRC)
       .map((f) => f.slice(SRC.length + 1).replaceAll('\\', '/'))
       .filter((rel) => !rel.includes('__tests__/') && !/\.test\.tsx?$/.test(rel))
@@ -171,7 +184,8 @@ describe('modelsDisplayedAttributes — the Creator Controls privacy boundary', 
     // not filterable either", AND THAT ENUMERATION WAS INCOMPLETE — the same incompleteness this
     // change corrected at the projection site. There are FOUR attribute lists, not two:
     // `displayedAttributes`, `filterableAttributes`, `sortableAttributes`, and the
-    // `searchableAttributes` whitelist declared in `onIndexSetup`. The fourth is a whitelist
+    // `modelsSearchableAttributes` whitelist in `~/server/search-index/searchable-attributes.ts`
+    // (a function-local literal in `onIndexSetup` until it was hoisted). The fourth is a whitelist
     // standing in for Meili's `["*"]` default, so widening it is a live route to reachability
     // with no edit to this file at all. Measured on a local Meilisearch 1.54.0, two documents
     // carrying `42` and `77`, with positive and negative controls: with the real whitelist

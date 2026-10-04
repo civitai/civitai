@@ -20,6 +20,7 @@ import {
   modelsDisplayedAttributes,
 } from '~/server/search-index/displayed-attributes';
 import { modelsFilterableAttributes } from '~/server/search-index/filterable-attributes';
+import { modelsSearchableAttributes } from '~/server/search-index/searchable-attributes';
 import { modelVersionPricingSignals } from '@civitai/buzz';
 import {
   getModelPaidAccessGates,
@@ -63,11 +64,19 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const settings = await index.getSettings();
 
-  const searchableAttributes = ['name', 'user.username', 'hashes', 'triggerWords'];
-
-  if (JSON.stringify(searchableAttributes) !== JSON.stringify(settings.searchableAttributes)) {
+  // The fourth attribute list, and the only one that used to be declared inline here. It is an
+  // explicit WHITELIST standing in for Meili's `["*"]` default, so widening it is a safety change
+  // — the reasoning, the measurements and the freeze are in ./searchable-attributes.ts.
+  // 🔴 The module export is passed STRAIGHT THROUGH, with no local copy, for the reason the
+  // displayed list below gives: a local can be mutated between its declaration and the call, so a
+  // guard that pins the declaration is not pinning what reaches the engine. That hole was measured
+  // on this very list three times over — a `.push` on the next line, a spread at the call site,
+  // and a helper taking the array as a parameter, each leaving a fully green suite.
+  if (
+    JSON.stringify(modelsSearchableAttributes) !== JSON.stringify(settings.searchableAttributes)
+  ) {
     const updateSearchableAttributesTask = await index.updateSearchableAttributes(
-      searchableAttributes
+      modelsSearchableAttributes
     );
     console.log(
       'onIndexSetup :: updateSearchableAttributesTask created',
@@ -407,11 +416,12 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
         // nothing at all.
         //
         // 🔴 CLOSURE RESTS ON A FOURTH LIST, AND AN EARLIER VERSION OF THIS COMMENT ATTRIBUTED
-        // IT TO ONLY THREE ABSENCES. `searchableAttributes` — the explicit whitelist declared at
-        // the top of `onIndexSetup` in this file; read it there rather than from a copy here —
-        // is the fourth, and it is a whitelist rather than a default: swap it for Meili's
-        // `["*"]` and the field becomes reachable by free-text query. Measured on a local
-        // engine: with the whitelist, `q=42` returns 0 hits; with `["*"]`, `q=42` returns 1.
+        // IT TO ONLY THREE ABSENCES. `modelsSearchableAttributes` — the explicit whitelist in
+        // ./searchable-attributes.ts, applied near the top of `onIndexSetup` in this file; read
+        // it there rather than from a copy here — is the fourth, and it is a whitelist rather
+        // than a default: swap it for Meili's `["*"]` and the field becomes reachable by
+        // free-text query. Measured on a local engine: with the whitelist, `q=42` returns 0
+        // hits; with `["*"]`, `q=42` returns 1.
         //
         // What that would buy an attacker is a MEMBERSHIP oracle, not a value leak — the hit
         // body still omits `insight`, because displayed-attribute withholding is a separate
@@ -420,26 +430,24 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
         // argued above, and it is equally true of the three PRE-EXISTING `insight.*` leaves, so
         // this is NOT new exposure introduced by projecting the id. What was wrong was the
         // completeness of the enumeration. The fourth list is machine-checked in
-        // ./__tests__/models-index-insight-projection.test.ts — it is read from this file's AST
-        // rather than imported, because unlike the sortable, displayed and filterable lists it is
-        // a function-local literal and not an exported constant.
+        // ./__tests__/models-index-insight-projection.test.ts, alongside the other three and by
+        // the same means — it is imported, like them.
         //
-        // ⚠️ "ALONGSIDE THE OTHER THREE" IS WHAT THIS SENTENCE USED TO SAY, AND IT OVERSTATED
-        // PARITY — corrected after two mutants escaped a fully green suite. The three membership
-        // assertions read the DECLARATION at the top of `onIndexSetup`; pinning a declaration is
-        // not pinning what reaches the engine, so a `searchableAttributes.push('*', …)` on the
-        // next line, and a `updateSearchableAttributes([...searchableAttributes, '*', …])` at
-        // the call site, both declared exactly what those assertions forbid and both passed.
-        // That is the same defect the displayed-list guard already shipped and fixed, recorded
-        // in `src/server/__tests__/models-displayed-attributes.test.ts`. What is pinned now, and
-        // the difference that remains: the displayed list pins the write ARGUMENT and bans a
-        // local binding outright (it is an exported module constant, passed straight through);
-        // this list pins the write ARGUMENT too, but cannot ban the local — it IS a local — so
-        // it instead bans any member access on it and pins the reference count inside
-        // `onIndexSetup`. Equivalent property, bought differently. Making the fourth list
-        // structurally parallel would mean hoisting this array to an exported constant beside
-        // the other three; that is a production change and is deliberately left as a follow-up,
-        // argued at the guard.
+        // ⚠️ THAT PARITY IS NEW, AND IT COST THREE ESCAPED MUTANTS TO GET. This list used to be a
+        // function-local literal in `onIndexSetup` while the other three were exported constants,
+        // and the guard on it was correspondingly bespoke: membership assertions read the
+        // DECLARATION, which is not what reaches the engine, so a `searchableAttributes.push('*',
+        // …)` on the next line and an `updateSearchableAttributes([...searchableAttributes, '*',
+        // …])` at the call site each declared exactly what those assertions forbid and each
+        // passed a fully green suite. Patching that with a function-scoped member-access ban plus
+        // a reference ledger then left a THIRD escape, because a scope-bounded ban always has an
+        // adjacent scope: a module-level helper taking the array as a parameter and pushing onto
+        // it kept every `onIndexSetup` count clean while the engine received `['name',
+        // 'user.username', 'hashes', 'triggerWords', '*', 'insight.modelVersionId']`. The list
+        // was therefore hoisted to ./searchable-attributes.ts and frozen there, and the guard is
+        // now the displayed list's proven one verbatim: pin the write ARGUMENT, and ban a local
+        // binding of the name outright. With no local there is nothing to mutate between a
+        // declaration and the write, which closes the class rather than one shape of it.
         //
         // WHY WRITE IT ANYWAY. It records WHICH VERSION THE INDEX DECIDED FOR at reset time,
         // and that fact is NOT recoverable from Postgres afterwards: the labels move

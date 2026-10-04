@@ -4,6 +4,7 @@ import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 import { modelsFilterableAttributes } from '~/server/search-index/filterable-attributes';
+import { modelsSearchableAttributes } from '~/server/search-index/searchable-attributes';
 import { modelsSortableAttributes } from '~/server/search-index/sortable-attributes';
 
 /**
@@ -94,132 +95,69 @@ function propertyAssignments() {
 }
 
 /**
- * The `searchableAttributes` whitelist `onIndexSetup` applies, read from the AST because it is
- * a function-local literal rather than an exported module constant like the other three lists.
+ * Declarations of `const <name> = …` anywhere in the index file, by name — the same helper the
+ * displayed-list guard uses (`declaredNames` in ~/server/__tests__/models-displayed-attributes.test.ts),
+ * reused rather than re-derived.
  *
- * 🔴 Asserts it found EXACTLY ONE such array literal, so this cannot return an empty list and
- * make its caller's `not.toContain` / `toEqual([])` assertions vacuously true — the reassuring
- * zero and the probe wired to nothing are indistinguishable without this. A second declaration
- * appearing in this file would also mean the caller is grading the wrong one.
+ * 🔴 FILE-WIDE on purpose, and that is the whole point of the shape. The guard it serves bans a
+ * LOCAL BINDING of the hoisted list's name existing at all, so there is nothing to mutate between
+ * a declaration and the write. Scoping the ban to one function is what let a measured mutant
+ * escape: a helper taking the array as a PARAMETER and pushing onto it kept every
+ * `onIndexSetup`-scoped count clean while the engine received `['name', 'user.username',
+ * 'hashes', 'triggerWords', '*', 'insight.modelVersionId']`.
+ *
+ * 🔴 It asserts it found something, because a walk that resolved nothing would make every
+ * `not.toContain` over it vacuously true — the reassuring zero and the probe wired to nothing are
+ * indistinguishable without this.
  */
-function searchableAttributeLiteral(): string[] {
-  const found: string[][] = [];
+function declaredNames(): string[] {
+  const names: string[] = [];
   const visit = (node: ts.Node) => {
-    if (
-      ts.isVariableDeclaration(node) &&
-      ts.isIdentifier(node.name) &&
-      node.name.text === 'searchableAttributes' &&
-      node.initializer &&
-      ts.isArrayLiteralExpression(node.initializer)
-    ) {
-      found.push(
-        node.initializer.elements.map((el) =>
-          ts.isStringLiteral(el) ? el.text : el.getText(indexAst)
-        )
-      );
-    }
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) names.push(node.name.text);
     ts.forEachChild(node, visit);
   };
   ts.forEachChild(indexAst, visit);
   expect(
-    found.length,
-    `exactly one \`searchableAttributes\` array literal must be readable in ${INDEX_REL} — 0 means this walk is wired to nothing and every assertion over it is vacuous`
-  ).toBe(1);
-  return found[0];
+    names.length,
+    `declarations must be readable in ${INDEX_REL} — 0 means this walk is wired to nothing and every \`not.toContain\` over it is vacuous`
+  ).toBeGreaterThan(0);
+  return names;
 }
 
 /**
- * Every use of the function-local `searchableAttributes` BINDING inside `onIndexSetup`,
- * classified by the syntactic position it occupies — so a caller can pin what happens to the
- * array between its declaration and the write, not merely what the declaration says.
+ * Every call expression in the file: the source text of its callee and arguments, plus the
+ * callee's method name resolved STRUCTURALLY as `method`.
  *
- * 🔴 WHY THIS EXISTS: pinning the DECLARATION is not pinning what reaches the engine, and that
- * is a MEASURED defect in this repo, in the sibling guard for the displayed list. Its own
- * comment records it (~/server/__tests__/models-displayed-attributes.test.ts, "passes the shared
- * module STRAIGHT to the processor write"): *"pinning the initialiser statement
- * `const displayedAttributes = [...module]` was structural but pinned the WRONG EXPRESSION: a
- * `displayedAttributes.push('sortMetrics')` on the next line re-opened the leak and passed the
- * entire suite."* The searchable guard had exactly that hole. Both escapes were reproduced at
- * this head before this walk existed, each leaving the suite fully green at
- * `Test Files 5 passed (5)` / `Tests 143 passed (143)`:
- *   - mutant F, a mutation of the local: `searchableAttributes.push('*', 'insight.modelVersionId');`
- *     on the line after the declaration.
- *   - mutant E, a rewrite at the call site:
- *     `index.updateSearchableAttributes([...searchableAttributes, '*', 'insight.modelVersionId'])`.
- * Each declares precisely what the three membership assertions exist to forbid.
+ * 🔴 `method` is NOT `callee.split('.').pop()`, and the difference is measured rather than
+ * hypothetical. That idiom is the one TEXTUAL matcher in a pair whose comments advertise it as
+ * structural: a second write spelled `index.updateSearchableAttributes([…])` is caught (the
+ * write-count assertion fails, "to have a length of 1 but got 2"), but the SAME write spelled
+ * `index['updateSearchableAttributes']([…])` left the whole suite green at
+ * `Test Files 5 passed (5)` / `Tests 144 passed (144)` — `.split('.').pop()` returns the entire
+ * `index['updateSearchableAttributes']` text and matches nothing.
  *
- * The classification, and why `settings.searchableAttributes` is not a use of the local:
- *   - `declarations` — the identifier is a VariableDeclaration's own name.
- *   - `reads` — any other use of the binding itself.
- *   - `memberTargets` — the subset of `reads` where the binding is the OBJECT of a property or
- *     element access, i.e. `searchableAttributes.<anything>` or `searchableAttributes[<i>]`.
- *     An identifier that is a property access's `name` (`settings.searchableAttributes`, the
- *     engine's CURRENT value being compared against) is a key on another object and is counted
- *     in none of the three.
- *
- * 🔴 `memberTargets` is a STRUCTURAL ban, not a blocklist of method names: it fails on any
- * member operation whatever, so `push`, `unshift`, `splice`, `length = 0` and `[0] = '*'` are
- * all caught by one assertion and a method nobody thought of is caught too. The reference COUNT
- * beside it closes the alias route (`const alias = searchableAttributes; alias.push(…)`), which
- * adds a read rather than a member access.
+ * An element-access callee with a string-literal argument resolves to the same method as a
+ * property access, so resolving it here is what makes the matcher mean what its comments claim.
+ * `isStringLiteralLike` also covers the backtick form (``index[`update…`]``), which is the same
+ * call again. A computed key that is not a literal (`index[k]`) stays unresolved and is therefore
+ * NOT matched — stated plainly because that IS the remaining gap, and it cannot be closed by a
+ * syntactic walk: naming the method would need the value of `k`.
  */
-function searchableAttributeUses() {
-  let setup: ts.Node | undefined;
-  const findSetup = (node: ts.Node) => {
-    if (
-      ts.isVariableDeclaration(node) &&
-      ts.isIdentifier(node.name) &&
-      node.name.text === 'onIndexSetup' &&
-      node.initializer
-    ) {
-      setup = node.initializer;
-    }
-    ts.forEachChild(node, findSetup);
-  };
-  ts.forEachChild(indexAst, findSetup);
-  // Positive control for the walk itself: if `onIndexSetup` were renamed or restructured out of
-  // reach, every count below would be 0 and the caller's assertions would grade nothing.
-  expect(
-    setup,
-    `\`onIndexSetup\` must be readable in ${INDEX_REL} — without it this walk is wired to nothing and every count over it is vacuous`
-  ).toBeDefined();
-
-  const declarations: number[] = [];
-  const reads: number[] = [];
-  const memberTargets: string[] = [];
-  const lineOf = (node: ts.Node) =>
-    indexAst.getLineAndCharacterOfPosition(node.getStart(indexAst)).line + 1;
-  const visit = (node: ts.Node) => {
-    if (ts.isIdentifier(node) && node.text === 'searchableAttributes') {
-      const parent = node.parent;
-      if (ts.isVariableDeclaration(parent) && parent.name === node) {
-        declarations.push(lineOf(node));
-      } else if (ts.isPropertyAccessExpression(parent) && parent.name === node) {
-        // `settings.searchableAttributes` — a key on the engine's settings object, not this
-        // local. Deliberately counted in nothing.
-      } else {
-        reads.push(lineOf(node));
-        if (
-          (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
-          parent.expression === node
-        ) {
-          memberTargets.push(`${lineOf(node)}: ${parent.getText(indexAst).replace(/\s+/g, ' ')}`);
-        }
-      }
-    }
-    ts.forEachChild(node, visit);
-  };
-  ts.forEachChild(setup as ts.Node, visit);
-  return { declarations, reads, memberTargets };
-}
-
-/** Every call expression in the file, as the source text of its callee and arguments. */
 function callExpressions() {
-  const out: { callee: string; args: string[] }[] = [];
+  const methodOf = (expr: ts.Expression): string | undefined => {
+    if (ts.isPropertyAccessExpression(expr)) return expr.name.text;
+    if (ts.isElementAccessExpression(expr)) {
+      const arg = expr.argumentExpression;
+      return arg && ts.isStringLiteralLike(arg) ? arg.text : undefined;
+    }
+    return undefined;
+  };
+  const out: { callee: string; method?: string; args: string[] }[] = [];
   const visit = (node: ts.Node) => {
     if (ts.isCallExpression(node)) {
       out.push({
         callee: node.expression.getText(indexAst),
+        method: methodOf(node.expression),
         args: node.arguments.map((a) => a.getText(indexAst).replace(/\s+/g, ' ')),
       });
     }
@@ -258,25 +196,29 @@ const INSIGHT_AXIS_ATTRS = ['insight.role', 'insight.styleFamily'];
  * alongside the other attributes. A further assertion, the write-only ledger in the
  * declared/projected pairing case, is what keeps the field PRESENT in the document while absent
  * from the lists. ⚠️ And the searchable absence takes a SECOND case, `applies that whitelist
- * VERBATIM …`, because the membership case reads the DECLARATION and the engine is given
- * whatever the write ARGUMENT evaluates to: two mutants that pushed onto the local and spread it
- * at the call site both escaped a fully green suite until that case existed. No count is given
- * for "the assertions" because that is the kind of restated figure this file has already had to
- * correct twice; the cases are named instead — and "TWO cases" is exactly such a figure, which
- * is why it is no longer one.
+ * VERBATIM …`, because the membership case reads the LIST and the engine is given whatever the
+ * write ARGUMENT evaluates to: three mutants escaped a fully green suite on that gap — a push
+ * onto the local, a spread at the call site, and a module-scope helper taking the array as a
+ * parameter. That third one is why the list no longer lives inside `onIndexSetup`; the history is
+ * in that case. No count is given for "the assertions" because that is the kind of restated
+ * figure this file has already had to correct twice; the cases are named instead — and "TWO
+ * cases" is exactly such a figure, which is why it is no longer one.
  *
  * ⚠️ WHY `searchableAttributes` BELONGS IN THAT LIST, since it is the one an enumeration keeps
  * missing: unreachability is not established by the three absences alone. That list is an
- * explicit whitelist in `onIndexSetup`, and Meili's default is `["*"]` — measured on a local
- * engine, with the whitelist `q=42` returns 0 hits and with `["*"]` it returns 1. Widening it
- * would therefore make the id reachable as a MEMBERSHIP oracle ("which model's winning version
+ * explicit whitelist applied by `onIndexSetup`, and Meili's default is `["*"]` — measured on a
+ * local engine, with the whitelist `q=42` returns 0 hits and with `["*"]` it returns 1. Widening
+ * it would therefore make the id reachable as a MEMBERSHIP oracle ("which model's winning version
  * is 42"), though not as a value leak: the hit body still withholds `insight`, which is a
  * separate mechanism. Equally true of the three pre-existing leaves, so it is not new exposure
  * from projecting the id — the enumeration was simply incomplete.
  *
- * It is read from the index file's AST rather than imported, because unlike `modelsSortable…`,
- * `modelsDisplayed…` and `modelsFilterable…` it is a FUNCTION-LOCAL literal with no export, so
- * there is nothing to import. That is also why it is the easiest of the four to forget.
+ * ⚠️ IT USED TO BE THE EASIEST OF THE FOUR TO FORGET, FOR A STRUCTURAL REASON THAT IS NOW FIXED:
+ * it was a function-local literal with no export, so unlike `modelsSortable…`,
+ * `modelsDisplayed…` and `modelsFilterable…` there was nothing to import and this file read it
+ * out of the index's AST. It now lives in ../searchable-attributes.ts and is imported like the
+ * other three. That asymmetry was not only a readability problem — it is what made a mutation
+ * guard on it escapable, which is recorded in the `applies that whitelist VERBATIM …` case.
  *
  * If one of them is in your way, making this field readable is the decision you are taking —
  * it is not an obstacle to route around.
@@ -547,90 +489,123 @@ describe('models search index projects insight.qualityScore', () => {
     // on it and why an enumeration keeps missing it. Searchable is the only one of the four
     // whose absence is not enough on its own: the list must stay an explicit WHITELIST, because
     // Meili's `["*"]` default would re-admit every leaf by free-text query.
-    const searchable = searchableAttributeLiteral();
-    // Positive control for the walk, on a value the whitelist has carried since long before
-    // `insight` existed — a walk that read an array it could not resolve would fail here.
-    expect(searchable, 'the searchableAttributes walk did not read the real list').toContain(
-      'name'
-    );
+    // Read by IMPORT, like the other three lists. It used to be read out of the index file's AST,
+    // because it was a function-local literal with nothing to import; hoisting it to
+    // ../searchable-attributes.ts removed that asymmetry and the walk with it.
+    //
+    // Positive control, on a value the whitelist has carried since long before `insight` existed:
+    // an import resolving to the wrong thing, or to an empty list, would fail here rather than
+    // making the two absences below vacuously true.
     expect(
-      searchable,
+      modelsSearchableAttributes,
+      'the searchable whitelist did not resolve to the real list'
+    ).toContain('name');
+    expect(
+      modelsSearchableAttributes,
       'searchableAttributes must stay an explicit whitelist — Meili’s `["*"]` default would make every insight leaf reachable by free-text query'
     ).not.toContain('*');
     expect(
-      searchable.filter((a) => a.startsWith('insight')),
+      modelsSearchableAttributes.filter((a) => a.startsWith('insight')),
       'no insight.* attribute may be searchable — a searchable leaf is a per-document MEMBERSHIP oracle (a q= query that matches reveals which model carries the value) even though the hit body still withholds `insight`'
     ).toEqual([]);
   });
 
-  it('🔴 applies that whitelist VERBATIM — pins the write ARGUMENT and bans mutation of the local', () => {
+  it('🔴 applies that whitelist VERBATIM — pins the write ARGUMENT and bans any local binding of it', () => {
     // 🔴 THE CASE ABOVE PINS THE DECLARATION. THIS ONE PINS WHAT REACHES THE ENGINE, and the
     // two are different claims — which is a measured defect in this repo, not a theoretical
     // gap. The displayed-list guard shipped the identical hole and records it in its own
     // comment (~/server/__tests__/models-displayed-attributes.test.ts, "passes the shared
     // module STRAIGHT to the processor write"): a `displayedAttributes.push('sortMetrics')` on
     // the line after a structurally-pinned initialiser re-opened the leak and passed the
-    // entire suite. Both shapes were reproduced here before this case existed, each leaving
-    // the suite fully green at `Test Files 5 passed (5)` / `Tests 143 passed (143)`:
-    //   - mutant F: `searchableAttributes.push('*', 'insight.modelVersionId');` after the
-    //     declaration — killed below by the member-access ban, which fires first; the
-    //     reference count would catch it too, since a `.push` target is also a read.
-    //   - mutant E: `index.updateSearchableAttributes([...searchableAttributes, '*',
-    //     'insight.modelVersionId'])` — killed below by the argument pin.
+    // entire suite.
     //
-    // 🔴 EXACTLY WHAT PARITY WITH THE DISPLAYED LIST IS AND IS NOT. That guard pins the
-    // argument AND asserts `declaredNames(PROC)` does not contain `displayedAttributes` — it
-    // can ban the local outright because the list is an exported module constant passed
-    // straight through. `searchableAttributes` is a function-local `const` with no export, so
-    // there is nothing to pass straight through and the no-local remedy cannot apply as-is:
-    // this guard REQUIRES the local and constrains it instead. Same property, bought a
-    // different way; the shapes are not interchangeable and should not be "unified".
+    // 🔴 THIS GUARD IS THE DISPLAYED LIST'S SHAPE, NOT A BESPOKE ONE, AND IT GOT HERE THE HARD
+    // WAY — THREE HOLES, THE THIRD OF WHICH IS WHY THE PRODUCTION CODE MOVED. Each escape left
+    // a fully green suite, so none was found by reading:
+    //   - a `.push` on the line after the declaration (pinning the declaration is not pinning
+    //     the write);
+    //   - `index.updateSearchableAttributes([...searchableAttributes, '*', …])` at the call site
+    //     (a declaration-scoped guard never sees the argument);
+    //   - and then, against a guard that had closed both of those with a function-scoped
+    //     member-access ban plus a reference ledger: a module-scope HELPER taking the array as a
+    //     parameter and pushing onto it —
+    //       `const applyWhitelist = async (index, searchableAttributes) => {
+    //          searchableAttributes.push('*', 'insight.modelVersionId');
+    //          await index.updateSearchableAttributes(searchableAttributes); };`
+    //     Re-measured at this head before the hoist: `Test Files 5 passed (5)` /
+    //     `Tests 144 passed (144)`, `pnpm typecheck` 0 errors, while the engine received
+    //     `['name','user.username','hashes','triggerWords','*','insight.modelVersionId']`.
+    //     Inside `onIndexSetup` the ledger still read 1 declaration + 2 reads and `memberTargets`
+    //     was still `[]`; the mutation had simply moved out of the scope being walked. The
+    //     ARGUMENT pin was file-wide and saw a bare identifier, so it passed too.
     //
-    // 🔴 THE DURABLE FIX THAT IS DELIBERATELY NOT BEING TAKEN HERE, AND WHY. Hoisting
-    // `searchableAttributes` out of `onIndexSetup` into an exported module constant beside
-    // ../filterable-attributes.ts / ../sortable-attributes.ts / ../displayed-attributes.ts
-    // would make the fourth list structurally parallel to the other three and let the PROVEN
-    // guard shape above be reused verbatim — argument pin plus `not.toContain` on the declared
-    // names — instead of this bespoke pair. That is a PRODUCTION change, on a change whose
-    // production delta is twelve twice-verified lines, so it is out of scope here and belongs
-    // in a follow-up. The asymmetry is recorded rather than quietly tolerated.
-    const calls = callExpressions().filter(
-      (c) => c.callee.split('.').pop() === 'updateSearchableAttributes'
-    );
+    // 🔴 WHY THE THIRD HOLE WAS FIXED IN PRODUCTION RATHER THAN PATCHED HERE. The bespoke pair
+    // existed only because this list was a function-local `const` while the other three were
+    // exported module constants — and that asymmetry WAS the seam. A guard that must distinguish
+    // "legitimate use of a local" from "mutation of a local" has to pick a scope to walk, and
+    // whichever it picks there is an adjacent scope the mutation can move to. So the list was
+    // hoisted into ../searchable-attributes.ts, the local was deleted, and the remedy the
+    // displayed list already proved applies verbatim: with NO local binding there is nothing to
+    // mutate between a declaration and the write, which closes the helper route by construction
+    // instead of detecting one shape of it.
+    const calls = callExpressions().filter((c) => c.method === 'updateSearchableAttributes');
 
     // Pin the ARGUMENT, which is the only thing that decides what the live index ends up with.
-    // Exactly one write, and its argument is the BARE identifier — not a spread, not an inline
-    // array, not a concatenation. This is the assertion mutant E has to get past.
+    // Exactly one write, and its argument is the BARE module name — not a spread, not an inline
+    // array, not a concatenation, not a helper call.
     expect(calls, 'exactly one updateSearchableAttributes write must exist').toHaveLength(1);
     expect(
       calls[0].args,
-      'the searchableAttributes write must pass the bare local — a spread or an inline array at the call site re-admits anything it likes while the declaration above still reads clean'
-    ).toEqual(['searchableAttributes']);
+      'the searchableAttributes write must pass the shared module export straight through — a spread, an inline array or a helper call at the call site re-admits anything it likes while the list itself still reads clean'
+    ).toEqual(['modelsSearchableAttributes']);
 
-    // And ban touching the local between declaration and call. STRUCTURAL rather than a
-    // blocklist of method names: it fails on ANY member operation on the binding, so `push`,
-    // `unshift`, `splice`, `length = 0` and `[0] = '*'` are all one assertion and a method
-    // nobody enumerated is caught too. This is the assertion mutant F has to get past.
-    const uses = searchableAttributeUses();
-    expect(
-      uses.memberTargets,
-      'nothing may be called on or assigned into `searchableAttributes` inside onIndexSetup — a mutation between the declaration and the write makes the pinned declaration a claim about a list the engine never sees'
-    ).toEqual([]);
+    // And no local binding to shadow it. BOTH names, and they buy DIFFERENT things — stated
+    // separately because they are not one guard:
+    //   - `modelsSearchableAttributes`: the STRUCTURAL half. A function-scoped
+    //     `const modelsSearchableAttributes = [...]` shadows the import and satisfies the
+    //     argument pin above, so without this the pin is a claim about a name, not a list.
+    //     (The displayed-list guard this shape copies bans only its local's name, not its
+    //     export's, so this is one assertion wider than the proven shape.)
+    //   - `searchableAttributes`: the SPELLED half, and it is honest to call it that. It blocks a
+    //     revert to the old function-local shape and an alias that happens to reuse that name; it
+    //     does NOT close the alias class, because `const alias = modelsSearchableAttributes` is
+    //     not caught by it. Measured: that mutant leaves this suite green.
+    const declared = declaredNames();
+    for (const name of ['searchableAttributes', 'modelsSearchableAttributes']) {
+      expect(
+        declared,
+        `${INDEX_REL} must declare no local \`${name}\` — the export is passed straight through, so a local binding is the one thing that could be mutated between its declaration and the write`
+      ).not.toContain(name);
+    }
 
-    // The reference ledger, which closes the alias route a member-access ban cannot see
-    // (`const alias = searchableAttributes; alias.push('*')` adds a READ, not a member access)
-    // and doubles as the positive control: the counts are non-zero, so neither assertion above
-    // can be passing because the walk found nothing. One declaration, and exactly two reads —
-    // the `JSON.stringify(searchableAttributes)` settings comparison and the write argument.
-    // Adding a third use, for any reason, is meant to land a human on this comment.
+    // 🔴 And the export is FROZEN. Two reasons, and the second is what closes the gap the
+    // assertions above leave open.
+    //
+    // (1) Hoisting a list to module scope trades a narrow hazard for a wider one if you stop
+    // there: an export is handed out BY REFERENCE, so `modelsSearchableAttributes.push('*')`
+    // anywhere in the process would widen the whitelist in one line. ../displayed-attributes.ts
+    // measured exactly that on its own list and calls the unfrozen export "worse than the local
+    // copy it replaced".
+    //
+    // (2) 🔴 IT IS THE ONLY THING COVERING THE MUTATION ROUTES NO SYNTACTIC WALK HERE SEES, and
+    // two of them were measured surviving this whole suite: an alias under another name
+    // (`const alias = modelsSearchableAttributes; alias.push('*')`) and the documented shorthand
+    // hole (`const bag = { modelsSearchableAttributes }; bag.modelsSearchableAttributes.push('*')`)
+    // — the tree-wide mutation ledger in ~/server/__tests__/models-displayed-attributes.test.ts
+    // matches the bare `<name>.<mutator>` callee and neither of those spells it. Both THROW once
+    // the list is frozen, measured with the control that makes the claim mean anything: on an
+    // UNFROZEN array the same two routes widen it (`["name"]` → `["name","*"]`), and on the frozen
+    // one both raise `TypeError: Cannot add property 4, object is not extensible`. So the freeze
+    // is not belt-and-braces here — it is the mechanism, and the assertions above are what make a
+    // widening visible at review time rather than only at runtime. That matters because this
+    // list's only writer runs inside an `UNRUNNABLE_JOB_CRON` reset, where a throw could go years
+    // unobserved.
     expect(
-      uses.declarations.length,
-      'exactly one `searchableAttributes` declaration must be readable inside onIndexSetup'
-    ).toBe(1);
-    expect(
-      uses.reads.length,
-      'onIndexSetup must use `searchableAttributes` exactly twice — the settings comparison and the write argument; a third reference is either a new reader to argue for or an alias the member-access ban cannot see'
-    ).toBe(2);
+      Object.isFrozen(modelsSearchableAttributes),
+      'modelsSearchableAttributes must stay frozen — it is the only thing closing the aliasing and shorthand mutation routes that no syntactic guard in this file can see'
+    ).toBe(true);
+    expect(() => modelsSearchableAttributes.push('*')).toThrow();
+    expect(modelsSearchableAttributes).not.toContain('*');
   });
 
   it('🔴 keeps the meaning axes OUT of sortableAttributes — they are unordered categories', () => {
@@ -643,14 +618,17 @@ describe('models search index projects insight.qualityScore', () => {
     // running this file over `origin/main`'s four non-test sources with `--reporter=verbose`,
     // and both figures below MOVED when they were re-derived:
     //
-    //   - **SIX** of this file's 12 cases failed there, every one by its OWN assertion and none
-    //     by a thrown error: the projection call (`expected [] to have a length of 1`), the
+    //   - **SEVEN** of this file's **13** cases failed there, every one by its OWN assertion and
+    //     none by a thrown error: the projection call (`expected [] to have a length of 1`), the
     //     ordered literal, the `?? null` diagnostic, the filterable membership of the two axes,
-    //     the declared/projected pairing, and the write-only-id absence case. ⚠️ This said
-    //     "Four cases" and listed the first four — correct when written, and invalidated by the
-    //     same commit that corrected the other number here: the pairing case was GREEN at base
-    //     until its undeclared-side assertion became a ledger, and the id-absence case is new.
-    //     That is this comment's own stated lesson biting a third time.
+    //     the declared/projected pairing, the write-only-id absence case, and the
+    //     whitelist-verbatim case. ⚠️ BOTH FIGURES HAVE NOW BEEN WRONG TWICE. It said "Four cases"
+    //     and listed the first four; it was corrected to "SIX of this file's 12" — where the 12
+    //     was ALREADY wrong, the file holding 13 cases at the time. The seventh failure is new and
+    //     has a real cause rather than an arithmetic one: hoisting the whitelist to
+    //     ../searchable-attributes.ts means the verbatim case now fails at base, where the write
+    //     still passes a function-local. That is this comment's own stated lesson biting a fourth
+    //     time — re-run the measurement, never carry a figure forward.
     //   - **ELEVEN** of the 13 `modelInsightProjection` cases in
     //     ~/server/services/__tests__/resource-insight.test.ts went red, on
     //     `TypeError: modelInsightProjection is not a function`. ⚠️ This said "twelve", which
@@ -714,13 +692,24 @@ describe('models search index projects insight.qualityScore', () => {
         import('~/server/search-index/models.search-index'),
       ]);
 
-    // 🔴 `INSIGHT_WRITE_ONLY_ATTR` is swept here too, and for it this is not a ride-along note
-    // but THE assertion that makes "no search path can return it" machine-checked. Being
-    // undisplayed is what makes it unreadable: `attributesToRetrieve` can only narrow WITHIN
-    // the displayed set, so it cannot re-admit a withheld attribute, and the id is declared in
-    // neither the filterable nor the sortable list either (pinned above). Remove `insight` from
-    // the withheld ledger and this case goes red — which is the intended cost of the DISPLAY
-    // route named at the projection site.
+    // 🔴 `INSIGHT_WRITE_ONLY_ATTR` is swept here too, and for it this is not a ride-along note:
+    // it is the assertion that pins the DISPLAY mechanism, which is ONE of the four absences
+    // "no search path can return it" rests on — a necessary condition, not the sufficient one.
+    //
+    // ⚠️ THIS COMMENT USED TO CALL IT "THE assertion that makes 'no search path can return it'
+    // machine-checked", over an enumeration of "neither the filterable nor the sortable list
+    // either" — i.e. verbatim the two-list enumeration this change exists to correct, and
+    // contradicting this file's own header 400 lines up, which spells out FOUR. It is left as a
+    // marked correction rather than deleted because of the failure it invites: a maintainer
+    // trimming guards reads "THE assertion", concludes the searchable membership case is
+    // redundant, and deletes the only check on the fourth list.
+    //
+    // The four, and where each is pinned: DISPLAYED here (and `attributesToRetrieve` can only
+    // narrow WITHIN the displayed set, so it cannot re-admit a withheld attribute); FILTERABLE
+    // and SORTABLE in `keeps the winning version id OFF …`; SEARCHABLE in that same case for the
+    // list's contents, plus `applies that whitelist VERBATIM …` for what the engine is actually
+    // given. Remove `insight` from the withheld ledger and this case goes red — which is the
+    // intended cost of the DISPLAY route named at the projection site, and of that route only.
     for (const attr of [INSIGHT_SORT_ATTR, ...INSIGHT_AXIS_ATTRS, INSIGHT_WRITE_ONLY_ATTR]) {
       const [topLevel] = attr.split('.');
       expect(modelsDisplayedAttributes, `${attr} must not be displayed`).not.toContain(attr);
