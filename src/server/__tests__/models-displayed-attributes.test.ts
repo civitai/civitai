@@ -156,10 +156,13 @@ describe('modelsDisplayedAttributes — the Creator Controls privacy boundary', 
     // MISSING. It shipped missing `flags` — written into this same index by the second writer,
     // `src/pages/api/mod/search/models-update.ts` — and a review round caught that, not a test.
     // A list that reads as the record while being incomplete is what stops the next person looking.
-    // `insight` is the models index's suitability score (`insight.qualityScore`), sort-only AND
-    // filter-only: the resource-intent matcher sorts on it and reads the scores it needs from
-    // Postgres, so no consumer reads it off a hit. Top-level key because `transformData` emits
-    // `insight: { qualityScore }`.
+    // `insight` is the models index's suitability object — the sortable+filterable
+    // `insight.qualityScore` plus the filter-only meaning axes `insight.role` and
+    // `insight.styleFamily`. No consumer reads any of them off a hit: the resource-intent matcher
+    // sorts on the score and reads what it needs from Postgres. ONE top-level entry covers all
+    // three, because `transformData` emits `insight: { qualityScore, role, styleFamily }` and both
+    // withholding paths are keyed on the top-level attribute — Meili's `displayedAttributes` (where
+    // nested children ride along with their parent) and `withheldStripped`'s `delete out[attr]`.
     expect([...MODELS_WITHHELD_ATTRIBUTES].sort().join(',')).toBe(
       'canGenerateNext,flags,insight,isOfficial,sortMetrics'
     );

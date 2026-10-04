@@ -25,7 +25,7 @@ import {
   getModelPaidAccessGates,
   getModelVersionPaidAccessTerms,
 } from '~/server/services/paid-access.service';
-import { loadResourceInsights, modelInsightQualityScore } from '~/server/services/resource-insight';
+import { loadResourceInsights, modelInsightProjection } from '~/server/services/resource-insight';
 import { modelsSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { getValidCreatorMembershipMap } from '~/server/services/creator-program.service';
 import {
@@ -251,7 +251,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
   } catch (error) {
     insights = new Map();
     console.error(
-      'transformData :: loadResourceInsights failed; indexing this batch WITHOUT insight scores',
+      'transformData :: loadResourceInsights failed; indexing this batch WITHOUT insight labels',
       error
     );
   }
@@ -305,9 +305,19 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
       const realDownloadCount = metrics?.downloadCount ?? 0;
       const realTippedAmountCount = metrics?.tippedAmountCount ?? 0;
 
-      // MAX `qualityScore` over this model's labeled versions that clear the promote
-      // confidence floor; `null` when none. The rule and the alternatives considered are
-      // in `modelInsightQualityScore`'s docstring.
+      // The winning version's WHOLE label row — `qualityScore`, `role`, `styleFamily` —
+      // chosen by MAX `qualityScore` over this model's labeled versions that clear the
+      // promote confidence floor, ties broken on the lowest version id; `null` when none
+      // qualifies. The rule, the alternatives considered and the tiebreak argument are in
+      // `modelInsightProjection`'s docstring.
+      //
+      // 🔴 ONE CALL, ONE ROW — DO NOT SPLIT THIS INTO A PER-AXIS LOOKUP. The three axes
+      // must describe the SAME version: taking the score from the best-scoring version and
+      // the role from any other produces a document whose axes describe different
+      // resources, so a purpose filter matches a model on a role no version of it that
+      // scored well actually has. Every field is individually well-formed, so nothing
+      // downstream — not the index, not a consumer, not a reviewer reading one line —
+      // can see it. That is why the projection returns a row instead of three numbers.
       //
       // 🔴 THE NULL IS WRITTEN, NOT OMITTED, AND THE DIFFERENCE IS A STALE-SCORE BUG.
       // An earlier version of this omitted the key on `null`, on the measured ground that
@@ -327,14 +337,21 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
       // floor, or a deleted version) keeps its top-of-pool seeding forever: the row is
       // gone from Postgres, so the re-rank never reaches `insightBucket` and leaves the
       // candidate neutral — which PRESERVES the head position the stale score bought.
-      const insightQualityScore = modelInsightQualityScore(
+      const insightProjection = modelInsightProjection(
         modelVersions.map((v) => v.id),
         insights
       );
 
       return {
         ...model,
-        insight: { qualityScore: insightQualityScore },
+        // All three keys written unconditionally — see the merge argument above. `?? null`
+        // and never `?? 0`: a version can legitimately be judged 0 with high confidence,
+        // and `?.qualityScore ?? null` keeps that 0 while still clearing an absent label.
+        insight: {
+          qualityScore: insightProjection?.qualityScore ?? null,
+          role: insightProjection?.role ?? null,
+          styleFamily: insightProjection?.styleFamily ?? null,
+        },
         earlyAccessDeadline: paidAccessGates.get(model.id)?.earlyAccessDeadline ?? null,
         hasActivePaidAccess: paidAccessGates.get(model.id)?.gated ?? false,
         nsfwLevel: parseBitwiseBrowsingLevel(model.nsfwLevel),

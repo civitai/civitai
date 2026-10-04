@@ -81,8 +81,15 @@ export const MODELS_WITHHELD_ATTRIBUTES = [
   // Sort-only AND filter-only: `insight.qualityScore` is in both `modelsSortableAttributes` and
   // `modelsFilterableAttributes`, and no consumer reads it off a hit — the resource-intent matcher
   // sorts on it and reads the scores it needs from Postgres via `loadResourceInsights`. The
-  // top-level key is `insight` because `transformData` emits `insight: { qualityScore }`, and this
-  // list is keyed on top-level attributes (nested children ride along with their parent).
+  // top-level key is `insight` because `transformData` emits
+  // `insight: { qualityScore, role, styleFamily }`, and this list is keyed on top-level attributes
+  // (nested children ride along with their parent).
+  // 🔴 That ride-along is what covers the two MEANING axes — `insight.role` and
+  // `insight.styleFamily`, filter-only, added later than the score — so withholding them needed
+  // no edit here. Confirmed on the OTHER path too, which this whitelist cannot reach:
+  // `withheldStripped` in ./models.search-index.ts `delete`s the top-level `insight` key, taking
+  // the whole object with it. Both paths are covered by the nesting, not by an entry per axis —
+  // which is also why a future axis promoted to a TOP-LEVEL key would need its own entry here.
   // ⚠ Withholding it is not a privacy decision like `sortMetrics` — a quality label is not a
   // creator's hidden number — it is the same costs-nothing default this list's header describes,
   // and it keeps the field out of every public search hit until something actually needs it there.

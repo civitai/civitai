@@ -109,9 +109,30 @@ export async function loadResourceInsights(
 }
 
 /**
- * The model-level projection: what ONE `insight.qualityScore` a model's search
- * document should carry, given that labels are VERSION-level and the models index is
+ * The three meaning axes a model's search document carries under `insight`, all taken
+ * from ONE version's label row. See `modelInsightProjection` for why that matters.
+ */
+export type ModelInsightProjection = {
+  qualityScore: number;
+  role: string;
+  styleFamily: string;
+};
+
+/**
+ * The model-level projection: what ONE `insight` object a model's search document
+ * should carry, given that labels are VERSION-level and the models index is
  * MODEL-level.
+ *
+ * 🔴 IT RETURNS A WHOLE ROW, NOT THREE INDEPENDENTLY-SELECTED FIELDS, AND THAT IS THE
+ * POINT OF THE FUNCTION. `role` and `styleFamily` describe the SAME resource the
+ * winning `qualityScore` was measured on. Selecting each axis on its own — max score
+ * from one version, role from another — produces a document whose axes describe
+ * different resources: a purpose filter would then match a model on a role no version
+ * of it that scored well actually has. Nothing downstream can detect that: every field
+ * is individually well-formed, the document validates, and the index answers normally.
+ * So the row travels together, and the test that pins it
+ * (~/server/services/__tests__/resource-insight.test.ts) uses a fixture whose
+ * highest-scoring version carries a DIFFERENT role from its lower-scoring one.
  *
  * The rule is MAX over the model's labeled versions that clear
  * `RESOURCE_INSIGHT_MIN_PROMOTE_CONFIDENCE`. This is a PRODUCT CHOICE, not a
@@ -127,7 +148,24 @@ export async function loadResourceInsights(
  *   - MEAN: smooths vendor noise, but dilutes a genuinely excellent version and mixes
  *     sub-floor rows back into the figure the floor exists to exclude.
  *
- * 🔴 Returns `null`, and the caller must WRITE that null — `insight: { qualityScore: null }`
+ * 🔴 TIES ARE BROKEN ON THE LOWEST `modelVersionId`, and a tiebreak is REQUIRED rather
+ * than cosmetic now that the row travels. For the score alone a tie was invisible — equal
+ * scores produce the same number whichever version wins — but `role` and `styleFamily`
+ * are not equal across a tie, so an unspecified winner means the projected role can FLIP
+ * between two reindexes with no label change behind it.
+ *
+ * ⚠️ "Whichever comes first in `versionIds`" would NOT have been deterministic, which is
+ * why it was not chosen. The caller's list comes from `modelSearchIndexSelect`
+ * (~/server/selectors/model.selector.ts), which orders `modelVersions` by
+ * `{ index: 'asc' }` — and `ModelVersion.index` is `Int?` (nullable) and is the creator's
+ * own display ordering, so it is both reorderable by a creator at any time and tied/NULL
+ * across rows. Ordering on it therefore leaves the winner of a score tie unpinned.
+ * `modelVersionId` is the table's immutable primary key, so this tiebreak is stable
+ * across reindexes AND independent of the order the ids arrive in — which is what lets
+ * the behavioural test assert order-independence for the ROW, not just the number.
+ *
+ * 🔴 Returns `null`, and the caller must WRITE that null — `insight: { qualityScore: null,
+ * role: null, styleFamily: null }`, every key present
  * — rather than a sentinel, a zero, or an omitted key. ⚠️ An earlier version of this
  * docstring said to OMIT it, on the measured ground that a missing sortable attribute and
  * an explicit null sort identically. They do; sorting was simply the wrong property to
@@ -150,17 +188,69 @@ export async function loadResourceInsights(
  * A sentinel (say `-1` for every unlabeled model) would be strictly worse: ~718k
  * extra document writes to buy an ordering that already exists, and under `:asc` it
  * would surface the unlabeled block FIRST.
+ *
+ * ⚠️ Those engine notes are about the SORTABLE attribute, which is `insight.qualityScore`
+ * alone. `insight.role` and `insight.styleFamily` are FILTERABLE only — deliberately not
+ * sortable, because an ordering over an unordered category has no meaning — so nothing
+ * above describes them. What does apply to them is the merge argument: they are written
+ * on every document, null included, for the same reason the score is.
+ */
+export function modelInsightProjection(
+  versionIds: number[],
+  insights: Map<number, ResourceIntentInsight>
+): ModelInsightProjection | null {
+  let best: ResourceIntentInsight | null = null;
+  let bestVersionId = 0;
+  for (const versionId of versionIds) {
+    const insight = insights.get(versionId);
+    if (!insight) continue;
+    if (insight.confidence < RESOURCE_INSIGHT_MIN_PROMOTE_CONFIDENCE) continue;
+    // Strictly-greater keeps MAX; the second clause is the tiebreak, and it reads off the
+    // map KEY rather than `insight.modelVersionId` — `ResourceIntentInsight` does not
+    // declare that column, so the key is the only id this function is typed to see.
+    const wins =
+      best === null ||
+      insight.qualityScore > best.qualityScore ||
+      (insight.qualityScore === best.qualityScore && versionId < bestVersionId);
+    if (wins) {
+      best = insight;
+      bestVersionId = versionId;
+    }
+  }
+  if (best === null) return null;
+  // Copied field-by-field rather than spread: `loadResourceInsights` selects
+  // `modelVersionId` too, so the row object carries a column the index document has no
+  // business holding, and a spread would quietly project it.
+  return { qualityScore: best.qualityScore, role: best.role, styleFamily: best.styleFamily };
+}
+
+/**
+ * The score-only view of `modelInsightProjection`, byte-for-byte the same number it
+ * always returned: the projection applies the same floor and the same MAX, and the
+ * tiebreak above cannot move the figure because a tie means the scores are equal.
+ *
+ * ⚠️ It has NO production caller as of this change — `models.search-index.ts` now takes
+ * the whole row — and it is kept anyway for two reasons worth stating so the next reader
+ * does not have to re-derive them. It is named in prose by
+ * ~/server/search-index/filterable-attributes.ts (twice, in the enumeration of why a
+ * document carries a written null) and by ./resource-intent-matcher.service.ts, so
+ * deleting the symbol turns those into dead references; and it is the surface the
+ * floor/MAX/null-vs-zero behavioural suite in
+ * ~/server/services/__tests__/resource-insight.test.ts was written against, which is
+ * coverage of the shared rule rather than of this one-line view. ⚠️ Do not restate that
+ * list as a COUNT — an earlier draft of this paragraph said "four other files" and named
+ * two that do not mention it at all. Derive it: `git grep modelInsightQualityScore src`.
+ *
+ * 🔴 `?? null` and not `||` — a genuine `qualityScore: 0` from a version that DID clear
+ * the floor must survive as 0, not collapse into the unlabeled null. Pinned by a test.
+ *
+ * ⚠️ The measured Meilisearch sort/merge behaviour that ./resource-intent-matcher.service.ts
+ * sends a reader here for moved one function UP, onto `modelInsightProjection`, when that
+ * function took over the rule. It was not deleted — read it there.
  */
 export function modelInsightQualityScore(
   versionIds: number[],
   insights: Map<number, ResourceIntentInsight>
 ): number | null {
-  let best: number | null = null;
-  for (const versionId of versionIds) {
-    const insight = insights.get(versionId);
-    if (!insight) continue;
-    if (insight.confidence < RESOURCE_INSIGHT_MIN_PROMOTE_CONFIDENCE) continue;
-    if (best === null || insight.qualityScore > best) best = insight.qualityScore;
-  }
-  return best;
+  return modelInsightProjection(versionIds, insights)?.qualityScore ?? null;
 }
