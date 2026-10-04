@@ -304,19 +304,6 @@ describe('apps.storage shared gates', () => {
   });
 
   /**
-   * 🔴 INVARIANT GUARDS, NOT REGRESSION TESTS. No bug has violated either of the two
-   * properties below; nothing has ever drifted here. They exist because the properties were
-   * pinned NOWHERE and are load-bearing for diagnosability.
-   *
-   * The storage path has two gates that refuse with a byte-identical error — this
-   * `enforceAppBlocksFlag` middleware (on the SESSION user, `ctx.user`) and
-   * `assertAppBlocksEnabledForTokenUser` in `app-storage.service` (on the token SUBJECT).
-   * Same `UNAUTHORIZED`, same `'Apps are not enabled'`, same 401, same `error.data.code` and
-   * `error.data.path`, no `cause` on either. The case above asserts only
-   * `toBeInstanceOf(TRPCError)`, so repo-wide the MIDDLEWARE producer's message was
-   * unpinned: the two gates could drift apart, or drift together, and nothing would notice.
-   */
-  /**
    * The five storage procedures, each with a minimal call. Shared by the per-op cases and by
    * the growth ledger below, so the two cannot disagree about what "every procedure" means.
    */
@@ -346,6 +333,21 @@ describe('apps.storage shared gates', () => {
     ],
   ] as const;
 
+  /**
+   * 🔴 INVARIANT GUARDS, NOT REGRESSION TESTS. No bug has violated ANY of the properties in
+   * this block; nothing has ever drifted here. They exist because the properties were pinned
+   * NOWHERE and are load-bearing for diagnosability. (Deliberately not "the two" — the block
+   * has grown to four: the message pin, the per-op label sweep, the subject-gate mirror arm,
+   * and the growth ledger.)
+   *
+   * The storage path has two gates that refuse with a byte-identical error — this
+   * `enforceAppBlocksFlag` middleware (on the SESSION user, `ctx.user`) and
+   * `assertAppBlocksEnabledForTokenUser` in `app-storage.service` (on the token SUBJECT).
+   * Same `UNAUTHORIZED`, same `'Apps are not enabled'`, same 401, same `error.data.code` and
+   * `error.data.path`, no `cause` on either. The case above asserts only
+   * `toBeInstanceOf(TRPCError)`, so repo-wide the MIDDLEWARE producer's message was
+   * unpinned: the two gates could drift apart, or drift together, and nothing would notice.
+   */
   describe('the SESSION-user gate is identifiable (invariant guards)', () => {
     it('INVARIANT: pins the middleware producer\u2019s exact code and message', async () => {
       mockIsAppBlocksEnabled.mockImplementation(async () => false);
@@ -417,10 +419,13 @@ describe('apps.storage shared gates', () => {
       ).sort();
 
       expect(declared).toEqual([...STORAGE_CALLS.map(([op]) => op)].sort());
-      // A vacuity belt, not an independent check: the equality above already fails on a
-      // rename or on growth. This covers the one case it cannot — BOTH sides empty, which is
-      // what a tRPC upgrade moving `_def.procedures` would produce — and makes "the
-      // introspection read nothing" fail as itself rather than as a confusing diff.
+      // 🔴 WHAT THIS ACTUALLY BUYS — stated as the effect, because an earlier draft claimed a
+      // case it cannot reach. It is NOT a both-sides-empty guard: `STORAGE_CALLS` is a 5-entry
+      // literal so its side can never empty, and if `_def.procedures` moved, `Object.keys`
+      // THROWS rather than yielding `[]` (the cast is compile-time only). What the line does is
+      // hard-pin the count at five, so a legitimately-added sixth procedure goes red HERE as
+      // well as on the equality — a second, differently-worded nudge at the author. Do not
+      // delete it as inert.
       expect(declared).toHaveLength(5);
     });
 
@@ -428,11 +433,18 @@ describe('apps.storage shared gates', () => {
     // refusal must move `ops_total` and leave the session-gate series untouched. Without it, a
     // session-gate counter that also fired on the SUBJECT gate would pass every case above.
     //
-    // 🔴 Scope, stated rather than implied: this covers ONE other producer on ONE op. The
-    // resolver has eleven further `outcome="unauthorized"` emits, and a stray session-gate inc
-    // in any of them is not visible here. The `invalid block token` case above carries the same
-    // one-line assertion for a second producer on a different branch; the remaining nine are
-    // uncovered, deliberately — a per-producer sweep would be a third copy of this fixture.
+    // 🔴 Scope, stated rather than implied, and the arithmetic spelled out because an earlier
+    // draft of it did not add up. TWELVE `outcome="unauthorized"` emit sites exist in the
+    // service; the subject gate's own byte-identical refusal is one, leaving ELEVEN further.
+    // The `invalid block token` case BELOW carries the same one-line assertion for a second
+    // producer on a different branch, so TEN remain behaviourally uncovered — deliberately, a
+    // per-producer sweep would be a third copy of this fixture.
+    //
+    // 🔴 The structural backstop for those ten is NOT here, and that is the important half: the
+    // reach ledger in `src/server/prom/__tests__/app-block-storage.metrics.test.ts` asserts the
+    // session-gate symbol has ZERO uses in the service, so a stray emit at any of the twelve
+    // fails there even though no behavioural case covers it. Measured: before that assertion
+    // existed, an emit at the revoked-instance refusal ran 114/114 green.
     it('INVARIANT: a SUBJECT-gate refusal moves ops_total and NOT the session-gate series', async () => {
       const sessionGateInc = vi.mocked(appStorageSessionGateRefusalsCounter.inc);
       const opsInc = vi.mocked(appStorageOpsCounter.inc);
@@ -520,7 +532,7 @@ describe('apps.storage shared gates', () => {
     });
     // A SECOND producer on a DIFFERENT branch, for the session-gate series' sake: this refusal
     // comes from the token verifier inside the resolver, so the session-gate counter must stay
-    // still. Without a case like this the mirror arm below would be the only evidence that the
+    // still. Without a case like this the mirror arm ABOVE would be the only evidence that the
     // series does not simply fire on every `UNAUTHORIZED` the path can produce.
     expect(sessionGateInc).not.toHaveBeenCalled();
   });

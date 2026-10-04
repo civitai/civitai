@@ -279,8 +279,9 @@ vi.mock('~/server/prom/client', () => ({
   // in the reassuring direction. tRPC wraps EVERY middleware in a catch
   // (`callRecursive` in @trpc/server 11.17.0 funnels any throw through
   // `getTRPCErrorFromUnknown`), so with this entry missing the refusal still arrives as a
-  // `TRPCError` — just `INTERNAL_SERVER_ERROR` with a `Cannot read properties of undefined`
-  // message instead of `UNAUTHORIZED`. Measured against the installed version, both arms.
+  // `TRPCError` — just `INTERNAL_SERVER_ERROR` instead of `UNAUTHORIZED`, wrapping vitest's
+  // own missing-export Proxy throw (`[vitest] No "…" export is defined on the "…" mock`), which
+  // is the mechanism the author-fee block above already records. Measured, both arms.
   //
   // So every case asserting only `rejects.toBeInstanceOf(TRPCError)` stays GREEN — which is
   // exactly the author-fee failure mode documented 70 lines above. What actually goes red is

@@ -72,15 +72,20 @@ import type { AppStorageOp } from '~/server/prom/app-block-storage.metrics';
  * emitted from TWELVE sites in `app-storage.service.ts` (counted, not estimated), so the
  * subject gate shares it with eleven others — bad token, revoked instance, missing scope,
  * unhydratable subject, anon write, and more. Nor is this the only producer of the string:
- * `'Apps are not enabled'` is thrown from five places platform-wide, and this counter
- * attributes exactly one of them, on one of the two storage transports. The REST twins
- * under `/api/v1/blocks/app-storage/` never run this middleware.
+ * `'Apps are not enabled'` is THROWN from six sites across five files, and SERVED — not
+ * thrown — by twelve REST handlers under `src/pages/api/`, almost all at HTTP 503. This
+ * counter attributes exactly one of the six, on one of the two storage transports; the REST
+ * twins under `/api/v1/blocks/app-storage/` never run this middleware. When chasing the
+ * string, the status is the discriminator: 401 ⇒ one of the six throw sites, 503 ⇒ a REST
+ * handler that is neither gate.
  *
  * 🔴 AND THE NAME IS SHARED BY THREE DIFFERENT MIDDLEWARES — do not assume they behave
- * alike. `app-listings.router.ts`'s `enforceAppBlocksFlag` is this one's twin (same
- * hard-throw body); `blocks.router.ts`'s is a DIFFERENT function wearing the same name — on
- * a query it falls through with `next({ ctx: { _appBlocksDisabled: true } })` instead of
- * throwing. Only this one emits the counter.
+ * alike, and note none of the three is substitutable for another. This one is a FACTORY
+ * (`(op) => middleware(...)`); the other two are bare `middleware` values. `blocks.router.ts`'s
+ * additionally behaves differently — on a query it falls through with
+ * `next({ ctx: { _appBlocksDisabled: true } })` instead of throwing — and
+ * `app-listings.router.ts`'s is its body minus that fall-through, i.e. the same hard-throw
+ * branch as here. Only this one emits the counter.
  *
  * 🔴 `op` IS PASSED, NOT DERIVED. The middleware's `path` is not a stable spelling of the
  * op — it carries whatever router prefix the procedure is mounted under — so the op is a

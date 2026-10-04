@@ -237,14 +237,22 @@ describe('re-seeding is non-destructive', () => {
     expect(handle.get).toBe(original);
   });
 
-  it('🔴 BOTH counters are written BEFORE the leg that can fail', async () => {
+  it('🔴 ALL FOUR counters are written BEFORE the leg that can fail', async () => {
     // The ordering the module comment claims, pinned as ORDER rather than as end state. The
     // end state cannot see it — `beforeAll` has already published everything, so reversing the
     // legs leaves every count correct. Measured: with a state-only assertion, moving
     // `zeroMissingLatencyChildren()` to the top of the `try` stayed green, while on a real
     // pod's first scrape that reversal plus a failing read publishes nothing at all.
     //
-    // 🔴 ALL THREE counters, because spying only the ops one left the other two unpinned —
+    // 🔴 ALL FOUR counters — the session-gate discriminator is the fourth, and it was added as
+    // a seeding leg WITHOUT a spy here, which left exactly the hole this paragraph describes
+    // one counter wider. Moving its loop to after `zeroMissingLatencyChildren()` measured
+    // green, and on a pod's first scrape with a failing registry read that leaves its 5 series
+    // unpublished — on the one counter whose entire purpose is that `absent()` must mean "the
+    // instrument is gone". The seeder's own "all 30 counter series" claim was only proven for
+    // 25 of the 30 until this spy existed.
+    //
+    // Originally THREE, because spying only the ops one left the other two unpinned —
     // including `quota_exceeded`, whose seeded zero is the one this family most needs to be
     // distinguishable from absence. With ops alone, moving the histogram leg to sit BETWEEN the
     // two counter loops measured 17/17 green while leaving `quota_exceeded` and
@@ -259,6 +267,7 @@ describe('re-seeding is non-destructive', () => {
     const opsSpy = vi.spyOn(incTarget(OPS), 'inc');
     const quotaSpy = vi.spyOn(incTarget(QUOTA_EXCEEDED), 'inc');
     const untrackedSpy = vi.spyOn(incTarget(USER_QUOTA_UNTRACKED), 'inc');
+    const sessionGateSpy = vi.spyOn(incTarget(SESSION_GATE_REFUSALS), 'inc');
     const getSpy = vi.spyOn(
       client.register.getSingleMetric(LATENCY) as unknown as { get: () => Promise<unknown> },
       'get'
@@ -270,6 +279,7 @@ describe('re-seeding is non-destructive', () => {
       const read = getSpy.mock.invocationCallOrder[0];
       for (const [label, spy] of [
         ['ops', opsSpy],
+        ['session_gate_refusals', sessionGateSpy],
         ['quota_exceeded', quotaSpy],
         ['user_quota_untracked', untrackedSpy],
       ] as const) {
@@ -277,7 +287,7 @@ describe('re-seeding is non-destructive', () => {
         expect(spy.mock.invocationCallOrder[0], label).toBeLessThan(read);
       }
     } finally {
-      for (const spy of [opsSpy, quotaSpy, untrackedSpy, getSpy]) spy.mockRestore();
+      for (const spy of [opsSpy, sessionGateSpy, quotaSpy, untrackedSpy, getSpy]) spy.mockRestore();
     }
   });
 });
@@ -412,7 +422,7 @@ describe('the seeded domain matches the service', () => {
       expect(src, `countStorageFault('${op}', …)`).toContain(`countStorageFault('${op}'`);
     }
 
-    // 🔴 The histogram's `op` axis carries 65 of the 90 seeded series. Paired PER PROCEDURE,
+    // 🔴 The histogram's `op` axis carries 65 of the 95 seeded series. Paired PER PROCEDURE,
     // not per file: a whole-file `toContain` cannot see a SWAP, and swapping the `op` labels on
     // two `startTimer` calls leaves both literals present — measured, it survived. A swap is
     // the same mislabel the resolver anchoring above exists to catch, on the bigger axis.
@@ -454,7 +464,9 @@ describe('the seeded domain matches the service', () => {
     // membership assertion, where the raw version only caught a symbol-named one. 🔴 That is
     // no longer hypothetical for `apps.router.ts`: it became a REAL writer when the
     // session-gate counter landed, and is in the set on its code rather than its prose. Its
-    // comments still name three of these keys and are still stripped.
+    // COMMENTS still name two of these keys and are still stripped — two, not three: the other
+    // two occurrences in that file are code (the import and the emit), which is exactly the
+    // distinction this paragraph is about.
     //
     // Spelling-based predicates were tried and are insufficient on their own:
     // `/appStorageOpsCounter\s*\.inc/` is walked by `const c = …; c.inc(…)`, by
@@ -512,6 +524,33 @@ describe('the seeded domain matches the service', () => {
       for (const rel of LEDGERED_WRITERS[sym]) {
         expect(perSymbolImports[sym]?.[rel], `${sym} imported once in ${rel}`).toBe(1);
         expect(perSymbolUses[sym]?.[rel], `${sym} used once in ${rel}`).toBe(1);
+      }
+    }
+
+    // 🔴 THE UNIVERSAL HALF, AND IT IS NOT OPTIONAL — the map above is EXISTENTIAL, and on its
+    // own it is weaker than the flat array it replaced. The flat array forced every ledgered
+    // symbol to appear exactly once in BOTH files; the map only pins the pairs it declares, so
+    // an emit of symbol X from a file that is a legitimate writer of symbol Y is asserted
+    // NOWHERE. The membership check above cannot carry it either, because admitting the router
+    // as a member is precisely what stopped a stray emit there from growing `reaching`.
+    //
+    // MEASURED, both arms green before this loop existed:
+    //   - `appStorageSessionGateRefusalsCounter.inc({ op })` added at the service's
+    //     revoked-instance refusal — a SUBJECT-side emit of the session-gate series, which
+    //     destroys the whole discriminator — ran with the suite 114/114 green.
+    //   - a raw `appStorageOpsCounter.inc({ op, outcome })` inside `apps.router.ts`, bypassing
+    //     `countStorageOutcome`'s type gate, is the wrapper-bypass class this case's own
+    //     comment says it exists to catch.
+    // The first is why this matters most: the exposed `help` string asserts "A middleware
+    // refusal moves ONLY this series", and a service-side emit makes that sentence false while
+    // every behavioural case stays green — ten of the twelve service refusal sites have no
+    // behavioural counter assertion over them at all.
+    for (const sym of LEDGERED_SYMBOLS) {
+      const declared: readonly string[] = LEDGERED_WRITERS[sym];
+      for (const rel of reaching) {
+        if (declared.includes(rel)) continue;
+        expect(perSymbolImports[sym]?.[rel] ?? 0, `${sym} NOT imported in ${rel}`).toBe(0);
+        expect(perSymbolUses[sym]?.[rel] ?? 0, `${sym} NOT used in ${rel}`).toBe(0);
       }
     }
   });

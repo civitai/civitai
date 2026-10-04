@@ -708,25 +708,51 @@ export const appStorageOpsCounter = registerCounterWithLabels({
 // union (5 values, type-checked at every call site), chosen because it is the join key
 // against `..._ops_total{op}`.
 //
-// 🔴 WHY NOT A NEW `outcome` VALUE ON `..._ops_total` INSTEAD — the obvious cheaper move,
-// and the reason is NOT that `outcome="unauthorized"` is crowded (a new value such as
-// `session_gate` would separate the producers on one series perfectly well). It is that
-// `ops_total` means "storage operations that reached the resolver", and a pre-resolver
-// refusal would change that denominator for every existing consumer of it. The pair-read
-// above also depends on the two being separate series: "`ops_total` did not move" is half
-// the signal, and it cannot be expressed as a value OF `ops_total`.
+// 🔴 HOW TO BOUND THE STRING WHEN CHASING IT, because "five places" alone under-counts in the
+// reassuring direction. Counted: the string is THROWN from SIX sites across FIVE files
+// (`app-listings.router.ts` throws it from two different middlewares), and SERVED — not thrown
+// — by TWELVE REST handlers under `src/pages/api/`, almost all at HTTP 503. So the useful
+// discriminator for an investigator is the STATUS: 401 + this string ⇒ one of the six throw
+// sites, of which this counter attributes exactly one; 503 + this string ⇒ a REST handler that
+// is neither gate.
 //
-// 🔴 WHY NOT A LOG LINE. A `console.error` here is unreadable to any later investigator,
-// for a reason local to this repo rather than inherited: `src/pages/api/trpc/[trpc].ts`'s
-// `onError` returns early for `UNAUTHORIZED` (alongside FORBIDDEN / TOO_MANY_REQUESTS /
-// SERVICE_UNAVAILABLE), skipping the Axiom ingest entirely and by design. So a `cause` or
-// a log line on this branch reaches no store. A scraped counter is the only surface that
-// exists. The same conflation class, with the deployment-side version of this argument, is
-// documented on `civitai_app_block_post_subject_refusals_total` in
+// 🔴 WHY NOT A NEW `outcome` VALUE ON `..._ops_total` INSTEAD — the obvious cheaper move, and
+// NOT for the two reasons that first suggest themselves. It is not that
+// `outcome="unauthorized"` is crowded (a new value such as `session_gate` would separate the
+// producers on one series perfectly well, at identical cardinality now that both are seeded),
+// and it is NOT that the pair-read needs two series — `increase(ops_total{outcome="session_gate"})`
+// against `increase(ops_total{outcome="unauthorized"})` expresses the same discrimination, so an
+// earlier version of this comment claiming otherwise was simply wrong.
+//
+// The reason that decides it is TYPE REACH. Every service emit routes through
+// `countStorageOutcome(op, outcome: AppStorageOutcome)`, and that union is
+// `APP_STORAGE_OUTCOMES_ALL_OPS`. Adding `session_gate` to it makes the session-gate outcome
+// TYPE-LEGAL to emit from all twelve service refusal sites — precisely the conflation this
+// counter exists to prevent. A separate counter is UNFORGEABLE from the service: `tsc` cannot
+// stop it, but the reach ledger in `src/server/prom/__tests__/app-block-storage.metrics.test.ts`
+// asserts this symbol has zero uses there, and a new outcome VALUE would have no equivalent.
+//
+// Secondary, and weaker than it sounds: `ops_total` means "storage operations that reached the
+// resolver", so a pre-resolver outcome widens that population. Measured, this repo has NO
+// in-repo consumer of `ops_total` — no dashboard, alert or recording rule, here or in the infra
+// repo — so that is an argument about future readers, not about breaking a known one.
+//
+// 🔴 WHY NOT A LOG LINE — TWO mechanisms, and they cover DIFFERENT halves, so neither alone
+// establishes it. (a) A hand-written `console.error` here is unreadable because
+// application-container stdout is not collected into the log store for this deployment — that
+// is the half an earlier revision deleted as "inherited", and it is the only half that speaks
+// to a log line at all. (b) A server-side-only `cause` on the thrown error is unreadable for a
+// reason local to this repo: `src/pages/api/trpc/[trpc].ts`'s `onError` returns early for
+// `UNAUTHORIZED` (alongside FORBIDDEN / TOO_MANY_REQUESTS / SERVICE_UNAVAILABLE) ahead of its
+// `logToAxiom` call, so the automatic ingest never sees it. Note (b) sits inside that handler's
+// `if (isProd)`, so it is a production claim. Together: a scraped counter is the only surface
+// that exists. The same conflation class is documented on
+// `civitai_app_block_post_subject_refusals_total` in
 // `src/server/metrics/app-block-runtime.metrics.ts`.
 //
-// 🔴 SEEDED, DELIBERATELY, AND THE PAIR IS WHY. `src/server/prom/app-block-storage.metrics.ts`
-// splits seeding on BOUNDED-vs-UNBOUNDED label domain; `op` is bounded, so all 5 children
+// 🔴 SEEDED, DELIBERATELY, AND THE PAIR IS WHY. All five members of this family are seeded;
+// what `src/server/prom/app-block-storage.metrics.ts` splits on BOUNDED-vs-UNBOUNDED label
+// domain is the correct READER. `op` is bounded, so all 5 children
 // are published at 0 and `increase()` is the correct reader — the same one `ops_total`
 // wants. Matching readers across a deliberately-correlated pair is the point: an unseeded
 // child materialises at 1, which `increase()` cannot see, and a half-and-half pair is how

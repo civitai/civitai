@@ -42,9 +42,15 @@ const OPS = 'civitai_app_block_storage_ops_total';
 const QUOTA_EXCEEDED = 'civitai_app_block_storage_quota_exceeded_total';
 const USER_QUOTA_UNTRACKED = 'civitai_app_block_storage_user_quota_untracked_total';
 const LATENCY = 'civitai_app_block_storage_latency_seconds';
-// The session-user gate discriminator. Ledgered here for the growth reason stated in the
-// first case below: this file is the only place the EXPOSED string is pinned, and the
-// declared name is only half of it.
+// The session-user gate discriminator. Ledgered here for the GROWTH property the first case
+// below tests — a sixth family member must be entered here or that case goes red — which is
+// this file's unique job and is sufficient on its own.
+//
+// ⚠️ Do NOT justify this entry as "the only place the exposed string is pinned". That was an
+// earlier wording and it is false: the two suites under `src/server/prom/__tests__/` pin this
+// same wire name against the real registry and the real scrape body, and they can, because they
+// import from `@civitai/telemetry/client` rather than the `~/server/prom/client` shim that
+// `src/__tests__/setup.ts` stubs. Each of the three is an independent pin; none is redundant.
 const SESSION_GATE_REFUSALS = 'civitai_app_block_storage_session_gate_refusals_total';
 
 /** The pre-fix stuttering spellings. Retired 2026-10-02; must never come back. */
