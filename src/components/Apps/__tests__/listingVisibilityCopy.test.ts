@@ -86,9 +86,12 @@ describe('visibilityOptionsFor — the review ceiling, surfaced', () => {
     }
   });
 
-  it('disables EVERY option on a status where no level may be set, without emptying the list', () => {
-    // The control must still be able to SHOW a current level on a rejected/removed listing;
-    // an empty option list would make that impossible and would look like a render bug.
+  it('[INV] disables EVERY option on a status where no level may be set, without emptying the list', () => {
+    // ⚠️ AN INVARIANT GUARD, NOT COVERAGE OF A REACHABLE PATH — labelled so nobody counts it
+    // as the latter. Both call sites are gated on exactly `ceiling !== null`, so no surface
+    // can reach this branch; it pins only that the function stays TOTAL. The reachability
+    // claim this case used to carry ("the control must still be able to SHOW a current level
+    // on a rejected/removed listing") was false and is retracted at the implementation.
     for (const status of INELIGIBLE) {
       const opts = visibilityOptionsFor(status);
       expect(opts).toHaveLength(APP_LISTING_VISIBILITIES.length);

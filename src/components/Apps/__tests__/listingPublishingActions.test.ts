@@ -167,6 +167,18 @@ describe('listingPublishingActions', () => {
     expect(listingPublishingActions(INACTIVE)).toEqual(['visibility']);
   });
 
+  it('withholds the level control from a seat on EVERY status', () => {
+    // The role term, driven at every fixture rather than only the live one, so a mutant that
+    // gates on the STATUS instead of the role fails on at least one.
+    for (const base of [LIVE, OWNER_HIDDEN, MOD_REMOVED, INACTIVE, REJECTED]) {
+      expect(showVisibility({ ...base, role: 'editor' })).toBe(false);
+    }
+    // Positive control: the owner DOES get it on the two eligible fixtures, so the sweep
+    // above is about the role and not about the control being gone entirely.
+    expect(showVisibility(LIVE)).toBe(true);
+    expect(showVisibility(INACTIVE)).toBe(true);
+  });
+
   it('withholds the level control on `rejected`, which shares the `inactive` cell', () => {
     // 🔴 THE CONTROL THAT MAKES THE ROW ABOVE MEAN SOMETHING. `REJECTED` and `INACTIVE` are
     // the SAME `OwnerListingState`, so a state-keyed implementation would give them the same
@@ -206,11 +218,15 @@ describe('listingPublishingActions', () => {
     // than absorbed: the owner answer differs, the editor answer does not.
     expect(listingPublishingActions(LIVE)).toContain('unpublish');
     expect(listingPublishingActions(OWNER_HIDDEN)).toContain('republish');
-    // 🔴 And the level control is the one thing an editor DOES get — asserted so a mutant
-    // that withholds it from a seat (the obvious "fix" if someone reads EDITOR_ACTIONS as
-    // the complete answer) fails here rather than silently removing a capability.
-    expect(listingPublishingActions({ ...LIVE, role: 'editor' })).toEqual(['visibility']);
-    expect(listingPublishingActions({ ...INACTIVE, role: 'editor' })).toEqual(['visibility']);
+    // 🔴 AND AN EDITOR GETS THE LEVEL CONTROL EITHER, WHICH THIS FILE ONCE ASSERTED THE
+    // OPPOSITE OF. The server's level proc DOES admit an accepted seat, so role-agnostic was
+    // a true claim about the proc — and an unreachable one about the product, because
+    // `editorTabsFor` withholds the Publishing tab from an editor entirely. The assertion
+    // that an editor "renders exactly one control" pinned a configuration nothing can mount.
+    // Operator's call (2026-10-03): widen the tab's STATUS term, leave `role` alone. To
+    // re-enable the seat, widen `editorTabsFor`'s role term FIRST — then change this line.
+    expect(listingPublishingActions({ ...LIVE, role: 'editor' })).toEqual([]);
+    expect(listingPublishingActions({ ...INACTIVE, role: 'editor' })).toEqual([]);
   });
 
   it('agrees with the per-control predicates the component calls', () => {

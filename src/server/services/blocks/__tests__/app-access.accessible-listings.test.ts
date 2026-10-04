@@ -669,8 +669,10 @@ describe('getAppListingAuthoringContext', () => {
       const ctx = await getAppListingAuthoringContext({ appListingId: 'apl_1', userId: OWNER });
       expect(ctx.visibility).toBe('testers');
       expect(ctx.visibilityAvailable).toBe(true);
-      // `approved` (the fixture's status) permits every level.
-      expect(ctx.maxVisibility).toBe('public');
+      // ⚠️ NO `maxVisibility` ASSERTION, AND ITS ABSENCE IS THE POINT. The field was shipped
+      // and removed: nothing but this line ever read it, while the client derived the
+      // ceiling from the shared `maxVisibilityForStatus`. The ceiling's own behaviour is
+      // pinned where it is implemented, in that function's invariant test.
     });
 
     it('🔴 reports an UNSET level as null, never as `private`', async () => {

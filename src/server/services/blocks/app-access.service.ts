@@ -33,7 +33,6 @@ import {
   PUBLISHABLE_LISTING_STATUSES,
 } from '~/shared/constants/app-capabilities.constants';
 import type { AppListingVisibility } from '~/shared/utils/app-listing-visibility';
-import { maxVisibilityForStatus } from '~/shared/utils/app-listing-visibility';
 
 /**
  * App Listing COLLABORATORS — THE consolidated app-access predicate.
@@ -1006,16 +1005,22 @@ export type AppListingAuthoringContext = Omit<
    */
   visibilityAvailable: boolean;
   /**
-   * The widest level this listing's CURRENT status permits — the review ceiling — or
-   * `null` when no level may be set at all.
+   * ⚠️ THERE IS DELIBERATELY NO `maxVisibility` FIELD, AND ONE WAS SHIPPED AND REMOVED.
    *
-   * 🔴 DERIVED SERVER-SIDE ON PURPOSE (D6). The client must NOT re-derive the
-   * level→cohort map or the ceiling: two implementations of "may this listing be
-   * `public` yet?" is exactly how a `draft` + `public` selector would offer to publish
-   * content no moderator has seen. {@link maxVisibilityForStatus} is the one spelling,
-   * and it is already enforced at both the read and the write.
+   * It carried `maxVisibilityForStatus(row.status)` and was read by NOTHING but a test
+   * assertion: the client computes the ceiling by importing that same shared function. Its
+   * own docblock argued the opposite — *"the client must NOT re-derive the ceiling"* — while
+   * the client in the same change re-derived it, so the field shipped as a second spelling
+   * of a value nobody consumed. A field that exists in a DTO is not a guard; only a branch
+   * on it is, and there was no branch.
+   *
+   * 🔴 THE D6 REQUIREMENT IS ALREADY MET WITHOUT IT, which is the part to understand before
+   * re-adding it: `maxVisibilityForStatus` lives in `~/shared/utils` and BOTH sides import
+   * the SAME function, so there is one implementation of the ceiling, not two. D6 forbids a
+   * second DERIVATION, not a client-side CALL of the shared one. If a future surface needs
+   * the ceiling without the status — a paged list, say — add it then AND make a branch read
+   * it; do not re-add it as documentation.
    */
-  maxVisibility: AppListingVisibility | null;
 };
 
 /**
@@ -1518,9 +1523,6 @@ export async function getAppListingAuthoringContext(opts: {
     capabilities: capabilitiesForKind(access.kind),
     visibility: visibilityRead.visibility,
     visibilityAvailable: visibilityRead.available,
-    // 🔴 The ceiling is computed from the PARENT's status (`row.status`), the same value
-    // the tab set and the write path use — not from a shadow's.
-    maxVisibility: maxVisibilityForStatus(row.status),
   };
 }
 

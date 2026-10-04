@@ -102,9 +102,17 @@ export function visibilityOptionsFor(status: string): VisibilityOption[] {
   const ceiling = maxVisibilityForStatus(status);
   const reason = visibilityCeilingReason(status);
   return APP_LISTING_VISIBILITIES.map((value) => {
-    // `ceiling === null` ⇒ nothing is settable; every option is disabled rather than the
-    // list being empty, so the surface can still SHOW the current level on a rejected or
-    // removed listing without offering a write the server would refuse.
+    // ⚠️ `ceiling === null` IS UNREACHABLE FROM BOTH CALL SITES, AND IT HAS NO SURVIVING
+    // JUSTIFICATION. It is kept only so this stays a TOTAL function.
+    //
+    // Its original reason was "so the surface can still SHOW the current level on a rejected
+    // or removed listing" — and no surface does that: the owner modal opens only behind
+    // `showVisibility` and the moderator modal only behind `isVisibilityEligibleListingStatus`,
+    // both of which are exactly `ceiling !== null`. A round-0 reachability pass found it; the
+    // claim is retracted rather than replaced, because reaching for a fresh rationale under
+    // pressure to supply one is how a guard acquires a reason it never had. If a future
+    // surface genuinely needs to display a level on an ineligible status, THAT change can
+    // state the reason.
     const enabled = ceiling !== null && listingVisibilityRank(value) <= listingVisibilityRank(ceiling);
     return {
       value,

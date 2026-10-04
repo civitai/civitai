@@ -320,8 +320,10 @@ describe('the ledger — the SET of publishing controls the panel offers, per st
     // collaborator may set the level; asserting `[]` here would have encoded a refusal the
     // server does not make and would have hidden a real capability from a seat.
     expect(renderedActions()).toEqual(sortPublishingActions(listingPublishingActions(SEAT_LIVE)));
-    expect(renderedActions()).toEqual(['visibility']);
-    // The owner-only pair's own half, still empty for a seat in every state.
+    // ⚠️ THIS ASSERTED `['visibility']` FOR ONE REVISION, pinning a configuration the product
+    // cannot reach: `editorTabsFor` withholds this tab from an editor, so the panel is never
+    // mounted for a seat at all. The level proc would admit them; the tab does not.
+    expect(renderedActions()).toEqual([]);
     expect(EDITOR_ACTIONS).toEqual([]);
     expect(page.getByTestId('apps-publishing-unpublish').query()).toBeNull();
     expect(page.getByTestId('apps-publishing-republish').query()).toBeNull();

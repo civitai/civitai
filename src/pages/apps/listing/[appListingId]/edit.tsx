@@ -290,9 +290,14 @@ export default function AppListingEditPage() {
                   // 🔴 BOTH HALVES OF THE GUARDED READ, PASSED THROUGH UNCHANGED. The level
                   // alone is not enough: `visibilityAvailable: false` means the manual-apply
                   // migration has not run here, and the control must disable itself and say
-                  // so rather than offer a write with no missing-column degradation. The
-                  // page must not re-derive either value — see `maxVisibility`'s note in
-                  // `AppListingAuthoringContext` (D6).
+                  // so rather than offer a write with no missing-column degradation.
+                  //
+                  // ⚠️ The REVIEW CEILING is NOT passed. It is derived client-side from the
+                  // shared `maxVisibilityForStatus`, which is the same function the server
+                  // read and write use — one implementation, not two, so D6 is satisfied
+                  // without a DTO field. An earlier revision shipped `maxVisibility` here
+                  // and nothing consumed it; see its absence note in
+                  // `AppListingAuthoringContext`.
                   visibility={context.visibility}
                   visibilityAvailable={context.visibilityAvailable}
                 />
