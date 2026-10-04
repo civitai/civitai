@@ -165,9 +165,7 @@ const NON_SQUARE_IMAGE_DATA_URI =
  * arms were unguarded. Neither was ever a decode hang, and neither was load-dependent.
  *
  * ⚠️ NO TIMING FIGURE FOR THE `naturalWidth` ARM IS QUOTED, deliberately: the ratio is 1.04x,
- * i.e. noise. And note the browser these were taken on is not the one named anywhere: the
- * `vitest` config pins chromium **1200**, no 1200 build exists on this host, and the local
- * shim directory — itself named `1200` — resolves to **1228**.
+ * i.e. noise.
  *
  * ⚠️ IT CATCHES A HEADER-DEAD FIXTURE, NOT A PIXEL-DEAD ONE, and the narrower claim is the
  * true one. `naturalWidth` comes from the PNG IHDR, so corrupting only the IDAT run leaves a
@@ -200,7 +198,7 @@ const settled = async (testId: string) => {
     0
   );
   await img.decode();
-  return img!;
+  return img;
 };
 
 /**
@@ -544,8 +542,9 @@ describe('the store icon and cover are bigger on the review page than in a queue
     // agree ON.
     // 🔴 ANCHORED ON THE PLACEHOLDERS, the strictly stronger choice: a `div` gets no
     // `max-width` from Tailwind preflight, so only `iconBoxStyle` can satisfy it. Anchoring an
-    // IMG would miss a DELETION (preflight keeps the img at `100%`); the two mutations differ,
-    // and only the placeholder catches both.
+    // IMG would miss a DELETION on THIS assertion (preflight keeps the img at `100%`) — the
+    // agreement arm below still catches a deletion either way; what the placeholder buys is
+    // a one-sided substitution, and a message naming the real cause rather than a divergence.
     expect(maxWidthOf('row-icon-placeholder-2'), 'the row clamp really exists').toBe('100%');
     expect(maxWidthOf('row-icon-placeholder-2'), 'the row pair agrees on max-width').toBe(
       maxWidthOf('row-icon')
@@ -572,7 +571,9 @@ describe('the store icon and cover are bigger on the review page than in a queue
     await settled('apps-review-listing-icon-gen-matrix');
     await settled('apps-review-listing-cover-gen-matrix');
     const cover = box('apps-review-listing-cover-gen-matrix');
-    expect(cover.width / cover.height).toBeCloseTo(LISTING_COVER_W / LISTING_COVER_H, 1);
+    // 16/9 as a literal, not `LISTING_COVER_W / LISTING_COVER_H` — that is the ROW pair, and
+    // this arm renders the REVIEW cover. It passed only because both pairs are 16:9.
+    expect(cover.width / cover.height).toBeCloseTo(16 / 9, 1);
     const icon = box('apps-review-listing-icon-gen-matrix');
     expect(icon.width / icon.height).toBeCloseTo(1, 1);
   });
@@ -593,11 +594,13 @@ describe('the store icon and cover are bigger on the review page than in a queue
   });
 
   test('🔴 the six box constants are the numbers this page was designed around', () => {
-    // 🔴 THE ONLY LITERAL PIN ON THESE SIX. Every other assertion in this file compares a
-    // rendered box to the constant it was rendered FROM, so they all move together when a
-    // constant moves — which makes them blind to exactly the change that matters. Measured:
-    // `LISTING_COVER_W` 96→120 with `LISTING_COVER_H` 54→67 left the tier 102/102 GREEN, and
-    // the icon pair was caught only incidentally, by the `basis` literals two cases down.
+    // 🔴 THE ONLY PIN ON FOUR OF THESE SIX. Every other assertion in this file compares a
+    // rendered box to the constant it was rendered FROM, so they move together when a constant
+    // moves — blind to exactly the change that matters. Measured: either COVER pair can be
+    // changed (96→120 with 54→67, or 320→400 with 180→225) and ONLY this case reds. The two
+    // ICON constants are also pinned by the `basis` literals further up, so a mutation there
+    // reds twice; that overlap is worth keeping, since one pins the constant and the other
+    // pins the rendered shorthand.
     //
     // A box size is a product decision — a 40px row icon keeps a queue scannable; a 320px
     // review cover is big enough to judge publisher art by — so it should cost a deliberate
@@ -612,7 +615,13 @@ describe('the store icon and cover are bigger on the review page than in a queue
       REVIEW_COVER_W: 320,
       REVIEW_COVER_H: 180,
     });
-    // Both covers are 16:9, which is what makes `object-fit: cover` a crop and not a squash.
+    // 🔴 THESE TWO LOOK VACUOUS AND ARE NOT — I cut them once on that reading and had to put
+    // them back. They sit downstream of `toEqual`s that pin all six values, so no PRODUCTION
+    // mutation can reach them with the test still running. What they guard is the test's own
+    // literals: change a constant AND re-pin its literal to match, and these red. Measured —
+    // `LISTING_COVER_H` 54→72 in both places gives `expected 1.333… to be close to 1.777…`.
+    // That is the review someone does when a box "needs to be taller", and it is exactly the
+    // edit that would silently make a cover non-16:9 while every other arm stayed green.
     expect(LISTING_COVER_W / LISTING_COVER_H).toBeCloseTo(16 / 9, 1);
     expect(REVIEW_COVER_W / REVIEW_COVER_H).toBeCloseTo(16 / 9, 1);
   });
@@ -631,6 +640,8 @@ describe('the bundle screenshots are bigger on the review page than in the modal
   /** The grid Mantine rendered, and the column count it DECLARED. */
   const declaredCols = () => {
     const grid = at('apps-review-screenshot-0').closest('div')!.parentElement!;
+    // `longhand` is `getPropertyValue(p).trim()`; `--sg-cols` is a custom property rather than
+    // a longhand, but the read is identical and the helper carries the existence guard.
     return longhand(grid, '--sg-cols');
   };
 

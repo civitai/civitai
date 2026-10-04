@@ -900,10 +900,12 @@ jobs:
         run: |
           node - <<'JS'
           // Minimum ledger for the `geometry` tier. Both numbers are FLOORS (see the `<`
-          // comparison below), re-derived 2026-10-04 against 8 files / 102 tests. Only
-          // MIN_TESTS has headroom: 80 against 102, so 22 tests (21.6%) can go before it
-          // reds. MIN_FILES sits at exactly the collected count, so adding a file will not
-          // red but losing one will.
+          // comparison below). ⚠️ NO CURRENT-COUNT FIGURE IS QUOTED HERE: three consecutive
+          // commits restated one and each went stale in the commit that changed the tier,
+          // including one that added a test and left the number it had just invalidated.
+          // Derive it — `--reporter=json`, `testResults.length` and `numTotalTests`. What is
+          // durable: MIN_TESTS carries real headroom, MIN_FILES sits at exactly the collected
+          // count, so adding a file will not red but losing one will.
           //
           // ⚠️ A FLOOR ONLY CATCHES A DROP TO BELOW ITSELF, AND NOBODY RAISES IT. The file
           // floor sat at 6 against 7 collected on the base branch, so one file could have
@@ -912,7 +914,10 @@ jobs:
           // exactly current" — that contract is not implemented and the comment above the
           // block says the opposite. If you want a drop of one to be caught, the honest fix
           // is an equality against a count derived from the glob, not a hand-maintained
-          // floor; until then raise both when you add to the tier.
+          // floor. Until then: raise MIN_FILES when you add a file — it has no headroom —
+          // and leave MIN_TESTS alone, which is what "a fraction of current" below means.
+          // (An earlier pairing of these comments told you to raise both, which contradicted
+          // that, and this PR added a test without raising either.)
           const MIN_FILES = 8;
           // It was 10, and that clause alone could not fail: 92 tests could have stopped
           // collecting and it still passed. The GATE was not that weak — it is

@@ -75,7 +75,7 @@ const DELIBERATELY_NARROW: ReadonlyArray<{
     file: 'src/server/services/blocks/app-listing.service.ts',
     container: 'listingHydrateSelect',
     owner: 'user',
-    why: 'the PUBLIC store listing creator. The default path hands `SmartCreatorCard` only `{ id }` and refetches through the public `user.getCreator` proc; the `preview` path (its own `CreatorChip`) renders the chip directly, and a closed account drops out of it only INCIDENTALLY — `deleteUser` nulls `username` in the same transaction as `deletedAt`, and the chip skips username-less rows. That is the scrub doing the work, not a `deletedAt` branch, which is the same incidental-not-a-filter distinction `app-listing.service.ts` draws about its collaborator chip — and THERE it was judged not good enough, so that select carries `deletedAt` and this one still does not. Bounded, not closed. `deleteUser` is the only writer that sets `deletedAt`, and it scrubs `username` in the same transaction. Four writers set `username`; the hazard is exactly one of them, `forceUpdateUserIdentity` — a moderator endpoint whose gating is ACTOR-only, so its arbitrary `userId` matches a soft-deleted row. The other three are unreachable for a closed account, but NOT for one shared reason, which two earlier versions of this sentence got wrong in opposite directions: `updateUserById` and `completeOnboardingHandler` sit behind `isAuthed` (which rejects `user.deletedAt`) and write only to `ctx.user.id`; `assignUsername` is in the auth app, runs before a session exists so neither of those applies, and is safe structurally instead — both call sites are inside an `if (!userId)` fresh-INSERT branch, so its target row was created in the same request. Widening this select is still the fix and is still a separate change',
+    why: 'the PUBLIC store listing creator. The default path hands `SmartCreatorCard` only `{ id }` and refetches through the public `user.getCreator` proc; the `preview` path (its own `CreatorChip`) renders the chip directly, and a closed account drops out of it only INCIDENTALLY — `deleteUser` nulls `username` in the same transaction as `deletedAt`, and the chip skips username-less rows. That is the scrub doing the work, not a `deletedAt` branch, which is the same incidental-not-a-filter distinction `app-listing.service.ts` draws about its collaborator chip — and THERE it was judged not good enough, so that select carries `deletedAt` and this one still does not. Bounded, not closed. SIX writers set `username` (enumerated over Prisma, kysely and raw SQL across `src/`, `apps/` and `packages/`; three earlier versions of this sentence said four, and miscounted in both directions). TWO of them write `deletedAt`: `deleteUser` sets it and scrubs `username` in the same transaction, and `restoreUser` clears it alongside a username write in one transaction — so neither can leave a row deleted-and-named. Of the rest, the hazard is exactly one: `forceUpdateUserIdentity`, a moderator endpoint whose gating is ACTOR-only, so its arbitrary `userId` matches a soft-deleted row. The others are unreachable for a closed account, for DIFFERENT reasons: `updateUserHandler` is a `guardedProcedure` (so `isAuthed` rejects `user.deletedAt`) and throws unless `id === ctx.user.id` — note that is the HANDLER, not `updateUserById`, which has eleven call sites including an unsession\u0027d cron, only this one passing `username`; `completeOnboardingHandler` writes `where: { id }` off a `ProtectedContext`; `assignUsername` is in the auth app and runs before a session exists, so neither applies and it is safe structurally instead — both call sites sit inside an `if (!userId)` fresh-INSERT branch. Widening this select is still the fix and is still a separate change',
   },
 ] as const;
 
@@ -348,7 +348,9 @@ describe('the review user chip is one declaration', () => {
     // container and owner from the live ledger means the probe follows whatever is exempt.
     expect(
       DELIBERATELY_NARROW.length,
-      'the planted probes derive from the ledger, so an empty one silently tests nothing'
+      // Not a coverage guard: an empty ledger already fails loudly, as a TypeError on
+      // `EXEMPT.container`. This only trades that for a sentence naming the cause.
+      'the planted probes derive from the ledger; an empty one fails here rather than as a TypeError below'
     ).toBeGreaterThan(0);
     const EXEMPT = DELIBERATELY_NARROW[0];
     // 🔴 AN OWNER THE LEDGER DOES NOT NAME, in the container it DOES. Both ledger entries use
@@ -358,7 +360,7 @@ describe('the review user chip is one declaration', () => {
     const OWNER_PROBE = 'moderator';
     expect(
       DELIBERATELY_NARROW.map((e) => e.owner),
-      'the owner probe is only a probe while the ledger does not name it'
+      'the owner probe stops being a probe if the ledger ever names this owner'
     ).not.toContain(OWNER_PROBE);
     const PLANTED_SOURCE = `
       const submittedBy = { select: { id: true, username: true, image: true } };
@@ -374,7 +376,17 @@ describe('the review user chip is one declaration', () => {
     // half never runs — measured by two review lanes independently: deleting `e.file === rel`
     // from the lookup left all four tests green. The fifth carries a container AND owner that
     // ARE exempted, in a file that is not, so only the file comparison can reject it.
-    const plantedFile = 'src/server/services/blocks/publish-request.service.ts';
+    // 🔴 DERIVED AND PINNED, like the other two probes. This was hardcoded to a path that IS
+    // in `SERVICE_FILES`, with no precondition — while the comment below depends on it having
+    // no ledger entry. Reproduced: adding one entry for that file makes this probe fail with
+    // "five narrow planted chips must ALL be rejected", i.e. exactly the "the guard broke"
+    // misreading the sibling preconditions exist to prevent. (The claim that both siblings
+    // already had one was also wrong when written: only the owner probe did.)
+    const plantedFile = SERVICE_FILES.find((f) => f !== EXEMPT.file)!;
+    expect(
+      DELIBERATELY_NARROW.map((e) => e.file),
+      'the file probe stops being a probe if the ledger ever names this file'
+    ).not.toContain(plantedFile);
     const plantedVerdict = judge(plantedFile, chipsIn(plantedFile, PLANTED_SOURCE));
     expect(
       plantedVerdict.offenders,
@@ -402,10 +414,15 @@ describe('the review user chip is one declaration', () => {
     // own `why` says should be widened, and dropping `e.container === chip.container` goes
     // 4/4 GREEN. A probe makes the coverage a property of the test rather than of how many
     // rows the ledger happens to hold.
+    // 🔴 DERIVED FROM ENTRY 0 BUT CHECKED AGAINST EVERY ENTRY. An earlier version compared
+    // only against `EXEMPT.container`'s own name, so a collision with any OTHER ledger row's
+    // derived name went undetected — measured, planting the second entry's `…Unlisted` name
+    // left this green. Like its sibling above this is message quality, not coverage: a
+    // collision would also fail the probe's own `toHaveLength(1)`, just without saying why.
     const UNLISTED = `${EXEMPT.container}Unlisted`;
     expect(
       DELIBERATELY_NARROW.map((e) => e.container),
-      'the container probe is only a probe while the ledger does not name it'
+      'the container probe stops being a probe if the ledger ever names this container'
     ).not.toContain(UNLISTED);
     const CONTAINER_SOURCE = `
       const ${UNLISTED} = { ${EXEMPT.owner}: { select: { id: true, username: true, image: true } } };

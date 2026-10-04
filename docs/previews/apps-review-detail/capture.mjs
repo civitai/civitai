@@ -89,7 +89,6 @@ for (const theme of ['dark', 'light']) {
       box: `${clip.width}x${clip.height}`,
       kb: Math.round(statSync(file).size / 1024),
       ok,
-      file,
     });
     await pg.close();
   }
