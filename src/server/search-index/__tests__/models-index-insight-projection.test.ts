@@ -862,14 +862,20 @@ describe('🔴 onIndexSetup hands the ENGINE the frozen lists — behaviourally,
     return setupProbe.received;
   }
 
-  it('calls the engine at all — the probe is wired to something', async () => {
-    // 🔴 The non-vacuity assertion the rest of this describe rests on. A stub that is never
-    // called records nothing, and `received.find(...) === undefined` would then read as a clean
-    // absence in every case below. Pinned as its own case so the failure names the cause.
+  it('writes exactly these six settings, and nothing else', async () => {
+    // 🔴 THE NON-VACUITY ASSERTION THE REST OF THIS DESCRIBE RESTS ON. A stub that is never called
+    // records nothing, and `received.find(...) === undefined` would then read as a clean absence in
+    // every case below rather than as a broken probe. Pinned as its own case so the failure names
+    // the cause instead of showing up as three mysterious `toBeDefined()` failures.
+    //
+    // It is an exact SET rather than a `length > 0`, which buys a second thing: `onIndexSetup` is
+    // where this index's settings are decided, so a SEVENTH write appearing here is a settings
+    // change nobody reviewed. An EMPTY list means the probe is not reaching the function at all;
+    // a list that is merely different means the function's write set moved. The diff says which.
     const received = await runSetup();
     expect(
       received.map((r) => r.method).sort(),
-      'onIndexSetup wrote nothing — the client/index mocks are not reaching it'
+      "onIndexSetup's write set moved — an EMPTY received list means the client/index mocks are not reaching it, a DIFFERENT list means a settings write was added or removed"
     ).toEqual([
       'updateDisplayedAttributes',
       'updateFilterableAttributes',
