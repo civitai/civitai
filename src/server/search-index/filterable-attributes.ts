@@ -73,9 +73,11 @@ export const modelsFilterableAttributes = [
   'poi',
   'minor',
   'hasActivePaidAccess',
-  // Carried so a filter can split the labeled tier from the unlabeled one — which is what
-  // the pre-registered gold-set study needs to compare a purpose-query arm against a
-  // popularity arm over the slice where labels actually exist (~1.1% of documents).
+  // Carried so a filter can split the models with a PROMOTABLE label — ≈7,023 of them — from
+  // everything else, which is what a retrieval comparison needs to put a purpose-query arm
+  // against a popularity arm over the slice the feature actually acts on. 🔴 That "everything
+  // else" side is NOT the unlabeled set: it holds 863 labeled models too, for the reasons
+  // enumerated below. Do not describe it as the unlabeled tier.
   // Verified on Meilisearch v1.15.0 that filtering works on this field even though
   // ./displayed-attributes.ts withholds it.
   //
@@ -91,37 +93,85 @@ export const modelsFilterableAttributes = [
   //   IS NULL      -> everything else                             <- the control arm
   //
   // 🔴 `IS NULL` is NOT "the unlabeled remainder" — an earlier version of this table said so,
-  // and a written null has THREE causes: (1) genuinely unlabeled, by design; (2) LABELED but
-  // with no version at or above the promote floor (0.3) — `modelInsightQualityScore` skips
-  // sub-floor versions and returns null when none qualify, see
-  // ~/server/services/resource-insight.ts; (3) a label-read FAULT — `models.search-index.ts`
-  // catches a throw from `loadResourceInsights` and recovers with an empty Map, so EVERY
-  // model in that batch writes null, labeled or not, with a `console.error` as the only
-  // symptom. Cause 2 happens in completely normal operation.
+  // and a written null has at least FIVE causes: (1) genuinely unlabeled, by design;
+  // (2) LABELED but with no version at or above the promote floor (0.3) —
+  // `modelInsightQualityScore` skips sub-floor versions and returns null when none qualify,
+  // see ~/server/services/resource-insight.ts; (3) a label-read FAULT —
+  // `models.search-index.ts` catches a throw from `loadResourceInsights` and recovers with an
+  // empty Map, so EVERY model in that batch writes null, labeled or not, with a
+  // `console.error` as the only symptom; (4) the label row is STALE — `loadResourceInsights`
+  // filters `stale: false`, so a labeled version whose row has been invalidated reads as
+  // absent; (5) the labeled VERSION is not in the projection — `modelSearchIndexSelect`
+  // filters `modelVersions` to `status: Published` and `availability != Unsearchable`
+  // (~/server/selectors/model.selector.ts), so a qualifying label on a version later
+  // unpublished or flipped Unsearchable never reaches `modelInsightQualityScore`.
   //
-  // Measured 2026-10-03 on the replica (figures, not arithmetic): 1,265 of 9,900 label rows
-  // (12.78%) sit below the floor, leaving 863 of 7,886 labeled models (10.9%) with no
-  // qualifying version. Those cut in OPPOSITE directions — as control-arm contamination it is
-  // 863 of 711,360 documents = 0.12%, negligible; as labeled-arm coverage it EXCLUDES 10.9%
-  // of labeled models, and that exclusion is the promote floor doing its deliberate job, not
-  // a defect. So `IS NOT NULL` is still the right labeled arm; only the description was wrong.
+  // Cause 2 happens in completely normal operation. Causes 4 and 5 both MEASURE ZERO as of
+  // 2026-10-03 (no stale rows; no non-Published/Unsearchable labeled versions), but they are
+  // live mechanisms, not hypotheticals — creators unpublish routinely, so cause 5 will occur.
+  // 🔴 That is why cause 2 must not be read in reverse: "null AND labeled" does NOT imply
+  // "every one of that model's labels is sub-floor". Causes 4 and 5 produce the same null
+  // from an ABOVE-floor label.
   //
-  // 🔴 POSITIVE CONTROL THE STUDY MUST RUN: assert a non-trivial `IS NOT NULL` count before
-  // trusting any result. Under a total cause-3 fault `IS NOT NULL` returns NOTHING and
-  // `IS NULL` returns the entire index — which presents as "the two arms show no difference",
-  // i.e. a null result rather than an error. A reassuring zero is indistinguishable from a
-  // probe wired to nothing.
+  // Measured 2026-10-03 on the replica (figures, not arithmetic): of the 9,900 `ResourceInsight`
+  // label rows, 1,265 (12.78%) sit below the floor, leaving 863 of the 7,886 models carrying at
+  // least one label (10.9%) with no qualifying version. Those cut in OPPOSITE directions — as
+  // control-arm contamination it is DERIVED (not measured) at ≈0.12% of the index corpus,
+  // negligible; as labeled-arm coverage it EXCLUDES 10.9% of labeled models, and that exclusion
+  // is the promote floor doing its deliberate job, not a defect. No absolute document count is
+  // given here on purpose: an earlier version of this paragraph stated one under the "measured"
+  // attribution when it had in fact been derived from a stale denominator.
+  //
+  // So `IS NOT NULL` is the right labeled arm FOR A RETRIEVAL QUESTION — it is exactly the
+  // population the feature acts on. 🔴 It is NOT the right frame for a LABEL-QUALITY read: it
+  // is a confidence-truncated sample that omits precisely the weakest 10.9% of labels, i.e.
+  // the ones most likely to be wrong, so it biases any quality headline HIGH. Those 863 are
+  // also index-UNREACHABLE — in the index a written null is indistinguishable from unlabeled —
+  // so they can only be sampled from Postgres. And the floor itself was argued for ONE job:
+  // its own docstring (`RESOURCE_INSIGHT_MIN_PROMOTE_CONFIDENCE`,
+  // ~/server/services/resource-insight.ts) weighs the promote side only and says it "says
+  // nothing about the demote side, which is why that side has its own constant". Defining a
+  // STUDY ARM is a third use with no argument of its own. Which frame applies depends on the
+  // study's question, and that is not settled here.
+  //
+  // 🔴 POSITIVE CONTROL ANY RUN OF THESE ARMS MUST PERFORM: assert an `IS NOT NULL` count of
+  // ≈7,023 (the 7,886 labeled models minus the 863 with no qualifying version) before trusting
+  // any result. Under a TOTAL cause-3 fault `IS NOT NULL` returns NOTHING and `IS NULL`
+  // returns the entire index — which presents as "the two arms show no difference", i.e. a
+  // null result rather than an error. A reassuring zero is indistinguishable from a probe
+  // wired to nothing. The control is deliberately scoped to a total fault: cause 3 is
+  // PER-BATCH, so a partial fault still leaves thousands of labeled documents and passes any
+  // loose threshold.
+  //
+  // 🔴 NO COMMITTED RUNNER IMPLEMENTS THESE ARMS. `scripts/eval-resource-intent-goldset.ts`
+  // measures stage-1 label agreement and contains no reference to `insight`, `qualityScore`,
+  // Meilisearch or any index filter; `docs/resource-intent-primitive.md` records that the
+  // retrieval comparison is provided by neither that evaluator nor this change. So the control
+  // above belongs to whatever retrieval comparison gets BUILT — do not go looking for these
+  // arms in the gold-set evaluator, because they are not there.
   //
   // Measured on v1.15.0 over a mixed fixture (labeled / written-null / key-absent): EXISTS
   // returned 5 of 7 including every written null, NOT EXISTS returned only the 2 whose key
   // was absent, and `IS NOT NULL` returned the labeled rows plus the key-absent ones — which
   // is why the pair above is only correct once every document carries the key, i.e. AFTER a
-  // full reset. Before then, no SINGLE predicate isolates the labeled set. A two-clause
-  // filter plausibly does, since pre-reset a key-absent document implies unlabeled: labeled
-  // as `EXISTS AND IS NOT NULL`, control as `IS NULL OR NOT EXISTS`. ⚠ That route is
-  // UNTESTED — nobody has confirmed the engine accepts AND/OR-combining `EXISTS` with
-  // `IS NOT NULL` on the same attribute, which needs a local v1.15.0 container to settle. Do
-  // not rely on it until someone has run it.
+  // full reset.
+  //
+  // 🔴 PRE-RESET, NO PREDICATE ON THIS ATTRIBUTE ISOLATES THE LABELED SET — not a single one
+  // and not any combination of them, so do not go hunting for a cleverer filter. Key-absence
+  // does NOT mean unlabeled. It means "this document has not been rewritten since the field
+  // shipped", i.e. it tracks DOCUMENT-REWRITE HISTORY, which is orthogonal to labeled-ness and
+  // if anything ANTI-correlated with it: a label write causes no document rewrite at all.
+  // `scripts/label-resource-insights.ts` contains no search-index enqueue of any kind and
+  // never touches `Model.updatedAt`, and `prepareModelsBatches` in ./models.search-index.ts
+  // re-pulls only models satisfying `updatedAt >= lastUpdatedAt` — which a label write does
+  // not move. So labeling is precisely the event that does NOT trigger a rewrite. Pre-reset,
+  // `IS NOT NULL` therefore returns only those labeled models that happened to be edited for
+  // some unrelated reason since the field deployed (near-empty), while `IS NULL` sweeps the
+  // rest of the labeled population into the control.
+  //
+  // #5359 changes the first half of that — once it merges, a label write WILL enqueue the
+  // model — but the arms are still only clean after a full reset, since documents written
+  // before the field shipped stay key-absent until one runs.
   //
   // ⚠ Added in the SAME change as the sortable entry, and the reason first given for that
   // was WRONG: it said "both lists are written only by `onIndexSetup` from `reset()`".
