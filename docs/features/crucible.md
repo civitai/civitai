@@ -10,7 +10,7 @@ Crucible is separate from the Challenges platform and its judging engine.
 2. **Review.** The name, description and cover are checked automatically before anyone else can see the crucible. Until then only its creator and moderators can open it.
 3. **Enter.** While the crucible is active, entrants submit published media from their library, or generate or upload it from the submit dialog. Media added from the dialog stays an unpublished draft until it is entered, and entering publishes it; a refused or refunded entry leaves it a draft, and the dialog keeps offering it in later visits. Each entry pays the entry fee in the Buzz of the site the entrant is on, except the free entries the creator offers.
 4. **Judge.** Signed-in users are shown two entries side by side and pick one. Every vote updates both entries' ratings.
-5. **Finish.** At the end time the crucible closes, final positions are fixed by rating, and prizes are paid out.
+5. **Finish.** At the end time the crucible closes, final positions are fixed by rating, and each winner is awarded a prize to claim.
 
 ### Cancelling
 
@@ -49,6 +49,8 @@ The pool is the seeded amount plus the fee of every paid entry. Free entries add
 At the end, entries need a minimum share of votes to place; ties go to the earlier entry. Prizes follow the prize distribution, but a creator takes at most one: their best-placed entry. Their other entries keep their positions on the leaderboard and win nothing, and the next creator takes the next prize. When fewer creators place than there are prizes, the unfilled shares go to the winners in proportion to their own. Entries whose media was blocked, taken down or re-rated outside the crucible's levels can't place, and their fees stay in the pool. If nobody entered, or nothing could be awarded, the seed goes back to the creator.
 
 The discovery page's Prize Pool sort uses the same pool.
+
+Prizes are plain Buzz. A winner claims theirs from the link in their results notification (or the banner on the crucible page): on civitai.com it is paid in green, and on civitai.red the winner picks green or yellow. A prize nobody claims is paid in green after 30 days. Claiming is shared with challenge winner prizes; see `src/server/services/prize.service.ts`.
 
 ## Judging
 

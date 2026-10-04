@@ -640,6 +640,7 @@ model User {
   crucibles                          Crucible[]
   crucibleEntries                    CrucibleEntry[]
   crucibleEngagements                CrucibleEngagement[]
+  prizes                             Prize[]
 
   @@index([deletedAt])
 }
@@ -9098,4 +9099,35 @@ model CrucibleEntry {
   @@index([crucibleId], type: Hash)
   @@index([userId], type: Hash)
   @@index([crucibleId, score(sort: Desc)])
+}
+
+enum PrizeSourceType {
+  Crucible
+  Challenge
+}
+
+// A Buzz prize owed to a user. The winner picks the currency when claiming; an unclaimed prize is
+// paid green at `autoClaimAt`.
+model Prize {
+  id                    Int             @id @default(autoincrement())
+  userId                Int
+  user                  User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sourceType            PrizeSourceType
+  sourceId              Int
+  subjectId             Int?
+  position              Int?
+  amount                Int
+  title                 String
+  // The source's ledger key. Currency-independent, so a prize can only ever be paid once.
+  externalTransactionId String          @unique
+  createdAt             DateTime        @default(now())
+  autoClaimAt           DateTime
+  claimedAt             DateTime?
+  buzzType              String? // 'green' | 'yellow'
+  autoClaimed           Boolean         @default(false)
+  paidAt                DateTime?
+  voidedAt              DateTime?
+
+  @@index([userId])
+  @@index([sourceType, sourceId])
 }

@@ -136,6 +136,7 @@ import type {
   CrucibleStatus,
   CrucibleIngestionStatus,
   CrucibleEngagementType,
+  PrizeSourceType,
 } from './enums';
 
 export type Account = {
@@ -3852,6 +3853,24 @@ export type PricingSlot = {
   ownerId: number;
   createdAt: Generated<Timestamp>;
 };
+export type Prize = {
+  id: Generated<number>;
+  userId: number;
+  sourceType: PrizeSourceType;
+  sourceId: number;
+  subjectId: number | null;
+  position: number | null;
+  amount: number;
+  title: string;
+  externalTransactionId: string;
+  createdAt: Generated<Timestamp>;
+  autoClaimAt: Timestamp;
+  claimedAt: Timestamp | null;
+  buzzType: string | null;
+  autoClaimed: Generated<boolean>;
+  paidAt: Timestamp | null;
+  voidedAt: Timestamp | null;
+};
 export type Product = {
   id: string;
   active: boolean;
@@ -5059,6 +5078,7 @@ export type DB = {
   PressMention: PressMention;
   Price: Price;
   PricingSlot: PricingSlot;
+  Prize: Prize;
   Product: Product;
   PurchasableReward: PurchasableReward;
   Purchase: Purchase;
