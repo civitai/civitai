@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CrucibleIngestionStatus,
   CrucibleStatus,
@@ -327,5 +327,33 @@ describe('submitVote — per-judge cap on each entry', () => {
     await expect(vote()).rejects.toThrow('rating script failed');
 
     expect([judgeVotes('10'), judgeVotes('20')]).toEqual([0, 0]);
+  });
+});
+
+describe('submitVote — the ClickHouse vote row', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn(async () => ({ ok: true, status: 200, text: async () => '' }));
+    vi.stubGlobal('fetch', fetchMock);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  // The vote path builds its Tracker without a request or session, so the voter has to be
+  // passed in: the actor's userId on such a Tracker is 0, and every row read 0 until it was.
+  it('records the judge who voted, not the anonymous actor', async () => {
+    await vote(10, 20);
+    await new Promise((r) => setImmediate(r));
+
+    const rows = fetchMock.mock.calls
+      .filter(([url]) => String(url).endsWith('/track/crucible_votes'))
+      .map(([, init]) => JSON.parse((init as { body: string }).body));
+    expect(rows, 'crucible_votes rows sent').toHaveLength(1);
+    expect(rows[0], 'crucible_votes row').toMatchObject({
+      userId: JUDGE,
+      crucibleId: 1,
+      winnerEntryId: 10,
+      loserEntryId: 20,
+    });
   });
 });

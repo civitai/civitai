@@ -2630,6 +2630,7 @@ export const submitVote = async ({
   // Track vote in ClickHouse (fire-and-forget)
   const tracker = new Tracker();
   tracker.crucibleVote({
+    userId,
     crucibleId,
     winnerEntryId,
     loserEntryId,
