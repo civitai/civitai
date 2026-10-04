@@ -322,7 +322,7 @@ beforeEach(() => {
   mockClaimChallengeForCompletion.mockResolvedValue(JOB_CLAIM_STAMP);
 });
 
-// Justin, 2026-10-04: winner prizes are claimed; entry (participation) prizes are not — they keep
+// Product decision (2026-10-04): winner prizes are claimed; entry (participation) prizes are not — they keep
 // being paid automatically, in blue, the moment the challenge completes. No Prize row, no claim.
 describe('entry prizes stay automatic and blue', () => {
   it('pays an entry prize straight to blue, and never awards it as a claimable prize', async () => {

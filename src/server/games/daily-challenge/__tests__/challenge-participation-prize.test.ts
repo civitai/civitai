@@ -36,7 +36,7 @@ beforeEach(() => {
   dbMock.dbRead.$queryRaw.mockResolvedValue([{ userId: 1 }, { userId: 2 }]);
 });
 
-// Justin, 2026-10-04: winner prizes are claimed; entry (participation) prizes are not — the daily
+// Product decision (2026-10-04): winner prizes are claimed; entry (participation) prizes are not — the daily
 // job keeps paying them automatically, in blue. No Prize row, no claim.
 describe('the daily job pays entry prizes automatically, in blue', () => {
   it('pays each earner directly and awards nothing to claim', async () => {
