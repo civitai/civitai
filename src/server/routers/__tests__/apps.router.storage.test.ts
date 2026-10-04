@@ -368,9 +368,10 @@ describe('apps.storage shared gates', () => {
 
     /**
      * 🔴 GROWTH LEDGER — the only case here that can see a procedure that does not exist
-     * yet. A SIXTH storage procedure added without `.use(enforceAppBlocksFlag)` would be
-     * ungated and uncovered by the revocation sweep, while every other case in this file
-     * went on passing. Asserted against the ROUTER rather than a hand-written list, and on
+     * yet. A SIXTH storage procedure added without a `STORAGE_CALLS` entry escapes both
+     * sweeps above, so it is covered by nothing while every other case in this file goes on
+     * passing — and if it was also written against a bare `publicProcedure` rather than
+     * `appStorageProcedure`, it is ungated too. Asserted against the ROUTER rather than a hand-written list, and on
      * EQUALITY rather than containment, so it fails on growth as well as on a rename — the
      * same shape as `promotion.router.flag-gate.test.ts`. An INVARIANT guard like its
      * neighbours: no procedure has ever shipped ungated here.
