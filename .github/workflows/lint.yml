@@ -901,8 +901,9 @@ jobs:
           node - <<'JS'
           // Minimum ledger for the `geometry` tier. Both numbers are FLOORS (see the `<`
           // comparison below), re-derived 2026-10-04 against 8 files / 102 tests. Only
-          // MIN_TESTS has headroom (22 tests, ~78% of current); MIN_FILES sits at exactly the
-          // collected count, so adding a file will not red but losing one will.
+          // MIN_TESTS has headroom: 80 against 102, so 22 tests (21.6%) can go before it
+          // reds. MIN_FILES sits at exactly the collected count, so adding a file will not
+          // red but losing one will.
           //
           // ⚠️ A FLOOR ONLY CATCHES A DROP TO BELOW ITSELF, AND NOBODY RAISES IT. The file
           // floor sat at 6 against 7 collected on the base branch, so one file could have
@@ -914,7 +915,7 @@ jobs:
           // floor; until then raise both when you add to the tier.
           const MIN_FILES = 8;
           // 80 against 102 collected. It was 10, and the TEST clause alone could not fail:
-          // ninety tests could have stopped collecting and the test term still passed (the
+          // 92 tests could have stopped collecting and the test term still passed (the
           // gate is `files < MIN_FILES || tests < MIN_TESTS`, so the FILE term still caught a
           // dropped file — the hole was in this clause, not the gate). Deliberately a
           // fraction of current rather than a ratchet, so merging cases in a refactor does

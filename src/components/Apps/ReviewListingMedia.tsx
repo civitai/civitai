@@ -87,10 +87,9 @@ export function ReviewListingMedia({
             automatic minimum size is content-based, and the two branches contribute very
             differently: measured at a 280px viewport, cover present 246px, cover ABSENT 320px
             — i.e. a listing with no cover overflowed the card, which the 96px row box never
-            did. `minWidth: 0` lets the Stack shrink, and the placeholder's own
-            `max-width: 100%` then does the work (measured: deleting it there reds the parity
-            arm, 320 vs 246; deleting it from the cover `img` changes nothing, because that
-            one is a flex item of a row-direction button and shrink already handles it).
+            did. `minWidth: 0` lets the Stack shrink, and the placeholder's `max-width: 100%`
+            then does the work — the per-branch measurement is on `coverBoxStyle` in
+            `ListingMediaThumb.tsx`.
           */}
           <Stack gap={4} style={{ minWidth: 0 }}>
             <Text size="xs" c="dimmed">

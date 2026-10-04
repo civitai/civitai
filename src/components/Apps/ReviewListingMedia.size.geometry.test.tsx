@@ -13,6 +13,7 @@ import {
   LOADABLE_IMAGE_DATA_URI,
   cascadeEvidence,
   flexLonghands,
+  longhand,
   renderAtViewport,
 } from '../../../test/geometry-setup';
 import { ListingIconThumb } from '~/components/Apps/ListingMediaThumb';
@@ -61,7 +62,7 @@ import {
  * row/review split matters is recorded on `iconBoxStyle` in `ListingMediaThumb.tsx`; what
  * matters here is that the tier caught that regression ONCE and then stopped — re-mutating it
  * at this head left all 8 files green, because the narrowest viewport any row-rendering
- * geometry file uses is 768 and the regression needs a narrower one. So the case below
+ * geometry TEST renders a row thumb at is 768 and the regression needs a narrower one. So the case below
  * asserts the longhands directly rather than hoping a width reproduces it: cheap, and
  * width-independent. Everything else about the row box's rendered geometry is unmeasured.
  */
@@ -140,10 +141,17 @@ const NON_SQUARE_IMAGE_DATA_URI =
  *
  * 🔴 A DEAD FIXTURE MUST NAME ITSELF, AND THE `naturalWidth` CHECK IS THE HALF THAT DOES IT.
  * On a broken image Chromium sets `complete === true` with `naturalWidth === 0`, so the `load`
- * branch is skipped, no `error` event is pending to listen for, and `decode()` then neither
- * resolves nor rejects. Measured by destroying the fixture's base64 payload: without the
- * guard the arms each died on the 15 s per-test timeout (file 0.2 s → 75.4 s, reporting "Test
- * timed out" and nothing about an image); with it, 0.97 s and a message naming the fixture.
+ * branch is skipped and `decode()` can sit unresolved. Measured on the PINNED browser by
+ * destroying the fixture's base64 payload, tests-phase time, against a 542 ms healthy
+ * baseline: with the guard 985 ms, 0 timeouts, every failure naming the testid; without it
+ * 15.96 s, 3 of 6 arms dying on the 15 s per-test timeout and the rest raising a bare
+ * `EncodingError` that names no id. ~16x, and the real value is the NAME.
+ *
+ * ⚠️ BROWSER-DEPENDENT, SO THE NUMBERS ARE SCOPED TO THE PIN. A review lane measured the same
+ * mutation under a different Chromium and got no timeouts at all — every arm rejected through
+ * `EncodingError` in about a second. Both reads are right about their own browser, which is
+ * why the figures above name the one `vitest.config.mts` pins. An earlier version of this
+ * paragraph claimed "75.4 s" and "each died on the timeout"; neither reproduces here.
  *
  * ⚠️ IT CATCHES A HEADER-DEAD FIXTURE, NOT A PIXEL-DEAD ONE, and the narrower claim is the
  * true one. `naturalWidth` comes from the PNG IHDR, so corrupting only the IDAT run leaves a
@@ -207,11 +215,21 @@ const atWidth = async (width: number, ui: React.ReactElement) =>
     { width, height: 900 }
   );
 
-const box = (testId: string) => {
+/**
+ * 🔴 ONE GUARDED LOOKUP. The expression was open-coded five times here, and the two copies
+ * added most recently carried no existence check: a misaimed testid gave
+ * `TypeError: Failed to execute 'getComputedStyle' … parameter 1 is not of type 'Element'`,
+ * naming neither the id nor the assertion. This file now juggles eight ids that differ by a
+ * suffix (`row-icon` / `row-icon-2` / `row-icon-placeholder` / `row-icon-placeholder-2`, and
+ * the review four), which is exactly the misaim `settled`'s own comment warns about.
+ */
+const at = (testId: string) => {
   const el = document.querySelector<HTMLElement>(`[data-testid="${testId}"]`);
   expect(el, `${testId} must be on screen`).not.toBeNull();
-  return el!.getBoundingClientRect();
+  return el!;
 };
+
+const box = (testId: string) => at(testId).getBoundingClientRect();
 
 const container = () => box('page-container');
 
@@ -326,13 +344,9 @@ describe('the store icon and cover are bigger on the review page than in a queue
   });
 
   test('🔴 at phone width (280px) the cover CLAMPS to its container instead of widening the page', async () => {
-    // ⚠️ WHAT NARROWS THE COVER *IMG* HERE IS FLEX SHRINK, NOT `max-width: 100%` — measured,
-    // and the earlier version of this comment claimed the opposite. With a cover present
-    // `onOpen` is set, so the img is a flex item of `MediaButton`'s row-direction button at
-    // the default `flex: 0 1 auto`, and that is what gives way: deleting `max-width` leaves
-    // this suite green. The PLACEHOLDER is the opposite case — no button, nothing else to
-    // narrow it — and the parity arm below is what proves that half.
-    // What this arm DOES prove is the shape under shrink, below.
+    // ⚠️ Flex shrink, not `max-width`, is what narrows the cover IMG here — the per-branch
+    // measurement is on `coverBoxStyle` in `ListingMediaThumb.tsx`. What this arm proves is
+    // the shape under shrink, below.
     await atWidth(
       PHONE,
       <ReviewListingMedia
@@ -425,8 +439,7 @@ describe('the store icon and cover are bigger on the review page than in a queue
     //
     // 🔴 BOTH ARMS, because one shared helper now serves both sizes: a single edit there
     // changes the row path and the review path together, so pinning one arm would let the
-    // other move. `0` is the value a queue TABLE cell needs; `1` is what lets the 96px review
-    // box give way on a tiny screen.
+    // other move. Why each size gets the value it does is on `iconBoxStyle`.
     await atWidth(
       DESKTOP,
       <>
@@ -460,23 +473,28 @@ describe('the store icon and cover are bigger on the review page than in a queue
     );
     await settled('row-icon');
 
-    // 🔴 THE WHOLE OBJECT, NOT JUST `shrink`. `flexLonghands` returns all three and the one
-    // precedent in the repo (`geometryHarness.geometry.test.tsx`) asserts all three — its own
-    // docstring names `flex-basis` as THE field a `flex` shorthand bug hides. Measured: with
-    // only `shrink` asserted, `grow 0→1` and `basis ${box}px→auto` both SURVIVED, so two
+    // 🔴 THE WHOLE OBJECT, NOT JUST `shrink`. `flexLonghands` returns all three, and the one
+    // other place that ASSERTS all three (`geometryHarness.geometry.test.tsx`) is also the
+    // only one that needs to — `longhand`'s docstring in `test/geometry-setup.tsx` is where
+    // the reason lives: a `flex` shorthand bug hides in the field you did not read. Measured:
+    // with only `shrink` asserted, `grow 0→1` and `basis ${box}px→auto` both SURVIVED, so two
     // thirds of the shorthand this test exists to pin was unguarded.
-    const flexOf = (testId: string) =>
-      flexLonghands(document.querySelector(`[data-testid="${testId}"]`)!);
+    const flexOf = (testId: string) => flexLonghands(at(testId));
 
+    // 🔴 LITERAL `basis`, NOT `${LISTING_ICON_BOX}px` — the same rule this file states for the
+    // 16/9 ratio. Production derives the basis from those constants, so an expectation built
+    // from them moves with any change to them: measured, `LISTING_ICON_BOX` 40→48 left the
+    // tier 102/102 green. The box sizes are pinned by the constants case at the top of this
+    // file; this arm is about the SHORTHAND, so it states the pixels it expects.
     expect(flexOf('row-icon'), 'a queue-row icon must be rigid').toEqual({
       grow: '0',
       shrink: '0',
-      basis: `${LISTING_ICON_BOX}px`,
+      basis: '40px',
     });
     expect(flexOf('review-icon'), 'the review icon must give way').toEqual({
       grow: '0',
       shrink: '1',
-      basis: `${REVIEW_ICON_BOX}px`,
+      basis: '96px',
     });
     // 🔴 THE REVIEW PLACEHOLDER IS THE ARM THAT ACTUALLY DIVERGED, and an earlier version of
     // this case asserted only the ROW one — which is `0` either way, so restoring the exact
@@ -499,8 +517,13 @@ describe('the store icon and cover are bigger on the review page than in a queue
     // the shared object, under a comment claiming sharing had made divergence impossible. The
     // declaration lives in `iconBoxStyle` now; this is what holds it there. Measured: pulling
     // it back out leaves every other assertion in this file green.
-    const maxWidthOf = (testId: string) =>
-      getComputedStyle(document.querySelector(`[data-testid="${testId}"]`)!).maxWidth;
+    const maxWidthOf = (testId: string) => longhand(at(testId), 'max-width');
+    // 🔴 A LITERAL ANCHOR FIRST. The two agreement assertions below cannot see a mutation
+    // that moves BOTH sides: setting `maxWidth: 'none'` in the shared object (rather than
+    // deleting it) leaves the whole tier 102/102 green while removing the clamp this comment
+    // calls load-bearing. Agreement proves they did not diverge; the literal proves what they
+    // agree ON.
+    expect(maxWidthOf('row-icon'), 'the clamp is present, not merely shared').toBe('100%');
     expect(maxWidthOf('row-icon-placeholder-2'), 'the row pair agrees on max-width').toBe(
       maxWidthOf('row-icon')
     );
@@ -545,10 +568,11 @@ describe('the store icon and cover are bigger on the review page than in a queue
 });
 
 /**
- * ⚠️ THE GALLERY'S BREAKPOINT WAS CHOSEN SO THE CLAIM HOLDS AT 1280 AND 820 BOTH. Breaking at
- * `lg` would have made the review gallery identical to the modal's at 1280 — invisible exactly
- * where the page is used. (Restored: deleted as collateral while rewriting an adjacent
- * paragraph, and recorded nowhere else in `src/`.)
+ * ⚠️ THE REVIEW GALLERY IS A CONSTANT ONE COLUMN, NOT A BREAKPOINTED PAIR, and that is the
+ * choice worth recording: `lg` is 1184px, so breaking there would give two columns at 1280 —
+ * identical to the modal's, i.e. invisible at exactly the width this page is used at. It has
+ * never had a breakpoint; an earlier draft of this paragraph said "the gallery's breakpoint
+ * was chosen so…", which described a declaration that does not exist.
  */
 describe('the bundle screenshots are bigger on the review page than in the modal', () => {
   /** The grid Mantine rendered, and the column count it DECLARED. */

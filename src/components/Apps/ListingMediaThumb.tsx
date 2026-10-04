@@ -90,8 +90,16 @@ const iconBoxStyle = (box: number, size: ListingThumbSize): CSSProperties => ({
   // container) but it is the same present/absent rule the cover pair broke outright.
   flex: `0 ${size === 'review' ? 1 : 0} ${box}px`,
   // Was on the img and NOT the placeholder — the same asymmetry this object exists to stop,
-  // left behind when the rest of the pair was shared. One RESERVES the space, the other
-  // CLAMPS it so a wide box cannot widen its column.
+  // left behind when the rest of the pair was shared.
+  //
+  // ⚠️ IT IS A BOUND, NOT A WORKING CLAMP, and the honest version of that is the measured one:
+  // across `/apps/mine` (table + mobile card), the `/apps/review` queue and the review page,
+  // at eight widths down to 280px, adding it changed NO rendered dimension — the icon's
+  // containing block never falls below its box (narrowest observed 134px against a 40px box).
+  // It is also redundant on the img branch specifically, where Tailwind preflight already
+  // ships `img { max-width: 100% }`; the placeholder is a `div` and drops to `none` without
+  // it, which is the pair the parity arm reports as `expected 'none' to be '100%'`.
+  // Kept so the two branches cannot diverge, not because it does work today.
   maxWidth: '100%',
 });
 

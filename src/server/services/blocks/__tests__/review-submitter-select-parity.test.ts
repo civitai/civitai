@@ -75,7 +75,7 @@ const DELIBERATELY_NARROW: ReadonlyArray<{
     file: 'src/server/services/blocks/app-listing.service.ts',
     container: 'listingHydrateSelect',
     owner: 'user',
-    why: 'the PUBLIC store listing creator. The default path hands `SmartCreatorCard` only `{ id }` and refetches through the public `user.getCreator` proc; the `preview` path (its own `CreatorChip`) renders the chip directly, and a closed account drops out of it only INCIDENTALLY — `deleteUser` nulls `username` in the same transaction as `deletedAt`, and the chip skips username-less rows. That is the scrub doing the work, not a `deletedAt` branch, which is the same incidental-not-a-filter distinction `app-listing.service.ts` draws about its collaborator chip — and THERE it was judged not good enough, so that select carries `deletedAt` and this one still does not. Bounded, not closed: `deleteUser` is the only writer that scrubs, while `updateUserById` and `forceUpdateUserIdentity` (the latter behind a moderator endpoint) set `username` with no `deletedAt` guard, so a closed account can be given a truthy username again. Widening this select is still the fix and is still a separate change',
+    why: 'the PUBLIC store listing creator. The default path hands `SmartCreatorCard` only `{ id }` and refetches through the public `user.getCreator` proc; the `preview` path (its own `CreatorChip`) renders the chip directly, and a closed account drops out of it only INCIDENTALLY — `deleteUser` nulls `username` in the same transaction as `deletedAt`, and the chip skips username-less rows. That is the scrub doing the work, not a `deletedAt` branch, which is the same incidental-not-a-filter distinction `app-listing.service.ts` draws about its collaborator chip — and THERE it was judged not good enough, so that select carries `deletedAt` and this one still does not. Bounded, not closed: `deleteUser` is the only writer that scrubs, and the hazard is `forceUpdateUserIdentity` — a moderator endpoint whose gating is ACTOR-only, so its arbitrary `userId` matches a soft-deleted row. The self-serve writers are NOT a route, which an earlier version of this sentence got wrong in both directions: they write `username` with no `deletedAt` in the where-clause, but a closed account cannot reach them — session minting filters `deletedAt`, `isAuthed` rejects it, and the handler is self-only. Widening this select is still the fix and is still a separate change',
   },
 ] as const;
 
@@ -352,6 +352,10 @@ describe('the review user chip is one declaration', () => {
     // measured, deleting `e.owner === chip.owner` left 4/4 green, the exact sibling of the
     // `file` defect fixed one round earlier, on the same lookup line.
     const OWNER_PROBE = 'moderator';
+    expect(
+      DELIBERATELY_NARROW.map((e) => e.owner),
+      'the owner probe is only a probe while the ledger does not name it'
+    ).not.toContain(OWNER_PROBE);
     const PLANTED_SOURCE = `
       const submittedBy = { select: { id: true, username: true, image: true } };
       const authorChip = { id: true, username: true, image: true };
@@ -386,7 +390,22 @@ describe('the review user chip is one declaration', () => {
       ownerVerdict.offenders,
       `a narrow \`${OWNER_PROBE}\` chip inside the exempted container must still be rejected`
     ).toHaveLength(1);
-    expect(ownerVerdict.matched, 'and it must not consume the exemption').toEqual([]);
+
+    // 🔴 AND THE CONTAINER HALF — the third term on that same lookup line, and it had the
+    // identical hole the other two just had. Its only coverage was the real-corpus ledger
+    // equality, which discriminates solely because two live entries happen to share a file AND
+    // an owner while differing in container. Measured: simulate retiring the entry this PR's
+    // own `why` says should be widened, and dropping `e.container === chip.container` goes
+    // 4/4 GREEN. A probe makes the coverage a property of the test rather than of how many
+    // rows the ledger happens to hold.
+    const CONTAINER_SOURCE = `
+      const ${EXEMPT.container}Unlisted = { ${EXEMPT.owner}: { select: { id: true, username: true, image: true } } };
+    `;
+    const containerVerdict = judge(EXEMPT.file, chipsIn(EXEMPT.file, CONTAINER_SOURCE));
+    expect(
+      containerVerdict.offenders,
+      'a narrow chip in a container the ledger does not name must still be rejected'
+    ).toHaveLength(1);
     // ⚠️ This one is weaker than it looks on its own — `plantedFile` has no ledger entries at
     // all, so an empty `matched` is the only possible result regardless of the key. It earns
     // its place only alongside the fifth chip above, which CAN be exempted by a broken key.
@@ -401,6 +420,11 @@ describe('the review user chip is one declaration', () => {
     // `matched` — the control then passed with a Set as happily as with an array, i.e. it did
     // not test the thing it was written for. With both narrow, the exempted key is matched
     // TWICE: an array reports 2, a Set reports 1.
+    // ⚠️ HARDCODED DELIBERATELY, where the probes above derive from the ledger. The difference
+    // is what each asserts: those assert an OFFENDER COUNT, which stays satisfiable if the
+    // row is retired — measured, that is how the file-half coverage went silently green. This
+    // one asserts the exemption was CONSUMED TWICE, which structurally requires the row, so
+    // retiring it fails loudly here rather than quietly. Deriving it would gain nothing.
     const NESTED_SOURCE = `
       const moderationListingSelect = {
         user: { select: { id: true, username: true, image: true } },

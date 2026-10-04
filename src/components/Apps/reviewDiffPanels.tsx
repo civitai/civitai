@@ -1,4 +1,5 @@
 import { Badge, Card, Code, Group, ScrollArea, SegmentedControl, Stack, Text } from '@mantine/core';
+import type { CSSProperties } from 'react';
 import { useMemo, useState } from 'react';
 import {
   splitDiffRows,
@@ -47,11 +48,16 @@ const FILE_HEADER_BG = 'light-dark(var(--mantine-color-gray-1), var(--mantine-co
  * thing the brief says must never happen. Pinned for the unified table by the
  * horizontal-scroll case in `src/components/Apps/reviewDiffViewer.browser.test.tsx`.
  */
-const DIFF_TABLE_STYLE = {
+// 🔴 ANNOTATED, NOT `as const`. Measured: with `as const` a typo'd key (`bordrCollapse`)
+// typechecks CLEAN, because the object reaches `style=` as a variable so there is no
+// excess-property check and `as const` constrains the VALUES, not the key set. The annotation
+// subsumes the narrowing it was there for and catches the typo (TS2561). Same reasoning as
+// `iconBoxStyle`/`coverBoxStyle` in `ListingMediaThumb.tsx`.
+const DIFF_TABLE_STYLE: CSSProperties = {
   borderCollapse: 'collapse',
   width: 'max-content',
   minWidth: '100%',
-} as const;
+};
 
 /** Line-number gutter surface — fainter than the header, still distinct from the code. */
 const GUTTER_BG = 'light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-7))';
