@@ -84,8 +84,13 @@ const useFakeRedis = () => {
   return { judgeVotes };
 };
 
+let fetchMock: ReturnType<typeof vi.fn>;
+
 beforeEach(() => {
   vi.clearAllMocks();
+  // File-wide: every vote tracks to ClickHouse, and an unstubbed send retries into a later test.
+  fetchMock = vi.fn(async () => ({ ok: true, status: 200, text: async () => '' }));
+  vi.stubGlobal('fetch', fetchMock);
   dbMock.dbRead.crucible.findUnique.mockResolvedValue({
     id: 1,
     userId: 500,
@@ -106,6 +111,7 @@ beforeEach(() => {
   // Every pair counts as served unless a test says otherwise.
   redisMock.sysRedis.eval.mockResolvedValue(1);
 });
+afterEach(() => vi.unstubAllGlobals());
 
 describe('submitVote — a vote needs two different entries', () => {
   it('is refused by the input schema', () => {
@@ -331,14 +337,6 @@ describe('submitVote — per-judge cap on each entry', () => {
 });
 
 describe('submitVote — the ClickHouse vote row', () => {
-  let fetchMock: ReturnType<typeof vi.fn>;
-
-  beforeEach(() => {
-    fetchMock = vi.fn(async () => ({ ok: true, status: 200, text: async () => '' }));
-    vi.stubGlobal('fetch', fetchMock);
-  });
-  afterEach(() => vi.unstubAllGlobals());
-
   // The vote path builds its Tracker without a request or session, so the voter has to be
   // passed in: the actor's userId on such a Tracker is 0, and every row read 0 until it was.
   it('records the judge who voted, not the anonymous actor', async () => {
