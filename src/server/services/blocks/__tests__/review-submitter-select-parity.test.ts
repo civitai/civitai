@@ -250,4 +250,3 @@ describe('the select scanner', () => {
     expect(seen[0]).toBe('id: true, username: true, image: true');
   });
 });
-

@@ -230,7 +230,7 @@ beforeEach(() => {
   mocks.mutate.mockClear();
   mocks.pending = false;
   mocks.diff = undefined;
-  (router.replace as any).mockClear();
+  vi.mocked(router.replace).mockClear();
   router.query = {};
   router.pathname = '/apps/review/[publishRequestId]';
 });

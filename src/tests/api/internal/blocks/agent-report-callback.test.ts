@@ -141,6 +141,12 @@ describe('persistedStatusFor / buildReportUpdate (pure)', () => {
    * The body is built FROM the ledger rather than hand-spelled, which is what makes the
    * growth half automatic. Values are pairwise distinct AND distinct from any literal this
    * file asserts elsewhere, so a writer that hardcoded one key's value cannot survive.
+   *
+   * 🔴 MEASURED GREEN AT `origin/main` → A SEAM GUARD, NOT REGRESSION COVERAGE. Run against
+   * the base (with this file and the ledger module copied in), it passes: the pre-change
+   * writer spelled the same three keys as three `if`s, so it satisfies the ledger too. What
+   * the change bought is that the two can no longer DIVERGE — which is a future defect, not
+   * one anybody watched. Do not count it toward "the redesign is tested".
    */
   it('🔴 writes EXACTLY the shared ledger’s section keys — no more, no fewer', () => {
     const marker = (section: string) => ({ from: `ledger:${section}` });
@@ -183,7 +189,11 @@ describe('persistedStatusFor / buildReportUpdate (pure)', () => {
 
   /**
    * The carry-forward contract a TARGETED re-run depends on: a callback reporting on ONE
-   * section must not blank the other two. `startAgentReview` step (d') copies the previous
+   * section must not blank the other two.
+   *
+   * 🔴 ALSO MEASURED GREEN AT `origin/main` → AN INVARIANT GUARD. The absent-key semantics
+   * are unchanged by this PR and deliberately so; this pins them because the new targeted
+   * re-run is the first caller that DEPENDS on them. `startAgentReview` step (d') copies the previous
    * report's untargeted sections forward precisely because this writer leaves an absent
    * key alone — so if that ever became "write null", a one-section retry would erase the
    * two analyses it did not re-run.
