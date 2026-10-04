@@ -88,9 +88,11 @@ export type ImageResourceHelperModel = Prisma.ImageResourceHelperGetPayload<
 
 const reviewedImageWhere = { needsReview: null, tosViolation: false } as const;
 
+const publishedPostWhere = (): Prisma.PostWhereInput => ({ publishedAt: { lte: new Date() } });
+
 export const publishedImageWhere = (): Prisma.ImageWhereInput => ({
   ...reviewedImageWhere,
-  post: { publishedAt: { lte: new Date() } },
+  post: publishedPostWhere(),
 });
 
 /** Unpublished media, held to the same review gates as published media. */
@@ -107,7 +109,7 @@ export const publishedOrEntryDraftImageWhere = (): Prisma.ImageWhereInput => ({
   ...reviewedImageWhere,
   post: {
     OR: [
-      { publishedAt: { lte: new Date() } },
+      publishedPostWhere(),
       {
         publishedAt: null,
         metadata: { path: [CRUCIBLE_ENTRY_DRAFT_METADATA_KEY], equals: true },

@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 import { dbRead } from '~/server/db/client';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import {
+  describeActiveLimitsByTier,
   getChallengeActiveLimit,
   CHALLENGE_MIN_CREATOR_SCORE,
   CHALLENGE_CREATE_DAILY_LIMIT,
@@ -132,7 +133,9 @@ export async function assertUnderActiveChallengeLimit(
   const limit = getChallengeActiveLimit(subscription?.tier);
   if (activeCount >= limit)
     throw forbidden(
-      `You've reached your limit of ${limit} active challenge(s) for your membership tier.`
+      `You've reached your limit of ${limit} challenge${
+        limit === 1 ? '' : 's'
+      } running at once for your membership tier (${describeActiveLimitsByTier()}).`
     );
   return { limit, activeCount };
 }

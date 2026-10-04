@@ -1692,10 +1692,14 @@ export const submitEntry = async ({
             post: { select: { metadata: true, _count: { select: { images: true } } } },
           },
         });
-    // Entering must publish nothing else, and a post its model unpublished keeps its original date.
+    // Only the modal's own drafts: entering publishes the post without the checks a post, collection
+    // or model-showcase publish goes through. Entering must publish nothing else, and a post its model
+    // unpublished keeps its original date.
+    const draftMetadata = draft?.post?.metadata as Record<string, unknown> | null | undefined;
     const draftPostId =
       draft?.post?._count.images === 1 &&
-      !(draft.post.metadata as { prevPublishedAt?: unknown } | null)?.prevPublishedAt
+      draftMetadata?.[CRUCIBLE_ENTRY_DRAFT_METADATA_KEY] === true &&
+      !draftMetadata.prevPublishedAt
         ? draft.postId
         : null;
     if (!isPublished && !draftPostId) {

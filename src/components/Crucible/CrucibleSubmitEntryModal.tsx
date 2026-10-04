@@ -27,7 +27,7 @@ import {
   IconVideo,
   IconX,
 } from '@tabler/icons-react';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { CrucibleContentLevelBadges } from '~/components/Crucible/CrucibleContentLevelBadges';
@@ -742,23 +742,33 @@ export default function CrucibleSubmitEntryModal({
     });
   };
 
+  // A scan that sends an upload to review or blocks it drops it from the list instead of settling
+  // it, so an upload seen and then gone counts as failed rather than holding the batch forever.
+  const seenAwaitingScan = useRef(new Set<number>());
   useEffect(() => {
     if (!awaitingScan.length) return;
+    const listedIds = new Set(images.map((image) => image.id));
+    for (const id of awaitingScan) if (listedIds.has(id)) seenAwaitingScan.current.add(id);
+    const vanished = awaitingScan.filter(
+      (id) => seenAwaitingScan.current.has(id) && !listedIds.has(id)
+    );
     const settled = images.filter(
       (image) =>
         awaitingScan.includes(image.id) &&
         !validateImage(image).isChecking &&
         ineligibleReasonsById.has(image.id)
     );
-    if (!settled.length) return;
-    setAwaitingScan((prev) => prev.filter((id) => !settled.some((image) => image.id === id)));
+    if (!settled.length && !vanished.length) return;
+    setAwaitingScan((prev) =>
+      prev.filter((id) => !vanished.includes(id) && !settled.some((image) => image.id === id))
+    );
     const settledValid = settled.filter((image) => validateImage(image).isValid);
     setAutoSubmit(
       (prev) =>
         prev && {
           ...prev,
           valid: [...prev.valid, ...settledValid.map((image) => image.id)],
-          failed: prev.failed + settled.length - settledValid.length,
+          failed: prev.failed + vanished.length + settled.length - settledValid.length,
         }
     );
     setSelectedImages((prev) => {

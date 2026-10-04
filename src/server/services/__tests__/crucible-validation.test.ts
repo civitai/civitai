@@ -638,7 +638,10 @@ describe('submitEntry — content type', () => {
     dbMock.dbRead.image.count.mockResolvedValue(0);
     dbMock.dbRead.image.findFirst.mockResolvedValue({
       postId: 300,
-      post: { metadata: post.metadata ?? null, _count: { images: post.images ?? 1 } },
+      post: {
+        metadata: 'metadata' in post ? post.metadata : { crucibleEntryDraft: true },
+        _count: { images: post.images ?? 1 },
+      },
     });
     dbMock.dbWrite.post.updateMany.mockResolvedValue({ count: 1 });
   };
@@ -679,8 +682,11 @@ describe('submitEntry — content type', () => {
     ['holds other images, which entering one would publish', { images: 2 }],
     [
       'was unpublished with its model, so it keeps its original date',
-      { metadata: { prevPublishedAt: '2026-01-01' } },
+      { metadata: { crucibleEntryDraft: true, prevPublishedAt: '2026-01-01' } },
     ],
+    // A collection or model-showcase draft would skip the checks its own publish path runs.
+    ['the entry modal did not create', { metadata: null }],
+    ['carries other metadata but not the entry-modal marker', { metadata: { other: true } }],
   ])('refuses a draft that %s', async (_, post) => {
     draftOf(post);
 
@@ -692,6 +698,7 @@ describe('submitEntry — content type', () => {
     await submit();
 
     expect(dbMock.dbWrite.post.updateMany).not.toHaveBeenCalled();
+    expect(afterPostPublish).not.toHaveBeenCalled();
   });
 
   it('saves no entry when the draft was published or moved meanwhile', async () => {
@@ -1156,6 +1163,43 @@ describe('submitEntry — a cancel or the end landing mid-submit', () => {
     expect(refundMultiAccountTransaction).toHaveBeenCalledTimes(2);
     expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
       expect.objectContaining({ name: 'crucible-entry-fee-refund-failed' })
+    );
+  });
+
+  const paidDraft = () => {
+    dbMock.dbRead.image.count.mockResolvedValue(0);
+    dbMock.dbRead.image.findFirst.mockResolvedValue({
+      postId: 300,
+      post: { metadata: { crucibleEntryDraft: true }, _count: { images: 1 } },
+    });
+    dbMock.dbWrite.post.updateMany.mockResolvedValue({ count: 1 });
+  };
+
+  // The entry and its fee are committed by then: a refund here would make it a free entry.
+  it('keeps a paid draft entry and its fee when the post refresh after commit fails', async () => {
+    paidDraft();
+    afterPostPublish.mockRejectedValueOnce(new Error('reindex down'));
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+
+    expect(createMultiAccountBuzzTransaction).toHaveBeenCalledTimes(1);
+    expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'crucible-entry-post-refresh-failed', postId: 300 })
+    );
+  });
+
+  it('refunds a paid draft entry when its post was published or moved meanwhile', async () => {
+    paidDraft();
+    dbMock.dbWrite.post.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(submit()).rejects.toThrow(/changed while it was being entered/);
+
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+    expect(refundMultiAccountTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        externalTransactionIdPrefix: expect.stringMatching(/^crucible-entry-1-42-/),
+      })
     );
   });
 

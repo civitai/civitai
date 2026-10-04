@@ -183,6 +183,7 @@ const plainSubmit = () =>
 beforeEach(() => {
   mocks.images = [image(1), image(2)];
   mocks.myImagesInputs = [];
+  mocks.showErrorNotification.mockReset();
   mocks.upload.mockReset();
   mocks.submitEntry.mockReset().mockResolvedValue({ id: 1 });
   let postId = 300;
@@ -416,6 +417,47 @@ describe('CrucibleSubmitEntryModal — a batch from the generator', () => {
 
     await vi.waitFor(() => expect(mocks.submitEntry).toHaveBeenCalledTimes(2));
     expect(mocks.submitEntry.mock.calls.map(([input]) => input.imageId).sort()).toEqual([77, 78]);
+  });
+
+  // A scan that sends an upload to review drops it from the library rather than settling it.
+  test('counts an upload that leaves the library mid-scan as failed, and enters the rest', async () => {
+    const { rerender } = await startBatch();
+    mocks.addImageOnSuccess!({ id: 77 });
+    mocks.addImageOnSuccess!({ id: 78 });
+    mocks.images = [
+      { ...image(77), ingestion: ImageIngestionStatus.Pending },
+      { ...image(78), ingestion: ImageIngestionStatus.Pending },
+    ];
+    await rerender();
+
+    mocks.images = [image(77)];
+    await rerender();
+
+    await vi.waitFor(() =>
+      expect(mocks.submitEntry).toHaveBeenCalledWith({ crucibleId: 1, imageId: 77 })
+    );
+    expect(mocks.submitEntry).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() =>
+      expect(mocks.showErrorNotification).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "1 couldn't be entered" })
+      )
+    );
+  });
+
+  test('does not count an upload as failed before it first appears in the library', async () => {
+    const { rerender } = await startBatch();
+    mocks.addImageOnSuccess!({ id: 77 });
+    mocks.addImageOnSuccess!({ id: 78 });
+    mocks.images = [image(77)];
+    await rerender();
+
+    mocks.images = [image(77), image(78)];
+    await rerender();
+
+    await vi.waitFor(() => expect(mocks.submitEntry).toHaveBeenCalledTimes(2));
+    expect(mocks.showErrorNotification).not.toHaveBeenCalledWith(
+      expect.objectContaining({ title: expect.stringMatching(/couldn't be entered/) })
+    );
   });
 
   test('enters the rest when one upload is blocked', async () => {
