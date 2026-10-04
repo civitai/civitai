@@ -78,6 +78,15 @@ export const MODELS_WITHHELD_ATTRIBUTES = [
   // `models.search-index.ts` never emits it. No models filterable entry references it
   // (`flags.promptNsfw` belongs to `imagesFilterableAttributes`) and no consumer reads it off a hit.
   'flags',
+  // Sort-only AND filter-only: `insight.qualityScore` is in both `modelsSortableAttributes` and
+  // `modelsFilterableAttributes`, and no consumer reads it off a hit — the resource-intent matcher
+  // sorts on it and reads the scores it needs from Postgres via `loadResourceInsights`. The
+  // top-level key is `insight` because `transformData` emits `insight: { qualityScore }`, and this
+  // list is keyed on top-level attributes (nested children ride along with their parent).
+  // ⚠ Withholding it is not a privacy decision like `sortMetrics` — a quality label is not a
+  // creator's hidden number — it is the same costs-nothing default this list's header describes,
+  // and it keeps the field out of every public search hit until something actually needs it there.
+  'insight',
 ];
 
 // 🔴 FROZEN, and this is the deterministic half of the guard — not decoration.
