@@ -200,16 +200,9 @@ describe('GET /api/v1/blocks/shared-storage/list', () => {
   // The handler's whole job here is to parse one query param correctly and thread it;
   // the author resolution and the SQL predicate are the router's, tested there.
   describe('#5354 Q3 mine=', () => {
-    it('mine=true threads mine:true down', async () => {
-      const { req, res } = createMocks({ query: { mine: 'true' } });
-      await handler(req as never, res as never);
-      expect(res._status()).toBe(200);
-      expect(mockList).toHaveBeenCalledWith(
-        'tok_list',
-        expect.objectContaining({ mine: true })
-      );
-    });
-
+    // 🔴 No separate "mine=true threads down" test: the composition case at the
+    // bottom of this block asserts the FULL call object including `mine: true`
+    // and strictly subsumes an `objectContaining({mine:true})` version of it.
     it('🔴 mine=false is FALSE — the string is not truthy-coerced', async () => {
       const { req, res } = createMocks({ query: { mine: 'false' } });
       await handler(req as never, res as never);

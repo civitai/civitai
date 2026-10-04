@@ -2694,6 +2694,7 @@ export function IframeHost({
           prefix?: unknown;
           limit?: unknown;
           cursor?: unknown;
+          mine?: unknown;
         }
       | undefined
     >('SHARED_LIST', async (raw) => {
@@ -2706,12 +2707,18 @@ export function IframeHost({
             ? Math.min(Math.max(Math.floor(raw.limit), 1), 100)
             : 50;
         const cursor = typeof raw.cursor === 'string' ? raw.cursor : undefined;
+        // civitai/civitai#5354 Q3 — kept byte-identical to PageBlockHost's arm.
+        // 🔴 Forwarded ONLY when literally `true`, so a malformed payload cannot
+        // silently narrow someone's feed. The server decides WHOSE rows; this
+        // message carries no user id and cannot name an author.
+        const mine = raw.mine === true ? true : undefined;
         const result = await trpcUtils.apps.shared.list.fetch(
           {
             blockToken: token,
             prefix,
             limit,
             cursor,
+            mine,
           },
           BLOCK_STORAGE_READ_OPTS
         );
