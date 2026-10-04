@@ -13,10 +13,10 @@ import {
 } from '../app-block-storage.metrics';
 
 /**
- * Zero-seeding of the five App Blocks KV storage metrics, against the REAL prom-client default
+ * Zero-seeding of the four App Blocks KV storage metrics, against the REAL prom-client default
  * registry — `@civitai/telemetry/client` is not stubbed by `src/__tests__/setup.ts`, which
  * replaces only `~/server/prom/client`. Nothing here may call `client.register.clear()`: these
- * five are constructed once at package module scope, so clearing drops them irrecoverably and
+ * four are constructed once at package module scope, so clearing drops them irrecoverably and
  * every later assertion would be about an empty registry.
  */
 
@@ -24,10 +24,6 @@ const OPS = 'civitai_app_block_storage_ops_total';
 const QUOTA_EXCEEDED = 'civitai_app_block_storage_quota_exceeded_total';
 const USER_QUOTA_UNTRACKED = 'civitai_app_block_storage_user_quota_untracked_total';
 const LATENCY = 'civitai_app_block_storage_latency_seconds';
-// The session-user gate discriminator (`enforceAppBlocksFlag` in apps.router). Seeded on the
-// SAME rule as `ops_total` — its only label is the closed `APP_STORAGE_OPS` union — which is
-// what lets the two be read together with one reader (`increase()`) on a shared `op`.
-const SESSION_GATE_REFUSALS = 'civitai_app_block_storage_session_gate_refusals_total';
 
 type Values = Array<{ labels: Record<string, string>; value: number; metricName?: string }>;
 
@@ -83,25 +79,19 @@ describe('seedAppBlockStorageMetrics', () => {
     }
   });
 
-  it('🔴 publishes 95 series per scraped pod — 22 of them (op, outcome) PAIRS', async () => {
+  it('🔴 publishes 90 series per scraped pod — 22 of them (op, outcome) PAIRS', async () => {
     // Literal, because this is the figure a cardinality budget is sized against, and the pair
     // count is NOT it: the histogram contributes 5 children x (10 buckets + `+Inf` + `_sum` +
-    // `_count`) = 65, against 22 + 5 + 2 + 1 = 30 counter series. Quoting 22 as the budget
+    // `_count`) = 65, against 22 + 2 + 1 = 25 counter series. Quoting 22 as the budget
     // understates the change fourfold.
-    //
-    // The 5 is `session_gate_refusals_total`, one child per op. It is INSIDE the budget rather
-    // than a footnote to it precisely because it is seeded: an unseeded counter would leave the
-    // figure here reading 90 while a pod that had refused carried 95, i.e. a budget whose own
-    // test could not see the difference.
     expect(REACHABLE_OPS_SERIES.length).toBe(22);
 
     const total =
       (await valuesOf(OPS)).length +
-      (await valuesOf(SESSION_GATE_REFUSALS)).length +
       (await valuesOf(QUOTA_EXCEEDED)).length +
       (await valuesOf(USER_QUOTA_UNTRACKED)).length +
       (await valuesOf(LATENCY)).length;
-    expect(total).toBe(95);
+    expect(total).toBe(90);
 
     expect([...APP_STORAGE_OPS]).toEqual(['get', 'set', 'delete', 'list', 'getQuota']);
     expect([...APP_STORAGE_OUTCOMES_ALL_OPS]).toEqual(['ok', 'unauthorized', 'not_found', 'error']);
@@ -136,7 +126,6 @@ describe('seedAppBlockStorageMetrics', () => {
   it('appears in the scrape output under the exact names an operator queries', async () => {
     const scrape = await client.register.metrics();
     expect(scrape).toContain(`${OPS}{op="set",outcome="quota_exceeded"} 0`);
-    expect(scrape).toContain(`${SESSION_GATE_REFUSALS}{op="getQuota"} 0`);
     expect(scrape).toContain(`${QUOTA_EXCEEDED}{ceiling="app"} 0`);
     expect(scrape).toContain(`${USER_QUOTA_UNTRACKED} 0`);
     expect(scrape).toContain(`${LATENCY}_count{op="getQuota"} 0`);
@@ -237,22 +226,14 @@ describe('re-seeding is non-destructive', () => {
     expect(handle.get).toBe(original);
   });
 
-  it('🔴 ALL FOUR counters are written BEFORE the leg that can fail', async () => {
+  it('🔴 BOTH counters are written BEFORE the leg that can fail', async () => {
     // The ordering the module comment claims, pinned as ORDER rather than as end state. The
     // end state cannot see it — `beforeAll` has already published everything, so reversing the
     // legs leaves every count correct. Measured: with a state-only assertion, moving
     // `zeroMissingLatencyChildren()` to the top of the `try` stayed green, while on a real
     // pod's first scrape that reversal plus a failing read publishes nothing at all.
     //
-    // 🔴 ALL FOUR counters — the session-gate discriminator is the fourth, and it was added as
-    // a seeding leg WITHOUT a spy here, which left exactly the hole this paragraph describes
-    // one counter wider. Moving its loop to after `zeroMissingLatencyChildren()` measured
-    // green, and on a pod's first scrape with a failing registry read that leaves its 5 series
-    // unpublished — on the one counter whose entire purpose is that `absent()` must mean "the
-    // instrument is gone". The seeder's own "all 30 counter series" claim was only proven for
-    // 25 of the 30 until this spy existed.
-    //
-    // Originally THREE, because spying only the ops one left the other two unpinned —
+    // 🔴 ALL THREE counters, because spying only the ops one left the other two unpinned —
     // including `quota_exceeded`, whose seeded zero is the one this family most needs to be
     // distinguishable from absence. With ops alone, moving the histogram leg to sit BETWEEN the
     // two counter loops measured 17/17 green while leaving `quota_exceeded` and
@@ -267,7 +248,6 @@ describe('re-seeding is non-destructive', () => {
     const opsSpy = vi.spyOn(incTarget(OPS), 'inc');
     const quotaSpy = vi.spyOn(incTarget(QUOTA_EXCEEDED), 'inc');
     const untrackedSpy = vi.spyOn(incTarget(USER_QUOTA_UNTRACKED), 'inc');
-    const sessionGateSpy = vi.spyOn(incTarget(SESSION_GATE_REFUSALS), 'inc');
     const getSpy = vi.spyOn(
       client.register.getSingleMetric(LATENCY) as unknown as { get: () => Promise<unknown> },
       'get'
@@ -279,7 +259,6 @@ describe('re-seeding is non-destructive', () => {
       const read = getSpy.mock.invocationCallOrder[0];
       for (const [label, spy] of [
         ['ops', opsSpy],
-        ['session_gate_refusals', sessionGateSpy],
         ['quota_exceeded', quotaSpy],
         ['user_quota_untracked', untrackedSpy],
       ] as const) {
@@ -287,7 +266,7 @@ describe('re-seeding is non-destructive', () => {
         expect(spy.mock.invocationCallOrder[0], label).toBeLessThan(read);
       }
     } finally {
-      for (const spy of [opsSpy, sessionGateSpy, quotaSpy, untrackedSpy, getSpy]) spy.mockRestore();
+      for (const spy of [opsSpy, quotaSpy, untrackedSpy, getSpy]) spy.mockRestore();
     }
   });
 });
@@ -305,37 +284,24 @@ describe('the seeded domain matches the service', () => {
   const SRC = path.resolve(__dirname, '../../..');
   const SERVICE_REL = 'server/services/apps/app-storage.service.ts';
   const SEEDER_REL = 'server/prom/app-block-storage.metrics.ts';
-  const ROUTER_REL = 'server/routers/apps.router.ts';
   /**
-   * The four seeded counters, each against ITS OWN writers. Each must appear exactly twice in
-   * each of them — the import and the one use. An alias or an `inc.call(…)` adds an occurrence
-   * and is caught.
+   * The three seeded counters. Each must appear exactly twice in each writer — the import and
+   * the one use. An alias or an `inc.call(…)` adds an occurrence and is caught.
    *
    * 🔴 Counted SEPARATELY, because the SUM cannot see a namespace import: dropping the symbol
    * from the named import and emitting twice via `prom.<sym>.inc(…)` is 0 + 2 = 2, the same
    * total as 1 + 1, with a wrapper-bypassing emit site present and type-clean.
    *
-   * 🔴 PER-SYMBOL WRITERS, not one shared pair, because the writers genuinely differ now. The
-   * first three are emitted from the SERVICE; `appStorageSessionGateRefusalsCounter` is emitted
-   * from the ROUTER's `enforceAppBlocksFlag` middleware and never from the service — that is
-   * the whole point of it, since the middleware refuses before the resolver runs. A shared pair
-   * would have demanded a service emit that must not exist.
-   *
    * NOT "every counter behind a typed wrapper": only `countStorageOutcome` and
-   * `countQuotaExceeded` exist. `appStorageUserQuotaUntrackedCounter` and
-   * `appStorageSessionGateRefusalsCounter` are each emitted RAW at one site, so for those two
-   * this is a single-emit-site ledger rather than a wrapper-bypass guard. That distinction is
-   * the selection criterion a future author applies to a fifth counter — and it is why the
-   * session-gate counter is ledgered here at all: one raw emit site is exactly the shape the
-   * untracked counter was admitted on.
+   * `countQuotaExceeded` exist. `appStorageUserQuotaUntrackedCounter` is emitted RAW at one
+   * site, so for it this is a single-emit-site ledger rather than a wrapper-bypass guard. That
+   * distinction is the selection criterion a future author applies to a fourth counter.
    */
-  const LEDGERED_WRITERS = {
-    appStorageOpsCounter: [SERVICE_REL, SEEDER_REL],
-    appStorageQuotaExceededCounter: [SERVICE_REL, SEEDER_REL],
-    appStorageUserQuotaUntrackedCounter: [SERVICE_REL, SEEDER_REL],
-    appStorageSessionGateRefusalsCounter: [ROUTER_REL, SEEDER_REL],
-  } as const;
-  const LEDGERED_SYMBOLS = Object.keys(LEDGERED_WRITERS) as Array<keyof typeof LEDGERED_WRITERS>;
+  const LEDGERED_WRITERS = [
+    'appStorageOpsCounter',
+    'appStorageQuotaExceededCounter',
+    'appStorageUserQuotaUntrackedCounter',
+  ] as const;
   /**
    * 🔴 PREFIX-RELATIVE declared names, not the `civitai_app_`-prefixed wire names. A third
    * reach-path exists that names neither the symbol nor the full name: the HMR-safe registrars
@@ -359,65 +325,10 @@ describe('the seeded domain matches the service', () => {
     'block_storage_ops_total',
     'block_storage_quota_exceeded_total',
     'block_storage_user_quota_untracked_total',
-    'block_storage_session_gate_refusals_total',
   ] as const;
-  const REACH_KEYS = [...LEDGERED_SYMBOLS, ...DECLARED_NAMES] as const;
-  /**
-   * Comments stripped, so this guard is about reachability and never about wording.
-   *
-   * 🔴 ONE ALTERNATION, NOT TWO CHAINED REPLACES, AND THE ORDER WAS A LIVE HOLE. Stripping
-   * block comments FIRST lets a block-comment OPENER sitting inside a `//` LINE comment open a
-   * pseudo block comment that runs to the next real block-comment CLOSER — swallowing every
-   * line of code between them. The span is NOT local: measured on the service, a single
-   * inserted line comment carrying an UNTERMINATED block-comment opener swallowed roughly **75
-   * non-blank lines over a ~155-line span** — about **19x** the "four" an earlier version of
-   * this paragraph claimed, which also contradicted the mechanism sentence directly above it.
-   * (A later version said "two orders of magnitude", which is ~100x and was wrong in the
-   * opposite direction, in the same sentence as the 75 that refutes it. 75/4 is 18.75.)
-   *
-   * ⚠️ NO ABSOLUTE BEFORE/AFTER LINE TOTALS ARE QUOTED, DELIBERATELY. A previous revision gave
-   * a specific pair and it was not reproducible: the totals depend on the exact text and
-   * position of the inserted comment, so two people measuring "the same" mutant from this
-   * paragraph got different totals and the figure read as wrong rather than as
-   * fixture-dependent. "A line or two" understated that — as the opener note below shows, the
-   * wrong comment text changes the delta from 75 to 0, not by a line or two. The DELTA and the direction are the stable, reproducible part; if you
-   * need the absolutes, measure them from the recipe below and record the inserted text with
-   * them.
-   *
-   * It takes TWO mutants to blind both flat-zero loops below, and an earlier version claimed
-   * one did — so they are separated here, each measured. For both: insert at the service's
-   * REVOKED-INSTANCE refusal (`countStorageOutcome(op, 'unauthorized')` in the revocation
-   * branch of `resolveStorageContext`), the line comment FIRST and the emit second.
-   *
-   * 🔴 THE COMMENT'S OPENER MUST BE UNTERMINATED ON ITS OWN LINE, and omitting that from this
-   * recipe was its own defect — because the NATURAL glob to reach for closes itself. Measured:
-   * a comment ending in a bare `**` swallows (delta 75, the arm goes 1 hit to 0), while one
-   * ending `**` + `/` + `*.ts` contains a COMPLETE empty block comment, so nothing is swallowed
-   * at all — delta 0, the arm stays at 1, and a reader following the recipe exactly would
-   * measure that the hole does not exist. That is the worst possible outcome for a paragraph
-   * whose job is to make the hole reproducible, so it is stated rather than implied.
-   *
-   * Control worth running: reversing the two lines puts the emit AHEAD of the swallow, where it
-   * is still counted and nothing is blinded — which shows the SPAN and not the file is what
-   * matters.
-   *   - second line `appStorageSessionGateRefusalsCounter.inc({ op })` → the SYMBOL arm of the
-   *     universal-half loop goes 1 hit to 0. Declared-name hits are 0 in BOTH arms, so the
-   *     names loop was never at 1 for this mutant.
-   *   - second line `getSingleMetric('<the wire name>').inc({ op })` → the DECLARED-NAME loop
-   *     goes 1 to 0 instead.
-   * Either way the direction is the same, which is what makes this aligned exactly with the
-   * hazard: a swallow can only ever help an `expect(...).toBe(0)`, and both loops are that
-   * shape, while a swallow inside a DECLARED writer's cell fails loudly against its expected 1.
-   *
-   * The alternation fixes it by precedence: scanning left to right, at a `//` position the
-   * block-comment branch cannot match, so an opener inside that line is consumed as
-   * line-comment text. Controls measured both ways — on a clean tree the two forms give
-   * identical results, so this buys the hole and costs no false positive.
-   *
-   * (Deliberately described rather than spelled: writing the opener literally here would end
-   * this very docblock. The same hazard the `DECLARED_NAMES` block below records about itself.)
-   */
-  const codeOf = (text: string) => text.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
+  const REACH_KEYS = [...LEDGERED_WRITERS, ...DECLARED_NAMES] as const;
+  /** Comments stripped, so this guard is about reachability and never about wording. */
+  const codeOf = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
   const SERVICE = path.join(SRC, 'server/services/apps/app-storage.service.ts');
   const service = () => fs.readFileSync(SERVICE, 'utf8');
 
@@ -476,7 +387,7 @@ describe('the seeded domain matches the service', () => {
       expect(src, `countStorageFault('${op}', …)`).toContain(`countStorageFault('${op}'`);
     }
 
-    // 🔴 The histogram's `op` axis carries 65 of the 95 seeded series. Paired PER PROCEDURE,
+    // 🔴 The histogram's `op` axis carries 65 of the 90 seeded series. Paired PER PROCEDURE,
     // not per file: a whole-file `toContain` cannot see a SWAP, and swapping the `op` labels on
     // two `startTimer` calls leaves both literals present — measured, it survived. A swap is
     // the same mislabel the resolver anchoring above exists to catch, on the bigger axis.
@@ -504,23 +415,18 @@ describe('the seeded domain matches the service', () => {
     }
   });
 
-  it('🔴 exactly three files under src/ name these counters in CODE today — every case above assumes that scope', () => {
+  it('🔴 exactly two files under src/ name these counters in CODE today — every case above assumes that scope', () => {
     // 🔴 "today", not "can": this is a statement about the CURRENT tree, not a decidable
     // universal. Two residual reaches pass — `getSingleMetric(FAMILY + 'ops_total')` built by
     // concatenation, and a template-literal metric name — so the set is a ratchet on what is
     // there, not a proof that nothing else could get a handle.
     // Matched on CODE, not raw text. The raw-text version put two documentation files in the
-    // set — `block-token-access.service.ts` names the symbol in a docstring, and
-    // `apps.router.ts` then named the metric only in prose — so an ordinary reword in either,
-    // touching no code and no counter, failed this case with `expected [ …(3) ] to deeply equal
-    // [ …(4) ]` and named neither the file nor the cause. Code-matching removes that entirely
-    // AND widens the guard: a first real emit in a doc file enters the set and trips the
-    // membership assertion, where the raw version only caught a symbol-named one. 🔴 That is
-    // no longer hypothetical for `apps.router.ts`: it became a REAL writer when the
-    // session-gate counter landed, and is in the set on its code rather than its prose. Its
-    // COMMENTS still name two of these keys and are still stripped — two, not three: the other
-    // two occurrences in that file are code (the import and the emit), which is exactly the
-    // distinction this paragraph is about.
+    // set — `block-token-access.service.ts` names the symbol in a docstring, `apps.router.ts`
+    // names the metric in the operator contract this PR corrected — so an ordinary reword in
+    // either, touching no code and no counter, failed this case with `expected [ …(3) ] to
+    // deeply equal [ …(4) ]` and named neither the file nor the cause. Code-matching removes
+    // that entirely AND widens the guard: a first real emit in a doc file enters the set and
+    // trips the membership assertion, where the raw version only caught a symbol-named one.
     //
     // Spelling-based predicates were tried and are insufficient on their own:
     // `/appStorageOpsCounter\s*\.inc/` is walked by `const c = …; c.inc(…)`, by
@@ -552,7 +458,7 @@ describe('the seeded domain matches the service', () => {
             const rel = path.relative(SRC, full);
             reaching.push(rel);
             const imports = (code.match(/import\s[\s\S]*?from\s*'[^']*';?/g) ?? []).join('\n');
-            for (const sym of LEDGERED_SYMBOLS) {
+            for (const sym of LEDGERED_WRITERS) {
               const re = new RegExp(`\\b${sym}\\b`, 'g');
               const total = (code.match(re) ?? []).length;
               perSymbolImports[sym] ??= {};
@@ -565,73 +471,19 @@ describe('the seeded domain matches the service', () => {
       }
     };
     walk(SRC);
-    expect(reaching.sort()).toEqual([SEEDER_REL, SERVICE_REL, ROUTER_REL].sort());
+    expect(reaching.sort()).toEqual([SEEDER_REL, SERVICE_REL].sort());
 
-    // All FOUR counters. The asymmetry was the gap: `quota_exceeded` is the one whose typo is
+    // All THREE counters. The asymmetry was the gap: `quota_exceeded` is the one whose typo is
     // worse than absence — a seeded zero that reads as "no app has hit a ceiling" while real
     // refusals accumulate elsewhere — yet it had no ledger at
     // all. A raw `appStorageQuotaExceededCounter.inc({ …, ceiling: 'User' })` replacing a
     // wrapper call left typecheck at 4 errors and the suite green, because
     // `registerCounterWithLabels` parameterises label NAMES only and prom-client types a label
     // VALUE as `string | number`, so bypassing the helper violates no type.
-    for (const sym of LEDGERED_SYMBOLS) {
-      for (const rel of LEDGERED_WRITERS[sym]) {
+    for (const sym of LEDGERED_WRITERS) {
+      for (const rel of [SERVICE_REL, SEEDER_REL]) {
         expect(perSymbolImports[sym]?.[rel], `${sym} imported once in ${rel}`).toBe(1);
         expect(perSymbolUses[sym]?.[rel], `${sym} used once in ${rel}`).toBe(1);
-      }
-    }
-
-    // 🔴 THE UNIVERSAL HALF, AND IT IS NOT OPTIONAL — the map above is EXISTENTIAL, and on its
-    // own it is weaker than the flat array it replaced. The flat array forced every ledgered
-    // symbol to appear exactly once in BOTH files; the map only pins the pairs it declares, so
-    // an emit of symbol X from a file that is a legitimate writer of symbol Y is asserted
-    // NOWHERE. The membership check above cannot carry it either, because admitting the router
-    // as a member is precisely what stopped a stray emit there from growing `reaching`.
-    //
-    // MEASURED, both arms green before this loop existed:
-    //   - `appStorageSessionGateRefusalsCounter.inc({ op })` added at the service's
-    //     revoked-instance refusal — a SUBJECT-side emit of the session-gate series, which
-    //     destroys the whole discriminator — ran with the suite 114/114 green.
-    //   - a raw `appStorageOpsCounter.inc({ op, outcome })` inside `apps.router.ts`, bypassing
-    //     `countStorageOutcome`'s type gate, is the wrapper-bypass class this case's own
-    //     comment says it exists to catch.
-    // The first is why this matters most: the exposed `help` string asserts "A middleware
-    // refusal moves ONLY this series", and a service-side emit makes that sentence false while
-    // every behavioural case stays green. Counted, and narrowed to the only figure that bears
-    // on the argument after two earlier versions of this sentence got loose in opposite
-    // directions — the second of them by adding a precise `ops_total` count that was itself
-    // wrong, which is why that half is simply gone rather than re-counted: of the TWELVE
-    // `outcome="unauthorized"` emit sites in the service, exactly TWO have a case asserting the
-    // session-gate series stays STILL (the mirror arm and the invalid-token case). So TEN carry
-    // no stillness assertion, which is the direction that matters here.
-    for (const sym of LEDGERED_SYMBOLS) {
-      const declared: readonly string[] = LEDGERED_WRITERS[sym];
-      for (const rel of reaching) {
-        if (declared.includes(rel)) continue;
-        expect(perSymbolImports[sym]?.[rel] ?? 0, `${sym} NOT imported in ${rel}`).toBe(0);
-        expect(perSymbolUses[sym]?.[rel] ?? 0, `${sym} NOT used in ${rel}`).toBe(0);
-      }
-    }
-
-    // 🔴 AND THE SAME COUNT OVER THE DECLARED NAMES, because the loop above keys on the SYMBOL
-    // and a string literal does not contain it. `DECLARED_NAMES` feed `REACH_KEYS`, which
-    // decides MEMBERSHIP only — useless for the three files already in `reaching`. So all three
-    // of these evaded every assertion in this file, each MEASURED green:
-    //   - `getSingleMetric('civitai_app_block_storage_session_gate_refusals_total').inc({op})`
-    //     at the service's revoked-instance refusal — the F1 mutation by a different handle;
-    //   - the same shape for `..._ops_total` inside `apps.router.ts`;
-    //   - `registerCounterWithLabels({ name: 'block_storage_session_gate_refusals_total' }).inc()`
-    //     in the service — a writable handle obtained from a declared name alone, which the
-    //     `DECLARED_NAMES` docblock above records as having shipped once already.
-    // A flat 0 needs no writer exceptions: the DECLARATIONS live in `packages/`, outside this
-    // walk, so a declared name appearing in CODE anywhere under `src/` is by definition a
-    // by-name handle. Measured on this tree: zero occurrences in all three files (every hit is
-    // a comment, and `codeOf` strips those).
-    for (const name of DECLARED_NAMES) {
-      for (const rel of reaching) {
-        const code = codeOf(fs.readFileSync(path.join(SRC, rel), 'utf8'));
-        const hits = code.split(name).length - 1;
-        expect(hits, `declared name ${name} must not appear in CODE in ${rel}`).toBe(0);
       }
     }
   });

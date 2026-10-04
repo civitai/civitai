@@ -6,16 +6,15 @@ import {
   appStorageLatencyHistogram,
   appStorageOpsCounter,
   appStorageQuotaExceededCounter,
-  appStorageSessionGateRefusalsCounter,
   appStorageUserQuotaUntrackedCounter,
 } from '../client';
 
 /**
- * NAME LEDGER for the five App Blocks KV storage metrics.
+ * NAME LEDGER for the four App Blocks KV storage metrics.
  *
  * 🔴 WHY A LEDGER AND NOT A HEURISTIC. The declared names in `../client` are
  * PREFIX-RELATIVE — the register helpers construct with `PROM_PREFIX + name` —
- * and four of them were declared already carrying `app_blocks_`, so the wire names
+ * and these four were declared already carrying `app_blocks_`, so the wire names
  * stuttered: `civitai_app_app_blocks_storage_ops_total`. That shipped and was
  * scraped for months. The sibling guard `prom-prefix-not-doubled.test.ts`
  * CANNOT see it: it rejects only a literal `PROM_PREFIX + PROM_PREFIX`, and
@@ -29,16 +28,10 @@ import {
  * literal would be green on exactly the defect this file exists to catch.
  * Importing `../client` is what performs the registrations.
  *
- * ⚠️ WHAT THIS FILE IS **NOT**. An earlier revision of this paragraph claimed this is "the
- * ONLY layer where these names are checkable at all", because every app-side consumer goes
- * through the `~/server/prom/client` shim that `src/__tests__/setup.ts` stubs wholesale. That
- * premise is true of the SHIM and false as a conclusion:
- * `src/server/prom/app-block-storage.metrics.ts` deliberately imports the handles from
- * `@civitai/telemetry/client` instead, precisely so it stays testable, and says so in its own
- * header — so both suites under `src/server/prom/__tests__/` do assert these exact wire names,
- * against the real registry and the real scrape body. This file's unique property is narrower,
- * and is the one its first case tests: it fails on family GROWTH, so a new member cannot join
- * unledgered.
+ * This is also the ONLY layer where these names are checkable at all. Every
+ * app-side consumer imports them through `~/server/prom/client`, which
+ * `src/__tests__/setup.ts` replaces wholesale with `vi.fn()` stubs — so no
+ * app-side assertion can see a metric name, correct or not.
  */
 
 // Literal, not derived from PROM_PREFIX or from the declarations. These are the
@@ -48,19 +41,6 @@ const OPS = 'civitai_app_block_storage_ops_total';
 const QUOTA_EXCEEDED = 'civitai_app_block_storage_quota_exceeded_total';
 const USER_QUOTA_UNTRACKED = 'civitai_app_block_storage_user_quota_untracked_total';
 const LATENCY = 'civitai_app_block_storage_latency_seconds';
-// The session-user gate discriminator. Ledgered here for the GROWTH property the first case
-// below tests — a sixth family member must be entered here or that case goes red — which is
-// this file's unique job and is sufficient on its own.
-//
-// ⚠️ Do NOT justify this entry as "the only place the exposed string is pinned". That was an
-// earlier wording and it is false: the two suites under `src/server/prom/__tests__/` pin this
-// same wire name against the real registry and the real scrape body. The mechanism is NOT that
-// they import the telemetry package themselves — they import `prom-client` plus the module under
-// test — it is that `@civitai/telemetry/client` is never stubbed (`src/__tests__/setup.ts`
-// replaces only the `~/server/prom/client` shim), so the seeder they exercise holds the REAL
-// handles and the default registry carries the real names. Each of the three pins is
-// independent; none is redundant.
-const SESSION_GATE_REFUSALS = 'civitai_app_block_storage_session_gate_refusals_total';
 
 /** The pre-fix stuttering spellings. Retired 2026-10-02; must never come back. */
 const OLD_NAMES = [
@@ -71,36 +51,25 @@ const OLD_NAMES = [
 ];
 
 describe('App Blocks storage metric names', () => {
-  it('exposes exactly these five names on the default registry', () => {
-    for (const name of [
-      OPS,
-      SESSION_GATE_REFUSALS,
-      QUOTA_EXCEEDED,
-      USER_QUOTA_UNTRACKED,
-      LATENCY,
-    ]) {
+  it('exposes exactly these four names on the default registry', () => {
+    for (const name of [OPS, QUOTA_EXCEEDED, USER_QUOTA_UNTRACKED, LATENCY]) {
       expect(promClient.register.getSingleMetric(name), name).toBeDefined();
     }
 
-    // Fails on GROWTH too, not only on a rename: a sixth `block_storage_*` metric would
+    // Fails on GROWTH too, not only on a rename: a fifth `block_storage_*` metric would
     // otherwise join the family with its exposed name pinned nowhere.
     const family = promClient.register
       .getMetricsAsArray()
       .map((m) => (m as { name: string }).name)
       .filter((n) => n.startsWith('civitai_app_block_storage_'));
-    expect(family.sort()).toEqual(
-      [LATENCY, OPS, QUOTA_EXCEEDED, SESSION_GATE_REFUSALS, USER_QUOTA_UNTRACKED].sort()
-    );
+    expect(family.sort()).toEqual([LATENCY, OPS, QUOTA_EXCEEDED, USER_QUOTA_UNTRACKED].sort());
   });
 
-  it('the exported handles ARE those five metrics — not same-named strangers', () => {
+  it('the exported handles ARE those four metrics — not same-named strangers', () => {
     // Pins handle -> name. Without this, the case above stays green if someone
     // registers these names from somewhere else while the handles the service
     // actually calls `.inc()` on keep stuttering.
     expect((appStorageOpsCounter as unknown as { name: string }).name).toBe(OPS);
-    expect((appStorageSessionGateRefusalsCounter as unknown as { name: string }).name).toBe(
-      SESSION_GATE_REFUSALS
-    );
     expect((appStorageQuotaExceededCounter as unknown as { name: string }).name).toBe(
       QUOTA_EXCEEDED
     );
@@ -135,7 +104,6 @@ describe('App Blocks storage metric names', () => {
         ).labelNames ?? []),
       ].sort();
     expect(declared(OPS)).toEqual(['op', 'outcome']);
-    expect(declared(SESSION_GATE_REFUSALS)).toEqual(['op']);
     expect(declared(QUOTA_EXCEEDED)).toEqual(['app_block_id', 'ceiling']);
     expect(declared(USER_QUOTA_UNTRACKED)).toEqual(['app_block_id']);
     expect(declared(LATENCY)).toEqual(['op']);

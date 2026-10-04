@@ -14,8 +14,6 @@ import {
   setAppStorageValue,
 } from '~/server/services/apps/app-storage.service';
 import { middleware, publicProcedure, router } from '~/server/trpc';
-import { appStorageSessionGateRefusalsCounter } from '~/server/prom/client';
-import type { AppStorageOp } from '~/server/prom/app-block-storage.metrics';
 
 /**
  * The postMessage-BRIDGE adapter for per-viewer app storage.
@@ -44,72 +42,27 @@ import type { AppStorageOp } from '~/server/prom/app-block-storage.metrics';
  */
 
 /**
- * The SESSION-user capability gate. Evaluates `app-blocks-enabled` against `ctx.user` —
- * the browser session on the host page — and runs BEFORE the resolver, so before any
- * block-token verification and before any `AppBlock` lookup.
+ * The SESSION-user capability gate: `app-blocks-enabled` evaluated against `ctx.user` — the
+ * browser session on the host page — BEFORE the resolver, so before any block-token
+ * verification and before any `AppBlock` lookup.
  *
- * 🔴 THIS IS ONE OF TWO GATES ON THIS PATH THAT THROW A BYTE-IDENTICAL ERROR, AND THE
- * COUNTER BELOW IS THE ONLY THING THAT TELLS THEM APART — SERVER-SIDE ONLY. Nothing in the
- * response does, deliberately: that is a behaviour change needing product sign-off, and
- * existing tests assert the exact string. The other gate is
- * `assertAppBlocksEnabledForTokenUser` in `~/server/services/apps/app-storage.service`,
- * which gates the same capability against the block token's SUBJECT. Both throw
- * `UNAUTHORIZED: 'Apps are not enabled'`; both map to HTTP 401 with the same
- * `error.data.code` and `error.data.path`; neither sets a `cause`, and
- * `~/server/trpc/error-formatter` surfaces nothing else at 401 (`getClientSafeError`
- * fires only at `status >= 500 && status !== 503`). So the response cannot distinguish
- * them — which cost a real debugging session: a token-authenticated call was read as
- * proof the app did not exist server-side, when the refusal was THIS gate and the token's
- * scopes were never consulted.
+ * 🔴 ITS MESSAGE IS DELIBERATELY UNIQUE AND MUST STAY UNIQUE. The storage path has a SECOND
+ * capability gate — `assertAppBlocksEnabledForTokenUser` in
+ * `~/server/services/apps/app-storage.service`, on the block token's SUBJECT — and the two
+ * used to throw a byte-identical `UNAUTHORIZED: 'Apps are not enabled'` with no `cause`.
+ * `~/server/trpc/error-formatter` surfaces nothing else at 401 (`getClientSafeError` fires
+ * only at `status >= 500 && status !== 503`), so a 401 on this path could not be attributed
+ * to either gate. The message is now the discriminator, per this repo's own convention for
+ * the shape — `~/server/services/blocks/user-settings.service`: "If you add another refusal
+ * of this shape, give it text no other one uses". Do not reuse this string, and do not
+ * re-spell it to match the subject gate.
  *
- * 🔴 WHAT THE COUNTER SEPARATES, AND WHAT IT DOES NOT. A refusal here increments
- * `civitai_app_block_storage_session_gate_refusals_total{op}` and never
- * `..._ops_total`, because the resolver — where every `countStorageOutcome` lives — does
- * not run. A subject-gate refusal is the mirror: `..._ops_total{outcome="unauthorized"}`
- * moves and this series does not. That pair is the whole discriminator.
+ * Queries AND mutations refuse: anything else gives the block a misleading-success path. The
+ * block already gates its own UI on host signals, so a clean UNAUTHORIZED is fine. (A
+ * `type === 'query'` branch here used to throw an error byte-identical to the fall-through,
+ * so its two arms shared one observable outcome; removed.)
  *
- * It does NOT narrow which refusal inside the resolver fired: `outcome="unauthorized"` is
- * emitted from TWELVE sites in `app-storage.service.ts` (counted, not estimated), so the
- * subject gate shares it with eleven others — bad token, revoked instance, missing scope,
- * unhydratable subject, anon write, and more. Nor is this the only producer of the string:
- * `'Apps are not enabled'` is THROWN from six sites across five files, and SERVED — not
- * thrown — by twelve REST handlers under `src/pages/api/`, ELEVEN of them at a hardcoded
- * HTTP 503. This counter attributes exactly one of the six, on one of the two storage
- * transports; the REST twins under `/api/v1/blocks/app-storage/` never run this middleware.
- *
- * 🔴 SO THE STATUS NARROWS, BUT NOT TO A THROW SITE — and two earlier revisions of this
- * sentence were wrong in OPPOSITE directions, first claiming a 401 implied a throw site, then
- * that it narrowed nothing. Measured: 503 ⇒ one of the eleven hardcoding handlers, so neither
- * gate. 401 ⇒ SEVEN candidates, not six — the twelfth REST handler,
- * `src/pages/api/v1/blocks/me.ts`, derives its status from the `TRPCError` it catches and so
- * SERVES this string at 401, for two different underlying refusals, one of which carries an
- * entirely different message at its own throw site and is discarded by that route. This
- * counter is silent there.
- *
- * 🔴 AND THE NAME IS SHARED BY THREE DIFFERENT MIDDLEWARES — do not assume they behave
- * alike, and note none of the three is substitutable for another. This one is a FACTORY
- * (`(op) => middleware(...)`); the other two are bare `middleware` values. `blocks.router.ts`'s
- * additionally behaves differently — on a query it falls through with
- * `next({ ctx: { _appBlocksDisabled: true } })` instead of throwing — and
- * `app-listings.router.ts`'s is its body minus that fall-through, i.e. the same hard-throw
- * branch as here. Only this one emits the counter.
- *
- * 🔴 `op` IS PASSED, NOT DERIVED. The middleware's `path` is not a stable spelling of the
- * op — it carries whatever router prefix the procedure is mounted under — so the op is a
- * code-owned argument type-checked against `AppStorageOp` at each of the five call sites,
- * rather than a string parsed out of `path` with a fallback bucket.
- *
- * The refusal covers queries AND mutations: anything else gives the block a
- * misleading-success path. The block already gates its own UI on host signals, so a clean
- * UNAUTHORIZED is fine. (There used to be a `type === 'query'` branch here throwing a
- * byte-identical error to the fall-through — no `cause`, no different code, no different
- * message — so it produced no outcome a caller or an operator could tell apart. Removed:
- * a branch whose two arms share one observable outcome reads as a behavioural difference
- * that is not there. The sibling middleware in `blocks.router.ts` is where a query genuinely
- * diverges — it falls through with a flag on the context instead of throwing — which is
- * probably where this shape was copied from.)
- *
- * NOT fail-closed on an anon viewer, and deliberately so: these are `publicProcedure`s, so
+ * NOT fail-closed on an anon viewer, deliberately: these are `publicProcedure`s, so
  * `ctx.user` may be undefined and `isAppBlocksEnabled` then performs a GLOBAL eval. Flipt
  * answers an unmatched rollout with the flag's own base `enabled` value, so that branch
  * refuses today only because `app-blocks-enabled` is base-`false`, and would ADMIT at a
@@ -117,12 +70,13 @@ import type { AppStorageOp } from '~/server/prom/app-block-storage.metrics';
  * `~/server/services/__tests__/app-blocks-flag.base-enabled-flip.test.ts`; the service's
  * subject gate null-checks explicitly for exactly this reason.
  */
-const enforceAppBlocksFlag = (op: AppStorageOp) =>
-  middleware(async ({ ctx, next }) => {
-    if (await isAppBlocksEnabled({ user: ctx.user })) return next();
-    appStorageSessionGateRefusalsCounter.inc({ op });
-    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps are not enabled' });
+const enforceAppBlocksFlag = middleware(async ({ ctx, next }) => {
+  if (await isAppBlocksEnabled({ user: ctx.user })) return next();
+  throw new TRPCError({
+    code: 'UNAUTHORIZED',
+    message: 'session user does not have apps enabled',
   });
+});
 
 /**
  * `blockToken` rides INSIDE the input on this transport; on REST it rides in the
@@ -140,7 +94,7 @@ export const appsStorageRouter = router({
    * defaults without a 401 round-trip.
    */
   get: publicProcedure
-    .use(enforceAppBlocksFlag('get'))
+    .use(enforceAppBlocksFlag)
     .input(blockTokenInput.merge(appStorageKeyInput))
     .query(async ({ input }) => getAppStorageValue(input.blockToken, input.key)),
 
@@ -152,12 +106,12 @@ export const appsStorageRouter = router({
    * to scope writes to.
    */
   set: publicProcedure
-    .use(enforceAppBlocksFlag('set'))
+    .use(enforceAppBlocksFlag)
     .input(blockTokenInput.merge(appStorageSetInput))
     .mutation(async ({ input }) => setAppStorageValue(input.blockToken, input.key, input.value)),
 
   delete: publicProcedure
-    .use(enforceAppBlocksFlag('delete'))
+    .use(enforceAppBlocksFlag)
     .input(blockTokenInput.merge(appStorageKeyInput))
     .mutation(async ({ input }) => deleteAppStorageValue(input.blockToken, input.key)),
 
@@ -168,7 +122,7 @@ export const appsStorageRouter = router({
    * `nextCursor` is undefined when fewer than `limit` rows came back.
    */
   list: publicProcedure
-    .use(enforceAppBlocksFlag('list'))
+    .use(enforceAppBlocksFlag)
     .input(blockTokenInput.merge(appStorageListInput))
     .query(async ({ input }) => listAppStorageKeys(input.blockToken, input)),
 
@@ -202,7 +156,7 @@ export const appsStorageRouter = router({
    * scope each number describes.
    */
   getQuota: publicProcedure
-    .use(enforceAppBlocksFlag('getQuota'))
+    .use(enforceAppBlocksFlag)
     .input(blockTokenInput)
     .query(async ({ input }) => getAppStorageQuota(input.blockToken)),
 });

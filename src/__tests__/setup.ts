@@ -272,23 +272,6 @@ vi.mock('~/server/prom/client', () => ({
   // App-Blocks W4 KV storage metrics (apps.router). promMetricStub() covers the
   // .inc()/.labels()/.observe()/.startTimer() surface these tests exercise.
   appStorageOpsCounter: promMetricStub(),
-  // The session-user gate discriminator (`enforceAppBlocksFlag` in apps.router).
-  //
-  // 🔴 DO NOT reason about this one from "the call site has no try/catch". An earlier revision
-  // of this comment did, and concluded the omission "fails LOUDLY" — which is false, and false
-  // in the reassuring direction. tRPC wraps EVERY middleware in a catch
-  // (`callRecursive` in @trpc/server 11.17.0 funnels any throw through
-  // `getTRPCErrorFromUnknown`), so with this entry missing the refusal still arrives as a
-  // `TRPCError` — just `INTERNAL_SERVER_ERROR` instead of `UNAUTHORIZED`, wrapping vitest's
-  // own missing-export Proxy throw (`[vitest] No "…" export is defined on the "…" mock`), which
-  // is the mechanism the author-fee block above already records. Measured, both arms.
-  //
-  // So every case asserting only `rejects.toBeInstanceOf(TRPCError)` stays GREEN — which is
-  // exactly the author-fee failure mode documented 70 lines above. What actually goes red is
-  // a suite that pins the CODE/MESSAGE, or one that reads this counter's `.inc` through
-  // `vi.mocked` (that throws at the property access). `apps.router.storage.test.ts` does both;
-  // nothing guarantees the next suite will.
-  appStorageSessionGateRefusalsCounter: promMetricStub(),
   appStorageQuotaExceededCounter: promMetricStub(),
   appStorageUserQuotaUntrackedCounter: promMetricStub(),
   appStorageLatencyHistogram: promMetricStub(),

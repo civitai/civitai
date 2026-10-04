@@ -1,11 +1,8 @@
-// Publishes the five App Blocks KV storage metrics at 0.
+// Publishes the four App Blocks KV storage metrics at 0.
 //
 // prom-client materialises a child only on its first inc()/observe(), so a labelled counter
 // that has never fired exposes no series — making "no app has hit a ceiling" and "the
-// instrument is not wired" the same observation. Two of the original four read that way in
-// production, which is why this exists. The fifth member — the session-user gate discriminator
-// `appStorageSessionGateRefusalsCounter` — was added for the same reason and is seeded here on
-// the same rule; "two of the four" is history, not the current count.
+// instrument is not wired" the same observation. Two of the four read that way in production.
 //
 // Imports the handles from `@civitai/telemetry/client` rather than the `~/server/prom/client`
 // shim, matching `external-moderation.metrics.ts`: the shim builds the pg pool gauges at module
@@ -14,7 +11,6 @@ import {
   appStorageLatencyHistogram,
   appStorageOpsCounter,
   appStorageQuotaExceededCounter,
-  appStorageSessionGateRefusalsCounter,
   appStorageUserQuotaUntrackedCounter,
 } from '@civitai/telemetry/client';
 
@@ -84,24 +80,6 @@ export async function seedAppBlockStorageMetrics(): Promise<void> {
       appStorageOpsCounter.inc({ op, outcome }, 0);
     }
 
-    // 🔴 SEEDED, AND THE RULE BLOCK BELOW IS WHY — read it before "simplifying" this loop
-    // away. The split that decides seeding is BOUNDED-vs-UNBOUNDED label domain, not
-    // "counters that fire often". This one's only label is `op` over the same closed
-    // `APP_STORAGE_OPS` union as the counter above, so a real refusal moves an EXISTING
-    // series 0→N and `increase()` is correct — the same reader `ops_total` wants.
-    //
-    // That symmetry is the point, not a nicety. This counter is only ever read AGAINST
-    // `ops_total` on a shared `op`: a session-gate refusal moves this and leaves
-    // `ops_total` still, a subject-gate refusal does the mirror. Leaving one half of a
-    // deliberately-correlated pair on `max_over_time` and the other on `increase()` is how
-    // that read goes wrong under pressure, which is the opposite of what the pair is for.
-    //
-    // All five children are genuinely reachable: the gate runs on every one of the five
-    // procedures, so none of these is a zero no code path can move.
-    for (const op of APP_STORAGE_OPS) {
-      appStorageSessionGateRefusalsCounter.inc({ op }, 0);
-    }
-
     // 🔴 `app_block_id` is deliberately OMITTED, not filled with a placeholder. Its domain is
     // unbounded, so there is nothing to enumerate; prom-client accepts a partial label set and
     // drops the unsupplied label, giving one row per `ceiling` whose `app_block_id` is empty.
@@ -115,7 +93,7 @@ export async function seedAppBlockStorageMetrics(): Promise<void> {
 
     // Last because this is the only leg that AWAITS, and so the only one that can reject — the
     // `a failing latency read costs the series, never the scrape` case drives exactly that.
-    // With it last, a failing read still leaves all 30 counter series published. This is about
+    // With it last, a failing read still leaves all 25 counter series published. This is about
     // failure ORDER only: it is NOT a claim that the histogram goes unseeded, which
     // `zeroMissingLatencyChildren` above contradicts by publishing a zeroed child per op.
     //
@@ -125,11 +103,6 @@ export async function seedAppBlockStorageMetrics(): Promise<void> {
     // `ops_total` — all 22 children are seeded at 0 above and both labels are closed unions, so
     // a real emit moves an EXISTING series 0→N. `increase()` is correct here, and strictly more
     // sensitive than `max_over_time`.
-    //
-    // `session_gate_refusals_total` — SAME CASE, and it is seeded for that reason rather than
-    // because it fires often: its only label `op` is the same closed union, so all 5 children
-    // are seeded above and `increase()` is correct. It is read AGAINST `ops_total` on a shared
-    // `op`, so matching readers is what makes the pair legible; see the seeding loop's own note.
     //
     // `quota_exceeded_total` / `user_quota_untracked_total` — `app_block_id` is unbounded, so a
     // real refusal creates a NEW child that materialises AT 1. `increase()` cannot see a 0→1

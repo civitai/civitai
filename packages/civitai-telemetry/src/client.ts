@@ -659,136 +659,16 @@ export const sysredisSentinelClientErrorsCounter = registerSysredisCounter({
 
 // App Blocks KV datastore (op ∈ get|set|delete|list|getQuota; outcome ∈ ok|unauthorized|…).
 //
-// 🔴 These five names are PREFIX-RELATIVE — do NOT re-add `app_blocks_`. The helpers prepend
+// 🔴 These four names are PREFIX-RELATIVE — do NOT re-add `app_blocks_`. The helpers prepend
 // PROM_PREFIX, so a declared `app_blocks_*` stutters into `civitai_app_app_blocks_*`, which is
-// what shipped. Exposed: `civitai_app_block_storage_{ops_total,session_gate_refusals_total,
-// quota_exceeded_total,user_quota_untracked_total,latency_seconds}`, in the
-// `civitai_app_block_*` family the rest of App Blocks already uses. Pinned by
-// `__tests__/app-block-storage-metric-names.test.ts`, which fails on GROWTH as well as on a
-// rename — a sixth member must be ledgered there.
-// All five are seeded to 0 by `src/server/prom/app-block-storage.metrics.ts`.
+// what shipped. Exposed: `civitai_app_block_storage_{ops_total,quota_exceeded_total,
+// user_quota_untracked_total,latency_seconds}`, in the `civitai_app_block_*` family the rest of
+// App Blocks already uses. Pinned by `__tests__/app-block-storage-metric-names.test.ts`.
+// Seeded to 0 by `src/server/prom/app-block-storage.metrics.ts`.
 export const appStorageOpsCounter = registerCounterWithLabels({
   name: 'block_storage_ops_total',
   help: 'App Blocks KV datastore tRPC operations',
   labelNames: ['op', 'outcome'] as const,
-});
-
-// App Blocks KV requests refused by the SESSION-user capability gate — the
-// `enforceAppBlocksFlag` middleware in `src/server/routers/apps.router.ts`, which runs
-// before the resolver and therefore before any token verification or app lookup.
-//
-// 🔴 WHY A SEPARATE SERIES: TWO GATES, ONE BYTE-IDENTICAL REFUSAL. The storage path
-// refuses with `UNAUTHORIZED: 'Apps are not enabled'` from two places — that middleware
-// (evaluating the browser SESSION user, `ctx.user`) and
-// `assertAppBlocksEnabledForTokenUser` in `app-storage.service.ts` (evaluating the block
-// token's SUBJECT). Same code, same message, same HTTP 401, same `error.data.code` and
-// `error.data.path`, and neither sets a `cause` the error formatter could surface — so
-// NOTHING in the response distinguished them. That cost a real debugging session: a
-// token-authenticated call was read as proof the app did not exist server-side, when the
-// refusal was the session-user gate and the token's scopes were never consulted.
-//
-// 🔴 WHAT IT SEPARATES — exactly one thing, by ABSENCE as much as by presence. A
-// middleware refusal increments THIS series and never `..._ops_total`, because the
-// resolver (where every `countStorageOutcome` lives) does not run. A subject-gate refusal
-// is the mirror: `..._ops_total{outcome="unauthorized"}` moves and this series does not.
-// Read the PAIR on a shared `op`.
-//
-// 🔴 WHAT IT DOES NOT SEPARATE, and the numbers are measured, not estimated. It says
-// nothing about which refusal inside the resolver fired: `outcome="unauthorized"` is
-// emitted from TWELVE sites in `app-storage.service.ts`, so the subject gate shares it
-// with eleven others (bad token, revoked instance, missing scope, unhydratable subject,
-// anon write, …). Nor is this the only producer of the STRING: `'Apps are not enabled'`
-// is thrown from SIX sites across five files (`apps.router.ts`, `blocks.router.ts`,
-// `app-listings.router.ts` — twice, from two different middlewares —
-// `app-storage.service.ts`, `block-token-access.service.ts`),
-// and this counter attributes exactly one of them, on one of the two storage transports —
-// the REST twins under `/api/v1/blocks/app-storage/` never run this middleware. It also
-// carries no app, block or user label, so it attributes a MECHANISM and never a viewer:
-// prom-client retains every distinct label set in the Node heap for the process lifetime,
-// on every scraped pod. `op` is the only label, over the closed code-owned `AppStorageOp`
-// union (5 values, type-checked at every call site), chosen because it is the join key
-// against `..._ops_total{op}`.
-//
-// 🔴 HOW TO BOUND THE STRING WHEN CHASING IT. Counted: THROWN from SIX sites across five
-// files, and SERVED — not thrown — by TWELVE REST handlers under `src/pages/api/`, eleven of
-// them at a hardcoded HTTP 503.
-//
-// 🔴 THE STATUS NARROWS, BUT NOT TO A THROW SITE — and "narrows nothing" was an earlier
-// over-correction in the other direction. 503 ⇒ one of the eleven REST handlers that hardcode
-// it, so neither gate. 401 ⇒ SEVEN candidates, not six:
-// `src/pages/api/v1/blocks/me.ts` derives its status from the `TRPCError`
-// it catches, so it serves this string at 401 — and for one of its two refusals the thrown
-// message is `'runtime block token subject could not be resolved'`, deliberately made distinct
-// upstream and then discarded by that route. So a 401 plus this string may be none of the six
-// throw sites, and this counter is silent there. An earlier revision asserted 401 ⇒ a throw
-// site; in a comment whose job is to aim an investigator, that error is worse than the
-// under-count it replaced.
-//
-// 🔴 WHY NOT A NEW `outcome` VALUE ON `..._ops_total` INSTEAD — the obvious cheaper move, and
-// NOT for the two reasons that first suggest themselves. It is not that
-// `outcome="unauthorized"` is crowded (a new value such as `session_gate` would separate the
-// producers on one series perfectly well, at identical cardinality now that both are seeded),
-// and it is NOT that the pair-read needs two series — `increase(ops_total{outcome="session_gate"})`
-// against `increase(ops_total{outcome="unauthorized"})` expresses the same discrimination, so an
-// earlier version of this comment claiming otherwise was simply wrong.
-//
-// The reason that decides it is TYPE REACH. Every service emit routes through
-// `countStorageOutcome(op, outcome: AppStorageOutcome)` — and that type is the WHOLE union
-// `APP_STORAGE_OUTCOMES_ALL_OPS | APP_STORAGE_OUTCOMES_SET_ONLY`, six values, not either half
-// alone. Adding `session_gate` to either constant makes the session-gate outcome
-// TYPE-LEGAL to emit from all twelve service refusal sites — precisely the conflation this
-// counter exists to prevent. A separate counter is not forgeable from the service WITHOUT
-// FAILING A GUARD — deliberately not "unforgeable", because `tsc` cannot stop it: the detection
-// is the reach ledger in `src/server/prom/__tests__/app-block-storage.metrics.test.ts`, which
-// asserts this symbol AND its declared name have zero code occurrences there. A new outcome
-// VALUE would have no equivalent, because the type would make it legal everywhere.
-//
-// Secondary, and weaker than it sounds: `ops_total` means "storage operations that reached the
-// resolver", so a pre-resolver outcome widens that population. Measured, this repo has NO
-// in-repo consumer of `ops_total` — no dashboard, alert or recording rule, here or in the infra
-// repo — so that is an argument about future readers, not about breaking a known one.
-//
-// 🔴 WHY NOT A LOG LINE — AND NOT FOR THE REASON THE PRECEDENT GIVES, WHICH IS FALSE.
-// `civitai_app_block_post_subject_refusals_total`'s shipped help string
-// (`src/server/metrics/app-block-runtime.metrics.ts`) asserts that application-container logs
-// "are not collected" for this deployment, and three further comments in that same file give
-// it as the DECIDING reason for a design choice. Checked against the running deployment on
-// 2026-10-04, with a positive and a negative control on the query: it does not hold — this
-// app container's plain `console` output IS collected, stack frames included. Do not repeat
-// the claim; it is an availability argument resting on a condition that is not true.
-// (Figures and collection topology deliberately omitted: this repo is public, they are not
-// load-bearing for the argument, and that config is mutable — so treat this as time-scoped
-// and re-check it rather than trusting this line.)
-//
-// 🔴 THE REASON THAT DOES HOLD IS THE JOIN, NOT AVAILABILITY — and specifically NOT "there is
-// no rate to alert on", which an earlier revision of this paragraph asserted two sentences
-// after proving the logs ARE collected. A collected stream is rate-queryable. What a log line
-// cannot do is be read AGAINST `..._ops_total{op}` with one `increase()` on a shared label,
-// which is this counter's entire job: the discriminator is a PAIR of series moving in opposite
-// directions, and half a pair in a different store is not a pair. Secondary and honest: a
-// per-request line on this branch is unstructured noise in an already-busy stream.
-//
-// Separately, a server-side-only `cause` on the thrown error would not be ingested at all:
-// `src/pages/api/trpc/[trpc].ts`'s `onError` returns early for `UNAUTHORIZED` (alongside
-// FORBIDDEN / TOO_MANY_REQUESTS / SERVICE_UNAVAILABLE) ahead of its `logToAxiom` call — inside
-// that handler's `if (isProd)`, so that one is a production claim. So: a scraped counter is the
-// right surface because it JOINS, not because the alternatives are unreadable. The conflation
-// CLASS is still well documented at that precedent; its deployment claim is not — and this PR
-// corrects only the copy it would otherwise have repeated. The help string and the three
-// comment copies there are left as they are: a decision, not an oversight.
-//
-// 🔴 SEEDED, DELIBERATELY, AND THE PAIR IS WHY. All five members of this family are seeded;
-// what `src/server/prom/app-block-storage.metrics.ts` splits on BOUNDED-vs-UNBOUNDED label
-// domain is the correct READER. `op` is bounded, so all 5 children
-// are published at 0 and `increase()` is the correct reader — the same one `ops_total`
-// wants. Matching readers across a deliberately-correlated pair is the point: an unseeded
-// child materialises at 1, which `increase()` cannot see, and a half-and-half pair is how
-// the correlated read goes wrong under pressure. Seeding also makes `absent()` mean "the
-// instrument is gone" rather than "this gate has never refused".
-export const appStorageSessionGateRefusalsCounter = registerCounterWithLabels({
-  name: 'block_storage_session_gate_refusals_total',
-  help: 'App Blocks KV requests refused by the SESSION-user capability gate in the tRPC bridge middleware, before any block-token verification or app lookup. The DISCRIMINATOR for a 401 "Apps are not enabled": the per-SUBJECT capability gate inside the storage service throws a byte-identical error, so the two producers are indistinguishable from the response alone. A middleware refusal moves ONLY this series; a subject-gate refusal moves ONLY civitai_app_block_storage_ops_total{outcome="unauthorized"} — read the pair on a shared op. It does NOT separate the subject gate from the eleven other emits sharing that outcome, and carries no app or user label, so it attributes a MECHANISM, never a viewer. Zero-seeded, so read it with increase()',
-  labelNames: ['op'] as const,
 });
 
 // App Blocks KV writes refused by a storage ceiling. `ceiling` says WHICH one,
