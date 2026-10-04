@@ -16,6 +16,7 @@
 //   · the page must not scroll horizontally.
 import { chromium } from 'playwright-core';
 import { mkdirSync, writeFileSync, statSync } from 'fs';
+import { tmpdir } from 'os';
 
 const BASE = 'http://localhost:61121';
 const OUT = new URL('.', import.meta.url).pathname;
@@ -106,6 +107,7 @@ for (const r of rows) {
     ).padStart(5)} xOverflow=${r.xOverflow} box=${r.box.padEnd(10)} ${String(r.kb).padStart(4)}KB`
   );
 }
-writeFileSync(`${OUT}/index.json`, JSON.stringify(rows, null, 2));
+// Beside the PNGs would leave an untracked file in the repo after every run.
+writeFileSync(`${tmpdir()}/apps-review-detail-capture.json`, JSON.stringify(rows, null, 2));
 console.log(`\n${rows.length} shots, ${bad} failed the floor, ${total} KB total`);
 process.exit(bad === 0 ? 0 : 1);
