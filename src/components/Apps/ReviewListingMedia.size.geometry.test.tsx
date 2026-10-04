@@ -62,8 +62,9 @@ import {
  * row/review split matters is recorded on `iconBoxStyle` in `ListingMediaThumb.tsx`; what
  * matters here is that the tier caught that regression ONCE and then stopped — re-mutating it
  * at this head left all 8 files green, because the narrowest viewport any row-rendering
- * geometry TEST renders a row thumb at is 768 and the regression needs a narrower one. So the case below
- * asserts the longhands directly rather than hoping a width reproduces it: cheap, and
+ * geometry TEST renders a row thumb at is 768, and the regression needs a narrower one. So
+ * the case below asserts the longhands directly rather than hoping a width reproduces it —
+ * cheap, and
  * width-independent. Everything else about the row box's rendered geometry is unmeasured.
  */
 
@@ -141,17 +142,18 @@ const NON_SQUARE_IMAGE_DATA_URI =
  *
  * 🔴 A DEAD FIXTURE MUST NAME ITSELF, AND THE `naturalWidth` CHECK IS THE HALF THAT DOES IT.
  * On a broken image Chromium sets `complete === true` with `naturalWidth === 0`, so the `load`
- * branch is skipped and `decode()` can sit unresolved. Measured on the PINNED browser by
- * destroying the fixture's base64 payload, tests-phase time, against a 542 ms healthy
- * baseline: with the guard 985 ms, 0 timeouts, every failure naming the testid; without it
- * 15.96 s, 3 of 6 arms dying on the 15 s per-test timeout and the rest raising a bare
- * `EncodingError` that names no id. ~16x, and the real value is the NAME.
+ * branch is skipped and `decode()` can sit unresolved. Measured by destroying the fixture's
+ * base64 payload: with the guard every one of the 6 failures NAMES the testid; without it the
+ * failures are bare `EncodingError`s that name nothing, and on at least one run three arms
+ * reached the 15 s per-test timeout instead. **The name is the value here, not a number.**
  *
- * ⚠️ BROWSER-DEPENDENT, SO THE NUMBERS ARE SCOPED TO THE PIN. A review lane measured the same
- * mutation under a different Chromium and got no timeouts at all — every arm rejected through
- * `EncodingError` in about a second. Both reads are right about their own browser, which is
- * why the figures above name the one `vitest.config.mts` pins. An earlier version of this
- * paragraph claimed "75.4 s" and "each died on the timeout"; neither reproduces here.
+ * ⚠️ NO TIMING FIGURE IS QUOTED, DELIBERATELY — two earlier drafts quoted some and neither
+ * reproduced. The unguarded path is timing-dependent (a decode that hangs under load merely
+ * rejects when the box is quiet), and this repo's browser pin is not what runs here: the
+ * `vitest` config pins chromium **1200**, no 1200 build exists on a NixOS host, and the local
+ * shim maps that name onto **1228**. So every geometry number in this file was measured on a
+ * browser the pin does not name, and a wall-clock claim attributed to "the pinned browser"
+ * was wrong twice over. What survives on every revision measured is the named failure.
  *
  * ⚠️ IT CATCHES A HEADER-DEAD FIXTURE, NOT A PIXEL-DEAD ONE, and the narrower claim is the
  * true one. `naturalWidth` comes from the PNG IHDR, so corrupting only the IDAT run leaves a
@@ -163,8 +165,7 @@ const NON_SQUARE_IMAGE_DATA_URI =
  * fail in one second with a sentence, not in ninety with a timeout.
  */
 const settled = async (testId: string) => {
-  const img = document.querySelector<HTMLImageElement>(`[data-testid="${testId}"]`);
-  expect(img, `${testId} must be on screen`).not.toBeNull();
+  const img = at(testId) as HTMLImageElement;
   // A `div`'s `.complete` is `undefined` ⇒ falsy ⇒ this would await a `load` that never fires
   // and die on the test timeout with nothing naming the id. The placeholder testids in this
   // file differ from the img ones by a single path segment, so it is an easy call to misaim.
@@ -172,20 +173,19 @@ const settled = async (testId: string) => {
     img,
     `${testId} is not an <img> — a placeholder id? pass the img id instead`
   ).toBeInstanceOf(HTMLImageElement);
-  if (!img!.complete) {
+  if (!img.complete) {
     await new Promise((resolve, reject) => {
-      img!.addEventListener('load', resolve, { once: true });
-      img!.addEventListener('error', () => reject(new Error(`${testId}: fixture failed to load`)), {
+      img.addEventListener('load', resolve, { once: true });
+      img.addEventListener('error', () => reject(new Error(`${testId}: fixture failed to load`)), {
         once: true,
       });
     });
   }
   // Before `decode()`, never after — that call is the one that hangs.
-  expect(
-    img!.naturalWidth,
-    `${testId}: fixture decoded to 0x0 — corrupt data URI?`
-  ).toBeGreaterThan(0);
-  await img!.decode();
+  expect(img.naturalWidth, `${testId}: fixture decoded to 0x0 — corrupt data URI?`).toBeGreaterThan(
+    0
+  );
+  await img.decode();
   return img!;
 };
 
@@ -484,8 +484,13 @@ describe('the store icon and cover are bigger on the review page than in a queue
     // 🔴 LITERAL `basis`, NOT `${LISTING_ICON_BOX}px` — the same rule this file states for the
     // 16/9 ratio. Production derives the basis from those constants, so an expectation built
     // from them moves with any change to them: measured, `LISTING_ICON_BOX` 40→48 left the
-    // tier 102/102 green. The box sizes are pinned by the constants case at the top of this
-    // file; this arm is about the SHORTHAND, so it states the pixels it expects.
+    // tier 102/102 green.
+    //
+    // ⚠️ AND THESE TWO LITERALS ARE THE ONLY PIN ON THOSE CONSTANTS ANYWHERE. An earlier draft
+    // of this comment said the box sizes were "pinned by the constants case at the top of this
+    // file" — there is no such case, and the box arms assert `toBeCloseTo(REVIEW_ICON_BOX, 0)`,
+    // i.e. derived from the very constants at issue. Measured: changing BOTH (40→48, 96→120)
+    // reds exactly one of twelve tests — this one.
     expect(flexOf('row-icon'), 'a queue-row icon must be rigid').toEqual({
       grow: '0',
       shrink: '0',
@@ -523,10 +528,17 @@ describe('the store icon and cover are bigger on the review page than in a queue
     // deleting it) leaves the whole tier 102/102 green while removing the clamp this comment
     // calls load-bearing. Agreement proves they did not diverge; the literal proves what they
     // agree ON.
-    expect(maxWidthOf('row-icon'), 'the clamp is present, not merely shared').toBe('100%');
+    // 🔴 ANCHORED ON THE PLACEHOLDERS, the strictly stronger choice: a `div` gets no
+    // `max-width` from Tailwind preflight, so only `iconBoxStyle` can satisfy it. Anchoring an
+    // IMG would miss a DELETION (preflight keeps the img at `100%`); the two mutations differ,
+    // and only the placeholder catches both.
+    expect(maxWidthOf('row-icon-placeholder-2'), 'the row clamp really exists').toBe('100%');
     expect(maxWidthOf('row-icon-placeholder-2'), 'the row pair agrees on max-width').toBe(
       maxWidthOf('row-icon')
     );
+    // Both halves need an anchor: with only the row one, `maxWidth: size === 'review' ?
+    // 'none' : '100%'` left the whole tier 102/102 green — the same class, half-closed.
+    expect(maxWidthOf('review-icon-placeholder-2'), 'the review clamp really exists').toBe('100%');
     expect(maxWidthOf('review-icon-placeholder-2'), 'the review pair agrees on max-width').toBe(
       maxWidthOf('review-icon')
     );
@@ -565,11 +577,38 @@ describe('the store icon and cover are bigger on the review page than in a queue
     expect(cover.width).toBeCloseTo(REVIEW_COVER_W, 0);
     expect(cover.height).toBeCloseTo(REVIEW_COVER_H, 0);
   });
+
+  test('🔴 the six box constants are the numbers this page was designed around', () => {
+    // 🔴 THE ONLY LITERAL PIN ON THESE SIX. Every other assertion in this file compares a
+    // rendered box to the constant it was rendered FROM, so they all move together when a
+    // constant moves — which makes them blind to exactly the change that matters. Measured:
+    // `LISTING_COVER_W` 96→120 with `LISTING_COVER_H` 54→67 left the tier 102/102 GREEN, and
+    // the icon pair was caught only incidentally, by the `basis` literals two cases down.
+    //
+    // A box size is a product decision — a 40px row icon keeps a queue scannable; a 320px
+    // review cover is big enough to judge publisher art by — so it should cost a deliberate
+    // edit here rather than riding along with a refactor.
+    expect({ LISTING_ICON_BOX, LISTING_COVER_W, LISTING_COVER_H }, 'the queue-row boxes').toEqual({
+      LISTING_ICON_BOX: 40,
+      LISTING_COVER_W: 96,
+      LISTING_COVER_H: 54,
+    });
+    expect({ REVIEW_ICON_BOX, REVIEW_COVER_W, REVIEW_COVER_H }, 'the review-page boxes').toEqual({
+      REVIEW_ICON_BOX: 96,
+      REVIEW_COVER_W: 320,
+      REVIEW_COVER_H: 180,
+    });
+    // Both covers are 16:9, which is what makes `object-fit: cover` a crop and not a squash.
+    expect(LISTING_COVER_W / LISTING_COVER_H).toBeCloseTo(16 / 9, 1);
+    expect(REVIEW_COVER_W / REVIEW_COVER_H).toBeCloseTo(16 / 9, 1);
+  });
 });
 
 /**
  * ⚠️ THE REVIEW GALLERY IS A CONSTANT ONE COLUMN, NOT A BREAKPOINTED PAIR, and that is the
- * choice worth recording: `lg` is 1184px, so breaking there would give two columns at 1280 —
+ * choice worth recording: `lg` is 1200px on the MANTINE scale this prop resolves against
+ * (1184 is the Tailwind one; `chromeGeometry.ts` documents that collision by name), so
+ * breaking there would give two columns at 1280 —
  * identical to the modal's, i.e. invisible at exactly the width this page is used at. It has
  * never had a breakpoint; an earlier draft of this paragraph said "the gallery's breakpoint
  * was chosen so…", which described a declaration that does not exist.
@@ -577,9 +616,8 @@ describe('the store icon and cover are bigger on the review page than in a queue
 describe('the bundle screenshots are bigger on the review page than in the modal', () => {
   /** The grid Mantine rendered, and the column count it DECLARED. */
   const declaredCols = () => {
-    const shot = document.querySelector<HTMLElement>('[data-testid="apps-review-screenshot-0"]')!;
-    const grid = shot.closest('div')!.parentElement!;
-    return getComputedStyle(grid).getPropertyValue('--sg-cols').trim();
+    const grid = at('apps-review-screenshot-0').closest('div')!.parentElement!;
+    return longhand(grid, '--sg-cols');
   };
 
   test.each([

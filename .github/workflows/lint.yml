@@ -914,10 +914,10 @@ jobs:
           // is an equality against a count derived from the glob, not a hand-maintained
           // floor; until then raise both when you add to the tier.
           const MIN_FILES = 8;
-          // 80 against 102 collected. It was 10, and the TEST clause alone could not fail:
-          // 92 tests could have stopped collecting and the test term still passed (the
-          // gate is `files < MIN_FILES || tests < MIN_TESTS`, so the FILE term still caught a
-          // dropped file — the hole was in this clause, not the gate). Deliberately a
+          // It was 10, and that clause alone could not fail: 92 tests could have stopped
+          // collecting and it still passed. The GATE was not that weak — it is
+          // `files < MIN_FILES || tests < MIN_TESTS`, so the FILE term still caught a dropped
+          // file — the hole was in this clause. Deliberately a
           // fraction of current rather than a ratchet, so merging cases in a refactor does
           // not force a floor bump — but a floor that cannot fail is not conservative.
           const MIN_TESTS = 80;

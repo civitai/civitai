@@ -92,10 +92,13 @@ const iconBoxStyle = (box: number, size: ListingThumbSize): CSSProperties => ({
   // Was on the img and NOT the placeholder — the same asymmetry this object exists to stop,
   // left behind when the rest of the pair was shared.
   //
-  // ⚠️ IT IS A BOUND, NOT A WORKING CLAMP, and the honest version of that is the measured one:
-  // across `/apps/mine` (table + mobile card), the `/apps/review` queue and the review page,
-  // at eight widths down to 280px, adding it changed NO rendered dimension — the icon's
-  // containing block never falls below its box (narrowest observed 134px against a 40px box).
+  // ⚠️ IT IS A BOUND, NOT A WORKING CLAMP, and the reason is structural rather than lucky:
+  // the icon's containing block is self-sized BY the box — on the review page it measures
+  // exactly 96.00px against a 96px box at every width from 280 to 1280 — so `max-width: 100%`
+  // resolves to the box and can never bind. Measured across `/apps/mine` (table + mobile
+  // card), the `/apps/review` queue and the review page at eight widths: adding it changed no
+  // rendered dimension anywhere. (An earlier draft cited "134px against a 40px box", which is
+  // a different surface and reads as 3.35x headroom where the one this PR adds has none.)
   // It is also redundant on the img branch specifically, where Tailwind preflight already
   // ships `img { max-width: 100% }`; the placeholder is a `div` and drops to `none` without
   // it, which is the pair the parity arm reports as `expected 'none' to be '100%'`.

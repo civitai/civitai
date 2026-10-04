@@ -48,16 +48,17 @@ const FILE_HEADER_BG = 'light-dark(var(--mantine-color-gray-1), var(--mantine-co
  * thing the brief says must never happen. Pinned for the unified table by the
  * horizontal-scroll case in `src/components/Apps/reviewDiffViewer.browser.test.tsx`.
  */
-// 🔴 ANNOTATED, NOT `as const`. Measured: with `as const` a typo'd key (`bordrCollapse`)
-// typechecks CLEAN, because the object reaches `style=` as a variable so there is no
-// excess-property check and `as const` constrains the VALUES, not the key set. The annotation
-// subsumes the narrowing it was there for and catches the typo (TS2561). Same reasoning as
-// `iconBoxStyle`/`coverBoxStyle` in `ListingMediaThumb.tsx`.
-const DIFF_TABLE_STYLE: CSSProperties = {
+// 🔴 `as const satisfies`, NOT A BARE `as const` AND NOT A BARE ANNOTATION. Measured: with a
+// bare `as const` a typo'd key (`bordrCollapse`) typechecks CLEAN — the object reaches `style=`
+// as a variable, so there is no excess-property check, and `as const` constrains the VALUES
+// rather than the key set. A bare `: CSSProperties` catches the typo (TS2561) but drops the
+// deep-readonly, letting a caller assign through an object shared by both tables. `satisfies`
+// is the form that keeps both.
+const DIFF_TABLE_STYLE = {
   borderCollapse: 'collapse',
   width: 'max-content',
   minWidth: '100%',
-};
+} as const satisfies CSSProperties;
 
 /** Line-number gutter surface — fainter than the header, still distinct from the code. */
 const GUTTER_BG = 'light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-7))';
@@ -101,7 +102,7 @@ const LINE_FG: Record<DiffLineKind | 'empty', string | undefined> = {
 const FILE_MAX_HEIGHT = 420;
 
 /** The monospace cell style shared by every diff line + gutter. */
-const MONO: React.CSSProperties = {
+const MONO: CSSProperties = {
   fontFamily: 'ui-monospace, monospace',
   fontSize: 11,
   lineHeight: '18px',

@@ -41,7 +41,7 @@ const SERVICE_FILES = [
 ] as const;
 
 /**
- * User chips in the corpus that are DELIBERATELY narrow, keyed on FILE **and** owner.
+ * User chips in the corpus that are DELIBERATELY narrow, keyed on FILE, CONTAINER and OWNER.
  *
  * 🔴 A THIRD ENTRY WAS DELETED RATHER THAN RE-KEYED — which is the finding worth carrying (two
  * remain, below). It exempted the collaborator-allowlist `user.findMany`, and the key it matched on
@@ -75,7 +75,7 @@ const DELIBERATELY_NARROW: ReadonlyArray<{
     file: 'src/server/services/blocks/app-listing.service.ts',
     container: 'listingHydrateSelect',
     owner: 'user',
-    why: 'the PUBLIC store listing creator. The default path hands `SmartCreatorCard` only `{ id }` and refetches through the public `user.getCreator` proc; the `preview` path (its own `CreatorChip`) renders the chip directly, and a closed account drops out of it only INCIDENTALLY — `deleteUser` nulls `username` in the same transaction as `deletedAt`, and the chip skips username-less rows. That is the scrub doing the work, not a `deletedAt` branch, which is the same incidental-not-a-filter distinction `app-listing.service.ts` draws about its collaborator chip — and THERE it was judged not good enough, so that select carries `deletedAt` and this one still does not. Bounded, not closed: `deleteUser` is the only writer that scrubs, and the hazard is `forceUpdateUserIdentity` — a moderator endpoint whose gating is ACTOR-only, so its arbitrary `userId` matches a soft-deleted row. The self-serve writers are NOT a route, which an earlier version of this sentence got wrong in both directions: they write `username` with no `deletedAt` in the where-clause, but a closed account cannot reach them — session minting filters `deletedAt`, `isAuthed` rejects it, and the handler is self-only. Widening this select is still the fix and is still a separate change',
+    why: 'the PUBLIC store listing creator. The default path hands `SmartCreatorCard` only `{ id }` and refetches through the public `user.getCreator` proc; the `preview` path (its own `CreatorChip`) renders the chip directly, and a closed account drops out of it only INCIDENTALLY — `deleteUser` nulls `username` in the same transaction as `deletedAt`, and the chip skips username-less rows. That is the scrub doing the work, not a `deletedAt` branch, which is the same incidental-not-a-filter distinction `app-listing.service.ts` draws about its collaborator chip — and THERE it was judged not good enough, so that select carries `deletedAt` and this one still does not. Bounded, not closed. `deleteUser` is the only writer that sets `deletedAt`, and it scrubs `username` in the same transaction. Four writers set `username`; the hazard is exactly one of them, `forceUpdateUserIdentity` — a moderator endpoint whose gating is ACTOR-only, so its arbitrary `userId` matches a soft-deleted row. The other three are unreachable for a closed account, but NOT for one shared reason, which two earlier versions of this sentence got wrong in opposite directions: `updateUserById` and `completeOnboardingHandler` sit behind `isAuthed` (which rejects `user.deletedAt`) and write only to `ctx.user.id`; `assignUsername` is in the auth app, runs before a session exists so neither of those applies, and is safe structurally instead — both call sites are inside an `if (!userId)` fresh-INSERT branch, so its target row was created in the same request. Widening this select is still the fix and is still a separate change',
   },
 ] as const;
 
@@ -162,7 +162,7 @@ function judge(rel: string, chips: Chip[]): { offenders: string[]; matched: stri
   const matched: string[] = [];
   for (const chip of chips) {
     if (chip.fields.includes('deletedAt')) continue;
-    // 🔴 KEYED ON FILE **AND** OWNER. Keying on the name alone let the `user` entry —
+    // 🔴 KEYED ON FILE, CONTAINER **AND** OWNER. Keying on the name alone let the `user` entry —
     // justified for the listings table — exempt any property called `user` in any of the
     // three files, including the service this whole arc is about.
     // 🔴 AN UNRESOLVABLE CHIP IS AN OFFENDER, NEVER AN EXEMPTION. Twice now the resolver's
@@ -346,6 +346,10 @@ describe('the review user chip is one declaration', () => {
     // measured, once that entry goes the file-half coverage goes silently with it: simulating
     // the retirement and then dropping `e.file === rel` gave 4/4 green again. Deriving the
     // container and owner from the live ledger means the probe follows whatever is exempt.
+    expect(
+      DELIBERATELY_NARROW.length,
+      'the planted probes derive from the ledger, so an empty one silently tests nothing'
+    ).toBeGreaterThan(0);
     const EXEMPT = DELIBERATELY_NARROW[0];
     // 🔴 AN OWNER THE LEDGER DOES NOT NAME, in the container it DOES. Both ledger entries use
     // `owner: 'user'`, so no chip built from them can discriminate the OWNER half of the key —
@@ -398,14 +402,20 @@ describe('the review user chip is one declaration', () => {
     // own `why` says should be widened, and dropping `e.container === chip.container` goes
     // 4/4 GREEN. A probe makes the coverage a property of the test rather than of how many
     // rows the ledger happens to hold.
+    const UNLISTED = `${EXEMPT.container}Unlisted`;
+    expect(
+      DELIBERATELY_NARROW.map((e) => e.container),
+      'the container probe is only a probe while the ledger does not name it'
+    ).not.toContain(UNLISTED);
     const CONTAINER_SOURCE = `
-      const ${EXEMPT.container}Unlisted = { ${EXEMPT.owner}: { select: { id: true, username: true, image: true } } };
+      const ${UNLISTED} = { ${EXEMPT.owner}: { select: { id: true, username: true, image: true } } };
     `;
     const containerVerdict = judge(EXEMPT.file, chipsIn(EXEMPT.file, CONTAINER_SOURCE));
     expect(
       containerVerdict.offenders,
       'a narrow chip in a container the ledger does not name must still be rejected'
     ).toHaveLength(1);
+
     // ⚠️ This one is weaker than it looks on its own — `plantedFile` has no ledger entries at
     // all, so an empty `matched` is the only possible result regardless of the key. It earns
     // its place only alongside the fifth chip above, which CAN be exempted by a broken key.

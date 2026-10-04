@@ -14,9 +14,8 @@
 //   · the rendered text must not contain "Story not found" (a wrong story id),
 //   · it must be at least MIN_CHARS long (a crashed story renders Ladle's chrome only), and
 //   · the page must not scroll horizontally.
-import { chromium } from 'playwright-core';
-import { mkdirSync, writeFileSync, statSync } from 'fs';
-import { tmpdir } from 'os';
+import { chromium } from 'playwright';
+import { mkdirSync, statSync } from 'fs';
 
 const BASE = 'http://localhost:61121';
 const OUT = new URL('.', import.meta.url).pathname;
@@ -107,7 +106,5 @@ for (const r of rows) {
     ).padStart(5)} xOverflow=${r.xOverflow} box=${r.box.padEnd(10)} ${String(r.kb).padStart(4)}KB`
   );
 }
-// Beside the PNGs would leave an untracked file in the repo after every run.
-writeFileSync(`${tmpdir()}/apps-review-detail-capture.json`, JSON.stringify(rows, null, 2));
 console.log(`\n${rows.length} shots, ${bad} failed the floor, ${total} KB total`);
 process.exit(bad === 0 ? 0 : 1);
