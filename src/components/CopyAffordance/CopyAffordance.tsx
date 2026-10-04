@@ -16,10 +16,22 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
  * is literally `Copy command: …`.
  *
  * ⚠️ NO TOTAL IS STATED HERE, DELIBERATELY. Two successive comments in this family each
- * claimed a count ("not a fourth copy", then "a fifth") and each was wrong — the same shell
- * also sits outside this directory, in `Account/ApiKeyModal.tsx`, `Account/OAuthAppsCard.tsx`
- * and `Collections/CollectionEditModal.tsx`. The scope this component claims, and the only
- * scope `__tests__/copyAffordanceLedger.test.ts` enforces, is `src/components/Apps/`.
+ * claimed a count ("not a fourth copy", then "a fifth") and each was wrong, and a third
+ * attempt — an enumerated-equality ledger test over `src/components/Apps/` — was deleted
+ * rather than widened: it enforced a repo-wide convention in one of five directories, its
+ * own header conceded the wider form "would be red on arrival", and in its whole life it
+ * never went red for anything but a planted mutant.
+ *
+ * 🔴 WHAT REPLACED IT IS THIS FILE'S LOCATION AND ITS REQUIRED `label`, NOT ANOTHER GUARD.
+ * It used to live under `components/Apps/`, which is why the copies in `Account/` and
+ * `Collections/` were somebody else's problem; it is now a plain shared component, and the
+ * four `Code`-block copies that sat in `Account/ApiKeyModal.tsx` and
+ * `Account/OAuthAppsCard.tsx` route through it. `label` is REQUIRED and has no default, so
+ * the defect those four shared — a copy control for an API key or a client secret with no
+ * accessible name at all, announced to a screen reader as "button" — is a type error here
+ * rather than something a reviewer has to notice. One remaining local copy is deliberate:
+ * `Collections/CollectionEditModal.tsx` gates its control on `disabled={!joinUrl}`, which
+ * this component does not model, so it keeps its own shell and carries an `aria-label`.
  *
  * `onCopy` is OPTIONAL and defaults to nothing. That is what keeps `GetStartedBody`,
  * `CliSubmitCta` and {@link AgentOnboardingCard} the "pure presentational (props-only, no
@@ -155,12 +167,20 @@ export function CopyAffordance({
 /**
  * The icon's inset from the body's right edge, and the clearance a body must leave for it.
  *
- * 🔴 ONE COUPLING — FOR THE TWO `Code`-BLOCK BODIES. The control sits `COPY_ICON_INSET` from
- * the right and is 16px wide, so a body that reserves less than their sum plus breathing room
- * renders its text UNDER the icon. That happened once already in this family. `CopyableCommand`
- * and `AuthorViaGit` share these; {@link AgentOnboardingCard}'s prose panel sets its own
- * clearance in its stylesheet (its control sits top-right, not right-middle), so it is a
- * THIRD spelling of the same idea — named here rather than implied to be covered.
+ * 🔴 ONE COUPLING — FOR EVERY `Code`-BLOCK BODY. The control sits `COPY_ICON_INSET` from the
+ * right and is 16px wide, so a body that reserves less than their sum plus breathing room
+ * renders its text UNDER the icon. That happened once already in this family.
+ * `CopyableCommand`, `AuthorViaGit`, `ApiKeyModal` and `OAuthAppsCard` share these;
+ * {@link AgentOnboardingCard}'s prose panel sets its own clearance in its stylesheet (its
+ * control sits top-right, not right-middle), so it is a SECOND spelling of the same idea.
+ *
+ * 🔴 BOTH SPELLINGS ARE MEASURED, NOT MERELY DOCUMENTED, BY
+ * `src/components/CopyAffordance/CopyAffordance.geometry.test.tsx`. Until it existed, a
+ * mutation that made this sum WRONG survived a 54-assertion sweep: nothing read the number
+ * and nothing read a box, so the one defect the constants exist to prevent was invisible to
+ * every suite. The geometry tier asserts the claim this doc makes — the control's box does
+ * not overlap the body's text content box — rather than re-deriving the arithmetic, which
+ * would pass against any value the implementation happened to produce.
  */
 export const COPY_ICON_INSET = 8;
 /** The glyph's rendered size. Was retyped at three `size={16}` call sites in this file. */

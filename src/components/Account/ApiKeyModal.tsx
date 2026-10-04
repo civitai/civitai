@@ -7,7 +7,6 @@ import {
   Button,
   Checkbox,
   Code,
-  CopyButton,
   Group,
   Modal,
   NumberInput,
@@ -17,7 +16,6 @@ import {
   Table,
   Text,
 } from '@mantine/core';
-import { IconCheck, IconClipboard } from '@tabler/icons-react';
 import type * as z from 'zod';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Form, InputText, useForm } from '~/libs/form';
@@ -31,7 +29,7 @@ import {
 import { Flags } from '~/shared/utils/flags';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
+import { CopyAffordance } from '~/components/CopyAffordance/CopyAffordance';
 
 const schema = addApiKeyInputSchema;
 
@@ -146,23 +144,19 @@ export function ApiKeyModal({ initialName, initialTokenScope, ...props }: Props)
       {apiKey ? (
         <Stack gap={4}>
           <Text fw={500}>Here is your API Key:</Text>
-          <CopyButton value={apiKey}>
-            {({ copied, copy }) => (
-              <Box pos="relative" onClick={copy} style={{ cursor: 'pointer' }}>
-                <Code block color={copied ? 'green' : undefined}>
-                  {copied ? 'Copied' : apiKey}
-                </Code>
-                <LegacyActionIcon
-                  className="absolute right-2 top-1/2 -translate-y-1/2"
-                  right={10}
-                  variant="transparent"
-                  color="gray"
-                >
-                  {copied ? <IconCheck /> : <IconClipboard />}
-                </LegacyActionIcon>
-              </Box>
+          {/* 🔴 THE ACCESSIBLE NAME IS THE POINT OF ROUTING THIS THROUGH `CopyAffordance`,
+              NOT THE DE-DUPLICATION. This was a hand-rolled copy of that component's shell
+              whose `ActionIcon` carried no `aria-label` and no text, so the one control that
+              puts a live API key on the clipboard announced itself to a screen reader as
+              "button". `CopyAffordance`'s `label` is a required prop with no default, which
+              is what keeps the next copy of this block from shipping the same way. */}
+          <CopyAffordance value={apiKey} label="Copy your API key">
+            {({ copied }) => (
+              <Code block color={copied ? 'green' : undefined}>
+                {copied ? 'Copied' : apiKey}
+              </Code>
             )}
-          </CopyButton>
+          </CopyAffordance>
           <Text size="xs" c="dimmed">
             {`Be sure to save this, you won't be able to see it again.`}
           </Text>
