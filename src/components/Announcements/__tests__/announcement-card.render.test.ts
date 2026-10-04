@@ -37,7 +37,9 @@ describe('AnnouncementCard body line breaks', () => {
   });
 
   it('renders a blank line as two paragraphs', () => {
-    expect(render({ content: 'para one\n\npara two' })).toContain('<p>para one</p>');
+    expect(render({ content: 'para one\n\npara two' })).toMatch(
+      /<p>para one<\/p>\s*<p>para two<\/p>/
+    );
   });
 
   it('still strips markup other than links and breaks', () => {

@@ -95,14 +95,26 @@ describe('parseExternalDestination', () => {
 });
 
 describe('externalLinkInterstitialHref', () => {
+  // What the page will read back out of the href it is given: `/leaving` offers no way onward
+  // unless this is an absolute http(s) URL.
+  const landed = (destination: string) =>
+    parseExternalDestination(
+      new URL(externalLinkInterstitialHref(destination), 'https://civitai.com').searchParams.get(
+        'url'
+      )
+    );
+
   it.each([
-    'https://t.me/SomeGroup',
-    'https://example.com/a b?x=1&y=two#frag',
-    'https://example.com/?next=https%3A%2F%2Fother.test',
-  ])('round-trips %j through the query string', (destination) => {
-    const href = externalLinkInterstitialHref(destination);
-    const parsed = new URL(href, 'https://civitai.com').searchParams.get('url');
-    expect(parsed).toBe(destination);
+    ['https://t.me/SomeGroup', 'https://t.me/SomeGroup'],
+    ['https://example.com/a b?x=1&y=two#frag', 'https://example.com/a%20b?x=1&y=two#frag'],
+    [
+      'https://example.com/?next=https%3A%2F%2Fother.test',
+      'https://example.com/?next=https%3A%2F%2Fother.test',
+    ],
+    // Scheme-relative: external to `isExternalHref`, so it reaches here as a button link.
+    ['//example.com/x', 'https://example.com/x'],
+  ])('lands %j on the warning page as %j', (destination, expected) => {
+    expect(landed(destination)).toBe(expected);
   });
 
   it('keeps the destination readable in the href', () => {

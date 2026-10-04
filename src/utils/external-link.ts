@@ -61,8 +61,18 @@ export function parseExternalDestination(value: unknown): string | null {
  *
  * `:` and `/` are legal unescaped in a query value, and leaving them readable is what lets the
  * hover preview show where the link goes.
+ *
+ * Resolved the way `isExternalHref` resolves it, because the page accepts only an absolute URL
+ * and a scheme-relative `//host/x` would otherwise arrive there with no destination.
  */
 export function externalLinkInterstitialHref(destination: string): string {
-  const encoded = encodeURIComponent(destination).replace(/%3A/gi, ':').replace(/%2F/gi, '/');
+  const absolute = (() => {
+    try {
+      return new URL(destination.trim(), 'https://invalid.').href;
+    } catch {
+      return destination;
+    }
+  })();
+  const encoded = encodeURIComponent(absolute).replace(/%3A/gi, ':').replace(/%2F/gi, '/');
   return `${EXTERNAL_LINK_INTERSTITIAL_PATH}?url=${encoded}`;
 }

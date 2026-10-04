@@ -87,8 +87,8 @@ export function CustomMarkdown({
 
       href = href.replace(encodeURI('{userId}'), user?.id?.toString() ?? '');
 
-      // Unlike the CTA button, this href is kept — prose text needs it for copy-link and
-      // screen-reader destination announcement — so middle-click and copy-link stay ungated.
+      // The raw destination, unlike an announcement CTA's `/leaving` href, so middle-click and
+      // copy-link on a prose link skip the warning.
       const warn = warnOnExternalLinks && isExternalHref(href, internalHosts);
 
       return (
