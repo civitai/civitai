@@ -56,9 +56,38 @@ import {
  * character class that cannot match a DIGIT, so `render_3d` — a real option, a live fixture
  * value right here — was never scanned and an invented digit-bearing spelling went green. The
  * guard is now an AST walk over property assignments, which has no character class and does
- * not read comments, and a fixture written in a shape it cannot read FAILS rather than being
- * skipped. The one narrowing that remains is the file list itself: a suite not named in
- * `FIXTURE_SUITES` is not scanned. The worked history is at the guard.
+ * not read comments.
+ *
+ * ⚠️ AND THE SAME CLAIM OUTRAN THE SAME IMPLEMENTATION A SECOND TIME, WHICH IS WHY THE
+ * NARROWINGS ARE NOW ENUMERATED INSTEAD OF DISMISSED IN A CLAUSE. This paragraph used to end
+ * "a fixture written in a shape it cannot read FAILS rather than being skipped. The one
+ * narrowing that remains is the file list itself" — and BOTH halves were false, measured. The
+ * walk read its key with `node.name.getText()`, which for a StringLiteral name returns the
+ * QUOTES as well, so a quoted key matched nothing and was SKIPPED, not failed: planting
+ * `'styleFamily': 'rendr_9d'` left the suite fully green. A computed key `['styleFamily']` was
+ * green for the same reason. Both are now closed — `.text` for the quoted form, an explicit
+ * loud failure for the computed form — and both cures carry their controls at the guard.
+ *
+ * 🔴 THE NARROWINGS THAT ACTUALLY REMAIN, each measured at this head rather than reasoned:
+ *   (a) THE FILE LIST. A suite not named in `FIXTURE_SUITES` is not scanned at all.
+ *   (b) PROPERTY ASSIGNMENTS WITH LITERAL NAMES AND LITERAL VALUES ARE THE WHOLE SCOPE. A
+ *       SHORTHAND property is NOT a `ts.PropertyAssignment`, so a label reaching a fixture as
+ *       `insight({ role, styleFamily })` off a hoisted `const` is invisible: measured, a
+ *       `const styleFamily = 'rendr_9d'` plus the shorthand reference left the suite
+ *       `Test Files 5 passed (5)` / `Tests 143 passed (143)`. The same hole covers any value
+ *       the walk cannot see as a literal in place — a whole overrides object passed as a
+ *       variable, or a value spread in from elsewhere. A non-literal value under a key the
+ *       walk DOES see still fails loudly; it is the key form and the indirection that escape.
+ *   (c) IT GRADES THE SOURCE ON DISK at `process.cwd()`, not the module the suite imported.
+ *
+ * ⚠️ ONE COMPENSATING CONTROL, RECORDED RATHER THAN RELIED ON SILENTLY: this repo's prettier
+ * config sets no `quoteProps`, so the default `as-needed` applies and `pnpm exec prettier`
+ * rewrites `{ 'styleFamily': 'x' }` back to `{ styleFamily: 'x' }`; `prettier:check` runs on
+ * changed files, so a NEW quoted-key fixture was already caught by a different gate. That is
+ * why the realistic exposure of (3) was small — the computed and shorthand forms are NOT
+ * normalised, but they also take deliberate effort to write. The defect worth fixing was the
+ * CLAIM, which read as coverage this walk did not provide; the widening is cheap, so it was
+ * taken too. The worked history of all three defects is at the guard.
  */
 
 /** The two suites that carry `role`/`styleFamily` fixtures, scanned by the guard below. */
@@ -481,20 +510,43 @@ describe('modelInsightProjection — the winning version’s whole row', () => {
     // extra keys on the received object". That is FALSE and was measured false on this repo's
     // own `@vitest/expect`: an extra DEFINED key FAILS `toEqual` (an extra key whose value is
     // `undefined` is what it ignores). So every `toEqual` above already kills a `{ ...best }`
-    // spread, via the fixture's `confidence: 0.9`. The sentence is corrected rather than
-    // deleted because believing it would license under-specified object assertions elsewhere.
+    // spread, via the fixture's `confidence: 0.9` — and a bare `best.modelVersionId` too, via
+    // the helper row's absent column; the measurements are in the next-but-one paragraph. The
+    // sentence is corrected rather than deleted because believing it would license
+    // under-specified object assertions elsewhere.
     //
     // 🔴 THE FIXTURE'S `modelVersionId` COLUMN DISAGREES WITH ITS MAP KEY ON PURPOSE, AND THAT
     // IS THE WHOLE POINT OF THIS CASE. The projection is typed to read the id off the KEY —
     // `ResourceIntentInsight` does not declare that column, so nothing type-checks a read of
-    // it — and a `{ ...best }` spread, or an explicit `best.modelVersionId`, would take the
-    // ROW's column instead. Both return a well-formed object with a plausible number in it, so
-    // only a fixture where the two sources differ can tell them apart. Keyed at 11, column
-    // says 999: the assertion below demands 11.
+    // it — and a provenance mutant that reads `best.modelVersionId` takes the ROW's column
+    // instead. It returns a well-formed object with a plausible number in it, so only a fixture
+    // where the two sources differ can tell them apart. Keyed at 11, column says 999: the
+    // assertion below demands 11.
     //
-    // No other case in this file can see that mutation — every one of them is keyed by the
-    // same id its (helper-built, column-less) row describes, so key and column agree and both
-    // implementations pass.
+    // 🔴 WHICH PROVENANCE MUTANT THIS CASE IS THE SOLE GUARD FOR IS NARROWER THAN IT LOOKS, AND
+    // AN EARLIER VERSION OF THIS COMMENT GOT IT WRONG IN THE DIRECTION THAT COSTS COVERAGE. It
+    // read "no other case in this file can see that mutation" of BOTH a `{ ...best }` spread and
+    // a bare `best.modelVersionId`, which contradicted the paragraph directly above it and was
+    // measured false for both. The eight neighbouring whole-object `toEqual`s DO see both, for
+    // two independent reasons: a spread carries the fixture's `confidence`, which `toEqual`
+    // rejects as an extra defined key; and every neighbouring row is built by the `insight()`
+    // helper, which emits NO `modelVersionId` column at all, so a bare column read yields
+    // `undefined` against an expected number. Measured at this head, over the five suites this
+    // change touches: `modelVersionId: best.modelVersionId` → `9 failed | 134 passed (143)`, and
+    // `return { ...best }` → `9 failed | 134 passed (143)` — the same nine, of which this case
+    // is one.
+    //
+    // The mutant this case is genuinely the SOLE guard for is the FALLBACK form,
+    // `best.modelVersionId ?? bestVersionId`: on a helper-built row the absent column falls
+    // through to the correct map key, so all eight neighbours stay green, and only a row whose
+    // column DISAGREES with its key can see it. Measured: `1 failed | 142 passed (143)`, failing
+    // here with this case's own assertion message.
+    //
+    // 🔴 SO DO NOT TRIM THE NEIGHBOURING `toEqual`s TO PER-FIELD `toBe`s ON THE THEORY THAT THIS
+    // CASE IS THE ONLY PROVENANCE GUARD. They are eight-ninths of the kill set for the two
+    // likeliest mutants, and a per-field `toBe(…)` on `qualityScore`/`role`/`styleFamily` sees
+    // neither — it drops both the extra-key rejection and the absent-column signal. The
+    // whole-object form is the coverage; this case only closes the one gap it leaves.
     const row = {
       modelVersionId: 999,
       role: 'style',
@@ -593,12 +645,36 @@ describe('modelInsightProjection — the winning version’s whole row', () => {
       const ast = ts.createSourceFile(rel, src, ts.ScriptTarget.Latest, true);
       const visit = (node: ts.Node) => {
         if (ts.isPropertyAssignment(node)) {
-          const key = node.name.getText(ast);
-          if ((labelKeys as readonly string[]).includes(key)) {
+          // 🔴 READ THE NAME'S `.text`, NOT `getText()` — DEFECT (3), AND IT SURVIVED THE MOVE TO
+          // THE AST. For a StringLiteral property name `getText()` returns the source span
+          // INCLUDING THE QUOTES, so `'styleFamily': 'x'` yields the key `"'styleFamily'"`,
+          // which matches no entry in `labelKeys` and was therefore SKIPPED — the identical
+          // silent escape as defect (1), reached through a different mechanism. Measured, both
+          // controls, over the five suites this change touches: planting
+          // `'styleFamily': 'rendr_9d'` (quoted key, invented digit-bearing value, on a loser
+          // row no expectation names) left the suite `Test Files 5 passed (5)` /
+          // `Tests 143 passed (143)` — fully green — while the same plant with a BARE key went
+          // red with this case's own `fixture styleFamily 'rendr_9d' is not a real option`.
+          // `.text` is quote-free for an Identifier and a StringLiteral alike, which is the fix.
+          const name = node.name;
+          const line = ast.getLineAndCharacterOfPosition(node.getStart(ast)).line + 1;
+          if (ts.isComputedPropertyName(name)) {
+            // 🔴 A COMPUTED KEY FAILS RATHER THAN BEING SKIPPED, and that choice is deliberate:
+            // `['styleFamily']: 'rendr_9d'` was ALSO fully green before this branch existed
+            // (measured, same `143 passed (143)`), because a ComputedPropertyName has no `.text`
+            // and its source span carries the brackets. Resolving one in general means
+            // evaluating an arbitrary expression, which an AST walk cannot do — so the guard
+            // refuses the shape instead of guessing, and says so loudly. Write a plain key.
+            const text = name.getText(ast);
+            expect(
+              labelKeys.every((k) => !text.includes(k)),
+              `${rel}:${line} — a label fixture must use a plain \`role:\` / \`styleFamily:\` property name; this guard cannot resolve the computed name \`${text}\`, and skipping it would be the silent escape defect (1) was`
+            ).toBe(true);
+          } else if ((labelKeys as readonly string[]).includes(name.text)) {
+            const key = name.text;
             // 🔴 An unreadable fixture must FAIL, not be skipped — a skipped fixture is exactly
             // the silent escape defect (1) was. A template literal, a concatenation or a
             // variable all land here.
-            const line = ast.getLineAndCharacterOfPosition(node.getStart(ast)).line + 1;
             expect(
               ts.isStringLiteral(node.initializer),
               `${rel}:${line} — \`${key}\` fixture must be a plain string literal so this guard can read it; got \`${node.initializer

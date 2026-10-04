@@ -396,9 +396,33 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
         // top-level `insight` key is withheld from `modelsDisplayedAttributes` (see
         // ./displayed-attributes.ts) and `attributesToRetrieve` can only narrow WITHIN the
         // displayed set, so it cannot re-admit a withheld attribute: no search response
-        // serialises this field. It is also neither filterable nor sortable, so it is not even
-        // reachable as a per-document oracle the way `insight.qualityScore` and the two axes
-        // are. Written by nothing else, read by nothing at all.
+        // serialises this field. (That narrowing claim is ENGINE-MEASURED, not inferred — on a
+        // local Meilisearch v1.54.0, with `displayedAttributes: ["*"]` a request for
+        // `["id","insight.modelVersionId"]` returns the field, so the instrument can see it,
+        // while with `displayedAttributes: ["id","name"]` the same request returns `{"id":1}`
+        // and a filter on the attribute is a 400. ⚠️ v1.54.0 is a LATER engine than the v1.15.0
+        // the other measurements in this file and ./displayed-attributes.ts cite.) It is also
+        // neither filterable nor sortable, so it is not even reachable as a per-document oracle
+        // the way `insight.qualityScore` and the two axes are. Written by nothing else, read by
+        // nothing at all.
+        //
+        // 🔴 CLOSURE RESTS ON A FOURTH LIST, AND AN EARLIER VERSION OF THIS COMMENT ATTRIBUTED
+        // IT TO ONLY THREE ABSENCES. `searchableAttributes` — the explicit whitelist declared at
+        // the top of `onIndexSetup` in this file; read it there rather than from a copy here —
+        // is the fourth, and it is a whitelist rather than a default: swap it for Meili's
+        // `["*"]` and the field becomes reachable by free-text query. Measured on a local
+        // engine: with the whitelist, `q=42` returns 0 hits; with `["*"]`, `q=42` returns 1.
+        //
+        // What that would buy an attacker is a MEMBERSHIP oracle, not a value leak — the hit
+        // body still omits `insight`, because displayed-attribute withholding is a separate
+        // mechanism, so the answer is "which model's winning version is 42", one guess at a
+        // time. That is the same shape and the same accepted class as the filterable oracle
+        // argued above, and it is equally true of the three PRE-EXISTING `insight.*` leaves, so
+        // this is NOT new exposure introduced by projecting the id. What was wrong was the
+        // completeness of the enumeration. The fourth list is now machine-checked alongside the
+        // other three in ./__tests__/models-index-insight-projection.test.ts — it is read from
+        // this file's AST rather than imported, because unlike the sortable, displayed and
+        // filterable lists it is a function-local literal and not an exported constant.
         //
         // WHY WRITE IT ANYWAY. It records WHICH VERSION THE INDEX DECIDED FOR at reset time,
         // and that fact is NOT recoverable from Postgres afterwards: the labels move
@@ -423,7 +447,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
         // labels, for anyone holding the browser-published search key. The approved payload is
         // filterable `insight.role` + `insight.styleFamily` and nothing more. Both routes are
         // pinned shut by ./__tests__/models-index-insight-projection.test.ts, which asserts this
-        // leaf is absent from all three lists — if one of those assertions is in your way, that
+        // leaf is absent from all four lists — if one of those assertions is in your way, that
         // is the decision, not an obstacle.
         insight: {
           qualityScore: insightProjection?.qualityScore ?? null,

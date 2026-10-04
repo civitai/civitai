@@ -11,7 +11,7 @@ import { modelsSortableAttributes } from '~/server/search-index/sortable-attribu
  * `insight.role` / `insight.styleFamily` are the two MEANING axes — filterable, not
  * sortable, nothing reads them yet — and `insight.modelVersionId` is the id of the version
  * all three were taken from, projected but declared in NO attribute list, so no search path
- * can return it at all (argued at the projection site in ../models.search-index.ts; the three
+ * can return it at all (argued at the projection site in ../models.search-index.ts; the four
  * absences are pinned below). This file pins the wiring that puts all four on a document.
  *
  * ⚠️ WHAT THIS FILE DELIBERATELY DOES NOT PIN: the seed's sort array. Adding the axes to the
@@ -93,6 +93,41 @@ function propertyAssignments() {
   return out;
 }
 
+/**
+ * The `searchableAttributes` whitelist `onIndexSetup` applies, read from the AST because it is
+ * a function-local literal rather than an exported module constant like the other three lists.
+ *
+ * 🔴 Asserts it found EXACTLY ONE such array literal, so this cannot return an empty list and
+ * make its caller's `not.toContain` / `toEqual([])` assertions vacuously true — the reassuring
+ * zero and the probe wired to nothing are indistinguishable without this. A second declaration
+ * appearing in this file would also mean the caller is grading the wrong one.
+ */
+function searchableAttributeLiteral(): string[] {
+  const found: string[][] = [];
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === 'searchableAttributes' &&
+      node.initializer &&
+      ts.isArrayLiteralExpression(node.initializer)
+    ) {
+      found.push(
+        node.initializer.elements.map((el) =>
+          ts.isStringLiteral(el) ? el.text : el.getText(indexAst)
+        )
+      );
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(indexAst, visit);
+  expect(
+    found.length,
+    `exactly one \`searchableAttributes\` array literal must be readable in ${INDEX_REL} — 0 means this walk is wired to nothing and every assertion over it is vacuous`
+  ).toBe(1);
+  return found[0];
+}
+
 /** Every call expression in the file, as the source text of its callee and arguments. */
 function callExpressions() {
   const out: { callee: string; args: string[] }[] = [];
@@ -125,19 +160,33 @@ const INSIGHT_AXIS_ATTRS = ['insight.role', 'insight.styleFamily'];
 
 /**
  * The winning version's id: PROJECTED onto every document, and declared NOWHERE — not
- * sortable, not filterable, not displayed. So no search path can return it and it is not even
- * reachable as a per-document oracle; it records which version the index decided for at reset
- * time, which is not recoverable from Postgres later. The full argument, and the two routes
- * that would make it readable (neither approved), is at the projection site in
- * ../models.search-index.ts.
+ * sortable, not filterable, not displayed, and not searchable. So no search path can return it
+ * and it is not even reachable as a per-document oracle; it records which version the index
+ * decided for at reset time, which is not recoverable from Postgres later. The full argument,
+ * and the two routes that would make it readable (neither approved), is at the projection site
+ * in ../models.search-index.ts.
  *
- * 🔴 All three absences are pinned below, across TWO cases rather than one — the
- * filterable and sortable absences in `keeps the winning version id OFF …`, the displayed
- * absence in the withheld-ledger sweep, which reaches it by iterating this constant alongside
- * the other attributes. A fourth assertion, the write-only ledger in the declared/projected
- * pairing case, is what keeps the field PRESENT in the document while absent from the lists.
- * No count is given for "the assertions" because that is the kind of restated figure this
- * file has already had to correct twice; the cases are named instead.
+ * 🔴 FOUR absences, not three, and the count was wrong here and at the projection site until
+ * an audit round named the fourth. They are pinned below, across TWO cases rather than one —
+ * the filterable, sortable and SEARCHABLE absences in `keeps the winning version id OFF …`,
+ * the displayed absence in the withheld-ledger sweep, which reaches it by iterating this
+ * constant alongside the other attributes. A further assertion, the write-only ledger in the
+ * declared/projected pairing case, is what keeps the field PRESENT in the document while
+ * absent from the lists. No count is given for "the assertions" because that is the kind of
+ * restated figure this file has already had to correct twice; the cases are named instead.
+ *
+ * ⚠️ WHY `searchableAttributes` BELONGS IN THAT LIST, since it is the one an enumeration keeps
+ * missing: unreachability is not established by the three absences alone. That list is an
+ * explicit whitelist in `onIndexSetup`, and Meili's default is `["*"]` — measured on a local
+ * engine, with the whitelist `q=42` returns 0 hits and with `["*"]` it returns 1. Widening it
+ * would therefore make the id reachable as a MEMBERSHIP oracle ("which model's winning version
+ * is 42"), though not as a value leak: the hit body still withholds `insight`, which is a
+ * separate mechanism. Equally true of the three pre-existing leaves, so it is not new exposure
+ * from projecting the id — the enumeration was simply incomplete.
+ *
+ * It is read from the index file's AST rather than imported, because unlike `modelsSortable…`,
+ * `modelsDisplayed…` and `modelsFilterable…` it is a FUNCTION-LOCAL literal with no export, so
+ * there is nothing to import. That is also why it is the easiest of the four to forget.
  *
  * If one of them is in your way, making this field readable is the decision you are taking —
  * it is not an obstacle to route around.
@@ -339,7 +388,7 @@ describe('models search index projects insight.qualityScore', () => {
     //
     // 🔴 PROJECTED ⊆ DECLARED IS NOT, AND IT USED TO BE ASSERTED AS SET EQUALITY, WHICH THIS
     // CHANGE BROKE. `insight.modelVersionId` is projected on purpose and declared nowhere on
-    // purpose (../models.search-index.ts argues it; the three absences are pinned below). The
+    // purpose (../models.search-index.ts argues it; the four absences are pinned below). The
     // old equality read that as "a field written to every document for nothing" — a reasonable
     // default that is simply wrong for a field whose value IS the write. So the undeclared
     // side is now an asserted LEDGER rather than a prohibition: exactly the keys named here may
@@ -374,7 +423,7 @@ describe('models search index projects insight.qualityScore', () => {
     ).toEqual([writeOnlyLeaf]);
   });
 
-  it('🔴 keeps the winning version id OFF filterableAttributes and OFF sortableAttributes', () => {
+  it('🔴 keeps the winning version id OFF filterableAttributes, sortableAttributes and searchableAttributes', () => {
     // The approved payload is filterable `insight.role` + `insight.styleFamily`, and nothing
     // more. This pins the half of that decision a list-membership test can actually check.
     //
@@ -403,6 +452,25 @@ describe('models search index projects insight.qualityScore', () => {
     expect(modelsFilterableAttributes.filter((a) => a.startsWith('insight.')).sort()).toEqual(
       [...INSIGHT_AXIS_ATTRS, INSIGHT_SORT_ATTR].sort()
     );
+
+    // 🔴 THE FOURTH LIST — see the `INSIGHT_WRITE_ONLY_ATTR` docstring for why closure depends
+    // on it and why an enumeration keeps missing it. Searchable is the only one of the four
+    // whose absence is not enough on its own: the list must stay an explicit WHITELIST, because
+    // Meili's `["*"]` default would re-admit every leaf by free-text query.
+    const searchable = searchableAttributeLiteral();
+    // Positive control for the walk, on a value the whitelist has carried since long before
+    // `insight` existed — a walk that read an array it could not resolve would fail here.
+    expect(searchable, 'the searchableAttributes walk did not read the real list').toContain(
+      'name'
+    );
+    expect(
+      searchable,
+      'searchableAttributes must stay an explicit whitelist — Meili’s `["*"]` default would make every insight leaf reachable by free-text query'
+    ).not.toContain('*');
+    expect(
+      searchable.filter((a) => a.startsWith('insight')),
+      'no insight.* attribute may be searchable — a searchable leaf is a per-document MEMBERSHIP oracle (a q= query that matches reveals which model carries the value) even though the hit body still withholds `insight`'
+    ).toEqual([]);
   });
 
   it('🔴 keeps the meaning axes OUT of sortableAttributes — they are unordered categories', () => {
