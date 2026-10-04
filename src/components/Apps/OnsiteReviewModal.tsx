@@ -570,6 +570,18 @@ export function OnsiteReviewModalTitle({
  * sitting in the same position, so the arrangement is unchanged while the leaves are shared
  * with the review PAGE.
  *
+ * 🔴 SO DO NOT FORK A PANEL FOR ONE SURFACE. Every panel here has ONE implementation,
+ * rendered by both the modal and the review page, and only the ARRANGEMENT differs. A
+ * per-surface copy would drift, and the drift would be invisible because each surface's own
+ * tests would stay green. This is the contract `ReviewDetailView` and the review page point
+ * at; it was deleted once by a commit that meant only to withdraw the ordering claim below,
+ * which left three live cross-references aimed at nothing.
+ *
+ * 🔴 THE PARENT KEYS THIS ON `selection.request.id`, so all local state is fresh on every
+ * request switch — no manual reset needed, and the `onSuccess → onClose` paths are safe
+ * because the next open remounts fresh. Removing that `key` is the non-obvious way to break
+ * the approve/reject state reset.
+ *
  * 🔴 THAT IS A ONE-TIME MEASUREMENT, NOT A GUARANTEE, and saying so is the point. No test
  * asserts this sequence: the modal exposes only three stable test ids, so pinning it would
  * mean adding production attributes for a guard alone — considered and rejected as more

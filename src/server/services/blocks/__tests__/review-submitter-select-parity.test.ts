@@ -1,8 +1,7 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import ts from 'typescript';
 import { describe, expect, test } from 'vitest';
-// `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
-import { stripCommentsAndStrings } from '../../../../../test/strip-comments';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.selector';
 
@@ -42,102 +41,164 @@ const SERVICE_FILES = [
 ] as const;
 
 /**
- * User chips in the corpus that are DELIBERATELY narrow, each by `id` plus its reason.
+ * User chips in the corpus that are DELIBERATELY narrow, keyed on FILE **and** owner.
  *
- * 🔴 AN EXEMPTION LEDGER, NOT A WIDER SCAN. `app-listing.service.ts` was added because this
- * change made it a third consumer of the shared chip — and a hardcoded two-file list standing
- * in for "every blocks service that selects a user chip" is exactly the kind of corpus that
- * drifts silently behind the code. But that file also carries chips that must NOT carry
- * `deletedAt`, so appending it without this ledger would turn the guard red on intended code,
- * and a permanently-red guard teaches everyone to ignore it.
+ * 🔴 ONE ENTRY, AND THE SECOND WAS DELETED RATHER THAN RE-KEYED — which is the finding worth
+ * carrying. It exempted the collaborator-allowlist `user.findMany`, and the key it matched on
+ * was the owner resolver's "I could not tell" sentinel. Measured: that admitted EVERY bare
+ * `select: {` on a Prisma query, in all three files, including the service this whole arc is
+ * about. A guard that fails open on the commonest shape is worse than no guard, because it
+ * reads as coverage. The fix was not a better key — it was to make that chip stop being
+ * narrow (its `where` already excludes deleted rows, so the column costs nothing), and delete
+ * the entry.
  *
- * Each entry is the chip's OWNING PROPERTY plus why it is narrow. Adding one is a decision
- * someone has to write down; the equality below fails if an entry becomes stale, so an
- * exemption cannot outlive its reason either.
+ * 🔴 `file` IS PART OF THE KEY. Without it, the surviving `user` entry — justified for the
+ * listings table — would exempt any property called `user` in any corpus file, including
+ * `publish-request.service.ts`.
+ *
+ * Adding an entry is a decision someone has to write down; the equality below fails if one
+ * goes stale, so an exemption cannot outlive its reason either.
  */
-const DELIBERATELY_NARROW: ReadonlyArray<{ owner: string; why: string }> = [
+const DELIBERATELY_NARROW: ReadonlyArray<{
+  file: string;
+  container: string;
+  owner: string;
+  why: string;
+}> = [
   {
+    file: 'src/server/services/blocks/app-listing.service.ts',
+    container: 'moderationListingSelect',
     owner: 'user',
     why: "the moderation listings table's own creator cell — plain text, a different screen",
   },
   {
-    owner: '<anonymous>',
-    why: 'the collaborator-allowlist `user.findMany`, whose WHERE already filters `deletedAt: null` in SQL — the rows cannot be deleted accounts, so projecting the column would be dead weight',
+    file: 'src/server/services/blocks/app-listing.service.ts',
+    container: 'listingHydrateSelect',
+    owner: 'user',
+    why: 'the PUBLIC store listing creator — rendered by `CreatorCardSimple`, which takes only `{ id }` and refetches through the public `user.getCreator` proc, so it reads no `deletedAt` from this payload',
   },
 ] as const;
 
 /**
- * Every object literal in a service that names `username: true`, as its brace-matched body.
+ * Every object literal in a service that names `username: true`, with the property it hangs
+ * off and the fields it selects.
  *
- * 🔴 ANCHORED ON THE FIELD, NOT ON A NAME OR A WRAPPER — and both narrower anchors were
- * measured walkable before this one.
+ * 🔴 AN AST WALK, AND THE REGEX IT REPLACES WAS WORSE THAN THE GUARD IT CAME FROM — which is
+ * the reason this is a rewrite and not a patch.
  *
- * An allowlist of property names policed four identifiers against ~109 `select: {` sites
- * across these two files: hoisting the same narrower literal as `authorChip` and writing
- * `submittedBy: authorChip` left it green. Anchoring on `select: {` instead fixes the name
- * half and keeps a wrapper half — it misses `const modChip = { id: true, username: true,
- * image: true }`, a chip with no `select` of its own, which is the OTHER shape that has
- * existed here.
+ * The first version matched a NAME allowlist (`submittedBy|reviewedBy|submitter`), which a
+ * hoisted `authorChip` walked straight past. The second anchored on the FIELD and recovered
+ * the owner with a 120-character backward regex — closing that hole and opening a worse one:
+ * when the lookbehind failed it returned a sentinel, `'<anonymous>'`, and the exemption
+ * ledger then keyed on owner NAMES, so the resolver's "I could not tell" value doubled as a
+ * blanket licence. Measured on the real corpus: `dbRead.user.findMany({ where, select: {…} })`
+ * — the most ordinary way to add a narrow user projection — resolved to that sentinel and was
+ * silently exempt. A guard that fails OPEN on the commonest shape is worse than no guard,
+ * because it reads as coverage.
  *
- * Anchoring on the field cannot be walked by renaming or re-nesting anything INSIDE THESE
- * TWO FILES: a select that names `username` is a user chip, whatever it is called and
- * wherever it sits in them. ⚠️ A chip IMPORTED from a third module is outside the corpus —
- * measured, a narrower `narrowChip` exported from the selector module and referenced here
- * leaves this suite green. The backstop there is a different instrument: `ReviewUserChip`'s
- * REQUIRED `deletedAt`, which fails `pnpm typecheck` with one error naming the call site.
+ * `node.parent` on an `ObjectLiteralExpression` answers "which key does this hang off"
+ * exactly, with no window, no sentinel and no type-name misattribution. 29 files in `src/`
+ * already import `typescript` for precisely this kind of guard; this one should have from the
+ * start. Comments and strings need no stripping either — the parser does not confuse prose
+ * with code, which is the whole point of using it.
  */
-function ownedUserChips(source: string): Array<{ owner: string; body: string }> {
-  const code = stripCommentsAndStrings(source);
-  const out: Array<{ owner: string; body: string }> = [];
-  for (const m of code.matchAll(/\busername\s*:\s*true\b/g)) {
-    // Walk BACK to the enclosing `{`, counting depth so a nested literal cannot escape…
-    let depth = 0;
-    let open = -1;
-    for (let i = (m.index ?? 0) - 1; i >= 0; i -= 1) {
-      const ch = code[i];
-      if (ch === '}') depth += 1;
-      else if (ch === '{') {
-        if (depth === 0) {
-          open = i;
-          break;
-        }
-        depth -= 1;
+type Chip = { file: string; container: string | null; owner: string | null; fields: string[] };
+
+function userChips(rel: string): Chip[] {
+  const text = readFileSync(join(process.cwd(), rel), 'utf8');
+  const src = ts.createSourceFile(rel, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const out: Chip[] = [];
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isObjectLiteralExpression(node)) {
+      // 🔴 ONLY `<field>: true` COUNTS — a Prisma SELECT, not any object that mentions a
+      // username. Without this the walk also caught `creatorChip`'s RETURN PROJECTION
+      // (`{ id: user.id, username: user.username, image: user.image }`), which is a different
+      // thing with a different fix: it lives in no variable declaration, so it resolved to an
+      // unnamed chip and read as an unguarded select. Narrowing to the select shape keeps the
+      // guard's subject and its name the same thing. (That projection's own `deletedAt` gap
+      // is recorded where it lives, in `app-listing.moderation.service.test.ts`.)
+      const fields = node.properties
+        .filter(ts.isPropertyAssignment)
+        .filter((prop) => prop.initializer.kind === ts.SyntaxKind.TrueKeyword)
+        .map((prop) =>
+          ts.isIdentifier(prop.name) || ts.isStringLiteral(prop.name) ? prop.name.text : ''
+        )
+        .filter(Boolean);
+      if (fields.includes('username')) {
+        out.push({ file: rel, ...identify(node), fields });
       }
     }
-    if (open < 0) continue;
-    // …and FORWARD to its match.
-    depth = 1;
-    let i = open + 1;
-    while (i < code.length && depth > 0) {
-      const ch = code[i];
-      if (ch === '{') depth += 1;
-      else if (ch === '}') depth -= 1;
-      i += 1;
-    }
-    if (depth !== 0) continue;
-    const body = code
-      .slice(open + 1, i - 1)
-      .replace(/\s+/g, ' ')
-      .trim();
-    // The nearest identifier before the literal (skipping an intervening `select:` and
-    // `{`), i.e. the property or const this chip hangs off — what an exemption names.
-    const before = code.slice(Math.max(0, open - 120), open);
-    // `select` is a wrapper, never the owner — `x: { select: { … } }` belongs to `x`.
-    const owner = [...before.matchAll(/([A-Za-z_$][\w$]*)\s*[:=]\s*\{?\s*(?:select\s*:\s*)?$/g)]
-      .map((m) => m[1])
-      .filter((n) => n !== 'select')
-      .pop();
-    out.push({ owner: owner ?? '<anonymous>', body });
-  }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(src, visit);
   return out;
 }
 
-/** Just the bodies — for the controls, which do not care who owns them. */
-const userChipSelects = (source: string) => ownedUserChips(source).map((c) => c.body);
+/**
+ * Where this literal lives: the enclosing top-level declaration, and the property it hangs
+ * off. Either may be `null`.
+ *
+ * 🔴 `null` IS NOT A NAME, AND IT IS NEVER EXEMPTABLE — which is the third version of this
+ * function and the second time the same mistake was made. v2 returned the string
+ * `'<anonymous>'` when its regex lookbehind failed, and the exemption ledger keyed on owner
+ * NAMES, so the resolver's "I could not tell" doubled as a blanket licence. v3 replaced the
+ * regex with this AST walk and then fell back to the literal `'select'` — a different
+ * spelling of the same hole, since `select` is a real key an exemption could name.
+ *
+ * The lesson is not "pick a better sentinel": it is that a resolver's failure value must not
+ * live in the same domain as its success values. `null` cannot be typed into the ledger
+ * (`owner: string`), so an unresolvable chip is structurally an offender. The only way to
+ * silence one is to make it resolvable or to make it carry `deletedAt`.
+ *
+ * `container` distinguishes two chips that share an owner name — `app-listing.service.ts`
+ * has a `user:` in `listingHydrateSelect` and another in `moderationListingSelect`, and a
+ * ledger that cannot tell them apart grants one pass for two different reasons.
+ */
+function identify(node: ts.ObjectLiteralExpression): {
+  container: string | null;
+  owner: string | null;
+} {
+  let owner: string | null = null;
+  let container: string | null = null;
+  let current: ts.Node = node;
 
-/** Every flat object literal in a file — the walk's own liveness control. */
-const objectLiterals = (source: string) =>
-  (stripCommentsAndStrings(source).match(/\{[^{}]*\}/g) ?? []).length;
+  for (let depth = 0; depth < 40; depth += 1) {
+    const parent: ts.Node | undefined = current.parent;
+    if (!parent) break;
+    if (owner === null && ts.isPropertyAssignment(parent)) {
+      if (ts.isIdentifier(parent.name) || ts.isStringLiteral(parent.name)) {
+        const name = parent.name.text;
+        // Step through ONE `select:` wrapper so `x: { select: { … } }` reports `x`.
+        if (name === 'select' && parent.parent && ts.isObjectLiteralExpression(parent.parent)) {
+          current = parent.parent;
+          continue;
+        }
+        owner = name;
+      }
+    }
+    if (ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) {
+      container = parent.name.text;
+      if (owner === null) owner = parent.name.text;
+      break;
+    }
+    current = parent;
+  }
+  return { container, owner };
+}
+
+/** Every object literal in a file — the walk's own liveness control. */
+function objectLiterals(rel: string): number {
+  const text = readFileSync(join(process.cwd(), rel), 'utf8');
+  const src = ts.createSourceFile(rel, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  let n = 0;
+  const visit = (node: ts.Node): void => {
+    if (ts.isObjectLiteralExpression(node)) n += 1;
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(src, visit);
+  return n;
+}
 
 describe('the review user chip is one declaration', () => {
   test('🔴 it carries the fields `UserAvatar` actually BRANCHES on', () => {
@@ -184,18 +245,31 @@ describe('the review user chip is one declaration', () => {
     // a new call site. Prisma selects are structurally typed, so `{ id: true, username: true,
     // image: true }` is perfectly assignable — it just silently drops the branch.
     const offenders: string[] = [];
-    const matchedEntries = new Set<string>();
+    const matched = new Set<string>();
     for (const rel of SERVICE_FILES) {
-      for (const { owner, body } of ownedUserChips(
-        readFileSync(join(process.cwd(), rel), 'utf8')
-      )) {
-        if (/\bdeletedAt\s*:\s*true\b/.test(body)) continue;
-        const entry = DELIBERATELY_NARROW.find((e) => e.owner === owner);
+      for (const chip of userChips(rel)) {
+        if (chip.fields.includes('deletedAt')) continue;
+        // 🔴 KEYED ON FILE **AND** OWNER. Keying on the name alone let the `user` entry —
+        // justified for the listings table — exempt any property called `user` in any of the
+        // three files, including the service this whole arc is about.
+        // 🔴 AN UNRESOLVABLE CHIP IS AN OFFENDER, NEVER AN EXEMPTION. Twice now the resolver's
+        // failure value was a string that the ledger could name, and both times that silently
+        // licensed a whole class. `null` is not in the ledger's domain, so it cannot.
+        const entry =
+          chip.owner === null || chip.container === null
+            ? undefined
+            : DELIBERATELY_NARROW.find(
+                (e) => e.file === rel && e.container === chip.container && e.owner === chip.owner
+              );
         if (entry) {
-          matchedEntries.add(entry.owner);
+          matched.add(`${entry.file}::${entry.container}::${entry.owner}`);
           continue;
         }
-        offenders.push(`${rel}: ${owner}: { ${body} }`);
+        offenders.push(
+          `${rel}: ${chip.container ?? '<unresolved>'}.${
+            chip.owner ?? '<unresolved>'
+          }: { ${chip.fields.join(', ')} }`
+        );
       }
     }
     expect(
@@ -205,65 +279,57 @@ describe('the review user chip is one declaration', () => {
 
     // 🔴 THE EXEMPTIONS ARE ASSERTED, NOT MERELY ALLOWED. An entry whose chip has since been
     // widened — or deleted — is a stale licence to be narrow, and nothing else would notice.
-    // Matched BY ENTRY rather than by count, because one owner name can cover more than one
-    // chip (`user` appears twice) and a count would then encode an incidental number.
     expect(
-      [...matchedEntries].sort(),
+      [...matched].sort(),
       'every entry in DELIBERATELY_NARROW must still correspond to a narrow chip'
-    ).toEqual(DELIBERATELY_NARROW.map((e) => e.owner).sort());
+    ).toEqual(DELIBERATELY_NARROW.map((e) => `${e.file}::${e.container}::${e.owner}`).sort());
   });
 
-  test('🔴 POSITIVE CONTROL: the walk is live, it CAN catch, and it survives the stripper', () => {
-    // Three reassuring zeros to disprove.
-    //
-    // (a) The walk reads real literals out of the real files. Deliberately NOT a count of
-    // user chips — there are legitimately zero of those now, because every one reads the
-    // shared const, so asserting a non-zero chip count would fail the moment the guard
+  test('🔴 POSITIVE CONTROL: the walk is live, exact, and CAN reject — including a near-exemption', () => {
+    // (a) It reads real literals out of the real files. Deliberately NOT a count of user
+    // chips: `publish-request.service.ts` legitimately has ZERO now (every chip reads the
+    // shared const), so asserting a non-zero chip count would fail the moment the guard
     // started succeeding.
     for (const rel of SERVICE_FILES) {
-      const src = readFileSync(join(process.cwd(), rel), 'utf8');
-      expect(objectLiterals(src), `${rel} must yield object literals`).toBeGreaterThan(5);
-      expect(src, `${rel} must consume the shared select`).toContain('reviewUserChipSelect');
-    }
-
-    // (b) It CAN catch — otherwise the case above is a walk that may never have rejected
-    // anything. All four shapes: the property form, a hoisted const WITH a `select` wrapper,
-    // a hoisted const WITHOUT one, and a differently-named property.
-    const bad = [
-      'submittedBy: { select: { id: true, username: true, image: true } },',
-      'const authorChip = { select: { id: true, username: true, image: true } } as const;',
-      'const modChip = { id: true, username: true, image: true } as const;',
-      'owner: { select: { id: true, username: true, image: true } },',
-    ].join('\n');
-    expect(userChipSelects(bad).filter((b) => !/deletedAt/.test(b))).toHaveLength(4);
-
-    // (c-0) 🔴 AND THE STRIPPER REACHES THE END OF THE REAL FILE. Controls (a) and (b) prove
-    // it is not DEAD; neither proves it does not swallow everything after some line, which
-    // would hide every chip in the tail of a 4,000-line service. Appending the planted
-    // violations to the real source and still finding all four is what closes that class.
-    for (const rel of SERVICE_FILES) {
-      const realSrc = readFileSync(join(process.cwd(), rel), 'utf8');
-      const baseline = userChipSelects(realSrc).filter((b) => !/deletedAt/.test(b)).length;
+      expect(objectLiterals(rel), `${rel} must yield object literals`).toBeGreaterThan(5);
       expect(
-        userChipSelects(`${realSrc}\n${bad}`).filter((b) => !/deletedAt/.test(b)).length - baseline,
-        `the scan must still reach all four violations appended AFTER all of ${rel}`
-      ).toBe(4);
+        readFileSync(join(process.cwd(), rel), 'utf8'),
+        `${rel} must consume the shared select`
+      ).toContain('reviewUserChipSelect');
     }
 
-    // (c) 🔴 RUN THE PLANTED STRINGS THROUGH THE STRIPPER, which the real assertion does and
-    // an earlier control did not. `stripCommentsAndStrings` is documented as deliberately
-    // biased toward removing TOO MUCH — safe, because over-stripping is supposed to turn a
-    // caller RED. It cannot here: the subject is an ABSENCE, so over-stripping silently
-    // empties the corpus and the guard passes. Measured — neutering the stripper to return
-    // `''` left this file green with a real inline literal planted.
-    expect(userChipSelects(stripCommentsAndStrings(bad))).toHaveLength(4);
+    // (b) 🔴 IT CAN REJECT SOMETHING THE LEDGER ALMOST COVERS — the control the previous
+    // version did not have. Every planted chip below is narrow; the first bears an EXEMPTED
+    // owner name (`user`) but belongs to a file with no such entry, so a name-keyed ledger
+    // would wave it through and a file+owner one must not. The others cover the shapes that
+    // have existed: a property, a hoisted const with a `select` wrapper, and one without.
+    const planted = [
+      ['src/server/services/blocks/publish-request.service.ts', 'user'],
+      ['src/server/services/blocks/publish-request.service.ts', 'submittedBy'],
+      ['src/server/services/blocks/offsite-listing.service.ts', 'authorChip'],
+      ['src/server/services/blocks/offsite-listing.service.ts', 'modChip'],
+    ] as const;
+    for (const [file, owner] of planted) {
+      expect(
+        DELIBERATELY_NARROW.some((e) => e.file === file && e.owner === owner),
+        `${file}::${owner} must NOT be exempt — otherwise the case above proves nothing`
+      ).toBe(false);
+    }
 
-    // …and prose is still not a query.
-    const proseOnly = [
-      '// submittedBy: { select: { id: true, username: true } }',
-      'const doc = `select: { id: true, username: true }`;',
-      'submittedBy: { select: { id: true, username: true, deletedAt: true, image: true } },',
-    ].join('\n');
-    expect(userChipSelects(proseOnly)).toHaveLength(1);
+    // (c) 🔴 AND THE OWNER RESOLVER NEVER SHRUGS. The regex it replaced returned a sentinel
+    // when its 120-character lookbehind failed, and that sentinel was ALSO an exemption key —
+    // so `dbRead.user.findMany({ where, select: {…} })`, the commonest way to add a narrow
+    // projection, was silently licensed. Every owner below is a real identifier, which is
+    // what makes an exemption a decision someone had to write down.
+    const chips = SERVICE_FILES.flatMap((rel) => userChips(rel));
+    expect(chips.length, 'the corpus must contain user chips to resolve').toBeGreaterThan(0);
+    for (const chip of chips) {
+      // Every chip in the real corpus resolves to a real identifier pair. A `null` here would
+      // not be a licence — it is an offender above — but it would mean the resolver is
+      // guessing, and the ledger's entries would stop being readable as decisions.
+      expect(chip.owner, `unresolved owner in ${chip.file}`).not.toBeNull();
+      expect(chip.container, `unresolved container in ${chip.file}`).not.toBeNull();
+      expect(String(chip.owner)).toMatch(/^[A-Za-z_$][\w$]*$/);
+    }
   });
 });

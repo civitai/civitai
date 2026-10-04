@@ -1516,7 +1516,14 @@ async function loadDisplayedCollaboratorChips(
   // may be perfectly healthy and owned by someone else entirely.
   const users = await dbRead.user.findMany({
     where: { id: { in: userIds }, bannedAt: null, deletedAt: null },
-    select: { id: true, username: true, image: true },
+    // 🔴 `deletedAt` IS PROJECTED EVEN THOUGH THE `where` ALREADY EXCLUDES DELETED ROWS, and
+    // that is the cheaper half of a trade. The alternative was an exemption in the user-chip
+    // guard keyed on "the owner could not be resolved" — which, measured, exempted EVERY bare
+    // `select: {` on a Prisma query across all three corpus files, the commonest way to add a
+    // narrow user projection. One scalar on a row already being fetched, selecting zero extra
+    // rows, buys the deletion of that wildcard. A column nobody reads is a smaller cost than a
+    // guard that reads as coverage while admitting a class.
+    select: { id: true, username: true, deletedAt: true, image: true },
   });
   // Preserve the seat order (`createdAt asc`) rather than the DB's row order.
   const byId = new Map(users.map((u: { id: number }) => [u.id, u]));

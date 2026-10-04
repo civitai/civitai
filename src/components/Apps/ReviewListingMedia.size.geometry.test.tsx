@@ -23,8 +23,21 @@ import {
  * review queue need. A thumbnail too small to assess is the same as not showing it, so the
  * size is part of the feature, not of its appearance.
  *
- * 🔴 MEASURED AT TWO NAMED VIEWPORTS — 1280 and 820 — because "larger" is a claim about a
- * layout and a layout is a function of width. 1280 is the desktop the page is designed for;
+ * 🔴 THE `geometry` TIER, NOT `component` — and moving it is what found a real defect. As a
+ * `.browser.test.tsx` this ran in a document with 24 CSS rules, where every height number was
+ * a property of the harness: Tailwind preflight was absent, so the `img` `height` ATTRIBUTE
+ * won and the box looked reserved. Renamed into geometry (3,677 rules) the cover read
+ * 320x320 against an asserted 320x180 — preflight's `height: auto` outranks a presentational
+ * hint, so the cover's height was tracking the publisher's art. A pixel assertion in a tier
+ * that loads no stylesheet measures a different, internally-consistent layout, which is worse
+ * than measuring nothing.
+ *
+ * 🔴 MEASURED AT THREE NAMED VIEWPORTS — 1280, 820 and 390 — because "larger" is a claim about
+ * a layout and a layout is a function of width. The narrow one is not decoration: at 1280 and
+ * 820 the 320px cover never reaches its container, so `max-width: 100%` is provably INERT and
+ * the arms that cite it prove nothing about it. 280 is below the box, so the clamp binds —
+ * and 390, the obvious "phone" number, is NOT: measured, the container is still wider than
+ * the cover there, so that arm would have been a third vacuous one. 1280 is the desktop the page is designed for;
  * 820 is a tablet at which a fixed 320px cover could plausibly have overflowed its container.
  * A single measurement would carry no scope, and the overflow half of the claim is only
  * interesting at the narrow one. The gallery's breakpoint was chosen so the claim holds at
@@ -76,6 +89,14 @@ const { ScreenshotsReviewPanel } = await import('./OnsiteReviewModal');
 /** The two widths every claim below is scoped to. */
 const DESKTOP = 1280;
 const TABLET = 820;
+/**
+ * A width at which the 320px cover genuinely MEETS its container.
+ *
+ * ⚠️ 390 (a modern phone) is NOT narrow enough — measured, the container is still 390 and the
+ * 320px box fits with room to spare, so an arm at that width asserts the clamp without
+ * exercising it, which is the same vacuity as the two wide arms. 280 is below the box.
+ */
+const PHONE = 280;
 
 /**
  * Sets the real VIEWPORT, then renders inside a full-width container.
@@ -152,6 +173,30 @@ describe('the store icon and cover are bigger on the review page than in a queue
     );
   });
 
+  test('🔴 at phone width (280px) the cover CLAMPS to its container instead of widening the page', async () => {
+    // The arm that makes `max-width: 100%` load-bearing. At 1280 and 820 a 320px box never
+    // meets its container, so those arms assert the clamp without ever exercising it.
+    await atWidth(
+      PHONE,
+      <ReviewListingMedia
+        slug="gen-matrix"
+        name="Gen Matrix"
+        iconUrl={LOADABLE_IMAGE_DATA_URI}
+        coverUrl={`${LOADABLE_IMAGE_DATA_URI}#cover`}
+      />
+    );
+    await expect.element(page.getByTestId('apps-review-listing-media')).toBeInTheDocument();
+    const cover = box('apps-review-listing-cover-gen-matrix');
+    const c = container();
+    expect(c.width, 'the container must actually be narrower than the cover box').toBeLessThan(
+      REVIEW_COVER_W
+    );
+    expect(cover.width, 'the cover clamps to the container').toBeLessThanOrEqual(c.width + 1);
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(
+      document.documentElement.clientWidth + 1
+    );
+  });
+
   test('🔴 the ratio is preserved, so a bigger box is not a differently-cropped one', async () => {
     await atWidth(
       DESKTOP,
@@ -186,22 +231,6 @@ describe('the store icon and cover are bigger on the review page than in a queue
 });
 
 describe('the bundle screenshots are bigger on the review page than in the modal', () => {
-  /**
-   * 🔴 THE COMPACT ARM IS DERIVED, NOT MEASURED, AND HERE IS WHY — because a test that
-   * quietly swaps a measurement for arithmetic is the thing this file is otherwise about.
-   *
-   * Mantine resolves a responsive `cols={{ base, sm }}` through MEDIA QUERIES, and in this
-   * browser harness those do not apply: rendering the modal's gallery at a 1280 viewport
-   * produced ONE column, not two, so a measured comparison read `1280 > 1280` and the claim
-   * was untestable rather than false. Rather than assert against a number the harness is
-   * getting wrong, the review arm is MEASURED and the modal's two-up width is computed from
-   * the container — which is what the modal renders in a real browser.
-   *
-   * What that costs: this cannot catch a regression in the MODAL's column count. That is the
-   * modal's own suite's job, and it is stated here rather than left for a reader to discover.
-   */
-  const twoUpWidth = (containerWidth: number) => containerWidth / 2;
-
   /** The grid Mantine rendered, and the column count it DECLARED. */
   const declaredCols = () => {
     const shot = document.querySelector<HTMLElement>('[data-testid="apps-review-screenshot-0"]')!;
@@ -218,11 +247,17 @@ describe('the bundle screenshots are bigger on the review page than in the modal
       await atWidth(width, <ScreenshotsReviewPanel publishRequestId="pubreq_1" size="review" />);
       await expect.element(page.getByTestId('apps-review-screenshot-0')).toBeInTheDocument();
 
-      // 🔴 THE DECLARED COLUMN COUNT IS THE LOAD-BEARING ASSERTION, and the measured width
-      // below cannot replace it — see the harness note above. Measured by mutation: reverting
-      // the review gallery to the modal's responsive `{ base: 1, sm: 2 }` left every WIDTH
-      // assertion green, because this harness resolves a responsive `cols` to its `base`.
-      // Only the declared value moves, and it is what a real browser acts on.
+      // 🔴 THE DECLARED COLUMN COUNT IS THE LOAD-BEARING ASSERTION. Measured by mutation:
+      // reverting the review gallery to the modal's responsive `{ base: 1, sm: 2 }` leaves
+      // every WIDTH assertion in this file green, and only this one moves.
+      //
+      // ⚠️ AND THE REASON IS NOT THE ONE AN EARLIER DRAFT RECORDED. That draft blamed media
+      // queries "not applying". Measured directly: `matchMedia('(min-width: 48em)')` is true
+      // at 1280 and 820 and false at 600, and `--sg-cols` reads 2 / 2 / 1 — the responsive
+      // value resolves correctly. What was absent in the old `component` tier was
+      // SimpleGrid's LAYOUT CSS, so the grid was never a grid and both arms filled the
+      // container. The distinction matters because the two diagnoses lead to different
+      // fixes, and someone "fixing the media queries" would chase nothing.
       expect(declaredCols(), 'the review gallery must declare a single column').toBe('1');
 
       const shot = box('apps-review-screenshot-0');
@@ -230,11 +265,6 @@ describe('the bundle screenshots are bigger on the review page than in the modal
       expect(shot.width, `a review shot should fill the ${c.width}px container`).toBeGreaterThan(
         c.width * 0.9
       );
-      expect(
-        shot.width,
-        `review ${shot.width} must beat the modal two-up ${twoUpWidth(c.width)} at ${width}px`
-      ).toBeGreaterThan(twoUpWidth(c.width) * 1.5);
-
       // 🔴 AND STILL BOUNDED. `max-width: 100%` is what stops a wide image widening the page.
       expect(shot.width).toBeLessThanOrEqual(c.width + 1);
       expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(

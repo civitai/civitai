@@ -31,13 +31,18 @@ export const LISTING_COVER_H = 54; // 16:9
  * 40×40 icon cannot carry that, which is the defect: the publisher-supplied image is an abuse
  * vector and a thumbnail too small to assess is the same as not showing it.
  *
- * ⚠️ STILL FIXED, AND STILL ON THE `img` ATTRIBUTES. "Larger" must not mean "fluid": the
- * CLS reservation and the present/absent parity above are properties of having a known box,
- * and they matter more on a page that also lazy-loads a diff. The placeholders use the same
- * pair, so a listing with no cover occupies exactly the space one with a cover would.
+ * ⚠️ STILL FIXED, AND THE BOX IS ON THE CSS. "Larger" must not mean "fluid": the reservation
+ * and the present/absent parity are properties of having a known box, and they matter more on
+ * a page that also lazy-loads a diff. The placeholders use the same pair, so a listing with no
+ * cover occupies exactly the space one with a cover would.
  *
- * The ratio is preserved — icon square, cover 16:9 — so a bigger box cannot letterbox or
- * crop differently from the small one.
+ * 🔴 THE ATTRIBUTES ALONE DID NOT DELIVER THAT, and the enlargement is what made it matter.
+ * Preflight's `img { height: auto }` outranks a presentational hint, so the cover's height
+ * tracked the uploaded art: a 1:1 image rendered 320x320 in the 320x180 box, moving the card
+ * 140px — against 42px at the old row size, so the enlargement amplified an existing defect
+ * 3.3x rather than creating one. Measured in the geometry tier; invisible in the component
+ * tier, which loads 24 CSS rules. Both dimensions are now CSS as well, so the ratio really is
+ * preserved and `object-fit: cover` really does the cropping.
  */
 export const REVIEW_ICON_BOX = 96;
 export const REVIEW_COVER_W = 320;
@@ -173,6 +178,18 @@ export function ListingIconThumb({
       // `maxWidth: '100%'` is the other half, and it is not redundant with the fixed pair:
       // one RESERVES the space, the other CLAMPS it so a wide box cannot widen the page.
       style={{
+        // 🔴 THE BOX IS ON THE CSS, NOT ONLY THE ATTRIBUTES — and the attribute-only version
+        // did NOT reserve anything, which is the opposite of what this file claimed for it.
+        // `width`/`height` content attributes are PRESENTATIONAL HINTS and sort below every
+        // author layer, and `globals.css` ships Tailwind preflight (`img { max-width: 100%;
+        // height: auto }`). So `height: auto` won, the used height became
+        // `usedWidth / naturalRatio`, and `object-fit: cover` was inert. Measured in the
+        // geometry tier (3,677 CSS rules): a 1:1 image in the 320x180 cover box rendered
+        // 320x320 — the card reflowing 140px by whatever the publisher uploaded. The
+        // component tier's 24-rule document could not see it, which is why this shipped.
+        // The attributes stay for the pre-CSS paint; these two are what hold the box.
+        width: box,
+        height: box,
         borderRadius: 8,
         objectFit: 'cover',
         flex: `0 ${size === 'review' ? 1 : 0} ${box}px`,
@@ -230,9 +247,16 @@ export function ListingCoverThumb({
       height={box.h}
       loading="lazy"
       decoding="async"
-      // `maxWidth: '100%'` for the same reason as the icon: the fixed pair reserves, this
-      // clamps, and a 320px cover must not widen a narrow page.
-      style={{ borderRadius: 6, objectFit: 'cover', maxWidth: '100%' }}
+      // The box on the CSS for the same reason as the icon — see that comment. Without it
+      // preflight's `height: auto` makes this cover as tall as the publisher's art is,
+      // which is the one input this surface exists to be suspicious of.
+      style={{
+        width: box.w,
+        height: box.h,
+        borderRadius: 6,
+        objectFit: 'cover',
+        maxWidth: '100%',
+      }}
     />
   );
   if (!onOpen) return img;

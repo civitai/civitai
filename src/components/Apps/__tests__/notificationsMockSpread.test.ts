@@ -51,7 +51,7 @@ import { describe, expect, it } from 'vitest';
  * WHY NOT `local-rules/no-wholesale-module-mock` INSTEAD. That rule is the detector used
  * below, but its registry in `.eslintrc.js` deliberately excludes `~/utils/notifications`:
  * its stated admission test needs ≥15 exported bindings AND zero existing violators, and this
- * module has 7 exports and 39 violators. Registering it is blocked on that second criterion —
+ * module has 7 exports and 35 violators. Registering it is blocked on that second criterion —
  * converting the 35 — which is tracked in #5115 together with the question of whether an
  * export-count threshold is the right admission test at all. Deliberately not done here.
  *

@@ -39,29 +39,33 @@ export type CombinedReviewPayload = {
 };
 
 /**
- * THE user chip every moderator review surface carries — the queue list (on-site AND
- * off-site rows), the per-submission page, the prior-versions modal, and the moderation
- * listings table's pending request. ONE declaration, because all four
- * hand it to the same `UserAvatar`.
+ * THE user chip the moderator review surfaces project.
  *
- * 🔴 `deletedAt` IS LOAD-BEARING, NOT DECORATION, and its absence here was a real hole rather
- * than a missing nicety. `UserAvatar` BRANCHES on it twice — `UserProfileLink` suppresses
- * `linkToProfile` for a closed account, and `Username` renders "[deleted]" instead of a name.
- * Omit it and the value is `undefined` ⇒ falsy ⇒ a deleted account renders as a live, linked
- * one, on the surface where who submitted a bundle is the fact being judged. It reached the
- * on-site selects a round before the off-site one, so for a while the queue disagreed with
- * itself between two adjacent rows; this type is what stops a narrower projection being
- * type-legal again. The server side is one `reviewUserChipSelect` in
- * `src/server/selectors/review-user-chip.selector.ts` — a LEAF with a type-only Prisma
+ * 🔴 `deletedAt` IS LOAD-BEARING, NOT DECORATION. `UserAvatar` BRANCHES on it twice —
+ * `UserProfileLink` suppresses `linkToProfile` for a closed account, and `Username` renders
+ * "[deleted]" instead of a name. Omit it and the value is `undefined` ⇒ falsy ⇒ a deleted
+ * account renders as a live, linked one, on the surface where who submitted a bundle is the
+ * fact being judged. It reached the on-site selects a round before the off-site one, so for a
+ * while the queue disagreed with itself between two adjacent rows; this type is what stops a
+ * narrower projection being type-legal again. The server side is one `reviewUserChipSelect`
+ * in `src/server/selectors/review-user-chip.selector.ts` — a LEAF with a type-only Prisma
  * import, deliberately not `user.selector.ts`; that file's header says why.
+ *
+ * ⚠️ NO CONSUMER INVENTORY HERE, DELIBERATELY. This docstring used to enumerate the surfaces
+ * and assert that all of them render the chip through `UserAvatar`. The list went stale twice
+ * in three rounds, and the second time it was widened to include a surface that renders plain
+ * text — restating, one file away, the exact claim that same commit was retracting. The set
+ * of consumers is `git grep ReviewUserChip`, which cannot rot; a prose copy of it can, and
+ * did. Not every consumer hands it to `UserAvatar`; the ones that do not carry it for parity,
+ * so the branch is there the moment they adopt the shared component.
  *
  * ⚠️ `profilePicture` is deliberately NOT here — the other field `UserAvatar` reads, but a
  * NESTED select (a joined image row per row on three list paths) for a cosmetic gain that
  * `UserAvatar` already falls back from. The reasoning lives beside the select.
  *
  * 🔴 THIS MODULE IS REACT-FREE ON PURPOSE, which is why the type lives here rather than in
- * one of the three components that render it: a component module cannot be imported by the
- * other two without dragging their trees along.
+ * one of the components that render it: a component module cannot be imported by the others
+ * without dragging their trees along.
  */
 export type ReviewUserChip = {
   id: number;

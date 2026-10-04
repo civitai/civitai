@@ -373,6 +373,31 @@ describe('re-running ONE analysis instead of all three', () => {
     expect(other!.disabled).toBe(false);
   });
 
+  test('🔴 NEGATIVE CONTROL for the missing arm: with nothing in flight, that button IS clickable', async () => {
+    // Measured gap: `disabled={true}` on the `missing` arm passed all 23 cases. The FAILED
+    // arm's control does not cover this one — it drives a different component
+    // (`SectionDidNotRun`, not `SectionFailed`) — so without this, permanently disabling
+    // "Run this analysis" would be invisible. That is the state whose own docstring says
+    // telling a moderator to take an action the screen does not offer is worse than saying
+    // nothing, and it is the state a stranded targeted re-run leaves behind.
+    mocks.report = {
+      status: 'failed',
+      model: 'anthropic/claude-x',
+      summaryMd: 'Provisioning failed: no target',
+      scopeVerdicts: PARTIAL_REPORT.scopeVerdicts,
+      securityAudit: null,
+      codeReview: null,
+    };
+    mocks.pending = false;
+    render();
+    await page.getByRole('tab', { name: /Code review/ }).click();
+    const btn = visiblePanel()!.querySelector<HTMLButtonElement>(
+      '[data-testid="apps-report-section-rerun"]'
+    );
+    expect(btn, 'a section that never ran must still offer a run control').not.toBeNull();
+    expect(btn!.disabled, 'with nothing in flight it must be clickable').toBe(false);
+  });
+
   test('🔴 the whole-report re-run is STILL offered, and sends NO section list', async () => {
     // A mod who thinks the whole analysis is stale must still be able to redo everything —
     // and that path must not acquire a section filter by accident.

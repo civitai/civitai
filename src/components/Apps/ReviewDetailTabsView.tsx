@@ -293,8 +293,8 @@ function ReviewDetailTabsViewInner({
  * calls the same `useNowTick` and then renders `ReviewAgentSection` / `ReviewFilesSection` as
  * flat siblings with nothing memoised between the tick and them — so the per-minute re-render
  * described below is still live there. That is accepted for now (mod-only, one submission
- * open at a time), but the shared body's docstring promises the two surfaces stay
- * behaviour-identical through one implementation per panel, and THIS is the one thing that is
+ * open at a time), but `OnsiteReviewModalBody`'s docstring forbids forking a panel for one
+ * surface — one implementation, rendered by both, differing only in arrangement, and THIS is the one thing that is
  * not shared. Said here so the next reader does not assume `ReviewDetailTabsMemo`'s test
  * covers the modal; it does not.
  *
