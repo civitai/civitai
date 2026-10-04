@@ -156,10 +156,17 @@ describe('modelsDisplayedAttributes — the Creator Controls privacy boundary', 
     // MISSING. It shipped missing `flags` — written into this same index by the second writer,
     // `src/pages/api/mod/search/models-update.ts` — and a review round caught that, not a test.
     // A list that reads as the record while being incomplete is what stops the next person looking.
-    // `insight` is the models index's suitability score (`insight.qualityScore`), sort-only AND
-    // filter-only: the resource-intent matcher sorts on it and reads the scores it needs from
-    // Postgres, so no consumer reads it off a hit. Top-level key because `transformData` emits
-    // `insight: { qualityScore }`.
+    // `insight` is the models index's suitability object — the sortable+filterable
+    // `insight.qualityScore`, the filter-only meaning axes `insight.role` and
+    // `insight.styleFamily`, and `insight.modelVersionId`, which is declared in NO attribute list
+    // at all. No consumer reads any of them off a hit: the resource-intent matcher sorts on the
+    // score and reads what it needs from Postgres. ONE top-level entry covers all FOUR, because
+    // `transformData` emits `insight: { qualityScore, role, styleFamily, modelVersionId }` and both
+    // withholding paths are keyed on the top-level attribute — Meili's `displayedAttributes` (where
+    // nested children ride along with their parent) and `withheldStripped`'s `delete out[attr]`.
+    // 🔴 For `modelVersionId` that ride-along is not incidental: being undisplayed is the ONLY
+    // thing making it unreadable, since it is not filterable either, so removing `insight` from
+    // this list would publish a field the projection site argues must stay unreadable.
     expect([...MODELS_WITHHELD_ATTRIBUTES].sort().join(',')).toBe(
       'canGenerateNext,flags,insight,isOfficial,sortMetrics'
     );

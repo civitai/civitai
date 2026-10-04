@@ -83,8 +83,13 @@ export const modelsFilterableAttributes = [
   //
   // 🔴 THE PREDICATE IS `IS NOT NULL` / `IS NULL`, **NOT** `EXISTS` / `NOT EXISTS`, and an
   // earlier version of this comment named the wrong pair. `models.search-index.ts` WRITES
-  // `insight: { qualityScore: null }` whenever the projection returns null (it must —
-  // omitting the key cannot clear a stale score under PUT merge semantics; see that file).
+  // `insight: { qualityScore: null, role: null, styleFamily: null, modelVersionId: null }`
+  // whenever the projection returns null (it must — omitting a key cannot clear a stale value
+  // under PUT merge semantics; see that file). All FOUR nulls come from the SAME branch of the
+  // SAME projection, so they can never disagree about whether a model has a usable label.
+  // ⚠️ `modelVersionId` is written but is NOT in this list and must not be added — it is
+  // unreadable by any search path by design, argued at the projection site. Nothing below
+  // describes it; the predicate table is about `insight.qualityScore`.
   // A written null COUNTS AS EXISTING, so once a reset has written every document:
   //   EXISTS       -> every document (useless as a labeled-tier arm)
   //   NOT EXISTS   -> nothing at all (useless as a control arm)
@@ -95,7 +100,7 @@ export const modelsFilterableAttributes = [
   // 🔴 `IS NULL` is NOT "the unlabeled remainder" — an earlier version of this table said so,
   // and a written null has at least FIVE causes: (1) genuinely unlabeled, by design;
   // (2) LABELED but with no version at or above the promote floor (0.3) —
-  // `modelInsightQualityScore` skips sub-floor versions and returns null when none qualify,
+  // `modelInsightProjection` skips sub-floor versions and returns null when none qualify,
   // see ~/server/services/resource-insight.ts; (3) a label-read FAULT —
   // `models.search-index.ts` catches a throw from `loadResourceInsights` and recovers with an
   // empty Map, so EVERY model in that batch writes null, labeled or not, with a
@@ -104,7 +109,7 @@ export const modelsFilterableAttributes = [
   // absent; (5) the labeled VERSION is not in the projection — `modelSearchIndexSelect`
   // filters `modelVersions` to `status: Published` and `availability != Unsearchable`
   // (~/server/selectors/model.selector.ts), so a qualifying label on a version later
-  // unpublished or flipped Unsearchable never reaches `modelInsightQualityScore`.
+  // unpublished or flipped Unsearchable never reaches `modelInsightProjection`.
   //
   // Cause 2 happens in completely normal operation. Causes 4 and 5 both MEASURE ZERO as of
   // 2026-10-03 (no stale rows; no non-Published/Unsearchable labeled versions), but they are
@@ -232,6 +237,56 @@ export const modelsFilterableAttributes = [
   // whereas deferring it means paying that route's own full facet rebuild later. So the
   // asymmetry is a reason to land it now, not a reason the claim was harmless.
   'insight.qualityScore',
+  // The two MEANING axes — the arc's actual goal, which `insight.qualityScore` is not.
+  // Their vocabularies are `RESOURCE_INTENT_ROLE_OPTIONS` and
+  // `RESOURCE_INTENT_STYLE_FAMILY_OPTIONS` (~/server/schema/resource-intent.schema.ts) —
+  // named rather than counted, because a count restated here goes silently wrong the first
+  // time an option is added. Both are written from the SAME version row the score came from
+  // (`modelInsightProjection`, ~/server/services/resource-insight.ts). Quality answers "how
+  // good"; these answer "what FOR", which is the question a purpose query asks.
+  //
+  // ⚠️ `category.name` above is the OTHER filterable answer to "what is this FOR", and the
+  // next person to add a purpose filter will meet both. They are not interchangeable:
+  // `category.name` is a MODEL-level creator-assigned tag drawn from the category tag set,
+  // whereas `insight.role` is a VERSION-level machine label behind a confidence floor,
+  // projected from one winning version. Pick deliberately; ANDing them intersects two
+  // different authorities on the same question and silently narrows the pool.
+  //
+  // 🔴 FILTERABLE ONLY, AND DELIBERATELY NOT SORTABLE — do not "complete the set" by
+  // adding them to ./sortable-attributes.ts. They are unordered categories, so a
+  // `role:desc` would order alphabetically and read as meaningful ranking; Meilisearch
+  // accepts a sort on any declared sortable attribute without complaint, so that mistake
+  // is silent. A purpose query wants an EQUALITY filter (`insight.role = "style"`), which
+  // is exactly what this list buys.
+  //
+  // 🔴 THE SEED'S SORT ARRAY IS UNCHANGED BY THE CHANGE THAT ADDED THESE, and that is a
+  // decision rather than an omission. What the index WRITES and how
+  // `searchShortlistModels` (~/server/services/resource-intent-matcher.service.ts) ORDERS
+  // are separable: a document only ACQUIRES these two fields when it is rewritten, which at
+  // full coverage means the manual full reset — authorisation-gated and not yet run — whereas
+  // the sort array is a plain code change deployable any time. So landing the widest useful
+  // projection now means ONE reset writes everything a later purpose-first ordering could
+  // need, and that ordering then costs code only. Nothing reads these attributes yet — by
+  // design.
+  //
+  // 🔴 ⚠️ DO NOT RE-DERIVE THAT AS "THE LISTS ONLY REACH A LIVE INDEX THROUGH A RESET" — a
+  // draft of this very entry said exactly that, and it is the claim the ⚠️ paragraph beside
+  // the score entry above was written to RETRACT. THIS list has
+  // src/pages/api/admin/temp/apply-models-index-filterable-attributes.ts, which applies it to
+  // the live index with no reset; only `sortableAttributes` and `displayedAttributes` are
+  // reset-only. The separability argument does not need the false half, so it no longer
+  // carries it — the DOCUMENTS are what wait for a rewrite, not the settings.
+  //
+  // ⚠️ The null semantics are the score's, verbatim: `models.search-index.ts` writes
+  // `role: null` / `styleFamily: null` on every model with no qualifying version, because
+  // a PUT merge cannot clear a key it omits. So the `IS NOT NULL` / `IS NULL` arms and
+  // the FIVE causes of a written null enumerated above the score entry apply unchanged to
+  // these two — including that `IS NULL` is NOT "the unlabeled remainder". One difference
+  // worth knowing: a null here and a null on the score are the SAME null, written in the
+  // same branch from the same projection returning null, so the three can never disagree
+  // about whether a model has a usable label.
+  'insight.role',
+  'insight.styleFamily',
 ];
 
 export const toolsFilterableAttributes = ['id', 'type', 'company'];

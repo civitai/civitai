@@ -81,8 +81,49 @@ export const MODELS_WITHHELD_ATTRIBUTES = [
   // Sort-only AND filter-only: `insight.qualityScore` is in both `modelsSortableAttributes` and
   // `modelsFilterableAttributes`, and no consumer reads it off a hit — the resource-intent matcher
   // sorts on it and reads the scores it needs from Postgres via `loadResourceInsights`. The
-  // top-level key is `insight` because `transformData` emits `insight: { qualityScore }`, and this
-  // list is keyed on top-level attributes (nested children ride along with their parent).
+  // top-level key is `insight` because `transformData` emits
+  // `insight: { qualityScore, role, styleFamily, modelVersionId }`, and this list is keyed on
+  // top-level attributes (nested children ride along with their parent).
+  // 🔴 That ride-along is what keeps the two MEANING axes — `insight.role` and
+  // `insight.styleFamily`, filter-only, added later than the score — out of a serialised hit
+  // with no edit here. Confirmed on the OTHER path too, which this whitelist cannot reach:
+  // `withheldStripped` in ./models.search-index.ts `delete`s the top-level `insight` key, taking
+  // the whole object with it. Neither needed an entry per axis — which is also why a future axis
+  // promoted to a TOP-LEVEL key WOULD need its own entry here.
+  //
+  // 🔴 AND FOR `insight.modelVersionId` THE RIDE-ALONG IS LOAD-BEARING RATHER THAN CONVENIENT.
+  // That leaf is in NO attribute list — not filterable, not sortable — so unlike the three
+  // beside it, this entry is the ONLY thing keeping it unreadable: `attributesToRetrieve` can
+  // narrow within the displayed set but cannot re-admit a withheld attribute, so withholding
+  // `insight` is what makes "no search path returns the winning version id" true. Removing
+  // `insight` from this list to expose something else therefore also publishes that id, and it
+  // cannot be done per-leaf — both mechanisms key on the top-level attribute. The argument for
+  // why the id is written at all, and the two routes that would make it readable (neither
+  // approved), are at the projection site in ./models.search-index.ts.
+  //
+  // 🔴 BUT READ "WITHHELD" AS **NOT SERIALISED INTO A HIT**, NEVER AS NOT DETERMINABLE, and do
+  // not let the word do work it cannot do. These two mechanisms are the complete boundary on
+  // what a hit CONTAINS and they are not a confidentiality control, because a FILTERABLE
+  // attribute is an oracle: ./filterable-attributes.ts records, measured on v1.15.0, that
+  // filtering works on a field this list withholds, and `src/components/Search/search.client.ts`
+  // points the browser at the models index with a client key published in
+  // `src/env/client-schema.ts`. So anyone holding that key can test a withheld-but-filterable
+  // value against a document of their choosing, one equality at a time. The class is
+  // pre-existing — `insight.qualityScore` has been filterable since it shipped, and it is the
+  // more sensitive of the three — and acceptable here for the reason the next paragraph gives.
+  // 🔴 It is NOT acceptable by default: if an axis arrives that genuinely must not be externally
+  // derivable, declaring it filterable defeats BOTH mechanisms at once, and nothing in this file
+  // or in that one will stop you.
+  //
+  // ⚠️ THERE IS ALSO A THIRD EXIT from the shared record builder that neither mechanism can
+  // see, so the pair above is not an enumeration of paths: `getData(ids)` in
+  // ./base.search-index.ts runs `pullData` + `transformData` and returns the transformed records
+  // straight to its caller — not through `pushData` (so `displayedAttributes` never applies) and
+  // not through `getModelSearchIndexRecords` (so `withheldStripped` never applies). It has NO
+  // caller anywhere in the repo today, so this is a dormant exit rather than a live leak; it is
+  // named here because the one leak this file exists to record got out the same way — through a
+  // path the whitelist could not reach — and because it sits on an object whose sibling methods
+  // are called freely from jobs and admin routes.
   // ⚠ Withholding it is not a privacy decision like `sortMetrics` — a quality label is not a
   // creator's hidden number — it is the same costs-nothing default this list's header describes,
   // and it keeps the field out of every public search hit until something actually needs it there.
