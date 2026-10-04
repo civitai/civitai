@@ -368,12 +368,22 @@ describe('the seeded domain matches the service', () => {
    * 🔴 ONE ALTERNATION, NOT TWO CHAINED REPLACES, AND THE ORDER WAS A LIVE HOLE. Stripping
    * block comments FIRST lets a block-comment OPENER sitting inside a `//` LINE comment open a
    * pseudo block comment that runs to the next real block-comment CLOSER — swallowing every
-   * line of code between them. Measured: two inserted lines, the first a line comment ending in
-   * a path glob of a shape that already appears in two of the three guarded files, silently
-   * deleted four code-ish lines and took BOTH flat-zero loops below from 1 hit to 0. It is
-   * aligned exactly with the hazard: a swallow can only ever help an `expect(...).toBe(0)`, and
-   * both of those loops are that shape, while a swallow inside a DECLARED writer's cell fails
-   * loudly against its expected 1.
+   * line of code between them. The span is NOT local: measured on the service, inserting one
+   * line comment ending in a path glob of a shape that already appears in two of the three
+   * guarded files swallowed a **155-line span, 75 non-blank lines** (the stripper's output went
+   * 571 non-blank lines to 496). An earlier version of this paragraph said "four", which
+   * understated it ~19x and contradicted the mechanism sentence above it.
+   *
+   * It takes TWO mutants to blind both flat-zero loops below, and an earlier version claimed
+   * one did — so they are separated here, each measured:
+   *   - second line `appStorageSessionGateRefusalsCounter.inc({ op })` → the SYMBOL arm of the
+   *     universal-half loop goes 1 hit to 0. Declared-name hits are 0 in BOTH arms, so the
+   *     names loop was never at 1 for this mutant.
+   *   - second line `getSingleMetric('<the wire name>').inc({ op })` → the DECLARED-NAME loop
+   *     goes 1 to 0 instead.
+   * Either way the direction is the same, which is what makes this aligned exactly with the
+   * hazard: a swallow can only ever help an `expect(...).toBe(0)`, and both loops are that
+   * shape, while a swallow inside a DECLARED writer's cell fails loudly against its expected 1.
    *
    * The alternation fixes it by precedence: scanning left to right, at a `//` position the
    * block-comment branch cannot match, so an opener inside that line is consumed as
@@ -563,12 +573,13 @@ describe('the seeded domain matches the service', () => {
     //     comment says it exists to catch.
     // The first is why this matters most: the exposed `help` string asserts "A middleware
     // refusal moves ONLY this series", and a service-side emit makes that sentence false while
-    // every behavioural case stays green. Counted, because two earlier versions of this
-    // sentence were loose in opposite directions: of the TWELVE `outcome="unauthorized"` emit
-    // sites in the service, exactly ONE has a case asserting `ops_total` was incremented, and
-    // exactly TWO assert the session-gate series stays STILL (the mirror arm and the
-    // invalid-token case). So TEN carry no stillness assertion, which is the direction that
-    // matters here.
+    // every behavioural case stays green. Counted, and narrowed to the only figure that bears
+    // on the argument after two earlier versions of this sentence got loose in opposite
+    // directions — the second of them by adding a precise `ops_total` count that was itself
+    // wrong, which is why that half is simply gone rather than re-counted: of the TWELVE
+    // `outcome="unauthorized"` emit sites in the service, exactly TWO have a case asserting the
+    // session-gate series stays STILL (the mirror arm and the invalid-token case). So TEN carry
+    // no stillness assertion, which is the direction that matters here.
     for (const sym of LEDGERED_SYMBOLS) {
       const declared: readonly string[] = LEDGERED_WRITERS[sym];
       for (const rel of reaching) {
