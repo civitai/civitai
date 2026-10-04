@@ -21,6 +21,17 @@ import { listingMediaIndex, listingMediaShots } from '~/components/Apps/myAppsVi
  * A pending FIRST version does have a pre-approval draft listing (created at submit), so the
  * media usually exists at review time — but not always, which is why both absences render an
  * explicit state rather than an empty box.
+ *
+ * 🔴 `size="review"` — THE SAME COMPONENTS, THE BIGGER BOX. These two thumbs are shared with
+ * `/apps/mine` and the `/apps/review` queue, where they sit in TABLE ROWS and 40×40 is
+ * correct. Here there is one submission on the moderator's whole screen and the question is
+ * partly whether this art is acceptable, so the row size was the defect: a thumbnail too
+ * small to assess is the same as not showing it. The size is a per-caller variant rather than
+ * a change to the shared constants, which would double the height of every queue row.
+ *
+ * ⚠️ IT RENDERS FOR EVERY MODE. This card is outside the pending-only gates, so an approved
+ * or rejected submission still shows its store art for a re-check — the larger box must not
+ * assume a decision is pending, and nothing here reads `mode`.
  */
 export function ReviewListingMedia({
   slug,
@@ -57,6 +68,7 @@ export function ReviewListingMedia({
               Icon
             </Text>
             <ListingIconThumb
+              size="review"
               url={iconUrl}
               name={name}
               imgTestId={`apps-review-listing-icon-${slug}`}
@@ -75,6 +87,7 @@ export function ReviewListingMedia({
               Cover
             </Text>
             <ListingCoverThumb
+              size="review"
               url={coverUrl}
               name={name}
               imgTestId={`apps-review-listing-cover-${slug}`}

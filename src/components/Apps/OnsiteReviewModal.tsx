@@ -866,7 +866,24 @@ function ReviewPreviewPanel({
 // pending app has no public screenshot URL yet — it isn't approved).
 // ---------------------------------------------------------------------------
 
-export function ScreenshotsReviewPanel({ publishRequestId }: { publishRequestId: string }) {
+/**
+ * 🔴 `size` IS THE WHOLE POINT OF THIS PANEL, NOT A STYLE KNOB. The comment above records why
+ * the panel exists: publisher-supplied images are an abuse vector and the moderator has to
+ * actually SEE them before approving. A gallery too small to assess is the same as not
+ * showing them — so the review PAGE, which has one submission and the whole screen, renders
+ * one image per row up to a tablet width instead of two.
+ *
+ * The modal keeps `'compact'`: it is a dialog sharing its width with a scrolling body, and
+ * two columns there is the readable arrangement. Same component, same lazy query, same
+ * `max-width: 100%` bound — only the column count differs.
+ */
+export function ScreenshotsReviewPanel({
+  publishRequestId,
+  size = 'compact',
+}: {
+  publishRequestId: string;
+  size?: 'compact' | 'review';
+}) {
   const features = useFeatureFlags();
   const { data, isLoading, error } = trpc.blocks.getPublishRequestScreenshots.useQuery(
     { publishRequestId },
@@ -904,7 +921,16 @@ export function ScreenshotsReviewPanel({ publishRequestId }: { publishRequestId:
           <Text size="xs" c="dimmed">
             Publisher-supplied images from the bundle — review before approving.
           </Text>
-          <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+          {/*
+            🔴 ONE COLUMN ON THE REVIEW PAGE, AT EVERY WIDTH — not a different breakpoint.
+            The modal goes two-up at `sm` (768) because it is a dialog sharing its width with
+            a scrolling body. The page has one submission and the moderator's whole screen,
+            and the thing being judged is whether publisher-supplied art is acceptable: a
+            half-width thumbnail is the defect this panel's own header describes. A single
+            column makes each shot the full container width, which is roughly twice the
+            modal's at the same viewport.
+          */}
+          <SimpleGrid cols={size === 'review' ? 1 : { base: 1, sm: 2 }} spacing="sm">
             {items.map((shot) => (
               <Card
                 key={shot.index}
@@ -917,8 +943,13 @@ export function ScreenshotsReviewPanel({ publishRequestId }: { publishRequestId:
                 <img
                   src={shot.dataUrl}
                   alt={`Screenshot ${shot.index + 1}`}
+                  // 🔴 `loading="lazy"` STAYS. Bigger must not mean eagerly fetched: these are
+                  // base64 data URLs inlined in the query payload, and the panel only mounts
+                  // once the Preview tab is visited. Widening the column changes the layout,
+                  // not when the bytes are decoded.
                   loading="lazy"
-                  style={{ width: '100%', height: 'auto', display: 'block' }}
+                  data-testid={`apps-review-screenshot-${shot.index}`}
+                  style={{ width: '100%', maxWidth: '100%', height: 'auto', display: 'block' }}
                 />
               </Card>
             ))}

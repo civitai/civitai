@@ -21,6 +21,44 @@ export const LISTING_COVER_W = 96;
 export const LISTING_COVER_H = 54; // 16:9
 
 /**
+ * The REVIEW-PAGE boxes — the same media, sized to be judged rather than recognised.
+ *
+ * 🔴 A SECOND SIZE RATHER THAN A BIGGER SHARED ONE. The constants above are a TABLE ROW's
+ * reservation: `/apps/mine` and the `/apps/review` queue put one of these in every row, and a
+ * 96px icon there would double the row height of a list whose job is to be scannable. The
+ * review PAGE is the opposite surface — one submission, the moderator's whole screen, and the
+ * decision they are being asked to make is partly about whether this art is acceptable. A
+ * 40×40 icon cannot carry that, which is the defect: the publisher-supplied image is an abuse
+ * vector and a thumbnail too small to assess is the same as not showing it.
+ *
+ * ⚠️ STILL FIXED, AND STILL ON THE `img` ATTRIBUTES. "Larger" must not mean "fluid": the
+ * CLS reservation and the present/absent parity above are properties of having a known box,
+ * and they matter more on a page that also lazy-loads a diff. The placeholders use the same
+ * pair, so a listing with no cover occupies exactly the space one with a cover would.
+ *
+ * The ratio is preserved — icon square, cover 16:9 — so a bigger box cannot letterbox or
+ * crop differently from the small one.
+ */
+export const REVIEW_ICON_BOX = 96;
+export const REVIEW_COVER_W = 320;
+export const REVIEW_COVER_H = 180; // 16:9, same as the row box
+
+/**
+ * Which box a caller wants. `'row'` is the default so every existing call site keeps the
+ * reservation its tests assert; only the review page asks for `'review'`.
+ */
+export type ListingThumbSize = 'row' | 'review';
+
+const ICON_BOX: Record<ListingThumbSize, number> = {
+  row: LISTING_ICON_BOX,
+  review: REVIEW_ICON_BOX,
+};
+const COVER_BOX: Record<ListingThumbSize, { w: number; h: number }> = {
+  row: { w: LISTING_COVER_W, h: LISTING_COVER_H },
+  review: { w: REVIEW_COVER_W, h: REVIEW_COVER_H },
+};
+
+/**
  * 🔴 THE CLICK TARGET IS A REAL `<button>`, AND THE PLACEHOLDER IS NOT ONE.
  *
  * `UnstyledButton` renders a real `<button type="button">`, so it is tab-reachable,
@@ -79,6 +117,8 @@ export type ListingThumbProps = {
   placeholderTestId: string;
   /** Omit to render a plain, non-interactive image (no lightbox on that surface). */
   onOpen?: () => void;
+  /** Which fixed box to reserve. Defaults to the table-row size. */
+  size?: ListingThumbSize;
   /** `data-testid` for the wrapping button, when `onOpen` is given. */
   buttonTestId?: string;
 };
@@ -90,17 +130,19 @@ export function ListingIconThumb({
   placeholderTestId,
   onOpen,
   buttonTestId,
+  size = 'row',
 }: ListingThumbProps) {
+  const box = ICON_BOX[size];
   if (!url) {
     return (
       <div
         data-testid={placeholderTestId}
         aria-hidden
         style={{
-          width: LISTING_ICON_BOX,
-          height: LISTING_ICON_BOX,
+          width: box,
+          height: box,
           borderRadius: 8,
-          flex: `0 0 ${LISTING_ICON_BOX}px`,
+          flex: `0 0 ${box}px`,
           background: 'var(--mantine-color-dark-4)',
         }}
       />
@@ -117,11 +159,15 @@ export function ListingIconThumb({
       data-testid={imgTestId}
       src={url}
       alt=""
-      width={LISTING_ICON_BOX}
-      height={LISTING_ICON_BOX}
+      width={box}
+      height={box}
       loading="lazy"
       decoding="async"
-      style={{ borderRadius: 8, objectFit: 'cover', flex: `0 0 ${LISTING_ICON_BOX}px` }}
+      // 🔴 `maxWidth: '100%'` ON TOP OF THE FIXED BOX. The fixed pair is the CLS reservation;
+      // this is the bound that stops a wide box from widening the PAGE on a narrow viewport,
+      // which the review page must never do (its diff panel scrolls inside itself for the
+      // same reason). The two are not redundant — one reserves, the other clamps.
+      style={{ borderRadius: 8, objectFit: 'cover', flex: `0 1 ${box}px`, maxWidth: '100%' }}
     />
   );
   if (!onOpen) return img;
@@ -139,14 +185,17 @@ export function ListingCoverThumb({
   placeholderTestId,
   onOpen,
   buttonTestId,
+  size = 'row',
 }: ListingThumbProps) {
+  const box = COVER_BOX[size];
   if (!url) {
     return (
       <div
         data-testid={placeholderTestId}
         style={{
-          width: LISTING_COVER_W,
-          height: LISTING_COVER_H,
+          width: box.w,
+          height: box.h,
+          maxWidth: '100%',
           borderRadius: 6,
           display: 'flex',
           alignItems: 'center',
@@ -167,11 +216,13 @@ export function ListingCoverThumb({
       data-testid={imgTestId}
       src={url}
       alt=""
-      width={LISTING_COVER_W}
-      height={LISTING_COVER_H}
+      width={box.w}
+      height={box.h}
       loading="lazy"
       decoding="async"
-      style={{ borderRadius: 6, objectFit: 'cover' }}
+      // `maxWidth: '100%'` for the same reason as the icon: the fixed pair reserves, this
+      // clamps, and a 320px cover must not widen a narrow page.
+      style={{ borderRadius: 6, objectFit: 'cover', maxWidth: '100%' }}
     />
   );
   if (!onOpen) return img;

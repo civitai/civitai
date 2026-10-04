@@ -279,7 +279,7 @@ function ReviewDetailTabsViewInner({
               iconUrl={request.iconUrl ?? null}
               coverUrl={request.coverUrl ?? null}
             />
-            <ScreenshotsReviewPanel publishRequestId={request.id} />
+            <ScreenshotsReviewPanel publishRequestId={request.id} size="review" />
             <ReviewCurationSection selection={selection} />
           </Stack>
         )}
