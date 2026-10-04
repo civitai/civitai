@@ -348,6 +348,18 @@ describe('crucible.getEntries — podium', () => {
     expectPublishedEntryImage(sql!);
   });
 
+  it('leaves a winner the viewer cannot see off the podium', async () => {
+    const page = queryRaw.getMockImplementation()!;
+    queryRaw.mockImplementation(async (...call: unknown[]) => {
+      const rows = (await page(...call)) as { id: number }[];
+      return isPodiumQuery(rendered(call)) ? rows.filter(({ id }) => id !== 3) : rows;
+    });
+
+    const { podium } = await caller(undefined).getEntries({ crucibleId: CRUCIBLE_ID });
+
+    expect(podium.map((e) => [e.id, e.prizePlace])).toEqual([[1, 1]]);
+  });
+
   it('shows a signed-in creator their own podium entry, inside the id filter', async () => {
     await caller(signedIn(OWNER_ID)).getEntries({ crucibleId: CRUCIBLE_ID });
 

@@ -46,7 +46,7 @@ Settings can change only before the crucible starts; after that only the name, d
 
 The pool is the seeded amount plus the fee of every paid entry. Free entries add nothing, so a crucible with no seed and only free entries has a pool of 0.
 
-At the end, entries need a minimum share of votes to place. Those that place split the pool by the prize distribution; ties go to the earlier entry. Entries whose media was blocked, taken down or re-rated outside the crucible's levels can't place, and their fees stay in the pool. If nobody entered, or nothing could be awarded, the seed goes back to the creator.
+At the end, entries need a minimum share of votes to place; ties go to the earlier entry. Prizes follow the prize distribution, but a creator takes at most one: their best-placed entry. Their other entries keep their positions on the leaderboard and win nothing, and the next creator takes the next prize. When fewer creators place than there are prizes, the unfilled shares go to the winners in proportion to their own. Entries whose media was blocked, taken down or re-rated outside the crucible's levels can't place, and their fees stay in the pool. If nobody entered, or nothing could be awarded, the seed goes back to the creator.
 
 The discovery page's Prize Pool sort uses the same pool.
 
@@ -70,7 +70,7 @@ Showing a live leaderboard would bias judges, so scores and positions stay hidde
 ## Notifications
 
 - **Creator:** new entries, and the end (with any seed refund).
-- **Entrants:** their final position and any prize, a cancellation and its refund, and an entry removed by a moderator.
+- **Entrants:** the prize they took (or their final position, without one), a cancellation and its refund, and an entry removed by a moderator.
 - **Followers and entrants:** a reminder once, 8 hours before the end. A crucible that runs 8 hours or less gets none.
 - **Followers:** the results, unless they are the creator or an entrant, who already hear about the end.
 
