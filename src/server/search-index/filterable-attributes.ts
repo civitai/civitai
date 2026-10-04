@@ -124,8 +124,16 @@ export const modelsFilterableAttributes = [
   //
   // So `IS NOT NULL` is the right labeled arm FOR A RETRIEVAL QUESTION — it is exactly the
   // population the feature acts on. 🔴 It is NOT the right frame for a LABEL-QUALITY read: it
-  // is a confidence-truncated sample that omits precisely the weakest 10.9% of labels, i.e.
-  // the ones most likely to be wrong, so it biases any quality headline HIGH. Those 863 are
+  // is a confidence-truncated sample that omits precisely the weakest 10.9% of labeled
+  // MODELS (863 of the 7,886 carrying a label), i.e. the ones most likely to be wrong, so it
+  // biases any quality headline HIGH. 🔴 MODELS, not label rows — an earlier version of this
+  // sentence said "10.9% of labels", and the omitted ROW share is that figure under neither
+  // reading: those 863 fully-excluded models hold 887 rows (8.96% of the 9,900
+  // `ResourceInsight` label rows), while ALL sub-floor rows number 1,265 (12.78% of the same
+  // 9,900). And the model-level frame cannot express the 378 sub-floor rows that are the
+  // difference between those two (1,265 less the 887): they sit on models that qualify via
+  // ANOTHER version, so those rows are dropped from the SCORE while their model stays in the
+  // sample. Those 863 are
   // also index-UNREACHABLE — in the index a written null is indistinguishable from unlabeled —
   // so they can only be sampled from Postgres. And the floor itself was argued for ONE job:
   // its own docstring (`RESOURCE_INSIGHT_MIN_PROMOTE_CONFIDENCE`,
@@ -164,10 +172,50 @@ export const modelsFilterableAttributes = [
   // `scripts/label-resource-insights.ts` contains no search-index enqueue of any kind and
   // never touches `Model.updatedAt`, and `prepareModelsBatches` in ./models.search-index.ts
   // re-pulls only models satisfying `updatedAt >= lastUpdatedAt` — which a label write does
-  // not move. So labeling is precisely the event that does NOT trigger a rewrite. Pre-reset,
-  // `IS NOT NULL` therefore returns only those labeled models that happened to be edited for
-  // some unrelated reason since the field deployed (near-empty), while `IS NULL` sweeps the
-  // rest of the labeled population into the control.
+  // not move. So labeling is precisely the event that does NOT trigger a rewrite.
+  //
+  // 🔴 AND THE PRE-RESET DIRECTION IS THE OPPOSITE OF THE INTUITIVE ONE — read it off the
+  // fixture measured in the paragraph above, not off intuition. That fixture recorded
+  // `IS NOT NULL` returning the labeled rows PLUS the key-absent ones, so on v1.15.0
+  // `IS NULL` matches ONLY key-present-and-null, and `IS NOT NULL`, being its negation,
+  // SWEEPS IN EVERY KEY-ABSENT DOCUMENT. Pre-reset almost every document is key-absent (a
+  // label write rewrites nothing — just above). Therefore, pre-reset:
+  //   IS NOT NULL  -> ≈ THE ENTIRE INDEX. Not a near-empty set.
+  //   IS NULL      -> a SMALL set: only documents rewritten since the field shipped that
+  //                   received a null.
+  // and the labeled-but-never-rewritten models land in `IS NOT NULL` together with
+  // everything else. So neither arm isolates them — the heading above, reached from the
+  // other side.
+  //
+  // ⚠ An earlier version of this paragraph had that exactly inverted ("`IS NOT NULL` …
+  // near-empty, while `IS NULL` sweeps the rest of the labeled population into the
+  // control"), contradicting the fixture paragraph above. It was not merely misplaced: it is
+  // TRUE of the two-clause route (`EXISTS AND … IS NOT NULL` against
+  // `IS NULL OR NOT EXISTS`), which reduces to key-present-with-value and so IS near-empty
+  // pre-reset. That route was deliberately deleted, and the sentence was carried across to
+  // the bare predicates, where it inverts. Reinstate neither.
+  //
+  // 🔴 Three wrong actions the inverted reading enables, which is why this is spelled out.
+  // (a) This list CAN be applied to a live index with NO reset, via the admin route named at
+  // the bottom of this comment — do that, run the positive control, and `IS NOT NULL` comes
+  // back as the whole index rather than ≈7,023; because the old text promised near-empty, a
+  // count two orders of magnitude too high reads as "the reset must already have run" instead
+  // of "key-absent documents are sitting in my labeled arm". (b) The same trap once #5359
+  // merges and a labeling pass runs: a reader expecting ≈7,023 gets the whole index. (c) It
+  // destroys the reset-has-run check immediately below.
+  //
+  // ✅ COROLLARY, and the operationally useful one: `IS NULL`'s OWN COUNT is a clean
+  // discriminator for whether the full reset has run — a small number before, ≈ the entire
+  // index minus the ≈7,023 labeled arm after. (Stated relationally on purpose, for the same
+  // reason the measured paragraph above gives no absolute document count; a search with an
+  // empty filter returns the index total to compare it against.) The inverted sentence
+  // claimed `IS NULL` was already large pre-reset, which made the two states look
+  // indistinguishable.
+  //
+  // The heading's "not any combination of them" is load-bearing and survives all of the
+  // above: labeled models are spread across all THREE cells — key-absent,
+  // key-present-with-value, and key-present-null (causes 2–5) — so no boolean expression over
+  // {EXISTS, NOT EXISTS, IS NULL, IS NOT NULL} carves the labeled set out of any of them.
   //
   // #5359 changes the first half of that — once it merges, a label write WILL enqueue the
   // model — but the arms are still only clean after a full reset, since documents written

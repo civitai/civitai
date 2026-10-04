@@ -111,13 +111,14 @@ describe('models search index projects insight.qualityScore', () => {
   });
 
   it('declares the attribute filterable too, so the labeled tier is separable', () => {
-    // 🔴 The study's arms are `IS NOT NULL` / `IS NULL`, NOT `EXISTS` / `NOT EXISTS` — a
-    // written null counts as existing, so `EXISTS` matches every document. An earlier version
-    // of this comment named the wrong pair and nothing here could go red, because the
-    // assertion below is membership only. The authoritative block — what each predicate
-    // returns, the three causes of a written null with their measured magnitudes, and the
-    // positive control the study must run — is beside this entry in
-    // ~/server/search-index/filterable-attributes.ts. Read it there; it is not restated here.
+    // 🔴 The arms are `IS NOT NULL` / `IS NULL`, NOT `EXISTS` / `NOT EXISTS` — a written null
+    // counts as existing, so `EXISTS` matches every document. An earlier version of this
+    // comment named the wrong pair and nothing here could go red, because the assertion below
+    // is membership only. The authoritative block — what each predicate returns, the FIVE
+    // causes of a written null with their measured magnitudes, how the predicates behave
+    // PRE-reset, and the positive control any run of these arms must perform — is beside this
+    // entry in ~/server/search-index/filterable-attributes.ts. Read it there; it is not
+    // restated here.
     expect(modelsFilterableAttributes).toContain(INSIGHT_SORT_ATTR);
   });
 
