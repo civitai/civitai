@@ -41,7 +41,10 @@ import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { CopyAffordance } from '~/components/CopyAffordance/CopyAffordance';
+import {
+  COPY_BODY_PADDING_RIGHT,
+  CopyAffordance,
+} from '~/components/CopyAffordance/CopyAffordance';
 import {
   TokenScope,
   TokenScopePresets,
@@ -158,7 +161,15 @@ function ScopeSelector({
   );
 }
 
-function SecretDisplay({
+/**
+ * The post-registration panel. Props-only — no hooks, no tRPC.
+ *
+ * EXPORTED FOR `src/components/CopyAffordance/CopyAffordance.geometry.test.tsx`, which
+ * measures that its two credential bodies reserve the copy control's width. Nothing else
+ * imports it. The alternative was a fixture re-typing this JSX, which would have measured the
+ * fixture; the other two bodies in this family sit behind a tRPC mutation and are not mounted.
+ */
+export function SecretDisplay({
   clientId,
   clientSecret,
   onClose,
@@ -184,7 +195,17 @@ function SecretDisplay({
             component's required `label` rather than three hand-written attributes. */}
         <CopyAffordance value={clientId} label="Copy the client ID">
           {({ copied }) => (
-            <Code block color={copied ? 'green' : undefined}>
+            // `paddingRight` on all three bodies in this file: the control is absolutely
+            // positioned inside the body, so the body reserves its width. Measured without
+            // it, the value's last characters sat 26px under the clipboard icon at 390 and at
+            // 360. `src/components/CopyAffordance/CopyAffordance.geometry.test.tsx` measures
+            // this one and the secret below; the rotated secret further down is the same
+            // spelling and is not separately mounted.
+            <Code
+              block
+              color={copied ? 'green' : undefined}
+              style={{ paddingRight: COPY_BODY_PADDING_RIGHT }}
+            >
               {copied ? 'Copied' : clientId}
             </Code>
           )}
@@ -224,7 +245,11 @@ function SecretDisplay({
             </Text>
             <CopyAffordance value={clientSecret} label="Copy the client secret">
               {({ copied }) => (
-                <Code block color={copied ? 'green' : undefined}>
+                <Code
+                  block
+                  color={copied ? 'green' : undefined}
+                  style={{ paddingRight: COPY_BODY_PADDING_RIGHT }}
+                >
                   {copied ? 'Copied' : clientSecret}
                 </Code>
               )}
@@ -940,7 +965,11 @@ export function OAuthAppsCard({ flat }: { flat?: boolean } = {}) {
           <Stack>
             <CopyAffordance value={rotatedSecret} label="Copy the new client secret">
               {({ copied }) => (
-                <Code block color={copied ? 'green' : undefined}>
+                <Code
+                  block
+                  color={copied ? 'green' : undefined}
+                  style={{ paddingRight: COPY_BODY_PADDING_RIGHT }}
+                >
                   {copied ? 'Copied' : rotatedSecret}
                 </Code>
               )}

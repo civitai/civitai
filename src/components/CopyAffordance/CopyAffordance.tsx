@@ -165,14 +165,25 @@ export function CopyAffordance({
 }
 
 /**
- * The icon's inset from the body's right edge, and the clearance a body must leave for it.
+ * The control's inset from the body's right edge, and the clearance a body must leave for it.
  *
  * 🔴 ONE COUPLING — FOR EVERY `Code`-BLOCK BODY. The control sits `COPY_ICON_INSET` from the
- * right and is 16px wide, so a body that reserves less than their sum plus breathing room
- * renders its text UNDER the icon. That happened once already in this family.
- * `CopyableCommand`, `AuthorViaGit`, `ApiKeyModal` and `OAuthAppsCard` share these;
+ * right and its BORDER BOX is `COPY_CONTROL_SIZE` wide, so a body that reserves less than
+ * their sum renders its text UNDER the icon. That happened once already in this family.
+ * `CopyableCommand`, `AuthorViaGit` and the four `Code` bodies in `Account/ApiKeyModal.tsx`
+ * and `Account/OAuthAppsCard.tsx` apply `COPY_BODY_PADDING_RIGHT` inline;
  * {@link AgentOnboardingCard}'s prose panel sets its own clearance in its stylesheet (its
  * control sits top-right, not right-middle), so it is a SECOND spelling of the same idea.
+ *
+ * ⚠️ THE CLEARANCE IS A CLAIM ABOUT A BODY WHOSE VALUE *FITS*, AND NOTHING MORE. Measured at
+ * 390px: `<Code block>` computes `white-space: pre` / `text-wrap-mode: nowrap` /
+ * `overflow-x: auto`, so a value wider than the content box does not wrap — it scrolls, and a
+ * scrolling `pre` paints across its own right padding. `CopyableCommand`'s long-command
+ * fixture overflows exactly that way (`scrollWidth` 572 against `clientWidth` 390) and its
+ * `word-break: break-all` is INERT under `nowrap`. So the padding removes the overlap for
+ * every value that fits and does not for one that does not. Clipping or wrapping instead
+ * would be a rendered-output change at every call site; it is not what these constants buy,
+ * and an assertion here cannot be read as "no value can ever sit under the icon".
  *
  * 🔴 BOTH SPELLINGS ARE MEASURED, NOT MERELY DOCUMENTED, BY
  * `src/components/CopyAffordance/CopyAffordance.geometry.test.tsx`. Until it existed, a
@@ -183,16 +194,45 @@ export function CopyAffordance({
  * would pass against any value the implementation happened to produce.
  */
 export const COPY_ICON_INSET = 8;
-/** The glyph's rendered size. Was retyped at three `size={16}` call sites in this file. */
+/**
+ * The GLYPH's rendered size — what gets passed to the tabler icon, not the control's box.
+ *
+ * ⚠️ 16 IS A CHANGE AT THE FOUR `Account/` CALL SITES AND IT IS DELIBERATE. The shells this
+ * component replaced there rendered a bare `<IconClipboard />`, i.e. tabler's default 24,
+ * inside the same 28px button — 24-of-28, nearly edge to edge. The three call sites that
+ * already routed through here have always rendered 16, so one of the two had to move for the
+ * affordance to be one affordance; 16 is the repo's `LegacyActionIcon` convention and is
+ * what the geometry suite now measures. The BUTTON box — the click and touch target — is
+ * `COPY_CONTROL_SIZE` either way and did not move.
+ */
 export const COPY_ICON_SIZE = 16;
+/**
+ * The control's rendered BORDER BOX — `LegacyActionIcon`'s default size, not the glyph's.
+ *
+ * 🔴 THE NUMBER THE CLEARANCE IS MADE OF, AND IT IS NOT `COPY_ICON_SIZE`. A Mantine
+ * `ActionIcon` at its default `size="md"` is 28px square and carries the 16px glyph with 6px
+ * either side. The glyph is what this file passes; the border box is what can overlap the
+ * text. Measured off the rendered control by the geometry suite rather than taken on trust,
+ * so a Mantine default-size change reds an assertion that names this constant instead of
+ * reappearing as a mysterious one-pixel clearance failure.
+ */
+export const COPY_CONTROL_SIZE = 28;
 /**
  * Right padding a `Code`-style body must carry so the control never overlaps its text.
  *
  * 🔴 DERIVED, NOT A SECOND LITERAL. The doc above states the relation; stating it was not
  * enforcing it, and a bump to the inset would silently shrink the clearance — re-arming the
- * exact defect the constants were introduced to prevent. The `12` is breathing room.
+ * exact defect the constants were introduced to prevent.
+ *
+ * ⚠️ IT SPELLED `COPY_ICON_INSET + COPY_ICON_SIZE + 12` AND CALLED THE `12` BREATHING ROOM.
+ * Same total, wrong mechanism: 12 is the button's own padding, 6 per side, so that sum was
+ * the border box re-derived by coincidence and there is NO breathing room — measured
+ * clearance on a correctly padded body is 0.00px at both 390 and 360. Worth knowing before
+ * you read a failure: the geometry suite's `clearance >= 0` assertion therefore sits exactly
+ * ON its own boundary, so anything that widens the control by one pixel reds it. That is the
+ * right direction to fail in, and it is not slack.
  */
-export const COPY_BODY_PADDING_RIGHT = COPY_ICON_INSET + COPY_ICON_SIZE + 12;
+export const COPY_BODY_PADDING_RIGHT = COPY_ICON_INSET + COPY_CONTROL_SIZE;
 
 /** The default glyph pair, exported so a `renderGlyph` can wrap it rather than restate it. */
 export function CopyGlyph({ copied, size = COPY_ICON_SIZE }: { copied: boolean; size?: number }) {

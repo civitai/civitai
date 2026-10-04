@@ -29,7 +29,10 @@ import {
 import { Flags } from '~/shared/utils/flags';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { CopyAffordance } from '~/components/CopyAffordance/CopyAffordance';
+import {
+  COPY_BODY_PADDING_RIGHT,
+  CopyAffordance,
+} from '~/components/CopyAffordance/CopyAffordance';
 
 const schema = addApiKeyInputSchema;
 
@@ -152,7 +155,15 @@ export function ApiKeyModal({ initialName, initialTokenScope, ...props }: Props)
               is what keeps the next copy of this block from shipping the same way. */}
           <CopyAffordance value={apiKey} label="Copy your API key">
             {({ copied }) => (
-              <Code block color={copied ? 'green' : undefined}>
+              // `paddingRight`: the control is absolutely positioned inside this body, so the
+              // body reserves its width. Measured without it, the key's last characters sat
+              // 26px under the clipboard icon at 390 and at 360. See
+              // `COPY_BODY_PADDING_RIGHT` for what the clearance does and does not cover.
+              <Code
+                block
+                color={copied ? 'green' : undefined}
+                style={{ paddingRight: COPY_BODY_PADDING_RIGHT }}
+              >
                 {copied ? 'Copied' : apiKey}
               </Code>
             )}
