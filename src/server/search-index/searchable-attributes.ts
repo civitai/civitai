@@ -36,9 +36,19 @@
 // thing to ship, in the commit whose entire purpose was to fix an undercount in this file. That
 // figure is recorded as a one-off MEASUREMENT over a named corpus, not as a number anyone is
 // expected to keep current: a prose tally has no mechanical check behind it and rots on the next
-// edit, which is how it has now gone wrong three times running. What replaces it is the thing that
-// cannot rot — the FOUR lists are four FILES with one export each, so the enumeration below is
-// derivable: `ls src/server/search-index/*-attributes.ts`. Count the files, never the prose.
+// edit, which is how it has now gone wrong three times running. What replaces it is the FILE set,
+// which is derivable: `ls src/server/search-index/*-attributes.ts` — one file per Meilisearch
+// attribute setting. Count the files, never the prose.
+//
+// ⚠️ TWO LIMITS ON THAT DERIVATION, BOTH FOUND BY A LATER ROUND, AND NEITHER IS FIXED BY REWORDING.
+// (1) It is "one FILE per setting", NOT "one export each" — this said the latter and that is FALSE:
+// the four files export 2 / 9 / 1 / 9 symbols respectively, because the per-index lists for all ten
+// indexes live in them too, and ./displayed-attributes.ts carries a second models-scoped list
+// (MODELS_WITHHELD_ATTRIBUTES) in the very file this paragraph sits beside. Count FILES, not exports.
+// (2) NOTHING PINS THE FOUR. No test globs `*-attributes.ts` or asserts the count, so adding a fifth
+// such file makes the prescribed `ls` return 5 while Meilisearch still has four settings lists, with
+// no gate firing. This is a derivation a reader must RUN, not an invariant the suite holds — which is
+// weaker than "cannot rot", the claim this paragraph originally made for it.
 //
 // There are FOUR attribute lists and each absence does different work:
 // ./displayed-attributes.ts is the only one keeping the leaf out of a SERIALISED hit;

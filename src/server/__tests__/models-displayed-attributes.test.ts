@@ -313,7 +313,7 @@ describe('the writer seam', () => {
     // and `apply-models-index-displayed-attributes.ts`) — with
     //     const index = searchClient.index(MODELS_SEARCH_INDEX);
     //     const task = await index.updateSearchableAttributes(['*']);
-    // left `Test Files 5 passed (5)` / `Tests 144 passed (144)` and `pnpm typecheck` at 0 errors,
+    // left the whole suite green and `pnpm typecheck` at 0 errors,
     // while the LIVE models index would end up with `searchableAttributes: ["*"]` — i.e. every
     // `insight.*` leaf, `insight.modelVersionId` included, becomes a per-document free-text
     // MEMBERSHIP ORACLE to any holder of the browser-published client key in
@@ -400,8 +400,14 @@ describe('the writer seam', () => {
     // `onIndexSetup`, satisfies the pin (the argument text is still the bare module name), and hands
     // the engine `['id','sortMetrics']` — i.e. it PUBLISHES the real download and tipped figures of
     // every creator who hid them, the single thing this module exists to prevent. Measured at this
-    // head with that one line planted: `Test Files 5 passed (5)` / `Tests 144 passed (144)` and
-    // `pnpm typecheck` 0 errors. Nothing else could see it — the freeze does not apply to a fresh
+    // head with that one line planted: the whole suite green and `pnpm typecheck` 0 errors.
+    //
+    // ⚠️ SUITE TOTALS ARE DELIBERATELY NOT QUOTED IN THIS FILE OR ITS SIBLING. They were, as
+    // `Tests 144 passed (144)` at five sites, and the commit that wrote four of them ADDED four
+    // cases, so every one was stale the moment it landed (the tree is at 148). A total is not what
+    // these notes are claiming — "the mutant went uncaught" is — and this arc has now corrected a
+    // bare count six times. State the corpus or state nothing; do not re-add a total.
+    // Nothing else could see it — the freeze does not apply to a fresh
     // local, the tree-wide mutation ledger sees no mutation, and the whole-list pin reads the
     // IMPORT, not what the function resolved.
     //

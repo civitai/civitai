@@ -16,9 +16,19 @@ import type * as BaseSearchIndexModule from '~/server/search-index/base.search-i
  * ../models.search-index.ts, and a syntactic claim cannot say what the engine was handed.
  *
  * Measured premise for why that gap existed and had to be closed here rather than assumed away:
- * across the 2,969 tracked test files at this head, NOTHING calls `.reset(` or `.setup(` on any
- * search-index processor, and all 57 `modelsSearchIndex` references are `vi.mock` stubs. So
- * "the engine receives the frozen list" was proven STRUCTURALLY and never once BEHAVIOURALLY.
+ * across the 2,969 tracked test files AS THEY STOOD BEFORE THIS CASE WAS ADDED, nothing called
+ * `.reset(` or `.setup(` on any search-index processor, and every `modelsSearchIndex` reference was
+ * a `vi.mock` stub. So "the engine receives the frozen list" was proven STRUCTURALLY and never once
+ * BEHAVIOURALLY.
+ *
+ * ⚠️ THAT PREMISE IS PAST-TENSE ON PURPOSE, AND IT USED TO BE WRITTEN "at this head" — WHICH THIS
+ * VERY FILE FALSIFIES. The `describe` below calls `processor.setup(...)`, and a second block does a
+ * real `await import(...)` of the module rather than a stub, so the present-tense form was refuted
+ * by the commit that wrote it: a reader could cite it to argue this seam is unnecessary and delete
+ * the case. A premise stated as an ABSENCE must name the corpus AND the moment it was swept.
+ * The `57` reference count that stood here is DELETED rather than corrected — a later round could
+ * not reproduce it at any ref under any scoping (55 at the merge-base, 55 before this commit, 61
+ * here), so no stated corpus makes it true and it was never load-bearing.
  *
  * 🔴 AND THE ROUTE IN, BECAUSE THE OBVIOUS ONE DOES NOT EXIST AND READS AS IF IT DOES.
  * `onIndexSetup` is module-private, and `modelsSearchIndex.setup` is NOT a thing:
@@ -210,8 +220,7 @@ function declaredNames(): string[] {
  * hypothetical. That idiom is the one TEXTUAL matcher in a pair whose comments advertise it as
  * structural: a second write spelled `index.updateSearchableAttributes([…])` is caught (the
  * write-count assertion fails, "to have a length of 1 but got 2"), but the SAME write spelled
- * `index['updateSearchableAttributes']([…])` left the whole suite green at
- * `Test Files 5 passed (5)` / `Tests 144 passed (144)` — `.split('.').pop()` returns the entire
+ * `index['updateSearchableAttributes']([…])` left the whole suite green — `.split('.').pop()` returns the entire
  * `index['updateSearchableAttributes']` text and matches nothing.
  *
  * An element-access callee with a string-literal argument resolves to the same method as a
@@ -610,8 +619,8 @@ describe('models search index projects insight.qualityScore', () => {
     //       `const applyWhitelist = async (index, searchableAttributes) => {
     //          searchableAttributes.push('*', 'insight.modelVersionId');
     //          await index.updateSearchableAttributes(searchableAttributes); };`
-    //     Re-measured at this head before the hoist: `Test Files 5 passed (5)` /
-    //     `Tests 144 passed (144)`, `pnpm typecheck` 0 errors, while the engine received
+    //     Re-measured at this head before the hoist: whole suite green,
+    //     `pnpm typecheck` 0 errors, while the engine received
     //     `['name','user.username','hashes','triggerWords','*','insight.modelVersionId']`.
     //     Inside `onIndexSetup` the ledger still read 1 declaration + 2 reads and `memberTargets`
     //     was still `[]`; the mutation had simply moved out of the scope being walked. The
@@ -633,7 +642,7 @@ describe('models search index projects insight.qualityScore', () => {
     // both walk `models.search-index.ts` alone — so the one tree-wide member was missing and a
     // writer in a SECOND FILE was invisible to the whole set. Measured: a new
     // `src/pages/api/admin/temp/apply-models-index-searchable-attributes.ts` doing
-    // `index.updateSearchableAttributes(['*'])` left this suite at `Tests 144 passed (144)` and
+    // `index.updateSearchableAttributes(['*'])` left this suite fully green and
     // typecheck at 0 errors while the live index would take `["*"]`. The third guard now exists —
     // `has exactly nine writers of searchableAttributes, tree-wide` in
     // ~/server/__tests__/models-displayed-attributes.test.ts, beside the displayed list's own
