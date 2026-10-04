@@ -367,10 +367,8 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
 
         {crucible.status === CrucibleStatus.Completed && (
           <CruciblePodium
-            entries={loadedEntries}
-            prizePositions={prizePositions}
-            entryCount={crucible.placedEntryCount ?? entryCount}
-            totalPrizePool={totalPrizePool}
+            entries={entriesData?.pages[0]?.podium ?? []}
+            prizeWinners={crucible.prizeWinners}
             buzzType={CRUCIBLE_PRIZE_BUZZ_TYPE}
           />
         )}
@@ -529,7 +527,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                 <CrucibleLeaderboard
                   entries={loadedEntries.filter(hasScore)}
                   totalCount={entryCount}
-                  placedCount={crucible.placedEntryCount}
+                  prizeWinners={crucible.prizeWinners}
                   hasMore={!!hasMoreEntries}
                   onLoadMore={loadMoreEntries}
                   prizePositions={prizePositions}

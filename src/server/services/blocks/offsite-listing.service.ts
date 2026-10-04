@@ -5,6 +5,7 @@ import { TRPCError } from '@trpc/server';
 import { Prisma } from '@prisma/client';
 
 import { dbRead, dbWrite } from '~/server/db/client';
+import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.selector';
 import {
   bustAppListingCatalogCache,
   listingQueueFacts,
@@ -4076,7 +4077,17 @@ const mySubmissionSelect = {
   },
 } as const;
 
-const submitterChip = { select: { id: true, username: true, image: true } } as const;
+/**
+ * The user chip the moderator queue renders for an OFF-SITE row.
+ *
+ * 🔴 THE SAME SELECT AS EVERY ON-SITE READER, from the one declaration, and that matters
+ * because the two render SIDE BY SIDE in one list. `UnifiedReviewList` hands both to the
+ * same `UserAvatar` with `linkToProfile`, so while this chip omitted `deletedAt` and the
+ * on-site ones carried it, a closed account read as `[deleted]` on one row and as a live,
+ * clickable profile on the row beneath — two rows on one screen disagreeing about the
+ * identity a moderator is judging.
+ */
+const submitterChip = { select: reviewUserChipSelect } as const;
 
 /**
  * `submissionSelect` PLUS the store-listing facts the MODERATOR queue shows beside each

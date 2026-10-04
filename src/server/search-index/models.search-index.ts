@@ -15,13 +15,17 @@ import type { RecommendedSettingsSchema } from '~/server/schema/model-version.sc
 import type { ModelMeta } from '~/server/schema/model.schema';
 import type { SearchIndexContext } from '~/server/search-index/base.search-index';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
-import { modelsDisplayedAttributes } from '~/server/search-index/displayed-attributes';
+import {
+  MODELS_WITHHELD_ATTRIBUTES,
+  modelsDisplayedAttributes,
+} from '~/server/search-index/displayed-attributes';
 import { modelsFilterableAttributes } from '~/server/search-index/filterable-attributes';
 import { modelVersionPricingSignals } from '@civitai/buzz';
 import {
   getModelPaidAccessGates,
   getModelVersionPaidAccessTerms,
 } from '~/server/services/paid-access.service';
+import { loadResourceInsights, modelInsightQualityScore } from '~/server/services/resource-insight';
 import { modelsSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { getValidCreatorMembershipMap } from '~/server/services/creator-program.service';
 import {
@@ -216,6 +220,42 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
   const versionIds = models.flatMap((m) => m.modelVersions.map((v) => v.id));
   const paidAccessTerms = await getModelVersionPaidAccessTerms(versionIds);
 
+  // Suitability labels are VERSION-level and this index is MODEL-level, so these get
+  // collapsed to one score per model below. Batched over the whole read window like
+  // every other auxiliary lookup in this function.
+  //
+  // ⚠️ This adds one query per read batch, over a table that currently holds ~9,900
+  // rows against the ~718k documents being rebuilt — so the `in` list is wide and the
+  // result set is tiny. It is not free, but it is bounded by `READ_BATCH_SIZE`, not by
+  // the corpus.
+  //
+  // 🔴 FAIL-SOFT, AND THE CATCH IS THE POINT. `ResourceInsight` is applied BY HAND per
+  // environment (its migration says so), so in any environment where that has not
+  // happened this read throws `P2021` on EVERY batch. Unguarded, that failure does not
+  // degrade the score — it takes the whole batch down: `processSearchIndexTask` scores the
+  // batch `'error'`, the batch is dropped after its retries, and `update()` advances
+  // `setLastUpdate` regardless, so up to `READ_BATCH_SIZE` published models are dropped
+  // from the index PERMANENTLY, every 15 minutes, with a `console.error` as the only
+  // symptom. An optional ordering refinement must never be able to do that.
+  //
+  // The empty Map falls through to the same `null` -> cleared path an unlabeled model
+  // takes, which is already correct. ⚠️ Deliberately broader than `isMissingTableError`
+  // in `app-access.service.ts` / `isUndefinedTable` in `app-storage.service.ts`, for the
+  // same reason the matcher's copy of this catch is: this read refines an ordering rather
+  // than deciding access, so there is no silent zero to generate — every model is still
+  // indexed, just without a score. The cost of the breadth is that a permanent fault
+  // degrades quietly, which is why it logs on every occurrence rather than once.
+  let insights: Awaited<ReturnType<typeof loadResourceInsights>>;
+  try {
+    insights = await loadResourceInsights(versionIds);
+  } catch (error) {
+    insights = new Map();
+    console.error(
+      'transformData :: loadResourceInsights failed; indexing this batch WITHOUT insight scores',
+      error
+    );
+  }
+
   const indexReadyRecords = models
     .map((modelRecord) => {
       const {
@@ -265,8 +305,36 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
       const realDownloadCount = metrics?.downloadCount ?? 0;
       const realTippedAmountCount = metrics?.tippedAmountCount ?? 0;
 
+      // MAX `qualityScore` over this model's labeled versions that clear the promote
+      // confidence floor; `null` when none. The rule and the alternatives considered are
+      // in `modelInsightQualityScore`'s docstring.
+      //
+      // 🔴 THE NULL IS WRITTEN, NOT OMITTED, AND THE DIFFERENCE IS A STALE-SCORE BUG.
+      // An earlier version of this omitted the key on `null`, on the measured ground that
+      // a missing sortable attribute and an explicit null sort identically. They do — but
+      // sorting was the wrong property to check, because every live write is a MERGE:
+      // `updateDocs` -> `index.updateDocuments` -> `PUT /indexes/<uid>/documents`, which
+      // add-or-updates top-level fields. So on a document that ALREADY carries a score,
+      // omitting the key leaves the old value in place.
+      //
+      // Measured against v1.15.0, both arms: PUTting `{insight:{qualityScore:null}}` over
+      // an existing 0.9 moved that document out of the sort head and the stored document
+      // read back as `{qualityScore: null}`; the control — a PUT with no `insight` key at
+      // all — left `{qualityScore: 0.1}` intact. And a nested null groups with the absent
+      // documents in BOTH sort directions, so writing it costs nothing in ordering.
+      //
+      // Without this, a retracted label (`stale = true`, a re-label below the confidence
+      // floor, or a deleted version) keeps its top-of-pool seeding forever: the row is
+      // gone from Postgres, so the re-rank never reaches `insightBucket` and leaves the
+      // candidate neutral — which PRESERVES the head position the stale score bought.
+      const insightQualityScore = modelInsightQualityScore(
+        modelVersions.map((v) => v.id),
+        insights
+      );
+
       return {
         ...model,
+        insight: { qualityScore: insightQualityScore },
         earlyAccessDeadline: paidAccessGates.get(model.id)?.earlyAccessDeadline ?? null,
         hasActivePaidAccess: paidAccessGates.get(model.id)?.gated ?? false,
         nsfwLevel: parseBitwiseBrowsingLevel(model.nsfwLevel),
@@ -456,10 +524,47 @@ export async function getModelSearchIndexRecords(ids: number[]): Promise<ModelSe
 
   const imagesById = new Map(indexRecordsWithImages.map((r) => [r.id, r.images]));
   const byId = new Map(
-    indexReadyRecords.map((r) => [r.id, { ...r, images: imagesById.get(r.id) ?? [] }])
+    indexReadyRecords.map((r) => [
+      r.id,
+      withheldStripped({ ...r, images: imagesById.get(r.id) ?? [] }),
+    ])
   );
   // Preserve the caller's id order.
   return ids.map((id) => byId.get(id)).filter(isDefined) as ModelSearchIndexRecord[];
+}
+
+/**
+ * 🔴 THE WHOLE POINT OF THIS FUNCTION'S DOCSTRING — "the shape stays identical to a search
+ * hit" — AND IT WAS NOT TRUE. `displayedAttributes` governs only the MEILISEARCH read path,
+ * so this DB-direct path returned every attribute that whitelist exists to withhold, and the
+ * records go straight to `transformModelHits` (a bare `{...item}` spread) and out of
+ * `model.getResourceSelect`, a `publicProcedure` with no `.output()` schema.
+ *
+ * So an unauthenticated caller received, for every official-pinned model in the resource
+ * picker's default state:
+ *   - `sortMetrics` — the REAL download and tipped-amount values, whose own comment in
+ *     `transformData` says they are "excluded from `displayedAttributes` ... so they are
+ *     never returned to clients". For a creator who hid those numbers via Creator Controls
+ *     this is exactly the leak `./displayed-attributes.ts` was written to close, reached by
+ *     the one path that whitelist cannot see. PRE-EXISTING, not introduced by the insight work.
+ *   - `insight` — an internal, unvalidated per-model LLM quality judgment.
+ *
+ * Driven off `MODELS_WITHHELD_ATTRIBUTES` rather than a local list so the two cannot drift:
+ * that export is the deliberate record of what a document carries and a hit must not, and it
+ * is frozen. Safe by construction — anything a consumer legitimately reads off a hit must
+ * already survive Meilisearch withholding it, since that narrowing is live on `models_v9`.
+ *
+ * Exported for the same reason `prepareModelsBatches` below is: so a test can drive it
+ * directly. It guards a privacy boundary, so it is worth a behavioural test rather than a
+ * source-text one — `getModelSearchIndexRecords` itself needs a Prisma payload, several
+ * caches and a live DB. Tested in `src/server/__tests__/models-displayed-attributes.test.ts`,
+ * which owns this boundary, because the strip protects all five withheld attributes and not
+ * only the newest one.
+ */
+export function withheldStripped<T extends Record<string, unknown>>(record: T): T {
+  const out = { ...record };
+  for (const attr of MODELS_WITHHELD_ATTRIBUTES) delete out[attr];
+  return out;
 }
 
 /**

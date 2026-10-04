@@ -838,6 +838,7 @@ export const createPost = async ({
 }: PostCreateInput & {
   userId: number;
   isModerator?: boolean;
+  metadata?: Prisma.InputJsonObject;
 }): Promise<PostDetailEditable> => {
   await throwOnBlockedUserContent([data.title, data.detail], { surface: 'post' });
 
@@ -1002,29 +1003,31 @@ export const updatePost = async ({
   });
 
   await preventReplicationLag('post', post.id);
-  await userPostCountCache.refresh(post.userId);
-
-  // A publishedAt change moves the images' feed sort position
-  // (GREATEST(publishedAt, scannedAt, createdAt)), but the DB-trigger-driven
-  // updatedAt bump isn't reliably picked up by the metrics_images index — so
-  // a reschedule would otherwise leave the index frozen at the original time.
-  // Enqueue an explicit reindex so sortAt/publishedAtUnix get recomputed.
-  if (publishedAtWritten) {
-    const images = await dbWrite.image.findMany({
-      where: { postId: post.id },
-      select: { id: true },
-    });
-    if (images.length) {
-      await queueImageSearchIndexUpdate({
-        ids: images.map((i) => i.id),
-        action: SearchIndexUpdateQueueAction.Update,
-      });
-    }
-    await userImageVideoCountCaches.refresh(post.userId);
-  }
+  if (publishedAtWritten) await afterPostPublish({ postId: post.id, userId: post.userId });
+  else await userPostCountCache.refresh(post.userId);
 
   return post;
 };
+
+/**
+ * Everything a publish needs besides the write. The reindex is explicit because the trigger-driven
+ * updatedAt bump isn't reliably picked up by metrics_images, so a new publishedAt would leave
+ * sortAt/publishedAtUnix stale.
+ */
+export async function afterPostPublish({ postId, userId }: { postId: number; userId: number }) {
+  await userPostCountCache.refresh(userId);
+  const images = await dbWrite.image.findMany({
+    where: { postId },
+    select: { id: true },
+  });
+  if (images.length) {
+    await queueImageSearchIndexUpdate({
+      ids: images.map((i) => i.id),
+      action: SearchIndexUpdateQueueAction.Update,
+    });
+  }
+  await userImageVideoCountCaches.refresh(userId);
+}
 
 export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerator?: boolean }) => {
   // Before the transaction: `CollectionItem.postId` cascades and the post's images go

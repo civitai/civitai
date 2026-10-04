@@ -94,6 +94,17 @@ export const crucibleNotifications = createNotificationProcessor({
           url: `/crucibles/${details.crucibleId}`,
         };
       }
+      // Not the position: a creator holds one prize, so 4th place can take 2nd prize.
+      if (details.prizePlace != null)
+        return {
+          message: `Congrats! You took ${asOrdinal(
+            details.prizePlace
+          )} prize in the crucible${quotedName(details.crucibleName)} and won ${numberWithCommas(
+            details.prizeAmount
+          )} Buzz.`,
+          url: `/crucibles/${details.crucibleId}`,
+        };
+      // Sent before prize places existed.
       return {
         message: `Congrats! You placed ${asOrdinal(details.position)} in the crucible${quotedName(
           details.crucibleName

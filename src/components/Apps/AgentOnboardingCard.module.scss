@@ -1,0 +1,117 @@
+/* `AgentOnboardingCard` — the gradient ring and the prompt panel.
+ *
+ * 🔴 THE RING IS A PADDED GRADIENT WRAPPER, NOT A `mask-composite` BORDER. The mask technique
+ * is shorter but appears nowhere in `src/` today, so it would be the first use of a property
+ * whose `exclude`/`xor` spelling still differs between engines — on the one `/apps/build`
+ * state that is deliberately indexable, i.e. the worst place to debug a renderer gap.
+ *
+ * 🔴 THE SHIMMER IS CSS KEYFRAMES RATHER THAN `motion`, AND IT IS THE ONE ANIMATION ON THIS
+ * CARD THAT HAD TO BE — the only one that was BOTH non-accelerable AND infinite. Read that as
+ * both conditions: `acceleratedValues` is the literal set
+ * `{opacity, clipPath, filter, transform}` and framer passes the motion-value key
+ * UNNORMALISED, so `y` and `scale` are NOT members and take `MainThreadAnimation` exactly as
+ * the shimmer did; they are free only because they are FINITE one-shots whose driver stops on
+ * completion. This is the file someone opens to move an animation back onto `motion`, so: a
+ * non-accelerable infinite one reproduces the bug verbatim — a `keepAlive: true` frameloop
+ * driver that never unregisters, on the public pitch state, off-screen included (`animate` has
+ * no viewport gating; that is `whileInView`). CSS instead gets lifecycle gating a rAF loop
+ * structurally cannot have: an animation inside a `display:none` or
+ * `content-visibility`-skipped subtree generates no style updates. (Mechanism read from the
+ * installed `motion@11.18.2`, not profiled in a browser.)
+ *
+ * ⚠️ A NINTH LOCAL COPY OF A FOUR-LINE IDIOM, NOT REUSE. Eight stylesheets in `src/` already
+ * animate `background-position` this way (`CruciblePrizeBreakdown`, `BountyEntryCard`, …). A
+ * shared mixin is its own change; do not read the precedent as "nothing is duplicated here".
+ *
+ * 🔴 `background-size: 200%` AND THE KEYFRAMES' 0%→200% SWEEP HAVE TO AGREE or the gradient
+ * does not travel seamlessly. The static render omits `.ringAnimated` and keeps the default
+ * position, so it reads as a plain gradient edge rather than as a broken animation.
+ */
+
+.ring {
+  padding: 1px;
+  border-radius: var(--mantine-radius-md);
+  background-image: linear-gradient(
+    90deg,
+    light-dark(var(--mantine-color-blue-4), var(--mantine-color-blue-7)) 0%,
+    light-dark(var(--mantine-color-grape-4), var(--mantine-color-grape-6)) 25%,
+    light-dark(var(--mantine-color-teal-4), var(--mantine-color-teal-7)) 50%,
+    light-dark(var(--mantine-color-grape-4), var(--mantine-color-grape-6)) 75%,
+    light-dark(var(--mantine-color-blue-4), var(--mantine-color-blue-7)) 100%
+  );
+  background-size: 200% 100%;
+  background-position: 0% 50%;
+}
+
+.ringAnimated {
+  animation: agentRingShimmer 4s linear infinite;
+}
+
+@keyframes agentRingShimmer {
+  from {
+    background-position: 0% 50%;
+  }
+  to {
+    background-position: 200% 50%;
+  }
+}
+
+/* A belt: the component already short-circuits in JS, so this is redundant on every path we
+ * drive — but it means a refactor that drops the JS branch cannot leave a reduced-motion
+ * viewer with a moving border. (The browser suites' `animationName` reads do implicitly
+ * assume the runner reports `no-preference`; nothing emulates that media feature.) It is also
+ * what every other shimmer consumer in this repo does. */
+@media (prefers-reduced-motion: reduce) {
+  .ringAnimated {
+    animation: none;
+  }
+}
+
+/* The opaque surface inside the ring. Radius is one pixel tighter than the ring's so the
+ * gradient reads as an even edge rather than pooling in the corners. */
+.surface {
+  border-radius: calc(var(--mantine-radius-md) - 1px);
+  background: light-dark(var(--mantine-color-white), var(--mantine-color-dark-6));
+}
+
+/* The prompt itself.
+ *
+ * 🔴 `white-space: pre-line` IS LOAD-BEARING, NOT TYPOGRAPHY. `AGENT_BUILD_PROMPT` is two
+ * paragraphs separated by a blank line, and that blank line is part of the bytes the clipboard
+ * receives. Without `pre-line` the rendered copy collapses it and the panel silently disagrees
+ * with what the button copies. `pre-line` also keeps normal wrapping, so the panel reflows.
+ * Guarded by `AgentOnboardingCard.browser.test.tsx`, which reads the computed value — every
+ * other assertion goes through `textContent` or the clipboard, which keep `\n\n` regardless.
+ */
+.prompt {
+  white-space: pre-line;
+  /* 🔴 ALL FOUR PADDINGS ARE SET HERE, NOT BY A TAILWIND `p-3` ALONGSIDE — and that is a
+   * fix, not a preference. `padding-right` has to clear the copy control, which is
+   * absolutely positioned at the panel's top-right; a `p-3` utility on the same element is
+   * the SHORTHAND, so it resets `padding-right` back to 0.75rem and the clipboard icon
+   * lands on top of the first line's last word. Caught in the dark AND light screenshot
+   * passes, where it rendered as "then tell m[icon]". */
+  padding: 0.75rem;
+  padding-right: 2.75rem;
+}
+
+.panel {
+  border-radius: var(--mantine-radius-sm);
+  background: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-8));
+  border: 1px solid light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-4));
+}
+
+/* The caret that sits after the settled prompt text. It is DECORATION beside text the
+ * reader has to read, never a typewriter effect on the text itself — the prompt is meant to
+ * be scanned and copied, and animating its characters would make both harder. Rendered only
+ * in the animated tree; a non-blinking block after a full stop reads as a typo, so the
+ * static tree omits it entirely rather than freezing it. */
+.caret {
+  display: inline-block;
+  width: 0.45em;
+  height: 1em;
+  margin-left: 0.1em;
+  vertical-align: text-bottom;
+  background: light-dark(var(--mantine-color-grape-6), var(--mantine-color-grape-4));
+  border-radius: 1px;
+}

@@ -54,7 +54,7 @@ const ONSITE: OnsiteReviewRequest = {
   fileSummary: {},
   manifestDiffSummary: {},
   reviewRepoUrl: 'https://forgejo.example/repo',
-  submittedBy: { id: 7, username: 'onsite-dev', image: null },
+  submittedBy: { id: 7, username: 'onsite-dev', deletedAt: null, image: null },
 } as OnsiteReviewRequest;
 
 const OFFSITE: OffsiteReviewRequest = {
@@ -75,7 +75,7 @@ const OFFSITE: OffsiteReviewRequest = {
     category: 'utility',
     contentRating: 'g',
   },
-  submittedBy: { id: 9, username: 'offsite-dev', image: null },
+  submittedBy: { id: 9, username: 'offsite-dev', deletedAt: null, image: null },
 };
 
 const { UnifiedReviewList } = await import('./UnifiedReviewList');

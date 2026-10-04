@@ -1,6 +1,6 @@
 # Resource-intent primitive (Jev)
 
-**Status:** **M1 + the M2 consume seam** — the primitive and its REST surface, dark behind `resourceIntentJev` (default-deny), with the shortlist now ordered against the `ResourceInsight` labels. The candidate POOL is still seeded by popularity; see [Label ordering](#label-ordering) for what that does and does not buy. M3 (the gold-set study) is committed but has never been run, and grades stage-1 agreement rather than retrieval — see [Label ordering](#label-ordering). M4/M5 are gated follow-ons — see [Rollout](#rollout).
+**Status:** **M1 + the M2 consume seam** — the primitive and its REST surface, dark behind `resourceIntentJev` (default-deny), with the shortlist now ordered against the `ResourceInsight` labels. The candidate POOL seed lands with this PR — `insight.qualityScore` is projected into the models index and leads the shortlist sort — but the attribute lists reach a live index only via a manual full reset, which has **not** been run, so until it is the pool is still popularity-seeded in every environment; see [Label ordering](#label-ordering) for what that does and does not buy. M3 (the gold-set study) is committed but has never been run, and grades stage-1 agreement rather than retrieval — see [Label ordering](#label-ordering). M4/M5 are gated follow-ons — see [Rollout](#rollout).
 
 A versioned, headless API primitive: **prompt → intent + criteria → civitai resource suggestions**. A prompt becomes a typed intent (what kinds of resources it wants, with full probability distributions), the intent compiles into a deterministic shortlist over the model search index, and a second judgment ranks the shortlist. `none` is a first-class answer at every stage — most prompts need no resource.
 
@@ -33,7 +33,7 @@ POST /api/v1/blocks/resource-intent {prompt, baseModel?, limit?}
 | `src/server/services/resource-intent.service.ts`         | Cache → stage 1 → criteria → matcher → stage 3 → hydration → shadow event. Plain async function; reusable without the REST surface. |
 | `src/server/services/resource-intent-matcher.service.ts` | Deterministic gates + popularity-seeded pool + `ResourceInsight` ordering + hard cap.                                               |
 | `src/pages/api/v1/blocks/resource-intent.ts`             | Block-token REST surface.                                                                                                           |
-| `scripts/label-resource-insights.ts`                     | The offline batch pass that WRITES `ResourceInsight`. Run manually; spends vendor budget on every invocation, dry run included.      |
+| `scripts/label-resource-insights.ts`                     | The offline batch pass that WRITES `ResourceInsight`, and enqueues the labeled MODELS for reindex. Run manually; spends vendor budget on every invocation, dry run included. |
 | `scripts/eval-resource-intent-goldset.ts`                | M3 gold-set study runner. Committed, never executed; no-ops without `--execute`. Grades stage-1 agreement, not retrieval.            |
 
 ## Hard rules
@@ -60,7 +60,7 @@ All six in one request; state is ONLY the prompt (+ optional baseModel string):
 | `specificity`      | score  | 1–5, scored against the 5-point `criteria` rubric in the schema file (quoted nowhere here, so a reword cannot leave a stale copy), `integer: true` |
 | `injectionPresent` | noul   | P(prompt contains instructions aimed at an AI system)                                                                                              |
 
-The role compiles to a ModelType filter (`ROLE_MODEL_TYPES` in the schema file — exhaustive, `none` → no matcher run, unknown → no filter). `role` and `styleFamily` are carried in criteria and are the two axes the label ordering compares against; `contentType`/`specificity` are recorded on the shadow event only. ⚠️ **None of them are given to stage 3** — that sentence used to say they were and it is false: stage 3's `state` is `{ prompt }` alone and `buildStage3Question`'s text carries only the shortlist. The code sends _less_ user-derived context than this doc claimed, which is benign in direction but misleading to the next fixer. They also do not yet filter the search — there is no normalized style taxonomy to filter on, and the study (M3) decides whether any mapping earns its false-exclusions.
+The role compiles to a ModelType filter (`ROLE_MODEL_TYPES` in the schema file — exhaustive, `none` → no matcher run, unknown → no filter). `role` and `styleFamily` are carried in criteria and are the two axes the label ordering compares against; `contentType`/`specificity` are recorded on the shadow event only. ⚠️ **None of them are given to stage 3** — that sentence used to say they were and it is false: stage 3's `state` is `{ prompt }` alone and `buildStage3Question`'s text carries only the shortlist. The code sends _less_ user-derived context than this doc claimed, which is benign in direction but misleading to the next fixer. They also do not yet filter the search — the search index carries no normalized style attribute to filter on (a style taxonomy does exist, in `ResourceInsight`, and the label ordering reads it), and the study (M3) decides whether any mapping earns its false-exclusions.
 
 ## Caching, rate limits, flag
 
@@ -82,6 +82,113 @@ popularity-seeded index query, because no insight field is projected into
 So this ranks within a popularity-seeded pool; it is not purpose-first retrieval.
 The seed reaches `applyInsightRanking` only as the tiebreak index, so replacing it
 later is a change to `searchShortlistModels` alone.
+
+🔴 **A label write is ANNOUNCED to the models index, and that is a prerequisite
+rather than a nicety.** A model enters the incremental models-index sync on
+exactly three conditions, and they live in **two** files: `Model.createdAt >=
+lastUpdatedAt` and `Model.updatedAt >= lastUpdatedAt` are in
+`prepareModelsBatches` (`src/server/search-index/models.search-index.ts`); the
+third — the index's own update queue — is read by `update()` in
+`src/server/search-index/base.search-index.ts`, which unions the queued ids with
+that function's `updateIds`. A `ResourceInsight` upsert satisfies none of them —
+it touches neither `Model` column — so nothing about a label would reach the
+index except through the manual full re-projection, which can go a very long
+time between runs. The labeling pass therefore enqueues the affected MODEL ids
+(`ResourceInsight` is keyed per version; the index is keyed per model) on every
+batch that writes rows.
+
+⚠️ Until an insight field is actually projected into `models_v9` the rebuilt
+document is byte-identical, so today the enqueue buys nothing visible. It is
+wired now because the alternative is a projected attribute frozen at the one
+manual reset, decaying from the moment it finishes, with every newly-labeled
+model seeded as unlabeled — a defect whose symptom is indistinguishable from
+"the labels are bad". **Touching `Model.updatedAt` instead was considered and
+rejected:** it orders the "recently updated" model lists (`model.service.ts`
+already drops to raw SQL to AVOID bumping it on a non-creator edit, and says
+so), so a corpus labeling pass would misrepresent every labeled model as
+freshly updated.
+
+🔴 **The per-batch enqueue is sized for the STEADY-STATE trickle. Price a
+full-corpus pass before running one.** What is verified in code:
+
+- The drain is `search-index-sync-models`, cron `*/15 * * * *`
+  (`src/server/jobs/search-index-sync.ts`), and its `update()` gate is
+  `lastUpdatedAt + updateInterval < now` with a 30-second default
+  (`src/server/search-index/base.search-index.ts`) — so **every** cron fire
+  drains, continuously, for the whole duration of a pass.
+- That `update()` runs with `db: dbWrite` / `pg: pgDbWrite`, so each drained
+  model is a full nested `modelSearchIndexSelect` pull **off the primary** — not
+  the replica. `reset()` is the one that uses `dbRead`/`pgDbRead`.
+- The documents rebuilt are byte-identical until an insight field is projected
+  into `models_v9`.
+- The index holds **~700k ungated documents** — the figure is
+  `src/pages/api/admin/temp/queue-paid-models-reindex.ts`'s own, in a comment
+  that declines to rewrite them because "rewriting them would be waste".
+
+Two corrections to the obvious reasoning, both of which bit an earlier draft of
+this paragraph:
+
+- ⚠️ **Queue DEPTH is a count of DISTINCT MODELS, not of versions labeled** —
+  which is a correction to the _mechanism_, not a cheaper cost estimate, and
+  billing it as the latter is what bit the earlier draft. The queue is a redis
+  **set** (`sAdd`, and `checkoutQueue` collects into a `Set`). 🔴 **It is a
+  different quantity from the script's `indexQueued` total, so do not read
+  either off the other.** `indexQueued` is a **pass**-scoped sum of per-batch
+  announcement lists, deduplicated only _within_ each batch, so a model
+  announced by two batches is counted twice. Standing depth is a
+  **per-drain-window** quantity that this pass only _contributes_ to: the queue
+  is shared with every other `queueUpdate` caller, and the `models` sync drains
+  it every 15 minutes (`src/server/jobs/search-index-sync.ts`,
+  `models: '*/15 * * * *'`). Which batch a model's versions land in follows from
+  the ordering: on the **default** sweep (`id > cursor`,
+  `orderBy: { id: 'asc' }`, `take ≤ 10` per batch —
+  `scripts/label-resource-insights.ts`) a model's versions are created at
+  different times and so are not adjacent in id space, which is why they can
+  land in different batches; under `--top`
+  (`orderBy: [{ generationCount: 'desc' }, { modelVersionId: 'asc' }]`) usage
+  correlates within a model, so several of its versions _can_ land in one batch,
+  where `labeledModelIds` collapses them — ⚠️ statistically, not by
+  construction, since nothing in that ordering groups by model. Hence the double
+  count is near-certain on the default sweep and rarest under `--top`.
+  🔴 **Three of these quantities are recorded nowhere in this repo** — batch
+  throughput, per-model version-id spacing, and actual standing depth. `docs/`,
+  `scripts/` and `src/` were swept at this head and hold no figure for any of
+  them, which is weaker than nobody having measured them; do not size anything
+  on those three until a run produces figures. The versions-per-model
+  distribution, however, **is measured**: `docs/plans/model-ui-overhaul.md`
+  records it from the production database, and **84% of models have exactly one
+  version** — for which a cross-batch double count is structurally impossible.
+  Summing its buckets at their floors puts the mean at **≥ ~1.24 versions per
+  model**; the open-ended `6+` bucket makes the true figure somewhat higher, but
+  nothing in the distribution gets it near 2. So `indexQueued` over-reports
+  distinct models by a fraction, **not by a multiple**. ⚠️ That bounds the
+  quantity without pinning it: its corpus is every `Model` row (type-mixed)
+  rather than the `LABELABLE_VERSION_FILTER` published/non-private subset this
+  pass walks, its buckets are ranges rather than exact counts, and its `20+` row
+  is presumably a subset of its `6+` row.
+- ⚠️ **`--top N` DOES bound the announced set, PER INVOCATION** —
+  `topUsageVersionIds` takes at most N ids in one query, so one run announces at
+  most N models. It does **not** bound a resumed pass: `--cursor` re-materialises
+  the ordered list on every resume, over a `generationCount` that moves while the
+  run is in flight, so the union of models announced across the resumes of one
+  logical pass can exceed N. What it bounds even less is per-document size, and
+  ordering by `generationCount` plausibly selects larger documents (more
+  versions, files, showcase images). That last clause is a correlation nothing
+  in this repo measures.
+
+🔴 **There is no `--no-enqueue` lever, so a corpus pass cannot be run without
+announcing**, and because the cron drains every 15 minutes a "finish with a
+reset instead" plan does not avoid the incremental cost — most of it is already
+paid by the time the pass ends. If that cost needs avoiding, it needs a flag on
+this script plus pausing the drain, neither of which exists in this repo today.
+`search-index-sync-models-reset` is still the cheap way to make the whole corpus
+consistent once an insight field IS projected: it is a manual-trigger job that
+builds off the replica, swaps, then clears the queue.
+
+Apart from the versions-per-model distribution cited above — which bounds the
+over-report without sizing the pass — none of the cost quantities above is
+measured against the database. The distinct-model count is the number that
+decides the real cost, and a corpus run should derive it first.
 
 The pool is wider than the response — `min(cap × 2, 255)` — so the ordering can
 promote a candidate popularity placed outside the response rather than only
@@ -120,9 +227,9 @@ substituting a new one.** What survives is a property rather than a justificatio
 labeled and an unlabeled candidate share no scale, so any scoring scheme has to
 invent a score for the unlabeled candidates, and the neutral band is how this
 ordering avoids inventing one. Whether buckets or scores serve better at the in-pool
-coverage above has never been tested; it is the first thing to revisit once the
-shadow table can grade the ordering (see the closing condition at the end of this
-section). The policy as it stands:
+coverage above is tested nowhere in this repo; it is the first thing to revisit
+once the shadow table can grade the ordering (see the closing condition at the end
+of this section). The policy as it stands:
 
 | Candidate | Bucket |
 | --- | --- |
@@ -312,7 +419,7 @@ which neither this evaluator nor this change provides.
 ## Rollout
 
 - **M1:** primitive + REST surface, dark behind `resourceIntentJev`.
-- **M2:** `ResourceInsight` + the labeling script, then the matcher ordering that reads them. Code done. 🔴 **Two OPERATIONAL preconditions are not, and neither is automatic:** `packages/civitai-db-schema/prisma/migrations/20260929170000_resource_insights/migration.sql` is applied by hand per environment, and `scripts/label-resource-insights.ts` must have been run there. Until both hold in a given environment the ordering is wired but has nothing to read, which is a data state, not a code state — and the two are distinguishable from outside: an unapplied migration makes the read FAIL, so the matcher logs `resource-intent-insight-read-failed`, sets `insightFallback: true` and the response caches for 60s; an unrun labelling pass makes the read SUCCEED and return nothing, which is `insightFallback: false` on the full-hour TTL and silently preserves the seed order. An environment stuck on the second therefore looks healthy, by design. **The index seed is NOT part of M2 either** — putting an insight field in `modelsSortableAttributes` and reindexing is separate, larger work, and until it happens the pool is popularity-seeded.
+- **M2:** `ResourceInsight` + the labeling script, then the matcher ordering that reads them. Code done. 🔴 **Two OPERATIONAL preconditions are not, and neither is automatic:** `packages/civitai-db-schema/prisma/migrations/20260929170000_resource_insights/migration.sql` is applied by hand per environment, and `scripts/label-resource-insights.ts` must have been run there. Until both hold in a given environment the ordering is wired but has nothing to read, which is a data state, not a code state — and the two are distinguishable from outside: an unapplied migration makes the read FAIL, so the matcher logs `resource-intent-insight-read-failed`, sets `insightFallback: true` and the response caches for 60s; an unrun labelling pass makes the read SUCCEED and return nothing, which is `insightFallback: false` on the full-hour TTL and silently preserves the seed order. An environment stuck on the second therefore looks healthy, by design. **The index seed lands with THIS PR**, not later — `insight.qualityScore` is projected by the models index and added to `modelsSortableAttributes` and `modelsFilterableAttributes`. 🔴 It carries an operational precondition of the same kind as the two above, and it is likewise not automatic: those attribute lists reach a live index only via a manual full reset, which has **not** been run, so until it is the pool is still popularity-seeded.
 - **M3 (committed, never run):** the gold-set study. It does NOT grade clause (iii) above. See the section above.
 - **M4 (suggestions UI)** — NOT implemented. Closing condition: M1 merged + shadow volume ≥1k/day for 7 days + p95 end-to-end ≤2s.
   🔴 **The p95 half of that condition moves under a label-read fault, and no shadow column records why.** In an environment where the `ResourceInsight` migration is unapplied — which this doc elsewhere calls the default state of a fresh environment — a label read that is *issued* fails, so those responses take the 60s fallback TTL instead of the 1h success TTL, and per-key recomputes rise to **up to** 60/hour, each paying two vendor round trips plus search plus hydration. Because `writeShadowEvent` fires on cache hits too, the shadow population's miss share rises and its `latencyMs` p95 rises with it. **Do not read a p95 regression as an M4 failure without first checking that the label read is succeeding in that environment**; the shadow table cannot distinguish the two.

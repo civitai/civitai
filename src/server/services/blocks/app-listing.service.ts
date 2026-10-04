@@ -60,6 +60,8 @@ import {
   APP_LISTING_CATALOG_TAG,
   APP_LISTING_RECOMMEND_MEAN_TAG,
 } from '~/server/services/blocks/app-listing-cache.constants';
+import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.selector';
+import type { ReviewSubmitterChip } from '~/components/Apps/unifiedReviewRow';
 
 /**
  * App Store Listings (W13) — P2a UNIFIED STORE READ PATH service.
@@ -1497,15 +1499,18 @@ async function loadDisplayedCollaboratorChips(
   const userIds = await listDisplayedCollaboratorUserIds(appListingId);
   if (userIds.length === 0) return [];
   // 🔴 EXPLICIT ALLOWLIST at the SELECT, not only at the projection. Two independent
-  // narrowings: nothing but these three columns ever leaves the DB, and `creatorChip`
+  // narrowings: nothing but these four columns ever leaves the DB, and `creatorChip`
   // re-shapes them. Widening either alone cannot leak.
   // 🔴 BANNED AND DELETED ACCOUNTS ARE FILTERED OUT, EXPLICITLY.
   //
   // This is the read that puts a collaborator's name and avatar on a PUBLIC app page,
   // linked to their profile. Without these two clauses a banned user keeps that placement
-  // indefinitely, and a deleted one fell out only INCIDENTALLY — a hard delete nulls
-  // `username` and the chip component skips username-less rows, which is luck, not a
-  // filter. Neither is something to leave to the render layer.
+  // indefinitely, and a deleted one fell out only INCIDENTALLY — `deleteUser` is a SOFT
+  // delete that nulls `username` in the same transaction as `deletedAt`, and the chip
+  // component skips username-less rows, which is luck, not a filter. (This comment said
+  // "a hard delete" until 2026-10-04; there is no hard-delete path in `user.service.ts`,
+  // and the distinction matters because the luck is the PII scrub, not row removal.)
+  // Neither is something to leave to the render layer.
   //
   // 🔴 DELIBERATELY STRICTER THAN `creatorChip`, which has the same shape and is NOT
   // changed here. The two are different subjects: the creator IS the app's owner, whose
@@ -1514,7 +1519,10 @@ async function loadDisplayedCollaboratorChips(
   // may be perfectly healthy and owned by someone else entirely.
   const users = await dbRead.user.findMany({
     where: { id: { in: userIds }, bannedAt: null, deletedAt: null },
-    select: { id: true, username: true, image: true },
+    // `deletedAt` is projected even though the `where` already excludes deleted rows: it makes
+    // this chip satisfy the user-chip guard outright rather than needing a ledger exemption,
+    // and it costs nothing — the column is read from the same heap tuple, no extra rows.
+    select: { id: true, username: true, deletedAt: true, image: true },
   });
   // Preserve the seat order (`createdAt asc`) rather than the DB's row order.
   const byId = new Map(users.map((u: { id: number }) => [u.id, u]));
@@ -1566,7 +1574,9 @@ export type ModerationListingRow = {
     id: string;
     submittedAt: Date;
     changelog: string | null;
-    submittedBy: ModerationUserChip | null;
+    /** The shared review chip — see the select. NOT `ModerationUserChip`, which is the
+     *  listings table's own plain-text owner cell and carries no `deletedAt`. */
+    submittedBy: ReviewSubmitterChip;
   } | null;
   /**
    * 🔴 ON-SITE ONLY, AND NOT THE SAME THING AS `pendingRequest`.
@@ -1622,7 +1632,23 @@ export const moderationListingSelect = {
       id: true,
       submittedAt: true,
       changelog: true,
-      submittedBy: { select: { id: true, username: true, image: true } },
+      // 🔴 THE SHARED REVIEW CHIP, because this row reaches a REVIEW surface: it is handed to
+      // the reused off-site review modal, which is the same modal the review queue opens.
+      //
+      // ⚠️ FORWARD-LOOKING, AND AN EARLIER VERSION OF THIS COMMENT OVERSTATED IT. That version
+      // said the modal "renders the submitter through `UserAvatar` — and that BRANCHES on
+      // `deletedAt`". It does not, today: `OffsiteReviewQueue` renders the submitter as plain
+      // `{username ?? '#id'}` text and does not import `UserAvatar` at all, so a closed
+      // account currently shows its verbatim username there and there is no profile link to
+      // suppress. The field is carried so the chip MATCHES every other review read and the
+      // branch is available the moment that cell adopts the shared component — which is the
+      // stated direction, and the on-site half of the same list already made the move. Read
+      // at face value the old wording answered "does this surface handle a deleted account?"
+      // with a confident yes, which is how a gap stays closed to inspection.
+      //
+      // The `user` chip above is deliberately NOT widened: it is the listings table's own
+      // owner cell, plain text, and a separate decision about a separate screen.
+      submittedBy: { select: reviewUserChipSelect },
     },
   },
 } satisfies Prisma.AppListingSelect;
@@ -1671,7 +1697,12 @@ export function projectModerationListing(
           id: pending.id,
           submittedAt: pending.submittedAt,
           changelog: pending.changelog ?? null,
-          submittedBy: creatorChip(pending.submittedBy),
+          // 🔴 PASSED THROUGH WHOLE, not through `creatorChip`. That helper projects
+          // `{ id, username, image }` EXPLICITLY, so it would drop the `deletedAt` the
+          // select above exists to carry — a field the review modal branches on. An
+          // explicit re-projection is exactly how this class of defect travels one layer
+          // at a time, and it produces no type error on the way.
+          submittedBy: pending.submittedBy,
         }
       : null,
   };

@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
+import type * as UserAvatarMod from '~/components/UserAvatar/UserAvatar';
+import type * as NotificationsModule from '~/utils/notifications';
+import { REVIEW_COVER_W, REVIEW_ICON_BOX } from '~/components/Apps/ListingMediaThumb';
 
 /**
  * `ReviewDetailView` — the per-submission review PAGE body (`/apps/review/<id>`),
@@ -34,7 +37,7 @@ const PENDING = {
   manifestDiffSummary: { kind: 'first-version', fields: ['name'] },
   reviewRepoUrl: 'https://forgejo.example/repo',
   pushCommitUrl: null as string | null,
-  submittedBy: { id: 7, username: 'dev-user', image: null },
+  submittedBy: { id: 7, username: 'dev-user', deletedAt: null, image: null },
 };
 
 const APPROVED = {
@@ -43,7 +46,7 @@ const APPROVED = {
   slug: 'approved-block',
   reviewedAt: new Date('2026-01-02T00:00:00Z'),
   approvalNotes: 'looks good',
-  reviewedBy: { id: 99, username: 'mod-user', image: null },
+  reviewedBy: { id: 99, username: 'mod-user', deletedAt: null, image: null },
 };
 
 const mocks = vi.hoisted(() => ({
@@ -52,6 +55,34 @@ const mocks = vi.hoisted(() => ({
   errorMode: false,
   reviewStatus: undefined as unknown,
   pending: false,
+}));
+
+/*
+  🔴 `UserAvatar` IS STUBBED, AND IT IS A NEW DEPENDENCY OF THIS TREE. The shared review
+  body's submitter line now renders the SAME avatar chip the queue list does, and the real
+  component reaches `trpc.user.getById`, `useCurrentUser`,
+  `useViewerBrowsingLevelDebounced` and `useBrowsingSettings` — none of which this harness
+  mounts, so it throws and blanks the whole render. The stub keeps the only contract this
+  suite cares about (WHICH user, and whether it links) and the real component is exercised
+  for real in `ReviewSubmitterMeta.browser.test.tsx`. Precedent:
+  `UnifiedReviewList.browser.test.tsx`, for the same component and the same reason.
+*/
+vi.mock('~/components/UserAvatar/UserAvatar', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserAvatarMod>()),
+  UserAvatar: ({
+    user,
+    linkToProfile,
+  }: {
+    user: { id: number; username?: string | null };
+    linkToProfile?: boolean;
+  }) =>
+    linkToProfile ? (
+      <a href={`/user/${user.username ?? user.id}`} data-testid="submitter-link">
+        {user.username ?? '[deleted]'}
+      </a>
+    ) : (
+      <span>{user.username ?? '[deleted]'}</span>
+    ),
 }));
 
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
@@ -63,7 +94,16 @@ vi.mock('~/components/Apps/ReviewBlockPreviewHost', () => ({
 }));
 
 const showError = vi.fn();
-vi.mock('~/utils/notifications', () => ({
+/*
+  🔴 SPREAD THE ORIGINAL, never a one-key factory. A factory that omits an export fails the
+  WHOLE FILE at import the day anything in its graph starts calling it — and vitest reports
+  that as 0 tests collected, not as a failing assertion, so it reads as a skipped file. This
+  PR hit it four times at once: the panel gained a `showWarningNotification` call and every
+  suite listing only two exports stopped importing. `local-rules/no-wholesale-module-mock`
+  reds on the narrow form.
+*/
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationsModule>()),
   showSuccessNotification: vi.fn(),
   showErrorNotification: (...a: unknown[]) => showError(...a),
 }));
@@ -133,6 +173,11 @@ beforeEach(() => {
   (router.beforePopState as any).mockClear();
   (router.push as any).mockClear();
   (router.push as any).mockResolvedValue(true);
+  (router.replace as any).mockClear();
+  // No `?tab=` ⇒ the default (Permissions). Reset per test so one case's deep link cannot
+  // leak into the next — the scaffold's router is a shared singleton.
+  router.query = {};
+  router.pathname = '/apps/review/[publishRequestId]';
 });
 
 describe('ReviewDetailView — sticky action bar', () => {
@@ -140,8 +185,12 @@ describe('ReviewDetailView — sticky action bar', () => {
     renderWithProviders(
       <ReviewDetailView selection={{ request: PENDING, mode: 'pending' }} onClose={vi.fn()} />
     );
-    // Body content is present (shared review body).
-    await expect.element(page.getByText('Show code diff')).toBeInTheDocument();
+    // Body content is present. ⚠️ The assertion moved from `getByText('Show code diff')` to
+    // the PERMISSIONS card when the page became tabbed: the code-diff affordance now lives
+    // in the Code tab, and the default tab is Permissions. The point of the assertion is
+    // unchanged — the shared review body rendered something — and the tab mechanics
+    // themselves are covered in `ReviewDetailTabs.browser.test.tsx`.
+    await expect.element(page.getByTestId('apps-review-permissions')).toBeInTheDocument();
     // The pinned action bar (labelled group) with both terminal actions.
     const bar = page.getByRole('group', { name: 'Review actions' });
     await expect.element(bar).toBeInTheDocument();
@@ -317,6 +366,23 @@ describe('ReviewDetailView — the STORE LISTING media section', () => {
    */
   const PIXEL = LOADABLE_IMAGE_DATA_URI;
 
+  /**
+   * ⚠️ THE SECTION MOVED INTO THE `Preview` TAB, so every case here selects that tab first.
+   * That is not a weakening: the panel is only reachable from there now, so a test that did
+   * not navigate would be asserting against a surface no mod can see.
+   *
+   * 🔴 VIA `router.query`, NOT A CLICK, and that is a property of the design rather than a
+   * harness workaround. The active tab is derived from `?tab=` with NO local copy — one
+   * source of truth — so the scaffold's `router.replace` (a `vi.fn()` that does not mutate
+   * `query`) cannot move it. Setting the query is also the more faithful test: it exercises
+   * the DEEP LINK a mod actually receives. The click half — that selecting a tab REWRITES
+   * the URL — is asserted in `ReviewDetailTabs.browser.test.tsx`. Precedent:
+   * `AppActivityPage.browser.test.tsx`, same split for the same reason.
+   */
+  beforeEach(() => {
+    router.query = { tab: 'preview' };
+  });
+
   test('both assets render as sized images, and NEITHER missing-state appears', async () => {
     renderWithProviders(
       <ReviewDetailView
@@ -334,8 +400,20 @@ describe('ReviewDetailView — the STORE LISTING media section', () => {
     await expect.element(cover).toBeInTheDocument();
     // The box is reserved before the bytes land — a review page with two images is
     // otherwise a CLS machine.
-    expect((icon.element() as HTMLImageElement).getAttribute('width')).toBe('40');
-    expect((cover.element() as HTMLImageElement).getAttribute('width')).toBe('96');
+    //
+    // 🔴 THE REVIEW BOX, NOT THE TABLE-ROW ONE. These used to read 40 and 96, which are the
+    // sizes `/apps/mine` and the review QUEUE need for a row. On this page the media is the
+    // store card a moderator is approving, and a 40px icon cannot be judged — so the page
+    // asks for `size="review"` and the reservation moves with it. Imported rather than
+    // retyped, so the two cannot drift: the point of the assertion is that the box is
+    // DECLARED on the attributes at all, and the sizes themselves are pinned against the
+    // row constants in `ReviewListingMedia.size.geometry.test.tsx`.
+    expect((icon.element() as HTMLImageElement).getAttribute('width')).toBe(
+      String(REVIEW_ICON_BOX)
+    );
+    expect((cover.element() as HTMLImageElement).getAttribute('width')).toBe(
+      String(REVIEW_COVER_W)
+    );
     expect(page.getByTestId('apps-review-listing-no-icon-my-block').elements()).toEqual([]);
     expect(page.getByTestId('apps-review-listing-no-cover-my-block').elements()).toEqual([]);
   });

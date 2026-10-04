@@ -7,6 +7,7 @@ import {
   getCrucibleManageActions,
   getCrucibleMinVotes,
   getCruciblePrizeAmount,
+  getCruciblePrizeWinners,
   getCrucibleRatingLabel,
   getCrucibleStatusBadge,
   getCrucibleTransactionDescription,
@@ -160,6 +161,64 @@ describe('getCrucibleStatusBadge', () => {
     expect(getCrucibleStatusBadge(CrucibleStatus.Completed, sevenDayRun(-1), now).label).toBe(
       'Completed'
     );
+  });
+});
+
+describe('getCruciblePrizeWinners', () => {
+  const prizePositions = [
+    { position: 1, percentage: 50 },
+    { position: 2, percentage: 30 },
+    { position: 3, percentage: 20 },
+  ];
+  const place = (entryId: number, userId: number, position: number) => ({
+    entryId,
+    userId,
+    position,
+  });
+  const winners = (placed: ReturnType<typeof place>[], positions = prizePositions) =>
+    getCruciblePrizeWinners({ placed, prizePositions: positions, totalPrizePool: 1000 }).map(
+      (w) => [w.entryId, w.prizePlace, w.prizeAmount]
+    );
+
+  it("gives a creator's best placing their one prize and moves the next creators up", () => {
+    expect(
+      winners([place(1, 10, 1), place(2, 10, 2), place(3, 10, 3), place(4, 11, 4), place(5, 12, 5)])
+    ).toEqual([
+      [1, 1, 500],
+      [4, 2, 300],
+      [5, 3, 200],
+    ]);
+  });
+
+  it('reads placings in position order, whatever order they arrive in', () => {
+    expect(winners([place(5, 12, 5), place(2, 10, 2), place(4, 11, 4), place(1, 10, 1)])).toEqual([
+      [1, 1, 500],
+      [4, 2, 300],
+      [5, 3, 200],
+    ]);
+  });
+
+  it('splits the unfilled prizes among the creators there are', () => {
+    expect(winners([place(1, 10, 1), place(2, 10, 2), place(3, 11, 3)])).toEqual([
+      [1, 1, 625],
+      [3, 2, 375],
+    ]);
+  });
+
+  it('pays no one for a prize place the crucible did not configure', () => {
+    const gapped = [
+      { position: 1, percentage: 60 },
+      { position: 3, percentage: 40 },
+    ];
+    expect(winners([place(1, 10, 1), place(2, 11, 2), place(3, 12, 3)], gapped)).toEqual([
+      [1, 1, 600],
+      [3, 3, 400],
+    ]);
+  });
+
+  it('pays nobody without placings or prize places', () => {
+    expect(winners([])).toEqual([]);
+    expect(winners([place(1, 10, 1)], [])).toEqual([]);
   });
 });
 

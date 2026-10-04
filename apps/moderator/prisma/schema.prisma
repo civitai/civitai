@@ -409,6 +409,48 @@ model Temp_FailedLoRATrain {
 
 /// Retool-era history, and the app must not read or write it. A timed mute is `User.muteExpiresAt` in
 /// the MAIN database, drained hourly by `processTimedUnmutesJob`; a mute recorded only here never lifts.
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model text_relabel_answer {
+  id                BigInt            @id @default(autoincrement())
+  item_id           BigInt
+  labeler_id        Int
+  label             String
+  note              String?
+  duration_ms       Int?
+  handed_off_at     DateTime?         @db.Timestamptz(6)
+  created_at        DateTime          @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime          @default(now()) @db.Timestamptz(6)
+  text_relabel_item text_relabel_item @relation(fields: [item_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([item_id, labeler_id])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model text_relabel_item {
+  id                  BigInt                @id @default(autoincrement())
+  token               String                @unique @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  batch               String
+  report_id           Int
+  tag                 String
+  wave                Int                   @db.SmallInt
+  entity_type         String
+  entity_id           Int?
+  author_id           Int?
+  visibility          String
+  confidence          Int                   @db.SmallInt
+  confidence_band     String
+  stratum_key         String
+  cell_population     Int
+  text_value          String?
+  flagged_at          DateTime              @db.Timestamptz(6)
+  purge_after         DateTime              @db.Timestamptz(6)
+  created_at          DateTime              @default(now()) @db.Timestamptz(6)
+  text_relabel_answer text_relabel_answer[]
+
+  @@unique([report_id, tag])
+  @@index([batch], map: "text_relabel_item_batch_idx")
+}
+
 model TimedMutes {
   id         Int       @id @default(autoincrement())
   userId     String?

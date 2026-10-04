@@ -129,6 +129,7 @@ export const NAVIGATION: NavLink[] = [
       { path: '/audit/training-models', label: 'Training Models' },
       { path: '/audit/training-data', label: 'Training Data Review' },
       { path: '/audit/relabel', label: 'Removal Label Relabel' },
+      { path: '/audit/text-relabel', label: 'Automated Text Relabel' },
     ],
   },
   {
