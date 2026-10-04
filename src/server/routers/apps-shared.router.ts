@@ -559,8 +559,10 @@ export async function listSharedRows(
   // bounded and small. The index is created by the same migration that creates
   // `shared_kv`, so every provisioned schema has it.
   //
-  // 🔴 THE `$5` GUARD HAS NO FAIL-CLOSED FORM, AND TWO SUCCESSIVE ATTEMPTS TO GIVE
-  // IT ONE WERE WRONG. Written down so a third is not derived.
+  // 🔴 NO FAIL-CLOSED FORM OF THE `$5` GUARD IS AN IMPROVEMENT ON THIS ONE, AND
+  // TWO SUCCESSIVE ATTEMPTS TO FIND ONE WERE WRONG. Written down so a third is
+  // not derived. (An earlier heading said no fail-closed form EXISTS, which this
+  // comment's own second half then contradicts — one does; it is simply worse.)
   //
   // Attempt 1 shipped `NOT COALESCE($5::boolean, false)` in place of
   // `$5::boolean IS NOT TRUE`, with a comment claiming it changed the failure
