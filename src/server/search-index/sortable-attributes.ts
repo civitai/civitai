@@ -99,8 +99,8 @@ export const modelsSortableAttributes = [
   // `metrics.thumbsUpCount:desc` as that second key.
   //
   // Deliberately NOT added to ./displayed-attributes.ts: it is stored-but-undisplayed,
-  // the same shape as `sortMetrics`, which that file documents. Sorting and `EXISTS`
-  // filtering on an undisplayed field both verified working on v1.15.0.
+  // the same shape as `sortMetrics`, which that file documents. Sorting and filtering on an
+  // undisplayed field both verified working on v1.15.0.
   'insight.qualityScore',
   'metrics.collectedCount',
   'metrics.commentCount',

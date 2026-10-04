@@ -111,13 +111,18 @@ describe('models search index projects insight.qualityScore', () => {
   });
 
   it('declares the attribute filterable too, so the labeled tier is separable', () => {
-    // `EXISTS` / `NOT EXISTS` on this field is how the gold-set study splits the labeled
-    // ~1.1% from the rest. Verified working on v1.15.0 against an undisplayed field.
+    // 🔴 The study's arms are `IS NOT NULL` / `IS NULL`, NOT `EXISTS` / `NOT EXISTS` — a
+    // written null counts as existing, so `EXISTS` matches every document. An earlier version
+    // of this comment named the wrong pair and nothing here could go red, because the
+    // assertion below is membership only. The authoritative block — what each predicate
+    // returns, the three causes of a written null with their measured magnitudes, and the
+    // positive control the study must run — is beside this entry in
+    // ~/server/search-index/filterable-attributes.ts. Read it there; it is not restated here.
     expect(modelsFilterableAttributes).toContain(INSIGHT_SORT_ATTR);
   });
 
   it('🔴 keeps the attribute OUT of displayedAttributes and ON the withheld ledger', async () => {
-    // Stored-but-undisplayed. Sorting and `EXISTS` filtering on an undisplayed field were both
+    // Stored-but-undisplayed. Sorting and filtering on an undisplayed field were both
     // verified working on v1.15.0, so displaying it would buy nothing and would widen what a
     // public search hit returns.
     //
