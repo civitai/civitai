@@ -791,8 +791,8 @@ jobs:
     # (`unit*`, `@civitai/*`, `app:*`), and its only CI home is the preview
     # pipeline's report-only `preview / component-tests`. Adding it here is a
     # much larger change than this harness and belongs in its own PR, on measured
-    # cost: locally, on a 16-core box, `geometry` is 6 files / 73 tests in 44.93s (2026-09-15)
-    # while `component` is 212 files / 2,362 tests in 112.92s wall — and 334s of
+    # cost: locally, on a 16-core box, `geometry` runs in well under a minute while
+    # `component` is 212 files / 2,362 tests in 112.92s wall — and 334s of
     # that is test time spread across workers, so a 2-core runner (browser pool
     # `min(12, cpus - 1)` = 1 instance) does not divide it. That is a job an order
     # of magnitude more expensive, with 212 files of pass/fail history nobody has

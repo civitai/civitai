@@ -185,7 +185,7 @@ const NON_SQUARE_IMAGE_DATA_URI =
  *
  * ⚠️ IT CATCHES A HEADER-DEAD FIXTURE, NOT A PIXEL-DEAD ONE, and the narrower claim is the
  * true one. `naturalWidth` comes from the PNG IHDR, so corrupting only the IDAT run leaves a
- * decodable 2x1 and this guard never fires — measured, 12/12 green. That is the right
+ * decodable 2x1 and this guard never fires — measured, the whole file green. That is the right
  * outcome, since every assertion here is about the BOX and the box is still 2x1; it is
  * recorded so nobody reads this as fixture validation in general. The awaits are still the
  * right call — at the previous head the same corrupt fixture was SILENTLY GREEN, because a
