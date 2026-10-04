@@ -145,13 +145,25 @@ this paragraph:
   `scripts/label-resource-insights.ts`) a model's versions are created at
   different times and so are not adjacent in id space, which is why they can
   land in different batches; under `--top`
-  (`orderBy: [{ generationCount: 'desc' }, { modelVersionId: 'asc' }]`) nothing
-  groups by model, so any clustering is statistical, not guaranteed. Hence the
-  double count is near-certain on the default sweep and rarest under `--top`.
-  🔴 **None of these quantities has been measured** — not batch throughput, not
-  per-model version-id spacing, not actual standing depth, not the corpus's
-  versions-per-model distribution — so nothing may be sized on them until they
-  are.
+  (`orderBy: [{ generationCount: 'desc' }, { modelVersionId: 'asc' }]`) usage
+  correlates within a model, so several of its versions _can_ land in one batch,
+  where `labeledModelIds` collapses them — ⚠️ statistically, not by
+  construction, since nothing in that ordering groups by model. Hence the double
+  count is near-certain on the default sweep and rarest under `--top`.
+  🔴 **Three of these quantities are unmeasured** — batch throughput, per-model
+  version-id spacing, and actual standing depth — so do not size anything on
+  those three until they are. The versions-per-model distribution, however, **is
+  measured**: `docs/plans/model-ui-overhaul.md` records it from the production
+  database, and **84% of models have exactly one version** — for which a
+  cross-batch double count is structurally impossible. Summing its buckets at
+  their floors puts the mean at **≥ ~1.24 versions per model**; the open-ended
+  `6+` bucket makes the true figure somewhat higher, but nothing in the
+  distribution gets it near 2. So `indexQueued` over-reports distinct models by
+  a fraction, **not by a multiple**. ⚠️ That bounds the quantity without pinning
+  it: its corpus is every `Model` row (type-mixed) rather than the
+  `LABELABLE_VERSION_FILTER` published/non-private subset this pass walks, its
+  buckets are ranges rather than exact counts, and its `20+` row is presumably a
+  subset of its `6+` row.
 - ⚠️ **`--top N` DOES bound the announced set, PER INVOCATION** —
   `topUsageVersionIds` takes at most N ids in one query, so one run announces at
   most N models. It does **not** bound a resumed pass: `--cursor` re-materialises

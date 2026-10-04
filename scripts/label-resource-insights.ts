@@ -553,8 +553,8 @@ export function labeledModelIds(
  * The `models_v9:Update` queue is shared with many other `queueUpdate` call
  * sites across the codebase — deliberately no count: it carries none of the
  * argument, and any count is corpus-dependent and not reproducible (it moves
- * with `src` vs `src`+`scripts`, with or without `__tests__`, `.ts` vs
- * `.ts`+`.tsx`, and a grep counts a string literal as a hit — see the
+ * with `src` vs `src`+`scripts`, with or without `__tests__`, and a grep counts
+ * a string literal as a hit — see the
  * `invalidation('modelsSearchIndex.queueUpdate', …)` label sitting on the line
  * above its own call in `src/server/services/model.service.ts`), so do not
  * re-add a figure. An entry survives until the next
