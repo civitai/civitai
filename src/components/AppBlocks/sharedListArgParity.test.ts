@@ -81,18 +81,30 @@ function sharedListArgKeys(src: string): string[] {
       else if (ch === '}' || ch === ']' || ch === ')') d--;
     }
     if (before !== 0) continue;
-    // 🔴 A SPREAD DEFEATS KEY COMPARISON, so refuse rather than drop it. Measured:
-    // adding `...extraArgs` to ONE host's literal left this test green — the key
-    // regex below requires an identifier at segment start, so `...x` matched
-    // nothing and vanished. A spread in one host and not the other is precisely
-    // the divergence this file exists to catch, and it was the invisible case.
-    if (/^\s*\.\.\./.test(segment)) {
+    // 🔴 REFUSE ANY SEGMENT THIS PARSER CANNOT RESOLVE — do not drop it.
+    // An earlier version special-cased the one shape that had been reported
+    // (`/^\s*\.\.\./`, a spread) and left the general case: the key regex below
+    // requires an identifier at segment start, so ANYTHING it misses vanished
+    // silently. That is the same spelled-not-structural mistake the guard itself
+    // exists to catch, committed inside the guard. Measured, each passing GREEN
+    // against the narrow version with the key added to ONE host only:
+    //   `...extraArgs,`      a spread
+    //   `'extraArg': 1,`     a quoted key
+    //   `['extraArg']: 1,`   a computed key
+    // Each is "a key added to one host and not the other" — precisely what the
+    // docstring promises to catch. Refusing the unparsed segment covers all
+    // three and every shape nobody has thought of, which a fourth special case
+    // would not.
+    const m = segment.match(/^\s*([A-Za-z_$][\w$]*)\s*(?::|$)/);
+    if (!m) {
+      if (segment.trim() === '') continue; // trailing comma
       throw new Error(
-        'a spread in the apps.shared.list.fetch( argument — key comparison cannot see through it; inline the keys or teach this parser to resolve the spread'
+        `unparsed segment in the apps.shared.list.fetch( argument: ${JSON.stringify(
+          segment.trim()
+        )} — this parser compares plain identifier keys only, so it can no longer see a divergence; inline the key or teach the parser this shape`
       );
     }
-    const m = segment.match(/^\s*([A-Za-z_$][\w$]*)\s*(?::|$)/);
-    if (m) keys.push(m[1]);
+    keys.push(m[1]);
   }
   return keys.sort();
 }
