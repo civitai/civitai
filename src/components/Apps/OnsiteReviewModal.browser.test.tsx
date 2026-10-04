@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import type * as UserAvatarMod from '~/components/UserAvatar/UserAvatar';
+import type * as NotificationsModule from '~/utils/notifications';
 
 /**
  * On-site (App Block) review modal — browser-mode render test (report-only in
@@ -48,7 +50,7 @@ const ONSITE_PENDING = {
   manifestDiffSummary: { kind: 'first-version', fields: ['name'] },
   reviewRepoUrl: 'https://forgejo.example/repo',
   pushCommitUrl: null as string | null,
-  submittedBy: { id: 7, username: 'dev-user', image: null },
+  submittedBy: { id: 7, username: 'dev-user', deletedAt: null, image: null },
 };
 
 const ONSITE_APPROVED = {
@@ -57,7 +59,7 @@ const ONSITE_APPROVED = {
   slug: 'approved-block',
   reviewedAt: new Date('2026-01-02T00:00:00Z'),
   approvalNotes: 'looks good, shipping it',
-  reviewedBy: { id: 99, username: 'mod-user', image: null },
+  reviewedBy: { id: 99, username: 'mod-user', deletedAt: null, image: null },
 };
 
 // A SECOND pending request (distinct `id`) used to prove the transient
@@ -81,6 +83,34 @@ const mocks = vi.hoisted(() => ({
   pending: false,
 }));
 
+/*
+  🔴 `UserAvatar` IS STUBBED, AND IT IS A NEW DEPENDENCY OF THIS TREE. The shared review
+  body's submitter line now renders the SAME avatar chip the queue list does, and the real
+  component reaches `trpc.user.getById`, `useCurrentUser`,
+  `useViewerBrowsingLevelDebounced` and `useBrowsingSettings` — none of which this harness
+  mounts, so it throws and blanks the whole render. The stub keeps the only contract this
+  suite cares about (WHICH user, and whether it links) and the real component is exercised
+  for real in `ReviewSubmitterMeta.browser.test.tsx`. Precedent:
+  `UnifiedReviewList.browser.test.tsx`, for the same component and the same reason.
+*/
+vi.mock('~/components/UserAvatar/UserAvatar', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserAvatarMod>()),
+  UserAvatar: ({
+    user,
+    linkToProfile,
+  }: {
+    user: { id: number; username?: string | null };
+    linkToProfile?: boolean;
+  }) =>
+    linkToProfile ? (
+      <a href={`/user/${user.username ?? user.id}`} data-testid="submitter-link">
+        {user.username ?? '[deleted]'}
+      </a>
+    ) : (
+      <span>{user.username ?? '[deleted]'}</span>
+    ),
+}));
+
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: true }),
 }));
@@ -93,7 +123,16 @@ vi.mock('~/components/Apps/ReviewBlockPreviewHost', () => ({
 }));
 
 const showError = vi.fn();
-vi.mock('~/utils/notifications', () => ({
+/*
+  🔴 SPREAD THE ORIGINAL, never a one-key factory. A factory that omits an export fails the
+  WHOLE FILE at import the day anything in its graph starts calling it — and vitest reports
+  that as 0 tests collected, not as a failing assertion, so it reads as a skipped file. This
+  PR hit it four times at once: the panel gained a `showWarningNotification` call and every
+  suite listing only two exports stopped importing. `local-rules/no-wholesale-module-mock`
+  reds on the narrow form.
+*/
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationsModule>()),
   showSuccessNotification: vi.fn(),
   showErrorNotification: (...a: unknown[]) => showError(...a),
 }));

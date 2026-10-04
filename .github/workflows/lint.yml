@@ -899,13 +899,23 @@ jobs:
         if: always()
         run: |
           node - <<'JS'
-          // Minimum ledger for the `geometry` tier. Measured 2026-09-15: 6 files / 73 tests.
-          // FILES ratchets at exactly current — files do not merge by accident, so a drop means a
-          // file stopped being collected, which is the thing this ledger exists to catch. TESTS
-          // stays conservative: a legitimate refactor merges cases, and a test-count ratchet at
-          // current would teach people to raise the floor rather than investigate the drop.
-          const MIN_FILES = 6;
-          const MIN_TESTS = 10;
+          // Minimum ledger for the `geometry` tier. Both numbers are FLOORS (see the `<`
+          // comparison below), re-derived 2026-10-04 against 8 files / 101 tests.
+          //
+          // ⚠️ A FLOOR ONLY CATCHES A DROP TO BELOW ITSELF, AND NOBODY RAISES IT. The file
+          // floor sat at 6 against 7 collected on the base branch, so one file could have
+          // stopped being collected with no red; the test floor sat at 10 against 101, so
+          // ninety could have. An earlier draft of this comment claimed FILES "ratchets at
+          // exactly current" — that contract is not implemented and the comment above the
+          // block says the opposite. If you want a drop of one to be caught, the honest fix
+          // is an equality against a count derived from the glob, not a hand-maintained
+          // floor; until then raise both when you add to the tier.
+          const MIN_FILES = 8;
+          // 80 against 101 collected. It was 10, which could not fail: seven of the eight
+          // files could have stopped collecting and this still passed. Deliberately a
+          // fraction of current rather than a ratchet, so merging cases in a refactor does
+          // not force a floor bump — but a floor that cannot fail is not conservative.
+          const MIN_TESTS = 80;
           const REPORT = 'geometry-report.json';
 
           const fs = require('fs');

@@ -75,7 +75,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { cleanup } from 'vitest-browser-react';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { cascadeEvidence, nextLayout, renderAtViewport } from '../../../test/geometry-setup';
-import { LOADABLE_IMAGE_DATA_URI } from '../../../test/component-setup';
+import { LOADABLE_IMAGE_DATA_URI } from '../../../test/geometry-setup';
 import { USERNAME_MAX_LENGTH } from '~/shared/zod/username.schema';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as BrowserSettingsMod from '~/providers/BrowserSettingsProvider';
@@ -483,7 +483,7 @@ const ONSITE: OnsiteReviewRequest = {
   iconUrl: PIXEL,
   coverUrl: PIXEL,
   reviewRepoUrl: 'https://forgejo.example/repo',
-  submittedBy: { id: 7, username: SUBMITTER_USERNAME, image: null },
+  submittedBy: { id: 7, username: SUBMITTER_USERNAME, deletedAt: null, image: null },
 } as OnsiteReviewRequest;
 
 const OFFSITE: OffsiteReviewRequest = {
@@ -499,7 +499,7 @@ const OFFSITE: OffsiteReviewRequest = {
     category: 'utility',
     contentRating: 'g',
   },
-  submittedBy: { id: 9, username: 'offsite-dev', image: null },
+  submittedBy: { id: 9, username: 'offsite-dev', deletedAt: null, image: null },
   playCount: 7,
   iconUrl: PIXEL,
   coverUrl: null,
