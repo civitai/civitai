@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as BuzzService from '~/server/services/buzz.service';
 import { dbMock, redisMock } from '~/__tests__/mocks';
+import { REDIS_KEYS } from '~/server/redis/client';
 
 // Prod's shape: civitai.red is configured as both the blue and the red domain.
 vi.stubEnv('SERVER_DOMAIN_GREEN', 'civitai.com');
@@ -195,7 +196,7 @@ describe('which Buzz a winner may choose', () => {
     expect(getPrizeBuzzChoices('red')).toEqual(['green', 'yellow']);
   });
 
-  // createContext defaults an unresolved host to blue; reading that default would offer yellow.
+  // Not createContext's blue default: an unresolved host resolves to nothing, and nothing is green.
   it('offers only green on a host it cannot resolve', () => {
     expect(getRequestPrizeBuzzChoices({ headers: { host: 'evil.example' } })).toEqual(['green']);
     expect(getRequestPrizeBuzzChoices({ headers: {} })).toEqual(['green']);
@@ -511,7 +512,7 @@ describe('paying', () => {
 
     await claimPrize({ id, userId: 10, choices: ['green'] });
 
-    expect(redisMock.redis.del).toHaveBeenCalledWith(expect.stringMatching(/:10$/));
+    expect(redisMock.redis.del).toHaveBeenCalledWith(`${REDIS_KEYS.CRUCIBLE.USER_BUZZ_WON}:10`);
   });
 
   // A prize voided between its claim and its payment reaches payPrize with the claim already set.
