@@ -198,7 +198,8 @@ export function listingPublishingActions(row: PublishingActionRow): PublishingPa
   // Folding `visibility` into `OWNER_ACTIONS_BY_STATE` would force it through a state
   // machine that cannot express `draft`-yes/`rejected`-no — `inactive` contains both.
   // See {@link PUBLISHING_PANEL_ACTIONS}.
-  const base = row.role === 'owner' ? OWNER_ACTIONS_BY_STATE[listingOwnerState(row)] : EDITOR_ACTIONS;
+  const base =
+    row.role === 'owner' ? OWNER_ACTIONS_BY_STATE[listingOwnerState(row)] : EDITOR_ACTIONS;
   const actions: PublishingPanelAction[] = [...base];
   if (showVisibility(row)) actions.push('visibility');
   return actions;

@@ -137,8 +137,11 @@ export function ListingPublishingPanel({
   const chip = ownerStateChip(state);
   const canUnpublish = showUnpublish(row);
   const canRepublish = showRepublish(row);
-  // 🔴 NOT role-gated — see `showVisibility`: the level proc admits an accepted
-  // collaborator, so withholding the control from a seat would hide a real capability.
+  // 🔴 OWNER-GATED — see `showVisibility`. ⚠️ This comment said "NOT role-gated" on the
+  // grounds that the level proc admits an accepted collaborator. That is true of the PROC and
+  // was unreachable in the product: `editorTabsFor` withholds this tab from an editor, so the
+  // branch described a configuration nothing can mount. Re-enabling the seat means widening
+  // that tab's `role` term FIRST — the server will already allow it.
   const canSetVisibility = showVisibility(row);
   const postApprovalPrompt = visibilityPostApprovalPrompt(visibility, status);
   // On-site apps go OFFLINE; an off-site listing is only delisted from the store.

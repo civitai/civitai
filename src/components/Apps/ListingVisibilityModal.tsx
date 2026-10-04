@@ -30,10 +30,13 @@ import { trpc } from '~/utils/trpc';
  * This component is deliberately a thin renderer over functions the blocking `unit`
  * project drives.
  *
- * 🔴 NOT OWNER-ONLY, UNLIKE ITS NEIGHBOURS IN `ownerListingModals.tsx` — which is why it
- * is its own file rather than a third export there. `setListingVisibilityAsOwner` refuses
- * only a caller with no role at all, so an ACCEPTED collaborator may set the level; the
- * two takedown modals beside it are genuinely owner-scoped.
+ * ⚠️ IT IS OWNER-ONLY IN PRACTICE, AND THIS PARAGRAPH CLAIMED THE OPPOSITE AS THE REASON
+ * FOR THE FILE EXISTING. `setListingVisibilityAsOwner` does refuse only a caller with no
+ * role, so the SERVER would admit an accepted collaborator — but `editorTabsFor` withholds
+ * the Publishing tab from an editor, so this modal is only ever mounted for an owner. The
+ * file stays separate from `ownerListingModals.tsx` for a smaller but real reason: this one
+ * needs no `reason` field and has its own enablement rules, and the moderator variant is a
+ * third shape again. Do not restore the role claim without widening the tab's `role` term.
  */
 
 export type ListingVisibilityTarget = { id: string; slug: string } | null;

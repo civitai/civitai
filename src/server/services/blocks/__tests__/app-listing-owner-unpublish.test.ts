@@ -138,6 +138,11 @@ describe('LISTING_STATUS_CHANGING_MODERATION_ACTIONS', () => {
       'report-dismiss',
       'message-owner',
       'purge-user-storage',
+      // The per-listing VISIBILITY LEVEL set by a moderator. NEUTRAL: `applyVisibility`
+      // writes the `visibility` column and nothing else — it re-asserts `status` in its CAS
+      // `WHERE` but never assigns it — so this event must never displace the one that
+      // explains a removal.
+      'set-visibility',
     ]);
   });
 

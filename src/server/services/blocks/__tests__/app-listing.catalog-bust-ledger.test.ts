@@ -510,7 +510,12 @@ const LEDGER = [
   // changes which rows a given audience floor sees. Not optional — the catalog key is
   // per-cohort, so an un-busted level change leaves one cohort's id page wrong for up to
   // the whole TTL.
-  'src/server/services/blocks/app-listing-visibility-write.service.ts::applyVisibility',
+  // 🔴 MOVED OUT OF `applyVisibility`, AND THE MOVE WAS REQUIRED RATHER THAN COSMETIC.
+  // `applyVisibility` now runs inside an interactive TRANSACTION on the moderator path, and
+  // busting the catalog before that transaction COMMITS would advertise an audience change
+  // for a write that may still roll back. The bust is one helper called by each path after
+  // its own write is durable, so there is still exactly ONE bust site in this file.
+  'src/server/services/blocks/app-listing-visibility-write.service.ts::bustCatalogAfterVisibilityWrite',
   // Catalog membership + the live-parent scalar writes.
   'src/server/services/blocks/offsite-listing.service.ts::applyApprovedRevision',
   'src/server/services/blocks/offsite-listing.service.ts::approveExternalRequest',

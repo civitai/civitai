@@ -97,8 +97,8 @@ export function ModListingVisibilityModal({
           data-testid="apps-mod-visibility-note"
         >
           <Text size="sm">
-            This changes who can DISCOVER the listing in the store. It does not take the app
-            offline and does not revoke access for anyone holding its link — use Hide for that.
+            This changes who can DISCOVER the listing in the store. It does not take the app offline
+            and does not revoke access for anyone holding its link — use Hide for that.
           </Text>
         </Alert>
 
@@ -124,8 +124,8 @@ export function ModListingVisibilityModal({
         </Radio.Group>
 
         <Text size="xs" c="dimmed">
-          Current level is not shown here — see the listing&apos;s own Publishing tab. (Default
-          for an unset listing: {visibilitySummaryLabel(null, target.status)}.)
+          Current level is not shown here — see the listing&apos;s own Publishing tab. (Default for
+          an unset listing: {visibilitySummaryLabel(null, target.status)}.)
         </Text>
 
         <Textarea

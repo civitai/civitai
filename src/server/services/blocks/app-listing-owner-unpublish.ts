@@ -118,6 +118,13 @@ export const STATE_NEUTRAL_MODERATION_ACTIONS = [
   // per-app schema in a DIFFERENT DATABASE and records the fact here. So it must
   // never displace the event that explains a removal, exactly like `message-owner`.
   'purge-user-storage',
+  // The per-listing VISIBILITY LEVEL set by a moderator. NEUTRAL, and not a close call:
+  // `applyVisibility` writes the `visibility` column and nothing else — it re-asserts
+  // `status` in its CAS `WHERE` but never assigns it. So this event must never displace the
+  // one that explains a removal, which is what `republishOwnListing`'s last-event guard
+  // reads. (It also cannot BE the newest event on a `removed` listing: `removed` is not
+  // level-eligible, so the write is refused there.)
+  'set-visibility',
 ] as const satisfies readonly AppListingModerationAction[];
 
 /**

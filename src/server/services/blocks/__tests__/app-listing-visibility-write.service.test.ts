@@ -48,7 +48,9 @@ vi.mock('~/server/services/blocks/app-access.service', () => ({
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { APP_LISTING_MODERATION_ACTIONS } from '~/server/schema/blocks/offsite-moderation.schema';
 import {
+  SET_VISIBILITY_ACTION,
   setListingVisibilityAsModerator,
   setListingVisibilityAsOwner,
   VISIBILITY_BLOCK_SUSPENDED_MESSAGE,
@@ -93,7 +95,16 @@ function installDefaults() {
     return [{ visibility: stored }];
   });
   (dbMock.dbWrite.$executeRaw as unknown as MockFn).mockImplementation(async () => flipped);
-  mockResolveListingAccess.mockImplementation(async () => ({ role: 'owner' }));
+  mockResolveListingAccess.mockImplementation(async () => ({ role: 'owner', seatListingId: 'apl_1' }));
+  // 🔴 THE MODERATION-EVENT CREATE IS RESET HERE TOO, and omitting it cost a debugging round.
+  // `clearAllMocks` clears CALLS but not IMPLEMENTATIONS (see `beforeEach`), so the case that
+  // makes `create` THROW — modelling the 23514 the action CHECK produced in production — left
+  // a throwing implementation installed for every case after it, and the next test failed
+  // with that error rather than its own assertion. Every override this file installs must be
+  // reinstalled here; that is the file's own convention and this one was the exception.
+  (dbMock.dbWrite.appListingModerationEvent.create as unknown as MockFn).mockImplementation(
+    async () => ({ id: 'almev_1' })
+  );
 }
 
 beforeEach(() => {
@@ -117,7 +128,7 @@ describe('the OWNER path — authorization', () => {
   it('[INV] a row that resolves with a NULL role is refused', async () => {
     // The other shape `resolveListingAccess` can return: a row exists but the caller holds
     // no accepted seat on it. `{ role: null }` must be refused exactly like `null`.
-    mockResolveListingAccess.mockImplementation(async () => ({ role: null }));
+    mockResolveListingAccess.mockImplementation(async () => ({ role: null, seatListingId: 'apl_1' }));
     await expect(
       setListingVisibilityAsOwner({ appListingId: 'apl_1', visibility: 'testers', userId: 9 })
     ).rejects.toThrow(VISIBILITY_NOT_OWNED_MESSAGE);
@@ -142,7 +153,7 @@ describe('the OWNER path — authorization', () => {
   });
 
   it('[NEW] an accepted EDITOR may set the level, not only the owner', async () => {
-    mockResolveListingAccess.mockImplementation(async () => ({ role: 'editor' }));
+    mockResolveListingAccess.mockImplementation(async () => ({ role: 'editor', seatListingId: 'apl_1' }));
     await expect(
       setListingVisibilityAsOwner({ appListingId: 'apl_1', visibility: 'testers', userId: 9 })
     ).resolves.toMatchObject({ visibility: 'testers', changed: true });
@@ -525,6 +536,78 @@ describe('the MODERATOR path', () => {
       })
     ).resolves.toMatchObject({ changed: true });
     expect(mockResolveListingAccess).not.toHaveBeenCalled();
+  });
+
+  it('[NEW] 🔴 the event and the level write go through ONE transaction client', async () => {
+    // 🔴 THE REGRESSION TEST FOR A SHIPPED DEFECT, and it is precise about what a MOCK can
+    // prove. The revision that shipped did the level write and the event in two separate
+    // round trips while its own header claimed a moderator write was "structurally incapable
+    // of happening without an event row". It was not: the event insert was rejected by the
+    // action CHECK (`set-visibility` was unregistered) AFTER the level had committed, so a
+    // stranger's app discoverability changed with no audit row — and the retry then
+    // short-circuited `changed: false` and returned 200 over the unrecorded act.
+    //
+    // ⚠️ A MOCKED `$transaction` CANNOT PROVE ROLLBACK — the shared mock runs the callback
+    // and has no transactional semantics, so nothing here demonstrates the level reverting.
+    // What IS assertable, and what actually guarantees atomicity in production, is that both
+    // statements are issued on the SAME client the transaction handed the callback. That is
+    // the structural property; the rollback follows from Postgres.
+    stored = 'moderators';
+    await setListingVisibilityAsModerator({
+      appListingId: 'apl_1',
+      visibility: 'public',
+      reason: 'audited change',
+      moderatorUserId: 77,
+    });
+    expect(dbMock.dbWrite.$transaction).toHaveBeenCalledTimes(1);
+    // The write and the event both ran — and the event's own client is the tx's, not a
+    // second top-level call. The shared mock hands the callback `dbWrite` itself, so the
+    // observable is that BOTH landed inside the single `$transaction` invocation.
+    expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(event()).toHaveBeenCalledTimes(1);
+  });
+
+  it('[NEW] 🔴 a REJECTED event propagates — the proc must not report success', async () => {
+    // The other half: if the audit row cannot be written the caller has to hear about it.
+    // This is the exact shape prod produced (23514 on the action CHECK), modelled as a
+    // throwing `create`. Reporting success here is what made the retry dangerous.
+    stored = 'moderators';
+    (event() as unknown as MockFn).mockImplementation(async () => {
+      throw Object.assign(new Error('violates check constraint'), { code: 'P2010' });
+    });
+    await expect(
+      setListingVisibilityAsModerator({
+        appListingId: 'apl_1',
+        visibility: 'public',
+        reason: 'audit row will be rejected',
+        moderatorUserId: 77,
+      })
+    ).rejects.toThrow('violates check constraint');
+  });
+
+  it('[INV] 🔴 the action it writes is REGISTERED in the moderation taxonomy', async () => {
+    // 🔴 THE DEFECT WAS AN UNREGISTERED LITERAL, so this pins the registration itself rather
+    // than the string. `action: 'set-visibility'` shipped as a bare literal with no entry in
+    // APP_LISTING_MODERATION_ACTIONS, no classification in the state-changing/neutral
+    // partition, and no action-CHECK widen migration — and ALL THREE of this repo's gates
+    // for that class fire on REGISTERING an action, so an unregistered one is invisible to
+    // every one of them and `pnpm typecheck` was clean. Deriving the constant from the
+    // taxonomy is what arms them; this asserts the derivation holds.
+    expect(APP_LISTING_MODERATION_ACTIONS).toContain(SET_VISIBILITY_ACTION);
+    stored = 'moderators';
+    await setListingVisibilityAsModerator({
+      appListingId: 'apl_1',
+      visibility: 'public',
+      reason: 'registered action',
+      moderatorUserId: 77,
+    });
+    const written = (
+      event() as unknown as { mock: { calls: { 0: { data: Record<string, unknown> } }[] } }
+    ).mock.calls[0][0].data.action;
+    expect(written).toBe(SET_VISIBILITY_ACTION);
+    // 🔴 The round trip that matters: whatever the create site actually wrote is a MEMBER of
+    // the taxonomy. A literal would satisfy the line above and fail this one.
+    expect(APP_LISTING_MODERATION_ACTIONS as readonly string[]).toContain(written);
   });
 
   it('[INV] refuses on an UNAPPLIED migration, and records nothing', async () => {

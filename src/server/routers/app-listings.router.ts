@@ -1847,11 +1847,14 @@ export const appListingsRouter = router({
    * Rate-limited on the same budget as `updateListing`: this is an authored edit, and a
    * level change busts the store catalog cache, so it is not free to repeat.
    *
-   * ⚠️ THE MODERATOR COUNTERPART IS DEFERRED, NOT DROPPED. A `setListingVisibilityAsModerator`
-   * proc — any listing, `moderatorProcedure` + an inner recheck, writing a `set-visibility`
-   * moderation event — is operator-asked (D2) and lands with the UI PR. It was removed from
-   * this one because it existed for a verb no surface could invoke while obliging a human to
-   * hand-apply a second production DDL. See the write service's header.
+   * ✅ THE MODERATOR COUNTERPART HAS LANDED — `setListingVisibilityAsModerator`, 44 lines
+   * below. ⚠️ This paragraph said "DEFERRED, NOT DROPPED" and outlived the proc arriving; it
+   * is the kind of claim a maintainer asks ("can a moderator set a level?") and gets a
+   * confident wrong NO from. What still holds: it is a SEPARATE proc rather than a mod bypass
+   * here, with a required audited reason and its event in the same transaction as the write.
+   * It does oblige a human to hand-apply a DDL — the action-CHECK widen
+   * `20261004120000_app_listing_mod_action_set_visibility` — and shipping without that is
+   * exactly how the first live use changed a level and then 23514'd with no audit row.
    */
   setListingVisibility: appDeveloperProcedure
     .use(

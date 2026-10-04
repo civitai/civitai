@@ -113,13 +113,16 @@ export function visibilityOptionsFor(status: string): VisibilityOption[] {
     // pressure to supply one is how a guard acquires a reason it never had. If a future
     // surface genuinely needs to display a level on an ineligible status, THAT change can
     // state the reason.
-    const enabled = ceiling !== null && listingVisibilityRank(value) <= listingVisibilityRank(ceiling);
+    const enabled =
+      ceiling !== null && listingVisibilityRank(value) <= listingVisibilityRank(ceiling);
     return {
       value,
       label: visibilityLevelLabel(value),
       description: visibilityLevelDescription(value),
       enabled,
-      ...(enabled ? {} : { disabledReason: reason ?? 'This listing’s status does not allow a visibility level.' }),
+      ...(enabled
+        ? {}
+        : { disabledReason: reason ?? 'This listing’s status does not allow a visibility level.' }),
     };
   });
 }

@@ -80,10 +80,21 @@ export type ListListingReportsInput = z.infer<typeof listListingReportsSchema>;
  * (`reset-to-pending`/`owner-unpublish`/`owner-republish`) are added by the W13
  * post-approval-mgmt widen `20260713120000_w13_post_approval_mod_actions` (a strict
  * superset — additive DROP+ADD CHECK), `message-owner` by
- * `20260824120000_app_listing_mod_action_message_owner`, and `purge-user-storage` by
- * `20260912120000_app_listing_mod_action_purge_user_storage`. A drift here would let a proc
+ * `20260824120000_app_listing_mod_action_message_owner`, `purge-user-storage` by
+ * `20260912120000_app_listing_mod_action_purge_user_storage`, and `set-visibility` by
+ * `20261004120000_app_listing_mod_action_set_visibility`. A drift here would let a proc
  * write an `action` the DB rejects (23514). The action-agreement unit test pins this
  * tuple against the LATEST action-CHECK migration's IN-list.
+ *
+ * 🔴 THAT TEST IS A CODE/DDL AGREEMENT CHECK, NOT AN APPLY, AND THE DIFFERENCE BIT THIS
+ * TUPLE ONCE. `set-visibility` shipped as a bare inline literal at its create site with no
+ * entry here and no widen migration: nothing failed, because all three of this repo's gates
+ * for this class (`UnclassifiedModerationAction`, the partition test, the agreement test)
+ * fire on REGISTERING an action, and an unregistered one is invisible to every one of them.
+ * Measured on prod: the insert was rejected with 23514 while the level write had already
+ * committed. Registering the action is what ARMS those gates — so add the tuple member and
+ * the migration TOGETHER, and reference a named constant at the create site rather than a
+ * literal, or the next one is invisible in exactly the same way.
  *
  * NOTE the hyphen form (`report-resolve`/`report-dismiss`/`reset-to-pending`/
  * `owner-unpublish`/`owner-republish`) — it matches the shipped/widened migration
@@ -129,6 +140,22 @@ export const APP_LISTING_MODERATION_ACTIONS = [
   // enumerates every `after` state. Do not re-describe them here — this comment
   // has been falsified by a later commit of the same change twice already.
   'purge-user-storage',
+  // The per-listing VISIBILITY LEVEL, set by a MODERATOR on someone else's listing
+  // (`setListingVisibilityAsModerator`). Like `message-owner` and `purge-user-storage` it
+  // changes NO listing state: `app_listings.status` is untouched and the act is confined to
+  // the `visibility` column, so it must never displace the event that explains a removal.
+  //
+  // `reason`  — the moderator's required rationale (3..1000 chars), surfaced in the OWNER's
+  //             own history so a discoverability change is never silent to them.
+  // `before`  — { visibility: <level|null> } — the pre-state. 🔴 `null` is a REAL value here
+  //             meaning "no choice expressed", NOT the `private` level; recording it as
+  //             `private` would misreport what the moderator changed.
+  // `after`   — { visibility: <level> }.
+  //
+  // 🔴 NO `status` IN EITHER SNAPSHOT, deliberately — every sibling records a status
+  // transition because that is what it changed; this one changes none, so a `status` key
+  // would describe a transition that did not happen.
+  'set-visibility',
 ] as const;
 export type AppListingModerationAction = (typeof APP_LISTING_MODERATION_ACTIONS)[number];
 

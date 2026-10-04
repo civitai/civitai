@@ -37,6 +37,7 @@ import {
   readListingVisibility,
 } from '~/server/services/blocks/app-listing-visibility.service';
 import { newAppListingModerationEventId } from '~/server/utils/app-block-ids';
+import { APP_LISTING_MODERATION_ACTIONS } from '~/server/schema/blocks/offsite-moderation.schema';
 import type { AppListingVisibility } from '~/shared/utils/app-listing-visibility';
 import {
   isVisibilityEligibleListingStatus,
@@ -74,6 +75,34 @@ export const VISIBILITY_BLOCK_SUSPENDED_MESSAGE =
 export const VISIBILITY_NOT_OWNED_MESSAGE = 'You can only change your own listings.';
 
 /**
+ * The moderation-event `action` this module writes.
+ *
+ * 🔴 A NAMED CONSTANT, NOT AN INLINE LITERAL, AND THE LITERAL IS WHY THIS EXISTS. Shipped as
+ * `action: 'set-visibility'` at the create site, it was in NO registry: absent from
+ * {@link APP_LISTING_MODERATION_ACTIONS}, unclassified in the state-changing/neutral
+ * partition, and absent from every action-CHECK migration. All three of this repo's gates
+ * for that class fire on REGISTERING an action, so an unregistered one is invisible to all
+ * of them and `pnpm typecheck` was clean. Prod rejected the insert with 23514. Deriving the
+ * value from the taxonomy makes the tuple the single source and the agreement test the gate.
+ */
+export const SET_VISIBILITY_ACTION =
+  'set-visibility' satisfies (typeof APP_LISTING_MODERATION_ACTIONS)[number];
+
+/**
+ * A client that can perform the visibility write — `dbWrite` or an interactive transaction.
+ *
+ * 🔴 PRISMA'S OWN `TransactionClient`, NOT A HAND-ROLLED STRUCTURAL TYPE, and the structural
+ * one is why this comment exists. {@link VisibilityReadClient} can be structural because it
+ * needs ONE loosely-typed method (`$queryRaw`); this client also needs `appListing.findUnique`,
+ * whose generic signature carries the `select` inference. A hand-written
+ * `findUnique: (args: unknown) => Promise<unknown>` type-checked at the declaration and then
+ * collapsed every projected row to `{}` — six errors downstream, each one a real field the
+ * code reads (`status`, `appBlock`, `slug`). `TransactionClient` is `Omit<PrismaClient, …>`,
+ * so the full client satisfies it and an interactive tx client IS it.
+ */
+type VisibilityWriteClient = Prisma.TransactionClient;
+
+/**
  * The refusal a level WIDER than the listing's review state allows produces.
  *
  * 🔴 THIS GUARD CLOSES A MODERATOR-REVIEW BYPASS. Without it an owner could set
@@ -104,10 +133,26 @@ export const VISIBILITY_EXCEEDS_REVIEW_CEILING_MESSAGE =
  * rows after a status re-check is a REFUSAL. Collapsing the two would report success for a
  * listing that was taken down a millisecond ago.
  */
-async function applyVisibility(args: {
-  appListingId: string;
-  visibility: AppListingVisibility;
-}): Promise<SetListingVisibilityResult> {
+async function applyVisibility(
+  args: {
+    appListingId: string;
+    visibility: AppListingVisibility;
+  },
+  /**
+   * The write client. `dbWrite` for the owner path; an INTERACTIVE TRANSACTION client for
+   * the moderator path, so the level write and its audit event commit or roll back together.
+   *
+   * 🔴 THE MODERATOR PATH MUST PASS A TX, AND THE REASON IS MEASURED. With two separate
+   * round trips the level write commits first; if the event insert then fails, the listing's
+   * discoverability has changed with NO audit row — and the retry short-circuits
+   * `changed: false` and returns 200, reporting success over a still-unrecorded act. That is
+   * exactly what happened: `set-visibility` was unregistered, so prod rejected the insert
+   * with 23514 after the level had already changed. Every sibling mod proc in
+   * `offsite-moderation.service.ts` wraps mutation + event in one `$transaction` for this
+   * reason, and that file's summary states it as an invariant.
+   */
+  db: VisibilityWriteClient = dbWrite
+): Promise<SetListingVisibilityResult & { slug: string }> {
   const { appListingId, visibility } = args;
 
   // 🔴 THE PRIMARY, NOT THE REPLICA. A freshly-delisted or freshly-relisted row read
@@ -118,7 +163,7 @@ async function applyVisibility(args: {
   // needs no separate lookup. A missing column makes the whole select raise P2022, which is
   // caught below and reported as "not available on this environment" — the honest answer for
   // a write, and the reason this function may name the column at all.
-  const listing = await dbWrite.appListing.findUnique({
+  const listing = await db.appListing.findUnique({
     where: { id: appListingId },
     select: {
       id: true,
@@ -163,10 +208,10 @@ async function applyVisibility(args: {
   // select above cannot name it. That is deliberate: it is what makes all 17 unguarded
   // `appListing` WRITES elsewhere in the tree immune to the missing column instead of
   // 500ing on it. See the reader module's header.
-  const before = await readListingVisibility(appListingId, dbWrite);
+  const before = await readListingVisibility(appListingId, db);
   assertVisibilityWritable(before.available);
   if (before.visibility === visibility) {
-    return { appListingId, visibility, changed: false };
+    return { appListingId, visibility, changed: false, slug: listing.slug };
   }
 
   // 🔴 THE COMPARE-AND-SET, IN RAW SQL FOR THE SAME REASON — `data: { visibility }` is not
@@ -175,7 +220,7 @@ async function applyVisibility(args: {
   // never a second literal, or a grown allowlist would surface as a phantom race) and the
   // backing block's suspension, which is the half the status re-check cannot catch.
   // `$executeRaw` returns the affected row count — that is the CAS signal.
-  const flipped = await dbWrite.$executeRaw(
+  const flipped = await db.$executeRaw(
     Prisma.sql`
       UPDATE "app_listings"
          SET "visibility" = ${visibility}
@@ -195,7 +240,7 @@ async function applyVisibility(args: {
     // 🔴 A DELETION IS NOT AN INELIGIBLE STATUS. Mapping every zero-row outcome to the
     // status refusal reported a vanished listing as a lifecycle problem — a refusal naming
     // the wrong cause, in the one branch whose whole job is to be legible.
-    const still = await dbWrite.appListing.findUnique({
+    const still = await db.appListing.findUnique({
       where: { id: appListingId },
       select: { id: true },
     });
@@ -203,20 +248,28 @@ async function applyVisibility(args: {
     throw new TRPCError({ code: 'FORBIDDEN', message: VISIBILITY_STATUS_INELIGIBLE_MESSAGE });
   }
 
-  // The cached store catalog keys on which rows a cohort sees, and this write moves
-  // exactly that. Fire-and-forget by this module's convention: a cache-bus outage must
-  // never fail a mutation that already committed.
-  // 🔴 AWAITED AND CAUGHT, matching all 21 other call sites. A bare `void` here would be
-  // the only unhandled one: `bustCacheTag` can reject on a cache-bus fault, and with
-  // nothing awaiting it that rejection has nowhere to go but `unhandledRejection`. Catching
-  // rather than propagating is the same trade every sibling makes — a stale grid for at
-  // most the TTL beats a mutation that reports failure after having committed.
+  // 🔴 THE CACHE BUST MOVED OUT OF HERE, TO THE CALLERS, AND IT IS NOT A TIDY-UP. This
+  // function can now run inside an interactive transaction, and busting the catalog cache
+  // before that transaction COMMITS would advertise a change that may still roll back — the
+  // cache would then serve the new audience for a write that never landed. Each caller busts
+  // after its own write is durable; see {@link bustCatalogAfterVisibilityWrite}.
+  return { appListingId, visibility, changed: true, slug: listing.slug };
+}
+
+/**
+ * Bust the store catalog cache after a visibility write has COMMITTED.
+ *
+ * Fire-and-forget by this module's convention: a cache-bus outage must never fail a mutation
+ * that already committed. AWAITED AND CAUGHT, matching all 21 other call sites — a bare
+ * `void` would be the only unhandled one, and `bustCacheTag` can reject on a cache-bus
+ * fault, which with nothing awaiting it has nowhere to go but `unhandledRejection`. A stale
+ * grid for at most the TTL beats a mutation that reports failure after having committed.
+ */
+async function bustCatalogAfterVisibilityWrite(): Promise<void> {
   const { bustAppListingCatalogCache } = await import(
     '~/server/services/blocks/app-listing.service'
   );
   await bustAppListingCatalogCache().catch(() => undefined);
-
-  return { appListingId, visibility, changed: true };
 }
 
 /**
@@ -233,12 +286,13 @@ async function applyVisibility(args: {
  * none either, and the divergence between it and `app-listing-assets.service`'s
  * mod-bypassing loader is recorded in the access call-site ledger.
  *
- * ⚠️ AND MODERATORS CURRENTLY HAVE **NO PATH AT ALL**, which this paragraph claimed
- * otherwise. It pointed at a `setListingVisibilityAsModerator` that DOES NOT EXIST — it was
- * deferred to the UI PR along with the rest of the moderator surface, and the sentence
- * survived the removal. A moderator cannot set a level today. Letting them in HERE would be
- * an unaudited moderator write on someone else's listing, so the gap is closed by the
- * deferred proc rather than by widening this one.
+ * ✅ MODERATORS NOW HAVE A PATH, AND IT IS {@link setListingVisibilityAsModerator} IN THIS
+ * FILE — below. This paragraph has been wrong in BOTH directions: it once pointed at a
+ * moderator proc that did not exist, was corrected to "no path at all", and that correction
+ * then outlived the proc landing. The claim that matters is unchanged and still true:
+ * letting a moderator in through THIS function would be an unaudited write on someone
+ * else's listing, which is why the moderator path is a separate export with a required
+ * reason and an audited event in the same transaction — not a bypass here.
  */
 export async function setListingVisibilityAsOwner(args: {
   appListingId: string;
@@ -258,7 +312,25 @@ export async function setListingVisibilityAsOwner(args: {
   if (!access || access.role == null) {
     throw new TRPCError({ code: 'FORBIDDEN', message: VISIBILITY_NOT_OWNED_MESSAGE });
   }
-  return applyVisibility({ appListingId: args.appListingId, visibility: args.visibility });
+  // 🔴 `access.seatListingId`, NOT `args.appListingId` — THE PARENT. The caller may have
+  // arrived with a SHADOW revision id: `resolveListingAccess` resolves the role THROUGH the
+  // parent (`seatListingId = revisionOfId ?? id`) and admits it, so without this the write
+  // lands on the shadow row. Nothing reads a shadow's level — the store filters
+  // `revisionOfId: null` and the approve path's scalar copy does not include `visibility` —
+  // so the proc returned `changed: true` for a write with no effect, and the owner's panel
+  // still showed the parent's old level. The READ path documents this id class as reachable
+  // and keys on the parent for the same reason; the write did not, which made the two
+  // disagree about which row the feature is about.
+  const result = await applyVisibility({
+    appListingId: access.seatListingId,
+    visibility: args.visibility,
+  });
+  if (result.changed) await bustCatalogAfterVisibilityWrite();
+  return {
+    appListingId: result.appListingId,
+    visibility: result.visibility,
+    changed: result.changed,
+  };
 }
 
 /**
@@ -278,8 +350,11 @@ export async function setListingVisibilityAsOwner(args: {
  * Same for D1: a `removed`/`rejected` listing refuses a level for a moderator too.
  * Moderator-ness buys the right to act on someone else's listing, nothing more.
  *
- * 🔴 THE EVENT IS WRITTEN BEFORE THE LEVEL, AND ONLY IF THE LEVEL LANDS. The order below
- * is read-then-apply-then-record: `applyVisibility` throws on every refusal (D1, the
+ * 🔴 THE EVENT IS WRITTEN AFTER THE LEVEL, IN THE SAME TRANSACTION, AND ONLY IF THE LEVEL
+ * LANDS. ⚠️ This sentence used to read "BEFORE the level", which is the reverse of its own
+ * next clause and of the code — and acting on the bolded half would reintroduce the mutant
+ * this module's suite specifically kills ("apply first, record second"). The order is
+ * read-then-apply-then-record: `applyVisibility` throws on every refusal (D1, the
  * ceiling, an unapplied migration, a lost CAS race), so no event row is created for an act
  * that did not happen. The alternative — event first — would log moderator actions that
  * were refused, which is worse than not logging in a surface whose job is to be believed.
@@ -305,38 +380,60 @@ export async function setListingVisibilityAsModerator(args: {
   reason: string;
   moderatorUserId: number;
 }): Promise<SetListingVisibilityResult> {
-  // The pre-state, for the event's `before`. Read through the raw reader for the same
-  // reason the write path does — the column is not on the Prisma model. A refusal below
-  // discards this, which costs one cheap read on the failure path and keeps the happy path
-  // honest about what it changed.
-  const before = await readListingVisibility(args.appListingId, dbWrite);
+  /**
+   * 🔴 ONE INTERACTIVE TRANSACTION FOR THE LEVEL AND ITS EVENT, and this was two round trips
+   * in the revision that shipped. The module header then claimed a moderator write was
+   * "structurally incapable of happening without an event row", which was false as written:
+   * any failure of the `create` left a COMMITTED level change with no audit row. It was not
+   * hypothetical — `set-visibility` was unregistered in the action CHECK, so prod rejected
+   * the insert with 23514 *after* the level had changed, and the retry then short-circuited
+   * `changed: false` and returned 200 over a still-unrecorded act. Now a rejected event rolls
+   * the level back with it, which is what every sibling mod proc in
+   * `offsite-moderation.service.ts` does and what that file's summary states as an invariant.
+   *
+   * The pre-state read is INSIDE the transaction too, so the `before` snapshot and the write
+   * cannot be separated by a concurrent change.
+   */
+  const result = await dbWrite.$transaction(async (tx) => {
+    const before = await readListingVisibility(args.appListingId, tx);
 
-  const result = await applyVisibility({
-    appListingId: args.appListingId,
-    visibility: args.visibility,
+    const applied = await applyVisibility(
+      { appListingId: args.appListingId, visibility: args.visibility },
+      tx
+    );
+
+    // An idempotent no-op records nothing: an event row there would fill the owner's visible
+    // history with no-ops, and that history is the only place they learn a moderator touched
+    // their listing's discoverability.
+    if (!applied.changed) return applied;
+
+    await tx.appListingModerationEvent.create({
+      data: {
+        id: newAppListingModerationEventId(),
+        appListingId: args.appListingId,
+        // 🔴 THE SLUG COMES OUT OF THE WRITE'S OWN READ, not a second query, and it is never
+        // `''`. This column is the denormalised "the event stays self-describing after the
+        // listing is purged" copy — an empty string defeats the one case it exists for, and
+        // the previous revision fell back to exactly that.
+        slug: applied.slug,
+        action: SET_VISIBILITY_ACTION,
+        actorUserId: args.moderatorUserId,
+        reason: args.reason,
+        // 🔴 THE LEVELS, NOT THE STATUS. This act changes neither the status nor anything
+        // else, so recording `status` would describe a transition that did not happen. And
+        // `null` is a REAL pre-state meaning "no choice expressed" — not the `private` level.
+        before: { visibility: before.visibility },
+        after: { visibility: args.visibility },
+      },
+    });
+    return applied;
   });
 
-  if (!result.changed) return result;
-
-  const listing = await dbWrite.appListing.findUnique({
-    where: { id: args.appListingId },
-    select: { slug: true },
-  });
-  await dbWrite.appListingModerationEvent.create({
-    data: {
-      id: newAppListingModerationEventId(),
-      appListingId: args.appListingId,
-      slug: listing?.slug ?? '',
-      action: 'set-visibility',
-      actorUserId: args.moderatorUserId,
-      reason: args.reason,
-      // 🔴 THE LEVEL, NOT THE STATUS. Every sibling event records a `status` transition
-      // because that is what it changed; this one changes neither the status nor anything
-      // else, so recording `status` here would describe a transition that did not happen.
-      before: { visibility: before.visibility },
-      after: { visibility: args.visibility },
-    },
-  });
-
-  return result;
+  // After COMMIT, never inside — see `applyVisibility`'s note.
+  if (result.changed) await bustCatalogAfterVisibilityWrite();
+  return {
+    appListingId: result.appListingId,
+    visibility: result.visibility,
+    changed: result.changed,
+  };
 }
