@@ -1110,7 +1110,12 @@ export class Tracker {
     });
   }
 
-  public crucibleVote(values: { crucibleId: number; winnerEntryId: number; loserEntryId: number }) {
+  public crucibleVote(values: {
+    userId: number;
+    crucibleId: number;
+    winnerEntryId: number;
+    loserEntryId: number;
+  }) {
     return this.track(
       'crucible_votes',
       { ...values, createdAt: new Date() },

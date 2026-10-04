@@ -39,8 +39,9 @@ function lastFetchBody(fetchMock: ReturnType<typeof vi.fn>) {
 }
 
 async function emit(fetchMock: ReturnType<typeof vi.fn>) {
-  const tracker = new Tracker(undefined, undefined, { user: { id: 555 } } as never);
-  await tracker.crucibleVote({ crucibleId: 7, winnerEntryId: 11, loserEntryId: 12 });
+  // No request or session, as `submitVote` builds it: the voter arrives only as `userId`.
+  const tracker = new Tracker();
+  await tracker.crucibleVote({ userId: 555, crucibleId: 7, winnerEntryId: 11, loserEntryId: 12 });
   await new Promise((r) => setImmediate(r));
   return lastFetchBody(fetchMock);
 }
