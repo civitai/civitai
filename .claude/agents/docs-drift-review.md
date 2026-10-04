@@ -1,6 +1,7 @@
 ---
 name: docs-drift-review
 description: Given a session's commits or diff, finds the docs that the change made wrong — stale paths and symbols, checklist boxes now done, decisions recorded as open that something already settled, and two docs that now contradict each other. Also cuts padding, judging fact density rather than length. Reports exact replacement text. Use before opening a PR, and after any change that moves a file, renames a script, or closes a tracked item.
+model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
 

@@ -60,7 +60,7 @@ function readDoc(relPath: string, heading: string) {
 }
 
 const docs = [
-  readDoc('CLAUDE.md', '#### Convention guards run as tests'),
+  readDoc('.claude/rules/convention-guards.md', '#### Convention guards run as tests'),
   readDoc('.claude/agents/civitai-test-review.md', '### Convention guards'),
 ];
 

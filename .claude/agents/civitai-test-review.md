@@ -1,6 +1,7 @@
 ---
 name: civitai-test-review
 description: Reviews the tests in a feature segment of the main Civitai Next.js app (src/) for whether they would actually fail if the code broke — vacuous assertions, over-broad mocks, fakes that hang instead of failing, suites that collect zero tests, and races in browser tests. Use before calling a segment done, alongside civitai-reuse-review, civitai-correctness-review, civitai-perf-review and civitai-intent-review.
+model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -9,7 +10,7 @@ tools: Read, Grep, Glob, Bash
 **Scope is the tests in `src/` and the packages it imports.** The SvelteKit apps under `apps/` belong
 to the `svelte-*-review` trio.
 
-Read the **Testing** section of the root `CLAUDE.md` in full before you start. It is doctrine written
+Read the **Tests** section of the root `CLAUDE.md`, plus `.claude/rules/testing.md` and `.claude/rules/convention-guards.md`, in full before you start. It is doctrine written
 off real incidents in this repo, most of it recorded nowhere else, and it is the substance of this
 review.
 

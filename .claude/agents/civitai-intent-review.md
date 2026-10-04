@@ -1,6 +1,7 @@
 ---
 name: civitai-intent-review
 description: Scores a feature segment in the main Civitai Next.js app (src/) against the intent doc for the work — did the PR do what was actually asked, without quietly narrowing, widening, or transforming it. Use before calling a segment done, alongside civitai-reuse-review, civitai-correctness-review, civitai-perf-review and civitai-test-review.
+model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
 
