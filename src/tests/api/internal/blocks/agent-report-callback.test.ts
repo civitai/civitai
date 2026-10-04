@@ -144,9 +144,25 @@ describe('persistedStatusFor / buildReportUpdate (pure)', () => {
    * and a hand-spelled branch for an UNPLANTED key survives. Measured: adding one for
    * `licenceAudit` left all 16 cases green. It is therefore a BATTERY, not a proof: the
    * decoys below cover a plausible fourth analysis, two near-misses of real section names,
-   * and the two prototype members an adversarial body would reach for. A branch for a key
-   * outside the battery is not caught here; the structural backstop is that the writer has
-   * exactly one assignment site, the ledger loop.
+   * and the two prototype members an adversarial body would reach for.
+   *
+   * A branch for a key outside the battery is not caught here, and the structural fact that
+   * bounds it is narrower than "one assignment site": the ledger loop is the writer's only
+   * COMPUTED-key write (`data[section]`). The other five writes are hardcoded non-section
+   * keys — `status`/`completedAt` in the literal, then `model`, `tokenUsage`, `costUsd`,
+   * `summaryMd` — so a hand-spelled `data.licenceAudit = …` is type-legal and adds a seventh
+   * site that nothing structurally prevents. It is visible in review and nowhere else.
+   *
+   * ⚠️ AND THE SECOND HALF IS WIDER THAN "SECTION-SHAPED". `nonSection` is a closed literal
+   * set, so the equality is an exact ledger of every column this writer may write — a new
+   * NON-section column (`data.runnerVersion = …`) also turns it red, measured. That is
+   * deliberate: `data` is handed to Prisma as a column map, so an unledgered column is the
+   * same class of defect as an unledgered section. A legitimate new column means adding it to
+   * `nonSection` in the same commit.
+   *
+   * ⚠️ The mutant that does survive is specifically a GUARDED branch for a key the
+   * ledger-built fixture never plants (`if (body.licenceAudit) data.licenceAudit = …` never
+   * fires ⇒ no key ⇒ green). An UNCONDITIONAL one is caught by the same set-equality.
    *
    * The body is built FROM the ledger rather than hand-spelled, which is what makes the
    * growth half automatic. Values are pairwise distinct AND distinct from any literal this

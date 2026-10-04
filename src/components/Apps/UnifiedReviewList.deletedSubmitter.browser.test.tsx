@@ -153,13 +153,23 @@ describe('a DELETED submitter on either row kind', () => {
     '🔴 the %s row reads "[deleted]" and carries NO profile link — while its neighbour still does',
     async (_kind, opts, goneName, liveName) => {
       renderList(opts);
-      await expect.element(page.getByText('[deleted]', { exact: false })).toBeInTheDocument();
+      // 🔴 AWAIT THE STATE THAT ARRIVES IN BOTH THE HEALTHY AND THE BROKEN RENDER — the LIVE
+      // neighbour — then read the deleted row synchronously. Awaiting "[deleted]" first made
+      // every failure a 15-second locator timeout: the state never arrives under the mutant,
+      // so the budget is spent waiting and the three assertions that actually describe the
+      // defect never execute. The failure then reports a missing locator rather than a
+      // rendered closed account, which is a candidate filter, not a diagnosis.
+      await expect.element(page.getByText(liveName)).toBeInTheDocument();
 
       // 🔴 THE NAME IS GONE, not merely accompanied by a marker. `Username` replaces it.
       expect(
         page.getByText(goneName).elements(),
         `a closed account must not still be named @${goneName}`
       ).toHaveLength(0);
+      expect(
+        page.getByText('[deleted]', { exact: false }).elements().length,
+        'the closed account must be rendered as deleted'
+      ).toBeGreaterThan(0);
 
       // 🔴 AND THERE IS NO PROFILE TO CLICK THROUGH TO. `UserProfileLink` drops the anchor.
       const hrefs = profileHrefs();
@@ -168,8 +178,7 @@ describe('a DELETED submitter on either row kind', () => {
       // 🔴 THE CONTRAST, IN THE SAME RENDER, AND IT IS THE WHOLE POINT. The other row kind
       // comes from a different service and a different select. Without this, "no links at
       // all" — a list that failed to render, or a blanket suppression — would satisfy the
-      // assertions above.
-      await expect.element(page.getByText(liveName)).toBeInTheDocument();
+      // assertions above. (Its presence is the awaited anchor at the top of this case.)
       expect(hrefs, `the live neighbour must still be linked`).toContain(`/user/${liveName}`);
     }
   );

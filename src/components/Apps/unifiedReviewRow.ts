@@ -39,8 +39,9 @@ export type CombinedReviewPayload = {
 };
 
 /**
- * THE user chip every moderator review surface carries — the queue list, the per-submission
- * page, the prior-versions modal and the off-site rows. ONE declaration, because all four
+ * THE user chip every moderator review surface carries — the queue list (on-site AND
+ * off-site rows), the per-submission page, the prior-versions modal, and the moderation
+ * listings table's pending request. ONE declaration, because all four
  * hand it to the same `UserAvatar`.
  *
  * 🔴 `deletedAt` IS LOAD-BEARING, NOT DECORATION, and its absence here was a real hole rather
@@ -51,7 +52,8 @@ export type CombinedReviewPayload = {
  * on-site selects a round before the off-site one, so for a while the queue disagreed with
  * itself between two adjacent rows; this type is what stops a narrower projection being
  * type-legal again. The server side is one `reviewUserChipSelect` in
- * `src/server/selectors/user.selector.ts`.
+ * `src/server/selectors/review-user-chip.selector.ts` — a LEAF with a type-only Prisma
+ * import, deliberately not `user.selector.ts`; that file's header says why.
  *
  * ⚠️ `profilePicture` is deliberately NOT here — the other field `UserAvatar` reads, but a
  * NESTED select (a joined image row per row on three list paths) for a cosmetic gain that

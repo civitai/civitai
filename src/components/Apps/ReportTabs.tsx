@@ -983,7 +983,7 @@ export function ReportTabs({
   costCapped,
   onRerunSection,
   rerunningSection = null,
-  dispatchBusy = false,
+  dispatchBusy,
 }: {
   /**
    * Dispatch a re-run of ONE analysis.
@@ -1001,6 +1001,12 @@ export function ReportTabs({
    * 🔴 TRUE WHILE **ANY** RE-RUN IS IN FLIGHT, not just the one you clicked.
    * `rerunningSection` is single-valued and drives the SPINNER; this drives the DISABLED
    * state on all three buttons, because every one of them dispatches the same billed job.
+   *
+   * ⚠️ NO `= false` DEFAULT, DELIBERATELY. The buttons read `busy ?? rerunning`, which falls
+   * back only on `undefined` — so defaulting here to `false` would forward `false` and leave
+   * a caller that omits the prop with NO disabling at all, which is strictly worse than the
+   * `disabled={rerunning}` it replaced. Leaving it undefined is what makes the documented
+   * fallback real.
    */
   dispatchBusy?: boolean;
   report: {

@@ -61,7 +61,7 @@ import {
   APP_LISTING_RECOMMEND_MEAN_TAG,
 } from '~/server/services/blocks/app-listing-cache.constants';
 import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.selector';
-import type { ReviewUserChip } from '~/components/Apps/unifiedReviewRow';
+import type { ReviewSubmitterChip } from '~/components/Apps/unifiedReviewRow';
 
 /**
  * App Store Listings (W13) — P2a UNIFIED STORE READ PATH service.
@@ -1570,7 +1570,7 @@ export type ModerationListingRow = {
     changelog: string | null;
     /** The shared review chip — see the select. NOT `ModerationUserChip`, which is the
      *  listings table's own plain-text owner cell and carries no `deletedAt`. */
-    submittedBy: ReviewUserChip | null;
+    submittedBy: ReviewSubmitterChip;
   } | null;
   /**
    * 🔴 ON-SITE ONLY, AND NOT THE SAME THING AS `pendingRequest`.
@@ -1626,12 +1626,22 @@ export const moderationListingSelect = {
       id: true,
       submittedAt: true,
       changelog: true,
-      // 🔴 THE SHARED REVIEW CHIP, because this row reaches a REVIEW surface. The pending
-      // request below is handed to the reused off-site review modal (see the type's own
-      // comment), which renders the submitter through `UserAvatar` — and that BRANCHES on
-      // `deletedAt` to suppress the profile link and to render "[deleted]". The `user`
-      // chip above is deliberately NOT widened: it is the listings table's own owner cell,
-      // which is plain text, and widening it is a separate decision about a separate screen.
+      // 🔴 THE SHARED REVIEW CHIP, because this row reaches a REVIEW surface: it is handed to
+      // the reused off-site review modal, which is the same modal the review queue opens.
+      //
+      // ⚠️ FORWARD-LOOKING, AND AN EARLIER VERSION OF THIS COMMENT OVERSTATED IT. That version
+      // said the modal "renders the submitter through `UserAvatar` — and that BRANCHES on
+      // `deletedAt`". It does not, today: `OffsiteReviewQueue` renders the submitter as plain
+      // `{username ?? '#id'}` text and does not import `UserAvatar` at all, so a closed
+      // account currently shows its verbatim username there and there is no profile link to
+      // suppress. The field is carried so the chip MATCHES every other review read and the
+      // branch is available the moment that cell adopts the shared component — which is the
+      // stated direction, and the on-site half of the same list already made the move. Read
+      // at face value the old wording answered "does this surface handle a deleted account?"
+      // with a confident yes, which is how a gap stays closed to inspection.
+      //
+      // The `user` chip above is deliberately NOT widened: it is the listings table's own
+      // owner cell, plain text, and a separate decision about a separate screen.
       submittedBy: { select: reviewUserChipSelect },
     },
   },

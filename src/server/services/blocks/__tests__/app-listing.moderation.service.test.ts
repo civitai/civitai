@@ -117,9 +117,12 @@ describe('projectModerationListing', () => {
     );
     // 🔴 `deletedAt` SURVIVES THE PROJECTION, and that is the point of this assertion.
     //
-    // This row is handed to the REUSED off-site review modal (see `ModerationListingRow`'s
-    // own comment), which renders the submitter through `UserAvatar` — so it is a review
-    // surface, and the field is one the avatar BRANCHES on. The select was widened to the
+    // This row is handed to the REUSED off-site review modal — the same modal the review
+    // queue opens — so it is a review surface and the chip must match every other review
+    // read. ⚠️ That modal renders the submitter as PLAIN TEXT today, so the `deletedAt`
+    // branch is not yet exercised there; the select carries the field so it is available the
+    // moment the cell adopts `UserAvatar`, which the on-site half of the same list already
+    // did. The select was widened to the
     // shared `reviewUserChipSelect` and the projection now passes the chip through WHOLE
     // rather than re-projecting it through `creatorChip`, which spells `{ id, username,
     // image }` explicitly and would drop it with no type error. An explicit re-projection is
@@ -127,6 +130,12 @@ describe('projectModerationListing', () => {
     //
     // ⚠️ The sibling `owner` chip is deliberately NOT widened — it is the listings table's
     // own plain-text creator cell, a different screen, and still reads `ModerationUserChip`.
+    //
+    // 🔴 AND THIS ASSERTION PINS THE PROJECTION, NOT THE SELECT. Narrowing
+    // `moderationListingSelect` back leaves this case green; what catches that is
+    // `ModerationListingRow`'s `ReviewSubmitterChip` annotation, which fails `pnpm typecheck`
+    // with one error naming this field. Said here because a reader looking for the red test
+    // that guards the select will not find one.
     expect(dto.pendingRequest).toEqual({
       id: 'alpr_1',
       submittedAt: new Date('2026-01-02T00:00:00Z'),

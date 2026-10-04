@@ -255,6 +255,10 @@ describe('unified layout (the default)', () => {
         for (const [, token] of style.matchAll(/--mantine-color-([a-z0-9-]+)/g)) {
           if (isFixedInBothSchemes(token)) checked += 1;
         }
+        // ⚠️ ONE LEVEL OF NESTING. `light-dark(linear-gradient(var(--a), white), …)` — two
+        // levels — is not matched, so the span is not stripped and healthy code would RED.
+        // That is the false-POSITIVE direction, i.e. loud and safe, and nothing in this file
+        // needs two levels today; widen it when something does rather than in advance.
         const outside = style.replace(/light-dark\((?:[^()]|\([^()]*\))*\)/g, '');
         const stray = Array.from(outside.matchAll(/--mantine-color-([a-z0-9-]+)/g))
           .map(([, t]) => t)

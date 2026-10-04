@@ -326,6 +326,36 @@ describe('re-running ONE analysis instead of all three', () => {
     ).toBe(true);
   });
 
+  test('🔴 …and the SAME lock applies to a section that never RAN, not only a failed one', async () => {
+    // 🔴 THE `missing` ARM IS A SEPARATE COMPONENT (`SectionDidNotRun`, not `SectionFailed`)
+    // AND IT HAD ITS OWN COPY OF THE DISABLE RULE. Measured: reverting only that copy to
+    // `disabled={rerunning}` left 57 cases across three files green, because every existing
+    // case drove the FAILED arm. And `missing` is precisely the state a torn-down or stranded
+    // run leaves — the one a moderator re-runs.
+    // The same shape as the `NEVER_RAN` fixture two describes down — spelled here rather
+    // than hoisted, because that one is scoped to the block whose subject it is and hoisting
+    // it would make a fixture shared by two unrelated arguments.
+    mocks.report = {
+      status: 'failed',
+      model: 'anthropic/claude-x',
+      summaryMd: 'Provisioning failed: no target',
+      scopeVerdicts: PARTIAL_REPORT.scopeVerdicts,
+      securityAudit: null,
+      codeReview: null,
+    };
+    mocks.pending = true;
+    render();
+    await page.getByRole('tab', { name: /Code review/ }).click();
+    const other = visiblePanel()!.querySelector<HTMLButtonElement>(
+      '[data-testid="apps-report-section-rerun"]'
+    );
+    expect(other, 'a section that never ran still offers a run control').not.toBeNull();
+    expect(
+      other!.disabled,
+      'a never-run section must not dispatch while a re-run is already in flight'
+    ).toBe(true);
+  });
+
   test('🔴 NEGATIVE CONTROL: with nothing in flight, that same button IS clickable', async () => {
     // Without this, the assertion above is satisfied by a panel that disables the control
     // permanently — which would remove the affordance rather than guard it.

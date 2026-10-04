@@ -38,6 +38,32 @@ import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.select
 const SERVICE_FILES = [
   'src/server/services/blocks/publish-request.service.ts',
   'src/server/services/blocks/offsite-listing.service.ts',
+  'src/server/services/blocks/app-listing.service.ts',
+] as const;
+
+/**
+ * User chips in the corpus that are DELIBERATELY narrow, each by `id` plus its reason.
+ *
+ * 🔴 AN EXEMPTION LEDGER, NOT A WIDER SCAN. `app-listing.service.ts` was added because this
+ * change made it a third consumer of the shared chip — and a hardcoded two-file list standing
+ * in for "every blocks service that selects a user chip" is exactly the kind of corpus that
+ * drifts silently behind the code. But that file also carries chips that must NOT carry
+ * `deletedAt`, so appending it without this ledger would turn the guard red on intended code,
+ * and a permanently-red guard teaches everyone to ignore it.
+ *
+ * Each entry is the chip's OWNING PROPERTY plus why it is narrow. Adding one is a decision
+ * someone has to write down; the equality below fails if an entry becomes stale, so an
+ * exemption cannot outlive its reason either.
+ */
+const DELIBERATELY_NARROW: ReadonlyArray<{ owner: string; why: string }> = [
+  {
+    owner: 'user',
+    why: "the moderation listings table's own creator cell — plain text, a different screen",
+  },
+  {
+    owner: '<anonymous>',
+    why: 'the collaborator-allowlist `user.findMany`, whose WHERE already filters `deletedAt: null` in SQL — the rows cannot be deleted accounts, so projecting the column would be dead weight',
+  },
 ] as const;
 
 /**
@@ -53,13 +79,16 @@ const SERVICE_FILES = [
  * image: true }`, a chip with no `select` of its own, which is the OTHER shape that has
  * existed here.
  *
- * Anchoring on the field cannot be walked by renaming or re-nesting anything: a select that
- * names `username` is a user chip, whatever it is called and wherever it sits, and on these
- * two services every user chip must carry `deletedAt`.
+ * Anchoring on the field cannot be walked by renaming or re-nesting anything INSIDE THESE
+ * TWO FILES: a select that names `username` is a user chip, whatever it is called and
+ * wherever it sits in them. ⚠️ A chip IMPORTED from a third module is outside the corpus —
+ * measured, a narrower `narrowChip` exported from the selector module and referenced here
+ * leaves this suite green. The backstop there is a different instrument: `ReviewUserChip`'s
+ * REQUIRED `deletedAt`, which fails `pnpm typecheck` with one error naming the call site.
  */
-function userChipSelects(source: string): string[] {
+function ownedUserChips(source: string): Array<{ owner: string; body: string }> {
   const code = stripCommentsAndStrings(source);
-  const out: string[] = [];
+  const out: Array<{ owner: string; body: string }> = [];
   for (const m of code.matchAll(/\busername\s*:\s*true\b/g)) {
     // Walk BACK to the enclosing `{`, counting depth so a nested literal cannot escape…
     let depth = 0;
@@ -86,15 +115,25 @@ function userChipSelects(source: string): string[] {
       i += 1;
     }
     if (depth !== 0) continue;
-    out.push(
-      code
-        .slice(open + 1, i - 1)
-        .replace(/\s+/g, ' ')
-        .trim()
-    );
+    const body = code
+      .slice(open + 1, i - 1)
+      .replace(/\s+/g, ' ')
+      .trim();
+    // The nearest identifier before the literal (skipping an intervening `select:` and
+    // `{`), i.e. the property or const this chip hangs off — what an exemption names.
+    const before = code.slice(Math.max(0, open - 120), open);
+    // `select` is a wrapper, never the owner — `x: { select: { … } }` belongs to `x`.
+    const owner = [...before.matchAll(/([A-Za-z_$][\w$]*)\s*[:=]\s*\{?\s*(?:select\s*:\s*)?$/g)]
+      .map((m) => m[1])
+      .filter((n) => n !== 'select')
+      .pop();
+    out.push({ owner: owner ?? '<anonymous>', body });
   }
   return out;
 }
+
+/** Just the bodies — for the controls, which do not care who owns them. */
+const userChipSelects = (source: string) => ownedUserChips(source).map((c) => c.body);
 
 /** Every flat object literal in a file — the walk's own liveness control. */
 const objectLiterals = (source: string) =>
@@ -145,15 +184,33 @@ describe('the review user chip is one declaration', () => {
     // a new call site. Prisma selects are structurally typed, so `{ id: true, username: true,
     // image: true }` is perfectly assignable — it just silently drops the branch.
     const offenders: string[] = [];
+    const matchedEntries = new Set<string>();
     for (const rel of SERVICE_FILES) {
-      for (const body of userChipSelects(readFileSync(join(process.cwd(), rel), 'utf8'))) {
-        if (!/\bdeletedAt\s*:\s*true\b/.test(body)) offenders.push(`${rel}: { ${body} }`);
+      for (const { owner, body } of ownedUserChips(
+        readFileSync(join(process.cwd(), rel), 'utf8')
+      )) {
+        if (/\bdeletedAt\s*:\s*true\b/.test(body)) continue;
+        const entry = DELIBERATELY_NARROW.find((e) => e.owner === owner);
+        if (entry) {
+          matchedEntries.add(entry.owner);
+          continue;
+        }
+        offenders.push(`${rel}: ${owner}: { ${body} }`);
       }
     }
     expect(
       offenders,
       'a user chip without `deletedAt` renders a closed account as a live, linked profile'
     ).toEqual([]);
+
+    // 🔴 THE EXEMPTIONS ARE ASSERTED, NOT MERELY ALLOWED. An entry whose chip has since been
+    // widened — or deleted — is a stale licence to be narrow, and nothing else would notice.
+    // Matched BY ENTRY rather than by count, because one owner name can cover more than one
+    // chip (`user` appears twice) and a count would then encode an incidental number.
+    expect(
+      [...matchedEntries].sort(),
+      'every entry in DELIBERATELY_NARROW must still correspond to a narrow chip'
+    ).toEqual(DELIBERATELY_NARROW.map((e) => e.owner).sort());
   });
 
   test('🔴 POSITIVE CONTROL: the walk is live, it CAN catch, and it survives the stripper', () => {
@@ -179,6 +236,19 @@ describe('the review user chip is one declaration', () => {
       'owner: { select: { id: true, username: true, image: true } },',
     ].join('\n');
     expect(userChipSelects(bad).filter((b) => !/deletedAt/.test(b))).toHaveLength(4);
+
+    // (c-0) 🔴 AND THE STRIPPER REACHES THE END OF THE REAL FILE. Controls (a) and (b) prove
+    // it is not DEAD; neither proves it does not swallow everything after some line, which
+    // would hide every chip in the tail of a 4,000-line service. Appending the planted
+    // violations to the real source and still finding all four is what closes that class.
+    for (const rel of SERVICE_FILES) {
+      const realSrc = readFileSync(join(process.cwd(), rel), 'utf8');
+      const baseline = userChipSelects(realSrc).filter((b) => !/deletedAt/.test(b)).length;
+      expect(
+        userChipSelects(`${realSrc}\n${bad}`).filter((b) => !/deletedAt/.test(b)).length - baseline,
+        `the scan must still reach all four violations appended AFTER all of ${rel}`
+      ).toBe(4);
+    }
 
     // (c) 🔴 RUN THE PLANTED STRINGS THROUGH THE STRIPPER, which the real assertion does and
     // an earlier control did not. `stripCommentsAndStrings` is documented as deliberately

@@ -41,7 +41,7 @@ import { describe, expect, it } from 'vitest';
  * WHY A LEDGER AND NOT A REPO-WIDE RULE. Measured with the detector below: 44 test files
  * carry a non-spreading `~/utils/notifications` factory at `ba6ce2b835`; #5102 converted the
  * 5 in `FIXED_BY_5102` and #5358 four more, leaving the 35 in `TOLERATED`. A repo-wide "must spread" check would
- * be red on all 39 — and a permanently-red gate is worse than no gate, which is the whole
+ * be red on all 35 — and a permanently-red gate is worse than no gate, which is the whole
  * subject of #5102. So the tolerated set is enumerated instead, and the assertion is EQUALITY
  * in both directions: adding a new wholesale factory fails this test, and converting one
  * without editing the ledger also fails it, so the count here stays true. Per the tier note
@@ -52,7 +52,7 @@ import { describe, expect, it } from 'vitest';
  * below, but its registry in `.eslintrc.js` deliberately excludes `~/utils/notifications`:
  * its stated admission test needs ≥15 exported bindings AND zero existing violators, and this
  * module has 7 exports and 39 violators. Registering it is blocked on that second criterion —
- * converting the 39 — which is tracked in #5115 together with the question of whether an
+ * converting the 35 — which is tracked in #5115 together with the question of whether an
  * export-count threshold is the right admission test at all. Deliberately not done here.
  *
  * Sibling guard, same defect class one module over:

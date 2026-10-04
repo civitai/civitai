@@ -5,6 +5,7 @@ import { page } from 'vitest/browser';
 import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
 import type * as UserAvatarMod from '~/components/UserAvatar/UserAvatar';
 import type * as NotificationsModule from '~/utils/notifications';
+import { REVIEW_COVER_W, REVIEW_ICON_BOX } from '~/components/Apps/ListingMediaThumb';
 
 /**
  * `ReviewDetailView` — the per-submission review PAGE body (`/apps/review/<id>`),
@@ -399,8 +400,16 @@ describe('ReviewDetailView — the STORE LISTING media section', () => {
     await expect.element(cover).toBeInTheDocument();
     // The box is reserved before the bytes land — a review page with two images is
     // otherwise a CLS machine.
-    expect((icon.element() as HTMLImageElement).getAttribute('width')).toBe('40');
-    expect((cover.element() as HTMLImageElement).getAttribute('width')).toBe('96');
+    //
+    // 🔴 THE REVIEW BOX, NOT THE TABLE-ROW ONE. These used to read 40 and 96, which are the
+    // sizes `/apps/mine` and the review QUEUE need for a row. On this page the media is the
+    // store card a moderator is approving, and a 40px icon cannot be judged — so the page
+    // asks for `size="review"` and the reservation moves with it. Imported rather than
+    // retyped, so the two cannot drift: the point of the assertion is that the box is
+    // DECLARED on the attributes at all, and the sizes themselves are pinned against the
+    // row constants in `ReviewListingMedia.size.browser.test.tsx`.
+    expect((icon.element() as HTMLImageElement).getAttribute('width')).toBe(String(REVIEW_ICON_BOX));
+    expect((cover.element() as HTMLImageElement).getAttribute('width')).toBe(String(REVIEW_COVER_W));
     expect(page.getByTestId('apps-review-listing-no-icon-my-block').elements()).toEqual([]);
     expect(page.getByTestId('apps-review-listing-no-cover-my-block').elements()).toEqual([]);
   });
