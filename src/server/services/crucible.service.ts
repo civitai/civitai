@@ -93,7 +93,7 @@ import { resolveCoverImageId } from '~/server/services/cover-image.service';
 import { isNonSfwForGreen } from '~/server/games/daily-challenge/challenge-currency';
 import { getEffectiveBrowsingLevel } from '~/server/games/daily-challenge/challenge-visibility';
 import { checkCrucibleSettings } from '~/server/schema/crucible.schema';
-import { createPost, afterPostPublish } from '~/server/services/post.service';
+import { createPost, afterPostPublish, afterPostsPublish } from '~/server/services/post.service';
 import { NotificationCategory } from '~/server/common/enums';
 import { imageResourcesCache } from '~/server/redis/caches';
 import {
@@ -3682,8 +3682,9 @@ const NOT_RUNNING = 'Entries can only be removed while the crucible is running';
  */
 /**
  * Publishes now the entry-modal posts `submitEntry` scheduled for the crucible's end, and reindexes
- * them all: images_v6 refused them while future-dated, so a reveal by the clock never reaches search.
- * Fail-soft, because the clock still reveals them at the original end.
+ * them all: images_v6 refused them while future-dated, and the scheduled-publishing sweep skips a post
+ * entered within its schedule minimum of the end and never refreshes post counts. Fail-soft, because
+ * the clock still reveals them at the original end.
  */
 async function revealCrucibleEntryPosts(entries: { crucibleId: number } | { imageId: number }) {
   const imageFilter =
@@ -3706,10 +3707,7 @@ async function revealCrucibleEntryPosts(entries: { crucibleId: number } | { imag
       )
       SELECT id, "userId" FROM entry_posts
     `;
-    const limit = plimit(10);
-    await Promise.all(
-      posts.map((post) => limit(() => afterPostPublish({ postId: post.id, userId: post.userId })))
-    );
+    await afterPostsPublish(posts.map((post) => ({ postId: post.id, userId: post.userId })));
   } catch (error) {
     logToAxiom({
       type: 'error',
@@ -3960,8 +3958,6 @@ export const cancelCrucible = async ({
       );
   }
 
-  await revealCrucibleEntryPosts({ crucibleId: id });
-
   let refundedEntries = 0;
   let totalRefunded = 0;
   let alreadySettled = 0;
@@ -4066,6 +4062,7 @@ export const cancelCrucible = async ({
   await crucibleEloRedis.setTTL(id, 24 * 60 * 60); // 24 hours
 
   notifyEntrantsOfCancellation(crucible, failedRefunds);
+  await revealCrucibleEntryPosts({ crucibleId: id });
 
   log(
     `Cancelled crucible ${id}: ${refundedEntries} entries refunded, ${totalRefunded} Buzz total, ${failedRefunds.length} failed, setup fee refunded: ${creatorSetupFeeRefunded}`

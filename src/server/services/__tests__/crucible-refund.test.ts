@@ -15,11 +15,11 @@ const claim = dbMock.dbWrite.crucible.updateMany;
 const refundMultiAccountTransaction = vi.fn();
 const setTTL = vi.fn();
 const createNotification = vi.fn();
-const afterPostPublish = vi.fn();
+const afterPostsPublish = vi.fn();
 
 vi.mock('~/server/services/post.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PostService>()),
-  afterPostPublish,
+  afterPostsPublish,
 }));
 
 vi.mock('~/server/services/notification.service', async (importOriginal) => ({
@@ -74,7 +74,7 @@ beforeEach(() => {
   setTTL.mockResolvedValue(undefined);
   refundMultiAccountTransaction.mockResolvedValue(undefined);
   createNotification.mockResolvedValue(undefined);
-  afterPostPublish.mockResolvedValue(undefined);
+  afterPostsPublish.mockResolvedValue(undefined);
   dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
 });
 
@@ -571,10 +571,21 @@ describe('cancelCrucible — entry posts', () => {
     await cancelCrucible({ id: 1, userId: 99, isModerator: true });
 
     const query = revealQuery();
-    expect(query?.sql).toMatch(/UPDATE "Post" p SET "publishedAt" = now\(\)/);
+    expect(query?.sql).toMatch(
+      /UPDATE "Post" p SET "publishedAt" = now\(\)\s+FROM entry_posts e\s+WHERE p\.id = e\.id AND e\.hidden/
+    );
     expect(query?.sql).toMatch(/ce\."crucibleId" = \$\d/);
     expect(query?.values).toEqual(expect.arrayContaining([1, 'crucibleEntryDraft']));
-    expect(afterPostPublish).toHaveBeenCalledWith({ postId: 300, userId: 10 });
+    expect(afterPostsPublish).toHaveBeenCalledTimes(1);
+    expect(afterPostsPublish).toHaveBeenCalledWith([{ postId: 300, userId: 10 }]);
+  });
+
+  it('reveals only after every refund has been attempted', async () => {
+    await cancelCrucible({ id: 1, userId: 99, isModerator: true });
+
+    const revealOrder = dbMock.dbWrite.$queryRaw.mock.invocationCallOrder.at(-1)!;
+    for (const refundOrder of refundMultiAccountTransaction.mock.invocationCallOrder)
+      expect(refundOrder).toBeLessThan(revealOrder);
   });
 
   it('reveals nothing when the cancel is refused', async () => {

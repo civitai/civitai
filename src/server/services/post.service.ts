@@ -1014,10 +1014,16 @@ export const updatePost = async ({
  * updatedAt bump isn't reliably picked up by metrics_images, so a new publishedAt would leave
  * sortAt/publishedAtUnix stale.
  */
-export async function afterPostPublish({ postId, userId }: { postId: number; userId: number }) {
-  await userPostCountCache.refresh(userId);
+export async function afterPostPublish(post: { postId: number; userId: number }) {
+  await afterPostsPublish([post]);
+}
+
+export async function afterPostsPublish(posts: { postId: number; userId: number }[]) {
+  if (!posts.length) return;
+  const userIds = uniq(posts.map((post) => post.userId));
+  await userPostCountCache.refresh(userIds);
   const images = await dbWrite.image.findMany({
-    where: { postId },
+    where: { postId: { in: posts.map((post) => post.postId) } },
     select: { id: true },
   });
   if (images.length) {
@@ -1026,7 +1032,7 @@ export async function afterPostPublish({ postId, userId }: { postId: number; use
       action: SearchIndexUpdateQueueAction.Update,
     });
   }
-  await userImageVideoCountCaches.refresh(userId);
+  await userImageVideoCountCaches.refresh(userIds);
 }
 
 export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerator?: boolean }) => {

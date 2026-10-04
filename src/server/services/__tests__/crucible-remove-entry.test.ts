@@ -9,11 +9,11 @@ import { dbMock, loggingMock } from '~/__tests__/mocks';
 
 const refundMultiAccountTransaction = vi.fn();
 const createNotification = vi.fn();
-const afterPostPublish = vi.fn();
+const afterPostsPublish = vi.fn();
 
 vi.mock('~/server/services/post.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PostService>()),
-  afterPostPublish,
+  afterPostsPublish,
 }));
 
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
@@ -73,7 +73,7 @@ beforeEach(() => {
   deleteEntry.mockResolvedValue({});
   refundMultiAccountTransaction.mockResolvedValue(undefined);
   createNotification.mockResolvedValue(undefined);
-  afterPostPublish.mockResolvedValue(undefined);
+  afterPostsPublish.mockResolvedValue(undefined);
   dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
 });
 
@@ -232,11 +232,17 @@ describe('removeCrucibleEntry — entry post', () => {
     await remove();
 
     const query = revealQuery();
-    expect(query?.sql).toMatch(/UPDATE "Post" p SET "publishedAt" = now\(\)/);
+    expect(query?.sql).toMatch(
+      /UPDATE "Post" p SET "publishedAt" = now\(\)\s+FROM entry_posts e\s+WHERE p\.id = e\.id AND e\.hidden/
+    );
     expect(query?.sql).toMatch(/i\.id = \$\d/);
     expect(query?.values).toEqual(expect.arrayContaining([70, 'crucibleEntryDraft']));
-    expect(afterPostPublish).toHaveBeenCalledWith({ postId: 300, userId: 42 });
-    expect(dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[0]).toBeGreaterThan(
+    expect(afterPostsPublish).toHaveBeenCalledTimes(1);
+    expect(afterPostsPublish).toHaveBeenCalledWith([{ postId: 300, userId: 42 }]);
+    const revealCall = dbMock.dbWrite.$queryRaw.mock.calls.findIndex(([strings]) =>
+      (strings as string[]).join('').includes('entry_posts')
+    );
+    expect(dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[revealCall]).toBeGreaterThan(
       deleteEntry.mock.invocationCallOrder[0]
     );
   });
