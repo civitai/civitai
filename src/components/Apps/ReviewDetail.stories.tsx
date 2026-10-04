@@ -1,6 +1,7 @@
 import { Alert, Badge, Code, Group, Stack, Tabs, Text, Title } from '@mantine/core';
 import { IconArrowLeft } from '@tabler/icons-react';
 import { ManifestScopes, ManifestView } from '~/components/Apps/OnsiteReviewModal';
+import { ListingCoverThumb, ListingIconThumb } from '~/components/Apps/ListingMediaThumb';
 import { ReportTabs } from '~/components/Apps/ReportTabs';
 import { FileDiffEntry, type FileLineDiff } from '~/components/Apps/reviewDiffPanels';
 import {
@@ -337,3 +338,80 @@ export const Manifest = () => (
     </Stack>
   </Shell>
 );
+
+/**
+ * PREVIEW — the store listing media at the size a moderator can actually judge.
+ *
+ * 🔴 BOTH SIZES SIDE BY SIDE, deliberately. The point of the change is a COMPARISON — the
+ * same two components render at the table-row box in `/apps/mine` and the review queue, and
+ * at the review box here — and a story showing only the new one cannot show that the small
+ * one was the defect. The live gallery is not reproduced: it needs a tRPC query, and its own
+ * sizing is pinned in `ReviewListingMedia.size.browser.test.tsx`.
+ */
+export const Preview_Media = () => (
+  <Shell active="preview">
+    <Stack gap="lg">
+      <Stack gap={4}>
+        <Text size="sm" fw={600}>
+          Store listing media — review page
+        </Text>
+        <Group gap="lg" align="flex-start">
+          <Stack gap={4}>
+            <Text size="xs" c="dimmed">
+              Icon
+            </Text>
+            <ListingIconThumb
+              size="review"
+              url={SHOT}
+              name="Gen Matrix"
+              imgTestId="story-icon-review"
+              placeholderTestId="story-icon-review-ph"
+            />
+          </Stack>
+          <Stack gap={4}>
+            <Text size="xs" c="dimmed">
+              Cover
+            </Text>
+            <ListingCoverThumb
+              size="review"
+              url={SHOT}
+              name="Gen Matrix"
+              imgTestId="story-cover-review"
+              placeholderTestId="story-cover-review-ph"
+            />
+          </Stack>
+        </Group>
+      </Stack>
+      <Stack gap={4}>
+        <Text size="sm" fw={600}>
+          The same two components at the QUEUE-ROW size, for scale
+        </Text>
+        <Group gap="lg" align="flex-start">
+          <ListingIconThumb
+            url={SHOT}
+            name="Gen Matrix"
+            imgTestId="story-icon-row"
+            placeholderTestId="story-icon-row-ph"
+          />
+          <ListingCoverThumb
+            url={SHOT}
+            name="Gen Matrix"
+            imgTestId="story-cover-row"
+            placeholderTestId="story-cover-row-ph"
+          />
+        </Group>
+      </Stack>
+    </Stack>
+  </Shell>
+);
+
+/** A 16:9 placeholder so both boxes have real bytes to letterbox. */
+const SHOT =
+  'data:image/svg+xml;utf8,' +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 180">' +
+      '<rect width="320" height="180" fill="#4c6ef5"/>' +
+      '<circle cx="160" cy="90" r="56" fill="#e7f5ff"/>' +
+      '<text x="160" y="98" font-size="28" text-anchor="middle" fill="#1864ab">art</text>' +
+      '</svg>'
+  );
