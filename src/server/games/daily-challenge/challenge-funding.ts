@@ -133,7 +133,8 @@ export async function chargeEntryFees({
   entryFee: number;
   fromAccountType: ChallengeBuzzType;
 }): Promise<ChargeEntryFeesResult> {
-  if (entryFee <= 0 || imageIds.length === 0) return { paidImageIds: imageIds, unpaidImageIds: [] };
+  if (entryFee <= 0 || imageIds.length === 0)
+    return { paidImageIds: imageIds, unpaidImageIds: [] };
 
   const houseAmount = Math.min(entryFee, CHALLENGE_ENTRY_HOUSE_CUT);
   const poolAmount = entryFee - houseAmount;
@@ -208,8 +209,7 @@ export async function chargeEntryFees({
   }
 
   if (unpaidImageIds.length > 0) {
-    const houseOrphans =
-      paidSet.size < housePaidIds.length ? housePaidIds.filter((id) => !paidSet.has(id)) : [];
+    const houseOrphans = paidSet.size < housePaidIds.length ? housePaidIds.filter((id) => !paidSet.has(id)) : [];
     logToAxiom({
       type: 'warning',
       name: 'challenge-entry-fee-partial-charge',

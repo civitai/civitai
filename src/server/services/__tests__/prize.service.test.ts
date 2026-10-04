@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as BuzzService from '~/server/services/buzz.service';
-import { dbMock } from '~/__tests__/mocks';
+import { dbMock, redisMock } from '~/__tests__/mocks';
 
 // Prod's shape: civitai.red is configured as both the blue and the red domain.
 vi.stubEnv('SERVER_DOMAIN_GREEN', 'civitai.com');
@@ -18,6 +18,8 @@ const {
   autoPayPrizes,
   claimPrize,
   createPrizes,
+  getMyPrizes,
+  getPrize,
   getPrizeBuzzChoices,
   getRequestPrizeBuzzChoices,
   payPrize,
@@ -46,49 +48,82 @@ type Row = {
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = new Date('2026-10-04T12:00:00Z');
 
-/** An in-memory Prize table honouring the conditions the service writes under. */
+/**
+ * An in-memory Prize table honouring the conditions the service writes under. It refuses what the
+ * real table refuses (a duplicate ledger key without skipDuplicates, a non-positive amount) and
+ * throws on any filter it does not implement, so it can never match more rows than Postgres would.
+ */
 let rows: Row[] = [];
 type Where = Record<string, unknown>;
+const OPERATORS = new Set(['in', 'not', 'lte', 'gt']);
 const matches = (row: Row, where: Where = {}) =>
   Object.entries(where).every(([key, cond]) => {
     const value = row[key as keyof Row];
     if (cond === undefined) return true;
     if (cond === null) return value === null;
-    if (cond instanceof Date || typeof cond !== 'object') return value === cond;
+    if (cond instanceof Date) return value instanceof Date && value.getTime() === cond.getTime();
+    if (typeof cond !== 'object') return value === cond;
+    const unknown = Object.keys(cond).filter((op) => !OPERATORS.has(op));
+    if (unknown.length) throw new Error(`fake Prize table: unsupported filter ${unknown.join()}`);
     const c = cond as { in?: unknown[]; not?: null; lte?: Date; gt?: number };
+    if ('not' in c && c.not !== null) throw new Error('fake Prize table: only { not: null }');
     if (c.in && !c.in.includes(value)) return false;
-    if ('not' in c && c.not === null && value === null) return false;
+    if ('not' in c && value === null) return false;
     if (c.lte && !(value instanceof Date && value <= c.lte)) return false;
     if (c.gt !== undefined && !((value as number) > c.gt)) return false;
     return true;
   });
+const ordered = (list: Row[], orderBy?: Record<string, 'asc' | 'desc'>) => {
+  if (!orderBy) return list;
+  const [[key, dir]] = Object.entries(orderBy) as [keyof Row, 'asc' | 'desc'][];
+  const sign = dir === 'desc' ? -1 : 1;
+  return [...list].sort((a, b) => sign * (Number(a[key]) - Number(b[key])));
+};
 
 const prize = dbMock.dbWrite.prize;
 const installFakeTable = () => {
-  prize.createMany.mockImplementation(async ({ data }: { data: Omit<Row, 'id'>[] }) => {
-    let count = 0;
-    for (const input of data) {
-      if (rows.some((r) => r.externalTransactionId === input.externalTransactionId)) continue;
-      rows.push({
-        subjectId: null,
-        position: null,
-        claimedAt: null,
-        buzzType: null,
-        autoClaimed: false,
-        paidAt: null,
-        voidedAt: null,
-        ...input,
-        id: rows.length + 1,
-      });
-      count++;
+  prize.createMany.mockImplementation(
+    async ({ data, skipDuplicates }: { data: Omit<Row, 'id'>[]; skipDuplicates?: boolean }) => {
+      if (data.some((input) => !(input.amount > 0)))
+        throw new Error('violates check constraint "Prize_amount_check"');
+      let count = 0;
+      for (const input of data) {
+        if (rows.some((r) => r.externalTransactionId === input.externalTransactionId)) {
+          if (skipDuplicates) continue;
+          throw Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+        }
+        rows.push({
+          subjectId: null,
+          position: null,
+          claimedAt: null,
+          buzzType: null,
+          autoClaimed: false,
+          paidAt: null,
+          voidedAt: null,
+          ...input,
+          id: rows.length + 1,
+        });
+        count++;
+      }
+      return { count };
     }
-    return { count };
-  });
-  prize.findMany.mockImplementation(async ({ where, take }: { where: Where; take?: number }) =>
-    rows
-      .filter((r) => matches(r, where))
-      .slice(0, take ?? Infinity)
-      .map((r) => ({ ...r }))
+  );
+  prize.findMany.mockImplementation(
+    async ({
+      where,
+      take,
+      orderBy,
+    }: {
+      where: Where;
+      take?: number;
+      orderBy?: Record<string, 'asc' | 'desc'>;
+    }) =>
+      ordered(
+        rows.filter((r) => matches(r, where)),
+        orderBy
+      )
+        .slice(0, take ?? Infinity)
+        .map((r) => ({ ...r }))
   );
   prize.findFirst.mockImplementation(async ({ where }: { where: Where }) => {
     const row = rows.find((r) => matches(r, where));
@@ -152,6 +187,12 @@ describe('which Buzz a winner may choose', () => {
       'green',
       'yellow',
     ]);
+  });
+
+  // Blue is not a promise of red: an SFW blue front door must not be offered yellow.
+  it('offers only green on a blue host that is not red-capable', () => {
+    expect(getPrizeBuzzChoices('blue')).toEqual(['green']);
+    expect(getPrizeBuzzChoices('red')).toEqual(['green', 'yellow']);
   });
 
   // createContext defaults an unresolved host to blue; reading that default would offer yellow.
@@ -281,6 +322,24 @@ describe('awarding', () => {
     expect(rows).toHaveLength(1);
   });
 
+  // An unfunded user challenge still picks winners, at 0 Buzz; the table refuses a 0-amount row.
+  it('skips a zero prize instead of failing the whole award', async () => {
+    const awarded = await createPrizes(
+      [0, 900].map((amount) => ({
+        userId: 10 + amount,
+        sourceType: 'Challenge' as const,
+        sourceId: 3,
+        amount,
+        title: 'Challenge Winner Prize',
+        externalTransactionId: `challenge-winner-prize-3-${amount}`,
+      })),
+      { now: NOW }
+    );
+
+    expect(awarded.map((p) => p.amount)).toEqual([900]);
+    expect(rows).toHaveLength(1);
+  });
+
   it('sets the prize to pay itself 30 days after it was won', async () => {
     const [row] = await award();
 
@@ -342,7 +401,119 @@ describe('the auto-pay job', () => {
   });
 });
 
+describe('the auto-pay job, at volume', () => {
+  const seed = (count: number, overrides: Partial<Row>) => {
+    for (let i = 0; i < count; i++)
+      rows.push({
+        id: rows.length + 1,
+        userId: 10,
+        sourceType: 'Crucible',
+        sourceId: 1,
+        subjectId: i,
+        position: 1,
+        amount: 100,
+        title: 'Crucible 1st prize',
+        externalTransactionId: `crucible-prize-1-${i}-1`,
+        createdAt: new Date(NOW.getTime() - 31 * DAY),
+        autoClaimAt: new Date(NOW.getTime() - DAY),
+        claimedAt: null,
+        buzzType: null,
+        autoClaimed: false,
+        paidAt: null,
+        voidedAt: null,
+        ...overrides,
+      });
+  };
+
+  it('claims every due prize across batches, not just the first 200', async () => {
+    seed(201, {});
+
+    const result = await autoPayPrizes({ now: NOW });
+
+    expect(result.autoClaimed).toBe(201);
+    expect(rows.every((r) => r.paidAt)).toBe(true);
+  });
+
+  // The retry loop walks a cursor: without it, 200 payments that keep failing are retried 20 times.
+  it('tries each stuck payment once per run, however many there are', async () => {
+    createBuzzTransactionMany.mockResolvedValue({ transactions: [], conflicts: [] });
+    seed(201, { claimedAt: new Date(NOW.getTime() - DAY), buzzType: 'green' });
+
+    const result = await autoPayPrizes({ now: NOW });
+
+    expect(createBuzzTransactionMany).toHaveBeenCalledTimes(201);
+    expect(result.retried).toBe(0);
+  });
+
+  it('leaves a claim made minutes ago to its own payment', async () => {
+    createBuzzTransactionMany.mockResolvedValueOnce({ transactions: [], conflicts: [] });
+    const [{ id }] = await award();
+    await claimPrize({ id, userId: 10, choices: ['green'] });
+    rows[0].claimedAt = new Date(NOW.getTime() - 60 * 1000);
+
+    const result = await autoPayPrizes({ now: NOW });
+
+    expect(result.retried).toBe(0);
+    expect(createBuzzTransactionMany).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('voiding', () => {
+  // A claimed prize's payment may already be in flight or in the ledger: voiding it would leave a
+  // row that says "voided" over Buzz the winner received, and the job would never revisit it.
+  it('leaves a claimed prize owed, and the job finishes paying it', async () => {
+    createBuzzTransactionMany.mockResolvedValueOnce({ transactions: [], conflicts: [] });
+    const [{ id }] = await award();
+    await claimPrize({ id, userId: 10, buzzType: 'yellow', choices: ['green', 'yellow'] });
+
+    const voided = await voidPrizes('Crucible', 1);
+    rows[0].claimedAt = new Date(NOW.getTime() - 11 * 60 * 1000);
+    await autoPayPrizes({ now: NOW });
+
+    expect(voided).toBe(0);
+    expect(rows[0].voidedAt).toBeNull();
+    expect(rows[0].paidAt).not.toBeNull();
+  });
+
+  it('voids an unclaimed prize', async () => {
+    await award();
+
+    expect(await voidPrizes('Crucible', 1)).toBe(1);
+    expect(rows[0].voidedAt).not.toBeNull();
+  });
+});
+
+describe('reading prizes', () => {
+  it("never returns someone else's prize", async () => {
+    const [{ id }] = await award();
+
+    await expect(getPrize({ id, userId: 99, choices: ['green'] })).rejects.toThrow(
+      'Prize not found'
+    );
+    expect(await getMyPrizes({ userId: 99, choices: ['green'] })).toEqual([]);
+  });
+
+  it('lists only your own, unvoided prizes', async () => {
+    await award({ externalTransactionId: 'mine' });
+    await award({ externalTransactionId: 'theirs', userId: 99 });
+    await award({ externalTransactionId: 'voided', sourceId: 2 });
+    await voidPrizes('Crucible', 2);
+
+    const mine = await getMyPrizes({ userId: 10, choices: ['green'] });
+
+    expect(mine.map((p) => p.id)).toEqual([1]);
+  });
+});
+
 describe('paying', () => {
+  it("refreshes a crucible winner's Buzz-won total once paid", async () => {
+    const [{ id }] = await award();
+
+    await claimPrize({ id, userId: 10, choices: ['green'] });
+
+    expect(redisMock.redis.del).toHaveBeenCalledWith(expect.stringMatching(/:10$/));
+  });
+
   // A prize voided between its claim and its payment reaches payPrize with the claim already set.
   it('refuses a prize voided after it was claimed', async () => {
     const [row] = await award();

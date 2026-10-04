@@ -1,8 +1,10 @@
 import * as z from 'zod';
+import type { PurchasableBuzzType } from '~/shared/constants/buzz.constants';
 import { PrizeSourceType } from '~/shared/utils/prisma/enums';
 
-export const prizeBuzzTypes = ['green', 'yellow'] as const;
-export type PrizeBuzzType = (typeof prizeBuzzTypes)[number];
+// A prize pays in the currencies Buzz can be bought in.
+export const prizeBuzzTypes = ['green', 'yellow'] as const satisfies readonly PurchasableBuzzType[];
+export type PrizeBuzzType = PurchasableBuzzType;
 
 export const getPrizeSchema = z.object({ id: z.number().int().positive() });
 export type GetPrizeSchema = z.infer<typeof getPrizeSchema>;

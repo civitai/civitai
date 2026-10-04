@@ -57,7 +57,7 @@ describe('voidChallenge', () => {
     mockGetChallengeById.mockResolvedValue(makeChallenge(ChallengeStatus.Active));
     await voidChallenge(1);
     expect(mockDbWrite.prize.updateMany).toHaveBeenCalledWith({
-      where: { sourceType: 'Challenge', sourceId: 1, paidAt: null, voidedAt: null },
+      where: { sourceType: 'Challenge', sourceId: 1, claimedAt: null, voidedAt: null },
       data: { voidedAt: expect.any(Date) },
     });
   });

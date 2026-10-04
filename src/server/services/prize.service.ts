@@ -6,7 +6,7 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { PrizeBuzzType } from '~/server/schema/prize.schema';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
-import { getRequestDomainColor } from '~/server/utils/server-domain';
+import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { createLogger } from '~/utils/logging';
@@ -21,15 +21,15 @@ const PRIZE_JOB_BATCH_SIZE = 200;
 const PRIZE_JOB_MAX_BATCHES = 20;
 
 /**
- * Yellow is offered only on a host that resolves to a non-green color. The raw resolution, not
- * `ctx.domain`: that one defaults an unresolved host to blue, which would offer yellow on it.
+ * Yellow is offered only on a red-capable host (civitai.red), resolved the way leaderboards resolve
+ * it. Not `ctx.domain`, which defaults an unresolved host to blue.
  */
 export function getPrizeBuzzChoices(domain: ColorDomain | undefined): PrizeBuzzType[] {
-  return domain === 'blue' || domain === 'red' ? ['green', 'yellow'] : ['green'];
+  return domain === 'red' ? ['green', 'yellow'] : ['green'];
 }
 
 export function getRequestPrizeBuzzChoices(req: { headers: { host?: string } }) {
-  return getPrizeBuzzChoices(getRequestDomainColor(req));
+  return getPrizeBuzzChoices(getRequestBoardDomainColor(req));
 }
 
 export type PrizeInput = {
@@ -58,10 +58,13 @@ export async function createPrizes(inputs: PrizeInput[], { now = new Date() } = 
   });
 }
 
-/** Unpaid prizes of a source are never paid once it is voided. Paid ones are not clawed back. */
+/**
+ * Unclaimed prizes of a source are never paid once it is voided. A claimed one is left alone: its
+ * payment may already be in flight or in the ledger, so it is owed, and the job finishes paying it.
+ */
 export async function voidPrizes(sourceType: PrizeSourceType, sourceId: number) {
   const { count } = await dbWrite.prize.updateMany({
-    where: { sourceType, sourceId, paidAt: null, voidedAt: null },
+    where: { sourceType, sourceId, claimedAt: null, voidedAt: null },
     data: { voidedAt: new Date() },
   });
   return count;
@@ -97,7 +100,15 @@ export async function payPrize(prize: Prize): Promise<boolean> {
       },
     ]);
     // A conflict is the ledger already holding this key: paid before, by this or an earlier build.
-    if (result.transactions.length + result.conflicts.length < 1) return false;
+    if (result.transactions.length + result.conflicts.length < 1) {
+      logToAxiom({
+        type: 'error',
+        name: 'prize-payment-dropped',
+        message: `The ledger neither made nor recognised prize ${prize.id}'s payment`,
+        prizeId: prize.id,
+      }).catch(() => undefined);
+      return false;
+    }
   } catch (error) {
     logToAxiom({
       type: 'error',

@@ -1,5 +1,6 @@
 import { Alert, Button, Card, Group, SegmentedControl, Stack, Text, Title } from '@mantine/core';
 import { IconCircleCheck } from '@tabler/icons-react';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useState } from 'react';
 import { Currency } from '~/shared/utils/prisma/enums';
 import type { PrizeView } from '~/server/services/prize.service';
@@ -26,11 +27,8 @@ export function PrizeClaimCard({ prize }: { prize: PrizeView }) {
       showErrorNotification({ title: 'Unable to claim prize', error: new Error(error.message) }),
   });
 
-  const theme = getCurrencyConfig({
-    currency: Currency.BUZZ,
-    type: prize.buzzType ?? buzzType ?? 'yellow',
-  });
-  const Icon = theme.icon;
+  const shownType = prize.buzzType ?? buzzType ?? 'yellow';
+  const theme = getCurrencyConfig({ currency: Currency.BUZZ, type: shownType });
   const hasChoice = prize.choices.length > 1;
 
   return (
@@ -40,7 +38,7 @@ export function PrizeClaimCard({ prize }: { prize: PrizeView }) {
           {prize.title}
         </Title>
         <Text fz={48} fw={600} c={theme.color} className="flex items-center gap-2">
-          <Icon color={theme.color} fill={theme.color} size={40} />
+          <CurrencyIcon currency={Currency.BUZZ} type={shownType} fill={theme.color} size={40} />
           {numberWithCommas(prize.amount)}
         </Text>
 

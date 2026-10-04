@@ -22,7 +22,7 @@ dbMock.dbWrite.challenge.findUnique.mockResolvedValue({
 
 // Winner-prize payouts are deduped ONLY by their externalTransactionId, which embeds the winner's
 // PLACE (`challenge-winner-prize-{challengeId}-{userId}-place-{place}`) — `createPrizes`
-// adds no dedupe of its own, and nothing downstream checks whether a challenge already paid. So if a
+// dedupes on that key and nothing else, and nothing downstream checks whether a challenge already paid. So if a
 // completion re-picks winners over an existing `ChallengeWinner` record and lands the same user on a
 // DIFFERENT place, the payout goes out under a brand-new key and mints a second prize.
 //
@@ -51,6 +51,7 @@ const {
   mockCreateChallengeWinner,
   mockGetChallengeById,
   mockCreatePrizes,
+  mockCreateBuzzTransactionMany,
   mockWithRetries,
   mockBuildWinnerPrizes,
 } = vi.hoisted(() => ({
@@ -66,6 +67,7 @@ const {
   mockCreateChallengeWinner: vi.fn(),
   mockGetChallengeById: vi.fn().mockResolvedValue(null),
   mockCreatePrizes: vi.fn().mockResolvedValue([]),
+  mockCreateBuzzTransactionMany: vi.fn().mockResolvedValue(undefined),
   // Real `withRetries` re-invokes its closure up to 4 times on a flaky payout. Doubled so a test can
   // drive that deterministically instead of making the buzz mock throw and waiting on real retries.
   mockWithRetries: vi.fn(),
@@ -135,7 +137,7 @@ vi.mock('~/server/games/daily-challenge/generative-content', () => ({
 
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: vi.fn().mockResolvedValue(undefined),
-  createBuzzTransactionMany: vi.fn().mockResolvedValue(undefined),
+  createBuzzTransactionMany: mockCreateBuzzTransactionMany,
   getTransactionByExternalId: vi.fn().mockResolvedValue(null),
   refundMultiAccountTransaction: vi.fn().mockResolvedValue(undefined),
 }));
@@ -794,6 +796,12 @@ describe('the winner payout is built ONCE, outside the retry closure', () => {
 
     expect(mockCreatePrizes).toHaveBeenCalledTimes(1);
     expect(mockBuildWinnerPrizes).toHaveBeenCalledTimes(1);
+    // Winners are awarded, never paid directly: a direct payment would land in the pool's
+    // currency, and the winner's claim would then conflict on the same key and pay nothing.
+    const directWinnerPayments = mockCreateBuzzTransactionMany.mock.calls
+      .flatMap(([txs]) => (txs ?? []) as { externalTransactionId: string }[])
+      .filter((tx) => tx.externalTransactionId.startsWith('challenge-winner-prize-'));
+    expect(directWinnerPayments).toEqual([]);
   });
 
   it("links each winner's notification to their own prize", async () => {
