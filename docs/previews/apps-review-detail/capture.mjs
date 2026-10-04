@@ -20,7 +20,7 @@
 // is not resolvable from repo code. Measured from a clean clone: `playwright` resolves,
 // `playwright-core` gives ERR_MODULE_NOT_FOUND. The committed script would have failed for
 // anyone running it; it only worked where a stray ambient `node_modules` sat above the
-// checkout, which is exactly the kind of thing a scratch worktree provides and CI does not.
+// checkout.
 import { chromium } from 'playwright';
 import { mkdirSync, statSync } from 'fs';
 

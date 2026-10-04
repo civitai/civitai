@@ -61,7 +61,7 @@ import {
  * ⚠️ THE ROW SURFACES ARE COVERED FOR THE FLEX SHORTHAND AND `max-width` ONLY. Why the
  * row/review split matters is recorded on `iconBoxStyle` in `ListingMediaThumb.tsx`; what
  * matters here is that the tier caught that regression ONCE and then stopped — re-mutating it
- * at this head left all 8 files green, because the narrowest viewport any row-rendering
+ * at this head left the whole tier green, because the narrowest viewport any row-rendering
  * geometry TEST renders a row thumb at is 768, and the regression needs a narrower one. So
  * the case below asserts the longhands directly rather than hoping a width reproduces it —
  * cheap, and
@@ -153,35 +153,23 @@ const NON_SQUARE_IMAGE_DATA_URI =
  *   THE TWO REAL NEVER-SETTLING PATHS ARE BOTH ON THE `load` AWAIT. A non-`<img>` has
  *   `complete === undefined`, so the await IS entered and no `load` ever fires — that is
  *   `toBeInstanceOf`'s job, and it is the one measured: delete it, aim one `settled()` at a
- *   placeholder id, and ONE test times out at 15 s, taking the tests phase from ~0.6 s to
- *   ~15.6 s. (An earlier draft said "0 timeouts to 3" — that 3 was the number of LINES
+ *   placeholder id, and ONE test times out at 15 s, taking the tests phase from well under a
+ *   second to roughly that timeout. (An earlier draft said "0 timeouts to 3" — that 3 was the number of LINES
  *   matching "Test timed out", which vitest prints three times for one timeout. Three 15 s
  *   timeouts could not fit in the 15.6 s phase quoted in the same sentence.)
  *   The second path is an `<img>` in flight whose load FAILS, firing `error` rather than
- *   `load` — that is the `error` listener's job, and it is REACHABLE TODAY. An earlier draft
- *   called it unreachable "because data URIs complete synchronously", which is true only of a
- *   URI the browser has already decoded. Measured by instrumenting this helper: run any arm
- *   ALONE (`-t`) and its first `settled()` reads `complete=false, naturalWidth=0` — the await
- *   IS entered — while in a whole-file run every call reads `complete=true`, because an
- *   earlier arm warmed the same URI. So the branch's reachability depends on run shape, and
- *   `-t` is exactly how this ladder mutation-tests. Deleting that listener would turn the
- *   first dead-fixture arm from a named rejection into a 15 s timeout.
+ *   `load` — that is the `error` listener's job. It does not FIRE on a healthy run, because
+ *   no shipped fixture fails to load; what was measured is the half that matters, that the
+ *   AWAIT is entered at all. An earlier draft called the listener unreachable "because data
+ *   URIs complete synchronously" — true only of a URI the browser has already decoded.
+ *   Instrumenting this helper: run any arm ALONE (`-t`) and its first `settled()` reads
+ *   `complete=false, naturalWidth=0`, so the await IS entered; in a whole-file run every call
+ *   reads `complete=true`, an earlier arm having warmed the same URI. `-t` is exactly how this
+ *   ladder mutation-tests, so with a dead fixture the first arm rejects by name there instead
+ *   of timing out at 15 s. That is what the listener buys, and it is not nothing.
  *
- * Two figures from earlier rounds (75.4 s, 15.96 s) were retracted as unreproducible. A draft
- * here reconstructed them as multiples of a single timeout; that does not follow — the three
- * timeouts above sit inside a 15.62 s phase, so they overlap rather than sum. What is
- * established is the mechanism, not a reconstruction of two numbers nobody can re-measure.
- *
- * ⚠️ NO TIMING FIGURE FOR THE `naturalWidth` ARM IS QUOTED, deliberately: the ratio is 1.04x,
- * i.e. noise.
- *
- * ⚠️ AND EVERY LOCAL FIGURE HERE WAS TAKEN SIX CHROME MAJORS OFF THE PIN. `browsers.json` for
- * the pinned playwright asks for chromium revision 1200 / Chrome 143. That build does exist on
- * this host and the whole tier passes on it — an earlier draft claimed it did not, which was
- * wrong — but the ad-hoc runner this ladder used points at a hand-made directory NAMED 1200
- * whose chromium entry is a symlink onto 1228 / Chrome 149. Only the chromium pair is renamed
- * there; firefox and webkit keep their own revisions, so that directory exists to paper over
- * exactly this. CI runs the pin. Local numbers inherit the gap.
+ * ⚠️ Local figures here were measured on Chrome 149, not the pinned 143 — see CLAUDE.md,
+ * "Browser/component tests on NixOS". CI runs the pin.
  *
  * ⚠️ IT CATCHES A HEADER-DEAD FIXTURE, NOT A PIXEL-DEAD ONE, and the narrower claim is the
  * true one. `naturalWidth` comes from the PNG IHDR, so corrupting only the IDAT run leaves a
@@ -516,10 +504,9 @@ describe('the store icon and cover are bigger on the review page than in a queue
     // from them moves with any change to them: measured, `LISTING_ICON_BOX` 40→48 left the
     // whole tier green.
     //
-    // ⚠️ AND THESE TWO LITERALS PIN THE ICON CONSTANTS A SECOND TIME, deliberately. Every
-    // other arm asserts `toBeCloseTo(REVIEW_ICON_BOX, 0)` — derived from the constant at
-    // issue, so blind to it. The constants case further down pins all six literally; this one
-    // pins the rendered SHORTHAND, so a mutation to an icon constant reds in both places.
+    // ⚠️ THESE TWO PIN THE ICON CONSTANTS A SECOND TIME, deliberately: the constants case
+    // further down pins the values, this one pins the rendered SHORTHAND, so a mutation to an
+    // icon constant reds in both places.
     expect(flexOf('row-icon'), 'a queue-row icon must be rigid').toEqual({
       grow: '0',
       shrink: '0',
@@ -532,7 +519,7 @@ describe('the store icon and cover are bigger on the review page than in a queue
     });
     // 🔴 THE REVIEW PLACEHOLDER IS THE ARM THAT ACTUALLY DIVERGED, and an earlier version of
     // this case asserted only the ROW one — which is `0` either way, so restoring the exact
-    // shipped divergence (`flex: 0 0` pinned on the placeholder at both sizes) left this file
+    // shipped divergence (`flex: 0 0` pinned on the placeholder at both sizes) left the tier
     // the whole file GREEN. The comment named the defect and the fixture could not reach it: the
     // review arm above carries a url, so it paints an `img`, and no review-size PLACEHOLDER
     // was rendered at all. Both placeholders now, and the review one is the load-bearing half.
@@ -659,9 +646,14 @@ describe('the bundle screenshots are bigger on the review page than in the modal
   /** The grid Mantine rendered, and the column count it DECLARED. */
   const declaredCols = () => {
     const grid = at('apps-review-screenshot-0').closest('div')!.parentElement!;
-    // `--sg-cols` is a custom property, so an unset value reads as `''` — the assertion, not
-    // the helper, is what rejects it.
-    return longhand(grid, '--sg-cols');
+    // 🔴 THE NON-EMPTY CHECK LIVES HERE, NOT AT A CALL SITE. `--sg-cols` is a custom
+    // property, so an unset one reads as `''` — and `''` satisfies the NEGATIVE control
+    // (`not.toBe('1')`), which is a different test from the positive one. Guarding at the
+    // positive call site covered the arm that `toBe('1')` already protected and left the
+    // control failing open. In the helper, all three call sites get it.
+    const cols = longhand(grid, '--sg-cols');
+    expect(cols, '--sg-cols must be set at all').not.toBe('');
+    return cols;
   };
 
   test.each([
@@ -684,10 +676,6 @@ describe('the bundle screenshots are bigger on the review page than in the modal
       // SimpleGrid's LAYOUT CSS, so the grid was never a grid and both arms filled the
       // container. The distinction matters because the two diagnoses lead to different
       // fixes, and someone "fixing the media queries" would chase nothing.
-      // 🔴 NON-EMPTY FIRST. `--sg-cols` is a custom property, so an unset one reads as `''` —
-      // and `''` satisfies the NEGATIVE control below (`not.toBe('1')`), which is the arm whose
-      // only job is to prove this one is not vacuous. Without this, that arm fails open.
-      expect(declaredCols(), '--sg-cols must be set at all').not.toBe('');
       expect(declaredCols(), 'the review gallery must declare a single column').toBe('1');
 
       const shot = box('apps-review-screenshot-0');

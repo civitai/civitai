@@ -349,15 +349,14 @@ describe('the review user chip is one declaration', () => {
     expect(
       DELIBERATELY_NARROW.length,
       // Not a coverage guard: an empty ledger already fails loudly, as a TypeError on
-      // `EXEMPT.container` (or `.file`, depending which probe runs first). This only trades
-      // that for a sentence naming the cause.
+      // `EXEMPT.container` — the first access in source order, and unconditional, since the
+      // probes gate nothing. This only trades that for a sentence naming the cause.
       'the planted probes derive from the ledger; an empty one fails here rather than as a TypeError below'
     ).toBeGreaterThan(0);
     const EXEMPT = DELIBERATELY_NARROW[0];
-    // 🔴 AN OWNER THE LEDGER DOES NOT NAME, in the container it DOES. Both ledger entries use
-    // `owner: 'user'`, so no chip built from them can discriminate the OWNER half of the key —
-    // measured, deleting `e.owner === chip.owner` left 4/4 green, the exact sibling of the
-    // `file` defect fixed one round earlier, on the same lookup line.
+    // The narrow shape this whole file is about, spelled nine times across the planted
+    // sources. Named once so the property it OMITS is the thing a reader sees.
+    const NARROW = 'id: true, username: true, image: true';
     // 🔴 EACH PROBE BELOW IS ONLY A PROBE WHILE THE LEDGER DOES NOT NAME ITS VALUE. Three
     // preconditions, identical but for the field, so they are one helper — the message still
     // names the field, so a failure stays attributable to the probe that went stale rather
@@ -368,16 +367,20 @@ describe('the review user chip is one declaration', () => {
         `the ${field} probe stops being a probe if the ledger ever names this ${field}`
       ).not.toContain(value);
 
+    // 🔴 AN OWNER THE LEDGER DOES NOT NAME, in the container it DOES. Both ledger entries use
+    // `owner: 'user'`, so no chip built from them can discriminate the OWNER half of the key —
+    // measured, deleting `e.owner === chip.owner` left 4/4 green, the exact sibling of the
+    // `file` defect fixed one round earlier, on the same lookup line.
     const OWNER_PROBE = 'moderator';
     probeUnnamed('owner', OWNER_PROBE);
     const PLANTED_SOURCE = `
-      const submittedBy = { select: { id: true, username: true, image: true } };
-      const authorChip = { id: true, username: true, image: true };
+      const submittedBy = { select: { ${NARROW} } };
+      const authorChip = { ${NARROW} };
       export const q = {
-        user: { select: { id: true, username: true, image: true } },
-        modChip: { select: { id: true, username: true, image: true } },
+        user: { select: { ${NARROW} } },
+        modChip: { select: { ${NARROW} } },
       };
-      const ${EXEMPT.container} = { ${EXEMPT.owner}: { select: { id: true, username: true, image: true } } };
+      const ${EXEMPT.container} = { ${EXEMPT.owner}: { select: { ${NARROW} } } };
     `;
     // 🔴 THAT FIFTH CHIP IS WHAT EXERCISES THE `file` HALF OF THE KEY. The four above resolve
     // to containers no ledger entry names, so the CONTAINER half rejects them and the file
@@ -406,7 +409,7 @@ describe('the review user chip is one declaration', () => {
     // `e.owner === chip.owner` can reject it. Measured: dropping that term left 4/4 green,
     // the exact sibling of the `file` defect, on the same line.
     const OWNER_SOURCE = `
-      const ${EXEMPT.container} = { ${OWNER_PROBE}: { select: { id: true, username: true, image: true } } };
+      const ${EXEMPT.container} = { ${OWNER_PROBE}: { select: { ${NARROW} } } };
     `;
     const ownerVerdict = judge(EXEMPT.file, chipsIn(EXEMPT.file, OWNER_SOURCE));
     expect(
@@ -429,7 +432,7 @@ describe('the review user chip is one declaration', () => {
     const UNLISTED = `${EXEMPT.container}Unlisted`;
     probeUnnamed('container', UNLISTED);
     const CONTAINER_SOURCE = `
-      const ${UNLISTED} = { ${EXEMPT.owner}: { select: { id: true, username: true, image: true } } };
+      const ${UNLISTED} = { ${EXEMPT.owner}: { select: { ${NARROW} } } };
     `;
     const containerVerdict = judge(EXEMPT.file, chipsIn(EXEMPT.file, CONTAINER_SOURCE));
     expect(
@@ -458,9 +461,9 @@ describe('the review user chip is one declaration', () => {
     // retiring it fails loudly here rather than quietly. Deriving it would gain nothing.
     const NESTED_SOURCE = `
       const moderationListingSelect = {
-        user: { select: { id: true, username: true, image: true } },
+        user: { select: { ${NARROW} } },
         appBlock: {
-          select: { publisher: { select: { user: { select: { id: true, username: true, image: true } } } } },
+          select: { publisher: { select: { user: { select: { ${NARROW} } } } } },
         },
       };
     `;

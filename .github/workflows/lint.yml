@@ -792,11 +792,11 @@ jobs:
     # pipeline's report-only `preview / component-tests`. Adding it here is a
     # much larger change than this harness and belongs in its own PR, on measured
     # cost: locally, on a 16-core box, `geometry` runs in well under a minute while
-    # `component` is 212 files / 2,362 tests in 112.92s wall — and 334s of
+    # `component` is an order of magnitude larger in files, tests and wall time — and most of
     # that is test time spread across workers, so a 2-core runner (browser pool
     # `min(12, cpus - 1)` = 1 instance) does not divide it. That is a job an order
-    # of magnitude more expensive, with 212 files of pass/fail history nobody has
-    # ever seen in this workflow. Do it deliberately, not as a rider.
+    # of magnitude more expensive, with hundreds of files of pass/fail history nobody
+    # has ever seen in this workflow. Do it deliberately, not as a rider.
     #
     # REPORT-ONLY ON PULL REQUESTS, REAL VERDICT ON `main` — the same expression
     # `unit` uses, and NOT a literal `true`. Both halves matter:
@@ -880,9 +880,8 @@ jobs:
       # than no job, because it reports success.
       #
       # Both numbers are FLOORS, not equalities, so adding a geometry test never
-      # breaks this. ⚠️ "only losing one does" is true of the FILE floor, which sits at
-      # exactly the collected count; the TEST floor carries headroom, so losing one test
-      # does not red it. The block below says which to raise when you add to the tier.
+      # breaks this. Which floor to raise when you add to the tier is stated at the floors
+      # themselves, below.
       #
       # 🔴 THE FILE COUNT COMES FROM `testResults.length`, NOT FROM
       # `numTotalTestSuites`. Measured against a real report when the tier was 2
