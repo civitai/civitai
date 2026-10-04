@@ -5,6 +5,7 @@ import {
   ownerListingState,
 } from '~/components/Apps/offsiteOwnerControls';
 import type { AppRole } from '~/shared/constants/app-capabilities.constants';
+import { maxVisibilityForStatus } from '~/shared/utils/app-listing-visibility';
 
 /**
  * THE LEDGER OF OWNER PUBLISHING CONTROLS on the canonical authoring page's
@@ -69,6 +70,25 @@ import type { AppRole } from '~/shared/constants/app-capabilities.constants';
  * - `unpublish` — owner takedown of a live (approved) listing.
  * - `republish` — the owner's way BACK from their own unpublish. Not optional: without it
  *   an owner unpublish is a one-way door only a moderator `relistListing` can reopen.
+ * - `visibility` — the per-listing VISIBILITY LEVEL selector (`private` / `moderators` /
+ *   `testers` / `public`).
+ *
+ * 🔴 `visibility` IS THE FIRST MEMBER WHOSE AUDIENCE IS NOT OWNER-ONLY, AND THAT IS
+ * MEASURED FROM THE SERVER GATE RATHER THAN ASSUMED FROM ITS NEIGHBOURS. The other two
+ * procs are owner-scoped and throw for a seat; `setListingVisibilityAsOwner` refuses only
+ * `!access || access.role == null`, so an ACCEPTED collaborator passes it. Offering this
+ * one to an editor is therefore the honest mirror of the server, and withholding it would
+ * hide a capability they actually have. It is also why this member cannot live in
+ * {@link OWNER_ACTIONS_BY_STATE} — see the composition note on
+ * {@link listingPublishingActions}.
+ *
+ * 🔴 AND IT IS KEYED ON STATUS, NOT ON {@link OwnerListingState}, WHICH CANNOT EXPRESS IT.
+ * That state machine collapses `draft`, `pending` AND `rejected` into one `inactive` cell,
+ * but a level may be set on the first two and never on `rejected` — so a per-state table
+ * would be wrong for a third of its own cell. {@link showVisibility} asks
+ * `maxVisibilityForStatus` instead, which is the SAME function the server read and the
+ * server write both use, so this is one spelling reaching the client rather than a second
+ * derivation (D6).
  *
  * 🔴 THERE IS NO CONSTANT MEMBER ANY MORE, and that is a real loss this file has to say
  * out loud. `history` used to sit here as the control present in EVERY state, which is
@@ -79,7 +99,7 @@ import type { AppRole } from '~/shared/constants/app-capabilities.constants';
  * inactive sibling), and the browser ledger asserts that statement is present by the same
  * mechanism it asserts the buttons are absent — a positive control for the two nulls.
  */
-export const PUBLISHING_PANEL_ACTIONS = ['unpublish', 'republish'] as const;
+export const PUBLISHING_PANEL_ACTIONS = ['unpublish', 'republish', 'visibility'] as const;
 export type PublishingPanelAction = (typeof PUBLISHING_PANEL_ACTIONS)[number];
 
 /** Canonical-order sort, so a set comparison never fails on ordering alone. */
@@ -115,7 +135,8 @@ export const OWNER_ACTIONS_BY_STATE: Readonly<
 };
 
 /**
- * The ledger for a seated COLLABORATOR, in every state: NOTHING.
+ * The ledger for a seated COLLABORATOR of the two OWNER-SCOPED controls, in every state:
+ * NOTHING.
  *
  * 🔴 A SEAT IS NOT OWNERSHIP. Both `unpublishOwnListing` and `republishOwnListing` are
  * owner-scoped server-side and throw for anyone else, so an editor offered either control
@@ -125,6 +146,15 @@ export const OWNER_ACTIONS_BY_STATE: Readonly<
  * 🔴 THIS IS WHY `role` IS LOAD-BEARING IN `editorTabsFor` FOR THE FIRST TIME. An editor
  * is not offered the Publishing TAB at all; this empty set is the panel-level restatement
  * of the same refusal, so mounting the panel for an editor still yields no control.
+ *
+ * ⚠️ THIS IS NO LONGER "the editor's whole set" — IT IS THE OWNER-ONLY PAIR'S EMPTY CELL.
+ * `visibility` is role-agnostic server-side (see {@link PUBLISHING_PANEL_ACTIONS}) and is
+ * added by COMPOSITION in {@link listingPublishingActions}, so an editor on a
+ * level-eligible listing legitimately renders exactly one control. The constant is kept
+ * empty rather than deleted because the claim it encodes — *a seat never gets the takedown
+ * pair* — is still true and still worth failing on; what changed is that it is no longer
+ * the complete answer for an editor. Reading it as the complete answer is how `visibility`
+ * would get withheld from someone the server admits.
  */
 export const EDITOR_ACTIONS: readonly PublishingPanelAction[] = [];
 
@@ -161,9 +191,16 @@ export function listingOwnerState(row: PublishingActionRow): OwnerListingState {
  * deleted the seam test as redundant.
  */
 export function listingPublishingActions(row: PublishingActionRow): PublishingPanelAction[] {
-  if (row.role !== 'owner') return [...EDITOR_ACTIONS];
-  const state = listingOwnerState(row);
-  return [...OWNER_ACTIONS_BY_STATE[state]];
+  // 🔴 COMPOSED, NOT TABLE-LOOKED-UP, and the two halves are keyed on DIFFERENT things on
+  // purpose: the takedown pair is role+state (owner-only, `OwnerListingState`), the level
+  // control is status-only (either role, `maxVisibilityForStatus`). Folding `visibility`
+  // into `OWNER_ACTIONS_BY_STATE` would force it through a state machine that cannot
+  // express `draft`-yes/`rejected`-no and would withhold it from editors the server
+  // admits. See {@link PUBLISHING_PANEL_ACTIONS}.
+  const base = row.role === 'owner' ? OWNER_ACTIONS_BY_STATE[listingOwnerState(row)] : EDITOR_ACTIONS;
+  const actions: PublishingPanelAction[] = [...base];
+  if (showVisibility(row)) actions.push('visibility');
+  return actions;
 }
 
 /** Does this listing offer Unpublish? Owner + live only — mirrors {@link canOwnerUnpublish}. */
@@ -174,6 +211,31 @@ export function showUnpublish(row: PublishingActionRow): boolean {
 /** Does this listing offer Republish? Owner + owner-hidden only — see {@link canOwnerRepublish}. */
 export function showRepublish(row: PublishingActionRow): boolean {
   return row.role === 'owner' && canOwnerRepublish(listingOwnerState(row));
+}
+
+/**
+ * Does this listing offer the VISIBILITY LEVEL control?
+ *
+ * 🔴 NOT GATED ON `role`, DELIBERATELY, and this is the one predicate here where that is
+ * correct rather than an oversight: `setListingVisibilityAsOwner` admits an owner OR an
+ * ACCEPTED collaborator (`!access || access.role == null` is its only role refusal), so
+ * gating the control on `owner` would hide a capability a seat genuinely has. Its two
+ * siblings above ARE owner-gated because their procs are.
+ *
+ * 🔴 ELIGIBILITY COMES FROM {@link maxVisibilityForStatus}, THE SHARED SPELLING — never a
+ * local status list. `null` means no level may be set on this status at all
+ * (`rejected`/`removed`), which is also exactly what the server read reports as
+ * `maxVisibility: null`, so the control's presence and the ceiling it offers cannot
+ * disagree. `inactive` in {@link OwnerListingState} cannot answer this question: it
+ * contains `draft`/`pending` (eligible) AND `rejected` (not).
+ *
+ * ⚠️ PRESENCE IS NOT WRITABILITY. An un-migrated environment still shows the control —
+ * the panel renders it DISABLED from `visibilityAvailable`, because a hidden control and a
+ * disabled one say different things to an owner, and `assertVisibilityWritable` is the
+ * authoritative refusal either way.
+ */
+export function showVisibility(row: PublishingActionRow): boolean {
+  return maxVisibilityForStatus(row.status) !== null;
 }
 
 /**

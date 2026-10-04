@@ -287,6 +287,14 @@ export default function AppListingEditPage() {
                   role={context.role}
                   status={context.status}
                   lastModerationAction={context.lastModerationAction}
+                  // 🔴 BOTH HALVES OF THE GUARDED READ, PASSED THROUGH UNCHANGED. The level
+                  // alone is not enough: `visibilityAvailable: false` means the manual-apply
+                  // migration has not run here, and the control must disable itself and say
+                  // so rather than offer a write with no missing-column degradation. The
+                  // page must not re-derive either value — see `maxVisibility`'s note in
+                  // `AppListingAuthoringContext` (D6).
+                  visibility={context.visibility}
+                  visibilityAvailable={context.visibilityAvailable}
                 />
               </Tabs.Panel>
             ) : null}

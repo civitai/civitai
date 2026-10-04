@@ -11,6 +11,7 @@ import {
   showModRemovedNotice,
   showRepublish,
   showUnpublish,
+  showVisibility,
   sortPublishingActions,
   type PublishingActionRow,
 } from '~/components/Apps/listingPublishingActions';
@@ -52,6 +53,16 @@ const OWNER_HIDDEN = row({ status: 'removed', lastModerationAction: OWNER_UNPUBL
 // "not owner-unpublish", so a raw verb is also exercised below to prove it still does.
 const MOD_REMOVED = row({ status: 'removed', lastModerationAction: 'other' });
 const INACTIVE = row({ status: 'draft', lastModerationAction: null });
+/**
+ * 🔴 THE DISCRIMINATING FIXTURE FOR `visibility`, AND WITHOUT IT THE PREDICATE IS UNTESTED.
+ * `rejected` also classifies as {@link OwnerListingState} `inactive` — the same cell as
+ * `INACTIVE` above — but it is NOT level-eligible, so it is the only fixture here that can
+ * separate `showVisibility` from the constant `true`. Every other status in this file is
+ * either eligible (`approved`, `draft`) or already yields `[]` for an unrelated reason
+ * (`removed`). A sweep built only from the four original fixtures scores a `() => true`
+ * mutant as SURVIVED.
+ */
+const REJECTED = row({ status: 'rejected', lastModerationAction: null });
 
 describe('the ledger table itself', () => {
   it('declares an entry for every owner state, drawn from the declared action vocabulary', () => {
@@ -145,14 +156,29 @@ describe('listingOwnerState — the routing the ledger is keyed on', () => {
 });
 
 describe('listingPublishingActions', () => {
-  it('returns the ledger entry for the row state', () => {
-    expect(listingPublishingActions(LIVE)).toEqual(['unpublish']);
+  it('returns the ledger entry for the row state, COMPOSED with the level control', () => {
+    // 🔴 TWO KEYS, NOT ONE. The takedown pair is role+`OwnerListingState`; `visibility` is
+    // status-only. `approved` and `draft` are level-eligible, the two `removed` states are
+    // not — so the level control appears in exactly two of these four rows, and it is the
+    // ONLY member that can appear beside `unpublish` or alone.
+    expect(listingPublishingActions(LIVE)).toEqual(['unpublish', 'visibility']);
     expect(listingPublishingActions(OWNER_HIDDEN)).toEqual(['republish']);
     expect(listingPublishingActions(MOD_REMOVED)).toEqual([]);
-    expect(listingPublishingActions(INACTIVE)).toEqual([]);
+    expect(listingPublishingActions(INACTIVE)).toEqual(['visibility']);
   });
 
-  it('gives a seated EDITOR nothing, in every state', () => {
+  it('withholds the level control on `rejected`, which shares the `inactive` cell', () => {
+    // 🔴 THE CONTROL THAT MAKES THE ROW ABOVE MEAN SOMETHING. `REJECTED` and `INACTIVE` are
+    // the SAME `OwnerListingState`, so a state-keyed implementation would give them the same
+    // answer; they differ here only because the predicate reads the STATUS. This is also the
+    // case that kills a `showVisibility = () => true` mutant — nothing else in this file can.
+    expect(listingOwnerState(REJECTED)).toBe(listingOwnerState(INACTIVE));
+    expect(listingPublishingActions(REJECTED)).toEqual([]);
+    expect(showVisibility(REJECTED)).toBe(false);
+    expect(showVisibility(INACTIVE)).toBe(true);
+  });
+
+  it('gives a seated EDITOR no TAKEDOWN control, in every state', () => {
     // 🔴 Both takedown procs are owner-scoped server-side. This loop is the reachability
     // proof for the role branch: it is exercised at all four states, not just the live one,
     // so a mutant that gates on the state instead of the role fails on at least one.
@@ -164,25 +190,44 @@ describe('listingPublishingActions', () => {
     // they are the two whose owner answer is non-empty — and the seam test below drives the
     // predicates directly at every state × role. `editorTabsFor`'s own editor cases are the
     // other half.
-    for (const base of [LIVE, OWNER_HIDDEN, MOD_REMOVED, INACTIVE]) {
-      expect(listingPublishingActions({ ...base, role: 'editor' })).toEqual([]);
+    // 🔴 NARROWED FROM "nothing" TO "no takedown control", because `visibility` is
+    // role-agnostic server-side and an editor legitimately gets it. Asserting `[]` here
+    // would have encoded a refusal the server does not make. The takedown pair is what this
+    // loop is about, so it is asserted DIRECTLY rather than via the composed list — which
+    // keeps the assertion exactly as strong as it was before the level control existed.
+    for (const base of [LIVE, OWNER_HIDDEN, MOD_REMOVED, INACTIVE, REJECTED]) {
+      const asEditor = { ...base, role: 'editor' as const };
+      expect(showUnpublish(asEditor)).toBe(false);
+      expect(showRepublish(asEditor)).toBe(false);
+      expect(listingPublishingActions(asEditor)).not.toContain('unpublish');
+      expect(listingPublishingActions(asEditor)).not.toContain('republish');
     }
     // The two that are load-bearing, restated so the weakening above is explicit rather
     // than absorbed: the owner answer differs, the editor answer does not.
-    expect(listingPublishingActions(LIVE)).not.toEqual([]);
-    expect(listingPublishingActions(OWNER_HIDDEN)).not.toEqual([]);
+    expect(listingPublishingActions(LIVE)).toContain('unpublish');
+    expect(listingPublishingActions(OWNER_HIDDEN)).toContain('republish');
+    // 🔴 And the level control is the one thing an editor DOES get — asserted so a mutant
+    // that withholds it from a seat (the obvious "fix" if someone reads EDITOR_ACTIONS as
+    // the complete answer) fails here rather than silently removing a capability.
+    expect(listingPublishingActions({ ...LIVE, role: 'editor' })).toEqual(['visibility']);
+    expect(listingPublishingActions({ ...INACTIVE, role: 'editor' })).toEqual(['visibility']);
   });
 
   it('agrees with the per-control predicates the component calls', () => {
     // 🔴 THE COMPONENT USES `showUnpublish`/`showRepublish`, and the ledger test compares the
     // DOM against `OWNER_ACTIONS_BY_STATE`. If those two ever disagreed, the ledger would be
     // pinning itself rather than the page. This is the seam that forbids it.
-    for (const base of [LIVE, OWNER_HIDDEN, MOD_REMOVED, INACTIVE]) {
+    for (const base of [LIVE, OWNER_HIDDEN, MOD_REMOVED, INACTIVE, REJECTED]) {
       for (const role of ['owner', 'editor'] as const) {
         const r = { ...base, role };
         const declared = listingPublishingActions(r);
         expect(showUnpublish(r)).toBe(declared.includes('unpublish'));
         expect(showRepublish(r)).toBe(declared.includes('republish'));
+        // 🔴 The level control joins the seam on the same terms. Without this line the
+        // panel could render it from `showVisibility` while the ledger's list omitted it,
+        // and the browser set-comparison would be measuring the DOM against a table the
+        // DOM is not forced to follow — the self-pinning this whole test exists to forbid.
+        expect(showVisibility(r)).toBe(declared.includes('visibility'));
       }
     }
   });
