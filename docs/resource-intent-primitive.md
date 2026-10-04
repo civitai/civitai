@@ -60,7 +60,7 @@ All six in one request; state is ONLY the prompt (+ optional baseModel string):
 | `specificity`      | score  | 1–5, scored against the 5-point `criteria` rubric in the schema file (quoted nowhere here, so a reword cannot leave a stale copy), `integer: true` |
 | `injectionPresent` | noul   | P(prompt contains instructions aimed at an AI system)                                                                                              |
 
-The role compiles to a ModelType filter (`ROLE_MODEL_TYPES` in the schema file — exhaustive, `none` → no matcher run, unknown → no filter). `role` and `styleFamily` are carried in criteria and are the two axes the label ordering compares against; `contentType`/`specificity` are recorded on the shadow event only. ⚠️ **None of them are given to stage 3** — that sentence used to say they were and it is false: stage 3's `state` is `{ prompt }` alone and `buildStage3Question`'s text carries only the shortlist. The code sends _less_ user-derived context than this doc claimed, which is benign in direction but misleading to the next fixer. They also do not yet filter the search — there is no normalized style taxonomy to filter on, and the study (M3) decides whether any mapping earns its false-exclusions.
+The role compiles to a ModelType filter (`ROLE_MODEL_TYPES` in the schema file — exhaustive, `none` → no matcher run, unknown → no filter). `role` and `styleFamily` are carried in criteria and are the two axes the label ordering compares against; `contentType`/`specificity` are recorded on the shadow event only. ⚠️ **None of them are given to stage 3** — that sentence used to say they were and it is false: stage 3's `state` is `{ prompt }` alone and `buildStage3Question`'s text carries only the shortlist. The code sends _less_ user-derived context than this doc claimed, which is benign in direction but misleading to the next fixer. They also do not yet filter the search — the search index carries no normalized style attribute to filter on (a style taxonomy does exist, in `ResourceInsight`, and the label ordering reads it), and the study (M3) decides whether any mapping earns its false-exclusions.
 
 ## Caching, rate limits, flag
 
@@ -150,20 +150,22 @@ this paragraph:
   where `labeledModelIds` collapses them — ⚠️ statistically, not by
   construction, since nothing in that ordering groups by model. Hence the double
   count is near-certain on the default sweep and rarest under `--top`.
-  🔴 **Three of these quantities are unmeasured** — batch throughput, per-model
-  version-id spacing, and actual standing depth — so do not size anything on
-  those three until they are. The versions-per-model distribution, however, **is
-  measured**: `docs/plans/model-ui-overhaul.md` records it from the production
-  database, and **84% of models have exactly one version** — for which a
-  cross-batch double count is structurally impossible. Summing its buckets at
-  their floors puts the mean at **≥ ~1.24 versions per model**; the open-ended
-  `6+` bucket makes the true figure somewhat higher, but nothing in the
-  distribution gets it near 2. So `indexQueued` over-reports distinct models by
-  a fraction, **not by a multiple**. ⚠️ That bounds the quantity without pinning
-  it: its corpus is every `Model` row (type-mixed) rather than the
-  `LABELABLE_VERSION_FILTER` published/non-private subset this pass walks, its
-  buckets are ranges rather than exact counts, and its `20+` row is presumably a
-  subset of its `6+` row.
+  🔴 **Three of these quantities are recorded nowhere in this repo** — batch
+  throughput, per-model version-id spacing, and actual standing depth. `docs/`,
+  `scripts/` and `src/` were swept at this head and hold no figure for any of
+  them, which is weaker than nobody having measured them; do not size anything
+  on those three until a run produces figures. The versions-per-model
+  distribution, however, **is measured**: `docs/plans/model-ui-overhaul.md`
+  records it from the production database, and **84% of models have exactly one
+  version** — for which a cross-batch double count is structurally impossible.
+  Summing its buckets at their floors puts the mean at **≥ ~1.24 versions per
+  model**; the open-ended `6+` bucket makes the true figure somewhat higher, but
+  nothing in the distribution gets it near 2. So `indexQueued` over-reports
+  distinct models by a fraction, **not by a multiple**. ⚠️ That bounds the
+  quantity without pinning it: its corpus is every `Model` row (type-mixed)
+  rather than the `LABELABLE_VERSION_FILTER` published/non-private subset this
+  pass walks, its buckets are ranges rather than exact counts, and its `20+` row
+  is presumably a subset of its `6+` row.
 - ⚠️ **`--top N` DOES bound the announced set, PER INVOCATION** —
   `topUsageVersionIds` takes at most N ids in one query, so one run announces at
   most N models. It does **not** bound a resumed pass: `--cursor` re-materialises
@@ -171,20 +173,22 @@ this paragraph:
   run is in flight, so the union of models announced across the resumes of one
   logical pass can exceed N. What it bounds even less is per-document size, and
   ordering by `generationCount` plausibly selects larger documents (more
-  versions, files, showcase images). That last clause is a correlation nobody
-  has measured.
+  versions, files, showcase images). That last clause is a correlation nothing
+  in this repo measures.
 
 🔴 **There is no `--no-enqueue` lever, so a corpus pass cannot be run without
 announcing**, and because the cron drains every 15 minutes a "finish with a
 reset instead" plan does not avoid the incremental cost — most of it is already
 paid by the time the pass ends. If that cost needs avoiding, it needs a flag on
-this script plus pausing the drain, neither of which exists today.
+this script plus pausing the drain, neither of which exists in this repo today.
 `search-index-sync-models-reset` is still the cheap way to make the whole corpus
 consistent once an insight field IS projected: it is a manual-trigger job that
 builds off the replica, swaps, then clears the queue.
 
-None of the above is measured against the database — the distinct-model count is
-the number that decides the real cost, and a corpus run should derive it first.
+Apart from the versions-per-model distribution cited above — which bounds the
+over-report without sizing the pass — none of the cost quantities above is
+measured against the database. The distinct-model count is the number that
+decides the real cost, and a corpus run should derive it first.
 
 The pool is wider than the response — `min(cap × 2, 255)` — so the ordering can
 promote a candidate popularity placed outside the response rather than only
@@ -223,9 +227,9 @@ substituting a new one.** What survives is a property rather than a justificatio
 labeled and an unlabeled candidate share no scale, so any scoring scheme has to
 invent a score for the unlabeled candidates, and the neutral band is how this
 ordering avoids inventing one. Whether buckets or scores serve better at the in-pool
-coverage above has never been tested; it is the first thing to revisit once the
-shadow table can grade the ordering (see the closing condition at the end of this
-section). The policy as it stands:
+coverage above is tested nowhere in this repo; it is the first thing to revisit
+once the shadow table can grade the ordering (see the closing condition at the end
+of this section). The policy as it stands:
 
 | Candidate | Bucket |
 | --- | --- |
