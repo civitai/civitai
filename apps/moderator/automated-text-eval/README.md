@@ -75,13 +75,13 @@ agreement number.
 
 ## Hand-off
 
-A `clear_violation` on an item tagged with one of `HAND_OFF_TAGS` (CSAM, Grooming) is a case, not only a label. After saving one, the
-page links to the Automated report's own action view (`/reports/<type>?report=<id>`, which opens a
-single report whatever its status), to the content, and to the author in User Lookup, which shows
-their CSAM reports and account actions. Each internal link is shown only if the labeller's grants open it;
-otherwise the page names the report id to pass to someone who can. Whether the content still
-exists is checked when the page loads: once it is deleted, no report page can show the report, so only
-the author link remains. The page lists the
+A `clear_violation` on an item tagged with one of `HAND_OFF_TAGS` (CSAM, Grooming) is a case, not
+only a label. After saving one, the page links to the Automated report's own action view
+(`/reports/<type>?report=<id>`, which opens a single report whatever its status), to the content,
+and to the author in User Lookup, which shows their CSAM reports and account actions. Each internal
+link is shown only if the labeller's grants open it; otherwise the page names the report id to pass
+to someone who can. Whether the content still exists is checked when the page loads: once it is
+deleted, no report page can show the report, so only the author link remains. The page lists the
 labeller's 20 most recent such answers, so a case is still reachable after the queue moves on.
 
 `handed_off_at` records the first hand-off; an answer with `updated_at` after it was not made blind.

@@ -2,6 +2,7 @@ import { sql, type Kysely } from 'kysely';
 import type { DB as ModeratorDB } from './moderator-db/types';
 import {
   HAND_OFF_TAGS,
+  looksLikeChatTranscript,
   maskChatSpeakers,
   needsHandOff,
   type TextLabel,
@@ -21,8 +22,6 @@ export type TextRelabelItem = {
   entityLabel: string | null;
 };
 
-const CHAT_SHAPE = /^\[\d+\]:\s/;
-
 const answerCount = sql`(SELECT count(*) FROM text_relabel_answer a WHERE a.item_id = i.id)`;
 
 function toItem(row: {
@@ -36,7 +35,7 @@ function toItem(row: {
     tag: row.tag,
     // On the text's shape too: a chat whose report row was already gone is stored as 'unknown'.
     text:
-      row.entity_type === 'chat' || CHAT_SHAPE.test(row.text_value)
+      row.entity_type === 'chat' || looksLikeChatTranscript(row.text_value)
         ? maskChatSpeakers(row.text_value)
         : row.text_value,
     entityLabel: reportEntityLabels[row.entity_type as ReportEntity] ?? null,

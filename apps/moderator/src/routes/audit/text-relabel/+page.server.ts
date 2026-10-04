@@ -15,7 +15,6 @@ import {
 } from '$lib/server/text-relabel.service';
 import { MAX_NOTE_LENGTH, needsHandOff, parseTextLabel } from '$lib/automated-text/labels';
 import { resolveHandOffs, type HandOffItem } from '$lib/automated-text/hand-off';
-import type { ReportEntity } from '$lib/reports';
 
 const MAX_SKIPS = 100;
 
@@ -38,8 +37,7 @@ const handOffsFor = (user: SessionUser | null | undefined, items: HandOffItem[])
   resolveHandOffs(items, {
     civitaiUrl: civitaiLinkUrl(),
     canOpen: (path) => canAccess(user ?? null, path),
-    lookup: (item) =>
-      reportReachability(item.entityType as ReportEntity, item.entityId, item.reportId),
+    lookup: (item) => reportReachability(item.entityType, item.entityId, item.reportId),
   });
 
 export const load: PageServerLoad = async ({ locals, url }) => {

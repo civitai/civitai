@@ -129,11 +129,9 @@ function reportContextUrl(type: ReportEntity, entityId: ReturnType<typeof sql<nu
   return CONTEXT_RESOLVERS[type]?.(entityId) ?? sql<string | null>`null::text`;
 }
 
-/**
- * Whether one report can still be opened from its report page, which finds a report only through its
- * entity's join row (deleted with the entity), and the content's context URL. Null when the lookup
- * failed: a caller must read that as unknown, never as gone.
- */
+/** Whether the report page can still open this report (it finds one only through the entity's report
+ *  join row, deleted with the entity), plus the content's context URL. Null when the lookup failed:
+ *  read it as unknown, never as gone. */
 export async function reportReachability(
   type: ReportEntity,
   entityId: number | null,

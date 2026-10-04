@@ -36,7 +36,9 @@ export type HandOffDeps = {
   civitaiUrl: string;
   canOpen: (path: string) => boolean;
   /** Null when the lookup failed; the links are then offered as if the content still exists. */
-  lookup: (item: HandOffItem) => Promise<{ reachable: boolean; contextUrl: string | null } | null>;
+  lookup: (
+    item: HandOffItem & { entityType: ReportEntity }
+  ) => Promise<{ reachable: boolean; contextUrl: string | null } | null>;
 };
 
 const isReportEntity = (v: string): v is ReportEntity =>
@@ -48,8 +50,7 @@ const isReportEntity = (v: string): v is ReportEntity =>
  */
 export function handOffLinks(civitaiUrl: string, src: HandOffSource): HandOffLink[] {
   const links: HandOffLink[] = [];
-  // 'unknown' means the entity's report join row is gone, and the report page finds a report only
-  // through that row.
+  // 'unknown': no report join row, so the report page cannot show it (see reportReachability).
   if (isReportEntity(src.entityType)) {
     links.push({
       label: 'Open the report',
@@ -81,7 +82,7 @@ export async function resolveHandOffs(
   return Promise.all(
     items.map(async (item) => {
       const found = isReportEntity(item.entityType)
-        ? await deps.lookup(item)
+        ? await deps.lookup({ ...item, entityType: item.entityType })
         : { reachable: false, contextUrl: null };
       const contentGone = found?.reachable === false;
       const all = handOffLinks(

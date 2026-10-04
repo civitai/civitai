@@ -36,13 +36,19 @@ export const HAND_OFF_TAGS: ReadonlySet<string> = new Set(['CSAM', 'Grooming']);
 export const needsHandOff = (tag: string, label: TextLabel): boolean =>
   label === 'clear_violation' && HAND_OFF_TAGS.has(tag);
 
+const SPEAKER = String.raw`\[(\d+)\]:\s`;
+
+/** A chat transcript, recognised by its shape when its report row no longer says it was a chat. */
+export const looksLikeChatTranscript = (text: string): boolean =>
+  new RegExp(`^${SPEAKER}`).test(text);
+
 /**
  * `entity-moderation` sends Clavata a chat as `[<userId>]: <message> | [<userId>]: ...`. The ids say
  * who wrote it, which the labeler must not see; turn order survives as Speaker A, B, ...
  */
 export function maskChatSpeakers(text: string): string {
   const speakers = new Map<string, string>();
-  return text.replace(/(^|\s\|\s)\[(\d+)\]:\s/g, (_, lead: string, id: string) => {
+  return text.replace(new RegExp(`(^|\\s\\|\\s)${SPEAKER}`, 'g'), (_, lead: string, id: string) => {
     if (!speakers.has(id)) speakers.set(id, `Speaker ${speakerName(speakers.size)}`);
     return `${lead}[${speakers.get(id)}]: `;
   });

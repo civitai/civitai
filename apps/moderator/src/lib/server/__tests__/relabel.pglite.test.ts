@@ -57,8 +57,8 @@ beforeEach(async () => {
 });
 
 describe('saveAnswer errors', () => {
-  // A named CHECK failing (an answer value the SQL does not know yet) is a real error. Read as the
-  // trigger's "full", it told the moderator two others had already labelled the image.
+  // A named CHECK failing (an answer value the SQL does not know yet) is a real error; read as the
+  // trigger's "full" it would tell the moderator two others had labelled the image.
   it('rethrows a named CHECK failure instead of reporting the item full', async () => {
     const item = await seedItem(1);
     await expect(
