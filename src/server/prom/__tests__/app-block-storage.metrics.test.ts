@@ -13,11 +13,21 @@ import {
 } from '../app-block-storage.metrics';
 
 /**
- * Zero-seeding of the four App Blocks KV storage metrics, against the REAL prom-client default
- * registry — `@civitai/telemetry/client` is not stubbed by `src/__tests__/setup.ts`, which
- * replaces only `~/server/prom/client`. Nothing here may call `client.register.clear()`: these
- * four are constructed once at package module scope, so clearing drops them irrecoverably and
- * every later assertion would be about an empty registry.
+ * Zero-seeding of the four SEEDED App Blocks KV storage metrics, against the REAL prom-client
+ * default registry — `@civitai/telemetry/client` is not stubbed by `src/__tests__/setup.ts`,
+ * which replaces only `~/server/prom/client`. Nothing here may call `client.register.clear()`:
+ * these four are constructed once at package module scope, so clearing drops them irrecoverably
+ * and every later assertion would be about an empty registry.
+ *
+ * 🔴 THE FAMILY HAS A FIFTH MEMBER THAT IS DELIBERATELY NOT SEEDED, so "four" above is the
+ * seeded count, not the family size. `civitai_app_block_storage_session_gate_refusals_total`
+ * (the `enforceAppBlocksFlag` session-gate discriminator) materialises its children AT 1 on a
+ * refusal, which is why it is absent from `seedAppBlockStorageMetrics` and from every total
+ * below. Consequence for the budget figure in the headline case: the SEEDED cardinality is
+ * exactly 90, and a pod that has refused on all five ops carries up to 5 more — so 90 is the
+ * floor and 95 the ceiling. Read `increase()` on the seeded series and `max_over_time` on that
+ * one; the reasoning is on its declaration in `@civitai/telemetry`, and its registration is
+ * pinned by that package's name ledger rather than by a seeded zero here.
  */
 
 const OPS = 'civitai_app_block_storage_ops_total';
@@ -79,7 +89,7 @@ describe('seedAppBlockStorageMetrics', () => {
     }
   });
 
-  it('🔴 publishes 90 series per scraped pod — 22 of them (op, outcome) PAIRS', async () => {
+  it('🔴 publishes 90 SEEDED series per scraped pod — 22 of them (op, outcome) PAIRS', async () => {
     // Literal, because this is the figure a cardinality budget is sized against, and the pair
     // count is NOT it: the histogram contributes 5 children x (10 buckets + `+Inf` + `_sum` +
     // `_count`) = 65, against 22 + 2 + 1 = 25 counter series. Quoting 22 as the budget
