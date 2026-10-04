@@ -18,12 +18,32 @@ describe('challenge-winner notification message', () => {
 
   it('drops the Buzz claim entirely when the prize is 0', () => {
     const msg = def.prepareMessage({
-      details: { challengeId: 413, challengeName: 'Cute Cats with Silly Hats', position: 2, prize: 0 },
+      details: {
+        challengeId: 413,
+        challengeName: 'Cute Cats with Silly Hats',
+        position: 2,
+        prize: 0,
+      },
     });
 
     expect(msg!.message).toContain('2nd');
     expect(msg!.message).toContain('Cute Cats with Silly Hats');
     expect(msg!.message).not.toMatch(/Buzz/);
     expect(msg!.message).not.toMatch(/won/);
+  });
+
+  it('sends a winner with a prize to its claim screen', () => {
+    const msg = def.prepareMessage({
+      details: {
+        challengeId: 7,
+        challengeName: 'Neon Dreams',
+        position: 1,
+        prize: 1500,
+        prizeId: 42,
+      },
+    });
+
+    expect(msg!.url).toBe('/prizes/42');
+    expect(msg!.message).toMatch(/won 1,500 Buzz\. Claim your prize!$/);
   });
 });

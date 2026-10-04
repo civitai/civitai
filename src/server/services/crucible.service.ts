@@ -13,6 +13,7 @@ import {
   MediaType,
   ModelStatus,
   ModelType,
+  PrizeSourceType,
 } from '~/shared/utils/prisma/enums';
 import { CrucibleSort } from '../schema/crucible.schema';
 import { dbRead, dbWrite } from '../db/client';
@@ -24,7 +25,6 @@ import {
   throwAuthorizationError,
 } from '~/server/utils/errorHandling';
 import {
-  createBuzzTransactionMany,
   createMultiAccountBuzzTransaction,
   getUserBuzzAccount,
   refundMultiAccountTransaction,
@@ -76,7 +76,7 @@ import {
   resolveWatchSeconds,
 } from '~/server/services/crucible-judging-session';
 import type { RedisKeyTemplateSys, RedisKeyTemplateCache } from '~/server/redis/client';
-import { redis, sysRedis, REDIS_SYS_KEYS, REDIS_KEYS } from '~/server/redis/client';
+import { sysRedis, REDIS_SYS_KEYS, REDIS_KEYS } from '~/server/redis/client';
 import { CacheTTL, constants } from '~/server/common/constants';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import {
@@ -128,6 +128,7 @@ import {
 import { submitTextModeration } from '~/server/services/text-moderation.service';
 import { CHALLENGE_MODERATION_LABELS } from '~/server/games/daily-challenge/challenge-text-scan';
 import { logToAxiom } from '~/server/logging/client';
+import { createPrizes, voidPrizes } from '~/server/services/prize.service';
 import { removeTags } from '~/utils/string-helpers';
 
 const log = createLogger('crucible-service', 'cyan');
@@ -3026,7 +3027,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
       !!crucible.seedTransactionId &&
       (await refundUnawardedSeed(crucibleId, crucible.seedTransactionId, 'no-entries'));
 
-    if (await claimCrucibleCompletion(crucibleId, { prizesPaid: false })) {
+    if (await claimCrucibleCompletion(crucibleId, { prizesAwarded: false })) {
       await crucibleEloRedis.setTTL(crucibleId, 7 * 24 * 60 * 60);
       sendCrucibleNotification({
         userId: crucible.userId,
@@ -3170,56 +3171,33 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
       entry.position !== null && entry.prizePlace !== null && entry.prizeAmount > 0
   );
 
+  // Awarded, not paid: each winner claims theirs and picks the currency. The key is the one this
+  // payout has always used, so a prize an earlier build already paid conflicts instead of paying.
+  let prizes: Awaited<ReturnType<typeof createPrizes>> = [];
   if (prizeWinners.length > 0) {
-    // Build transactions for prize distribution
-    // Transfer from central bank (account 0) to each winner's yellow account
-    const prizeTransactions = prizeWinners.map((winner) => ({
-      fromAccountId: 0, // Central bank
-      fromAccountType: 'yellow' as const,
-      toAccountId: winner.userId,
-      toAccountType: CRUCIBLE_PRIZE_BUZZ_TYPE,
-      amount: winner.prizeAmount,
-      type: TransactionType.Reward,
-      description: getCrucibleTransactionDescription(
-        `Crucible ${asOrdinal(winner.prizePlace)} prize`,
-        crucible
-      ),
-      details: {
-        entityId: crucibleId,
-        entityType: 'Crucible',
-        position: winner.position,
-        prizePlace: winner.prizePlace,
-      },
-      externalTransactionId: `crucible-prize-${crucibleId}-${winner.entryId}-${winner.position}`,
-    }));
-
     try {
-      const result = await createBuzzTransactionMany(prizeTransactions);
-      // A transfer the ledger dropped (neither made nor a duplicate) is still owed: stay Active.
-      const unaccounted =
-        prizeTransactions.length - result.transactions.length - result.conflicts.length;
-      if (unaccounted > 0)
-        throw new Error(
-          `${unaccounted} of ${prizeTransactions.length} prize transfers were not made`
-        );
-      log(
-        `Distributed prizes for crucible ${crucibleId}: ${prizeWinners.length} winners, ${result.transactions.length} transactions`
+      prizes = await createPrizes(
+        prizeWinners.map((winner) => ({
+          userId: winner.userId,
+          sourceType: PrizeSourceType.Crucible,
+          sourceId: crucibleId,
+          subjectId: winner.entryId,
+          position: winner.prizePlace,
+          amount: winner.prizeAmount,
+          title: getCrucibleTransactionDescription(
+            `Crucible ${asOrdinal(winner.prizePlace)} prize`,
+            crucible
+          ),
+          externalTransactionId: `crucible-prize-${crucibleId}-${winner.entryId}-${winner.position}`,
+        }))
       );
-
-      // Invalidate buzz won cache for all winners so their stats reflect the new prize
-      const uniqueWinnerUserIds = [...new Set(prizeWinners.map((w) => w.userId))];
-      await Promise.all(
-        uniqueWinnerUserIds.map((winnerId) =>
-          redis.del(`${REDIS_KEYS.CRUCIBLE.USER_BUZZ_WON}:${winnerId}` as RedisKeyTemplateCache)
-        )
-      );
+      log(`Awarded ${prizes.length} prizes for crucible ${crucibleId}`);
     } catch (error) {
-      // Still Active, so the next run retries; prize ids are keyed per entry and place, so a payout
-      // that partly landed is not paid twice.
+      // Still Active, so the next run retries; the insert is keyed per entry and place.
       logToAxiom({
         type: 'error',
-        name: 'crucible-prize-payout-failed',
-        message: `Failed to pay prizes for crucible ${crucibleId}: ${
+        name: 'crucible-prize-award-failed',
+        message: `Failed to award prizes for crucible ${crucibleId}: ${
           error instanceof Error ? error.message : String(error)
         }`,
         crucibleId,
@@ -3242,8 +3220,10 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
     finalEntries: finalizedEntries,
     totalPrizesDistributed,
   };
-  if (!(await claimCrucibleCompletion(crucibleId, { prizesPaid: prizeWinners.length > 0 })))
+  if (!(await claimCrucibleCompletion(crucibleId, { prizesAwarded: prizeWinners.length > 0 }))) {
+    await voidPrizes(PrizeSourceType.Crucible, crucibleId);
     return result;
+  }
 
   // Kept a week in case the results need checking against the votes.
   await crucibleEloRedis.setTTL(crucibleId, 7 * 24 * 60 * 60);
@@ -3288,6 +3268,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
     // Skip notifying the crucible creator about their own entries (they already got crucible-ended)
     if (participantUserId === crucible.userId) continue;
 
+    const userPrizes = prizes.filter((prize) => prize.userId === participantUserId);
     sendCrucibleNotification({
       userId: participantUserId,
       type: 'crucible-won',
@@ -3299,6 +3280,8 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
         position: bestEntry.position,
         prizePlace: bestEntry.prizePlace,
         prizeAmount: bestEntry.prizeAmount,
+        prizeId: userPrizes.length === 1 ? userPrizes[0].id : undefined,
+        prizeCount: userPrizes.length,
       },
     });
   }
@@ -3418,11 +3401,11 @@ function withStoredPlaces(
 
 /**
  * Completed only from Active: past its end nothing else may move it, so a lost claim means a
- * cancel got there first and anything this run paid is now owed back to the bank.
+ * cancel got there first, so the prizes this run awarded are voided.
  */
 const claimCrucibleCompletion = async (
   crucibleId: number,
-  { prizesPaid }: { prizesPaid: boolean }
+  { prizesAwarded }: { prizesAwarded: boolean }
 ) => {
   const { count } = await dbWrite.crucible.updateMany({
     where: { id: crucibleId, status: CrucibleStatus.Active },
@@ -3433,10 +3416,10 @@ const claimCrucibleCompletion = async (
       type: 'error',
       name: 'crucible-finalize-claim-lost',
       message: `Crucible ${crucibleId} left Active while it was being finalized${
-        prizesPaid ? ' after its prizes were paid; check for refunds of the same pool' : ''
+        prizesAwarded ? ' after its prizes were awarded; they have been voided' : ''
       }.`,
       crucibleId,
-      prizesPaid,
+      prizesAwarded,
     });
   return count > 0;
 };

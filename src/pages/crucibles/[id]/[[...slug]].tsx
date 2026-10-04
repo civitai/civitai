@@ -52,6 +52,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CrucibleHeader } from '~/components/Crucible/CrucibleHeader';
+import { PrizeClaimBanner } from '~/components/Prize/PrizeClaimBanner';
 import { CrucibleLeaderboard } from '~/components/Crucible/CrucibleLeaderboard';
 import { CrucibleEntryGrid, type CrucibleEntryData } from '~/components/Crucible/CrucibleEntryGrid';
 import { CruciblePodium } from '~/components/Crucible/CruciblePodium';
@@ -65,6 +66,7 @@ import {
   Currency,
   ImageIngestionStatus,
   MediaType,
+  PrizeSourceType,
 } from '~/shared/utils/prisma/enums';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -364,6 +366,10 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
             paidEntryCount,
           }}
         />
+
+        {crucible.status === CrucibleStatus.Completed && (
+          <PrizeClaimBanner sourceType={PrizeSourceType.Crucible} sourceId={crucible.id} />
+        )}
 
         {crucible.status === CrucibleStatus.Completed && (
           <CruciblePodium
