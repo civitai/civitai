@@ -412,7 +412,7 @@ describe('crucible.getJudgingProgress', () => {
       crucibleId: CRUCIBLE_ID,
     });
 
-    expect(progress).toEqual({ remainingPairs: 2 });
+    expect(progress).toEqual({ remainingPairs: 2, votesUsedUp: false });
     expect(lastRenderedSql()).toContain('ce."userId" !=');
   });
 
@@ -437,7 +437,24 @@ describe('crucible.getJudgingProgress', () => {
 
     expect(
       await caller(signedIn(STRANGER_ID)).getJudgingProgress({ crucibleId: CRUCIBLE_ID })
-    ).toEqual({ remainingPairs: 0 });
+    ).toEqual({ remainingPairs: 0, votesUsedUp: false });
+  });
+
+  // The judge page shows "you've used all your votes" only on votesUsedUp. Zero pairs from too few
+  // visible entries is the browsing level hiding them, and must not read as votes spent.
+  it('reports votes used up only when the judge exhausted pairs among entries they can see', async () => {
+    redisMock.sysRedis.hGetAll.mockResolvedValue({});
+    redisMock.sysRedis.sMembers.mockResolvedValue(['1:2']);
+
+    queryRaw.mockResolvedValue([{ id: 1 }, { id: 2 }]);
+    expect(
+      await caller(signedIn(STRANGER_ID)).getJudgingProgress({ crucibleId: CRUCIBLE_ID })
+    ).toEqual({ remainingPairs: 0, votesUsedUp: true });
+
+    queryRaw.mockResolvedValue([{ id: 1 }]);
+    expect(
+      await caller(signedIn(STRANGER_ID)).getJudgingProgress({ crucibleId: CRUCIBLE_ID })
+    ).toEqual({ remainingPairs: 0, votesUsedUp: false });
   });
 });
 

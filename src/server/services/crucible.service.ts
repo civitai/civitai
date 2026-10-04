@@ -49,6 +49,7 @@ import type {
 import { calculateCrucibleSetupCost } from '../schema/crucible.schema';
 import {
   clipLengthAllowed,
+  CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
   crucibleRankingsAreFinal,
   crucibleSupportsVideoSettings,
   hasCrucibleStarted,
@@ -64,7 +65,11 @@ import {
   crucibleListSelect,
   hasEntryImage,
 } from '~/server/selectors/crucible.selector';
-import { publishedImageWhere } from '~/server/selectors/image.selector';
+import {
+  CRUCIBLE_ENTRY_DRAFT_METADATA_KEY,
+  draftImageWhere,
+  publishedImageWhere,
+} from '~/server/selectors/image.selector';
 import {
   getCrucibleJudgingConfig,
   recordSessionVote,
@@ -87,7 +92,7 @@ import { resolveCoverImageId } from '~/server/services/cover-image.service';
 import { isNonSfwForGreen } from '~/server/games/daily-challenge/challenge-currency';
 import { getEffectiveBrowsingLevel } from '~/server/games/daily-challenge/challenge-visibility';
 import { checkCrucibleSettings } from '~/server/schema/crucible.schema';
-import { createPost } from '~/server/services/post.service';
+import { createPost, afterPostPublish } from '~/server/services/post.service';
 import { NotificationCategory } from '~/server/common/enums';
 import { imageResourcesCache } from '~/server/redis/caches';
 import {
@@ -112,8 +117,10 @@ import { assertCanCreateCrucible } from '~/server/services/crucible-eligibility.
 import { getEligibleModels } from '~/server/services/eligible-models.service';
 import { getProfanityFilter } from '~/libs/profanity-simple';
 import {
+  matureBrowsingLevelsFlag,
   nsfwBrowsingLevelsFlag,
   publicBrowsingLevelsFlag,
+  exceedsModelBrowsingLevelLimit,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
@@ -341,6 +348,7 @@ export const createCrucible = async ({
   await assertPublishedModelVersions(allowedResources ?? []);
   await assertRequiredModelsMakeContentType(allowedResources ?? [], contentType ?? MediaType.image);
   assertBaseModelsMakeContentType(allowedBaseModels, contentType ?? MediaType.image);
+  await assertRequiredModelsAllowContentLevel(allowedResources ?? [], nsfwLevel);
 
   const now = new Date();
   const isScheduled = !!requestedStartAt && requestedStartAt > now;
@@ -608,6 +616,22 @@ const hasEntryRestriction = ({
   allowedResources?: number[];
   allowedBaseModels?: string[];
 }) => (allowedResources?.length ?? 0) > 0 || (allowedBaseModels?.length ?? 0) > 0;
+async function requiredModelRefusesLevel(versionIds: number[], nsfwLevel: number) {
+  const ids = [...new Set(versionIds)];
+  if (!ids.length || !Flags.intersects(nsfwLevel, matureBrowsingLevelsFlag)) return false;
+  const versions = await dbRead.modelVersion.findMany({
+    where: { id: { in: ids } },
+    select: { model: { select: { minor: true, sfwOnly: true } } },
+  });
+  return versions.some(({ model }) => exceedsModelBrowsingLevelLimit(nsfwLevel, model));
+}
+
+async function assertRequiredModelsAllowContentLevel(versionIds: number[], nsfwLevel: number) {
+  if (await requiredModelRefusesLevel(versionIds, nsfwLevel))
+    throw throwBadRequestError(
+      'A required model can only be used for PG and PG-13 content. Allow only PG and PG-13, or remove that model.'
+    );
+}
 
 const PRESENTATION_FIELDS = ['name', 'description', 'coverImage', 'heroImage'] as const;
 
@@ -742,6 +766,11 @@ export const updateCrucible = async ({
       next.contentType
     );
   }
+  // A level change re-checks every pick; otherwise only new ones, as the rest passed when added.
+  await assertRequiredModelsAllowContentLevel(
+    next.nsfwLevel !== current.nsfwLevel ? next.allowedResources : addedResources,
+    next.nsfwLevel
+  );
 
   const imageId = changes.coverImage
     ? await resolveCoverImageId({
@@ -1304,8 +1333,8 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
 };
 
 /**
- * Entries must be published images, so media added from inside the submit modal goes into a
- * published post first and becomes enterable once its scan settles.
+ * Media added from inside the submit modal goes into its own unpublished post, marked so the picker
+ * still lists it in a later session. Entering the image publishes the post.
  */
 export const createCrucibleEntryPost = async ({
   crucibleId,
@@ -1347,7 +1376,7 @@ export const createCrucibleEntryPost = async ({
   const post = await createPost({
     userId,
     title: getCruciblePublishableName(crucible) ?? undefined,
-    publishedAt: new Date(),
+    metadata: { [CRUCIBLE_ENTRY_DRAFT_METADATA_KEY]: true },
   });
   return { id: post.id };
 };
@@ -1359,6 +1388,7 @@ export type CrucibleEntryIneligibleReason =
   | 'no-resources'
   | 'missing-required-resource'
   | 'wrong-base-model'
+  | 'required-model-level'
   | 'not-found';
 
 const entryIneligibleMessages: Record<CrucibleEntryIneligibleReason, string> = {
@@ -1369,6 +1399,8 @@ const entryIneligibleMessages: Record<CrucibleEntryIneligibleReason, string> = {
     'This image does not use any of the required resources for this crucible. Please check the crucible requirements and submit an image that uses an allowed resource.',
   'wrong-base-model':
     "This image wasn't made with a checkpoint of one of this crucible's allowed base models.",
+  'required-model-level':
+    'A model this crucible requires can only be used for PG and PG-13 content, so this entry can only be PG or PG-13.',
   'not-found': 'Image not found',
 };
 
@@ -1388,7 +1420,7 @@ const getAllowedResources = (crucible: EntryEligibilityCrucible) =>
  */
 const getEntryIneligibleReasons = async (
   crucible: EntryEligibilityCrucible,
-  images: { id: number; createdAt: Date }[]
+  images: { id: number; createdAt: Date; nsfwLevel: number }[]
 ) => {
   const startedAt = crucible.startAt ?? crucible.createdAt;
   const allowedResources = getAllowedResources(crucible);
@@ -1398,6 +1430,12 @@ const getEntryIneligibleReasons = async (
     restricted && images.length > 0
       ? await imageResourcesCache.fetch(images.map((image) => image.id))
       : {};
+  // Create and edit check this too, but a required model can be flagged after the crucible opens.
+  const isMature = (image: { nsfwLevel: number }) =>
+    Flags.intersects(image.nsfwLevel, matureBrowsingLevelsFlag);
+  const requiredModelHeldToSfw =
+    images.some(isMature) &&
+    (await requiredModelRefusesLevel(allowedResources, matureBrowsingLevelsFlag));
 
   return new Map(
     images.map((image) => {
@@ -1424,6 +1462,7 @@ const getEntryIneligibleReasons = async (
             reasons.push('wrong-base-model');
         }
       }
+      if (requiredModelHeldToSfw && isMature(image)) reasons.push('required-model-level');
 
       return [image.id, reasons];
     })
@@ -1443,7 +1482,7 @@ export const checkCrucibleEntryEligibility = async ({
 
   const images = await dbRead.image.findMany({
     where: { id: { in: imageIds }, userId },
-    select: { id: true, createdAt: true },
+    select: { id: true, createdAt: true, nsfwLevel: true },
   });
   const reasonsByImage = await getEntryIneligibleReasons(crucible, images);
 
@@ -1643,7 +1682,27 @@ export const submitEntry = async ({
     const isPublished = await dbRead.image.count({
       where: { id: imageId, ...publishedImageWhere() },
     });
-    if (!isPublished) {
+    // Media added from the entry modal sits in an unpublished post, published with the entry.
+    const draft = isPublished
+      ? null
+      : await dbRead.image.findFirst({
+          where: { id: imageId, ...draftImageWhere({ userId }) },
+          select: {
+            postId: true,
+            post: { select: { metadata: true, _count: { select: { images: true } } } },
+          },
+        });
+    // Only the modal's own drafts: entering publishes the post without the checks a post, collection
+    // or model-showcase publish goes through. Entering must publish nothing else, and a post its model
+    // unpublished keeps its original date.
+    const draftMetadata = draft?.post?.metadata as Record<string, unknown> | null | undefined;
+    const draftPostId =
+      draft?.post?._count.images === 1 &&
+      draftMetadata?.[CRUCIBLE_ENTRY_DRAFT_METADATA_KEY] === true &&
+      !draftMetadata.prevPublishedAt
+        ? draft.postId
+        : null;
+    if (!isPublished && !draftPostId) {
       return throwBadRequestError('Only published images can be entered');
     }
 
@@ -1752,6 +1811,14 @@ export const submitEntry = async ({
             AND ("endAt" IS NULL OR "endAt" > statement_timestamp())
         `;
         if (!open) throw throwBadRequestError('This crucible is not accepting entries');
+        if (draftPostId) {
+          const published = await tx.post.updateMany({
+            where: { id: draftPostId, userId, publishedAt: null },
+            data: { publishedAt: new Date() },
+          });
+          if (!published.count)
+            throw throwBadRequestError('This image changed while it was being entered. Try again.');
+        }
         return tx.crucibleEntry.create({
           data: {
             crucibleId,
@@ -1777,6 +1844,17 @@ export const submitEntry = async ({
           },
         });
       });
+
+      if (draftPostId)
+        await afterPostPublish({ postId: draftPostId, userId }).catch((error) =>
+          logToAxiom({
+            type: 'error',
+            name: 'crucible-entry-post-refresh-failed',
+            message: error instanceof Error ? error.message : String(error),
+            crucibleId,
+            postId: draftPostId,
+          })
+        );
 
       if (crucible.userId !== userId) {
         sendCrucibleNotification({
@@ -1854,9 +1932,6 @@ function getJudgeEntryVotesKey(crucibleId: number, userId: number): RedisKeyTemp
 }
 
 const JUDGE_KEY_TTL_SECONDS = 30 * 24 * 60 * 60;
-
-/** Bounds how far one judge can move a single entry. */
-export const CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY = 5;
 
 /**
  * Counts the vote against both entries before it is processed, so concurrent votes cannot each
@@ -2253,7 +2328,7 @@ export const getJudgingProgress = async ({
   )
     throw throwNotFoundError('Crucible not found');
   if (crucible.status !== CrucibleStatus.Active || (crucible.endAt && crucible.endAt <= new Date()))
-    return { remainingPairs: 0 };
+    return { remainingPairs: 0, votesUsedUp: false };
 
   const visibleImage = visibleEntryImageSql(
     crucible.nsfwLevel,
@@ -2272,21 +2347,24 @@ export const getJudgingProgress = async ({
     sysRedis.sMembers(getVotedPairsKey(crucibleId, userId)),
   ]);
 
-  return {
-    remainingPairs: countRemainingPairs({
-      entryIds: entries.map(({ id }) => id),
-      judgeEntryVotes: (judgeEntryVotes ?? {}) as Record<string, string>,
-      votedPairKeys,
-      maxVotesPerEntry: CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
-    }),
-  };
+  const remainingPairs = countRemainingPairs({
+    entryIds: entries.map(({ id }) => id),
+    judgeEntryVotes: (judgeEntryVotes ?? {}) as Record<string, string>,
+    votedPairKeys,
+    maxVotesPerEntry: CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
+  });
+  // Fewer than two visible entries also counts zero pairs, but that is the browsing level
+  // hiding entries, not this judge's votes running out.
+  return { remainingPairs, votesUsedUp: remainingPairs === 0 && entries.length >= 2 };
 };
 
-type RatedEntry = EntryForJudging & { votes: number };
+type RatedEntry = EntryForJudging & { votes: number; judgeVotes: number };
 
 /**
  * The least-voted entry, against the nearest-rated of the least-voted opponents this judge hasn't
- * already paired it with. Ties break randomly.
+ * already paired it with. "Least-voted" ranks this judge's own votes on the entry before everyone's:
+ * a late entry stays least-voted overall for a long time, and ranked on that alone it anchors every
+ * pair the judge sees until it reaches their per-judge cap.
  */
 function pickUnjudgedPair(
   entries: RatedEntry[],
@@ -2295,7 +2373,12 @@ function pickUnjudgedPair(
 ) {
   const byVotes = entries
     .map((entry) => ({ entry, tieBreak: Math.random() }))
-    .sort((x, y) => x.entry.votes - y.entry.votes || x.tieBreak - y.tieBreak)
+    .sort(
+      (x, y) =>
+        x.entry.judgeVotes - y.entry.judgeVotes ||
+        x.entry.votes - y.entry.votes ||
+        x.tieBreak - y.tieBreak
+    )
     .map(({ entry }) => entry);
 
   for (const a of byVotes) {
@@ -2377,12 +2460,14 @@ export const getJudgingPair = async ({
     sysRedis.sMembers(getVotedPairsKey(crucibleId, userId)),
   ]);
   const votedPairs = new Set(votedPairKeys);
+  const judgeVotesOn = (entry: EntryForJudging) => Number(judgeEntryVotes?.[entry.id] ?? 0);
   const underJudgeCap = (entry: EntryForJudging) =>
-    Number(judgeEntryVotes?.[entry.id] ?? 0) < CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY;
+    judgeVotesOn(entry) < CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY;
   const rate = (entry: EntryForJudging): RatedEntry => ({
     ...entry,
     score: redisElos[entry.id] ?? entry.score,
     votes: voteCounts[entry.id] ?? 0,
+    judgeVotes: judgeVotesOn(entry),
   });
 
   const visibleImage = visibleEntryImageSql(

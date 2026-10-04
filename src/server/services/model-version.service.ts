@@ -190,6 +190,8 @@ export const getVersionsByIds = async ({ ids }: { ids: number[] }) => {
         select: {
           id: true,
           name: true,
+          minor: true,
+          sfwOnly: true,
         },
       },
     },
@@ -201,6 +203,8 @@ export const getVersionsByIds = async ({ ids }: { ids: number[] }) => {
     baseModel: v.baseModel,
     modelId: v.model.id,
     modelName: v.model.name,
+    minor: v.model.minor,
+    sfwOnly: v.model.sfwOnly,
   }));
 };
 

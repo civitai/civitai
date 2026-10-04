@@ -8,7 +8,7 @@ Crucible is separate from the Challenges platform and its judging engine.
 
 1. **Create.** The creator sets up the crucible and pays the setup cost and any seeded pool. It starts right away, or at a scheduled time up to 30 days out. A crucible runs on one Buzz type (yellow or green) and lives only on that currency's site; a green crucible is limited to PG and PG-13.
 2. **Review.** The name, description and cover are checked automatically before anyone else can see the crucible. Until then only its creator and moderators can open it.
-3. **Enter.** While the crucible is active, entrants submit published media from their library, or generate or upload it from the submit dialog. Each entry pays the entry fee, except the free entries the creator offers.
+3. **Enter.** While the crucible is active, entrants submit published media from their library, or generate or upload it from the submit dialog. Media added from the dialog stays an unpublished draft until it is entered, and entering publishes it; a refused or refunded entry leaves it a draft, and the dialog keeps offering it in later visits. Each entry pays the entry fee in the Buzz of the site the entrant is on, except the free entries the creator offers.
 4. **Judge.** Signed-in users are shown two entries side by side and pick one. Every vote updates both entries' ratings.
 5. **Finish.** At the end time the crucible closes, final positions are fixed by rating, and prizes are paid out.
 
@@ -36,7 +36,7 @@ A moderator can remove an entry while the crucible runs. The entry fee is refund
 | Free entries | The first N entries per user cost nothing | Free |
 | Seeded prize pool | Buzz the creator adds to the pool up front | The seeded amount |
 | Prize distribution | Custom split across positions (default 50 / 30 / 20) | 500 Buzz |
-| Resource requirements | Entries must be made with one of up to 10 chosen models | 500 Buzz |
+| Resource requirements | Entries must be made with one of up to 10 chosen models. If a chosen model is limited to PG and PG-13, so are the crucible and every entry | 500 Buzz |
 | Minimum view time *(video only)* | Judges must watch this long of both clips before voting | Free |
 | Maximum clip length *(video only)* | Longer clips are refused at submission | Free |
 
@@ -53,9 +53,9 @@ The discovery page's Prize Pool sort uses the same pool.
 ## Judging
 
 - Judges never see their own entries, and never see the same pair twice.
-- Pairs favour entries with few votes, so new entries get ranked quickly.
+- Pairs favour the entries this judge has voted on least, then those with the fewest votes overall, so new entries get ranked quickly without one late entry turning up in every pair a judge sees.
 - New entries' ratings move faster until they have enough votes.
-- Judges can skip a pair.
+- Judges can skip a pair. Skipped entries stay out for the rest of the visit (up to the last 20) and come back only once nothing else is left to judge.
 - On video crucibles with a minimum view time, only real playback counts. Skipping ahead or pausing does not add to it. A vote on an under-watched pair is rejected, and the judge keeps that pair.
 - Someone the creator has blocked can't see, enter or judge the crucible.
 
