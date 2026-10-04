@@ -75,7 +75,7 @@ const DELIBERATELY_NARROW: ReadonlyArray<{
     file: 'src/server/services/blocks/app-listing.service.ts',
     container: 'listingHydrateSelect',
     owner: 'user',
-    why: 'the PUBLIC store listing creator. The default path hands `SmartCreatorCard` only `{ id }` and refetches through the public `user.getCreator` proc; the `preview` path (its own `CreatorChip`) renders the chip directly, and a closed account drops out of it only INCIDENTALLY — `deleteUser` nulls `username` in the same transaction as `deletedAt`, and the chip skips username-less rows. That is the scrub doing the work, not a `deletedAt` branch, which is the same incidental-not-a-filter distinction `app-listing.service.ts` draws about its collaborator chip',
+    why: 'the PUBLIC store listing creator. The default path hands `SmartCreatorCard` only `{ id }` and refetches through the public `user.getCreator` proc; the `preview` path (its own `CreatorChip`) renders the chip directly, and a closed account drops out of it only INCIDENTALLY — `deleteUser` nulls `username` in the same transaction as `deletedAt`, and the chip skips username-less rows. That is the scrub doing the work, not a `deletedAt` branch, which is the same incidental-not-a-filter distinction `app-listing.service.ts` draws about its collaborator chip — and THERE it was judged not good enough, so that select carries `deletedAt` and this one still does not. Bounded, not closed: `deleteUser` is the only writer that scrubs, while `updateUserById` and `forceUpdateUserIdentity` (the latter behind a moderator endpoint) set `username` with no `deletedAt` guard, so a closed account can be given a truthy username again. Widening this select is still the fix and is still a separate change',
   },
 ] as const;
 
@@ -341,6 +341,17 @@ describe('the review user chip is one declaration', () => {
     // name-keyed ledger would wave it through; a plain property; a hoisted const with a
     // `select` wrapper and one without; and — the two the Set collapsed — a `user` NESTED
     // inside each exempted container, which resolves to the exempted container's own key.
+    // 🔴 DERIVED FROM THE LEDGER, NOT SPELLED. An earlier version hardcoded
+    // `listingHydrateSelect`, whose own `why` describes it as something to retire — and
+    // measured, once that entry goes the file-half coverage goes silently with it: simulating
+    // the retirement and then dropping `e.file === rel` gave 4/4 green again. Deriving the
+    // container and owner from the live ledger means the probe follows whatever is exempt.
+    const EXEMPT = DELIBERATELY_NARROW[0];
+    // 🔴 AN OWNER THE LEDGER DOES NOT NAME, in the container it DOES. Both ledger entries use
+    // `owner: 'user'`, so no chip built from them can discriminate the OWNER half of the key —
+    // measured, deleting `e.owner === chip.owner` left 4/4 green, the exact sibling of the
+    // `file` defect fixed one round earlier, on the same lookup line.
+    const OWNER_PROBE = 'moderator';
     const PLANTED_SOURCE = `
       const submittedBy = { select: { id: true, username: true, image: true } };
       const authorChip = { id: true, username: true, image: true };
@@ -348,7 +359,7 @@ describe('the review user chip is one declaration', () => {
         user: { select: { id: true, username: true, image: true } },
         modChip: { select: { id: true, username: true, image: true } },
       };
-      const listingHydrateSelect = { user: { select: { id: true, username: true, image: true } } };
+      const ${EXEMPT.container} = { ${EXEMPT.owner}: { select: { id: true, username: true, image: true } } };
     `;
     // 🔴 THAT FIFTH CHIP IS WHAT EXERCISES THE `file` HALF OF THE KEY. The four above resolve
     // to containers no ledger entry names, so the CONTAINER half rejects them and the file
@@ -361,6 +372,21 @@ describe('the review user chip is one declaration', () => {
       plantedVerdict.offenders,
       'five narrow planted chips must ALL be rejected by the real verdict path'
     ).toHaveLength(5);
+
+    // 🔴 THE OWNER HALF, which needs the EXEMPT file to reach it: in any other file the FILE
+    // comparison rejects first, and in the exempt container the only owner either entry names
+    // is `user`. Same container, same file, an owner the ledger does not name — so only
+    // `e.owner === chip.owner` can reject it. Measured: dropping that term left 4/4 green,
+    // the exact sibling of the `file` defect, on the same line.
+    const OWNER_SOURCE = `
+      const ${EXEMPT.container} = { ${OWNER_PROBE}: { select: { id: true, username: true, image: true } } };
+    `;
+    const ownerVerdict = judge(EXEMPT.file, chipsIn(EXEMPT.file, OWNER_SOURCE));
+    expect(
+      ownerVerdict.offenders,
+      `a narrow \`${OWNER_PROBE}\` chip inside the exempted container must still be rejected`
+    ).toHaveLength(1);
+    expect(ownerVerdict.matched, 'and it must not consume the exemption').toEqual([]);
     // ⚠️ This one is weaker than it looks on its own — `plantedFile` has no ledger entries at
     // all, so an empty `matched` is the only possible result regardless of the key. It earns
     // its place only alongside the fifth chip above, which CAN be exempted by a broken key.

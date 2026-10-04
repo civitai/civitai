@@ -290,8 +290,8 @@ describe('re-running ONE analysis instead of all three', () => {
    * cases below differ only in `mocks.pending`, so the control's validity rests on the report
    * being identical — and it was spelled out by hand in both, 40 lines apart, with nothing
    * enforcing that they stay the same. A drift in one would make the control stop controlling,
-   * silently and greenly. (The `NEVER_RAN` fixture in a later describe stays its own: it is
-   * scoped to the block whose subject it is, and its summary text differs deliberately.)
+   * silently and greenly. (The `NEVER_RAN` fixture in a later describe stays its own because
+   * ITS summary string is asserted verbatim; see the note beside it.)
    */
   const PROVISIONING_FAILED = {
     status: 'failed',
@@ -503,7 +503,7 @@ describe('a report whose analyses NEVER RAN', () => {
     scopeVerdicts: PARTIAL_REPORT.scopeVerdicts,
     securityAudit: null,
     codeReview: null,
-  };
+  } as const;
 
   test('🔴 the header NEVER reads "0 analyses failed ()" — it says what actually happened', async () => {
     mocks.report = NEVER_RAN;

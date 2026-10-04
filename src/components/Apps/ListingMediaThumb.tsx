@@ -1,5 +1,5 @@
 import { Text, UnstyledButton } from '@mantine/core';
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 
 /**
  * The listing ICON / COVER thumbnails, shared by `/apps/mine` and the `/apps/review` queue.
@@ -70,15 +70,10 @@ const COVER_BOX: Record<ListingThumbSize, { w: number; h: number }> = {
 };
 
 /**
- * 🔴 ONE OBJECT FOR BOTH COVER BRANCHES, so present/absent parity is STRUCTURAL.
- *
- * The `img` and the placeholder must size identically or a listing with no cover is a
- * different shape from one with a cover. That was previously four declarations written out
- * twice with a comment asking the next editor to keep them in step — and this PR had already
- * broken the pair once (an `aspect-ratio` img against a fixed-height placeholder), which is
- * exactly the drift a convention cannot prevent. Shared, the two cannot diverge.
+ * 🔴 ONE OBJECT FOR BOTH ICON BRANCHES, so present/absent parity is STRUCTURAL rather than a
+ * convention — see `coverBoxStyle` below for the same argument and the case that proved it.
  */
-const iconBoxStyle = (box: number, size: ListingThumbSize) => ({
+const iconBoxStyle = (box: number, size: ListingThumbSize): CSSProperties => ({
   width: box,
   height: box,
   borderRadius: 8,
@@ -94,9 +89,30 @@ const iconBoxStyle = (box: number, size: ListingThumbSize) => ({
   // listing was rigid where an icon one could shrink. Latent (it binds only below a 96px
   // container) but it is the same present/absent rule the cover pair broke outright.
   flex: `0 ${size === 'review' ? 1 : 0} ${box}px`,
+  // Was on the img and NOT the placeholder — the same asymmetry this object exists to stop,
+  // left behind when the rest of the pair was shared. One RESERVES the space, the other
+  // CLAMPS it so a wide box cannot widen its column.
+  maxWidth: '100%',
 });
 
-const coverBoxStyle = (box: { w: number; h: number }) => ({
+/**
+ * 🔴 ONE OBJECT FOR BOTH COVER BRANCHES, so present/absent parity is STRUCTURAL.
+ *
+ * The `img` and the placeholder must size identically or a listing with no cover is a
+ * different shape from one with a cover. That was previously four declarations written out
+ * twice with a comment asking the next editor to keep them in step — and this PR had already
+ * broken the pair once (an `aspect-ratio` img against a fixed-height placeholder), which is
+ * exactly the drift a convention cannot prevent. Shared, the two cannot diverge.
+ *
+ * ⚠️ `maxWidth` DOES DIFFERENT WORK ON THE TWO BRANCHES, and two review lanes read the single
+ * word "clamp" as one claim and disagreed about it. Measured by deleting it from each in turn:
+ * from the cover `img` → the geometry suite stays GREEN, because with a cover present
+ * `onOpen` is set, so the img is a flex item of `MediaButton`'s row-direction button and
+ * shrink reaches 246px on its own; from the cover PLACEHOLDER → RED, 320 vs 246, because a
+ * no-cover listing renders a plain block `div` with no button and nothing else to narrow it.
+ * Inert on one branch, load-bearing on the other — kept on both so they stay symmetric.
+ */
+const coverBoxStyle = (box: { w: number; h: number }): CSSProperties => ({
   width: box.w,
   aspectRatio: `${box.w} / ${box.h}`,
   maxWidth: '100%',
@@ -202,11 +218,6 @@ export function ListingIconThumb({
       height={box}
       loading="lazy"
       decoding="async"
-      // `maxWidth: '100%'` is NOT what narrows the cover img — measured, deleting it leaves
-      // the geometry suite green, because with `onOpen` set the img is a flex item of the
-      // row-direction `MediaButton` and shrink does the work. It IS load-bearing on the cover
-      // PLACEHOLDER, which has no button and nothing else to narrow it (deleting it there
-      // reds the parity arm, 320 vs 246). Kept on both so the branches stay symmetric.
       style={{
         // 🔴 THE BOX IS ON THE CSS, NOT ONLY THE ATTRIBUTES — the attribute-only version
         // reserved the right box and then did not RETAIN it, which is strictly worse than
@@ -215,15 +226,16 @@ export function ListingIconThumb({
         // sort below every author layer, and `globals.css` ships Tailwind preflight
         // (`img { max-width: 100%; height: auto }`). So once `naturalWidth` was known
         // `height: auto` took over, the used height became `usedWidth / naturalRatio`, and
-        // `object-fit: cover` was inert. Measured in the geometry tier (3,677 CSS rules): a
-        // 1:1 image in the 320x180 cover box rendered 320x320, reflowing the card 140px — and
-        // 1:3 art gives 320x960, a 780px shift, because the CDN URL caps the cover's WIDTH
-        // only (`listing-media-url.ts`) and leaves natural height unbounded. The component
+        // `object-fit: cover` was inert. Measured in the geometry tier (3,677 CSS rules) on
+        // the COVER, whose box is 16:9 so the defect is visible there: a 1:1 image in the
+        // 320x180 box rendered 320x320, reflowing the card 140px — and 1:3 art gives 320x960,
+        // a 780px shift, because the CDN URL caps the cover's WIDTH only
+        // (`listing-media-url.ts`) and leaves natural height unbounded. The same rule governs
+        // this icon; a square box simply hides it on a square fixture. The component
         // tier's 24-rule document could not see any of it, which is why this shipped. The
         // attributes stay for the pre-CSS paint; the CSS is what holds the box.
         ...iconBoxStyle(box, size),
         objectFit: 'cover',
-        maxWidth: '100%',
       }}
     />
   );
@@ -280,9 +292,10 @@ export function ListingCoverThumb({
       //
       // 🔴 `aspectRatio` RATHER THAN A FIXED `height`. The used width gives way in any
       // container narrower than the box, and a fixed `height` does not follow it, so the pair
-      // stopped being 16:9 (measured 246x180 = 1.37 at a 280px viewport). `aspect-ratio` derives the height from whatever width survives the
-      // clamp, so the ratio holds at every width AND the pre-decode reservation is unchanged:
-      // with `complete === false` the box is still 320x180.
+      // stopped being 16:9 (measured 246x180 = 1.37 at a 280px viewport). `aspect-ratio`
+      // derives the height from whatever width survives, so the ratio holds at every width AND
+      // the pre-decode reservation is unchanged: with `complete === false` it is still
+      // 320x180.
       style={{ ...coverBoxStyle(box), objectFit: 'cover' }}
     />
   );
