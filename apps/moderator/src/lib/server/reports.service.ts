@@ -125,11 +125,34 @@ const CONTEXT_RESOLVERS: Partial<Record<ReportEntity, ContextResolver>> = {
  *  and then left unselected by the queries that render links. */
 export const CONTEXT_ENTITIES = Object.keys(CONTEXT_RESOLVERS) as ReportEntity[];
 
-export function reportContextUrl(
-  type: ReportEntity,
-  entityId: ReturnType<typeof sql<number | null>>
-) {
+function reportContextUrl(type: ReportEntity, entityId: ReturnType<typeof sql<number | null>>) {
   return CONTEXT_RESOLVERS[type]?.(entityId) ?? sql<string | null>`null::text`;
+}
+
+/**
+ * Whether one report can still be opened from its report page, which finds a report only through its
+ * entity's join row (deleted with the entity), and the content's context URL. Null when the lookup
+ * failed: a caller must read that as unknown, never as gone.
+ */
+export async function reportReachability(
+  type: ReportEntity,
+  entityId: number | null,
+  reportId: number
+): Promise<{ reachable: boolean; contextUrl: string | null } | null> {
+  const join = reportEntity(type);
+  try {
+    const { rows } = await sql<{ reachable: boolean; url: string | null }>`
+      SELECT EXISTS (
+               SELECT 1 FROM ${sql.table(join.reportTable)} WHERE "reportId" = ${reportId}
+             ) AS reachable,
+             ${
+               entityId ? reportContextUrl(type, sql<number>`${entityId}::int`) : sql`null::text`
+             } AS url
+    `.execute(dbRead);
+    return rows[0] ? { reachable: Boolean(rows[0].reachable), contextUrl: rows[0].url } : null;
+  } catch {
+    return null;
+  }
 }
 
 /** `'all'` must be said, not implied by omission. These were optional and silently skipped, which is

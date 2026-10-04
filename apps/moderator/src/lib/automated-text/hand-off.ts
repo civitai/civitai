@@ -26,8 +26,17 @@ export type ResolvedHandOff = {
   /** Links this viewer has no grant for. Named on the page with the report id, so the case still
    *  reaches someone who can act on it instead of ending at a 403. */
   blocked: string[];
-  /** The reported entity is gone, so no report page can show this report. */
+  /** The report's content has been deleted, so no report page can show the report. */
   contentGone: boolean;
+};
+
+export type HandOffItem = HandOffSource & { token: string; tag: string; answeredAt: Date };
+
+export type HandOffDeps = {
+  civitaiUrl: string;
+  canOpen: (path: string) => boolean;
+  /** Null when the lookup failed; the links are then offered as if the content still exists. */
+  lookup: (item: HandOffItem) => Promise<{ reachable: boolean; contextUrl: string | null } | null>;
 };
 
 const isReportEntity = (v: string): v is ReportEntity =>
@@ -39,7 +48,8 @@ const isReportEntity = (v: string): v is ReportEntity =>
  */
 export function handOffLinks(civitaiUrl: string, src: HandOffSource): HandOffLink[] {
   const links: HandOffLink[] = [];
-  // The report page finds a report through its entity's join row, which is deleted with the entity.
+  // 'unknown' means the entity's report join row is gone, and the report page finds a report only
+  // through that row.
   if (isReportEntity(src.entityType)) {
     links.push({
       label: 'Open the report',
@@ -61,4 +71,35 @@ export function handOffLinks(civitaiUrl: string, src: HandOffSource): HandOffLin
       external: false,
     });
   return links;
+}
+
+/** The links for each case, decided now: content deleted after the snapshot loses its report link here. */
+export async function resolveHandOffs(
+  items: HandOffItem[],
+  deps: HandOffDeps
+): Promise<ResolvedHandOff[]> {
+  return Promise.all(
+    items.map(async (item) => {
+      const found = isReportEntity(item.entityType)
+        ? await deps.lookup(item)
+        : { reachable: false, contextUrl: null };
+      const contentGone = found?.reachable === false;
+      const all = handOffLinks(
+        deps.civitaiUrl,
+        contentGone
+          ? { ...item, entityType: 'unknown' }
+          : { ...item, contextUrl: found?.contextUrl }
+      );
+      const links = all.filter((l) => l.external || deps.canOpen(l.href.split('?')[0]));
+      return {
+        token: item.token,
+        tag: item.tag,
+        answeredAt: item.answeredAt,
+        reportId: item.reportId,
+        links,
+        blocked: all.filter((l) => !links.includes(l)).map((l) => l.label),
+        contentGone,
+      };
+    })
+  );
 }

@@ -6,7 +6,7 @@ import {
   needsHandOff,
   type TextLabel,
 } from '$lib/automated-text/labels';
-import type { HandOffSource } from '$lib/automated-text/hand-off';
+import type { HandOffItem } from '$lib/automated-text/hand-off';
 import { reportEntityLabels, type ReportEntity } from '$lib/reports';
 
 // Blind relabel: a labeler gets the token, text, tag and content kind. Confidence, stratum, wave,
@@ -16,9 +16,12 @@ export type TextRelabelItem = {
   token: string;
   tag: string;
   text: string;
-  /** Null when the reported entity is gone: "deleted" would tell the labeler someone acted on it. */
+  /** Null when the entity was deleted before the snapshot: "deleted" would tell the labeler someone
+   *  acted on it. */
   entityLabel: string | null;
 };
+
+const CHAT_SHAPE = /^\[\d+\]:\s/;
 
 const answerCount = sql`(SELECT count(*) FROM text_relabel_answer a WHERE a.item_id = i.id)`;
 
@@ -31,7 +34,11 @@ function toItem(row: {
   return {
     token: row.token,
     tag: row.tag,
-    text: row.entity_type === 'chat' ? maskChatSpeakers(row.text_value) : row.text_value,
+    // On the text's shape too: a chat whose report row was already gone is stored as 'unknown'.
+    text:
+      row.entity_type === 'chat' || CHAT_SHAPE.test(row.text_value)
+        ? maskChatSpeakers(row.text_value)
+        : row.text_value,
     entityLabel: reportEntityLabels[row.entity_type as ReportEntity] ?? null,
   };
 }
@@ -147,9 +154,8 @@ export async function saveAnswer(
         duration_ms: durationMs,
         handed_off_at: handedOffAt,
       })
-      // duration_ms keeps the first answer's time: a quick correction must not read as a
-      // rubber-stamp. handed_off_at keeps the first hand-off: any later edit was made after the
-      // labeler could see the report, so it is no longer a blind label.
+      // Both survive an edit: the first duration_ms, so a quick correction does not read as a
+      // rubber-stamp; the first handed_off_at, so the eval can tell an edit made with the report in view.
       .onConflict((oc) =>
         oc.columns(['item_id', 'labeler_id']).doUpdateSet({
           label,
@@ -197,8 +203,6 @@ export async function labelerProgress(
     waveOneDone: Number(totals?.done ?? 0),
   };
 }
-
-export type HandOffItem = HandOffSource & { token: string; tag: string; answeredAt: Date };
 
 /** This labeler's clear violations on hand-off tags, newest first, so a case stays reachable after
  *  the queue moves on. */

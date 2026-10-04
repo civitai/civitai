@@ -56,6 +56,17 @@ beforeEach(async () => {
   await pg.exec('TRUNCATE relabel_item RESTART IDENTITY CASCADE');
 });
 
+describe('saveAnswer errors', () => {
+  // A named CHECK failing (an answer value the SQL does not know yet) is a real error. Read as the
+  // trigger's "full", it told the moderator two others had already labelled the image.
+  it('rethrows a named CHECK failure instead of reporting the item full', async () => {
+    const item = await seedItem(1);
+    await expect(
+      save(1, item, { ...answers, sexualLevel: 'not_an_option' as Answers['sexualLevel'] })
+    ).rejects.toMatchObject({ code: '23514' });
+  });
+});
+
 describe('two labelers per item', () => {
   // Decision: exactly two labels per item; their agreement is the human baseline. A third would
   // silently turn a pair into a vote. The cap lives in the database trigger, not the page, because

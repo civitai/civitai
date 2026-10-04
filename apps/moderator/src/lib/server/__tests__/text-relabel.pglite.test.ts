@@ -139,6 +139,11 @@ describe('nextItem', () => {
     );
   });
 
+  it('masks a chat-shaped text whose report row was gone at snapshot', async () => {
+    await seedItem({ entity_type: 'unknown', text_value: '[4411]: hi | [9002]: hey' });
+    expect((await nextItem(db, 1))?.text).toBe('[Speaker A]: hi | [Speaker B]: hey');
+  });
+
   // "Deleted content" would tell the labeler someone already acted on it.
   it('names no content kind when the reported entity is gone', async () => {
     await seedItem({ entity_type: 'unknown' });

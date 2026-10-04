@@ -68,20 +68,20 @@ The labeller sees the text, the one tag and the kind of content (comment, chat, 
 Clavata's confidence, the stratum, the wave, the report or author id, or another labeller's answer,
 until they mark a hand-off tag a clear violation (see Hand-off). A chat reaches Clavata with each
 message prefixed by its author's user id; the page shows those as Speaker A, B, … instead. When the
-reported content has since been deleted, the kind of content is not shown.
+reported content was already deleted when the snapshot ran, the kind of content is not shown.
 Items are addressed by a random token, and each labeller walks them in a different fixed order. A
 database trigger caps each item at two labellers, so a second labeller can be added later for an
 agreement number.
 
 ## Hand-off
 
-A `clear_violation` on a CSAM or Grooming item is a case, not only a label. After saving one, the
+A `clear_violation` on an item tagged with one of `HAND_OFF_TAGS` (CSAM, Grooming) is a case, not only a label. After saving one, the
 page links to the Automated report's own action view (`/reports/<type>?report=<id>`, which opens a
 single report whatever its status), to the content, and to the author in User Lookup, which shows
-their CSAM reports and account actions. Each link is shown only if the labeller's grants open it;
-otherwise the page names the report id to pass to someone who can. When the content has been
-deleted, no report page can show the report, so only the author link remains. The page lists the
+their CSAM reports and account actions. Each internal link is shown only if the labeller's grants open it;
+otherwise the page names the report id to pass to someone who can. Whether the content still
+exists is checked when the page loads: once it is deleted, no report page can show the report, so only
+the author link remains. The page lists the
 labeller's 20 most recent such answers, so a case is still reachable after the queue moves on.
 
-The answer records when it first handed a case off (`handed_off_at`). The report is visible from
-that moment, so an edit made later (`updated_at` after it) is not a blind label.
+`handed_off_at` records the first hand-off; an answer with `updated_at` after it was not made blind.

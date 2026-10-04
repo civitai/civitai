@@ -9,7 +9,7 @@
  *
  * Sampling rules: `src/lib/server/text-relabel-snapshot.ts`.
  */
-import { createKyselyClients } from '@civitai/db/kysely';
+import * as kyselyModule from '@civitai/db/kysely';
 import type { DB as MainDB } from '@civitai/db-schema/kysely';
 import type { DB as ModeratorDB } from '../src/lib/server/moderator-db/types';
 import {
@@ -19,6 +19,12 @@ import {
   snapshotAutomatedText,
   SnapshotUsageError,
 } from '../src/lib/server/text-relabel-snapshot';
+
+// @civitai/db has no `"type": "module"`, so tsx loads it as CommonJS and an ESM named import of it
+// fails; its exports arrive on `default` instead.
+const { createKyselyClients } = (
+  'default' in kyselyModule ? kyselyModule.default : kyselyModule
+) as typeof kyselyModule;
 
 function requireEnv(name: string): string {
   const v = process.env[name];

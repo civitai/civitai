@@ -1,13 +1,10 @@
 import { error, fail } from '@sveltejs/kit';
-import { sql } from '@civitai/db/kysely';
 import type { Actions, PageServerLoad } from './$types';
 import type { SessionUser } from '@civitai/auth';
 import { canAccess, requireAccess } from '$lib/server/access';
 import { civitaiLinkUrl } from '$lib/server/civitai-url';
-import { dbRead } from '$lib/server/db';
 import { getModeratorDb } from '$lib/server/moderator-db';
-import { CONTEXT_ENTITIES, reportContextUrl } from '$lib/server/reports.service';
-import { resolveHandOffs } from '$lib/server/text-relabel-hand-off';
+import { reportReachability } from '$lib/server/reports.service';
 import {
   labelerProgress,
   lastAnsweredToken,
@@ -15,9 +12,9 @@ import {
   ownAnswer,
   ownHandOffs,
   saveAnswer,
-  type HandOffItem,
 } from '$lib/server/text-relabel.service';
 import { MAX_NOTE_LENGTH, needsHandOff, parseTextLabel } from '$lib/automated-text/labels';
+import { resolveHandOffs, type HandOffItem } from '$lib/automated-text/hand-off';
 import type { ReportEntity } from '$lib/reports';
 
 const MAX_SKIPS = 100;
@@ -37,24 +34,12 @@ function parseSkips(raw: string | null): string[] {
     .slice(-MAX_SKIPS);
 }
 
-const CONTEXT = new Set<string>(CONTEXT_ENTITIES);
-
-async function contextUrlFromMain(item: HandOffItem): Promise<string | null> {
-  if (!item.entityId || !CONTEXT.has(item.entityType)) return null;
-  const { rows } = await sql<{ url: string | null }>`
-    SELECT ${reportContextUrl(
-      item.entityType as ReportEntity,
-      sql<number>`${item.entityId}::int`
-    )} AS url
-  `.execute(dbRead);
-  return rows[0]?.url ?? null;
-}
-
 const handOffsFor = (user: SessionUser | null | undefined, items: HandOffItem[]) =>
   resolveHandOffs(items, {
     civitaiUrl: civitaiLinkUrl(),
     canOpen: (path) => canAccess(user ?? null, path),
-    contextUrl: contextUrlFromMain,
+    lookup: (item) =>
+      reportReachability(item.entityType as ReportEntity, item.entityId, item.reportId),
   });
 
 export const load: PageServerLoad = async ({ locals, url }) => {
@@ -127,8 +112,6 @@ export const actions: Actions = {
             : 'That item no longer exists, so your answer was not saved.',
         token,
       });
-    // Returned whole rather than looked up from page data: a save from a pinned item navigates
-    // away, and the page keeps this result across that navigation.
     const handOff = needsHandOff(result.tag, label)
       ? (await handOffsFor(locals.user, await ownHandOffs(db, labelerId, { token })))[0] ?? null
       : null;

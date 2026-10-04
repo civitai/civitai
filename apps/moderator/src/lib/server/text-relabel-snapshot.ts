@@ -144,9 +144,9 @@ export function allocate(candidates: readonly SnapshotCandidate[], seed: string)
   return { picks, unknownTags };
 }
 
-// [report table, fk, ReportEntity] for every report type. Kept here rather than read from
-// `REPORT_ENTITIES`, whose import graph the tsx CLI cannot load; a test holds the two equal. A type
-// missing here would arrive as 'unknown', with no report link.
+// [report table, fk, ReportEntity] for every report type. Not read from REPORT_ENTITIES: it imports
+// through $lib, which tsx cannot resolve. A test holds the two equal; a type missing here arrives as
+// 'unknown' and loses its report link.
 export const ENTITY_JOINS = [
   ['ImageReport', 'imageId', 'image'],
   ['ModelReport', 'modelId', 'model'],

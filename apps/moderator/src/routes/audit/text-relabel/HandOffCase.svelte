@@ -28,6 +28,6 @@
 {#if handOff.blocked.length}
   <p class="mt-1 text-xs text-dark-2">
     You do not have access to: {handOff.blocked.join(', ')}. Pass report #{handOff.reportId} to a
-    moderator who has Reports access.
+    moderator who can open them.
   </p>
 {/if}

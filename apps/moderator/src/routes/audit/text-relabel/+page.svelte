@@ -7,7 +7,7 @@
   import { RadioGroup, RadioGroupItem } from '@civitai/ui/components/ui/radio-group/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { dateTime, LINK_CLASS } from '$lib/format';
-  import { MAX_NOTE_LENGTH, TEXT_LABELS } from '$lib/automated-text/labels';
+  import { HAND_OFF_TAGS, MAX_NOTE_LENGTH, TEXT_LABELS } from '$lib/automated-text/labels';
   import type { ResolvedHandOff } from '$lib/automated-text/hand-off';
   import HandOffCase from './HandOffCase.svelte';
   import type { ActionData, PageData } from './$types';
@@ -75,10 +75,9 @@
 
 {#if handedOff}
   <Alert variant="destructive" class="mb-4">
-    <AlertTitle>
-      You marked that {handedOff.tag} text a clear violation. It needs action, not only a label.
-    </AlertTitle>
+    <AlertTitle>Needs action</AlertTitle>
     <AlertDescription>
+      <p>You marked that {handedOff.tag} text a clear violation. It needs action, not only a label.</p>
       <HandOffCase handOff={handedOff} locked={submitting} />
     </AlertDescription>
   </Alert>
@@ -136,7 +135,7 @@
         return async ({ result }) => {
           await applyAction(result);
           if (result.type === 'success') {
-            handedOff = (result.data?.handOff as ResolvedHandOff | null | undefined) ?? null;
+            handedOff = (result.data as Extract<ActionData, { handOff: unknown }>)?.handOff ?? null;
             if (leaveItem) await goto(queueHref({ item: null }), { invalidateAll: true });
             else await invalidateAll();
           } else if (result.type === 'failure') {
@@ -205,7 +204,8 @@
     </ul>
   {:else}
     <p class="text-xs text-dark-2">
-      None yet. A clear violation on a CSAM or Grooming text is listed here with its report.
+      None yet. A clear violation on a {[...HAND_OFF_TAGS].join(' or ')} text is listed here with its
+      report.
     </p>
   {/if}
 </section>
