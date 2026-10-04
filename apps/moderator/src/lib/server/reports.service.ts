@@ -129,6 +129,30 @@ function reportContextUrl(type: ReportEntity, entityId: ReturnType<typeof sql<nu
   return CONTEXT_RESOLVERS[type]?.(entityId) ?? sql<string | null>`null::text`;
 }
 
+/** Whether the report page can still open this report (it finds one only through the entity's report
+ *  join row, deleted with the entity), plus the content's context URL. Null when the lookup failed:
+ *  read it as unknown, never as gone. */
+export async function reportReachability(
+  type: ReportEntity,
+  entityId: number | null,
+  reportId: number
+): Promise<{ reachable: boolean; contextUrl: string | null } | null> {
+  const join = reportEntity(type);
+  try {
+    const { rows } = await sql<{ reachable: boolean; url: string | null }>`
+      SELECT EXISTS (
+               SELECT 1 FROM ${sql.table(join.reportTable)} WHERE "reportId" = ${reportId}
+             ) AS reachable,
+             ${
+               entityId ? reportContextUrl(type, sql<number>`${entityId}::int`) : sql`null::text`
+             } AS url
+    `.execute(dbRead);
+    return rows[0] ? { reachable: Boolean(rows[0].reachable), contextUrl: rows[0].url } : null;
+  } catch {
+    return null;
+  }
+}
+
 /** `'all'` must be said, not implied by omission. These were optional and silently skipped, which is
  *  how Chat Audit came to count every chat report in history under copy promising open ones only. */
 export type GetReportsParams = {
