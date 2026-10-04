@@ -239,25 +239,27 @@ describe('unified layout (the default)', () => {
       );
       let checked = 0;
       for (const style of styles) {
-        // 🔴 PER DECLARATION, NOT PER ELEMENT — measured, not a refinement for its own sake.
-        // Asserting `style.includes('light-dark(')` for the whole attribute passes as soon as
-        // ANY declaration on that element is scheme-aware. Mutation: painting the gutter
-        // cell's `color` a fixed `gray-6` while its `background` kept `GUTTER_BG` printed
-        // `1 passed | 15 skipped` — the token was matched and counted, and the assertion
-        // still read the sibling declaration's `light-dark(`. Every painted element happens
-        // to carry exactly one colour declaration today, which is the only reason that gap
-        // was closed; it opens on the first element that gains a border or a text colour,
-        // i.e. exactly the edit this guard exists to police.
-        for (const decl of style.split(';')) {
-          for (const [, token] of decl.matchAll(/--mantine-color-([a-z0-9-]+)/g)) {
-            if (!isFixedInBothSchemes(token)) continue;
-            checked += 1;
-            expect(
-              decl,
-              `${label}: --mantine-color-${token} is painted outside light-dark() in \`${decl.trim()}\` (full style: ${style})`
-            ).toContain('light-dark(');
-          }
+        // 🔴 STRIP THE `light-dark(...)` SPANS, THEN LOOK AT WHAT IS LEFT — and two earlier
+        // forms of this sweep were walkable because they asked a containment question
+        // instead. v1 asserted on the whole ELEMENT's style: a fixed shade passed as long as
+        // ANY declaration on it was scheme-aware. v2 narrowed the subject to the DECLARATION
+        // and kept `toContain('light-dark(')` — still containment, so ONE declaration holding
+        // both survives. Measured, with the edit that produces it:
+        // `background: linear-gradient(${GUTTER_BG}, var(--mantine-color-white))` paints a
+        // literal white stop in dark mode and printed `16 passed`.
+        //
+        // Removing the spans asks the question directly: once every `light-dark(…)` is gone,
+        // no fixed-in-both-schemes token may remain. It also retires the `;` split, which was
+        // its own hazard — a `;` inside a quoted value (a `font-family`) would orphan a
+        // fragment and fail healthy code.
+        for (const [, token] of style.matchAll(/--mantine-color-([a-z0-9-]+)/g)) {
+          if (isFixedInBothSchemes(token)) checked += 1;
         }
+        const outside = style.replace(/light-dark\((?:[^()]|\([^()]*\))*\)/g, '');
+        const stray = Array.from(outside.matchAll(/--mantine-color-([a-z0-9-]+)/g))
+          .map(([, t]) => t)
+          .filter(isFixedInBothSchemes);
+        expect(stray, `${label}: painted OUTSIDE light-dark() in \`${style.trim()}\``).toEqual([]);
       }
       // 🔴 POSITIVE CONTROL PER PASS. A sweep that matched no tokens at all would be a
       // reassuring zero, indistinguishable from a clean one.

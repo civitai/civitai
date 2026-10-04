@@ -60,6 +60,8 @@ import {
   APP_LISTING_CATALOG_TAG,
   APP_LISTING_RECOMMEND_MEAN_TAG,
 } from '~/server/services/blocks/app-listing-cache.constants';
+import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.selector';
+import type { ReviewUserChip } from '~/components/Apps/unifiedReviewRow';
 
 /**
  * App Store Listings (W13) — P2a UNIFIED STORE READ PATH service.
@@ -1566,7 +1568,9 @@ export type ModerationListingRow = {
     id: string;
     submittedAt: Date;
     changelog: string | null;
-    submittedBy: ModerationUserChip | null;
+    /** The shared review chip — see the select. NOT `ModerationUserChip`, which is the
+     *  listings table's own plain-text owner cell and carries no `deletedAt`. */
+    submittedBy: ReviewUserChip | null;
   } | null;
   /**
    * 🔴 ON-SITE ONLY, AND NOT THE SAME THING AS `pendingRequest`.
@@ -1622,7 +1626,13 @@ export const moderationListingSelect = {
       id: true,
       submittedAt: true,
       changelog: true,
-      submittedBy: { select: { id: true, username: true, image: true } },
+      // 🔴 THE SHARED REVIEW CHIP, because this row reaches a REVIEW surface. The pending
+      // request below is handed to the reused off-site review modal (see the type's own
+      // comment), which renders the submitter through `UserAvatar` — and that BRANCHES on
+      // `deletedAt` to suppress the profile link and to render "[deleted]". The `user`
+      // chip above is deliberately NOT widened: it is the listings table's own owner cell,
+      // which is plain text, and widening it is a separate decision about a separate screen.
+      submittedBy: { select: reviewUserChipSelect },
     },
   },
 } satisfies Prisma.AppListingSelect;
@@ -1671,7 +1681,12 @@ export function projectModerationListing(
           id: pending.id,
           submittedAt: pending.submittedAt,
           changelog: pending.changelog ?? null,
-          submittedBy: creatorChip(pending.submittedBy),
+          // 🔴 PASSED THROUGH WHOLE, not through `creatorChip`. That helper projects
+          // `{ id, username, image }` EXPLICITLY, so it would drop the `deletedAt` the
+          // select above exists to carry — a field the review modal branches on. An
+          // explicit re-projection is exactly how this class of defect travels one layer
+          // at a time, and it produces no type error on the way.
+          submittedBy: pending.submittedBy,
         }
       : null,
   };

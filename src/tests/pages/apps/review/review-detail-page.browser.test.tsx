@@ -271,8 +271,13 @@ describe('ReviewDetailPage — the `selection` identity the memo downstream depe
       <ReviewDetailPage publishRequestId="pubreq_1" />
     );
     await expect.element(page.getByTestId('review-body')).toBeInTheDocument();
+    // 🔴 ONLY THE REQUEST MOVES — the mode stays `pending`, deliberately. Changing both let
+    // an UNDER-SPECIFIED dependency array pass: measured, `useMemo(…, [query.data?.mode])`
+    // survived, because the control satisfied it through the mode alone. That mutant's live
+    // failure is worse than the lost bail-out this test was written for — a refetch that
+    // returns a new request at the same mode would hand the memoised body a STALE payload.
     state.query = {
-      data: { mode: 'approved', request: { ...REQUEST, id: 'pubreq_2' } },
+      data: { mode: 'pending', request: { ...REQUEST, id: 'pubreq_2' } },
       isLoading: false,
       isError: false,
       error: null,

@@ -150,7 +150,9 @@ describe('agentReportSectionStatuses', () => {
    * different route.
    */
   test('🔴 a NON-OBJECT or ARRAY slot is a failure, not a clean section', () => {
-    for (const bogus of [0, false, [], 'x'.length - 1]) {
+    // Four DISTINCT shapes. An earlier version's fourth element was `'x'.length - 1`, which
+    // evaluates to `0` — a duplicate of the first, dressed as a separate case.
+    for (const bogus of [0, false, [], true]) {
       expect(agentReportSectionStatuses({ codeReview: bogus }).codeReview).toBe('failed');
       expect(sectionErrorMessage(bogus)).toBe('the analysis returned no result');
     }

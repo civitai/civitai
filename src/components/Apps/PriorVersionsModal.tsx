@@ -4,7 +4,7 @@ import {
   type ListingHistoryEntry,
 } from '~/components/Apps/ListingHistoryPanel';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import type { ReviewUserChip } from '~/components/Apps/unifiedReviewRow';
+import type { ReviewSubmitterChip } from '~/components/Apps/unifiedReviewRow';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -40,8 +40,8 @@ export type VersionHistoryEntry = {
   status: string;
   submittedAt: string | Date;
   reviewedAt: string | Date | null;
-  submittedBy: ReviewUserChip | null;
-  reviewedBy: ReviewUserChip | null;
+  submittedBy: ReviewSubmitterChip;
+  reviewedBy: ReviewSubmitterChip;
   rejectionReason: string | null;
   deployState: string | null;
 };

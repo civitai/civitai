@@ -36,7 +36,7 @@ import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { AgentReviewPanel, isOnsiteReviewRequest } from '~/components/Apps/AgentReviewPanel';
 import { ReviewBlockPreviewHost } from '~/components/Apps/ReviewBlockPreviewHost';
 import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
-import type { ReviewUserChip } from '~/components/Apps/unifiedReviewRow';
+import type { ReviewSubmitterChip, ReviewUserChip } from '~/components/Apps/unifiedReviewRow';
 import {
   compactRelativeTime,
   REVIEW_RELATIVE_TICK_MS,
@@ -99,17 +99,6 @@ export type FileSummary = {
   changed: string[];
 };
 
-/**
- * The submitter/reviewer shape every review read selects.
- *
- * 🔴 AN ALIAS, NOT A DECLARATION — and the two it replaced had already drifted. This file and
- * `PriorVersionsModal` each declared their own four-field chip for the same `UserAvatar`, and
- * they disagreed at birth about whether `deletedAt` was optional: the optional one could not
- * catch an omission the required one would. `ReviewUserChip` is the single declaration, in
- * the React-free `unifiedReviewRow` module so all three surfaces can reach it.
- */
-export type UserProfile = ReviewUserChip;
-
 export type ReviewedRequestCommon = {
   id: string;
   appBlockId: string | null;
@@ -125,7 +114,7 @@ export type ReviewedRequestCommon = {
   // PUSH-ORIGINATED requests (git-push, empty bundle) have no review-org
   // snapshot — this links the mod to the canonical repo at the exact pushed sha.
   pushCommitUrl?: string | null;
-  submittedBy: UserProfile;
+  submittedBy: ReviewUserChip;
   /** Lifetime store opens for this app's listing, joined on slug by the list/detail
    *  reads. Optional so a fixture need not spell it; `undefined` is "unknown", which the
    *  queue renders identically to a null listing. */
@@ -140,7 +129,7 @@ export type PendingRequest = ReviewedRequestCommon;
 export type ApprovedRequest = ReviewedRequestCommon & {
   reviewedAt: string | Date | null;
   approvalNotes: string | null;
-  reviewedBy: UserProfile | null;
+  reviewedBy: ReviewSubmitterChip;
   /** Build/deploy lifecycle for the approved version — `null` means either a
    *  legacy pre-feature row OR the STRANDED case (approved, but the build never
    *  started). Selected by `listApprovedRequests`; optional so older callers /
@@ -153,7 +142,7 @@ export type ApprovedRequest = ReviewedRequestCommon & {
 export type RejectedRequest = ReviewedRequestCommon & {
   reviewedAt: string | Date | null;
   rejectionReason: string | null;
-  reviewedBy: UserProfile | null;
+  reviewedBy: ReviewSubmitterChip;
 };
 
 export type AnyRequest = PendingRequest | ApprovedRequest | RejectedRequest;

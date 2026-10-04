@@ -110,22 +110,28 @@ describe('projectModerationListing', () => {
             id: 'alpr_1',
             submittedAt: new Date('2026-01-02T00:00:00Z'),
             changelog: 'first version',
-            submittedBy: { id: 42, username: 'author', image: null },
+            submittedBy: { id: 42, username: 'author', deletedAt: null, image: null },
           },
         ],
       }) as never
     );
-    // ⚠️ NO `deletedAt` HERE, DELIBERATELY. `creatorChip` projects `{ id, username, image }`
-    // EXPLICITLY, so it drops the field even when the row carries it — unlike the review
-    // adapters, which pass the user object through whole. That is a real gap on this
-    // surface and it is NOT this PR's: the moderator LISTINGS table is a different screen
-    // from the review queue, and widening it means widening `moderationListingSelect` too.
-    // Asserted as-is so the test keeps describing what the projection does.
+    // 🔴 `deletedAt` SURVIVES THE PROJECTION, and that is the point of this assertion.
+    //
+    // This row is handed to the REUSED off-site review modal (see `ModerationListingRow`'s
+    // own comment), which renders the submitter through `UserAvatar` — so it is a review
+    // surface, and the field is one the avatar BRANCHES on. The select was widened to the
+    // shared `reviewUserChipSelect` and the projection now passes the chip through WHOLE
+    // rather than re-projecting it through `creatorChip`, which spells `{ id, username,
+    // image }` explicitly and would drop it with no type error. An explicit re-projection is
+    // exactly how this defect travels one layer at a time.
+    //
+    // ⚠️ The sibling `owner` chip is deliberately NOT widened — it is the listings table's
+    // own plain-text creator cell, a different screen, and still reads `ModerationUserChip`.
     expect(dto.pendingRequest).toEqual({
       id: 'alpr_1',
       submittedAt: new Date('2026-01-02T00:00:00Z'),
       changelog: 'first version',
-      submittedBy: { id: 42, username: 'author', image: null },
+      submittedBy: { id: 42, username: 'author', deletedAt: null, image: null },
     });
   });
 

@@ -16,7 +16,11 @@ import {
   missingAgentReportSections,
   type AgentReportSection,
 } from '~/components/Apps/agentReviewReport';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import {
+  showErrorNotification,
+  showSuccessNotification,
+  showWarningNotification,
+} from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -159,7 +163,16 @@ export function AgentReviewPanel({
       // when a run is already in flight — refetch so the panel falls into the
       // running state instead of surfacing an error / crashing.
       if (isAlreadyRunningError(e)) {
-        showSuccessNotification({ message: 'A review is already running for this request.' });
+        // 🔴 NOT A SUCCESS TOAST. This path means the request was DROPPED — the server
+        // refused it because a run is already in flight — and a green "a review is already
+        // running" told a moderator their re-run was fine. It is not: the section they asked
+        // for is never re-run, the next report still shows it failed, and that reads as "the
+        // re-run didn't help" and earns another click. Say what happened instead.
+        showWarningNotification({
+          title: 'Not re-run',
+          message:
+            'A review is already running for this submission, so this request was dropped. Wait for it to finish, then try again.',
+        });
         void utils.blocks.getAgentReview.invalidate({ publishRequestId });
         return;
       }
@@ -219,19 +232,26 @@ export function AgentReviewPanel({
     }) === false;
 
   /**
-   * 🔴 THE BUSY WINDOW EXTENDS PAST `isPending`, AND THAT IS THE EXPENSIVE CLICK.
+   * 🔴 ONE FLAG FOR EVERY DISPATCH CONTROL ON THIS SURFACE — the whole-report button AND the
+   * three per-section ones, which is the half that was open.
    *
-   * `onSuccess` clears `isPending` and THEN awaits the report invalidation, so for a full
-   * round trip the panel still holds the stale `complete` row and renders this button
-   * enabled. A moderator who sees nothing change clicks again — and the service's own
-   * duplicate pre-check is a REPLICA read, so it cannot see the `running` row the first call
-   * just wrote to the primary. The remaining backstop is a partial unique index whose
-   * migration is marked manual-apply, so a second click in that window can provision a
-   * second ephemeral agent and a second full LLM run. This is the one dollar-denominated
-   * action on the surface; keep it disabled until the refetch that would change what the
-   * panel shows has actually landed.
+   * `ReportTabs` disabled only the SECTION YOU CLICKED (`disabled={rerunning}`), so while a
+   * targeted re-run was in flight the other two stayed live and each would dispatch its own.
+   * That costs a second ephemeral agent and a second full model run over the bundle, against
+   * a server pre-check that is a replica read and cannot see the row just written. `loading`
+   * stays per-section so only the clicked one spins.
+   *
+   * ⚠️ IT IS `isPending` ALONE, AND AN EARLIER REVISION ADDED `|| reportQuery.isFetching` ON
+   * A MECHANISM THAT IS NOT REAL. The claim was that `onSuccess` clears the pending flag and
+   * THEN awaits the invalidation, leaving a live button over a stale row. `@tanstack/query-core`
+   * does the opposite: `Mutation.execute` awaits `options.onSuccess` (mutation.js:123) and
+   * dispatches `{type:'success'}` only afterwards (mutation.js:144) — so `isPending` already
+   * spans the invalidate and its awaited refetch. Measured with a live observer: the flag is
+   * still true on `onSuccess` EXIT. The extra term bought nothing and added a failure the
+   * flag alone cannot produce — `retry: false` plus a hung request holds `isFetching` true
+   * for as long as the socket hangs, disabling the primary action with no mutation in flight.
    */
-  const dispatchBusy = startMut.isPending || reportQuery.isFetching;
+  const dispatchBusy = startMut.isPending;
 
   const runButton = (label: string) => (
     <Button
@@ -351,6 +371,7 @@ export function AgentReviewPanel({
               startMut.mutate({ publishRequestId, sections: [section] });
             }}
             rerunningSection={dispatchBusy ? rerunningSection : null}
+            dispatchBusy={dispatchBusy}
           />
           <Group gap="xs">{runButton('Re-run all analyses')}</Group>
         </Stack>
@@ -379,6 +400,7 @@ export function AgentReviewPanel({
               startMut.mutate({ publishRequestId, sections: [section] });
             }}
             rerunningSection={dispatchBusy ? rerunningSection : null}
+            dispatchBusy={dispatchBusy}
           />
           {/*
             🔴 A `complete` REPORT CAN STILL BE MISSING AN ANALYSIS, and until this was added

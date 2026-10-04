@@ -65,10 +65,16 @@ describe('reviewDiffPanels — dark-theme-aware backgrounds (Bug 2)', () => {
   });
 
   test('+/- line highlights are dark-aware (green-9/red-9 fallbacks)', async () => {
-    // ⚠️ RENDERED THROUGH `FileDiffEntry`, NOT THE OLD `DiffHunkView`. That component was a
-    // second copy of the same row mapper with ZERO production callers — so this guard was
-    // testing a renderer no moderator ever sees, while the one they do see was free to
-    // change underneath it. `DiffHunkView` is gone; this now exercises the real path.
+    // ⚠️ RENDERED THROUGH `FileDiffEntry`, NOT THE REMOVED `DiffHunkView` — and the history
+    // precisely, because an earlier wording of this note got it backwards in two places.
+    // On `origin/main` `DiffHunkView` was `FileDiffEntry`'s CHILD, called from its body, not
+    // a rival copy of it; and its only consumer from OUTSIDE that module was this guard.
+    // Rewriting `FileDiffEntry` around a shared rows table left it with no production caller
+    // at all, so the guard became a test of a renderer no moderator would ever see while the
+    // structure they DO see was free to change underneath it. The export is gone; this now
+    // exercises the real path. (The same retraction is recorded at the two sites that
+    // asserted it: `reviewDiffPanels.tsx`'s `UnifiedRowsTable` and
+    // `src/components/Apps/reviewDiffViewer.browser.test.tsx`.)
     const file: FileLineDiff = {
       path: 'src/hunk.ts',
       changeKind: 'changed',

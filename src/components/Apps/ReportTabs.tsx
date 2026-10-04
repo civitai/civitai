@@ -139,6 +139,7 @@ export function SectionFailed({
   section,
   onRerun,
   rerunning = false,
+  busy,
 }: {
   error: string;
   /** Which analysis this is — passed back to `onRerun`. Omit to render no control. */
@@ -155,6 +156,8 @@ export function SectionFailed({
    */
   onRerun?: (section: AgentReportSection) => void;
   rerunning?: boolean;
+  /** True while ANY dispatch is in flight on this report — see the button below. */
+  busy?: boolean;
 }) {
   return (
     <Alert
@@ -178,7 +181,15 @@ export function SectionFailed({
             color="red"
             leftSection={<IconRefresh size={14} />}
             loading={rerunning}
-            disabled={rerunning}
+            // 🔴 DISABLED BY THE SHARED FLAG, SPINNING BY ITS OWN. `disabled={rerunning}`
+            // closed only the button you clicked, so with two analyses broken — the case a
+            // moderator actually meets — the other one stayed live and dispatched a SECOND
+            // ephemeral agent and a second full model run over the same bundle. The server's
+            // duplicate pre-check is a replica read and cannot see the row just written, so
+            // the only thing between that click and a second billed run is a partial unique
+            // index whose migration is manual-apply. `busy` falls back to `rerunning` so a
+            // caller that has not been updated is no worse off than before.
+            disabled={busy ?? rerunning}
             onClick={() => onRerun(section)}
             data-testid="apps-report-section-rerun"
           >
@@ -204,6 +215,7 @@ export function SectionDidNotRun({
   section,
   onRerun,
   rerunning = false,
+  busy,
 }: {
   section: AgentReportSection;
   /**
@@ -217,6 +229,8 @@ export function SectionDidNotRun({
    */
   onRerun?: (section: AgentReportSection) => void;
   rerunning?: boolean;
+  /** True while ANY dispatch is in flight on this report — see the button below. */
+  busy?: boolean;
 }) {
   const label = AGENT_REPORT_SECTION_LABELS[section];
   return (
@@ -241,7 +255,15 @@ export function SectionDidNotRun({
             variant="light"
             leftSection={<IconRefresh size={14} />}
             loading={rerunning}
-            disabled={rerunning}
+            // 🔴 DISABLED BY THE SHARED FLAG, SPINNING BY ITS OWN. `disabled={rerunning}`
+            // closed only the button you clicked, so with two analyses broken — the case a
+            // moderator actually meets — the other one stayed live and dispatched a SECOND
+            // ephemeral agent and a second full model run over the same bundle. The server's
+            // duplicate pre-check is a replica read and cannot see the row just written, so
+            // the only thing between that click and a second billed run is a partial unique
+            // index whose migration is manual-apply. `busy` falls back to `rerunning` so a
+            // caller that has not been updated is no worse off than before.
+            disabled={busy ?? rerunning}
             onClick={() => onRerun(section)}
             data-testid="apps-report-section-rerun"
           >
@@ -495,6 +517,7 @@ export function CodeReviewTab({
   highlightedId,
   onRerun,
   rerunning,
+  busy,
   status,
 }: {
   codeReview: CodeReviewView;
@@ -504,6 +527,8 @@ export function CodeReviewTab({
   /** Dispatch a re-run of THIS analysis alone. Omitted ⇒ the failure state has no control. */
   onRerun?: (section: AgentReportSection) => void;
   rerunning?: boolean;
+  /** True while ANY dispatch is in flight on this report — see the button below. */
+  busy?: boolean;
   /**
    * What this analysis DID — `complete` | `failed` | `missing`.
    *
@@ -515,10 +540,18 @@ export function CodeReviewTab({
   status?: AgentSectionStatus;
 }) {
   if (status === 'missing')
-    return <SectionDidNotRun section="codeReview" onRerun={onRerun} rerunning={rerunning} />;
+    return (
+      <SectionDidNotRun section="codeReview" onRerun={onRerun} rerunning={rerunning} busy={busy} />
+    );
   if (error)
     return (
-      <SectionFailed error={error} section="codeReview" onRerun={onRerun} rerunning={rerunning} />
+      <SectionFailed
+        error={error}
+        section="codeReview"
+        onRerun={onRerun}
+        rerunning={rerunning}
+        busy={busy}
+      />
     );
   return (
     <Stack gap="sm">
@@ -566,6 +599,7 @@ export function SecurityAuditTab({
   highlightedId,
   onRerun,
   rerunning,
+  busy,
   status,
 }: {
   securityAudit: SecurityAuditView;
@@ -575,6 +609,8 @@ export function SecurityAuditTab({
   /** Dispatch a re-run of THIS analysis alone. Omitted ⇒ the failure state has no control. */
   onRerun?: (section: AgentReportSection) => void;
   rerunning?: boolean;
+  /** True while ANY dispatch is in flight on this report — see the button below. */
+  busy?: boolean;
   /**
    * What this analysis DID — `complete` | `failed` | `missing`.
    *
@@ -586,7 +622,14 @@ export function SecurityAuditTab({
   status?: AgentSectionStatus;
 }) {
   if (status === 'missing')
-    return <SectionDidNotRun section="securityAudit" onRerun={onRerun} rerunning={rerunning} />;
+    return (
+      <SectionDidNotRun
+        section="securityAudit"
+        onRerun={onRerun}
+        rerunning={rerunning}
+        busy={busy}
+      />
+    );
   if (error)
     return (
       <SectionFailed
@@ -594,6 +637,7 @@ export function SecurityAuditTab({
         section="securityAudit"
         onRerun={onRerun}
         rerunning={rerunning}
+        busy={busy}
       />
     );
   return (
@@ -687,6 +731,7 @@ export function ScopesTab({
   error,
   onRerun,
   rerunning,
+  busy,
   status,
 }: {
   scopeVerdicts: ScopeVerdictsView;
@@ -694,6 +739,8 @@ export function ScopesTab({
   /** Dispatch a re-run of THIS analysis alone. Omitted ⇒ the failure state has no control. */
   onRerun?: (section: AgentReportSection) => void;
   rerunning?: boolean;
+  /** True while ANY dispatch is in flight on this report — see the button below. */
+  busy?: boolean;
   /**
    * What this analysis DID — `complete` | `failed` | `missing`.
    *
@@ -710,7 +757,14 @@ export function ScopesTab({
   const isNarrow = useMediaQuery('(max-width: 768px)');
 
   if (status === 'missing')
-    return <SectionDidNotRun section="scopeVerdicts" onRerun={onRerun} rerunning={rerunning} />;
+    return (
+      <SectionDidNotRun
+        section="scopeVerdicts"
+        onRerun={onRerun}
+        rerunning={rerunning}
+        busy={busy}
+      />
+    );
   if (error)
     return (
       <SectionFailed
@@ -718,6 +772,7 @@ export function ScopesTab({
         section="scopeVerdicts"
         onRerun={onRerun}
         rerunning={rerunning}
+        busy={busy}
       />
     );
 
@@ -928,6 +983,7 @@ export function ReportTabs({
   costCapped,
   onRerunSection,
   rerunningSection = null,
+  dispatchBusy = false,
 }: {
   /**
    * Dispatch a re-run of ONE analysis.
@@ -941,6 +997,12 @@ export function ReportTabs({
   onRerunSection?: (section: AgentReportSection) => void;
   /** The section whose re-run is in flight, if any. */
   rerunningSection?: AgentReportSection | null;
+  /**
+   * 🔴 TRUE WHILE **ANY** RE-RUN IS IN FLIGHT, not just the one you clicked.
+   * `rerunningSection` is single-valued and drives the SPINNER; this drives the DISABLED
+   * state on all three buttons, because every one of them dispatches the same billed job.
+   */
+  dispatchBusy?: boolean;
   report: {
     status: string;
     model?: string | null;
@@ -1134,6 +1196,7 @@ export function ReportTabs({
             status={sectionStatuses.scopeVerdicts}
             onRerun={onRerunSection}
             rerunning={rerunningSection === 'scopeVerdicts'}
+            busy={dispatchBusy}
           />
         </Tabs.Panel>
         <Tabs.Panel value="security" pt="sm">
@@ -1145,6 +1208,7 @@ export function ReportTabs({
             highlightedId={highlightedId}
             onRerun={onRerunSection}
             rerunning={rerunningSection === 'securityAudit'}
+            busy={dispatchBusy}
           />
         </Tabs.Panel>
         <Tabs.Panel value="code" pt="sm">
@@ -1156,6 +1220,7 @@ export function ReportTabs({
             highlightedId={highlightedId}
             onRerun={onRerunSection}
             rerunning={rerunningSection === 'codeReview'}
+            busy={dispatchBusy}
           />
         </Tabs.Panel>
       </Tabs>

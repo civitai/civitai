@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import type * as UserAvatarMod from '~/components/UserAvatar/UserAvatar';
+import type * as NotificationsModule from '~/utils/notifications';
 
 /**
  * AGENTIC MOD CODE-REVIEW panel (App Blocks P2) — browser-mode component tests.
@@ -92,9 +93,20 @@ vi.mock('@mantine/hooks', async () => {
 
 const showError = vi.fn();
 const showSuccess = vi.fn();
-vi.mock('~/utils/notifications', () => ({
+const showWarning = vi.fn();
+/*
+  🔴 SPREAD THE ORIGINAL, never a one-key factory — and this file is the worked example of
+  why. It listed two exports; the panel then started calling a third
+  (`showWarningNotification`, for the dropped-re-run toast) and the WHOLE FILE stopped
+  importing: `does not provide an export named …`, which vitest reports as 0 tests collected,
+  not as a failing assertion. A sibling suite's green run is the only reason it was noticed.
+  `local-rules/no-wholesale-module-mock` reds on the narrow form.
+*/
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationsModule>()),
   showSuccessNotification: (...a: unknown[]) => showSuccess(...a),
   showErrorNotification: (...a: unknown[]) => showError(...a),
+  showWarningNotification: (...a: unknown[]) => showWarning(...a),
 }));
 
 // The AgentReviewChat sub-panel reads `useCurrentUser()` (→ CivitaiSessionContext)
@@ -343,6 +355,7 @@ beforeEach(() => {
   mocks.lastAgentOpts = undefined;
   showError.mockClear();
   showSuccess.mockClear();
+  showWarning.mockClear();
   setNarrow(false); // desktop (table + scroll-container) by default
 });
 
@@ -430,11 +443,23 @@ describe('AgentReviewPanel — trigger', () => {
       <AgentReviewPanel publishRequestId="onsite-req-1" slug="my-onsite-block" />
     );
     await page.getByRole('button', { name: 'Run agentic review' }).click();
-    // No error notification (CONFLICT is expected), and the read query is refetched
-    // so the panel falls into the running state.
+    // No error notification — a CONFLICT is expected, not a crash — and the read query is
+    // refetched so the panel falls into the running state.
     expect(showError).not.toHaveBeenCalled();
-    expect(showSuccess).toHaveBeenCalled();
     expect(mocks.invalidate).toHaveBeenCalled();
+
+    // 🔴 AND IT IS NOT A SUCCESS TOAST. This path means the moderator's request was DROPPED:
+    // the server refused it because a run is already in flight, so the analysis they asked
+    // for is never re-run. A green "a review is already running" told them it was fine — and
+    // the next report still shows that section failed, which reads as "the re-run didn't
+    // help" and earns another click at the same billed cost.
+    expect(showSuccess, 'a dropped request must not read as a success').not.toHaveBeenCalled();
+    expect(showWarning).toHaveBeenCalledTimes(1);
+    const toast = showWarning.mock.calls[0][0] as { title?: string; message?: string };
+    // The copy has to say the request did not happen — by its words, since that is all the
+    // moderator gets. Asserted on both halves so a reword that drops either one fails.
+    expect(`${toast.title ?? ''} ${toast.message ?? ''}`).toMatch(/not re-run/i);
+    expect(toast.message ?? '').toMatch(/dropped/i);
   });
 
   test('a genuine error DOES surface via showErrorNotification', async () => {

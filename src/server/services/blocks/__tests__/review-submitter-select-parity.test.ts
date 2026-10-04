@@ -3,7 +3,8 @@ import { join } from 'path';
 import { describe, expect, test } from 'vitest';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { stripCommentsAndStrings } from '../../../../../test/strip-comments';
-import { reviewUserChipSelect, simpleUserSelect } from '~/server/selectors/user.selector';
+import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.selector';
 
 /**
  * THE SEAM BETWEEN EVERY MODERATOR REVIEW SURFACE'S USER CHIP.
@@ -14,7 +15,7 @@ import { reviewUserChipSelect, simpleUserSelect } from '~/server/selectors/user.
  * `profilePicture` and `cosmetics` off whatever object it is handed — so the surfaces agree
  * only while their selects do.
  *
- * 🔴 THIS FILE USED TO BE A 230-LINE SOURCE SCAN, AND DELETING IT WAS THE FIX.
+ * 🔴 THIS FILE USED TO BE A 230-LINE PARITY SCAN, AND DELETING THAT WAS THE FIX.
  *
  * The literal `{ id, username, deletedAt, image }` was spelled inline at NINE sites in
  * `publish-request.service.ts` plus one in `offsite-listing.service.ts`, and the scan existed
@@ -22,17 +23,16 @@ import { reviewUserChipSelect, simpleUserSelect } from '~/server/selectors/user.
  * whole round before the four `reviewedBy` ones, and the off-site chip after both — so for a
  * while the queue rendered a closed account as `[deleted]` on an on-site row and as a live,
  * linked profile on the off-site row directly beneath. A predicate open-coded at ten sites is
- * typically wrong at most of them in the same direction, and a scan can only ever report that
+ * typically wrong at most of them in the same direction, and a scan can only report that
  * after the fact.
  *
  * There is now ONE declaration — `reviewUserChipSelect` — so parity is an identity rather
- * than a text property, and the scan's whole subject is gone. What survives is the smaller
- * question the const cannot answer by itself: does it still carry the fields the chip
- * BRANCHES on, and has anyone re-introduced an inline copy?
+ * than a text property. What survives is the smaller question the const cannot answer by
+ * itself: does it still carry what the chip BRANCHES on, and has a NARROWER copy appeared?
  *
  * ⚠️ The scan is not "replaced by types". A Prisma select is structurally typed, so a
- * NARROWER inline literal is still assignable — nothing in the type system objects to
- * someone writing the four fields out again, minus one. That is what the third case checks.
+ * narrower literal is still assignable — nothing in the type system objects to someone
+ * writing the four fields out again, minus one. That is what the third case checks.
  */
 
 const SERVICE_FILES = [
@@ -41,14 +41,64 @@ const SERVICE_FILES = [
 ] as const;
 
 /**
- * An inline `{ select: { … } }` literal on any of the chip-bearing names.
+ * Every object literal in a service that names `username: true`, as its brace-matched body.
  *
- * `[:=]` covers both spellings that have existed here: the property form
- * (`submittedBy: { select: { … } }`) and the hoisted-const form
- * (`const submitterChip = { select: { … } }`), which is how the off-site service wrote it.
- * A site that reads the shared const has no `{` after `select:` and cannot match.
+ * 🔴 ANCHORED ON THE FIELD, NOT ON A NAME OR A WRAPPER — and both narrower anchors were
+ * measured walkable before this one.
+ *
+ * An allowlist of property names policed four identifiers against ~109 `select: {` sites
+ * across these two files: hoisting the same narrower literal as `authorChip` and writing
+ * `submittedBy: authorChip` left it green. Anchoring on `select: {` instead fixes the name
+ * half and keeps a wrapper half — it misses `const modChip = { id: true, username: true,
+ * image: true }`, a chip with no `select` of its own, which is the OTHER shape that has
+ * existed here.
+ *
+ * Anchoring on the field cannot be walked by renaming or re-nesting anything: a select that
+ * names `username` is a user chip, whatever it is called and wherever it sits, and on these
+ * two services every user chip must carry `deletedAt`.
  */
-const INLINE_CHIP = /(submittedBy|reviewedBy|submitter(?:Chip)?)\s*[:=]\s*\{\s*select\s*:\s*\{/g;
+function userChipSelects(source: string): string[] {
+  const code = stripCommentsAndStrings(source);
+  const out: string[] = [];
+  for (const m of code.matchAll(/\busername\s*:\s*true\b/g)) {
+    // Walk BACK to the enclosing `{`, counting depth so a nested literal cannot escape…
+    let depth = 0;
+    let open = -1;
+    for (let i = (m.index ?? 0) - 1; i >= 0; i -= 1) {
+      const ch = code[i];
+      if (ch === '}') depth += 1;
+      else if (ch === '{') {
+        if (depth === 0) {
+          open = i;
+          break;
+        }
+        depth -= 1;
+      }
+    }
+    if (open < 0) continue;
+    // …and FORWARD to its match.
+    depth = 1;
+    let i = open + 1;
+    while (i < code.length && depth > 0) {
+      const ch = code[i];
+      if (ch === '{') depth += 1;
+      else if (ch === '}') depth -= 1;
+      i += 1;
+    }
+    if (depth !== 0) continue;
+    out.push(
+      code
+        .slice(open + 1, i - 1)
+        .replace(/\s+/g, ' ')
+        .trim()
+    );
+  }
+  return out;
+}
+
+/** Every flat object literal in a file — the walk's own liveness control. */
+const objectLiterals = (source: string) =>
+  (stripCommentsAndStrings(source).match(/\{[^{}]*\}/g) ?? []).length;
 
 describe('the review user chip is one declaration', () => {
   test('🔴 it carries the fields `UserAvatar` actually BRANCHES on', () => {
@@ -62,7 +112,8 @@ describe('the review user chip is one declaration', () => {
     // `undefined` ⇒ falsy ⇒ a DELETED submitter rendered as a live, linked account, on the
     // surface where who submitted a bundle is the fact being judged. A field that exists in a
     // DTO is not a guard; those are the consumers that BRANCH on it, which is why the floor
-    // names it. The render itself is pinned in `ReviewSubmitterMeta.browser.test.tsx`.
+    // names it. The render itself is pinned in `ReviewSubmitterMeta.browser.test.tsx` and,
+    // for both row kinds in one list, `UnifiedReviewList.deletedSubmitter.browser.test.tsx`.
     expect(reviewUserChipSelect).toEqual({
       id: true,
       username: true,
@@ -89,42 +140,60 @@ describe('the review user chip is one declaration', () => {
     expect(rest).toEqual(reviewUserChipSelect);
   });
 
-  test('🔴 no service re-introduces an INLINE chip literal — the type system cannot see one', () => {
-    // The failure this replaces the old scan for: a narrower literal written out again at a
-    // new call site. Prisma selects are structurally typed, so `{ id: true, username: true,
+  test('🔴 every user chip these services select carries `deletedAt` — whatever it is called', () => {
+    // The failure this replaces the parity scan for: a narrower literal written out again at
+    // a new call site. Prisma selects are structurally typed, so `{ id: true, username: true,
     // image: true }` is perfectly assignable — it just silently drops the branch.
-    //
-    // Comments and strings are stripped first: a select spelled in a docstring or an error
-    // message is prose, not a query, and counting one would fail this for no reason.
     const offenders: string[] = [];
     for (const rel of SERVICE_FILES) {
-      const code = stripCommentsAndStrings(readFileSync(join(process.cwd(), rel), 'utf8'));
-      for (const m of code.matchAll(INLINE_CHIP)) {
-        offenders.push(`${rel}: ${m[0].replace(/\s+/g, ' ')}`);
+      for (const body of userChipSelects(readFileSync(join(process.cwd(), rel), 'utf8'))) {
+        if (!/\bdeletedAt\s*:\s*true\b/.test(body)) offenders.push(`${rel}: { ${body} }`);
       }
     }
-    expect(offenders, 'every review user chip must read `reviewUserChipSelect`').toEqual([]);
+    expect(
+      offenders,
+      'a user chip without `deletedAt` renders a closed account as a live, linked profile'
+    ).toEqual([]);
   });
 
-  test('🔴 POSITIVE CONTROL: the services DO reference the shared const, and the pattern CAN match', () => {
-    // Two reassuring zeros to disprove. (a) An empty `offenders` above is indistinguishable
-    // from a scan pointed at the wrong files, so prove both services actually name the const.
-    // (b) Prove the pattern matches when an inline literal IS present — otherwise the case
-    // above is a regex that may never have matched anything in its life.
+  test('🔴 POSITIVE CONTROL: the walk is live, it CAN catch, and it survives the stripper', () => {
+    // Three reassuring zeros to disprove.
+    //
+    // (a) The walk reads real literals out of the real files. Deliberately NOT a count of
+    // user chips — there are legitimately zero of those now, because every one reads the
+    // shared const, so asserting a non-zero chip count would fail the moment the guard
+    // started succeeding.
     for (const rel of SERVICE_FILES) {
-      const code = readFileSync(join(process.cwd(), rel), 'utf8');
-      expect(code, `${rel} must consume the shared select`).toContain('reviewUserChipSelect');
+      const src = readFileSync(join(process.cwd(), rel), 'utf8');
+      expect(objectLiterals(src), `${rel} must yield object literals`).toBeGreaterThan(5);
+      expect(src, `${rel} must consume the shared select`).toContain('reviewUserChipSelect');
     }
-    const planted = [
+
+    // (b) It CAN catch — otherwise the case above is a walk that may never have rejected
+    // anything. All four shapes: the property form, a hoisted const WITH a `select` wrapper,
+    // a hoisted const WITHOUT one, and a differently-named property.
+    const bad = [
       'submittedBy: { select: { id: true, username: true, image: true } },',
-      'reviewedBy: { select: { id: true } },',
-      'const submitterChip = { select: { id: true } } as const;',
-    ];
-    for (const p of planted) {
-      expect(
-        new RegExp(INLINE_CHIP.source).test(p),
-        `the inline-literal pattern must match \`${p}\``
-      ).toBe(true);
-    }
+      'const authorChip = { select: { id: true, username: true, image: true } } as const;',
+      'const modChip = { id: true, username: true, image: true } as const;',
+      'owner: { select: { id: true, username: true, image: true } },',
+    ].join('\n');
+    expect(userChipSelects(bad).filter((b) => !/deletedAt/.test(b))).toHaveLength(4);
+
+    // (c) 🔴 RUN THE PLANTED STRINGS THROUGH THE STRIPPER, which the real assertion does and
+    // an earlier control did not. `stripCommentsAndStrings` is documented as deliberately
+    // biased toward removing TOO MUCH — safe, because over-stripping is supposed to turn a
+    // caller RED. It cannot here: the subject is an ABSENCE, so over-stripping silently
+    // empties the corpus and the guard passes. Measured — neutering the stripper to return
+    // `''` left this file green with a real inline literal planted.
+    expect(userChipSelects(stripCommentsAndStrings(bad))).toHaveLength(4);
+
+    // …and prose is still not a query.
+    const proseOnly = [
+      '// submittedBy: { select: { id: true, username: true } }',
+      'const doc = `select: { id: true, username: true }`;',
+      'submittedBy: { select: { id: true, username: true, deletedAt: true, image: true } },',
+    ].join('\n');
+    expect(userChipSelects(proseOnly)).toHaveLength(1);
   });
 });

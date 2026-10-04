@@ -1,5 +1,5 @@
 import { appDisplayName } from '~/shared/utils/app-display-name';
-import { reviewUserChipSelect } from '~/server/selectors/user.selector';
+import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.selector';
 import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import type { Prisma } from '@prisma/client';
 import { createHash } from 'crypto';

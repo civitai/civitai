@@ -299,6 +299,50 @@ describe('re-running ONE analysis instead of all three', () => {
     });
   });
 
+  test('🔴 a dispatch in flight disables EVERY re-run button, not just the one clicked', async () => {
+    // The money path, and the likelier one: a moderator looking at TWO broken analyses
+    // clicks both. Each dispatches the same job — a second ephemeral agent and a second
+    // full model run over the same bundle — against a server pre-check that is a replica
+    // read and cannot see the row the first call just wrote.
+    //
+    // 🔴 THE FIXTURE HAS TWO FAILED SECTIONS ON PURPOSE. With only one there is nothing to
+    // click second, so a one-failure fixture would make this pass whatever the code did.
+    mocks.report = {
+      ...PARTIAL_REPORT,
+      securityAudit: { error: 'truncated-response' },
+    };
+    // `pending` IS a dispatch in flight — the panel derives its shared busy flag from the
+    // mutation's own pending state, so this is the real condition rather than a stand-in.
+    mocks.pending = true;
+    render();
+    await page.getByRole('tab', { name: /Security audit/ }).click();
+    const other = visiblePanel()!.querySelector<HTMLButtonElement>(
+      '[data-testid="apps-report-section-rerun"]'
+    );
+    expect(other, 'the OTHER failed section still offers a retry control').not.toBeNull();
+    expect(
+      other!.disabled,
+      'a second section must not dispatch while a re-run is already in flight'
+    ).toBe(true);
+  });
+
+  test('🔴 NEGATIVE CONTROL: with nothing in flight, that same button IS clickable', async () => {
+    // Without this, the assertion above is satisfied by a panel that disables the control
+    // permanently — which would remove the affordance rather than guard it.
+    mocks.report = {
+      ...PARTIAL_REPORT,
+      securityAudit: { error: 'truncated-response' },
+    };
+    mocks.pending = false;
+    render();
+    await page.getByRole('tab', { name: /Security audit/ }).click();
+    const other = visiblePanel()!.querySelector<HTMLButtonElement>(
+      '[data-testid="apps-report-section-rerun"]'
+    );
+    expect(other).not.toBeNull();
+    expect(other!.disabled).toBe(false);
+  });
+
   test('🔴 the whole-report re-run is STILL offered, and sends NO section list', async () => {
     // A mod who thinks the whole analysis is stale must still be able to redo everything —
     // and that path must not acquire a section filter by accident.

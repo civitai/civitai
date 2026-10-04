@@ -5,7 +5,7 @@ import { TRPCError } from '@trpc/server';
 import { Prisma } from '@prisma/client';
 
 import { dbRead, dbWrite } from '~/server/db/client';
-import { reviewUserChipSelect } from '~/server/selectors/user.selector';
+import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.selector';
 import {
   bustAppListingCatalogCache,
   listingQueueFacts,
