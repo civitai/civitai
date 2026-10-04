@@ -163,11 +163,21 @@ export function ListingIconThumb({
       height={box}
       loading="lazy"
       decoding="async"
-      // 🔴 `maxWidth: '100%'` ON TOP OF THE FIXED BOX. The fixed pair is the CLS reservation;
-      // this is the bound that stops a wide box from widening the PAGE on a narrow viewport,
-      // which the review page must never do (its diff panel scrolls inside itself for the
-      // same reason). The two are not redundant — one reserves, the other clamps.
-      style={{ borderRadius: 8, objectFit: 'cover', flex: `0 1 ${box}px`, maxWidth: '100%' }}
+      // 🔴 THE ROW BOX STAYS RIGID (`0 0`); ONLY THE REVIEW BOX MAY SHRINK (`0 1`). An earlier
+      // revision used `0 1` for both and the geometry tier caught it: in a queue TABLE cell
+      // a shrinkable icon lets the browser trade width for height, so the ledger's columns
+      // made rows TALLER at a narrow width — a layout regression a width assertion cannot
+      // see, in a surface this change was not supposed to touch at all. The 96px review box
+      // genuinely should give way on a tiny screen; the 40px row box has nothing to give.
+      //
+      // `maxWidth: '100%'` is the other half, and it is not redundant with the fixed pair:
+      // one RESERVES the space, the other CLAMPS it so a wide box cannot widen the page.
+      style={{
+        borderRadius: 8,
+        objectFit: 'cover',
+        flex: `0 ${size === 'review' ? 1 : 0} ${box}px`,
+        maxWidth: '100%',
+      }}
     />
   );
   if (!onOpen) return img;
