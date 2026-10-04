@@ -26,7 +26,9 @@ import { AGENT_BUILD_PROMPT, AGENT_ONBOARDING_URL } from '~/components/Apps/cliC
  * Written from the specification, not copied from the implementation, and concatenated with
  * an explicit `'\n' + '\n'` so the blank line between the two paragraphs is unambiguous in
  * the source — it is part of the bytes the clipboard receives, and
- * `AgentOnboardingCard.module.scss`'s `white-space: pre-line` exists to render it.
+ * `AgentOnboardingCard.module.scss`'s `white-space: pre-line` exists to render it. The em
+ * dash (U+2014) and that blank line are both inside this literal, so both are pinned by the
+ * one `toBe` below; neither needs its own assertion.
  */
 const EXPECTED_PROMPT =
   'Read https://civitai.com/agent-onboarding and complete the setup, then tell me if I need to run `civitai login`.\n' +
@@ -38,17 +40,10 @@ describe('🔴 the agent onboarding prompt is these exact bytes', () => {
     expect(AGENT_BUILD_PROMPT).toBe(EXPECTED_PROMPT);
   });
 
-  it('carries the onboarding URL, so the two constants cannot drift apart', () => {
-    // `AGENT_BUILD_PROMPT` interpolates `AGENT_ONBOARDING_URL`, so this holds structurally —
-    // asserted anyway, because the interpolation is the kind of thing a later edit inlines.
-    expect(AGENT_BUILD_PROMPT).toContain(AGENT_ONBOARDING_URL);
+  it('pins the onboarding URL independently of the prompt', () => {
+    // The one claim the assertion above does not already make: `AGENT_ONBOARDING_URL` is
+    // exported and read elsewhere, so it is pinned on its own rather than only through the
+    // prompt that interpolates it.
     expect(AGENT_ONBOARDING_URL).toBe('https://civitai.com/agent-onboarding');
-  });
-
-  it('uses an EM DASH, not a hyphen, and a real blank line between the paragraphs', () => {
-    // Spelled out separately because both are invisible in a diff and neither would survive
-    // a well-meant "tidy the punctuation" pass unnoticed. The em dash is U+2014.
-    expect(AGENT_BUILD_PROMPT).toContain('—');
-    expect(AGENT_BUILD_PROMPT.split('\n\n')).toHaveLength(2);
   });
 });

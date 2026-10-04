@@ -83,63 +83,37 @@ export const CLI_SUBMIT_COMMAND = 'civitai app submit';
 /**
  * The short alias a developer's coding agent is told to read.
  *
- * 🔴 OWNED BY `civitai/civitai-developer-docs`, NOT BY THIS REPO.
- * `.vitepress/agent-setup.mjs` there declares `SHORT_PROMPT_URL` with this exact value and
- * builds its own `SETUP_PROMPT` from it, and `scripts/check-agent-setup.mjs` runs six
- * anti-rot checks over that surface — including a SINGLE SOURCE check that the page's
- * copy-paste string is byte-identical to the constant. That checker BLOCKS a PR there.
- *
- * 🔴 IT CANNOT SEE THIS FILE, AND THAT IS BY DESIGN RATHER THAN AN OVERSIGHT. Its own
- * header states every check is repo-local — "they read committed files only, make no network
- * request, and cannot false-fail on someone else's publish, which is the property this repo
- * requires of anything that blocks a PR". So the copy below is unguarded upstream: changing
- * `SHORT_PROMPT_URL` there leaves this constant behind with every check on both sides green.
+ * 🔴 OWNED BY `civitai/civitai-developer-docs`, NOT BY THIS REPO. `.vitepress/agent-setup.mjs`
+ * there declares `SHORT_PROMPT_URL` with this exact value and builds its own `SETUP_PROMPT`
+ * from it, guarded by `scripts/check-agent-setup.mjs`, which BLOCKS a PR there. That checker
+ * is repo-local by design — committed files only, no network request — so it CANNOT see this
+ * copy: changing `SHORT_PROMPT_URL` upstream leaves this constant behind with every check on
+ * both sides green. The only thing pinning this side is `__tests__/agentPrompt.test.ts` (the
+ * bytes) plus `AgentOnboardingCard.browser.test.tsx` (that those bytes reach the clipboard) —
+ * a guard against an accidental edit HERE, never a check that upstream still agrees.
  *
  * 🔴 AND THE URL ITSELF IS TRACKED IN NEITHER REPO. It is a Cloudflare 302 to
  * `https://developer.civitai.com/agent-setup/prompt.md` — a dashboard redirect rule, not a
- * Next.js route and not a rewrite. Measured 2026-10-03: `302` with that `location:`, then
- * `200` and 7,433 bytes. `next.config.mjs` defines no such redirect — unlike
- * `APPS_REQUEST_ACCESS_HREF` above, whose `/discord` target IS a committed redirect with a
- * test asserting it exists (positive control: the same search finds `/discord`, so that zero
- * is a real absence). If the Cloudflare rule is moved or deleted, this constant silently
- * points at a 404 and nothing in either repo reports it.
+ * Next.js route and not a rewrite (measured 2026-10-03: `302` with that `location:`, then
+ * `200`, 7,433 bytes). Moved or deleted, this constant silently points at a 404 and nothing in
+ * either repo reports it. ⚠️ A 404 rather than someone else's text only because `src/pages/`
+ * has no top-level dynamic or catch-all segment and there is no `src/middleware.ts` rewrite:
+ * adding a root-level `[slug]`/`[...slug]` page would turn this into a pointer at
+ * user-controllable content, unreported on either side.
  *
- * ⚠️ AN EARLIER VERSION OF THIS NOTE SAID "`git grep agent-onboarding` RETURNS NOTHING BUT
- * THIS BLOCK" — true when written, false now that the card and three test files reference it.
- * The substantive claim (no committed ROUTE) is what matters and still holds; the sentence is
- * corrected because it is the evidence a future reader would lean on.
+ * ⚠️ WHAT IT DOES AND DOES NOT WIDEN. Not the trust domain — `CLI_INSTALL_NPM` above already
+ * asks the same page's reader to `npm install -g @civitai/cli`. What changes is WHO can alter
+ * what gets executed: the command blocks are code-reviewed strings, this delegates to unpinned
+ * remote text editable from a dashboard. The mitigation is informed consent, and it is pinned:
+ * both tone variants disclose all three side effects (CLI install, MCP registration, login
+ * state).
  *
- * 🔴 AND THE BOUNDED-NESS RESTS ON A PRECONDITION WORTH STATING. A deleted rule degrades to a
- * 404 — rather than to an agent executing someone else's text — only because `src/pages/` has
- * no top-level dynamic or catch-all segment and there is no `src/middleware.ts` rewrite, so
- * the path can only fall through. Adding a root-level `[slug]`/`[...slug]` page later would
- * silently turn this constant into a pointer at user-controllable content, and nothing in
- * either repo would report that either.
- *
- * ⚠️ WHAT THIS DOES AND DOES NOT WIDEN, because the note should not read as alarmist. It does
- * NOT widen the trust domain: `npm install -g @civitai/cli` is already on this same page as
- * `CLI_INSTALL_NPM`, so the card adds a second route to a destination the page already asks
- * for. What it DOES change is who can alter what gets executed — the three command blocks are
- * code-reviewed strings, while this delegates to unpinned remote text editable from a
- * dashboard outside code review. The mitigation that matters for informed consent is in the
- * card and is pinned: both tone variants disclose all three side effects (CLI install, MCP
- * registration, login state), asserted for both.
- *
- * What DOES pin the pair is `__tests__/agentPrompt.test.ts` (the exact bytes, in the unit
- * tier) plus `AgentOnboardingCard.browser.test.tsx` (that those bytes are what reaches the
- * clipboard). That is a pin against an accidental edit HERE, not a check that upstream still
- * agrees — nothing in this repo can make that second claim.
- *
- * ⚠️ THE ALTERNATIVE THAT WAS CONSIDERED AND NOT TAKEN, recorded so it is a decision rather
- * than an oversight: the prompt could name `https://developer.civitai.com/agent-setup/prompt.md`
- * directly — the 302's own target, which IS covered by that PR-blocking checker — and drop
- * the alias hop entirely. It was kept because the alias is what upstream's own `SETUP_PROMPT`
- * advertises (`SHORT_PROMPT_URL` exists precisely to be the short human copy-paste form), so
- * using the canonical URL here would make the two surfaces disagree about what a developer is
- * told to paste — trading an ungated hop for a guaranteed divergence. Note the gain is also
- * smaller than it looks: both hostnames are civitai DNS, so the same CDN control plane
- * decides both; the alias removes one separately-editable rule, not the class. Revisit
- * together with upstream, not unilaterally.
+ * ⚠️ CONSIDERED AND NOT TAKEN: naming `https://developer.civitai.com/agent-setup/prompt.md`
+ * directly — the 302's own target, which IS covered by that PR-blocking checker. Rejected
+ * because the alias is what upstream's `SETUP_PROMPT` advertises, so using the canonical URL
+ * here would make the two surfaces disagree about what a developer is told to paste. The gain
+ * is also smaller than it looks: both hostnames are civitai DNS, so the same control plane
+ * decides both. Revisit together with upstream, not unilaterally.
  */
 export const AGENT_ONBOARDING_URL = 'https://civitai.com/agent-onboarding';
 

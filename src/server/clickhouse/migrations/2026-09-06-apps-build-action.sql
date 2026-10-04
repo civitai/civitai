@@ -20,18 +20,13 @@
 -- (2026-09-04-announcement-click-action.sql checked `system.tables` directly), but an MV
 -- added since would put a `MODIFY QUERY` obligation on this widening. This change adds none.
 --
--- ONE TYPE, N STEPS. The funnel step lives in `details.action` and the page state in
--- `details.state`, both closed `z.enum`s in `src/server/schema/track.schema.ts` — which is
--- the authority for their members, not this file. `details` is a `String` column, so adding
--- a step is a zod change with NO DDL, which is the reason this is one enum value rather than
--- one per step. `Feed_TagBar_Click` (= 22) is the existing precedent for a type whose
--- `details` carries the discriminator.
---
--- NOTE This paragraph used to enumerate the four steps that existed when the DDL was applied
--- ('view' | 'request_access' | 'cli_copy' | 'create_entry'). It has since been read as a
--- current list rather than an as-applied record, so the enumeration is gone and the pointer
--- stays: a fifth step ('agent_prompt_copy') landed with `AgentOnboardingCard` and needed no
--- DDL, exactly as predicted above. Nothing about the applied migration changed.
+-- ONE TYPE, FOUR STEPS. The funnel step lives in `details.action`
+-- ('view' | 'request_access' | 'cli_copy' | 'create_entry') and the page state in
+-- `details.state` ('pitch' | 'first-app' | 'workbench'), both closed `z.enum`s in
+-- `src/server/schema/track.schema.ts`. `details` is a `String` column, so a FIFTH funnel step
+-- later is a zod change with NO DDL — which is the reason this is one enum value and not
+-- four. `Feed_TagBar_Click` (= 22) is the existing precedent for a type whose `details`
+-- carries the discriminator.
 --
 -- 🔴 THE ORDERING RULE ABOVE IS NECESSARY AND INSUFFICIENT — APPLYING THE DDL FIRST DOES NOT
 -- MAKE THIS WORK. `civitai-clickhouse-tracker` builds its column serializers from the schema

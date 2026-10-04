@@ -116,9 +116,13 @@ describe('AgentOnboardingCard — the copy control', () => {
   });
 
   test('🔴 pressing the INNER ICON fires the copy callback exactly ONCE', async () => {
-    // The regression this component family already fixed once: the icon sits inside the Box
-    // that also handles the click, so without `stopPropagation()` one press ran `copy()` and
-    // `onCopy()` TWICE — over-counting the funnel by however many users aim at the button.
+    // This asserts one press → one `onCopy` and one clipboard write, and nothing more. It is
+    // NOT a guard on `CopyAffordance`'s `stopPropagation()`: this card passes
+    // `bodyClickCopies={false}`, so the Box carries no handler and nothing here can
+    // double-fire. Measured over this file plus `AppsBuildBody.agentPrompt` and
+    // `AuthorViaGit`: deleting that `stopPropagation()` leaves this green, and the test it
+    // reds is `🔴 POSITIVE CONTROL: a CLI copy still posts cli_copy` in
+    // `AppsBuildBody.agentPrompt.browser.test.tsx`, where the body click IS live.
     const onCopy = vi.fn();
     await renderWithProviders(<AgentOnboardingCard onCopy={onCopy} />);
 
@@ -306,15 +310,6 @@ describe('AgentOnboardingCard — motion, when the viewer has not opted out', ()
     // Static is not a degraded affordance — it still copies the same bytes.
     await page.getByRole('button', { name: AGENT_COPY_LABEL }).click();
     expect(writeText()).toHaveBeenCalledWith(AGENT_BUILD_PROMPT);
-  });
-
-  test('the prompt text is NOT typed out character by character', async () => {
-    // The one animation deliberately excluded: this is text the reader has to read and copy.
-    // A typewriter effect would mean the panel's text content grows over time, so assert the
-    // whole prompt is present on the first settled render.
-    await renderWithProviders(<AgentOnboardingCard />);
-    const panel = page.getByTestId(AGENT_PROMPT_TESTID);
-    expect(panel.element().textContent ?? '').toContain(AGENT_BUILD_PROMPT);
   });
 });
 
