@@ -75,6 +75,7 @@ import {
   ImageIngestionStatus,
   PoolTrigger,
   PrizeMode,
+  PrizeSourceType,
 } from '~/shared/utils/prisma/enums';
 import { enqueueImageIngestion } from '~/server/services/image.service';
 import { getEligibleModels } from '~/server/services/eligible-models.service';
@@ -180,7 +181,7 @@ import {
   getTransactionByExternalId,
 } from '~/server/services/buzz.service';
 import { createNotification } from '~/server/services/notification.service';
-import { createPrizes } from '~/server/services/prize.service';
+import { createPrizes, voidPrizes } from '~/server/services/prize.service';
 import { sendChallengeResultsNotification } from '~/server/services/challenge-engagement.service';
 import { withRetries } from '~/utils/errorHandling';
 import { getEdgeUrl } from '~/client-utils/edge-url';
@@ -3085,6 +3086,10 @@ export async function voidChallenge(
     }
     log('Challenge status updated to Cancelled');
   }
+
+  // A completion that awarded prizes and then failed is reset to Active, so it can still be voided
+  // here; the pool is refunded below, so what it awarded must not also be claimable.
+  await voidPrizes(PrizeSourceType.Challenge, challengeId);
 
   // Close the collection if exists
   await closeChallengeCollection(challenge);
