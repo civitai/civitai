@@ -32,7 +32,7 @@ function row(over: Partial<OffsitePendingRow> & { id: string }): OffsitePendingR
       category: 'utility',
       contentRating: 'PG',
     },
-    submittedBy: { id: 7, username: 'alice', image: 'img-key' },
+    submittedBy: { id: 7, username: 'alice', deletedAt: null, image: 'img-key' },
     ...over,
   };
 }

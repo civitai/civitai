@@ -50,7 +50,7 @@ function onsiteRow(over: Partial<Record<string, unknown>> = {}): OnsiteReviewReq
     fileSummary: {},
     manifestDiffSummary: {},
     reviewRepoUrl: 'https://example.invalid/repo',
-    submittedBy: { id: 7, username: 'onsite-dev', image: null },
+    submittedBy: { id: 7, username: 'onsite-dev', deletedAt: null, image: null },
     // The lifecycle projection `listApprovedRequests` now selects.
     deployState: null,
     deployDetail: null,

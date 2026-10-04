@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY } from '~/shared/constants/crucible.constants';
 import {
   CrucibleIngestionStatus,
   CrucibleStatus,
@@ -28,9 +29,7 @@ vi.mock('~/server/redis/crucible-elo.redis', async (importOriginal) => ({
   },
 }));
 
-const { getJudgingPair, submitVote, CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY } = await import(
-  '~/server/services/crucible.service'
-);
+const { getJudgingPair, submitVote } = await import('~/server/services/crucible.service');
 
 const JUDGE = 42;
 const JUDGE_ENTRY_VOTES_KEY = `${REDIS_SYS_KEYS.CRUCIBLE.JUDGE_ENTRY_VOTES}:1:${JUDGE}`;
