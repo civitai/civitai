@@ -1499,7 +1499,7 @@ async function loadDisplayedCollaboratorChips(
   const userIds = await listDisplayedCollaboratorUserIds(appListingId);
   if (userIds.length === 0) return [];
   // 🔴 EXPLICIT ALLOWLIST at the SELECT, not only at the projection. Two independent
-  // narrowings: nothing but these three columns ever leaves the DB, and `creatorChip`
+  // narrowings: nothing but these four columns ever leaves the DB, and `creatorChip`
   // re-shapes them. Widening either alone cannot leak.
   // 🔴 BANNED AND DELETED ACCOUNTS ARE FILTERED OUT, EXPLICITLY.
   //
@@ -1516,13 +1516,10 @@ async function loadDisplayedCollaboratorChips(
   // may be perfectly healthy and owned by someone else entirely.
   const users = await dbRead.user.findMany({
     where: { id: { in: userIds }, bannedAt: null, deletedAt: null },
-    // 🔴 `deletedAt` IS PROJECTED EVEN THOUGH THE `where` ALREADY EXCLUDES DELETED ROWS, and
-    // that is the cheaper half of a trade. The alternative was an exemption in the user-chip
-    // guard keyed on "the owner could not be resolved" — which, measured, exempted EVERY bare
-    // `select: {` on a Prisma query across all three corpus files, the commonest way to add a
-    // narrow user projection. One scalar on a row already being fetched, selecting zero extra
-    // rows, buys the deletion of that wildcard. A column nobody reads is a smaller cost than a
-    // guard that reads as coverage while admitting a class.
+    // `deletedAt` is projected even though the `where` already excludes deleted rows: it makes
+    // this chip satisfy the user-chip guard outright rather than needing a ledger exemption,
+    // and it costs nothing — the column is read from the same heap tuple, no extra rows, and
+    // the seam below drops it before anything is returned.
     select: { id: true, username: true, deletedAt: true, image: true },
   });
   // Preserve the seat order (`createdAt asc`) rather than the DB's row order.

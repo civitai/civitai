@@ -285,6 +285,23 @@ describe('a PARTIALLY failed report renders its surviving sections', () => {
 });
 
 describe('re-running ONE analysis instead of all three', () => {
+  /**
+   * 🔴 ONE FIXTURE FOR BOTH ARMS, BECAUSE THE SECOND IS THE FIRST'S NEGATIVE CONTROL. The two
+   * cases below differ only in `mocks.pending`, so the control's validity rests on the report
+   * being identical — and it was spelled out by hand in both, 40 lines apart, with nothing
+   * enforcing that they stay the same. A drift in one would make the control stop controlling,
+   * silently and greenly. (The `NEVER_RAN` fixture in a later describe stays its own: it is
+   * scoped to the block whose subject it is, and its summary text differs deliberately.)
+   */
+  const PROVISIONING_FAILED = {
+    status: 'failed',
+    model: 'anthropic/claude-x',
+    summaryMd: 'Provisioning failed: no target',
+    scopeVerdicts: PARTIAL_REPORT.scopeVerdicts,
+    securityAudit: null,
+    codeReview: null,
+  } as const;
+
   test('🔴 the failed section offers a targeted retry, and it dispatches ONLY that section', async () => {
     // The cost argument: a whole-report re-run re-bills all three analyses. The narrow
     // action sits next to the thing that broke.
@@ -332,17 +349,7 @@ describe('re-running ONE analysis instead of all three', () => {
     // `disabled={rerunning}` left 57 cases across three files green, because every existing
     // case drove the FAILED arm. And `missing` is precisely the state a torn-down or stranded
     // run leaves — the one a moderator re-runs.
-    // The same shape as the `NEVER_RAN` fixture two describes down — spelled here rather
-    // than hoisted, because that one is scoped to the block whose subject it is and hoisting
-    // it would make a fixture shared by two unrelated arguments.
-    mocks.report = {
-      status: 'failed',
-      model: 'anthropic/claude-x',
-      summaryMd: 'Provisioning failed: no target',
-      scopeVerdicts: PARTIAL_REPORT.scopeVerdicts,
-      securityAudit: null,
-      codeReview: null,
-    };
+    mocks.report = { ...PROVISIONING_FAILED };
     mocks.pending = true;
     render();
     await page.getByRole('tab', { name: /Code review/ }).click();
@@ -380,14 +387,7 @@ describe('re-running ONE analysis instead of all three', () => {
     // "Run this analysis" would be invisible. That is the state whose own docstring says
     // telling a moderator to take an action the screen does not offer is worse than saying
     // nothing, and it is the state a stranded targeted re-run leaves behind.
-    mocks.report = {
-      status: 'failed',
-      model: 'anthropic/claude-x',
-      summaryMd: 'Provisioning failed: no target',
-      scopeVerdicts: PARTIAL_REPORT.scopeVerdicts,
-      securityAudit: null,
-      codeReview: null,
-    };
+    mocks.report = { ...PROVISIONING_FAILED };
     mocks.pending = false;
     render();
     await page.getByRole('tab', { name: /Code review/ }).click();

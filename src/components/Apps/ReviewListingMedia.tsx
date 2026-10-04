@@ -82,7 +82,17 @@ export function ReviewListingMedia({
               </Text>
             )}
           </Stack>
-          <Stack gap={4}>
+          {/*
+            🔴 `minWidth: 0` SO THE NO-COVER CASE CLAMPS LIKE THE COVER CASE. A flex item's
+            automatic minimum size is its min-content width, and that differs between the two
+            branches: the `img` contributes ~0 (a replaced element's percentage `max-width` is
+            treated as `none` for intrinsic sizing, so it may shrink), while the placeholder
+            `div`'s definite `width: 320px` contributes 320 and pins this Stack open. Measured
+            at a 280px viewport: cover present 246px, cover ABSENT 320px — i.e. a listing with
+            no cover overflowed the card, which the 96px row box never did. `minWidth: 0` lets
+            the Stack shrink, and the placeholder's own `max-width: 100%` then does the work.
+          */}
+          <Stack gap={4} style={{ minWidth: 0 }}>
             <Text size="xs" c="dimmed">
               Cover
             </Text>

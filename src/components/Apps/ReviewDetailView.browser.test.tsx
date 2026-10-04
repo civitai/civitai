@@ -407,9 +407,13 @@ describe('ReviewDetailView — the STORE LISTING media section', () => {
     // asks for `size="review"` and the reservation moves with it. Imported rather than
     // retyped, so the two cannot drift: the point of the assertion is that the box is
     // DECLARED on the attributes at all, and the sizes themselves are pinned against the
-    // row constants in `ReviewListingMedia.size.browser.test.tsx`.
-    expect((icon.element() as HTMLImageElement).getAttribute('width')).toBe(String(REVIEW_ICON_BOX));
-    expect((cover.element() as HTMLImageElement).getAttribute('width')).toBe(String(REVIEW_COVER_W));
+    // row constants in `ReviewListingMedia.size.geometry.test.tsx`.
+    expect((icon.element() as HTMLImageElement).getAttribute('width')).toBe(
+      String(REVIEW_ICON_BOX)
+    );
+    expect((cover.element() as HTMLImageElement).getAttribute('width')).toBe(
+      String(REVIEW_COVER_W)
+    );
     expect(page.getByTestId('apps-review-listing-no-icon-my-block').elements()).toEqual([]);
     expect(page.getByTestId('apps-review-listing-no-cover-my-block').elements()).toEqual([]);
   });

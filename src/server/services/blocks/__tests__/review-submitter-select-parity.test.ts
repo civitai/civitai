@@ -43,8 +43,8 @@ const SERVICE_FILES = [
 /**
  * User chips in the corpus that are DELIBERATELY narrow, keyed on FILE **and** owner.
  *
- * 🔴 ONE ENTRY, AND THE SECOND WAS DELETED RATHER THAN RE-KEYED — which is the finding worth
- * carrying. It exempted the collaborator-allowlist `user.findMany`, and the key it matched on
+ * 🔴 A THIRD ENTRY WAS DELETED RATHER THAN RE-KEYED — which is the finding worth carrying (two
+ * remain, below). It exempted the collaborator-allowlist `user.findMany`, and the key it matched on
  * was the owner resolver's "I could not tell" sentinel. Measured: that admitted EVERY bare
  * `select: {` on a Prisma query, in all three files, including the service this whole arc is
  * about. A guard that fails open on the commonest shape is worse than no guard, because it
@@ -75,7 +75,7 @@ const DELIBERATELY_NARROW: ReadonlyArray<{
     file: 'src/server/services/blocks/app-listing.service.ts',
     container: 'listingHydrateSelect',
     owner: 'user',
-    why: 'the PUBLIC store listing creator — rendered by `CreatorCardSimple`, which takes only `{ id }` and refetches through the public `user.getCreator` proc, so it reads no `deletedAt` from this payload',
+    why: 'the PUBLIC store listing creator. TWO consumers, and only one of them is clean: the default path hands `SmartCreatorCard` just `{ id }` and refetches through the public `user.getCreator` proc (AppListingDetailBody.tsx:1117), reading no `deletedAt` here. The `preview` path hands the whole chip to a file-local `CreatorChip` (AppListingDetailBody.tsx:1023) which renders `username` + avatar inside a profile link and skips only on a FALSY username — so a SOFT-deleted creator still renders as a live, linked account there. That is pre-existing on a surface this PR does not touch, and it is recorded rather than argued away: widening this select is the fix, and it is a separate change',
   },
 ] as const;
 
@@ -104,8 +104,15 @@ const DELIBERATELY_NARROW: ReadonlyArray<{
  */
 type Chip = { file: string; container: string | null; owner: string | null; fields: string[] };
 
-function userChips(rel: string): Chip[] {
-  const text = readFileSync(join(process.cwd(), rel), 'utf8');
+/**
+ * 🔴 SPLIT FROM `userChips` SO THE WALK CAN BE FED PLANTED SOURCE. The previous version read
+ * the file itself, which made the offender path impossible to control: measured, replacing
+ * `offenders.push(...)` with a no-op left all four tests GREEN. The real corpus is compliant
+ * by construction, so `offenders` is `[]` on every honest run and the branch never executes —
+ * a guard whose only output is structurally unreachable. Taking text as a parameter is what
+ * lets `judge` below be exercised against a chip that MUST be rejected.
+ */
+function chipsIn(rel: string, text: string): Chip[] {
   const src = ts.createSourceFile(rel, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const out: Chip[] = [];
 
@@ -133,6 +140,51 @@ function userChips(rel: string): Chip[] {
   };
   ts.forEachChild(src, visit);
   return out;
+}
+
+function userChips(rel: string): Chip[] {
+  return chipsIn(rel, readFileSync(join(process.cwd(), rel), 'utf8'));
+}
+
+/**
+ * The VERDICT, extracted so the real corpus and a planted chip go through the same code.
+ *
+ * 🔴 `matched` IS AN ARRAY, NOT A SET — and that is a fail-open fix, not a style choice.
+ * `{file, container, owner}` is not unique per chip: `identify()` walks up to the first
+ * variable declaration, so a `user:` nested three levels inside `moderationListingSelect`
+ * resolves to the SAME key as the top-level one the ledger exempts. With a Set both chips
+ * collapsed into one entry and the equality below could not see the second — measured, a
+ * planted `appBlock: { select: { publisher: { select: { user: {…} } } } }` was silently
+ * exempt. As an array, a key matching twice makes the equality 3-vs-2 and reds.
+ */
+function judge(rel: string, chips: Chip[]): { offenders: string[]; matched: string[] } {
+  const offenders: string[] = [];
+  const matched: string[] = [];
+  for (const chip of chips) {
+    if (chip.fields.includes('deletedAt')) continue;
+    // 🔴 KEYED ON FILE **AND** OWNER. Keying on the name alone let the `user` entry —
+    // justified for the listings table — exempt any property called `user` in any of the
+    // three files, including the service this whole arc is about.
+    // 🔴 AN UNRESOLVABLE CHIP IS AN OFFENDER, NEVER AN EXEMPTION. Twice now the resolver's
+    // failure value was a string that the ledger could name, and both times that silently
+    // licensed a whole class. `null` is not in the ledger's domain, so it cannot.
+    const entry =
+      chip.owner === null || chip.container === null
+        ? undefined
+        : DELIBERATELY_NARROW.find(
+            (e) => e.file === rel && e.container === chip.container && e.owner === chip.owner
+          );
+    if (entry) {
+      matched.push(`${entry.file}::${entry.container}::${entry.owner}`);
+      continue;
+    }
+    offenders.push(
+      `${rel}: ${chip.container ?? '<unresolved>'}.${
+        chip.owner ?? '<unresolved>'
+      }: { ${chip.fields.join(', ')} }`
+    );
+  }
+  return { offenders, matched };
 }
 
 /**
@@ -245,32 +297,11 @@ describe('the review user chip is one declaration', () => {
     // a new call site. Prisma selects are structurally typed, so `{ id: true, username: true,
     // image: true }` is perfectly assignable — it just silently drops the branch.
     const offenders: string[] = [];
-    const matched = new Set<string>();
+    const matched: string[] = [];
     for (const rel of SERVICE_FILES) {
-      for (const chip of userChips(rel)) {
-        if (chip.fields.includes('deletedAt')) continue;
-        // 🔴 KEYED ON FILE **AND** OWNER. Keying on the name alone let the `user` entry —
-        // justified for the listings table — exempt any property called `user` in any of the
-        // three files, including the service this whole arc is about.
-        // 🔴 AN UNRESOLVABLE CHIP IS AN OFFENDER, NEVER AN EXEMPTION. Twice now the resolver's
-        // failure value was a string that the ledger could name, and both times that silently
-        // licensed a whole class. `null` is not in the ledger's domain, so it cannot.
-        const entry =
-          chip.owner === null || chip.container === null
-            ? undefined
-            : DELIBERATELY_NARROW.find(
-                (e) => e.file === rel && e.container === chip.container && e.owner === chip.owner
-              );
-        if (entry) {
-          matched.add(`${entry.file}::${entry.container}::${entry.owner}`);
-          continue;
-        }
-        offenders.push(
-          `${rel}: ${chip.container ?? '<unresolved>'}.${
-            chip.owner ?? '<unresolved>'
-          }: { ${chip.fields.join(', ')} }`
-        );
-      }
+      const verdict = judge(rel, userChips(rel));
+      offenders.push(...verdict.offenders);
+      matched.push(...verdict.matched);
     }
     expect(
       offenders,
@@ -280,8 +311,8 @@ describe('the review user chip is one declaration', () => {
     // 🔴 THE EXEMPTIONS ARE ASSERTED, NOT MERELY ALLOWED. An entry whose chip has since been
     // widened — or deleted — is a stale licence to be narrow, and nothing else would notice.
     expect(
-      [...matched].sort(),
-      'every entry in DELIBERATELY_NARROW must still correspond to a narrow chip'
+      matched.sort(),
+      'every entry in DELIBERATELY_NARROW must correspond to EXACTLY ONE narrow chip'
     ).toEqual(DELIBERATELY_NARROW.map((e) => `${e.file}::${e.container}::${e.owner}`).sort());
   });
 
@@ -298,23 +329,59 @@ describe('the review user chip is one declaration', () => {
       ).toContain('reviewUserChipSelect');
     }
 
-    // (b) 🔴 IT CAN REJECT SOMETHING THE LEDGER ALMOST COVERS — the control the previous
-    // version did not have. Every planted chip below is narrow; the first bears an EXEMPTED
-    // owner name (`user`) but belongs to a file with no such entry, so a name-keyed ledger
-    // would wave it through and a file+owner one must not. The others cover the shapes that
-    // have existed: a property, a hoisted const with a `select` wrapper, and one without.
-    const planted = [
-      ['src/server/services/blocks/publish-request.service.ts', 'user'],
-      ['src/server/services/blocks/publish-request.service.ts', 'submittedBy'],
-      ['src/server/services/blocks/offsite-listing.service.ts', 'authorChip'],
-      ['src/server/services/blocks/offsite-listing.service.ts', 'modChip'],
-    ] as const;
-    for (const [file, owner] of planted) {
-      expect(
-        DELIBERATELY_NARROW.some((e) => e.file === file && e.owner === owner),
-        `${file}::${owner} must NOT be exempt — otherwise the case above proves nothing`
-      ).toBe(false);
-    }
+    // (b) 🔴 IT ACTUALLY REJECTS — the planted source goes through the SAME `chipsIn` + `judge`
+    // the real assertion uses, so this drives the offender path rather than asserting a lookup
+    // in the ledger array. The previous version checked only that these owners were absent
+    // from `DELIBERATELY_NARROW`, which never called the walk at all: measured, replacing
+    // `offenders.push(...)` with a no-op left every test in this file GREEN. The real corpus is
+    // compliant, so `offenders` is `[]` on every honest run and this is the only case that can
+    // ever observe the branch.
+    //
+    // Shapes covered: an EXEMPTED owner name (`user`) in a file with no such entry, so a
+    // name-keyed ledger would wave it through; a plain property; a hoisted const with a
+    // `select` wrapper and one without; and — the two the Set collapsed — a `user` NESTED
+    // inside each exempted container, which resolves to the exempted container's own key.
+    const PLANTED_SOURCE = `
+      const submittedBy = { select: { id: true, username: true, image: true } };
+      const authorChip = { id: true, username: true, image: true };
+      export const q = {
+        user: { select: { id: true, username: true, image: true } },
+        modChip: { select: { id: true, username: true, image: true } },
+      };
+    `;
+    const plantedFile = 'src/server/services/blocks/publish-request.service.ts';
+    const plantedVerdict = judge(plantedFile, chipsIn(plantedFile, PLANTED_SOURCE));
+    expect(
+      plantedVerdict.offenders,
+      'four narrow planted chips must ALL be rejected by the real verdict path'
+    ).toHaveLength(4);
+    expect(plantedVerdict.matched, 'nothing planted may be exempted').toEqual([]);
+
+    // 🔴 AND A CHIP NESTED INSIDE AN EXEMPTED CONTAINER IS NOT COVERED BY IT. `identify()`
+    // walks up to the first variable declaration, so a `user:` three levels deep inside
+    // `moderationListingSelect` reports that container — the exempted key. Measured: with
+    // `matched` as a Set both chips collapsed into one and this shipped exempt.
+    // 🔴 BOTH chips here are NARROW, which is what makes this discriminate. An earlier draft
+    // gave the top-level one `deletedAt`, so it was skipped and only ONE chip ever reached
+    // `matched` — the control then passed with a Set as happily as with an array, i.e. it did
+    // not test the thing it was written for. With both narrow, the exempted key is matched
+    // TWICE: an array reports 2, a Set reports 1.
+    const NESTED_SOURCE = `
+      const moderationListingSelect = {
+        user: { select: { id: true, username: true, image: true } },
+        appBlock: {
+          select: { publisher: { select: { user: { select: { id: true, username: true, image: true } } } } },
+        },
+      };
+    `;
+    const nestedFile = 'src/server/services/blocks/app-listing.service.ts';
+    const nestedKey = `${nestedFile}::moderationListingSelect::user`;
+    const nestedVerdict = judge(nestedFile, chipsIn(nestedFile, NESTED_SOURCE));
+    expect(
+      nestedVerdict.matched,
+      'a nested chip resolving to an exempted key must be COUNTED, so the ledger equality reds'
+    ).toEqual([nestedKey, nestedKey]);
+    expect(nestedVerdict.offenders).toEqual([]);
 
     // (c) 🔴 AND THE OWNER RESOLVER NEVER SHRUGS. The regex it replaced returned a sentinel
     // when its 120-character lookbehind failed, and that sentinel was ALSO an exemption key —

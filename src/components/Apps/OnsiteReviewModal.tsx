@@ -577,16 +577,16 @@ export function OnsiteReviewModalTitle({
  * at; it was deleted once by a commit that meant only to withdraw the ordering claim below,
  * which left three live cross-references aimed at nothing.
  *
- * 🔴 THE PARENT KEYS THIS ON `selection.request.id`, so all local state is fresh on every
- * request switch — no manual reset needed, and the `onSuccess → onClose` paths are safe
- * because the next open remounts fresh. Removing that `key` is the non-obvious way to break
- * the approve/reject state reset.
+ * The parent keys this on `selection.request.id`; why that matters is written on the shell
+ * that sets it, above.
  *
  * 🔴 THAT IS A ONE-TIME MEASUREMENT, NOT A GUARANTEE, and saying so is the point. No test
- * asserts this sequence: the modal exposes only three stable test ids, so pinning it would
- * mean adding production attributes for a guard alone — considered and rejected as more
- * scaffolding than the risk earns. If you reorder these, nothing will stop you; what IS
- * covered is the leaves, which both surfaces render for real in their own suites.
+ * asserts this sequence, so reordering these is not covered. The decision not to pin it has
+ * no justification recorded here any more: the one this used to give — that pinning would
+ * mean adding production test ids — was measured false (the ids these sections already expose
+ * are enough to pin the order with `compareDocumentPosition`, and no new attribute would be
+ * needed). What IS covered is the leaves, which both surfaces render for real in their own
+ * suites.
  */
 export function OnsiteReviewModalBody({
   selection,

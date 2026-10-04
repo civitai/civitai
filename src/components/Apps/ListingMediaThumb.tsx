@@ -13,9 +13,10 @@ import type { ReactNode } from 'react';
  * tests assert on the existing ones.
  */
 
-/** Fixed media boxes. Both dimensions are attributes on the `img`, so a row reserves its space
- *  before the bytes arrive — a table with images in every row is otherwise a CLS machine. The
- *  placeholder uses the SAME box, so present and absent media never reflow. */
+/** Fixed media boxes. The box is held by CSS, not by the `width`/`height` attributes — see the
+ *  style comment on the `img` below for why the attributes alone do not hold it. A table with
+ *  images in every row is otherwise a CLS machine. The placeholder uses the SAME box, so
+ *  present and absent media never reflow. */
 export const LISTING_ICON_BOX = 40;
 export const LISTING_COVER_W = 96;
 export const LISTING_COVER_H = 54; // 16:9
@@ -36,13 +37,18 @@ export const LISTING_COVER_H = 54; // 16:9
  * a page that also lazy-loads a diff. The placeholders use the same pair, so a listing with no
  * cover occupies exactly the space one with a cover would.
  *
- * 🔴 THE ATTRIBUTES ALONE DID NOT DELIVER THAT, and the enlargement is what made it matter.
- * Preflight's `img { height: auto }` outranks a presentational hint, so the cover's height
- * tracked the uploaded art: a 1:1 image rendered 320x320 in the 320x180 box, moving the card
- * 140px — against 42px at the old row size, so the enlargement amplified an existing defect
- * 3.3x rather than creating one. Measured in the geometry tier; invisible in the component
- * tier, which loads 24 CSS rules. Both dimensions are now CSS as well, so the ratio really is
- * preserved and `object-fit: cover` really does the cropping.
+ * 🔴 THE ATTRIBUTES ALONE DID NOT HOLD THAT. Preflight's `img { height: auto }` outranks a
+ * presentational hint, so the cover's height tracked the uploaded art: a 1:1 image rendered
+ * 320x320 in the 320x180 box, moving the card 140px — against 42px at the old row size, so
+ * the enlargement amplified an existing defect 3.3x rather than creating one. Measured in the
+ * geometry tier; invisible in the component tier, which loads 24 CSS rules. The box is CSS
+ * now, so `object-fit: cover` really does the cropping.
+ *
+ * The COVER holds its ratio with `aspect-ratio` rather than a fixed `height`, because
+ * `max-width: 100%` clamps the used WIDTH and a fixed height does not follow it: below a
+ * 320px container a fixed pair gave 280x180 (1.56) instead of 16:9. The ICON keeps a fixed
+ * height deliberately — in its column flex `flex-basis` governs the main axis and outranks
+ * `aspect-ratio`, so adding one there changes nothing. Measured at 1280/390/280/246/200.
  */
 export const REVIEW_ICON_BOX = 96;
 export const REVIEW_COVER_W = 320;
@@ -178,16 +184,19 @@ export function ListingIconThumb({
       // `maxWidth: '100%'` is the other half, and it is not redundant with the fixed pair:
       // one RESERVES the space, the other CLAMPS it so a wide box cannot widen the page.
       style={{
-        // 🔴 THE BOX IS ON THE CSS, NOT ONLY THE ATTRIBUTES — and the attribute-only version
-        // did NOT reserve anything, which is the opposite of what this file claimed for it.
-        // `width`/`height` content attributes are PRESENTATIONAL HINTS and sort below every
-        // author layer, and `globals.css` ships Tailwind preflight (`img { max-width: 100%;
-        // height: auto }`). So `height: auto` won, the used height became
-        // `usedWidth / naturalRatio`, and `object-fit: cover` was inert. Measured in the
-        // geometry tier (3,677 CSS rules): a 1:1 image in the 320x180 cover box rendered
-        // 320x320 — the card reflowing 140px by whatever the publisher uploaded. The
-        // component tier's 24-rule document could not see it, which is why this shipped.
-        // The attributes stay for the pre-CSS paint; these two are what hold the box.
+        // 🔴 THE BOX IS ON THE CSS, NOT ONLY THE ATTRIBUTES — the attribute-only version
+        // reserved the right box and then did not RETAIN it, which is strictly worse than
+        // reserving nothing: the shift is guaranteed rather than possible, and `loading="lazy"`
+        // lands it on SCROLL. `width`/`height` content attributes are PRESENTATIONAL HINTS and
+        // sort below every author layer, and `globals.css` ships Tailwind preflight
+        // (`img { max-width: 100%; height: auto }`). So once `naturalWidth` was known
+        // `height: auto` took over, the used height became `usedWidth / naturalRatio`, and
+        // `object-fit: cover` was inert. Measured in the geometry tier (3,677 CSS rules): a
+        // 1:1 image in the 320x180 cover box rendered 320x320, reflowing the card 140px — and
+        // 1:3 art gives 320x960, a 780px shift, because the CDN URL caps the cover's WIDTH
+        // only (`listing-media-url.ts`) and leaves natural height unbounded. The component
+        // tier's 24-rule document could not see any of it, which is why this shipped. The
+        // attributes stay for the pre-CSS paint; the CSS is what holds the box.
         width: box,
         height: box,
         borderRadius: 8,
@@ -219,9 +228,13 @@ export function ListingCoverThumb({
     return (
       <div
         data-testid={placeholderTestId}
+        // `aspectRatio`, matching the `img` below: the present/absent parity this file promises
+        // is only real if BOTH respond to the clamp the same way. A fixed `height` here against
+        // an `aspect-ratio` there would make a no-cover listing taller than a cover one at any
+        // width below the box.
         style={{
           width: box.w,
-          height: box.h,
+          aspectRatio: `${box.w} / ${box.h}`,
           maxWidth: '100%',
           borderRadius: 6,
           display: 'flex',
@@ -250,9 +263,16 @@ export function ListingCoverThumb({
       // The box on the CSS for the same reason as the icon — see that comment. Without it
       // preflight's `height: auto` makes this cover as tall as the publisher's art is,
       // which is the one input this surface exists to be suspicious of.
+      //
+      // 🔴 `aspectRatio` RATHER THAN A FIXED `height`, and the clamp is why. `maxWidth: '100%'`
+      // clamps the used WIDTH; a fixed `height` does not follow it, so in any container
+      // narrower than the box the pair stopped being 16:9 (280x180 = 1.56 at the narrowest
+      // tested viewport). `aspect-ratio` derives the height from whatever width survives the
+      // clamp, so the ratio holds at every width AND the pre-decode reservation is unchanged:
+      // with `complete === false` the box is still 320x180.
       style={{
         width: box.w,
-        height: box.h,
+        aspectRatio: `${box.w} / ${box.h}`,
         borderRadius: 6,
         objectFit: 'cover',
         maxWidth: '100%',

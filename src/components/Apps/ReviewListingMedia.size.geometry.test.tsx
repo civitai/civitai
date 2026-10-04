@@ -3,7 +3,17 @@ import { page } from 'vitest/browser';
 import type * as TrpcModule from '~/utils/trpc';
 import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
-import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
+//
+// 🔴 `geometry-setup`, NOT `component-setup`. This file used the component harness even after
+// it was renamed into the geometry tier, and that harness injects its own `:root` block —
+// "the one thing this harness exists to avoid", in geometry-setup's words. It changed no
+// number measured here (the injected values match the real cascade's), but importing the
+// stylesheet-free harness into the stylesheet tier is how this file's original defect arose.
+import {
+  LOADABLE_IMAGE_DATA_URI,
+  cascadeEvidence,
+  renderWithProviders,
+} from '../../../test/geometry-setup';
 import {
   LISTING_COVER_H,
   LISTING_COVER_W,
@@ -32,21 +42,27 @@ import {
  * that loads no stylesheet measures a different, internally-consistent layout, which is worse
  * than measuring nothing.
  *
- * 🔴 MEASURED AT THREE NAMED VIEWPORTS — 1280, 820 and 390 — because "larger" is a claim about
- * a layout and a layout is a function of width. The narrow one is not decoration: at 1280 and
- * 820 the 320px cover never reaches its container, so `max-width: 100%` is provably INERT and
- * the arms that cite it prove nothing about it. 280 is below the box, so the clamp binds —
- * and 390, the obvious "phone" number, is NOT: measured, the container is still wider than
- * the cover there, so that arm would have been a third vacuous one. 1280 is the desktop the page is designed for;
- * 820 is a tablet at which a fixed 320px cover could plausibly have overflowed its container.
- * A single measurement would carry no scope, and the overflow half of the claim is only
- * interesting at the narrow one. The gallery's breakpoint was chosen so the claim holds at
+ * 🔴 MEASURED AT THREE NAMED VIEWPORTS — 1280, 820 and 280 — because "larger" is a claim about
+ * a layout and a layout is a function of width. At 1280 and 820 the 320px cover never reaches
+ * its container, so it renders at its declared box; at 280 it must give way, which is where
+ * the SHAPE of the give-way is checked. 390, the obvious "phone" number, is not narrow enough
+ * — measured, the container is still wider than the cover there. 1280 is the desktop the page
+ * is designed for; 820 is a tablet at which a fixed 320px cover could plausibly have
+ * overflowed. A single measurement would carry no scope.
+ *
+ * ⚠️ `max-width: 100%` IS NOT WHAT ANY ARM HERE PROVES, and an earlier version of this
+ * docstring claimed it was. Measured: deleting it leaves every test green, because flex shrink
+ * narrows the cover to 246px at the 280 viewport — already inside the 280 the percentage
+ * resolves to. The narrow arm is load-bearing for the RATIO under shrink, not for the clamp. The gallery's breakpoint was chosen so the claim holds at
  * BOTH: breaking at `lg` would have made the review gallery identical to the modal's at 1280,
  * i.e. invisible exactly where the page is used.
  *
- * ⚠️ THE ROW SIZE IS NOT REGRESSED. The shared thumbs keep `'row'` as their default, and the
- * first case pins both boxes so a future "just make the constant bigger" lands here rather
- * than doubling the height of every queue row.
+ * ⚠️ WHAT THIS FILE DOES NOT COVER: the ROW surfaces. The shared thumbs keep `'row'` as their
+ * default and the first case pins both sets of CONSTANTS, so a future "just make the constant
+ * bigger" lands here rather than doubling the height of every queue row. But no case here
+ * RENDERS a row-size thumb, so the row box's rendered geometry is unmeasured. The style object
+ * is shared and unbranched, which is what makes the review arms mutation-tests for the row
+ * path too — the day that object branches on `size`, the row path loses all pixel coverage.
  */
 
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
@@ -86,7 +102,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
 const { ReviewListingMedia } = await import('./ReviewListingMedia');
 const { ScreenshotsReviewPanel } = await import('./OnsiteReviewModal');
 
-/** The two widths every claim below is scoped to. */
+/** The three widths every claim below is scoped to (the third is `PHONE`, just below). */
 const DESKTOP = 1280;
 const TABLET = 820;
 /**
@@ -97,6 +113,39 @@ const TABLET = 820;
  * exercising it, which is the same vacuity as the two wide arms. 280 is below the box.
  */
 const PHONE = 280;
+
+/**
+ * 🔴 A NON-SQUARE FIXTURE, AND IT IS LOAD-BEARING FOR THE ICON.
+ *
+ * `LOADABLE_IMAGE_DATA_URI` is 1x1. On the SQUARE icon box a 1:1 natural ratio makes
+ * `height: auto` produce the correct number by coincidence, so deleting the icon's CSS box
+ * left this whole suite green — measured. The cover's defect was only visible because its box
+ * is 16:9 while the fixture is 1:1, i.e. the fixture could discriminate one box and not the
+ * other. 2x1 mismatches BOTH boxes, so one fixture covers both halves.
+ */
+const NON_SQUARE_IMAGE_DATA_URI =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAEUlEQVR4nGP8z8Dwn4GBgQEADQUCAOAHawIAAAAASUVORK5CYII=';
+
+/**
+ * 🔴 WAIT FOR THE DECODE BEFORE MEASURING, OR THE MEASUREMENT IS OF THE ATTRIBUTES.
+ *
+ * `expect.element(...).toBeInTheDocument()` resolves while the image is still loading, and
+ * BEFORE decode Chromium derives the box from the `width`/`height` ATTRIBUTES — which is
+ * exactly the value these tests assert. Measured under a mutation that deletes the CSS box:
+ * pre-decode `320x180, complete=false, natural=0x0`; post-decode `320x320`. So the first test
+ * to render an `img` always read the healthy pre-decode value and the defect was caught only
+ * by a LATER test, off a decode the earlier one had warmed. The protection was file ORDER: a
+ * reorder, a dropped arm, a `.only` or a `-t` filter and the defect ships green.
+ */
+const settled = async (testId: string) => {
+  const img = document.querySelector<HTMLImageElement>(`[data-testid="${testId}"]`);
+  expect(img, `${testId} must be on screen`).not.toBeNull();
+  if (!img!.complete) {
+    await new Promise((resolve) => img!.addEventListener('load', resolve, { once: true }));
+  }
+  await img!.decode();
+  return img!;
+};
 
 /**
  * Sets the real VIEWPORT, then renders inside a full-width container.
@@ -125,6 +174,29 @@ const box = (testId: string) => {
 
 const container = () => box('page-container');
 
+/**
+ * 🔴 THE POSITIVE CONTROL FOR THE WHOLE FILE, AND IT IS NOT OPTIONAL.
+ *
+ * Every height assertion here is only meaningful because Tailwind preflight is loaded and
+ * outranks the `img` `width`/`height` attributes. That is precisely what was absent when this
+ * file lived in the `component` tier: the attributes won, the boxes looked correct, and the
+ * suite was green with the production defect live. So if `globals.css` ever stops loading in
+ * this tier, this file silently reverts to measuring that same wrong, internally-consistent
+ * layout — and nothing else in it would notice.
+ *
+ * `probeBoxSizing === 'border-box'` is preflight specifically (the UA default is
+ * `content-box`), and the rule count separates a loaded stylesheet from an injected handful.
+ */
+describe('the harness itself', () => {
+  test('🔴 the real cascade is loaded — without it every box below is a harness artefact', () => {
+    const evidence = cascadeEvidence();
+    expect(evidence.probeBoxSizing, 'Tailwind preflight must be in the cascade').toBe('border-box');
+    expect(evidence.ruleCount, 'a loaded stylesheet, not an injected handful').toBeGreaterThan(
+      1000
+    );
+  });
+});
+
 describe('the store icon and cover are bigger on the review page than in a queue row', () => {
   test.each([
     ['desktop', DESKTOP],
@@ -135,14 +207,24 @@ describe('the store icon and cover are bigger on the review page than in a queue
       <ReviewListingMedia
         slug="gen-matrix"
         name="Gen Matrix"
-        iconUrl={LOADABLE_IMAGE_DATA_URI}
-        coverUrl={`${LOADABLE_IMAGE_DATA_URI}#cover`}
+        iconUrl={NON_SQUARE_IMAGE_DATA_URI}
+        coverUrl={`${NON_SQUARE_IMAGE_DATA_URI}#cover`}
       />
     );
     await expect.element(page.getByTestId('apps-review-listing-media')).toBeInTheDocument();
 
+    // 🔴 BOTH DECODES, BEFORE EITHER MEASUREMENT — see `settled`. And the fixture's own ratio
+    // is the premise the whole suite rests on, so assert it rather than trusting the constant.
+    const iconEl = await settled('apps-review-listing-icon-gen-matrix');
+    const coverEl = await settled('apps-review-listing-cover-gen-matrix');
+    expect(
+      iconEl.naturalWidth,
+      'the fixture must NOT be square, or neither box can be discriminated'
+    ).not.toBe(iconEl.naturalHeight);
+
     const icon = box('apps-review-listing-icon-gen-matrix');
     const cover = box('apps-review-listing-cover-gen-matrix');
+    expect(coverEl.complete).toBe(true);
 
     // 🔴 STRICTLY GREATER THAN THE ROW CONSTANT, not "equals the new constant". Asserting the
     // new number alone would pass if someone set BOTH constants to the same value, which is
@@ -174,27 +256,86 @@ describe('the store icon and cover are bigger on the review page than in a queue
   });
 
   test('🔴 at phone width (280px) the cover CLAMPS to its container instead of widening the page', async () => {
-    // The arm that makes `max-width: 100%` load-bearing. At 1280 and 820 a 320px box never
-    // meets its container, so those arms assert the clamp without ever exercising it.
+    // ⚠️ WHAT NARROWS THE COVER HERE IS FLEX SHRINK, NOT `max-width: 100%` — measured, and the
+    // earlier version of this comment claimed the opposite. At a 280px viewport the cover is
+    // 246px wide, i.e. already below the 280px the percentage resolves to, so `max-width`
+    // never binds: deleting it leaves this suite green. The `img` is a flex item at the
+    // default `flex: 0 1 auto`, and that is what gives way. `max-width` stays as
+    // belt-and-braces for any future non-flex parent; it is not what this arm proves.
+    // What this arm DOES prove is the shape under shrink, below.
     await atWidth(
       PHONE,
       <ReviewListingMedia
         slug="gen-matrix"
         name="Gen Matrix"
-        iconUrl={LOADABLE_IMAGE_DATA_URI}
-        coverUrl={`${LOADABLE_IMAGE_DATA_URI}#cover`}
+        iconUrl={NON_SQUARE_IMAGE_DATA_URI}
+        coverUrl={`${NON_SQUARE_IMAGE_DATA_URI}#cover`}
       />
     );
     await expect.element(page.getByTestId('apps-review-listing-media')).toBeInTheDocument();
+    await settled('apps-review-listing-cover-gen-matrix');
     const cover = box('apps-review-listing-cover-gen-matrix');
     const c = container();
     expect(c.width, 'the container must actually be narrower than the cover box').toBeLessThan(
       REVIEW_COVER_W
     );
-    expect(cover.width, 'the cover clamps to the container').toBeLessThanOrEqual(c.width + 1);
+    expect(cover.width, 'the cover stays inside the container').toBeLessThanOrEqual(c.width + 1);
+    expect(cover.width, 'and it has actually given way').toBeLessThan(REVIEW_COVER_W);
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(
       document.documentElement.clientWidth + 1
     );
+
+    // 🔴 AND THE RATIO SURVIVES THE SHRINK. This is the assertion this arm was missing: it
+    // entered the one width regime where the box gives way and then said nothing about what
+    // that does to the SHAPE. A fixed `height` does not follow a narrowed width, so the pair
+    // gave 246x180 (1.37) here while this file's own subject promised 16:9. Red against a
+    // fixed `height` (measured 1.37 vs 1.78), green against `aspect-ratio`.
+    expect(cover.width / cover.height, 'the clamped cover is still 16:9').toBeCloseTo(
+      REVIEW_COVER_W / REVIEW_COVER_H,
+      1
+    );
+  });
+
+  test('🔴 under the clamp a MISSING cover still matches a present one — parity is width-independent', async () => {
+    // ⚠️ INVARIANT GUARD, not a regression test: parity held before the `aspect-ratio` change
+    // too, because both boxes were a fixed 180 tall. It is pinned because the fix had to move
+    // BOTH of them — an `aspect-ratio` img against a fixed-height placeholder would have made
+    // a no-cover listing taller than a cover one at every width below the box, and the
+    // existing parity case runs at DESKTOP where the clamp cannot bind.
+    // ONE render with two instances, not two renders: `renderWithProviders` does not unmount
+    // the previous tree, so a second `atWidth` in the same test leaves both on screen and
+    // every unscoped `data-testid` resolves to 2 elements. The slug-scoped ids stay unique,
+    // and stacking them means both are measured at the same viewport in the same pass.
+    await atWidth(
+      PHONE,
+      <>
+        <ReviewListingMedia
+          slug="has-cover"
+          name="Has Cover"
+          iconUrl={NON_SQUARE_IMAGE_DATA_URI}
+          coverUrl={`${NON_SQUARE_IMAGE_DATA_URI}#cover`}
+        />
+        <ReviewListingMedia
+          slug="no-cover"
+          name="No Cover"
+          iconUrl={NON_SQUARE_IMAGE_DATA_URI}
+          coverUrl={null}
+        />
+      </>
+    );
+    await expect
+      .element(page.getByTestId('apps-review-listing-cover-has-cover'))
+      .toBeInTheDocument();
+    await settled('apps-review-listing-cover-has-cover');
+
+    const present = box('apps-review-listing-cover-has-cover');
+    const absent = box('apps-review-listing-cover-placeholder-no-cover');
+
+    // The clamp must actually be binding, or this asserts parity at a width where both are
+    // simply their declared box — the vacuity the whole PHONE arm exists to avoid.
+    expect(present.width, 'the clamp must be binding').toBeLessThan(REVIEW_COVER_W);
+    expect(absent.width, 'same clamped width').toBeCloseTo(present.width, 0);
+    expect(absent.height, 'same clamped height').toBeCloseTo(present.height, 0);
   });
 
   test('🔴 the ratio is preserved, so a bigger box is not a differently-cropped one', async () => {
@@ -203,11 +344,13 @@ describe('the store icon and cover are bigger on the review page than in a queue
       <ReviewListingMedia
         slug="gen-matrix"
         name="Gen Matrix"
-        iconUrl={LOADABLE_IMAGE_DATA_URI}
-        coverUrl={`${LOADABLE_IMAGE_DATA_URI}#cover`}
+        iconUrl={NON_SQUARE_IMAGE_DATA_URI}
+        coverUrl={`${NON_SQUARE_IMAGE_DATA_URI}#cover`}
       />
     );
     await expect.element(page.getByTestId('apps-review-listing-media')).toBeInTheDocument();
+    await settled('apps-review-listing-icon-gen-matrix');
+    await settled('apps-review-listing-cover-gen-matrix');
     const cover = box('apps-review-listing-cover-gen-matrix');
     expect(cover.width / cover.height).toBeCloseTo(LISTING_COVER_W / LISTING_COVER_H, 1);
     const icon = box('apps-review-listing-icon-gen-matrix');

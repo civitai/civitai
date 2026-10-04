@@ -899,12 +899,16 @@ jobs:
         if: always()
         run: |
           node - <<'JS'
-          // Minimum ledger for the `geometry` tier. Measured 2026-09-15: 6 files / 73 tests.
+          // Minimum ledger for the `geometry` tier. Re-measured 2026-10-03: 8 files.
           // FILES ratchets at exactly current — files do not merge by accident, so a drop means a
           // file stopped being collected, which is the thing this ledger exists to catch. TESTS
           // stays conservative: a legitimate refactor merges cases, and a test-count ratchet at
           // current would teach people to raise the floor rather than investigate the drop.
-          const MIN_FILES = 6;
+          //
+          // ⚠️ THE FILE FLOOR HAD DRIFTED 2 BEHIND ITS OWN CONTRACT (6 against 8 collected), so
+          // two files could have stopped collecting with no red. Re-derive this when adding a
+          // geometry file — "ratchets at exactly current" is only true if someone bumps it.
+          const MIN_FILES = 8;
           const MIN_TESTS = 10;
           const REPORT = 'geometry-report.json';
 

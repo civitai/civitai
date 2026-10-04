@@ -179,7 +179,9 @@ export type DiffLayout = 'unified' | 'split';
  * in the review PAGE's Code tab. The page redesign rearranges WHICH PANELS GO WHERE; it
  * deliberately does not fork the panels themselves, because a second per-file diff
  * renderer is the thing that would drift — and the shared body's docstring asks the two
- * surfaces to stay behaviour-identical.
+ * surfaces not to FORK a panel. It does not ask them to behave identically: the review page
+ * memoises its tab subtree while the modal re-renders per minute, which is a documented
+ * difference, not a drift.
  *
  * 🔴 THE `skipReason` LABELS ARE UNCHANGED AND CARRY NO LINK. `SKIP_LABEL`'s docstring
  * records why: the "— view in Forgejo" deep-links were retired in #3498 because in-review

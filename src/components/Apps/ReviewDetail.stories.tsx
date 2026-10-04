@@ -346,7 +346,7 @@ export const Manifest = () => (
  * same two components render at the table-row box in `/apps/mine` and the review queue, and
  * at the review box here — and a story showing only the new one cannot show that the small
  * one was the defect. The live gallery is not reproduced: it needs a tRPC query, and its own
- * sizing is pinned in `ReviewListingMedia.size.browser.test.tsx`.
+ * sizing is pinned in `ReviewListingMedia.size.geometry.test.tsx`.
  */
 export const Preview_Media = () => (
   <Shell active="preview">
