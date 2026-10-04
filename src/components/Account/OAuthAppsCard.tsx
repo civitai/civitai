@@ -195,9 +195,14 @@ export function SecretDisplay({
             component's required `label` rather than three hand-written attributes. */}
         <CopyAffordance value={clientId} label="Copy the client ID">
           {({ copied }) => (
-            // `paddingRight` on all three bodies in this file: the control is absolutely
-            // positioned inside the body, so the body reserves its width. Measured without
-            // it, the value's last characters sat 26px under the clipboard icon at 390 and at
+            // `paddingRight` on all three bodies in this file: the control is a SIBLING of the
+            // body, not inside it — `CopyAffordance` renders
+            // `<Box pos="relative">{children}<LegacyActionIcon …/></Box>`, so the control is
+            // positioned against that wrapper and merely OVERLAPS the body. It could not be
+            // inside it: `Code` computes `overflow: auto`, so a control genuinely inside would
+            // scroll away with the text. The overlap is why the body reserves the control's
+            // width. Measured without it, the value's last characters sat 26px under the
+            // clipboard icon at 390 and at
             // 360. `src/components/CopyAffordance/CopyAffordance.geometry.test.tsx` measures
             // this one and the secret below; the rotated secret further down is the same
             // spelling and is not separately mounted.

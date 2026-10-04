@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test } from 'vitest';
 import { page } from 'vitest/browser';
 import {
   NARROW_PHONE_VIEWPORT,
@@ -17,7 +17,12 @@ import { CopyableCommand } from '~/components/Apps/CopyableCommand';
 import { SecretDisplay } from '~/components/Account/OAuthAppsCard';
 // 🔴 `COPY_ICON_SIZE` IS DELIBERATELY NOT IMPORTED. The glyph assertion below pins a literal
 // 16: its box is that constant, so importing it would make the measurement check itself.
-import { COPY_BODY_PADDING_RIGHT, COPY_CONTROL_SIZE, COPY_ICON_INSET } from './CopyAffordance';
+//
+// 🔴 NOR IS `COPY_BODY_PADDING_RIGHT`, ANY LONGER, AND FOR A DIFFERENT REASON: it is now a
+// `rem()` CSS STRING rather than a number, so there is nothing to compare a px measurement
+// against. Every assertion over it below reads the RENDERED `padding-right` instead, which is
+// the stronger claim anyway — it holds at whatever root font size the test runs at.
+import { COPY_CONTROL_SIZE, COPY_ICON_INSET } from './CopyAffordance';
 
 /**
  * 🔒 THE COPY CONTROL DOES NOT SIT ON TOP OF THE TEXT IT COPIES.
@@ -29,10 +34,12 @@ import { COPY_BODY_PADDING_RIGHT, COPY_CONTROL_SIZE, COPY_ICON_INSET } from './C
  * has to reserve clearance for it. There are exactly TWO spellings of that clearance and
  * both have already been wrong in production:
  *
- *   · `COPY_BODY_PADDING_RIGHT` — `COPY_ICON_INSET + COPY_CONTROL_SIZE`, applied inline by
+ *   · `COPY_BODY_PADDING_RIGHT` — `rem(COPY_ICON_INSET + COPY_CONTROL_SIZE)`, applied inline by
  *     every `Code`-block consumer: `CopyableCommand`, `AuthorViaGit`, and the four bodies in
  *     `Account/ApiKeyModal.tsx` and `Account/OAuthAppsCard.tsx`. Introduced *because* a body
- *     once reserved less than the control's width and rendered its text under the icon.
+ *     once reserved less than the control's width and rendered its text under the icon, and
+ *     `rem()`-ified because a raw number stopped tracking a rem-scaled control above a 16px
+ *     root font size — the second spelling of the same defect. Both are measured below.
  *
  *     ⚠️ THOSE FOUR DID NOT CARRY IT WHEN THIS LINE FIRST CLAIMED THEY DID. Measured then:
  *     clearance −26px at 390 and at 360 on a routed `Account/` body, with the value's last
@@ -82,7 +89,13 @@ import { COPY_BODY_PADDING_RIGHT, COPY_CONTROL_SIZE, COPY_ICON_INSET } from './C
  * `.github/workflows/lint.yml` reports on a PR and blocks on a push to `main`.
  */
 
-/** A command long enough to wrap and reach the control at any phone width. */
+/**
+ * A command long enough to OVERFLOW the body at any phone width.
+ *
+ * ⚠️ NOT "long enough to wrap", which is what this line said and what the file's own
+ * measurement at `:67` refutes: `<Code block>` is `pre`/`nowrap`/`overflow-x: auto`, and for
+ * THIS fixture `scrollWidth` is 572 against a `clientWidth` of 390. It scrolls.
+ */
 const LONG_COMMAND = 'npm install -g @civitai/cli && civitai app create my-very-long-app-name';
 
 /**
@@ -143,18 +156,46 @@ function promptBody(): Element {
   return paragraphs[0];
 }
 
-/** The harness's own positive control — these values are impossible without the cascade. */
-function assertCascadeIsReal() {
+/**
+ * The harness's own positive control — these values are impossible without the cascade.
+ *
+ * 🔴 THE ROOT FONT SIZE IS ONE OF THEM, AND IT WAS COLLECTED BUT NEVER ASSERTED.
+ * `cascadeEvidence()` has returned `htmlFontSize` all along; nothing read it, so every
+ * clearance number in this file was a measurement at whatever R the browser happened to
+ * default to, quoted as if it were unconditional. It is not unconditional: `rem` units in the
+ * cascade scale with R, and a clearance built out of a mix of rem and px terms moves with it.
+ * Naming the expected value here is what gives each measurement its own scope — and in the
+ * root-font-size block at the bottom it doubles as proof the override actually took effect.
+ */
+function assertCascadeIsReal(expectedRootFontSize = '16px') {
   const evidence = cascadeEvidence();
   expect(evidence.ruleCount, 'the real stylesheet did not load').toBeGreaterThan(1000);
   expect(evidence.tailwindFlexUtilityResolves, 'Tailwind utilities are inert here').toBe(true);
   expect(evidence.probeBoxSizing).toBe('border-box');
+  expect(
+    evidence.htmlFontSize,
+    `the root font size is ${evidence.htmlFontSize}, not ${expectedRootFontSize} — every ` +
+      'px clearance measured in this file is a claim at a particular root font size, because ' +
+      'the cascade around it is in rem'
+  ).toBe(expectedRootFontSize);
 }
 
 describe('🔒 a `Code`-block body reserves the control`s width — `COPY_BODY_PADDING_RIGHT`', () => {
   for (const viewport of [PHONE_VIEWPORT, NARROW_PHONE_VIEWPORT] as Viewport[]) {
-    // Two widths, because the body wraps and the control does not: a clearance that holds at
-    // 390 and not at 360 is a real defect, and one measurement could not tell.
+    // Two widths, because a cascade is not obliged to be width-invariant: these two pin that
+    // nothing in it BECOMES width-dependent — a `max-width` media query on the body's padding,
+    // a breakpoint that changes the control's size.
+    //
+    // ⚠️ THEY CANNOT DISCRIMINATE A WIDTH-DEPENDENT CLEARANCE IN *THIS* GEOMETRY, AND THE
+    // EARLIER RATIONALE HERE ("the body wraps and the control does not: a clearance that holds
+    // at 390 and not at 360 is a real defect") CLAIMED THEY COULD. The body does not wrap —
+    // see `LONG_COMMAND` and `:67` — and the measured clearance contains no viewport term at
+    // all: it is `bodyPaddingRight − inset − controlWidth`, three constants. The numbers say so
+    // too, which is the part worth noticing before trusting a pair of measurements: −26px at
+    // BOTH widths before the padding was added, 0.00px at both after. Two pairs of identical
+    // numbers is what width-invariance looks like, not what a discriminating matrix looks like.
+    // The axis this geometry IS sensitive to is the root font size, and it took its own case
+    // at the bottom of this file.
     test(`at ${viewport.width}x${viewport.height} the control clears the command text`, async () => {
       const { observed } = await renderAtViewport(
         <CopyableCommand command={LONG_COMMAND} />,
@@ -197,7 +238,9 @@ describe('🔒 a `Code`-block body reserves the control`s width — `COPY_BODY_P
     expect(controlBox.right).toBeLessThanOrEqual(bodyBox.right);
     expect(controlBox.left).toBeGreaterThan(bodyBox.left);
     // And the reserved padding is the thing creating the gap, not an accident of wrapping.
-    expect(parseFloat(getComputedStyle(code).paddingRight)).toBe(COPY_BODY_PADDING_RIGHT);
+    expect(parseFloat(getComputedStyle(code).paddingRight)).toBe(
+      COPY_ICON_INSET + COPY_CONTROL_SIZE
+    );
     // The inset the clearance is derived FROM, read off the rendered control rather than
     // restated: a change to it that did not reach the padding is the documented failure.
     expect(bodyBox.right - controlBox.right).toBeCloseTo(COPY_ICON_INSET, 0);
@@ -211,10 +254,17 @@ describe('🔒 a `Code`-block body reserves the control`s width — `COPY_BODY_P
         `(${COPY_CONTROL_SIZE}). Mantine's default ActionIcon size moved; the body padding is ` +
         'derived from it, so update the constant rather than the padding.'
     ).toBe(COPY_CONTROL_SIZE);
+    // 🔴 THE RELATION, BETWEEN TWO RENDERED NUMBERS — NOT BETWEEN TWO CONSTANTS. This line used
+    // to read `expect(COPY_BODY_PADDING_RIGHT).toBe(COPY_ICON_INSET + controlBox.width)`, which
+    // compared a number the module computed against a measurement; it can no longer, because
+    // `COPY_BODY_PADDING_RIGHT` is now a `rem()` CSS STRING (see its doc — the control's box is
+    // rem-scaled, so a px padding de-synchronises above a 16px root font size). Comparing the
+    // RENDERED padding to the RENDERED control width is both unit-agnostic and the stronger
+    // claim: it holds at whatever root font size the harness is at.
     expect(
-      COPY_BODY_PADDING_RIGHT,
+      parseFloat(getComputedStyle(code).paddingRight),
       'the reserved padding is no longer the inset plus the measured control width'
-    ).toBe(COPY_ICON_INSET + controlBox.width);
+    ).toBeCloseTo(COPY_ICON_INSET + controlBox.width, 1);
   });
 });
 
@@ -288,7 +338,7 @@ describe('🔒 the `Account/` credential bodies reserve the control`s width', ()
           gap,
           `"${label}" overlaps its credential text by ${-gap}px — that body reserved ` +
             `${getComputedStyle(body).paddingRight} on the right, against the ` +
-            `${COPY_BODY_PADDING_RIGHT}px the control needs`
+            `${box(control.element()).width + COPY_ICON_INSET}px the control needs`
         ).toBeGreaterThanOrEqual(0);
       }
     });
@@ -372,4 +422,163 @@ describe('🔒 the agent prompt`s prose panel reserves its control`s width — t
       ).toBeGreaterThanOrEqual(0);
     });
   }
+});
+
+/**
+ * 🔒 THE CLEARANCE IS UNIT-SYMMETRIC — IT SURVIVES A NON-DEFAULT ROOT FONT SIZE.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE DEFECT THIS PINS
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The clearance is a difference of three terms, and TWO of them scale with the root font
+ * size while one did not:
+ *
+ *   · `COPY_ICON_INSET` is passed as Mantine's `right=` STYLE PROP. `right` is
+ *     `{type: 'size'}` in `core/Box/style-props/style-props-data.cjs`, so the number goes
+ *     through `sizeResolver` → `rem()` and renders `calc(0.5rem * var(--mantine-scale))`.
+ *     SCALES: 0.5·R.
+ *   · the control's BORDER BOX is `--ai-size-md`, which in the bundle this app imports
+ *     (`@mantine/core/styles.layer.css`, per `src/pages/_app.tsx`) is
+ *     `calc(1.75rem * var(--mantine-scale))`. SCALES: 1.75·R. 🔴 THE PER-COMPONENT FILE
+ *     `@mantine/core/styles/ActionIcon.css` DECLARES A LITERAL `28px` AND IS NOT IN THIS
+ *     CASCADE — reading it is exactly how this term got recorded as fixed. Measured here:
+ *     **35px at R=20**, which is 1.75 × 20.
+ *   · `COPY_BODY_PADDING_RIGHT` reached each body as a raw NUMBER in a React inline style,
+ *     so `36px`. DID NOT SCALE.
+ *
+ * So the clearance was `36 − 2.25R`: exactly 0 at R=16 — which is what every other
+ * measurement in this file reports, and why nothing noticed — and NEGATIVE at every larger
+ * R: **−9px at R=20, −18px at R=24**, with the tail of a credential rendered under the
+ * clipboard icon. Nothing pins R. `src/styles/globals.css` declares no `html { font-size }`
+ * (its only 16px is inside an iOS `input:focus` media query) and nothing overrides
+ * `--mantine-scale`, so a reader who has set a browser font-size preference got the defect.
+ *
+ * The fix is `COPY_BODY_PADDING_RIGHT = rem(…)` — Mantine's own converter, the same one the
+ * inset's style prop calls — so `2.25rem` tracks `0.5rem + 1.75rem` by construction. Forcing
+ * the other two to px instead would have fought the cascade in the wrong direction: the
+ * control growing with the root font size is the ACCESSIBILITY behaviour, not the bug.
+ *
+ * 🔴 WHY THIS AXIS NEEDED ITS OWN BLOCK RATHER THAN A THIRD VIEWPORT. The two widths above
+ * cannot see it: the clearance has no viewport term, which their own numbers show (−26px at
+ * both widths before the body padding existed, 0.00px at both after). R is a different
+ * dimension, the harness pinned it implicitly at the browser default, and a suite whose
+ * config pins a dimension is structurally blind to that dimension's bugs.
+ *
+ * ⚠️ ONE VIEWPORT HERE, DELIBERATELY. Width-invariance is what the blocks above establish;
+ * repeating it would add runs without adding a claim. What this block varies is R.
+ */
+describe('🔒 the clearance survives a non-default root font size', () => {
+  /**
+   * A root font size a real browser produces, not a stress value.
+   *
+   * 20px is Chrome/Firefox's "Large" font-size setting. It also OVERSHOOTS rather than sitting
+   * on a boundary: the pre-fix clearance here is −9px, so the assertion fails on the defect's
+   * own magnitude rather than on a rounding argument about zero. And 20/16 = 1.25 is not a
+   * whole multiple of any term, so a term that quietly stayed px cannot coincide with one that
+   * scaled.
+   */
+  const ROOT_FONT_SIZE = '20px';
+  const SCALE = 20 / 16;
+
+  afterEach(() => {
+    document.documentElement.style.removeProperty('font-size');
+  });
+
+  /**
+   * Each of the three terms, measured against its OWN expected value at this root font size.
+   *
+   * 🔴 THE DEFECT IS A DISAGREEMENT BETWEEN THE TERMS, NOT A WRONG VALUE IN ANY ONE — every
+   * term was individually defensible and the MIX was the bug. So a bare `clearance < 0` cannot
+   * say which one stopped tracking, and these three can: each names itself. `SCALE` is applied
+   * to constants this repo owns, compared against numbers the browser resolved out of Mantine's
+   * stylesheet, so none of them is the implementation checking itself.
+   *
+   * 🔴 CALLED **AFTER** THE CLEARANCE ASSERTION, AND BOTH ORDERS WERE WATCHED TO FAIL. Under
+   * the pre-fix spelling (`COPY_BODY_PADDING_RIGHT` as a raw number) each assertion goes red on
+   * its own terms when it runs first: the clearance reports `-9` with the three measured values
+   * in its message, and the padding term reports `expected 36 to be close to 45`. Only one of
+   * the two can report per run, so the clearance — the actual claim — goes first.
+   *
+   * These are NOT a restatement of it, and that was measured rather than argued: under
+   * `rem(2 * (COPY_ICON_INSET + COPY_CONTROL_SIZE))` the gap stays comfortably positive at
+   * every R, both clearance assertions pass, and this helper is still reached and still goes
+   * red (`expected 90 to be close to 45`). A padding that is too LARGE breaks the derivation
+   * the constants exist to express and the clearance cannot see it.
+   */
+  function assertAllThreeTermsScaleTogether(body: Element, control: Element) {
+    expect(
+      parseFloat(getComputedStyle(control).right),
+      'the control`s inset stopped tracking the root font size. It is Mantine`s `right=` style ' +
+        'prop, which rem-ifies via `sizeResolver` → `rem()`; a raw px value here would ' +
+        'de-synchronise it from the control`s own rem-scaled border box'
+    ).toBeCloseTo(COPY_ICON_INSET * SCALE, 1);
+    expect(
+      parseFloat(getComputedStyle(body).paddingRight),
+      'the body`s reserved padding is not the inset plus the control at this root font size. ' +
+        'Too SMALL means it stopped scaling — the exact defect `COPY_BODY_PADDING_RIGHT = ' +
+        'rem(…)` fixed, since a raw NUMBER in the consumer`s `style={{ paddingRight }}` ' +
+        'renders fixed px while the control keeps growing. Too LARGE means the derivation ' +
+        'drifted; the clearance assertion above cannot see that one, which is why this runs'
+    ).toBeCloseTo((COPY_ICON_INSET + COPY_CONTROL_SIZE) * SCALE, 1);
+    expect(
+      box(control).width,
+      'the control`s border box is not the rem-scaled `--ai-size-md`. If this reports a flat ' +
+        '28 the cascade changed to the per-component `styles/ActionIcon.css` spelling, and ' +
+        '`COPY_BODY_PADDING_RIGHT` should go back to a plain number'
+    ).toBeCloseTo(COPY_CONTROL_SIZE * SCALE, 1);
+  }
+
+  test(`at a ${ROOT_FONT_SIZE} root font size the credential bodies still clear their control`, async () => {
+    document.documentElement.style.fontSize = ROOT_FONT_SIZE;
+    const { observed } = await renderAtViewport(
+      <SecretDisplay
+        clientId="civitai-oauth-client-abcdef0123456789"
+        clientSecret="cs_7f3a9b1c4d2e8f6a0b5c9d3e7f1a2b4c6d8e0f2a4b6c8d0e2f4a6b8c0d2e4f6a"
+        onClose={() => undefined}
+      />
+    );
+    expect(observed).toEqual({ width: 390, height: 844 });
+    // Doubles as the positive control for the override: if the `font-size` write did not take,
+    // this reports 16px and the test below would be measuring R=16 all over again.
+    assertCascadeIsReal(ROOT_FONT_SIZE);
+
+    for (const label of ['Copy the client ID', 'Copy the client secret']) {
+      const control = page.getByRole('button', { name: label });
+      await expect.element(control).toBeInTheDocument();
+      const shell = control.element().parentElement;
+      const body = shell?.querySelector('pre[data-block="true"]');
+      if (!body) throw new Error(`"${label}" is not a sibling of a \`Code block\` body`);
+
+      const gap = clearance(body, control.element());
+      expect(
+        gap,
+        `at a ${ROOT_FONT_SIZE} root font size "${label}" overlaps its credential text by ` +
+          `${-gap}px. The body reserved ${getComputedStyle(body).paddingRight} and the ` +
+          `control sits ${getComputedStyle(control.element()).right} from the right at ` +
+          `${box(control.element()).width}px wide — a clearance that holds at 16px and not ` +
+          'here means those three are not all in the same unit.'
+      ).toBeGreaterThanOrEqual(0);
+      assertAllThreeTermsScaleTogether(body, control.element());
+    }
+  });
+
+  test(`at a ${ROOT_FONT_SIZE} root font size the command body still clears its control`, async () => {
+    document.documentElement.style.fontSize = ROOT_FONT_SIZE;
+    const { observed } = await renderAtViewport(<CopyableCommand command={LONG_COMMAND} />);
+    expect(observed).toEqual({ width: 390, height: 844 });
+    assertCascadeIsReal(ROOT_FONT_SIZE);
+
+    const control = page.getByRole('button', { name: `Copy command: ${LONG_COMMAND}` });
+    await expect.element(control).toBeInTheDocument();
+    const code = codeBody();
+
+    const gap = clearance(code, control.element());
+    expect(
+      gap,
+      `at a ${ROOT_FONT_SIZE} root font size the copy control overlaps the command text by ` +
+        `${-gap}px — the body reserved ${getComputedStyle(code).paddingRight} and the control ` +
+        `sits ${getComputedStyle(control.element()).right} from the right`
+    ).toBeGreaterThanOrEqual(0);
+    assertAllThreeTermsScaleTogether(code, control.element());
+  });
 });

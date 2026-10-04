@@ -1,5 +1,5 @@
 import type { MouseEvent, ReactNode } from 'react';
-import { Box, CopyButton } from '@mantine/core';
+import { Box, CopyButton, rem } from '@mantine/core';
 import { IconCheck, IconClipboard } from '@tabler/icons-react';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
@@ -10,10 +10,19 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
  * `GetStartedBody` and `CliSubmitCta` each carried a byte-identical private copy of a copy
  * button and `/apps/build` needed a third; its own header records that. The agent prompt
  * cannot reuse `CopyableCommand` itself, because that component renders `` `$ ${command}` ``
- * — a shell prompt sigil in front of a one-line command, inside a `Code block` with
- * `word-break: break-all`. The prompt is multi-line prose, so it would render as
- * "$ Read https://…" with its words broken mid-token, and `CopyableCommand`'s `aria-label`
- * is literally `Copy command: …`.
+ * — a shell prompt sigil in front of a one-line command — and its `aria-label` is literally
+ * `Copy command: …`. The prompt is multi-line prose, so it would render as "$ Read https://…"
+ * and announce itself to a screen reader as a command.
+ *
+ * ⚠️ `word-break: break-all` IS NOT A THIRD REASON, THOUGH THIS NOTE AND `CopyableCommand`'s
+ * HEADER BOTH LISTED IT AS ONE. `<Code block>` computes `white-space: pre` / `nowrap`, so no
+ * soft wrap happens and `break-all` has nothing to act on — measured in
+ * `src/components/CopyAffordance/CopyAffordance.geometry.test.tsx`, where `CopyableCommand`'s
+ * own long-command fixture SCROLLS (`scrollWidth` 572 against `clientWidth` 390) instead of
+ * wrapping. The property is still set on the bodies that carried it; it is inert there, not
+ * load-bearing — and no count of them is given here, for the reason the next paragraph gives.
+ * The conclusion above is unaffected: it rests on the sigil and the `aria-label`, both of
+ * which are rendered output.
  *
  * ⚠️ NO TOTAL IS STATED HERE, DELIBERATELY. Two successive comments in this family each
  * claimed a count ("not a fourth copy", then "a fifth") and each was wrong, and a third
@@ -131,9 +140,21 @@ export function CopyAffordance({
             {children({ copied })}
             <LegacyActionIcon
               className={iconClassName}
-              // Duplicates the Tailwind `right-2` in the default class (both 8px) as an
-              // inline style, so the offset survives a utility-class purge. See
-              // {@link COPY_ICON_INSET} for why the number is shared rather than retyped.
+              // Duplicates the Tailwind `right-2` in the default class as an inline style, so
+              // the offset survives a utility-class purge. See {@link COPY_ICON_INSET} for why
+              // the number is shared rather than retyped.
+              //
+              // 🔴 THIS IS MANTINE'S `right=` STYLE PROP AND IT REM-IFIES ITS ARGUMENT — KEPT
+              // DELIBERATELY, BECAUSE THE OTHER TWO TERMS DO TOO. `right` is `{type: 'size'}`
+              // in `core/Box/style-props/style-props-data.cjs`, so `8` goes through
+              // `sizeResolver` → `rem()` and renders `calc(0.5rem * var(--mantine-scale))`.
+              // The control's own border box is `--ai-size-md`, which in the stylesheet this
+              // app imports (`@mantine/core/styles.layer.css`) is
+              // `calc(1.75rem * var(--mantine-scale))` — NOT the `28px` the per-component
+              // `styles/ActionIcon.css` carries; that file is not in the cascade here. So both
+              // terms track the root font size, and {@link COPY_BODY_PADDING_RIGHT} is in
+              // `rem()` to match. Hard-coding a px inset here would RE-BREAK the clearance by
+              // de-synchronising it from a control that still grows.
               right={COPY_ICON_INSET}
               variant="transparent"
               color="gray"
@@ -175,6 +196,17 @@ export function CopyAffordance({
  * {@link AgentOnboardingCard}'s prose panel sets its own clearance in its stylesheet (its
  * control sits top-right, not right-middle), so it is a SECOND spelling of the same idea.
  *
+ * ⚠️ EXCEPT ONE, AND IT IS NAMED HERE BECAUSE AN ENUMERATION THAT OMITS ITS COUNTEREXAMPLE
+ * READS AS COVERAGE. `Collections/CollectionEditModal.tsx`'s invite-link block keeps its own
+ * shell rather than routing through this component — it gates on `disabled={!joinUrl}`, which
+ * this component does not model — and reserves NO right padding at all against a `right={10}`
+ * control: a clearance of −1.75·R, i.e. −28px at a 16px root font size, on a full URL whose
+ * tail therefore scroll-paints under the icon. DERIVED from that file's props and the rules
+ * above, NOT measured — no fixture mounts it. PRE-EXISTING and outside this component's reach
+ * either way; the deleted `src/components/Apps/` ledger scoped that directory out too, so it
+ * would not have caught it. Fixing it needs its own padding AND its own geometry case, which
+ * is a separate change from this one.
+ *
  * ⚠️ THE CLEARANCE IS A CLAIM ABOUT A BODY WHOSE VALUE *FITS*, AND NOTHING MORE. Measured at
  * 390px: `<Code block>` computes `white-space: pre` / `text-wrap-mode: nowrap` /
  * `overflow-x: auto`, so a value wider than the content box does not wrap — it scrolls, and a
@@ -210,13 +242,37 @@ export const COPY_ICON_INSET = 8;
  */
 export const COPY_ICON_SIZE = 16;
 /**
- * The control's rendered BORDER BOX — `LegacyActionIcon`'s default size, not the glyph's.
+ * The control's rendered BORDER BOX AT A 16px ROOT FONT SIZE — `LegacyActionIcon`'s default
+ * size, not the glyph's.
  *
- * 🔴 THE NUMBER THE CLEARANCE IS MADE OF, AND IT IS NOT `COPY_ICON_SIZE`. A Mantine
- * `ActionIcon` at its default `size="md"` is 28px square and carries the 16px glyph with 6px
- * either side. The glyph is what this file passes; the border box is what can overlap the
- * text. Measured off the rendered control by the geometry suite rather than taken on trust,
- * so a Mantine default-size change reds an assertion that names this constant instead of
+ * 🔴 THE NUMBER THE CLEARANCE IS MADE OF, AND IT IS NOT A FUNCTION OF `COPY_ICON_SIZE`. 28 is
+ * `--ai-size-md`. The ActionIcon root rule sets `width`/`height`/`min-width`/`min-height` to
+ * `var(--ai-size)` and centres its child with `display: inline-flex` +
+ * `align-items`/`justify-content: center` — so the box is INDEPENDENT OF THE GLYPH: bumping
+ * `COPY_ICON_SIZE` to 20 for legibility moves this constant by nothing and needs no call-site
+ * change at all. The glyph is what this file passes; the border box is what can overlap the
+ * text.
+ *
+ * 🔴 BUT 28 IS ONLY ITS px VALUE AT R=16 — THE BOX IS REM-SCALED, AND THE TWO MANTINE
+ * STYLESHEETS DISAGREE ABOUT THAT. READ THE ONE IN THE CASCADE. `@mantine/core@7.17.8/styles/ActionIcon.css` (and its `.layer` twin) declares a
+ * literal `--ai-size-md: 28px`; the BUNDLE this app actually imports,
+ * `@mantine/core/styles.layer.css` (see `src/pages/_app.tsx`), declares
+ * `calc(1.75rem * var(--mantine-scale))`. The per-component file is not in the cascade here,
+ * so quoting it is how a "fixed 28px" claim gets made about a box that measures **35px at a
+ * 20px root font size** — measured, in the root-font-size block of
+ * `src/components/CopyAffordance/CopyAffordance.geometry.test.tsx`. That is why
+ * {@link COPY_BODY_PADDING_RIGHT} is a `rem()` string rather than this number plus one.
+ *
+ * ⚠️ THIS DOC SAID THE BOX "carries the 16px glyph with 6px either side" AND THAT MECHANISM
+ * DOES NOT EXIST. No ActionIcon rule declares `padding` at all, so there is no padding to be
+ * 6px of — and 16+6+6 could not be an inside-the-border accounting of a BORDER box anyway.
+ * What the cascade gives at R=16 is a 1px transparent border (`--ai-bd`, which
+ * `variant="transparent"` also resolves to `rem(1) solid transparent`), a 26px content box,
+ * and the glyph flex-centred with 5px free per side — and that border is
+ * `calc(0.0625rem * var(--mantine-scale))` too, so none of those three numbers is fixed either.
+ *
+ * Measured off the rendered control by the geometry suite rather than taken on trust, so a
+ * Mantine default-size change reds an assertion that names this constant instead of
  * reappearing as a mysterious one-pixel clearance failure.
  */
 export const COPY_CONTROL_SIZE = 28;
@@ -227,15 +283,38 @@ export const COPY_CONTROL_SIZE = 28;
  * enforcing it, and a bump to the inset would silently shrink the clearance — re-arming the
  * exact defect the constants were introduced to prevent.
  *
- * ⚠️ IT SPELLED `COPY_ICON_INSET + COPY_ICON_SIZE + 12` AND CALLED THE `12` BREATHING ROOM.
- * Same total, wrong mechanism: 12 is the button's own padding, 6 per side, so that sum was
- * the border box re-derived by coincidence and there is NO breathing room — measured
- * clearance on a correctly padded body is 0.00px at both 390 and 360. Worth knowing before
- * you read a failure: the geometry suite's `clearance >= 0` assertion therefore sits exactly
- * ON its own boundary, so anything that widens the control by one pixel reds it. That is the
- * right direction to fail in, and it is not slack.
+ * 🔴 AND IT IS A `rem()` CSS STRING, NOT A NUMBER — BECAUSE THE OTHER TWO TERMS SCALE WITH THE
+ * ROOT FONT SIZE AND A RAW NUMBER DOES NOT. This was a live overlap, not a hypothetical. The
+ * inset goes through Mantine's `right=` style prop (`sizeResolver` → `rem()` →
+ * `calc(0.5rem * var(--mantine-scale))`) and the control's border box is `--ai-size-md`, which
+ * in the bundle this app imports is `calc(1.75rem * var(--mantine-scale))`. Against a raw
+ * `36` the clearance was therefore `36 − 2.25R`, i.e. `0` at a 16px root font size — which is
+ * what every measurement in the geometry suite reported — and NEGATIVE at every larger one:
+ * **−9px at R=20, −18px at R=24**, with the tail of an API key or client secret rendered under
+ * the clipboard icon. Nothing pins R: `src/styles/globals.css` declares no `html { font-size }`
+ * (its only `16px` is an iOS `input:focus` override) and nothing overrides `--mantine-scale`,
+ * so a reader with a browser font-size preference got the defect. `rem()` is Mantine's OWN
+ * converter — the same one the inset's style prop calls — so the three terms cannot drift
+ * apart by construction, and `2.25rem` is exactly `0.5rem + 1.75rem`.
+ *
+ * ⚠️ THE NUMBERS IN THE SUM ARE px-AT-R=16 REFERENCE VALUES, which is also how Mantine spells
+ * its own sizes (`rem()` divides by 16). Consumers apply this STRING to `paddingRight`; it is
+ * no longer something to do arithmetic on, and the geometry suite compares the RENDERED
+ * padding against the RENDERED control instead.
+ *
+ * ⚠️ IT ONCE SPELLED `COPY_ICON_INSET + COPY_ICON_SIZE + 12` AND CALLED THE `12` BREATHING
+ * ROOM. Same total, wrong mechanism — and then wrong a second time: the correction that
+ * replaced it ("the button's own padding, 6 per side") invented a padding declaration that no
+ * ActionIcon rule contains. What is true is only that the sum happened to equal the control's
+ * border box, which {@link COPY_CONTROL_SIZE} names directly; no decomposition belongs here.
+ *
+ * ⚠️ AND THERE IS NO SLACK, AT ANY VIEWPORT OR ROOT FONT SIZE. The measured clearance on a
+ * correctly padded body is 0.00px, by construction rather than by luck. Worth knowing before
+ * you read a failure: the geometry suite's `clearance >= 0` assertion sits exactly ON its own
+ * boundary, so anything that widens the control by one pixel reds it. That is the right
+ * direction to fail in, and it is not slack.
  */
-export const COPY_BODY_PADDING_RIGHT = COPY_ICON_INSET + COPY_CONTROL_SIZE;
+export const COPY_BODY_PADDING_RIGHT = rem(COPY_ICON_INSET + COPY_CONTROL_SIZE);
 
 /** The default glyph pair, exported so a `renderGlyph` can wrap it rather than restate it. */
 export function CopyGlyph({ copied, size = COPY_ICON_SIZE }: { copied: boolean; size?: number }) {
