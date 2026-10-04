@@ -73,17 +73,18 @@ import type { AppStorageOp } from '~/server/prom/app-block-storage.metrics';
  * subject gate shares it with eleven others — bad token, revoked instance, missing scope,
  * unhydratable subject, anon write, and more. Nor is this the only producer of the string:
  * `'Apps are not enabled'` is THROWN from six sites across five files, and SERVED — not
- * thrown — by twelve REST handlers under `src/pages/api/`, almost all at HTTP 503. This
- * counter attributes exactly one of the six, on one of the two storage transports; the REST
- * twins under `/api/v1/blocks/app-storage/` never run this middleware.
+ * thrown — by twelve REST handlers under `src/pages/api/`, ELEVEN of them at a hardcoded
+ * HTTP 503. This counter attributes exactly one of the six, on one of the two storage
+ * transports; the REST twins under `/api/v1/blocks/app-storage/` never run this middleware.
  *
- * 🔴 AND THE STATUS ONLY NARROWS IN ONE DIRECTION — an earlier revision of this comment
- * claimed both, which was false and pointed the wrong way. A 503 does narrow: it means a
- * REST handler that is neither gate. A 401 does NOT. `src/pages/api/v1/blocks/me.ts` derives
- * its status from the `TRPCError` it catches, so it SERVES this string at 401 — for two
- * different underlying refusals, one of which carries an entirely different message at its
- * throw site. So a 401 plus this string is consistent with any of the six throw sites OR
- * with that route, and this counter is silent on the latter.
+ * 🔴 SO THE STATUS NARROWS, BUT NOT TO A THROW SITE — and two earlier revisions of this
+ * sentence were wrong in OPPOSITE directions, first claiming a 401 implied a throw site, then
+ * that it narrowed nothing. Measured: 503 ⇒ one of the eleven hardcoding handlers, so neither
+ * gate. 401 ⇒ SEVEN candidates, not six — the twelfth REST handler,
+ * `src/pages/api/v1/blocks/me.ts`, derives its status from the `TRPCError` it catches and so
+ * SERVES this string at 401, for two different underlying refusals, one of which carries an
+ * entirely different message at its own throw site and is discarded by that route. This
+ * counter is silent there.
  *
  * 🔴 AND THE NAME IS SHARED BY THREE DIFFERENT MIDDLEWARES — do not assume they behave
  * alike, and note none of the three is substitutable for another. This one is a FACTORY

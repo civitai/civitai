@@ -362,8 +362,28 @@ describe('the seeded domain matches the service', () => {
     'block_storage_session_gate_refusals_total',
   ] as const;
   const REACH_KEYS = [...LEDGERED_SYMBOLS, ...DECLARED_NAMES] as const;
-  /** Comments stripped, so this guard is about reachability and never about wording. */
-  const codeOf = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  /**
+   * Comments stripped, so this guard is about reachability and never about wording.
+   *
+   * 🔴 ONE ALTERNATION, NOT TWO CHAINED REPLACES, AND THE ORDER WAS A LIVE HOLE. Stripping
+   * block comments FIRST lets a block-comment OPENER sitting inside a `//` LINE comment open a
+   * pseudo block comment that runs to the next real block-comment CLOSER — swallowing every
+   * line of code between them. Measured: two inserted lines, the first a line comment ending in
+   * a path glob of a shape that already appears in two of the three guarded files, silently
+   * deleted four code-ish lines and took BOTH flat-zero loops below from 1 hit to 0. It is
+   * aligned exactly with the hazard: a swallow can only ever help an `expect(...).toBe(0)`, and
+   * both of those loops are that shape, while a swallow inside a DECLARED writer's cell fails
+   * loudly against its expected 1.
+   *
+   * The alternation fixes it by precedence: scanning left to right, at a `//` position the
+   * block-comment branch cannot match, so an opener inside that line is consumed as
+   * line-comment text. Controls measured both ways — on a clean tree the two forms give
+   * identical results, so this buys the hole and costs no false positive.
+   *
+   * (Deliberately described rather than spelled: writing the opener literally here would end
+   * this very docblock. The same hazard the `DECLARED_NAMES` block below records about itself.)
+   */
+  const codeOf = (text: string) => text.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
   const SERVICE = path.join(SRC, 'server/services/apps/app-storage.service.ts');
   const service = () => fs.readFileSync(SERVICE, 'utf8');
 
@@ -543,10 +563,12 @@ describe('the seeded domain matches the service', () => {
     //     comment says it exists to catch.
     // The first is why this matters most: the exposed `help` string asserts "A middleware
     // refusal moves ONLY this series", and a service-side emit makes that sentence false while
-    // every behavioural case stays green. Stated precisely, because a looser version of this
-    // was an overclaim: some of those twelve DO have a case asserting `ops_total` was
-    // incremented — what ten of them lack is any assertion that the SESSION-GATE series stays
-    // STILL, which is the direction that matters here.
+    // every behavioural case stays green. Counted, because two earlier versions of this
+    // sentence were loose in opposite directions: of the TWELVE `outcome="unauthorized"` emit
+    // sites in the service, exactly ONE has a case asserting `ops_total` was incremented, and
+    // exactly TWO assert the session-gate series stays STILL (the mirror arm and the
+    // invalid-token case). So TEN carry no stillness assertion, which is the direction that
+    // matters here.
     for (const sym of LEDGERED_SYMBOLS) {
       const declared: readonly string[] = LEDGERED_WRITERS[sym];
       for (const rel of reaching) {

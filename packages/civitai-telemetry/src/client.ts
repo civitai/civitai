@@ -713,8 +713,10 @@ export const appStorageOpsCounter = registerCounterWithLabels({
 // files, and SERVED — not thrown — by TWELVE REST handlers under `src/pages/api/`, eleven of
 // them at a hardcoded HTTP 503.
 //
-// 🔴 THE STATUS NARROWS IN ONE DIRECTION ONLY. 503 ⇒ a REST handler that is neither gate. A
-// 401 narrows NOTHING: `src/pages/api/v1/blocks/me.ts` derives its status from the `TRPCError`
+// 🔴 THE STATUS NARROWS, BUT NOT TO A THROW SITE — and "narrows nothing" was an earlier
+// over-correction in the other direction. 503 ⇒ one of the eleven REST handlers that hardcode
+// it, so neither gate. 401 ⇒ SEVEN candidates, not six:
+// `src/pages/api/v1/blocks/me.ts` derives its status from the `TRPCError`
 // it catches, so it serves this string at 401 — and for one of its two refusals the thrown
 // message is `'runtime block token subject could not be resolved'`, deliberately made distinct
 // upstream and then discarded by that route. So a 401 plus this string may be none of the six

@@ -418,17 +418,23 @@ describe('apps.storage shared gates', () => {
           .procedures
       ).sort();
 
-      // 🔴 THE LENGTH PIN GOES FIRST, AND THE ORDER IS THE WHOLE POINT. Two earlier drafts of
-      // this block got it wrong in opposite directions — one claimed a both-sides-empty case
-      // that cannot occur, the other claimed this line fires "as well as" the equality. It
-      // cannot fire *after* it: array `toEqual` already requires equal length, so below the
-      // equality this assertion is unreachable in every failing input and its message is never
-      // the one the author sees. Above it, it owns the one case the equality is silent on — a
-      // CONSISTENT growth of both sides, i.e. exactly what a legitimately-added sixth procedure
-      // plus its `STORAGE_CALLS` entry looks like — and it fails with a length diff that names
-      // the count rather than the op.
-      expect(declared).toHaveLength(5);
       expect(declared).toEqual([...STORAGE_CALLS.map(([op]) => op)].sort());
+      // 🔴 THE LENGTH PIN, WITH ITS MECHANISM ENUMERATED RATHER THAN REASONED ABOUT — three
+      // successive drafts of this comment were wrong, in three different ways, so the inputs
+      // are written out. D = `declared`, S = `STORAGE_CALLS` (a 5-entry literal):
+      //   |D|=5, |S|=5  today. Both pass.
+      //   |D|=6, |S|=6  a procedure added WITH its entry. The equality PASSES — both sides
+      //                 agree — so this line is the only thing that can fail. It owns this one.
+      //   |D|=6, |S|=5  a procedure added, entry forgotten. The equality fails first and its
+      //                 diff NAMES THE NEW OP, which is the more useful message.
+      //   |D|=5, |S|=6  the mirror. Equality fails first.
+      // So it is load-bearing in exactly one input, and REACHABLE THERE FROM EITHER POSITION —
+      // a previous draft claimed it was unreachable below the equality and moved it up on that
+      // basis, which was false (array `toEqual` passing is precisely what exposes it). It sits
+      // after the equality deliberately: that way the two likelier mistakes report the op
+      // rather than a bare count. Do not delete it, and do not move it again without
+      // re-enumerating these four rows.
+      expect(declared).toHaveLength(5);
     });
 
     // The MIRROR arm, and the control that makes the pair above attributable: a SUBJECT-gate
