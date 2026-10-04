@@ -81,8 +81,17 @@ const ordered = (list: Row[], orderBy?: Record<string, 'asc' | 'desc'>) => {
   return [...list].sort((a, b) => sign * (Number(a[key]) - Number(b[key])));
 };
 
+/** Users by id; only the fields the service filters on. */
+let users = new Map<number, { bannedAt: Date | null; muted: boolean }>();
 const prize = dbMock.dbWrite.prize;
 const installFakeTable = () => {
+  dbMock.dbWrite.user.findMany.mockImplementation(
+    async ({ where }: { where: { id: { in: number[] }; bannedAt: { not: null } } }) => {
+      if (Object.keys(where).sort().join() !== 'bannedAt,id' || where.bannedAt.not !== null)
+        throw new Error('fake User table: unsupported filter');
+      return where.id.in.filter((id) => users.get(id)?.bannedAt).map((id) => ({ id }));
+    }
+  );
   prize.createMany.mockImplementation(
     async ({ data, skipDuplicates }: { data: Omit<Row, 'id'>[]; skipDuplicates?: boolean }) => {
       if (data.some((input) => !(input.amount > 0)))
@@ -170,6 +179,7 @@ const ledgerCalls = () =>
 beforeEach(() => {
   vi.clearAllMocks();
   rows = [];
+  users = new Map();
   installFakeTable();
   createBuzzTransactionMany.mockImplementation(async (txs: unknown[]) => ({
     transactions: txs,
@@ -481,6 +491,109 @@ describe('voiding', () => {
 
     expect(await voidPrizes('Crucible', 1)).toBe(1);
     expect(rows[0].voidedAt).not.toBeNull();
+  });
+});
+
+describe('a banned winner', () => {
+  const ban = (userId: number) => users.set(userId, { bannedAt: NOW, muted: false });
+  const unban = (userId: number) => users.set(userId, { bannedAt: null, muted: false });
+
+  it('cannot claim while banned, and nothing is paid or recorded', async () => {
+    ban(10);
+    const [{ id }] = await award();
+
+    await expect(
+      claimPrize({ id, userId: 10, buzzType: 'yellow', choices: ['green', 'yellow'] })
+    ).rejects.toThrow('on hold while your account is banned');
+
+    expect(createBuzzTransactionMany).not.toHaveBeenCalled();
+    expect(rows[0]).toMatchObject({ claimedAt: null, voidedAt: null });
+  });
+
+  it('has a due prize held by the job, not auto-paid and not voided', async () => {
+    ban(10);
+    await award({ createdAt: new Date(NOW.getTime() - 31 * DAY) });
+
+    const result = await autoPayPrizes({ now: NOW });
+
+    expect(result.autoClaimed).toBe(0);
+    expect(createBuzzTransactionMany).not.toHaveBeenCalled();
+    expect(rows[0]).toMatchObject({ claimedAt: null, voidedAt: null });
+  });
+
+  it('has a claimed but unpaid prize held by the job too', async () => {
+    createBuzzTransactionMany.mockResolvedValueOnce({ transactions: [], conflicts: [] });
+    const [{ id }] = await award();
+    await claimPrize({ id, userId: 10, choices: ['green'] });
+    rows[0].claimedAt = new Date(NOW.getTime() - 11 * 60 * 1000);
+    ban(10);
+
+    const result = await autoPayPrizes({ now: NOW });
+
+    expect(result.retried).toBe(0);
+    expect(createBuzzTransactionMany).toHaveBeenCalledTimes(1);
+    expect(rows[0].paidAt).toBeNull();
+  });
+
+  it('is paid once the ban is lifted', async () => {
+    ban(10);
+    await award({ createdAt: new Date(NOW.getTime() - 31 * DAY) });
+    await autoPayPrizes({ now: NOW });
+    unban(10);
+
+    const result = await autoPayPrizes({ now: NOW });
+
+    expect(result.autoClaimed).toBe(1);
+    expect(ledgerCalls()).toEqual([[expect.objectContaining({ toAccountType: 'green' })]]);
+  });
+
+  it('does not hold back the next winner in the same batch', async () => {
+    ban(10);
+    await award({ createdAt: new Date(NOW.getTime() - 31 * DAY) });
+    await award({ createdAt: new Date(NOW.getTime() - 31 * DAY), userId: 11 });
+
+    const result = await autoPayPrizes({ now: NOW });
+
+    expect(result.autoClaimed).toBe(1);
+    expect(ledgerCalls()).toEqual([[expect.objectContaining({ toAccountId: 11 })]]);
+  });
+});
+
+describe('a batch full of held prizes', () => {
+  // Held prizes stay due. Re-reading them from the top every batch would starve whoever is behind.
+  it('does not stop the job reaching the winners queued behind them', async () => {
+    users.set(10, { bannedAt: NOW, muted: false });
+    for (let i = 0; i < 200; i++)
+      await award({
+        createdAt: new Date(NOW.getTime() - 31 * DAY),
+        externalTransactionId: `held-${i}`,
+      });
+    await award({
+      createdAt: new Date(NOW.getTime() - 31 * DAY),
+      userId: 11,
+      externalTransactionId: 'next',
+    });
+
+    const result = await autoPayPrizes({ now: NOW });
+
+    expect(result.autoClaimed).toBe(1);
+    expect(ledgerCalls()).toEqual([[expect.objectContaining({ toAccountId: 11 })]]);
+  });
+});
+
+describe('a muted winner', () => {
+  it('claims and is paid as usual', async () => {
+    users.set(10, { bannedAt: null, muted: true });
+    const [{ id }] = await award();
+
+    const result = await claimPrize({
+      id,
+      userId: 10,
+      buzzType: 'yellow',
+      choices: ['green', 'yellow'],
+    });
+
+    expect(result).toMatchObject({ buzzType: 'yellow', paid: true });
   });
 });
 

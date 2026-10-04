@@ -50,7 +50,7 @@ At the end, entries need a minimum share of votes to place; ties go to the earli
 
 The discovery page's Prize Pool sort uses the same pool.
 
-Prizes are plain Buzz. A winner claims theirs from the link in their results notification (or the banner on the crucible page): on civitai.com it is paid in green, and on civitai.red the winner picks green or yellow. A prize nobody claims is paid in green after 30 days. Claiming is shared with challenge winner prizes; see `src/server/services/prize.service.ts`.
+Prizes are plain Buzz. A winner claims theirs from the link in their results notification (or the banner on the crucible page): on civitai.com it is paid in green, and on civitai.red the winner picks green or yellow. A prize nobody claims is paid in green after 30 days. A banned winner's prize is held, neither claimable nor auto-paid, until the ban is lifted. Claiming is shared with challenge winner prizes; see `src/server/services/prize.service.ts`.
 
 ## Judging
 

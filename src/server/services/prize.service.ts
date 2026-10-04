@@ -5,7 +5,11 @@ import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { PrizeBuzzType } from '~/server/schema/prize.schema';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
-import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
@@ -127,6 +131,19 @@ export async function payPrize(prize: Prize): Promise<boolean> {
   return true;
 }
 
+/**
+ * A banned winner's prize is held, not voided: it can't be claimed or auto-paid while the ban
+ * stands, and pays normally once it is lifted. Muted winners are paid as usual.
+ */
+async function getBannedUserIds(userIds: number[]) {
+  if (!userIds.length) return new Set<number>();
+  const banned = await dbWrite.user.findMany({
+    where: { id: { in: [...new Set(userIds)] }, bannedAt: { not: null } },
+    select: { id: true },
+  });
+  return new Set(banned.map((user) => user.id));
+}
+
 export function resolveClaimBuzzType(
   requested: PrizeBuzzType | undefined,
   choices: PrizeBuzzType[]
@@ -153,6 +170,8 @@ export async function claimPrize({
   if (!prize) throw throwNotFoundError('Prize not found');
   if (prize.voidedAt) throw throwBadRequestError('This prize is no longer available');
   if (prize.claimedAt) return toPrizeView(prize, choices);
+  if ((await getBannedUserIds([userId])).size)
+    throw throwAuthorizationError('This prize is on hold while your account is banned');
 
   const type = resolveClaimBuzzType(buzzType, choices);
   const { count } = await dbWrite.prize.updateMany({
@@ -172,15 +191,20 @@ export async function autoPayPrizes({ now = new Date() } = {}) {
   let autoClaimed = 0;
   let retried = 0;
 
+  let dueCursor = 0;
   for (let batch = 0; batch < PRIZE_JOB_MAX_BATCHES; batch++) {
+    // Walked by id: a held prize stays due, and must not be served again on every batch.
     const due = await dbWrite.prize.findMany({
-      where: { claimedAt: null, voidedAt: null, autoClaimAt: { lte: now } },
-      orderBy: { autoClaimAt: 'asc' },
+      where: { id: { gt: dueCursor }, claimedAt: null, voidedAt: null, autoClaimAt: { lte: now } },
+      orderBy: { id: 'asc' },
       take: PRIZE_JOB_BATCH_SIZE,
     });
     if (!due.length) break;
+    dueCursor = due[due.length - 1].id;
+    const banned = await getBannedUserIds(due.map((prize) => prize.userId));
 
     for (const prize of due) {
+      if (banned.has(prize.userId)) continue;
       const { count } = await dbWrite.prize.updateMany({
         where: { id: prize.id, claimedAt: null, voidedAt: null },
         data: { claimedAt: now, buzzType: PRIZE_AUTO_CLAIM_BUZZ_TYPE, autoClaimed: true },
@@ -212,7 +236,11 @@ export async function autoPayPrizes({ now = new Date() } = {}) {
     });
     if (!unpaid.length) break;
     cursor = unpaid[unpaid.length - 1].id;
-    for (const prize of unpaid) if (await payPrize(prize)) retried++;
+    const banned = await getBannedUserIds(unpaid.map((prize) => prize.userId));
+    for (const prize of unpaid) {
+      if (banned.has(prize.userId)) continue;
+      if (await payPrize(prize)) retried++;
+    }
     if (unpaid.length < PRIZE_JOB_BATCH_SIZE) break;
   }
 

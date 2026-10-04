@@ -322,6 +322,35 @@ beforeEach(() => {
   mockClaimChallengeForCompletion.mockResolvedValue(JOB_CLAIM_STAMP);
 });
 
+// Justin, 2026-10-04: winner prizes are claimed; entry (participation) prizes are not — they keep
+// being paid automatically, in blue, the moment the challenge completes. No Prize row, no claim.
+describe('entry prizes stay automatic and blue', () => {
+  it('pays an entry prize straight to blue, and never awards it as a claimable prize', async () => {
+    // User 1 is the winner; user 2 earned the entry prize.
+    mockDbReadQueryRaw.mockResolvedValueOnce([{ userId: 1 }, { userId: 2 }]);
+
+    await endChallengeAndPickWinners(1);
+
+    const { createBuzzTransactionMany } = await import('~/server/services/buzz.service');
+    const entryPayments = vi
+      .mocked(createBuzzTransactionMany)
+      .mock.calls.flatMap(([txs]) => txs)
+      .filter((tx) => tx.externalTransactionId.startsWith('challenge-entry-prize-'));
+    expect(entryPayments).toEqual([
+      expect.objectContaining({
+        toAccountId: 2,
+        toAccountType: 'blue',
+        amount: 50,
+        externalTransactionId: 'challenge-entry-prize-1-2',
+      }),
+    ]);
+    const awardedKeys = mockCreatePrizes.mock.calls.flatMap(([prizes]) =>
+      (prizes as { externalTransactionId: string }[]).map((p) => p.externalTransactionId)
+    );
+    expect(awardedKeys.filter((key) => key.startsWith('challenge-entry-prize-'))).toEqual([]);
+  });
+});
+
 describe('mod -> job completion boundary — prize Buzz is counted exactly once', () => {
   it('a moderator run that pays winners then throws before its Completed write emits nothing', async () => {
     // The entry-participation prize block runs (user 2 earned it, user 1 is the winner) and its
