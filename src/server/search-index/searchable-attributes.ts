@@ -9,20 +9,28 @@
 // displayed" and stopped there, and both had to be corrected.
 //
 // 🔴 It is a WHITELIST standing in for Meilisearch's `["*"]` default, so its contents are a safety
-// boundary and not a tuning knob. Measured on a local Meilisearch 1.54.0 with two documents
-// carrying `42` and `77`, with positive and negative controls: with this whitelist `q=42` returns
-// 0 hits; with `["*"]` it returns 1, `q=77` returns the OTHER document (per-document
-// discrimination) and `q=999` returns 0. A bare `'insight'` PARENT entry is a real route too, not
-// only a leaf one — `["name","insight"]` makes `q=42` and `q=render_3d` each return 1 hit, while
-// the leaf-only `["name","insight.role"]` returns 0 for `42`.
+// boundary and not a tuning knob. Measurements recorded at the projection site in
+// ./models.search-index.ts and in ./displayed-attributes.ts — taken against a local Meilisearch
+// with positive and negative controls, and restated here rather than re-derived: with this
+// whitelist `q=42` returns 0 hits; with `["*"]` it returns 1, and `q=77` returns the OTHER
+// document, i.e. per-document discrimination. A bare `'insight'` PARENT entry is a real route too,
+// not only a leaf one, which is why the projection guard filters on `startsWith('insight')`
+// rather than `startsWith('insight.')`.
 //
 // So widening this list ships a per-document MEMBERSHIP ORACLE on internal label outcomes
 // ("which model's winning version is 42", one guess at a time) to anyone holding the
 // browser-published client key in `src/env/client-schema.ts`. It is not a value leak — the hit
-// body still withholds `insight`, which is ./displayed-attributes.ts's separate mechanism — and
-// `insight.modelVersionId` is the leaf for which this list is one of only two things keeping it
-// unreachable. The argument for writing that id at all is at the projection site in
-// ./models.search-index.ts.
+// body still withholds `insight`, which is ./displayed-attributes.ts's separate mechanism.
+//
+// 🔴 DO NOT WRITE DOWN HOW MANY MECHANISMS KEEP `insight.modelVersionId` UNREACHABLE WITHOUT
+// COUNTING TO FOUR. An earlier draft of THIS paragraph said "one of only two things", which is
+// the same truncated enumeration this file was created to stop — three separate comments in this
+// tree have had to be corrected for it, and one of them was being corrected in the same commit
+// that introduced this one. There are FOUR attribute lists and each absence does different work:
+// ./displayed-attributes.ts is the only one keeping the leaf out of a SERIALISED hit;
+// ./filterable-attributes.ts and ./sortable-attributes.ts keep it out of the filter/sort oracle;
+// and THIS list keeps it out of free-text matching. The argument for writing that id at all is at
+// the projection site in ./models.search-index.ts.
 export const modelsSearchableAttributes = ['name', 'user.username', 'hashes', 'triggerWords'];
 
 // 🔴 FROZEN, and the freeze is what makes hoisting this list a net improvement rather than a wider
