@@ -74,7 +74,7 @@ describe('AnnouncementCard actions', () => {
       <AnnouncementCard {...base} actions={actions} onActionClick={onActionClick} />
     );
 
-    await page.getByRole('button', { name: 'Button 3' }).click();
+    await page.getByRole('link', { name: 'Button 3' }).click();
     expect(onActionClick).toHaveBeenCalledWith(actions[2], 2);
   });
 
@@ -87,14 +87,41 @@ describe('AnnouncementCard actions', () => {
       />
     );
 
-    const cta = page.getByRole('button', { name: 'Join the group' });
-    await expect.element(cta).toBeVisible();
-    // 🔴 An anchor stays middle-, cmd-clickable and copyable — all routes around the
-    // interstitial. The missing href IS the fix.
-    await expect.element(cta).not.toHaveAttribute('href');
+    const cta = page.getByRole('link', { name: 'Join the group' });
+    // The href is the leaving-Civitai page, so the routes a plain click does not take —
+    // middle-click, cmd-click, a copied link — still land on the warning.
+    await expect.element(cta).toHaveAttribute('href', '/leaving?url=https://t.me/SomeGroup');
 
     await cta.click();
     expect(mocks.openExternalLinkWarning).toHaveBeenCalledWith('https://t.me/SomeGroup');
+  });
+
+  test('a modified click on an external action leaves the browser to open the warning page', async () => {
+    const { AnnouncementCard } = await import('~/components/Announcements/AnnouncementCard');
+    const onActionClick = vi.fn();
+    const action = { link: 'https://t.me/SomeGroup', linkText: 'Join the group' };
+    renderWithProviders(
+      <AnnouncementCard {...base} actions={[action]} onActionClick={onActionClick} />
+    );
+
+    // Record whether the card cancelled the default, then cancel it ourselves so the test frame
+    // does not open a tab.
+    let cardPrevented: boolean | undefined;
+    const observe = (e: MouseEvent) => {
+      cardPrevented = e.defaultPrevented;
+      e.preventDefault();
+    };
+    window.addEventListener('click', observe);
+    try {
+      await page
+        .getByRole('link', { name: 'Join the group' })
+        .click({ modifiers: ['ControlOrMeta'] });
+      expect(cardPrevented).toBe(false);
+      expect(mocks.openExternalLinkWarning).not.toHaveBeenCalled();
+      expect(onActionClick).toHaveBeenCalledWith(action, 0);
+    } finally {
+      window.removeEventListener('click', observe);
+    }
   });
 
   test('an external action still reports the click to analytics', async () => {
@@ -105,7 +132,7 @@ describe('AnnouncementCard actions', () => {
       <AnnouncementCard {...base} actions={[action]} onActionClick={onActionClick} />
     );
 
-    await page.getByRole('button', { name: 'Join the group' }).click();
+    await page.getByRole('link', { name: 'Join the group' }).click();
     expect(onActionClick).toHaveBeenCalledWith(action, 0);
   });
 

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { isExternalHref } from '~/utils/external-link';
+import {
+  externalLinkInterstitialHref,
+  isExternalHref,
+  parseExternalDestination,
+} from '~/utils/external-link';
 
 const hosts = ['civitai.com', 'www.civitai.com', 'civitai.red'];
 
@@ -67,5 +71,43 @@ describe('isExternalHref', () => {
 
   it('is external when no internal hosts are known and the href is absolute', () => {
     expect(isExternalHref('https://civitai.com/x', [])).toBe(true);
+  });
+});
+
+describe('parseExternalDestination', () => {
+  it.each([
+    'javascript:alert(1)',
+    'data:text/html,<script>1</script>',
+    '/models/1',
+    '//evil.test/x',
+    '',
+  ])('refuses %j', (value) => {
+    expect(parseExternalDestination(value)).toBeNull();
+  });
+
+  it('refuses a repeated query parameter, which arrives as an array', () => {
+    expect(parseExternalDestination(['https://a.test', 'https://b.test'])).toBeNull();
+  });
+
+  it('accepts an absolute http(s) URL', () => {
+    expect(parseExternalDestination('https://t.me/SomeGroup')).toBe('https://t.me/SomeGroup');
+  });
+});
+
+describe('externalLinkInterstitialHref', () => {
+  it.each([
+    'https://t.me/SomeGroup',
+    'https://example.com/a b?x=1&y=two#frag',
+    'https://example.com/?next=https%3A%2F%2Fother.test',
+  ])('round-trips %j through the query string', (destination) => {
+    const href = externalLinkInterstitialHref(destination);
+    const parsed = new URL(href, 'https://civitai.com').searchParams.get('url');
+    expect(parsed).toBe(destination);
+  });
+
+  it('keeps the destination readable in the href', () => {
+    expect(externalLinkInterstitialHref('https://t.me/SomeGroup')).toBe(
+      '/leaving?url=https://t.me/SomeGroup'
+    );
   });
 });
