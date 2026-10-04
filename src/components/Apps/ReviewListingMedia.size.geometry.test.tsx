@@ -154,28 +154,31 @@ const NON_SQUARE_IMAGE_DATA_URI =
  *   `complete === undefined`, so the await IS entered and no `load` ever fires — that is
  *   `toBeInstanceOf`'s job, and it is the one measured: delete it, aim one `settled()` at a
  *   placeholder id, and ONE test times out at 15 s, taking the tests phase from well under a
- *   second to roughly that timeout. (An earlier draft said "0 timeouts to 3" — that 3 was the number of LINES
- *   matching "Test timed out", which vitest prints three times for one timeout. Three 15 s
- *   timeouts could not fit in the 15.6 s phase quoted in the same sentence.)
+ *   second to roughly that timeout. (An earlier draft said "0 timeouts to 3" — that 3 was the
+ *   number of LINES matching "Test timed out". Vitest prints that message more than once per
+ *   timeout, and HOW many depends on the reporter: measured 3 with the dot reporter, 2 with
+ *   verbose, for the same single timeout. The line count was never a timeout count under any
+ *   reporter, and three 15 s timeouts could not fit the phase quoted beside it.)
  *   The second path is an `<img>` in flight whose load FAILS, firing `error` rather than
  *   `load` — that is the `error` listener's job. It does not FIRE on a healthy run, because
  *   no shipped fixture fails to load; what was measured is the half that matters, that the
  *   AWAIT is entered at all. An earlier draft called the listener unreachable "because data
  *   URIs complete synchronously" — true only of a URI the browser has already decoded.
- *   Instrumenting this helper: run MOST arms alone (`-t`) and the first `settled()` reads
- *   `complete=false, naturalWidth=0`, so the await IS entered. ⚠️ Not all — the ROW-icon arm
- *   renders two `<img>`s on this URI before its own `settled()`, so it warms itself and reads
- *   `complete=true`; that is the arm this ladder has mutation-tested the flex and `max-width`
- *   claims through, so the exception is not academic. In a whole-file run every call reads
- *   `complete=true`, an earlier arm having warmed the URI.
+ *   ⚠️ WHETHER THAT AWAIT IS ENTERED AT ALL IS A TIMING RACE, AND THREE SEPARATE
+ *   INSTRUMENTED RUNS GAVE THREE ANSWERS. The question is only ever whether the data URI has
+ *   finished loading by the time `settled()` runs, and `renderAtViewport` awaits first, so it
+ *   usually has. On this machine under load (~12) the same arm read `complete=false` 5 times
+ *   out of 5; a review lane on a quieter box read `complete=true` 6 arms out of 6; a third
+ *   run split 5-of-6. Earlier drafts here blamed run shape — "any arm alone enters it", "a
+ *   whole-file run warms it" — and that is not the variable. Machine load is.
  *
- *   ⚠️ AND DELETING THE LISTENER IS A RACE, NOT A CERTAINTY. Measured on fresh, never-decoded
- *   dead payloads: with the listener, 3 of 4 runs gave the named `fixture failed to load` and
- *   1 of 4 landed on `complete=true` and the `naturalWidth` guard instead; without it, 1 of 5
- *   timed out at 15 s and the other 4 fell through to that same guard. So the listener
- *   usually changes WHICH named message you get, and occasionally saves a timeout. (A probe
- *   here must use an unseen payload — re-running the same dead URI flips `complete` to true
- *   off the browser profile's cached failure.)
+ *   SO TREAT THE `error` LISTENER AS DEFENSIVE, NOT AS EXERCISED. It fires only when a dead
+ *   fixture happens to lose that race; with the shipped fixtures it never fires at all, and
+ *   with a dead one the usual outcome is the `naturalWidth` guard below. An earlier draft
+ *   said deleting it "would turn the first dead-fixture arm into a 15 s timeout" — measured,
+ *   that happens in a minority of runs; most fall through to that guard and report in ~0.1 s.
+ *   (A probe here must use an UNSEEN payload: re-running the same dead URI flips `complete`
+ *   to true off the browser profile's cached failure.)
  *
  * ⚠️ Local figures here were measured on Chrome 149, not the pinned 143 — see CLAUDE.md,
  * "Browser/component tests on NixOS". CI runs the pin.
