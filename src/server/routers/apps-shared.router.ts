@@ -559,14 +559,32 @@ export async function listSharedRows(
   // bounded and small. The index is created by the same migration that creates
   // `shared_kv`, so every provisioned schema has it.
   //
-  // 🔴 `NOT COALESCE($5, false)` RATHER THAN `$5 IS NOT TRUE`, and the difference
-  // is the FAILURE DIRECTION. Both are inert for `false`, but `IS NOT TRUE` is
-  // ALSO inert for NULL — so an unexpected NULL `$5` returns the ENTIRE BOARD
-  // under a `mine` request. Nothing can send NULL today (`mine ?? false` below,
-  // and both callers are zod-typed `boolean | undefined`), but that made the
-  // invariant depend on a `??` three lines away rather than on the predicate.
-  // The COALESCE puts it in the SQL, where the default direction is "filter"
-  // instead of "no filter".
+  // 🔴 THE `$5` GUARD HAS NO FAIL-CLOSED FORM, AND TWO SUCCESSIVE ATTEMPTS TO GIVE
+  // IT ONE WERE WRONG. Written down so a third is not derived.
+  //
+  // Attempt 1 shipped `NOT COALESCE($5::boolean, false)` in place of
+  // `$5::boolean IS NOT TRUE`, with a comment claiming it changed the failure
+  // direction on NULL. It is a NO-OP — measured in PostgreSQL 16, the two have
+  // identical truth tables, NULL included:
+  //     $5     IS NOT TRUE   NOT COALESCE($5,false)
+  //     true        f                 f
+  //     false       t                 t
+  //     NULL        t                 t
+  // Reverted to the simpler original form, because a change that does nothing is
+  // churn that reads as protection.
+  //
+  // Attempt 2, proposed by the next audit round, was `NOT COALESCE($5, true)` —
+  // which genuinely does flip the NULL case, and is DANGEROUS. 🔴 Do not apply it.
+  // `$5` can only be NULL if the `mine ?? false` below is removed, and in exactly
+  // that scenario a caller sending NO `mine` sends `undefined` → NULL — so
+  // defaulting NULL to "filter" would make EVERY ordinary board listing silently
+  // return only the viewer's own rows. That is a far wider blast radius than the
+  // case it fixes.
+  //
+  // So: the NULL case is UNREACHABLE, no spelling of this predicate improves on
+  // that, and the invariant lives in the `mine ?? false` below plus the zod types
+  // on both callers (`boolean | undefined`). That is the honest state. If you are
+  // about to propose a third form, you are the third.
   const rows = (
     await pool.query<SharedKvRow>(
       `SELECT s.key, s.author_user_id, s.value, COALESCE(c.count, 0)::text AS count,
@@ -578,7 +596,7 @@ export async function listSharedRows(
         WHERE s.hidden_at IS NULL
           AND s.key LIKE $1 ESCAPE '\\'
           AND ($2::text IS NULL OR s.key < $2)
-          AND (NOT COALESCE($5::boolean, false) OR s.author_user_id = $4::int)
+          AND ($5::boolean IS NOT TRUE OR s.author_user_id = $4::int)
         ORDER BY s.key DESC
         LIMIT $3`,
       [prefixPattern, afterKey, limit, userId, mine ?? false]

@@ -1119,7 +1119,7 @@ describe('#5354 Q3 `mine` author filter on list', () => {
     mockPool.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
     await caller().list({ blockToken: 't' });
     const [sql, params] = mockPool.query.mock.calls[0] as [string, unknown[]];
-    expect(sql).toContain('(NOT COALESCE($5::boolean, false) OR s.author_user_id = $4::int)');
+    expect(sql).toContain('($5::boolean IS NOT TRUE OR s.author_user_id = $4::int)');
     expect(params[4]).toBe(false);
   });
 
@@ -1179,7 +1179,7 @@ describe('#5354 Q3 `mine` author filter on list', () => {
     const [sql, params] = mockPool.query.mock.calls[0] as [string, unknown[]];
     expect(sql).toContain("s.key LIKE $1 ESCAPE '\\'");
     expect(sql).toContain('($2::text IS NULL OR s.key < $2)');
-    expect(sql).toContain('(NOT COALESCE($5::boolean, false) OR s.author_user_id = $4::int)');
+    expect(sql).toContain('($5::boolean IS NOT TRUE OR s.author_user_id = $4::int)');
     expect(params[0]).toBe('grid:%');
     expect(params[1]).toBe('K9');
     expect(params[4]).toBe(true);
