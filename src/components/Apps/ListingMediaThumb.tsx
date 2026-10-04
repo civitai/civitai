@@ -100,8 +100,8 @@ const iconBoxStyle = (box: number, size: ListingThumbSize): CSSProperties => ({
   // What it is NOT: "the containing block is self-sized by the box, so this can never bind".
   // True on the REVIEW page, where the flex wrapper shrink-to-fits and the block measures
   // 96.00px against a 96px box at every width — but this object serves BOTH sizes, and on the
-  // row branch in a plain container the block is the full viewport against a 40px box, i.e.
-  // 7x headroom. Plenty of room, no binding today, but nothing structural stops it.
+  // row branch in a plain container the block is the full viewport against a 40px box. No
+  // binding today at any width measured, but nothing structural stops it.
   // It is also redundant on the img branch specifically, where Tailwind preflight already
   // ships `img { max-width: 100% }`; the placeholder is a `div` and drops to `none` without
   // it, which is the pair the parity arm reports as `expected 'none' to be '100%'`.

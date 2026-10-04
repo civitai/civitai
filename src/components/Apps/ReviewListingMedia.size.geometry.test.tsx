@@ -155,17 +155,30 @@ const NON_SQUARE_IMAGE_DATA_URI =
  *   `toBeInstanceOf`'s job, and it is the one measured: delete it, aim one `settled()` at a
  *   placeholder id, and the file goes from 0 timeouts to 3, tests phase 0.98 s to 15.62 s.
  *   The second path is an `<img>` in flight whose load FAILS, firing `error` rather than
- *   `load` — that is the `error` listener's job. ⚠️ It is UNREACHABLE with the data-URI
- *   fixtures here, which complete synchronously, so that listener is defensive against a
- *   future http(s) fixture and is pinned by nothing today. Said plainly rather than left to
- *   read as covered.
+ *   `load` — that is the `error` listener's job, and it is REACHABLE TODAY. An earlier draft
+ *   called it unreachable "because data URIs complete synchronously", which is true only of a
+ *   URI the browser has already decoded. Measured by instrumenting this helper: run any arm
+ *   ALONE (`-t`) and its first `settled()` reads `complete=false, naturalWidth=0` — the await
+ *   IS entered — while in a whole-file run every call reads `complete=true`, because an
+ *   earlier arm warmed the same URI. So the branch's reachability depends on run shape, and
+ *   `-t` is exactly how this ladder mutation-tests. Deleting that listener would turn the
+ *   first dead-fixture arm from a named rejection into a 15 s timeout.
  *
- * That arithmetic is also what reconciles two retracted figures from earlier rounds — 75.4 s
- * and 15.96 s are 5 and 1 of those 15.1 s timeouts, measured at heads where the hang-capable
- * arms were unguarded. Neither was ever a decode hang, and neither was load-dependent.
+ * Two figures from earlier rounds (75.4 s, 15.96 s) were retracted as unreproducible. A draft
+ * here reconstructed them as multiples of a single timeout; that does not follow — the three
+ * timeouts above sit inside a 15.62 s phase, so they overlap rather than sum. What is
+ * established is the mechanism, not a reconstruction of two numbers nobody can re-measure.
  *
  * ⚠️ NO TIMING FIGURE FOR THE `naturalWidth` ARM IS QUOTED, deliberately: the ratio is 1.04x,
  * i.e. noise.
+ *
+ * ⚠️ AND EVERY LOCAL FIGURE HERE WAS TAKEN SIX CHROME MAJORS OFF THE PIN. `browsers.json` for
+ * the pinned playwright asks for chromium revision 1200 / Chrome 143. That build does exist on
+ * this host and the whole tier passes on it — an earlier draft claimed it did not, which was
+ * wrong — but the ad-hoc runner this ladder used points at a hand-made directory NAMED 1200
+ * whose chromium entry is a symlink onto 1228 / Chrome 149. Only the chromium pair is renamed
+ * there; firefox and webkit keep their own revisions, so that directory exists to paper over
+ * exactly this. CI runs the pin. Local numbers inherit the gap.
  *
  * ⚠️ IT CATCHES A HEADER-DEAD FIXTURE, NOT A PIXEL-DEAD ONE, and the narrower claim is the
  * true one. `naturalWidth` comes from the PNG IHDR, so corrupting only the IDAT run leaves a
@@ -174,15 +187,14 @@ const NON_SQUARE_IMAGE_DATA_URI =
  * recorded so nobody reads this as fixture validation in general. The awaits are still the
  * right call — at the previous head the same corrupt fixture was SILENTLY GREEN, because a
  * fixed CSS height renders the right box whether or not any bytes arrive — but a guard should
- * fail in one second with a sentence, not in ninety with a timeout.
+ * fail with a sentence naming the fixture.
  */
 const settled = async (testId: string) => {
   // The cast is unchecked and is safe ONLY because `toBeInstanceOf` runs immediately below —
   // that ordering is load-bearing, not incidental.
   const img = at(testId) as HTMLImageElement;
-  // A `div`'s `.complete` is `undefined` ⇒ falsy ⇒ this would await a `load` that never fires
-  // and die on the test timeout with nothing naming the id. The placeholder testids in this
-  // file differ from the img ones by a single path segment, so it is an easy call to misaim.
+  // The placeholder testids differ from the img ones by a single path segment, so this is an
+  // easy call to misaim; the docstring above measures what happens without this guard.
   expect(
     img,
     `${testId} is not an <img> — a placeholder id? pass the img id instead`
@@ -195,7 +207,8 @@ const settled = async (testId: string) => {
       });
     });
   }
-  // Before `decode()`, never after — that call is the one that hangs.
+  // Before `decode()` so the failure names the testid — `decode()` itself rejects rather
+  // than hangs, per the docstring's probe.
   expect(img.naturalWidth, `${testId}: fixture decoded to 0x0 — corrupt data URI?`).toBeGreaterThan(
     0
   );
@@ -498,13 +511,12 @@ describe('the store icon and cover are bigger on the review page than in a queue
     // 🔴 LITERAL `basis`, NOT `${LISTING_ICON_BOX}px` — the same rule this file states for the
     // 16/9 ratio. Production derives the basis from those constants, so an expectation built
     // from them moves with any change to them: measured, `LISTING_ICON_BOX` 40→48 left the
-    // tier 102/102 green.
+    // whole tier green.
     //
-    // ⚠️ AND THESE TWO LITERALS ARE THE ONLY PIN ON THOSE CONSTANTS ANYWHERE. An earlier draft
-    // of this comment said the box sizes were "pinned by the constants case at the top of this
-    // file" — there is no such case, and the box arms assert `toBeCloseTo(REVIEW_ICON_BOX, 0)`,
-    // i.e. derived from the very constants at issue. Measured: changing BOTH (40→48, 96→120)
-    // reds exactly one of twelve tests — this one.
+    // ⚠️ AND THESE TWO LITERALS PIN THE ICON CONSTANTS A SECOND TIME, deliberately. Every
+    // other arm asserts `toBeCloseTo(REVIEW_ICON_BOX, 0)` — derived from the constant at
+    // issue, so blind to it. The constants case further down pins all six literally; this one
+    // pins the rendered SHORTHAND, so a mutation to an icon constant reds in both places.
     expect(flexOf('row-icon'), 'a queue-row icon must be rigid').toEqual({
       grow: '0',
       shrink: '0',
@@ -518,7 +530,7 @@ describe('the store icon and cover are bigger on the review page than in a queue
     // 🔴 THE REVIEW PLACEHOLDER IS THE ARM THAT ACTUALLY DIVERGED, and an earlier version of
     // this case asserted only the ROW one — which is `0` either way, so restoring the exact
     // shipped divergence (`flex: 0 0` pinned on the placeholder at both sizes) left this file
-    // 12/12 GREEN. The comment named the defect and the fixture could not reach it: the
+    // the whole file GREEN. The comment named the defect and the fixture could not reach it: the
     // review arm above carries a url, so it paints an `img`, and no review-size PLACEHOLDER
     // was rendered at all. Both placeholders now, and the review one is the load-bearing half.
     // Against the IMG's own longhands rather than a restated literal: the claim is that the
@@ -539,20 +551,21 @@ describe('the store icon and cover are bigger on the review page than in a queue
     const maxWidthOf = (testId: string) => longhand(at(testId), 'max-width');
     // 🔴 A LITERAL ANCHOR FIRST. The two agreement assertions below cannot see a mutation
     // that moves BOTH sides: setting `maxWidth: 'none'` in the shared object (rather than
-    // deleting it) leaves the whole tier 102/102 green while removing the clamp this comment
+    // deleting it) leaves the whole tier green while removing the clamp this comment
     // calls load-bearing. Agreement proves they did not diverge; the literal proves what they
     // agree ON.
     // 🔴 ANCHORED ON THE PLACEHOLDERS, the strictly stronger choice: a `div` gets no
     // `max-width` from Tailwind preflight, so only `iconBoxStyle` can satisfy it. Anchoring an
-    // IMG would miss a DELETION on THIS assertion (preflight keeps the img at `100%`) — the
-    // agreement arm below still catches a deletion either way; what the placeholder buys is
-    // a one-sided substitution, and a message naming the real cause rather than a divergence.
+    // IMG would miss a DELETION on THIS assertion (preflight keeps the img at `100%`), though
+    // the agreement arm below catches one either way. Enumerated, there is no mutation the
+    // placeholder anchor catches that (img anchor + agreement arm) misses — so this is message
+    // quality, not coverage: it names the missing clamp rather than reporting a divergence.
     expect(maxWidthOf('row-icon-placeholder-2'), 'the row clamp really exists').toBe('100%');
     expect(maxWidthOf('row-icon-placeholder-2'), 'the row pair agrees on max-width').toBe(
       maxWidthOf('row-icon')
     );
     // Both halves need an anchor: with only the row one, `maxWidth: size === 'review' ?
-    // 'none' : '100%'` left the whole tier 102/102 green — the same class, half-closed.
+    // 'none' : '100%'` left the whole tier green — the same class, half-closed.
     expect(maxWidthOf('review-icon-placeholder-2'), 'the review clamp really exists').toBe('100%');
     expect(maxWidthOf('review-icon-placeholder-2'), 'the review pair agrees on max-width').toBe(
       maxWidthOf('review-icon')
@@ -623,7 +636,8 @@ describe('the store icon and cover are bigger on the review page than in a queue
     // literals: change a constant AND re-pin its literal to match, and these red. Measured —
     // `LISTING_COVER_H` 54→72 in both places gives `expected 1.333… to be close to 1.777…`.
     // That is the review someone does when a box "needs to be taller", and it is exactly the
-    // edit that would silently make a cover non-16:9 while every other arm stayed green.
+    // edit that would silently make a cover non-16:9 while every other arm stayed green — and
+    // a non-16:9 box turns `object-fit: cover` from a crop into a squash.
     expect(LISTING_COVER_W / LISTING_COVER_H).toBeCloseTo(16 / 9, 1);
     expect(REVIEW_COVER_W / REVIEW_COVER_H).toBeCloseTo(16 / 9, 1);
   });
@@ -642,8 +656,8 @@ describe('the bundle screenshots are bigger on the review page than in the modal
   /** The grid Mantine rendered, and the column count it DECLARED. */
   const declaredCols = () => {
     const grid = at('apps-review-screenshot-0').closest('div')!.parentElement!;
-    // `longhand` is `getPropertyValue(p).trim()`; `--sg-cols` is a custom property rather than
-    // a longhand, but the read is identical and the helper carries the existence guard.
+    // `--sg-cols` is a custom property, so an unset value reads as `''` — the assertion, not
+    // the helper, is what rejects it.
     return longhand(grid, '--sg-cols');
   };
 
@@ -667,6 +681,10 @@ describe('the bundle screenshots are bigger on the review page than in the modal
       // SimpleGrid's LAYOUT CSS, so the grid was never a grid and both arms filled the
       // container. The distinction matters because the two diagnoses lead to different
       // fixes, and someone "fixing the media queries" would chase nothing.
+      // 🔴 NON-EMPTY FIRST. `--sg-cols` is a custom property, so an unset one reads as `''` —
+      // and `''` satisfies the NEGATIVE control below (`not.toBe('1')`), which is the arm whose
+      // only job is to prove this one is not vacuous. Without this, that arm fails open.
+      expect(declaredCols(), '--sg-cols must be set at all').not.toBe('');
       expect(declaredCols(), 'the review gallery must declare a single column').toBe('1');
 
       const shot = box('apps-review-screenshot-0');

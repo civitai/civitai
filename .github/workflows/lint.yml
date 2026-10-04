@@ -880,7 +880,9 @@ jobs:
       # than no job, because it reports success.
       #
       # Both numbers are FLOORS, not equalities, so adding a geometry test never
-      # breaks this — only losing one does.
+      # breaks this. ⚠️ "only losing one does" is true of the FILE floor, which sits at
+      # exactly the collected count; the TEST floor carries headroom, so losing one test
+      # does not red it. The block below says which to raise when you add to the tier.
       #
       # 🔴 THE FILE COUNT COMES FROM `testResults.length`, NOT FROM
       # `numTotalTestSuites`. Measured against a real report when the tier was 2
@@ -918,10 +920,10 @@ jobs:
           // floor. Until then: raise MIN_FILES when you add a file — it has no headroom —
           // and leave MIN_TESTS alone, which is what "a fraction of current" below means.
           // (An earlier pairing of these comments told you to raise both, which contradicted
-          // that, and this PR added a test without raising either.)
+          // that.)
           const MIN_FILES = 8;
-          // It was 10, and that clause alone could not fail: 92 tests could have stopped
-          // collecting and it still passed. The GATE was not that weak — it is
+          // It was 10, and that clause alone could not fail at any tier size this suite has
+          // had. The GATE was not that weak — it is
           // `files < MIN_FILES || tests < MIN_TESTS`, so the FILE term still caught a dropped
           // file — the hole was in this clause. Deliberately a
           // fraction of current rather than a ratchet, so merging cases in a refactor does

@@ -75,7 +75,7 @@ const DELIBERATELY_NARROW: ReadonlyArray<{
     file: 'src/server/services/blocks/app-listing.service.ts',
     container: 'listingHydrateSelect',
     owner: 'user',
-    why: 'the PUBLIC store listing creator. The default path hands `SmartCreatorCard` only `{ id }` and refetches through the public `user.getCreator` proc; the `preview` path (its own `CreatorChip`) renders the chip directly, and a closed account drops out of it only INCIDENTALLY — `deleteUser` nulls `username` in the same transaction as `deletedAt`, and the chip skips username-less rows. That is the scrub doing the work, not a `deletedAt` branch, which is the same incidental-not-a-filter distinction `app-listing.service.ts` draws about its collaborator chip — and THERE it was judged not good enough, so that select carries `deletedAt` and this one still does not. Bounded, not closed. SIX writers set `username` (enumerated over Prisma, kysely and raw SQL across `src/`, `apps/` and `packages/`; three earlier versions of this sentence said four, and miscounted in both directions). TWO of them write `deletedAt`: `deleteUser` sets it and scrubs `username` in the same transaction, and `restoreUser` clears it alongside a username write in one transaction — so neither can leave a row deleted-and-named. Of the rest, the hazard is exactly one: `forceUpdateUserIdentity`, a moderator endpoint whose gating is ACTOR-only, so its arbitrary `userId` matches a soft-deleted row. The others are unreachable for a closed account, for DIFFERENT reasons: `updateUserHandler` is a `guardedProcedure` (so `isAuthed` rejects `user.deletedAt`) and throws unless `id === ctx.user.id` — note that is the HANDLER, not `updateUserById`, which has eleven call sites including an unsession\u0027d cron, only this one passing `username`; `completeOnboardingHandler` writes `where: { id }` off a `ProtectedContext`; `assignUsername` is in the auth app and runs before a session exists, so neither applies and it is safe structurally instead — both call sites sit inside an `if (!userId)` fresh-INSERT branch. Widening this select is still the fix and is still a separate change',
+    why: 'the PUBLIC store listing creator. The default path hands `SmartCreatorCard` only `{ id }` and refetches through the public `user.getCreator` proc; the `preview` path (its own `CreatorChip`) renders the chip directly, and a closed account drops out of it only INCIDENTALLY — `deleteUser` nulls `username` in the same transaction as `deletedAt`, and the chip skips username-less rows. That is the scrub doing the work, not a `deletedAt` branch, which is the same incidental-not-a-filter distinction `app-listing.service.ts` draws about its collaborator chip — and THERE it was judged not good enough, so that select carries `deletedAt` and this one still does not. Bounded, not closed. SIX writers set `username` in APPLICATION code (enumerated over Prisma, kysely and raw SQL across `src/`, `apps/` and `packages/`, excluding `prisma/migrations/` — a one-shot 2023 migration also writes the column, so a reader re-running this without that exclusion gets seven; three earlier versions of this sentence said four, and miscounted in both directions). TWO of them write `deletedAt`: `deleteUser` sets it and scrubs `username` in the same transaction, and `restoreUser` clears it alongside a username write in one transaction — so neither can leave a row deleted-and-named. Of the rest, the hazard is exactly one: `forceUpdateUserIdentity`, a moderator endpoint whose gating is ACTOR-only, so its arbitrary `userId` matches a soft-deleted row. The others are unreachable for a closed account, for DIFFERENT reasons: `updateUserHandler` is a `guardedProcedure` (so `isAuthed` rejects `user.deletedAt`) and throws unless `id === ctx.user.id` — note that is the HANDLER, not `updateUserById`, which has eleven call sites including an unsession\u0027d cron, only this one passing `username`; `completeOnboardingHandler` writes `where: { id }` off a `ProtectedContext`; `assignUsername` is in the auth app and runs before a session exists, so neither applies and it is safe structurally instead — both call sites sit inside an `if (!userId)` fresh-INSERT branch. Widening this select is still the fix and is still a separate change',
   },
 ] as const;
 
@@ -349,7 +349,8 @@ describe('the review user chip is one declaration', () => {
     expect(
       DELIBERATELY_NARROW.length,
       // Not a coverage guard: an empty ledger already fails loudly, as a TypeError on
-      // `EXEMPT.container`. This only trades that for a sentence naming the cause.
+      // `EXEMPT.container` (or `.file`, depending which probe runs first). This only trades
+      // that for a sentence naming the cause.
       'the planted probes derive from the ledger; an empty one fails here rather than as a TypeError below'
     ).toBeGreaterThan(0);
     const EXEMPT = DELIBERATELY_NARROW[0];
@@ -357,11 +358,18 @@ describe('the review user chip is one declaration', () => {
     // `owner: 'user'`, so no chip built from them can discriminate the OWNER half of the key —
     // measured, deleting `e.owner === chip.owner` left 4/4 green, the exact sibling of the
     // `file` defect fixed one round earlier, on the same lookup line.
+    // 🔴 EACH PROBE BELOW IS ONLY A PROBE WHILE THE LEDGER DOES NOT NAME ITS VALUE. Three
+    // preconditions, identical but for the field, so they are one helper — the message still
+    // names the field, so a failure stays attributable to the probe that went stale rather
+    // than reading as "the guard broke".
+    const probeUnnamed = (field: 'file' | 'container' | 'owner', value: string) =>
+      expect(
+        DELIBERATELY_NARROW.map((e) => e[field]),
+        `the ${field} probe stops being a probe if the ledger ever names this ${field}`
+      ).not.toContain(value);
+
     const OWNER_PROBE = 'moderator';
-    expect(
-      DELIBERATELY_NARROW.map((e) => e.owner),
-      'the owner probe stops being a probe if the ledger ever names this owner'
-    ).not.toContain(OWNER_PROBE);
+    probeUnnamed('owner', OWNER_PROBE);
     const PLANTED_SOURCE = `
       const submittedBy = { select: { id: true, username: true, image: true } };
       const authorChip = { id: true, username: true, image: true };
@@ -383,10 +391,7 @@ describe('the review user chip is one declaration', () => {
     // misreading the sibling preconditions exist to prevent. (The claim that both siblings
     // already had one was also wrong when written: only the owner probe did.)
     const plantedFile = SERVICE_FILES.find((f) => f !== EXEMPT.file)!;
-    expect(
-      DELIBERATELY_NARROW.map((e) => e.file),
-      'the file probe stops being a probe if the ledger ever names this file'
-    ).not.toContain(plantedFile);
+    probeUnnamed('file', plantedFile);
     const plantedVerdict = judge(plantedFile, chipsIn(plantedFile, PLANTED_SOURCE));
     expect(
       plantedVerdict.offenders,
@@ -420,10 +425,7 @@ describe('the review user chip is one declaration', () => {
     // left this green. Like its sibling above this is message quality, not coverage: a
     // collision would also fail the probe's own `toHaveLength(1)`, just without saying why.
     const UNLISTED = `${EXEMPT.container}Unlisted`;
-    expect(
-      DELIBERATELY_NARROW.map((e) => e.container),
-      'the container probe stops being a probe if the ledger ever names this container'
-    ).not.toContain(UNLISTED);
+    probeUnnamed('container', UNLISTED);
     const CONTAINER_SOURCE = `
       const ${UNLISTED} = { ${EXEMPT.owner}: { select: { id: true, username: true, image: true } } };
     `;
