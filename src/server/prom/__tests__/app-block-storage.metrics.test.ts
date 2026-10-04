@@ -369,25 +369,37 @@ describe('the seeded domain matches the service', () => {
    * block comments FIRST lets a block-comment OPENER sitting inside a `//` LINE comment open a
    * pseudo block comment that runs to the next real block-comment CLOSER — swallowing every
    * line of code between them. The span is NOT local: measured on the service, a single
-   * inserted line comment carrying a block-comment opener swallowed roughly **75 non-blank
-   * lines over a ~155-line span** — two orders of magnitude more than the "four" an earlier
-   * version of this paragraph claimed, which also contradicted the mechanism sentence directly
-   * above it.
+   * inserted line comment carrying an UNTERMINATED block-comment opener swallowed roughly **75
+   * non-blank lines over a ~155-line span** — about **19x** the "four" an earlier version of
+   * this paragraph claimed, which also contradicted the mechanism sentence directly above it.
+   * (A later version said "two orders of magnitude", which is ~100x and was wrong in the
+   * opposite direction, in the same sentence as the 75 that refutes it. 75/4 is 18.75.)
    *
    * ⚠️ NO ABSOLUTE BEFORE/AFTER LINE TOTALS ARE QUOTED, DELIBERATELY. A previous revision gave
-   * a specific pair and it was not reproducible: the endpoints shift by a line or two with the
-   * exact text and position of the inserted comment, so two people measuring "the same" mutant
-   * from this paragraph got different totals and the figure read as wrong rather than as
-   * fixture-dependent. The DELTA and the direction are the stable, reproducible part; if you
+   * a specific pair and it was not reproducible: the totals depend on the exact text and
+   * position of the inserted comment, so two people measuring "the same" mutant from this
+   * paragraph got different totals and the figure read as wrong rather than as
+   * fixture-dependent. "A line or two" understated that — as the opener note below shows, the
+   * wrong comment text changes the delta from 75 to 0, not by a line or two. The DELTA and the direction are the stable, reproducible part; if you
    * need the absolutes, measure them from the recipe below and record the inserted text with
    * them.
    *
    * It takes TWO mutants to blind both flat-zero loops below, and an earlier version claimed
    * one did — so they are separated here, each measured. For both: insert at the service's
    * REVOKED-INSTANCE refusal (`countStorageOutcome(op, 'unauthorized')` in the revocation
-   * branch of `resolveStorageContext`), the line comment FIRST and the emit second — reversing
-   * the two lines puts the emit ahead of the swallow, where it is still counted and nothing is
-   * blinded, which is a useful control that the span and not the file is what matters.
+   * branch of `resolveStorageContext`), the line comment FIRST and the emit second.
+   *
+   * 🔴 THE COMMENT'S OPENER MUST BE UNTERMINATED ON ITS OWN LINE, and omitting that from this
+   * recipe was its own defect — because the NATURAL glob to reach for closes itself. Measured:
+   * a comment ending in a bare `**` swallows (delta 75, the arm goes 1 hit to 0), while one
+   * ending `**` + `/` + `*.ts` contains a COMPLETE empty block comment, so nothing is swallowed
+   * at all — delta 0, the arm stays at 1, and a reader following the recipe exactly would
+   * measure that the hole does not exist. That is the worst possible outcome for a paragraph
+   * whose job is to make the hole reproducible, so it is stated rather than implied.
+   *
+   * Control worth running: reversing the two lines puts the emit AHEAD of the swallow, where it
+   * is still counted and nothing is blinded — which shows the SPAN and not the file is what
+   * matters.
    *   - second line `appStorageSessionGateRefusalsCounter.inc({ op })` → the SYMBOL arm of the
    *     universal-half loop goes 1 hit to 0. Declared-name hits are 0 in BOTH arms, so the
    *     names loop was never at 1 for this mutant.
