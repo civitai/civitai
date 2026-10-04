@@ -129,17 +129,26 @@ Two corrections to the obvious reasoning, both of which bit an earlier draft of
 this paragraph:
 
 - ⚠️ **Queue DEPTH is a count of DISTINCT MODELS, not of versions labeled** —
-  which is a correction to the *mechanism*, not a cheaper cost estimate, and
+  which is a correction to the _mechanism_, not a cheaper cost estimate, and
   billing it as the latter is what bit the earlier draft. The queue is a redis
   **set** (`sAdd`, and `checkoutQueue` collects into a `Set`), so depth is
-  bounded by the number of distinct models: `≤` the version count, with
-  **equality whenever every version in the pass belongs to a distinct model** —
-  exactly the case the first half of this bullet establishes for the default
-  id-ordered sweep, where a model's versions are not adjacent in id space and
-  the collapse is near-zero. So on the default path this yields the same
-  estimate as the text it replaced; it only diverges under `--top`, where usage
-  correlates within a model. Total document rebuilds across a multi-day pass is
-  a different and larger quantity again, because the sync drains repeatedly.
+  bounded by the number of distinct models announced **since the last drain** —
+  not per pass: the `models` sync runs `*/15 * * * *`
+  (`src/server/jobs/search-index-sync.ts`), and the queue is shared with every
+  other `queueUpdate` caller, so standing depth is a per-drain-interval quantity
+  this pass only contributes to. Within such a window depth is `≤` the version
+  count, with **equality only if every version announced in it belongs to a
+  distinct model**. ⚠️ Non-adjacency in id space does NOT establish that case:
+  it is a **within-batch** property — it is why the script's own per-batch
+  `labeledModelIds` collapse is near-zero on the default id-ordered sweep — and
+  says nothing about distinctness across a window spanning many batches. Any
+  multi-version model in the corpus breaks the equality by
+  (versions − models): a pass labelling versions 1 and 1,000,000 of model 500
+  contributes 2 versions and 1 distinct model. So the **default** path is where
+  the version and model counts diverge, and `--top` — which clusters a model's
+  versions into one batch — is where the collapse actually happens. Total
+  document rebuilds across a multi-day pass is a different and larger quantity
+  again, because the sync drains repeatedly.
 - ⚠️ **`--top N` DOES bound the announced set, PER INVOCATION** —
   `topUsageVersionIds` takes at most N ids in one query, so one run announces at
   most N models. It does **not** bound a resumed pass: `--cursor` re-materialises

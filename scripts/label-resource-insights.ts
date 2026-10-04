@@ -87,10 +87,11 @@ import { Availability } from '~/shared/utils/prisma/enums';
  * the equivalent read-back in the admin endpoint above, and WEAKER than "proof"
  * in BOTH directions — do not report it as either. Not finding the ids is
  * inconclusive: the 15-minute sync may have checked the queue out in between.
- * Finding them is CORROBORATION, not proof, because the queue is SHARED — 28
- * other files call `modelsSearchIndex.queueUpdate` at this sha, and an entry
- * survives until the next non-`readOnly` checkout — so a model that some
- * unrelated edit queued minutes ago is present regardless of what this run did.
+ * Finding them is CORROBORATION, not proof, because the queue is SHARED — 46
+ * other call sites across 26 files call `modelsSearchIndex.queueUpdate` at this
+ * sha, and an entry survives until the next non-`readOnly` checkout — so a
+ * model that some unrelated edit queued minutes ago is present regardless of
+ * what this run did.
  * The case that makes the distinction real: a first batch mapping to one model,
  * a sysRedis that fails open on every enqueue (parking ids in Postgres), and
  * that one model independently edited a few minutes earlier — `found ===
@@ -494,9 +495,12 @@ export function partitionNeedingLabel(
  *      done here only so the payload this script hands over names each model
  *      once, which is what makes `enqueuedModelIds` a model count rather than a
  *      row count — ⚠️ PER BATCH, and only per batch. The run's total sums these
- *      per-batch lists without deduplicating across them, so under `--top`,
- *      where this docstring notes a model's versions cluster, a model straddling
- *      the 10-version batch boundary is announced twice and counted twice. That
+ *      per-batch lists without deduplicating across them, so the CROSS-batch
+ *      double count INVERTS the collapse rates stated just above: it is
+ *      near-certain on the default sweep, where a model's versions are not
+ *      adjacent in id space and so land in different batches that each announce
+ *      the model, and rarest under `--top`, where clustering puts them in one
+ *      batch and only a straddle of the 10-version boundary escapes. That
  *      is why the summary reports `announcements issued` rather than a model
  *      count; see the `done:` line in `main`.
  *
@@ -541,10 +545,11 @@ export function labeledModelIds(
  *
  * ONE-DIRECTIONAL, and the caller must report it that way — but the positive
  * direction is CORROBORATION, NOT PROOF, and the message must not claim more.
- * The `models_v9:Update` queue is shared with 28 other `queueUpdate` call sites
- * at this sha, and an entry survives until the next non-`readOnly` checkout
- * (≤15 min), so presence is consistent with this run having queued the ids and
- * also with anything else having queued them. The shape that makes that
+ * The `models_v9:Update` queue is shared with 46 other `queueUpdate` call sites
+ * across 26 files at this sha, and an entry survives until the next
+ * non-`readOnly` checkout (≤15 min), so presence is consistent with this run
+ * having queued the ids and also with anything else having queued them. The
+ * shape that makes that
  * concrete: one model in the first batch, every enqueue failing open into the
  * Postgres parking lot, and that model edited independently four minutes
  * earlier — `found === modelIds.length` and the run reports a healthy signal
@@ -814,9 +819,14 @@ export async function main(): Promise<void> {
   // every enqueue was parked in Postgres; `queueVerified` below is the
   // measurement, this is the volume. (b) It SUMS the per-batch lists, each of
   // which is deduplicated only within its own batch, so a model announced by
-  // two batches is counted twice — reachable under `--top`, where a model's
-  // versions cluster and one straddling the 10-version batch boundary lands in
-  // both. The consequence is a mis-sized load expectation, never wrong
+  // two batches is counted twice — NEAR-CERTAIN on the default sweep, which
+  // walks version ids in order, so a model's versions are not adjacent and land
+  // in different batches that each announce it; expect this to track the
+  // labeled-VERSION count there rather than the distinct-model count. `--top`
+  // is where it is RAREST, because clustering puts a model's versions in one
+  // batch where `labeledModelIds` collapses them, bar a straddle of the
+  // 10-version boundary. See `labeledModelIds` for why the two paths differ.
+  // The consequence is a mis-sized load expectation, never wrong
   // indexing: the queue is a redis set, so the duplicate announcement is free.
   // The printed label says `announcements issued` for exactly this reason; do
   // not "fix" it back to a model count without deduplicating across batches.
@@ -955,12 +965,15 @@ export async function main(): Promise<void> {
  *
  *   FLUSH FIRST, because `process.exit()` does NOT drain pending async writes,
  *   and stdout to a PIPE is async. Measured on node 24.19.0 with a 2001-line
- *   writer: exiting bare TRUNCATES INTERMITTENTLY over a pipe. ⚠️ No rate is
- *   quoted on purpose — two independent replications of that setup disagreed
- *   (one lost the final line in every piped run it tried; the other saw loss in
- *   1 of 3 piped to `cat` and 2 of 10 piped to `wc -l`), so the honest claim is
- *   that it is NONDETERMINISTIC, and an earlier draft of this comment asserting
- *   "3 of 3" was overstating a figure that does not replicate. Both
+ *   writer: exiting bare TRUNCATES INTERMITTENTLY over a pipe. ⚠️ No single
+ *   figure is quoted AS THE RATE — two independent replications of that setup
+ *   disagreed (one lost the final line in every piped run it tried; the other
+ *   saw loss in 1 of 3 piped to `cat` and 2 of 10 piped to `wc -l`), so the
+ *   honest claim is that it is NONDETERMINISTIC, and an earlier draft of this
+ *   comment asserting "3 of 3" was overstating a figure that does not
+ *   replicate. 🔴 Both figures stay: their DISAGREEMENT is the evidence of
+ *   nondeterminism and the only real measurement in this arc, so do not
+ *   "reconcile" this passage by deleting them. Both
  *   replications agree on the DIRECTION: bare exit truncates, drain-then-exit
  *   delivered every line in every run, as did the no-exit control. Intermittence
  *   is precisely why the drain is unconditional — there is no individual run you
@@ -987,8 +1000,12 @@ export async function main(): Promise<void> {
  * first of those two mutants silently restores the truncated-resume-token defect
  * this wrapper exists to fix. The defaults are therefore pinned by their own
  * tests (`runAsScript(exit)` with the real `drainStdio`; `runAsScript(undefined,
- * flush)` against a spied `process.exit`), which is also why `drainStdio` is
- * exported. Do not collapse the signature or "simplify" the defaults away.
+ * flush)` against a spied `process.exit`). ⚠️ Neither of those two imports
+ * `drainStdio`, so neither is why it is exported — both mutants above die with
+ * it unexported. The export exists for the THIRD test, which imports and calls
+ * it directly to watch it WAIT on the write callbacks; `drainStdio`'s own
+ * docstring is the single explanation. Do not collapse the signature or
+ * "simplify" the defaults away.
  */
 export async function runAsScript(
   exit: (code: number) => void = process.exit,

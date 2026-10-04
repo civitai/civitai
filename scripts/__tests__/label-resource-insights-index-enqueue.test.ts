@@ -380,11 +380,12 @@ describe('label writes are announced to the models search index', () => {
 
       expect(logged.join('\n')).toContain('queue-verify: all 2 model id(s)');
       // 🔴 CORROBORATION, NOT PROOF, and the wording is the claim: the
-      // `models_v9:Update` queue is shared with 28 other `queueUpdate` call
-      // sites and an entry survives until the next non-`readOnly` checkout, so
-      // an id put there by an unrelated edit is indistinguishable from one this
-      // run announced. A message asserting the enqueue "landed" would read as a
-      // green light over a run whose every enqueue was parked in Postgres.
+      // `models_v9:Update` queue is shared with 46 other `queueUpdate` call
+      // sites across 26 files and an entry survives until the next
+      // non-`readOnly` checkout, so an id put there by an unrelated edit is
+      // indistinguishable from one this run announced. A message asserting the
+      // enqueue "landed" would read as a green light over a run whose every
+      // enqueue was parked in Postgres.
       expect(logged.join('\n')).toContain('consistent with announcements landing');
       expect(logged.join('\n')).toContain('presence is corroboration, not proof');
       // 🔴 THE ARGUMENTS, not just the call. All three matter and none of them
@@ -431,6 +432,12 @@ describe('label writes are announced to the models search index', () => {
 
       expect(logged.join('\n')).toContain('2 reindex announcements issued');
       expect(logged.join('\n')).toContain('queue-verify: INCONCLUSIVE — 0/2 model id(s)');
+      // ⚠️ ENTAILED by the assertion above, not independent coverage:
+      // `verifyFirstEnqueue` returns exactly one of three strings and the
+      // read-back is one-shot per run, so the INCONCLUSIVE and corroborating
+      // messages can never co-occur — whenever the line above passes this
+      // cannot fail, and whenever it could fail the test has already aborted.
+      // Kept only as defence against a refactor that makes them co-occurrable.
       expect(logged.join('\n')).not.toContain('consistent with announcements landing');
     });
 
@@ -446,6 +453,10 @@ describe('label writes are announced to the models search index', () => {
       await run('--execute', '--limit', '3');
 
       expect(logged.join('\n')).toContain('queue-verify: INCONCLUSIVE — 1/2 model id(s)');
+      // ⚠️ ENTAILED by the assertion above — same reasoning as the
+      // none-present case. Measured: under the `found === modelIds.length` →
+      // `found > 0` mutant the test dies on the line above and this one never
+      // executes, so it is the preceding assertion that kills that mutant.
       expect(logged.join('\n')).not.toContain('consistent with announcements landing');
     });
 
@@ -483,10 +494,12 @@ describe('label writes are announced to the models search index', () => {
     // (the redis clients connect at module load and arm a ping interval), and
     // `process.exit` does NOT drain piped stdout — measured, a bare exit
     // truncates INTERMITTENTLY over a pipe (two independent replications
-    // disagreed on the rate, which is why no rate is quoted here or in the
-    // script; see `runAsScript`'s docstring). The final line carries the resume
-    // cursor for a run that spends vendor money per batch, so losing it means
-    // re-paying. `exit` and `flush` are injected precisely so this is testable.
+    // disagreed, which is why neither figure is quoted as THE rate — the
+    // script's docstring keeps both, because the disagreement itself is the
+    // evidence of nondeterminism; see `runAsScript`'s docstring). The final
+    // line carries the resume cursor for a run that spends vendor money per
+    // batch, so losing it means re-paying. `exit` and `flush` are injected
+    // precisely so this is testable.
     //
     // 🔴 AND THE INJECTION IS THE TRAP. The sole production call site passes
     // NEITHER argument, so the two tests below — which inject both — exercise
