@@ -201,9 +201,12 @@ export const COPY_ICON_INSET = 8;
  * component replaced there rendered a bare `<IconClipboard />`, i.e. tabler's default 24,
  * inside the same 28px button — 24-of-28, nearly edge to edge. The three call sites that
  * already routed through here have always rendered 16, so one of the two had to move for the
- * affordance to be one affordance; 16 is the repo's `LegacyActionIcon` convention and is
- * what the geometry suite now measures. The BUTTON box — the click and touch target — is
- * `COPY_CONTROL_SIZE` either way and did not move.
+ * affordance to be one affordance, and 16 is also the commonest glyph size in this repo's
+ * `LegacyActionIcon` call sites — a PLURALITY, not a rule: 50 of the 128 that pass a size,
+ * against 21 at 14 and 19 at 18 (grepped, so a majority of what that grep sees). What is not
+ * a judgement call is that the BUTTON box — the click and touch target — is
+ * `COPY_CONTROL_SIZE` either way and did not move, and that the geometry suite now measures
+ * both numbers.
  */
 export const COPY_ICON_SIZE = 16;
 /**
