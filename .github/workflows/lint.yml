@@ -921,8 +921,9 @@ jobs:
           // (An earlier pairing of these comments told you to raise both, which contradicted
           // that.)
           const MIN_FILES = 8;
-          // It was 10, and that clause alone could not fail at any tier size this suite has
-          // had. The GATE was not that weak — it is
+          // It was 10 — which had ZERO headroom when it was written (the tier was 10 tests
+          // then, the same configuration this comment praises the FILE floor for), and became
+          // unfailable as the tier grew past it. The GATE was not that weak — it is
           // `files < MIN_FILES || tests < MIN_TESTS`, so the FILE term still caught a dropped
           // file — the hole was in this clause. Deliberately a
           // fraction of current rather than a ratchet, so merging cases in a refactor does

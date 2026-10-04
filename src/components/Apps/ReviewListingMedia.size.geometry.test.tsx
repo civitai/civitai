@@ -162,11 +162,20 @@ const NON_SQUARE_IMAGE_DATA_URI =
  *   no shipped fixture fails to load; what was measured is the half that matters, that the
  *   AWAIT is entered at all. An earlier draft called the listener unreachable "because data
  *   URIs complete synchronously" — true only of a URI the browser has already decoded.
- *   Instrumenting this helper: run any arm ALONE (`-t`) and its first `settled()` reads
- *   `complete=false, naturalWidth=0`, so the await IS entered; in a whole-file run every call
- *   reads `complete=true`, an earlier arm having warmed the same URI. `-t` is exactly how this
- *   ladder mutation-tests, so with a dead fixture the first arm rejects by name there instead
- *   of timing out at 15 s. That is what the listener buys, and it is not nothing.
+ *   Instrumenting this helper: run MOST arms alone (`-t`) and the first `settled()` reads
+ *   `complete=false, naturalWidth=0`, so the await IS entered. ⚠️ Not all — the ROW-icon arm
+ *   renders two `<img>`s on this URI before its own `settled()`, so it warms itself and reads
+ *   `complete=true`; that is the arm this ladder has mutation-tested the flex and `max-width`
+ *   claims through, so the exception is not academic. In a whole-file run every call reads
+ *   `complete=true`, an earlier arm having warmed the URI.
+ *
+ *   ⚠️ AND DELETING THE LISTENER IS A RACE, NOT A CERTAINTY. Measured on fresh, never-decoded
+ *   dead payloads: with the listener, 3 of 4 runs gave the named `fixture failed to load` and
+ *   1 of 4 landed on `complete=true` and the `naturalWidth` guard instead; without it, 1 of 5
+ *   timed out at 15 s and the other 4 fell through to that same guard. So the listener
+ *   usually changes WHICH named message you get, and occasionally saves a timeout. (A probe
+ *   here must use an unseen payload — re-running the same dead URI flips `complete` to true
+ *   off the browser profile's cached failure.)
  *
  * ⚠️ Local figures here were measured on Chrome 149, not the pinned 143 — see CLAUDE.md,
  * "Browser/component tests on NixOS". CI runs the pin.
