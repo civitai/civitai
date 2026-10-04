@@ -111,12 +111,14 @@ export async function loadResourceInsights(
 /**
  * The three meaning axes a model's search document carries under `insight`, all taken
  * from ONE version's label row. See `modelInsightProjection` for why that matters.
+ *
+ * Expressed as `Omit<…, 'confidence'>` rather than three restated fields, so the
+ * relationship — "the document carries the whole label row EXCEPT the internal
+ * label-quality judgment" — is machine-checked instead of prose. Adding a column to
+ * `ResourceIntentInsight` then fails the projection's own `return` until someone decides
+ * whether the document should carry it, which is the decision that ought to be forced.
  */
-export type ModelInsightProjection = {
-  qualityScore: number;
-  role: string;
-  styleFamily: string;
-};
+export type ModelInsightProjection = Omit<ResourceIntentInsight, 'confidence'>;
 
 /**
  * The model-level projection: what ONE `insight` object a model's search document
@@ -220,7 +222,18 @@ export function modelInsightProjection(
   if (best === null) return null;
   // Copied field-by-field rather than spread: `loadResourceInsights` selects
   // `modelVersionId` too, so the row object carries a column the index document has no
-  // business holding, and a spread would quietly project it.
+  // business holding, and a spread would quietly project it — along with `confidence`, the
+  // internal label-quality judgment.
+  //
+  // ⚠️ NO VALUE GUARD HERE, and the asymmetry with the re-ranker is deliberate rather than an
+  // oversight. `insightBucket` in ./resource-intent-matcher.service.ts refuses to ACT on a
+  // `role` absent from `RESOURCE_INTENT_ROLE_OPTIONS`, because acting on a value this build
+  // cannot interpret would evict a candidate. Writing it to the index is the opposite case:
+  // the table is deliberately built so a superseded row stays READABLE (see the `stale: false`
+  // docstring above), and dropping an out-of-spec label here would blank the axis for every
+  // such model until a manual re-label pass finished. Today the two cannot disagree — the
+  // write side validates against the same option lists (scripts/label-resource-insights.ts) —
+  // but after a spec rename they would, and the index is the side that should keep the value.
   return { qualityScore: best.qualityScore, role: best.role, styleFamily: best.styleFamily };
 }
 
@@ -230,16 +243,17 @@ export function modelInsightProjection(
  * tiebreak above cannot move the figure because a tie means the scores are equal.
  *
  * ⚠️ It has NO production caller as of this change — `models.search-index.ts` now takes
- * the whole row — and it is kept anyway for two reasons worth stating so the next reader
- * does not have to re-derive them. It is named in prose by
- * ~/server/search-index/filterable-attributes.ts (twice, in the enumeration of why a
- * document carries a written null) and by ./resource-intent-matcher.service.ts, so
- * deleting the symbol turns those into dead references; and it is the surface the
- * floor/MAX/null-vs-zero behavioural suite in
- * ~/server/services/__tests__/resource-insight.test.ts was written against, which is
- * coverage of the shared rule rather than of this one-line view. ⚠️ Do not restate that
- * list as a COUNT — an earlier draft of this paragraph said "four other files" and named
- * two that do not mention it at all. Derive it: `git grep modelInsightQualityScore src`.
+ * the whole row — and it is kept for one reason: it is the surface the floor/MAX/null-vs-zero
+ * behavioural suite in ~/server/services/__tests__/resource-insight.test.ts was written
+ * against, and that suite is coverage of the shared rule rather than of this one-line view.
+ *
+ * 🔴 DO NOT RESTATE WHO REFERENCES IT — DERIVE IT: `git grep modelInsightQualityScore src`.
+ * Two successive drafts of this paragraph got that wrong in two different ways, which is why
+ * the instruction replaced the list. The first said "four other files" and named two that
+ * never mentioned it. The second named `filterable-attributes.ts` "twice" — and the SAME
+ * commit had just retargeted both of those mentions to `modelInsightProjection`, so the
+ * correction was false the moment it was written. A sweep that fixes a claim must re-derive
+ * it AFTER its own edits, not from the state it remembers.
  *
  * 🔴 `?? null` and not `||` — a genuine `qualityScore: 0` from a version that DID clear
  * the floor must survive as 0, not collapse into the unlabeled null. Pinned by a test.

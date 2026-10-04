@@ -1,5 +1,11 @@
+import fs from 'fs';
+import path from 'path';
 import { describe, expect, it } from 'vitest';
 
+import {
+  RESOURCE_INTENT_ROLE_OPTIONS,
+  RESOURCE_INTENT_STYLE_FAMILY_OPTIONS,
+} from '~/server/schema/resource-intent.schema';
 import {
   modelInsightProjection,
   modelInsightQualityScore,
@@ -12,16 +18,43 @@ import {
  * MODEL-level; this is the function that collapses the former into the latter so
  * Meilisearch can order by it.
  *
- * 🔴 NOT regression coverage — `modelInsightQualityScore` is new in this change, so there
- * is no pre-change build on which these could be shown to fail. They pin a NEW contract.
- * The regression half of this change lives in two tests that WERE shown red against
- * `origin/main`: the seed-order pair in ./resource-intent-matcher.service.test.ts and the
- * sortable-attributes contract in src/components/Search/__tests__/search-index-contract.test.ts.
+ * 🔴 NOT regression coverage, in BOTH describes below, and the reasoning differs per block —
+ * read it before counting any of this as a red-at-base claim.
+ *
+ * ⚠️ The `modelInsightQualityScore` block was written when that function was new, under the
+ * same reasoning. It is no longer new: as of the meaning-axes change it exists on
+ * `origin/main`, those cases pass there, and the sentence that used to sit here ("`…` is new in
+ * this change") was simply stale. The regression evidence for THAT arc was the seed-order pair
+ * in ./resource-intent-matcher.service.test.ts and the sortable-attributes contract in
+ * src/components/Search/__tests__/search-index-contract.test.ts; both still exist.
+ *
+ * ⚠️ The `modelInsightProjection` block below IS new, and the honest account of its red arm is
+ * written at the top of that block. In short: it goes red at `origin/main` on
+ * `TypeError: modelInsightProjection is not a function` — a missing symbol, which is evidence
+ * the function is new, not evidence that behaviour regressed. The guarantee those cases carry
+ * comes from the mutation battery run at HEAD.
  *
  * Fixture discipline: every `qualityScore` below is pairwise distinct AND distinct from
  * `RESOURCE_INSIGHT_MIN_PROMOTE_CONFIDENCE` (0.3), so no assertion here can be satisfied
  * by a mutant that returns the floor, returns a fixed index, or confuses the two fields.
+ *
+ * 🔴 AND THE SAME DISCIPLINE FOR THE TWO CATEGORICAL AXES, which is a trap rather than a
+ * nicety: `role` and `styleFamily` are typed `string` on purpose (the columns are TEXT, so
+ * a superseded label stays readable — argued in ./resource-intent-matcher.service.test.ts's
+ * subject), so TypeScript accepts ANY spelling here. A review round caught four invented
+ * values in this file — `concept` and `painterly`, which exist nowhere, plus `photoreal`
+ * and `retro_vintage`, near-misses for the real `photorealistic` and `pixel_retro`. That is
+ * the shape that HIDES a real spelling bug instead of exposing one, and worse: the only
+ * consumer of `role` refuses to act on a value absent from `RESOURCE_INTENT_ROLE_OPTIONS`,
+ * so every "winning" row in this suite sat in the class that consumer discards.
+ * The membership guard below closes the class for any fixture added later.
  */
+
+/** The two suites that carry `role`/`styleFamily` fixtures, scanned by the guard below. */
+const FIXTURE_SUITES = [
+  'src/server/services/__tests__/resource-insight.test.ts',
+  'src/server/search-index/__tests__/models-index-insight-projection.test.ts',
+];
 
 const insight = (overrides: Partial<ResourceIntentInsight> = {}): ResourceIntentInsight => ({
   role: 'character',
@@ -152,55 +185,82 @@ describe('modelInsightQualityScore — one model-level score from many version l
  * `modelInsightProjection` — the same selection rule, returning the WINNING VERSION'S WHOLE
  * ROW so the document's three meaning axes describe one resource.
  *
- * 🔴 These ARE regression tests for one specific defect class, and it is the only defect in
- * this change that nothing else could catch: a projection that selects each axis
- * independently — max score from one version, `role` from another — emits a document whose
- * axes describe DIFFERENT resources. Every field is individually well-formed, the document
- * validates, and Meilisearch answers normally, so there is no symptom anywhere downstream.
- * The discriminating fixture is `role`/`styleFamily` that DIFFER between the winning version
- * and a lower-scoring one; a fixture where every version shares a role cannot see it at all.
+ * These pin a NEW contract for one specific defect class — the only defect in this change
+ * that nothing else could catch: a projection that selects each axis independently — max
+ * score from one version, `role` from another — emits a document whose axes describe
+ * DIFFERENT resources. Every field is individually well-formed, the document validates, and
+ * Meilisearch answers normally, so there is no symptom anywhere downstream. The
+ * discriminating fixture is `role`/`styleFamily` that DIFFER between the winning version and a
+ * lower-scoring one; a fixture where every version shares a role cannot see it at all.
+ *
+ * 🔴 WHAT "RED AT `origin/main`" MEANS FOR THIS BLOCK, stated so it is not over-read. The
+ * symbol does not exist there, so all twelve cases fail with
+ * `TypeError: modelInsightProjection is not a function` — measured, not inferred; the runner
+ * listed twelve individual failures rather than a collection error, and the seven pre-existing
+ * `modelInsightQualityScore` cases in the describe above stayed GREEN in the same run. A
+ * missing-symbol red cannot discriminate the split-row defect from anything else. What gives
+ * these cases their teeth is a mutation battery run at HEAD, in which a per-axis split, a
+ * deleted tiebreak, an inverted tiebreak, a deleted floor, an exclusive floor and a row spread
+ * were each killed by the named case below and by its own assertion message.
  *
  * Fixture discipline, extending the rule stated at the top of this file to the two new axes:
- * the winner's `role` and `styleFamily` are never the `insight()` default, so a mutant that
- * hardcodes the default values, or reads the FIRST/LAST version's row, fails rather than
- * coincidentally agreeing.
+ * the winner's `role` and `styleFamily` are never the `insight()` default, and every fixture
+ * value is a real member of the live option lists — see the membership guard at the end.
  */
 describe('modelInsightProjection — the winning version’s whole row', () => {
   it('returns the single labeled version’s three axes', () => {
     const insights = mapOf([
-      [11, insight({ qualityScore: 0.42, role: 'style', styleFamily: 'photoreal' })],
+      [11, insight({ qualityScore: 0.42, role: 'style', styleFamily: 'photorealistic' })],
     ]);
     expect(modelInsightProjection([11], insights)).toEqual({
       qualityScore: 0.42,
       role: 'style',
-      styleFamily: 'photoreal',
+      styleFamily: 'photorealistic',
     });
   });
 
   it('🔴 carries the WINNER’s role and styleFamily — not another version’s', () => {
-    // THE test this function exists for. The highest-scoring version (12) deliberately
-    // carries a different role AND a different styleFamily from the lower-scoring one (11),
-    // and both differ from the fixture default. So:
-    //   - score from 12 + role from 11      -> 'character'/'anime_manga'  FAILS
-    //   - score from 12 + role from the max-by-id / first / last version  -> FAILS
-    //   - three independent maxima                                       -> FAILS
-    // Only "pick one row, then read all three fields off it" passes.
-    const insights = mapOf([
-      [11, insight({ qualityScore: 0.21, role: 'character', styleFamily: 'anime_manga' })],
-      [12, insight({ qualityScore: 0.91, role: 'style', styleFamily: 'photoreal' })],
+    // THE test this function exists for, and it needs TWO arms. A review round measured that a
+    // single arm over-claimed: with the winner at the higher id AND carrying the
+    // lexicographically larger role, both "role from the max-by-id version" and "three
+    // INDEPENDENT maxima, one per field" return exactly the expected object and SURVIVE. The
+    // fixtures below are built so each arm kills what the other cannot.
+    //
+    // Arm A — winner is the HIGHER id (12) and carries the lexicographically SMALLER role and
+    // styleFamily. So three independent maxima pick the LOSER's 'style'/'render_3d', and
+    // first-wins picks the loser too.
+    const armA = mapOf([
+      [11, insight({ qualityScore: 0.21, role: 'style', styleFamily: 'render_3d' })],
+      [12, insight({ qualityScore: 0.91, role: 'clothing', styleFamily: 'pixel_retro' })],
     ]);
-    expect(modelInsightProjection([11, 12], insights)).toEqual({
-      qualityScore: 0.91,
-      role: 'style',
-      styleFamily: 'photoreal',
-    });
-    // And the row travels regardless of where the winner sits in the id list — the number
-    // was already order-independent, but the ROW only is once a tiebreak is defined.
-    expect(modelInsightProjection([12, 11], insights)).toEqual({
-      qualityScore: 0.91,
-      role: 'style',
-      styleFamily: 'photoreal',
-    });
+    const expectedA = { qualityScore: 0.91, role: 'clothing', styleFamily: 'pixel_retro' };
+
+    // Arm B — winner is the LOWER id (11). So role-from-the-max-by-id version picks the
+    // loser's 'clothing', and last-wins picks the loser too.
+    const armB = mapOf([
+      [11, insight({ qualityScore: 0.91, role: 'style', styleFamily: 'photorealistic' })],
+      [12, insight({ qualityScore: 0.21, role: 'clothing', styleFamily: 'pixel_retro' })],
+    ]);
+    const expectedB = { qualityScore: 0.91, role: 'style', styleFamily: 'photorealistic' };
+
+    // Both input orders on both arms — the number was already order-independent, but the ROW
+    // only becomes so once a tiebreak is defined, and first/last-wins die here.
+    for (const ids of [
+      [11, 12],
+      [12, 11],
+    ]) {
+      expect(modelInsightProjection(ids, armA), `arm A, ids ${ids}`).toEqual(expectedA);
+      expect(modelInsightProjection(ids, armB), `arm B, ids ${ids}`).toEqual(expectedB);
+    }
+
+    // What the pair kills, enumerated honestly — each line checked against both arms:
+    //   loser's row                  -> arm A gives 'style', arm B gives 'clothing'   FAILS
+    //   first-wins / last-wins       -> one of the two orders disagrees on both arms   FAILS
+    //   role from the max-by-id      -> arm B gives 'clothing'                         FAILS
+    //   role from the min-by-id      -> arm A gives 'style'                            FAILS
+    //   three independent maxima     -> arm A gives 'style'/'render_3d'                FAILS
+    //   hardcoded `insight()` default-> neither arm's winner is 'character'/'anime_manga' FAILS
+    // Only "pick one row, then read all three fields off it" passes both arms both ways.
   });
 
   it('🔴 breaks a score tie on the LOWEST version id, in both input orders', () => {
@@ -211,35 +271,37 @@ describe('modelInsightProjection — the winning version’s whole row', () => {
     // creator's own reorderable display order, so "first in the list" is not stable either.
     //
     // Both orders are asserted and that is what discriminates: FIRST-wins gives 'style' for
-    // [12, 11], LAST-wins gives 'style' for [11, 12], and only lowest-id gives 'concept' for
+    // [12, 11], LAST-wins gives 'style' for [11, 12], and only lowest-id gives 'clothing' for
     // both. Identical scores, so no rule that looks at the score alone can choose.
     const insights = mapOf([
-      [11, insight({ qualityScore: 0.77, role: 'concept', styleFamily: 'painterly' })],
-      [12, insight({ qualityScore: 0.77, role: 'style', styleFamily: 'photoreal' })],
+      [11, insight({ qualityScore: 0.77, role: 'clothing', styleFamily: 'pixel_retro' })],
+      [12, insight({ qualityScore: 0.77, role: 'style', styleFamily: 'photorealistic' })],
     ]);
-    const expected = { qualityScore: 0.77, role: 'concept', styleFamily: 'painterly' };
+    const expected = { qualityScore: 0.77, role: 'clothing', styleFamily: 'pixel_retro' };
     expect(modelInsightProjection([11, 12], insights)).toEqual(expected);
     expect(modelInsightProjection([12, 11], insights)).toEqual(expected);
   });
 
   it('breaks a three-way tie on the lowest id even when it sits mid-list', () => {
-    // The lowest id is neither first nor last in the input, so this also fails a mutant
-    // that sorts the input and takes an end.
+    // The lowest id is neither first nor last in the input, so first-wins and last-wins both
+    // fail here on a single call. ⚠️ It does NOT kill "sort the input ascending and take the
+    // first" — that rule agrees with lowest-id by construction, so there is nothing to kill;
+    // an earlier version of this comment claimed it did. Taking the HIGH end is killed.
     const insights = mapOf([
-      [11, insight({ qualityScore: 0.64, role: 'concept', styleFamily: 'painterly' })],
-      [12, insight({ qualityScore: 0.64, role: 'style', styleFamily: 'photoreal' })],
-      [13, insight({ qualityScore: 0.64, role: 'character', styleFamily: 'retro_vintage' })],
+      [11, insight({ qualityScore: 0.64, role: 'clothing', styleFamily: 'pixel_retro' })],
+      [12, insight({ qualityScore: 0.64, role: 'style', styleFamily: 'photorealistic' })],
+      [13, insight({ qualityScore: 0.64, role: 'character', styleFamily: 'illustration_cartoon' })],
     ]);
     expect(modelInsightProjection([13, 11, 12], insights)).toEqual({
       qualityScore: 0.64,
-      role: 'concept',
-      styleFamily: 'painterly',
+      role: 'clothing',
+      styleFamily: 'pixel_retro',
     });
   });
 
   it('🔴 ignores a sub-floor version’s axes even when it scores highest', () => {
     // The floor applies to the ROW, not only to the number. Version 11 would win on score
-    // and would bring 'style'/'photoreal' with it; it is below the promote floor, so the
+    // and would bring 'style'/'photorealistic' with it; it is below the promote floor, so the
     // projection must come from 12 entirely.
     const insights = mapOf([
       [
@@ -248,7 +310,7 @@ describe('modelInsightProjection — the winning version’s whole row', () => {
           qualityScore: 0.97,
           confidence: RESOURCE_INSIGHT_MIN_PROMOTE_CONFIDENCE - 0.05,
           role: 'style',
-          styleFamily: 'photoreal',
+          styleFamily: 'photorealistic',
         }),
       ],
       [
@@ -256,15 +318,15 @@ describe('modelInsightProjection — the winning version’s whole row', () => {
         insight({
           qualityScore: 0.42,
           confidence: 0.88,
-          role: 'concept',
-          styleFamily: 'painterly',
+          role: 'clothing',
+          styleFamily: 'pixel_retro',
         }),
       ],
     ]);
     expect(modelInsightProjection([11, 12], insights)).toEqual({
       qualityScore: 0.42,
-      role: 'concept',
-      styleFamily: 'painterly',
+      role: 'clothing',
+      styleFamily: 'pixel_retro',
     });
   });
 
@@ -276,14 +338,14 @@ describe('modelInsightProjection — the winning version’s whole row', () => {
           qualityScore: 0.42,
           confidence: RESOURCE_INSIGHT_MIN_PROMOTE_CONFIDENCE,
           role: 'style',
-          styleFamily: 'photoreal',
+          styleFamily: 'photorealistic',
         }),
       ],
     ]);
     expect(modelInsightProjection([11], insights)).toEqual({
       qualityScore: 0.42,
       role: 'style',
-      styleFamily: 'photoreal',
+      styleFamily: 'photorealistic',
     });
   });
 
@@ -293,7 +355,7 @@ describe('modelInsightProjection — the winning version’s whole row', () => {
     // `{ qualityScore: null, role: 'style', ... }` — a partial row — must fail.
     const insights = mapOf([
       [11, insight({ qualityScore: 0.91, confidence: 0.1, role: 'style' })],
-      [12, insight({ qualityScore: 0.77, confidence: 0.2, role: 'concept' })],
+      [12, insight({ qualityScore: 0.77, confidence: 0.2, role: 'clothing' })],
     ]);
     expect(modelInsightProjection([11, 12], insights)).toBeNull();
   });
@@ -307,40 +369,56 @@ describe('modelInsightProjection — the winning version’s whole row', () => {
     // The loader is batched across a whole read window, so the map routinely holds versions
     // this model does not own — and a leak here would project another model's role.
     const insights = mapOf([
-      [11, insight({ qualityScore: 0.42, role: 'concept', styleFamily: 'painterly' })],
-      [999, insight({ qualityScore: 0.97, role: 'style', styleFamily: 'photoreal' })],
+      [11, insight({ qualityScore: 0.42, role: 'clothing', styleFamily: 'pixel_retro' })],
+      [999, insight({ qualityScore: 0.97, role: 'style', styleFamily: 'photorealistic' })],
     ]);
     expect(modelInsightProjection([11], insights)).toEqual({
       qualityScore: 0.42,
-      role: 'concept',
-      styleFamily: 'painterly',
+      role: 'clothing',
+      styleFamily: 'pixel_retro',
     });
   });
 
   it('preserves a genuine 0 score alongside its axes', () => {
     const insights = mapOf([
-      [11, insight({ qualityScore: 0, confidence: 0.93, role: 'style', styleFamily: 'photoreal' })],
+      [
+        11,
+        insight({
+          qualityScore: 0,
+          confidence: 0.93,
+          role: 'style',
+          styleFamily: 'photorealistic',
+        }),
+      ],
     ]);
     expect(modelInsightProjection([11], insights)).toEqual({
       qualityScore: 0,
       role: 'style',
-      styleFamily: 'photoreal',
+      styleFamily: 'photorealistic',
     });
   });
 
   it('🔴 projects EXACTLY the three axes — no `confidence`, no `modelVersionId`', () => {
     // `loadResourceInsights` selects `modelVersionId` as well, and its rows therefore carry
-    // columns the search document has no business holding. A `{ ...best }` spread would
-    // project both, and `toEqual` on a three-key literal would NOT catch it — it ignores
-    // extra keys on the received object. So the key set is asserted directly.
+    // columns the search document has no business holding. `confidence` is the one that
+    // matters: it is the internal label-quality judgment, and the document goes into an index
+    // whose displayed-attribute whitelist withholds `insight` precisely so unvalidated
+    // internals stay out of a public hit.
     //
-    // `confidence` is the one that matters: it is the internal label-quality judgment, and
-    // the document is written into an index whose displayed-attribute whitelist withholds
-    // `insight` precisely so unvalidated internals stay out of a public hit.
+    // ⚠️ An earlier version of this comment justified the case by claiming `toEqual` "ignores
+    // extra keys on the received object". That is FALSE and was measured false on this repo's
+    // own `@vitest/expect`: an extra DEFINED key FAILS `toEqual` (an extra key whose value is
+    // `undefined` is what it ignores). So every `toEqual` above already kills a `{ ...best }`
+    // spread, via the fixture's `confidence: 0.9`. The sentence is corrected rather than
+    // deleted because believing it would license under-specified object assertions elsewhere.
+    //
+    // This case is kept for the key it adds that no fixture carries — `modelVersionId`, which
+    // the real loader DOES put on every row — and because asserting the key SET states the
+    // contract directly instead of leaving it as a side effect of one fixture's field count.
     const row = {
       modelVersionId: 11,
       role: 'style',
-      styleFamily: 'photoreal',
+      styleFamily: 'photorealistic',
       qualityScore: 0.42,
       confidence: 0.88,
     } as unknown as ResourceIntentInsight;
@@ -350,27 +428,68 @@ describe('modelInsightProjection — the winning version’s whole row', () => {
   });
 
   it('agrees with `modelInsightQualityScore`, which is now a view over it', () => {
-    // The old entry point must keep returning exactly the number it always did. Covered on
-    // the three cases where a re-expression could drift: a plain max, a tie (where the
-    // tiebreak now chooses a row but must not move the figure), and a genuine 0.
+    // The old entry point must keep returning exactly the number it always did. Pinned on the
+    // four cases where a re-expression could drift: a plain max, a tie (where the tiebreak now
+    // chooses a row but must not move the figure), a genuine 0, and no label at all.
+    //
+    // ⚠️ ABSOLUTE VALUES ONLY. An earlier version also looped asserting
+    // `modelInsightQualityScore(ids, m) === modelInsightProjection(ids, m)?.qualityScore ?? null`
+    // — which is a verbatim copy of the view's own body, so ANY change inside the projection
+    // (floor flip, tiebreak flip, `>` to `>=`) moved both sides identically and the loop stayed
+    // green. That is the "assert against a copy of the implementation" shape; it was deleted
+    // rather than kept as reassurance, and these four pins are what carried the case anyway.
     const max = mapOf([
       [11, insight({ qualityScore: 0.21 })],
       [12, insight({ qualityScore: 0.91 })],
     ]);
     const tie = mapOf([
-      [11, insight({ qualityScore: 0.77, role: 'concept' })],
+      [11, insight({ qualityScore: 0.77, role: 'clothing' })],
       [12, insight({ qualityScore: 0.77, role: 'style' })],
     ]);
     const zero = mapOf([[11, insight({ qualityScore: 0, confidence: 0.93 })]]);
-    for (const insights of [max, tie, zero, mapOf([])]) {
-      expect(modelInsightQualityScore([11, 12], insights)).toBe(
-        modelInsightProjection([11, 12], insights)?.qualityScore ?? null
-      );
-    }
-    // Pinned absolutely too, so the pair cannot agree on a wrong value.
     expect(modelInsightQualityScore([11, 12], max)).toBe(0.91);
     expect(modelInsightQualityScore([11, 12], tie)).toBe(0.77);
     expect(modelInsightQualityScore([11, 12], zero)).toBe(0);
     expect(modelInsightQualityScore([11, 12], mapOf([]))).toBeNull();
+  });
+
+  it('🔴 uses only REAL role/styleFamily values, from the live option lists', () => {
+    // The guard for the whole class, because TypeScript cannot help here: `role` and
+    // `styleFamily` are typed `string` on purpose (TEXT columns, so a superseded label stays
+    // readable), so any spelling compiles. A review round found four invented values in these
+    // suites — two that exist nowhere, and two near-misses for `photorealistic` and
+    // `pixel_retro`. The near-miss is the dangerous shape: it reads as realistic data while
+    // being exactly the "value this build cannot interpret" case that `insightBucket` in
+    // ./resource-intent-matcher.service.ts refuses to act on, so every "winning" row in this
+    // suite sat in the class the only consumer of `role` discards.
+    //
+    // Scans the suite SOURCE rather than a hand-maintained list, so a fixture added later is
+    // covered without touching this case.
+    const sources = FIXTURE_SUITES.map((rel) =>
+      fs.readFileSync(path.join(process.cwd(), rel), 'utf8')
+    ).join('\n');
+    const used = (re: RegExp) => [...new Set([...sources.matchAll(re)].map((m) => m[1]))];
+    const roles = used(/\brole: '([a-z_]+)'/g);
+    const families = used(/\bstyleFamily: '([a-z_]+)'/g);
+
+    // 🔴 Positive control FIRST. A regex that matched nothing would make every assertion below
+    // vacuously true, and a reassuring zero is indistinguishable from a probe wired to nothing.
+    // More than one distinct value each, since the suites' whole discriminating property is
+    // that the winner's values differ from the loser's.
+    expect(roles.length, 'the role fixture scan matched nothing').toBeGreaterThan(1);
+    expect(families.length, 'the styleFamily fixture scan matched nothing').toBeGreaterThan(1);
+
+    for (const role of roles) {
+      expect(
+        RESOURCE_INTENT_ROLE_OPTIONS as readonly string[],
+        `fixture role '${role}' is not a real option`
+      ).toContain(role);
+    }
+    for (const family of families) {
+      expect(
+        RESOURCE_INTENT_STYLE_FAMILY_OPTIONS as readonly string[],
+        `fixture styleFamily '${family}' is not a real option`
+      ).toContain(family);
+    }
   });
 });

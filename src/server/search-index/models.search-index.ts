@@ -319,6 +319,23 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
       // downstream — not the index, not a consumer, not a reviewer reading one line —
       // can see it. That is why the projection returns a row instead of three numbers.
       //
+      // ⚠️ THAT COHERENCE IS WITHIN `insight` ONLY, and this document carries a SECOND,
+      // DIFFERENT answer to "which version does this speak for": `version.*` below is
+      // flattened from `const [version] = modelVersions` — the FIRST version in
+      // `{ index: 'asc' }` order — while `insight.*` comes from the highest-scoring one above
+      // the promote floor. The two routinely select different versions, and both are
+      // filterable (`version.baseModel` is in ./filterable-attributes.ts), so a query like
+      // `insight.role = "style" AND version.baseModel = "SDXL 1.0"` can match a model whose
+      // role came from one version and whose base model came from another.
+      //
+      // Left as-is rather than reconciled, deliberately: `version.*` is the card-display
+      // version and predates all of this, the winning version id is NOT projected (see
+      // `modelInsightProjection`, which drops it), and today's only consumer filters on the
+      // ARRAY form `versions.baseModel` rather than `version.baseModel`, so nothing currently
+      // ANDs the two. 🔴 A consumer that wants both axes to describe one version must project
+      // the winning `modelVersionId` first — do not assume the existing `version.*` keys
+      // already agree with `insight.*`.
+      //
       // 🔴 THE NULL IS WRITTEN, NOT OMITTED, AND THE DIFFERENCE IS A STALE-SCORE BUG.
       // An earlier version of this omitted the key on `null`, on the measured ground that
       // a missing sortable attribute and an explicit null sort identically. They do — but

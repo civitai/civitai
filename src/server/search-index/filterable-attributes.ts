@@ -235,10 +235,19 @@ export const modelsFilterableAttributes = [
   // asymmetry is a reason to land it now, not a reason the claim was harmless.
   'insight.qualityScore',
   // The two MEANING axes — the arc's actual goal, which `insight.qualityScore` is not.
-  // `role` is one of 9 values and `styleFamily` one of 6, both written from the SAME
-  // version row the score came from (`modelInsightProjection`,
-  // ~/server/services/resource-insight.ts). Quality answers "how good"; these answer
-  // "what FOR", which is the question a purpose query asks.
+  // Their vocabularies are `RESOURCE_INTENT_ROLE_OPTIONS` and
+  // `RESOURCE_INTENT_STYLE_FAMILY_OPTIONS` (~/server/schema/resource-intent.schema.ts) —
+  // named rather than counted, because a count restated here goes silently wrong the first
+  // time an option is added. Both are written from the SAME version row the score came from
+  // (`modelInsightProjection`, ~/server/services/resource-insight.ts). Quality answers "how
+  // good"; these answer "what FOR", which is the question a purpose query asks.
+  //
+  // ⚠️ `category.name` above is the OTHER filterable answer to "what is this FOR", and the
+  // next person to add a purpose filter will meet both. They are not interchangeable:
+  // `category.name` is a MODEL-level creator-assigned tag drawn from the category tag set,
+  // whereas `insight.role` is a VERSION-level machine label behind a confidence floor,
+  // projected from one winning version. Pick deliberately; ANDing them intersects two
+  // different authorities on the same question and silently narrows the pool.
   //
   // 🔴 FILTERABLE ONLY, AND DELIBERATELY NOT SORTABLE — do not "complete the set" by
   // adding them to ./sortable-attributes.ts. They are unordered categories, so a
@@ -250,11 +259,20 @@ export const modelsFilterableAttributes = [
   // 🔴 THE SEED'S SORT ARRAY IS UNCHANGED BY THE CHANGE THAT ADDED THESE, and that is a
   // decision rather than an omission. What the index WRITES and how
   // `searchShortlistModels` (~/server/services/resource-intent-matcher.service.ts) ORDERS
-  // are separable: the attribute lists only reach a live index through a full manual
-  // reset, which is authorisation-gated and has not been run, whereas the sort array is a
-  // plain code change deployable any time. So landing the widest useful projection now
-  // means ONE reset writes everything a later purpose-first ordering could need, and that
-  // ordering then costs code only. Nothing reads these attributes yet — by design.
+  // are separable: a document only ACQUIRES these two fields when it is rewritten, which at
+  // full coverage means the manual full reset — authorisation-gated and not yet run — whereas
+  // the sort array is a plain code change deployable any time. So landing the widest useful
+  // projection now means ONE reset writes everything a later purpose-first ordering could
+  // need, and that ordering then costs code only. Nothing reads these attributes yet — by
+  // design.
+  //
+  // 🔴 ⚠️ DO NOT RE-DERIVE THAT AS "THE LISTS ONLY REACH A LIVE INDEX THROUGH A RESET" — a
+  // draft of this very entry said exactly that, and it is the claim the ⚠️ paragraph beside
+  // the score entry above was written to RETRACT. THIS list has
+  // src/pages/api/admin/temp/apply-models-index-filterable-attributes.ts, which applies it to
+  // the live index with no reset; only `sortableAttributes` and `displayedAttributes` are
+  // reset-only. The separability argument does not need the false half, so it no longer
+  // carries it — the DOCUMENTS are what wait for a rewrite, not the settings.
   //
   // ⚠️ The null semantics are the score's, verbatim: `models.search-index.ts` writes
   // `role: null` / `styleFamily: null` on every model with no qualifying version, because

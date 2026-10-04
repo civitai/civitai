@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 import { modelsFilterableAttributes } from '~/server/search-index/filterable-attributes';
@@ -13,11 +14,18 @@ import { modelsSortableAttributes } from '~/server/search-index/sortable-attribu
  *
  * ⚠️ WHAT THIS FILE DELIBERATELY DOES NOT PIN: the seed's sort array. Adding the axes to the
  * projection changed `searchShortlistModels` not at all — what the index WRITES and how the
- * seed ORDERS are separable, the attribute lists reach a live index only through a manual
- * full reset while the sort array is a plain code change — and that array is already pinned
- * whole by `toEqual(['insight.qualityScore:desc', 'metrics.thumbsUpCount:desc'])` in
+ * seed ORDERS are separable — and that array is already pinned whole by
+ * `toEqual(['insight.qualityScore:desc', 'metrics.thumbsUpCount:desc'])` in
  * ~/server/services/__tests__/resource-intent-matcher.service.test.ts. A second guard here
  * would fail in exactly the cases that one already fails in, so there isn't one.
+ *
+ * ⚠️ An earlier version of this paragraph said "the attribute lists reach a live index only
+ * through a manual full reset", which is FALSE for the filterable list and is a claim
+ * ../filterable-attributes.ts explicitly retracts beside its own `insight` entry:
+ * src/pages/api/admin/temp/apply-models-index-filterable-attributes.ts applies THAT list to the
+ * live index with no reset. Only `sortableAttributes` and `displayedAttributes` are
+ * reset-only. The separability argument above does not need the false half, so it no longer
+ * carries it.
  *
  * 🔴 These are WIRING guards, not behavioural ones, and the difference matters when
  * reading them as coverage. The projection RULE (max over labeled versions above the
@@ -37,13 +45,73 @@ import { modelsSortableAttributes } from '~/server/search-index/sortable-attribu
  * (measured on v1.15.0), so a renamed document key with a stale sortable entry produces a
  * silently wrong ordering, not a loud 400.
  */
-const indexSource = fs.readFileSync(
-  path.join(process.cwd(), 'src/server/search-index/models.search-index.ts'),
-  'utf8'
-);
+const INDEX_REL = 'src/server/search-index/models.search-index.ts';
+const indexSource = fs.readFileSync(path.join(process.cwd(), INDEX_REL), 'utf8');
 // Collapse whitespace so these assertions survive reformatting by Prettier, which wraps
 // the conditional spread across lines at the current line width.
 const flat = indexSource.replace(/\s+/g, ' ');
+
+/**
+ * 🔴 ASK THE PARSER, NOT THE TEXT — and this is a MEASURED defect, not a style preference.
+ *
+ * `flat` above is the whole file's text with whitespace collapsed, **comments included**, and
+ * a non-global `.match()` returns the FIRST hit wherever it comes from. A review round
+ * demonstrated the consequence: the headline split defect (`role` read off a different version
+ * than the winning score) was planted, a doc comment quoting the correct emitted literal was
+ * added above it — exactly the comment style ../displayed-attributes.ts and
+ * ~/server/__tests__/models-displayed-attributes.test.ts already use for this very literal —
+ * and **every text assertion went green**. Controls confirmed it was the instrument and not
+ * the fixture: the same defect with no quoting comment went red, and the real file passed.
+ *
+ * So the two assertions that carry the row-coherence contract read the AST instead, where a
+ * comment is not a property assignment and cannot satisfy anything. Same lesson, same
+ * mechanism and the same `typescript` devDependency as the `callsIn` walk in
+ * ~/server/__tests__/models-displayed-attributes.test.ts — reused rather than re-derived.
+ *
+ * The surviving `flat` assertions are the pre-existing ones plus the per-leaf diagnostics; they
+ * are fine as diagnostics BECAUSE the AST pins sit beside them, and that is the whole reason
+ * they are allowed to stay textual.
+ */
+const indexAst = ts.createSourceFile(INDEX_REL, indexSource, ts.ScriptTarget.Latest, true);
+
+/** Every `name: initializer` property assignment in the file, as source text. */
+function propertyAssignments() {
+  const out: { name: string; initializer: string; node: ts.Expression }[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isPropertyAssignment(node)) {
+      out.push({
+        name: node.name.getText(indexAst),
+        initializer: node.initializer.getText(indexAst),
+        node: node.initializer,
+      });
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(indexAst, visit);
+  return out;
+}
+
+/** Every call expression in the file, as the source text of its callee and arguments. */
+function callExpressions() {
+  const out: { callee: string; args: string[] }[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node)) {
+      out.push({
+        callee: node.expression.getText(indexAst),
+        args: node.arguments.map((a) => a.getText(indexAst).replace(/\s+/g, ' ')),
+      });
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(indexAst, visit);
+  return out;
+}
+
+/** The ONE `insight:` property the document builder emits, parsed. */
+function insightProperty() {
+  const hits = propertyAssignments().filter((p) => p.name === 'insight');
+  return { hits, only: hits[0] };
+}
 
 const INSIGHT_SORT_ATTR = 'insight.qualityScore';
 
@@ -54,23 +122,23 @@ const INSIGHT_SORT_ATTR = 'insight.qualityScore';
 const INSIGHT_AXIS_ATTRS = ['insight.role', 'insight.styleFamily'];
 
 /**
- * The exact normalised text of the `insight` object literal `transformData` emits.
+ * The exact `name: value` list of the `insight` object literal `transformData` emits, read
+ * from the AST so punctuation and comments are out of scope.
  *
- * 🔴 Pinned as a WHOLE STRING on purpose, against this file's own general preference for
+ * 🔴 Pinned as a WHOLE ORDERED LIST on purpose, against this file's general preference for
  * pinning relationships over spellings — because here the hazard IS a spelling. A guard that
- * merely checks each key is present passes a literal whose `role` reads off a different
+ * merely checks each key is PRESENT passes a literal whose `role` reads off a different
  * version than its `qualityScore`, which is the one defect in this projection that has no
- * downstream symptom (see ~/server/services/resource-insight.ts). Whitespace is collapsed
- * before comparing, so Prettier reflow cannot break it; the trailing comma is normalised away
- * for the same reason, since it is present only while Prettier keeps the literal multi-line.
+ * downstream symptom (see ~/server/services/resource-insight.ts).
  *
- * The intended cost of changing the projection is updating this string, and a reviewer then
+ * The intended cost of changing the projection is updating this list, and a reviewer then
  * reads what moved.
  */
-const INSIGHT_LITERAL =
-  'qualityScore: insightProjection?.qualityScore ?? null, ' +
-  'role: insightProjection?.role ?? null, ' +
-  'styleFamily: insightProjection?.styleFamily ?? null';
+const INSIGHT_PROPERTIES = [
+  'qualityScore: insightProjection?.qualityScore ?? null',
+  'role: insightProjection?.role ?? null',
+  'styleFamily: insightProjection?.styleFamily ?? null',
+];
 
 describe('models search index projects insight.qualityScore', () => {
   it('loads the labels from the batch-wide id list, not a per-model one', () => {
@@ -86,9 +154,12 @@ describe('models search index projects insight.qualityScore', () => {
     // `modelVersions` is the per-model list inside the builder; `versionIds` is the
     // batch-wide one. Passing the batch-wide list here would give every model in the
     // read window the same score — the highest in the batch.
-    expect(flat).toMatch(
-      /modelInsightProjection\( modelVersions\.map\(\(v\) => v\.id\), insights \)/
-    );
+    //
+    // Read off the AST: there must be exactly ONE projection call, and its arguments must be
+    // the per-model id list and the batch-wide map.
+    const calls = callExpressions().filter((c) => c.callee === 'modelInsightProjection');
+    expect(calls, 'exactly one projection call per model').toHaveLength(1);
+    expect(calls[0].args).toEqual(['modelVersions.map((v) => v.id)', 'insights']);
   });
 
   it('🔴 takes all three axes from ONE projection call, so the winning row cannot be split', () => {
@@ -96,18 +167,37 @@ describe('models search index projects insight.qualityScore', () => {
     // some other one. The document validates, the index answers normally, and a purpose filter
     // then matches a model on a role no version of it that scored well actually has.
     //
-    // Two halves, and both are needed. The literal pin says the three keys read the same
-    // `insightProjection` binding with the same leaf names...
-    const literal = flat.match(/insight: \{ (.*?) \},/)?.[1];
-    expect(literal, 'the insight object literal was not found in transformData').toBeTruthy();
-    expect((literal as string).replace(/,$/, '')).toBe(INSIGHT_LITERAL);
+    // The whole emitted literal, pinned from the AST. Any key reading off anything other than
+    // the single `insightProjection` binding changes this string.
+    const { hits, only } = insightProperty();
+    expect(hits, 'exactly one `insight:` property is emitted').toHaveLength(1);
+    expect(
+      ts.isObjectLiteralExpression(only.node),
+      '`insight` must be a plain object literal'
+    ).toBe(true);
 
-    // ...and the call count says that binding came from a SINGLE selection, so three separate
-    // `modelInsightProjection(...)` calls — which could each pick a different winner if the
-    // rule ever gains a non-deterministic branch — cannot satisfy the pin above by accident.
-    // Counts call sites only: a mention of the name in prose carries no `(`.
-    const calls = flat.match(/modelInsightProjection\(/g) ?? [];
-    expect(calls, 'exactly one projection call per model').toHaveLength(1);
+    // Every member must be a `name: value` assignment — which rejects a spread
+    // (`...(insightProjection ? {…} : {})`) structurally rather than by grepping for one — and
+    // the full ordered list must match, so an added, removed or re-sourced key all fail here.
+    const props = (only.node as ts.ObjectLiteralExpression).properties.map((p) => {
+      expect(ts.isPropertyAssignment(p), 'no spreads or shorthand in the insight literal').toBe(
+        true
+      );
+      const pa = p as ts.PropertyAssignment;
+      return `${pa.name.getText(indexAst)}: ${pa.initializer
+        .getText(indexAst)
+        .replace(/\s+/g, ' ')}`;
+    });
+    expect(props).toEqual(INSIGHT_PROPERTIES);
+
+    // 🔴 And the clause that actually closes the split: a realistic split does NOT add a second
+    // projection call, it reads the batch map directly (`insights.get(someOtherId)?.role`). The
+    // call-count guard is blind to that — measured, it stays at 1 — so this is what sees it.
+    // `insights` is read in exactly TWO places in this file: the assignment from
+    // `loadResourceInsights`, and the argument handed to the projection. Nothing else may touch
+    // it, which is what makes "one row" a property of the file rather than of one line.
+    const insightsReads = callExpressions().filter((c) => c.callee.startsWith('insights.'));
+    expect(insightsReads, 'the label map must never be read directly in this file').toEqual([]);
   });
 
   it('🔴 WRITES the null unconditionally — never omits a key, never coalesces to 0', () => {
@@ -130,16 +220,17 @@ describe('models search index projects insight.qualityScore', () => {
     // document too, so a retracted label cannot leave a stale role behind. A single
     // projection returning `null` has to become three written nulls, which is why the
     // literal spells each key out rather than spreading an object that may be absent.
+    //
+    // ⚠️ This is the per-leaf DIAGNOSTIC, not the contract — the ordered AST list above is
+    // the contract, and it subsumes every assertion here. The value of this loop is the
+    // failure MESSAGE: it names which leaf went wrong instead of printing a list diff. It is
+    // allowed to stay textual only because the AST pin sits beside it.
+    const members = insightProperty().only.initializer.replace(/\s+/g, ' ');
     for (const leaf of ['qualityScore', 'role', 'styleFamily']) {
-      expect(flat, `${leaf} must be written as \`?? null\`, never \`?? 0\` or omitted`).toMatch(
+      expect(members, `${leaf} must be written as \`?? null\`, never \`?? 0\` or omitted`).toMatch(
         new RegExp(`${leaf}: insightProjection\\?\\.${leaf} \\?\\? null`)
       );
     }
-    // The three shapes that omit or defaultify instead, none of which the loop above can see.
-    expect(flat).not.toMatch(/insightProjection\?\.\w+ \?\? \d/);
-    expect(flat).not.toMatch(/insight: insightProjection/);
-    expect(flat).not.toMatch(/\.\.\.\(insightProjection/);
-    expect(flat).not.toMatch(/insightProjection === null \?/);
   });
 
   it('🔴 fails soft on a label-read error rather than dropping the whole index batch', () => {
@@ -198,17 +289,50 @@ describe('models search index projects insight.qualityScore', () => {
     }
   });
 
+  it('🔴 pairs every DECLARED insight attribute with a key the document actually carries', () => {
+    // Membership alone cannot see the half-change, and the test above says so in its own
+    // comment without checking it: a future `insight.contentType` added to either list with no
+    // projection change — or added to the projection under a differently-spelled leaf — is
+    // silently INERT. Meilisearch filters happily on an attribute no document carries, every
+    // document reads `IS NULL`, and nothing returns a 400. The score has a derived check of
+    // this shape already; the axes had none, and `INSIGHT_AXIS_ATTRS` above is a restated
+    // literal, so this is the assertion that makes the pairing machine-checked.
+    //
+    // Both directions, deliberately: a declared-but-unprojected attribute is the inert half,
+    // and a projected-but-undeclared key is a field written to every document for nothing.
+    const declared = [...modelsFilterableAttributes, ...modelsSortableAttributes]
+      .filter((a) => a.startsWith('insight.'))
+      .map((a) => a.slice('insight.'.length));
+    const projected = (insightProperty().only.node as ts.ObjectLiteralExpression).properties.map(
+      (p) => (p as ts.PropertyAssignment).name.getText(indexAst)
+    );
+
+    // Positive control: a zero on either side would make the comparison vacuously true.
+    expect(declared.length, 'no insight.* attribute is declared at all').toBeGreaterThan(0);
+    expect(projected.length, 'the document emits no insight key at all').toBeGreaterThan(0);
+    expect([...new Set(declared)].sort()).toEqual([...projected].sort());
+  });
+
   it('🔴 keeps the meaning axes OUT of sortableAttributes — they are unordered categories', () => {
     // ⚠️ AN INVARIANT GUARD, not regression coverage: it is GREEN on `origin/main` too, where
     // these attributes do not exist at all, so it never watched the bug it prevents. Counted
     // as such — it pins a decision for the next person rather than catching a defect that
-    // shipped. The regression half of this change is the twelve service-level cases and the
-    // four wiring cases that were red at `origin/main`.
+    // shipped.
+    //
+    // 🔴 And the honest account of what WAS red at `origin/main`, because an earlier version of
+    // this comment overstated it. Four cases in THIS file failed by their own assertions there:
+    // the projection call, the ordered literal, the `?? null` diagnostic and the filterable
+    // membership of the two axes. The twelve `modelInsightProjection` cases in
+    // ~/server/services/__tests__/resource-insight.test.ts also went red, but on
+    // `TypeError: modelInsightProjection is not a function` — a missing symbol, which is
+    // evidence the function is NEW, not evidence the behaviour regressed. Their teeth come
+    // from the mutation battery run at HEAD, not from that red.
     //
     // Not symmetry-for-its-own-sake: a declared-but-meaningless sortable attribute is a
     // SILENT trap. Meilisearch accepts `insight.role:desc` on any declared sortable attribute
     // and answers in alphabetical order, which reads as a ranking, so "completing the set"
-    // here would ship a plausible-looking ordering over a 9-value category with no order.
+    // here would ship a plausible-looking ordering over `RESOURCE_INTENT_ROLE_OPTIONS`
+    // (~/server/schema/resource-intent.schema.ts), which has no order at all.
     for (const attr of INSIGHT_AXIS_ATTRS) {
       expect(modelsSortableAttributes, `${attr} must NOT be sortable`).not.toContain(attr);
     }
@@ -267,22 +391,16 @@ describe('models search index projects insight.qualityScore', () => {
       );
     }
 
-    // The DB-direct path, behaviourally, with the NESTED shape the projection actually emits —
-    // a membership assertion on a ledger cannot show that the strip reaches inside. The values
-    // are checked as well as the keys: a strip that replaced the object with `{}` would pass a
-    // `toHaveProperty` check on the leaves while still shipping the parent.
-    const stripped = withheldStripped({
-      id: 1,
-      insight: { qualityScore: 0.9, role: 'style', styleFamily: 'photoreal' },
-    }) as Record<string, unknown>;
-    expect(stripped).not.toHaveProperty('insight');
-    for (const token of ['qualityScore', 'role', 'styleFamily', 'photoreal']) {
-      expect(
-        JSON.stringify(stripped),
-        `${token} must not survive anywhere on the record`
-      ).not.toContain(token);
-    }
-    // And it must not strip anything else — over-stripping blanks the search card.
-    expect(stripped.id).toBe(1);
+    // The DB-direct path, behaviourally, with the NESTED shape the projection actually emits.
+    // ONE assertion, and the reasoning for why it is one is worth keeping: the strip does not
+    // reach INSIDE `insight`, it deletes the parent — so a per-leaf loop under this line cannot
+    // fail unless this line already failed, and an earlier version of this block carried four
+    // such assertions justified by a mutant (`out[attr] = {}`) that this line kills on its own.
+    expect(
+      withheldStripped({
+        id: 1,
+        insight: { qualityScore: 0.9, role: 'style', styleFamily: 'photorealistic' },
+      })
+    ).toEqual({ id: 1 });
   });
 });
