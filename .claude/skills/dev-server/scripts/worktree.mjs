@@ -589,13 +589,13 @@ export async function cmdCreate(primaryArg, name, branch, opts = {}) {
   if (existsSync(resolve(primary, '.envrc'))) {
     writeFileSync(resolve(target, '.envrc'), 'use flake\n');
     try {
-      execFileSync('direnv', ['allow'], { cwd: target, stdio: 'ignore' });
+      execFileSync('direnv', ['allow'], { cwd: target, stdio: 'ignore', windowsHide: true });
     } catch {
       console.warn(`warning: wrote .envrc but could not run \`direnv allow\` in ${target}`);
     }
   }
 
-  if (!opts.noInstall) execFileSync('pnpm', ['install'], { cwd: target, stdio: 'inherit' });
+  if (!opts.noInstall) execFileSync('pnpm', ['install'], { cwd: target, stdio: 'inherit', windowsHide: true });
 
   const head = git(['status', '-sb'], target).split(/\r?\n/)[0];
   if (head !== `## ${branch}`) fail(`expected "## ${branch}" with no upstream, got "${head}" — fix with: git -C "${target}" branch --unset-upstream`);
