@@ -95,13 +95,22 @@ export const publishedImageWhere = (): Prisma.ImageWhereInput => ({
   post: publishedPostWhere(),
 });
 
+/** An entered image's post may be scheduled for its crucible's end; only unpublishing takes it out. */
+export const enteredImageWhere = (): Prisma.ImageWhereInput => ({
+  ...reviewedImageWhere,
+  post: { publishedAt: { not: null } },
+});
+
 /** Unpublished media, held to the same review gates as published media. */
 export const draftImageWhere = (post: Prisma.PostWhereInput): Prisma.ImageWhereInput => ({
   ...reviewedImageWhere,
   post: { ...post, publishedAt: null },
 });
 
-/** Marks a post the crucible entry modal created, so its unentered media stays pickable later. */
+/**
+ * Marks a post the crucible entry modal created, so its unentered media stays pickable later and an
+ * entered one can be revealed when its crucible ends.
+ */
 export const CRUCIBLE_ENTRY_DRAFT_METADATA_KEY = 'crucibleEntryDraft';
 
 /** One relation filter rather than an OR of two, so the planner can still semi-join on Post. */

@@ -155,12 +155,16 @@ const lastRawQuery = () => {
   };
 };
 
-/** A review hold, a ToS flag or an unpublished post after submission takes the entry out. */
+/**
+ * A review hold, a ToS flag or an unpublished post after submission takes the entry out. A post
+ * scheduled for the crucible's end does not: that is how `submitEntry` keeps entries off the
+ * entrant's profile while judging is blind.
+ */
 const expectPublishedEntryImage = (sql: string) => {
   expect(sql).toContain('i."needsReview" IS NULL');
   expect(sql).toContain('NOT i."tosViolation"');
   expect(sql).toMatch(
-    /EXISTS \( ?SELECT 1 FROM "Post" ep WHERE ep\.id = i\."postId" AND ep\."publishedAt" <= now\(\) ?\)/
+    /EXISTS \( ?SELECT 1 FROM "Post" ep WHERE ep\.id = i\."postId" AND ep\."publishedAt" IS NOT NULL ?\)/
   );
 };
 
@@ -607,7 +611,7 @@ describe('crucible.getMinVotesToPlace', () => {
         ingestion: { not: 'Blocked' },
         needsReview: null,
         tosViolation: false,
-        post: { publishedAt: { lte: expect.any(Date) } },
+        post: { publishedAt: { not: null } },
       },
     });
   });

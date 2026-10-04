@@ -646,7 +646,13 @@ describe('submitEntry — content type', () => {
     dbMock.dbWrite.post.updateMany.mockResolvedValue({ count: 1 });
   };
 
-  it("enters the caller's own draft image and publishes its post with the entry", async () => {
+  // Blind judging: the post publishes by the clock when the crucible ends, not on entry.
+  it("enters the caller's own draft image and schedules its post for the crucible's end", async () => {
+    const endAt = new Date(Date.now() + 3 * 24 * 60 * 60_000);
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.image),
+      endAt,
+    });
     draftOf();
 
     await expect(submit()).resolves.toMatchObject({ id: 5 });
@@ -664,7 +670,7 @@ describe('submitEntry — content type', () => {
     });
     expect(dbMock.dbWrite.post.updateMany).toHaveBeenCalledWith({
       where: { id: 300, userId: 42, publishedAt: null },
-      data: { publishedAt: expect.any(Date) },
+      data: { publishedAt: endAt },
     });
     expect(afterPostPublish).toHaveBeenCalledWith({ postId: 300, userId: 42 });
   });

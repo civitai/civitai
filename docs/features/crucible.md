@@ -8,7 +8,7 @@ Crucible is separate from the Challenges platform and its judging engine.
 
 1. **Create.** The creator sets up the crucible and pays the setup cost and any seeded pool. It starts right away, or at a scheduled time up to 30 days out. A crucible runs on one Buzz type (yellow or green) and lives only on that currency's site; a green crucible is limited to PG and PG-13.
 2. **Review.** The name, description and cover are checked automatically before anyone else can see the crucible. Until then only its creator and moderators can open it.
-3. **Enter.** While the crucible is active, entrants submit published media from their library, or generate or upload it from the submit dialog. Media added from the dialog stays an unpublished draft until it is entered, and entering publishes it; a refused or refunded entry leaves it a draft, and the dialog keeps offering it in later visits. Each entry pays the entry fee in the Buzz of the site the entrant is on, except the free entries the creator offers.
+3. **Enter.** While the crucible is active, entrants submit published media from their library, or generate or upload it from the submit dialog. Media added from the dialog stays an unpublished draft until it is entered, and entering schedules its post for the crucible's end; a refused or refunded entry leaves it a draft, and the dialog keeps offering it in later visits. Each entry pays the entry fee in the Buzz of the site the entrant is on, except the free entries the creator offers.
 4. **Judge.** Signed-in users are shown two entries side by side and pick one. Every vote updates both entries' ratings.
 5. **Finish.** At the end time the crucible closes, final positions are fixed by rating, and prizes are paid out.
 
@@ -62,6 +62,8 @@ The discovery page's Prize Pool sort uses the same pool.
 ## Judging is blind while a crucible runs
 
 On the crucible page, other people's entries show no creator and open in a media-only viewer instead of the image detail (creator, prompt, resources) until the crucible is completed or cancelled. Entrants still see their own entries in full, and moderators see everything.
+
+Media entered from the submit dialog also stays off the entrant's profile, the public feeds and search while the crucible runs: its post is scheduled for the crucible's end, so only the entrant (under their scheduled posts) and moderators see it, and the crucible's own grid, judging and leaderboard still show the entry. It goes public at the end, or immediately when the crucible is cancelled or a moderator removes the entry. Media entered from the library was already public and stays public. While its post is hidden, the same media can't be entered into a second crucible.
 
 ## Rankings are hidden while a crucible runs
 

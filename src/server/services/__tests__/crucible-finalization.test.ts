@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CrucibleIngestionStatus,
@@ -8,6 +9,7 @@ import type * as BuzzService from '~/server/services/buzz.service';
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as CrucibleEloRedis from '~/server/redis/crucible-elo.redis';
 import type * as EloService from '~/server/services/crucible-elo.service';
+import type * as PostService from '~/server/services/post.service';
 import { loggingMock, dbMock } from '~/__tests__/mocks';
 
 // `~/server/db/client` and `~/server/redis/client` are registered globally by the setup file
@@ -21,6 +23,12 @@ const createNotification = vi.fn();
 const getAllEntryElos = vi.fn();
 const getAllVoteCounts = vi.fn();
 const setTTL = vi.fn();
+const afterPostPublish = vi.fn();
+
+vi.mock('~/server/services/post.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof PostService>()),
+  afterPostPublish,
+}));
 
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzService>()),
@@ -140,6 +148,8 @@ beforeEach(() => {
   }));
   createNotification.mockResolvedValue(undefined);
   setTTL.mockResolvedValue(undefined);
+  afterPostPublish.mockResolvedValue(undefined);
+  dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
   setupCrucible();
 });
 
@@ -176,7 +186,7 @@ describe('finalizeCrucible — positions', () => {
       image: {
         needsReview: null,
         tosViolation: false,
-        post: { publishedAt: { lte: expect.any(Date) } },
+        post: { publishedAt: { not: null } },
         ingestion: { not: ImageIngestionStatus.Blocked },
         nsfwLevel: { in: expect.arrayContaining([1, 3]) },
       },
@@ -974,5 +984,60 @@ describe('finalizeCrucible — followers', () => {
 
     expect(results()).toEqual([]);
     expect(createNotification.mock.calls.map(([n]) => n.type)).toContain('crucible-ended');
+  });
+});
+
+describe('finalizeCrucible — entry posts', () => {
+  const revealQuery = () => {
+    const call = dbMock.dbWrite.$queryRaw.mock.calls.find(([strings]) =>
+      (strings as string[]).join('').includes('entry_posts')
+    );
+    if (!call) return undefined;
+    const [strings, ...values] = call as [TemplateStringsArray, ...unknown[]];
+    const query = Prisma.sql(strings, ...values);
+    return { sql: query.text, values: query.values };
+  };
+
+  // Entry posts were scheduled for the crucible's end; the clock revealed them, but images_v6
+  // refused them while future-dated, so only this reindex puts them into search.
+  it("reveals this crucible's entry-modal posts and reindexes each one once it completes", async () => {
+    dbMock.dbWrite.$queryRaw.mockImplementation(async (strings: string[]) =>
+      strings.join('').includes('entry_posts')
+        ? [
+            { id: 300, userId: 10 },
+            { id: 301, userId: 11 },
+          ]
+        : []
+    );
+
+    await finalizeCrucible(1);
+
+    const query = revealQuery();
+    expect(query?.sql).toMatch(/UPDATE "Post" p SET "publishedAt" = now\(\)/);
+    expect(query?.sql).toMatch(/"publishedAt" > now\(\)/);
+    expect(query?.sql).toMatch(/ce\."crucibleId" = \$\d/);
+    expect(query?.values).toEqual(expect.arrayContaining([1, 'crucibleEntryDraft']));
+    expect(afterPostPublish).toHaveBeenCalledWith({ postId: 300, userId: 10 });
+    expect(afterPostPublish).toHaveBeenCalledWith({ postId: 301, userId: 11 });
+  });
+
+  it('reveals nothing when another run already completed it', async () => {
+    claim.mockResolvedValue({ count: 0 });
+
+    await finalizeCrucible(1);
+
+    expect(revealQuery()).toBeUndefined();
+  });
+
+  it('still completes when the reveal fails, since the clock already published them', async () => {
+    dbMock.dbWrite.$queryRaw.mockImplementation(async (strings: string[]) => {
+      if (strings.join('').includes('entry_posts')) throw new Error('db down');
+      return [];
+    });
+
+    await expect(finalizeCrucible(1)).resolves.toMatchObject({ crucibleId: 1 });
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'crucible-entry-posts-reveal-failed', crucibleId: 1 })
+    );
   });
 });

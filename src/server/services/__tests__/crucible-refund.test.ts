@@ -1,9 +1,11 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { BuzzApiError } from '@civitai/buzz';
 import { CrucibleIngestionStatus, CrucibleStatus } from '~/shared/utils/prisma/enums';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as CrucibleEloRedis from '~/server/redis/crucible-elo.redis';
 import type * as NotificationService from '~/server/services/notification.service';
+import type * as PostService from '~/server/services/post.service';
 import { dbMock } from '~/__tests__/mocks';
 
 // `~/server/db/client` and `~/server/redis/client` are registered globally by the setup file
@@ -13,6 +15,12 @@ const claim = dbMock.dbWrite.crucible.updateMany;
 const refundMultiAccountTransaction = vi.fn();
 const setTTL = vi.fn();
 const createNotification = vi.fn();
+const afterPostPublish = vi.fn();
+
+vi.mock('~/server/services/post.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof PostService>()),
+  afterPostPublish,
+}));
 
 vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationService>()),
@@ -66,6 +74,8 @@ beforeEach(() => {
   setTTL.mockResolvedValue(undefined);
   refundMultiAccountTransaction.mockResolvedValue(undefined);
   createNotification.mockResolvedValue(undefined);
+  afterPostPublish.mockResolvedValue(undefined);
+  dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
 });
 
 const MODERATOR_CLAIM = {
@@ -540,5 +550,49 @@ describe('transaction prefixes', () => {
     expect(seed).not.toBe(setup);
     expect(seed.startsWith(setup)).toBe(false);
     expect(setup.startsWith(seed)).toBe(false);
+  });
+});
+
+describe('cancelCrucible — entry posts', () => {
+  const revealQuery = () => {
+    const call = dbMock.dbWrite.$queryRaw.mock.calls.find(([strings]) =>
+      (strings as string[]).join('').includes('entry_posts')
+    );
+    if (!call) return undefined;
+    const [strings, ...values] = call as [TemplateStringsArray, ...unknown[]];
+    const query = Prisma.sql(strings, ...values);
+    return { sql: query.text, values: query.values };
+  };
+
+  // They were scheduled for an end that will now never come as a result.
+  it("publishes this crucible's still-hidden entry posts now and reindexes them", async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 300, userId: 10 }]);
+
+    await cancelCrucible({ id: 1, userId: 99, isModerator: true });
+
+    const query = revealQuery();
+    expect(query?.sql).toMatch(/UPDATE "Post" p SET "publishedAt" = now\(\)/);
+    expect(query?.sql).toMatch(/ce\."crucibleId" = \$\d/);
+    expect(query?.values).toEqual(expect.arrayContaining([1, 'crucibleEntryDraft']));
+    expect(afterPostPublish).toHaveBeenCalledWith({ postId: 300, userId: 10 });
+  });
+
+  it('reveals nothing when the cancel is refused', async () => {
+    claim.mockResolvedValue({ count: 0 });
+    findUnique.mockResolvedValue(crucible({ status: CrucibleStatus.Completed }));
+
+    await expect(cancelCrucible({ id: 1, userId: 99, isModerator: true })).rejects.toThrow();
+    expect(revealQuery()).toBeUndefined();
+  });
+
+  it('still refunds every entry when the reveal fails', async () => {
+    dbMock.dbWrite.$queryRaw.mockImplementation(async (strings: string[]) => {
+      if (strings.join('').includes('entry_posts')) throw new Error('db down');
+      return [];
+    });
+
+    const result = await cancelCrucible({ id: 1, userId: 99, isModerator: true });
+
+    expect(result.refundedEntries).toBe(2);
   });
 });

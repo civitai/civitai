@@ -68,6 +68,7 @@ import {
 import {
   CRUCIBLE_ENTRY_DRAFT_METADATA_KEY,
   draftImageWhere,
+  enteredImageWhere,
   publishedImageWhere,
 } from '~/server/selectors/image.selector';
 import {
@@ -547,11 +548,11 @@ const crucibleListedSql = (viewerLevel: number) => Prisma.sql`
   }
 `;
 
-/** `publishedImageWhere` for entry image `i`. */
+/** `enteredImageWhere` for entry image `i`. */
 const publishedEntryImageSql = Prisma.sql`
   i."needsReview" IS NULL
   AND NOT i."tosViolation"
-  AND EXISTS (SELECT 1 FROM "Post" ep WHERE ep.id = i."postId" AND ep."publishedAt" <= now())
+  AND EXISTS (SELECT 1 FROM "Post" ep WHERE ep.id = i."postId" AND ep."publishedAt" IS NOT NULL)
 `;
 
 /**
@@ -1431,7 +1432,7 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
 
 /**
  * Media added from inside the submit modal goes into its own unpublished post, marked so the picker
- * still lists it in a later session. Entering the image publishes the post.
+ * still lists it in a later session. Entering the image schedules the post for the crucible's end.
  */
 export const createCrucibleEntryPost = async ({
   crucibleId,
@@ -1779,7 +1780,7 @@ export const submitEntry = async ({
     const isPublished = await dbRead.image.count({
       where: { id: imageId, ...publishedImageWhere() },
     });
-    // Media added from the entry modal sits in an unpublished post, published with the entry.
+    // Media added from the entry modal sits in an unpublished post, scheduled with the entry.
     const draft = isPublished
       ? null
       : await dbRead.image.findFirst({
@@ -1909,9 +1910,11 @@ export const submitEntry = async ({
         `;
         if (!open) throw throwBadRequestError('This crucible is not accepting entries');
         if (draftPostId) {
+          // Hidden from the entrant's profile, feeds and search until the end, so judging stays
+          // blind. The insert's lock above means endAt is still ahead.
           const published = await tx.post.updateMany({
             where: { id: draftPostId, userId, publishedAt: null },
-            data: { publishedAt: new Date() },
+            data: { publishedAt: crucible.endAt ?? new Date() },
           });
           if (!published.count)
             throw throwBadRequestError('This image changed while it was being entered. Try again.');
@@ -2870,7 +2873,7 @@ const rankableEntryWhere = (
 ): Prisma.CrucibleEntryWhereInput => ({
   crucibleId,
   image: {
-    ...publishedImageWhere(),
+    ...enteredImageWhere(),
     ingestion: { not: ImageIngestionStatus.Blocked },
     nsfwLevel: { in: levelsIntersecting(nsfwLevel) },
   },
@@ -3247,6 +3250,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
 
   // Kept a week in case the results need checking against the votes.
   await crucibleEloRedis.setTTL(crucibleId, 7 * 24 * 60 * 60);
+  await revealCrucibleEntryPosts({ crucibleId });
 
   log(
     `Finalized crucible ${crucibleId}: ${finalizedEntries.length} entries, ${totalPrizesDistributed} Buzz in prizes`
@@ -3676,6 +3680,46 @@ const NOT_RUNNING = 'Entries can only be removed while the crucible is running';
  * from its end, finalize owns the pool. The fee goes back before the entry is deleted, so a
  * refund that fails leaves the entry, and its record of what was paid, in place to try again.
  */
+/**
+ * Publishes now the entry-modal posts `submitEntry` scheduled for the crucible's end, and reindexes
+ * them all: images_v6 refused them while future-dated, so a reveal by the clock never reaches search.
+ * Fail-soft, because the clock still reveals them at the original end.
+ */
+async function revealCrucibleEntryPosts(entries: { crucibleId: number } | { imageId: number }) {
+  const imageFilter =
+    'crucibleId' in entries
+      ? Prisma.sql`i.id IN (SELECT ce."imageId" FROM "CrucibleEntry" ce WHERE ce."crucibleId" = ${entries.crucibleId})`
+      : Prisma.sql`i.id = ${entries.imageId}`;
+  try {
+    const posts = await dbWrite.$queryRaw<{ id: number; userId: number }[]>`
+      WITH entry_posts AS (
+        SELECT DISTINCT p.id, p."userId", p."publishedAt" > now() AS hidden
+        FROM "Image" i
+        JOIN "Post" p ON p.id = i."postId"
+        WHERE ${imageFilter}
+          AND p."publishedAt" IS NOT NULL
+          AND (p.metadata->>${CRUCIBLE_ENTRY_DRAFT_METADATA_KEY})::boolean IS TRUE
+      ), revealed AS (
+        UPDATE "Post" p SET "publishedAt" = now()
+        FROM entry_posts e
+        WHERE p.id = e.id AND e.hidden
+      )
+      SELECT id, "userId" FROM entry_posts
+    `;
+    const limit = plimit(10);
+    await Promise.all(
+      posts.map((post) => limit(() => afterPostPublish({ postId: post.id, userId: post.userId })))
+    );
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'crucible-entry-posts-reveal-failed',
+      message: error instanceof Error ? error.message : String(error),
+      ...entries,
+    });
+  }
+}
+
 export const removeCrucibleEntry = async ({
   entryId,
   moderatorId,
@@ -3685,6 +3729,7 @@ export const removeCrucibleEntry = async ({
     select: {
       crucibleId: true,
       userId: true,
+      imageId: true,
       buzzTransactionId: true,
       crucible: {
         select: {
@@ -3769,6 +3814,8 @@ export const removeCrucibleEntry = async ({
       throw throwNotFoundError('Entry not found');
     throw error;
   }
+
+  if (entry.imageId) await revealCrucibleEntryPosts({ imageId: entry.imageId });
 
   logToAxiom({
     type: 'info',
@@ -3912,6 +3959,8 @@ export const cancelCrucible = async ({
         'This crucible has ended and its results are being finalized, so it can no longer be cancelled'
       );
   }
+
+  await revealCrucibleEntryPosts({ crucibleId: id });
 
   let refundedEntries = 0;
   let totalRefunded = 0;
