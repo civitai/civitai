@@ -571,7 +571,8 @@ export function OnsiteReviewModalTitle({
  * with the review PAGE.
  *
  * 🔴 SO DO NOT FORK A PANEL FOR ONE SURFACE. Every panel here has ONE implementation,
- * rendered by both the modal and the review page, and only the ARRANGEMENT differs. A
+ * rendered by both the modal and the review page; what differs is the ARRANGEMENT, and the
+ * page's memoisation of its tab subtree. A
  * per-surface copy would drift, and the drift would be invisible because each surface's own
  * tests would stay green. This is the contract `ReviewDetailView` and the review page point
  * at; it was deleted once by a commit that meant only to withdraw the ordering claim below,
@@ -581,12 +582,8 @@ export function OnsiteReviewModalTitle({
  * that sets it, above.
  *
  * 🔴 THAT IS A ONE-TIME MEASUREMENT, NOT A GUARANTEE, and saying so is the point. No test
- * asserts this sequence, so reordering these is not covered. The decision not to pin it has
- * no justification recorded here any more: the one this used to give — that pinning would
- * mean adding production test ids — was measured false (the ids these sections already expose
- * are enough to pin the order with `compareDocumentPosition`, and no new attribute would be
- * needed). What IS covered is the leaves, which both surfaces render for real in their own
- * suites.
+ * asserts this sequence, so reordering these is not covered. What IS covered is the leaves,
+ * which both surfaces render for real in their own suites.
  */
 export function OnsiteReviewModalBody({
   selection,

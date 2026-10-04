@@ -12,8 +12,10 @@ import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 import {
   LOADABLE_IMAGE_DATA_URI,
   cascadeEvidence,
-  renderWithProviders,
+  flexLonghands,
+  renderAtViewport,
 } from '../../../test/geometry-setup';
+import { ListingIconThumb } from '~/components/Apps/ListingMediaThumb';
 import {
   LISTING_COVER_H,
   LISTING_COVER_W,
@@ -50,19 +52,25 @@ import {
  * is designed for; 820 is a tablet at which a fixed 320px cover could plausibly have
  * overflowed. A single measurement would carry no scope.
  *
- * ⚠️ `max-width: 100%` IS NOT WHAT ANY ARM HERE PROVES, and an earlier version of this
- * docstring claimed it was. Measured: deleting it leaves every test green, because flex shrink
- * narrows the cover to 246px at the 280 viewport — already inside the 280 the percentage
- * resolves to. The narrow arm is load-bearing for the RATIO under shrink, not for the clamp. The gallery's breakpoint was chosen so the claim holds at
- * BOTH: breaking at `lg` would have made the review gallery identical to the modal's at 1280,
- * i.e. invisible exactly where the page is used.
+ * ⚠️ `max-width: 100%` DOES DIFFERENT WORK ON THE TWO BRANCHES, and two review lanes read the
+ * single word "clamp" as one claim and disagreed about it. Measured, per branch, by deleting
+ * the declaration from each in turn: from the cover `img` → 11/11 still green, because with a
+ * cover present `onOpen` is set, so the img is a flex item of `MediaButton`'s row-direction
+ * button and shrink reaches 246px on its own; from the cover PLACEHOLDER → RED, 320 vs 246,
+ * because a no-cover listing renders a plain block `div` with no button and nothing else to
+ * narrow it. So it is inert on the img and load-bearing on the placeholder. The narrow arms
+ * prove the RATIO under shrink and the placeholder's clamp; they do not prove the img's.
  *
- * ⚠️ WHAT THIS FILE DOES NOT COVER: the ROW surfaces. The shared thumbs keep `'row'` as their
- * default and the first case pins both sets of CONSTANTS, so a future "just make the constant
- * bigger" lands here rather than doubling the height of every queue row. But no case here
- * RENDERS a row-size thumb, so the row box's rendered geometry is unmeasured. The style object
- * is shared and unbranched, which is what makes the review arms mutation-tests for the row
- * path too — the day that object branches on `size`, the row path loses all pixel coverage.
+ * ⚠️ THE ROW SURFACES ARE COVERED FOR ONE PROPERTY ONLY — `flex-shrink`, the one whose
+ * row/review split caused a real regression (a shrinkable icon in a queue TABLE cell lets the
+ * browser trade width for height, making rows TALLER). That was caught once by the geometry
+ * tier and then STOPPED being caught: re-mutating it to `0 1` at this head left all 8 files
+ * green, because the narrowest viewport any row-rendering geometry file uses is 768 and the
+ * regression needs a narrower one. So the catch was historical, not standing, and the comment
+ * claiming the tier covers it was describing a guard that no longer existed. The case below
+ * asserts the longhand directly instead of hoping a width reproduces it — cheap, and
+ * width-independent. Everything else about the row box's rendered geometry is still
+ * unmeasured here.
  */
 
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
@@ -136,13 +144,39 @@ const NON_SQUARE_IMAGE_DATA_URI =
  * to render an `img` always read the healthy pre-decode value and the defect was caught only
  * by a LATER test, off a decode the earlier one had warmed. The protection was file ORDER: a
  * reorder, a dropped arm, a `.only` or a `-t` filter and the defect ships green.
+ *
+ * 🔴 A DEAD FIXTURE MUST NAME ITSELF, AND THE `naturalWidth` CHECK IS THE HALF THAT DOES IT.
+ * On a broken image Chromium sets `complete === true` with `naturalWidth === 0`, so the `load`
+ * branch is skipped, no `error` event is pending to listen for, and `decode()` then neither
+ * resolves nor rejects. Measured by corrupting one run of base64 in the fixture: five arms
+ * each died on the 15 s per-test timeout, taking the file from 209 ms to 75.6 s (398x) and
+ * reporting "Test timed out" rather than anything about an image. The awaits are still the
+ * right call — at the previous head the same corrupt fixture was SILENTLY GREEN, because a
+ * fixed CSS height renders the right box whether or not any bytes arrive — but a guard should
+ * fail in one second with a sentence, not in ninety with a timeout.
  */
 const settled = async (testId: string) => {
   const img = document.querySelector<HTMLImageElement>(`[data-testid="${testId}"]`);
   expect(img, `${testId} must be on screen`).not.toBeNull();
+  // A `div`'s `.complete` is `undefined` ⇒ falsy ⇒ this would await a `load` that never fires
+  // and die on the test timeout with nothing naming the id. The placeholder testids in this
+  // file differ from the img ones by a single path segment, so it is an easy call to misaim.
+  expect(img, `${testId} is not an <img> — did you mean the placeholder testid?`).toBeInstanceOf(
+    HTMLImageElement
+  );
   if (!img!.complete) {
-    await new Promise((resolve) => img!.addEventListener('load', resolve, { once: true }));
+    await new Promise((resolve, reject) => {
+      img!.addEventListener('load', resolve, { once: true });
+      img!.addEventListener('error', () => reject(new Error(`${testId}: fixture failed to load`)), {
+        once: true,
+      });
+    });
   }
+  // Before `decode()`, never after — that call is the one that hangs.
+  expect(
+    img!.naturalWidth,
+    `${testId}: fixture decoded to 0x0 — corrupt data URI?`
+  ).toBeGreaterThan(0);
   await img!.decode();
   return img!;
 };
@@ -157,14 +191,22 @@ const settled = async (testId: string) => {
  * column count and the "review is wider" assertion read `414 > 414`. A container-width
  * harness cannot measure a viewport-breakpoint layout at all.
  */
-const atWidth = async (width: number, ui: React.ReactElement) => {
-  await page.viewport(width, 900);
-  return renderWithProviders(
+/**
+ * 🔴 THROUGH `renderAtViewport`, WHICH VERIFIES THE VIEWPORT IT SET. This used to call
+ * `page.viewport()` and render separately, never reading `window.innerWidth` back — the one
+ * geometry file of eight that bypassed the harness's own floor. `renderAtViewport` throws when
+ * the window disagrees with the request, and its docstring says why: a viewport call that
+ * silently did nothing turns every assertion in the file into a claim about a different
+ * screen. The desktop, tablet and ratio arms are exactly the ones that would not notice —
+ * they measure the declared box, which is viewport-independent above 320px.
+ */
+const atWidth = async (width: number, ui: React.ReactElement) =>
+  renderAtViewport(
     <div data-testid="page-container" style={{ width: '100%' }}>
       {ui}
-    </div>
+    </div>,
+    { width, height: 900 }
   );
-};
 
 const box = (testId: string) => {
   const el = document.querySelector<HTMLElement>(`[data-testid="${testId}"]`);
@@ -173,6 +215,35 @@ const box = (testId: string) => {
 };
 
 const container = () => box('page-container');
+
+/**
+ * 🔴 ASSERT THE CARD, NOT THE DOCUMENT — `documentElement.scrollWidth` CANNOT EXCEED ITS
+ * CLIENT WIDTH IN THIS TIER.
+ *
+ * `globals.css` sets `html, body { overflow: hidden }`, so three "the page does not scroll
+ * sideways" assertions in this file could never fail. Negative control: a planted
+ * `<div style={{ width: 5000 }}>` inside the container left them all GREEN.
+ *
+ * It is not an academic gap. The no-cover overflow this suite was written to catch — a 320px
+ * placeholder in a 246px column — is clipped by the Mantine Card's own `overflow-x: hidden`
+ * and never reaches the document at all: measured, the placeholder sat at `right: 337` in a
+ * 280px viewport while `documentElement.scrollWidth === clientWidth === 280`. So the document
+ * check was blind to precisely the class of defect it was guarding.
+ */
+const noOverflowWithin = (testId: string) => {
+  // 🔴 EVERY MATCH, NOT THE FIRST. `querySelector` returns the first element with the id, and
+  // the arm that can actually overflow renders TWO cards — the no-cover one second. Checking
+  // only the first measured the healthy card and passed with the defect live, which is how
+  // this helper spent its first revision unable to fail.
+  const els = Array.from(document.querySelectorAll<HTMLElement>(`[data-testid="${testId}"]`));
+  expect(els.length, `${testId} must be on screen`).toBeGreaterThan(0);
+  els.forEach((el, i) => {
+    expect(
+      el.scrollWidth,
+      `${testId}[${i}] must not scroll sideways (content wider than its box)`
+    ).toBeLessThanOrEqual(el.clientWidth + 1);
+  });
+};
 
 /**
  * 🔴 THE POSITIVE CONTROL FOR THE WHOLE FILE, AND IT IS NOT OPTIONAL.
@@ -194,6 +265,9 @@ describe('the harness itself', () => {
     expect(evidence.ruleCount, 'a loaded stylesheet, not an injected handful').toBeGreaterThan(
       1000
     );
+    // The sharpest discriminator of the two tiers, and the one the other 7 geometry files
+    // assert: `@tailwind utilities` is entirely absent from the `component` tier.
+    expect(evidence.tailwindFlexUtilityResolves, 'Tailwind utilities must resolve').toBe(true);
   });
 });
 
@@ -216,7 +290,7 @@ describe('the store icon and cover are bigger on the review page than in a queue
     // 🔴 BOTH DECODES, BEFORE EITHER MEASUREMENT — see `settled`. And the fixture's own ratio
     // is the premise the whole suite rests on, so assert it rather than trusting the constant.
     const iconEl = await settled('apps-review-listing-icon-gen-matrix');
-    const coverEl = await settled('apps-review-listing-cover-gen-matrix');
+    await settled('apps-review-listing-cover-gen-matrix');
     expect(
       iconEl.naturalWidth,
       'the fixture must NOT be square, or neither box can be discriminated'
@@ -224,7 +298,6 @@ describe('the store icon and cover are bigger on the review page than in a queue
 
     const icon = box('apps-review-listing-icon-gen-matrix');
     const cover = box('apps-review-listing-cover-gen-matrix');
-    expect(coverEl.complete).toBe(true);
 
     // 🔴 STRICTLY GREATER THAN THE ROW CONSTANT, not "equals the new constant". Asserting the
     // new number alone would pass if someone set BOTH constants to the same value, which is
@@ -250,18 +323,16 @@ describe('the store icon and cover are bigger on the review page than in a queue
     const c = container();
     expect(icon.width).toBeLessThanOrEqual(c.width + 1);
     expect(cover.width).toBeLessThanOrEqual(c.width + 1);
-    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(
-      document.documentElement.clientWidth + 1
-    );
+    noOverflowWithin('apps-review-listing-media');
   });
 
   test('🔴 at phone width (280px) the cover CLAMPS to its container instead of widening the page', async () => {
-    // ⚠️ WHAT NARROWS THE COVER HERE IS FLEX SHRINK, NOT `max-width: 100%` — measured, and the
-    // earlier version of this comment claimed the opposite. At a 280px viewport the cover is
-    // 246px wide, i.e. already below the 280px the percentage resolves to, so `max-width`
-    // never binds: deleting it leaves this suite green. The `img` is a flex item at the
-    // default `flex: 0 1 auto`, and that is what gives way. `max-width` stays as
-    // belt-and-braces for any future non-flex parent; it is not what this arm proves.
+    // ⚠️ WHAT NARROWS THE COVER *IMG* HERE IS FLEX SHRINK, NOT `max-width: 100%` — measured,
+    // and the earlier version of this comment claimed the opposite. With a cover present
+    // `onOpen` is set, so the img is a flex item of `MediaButton`'s row-direction button at
+    // the default `flex: 0 1 auto`, and that is what gives way: deleting `max-width` leaves
+    // this suite green. The PLACEHOLDER is the opposite case — no button, nothing else to
+    // narrow it — and the parity arm below is what proves that half.
     // What this arm DOES prove is the shape under shrink, below.
     await atWidth(
       PHONE,
@@ -281,28 +352,28 @@ describe('the store icon and cover are bigger on the review page than in a queue
     );
     expect(cover.width, 'the cover stays inside the container').toBeLessThanOrEqual(c.width + 1);
     expect(cover.width, 'and it has actually given way').toBeLessThan(REVIEW_COVER_W);
-    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(
-      document.documentElement.clientWidth + 1
-    );
+    noOverflowWithin('apps-review-listing-media');
 
     // 🔴 AND THE RATIO SURVIVES THE SHRINK. This is the assertion this arm was missing: it
     // entered the one width regime where the box gives way and then said nothing about what
     // that does to the SHAPE. A fixed `height` does not follow a narrowed width, so the pair
     // gave 246x180 (1.37) here while this file's own subject promised 16:9. Red against a
     // fixed `height` (measured 1.37 vs 1.78), green against `aspect-ratio`.
-    expect(cover.width / cover.height, 'the clamped cover is still 16:9').toBeCloseTo(
-      REVIEW_COVER_W / REVIEW_COVER_H,
-      1
-    );
+    // 🔴 A LITERAL 16/9, NOT `REVIEW_COVER_W / REVIEW_COVER_H`. Production derives its
+    // `aspect-ratio` from that same pair, so an expectation built from it stays green if both
+    // constants move to a non-16:9 box — while this message still claims 16:9. The literal is
+    // what the comment says and what the design asks for.
+    expect(cover.width / cover.height, 'the clamped cover is still 16:9').toBeCloseTo(16 / 9, 1);
   });
 
   test('🔴 under the clamp a MISSING cover still matches a present one — parity is width-independent', async () => {
-    // ⚠️ INVARIANT GUARD, not a regression test: parity held before the `aspect-ratio` change
-    // too, because both boxes were a fixed 180 tall. It is pinned because the fix had to move
-    // BOTH of them — an `aspect-ratio` img against a fixed-height placeholder would have made
-    // a no-cover listing taller than a cover one at every width below the box, and the
-    // existing parity case runs at DESKTOP where the clamp cannot bind.
-    // ONE render with two instances, not two renders: `renderWithProviders` does not unmount
+    // 🔴 A REGRESSION TEST, and an earlier draft of this comment mislabelled it an invariant
+    // guard on the grounds that "parity held before the `aspect-ratio` change too". True of
+    // the HEIGHT and false of the arm: it asserts WIDTH as well, and at the previous head —
+    // before `minWidth: 0` — it reds with `expected 320 to be close to 246`. It is the
+    // regression test for the no-cover overflow, and calling it an invariant guard understated
+    // its coverage and invited its deletion.
+    // ONE render with two instances, not two renders: the render helper does not unmount
     // the previous tree, so a second `atWidth` in the same test leaves both on screen and
     // every unscoped `data-testid` resolves to 2 elements. The slug-scoped ids stay unique,
     // and stacking them means both are measured at the same viewport in the same pass.
@@ -333,9 +404,64 @@ describe('the store icon and cover are bigger on the review page than in a queue
 
     // The clamp must actually be binding, or this asserts parity at a width where both are
     // simply their declared box — the vacuity the whole PHONE arm exists to avoid.
+    // 🔴 THE CARD MUST NOT OVERFLOW, AND THIS GOES FIRST ON PURPOSE. The no-cover branch is
+    // the only one that ever overflowed, so the arms rendering a cover PRESENT could never
+    // prove it — and when the width assertions below ran first they killed the mutant before
+    // this line executed, leaving it unreachable and therefore unproven. Ordered ahead of
+    // them, removing `minWidth: 0` reds HERE, which is what shows the check can fail at all.
+    // Measured at the previous head: placeholder `right: 337` inside a 280px viewport, while
+    // `documentElement.scrollWidth` stayed 280 because the Card clips it.
+    noOverflowWithin('apps-review-listing-media');
+
     expect(present.width, 'the clamp must be binding').toBeLessThan(REVIEW_COVER_W);
     expect(absent.width, 'same clamped width').toBeCloseTo(present.width, 0);
     expect(absent.height, 'same clamped height').toBeCloseTo(present.height, 0);
+  });
+
+  test('🔴 the ROW icon may not shrink, and the REVIEW icon must — the split that broke queue rows', async () => {
+    // Asserted on the longhand rather than on a rendered row height. The rendered-height
+    // version is what the tier used to catch and silently stopped catching, because it only
+    // reproduces below the narrowest viewport any row-rendering geometry file uses (768).
+    // A longhand assertion cannot stop reproducing.
+    //
+    // 🔴 BOTH ARMS, because one shared helper now serves both sizes: a single edit there
+    // changes the row path and the review path together, so pinning one arm would let the
+    // other move. `0` is the value a queue TABLE cell needs; `1` is what lets the 96px review
+    // box give way on a tiny screen.
+    await atWidth(
+      DESKTOP,
+      <>
+        <ListingIconThumb
+          url={NON_SQUARE_IMAGE_DATA_URI}
+          name="Row"
+          imgTestId="row-icon"
+          placeholderTestId="row-icon-placeholder"
+        />
+        <ListingIconThumb
+          size="review"
+          url={NON_SQUARE_IMAGE_DATA_URI}
+          name="Review"
+          imgTestId="review-icon"
+          placeholderTestId="review-icon-placeholder"
+        />
+        <ListingIconThumb
+          url={null}
+          name="Row empty"
+          imgTestId="row-icon-2"
+          placeholderTestId="row-icon-placeholder-2"
+        />
+      </>
+    );
+    await settled('row-icon');
+
+    const shrinkOf = (testId: string) =>
+      flexLonghands(document.querySelector(`[data-testid="${testId}"]`)!).shrink;
+
+    expect(shrinkOf('row-icon'), 'a queue-row icon must be rigid').toBe('0');
+    expect(shrinkOf('review-icon'), 'the review icon must give way').toBe('1');
+    // The placeholder is the branch that diverged: it was pinned rigid at BOTH sizes while
+    // the img was not, so a no-icon listing behaved differently from an icon one.
+    expect(shrinkOf('row-icon-placeholder-2'), 'the row placeholder matches its img').toBe('0');
   });
 
   test('🔴 the ratio is preserved, so a bigger box is not a differently-cropped one', async () => {
@@ -410,9 +536,7 @@ describe('the bundle screenshots are bigger on the review page than in the modal
       );
       // 🔴 AND STILL BOUNDED. `max-width: 100%` is what stops a wide image widening the page.
       expect(shot.width).toBeLessThanOrEqual(c.width + 1);
-      expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(
-        document.documentElement.clientWidth + 1
-      );
+      noOverflowWithin('page-container');
     }
   );
 

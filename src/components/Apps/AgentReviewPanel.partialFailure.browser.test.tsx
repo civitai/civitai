@@ -493,6 +493,9 @@ describe('a fully COMPLETE report is unchanged', () => {
  * bundle was clean.
  */
 describe('a report whose analyses NEVER RAN', () => {
+  // ⚠️ IDENTICAL TO `PROVISIONING_FAILED` IN 5 OF 6 FIELDS, and kept separate only because
+  // THIS one's `summaryMd` is asserted verbatim below — the other's is read by nothing. That
+  // is the whole discriminator; "scoped to its own block" is not one, since both are.
   const NEVER_RAN = {
     status: 'failed',
     model: 'anthropic/claude-x',

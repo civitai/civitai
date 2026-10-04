@@ -75,7 +75,7 @@ const DELIBERATELY_NARROW: ReadonlyArray<{
     file: 'src/server/services/blocks/app-listing.service.ts',
     container: 'listingHydrateSelect',
     owner: 'user',
-    why: 'the PUBLIC store listing creator. TWO consumers, and only one of them is clean: the default path hands `SmartCreatorCard` just `{ id }` and refetches through the public `user.getCreator` proc (AppListingDetailBody.tsx:1117), reading no `deletedAt` here. The `preview` path hands the whole chip to a file-local `CreatorChip` (AppListingDetailBody.tsx:1023) which renders `username` + avatar inside a profile link and skips only on a FALSY username — so a SOFT-deleted creator still renders as a live, linked account there. That is pre-existing on a surface this PR does not touch, and it is recorded rather than argued away: widening this select is the fix, and it is a separate change',
+    why: 'the PUBLIC store listing creator. The default path hands `SmartCreatorCard` only `{ id }` and refetches through the public `user.getCreator` proc; the `preview` path (its own `CreatorChip`) renders the chip directly, and a closed account drops out of it only INCIDENTALLY — `deleteUser` nulls `username` in the same transaction as `deletedAt`, and the chip skips username-less rows. That is the scrub doing the work, not a `deletedAt` branch, which is the same incidental-not-a-filter distinction `app-listing.service.ts` draws about its collaborator chip',
   },
 ] as const;
 
@@ -348,13 +348,22 @@ describe('the review user chip is one declaration', () => {
         user: { select: { id: true, username: true, image: true } },
         modChip: { select: { id: true, username: true, image: true } },
       };
+      const listingHydrateSelect = { user: { select: { id: true, username: true, image: true } } };
     `;
+    // 🔴 THAT FIFTH CHIP IS WHAT EXERCISES THE `file` HALF OF THE KEY. The four above resolve
+    // to containers no ledger entry names, so the CONTAINER half rejects them and the file
+    // half never runs — measured by two review lanes independently: deleting `e.file === rel`
+    // from the lookup left all four tests green. The fifth carries a container AND owner that
+    // ARE exempted, in a file that is not, so only the file comparison can reject it.
     const plantedFile = 'src/server/services/blocks/publish-request.service.ts';
     const plantedVerdict = judge(plantedFile, chipsIn(plantedFile, PLANTED_SOURCE));
     expect(
       plantedVerdict.offenders,
-      'four narrow planted chips must ALL be rejected by the real verdict path'
-    ).toHaveLength(4);
+      'five narrow planted chips must ALL be rejected by the real verdict path'
+    ).toHaveLength(5);
+    // ⚠️ This one is weaker than it looks on its own — `plantedFile` has no ledger entries at
+    // all, so an empty `matched` is the only possible result regardless of the key. It earns
+    // its place only alongside the fifth chip above, which CAN be exempted by a broken key.
     expect(plantedVerdict.matched, 'nothing planted may be exempted').toEqual([]);
 
     // 🔴 AND A CHIP NESTED INSIDE AN EXEMPTED CONTAINER IS NOT COVERED BY IT. `identify()`

@@ -45,10 +45,10 @@ export const LISTING_COVER_H = 54; // 16:9
  * now, so `object-fit: cover` really does the cropping.
  *
  * The COVER holds its ratio with `aspect-ratio` rather than a fixed `height`, because
- * `max-width: 100%` clamps the used WIDTH and a fixed height does not follow it: below a
- * 320px container a fixed pair gave 280x180 (1.56) instead of 16:9. The ICON keeps a fixed
- * height deliberately — in its column flex `flex-basis` governs the main axis and outranks
- * `aspect-ratio`, so adding one there changes nothing. Measured at 1280/390/280/246/200.
+ * the used WIDTH gives way and a fixed height does not follow it: at a 280px viewport the
+ * cover measured 246x180 (1.37) instead of 16:9. The ICON keeps its fixed pair deliberately —
+ * both of its dimensions are definite, so a specified `aspect-ratio` there would be ignored.
+ * Measured at 1280, 820 and 280.
  */
 export const REVIEW_ICON_BOX = 96;
 export const REVIEW_COVER_W = 320;
@@ -68,6 +68,40 @@ const COVER_BOX: Record<ListingThumbSize, { w: number; h: number }> = {
   row: { w: LISTING_COVER_W, h: LISTING_COVER_H },
   review: { w: REVIEW_COVER_W, h: REVIEW_COVER_H },
 };
+
+/**
+ * 🔴 ONE OBJECT FOR BOTH COVER BRANCHES, so present/absent parity is STRUCTURAL.
+ *
+ * The `img` and the placeholder must size identically or a listing with no cover is a
+ * different shape from one with a cover. That was previously four declarations written out
+ * twice with a comment asking the next editor to keep them in step — and this PR had already
+ * broken the pair once (an `aspect-ratio` img against a fixed-height placeholder), which is
+ * exactly the drift a convention cannot prevent. Shared, the two cannot diverge.
+ */
+const iconBoxStyle = (box: number, size: ListingThumbSize) => ({
+  width: box,
+  height: box,
+  borderRadius: 8,
+  // 🔴 THE ROW BOX STAYS RIGID (`0 0`); ONLY THE REVIEW BOX MAY SHRINK (`0 1`). An earlier
+  // revision used `0 1` for both and the geometry tier caught it: in a queue TABLE cell a
+  // shrinkable icon lets the browser trade width for height, so the ledger's columns made
+  // rows TALLER at a narrow width — a layout regression a width assertion cannot see, in a
+  // surface this change was not supposed to touch at all. The 96px review box genuinely
+  // should give way on a tiny screen; the 40px row box has nothing to give.
+  //
+  // ⚠️ SHARED WITH THE PLACEHOLDER, and that is the fix for a divergence this PR shipped: the
+  // placeholder was pinned at `0 0` while the img was `0 1`, so at review size a no-icon
+  // listing was rigid where an icon one could shrink. Latent (it binds only below a 96px
+  // container) but it is the same present/absent rule the cover pair broke outright.
+  flex: `0 ${size === 'review' ? 1 : 0} ${box}px`,
+});
+
+const coverBoxStyle = (box: { w: number; h: number }) => ({
+  width: box.w,
+  aspectRatio: `${box.w} / ${box.h}`,
+  maxWidth: '100%',
+  borderRadius: 6,
+});
 
 /**
  * 🔴 THE CLICK TARGET IS A REAL `<button>`, AND THE PLACEHOLDER IS NOT ONE.
@@ -149,13 +183,7 @@ export function ListingIconThumb({
       <div
         data-testid={placeholderTestId}
         aria-hidden
-        style={{
-          width: box,
-          height: box,
-          borderRadius: 8,
-          flex: `0 0 ${box}px`,
-          background: 'var(--mantine-color-dark-4)',
-        }}
+        style={{ ...iconBoxStyle(box, size), background: 'var(--mantine-color-dark-4)' }}
       />
     );
   }
@@ -174,15 +202,11 @@ export function ListingIconThumb({
       height={box}
       loading="lazy"
       decoding="async"
-      // 🔴 THE ROW BOX STAYS RIGID (`0 0`); ONLY THE REVIEW BOX MAY SHRINK (`0 1`). An earlier
-      // revision used `0 1` for both and the geometry tier caught it: in a queue TABLE cell
-      // a shrinkable icon lets the browser trade width for height, so the ledger's columns
-      // made rows TALLER at a narrow width — a layout regression a width assertion cannot
-      // see, in a surface this change was not supposed to touch at all. The 96px review box
-      // genuinely should give way on a tiny screen; the 40px row box has nothing to give.
-      //
-      // `maxWidth: '100%'` is the other half, and it is not redundant with the fixed pair:
-      // one RESERVES the space, the other CLAMPS it so a wide box cannot widen the page.
+      // `maxWidth: '100%'` is NOT what narrows the cover img — measured, deleting it leaves
+      // the geometry suite green, because with `onOpen` set the img is a flex item of the
+      // row-direction `MediaButton` and shrink does the work. It IS load-bearing on the cover
+      // PLACEHOLDER, which has no button and nothing else to narrow it (deleting it there
+      // reds the parity arm, 320 vs 246). Kept on both so the branches stay symmetric.
       style={{
         // 🔴 THE BOX IS ON THE CSS, NOT ONLY THE ATTRIBUTES — the attribute-only version
         // reserved the right box and then did not RETAIN it, which is strictly worse than
@@ -197,11 +221,8 @@ export function ListingIconThumb({
         // only (`listing-media-url.ts`) and leaves natural height unbounded. The component
         // tier's 24-rule document could not see any of it, which is why this shipped. The
         // attributes stay for the pre-CSS paint; the CSS is what holds the box.
-        width: box,
-        height: box,
-        borderRadius: 8,
+        ...iconBoxStyle(box, size),
         objectFit: 'cover',
-        flex: `0 ${size === 'review' ? 1 : 0} ${box}px`,
         maxWidth: '100%',
       }}
     />
@@ -228,15 +249,8 @@ export function ListingCoverThumb({
     return (
       <div
         data-testid={placeholderTestId}
-        // `aspectRatio`, matching the `img` below: the present/absent parity this file promises
-        // is only real if BOTH respond to the clamp the same way. A fixed `height` here against
-        // an `aspect-ratio` there would make a no-cover listing taller than a cover one at any
-        // width below the box.
         style={{
-          width: box.w,
-          aspectRatio: `${box.w} / ${box.h}`,
-          maxWidth: '100%',
-          borderRadius: 6,
+          ...coverBoxStyle(box),
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -264,19 +278,12 @@ export function ListingCoverThumb({
       // preflight's `height: auto` makes this cover as tall as the publisher's art is,
       // which is the one input this surface exists to be suspicious of.
       //
-      // 🔴 `aspectRatio` RATHER THAN A FIXED `height`, and the clamp is why. `maxWidth: '100%'`
-      // clamps the used WIDTH; a fixed `height` does not follow it, so in any container
-      // narrower than the box the pair stopped being 16:9 (280x180 = 1.56 at the narrowest
-      // tested viewport). `aspect-ratio` derives the height from whatever width survives the
+      // 🔴 `aspectRatio` RATHER THAN A FIXED `height`. The used width gives way in any
+      // container narrower than the box, and a fixed `height` does not follow it, so the pair
+      // stopped being 16:9 (measured 246x180 = 1.37 at a 280px viewport). `aspect-ratio` derives the height from whatever width survives the
       // clamp, so the ratio holds at every width AND the pre-decode reservation is unchanged:
       // with `complete === false` the box is still 320x180.
-      style={{
-        width: box.w,
-        aspectRatio: `${box.w} / ${box.h}`,
-        borderRadius: 6,
-        objectFit: 'cover',
-        maxWidth: '100%',
-      }}
+      style={{ ...coverBoxStyle(box), objectFit: 'cover' }}
     />
   );
   if (!onOpen) return img;

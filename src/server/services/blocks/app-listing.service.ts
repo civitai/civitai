@@ -1505,9 +1505,12 @@ async function loadDisplayedCollaboratorChips(
   //
   // This is the read that puts a collaborator's name and avatar on a PUBLIC app page,
   // linked to their profile. Without these two clauses a banned user keeps that placement
-  // indefinitely, and a deleted one fell out only INCIDENTALLY — a hard delete nulls
-  // `username` and the chip component skips username-less rows, which is luck, not a
-  // filter. Neither is something to leave to the render layer.
+  // indefinitely, and a deleted one fell out only INCIDENTALLY — `deleteUser` is a SOFT
+  // delete that nulls `username` in the same transaction as `deletedAt`, and the chip
+  // component skips username-less rows, which is luck, not a filter. (This comment said
+  // "a hard delete" until 2026-10-04; there is no hard-delete path in `user.service.ts`,
+  // and the distinction matters because the luck is the PII scrub, not row removal.)
+  // Neither is something to leave to the render layer.
   //
   // 🔴 DELIBERATELY STRICTER THAN `creatorChip`, which has the same shape and is NOT
   // changed here. The two are different subjects: the creator IS the app's owner, whose
@@ -1518,8 +1521,7 @@ async function loadDisplayedCollaboratorChips(
     where: { id: { in: userIds }, bannedAt: null, deletedAt: null },
     // `deletedAt` is projected even though the `where` already excludes deleted rows: it makes
     // this chip satisfy the user-chip guard outright rather than needing a ledger exemption,
-    // and it costs nothing — the column is read from the same heap tuple, no extra rows, and
-    // the seam below drops it before anything is returned.
+    // and it costs nothing — the column is read from the same heap tuple, no extra rows.
     select: { id: true, username: true, deletedAt: true, image: true },
   });
   // Preserve the seat order (`createdAt asc`) rather than the DB's row order.

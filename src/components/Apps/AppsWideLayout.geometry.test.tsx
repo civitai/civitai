@@ -75,7 +75,7 @@ import { describe, expect, test, vi } from 'vitest';
 import { cleanup } from 'vitest-browser-react';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { cascadeEvidence, nextLayout, renderAtViewport } from '../../../test/geometry-setup';
-import { LOADABLE_IMAGE_DATA_URI } from '../../../test/component-setup';
+import { LOADABLE_IMAGE_DATA_URI } from '../../../test/geometry-setup';
 import { USERNAME_MAX_LENGTH } from '~/shared/zod/username.schema';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as BrowserSettingsMod from '~/providers/BrowserSettingsProvider';
