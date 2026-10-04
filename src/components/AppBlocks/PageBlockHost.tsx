@@ -238,10 +238,25 @@ export { BLOCK_READY_TIMEOUT_MS, TOKEN_WAIT_TIMEOUT_MS };
  * wrapped in AppBlockChrome.)
  *
  * Implemented with a plain CSS opacity/transform transition rather than the
- * `motion` package: `motion` is NOT in the `/apps` route graph today (its only
- * importers are `src/components/Chat/*` + `src/utils/lazy-motion.ts`, reached via
- * a `next/dynamic` ChatWindow chunk), so importing it here would pull a new
- * animation runtime into the run-page bundle for one cross-fade.
+ * `motion` package, because importing it here would pull an animation runtime
+ * into the run-page bundle for one cross-fade.
+ *
+ * ⚠️ THE ORIGINAL REASON — "`motion` is NOT in the `/apps` route graph today (its
+ * only importers are `src/components/Chat/*` + `src/utils/lazy-motion.ts`, reached
+ * via a `next/dynamic` ChatWindow chunk)" — IS NO LONGER TRUE, and is corrected here
+ * rather than deleted, because the conclusion above survives it while the premise
+ * does not. `src/components/Apps/AgentOnboardingCard.tsx` statically imports
+ * `motion/react` and `motion/react-m` and is reached from `src/pages/apps/build.tsx`
+ * with no `next/dynamic`, so `/apps/build` now carries them. It defers only the
+ * `domAnimation` feature bundle via `LazyMotion`; the static half it still pays is
+ * measured in that component's header — deliberately NOT restated here, so there is
+ * only one copy of a number to keep true.
+ *
+ * So the live argument is narrower and still decides this file the same way: that
+ * card is one route's deliberate exception, THIS page is a different route, and a
+ * cross-fade is not worth re-paying for. Do not read the exception as a precedent
+ * for reaching for `motion` here. (Corrected when the card landed; a stale premise
+ * stated this confidently enough that a reader could have taken it as license.)
  */
 export const LAUNCH_REVEAL_MS = 260;
 
