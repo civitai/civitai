@@ -68,7 +68,7 @@ vi.mock('~/server/services/ai/jev', async (importOriginal) => ({
   askJev: (...a: unknown[]) => askJev(...a),
 }));
 
-// `importOriginal`, NOT a hand-listed mock — CLAUDE.md names this exact
+// `importOriginal`, NOT a hand-listed mock — .claude/rules/testing.md names this exact
 // specifier as the example, and the five sibling suites already load the real
 // barrel transitively through the script, so it demonstrably imports fine in
 // this project. A hand-listed `{ modelsSearchIndex }` would break this file

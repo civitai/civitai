@@ -3,8 +3,8 @@ import path from 'path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * `test:lint-rules` is a hand-maintained file list and two documents hand-copy its contents, so all
- * three go stale the moment somebody writes a guard and forgets one of them. A guard missing from the
+ * `test:lint-rules` is a hand-maintained file list and a document hand-copies its contents, so the
+ * two go stale the moment somebody writes a guard and forgets one of them. A guard missing from the
  * script fails only in a full-suite run, hours later, in a file nobody was looking at; a wrong count
  * in a doc an agent reads is followed as instruction. The counts had drifted three separate times
  * before this existed (868kv4d21), which is why the check is a test rather than another sentence
@@ -59,10 +59,7 @@ function readDoc(relPath: string, heading: string) {
   return { relPath, found: start !== -1, section, listParagraph };
 }
 
-const docs = [
-  readDoc('CLAUDE.md', '#### Convention guards run as tests'),
-  readDoc('.claude/agents/civitai-test-review.md', '### Convention guards'),
-];
+const docs = [readDoc('docs/dev/convention-guards.md', '#### Convention guards run as tests')];
 
 describe('test:lint-rules stays in step with the guards on disk', () => {
   it('names every no-* guard in the directory', () => {
