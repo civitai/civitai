@@ -62,7 +62,7 @@ describe('assertSharedTextSafe — how a blocklist rejection is classified', () 
 
     expect(throwOnBlockedUserContent).toHaveBeenCalledWith(
       [input.title, input.body],
-      expect.objectContaining({ surface: 'appListing' })
+      expect.objectContaining({ surface: 'appSharedStorage' })
     );
   });
 
