@@ -54,9 +54,7 @@ describe('getPublicVideoThumbnail', () => {
 
   it('prefers the uploader’s custom thumbnail, at its own dimensions, when the level allows it', () => {
     expect(getPublicVideoThumbnail({ image: video, customThumbnail, browsingLevel: 1 })).toEqual({
-      url: expect.stringMatching(
-        /(^|\/)thumb-uuid\/anim=false,transcode=true,optimized=true\/thumb-uuid\.jpeg$/
-      ),
+      url: expect.stringMatching(/(^|\/)thumb-uuid\/anim=false,optimized=true\/thumb-uuid\.jpeg$/),
       width: 832,
       height: 1216,
     });

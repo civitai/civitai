@@ -1,3 +1,4 @@
+import type { EdgeUrlProps } from '~/client-utils/edge-url';
 import { getEdgeUrl, videoStillEdgeOptions } from '~/client-utils/edge-url';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
@@ -27,14 +28,17 @@ export type PublicVideoThumbnail = { url: string; width: number | null; height: 
  * `original` at all, so it is dropped from the published URL. With no width the cacher returns the
  * source's native size.
  */
-function getStillUrl(src: string, skip?: number) {
+function getStillUrl(src: string, options: Omit<EdgeUrlProps, 'src'>) {
   return getEdgeUrl(src, {
-    ...videoStillEdgeOptions,
-    skip,
+    ...options,
     original: false,
     optimized: true,
   }).replace('original=false,', '');
 }
+
+// `transcode` is left off: on an image source it serves the upload's own format, so a PNG
+// thumbnail came back as a multi-megabyte PNG instead of an optimized WebP.
+const customThumbnailEdgeOptions = { type: MediaType.image, anim: false } as const;
 
 /** A still for a video, for public API consumers that cannot render one themselves. */
 export function getPublicVideoThumbnail({
@@ -52,14 +56,17 @@ export function getPublicVideoThumbnail({
   const allowed = Flags.intersection(browsingLevel, allBrowsingLevelsFlag);
   if (customThumbnail?.nsfwLevel && Flags.intersects(customThumbnail.nsfwLevel, allowed)) {
     return {
-      url: getStillUrl(customThumbnail.url),
+      url: getStillUrl(customThumbnail.url, customThumbnailEdgeOptions),
       width: customThumbnail.width ?? null,
       height: customThumbnail.height ?? null,
     };
   }
 
   return {
-    url: getStillUrl(image.url, getSkipValue({ type: image.type, metadata: image.metadata })),
+    url: getStillUrl(image.url, {
+      ...videoStillEdgeOptions,
+      skip: getSkipValue({ type: image.type, metadata: image.metadata }),
+    }),
     width: image.width ?? null,
     height: image.height ?? null,
   };
