@@ -1892,8 +1892,11 @@ export const appListingsRouter = router({
    * 🔴 A SEPARATE PROC RATHER THAN A MOD BYPASS IN `setListingVisibility`, and the write
    * service's header says why: admitting a moderator to the owner path would be an
    * unaudited write on someone else's listing. This one takes a REQUIRED `reason` and
-   * lands a `set-visibility` moderation event, so a moderator cannot change a stranger's
-   * discoverability without leaving a row the OWNER can read in their own listing history.
+   * lands a `set-visibility` moderation event in the SAME interactive transaction as the
+   * level write, so a moderator cannot change a stranger's discoverability without leaving
+   * a row the OWNER can read in their own listing history. 🔴 The ATOMICITY is what carries
+   * that, not the write order — the shipped two-round-trip version wrote the event second
+   * and a rejected insert left a committed level change with no audit row.
    *
    * 🔴 `moderatorProcedure` IS THE GATE, AND THE SERVICE DOES NOT RE-CHECK IT. That matches
    * every other mod proc in this file (`delistListing`, `relistListing`, `claimListing`,

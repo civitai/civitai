@@ -103,9 +103,14 @@ const GATE_LEDGER: Record<string, string> = {
     'deliberately — and the moderator half is a SEPARATE proc rather than a bypass here. ' +
     'setListingVisibilityAsModerator now EXISTS (added with the owner-facing UI): ' +
     'moderatorProcedure at the router, a REQUIRED audited reason, and a `set-visibility` ' +
-    'moderation event written only after the level actually lands, so a moderator cannot ' +
+    'moderation event written inside the SAME interactive transaction as the level write. ' +
+    '🔴 THE TRANSACTION IS THE SUPPORT, NOT THE ORDERING. An earlier wording here derived ' +
+    'the invariant from the event being written AFTER the level lands — which is exactly ' +
+    'the two-round-trip shape that SHIPPED and produced a committed level change with no ' +
+    'audit row. Ordering is what failed; atomicity is what fixes it. So a moderator cannot ' +
     "change a stranger's discoverability without a row the OWNER can read in their own " +
-    'listing history. The earlier ledger entry asserted this proc while it did NOT exist ' +
+    'listing history — and if the `$transaction` is ever removed, THIS invariant is gone ' +
+    'with it, whatever the ordering. The earlier ledger entry asserted this proc while it did NOT exist ' +
     '(it had been deferred), which is worse in a ledger than in prose because a ledger is ' +
     'the authoritative in-tree record — so note that the claim is now TRUE and was ' +
     'verified against the router and the service, not inferred from this sentence. ' +

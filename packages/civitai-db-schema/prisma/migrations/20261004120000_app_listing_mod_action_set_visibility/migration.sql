@@ -76,8 +76,11 @@
 -- file corrected elsewhere, so the evidence is here with the date.
 --
 --   WHAT RAN: this file's COMMITTED BYTES piped into `psql -v ON_ERROR_STOP=1` on each
---   primary — prod `cnpg-cluster-nvme0-5` (re-resolved at apply time, not from a doc) and
---   dev `cnpg-cluster-dev-1`. Both returned `BEGIN / ALTER TABLE / ALTER TABLE / COMMIT`.
+--   primary — the PROD nvme0 primary (resolved by role at apply time, not from a doc) and
+--   the DEV CLONE primary. Both returned `BEGIN / ALTER TABLE / ALTER TABLE / COMMIT`.
+--   🔴 Instance names are deliberately NOT recorded here: this is a PUBLIC repository, and
+--   naming which instance holds the production primary is an infrastructure detail the
+--   evidence does not need. Resolve the primary by role at apply time instead.
 --
 --   LIVE CONSTRAINT ON BOTH, read back after the commit: **12 actions**, `set-visibility`
 --   present, `purge-user-storage` present — the pending 20260912 widen rode along exactly
@@ -90,11 +93,14 @@
 --   constraint. Row counts unchanged either side: prod 23, dev 61.
 --
 --   PRE-FLIGHT, measured before applying: 0 existing rows would violate the new IN-list,
---   0 conflicting locks, 0 transactions older than 30s. The table is 23 rows / 112 kB on
---   prod, so the ACCESS EXCLUSIVE validation scan was effectively instantaneous.
+--   0 conflicting locks, 0 transactions older than 30s. The table is small enough on prod
+--   that the ACCESS EXCLUSIVE validation scan was effectively instantaneous — MEASURE it
+--   rather than assuming, because that lock blocks reads and writes for the scan's duration
+--   and a queued exclusive lock piles every later reader up behind it.
 --
---   THE DEV-REFRESH WARNING NO LONGER APPLIES TO THIS WIDEN. `cnpg-cluster-dev-refresh` is
---   `0 3 * * 0` (Sunday 03:00 UTC; last run 2026-10-04T03:00:01Z). Because PROD now carries
+--   THE DEV-REFRESH WARNING NO LONGER APPLIES TO THIS WIDEN. The dev clone is re-created
+--   weekly from prod backups, and the refresh preceding this apply ran 2026-10-04.
+--   Because PROD now carries
 --   the widen, the next refresh INHERITS it rather than wiping it — the bullet below is
 --   retained because it is still the correct rule for the NEXT hand-applied dev-only DDL.
 --
@@ -121,8 +127,8 @@
 --   * ✅ DONE — Apply to PROD nvme0 **before** this ships (main -> release). The OWNER path
 --     is unaffected — it writes no event — so only the moderator proc is gated on this.
 --   * ⚠️ STILL THE RULE FOR THE NEXT DEV-ONLY DDL, no longer a risk to THIS one: the dev
---     clone is re-created weekly from prod barman backups (`cnpg-cluster-dev-refresh`,
---     `0 3 * * 0`, Sun 03:00 UTC), so a hand-applied widen THERE is wiped on the next
+--     clone is re-created weekly from prod barman backups, so a hand-applied widen THERE
+--     is wiped on the next
 --     refresh while one applied to PROD propagates to dev for free. Prefer prod-first.
 --     Because prod carries this widen, the next refresh inherits it.
 --
