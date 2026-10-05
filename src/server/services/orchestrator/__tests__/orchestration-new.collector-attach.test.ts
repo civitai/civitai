@@ -30,6 +30,15 @@ import { describe, expect, it, vi } from 'vitest';
  *
  * The mock preamble mirrors `orchestration-new.air-map.test.ts` — it only keeps
  * the heavy DB/redis module graph inert so the module imports.
+ *
+ * It hosts a SECOND property off the same seam, for the same reason: the refusal counter
+ * `generation_validation_refused_total` is emitted inside `validateInput` and labelled from the
+ * collector's surface, so proving it fires needs exactly this combination — the real
+ * `buildGenerationContext` feeding the real `validateInput`. A separate file would have to
+ * duplicate this preamble, and a new file doing so trips `no-direct-shared-module-mock` and
+ * `no-hand-typed-redis-key-constants`, which this one predates. The codemod those guards
+ * point at refuses the conversion: the redis factory here replaces `REDIS_SUB_KEYS` with
+ * behaviour, so it is a control surface rather than a redundant re-export.
  */
 
 vi.mock('~/server/redis/client', () => {
@@ -74,6 +83,7 @@ import {
   buildGenerationContext,
   validateInput,
 } from '~/server/services/orchestrator/orchestration-new.service';
+import { generationValidationRefusedCounter } from '~/server/prom/generation-validation.metrics';
 import { GENERATION_SURFACES } from '~/shared/generation/model-substitution';
 import { getWorkflowCapability } from '~/shared/generation/workflow-capability';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -185,5 +195,78 @@ describe('the attached collector is WIRED TO THE REAL CLAMP', () => {
       externalCtx
     );
     expect(externalCtx.modelSubstitutions?.list()).toEqual([]);
+  });
+});
+
+/**
+ * The refusal counter actually increments, with the labels it promises.
+ *
+ * `prom/__tests__/generation-validation.metrics.test.ts` pins the LEDGER — one emit site,
+ * three bounded labels. It cannot see whether the emit ever RUNS: a textual guard is satisfied
+ * by an increment behind a condition that is never true.
+ *
+ * That matters more than usual here. This counter exists because removing the data-graph lane
+ * removed the shadow comparison, which was the only thing that saw a hub refusal — and its
+ * alarm is "any sustained non-zero", measured at zero over the 14 days before the cutover. A
+ * counter that never fires reads exactly like the healthy state it is meant to prove, which is
+ * the one failure mode nobody notices in production.
+ */
+describe('validateInput records a refusal', () => {
+  it('labels the surface, the clamped workflow and the first failing field', async () => {
+    const seriesOf = async () => {
+      const metric = await (
+        generationValidationRefusedCounter as unknown as {
+          get(): Promise<{ values: Array<{ labels: Record<string, string>; value: number }> }>;
+        }
+      ).get();
+      return metric.values ?? [];
+    };
+
+    const before = await seriesOf();
+    const { externalCtx } = await buildGenerationContext('free', {}, USER, 'block');
+
+    // txt2img with no prompt and no images: the hub refuses on `prompt`.
+    await expect(
+      (async () => validateInput({ workflow: 'txt2img', ecosystem: 'SDXL' }, externalCtx))()
+    ).rejects.toThrow(/Validation failed/);
+
+    const after = await seriesOf();
+    const changed = after.filter(
+      (a) =>
+        !before.some(
+          (b) => JSON.stringify(b.labels) === JSON.stringify(a.labels) && b.value === a.value
+        )
+    );
+
+    expect(
+      changed.length,
+      'the parse threw but the counter did not move — it is inert, and a zero reading would be ' +
+        'indistinguishable from health'
+    ).toBeGreaterThan(0);
+
+    expect(changed[0]!.labels).toMatchObject({
+      surface: 'block',
+      workflow: 'txt2img',
+      field: 'prompt',
+    });
+  });
+
+  it('clamps an unknown workflow instead of labelling it', async () => {
+    const bogus = 'not-a-real-workflow-' + Date.now();
+    const { externalCtx } = await buildGenerationContext('free', {}, USER, 'api');
+
+    await expect(
+      (async () => validateInput({ workflow: bogus, ecosystem: 'SDXL' }, externalCtx))()
+    ).rejects.toThrow(/Validation failed/);
+
+    const metric = await (
+      generationValidationRefusedCounter as unknown as {
+        get(): Promise<{ values: Array<{ labels: Record<string, string> }> }>;
+      }
+    ).get();
+    expect(
+      (metric.values ?? []).some((v) => v.labels.workflow === bogus),
+      'an arbitrary caller string reached the label — that is one series per bogus workflow'
+    ).toBe(false);
   });
 });

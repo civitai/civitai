@@ -51,10 +51,18 @@ import { ensureRegisterCsamArchiveMetrics } from '~/server/metrics/csam-archive.
 // the four were absent in production purely because nothing had ever incremented them, and one
 // of those exists to be alerted on. Called from the handler rather than here because it must
 // await a read of the latency histogram's existing children before zeroing any of them.
+// Same reason (#3665 again, one level down): seeds one zero-valued series per surface of
+// generation_validation_refused_total. That counter replaces the only signal a hub refusal
+// had — the removed data-graph shadow comparison — and its alarm is "any sustained
+// non-zero". Every caller that can increment it is non-browser (the on-site footer returns
+// before the network call), so absent is the expected reading for long stretches and is
+// otherwise indistinguishable from an unloaded module.
+import { seedGenerationValidationMetrics } from '~/server/prom/generation-validation.metrics';
 import { seedAppBlockStorageMetrics } from '~/server/prom/app-block-storage.metrics';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 ensureRegisterGenerationModelSubstitutionMetrics();
+seedGenerationValidationMetrics();
 ensureRegisterImageUploadRelayMetrics();
 ensureRegisterCsamArchiveMetrics();
 

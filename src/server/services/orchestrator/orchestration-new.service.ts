@@ -126,6 +126,7 @@ import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing
 import { createXGuardModerationRequest } from '~/server/services/orchestrator/orchestrator.service';
 import { submitSourceForSurface } from '~/server/services/orchestrator/orchestrator-submit-metrics';
 import { clampExternalModerationSource } from '~/server/prom/external-moderation.metrics';
+import { generationValidationRefusedCounter } from '~/server/prom/generation-validation.metrics';
 import { logToAxiom } from '~/server/logging/client';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { expandSnippetsToTargets } from '~/server/services/wildcard-set-resolver.service';
@@ -815,6 +816,28 @@ export function validateInput(input: Record<string, unknown>, externalCtx: Gener
   void emitModelSubstitutions(externalCtx.modelSubstitutions);
 
   if (!result.success) {
+    const failingKeys = Object.keys(result.errors).sort();
+    // The shadow comparison was the only thing that saw a hub refusal, and it went with the
+    // data-graph. One emit here covers submit, whatIf and the App Blocks bridge, which is the
+    // population the removal changes: a caller with no `formGraphGenerator` flag used to be
+    // served the v1 result, and the bridge passes no flags.
+    //
+    // Labels are clamped on purpose — see `generation-validation.metrics`. The workflow
+    // arrives PRE-parse, so it is an arbitrary caller string; the field is a graph key, never
+    // the value an error message would carry.
+    try {
+      const rawWorkflow = normalized.workflow;
+      generationValidationRefusedCounter.inc({
+        surface: externalCtx.modelSubstitutions?.surface ?? 'unknown',
+        workflow:
+          typeof rawWorkflow === 'string' && workflowConfigByKey.has(rawWorkflow)
+            ? rawWorkflow
+            : 'unknown',
+        field: failingKeys[0] ?? 'none',
+      });
+    } catch {
+      // Observability must never turn a 400 into a 500.
+    }
     const errorMessages = Object.entries(result.errors)
       .map(([key, error]) => `${key}: ${error.message}`)
       .join(', ');
