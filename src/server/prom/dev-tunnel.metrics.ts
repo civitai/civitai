@@ -20,6 +20,9 @@ import { PROM_PREFIX } from '@civitai/telemetry/client';
  *   - `civitai_app_dev_tunnel_mints_total` (Counter) — cumulative mints.
  *   - `civitai_app_dev_tunnel_teardowns_total{reason}` (Counter) — cumulative
  *     teardowns, labelled `stop` (explicit) | `reap-idle` | `reap-maxttl`.
+ *   - `civitai_app_dev_tunnel_dns_gc_total{outcome}` (Counter) — one increment per
+ *     orphan-DNS cleanup attempt (`deleteDevTunnelDns`), so a cleanup that silently
+ *     stops working becomes visible. Label values: DevTunnelDnsGcOutcome.
  */
 
 declare global {
@@ -30,6 +33,7 @@ declare global {
         mints: client.Counter<string>;
         teardowns: client.Counter<string>;
         reaperRuns: client.Counter<string>;
+        dnsGc?: client.Counter<string>;
       }
     | undefined;
 }
@@ -65,8 +69,22 @@ const metrics =
     }),
   });
 
+// Attached separately rather than in the literal above, so a globalThis object left
+// by an earlier eval that predates this counter still gains it (HMR in dev).
+metrics.dnsGc ??= new client.Counter({
+  name: PROM_PREFIX + 'dev_tunnel_dns_gc_total',
+  help:
+    'Cumulative dev-tunnel orphan-DNS cleanup attempts by outcome. ' +
+    'deleted = records found and every DELETE succeeded; none_found = zone resolved, no ' +
+    'matching record (already gone); skipped = cleanup not configured or the zone could ' +
+    'not be resolved; refused = host failed the dev-host safety check; failed = a record ' +
+    'LIST or DELETE failed, or an unexpected error. Alert on a sustained rate of failed.',
+  labelNames: ['outcome'],
+});
+
 export type DevTunnelTeardownReason = 'stop' | 'reap-idle' | 'reap-maxttl';
 export type DevTunnelReaperResult = 'ok' | 'list_failed' | 'error';
+export type DevTunnelDnsGcOutcome = 'skipped' | 'refused' | 'deleted' | 'none_found' | 'failed';
 
 /** Record a successful mint: bump the active gauge + the mint counter. Never
  *  throws — a telemetry failure must not break the mint. */
@@ -102,6 +120,17 @@ export function recordDevTunnelTeardown(reason: DevTunnelTeardownReason): void {
 export function recordDevTunnelReaperRun(result: DevTunnelReaperResult): void {
   try {
     metrics.reaperRuns.inc({ result });
+  } catch {
+    /* never throw from telemetry */
+  }
+}
+
+/** Record the outcome of ONE orphan-DNS cleanup attempt (`deleteDevTunnelDns`).
+ *  `failed` is the alertable value — a sustained rate means dev-host DNS records
+ *  are leaking. Never throws. */
+export function recordDevTunnelDnsGc(outcome: DevTunnelDnsGcOutcome): void {
+  try {
+    metrics.dnsGc?.inc({ outcome });
   } catch {
     /* never throw from telemetry */
   }
