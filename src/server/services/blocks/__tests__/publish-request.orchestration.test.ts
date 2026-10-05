@@ -1148,7 +1148,7 @@ describe('listPendingRequests', () => {
       manifest: {},
       fileSummary: {},
       manifestDiffSummary: {},
-      submittedBy: { id: 1, username: 'dev', image: null },
+      submittedBy: { id: 1, username: 'dev', deletedAt: null, image: null },
       ...over,
     };
   }
@@ -1226,8 +1226,8 @@ describe('listApprovedRequests', () => {
       manifest: {},
       fileSummary: {},
       manifestDiffSummary: {},
-      submittedBy: { id: 1, username: 'dev', image: null },
-      reviewedBy: { id: 999, username: 'mod', image: null },
+      submittedBy: { id: 1, username: 'dev', deletedAt: null, image: null },
+      reviewedBy: { id: 999, username: 'mod', deletedAt: null, image: null },
       ...over,
     };
   }
@@ -1258,12 +1258,17 @@ describe('listApprovedRequests', () => {
     mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
       row({
         approvalNotes: 'reviewed the iframe sandbox flags, looks good',
-        reviewedBy: { id: 999, username: 'modzilla', image: null },
+        reviewedBy: { id: 999, username: 'modzilla', deletedAt: null, image: null },
       }),
     ]);
     const result = await listApprovedRequests({});
     expect(result.items[0].approvalNotes).toBe('reviewed the iframe sandbox flags, looks good');
-    expect(result.items[0].reviewedBy).toEqual({ id: 999, username: 'modzilla', image: null });
+    expect(result.items[0].reviewedBy).toEqual({
+      id: 999,
+      username: 'modzilla',
+      deletedAt: null,
+      image: null,
+    });
   });
 
   it('paginates with cursor — uses cursor + skip:1 + take=limit+1', async () => {
@@ -1315,8 +1320,8 @@ describe('listRejectedRequests', () => {
       manifest: {},
       fileSummary: {},
       manifestDiffSummary: {},
-      submittedBy: { id: 1, username: 'dev', image: null },
-      reviewedBy: { id: 999, username: 'mod', image: null },
+      submittedBy: { id: 1, username: 'dev', deletedAt: null, image: null },
+      reviewedBy: { id: 999, username: 'mod', deletedAt: null, image: null },
       ...over,
     };
   }
@@ -1347,14 +1352,19 @@ describe('listRejectedRequests', () => {
     mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
       row({
         rejectionReason: 'iframe.src origin must match the OauthClient allowedOrigin',
-        reviewedBy: { id: 999, username: 'modzilla', image: null },
+        reviewedBy: { id: 999, username: 'modzilla', deletedAt: null, image: null },
       }),
     ]);
     const result = await listRejectedRequests({});
     expect(result.items[0].rejectionReason).toBe(
       'iframe.src origin must match the OauthClient allowedOrigin'
     );
-    expect(result.items[0].reviewedBy).toEqual({ id: 999, username: 'modzilla', image: null });
+    expect(result.items[0].reviewedBy).toEqual({
+      id: 999,
+      username: 'modzilla',
+      deletedAt: null,
+      image: null,
+    });
   });
 
   it('paginates with cursor — uses cursor + skip:1 + take=limit+1', async () => {

@@ -1,8 +1,11 @@
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { CrucibleIngestionStatus, CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { getBaseModelConfig } from '~/shared/constants/basemodel.constants';
+import { crucibleRankingsAreFinal } from '~/shared/constants/crucible.constants';
 import {
+  allBrowsingLevelsFlag,
   browsingLevelLabels,
+  getIsSafeBrowsingLevel,
   parseBitwiseBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
 import { slugit } from '~/utils/string-helpers';
@@ -18,6 +21,26 @@ export function getCrucibleSlug(name: string) {
 
 export const toCrucibleBuzzType = (value: string): 'green' | 'yellow' =>
   value === 'green' ? 'green' : 'yellow';
+
+/** How a prize is displayed. It is paid in whichever Buzz the winner picks when claiming. */
+export const CRUCIBLE_PRIZE_BUZZ_TYPE = 'yellow' as const;
+
+/** An entrant pays in the currency of the site they enter on. */
+export const getCrucibleEntryBuzzType = (isGreen: boolean): 'green' | 'yellow' =>
+  isGreen ? 'green' : 'yellow';
+
+/** The allowed-level values a crucible listed on the green site may have. */
+export const CRUCIBLE_SFW_LEVELS = Array.from(
+  { length: allBrowsingLevelsFlag },
+  (_, i) => i + 1
+).filter(getIsSafeBrowsingLevel);
+
+/**
+ * The green site lists only crucibles that accept nothing above PG-13 and whose text is SFW. Built on
+ * the list the feed queries match, so the gates and the feed cannot disagree.
+ */
+export const isCrucibleSfw = ({ nsfwLevel, textNsfw }: { nsfwLevel: number; textNsfw: boolean }) =>
+  CRUCIBLE_SFW_LEVELS.includes(nsfwLevel) && !textNsfw;
 
 export const getCrucibleUrl = (id: number, name: string) =>
   `/crucibles/${id}/${getCrucibleSlug(name)}`;
@@ -209,6 +232,22 @@ export function getCrucibleManageActions({
   };
 }
 
+/**
+ * Judging is blind: until a crucible ends, other people's entries show no creator and don't open
+ * the image detail, which carries the creator, prompt and resources.
+ */
+export function canSeeCrucibleEntryDetails({
+  status,
+  isModerator,
+  isOwnEntry,
+}: {
+  status: CrucibleStatus;
+  isModerator: boolean;
+  isOwnEntry: boolean;
+}) {
+  return isOwnEntry || isModerator || crucibleRankingsAreFinal(status);
+}
+
 export type PrizePosition = {
   position: number;
   percentage: number;
@@ -238,6 +277,95 @@ export function getCruciblePrizeAmount({
   const filled = sumOf(filledPositions);
   if (!filled) return Math.floor(((configured / 100) * totalPrizePool) / filledPositions.length);
   return Math.floor((prize.percentage / 100) * totalPrizePool * (configured / filled));
+}
+
+export type CruciblePrizeWinner = {
+  entryId: number;
+  userId: number;
+  position: number;
+  prizePlace: number;
+  prizeAmount: number;
+};
+export type CrucibleDisplayPrize = Omit<CruciblePrizeWinner, 'userId'>;
+
+export const CRUCIBLE_ONE_PRIZE_RULE =
+  'Each creator can win at most one prize. If you place more than once, your best entry counts and the next creator moves up.';
+
+/**
+ * Creators in finishing order, each represented by their best-placed entry. Prizes and average
+ * finish both rank creators with this, so the two cannot disagree about where a creator finished.
+ */
+export function rankCreatorsByBestEntry<T extends { userId: number; position: number }>(
+  placed: T[]
+): T[] {
+  const seen = new Set<number>();
+  return [...placed]
+    .sort((a, b) => a.position - b.position)
+    .filter(({ userId }) => !seen.has(userId) && !!seen.add(userId));
+}
+
+/**
+ * A creator takes at most one prize: their best-placed entry. Prize places go to creators in
+ * placing order, so a creator's other entries keep their positions but the next creator moves up
+ * a prize. Placings below the prize places don't change the result, so `placed` may be cut short
+ * after the last prize place's creator.
+ */
+export function getCruciblePrizeWinners({
+  placed,
+  prizePositions,
+  totalPrizePool,
+}: {
+  placed: { entryId: number; userId: number; position: number }[];
+  prizePositions: PrizePosition[];
+  totalPrizePool: number;
+}): CruciblePrizeWinner[] {
+  const lastPrizePlace = Math.max(0, ...prizePositions.map((p) => p.position));
+  const creatorsBest = rankCreatorsByBestEntry(placed)
+    .slice(0, lastPrizePlace)
+    .map(({ entryId, userId, position }) => ({ entryId, userId, position }));
+
+  return creatorsBest
+    .map((entry, index) => ({ ...entry, prizePlace: index + 1 }))
+    .filter(({ prizePlace }) => prizePositions.some((p) => p.position === prizePlace))
+    .map((winner) => ({
+      ...winner,
+      prizeAmount: getCruciblePrizeAmount({
+        position: winner.prizePlace,
+        prizePositions,
+        entryCount: creatorsBest.length,
+        totalPrizePool,
+      }),
+    }));
+}
+
+/** Smaller fields are too coarse to place a creator in: 2nd of 3 says little about skill. */
+export const AVG_FINISH_MIN_FIELD = 5;
+/** Below this, one lucky crucible would read as the creator's standing. */
+export const AVG_FINISH_MIN_CRUCIBLES = 3;
+
+/** Where a creator finished among the creators who placed; null when the creator did not place. */
+export function getCreatorFinish({
+  placed,
+  userId,
+}: {
+  placed: { userId: number; position: number }[];
+  userId: number;
+}): { rank: number; field: number } | null {
+  const ranked = rankCreatorsByBestEntry(placed);
+  const index = ranked.findIndex((creator) => creator.userId === userId);
+  return index === -1 ? null : { rank: index + 1, field: ranked.length };
+}
+
+/**
+ * A creator's average finish as "top X%" of the field, so entering big crucibles does not count
+ * against them the way a win rate does. Null until there are enough crucibles to mean something.
+ */
+export function getAverageFinishTopPercent(finishes: { rank: number; field: number }[]) {
+  const counted = finishes.filter(({ field }) => field >= AVG_FINISH_MIN_FIELD);
+  if (counted.length < AVG_FINISH_MIN_CRUCIBLES) return null;
+
+  const mean = counted.reduce((sum, { rank, field }) => sum + rank / field, 0) / counted.length;
+  return Math.max(1, Math.round(mean * 100));
 }
 
 export const CRUCIBLE_MIN_VOTES_PERCENT = 75;

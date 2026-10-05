@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { modelFlagsFindMany } from '~/server/services/__tests__/fixtures/model-flags-find-many';
 import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { dbMock, loggingMock } from '~/__tests__/mocks';
 import {
@@ -74,6 +75,7 @@ const crucible = (overrides: Record<string, unknown> = {}) => ({
   maxClipSeconds: null,
   prizePositions: { '1': 50, '2': 30, '3': 20 },
   allowedResources: null,
+  allowedBaseModels: [],
   duration: 24 * 60,
   seededPrizePool: 0,
   buzzTransactionId: null,
@@ -195,6 +197,40 @@ describe('updateCrucible — while upcoming', () => {
       createMultiAccountBuzzTransaction.mock.invocationCallOrder[0]
     );
     expect(written().buzzTransactionId).toMatch(/^crucible-setup-4-(?!old)/);
+  });
+
+  it('restricts by base model for free', async () => {
+    findUnique.mockResolvedValue(upcoming());
+
+    await edit({ allowedBaseModels: ['SDXL 1.0'] });
+
+    expect(written()).toMatchObject({ allowedBaseModels: ['SDXL 1.0'] });
+    expect(charged()).toEqual([]);
+  });
+
+  it('locks the base models once the crucible has started', async () => {
+    await expect(edit({ allowedBaseModels: ['SDXL 1.0'] })).rejects.toThrow(
+      /only its name, description and images can change/
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('re-checks every allowed base model against a new content type', async () => {
+    findUnique.mockResolvedValue(upcoming({ allowedBaseModels: ['SDXL 1.0'] }));
+
+    await expect(edit({ contentType: MediaType.video })).rejects.toThrow(
+      /allowed base model must make videos/
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('refuses adding a base model that makes the other media type', async () => {
+    findUnique.mockResolvedValue(upcoming());
+
+    await expect(edit({ allowedBaseModels: ['MiniMax H3'] })).rejects.toThrow(
+      /allowed base model must make images/
+    );
+    expect(update).not.toHaveBeenCalled();
   });
 
   it('refuses swapping in a model that is not published and public', async () => {
@@ -426,25 +462,57 @@ describe('updateCrucible — while upcoming', () => {
   });
 });
 
-describe('updateCrucible — free entries', () => {
-  it('lets a moderator who owns an upcoming crucible set them', async () => {
-    findUnique.mockResolvedValue(upcoming({ entryLimit: 3 }));
-
-    await edit({ freeEntriesPerUser: 1 }, OWNER, true);
-
-    expect(written().freeEntriesPerUser).toBe(1);
-  });
-
-  it('refuses them from an owner who is not a moderator', async () => {
-    findUnique.mockResolvedValue(upcoming({ entryLimit: 3 }));
-
-    await expect(edit({ freeEntriesPerUser: 1 })).rejects.toThrow(
-      'Only moderators can offer free entries'
+describe('updateCrucible — required models unsuitable for mature content', () => {
+  const R = 1 | 2 | 4;
+  /** Version 12 is flagged; the media-type check's query gets nothing back. */
+  const withFlaggedVersion12 = () =>
+    modelVersionFindMany.mockImplementation(
+      modelFlagsFindMany((id) => ({ minor: id === 12, sfwOnly: false }))
     );
+
+  it('refuses raising the content level to R+ while a flagged model is required', async () => {
+    findUnique.mockResolvedValue(upcoming({ allowedResources: [10, 12] }));
+    withFlaggedVersion12();
+
+    await expect(edit({ nsfwLevel: R })).rejects.toThrow(/PG and PG-13/);
     expect(update).not.toHaveBeenCalled();
   });
 
-  it("still lets that owner save other changes alongside free entries they didn't change", async () => {
+  it('refuses adding a flagged model to an R+ crucible', async () => {
+    findUnique.mockResolvedValue(upcoming({ nsfwLevel: R, allowedResources: [10] }));
+    withFlaggedVersion12();
+
+    await expect(edit({ allowedResources: [10, 12] })).rejects.toThrow(/PG and PG-13/);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('still lets an R+ crucible that already requires one take an edit that changes neither', async () => {
+    findUnique.mockResolvedValue(upcoming({ nsfwLevel: R, allowedResources: [12] }));
+    withFlaggedVersion12();
+
+    await expect(edit({ name: 'Renamed' })).resolves.toBeDefined();
+    expect(update).toHaveBeenCalled();
+  });
+
+  it('lets a moderator lower it to PG-13 even though a flagged model is required', async () => {
+    findUnique.mockResolvedValue(upcoming({ nsfwLevel: R, allowedResources: [12] }));
+    withFlaggedVersion12();
+
+    await expect(edit({ nsfwLevel: 1 | 2 }, 1, true)).resolves.toBeDefined();
+  });
+});
+
+describe('updateCrucible — free entries', () => {
+  // Deliberately not moderator-only.
+  it('lets an owner who is not a moderator set them on an upcoming crucible', async () => {
+    findUnique.mockResolvedValue(upcoming({ entryLimit: 3 }));
+
+    await edit({ freeEntriesPerUser: 2 });
+
+    expect(written().freeEntriesPerUser).toBe(2);
+  });
+
+  it('keeps the free entries an edit leaves out', async () => {
     findUnique.mockResolvedValue(upcoming({ entryLimit: 3, freeEntriesPerUser: 1 }));
 
     await edit({ entryFee: 200 });
@@ -452,10 +520,19 @@ describe('updateCrucible — free entries', () => {
     expect(written()).toMatchObject({ entryFee: 200, freeEntriesPerUser: 1 });
   });
 
+  it('refuses more free entries than the entry limit', async () => {
+    findUnique.mockResolvedValue(upcoming({ entryLimit: 3 }));
+
+    await expect(edit({ freeEntriesPerUser: 4 })).rejects.toThrow(
+      'Free entries cannot exceed the entry limit per user'
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it('refuses an entry limit lowered below the free entries already set', async () => {
     findUnique.mockResolvedValue(upcoming({ entryLimit: 3, freeEntriesPerUser: 2 }));
 
-    await expect(edit({ entryLimit: 1 }, OWNER, true)).rejects.toThrow(
+    await expect(edit({ entryLimit: 1 })).rejects.toThrow(
       'Free entries cannot exceed the entry limit per user'
     );
     expect(update).not.toHaveBeenCalled();
@@ -464,9 +541,10 @@ describe('updateCrucible — free entries', () => {
   it('locks them once the crucible has started', async () => {
     findUnique.mockResolvedValue(crucible({ entryLimit: 3 }));
 
-    await expect(edit({ freeEntriesPerUser: 1 }, OWNER, true)).rejects.toThrow(
+    await expect(edit({ freeEntriesPerUser: 1 })).rejects.toThrow(
       /only its name, description and images can change/
     );
+    expect(update).not.toHaveBeenCalled();
   });
 });
 

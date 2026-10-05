@@ -68,6 +68,9 @@ const respondWith = (costUsd?: number) => async (request: { questions: Question[
 
 const version = (id: number) => ({
   id,
+  // Deliberately a DIFFERENT id space from the version id: a fixture where
+  // the two coincide cannot tell a model-id enqueue from a version-id one.
+  modelId: 9000 + id,
   name: `Version ${id}`,
   baseModel: 'SDXL 1.0',
   trainedWords: ['trigger'],

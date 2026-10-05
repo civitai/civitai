@@ -6,6 +6,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as NotificationService from '~/server/services/notification.service';
+import { NsfwLevel } from '~/server/common/enums';
 import { dbMock, loggingMock } from '~/__tests__/mocks';
 
 const refundMultiAccountTransaction = vi.fn();
@@ -245,6 +246,31 @@ describe('list surfaces — featured and judging suggestions', () => {
       .split('as "prizePool"')[0]
       .split('as "entriesCount"')[1];
     expect(pool).toContain('FILTER (WHERE ce."buzzTransactionId" IS NOT NULL)');
+  });
+
+  it.each([
+    ['featured', (isGreen: boolean) => getFeaturedCrucible({ browsingLevel: 1, isGreen })],
+    [
+      'judging suggestions',
+      (isGreen: boolean) =>
+        getJudgingSuggestions({ userId: 7, browsingLevel: 1, limit: 4, isGreen }),
+    ],
+  ])('%s: lists any currency, and only SFW crucibles on the green site', async (_, run) => {
+    await run(true);
+    const green = sqlText(queryRaw.mock.calls.at(-1)!);
+    expect(green).not.toContain('"buzzType"');
+    expect(green).toContain('AND c."nsfwLevel" = ANY(?::int[]) AND NOT c."textNsfw"');
+    const greenSite = (queryRaw.mock.calls.at(-1)!.slice(1) as { strings?: string[] }[]).find(
+      (value) => value?.strings?.join('?').includes('NOT c."textNsfw"')
+    ) as { values: unknown[] };
+    expect(greenSite.values).toEqual([
+      [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.PG | NsfwLevel.PG13],
+    ]);
+
+    await run(false);
+    const red = sqlText(queryRaw.mock.calls.at(-1)!);
+    expect(red).not.toContain('"buzzType"');
+    expect(red).not.toContain('= ANY(?::int[]) AND NOT c."textNsfw"');
   });
 
   it('suggestions count only entries this judge could be shown', async () => {

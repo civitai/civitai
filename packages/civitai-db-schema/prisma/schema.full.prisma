@@ -639,6 +639,8 @@ model User {
   pricingSlots                       PricingSlot[]
   crucibles                          Crucible[]
   crucibleEntries                    CrucibleEntry[]
+  crucibleEngagements                CrucibleEngagement[]
+  prizes                             Prize[]
 
   @@index([deletedAt])
 }
@@ -2996,6 +2998,38 @@ model AppListing {
   // can't express it; canonical code set = APP_LISTING_STATUSES). P3b adds
   // 'removed' (the mod delist target); see app-blocks-p3b-delist-claim-scope.
   status          String       @default("draft")
+  /// Per-listing cohort gate: private|moderators|testers|public, or NULL.
+  ///
+  /// NULLABLE WITH NO DEFAULT, and NULL is NOT the `private` level — it means the owner
+  /// has expressed no choice, so the pre-feature rule for the row's `status` applies
+  /// (approved is visible, non-approved is not). That is what lets a level be
+  /// authoritative on an `approved` listing without a new approval -- of which there are
+  /// eight scattered writes and no chokepoint -- minting a row that vanishes from the
+  /// store. A level that IS set binds at every eligible status, `approved` included, so
+  /// an owner can restrict a live listing (discovery-only: hidden from the store, still
+  /// runnable by slug).
+  ///
+  /// Free-text `text` like `status`; the allowed set is a DB CHECK that lives ONLY in the
+  /// migration .sql (canonical code set = APP_LISTING_VISIBILITIES), and NULL passes that
+  /// CHECK by design. Always an AND with the surface flags, never an override.
+  ///
+  /// 🔴 THE no-type ANNOTATION ON THE FIELD LINE STRIPS IT FROM THE GENERATED CLIENT ON
+  /// PURPOSE, AND THAT
+  /// IS A FIX FOR A PRODUCTION 500, NOT A STYLE CHOICE. Prisma names every scalar the model
+  /// declares in its default SELECT/RETURNING, so while this was an ordinary field every
+  /// `appListing` call that returns rows with no explicit `select` emitted it — 18 such sites
+  /// on this tree, 17 of them WRITES — and during the manual-apply window that is
+  /// `prisma.appListing.create()` dying with P2022. It happened: off-site submit, approve and
+  /// delist all 500d on the PR preview. Stripping the field makes every one of those sites
+  /// immune by construction. The column is reached ONLY by raw SQL, in
+  /// `app-listing-visibility.service.ts` (read) and `-write.service.ts` (write). Re-adding it
+  /// to the client re-opens the outage; `app-listing-visibility.no-prisma-field` is the guard.
+  ///
+  /// MANUAL-APPLY, like every migration here. Read it ONLY through
+  /// `app-listing-visibility.service.ts` and never add it to a shared `select`: a
+  /// `select` naming a missing column throws P2022 for the WHOLE query, which on the
+  /// grid's shared select is a public-store outage.
+  visibility      String? // @no-type
   // Maturity rating. For on-site listings this MIRRORS AppBlock.content_rating
   // (single source — the listing must NOT override the runtime .red/.com serving
   // gate). Off-site listings carry their own. Same domain as AppBlock (g..x).
@@ -6383,7 +6417,7 @@ model Appeal {
   internalNotes     String?
   buzzTransactionId String?
 
-  @@unique([entityType, entityId, userId])
+  @@index([entityType, entityId, userId])
   @@index([userId])
   @@index([status])
 }
@@ -8992,6 +9026,8 @@ model Crucible {
   maxClipSeconds    Int?
   prizePositions    Json           @default("[]")
   allowedResources  Json?
+  // Base model names (basemodel.constants); an entry's checkpoint must be one of them.
+  allowedBaseModels String[]       @default([])
   duration          Int            @default(480)
   startAt           DateTime?
   endAt             DateTime?
@@ -9006,14 +9042,32 @@ model Crucible {
   // The scan found the text adult: list surfaces show it only to viewers who browse R or above.
   textNsfw          Boolean        @default(false)
 
-  entries CrucibleEntry[]
-  reports CrucibleReport[]
+  entries     CrucibleEntry[]
+  reports     CrucibleReport[]
+  engagements CrucibleEngagement[]
 
   @@index([userId], type: Hash)
   @@index([status])
   @@index([endAt])
   @@index([startAt])
   @@index([status, ingestion])
+}
+
+enum CrucibleEngagementType {
+  Notify
+}
+
+model CrucibleEngagement {
+  userId     Int
+  user       User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  crucibleId Int
+  crucible   Crucible               @relation(fields: [crucibleId], references: [id], onDelete: Cascade)
+  type       CrucibleEngagementType
+  createdAt  DateTime               @default(now())
+
+  @@id([type, crucibleId, userId])
+  @@index([crucibleId])
+  @@index([userId], type: Hash)
 }
 
 model CrucibleReport {
@@ -9045,4 +9099,35 @@ model CrucibleEntry {
   @@index([crucibleId], type: Hash)
   @@index([userId], type: Hash)
   @@index([crucibleId, score(sort: Desc)])
+}
+
+enum PrizeSourceType {
+  Crucible
+  Challenge
+}
+
+// A Buzz prize owed to a user. The winner picks the currency when claiming; an unclaimed prize is
+// paid green at `autoClaimAt`.
+model Prize {
+  id                    Int             @id @default(autoincrement())
+  userId                Int
+  user                  User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sourceType            PrizeSourceType
+  sourceId              Int
+  subjectId             Int?
+  position              Int?
+  amount                Int
+  title                 String
+  // The source's ledger key. Currency-independent, so a prize can only ever be paid once.
+  externalTransactionId String          @unique
+  createdAt             DateTime        @default(now())
+  autoClaimAt           DateTime
+  claimedAt             DateTime?
+  buzzType              String? // 'green' | 'yellow'
+  autoClaimed           Boolean         @default(false)
+  paidAt                DateTime?
+  voidedAt              DateTime?
+
+  @@index([userId])
+  @@index([sourceType, sourceId])
 }

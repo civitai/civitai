@@ -134,7 +134,7 @@ import {
   upsertModel,
 } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
-import { getLatestModelAppeal } from '~/server/services/report.service';
+import { getLatestAppeal } from '~/server/services/report.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { getCategoryTags, getCreationBlockedTags } from '~/server/services/system-cache';
 import {
@@ -176,6 +176,7 @@ import {
   Availability,
   BountyType,
   CollectionItemStatus,
+  EntityType,
   MetricTimeframe,
   ModelHashType,
   ModelModifier,
@@ -525,7 +526,13 @@ export const getModelHandler = async ({
 
     // Gated here to skip the query for the vast majority of page views (visitors);
     // resolveMinorAppeal below is the actual enforced boundary, independent of this.
-    const minorAppeal = isOwner ? await getLatestModelAppeal(model.id, model.user.id) : null;
+    const minorAppeal = isOwner
+      ? await getLatestAppeal({
+          entityType: EntityType.Model,
+          entityId: model.id,
+          userId: model.user.id,
+        })
+      : null;
 
     return {
       ...model,

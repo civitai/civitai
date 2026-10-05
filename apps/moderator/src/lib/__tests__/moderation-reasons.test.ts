@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { STRIKE_REASONS, TOS_REASONS, type CannedReason } from '$lib/moderation-reasons';
+import { violationUserMessage } from '$lib/violations';
 
 /**
  * `tos` is what lets a struck user be shown WHICH terms they broke. Two properties of it are easy to
@@ -44,5 +45,22 @@ describe('canned reason ToS citations', () => {
     for (const reason of all.filter((r) => !uncited.includes(r.label))) {
       expect(reason.tos, `"${reason.label}" lost its ToS citation`).toBeDefined();
     }
+  });
+});
+
+describe('canned removal messages', () => {
+  // The canned message is sent to the owner as typed, beside the notification built from
+  // `violationUserMessage`; a reason reworded in one and not the other still accuses.
+  it.each(['schoolNsfw', 'minorViolence'] as const)(
+    '%s sends the same wording as its notification',
+    (violation) => {
+      const rows = TOS_REASONS.filter((r) => r.violation === violation);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].message).toBe(`${violationUserMessage(violation)}.`);
+    }
+  );
+
+  it('does not set the minor flag for minor-with-violence', () => {
+    expect(TOS_REASONS.find((r) => r.violation === 'minorViolence')?.flag).toBeUndefined();
   });
 });

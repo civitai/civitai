@@ -44,6 +44,15 @@ import { renderWithProviders } from '../../../../test/component-setup';
 //     thin <img> echoing `src`, just enough to confirm the image branch renders.
 //     SHADOWS: all real CF-image URL building / animation logic.
 //
+//   * ResourceResidencyStatus (`~/components/ResourceLoad/ResourceResidency`) — a
+//     REQUIRED-CONTEXT leaf added to the component after this file was written.
+//     See the long note on its `vi.mock` below for why it has to be stubbed and
+//     what it cost not to be. SHADOWS: the residency dot, its label and its live
+//     `resourceLoad.getResidency` read. What the stub KEEPS observable is the row's
+//     own `{!isDisabled}` render guard and the `resource.id -> modelVersionId` prop,
+//     both pinned in Layer 2 ("residency row"). Nothing else about residency is
+//     asserted here — nor by any other COMPONENT test; see the vi.mock note.
+//
 //   Mantine is NOT mocked (resolve.dedupe handles dual-React at the scaffold).
 //
 // SCOPE CAVEATS (so nobody over-trusts Layer 2):
@@ -102,6 +111,54 @@ vi.mock('~/providers/AppProvider', () => ({
   useAppContext: vi.fn(),
 }));
 
+// 🔴 ResourceResidencyStatus is a REQUIRED-CONTEXT leaf, and leaving it real is what
+// made this file permanently red (civitai#5364).
+//
+// The component grew a `<ResourceResidencyStatus>` row — the `{!isDisabled && …}`
+// guarded block at ResourceItemContent.tsx:306-312, the element itself on 307 —
+// after this file was written. That leaf calls `useCurrentUser()`, which calls
+// `useCivitaiSessionContext()` — a hook that THROWS `missing CivitaiSessionContext`
+// when there is no <CivitaiSessionProvider>, which this network-free scaffold
+// deliberately does not supply. The throw happens during render, so `document.body`
+// stays EMPTY and every `expect.element(...)` in Layer 2 below burns its full 15s
+// locator timeout before failing with `Cannot find element with locator` — a message
+// that points at the assertion rather than at the cause. 19 tests × 15s = ~285s of
+// red per CI run, for one missing mock.
+//
+// The leaf ALSO issues `trpc.resourceLoad.getResidency.useQuery`, so mocking only
+// `~/hooks/useCurrentUser` would move the throw to "Unable to find tRPC Context"
+// rather than remove it. One boundary stub closes both.
+//
+// 🔴 WHAT THE STUB SHADOWS — do NOT read it as "covered elsewhere". The residency
+// dot, its label and the live `resourceLoad.getResidency` read are asserted nowhere
+// in this file, before this stub or after, and nowhere else at the COMPONENT layer:
+// `ResourceResidencyStatus`, `ResidencyBatchProvider`, `useResidency`,
+// `useResourceResidency`, `LoadedMark`, `LoadedCornerBadge` and `StatusDot` are the
+// subject of no test, and the two files naming `useRefreshResidencyOnOpen` only
+// `vi.fn()` it. The one residency test under `src/components/` is
+// `src/components/ResourceLoad/__tests__/resource-residency.test.ts`, which exercises
+// the pure `describeResidency` availability->label mapping and renders nothing.
+//
+// Scope that claim to the component layer and no wider: the SERVER side is covered.
+// `resourceLoad.getResidency` is a thin delegate to `getResourceResidency`
+// (`src/server/routers/resource-load.router.ts`), and that function plus
+// `bustResourceResidency` have tests in
+// `src/server/services/__tests__/resource-load.service.test.ts`. So what a boundary
+// stub here hides from the next reader is the RENDERED row, not the data behind it.
+// (Derive rather than trust this paragraph:
+// `grep -rl 'ResourceResidencyStatus\|ResidencyBatchProvider' src --include='*.test.ts*'`.)
+//
+// `importOriginal` rather than a bare factory on purpose: the other exports of that
+// module stay REAL, so a future child reaching for one is not silently satisfied by
+// an `undefined`.
+vi.mock('~/components/ResourceLoad/ResourceResidency', async (importOriginal) => ({
+  ...(await importOriginal<typeof ResourceResidencyModule>()),
+  ResourceResidencyStatus: ({ modelVersionId }: { modelVersionId: number }) => (
+    <div data-testid="residency-status" data-model-version-id={String(modelVersionId)} />
+  ),
+}));
+
+import type * as ResourceResidencyModule from '~/components/ResourceLoad/ResourceResidency';
 import {
   ResourceItemContent,
   getResourceCompatibility,
@@ -135,6 +192,10 @@ const makeResource = (over: Record<string, any> = {}): any => ({
 
 // Count rendered tabler icons of a given suffix in the live DOM.
 const countIcon = (suffix: string) => document.querySelectorAll(`.tabler-icon-${suffix}`).length;
+
+// The residency row, as emitted by the boundary stub above. Counted rather than
+// located so the SUPPRESSED case can assert a hard zero.
+const residencyRows = () => document.querySelectorAll('[data-testid="residency-status"]');
 
 // The Mantine `color` prop is rendered as a `color="..."` attribute on the
 // ThemeIcon root that wraps the icon svg. partial and incompatible BOTH render
@@ -613,5 +674,54 @@ describe('ResourceItemContent (render)', () => {
 
     await expect.element(page.getByText('M', { exact: true })).toBeInTheDocument();
     await expect.element(page.getByTestId('strength-slider')).not.toBeInTheDocument();
+  });
+
+  // ---------------------------------------------------------------------------
+  // The residency row's OWN render guard: `{!isDisabled && <ResourceResidencyStatus
+  // … />}` (ResourceItemContent.tsx:306-312). Two reasons this pair exists rather
+  // than being left to the stub:
+  //
+  //   1. At the merge base that guard is literally what SPLIT this describe block's
+  //      two outcome sets. The five Layer 2 tests whose fixture carried a disabled
+  //      status never reached the real leaf and passed; the other nineteen rendered
+  //      it, threw, and burned their full 15s locator timeout. So the branch that
+  //      hid the defect from a fifth of the block was itself asserted nowhere.
+  //   2. Without them the stub's `data-testid="residency-status"` has no reader at
+  //      all — it would be the only occurrence of that id in `src/`, i.e. an
+  //      attribute emitted for nobody.
+  //
+  // These assert the guard in BOTH directions (1 row vs 0), and the enabled case
+  // also pins the one prop the component passes down, `resource.id -> modelVersionId`.
+  // Watched red first by inverting the guard to `{isDisabled && …}`: the enabled
+  // case fails `expected +0 to be 1`, the suppressed case `expected 1 to be +0`.
+  test('residency row renders for an ENABLED resource, carrying resource.id', async () => {
+    // 777 is distinct from the default fixture id (555) AND from model.id (1), so a
+    // mutant that hardcoded either, or passed the model id instead of the version
+    // id, still fails the attribute assertion.
+    const r = makeResource({ id: 777, model: { id: 1, name: 'M', type: 'Checkpoint' } });
+    renderWithProviders(<ResourceItemContent resource={r} />);
+
+    // Await a positive element first: this is what stops either of these two tests
+    // from reading its count against an empty body (the exact failure mode the
+    // residency stub exists to prevent).
+    await expect.element(page.getByText('M', { exact: true })).toBeInTheDocument();
+    expect(residencyRows().length).toBe(1);
+    expect(residencyRows()[0].getAttribute('data-model-version-id')).toBe('777');
+  });
+
+  test('residency row is SUPPRESSED for a disabled resource (unavailable)', async () => {
+    // canGenerate:false + not private -> `unavailable`, which Layer 1 pins as
+    // disabled (`isResourceDisabled`). The ban indicator below proves we are on
+    // that branch and that the component rendered, so the zero is a real absence.
+    const r = makeResource({
+      canGenerate: false,
+      isPrivate: false,
+      model: { id: 1, name: 'M', type: 'Checkpoint' },
+    });
+    renderWithProviders(<ResourceItemContent resource={r} />);
+
+    await expect.element(page.getByText('M', { exact: true })).toBeInTheDocument();
+    expect(countIcon('ban')).toBe(1);
+    expect(residencyRows().length).toBe(0);
   });
 });

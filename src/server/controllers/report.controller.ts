@@ -14,7 +14,7 @@ import {
   createEntityAppeal,
   createReport,
   getAppealCount,
-  getLatestModelAppeal,
+  getLatestAppeal,
   reopenModelAppeal,
 } from '~/server/services/report.service';
 import {
@@ -25,6 +25,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { getAppealRefusal, isAppealableImage, isAppealableModel3D } from '~/shared/utils/appeal';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 
@@ -64,6 +65,22 @@ export async function createReportHandler({
   }
 }
 
+async function assertNotAlreadyAppealed({
+  entityType,
+  entityId,
+  userId,
+}: {
+  entityType: EntityType;
+  entityId: number;
+  userId: number;
+}) {
+  const refusal = getAppealRefusal(
+    entityType,
+    await getLatestAppeal({ entityType, entityId, userId })
+  );
+  if (refusal) throw throwBadRequestError(refusal);
+}
+
 export async function createEntityAppealHandler({
   input,
   ctx,
@@ -76,19 +93,25 @@ export async function createEntityAppealHandler({
   try {
     // Check ownership before creating the appeal
     switch (input.entityType) {
-      case EntityType.Image:
+      case EntityType.Image: {
         const image = await getImageById({ id: input.entityId });
         if (!image) throw throwNotFoundError('Image not found');
         if (image.userId !== userId) throw throwAuthorizationError();
-
+        await assertNotAlreadyAppealed({ ...input, userId });
+        if (!isAppealableImage(image))
+          throw throwBadRequestError('Only an image blocked by moderators can be appealed');
         break;
+      }
       case EntityType.Model3D:
         const m3d = await dbRead.model3D.findUnique({
           where: { id: input.entityId },
-          select: { userId: true },
+          select: { userId: true, status: true },
         });
         if (!m3d) throw throwNotFoundError('3D model not found');
         if (m3d.userId !== userId) throw throwAuthorizationError();
+        await assertNotAlreadyAppealed({ ...input, userId });
+        if (!isAppealableModel3D(m3d))
+          throw throwBadRequestError('Only a 3D model removed by moderators can be appealed');
         break;
       case EntityType.Model: {
         const model = await dbRead.model.findUnique({
@@ -103,18 +126,11 @@ export async function createEntityAppealHandler({
         if (!model.minor || !meta?.minorFlagSnapshot)
           throw throwBadRequestError('This model is not flagged as depicting a minor');
 
-        // `Appeal` is unique on (entityType, entityId, userId): creating a second
-        // row raises P2002, which is not a TRPCError and reaches the owner as a
-        // raw 500. Asking again after a denial is intended, so reuse the row.
-        const existing = await getLatestModelAppeal(input.entityId, userId);
+        // Asking again after a denial is intended for a minor flag, so reuse the row.
+        const existing = await getLatestAppeal({ ...input, userId });
         if (existing?.status === AppealStatus.Pending)
           throw throwBadRequestError('Your review request for this model is already under review');
-        if (existing)
-          return await reopenModelAppeal({
-            entityId: input.entityId,
-            userId,
-            message: input.message,
-          });
+        if (existing) return await reopenModelAppeal({ id: existing.id, message: input.message });
 
         skipFee = true;
         break;

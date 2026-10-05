@@ -48,7 +48,6 @@ export const crucibleCreateFormSchema = z.object({
   duration: z.number(),
   startAt: z.date().nullish(),
   nsfwLevel: z.number(),
-  buzzType: z.enum(['green', 'yellow']).optional(),
   contentType: z.enum(CRUCIBLE_CONTENT_TYPES),
   entryFee: z
     .number({ error: 'Entry fee is required' })
@@ -71,6 +70,7 @@ export const crucibleCreateFormSchema = z.object({
     )
     .optional(),
   allowedResources: z.array(z.number()).optional(),
+  allowedBaseModels: z.array(z.string()).optional(),
   minViewSeconds: z.number().optional(),
   maxClipSeconds: z.number().optional(),
   seededPrizePool: z
@@ -95,6 +95,7 @@ export const crucibleCreateDefaultValues: CrucibleCreateFormValues = {
   entryLimit: 1,
   freeEntriesPerUser: 0,
   allowedResources: [],
+  allowedBaseModels: [],
   seededPrizePool: 0,
   prizePositions: { ...CRUCIBLE_DEFAULT_PRIZE_POSITIONS },
   coverImage: null,
@@ -115,7 +116,6 @@ export const crucibleCreateDraftSchema = crucibleCreateFormSchema.extend({
     .refine((startAt) => startAt > new Date())
     .nullish()
     .catch(null),
-  buzzType: shape.buzzType.catch(undefined),
   entryFee: shape.entryFee.catch(defaults.entryFee),
   entryLimit: shape.entryLimit.catch(defaults.entryLimit),
   freeEntriesPerUser: shape.freeEntriesPerUser.catch(defaults.freeEntriesPerUser),
@@ -238,6 +238,7 @@ export function toCrucibleSubmitValues(values: CrucibleCreateFormValues) {
     freeEntriesPerUser: values.freeEntriesPerUser,
     maxTotalEntries: values.maxTotalEntries || undefined,
     allowedResources: values.allowedResources?.length ? values.allowedResources : undefined,
+    allowedBaseModels: values.allowedBaseModels?.length ? values.allowedBaseModels : undefined,
     prizePositions: values.prizePositions,
     seededPrizePool: values.seededPrizePool,
     duration: values.duration,
@@ -265,6 +266,7 @@ export type CrucibleEditSource = {
   seededPrizePool: number;
   prizePositions: unknown;
   allowedResources: unknown;
+  allowedBaseModels: string[];
   image: CrucibleImageRow;
   heroImage: CrucibleImageRow;
 };
@@ -304,6 +306,7 @@ export function crucibleToFormValues(crucible: CrucibleEditSource): CrucibleCrea
     allowedResources: Array.isArray(crucible.allowedResources)
       ? crucible.allowedResources.filter((id): id is number => typeof id === 'number')
       : [],
+    allowedBaseModels: crucible.allowedBaseModels,
     minViewSeconds: crucible.minViewSeconds ?? undefined,
     maxClipSeconds: crucible.maxClipSeconds ?? undefined,
     seededPrizePool: crucible.seededPrizePool,
@@ -327,6 +330,7 @@ export type CrucibleUpdateChanges = {
   freeEntriesPerUser?: number;
   maxTotalEntries?: number | null;
   allowedResources?: number[];
+  allowedBaseModels?: string[];
   prizePositions?: Record<string, number>;
   seededPrizePool?: number;
   duration?: number;
@@ -348,6 +352,7 @@ export const CRUCIBLE_EDITABLE_FIELDS = [
   'freeEntriesPerUser',
   'maxTotalEntries',
   'allowedResources',
+  'allowedBaseModels',
   'prizePositions',
   'seededPrizePool',
   'duration',
@@ -395,7 +400,8 @@ export function getCrucibleUpdateChanges({
   const changes: Record<string, unknown> = {};
   for (const field of editableFields) {
     if (isEqual(comparable(field, before[field]), comparable(field, after[field]))) continue;
-    changes[field] = after[field] ?? (field === 'allowedResources' ? [] : null);
+    changes[field] =
+      after[field] ?? (field === 'allowedResources' || field === 'allowedBaseModels' ? [] : null);
   }
   return changes as CrucibleUpdateChanges;
 }

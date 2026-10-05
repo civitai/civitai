@@ -64,6 +64,18 @@ export type AiReviewDecision = {
   neverReject?: boolean;
 };
 
+const MINOR_ESCALATIONS = {
+  photorealistic: 'photorealistic minor',
+  inappropriate: 'minor depicted inappropriately',
+  possible: 'possible minor',
+} as const;
+const MINOR_ESCALATION_VALUES: string[] = Object.values(MINOR_ESCALATIONS);
+
+// Holds whatever the collection decides: a rejected item is deleted from some boards within the
+// hour, and the image's own review queue is the only place this signal survives that.
+export const needsMinorReview = ({ escalations }: Pick<AiReviewDecision, 'escalations'>) =>
+  escalations.some((e) => MINOR_ESCALATION_VALUES.includes(e));
+
 // Takes `unknown` because a refusal, a provider fallback, or schema drift all arrive as parseable
 // JSON with the wrong shape.
 export function decideFromObservations(
@@ -87,8 +99,8 @@ export function decideFromObservations(
   // no cross-validation, and a hedged depictsMinor alongside a positive finding is exactly the
   // inconsistency the rules layer exists to absorb.
   const anyMinorSignal = o.depictsMinor || !!o.minorUncertain;
-  if (anyMinorSignal && o.minorIsPhotorealistic) escalations.push('photorealistic minor');
-  if (anyMinorSignal && o.minorInappropriate) escalations.push('minor depicted inappropriately');
+  if (anyMinorSignal && o.minorIsPhotorealistic) escalations.push(MINOR_ESCALATIONS.photorealistic);
+  if (anyMinorSignal && o.minorInappropriate) escalations.push(MINOR_ESCALATIONS.inappropriate);
   if (o.depictsRealPerson) escalations.push('real person likeness');
 
   const adultRating = ADULT_RATINGS.includes((o.nsfwEstimate ?? '').toLowerCase().trim());
@@ -101,7 +113,7 @@ export function decideFromObservations(
   // bright line for minors in ANY context — where the image could pass for a photograph.
   const uncertainAge =
     !!o.minorUncertain && (!!o.suggestiveStyling || o.sexualContent || !!o.isPhotorealistic);
-  if (uncertainAge) escalations.push('possible minor');
+  if (uncertainAge) escalations.push(MINOR_ESCALATIONS.possible);
 
   for (const entry of o.otherViolations ?? []) {
     const value = entry.toLowerCase().trim();

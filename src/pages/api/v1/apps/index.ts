@@ -128,6 +128,18 @@ export default MixedAuthEndpoint(async function handler(req, res, user) {
     const { items, nextCursor } = await listAvailableListings(parsed.data, {
       redCapable: isRedCapableRequest(req.headers.host),
       scope,
+      // 🔴 THE AUDIENCE FLOOR IS NOT LIFTED THE WAY THE SCOPE IS, AND PASSING IT
+      // EXPLICITLY IS THE POINT. `resolvePublicAppsCatalogScope` deliberately grants an
+      // anonymous caller `full` SURFACE access to the approved catalog; a per-listing level
+      // is a different axis and that grant says nothing about it. `public` is the
+      // least-privileged floor.
+      //
+      // ⚠️ AN EARLIER VERSION OF THIS COMMENT CLAIMED THIS ENDPOINT SEES "no widened draft,
+      // for any caller" AS A CONSEQUENCE OF THE FLOOR, AND THAT WAS FALSE — a `draft`
+      // carrying `visibility='public'` is admitted by the `public` floor, which is exactly
+      // the moderator-review bypass the REVIEW CEILING now closes. The property holds, but
+      // it is `maxVisibilityForStatus` that holds it, not this argument.
+      floor: 'public',
     });
     const { nextPage } = getNextPage({ req, nextCursor });
     return res.status(200).json({ items, metadata: { nextCursor, nextPage } });

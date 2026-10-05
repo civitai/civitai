@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react';
+
 /**
  * Compact relative age for the moderator review surfaces.
  *
@@ -14,6 +16,44 @@
 
 /** A timestamp we cannot read at all (an unparseable string reaching the adapter). */
 const UNKNOWN = '—';
+
+/**
+ * How often a relative age on a moderator review surface re-renders.
+ *
+ * 🔴 A MINUTE IS THE FLOOR THAT MATTERS, not a guess: it is the finest granularity
+ * `compactRelativeTime` can express past its `now` rung, so a faster tick could not change a
+ * single label.
+ */
+export const REVIEW_RELATIVE_TICK_MS = 60_000;
+
+/**
+ * A `Date` that advances on an interval — the clock behind every relative age on these
+ * surfaces.
+ *
+ * 🔴 ONE HOOK, NOT ONE PER SURFACE. It was written three times (the queue list, the shared
+ * review body, and the page body — the last of which imported the TICK CONSTANT from one
+ * sibling and then re-implemented the four-line body anyway). The tick is the thing a
+ * reviewer tunes — a `useIsClient` gate for SSR, pausing on a hidden tab,
+ * `document.visibilityState` — and three copies means tuning it once fixes one surface.
+ *
+ * 🔴 IT LIVES BESIDE `compactRelativeTime` ON PURPOSE. That function's docstring records
+ * that a SECOND relative-age ladder in this directory was deleted for drifting; the clock
+ * that drives it belongs in the same file for the same reason.
+ *
+ * ⚠️ NO `useIsClient` GATE. `UnifiedReviewList` argued it did not need one because nothing
+ * there renders on the server — an argument that is NOT true of a page body. It is still
+ * safe: `useState`'s initialiser runs identically on both sides and `setInterval` lives in an
+ * effect, so SSR and the first client paint agree and only the SECOND paint moves. Stated
+ * here rather than inherited silently.
+ */
+export function useNowTick(intervalMs: number = REVIEW_RELATIVE_TICK_MS): Date {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+  return now;
+}
 
 export function compactRelativeTime(date: Date, now: Date): string {
   const then = date.getTime();

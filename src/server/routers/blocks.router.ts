@@ -119,8 +119,11 @@ import { rateLimit } from '~/server/middleware.trpc';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import {
   emptyRevenue,
+  getGoodsSalesForOwner,
   getRecentAttributionsForOwner,
   getRevenueForOwner,
+  isMissingGoodsTableError,
+  unreadableGoodsSales,
 } from '~/server/services/blocks/buzz-attribution.service';
 import {
   emptyAnalytics,
@@ -2510,6 +2513,9 @@ export const blocksRouter = router({
         return await startAgentReview({
           publishRequestId: input.publishRequestId,
           modUserId: ctx.user.id,
+          // Optional targeted re-run (one failed analysis instead of all three).
+          // `undefined` ⇒ a full run, exactly as before this field existed.
+          sections: input.sections,
         });
       } catch (err) {
         // Preserve a typed TRPCError's CODE (the service raises CONFLICT — "a
@@ -7807,8 +7813,12 @@ export const blocksRouter = router({
    * consistent choice, for the reasons spelled out on getMyAppAnalytics.
    *
    * 🔴 DELIBERATELY **NOT** WIDENED FOR COLLABORATORS. This proc answers "what have
-   * *I* accrued", keyed on the snapshotted `BlockBuzzAttribution.appOwnerUserId`, and
-   * that is exactly the right question for it to keep answering:
+   * *I* accrued", keyed on the snapshotted `BlockBuzzAttribution.appOwnerUserId` — and,
+   * for the `goods` bucket, the snapshotted `block_good_purchase.app_owner_user_id`,
+   * which was chosen for the identical reason. Both arguments below therefore hold for
+   * both rails, which is what made the goods bridge a safe addition to THIS proc and
+   * not to the collaborator ones. That is exactly the right question for it to keep
+   * answering:
    *   - an editor calling it sees THEIR OWN portfolio, and nothing of the owner's —
    *     no leak, no change;
    *   - an owner who TRANSFERRED an app away still sees the rows they accrued before
@@ -7850,17 +7860,80 @@ export const blocksRouter = router({
         return emptyRevenue();
       }
       const user = ctx.user as SessionUser;
-      const { summary, topApps } = await getRevenueForOwner({
-        ownerUserId: user.id,
-        appBlockId: input.appBlockId,
-        from: input.from ? new Date(input.from) : undefined,
-        to: input.to ? new Date(input.to) : undefined,
-      });
-      const recentAttributions = await getRecentAttributionsForOwner({
-        ownerUserId: user.id,
-        appBlockId: input.appBlockId,
-      });
-      return { summary, topApps, recentAttributions };
+      const from = input.from ? new Date(input.from) : undefined;
+      const to = input.to ? new Date(input.to) : undefined;
+      // THREE BRANCHES, **SEVEN** CONCURRENT READS — do not read this as "three
+      // queries". `getRevenueForOwner` is itself a `Promise.all` of five (four
+      // single-status aggregates plus a groupBy), `getRecentAttributionsForOwner`
+      // is one, and the goods bridge is one.
+      //
+      // ⚠️ SEVEN IS THE ONLY NUMBER HERE THAT IS DERIVABLE FROM THIS REPO, and an
+      // earlier version of this comment also claimed the call holds "~20% of a
+      // pod's read pool, so ~5 concurrent callers exhaust it". That was removed as
+      // unfounded: the pool size comes from `connection_limit` on `DATABASE_URL`,
+      // which is deployment configuration this repo does not set, and Prisma's
+      // default is `num_cpus * 2 + 1` — on a small pod that is single digits, under
+      // which seven concurrent reads is most of the pool rather than a fifth. A
+      // fabricated capacity figure is worse than none, because the next author
+      // widening this proc would have budgeted against it.
+      //
+      // What survives is the shape of the concern: this proc fans out SEVEN reads
+      // per call, it is only acceptable because `appDeveloperProcedure` plus the
+      // `appBlocks` flag keeps the audience tiny, and anyone widening the audience
+      // should measure the live pool rather than trust a number in a comment.
+      //
+      // Parallel rather than sequential is still right: the connections are held
+      // for the same total work either way, just longer, and
+      // `/apps/[appBlockId]/revenue` documents at its `<RevenuePanel>` mount that
+      // it refuses to serialize independent reads on a money screen.
+      //
+      // `getGoodsSalesForOwner` is the digital-goods bridge: sales record into
+      // `block_good_purchase` and write no attribution row, so the owner's own
+      // revenue page sees them only because this call is here. It is a READ, not
+      // a back-fill — see the function's docblock for why that distinction was
+      // chosen deliberately.
+      const [{ summary, topApps }, recentAttributions, goods] = await Promise.all([
+        getRevenueForOwner({ ownerUserId: user.id, appBlockId: input.appBlockId, from, to }),
+        getRecentAttributionsForOwner({ ownerUserId: user.id, appBlockId: input.appBlockId }),
+        // 🔴 THE ONLY BRANCH THAT MAY DEGRADE, and only for ONE error. The table
+        // `block_good_purchase` is applied BY HAND per environment (see the
+        // migration header), so this code can legitimately run against a database
+        // that does not have it. Unguarded, that took down BOTH revenue pages
+        // entirely — including the card-purchase figures, which were readable.
+        //
+        // 🔴 `isMissingGoodsTableError` IS WHAT MAKES THIS SAFE, AND THE WIDE
+        // VERSION OF THIS CATCH WAS A BUG. Catching every rejection means a column
+        // rename, a bad argument or a `TypeError` in the aggregate is reported to
+        // the owner as "sales could not be loaded" — politely, in production,
+        // indefinitely. That is the invisible-revenue defect this change exists to
+        // fix, re-entering through the error path. Anything that is not the missing
+        // table RETHROWS and the proc fails loudly, as it should.
+        //
+        // 🔴 AND IT RETURNS A FLAGGED BUCKET, NOT ZEROS. `emptyGoodsSales()` here
+        // would report "no sales" for a rail that was never read — the fabricated
+        // zero this surface is built to prevent. `unreadableGoodsSales()` carries
+        // `unavailable: 'unreadable'` and `RevenuePanel` branches on it.
+        getGoodsSalesForOwner({
+          ownerUserId: user.id,
+          appBlockId: input.appBlockId,
+          from,
+          to,
+        }).catch((error) => {
+          if (!isMissingGoodsTableError(error)) throw error;
+          logToAxiom(
+            {
+              name: 'block-goods-earnings',
+              type: 'error',
+              message: 'block_good_purchase is absent; reporting the goods bucket as unreadable',
+              ownerUserId: user.id,
+              error: error instanceof Error ? error.message : String(error),
+            },
+            'civitai-prod'
+          ).catch(() => undefined);
+          return unreadableGoodsSales();
+        }),
+      ]);
+      return { summary, topApps, recentAttributions, goods };
     }),
 
   /**

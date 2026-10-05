@@ -44,8 +44,8 @@ function historyRow(over: Partial<Record<string, unknown>> & { id: string }) {
     reviewedAt: new Date('2026-03-02T00:00:00Z'),
     rejectionReason: null,
     deployState: 'live',
-    submittedBy: { id: 7, username: 'author', image: null },
-    reviewedBy: { id: 9, username: 'mod', image: null },
+    submittedBy: { id: 7, username: 'author', deletedAt: null, image: null },
+    reviewedBy: { id: 9, username: 'mod', deletedAt: null, image: null },
     ...over,
   };
 }
@@ -62,7 +62,7 @@ function queueRow(over: Partial<Record<string, unknown>> & { id: string; slug: s
     fileSummary: {},
     manifestDiffSummary: {},
     forgejoCommitSha: null,
-    submittedBy: { id: 7, username: 'author', image: null },
+    submittedBy: { id: 7, username: 'author', deletedAt: null, image: null },
     ...over,
   };
 }
@@ -172,8 +172,16 @@ describe('listVersionHistory — keyed on SLUG, newest-first, bounded', () => {
     // …and so are the fields the modal renders, including both user chips.
     for (const field of ['id', 'version', 'status', 'submittedAt', 'reviewedAt', 'rejectionReason'])
       expect(resolved[field], `${field} must be projected`).toBe(true);
-    expect(resolved.submittedBy).toEqual({ select: { id: true, username: true, image: true } });
-    expect(resolved.reviewedBy).toEqual({ select: { id: true, username: true, image: true } });
+    // 🔴 `deletedAt` IS PART OF BOTH CHIPS. `PriorVersionsModal` renders each of these
+    // through `UserAvatar`, which BRANCHES on `deletedAt` twice — `UserProfileLink`
+    // suppresses `linkToProfile` for a deleted account and `Username` renders "[deleted]".
+    // Without the field the value is `undefined` ⇒ falsy ⇒ a deleted user renders as a live,
+    // linked account. Asserted as an exact shape (not `toContain`) because the five
+    // `submittedBy` readers in this service must stay identical to each other; that parity
+    // rule lives in `src/server/services/blocks/__tests__/review-submitter-select-parity.test.ts`.
+    const CHIP = { select: { id: true, username: true, deletedAt: true, image: true } };
+    expect(resolved.submittedBy).toEqual(CHIP);
+    expect(resolved.reviewedBy).toEqual(CHIP);
     // No bundle pointers, no manifest blob: the modal is a list of dates and verdicts.
     expect(resolved.manifest).toBeUndefined();
     expect(resolved.bundleKey).toBeUndefined();
@@ -473,7 +481,7 @@ describe('the mod queue rows carry the app store listing, joined on SLUG', () =>
           deployState: 'live',
           deployDetail: null,
           deployUpdatedAt: null,
-          reviewedBy: { id: 9, username: 'mod', image: null },
+          reviewedBy: { id: 9, username: 'mod', deletedAt: null, image: null },
         },
       ]);
       mockDbRead.appListing.findMany.mockResolvedValue([

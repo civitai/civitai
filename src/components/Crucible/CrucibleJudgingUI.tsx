@@ -65,7 +65,10 @@ export type CrucibleJudgingUIProps = {
   pair: JudgingPairData;
   isLoading?: boolean;
   disabled?: boolean;
-  /** Playback each clip needs before either vote unlocks. Null or absent means no rule. */
+  /**
+   * Playback each clip needs before either vote unlocks. Null or absent means no rule. Overridden
+   * per side by `pair.watchSeconds`, which shortens a clip already judged this session.
+   */
   minViewSeconds?: number | null;
   onVote: (winnerId: number, loserId: number, watched: WatchedMs) => void;
   /** `unavailable`: an entry in the pair didn't load, so skipping wasn't the judge's choice. */
@@ -120,25 +123,28 @@ export function CrucibleJudgingUI({
     [pairKey]
   );
 
-  const requiredMs = (minViewSeconds ?? 0) * 1000;
+  const ruleSeconds = (side: Side) =>
+    (pair?.watchSeconds ? pair.watchSeconds[side] : minViewSeconds) ?? 0;
+  const requiredMs: Record<Side, number> = {
+    left: ruleSeconds('left') * 1000,
+    right: ruleSeconds('right') * 1000,
+  };
   // A clip shorter than the rule can never reach it, so playing it to its end once is enough.
-  const sideDone = (side: Side) => playedThrough[side] || watchedMs[side] >= requiredMs;
+  const sideDone = (side: Side) => playedThrough[side] || watchedMs[side] >= requiredMs[side];
   // The server checks the rule, not the clip's length, so a played-through short clip reports it.
   const reportedMs = (side: Side) =>
-    playedThrough[side] ? Math.max(watchedMs[side], requiredMs) : watchedMs[side];
-  const remainingMs = requiredMs
-    ? (['left', 'right'] as const).reduce(
-        (sum, side) => sum + (sideDone(side) ? 0 : Math.max(0, requiredMs - watchedMs[side])),
-        0
-      )
-    : 0;
+    playedThrough[side] ? Math.max(watchedMs[side], requiredMs[side]) : watchedMs[side];
+  const remainingMs = (['left', 'right'] as const).reduce(
+    (sum, side) => sum + (sideDone(side) ? 0 : Math.max(0, requiredMs[side] - watchedMs[side])),
+    0
+  );
   const watchGateOpen = remainingMs === 0;
 
   // Left plays its share, then right, then the judge is on their own. Derived from the watched
   // totals so a judge who plays a clip by hand is counted rather than fought.
   const isVideoPair =
     pair?.left.image.type === MediaType.video && pair?.right.image.type === MediaType.video;
-  const sequencing = !!requiredMs && isVideoPair && mediaReady && !watchGateOpen;
+  const sequencing = isVideoPair && mediaReady && !watchGateOpen;
   const autoplaySide: Side | null = !sequencing ? null : !sideDone('left') ? 'left' : 'right';
   const voteLocked = isDisabled || !mediaReady || !watchGateOpen;
 
@@ -172,7 +178,7 @@ export function CrucibleJudgingUI({
       }, 200);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `reportedMs` reads only the deps below
-    [voteLocked, pair, onVote, watchedMs, playedThrough, requiredMs]
+    [voteLocked, pair, onVote, watchedMs, playedThrough, requiredMs.left, requiredMs.right]
   );
 
   const anyUnavailable = media.left === 'error' || media.right === 'error';
@@ -223,8 +229,8 @@ export function CrucibleJudgingUI({
           isLoading={isLoading}
           disabled={voteLocked}
           pairKey={pairKey}
-          watchedMs={sideDone('left') ? Math.max(watchedMs.left, requiredMs) : watchedMs.left}
-          requiredMs={requiredMs}
+          watchedMs={sideDone('left') ? Math.max(watchedMs.left, requiredMs.left) : watchedMs.left}
+          requiredMs={requiredMs.left}
           autoplay={autoplaySide === 'left'}
           sequencing={sequencing}
           onWatched={(ms) => handleWatched('left', ms)}
@@ -247,8 +253,10 @@ export function CrucibleJudgingUI({
           isLoading={isLoading}
           disabled={voteLocked}
           pairKey={pairKey}
-          watchedMs={sideDone('right') ? Math.max(watchedMs.right, requiredMs) : watchedMs.right}
-          requiredMs={requiredMs}
+          watchedMs={
+            sideDone('right') ? Math.max(watchedMs.right, requiredMs.right) : watchedMs.right
+          }
+          requiredMs={requiredMs.right}
           autoplay={autoplaySide === 'right'}
           sequencing={sequencing}
           onWatched={(ms) => handleWatched('right', ms)}

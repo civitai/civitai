@@ -73,12 +73,13 @@ const VALID_BODY = { prompt: 'a photorealistic portrait of a knight', baseModel:
 
 const SERVICE_RESULT = {
   degraded: false,
+  insightFallback: false,
   intent: null,
   criteria: null,
   suggestions: [],
   noneProbability: null,
   model: 'typesafe/jev-1.13-20260917',
-  criteriaVersion: 1,
+  criteriaVersion: 2,
 };
 
 function makeRes() {

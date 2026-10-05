@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { CrucibleIngestionStatus, CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import {
+  getAverageFinishTopPercent,
+  getCreatorFinish,
   baseModelMakesMediaType,
+  canSeeCrucibleEntryDetails,
   getCrucibleCountdown,
   getCrucibleManageActions,
   getCrucibleMinVotes,
   getCruciblePrizeAmount,
+  getCruciblePrizeWinners,
   getCrucibleRatingLabel,
   getCrucibleStatusBadge,
   getCrucibleTransactionDescription,
@@ -13,11 +17,40 @@ import {
   getCrucibleEntriesCost,
   getCrucibleTotalPrizePool,
   getFreeEntriesLabel,
+  CRUCIBLE_SFW_LEVELS,
+  getCrucibleEntryBuzzType,
   isCrucibleFinalStretch,
+  isCrucibleSfw,
   isFreeCrucibleEntry,
   parsePrizePositions,
   rankCrucibleEntries,
 } from '~/utils/crucible-helpers';
+
+describe('green-site listing rule', () => {
+  it.each([
+    [1, false, true],
+    [1 | 2, false, true],
+    [1, true, false],
+    [1 | 4, false, false],
+    [1 | 8, false, false],
+    [16, false, false],
+    [2 | 16, false, false],
+    [0, false, false],
+    [64, false, false],
+    [1 | 64, false, false],
+  ])('isCrucibleSfw(level %i, textNsfw %s) is %s', (nsfwLevel, textNsfw, expected) => {
+    expect(isCrucibleSfw({ nsfwLevel, textNsfw })).toBe(expected);
+  });
+
+  it('lists exactly the PG / PG-13 combinations for a query to match', () => {
+    expect(CRUCIBLE_SFW_LEVELS).toEqual([1, 2, 3]);
+  });
+
+  it('charges an entrant in the currency of the site they enter on', () => {
+    expect(getCrucibleEntryBuzzType(true)).toBe('green');
+    expect(getCrucibleEntryBuzzType(false)).toBe('yellow');
+  });
+});
 
 describe('parsePrizePositions', () => {
   it('parses the object map the database actually stores', () => {
@@ -130,6 +163,64 @@ describe('getCrucibleStatusBadge', () => {
     expect(getCrucibleStatusBadge(CrucibleStatus.Completed, sevenDayRun(-1), now).label).toBe(
       'Completed'
     );
+  });
+});
+
+describe('getCruciblePrizeWinners', () => {
+  const prizePositions = [
+    { position: 1, percentage: 50 },
+    { position: 2, percentage: 30 },
+    { position: 3, percentage: 20 },
+  ];
+  const place = (entryId: number, userId: number, position: number) => ({
+    entryId,
+    userId,
+    position,
+  });
+  const winners = (placed: ReturnType<typeof place>[], positions = prizePositions) =>
+    getCruciblePrizeWinners({ placed, prizePositions: positions, totalPrizePool: 1000 }).map(
+      (w) => [w.entryId, w.prizePlace, w.prizeAmount]
+    );
+
+  it("gives a creator's best placing their one prize and moves the next creators up", () => {
+    expect(
+      winners([place(1, 10, 1), place(2, 10, 2), place(3, 10, 3), place(4, 11, 4), place(5, 12, 5)])
+    ).toEqual([
+      [1, 1, 500],
+      [4, 2, 300],
+      [5, 3, 200],
+    ]);
+  });
+
+  it('reads placings in position order, whatever order they arrive in', () => {
+    expect(winners([place(5, 12, 5), place(2, 10, 2), place(4, 11, 4), place(1, 10, 1)])).toEqual([
+      [1, 1, 500],
+      [4, 2, 300],
+      [5, 3, 200],
+    ]);
+  });
+
+  it('splits the unfilled prizes among the creators there are', () => {
+    expect(winners([place(1, 10, 1), place(2, 10, 2), place(3, 11, 3)])).toEqual([
+      [1, 1, 625],
+      [3, 2, 375],
+    ]);
+  });
+
+  it('pays no one for a prize place the crucible did not configure', () => {
+    const gapped = [
+      { position: 1, percentage: 60 },
+      { position: 3, percentage: 40 },
+    ];
+    expect(winners([place(1, 10, 1), place(2, 11, 2), place(3, 12, 3)], gapped)).toEqual([
+      [1, 1, 600],
+      [3, 3, 400],
+    ]);
+  });
+
+  it('pays nobody without placings or prize places', () => {
+    expect(winners([])).toEqual([]);
+    expect(winners([place(1, 10, 1)], [])).toEqual([]);
   });
 });
 
@@ -454,5 +545,78 @@ describe('free entries', () => {
     [3, 3, 'Free to enter'],
   ])('labels %i free of %i as %s', (freeEntriesPerUser, entryLimit, label) => {
     expect(getFreeEntriesLabel({ freeEntriesPerUser, entryLimit })).toBe(label);
+  });
+});
+
+describe('canSeeCrucibleEntryDetails', () => {
+  const stranger = { isModerator: false, isOwnEntry: false };
+
+  it.each([CrucibleStatus.Pending, CrucibleStatus.Active])(
+    "hides other people's entries from a judge while %s",
+    (status) => {
+      expect(canSeeCrucibleEntryDetails({ status, ...stranger })).toBe(false);
+    }
+  );
+
+  it.each([CrucibleStatus.Completed, CrucibleStatus.Cancelled])(
+    'reveals every entry once %s',
+    (status) => {
+      expect(canSeeCrucibleEntryDetails({ status, ...stranger })).toBe(true);
+    }
+  );
+
+  it('shows an entrant their own entries while running', () => {
+    expect(
+      canSeeCrucibleEntryDetails({
+        status: CrucibleStatus.Active,
+        isModerator: false,
+        isOwnEntry: true,
+      })
+    ).toBe(true);
+  });
+
+  it('shows moderators every entry while running', () => {
+    expect(
+      canSeeCrucibleEntryDetails({
+        status: CrucibleStatus.Active,
+        isModerator: true,
+        isOwnEntry: false,
+      })
+    ).toBe(true);
+  });
+});
+
+describe('getCreatorFinish', () => {
+  it('ranks each creator by their best entry, so extra entries take no extra places', () => {
+    const placed = [
+      { userId: 3, position: 5 },
+      { userId: 1, position: 2 },
+      { userId: 3, position: 4 },
+      { userId: 2, position: 3 },
+      { userId: 1, position: 1 },
+    ];
+
+    expect(getCreatorFinish({ placed, userId: 3 })).toEqual({ rank: 3, field: 3 });
+    expect(getCreatorFinish({ placed, userId: 1 })).toEqual({ rank: 1, field: 3 });
+    expect(getCreatorFinish({ placed, userId: 9 })).toBeNull();
+  });
+});
+
+describe('getAverageFinishTopPercent', () => {
+  it('averages the top percent of each counted field and never reads as top 0%', () => {
+    const firstOfMany = { rank: 1, field: 400 };
+    expect(getAverageFinishTopPercent([firstOfMany, firstOfMany, firstOfMany])).toBe(1);
+    expect(
+      getAverageFinishTopPercent([
+        { rank: 6, field: 6 },
+        { rank: 1, field: 10 },
+        { rank: 5, field: 10 },
+      ])
+    ).toBe(53);
+  });
+
+  it('rounds to the nearest percent', () => {
+    const firstOfEight = { rank: 1, field: 8 };
+    expect(getAverageFinishTopPercent([firstOfEight, firstOfEight, firstOfEight])).toBe(13);
   });
 });

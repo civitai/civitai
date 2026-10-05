@@ -12,6 +12,7 @@ import {
   OWNER_UNPUBLISH_EVENT,
   readLastModerationAction,
 } from '~/server/services/blocks/app-listing-owner-unpublish';
+import { readListingVisibility } from '~/server/services/blocks/app-listing-visibility.service';
 import { listingCoverUrl, listingIconUrl } from '~/server/services/blocks/listing-media-url';
 import type { ListingProblem } from '~/server/services/blocks/listing-problems';
 import { computeListingProblems } from '~/server/services/blocks/listing-problems';
@@ -31,6 +32,7 @@ import {
   listingKindSupports,
   PUBLISHABLE_LISTING_STATUSES,
 } from '~/shared/constants/app-capabilities.constants';
+import type { AppListingVisibility } from '~/shared/utils/app-listing-visibility';
 
 /**
  * App Listing COLLABORATORS — THE consolidated app-access predicate.
@@ -353,8 +355,16 @@ export function canonicalOwnerWhereBranches(userId: number): Array<Record<string
  * message branch requires the missing object to be named as a RELATION or TABLE, and
  * refuses anything that mentions a column at all. `app-access.service.test.ts` pins both
  * directions, including the "broadened back to `does not exist` / `not found`" mutants.
+ *
+ * 🔴 EXPORTED BECAUSE IT IS THE MEASURED SPELLING, AND A SECOND COPY WAS NARROWER.
+ * The digital-goods rail (`isMissingGoodsTableError` in `buzz-attribution.service.ts`)
+ * open-coded a code-only version of this check. On a path where Prisma leaves the
+ * SQLSTATE in the MESSAGE — the very case the sentence above records as measured — that
+ * copy returned false, the goods `.catch` rethrew, and `Promise.all` took BOTH owner
+ * revenue pages down, including the card figures that were readable. One spelling, one
+ * place: new callers delegate here rather than re-deriving the condition.
  */
-function isMissingTableError(err: unknown): boolean {
+export function isMissingTableError(err: unknown): boolean {
   const code = (err as { code?: unknown })?.code;
   if (code === 'P2021' || code === '42P01') return true;
   // Prisma wraps the driver error; the SQLSTATE is only in the message on some paths.
@@ -970,6 +980,47 @@ export type AppListingAuthoringContext = Omit<
    * `AppCollaboratorsPanelView`, and the server gate is unchanged and still authoritative.
    */
   connectClientId: string | null;
+  /**
+   * The listing's per-listing VISIBILITY LEVEL, or `null` for "the owner has expressed no
+   * choice". Read through the guarded raw-SQL reader, never a Prisma `select` — the column
+   * is `// @no-type` and does not exist on the generated delegate.
+   *
+   * 🔴 `null` IS NOT THE `private` LEVEL, and collapsing the pair is the documented way
+   * this goes wrong (see `app-listing-visibility.service.ts`'s "THREE STATES, NOT TWO").
+   * An unset level resolves to the pre-feature rule for the row's status; `private` is a
+   * deliberate choice that hides an approved listing. A client rendering a selector must
+   * show "no choice" as its own state, not preselect `private`.
+   */
+  visibility: AppListingVisibility | null;
+  /**
+   * False ⇒ the manual-apply migration is not applied in THIS environment, `visibility`
+   * above is a placeholder, and no write may name the column.
+   *
+   * 🔴 CARRIED SO THE CONTROL CAN DISABLE ITSELF INSTEAD OF OFFERING A WRITE THAT 500s.
+   * The owner write path (`setListingVisibilityAsOwner`) is raw SQL with NO missing-column
+   * degradation — by design, because a silently-swallowed write is worse than an error —
+   * so on an un-migrated environment the only correct UI is a disabled control saying so.
+   * A field is not a guard: the server still refuses via `assertVisibilityWritable`, and
+   * that refusal remains authoritative.
+   */
+  visibilityAvailable: boolean;
+  /**
+   * ⚠️ THERE IS DELIBERATELY NO `maxVisibility` FIELD, AND ONE WAS SHIPPED AND REMOVED.
+   *
+   * It carried `maxVisibilityForStatus(row.status)` and was read by NOTHING but a test
+   * assertion: the client computes the ceiling by importing that same shared function. Its
+   * own docblock argued the opposite — *"the client must NOT re-derive the ceiling"* — while
+   * the client in the same change re-derived it, so the field shipped as a second spelling
+   * of a value nobody consumed. A field that exists in a DTO is not a guard; only a branch
+   * on it is, and there was no branch.
+   *
+   * 🔴 THE D6 REQUIREMENT IS ALREADY MET WITHOUT IT, which is the part to understand before
+   * re-adding it: `maxVisibilityForStatus` lives in `~/shared/utils` and BOTH sides import
+   * the SAME function, so there is one implementation of the ceiling, not two. D6 forbids a
+   * second DERIVATION, not a client-side CALL of the shared one. If a future surface needs
+   * the ceiling without the status — a paged list, say — add it then AND make a branch read
+   * it; do not re-add it as documentation.
+   */
 };
 
 /**
@@ -1433,6 +1484,29 @@ export async function getAppListingAuthoringContext(opts: {
    */
   const lastAction =
     row.status === 'removed' ? await readLastModerationAction(dbRead, access.seatListingId) : null;
+  /**
+   * The per-listing visibility level, for the Publishing tab's level control.
+   *
+   * 🔴 KEYED ON `access.seatListingId` — THE PARENT — NEVER ON `opts.appListingId`. The
+   * caller may have arrived with a SHADOW revision id, and a shadow is a draft copy: the
+   * level governs the LIVE listing's discoverability, so reading it off a shadow would
+   * report the wrong row's level (in practice `null`, since nothing writes a shadow's) and
+   * an owner editing an approved app would see their deliberate `private` as "no choice".
+   * This is the same parent-not-shadow rule the `kind`/`appBlockId` comment below gives,
+   * in the column that decides who can see the app.
+   *
+   * 🔴 `dbRead` IS CORRECT HERE AND THE DIRECTION IS WHY. This value does not GRANT
+   * anything — it only decides which option a selector shows preselected; the write
+   * re-reads on the primary inside `setListingVisibilityAsOwner`'s own gate and CAS. A
+   * lagging replica can therefore only render a stale SELECTION, which costs a refresh,
+   * never a wrong audience. (Same offer-here/grant-there asymmetry as `lastAction` above.)
+   *
+   * 🔴 IT DEGRADES RATHER THAN THROWING, so an un-migrated environment still renders the
+   * whole authoring page. `readListingVisibility` returns `available: false` on 42703/P2022
+   * ONLY; a connection failure or a missing table still propagates, because degrading on
+   * those would turn an outage into a silently wrong audience.
+   */
+  const visibilityRead = await readListingVisibility(access.seatListingId, dbRead);
   return {
     appListingId: access.seatListingId,
     slug: row.slug,
@@ -1447,6 +1521,8 @@ export async function getAppListingAuthoringContext(opts: {
     connectClientId: row.connectClientId,
     role: access.role,
     capabilities: capabilitiesForKind(access.kind),
+    visibility: visibilityRead.visibility,
+    visibilityAvailable: visibilityRead.available,
   };
 }
 

@@ -1277,3 +1277,17 @@ export const CrucibleIngestionStatus = {
 
 export type CrucibleIngestionStatus =
   (typeof CrucibleIngestionStatus)[keyof typeof CrucibleIngestionStatus];
+
+export const CrucibleEngagementType = {
+  Notify: 'Notify',
+} as const;
+
+export type CrucibleEngagementType =
+  (typeof CrucibleEngagementType)[keyof typeof CrucibleEngagementType];
+
+export const PrizeSourceType = {
+  Crucible: 'Crucible',
+  Challenge: 'Challenge',
+} as const;
+
+export type PrizeSourceType = (typeof PrizeSourceType)[keyof typeof PrizeSourceType];

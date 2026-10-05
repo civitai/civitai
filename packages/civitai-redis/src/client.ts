@@ -2112,6 +2112,9 @@ export const REDIS_SYS_KEYS = {
     // Hash { sampleRate, until?, timeoutMs?, maxInflight? }: mirror a share of image-feed
     // searches to the candidate feed service and record the comparison. Off when missing.
     FEED_SHADOW: 'system:feed-shadow',
+    // Hash { repeatViewSeconds, sessionIdleSeconds }: the watch a judge owes a clip they already
+    // voted on this judging session, and how long idle ends that session. Missing = defaults.
+    CRUCIBLE_JUDGING: 'system:crucible-judging',
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',
@@ -2332,10 +2335,11 @@ export const REDIS_SYS_KEYS = {
   CRUCIBLE: {
     ELO: 'crucible:elo',
     VOTED_PAIRS: 'crucible:voted',
-    SERVED_PAIRS: 'crucible:served',
+    SERVED_PAIR: 'crucible:served-pair',
     JUDGE_ENTRY_VOTES: 'crucible:judge-entry-votes',
     JUDGES: 'crucible:judges',
     USER_VOTES: 'crucible:user-votes',
+    JUDGING_SESSION: 'crucible:judging-session',
   },
 } as const;
 
