@@ -413,3 +413,83 @@ describe('/api/upload/abort — client failure reason', () => {
     expect(logged.failure).toBeUndefined();
   });
 });
+
+/**
+ * The client's account of what the relay fallback did. The relay's own counter records
+ * `outcome="success"` once the route stores the bytes, so it cannot see a rescue the browser
+ * could not use — it overstates user-visible rescues, and by how much was unmeasurable while
+ * every client-side failure collapsed into one value.
+ *
+ * Caller-supplied JSON on an unauthenticated-body route, so it is narrowed against a closed set
+ * before it becomes a log field.
+ */
+describe('/api/upload/abort — relay fallback outcome', () => {
+  const lastLogged = () => vi.mocked(logToAxiom).mock.calls.at(-1)?.[0] as Record<string, unknown>;
+
+  it('logs the outcome the client declared', async () => {
+    mockAbortMultipartUpload.mockResolvedValue(undefined);
+    const res = makeRes();
+    await handler(makeReq({ body: { relayOutcome: 'bad_body' } }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 's3-upload-abort', relayOutcome: 'bad_body' })
+    );
+  });
+
+  it('logs it on the abort-error path too', async () => {
+    mockAbortMultipartUpload.mockRejectedValue(
+      s3Error({ name: 'InternalError', $metadata: { httpStatusCode: 500 } })
+    );
+    const res = makeRes();
+    await handler(makeReq({ body: { relayOutcome: 'rescued' } }), res);
+
+    expect(res.statusCode).toBe(503);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 's3-upload-abort-error', relayOutcome: 'rescued' })
+    );
+  });
+
+  it.each([
+    ['rescued'],
+    ['not_attempted'],
+    ['transport_error'],
+    ['aborted'],
+    ['non_2xx'],
+    ['bad_body'],
+  ])('passes the declarable value %s through unchanged', async (value) => {
+    mockAbortMultipartUpload.mockResolvedValue(undefined);
+    await handler(makeReq({ body: { relayOutcome: value } }), makeRes());
+
+    expect(lastLogged().relayOutcome).toBe(value);
+  });
+
+  it.each([
+    ['an unrecognised string', 'definitely_not_an_outcome'],
+    // 🔴 A SERVER bucket declared BY A CLIENT. `unknown` is the row a rollout is graded on — a
+    // falling `unknown` reads as stale bundles clearing — so a client able to write it could
+    // make the rollout look finished.
+    ['the server-only bucket unknown', 'unknown'],
+    ['the server-only bucket other', 'other'],
+    ['an empty string', ''],
+    ['a number', 7],
+    ['an array', ['rescued']],
+    ['an object', { reason: 'rescued' }],
+    ['null', null],
+  ])('maps %s to other rather than minting a field value', async (_name, value) => {
+    mockAbortMultipartUpload.mockResolvedValue(undefined);
+    await handler(makeReq({ body: { relayOutcome: value } }), makeRes());
+
+    expect(lastLogged().relayOutcome).toBe('other');
+  });
+
+  it('reports an ABSENT outcome as unknown, so the field is never missing', async () => {
+    // 🔴 Always present, unlike `failure`: grouping aborts by this field needs one denominator,
+    // and an omitted key would split it across two shapes. `unknown` is also a real population
+    // here — a bundle predating the field, and the abort paths that never reach the relay.
+    mockAbortMultipartUpload.mockResolvedValue(undefined);
+    await handler(makeReq(), makeRes());
+
+    expect(lastLogged().relayOutcome).toBe('unknown');
+  });
+});

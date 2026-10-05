@@ -8,6 +8,7 @@ import {
   getB2ImageS3Client,
 } from '~/utils/s3-utils';
 import { logToAxiom } from '~/server/logging/client';
+import { sanitizeRelayFallbackOutcome } from '~/utils/relay-fallback-outcome';
 
 /**
  * Sanitize the caller-supplied failure object before it reaches the event stream.
@@ -45,8 +46,11 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
     return;
   }
 
-  const { bucket, key, type, uploadId, backend, failure } = req.body;
+  const { bucket, key, type, uploadId, backend, failure, relayOutcome } = req.body;
   const clientFailure = sanitizeClientFailure(failure);
+  // Total and always logged, unlike `failure`: the field is read by grouping aborts, and a
+  // bucket that can be absent would split the denominator across two series.
+  const clientRelayOutcome = sanitizeRelayFallbackOutcome(relayOutcome);
   try {
     let s3;
     if (backend === 'backblaze') {
@@ -70,6 +74,7 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
         uploadId,
         backend,
         ...(clientFailure ? { failure: clientFailure } : {}),
+        relayOutcome: clientRelayOutcome,
       });
     } catch {
       /* contained — see above */
@@ -121,6 +126,7 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
           uploadId,
           backend,
           ...(clientFailure ? { failure: clientFailure } : {}),
+          relayOutcome: clientRelayOutcome,
           error: error.message,
           errorClass,
         });

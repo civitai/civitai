@@ -22,6 +22,7 @@ import {
   IMAGE_UPLOAD_RELAY_PRODUCER_HEADER,
   type ClientDeclarableProducer,
 } from '~/utils/image-upload-relay-producer';
+import type { RelayFallbackFailureReason } from '~/utils/relay-fallback-outcome';
 
 /**
  * The route both upload paths fall back to.
@@ -255,9 +256,14 @@ function abortError() {
   return new DOMException('The operation was aborted.', 'AbortError');
 }
 
+export type RelayFallbackResult =
+  | { ok: true; id: string }
+  | { ok: false; reason: RelayFallbackFailureReason };
+
 /**
  * Execute the multipart upload's relay fallback: POST the whole file through our own
- * origin (`/api/v1/image-upload/relay`) and resolve the relay-minted key, or `null`.
+ * origin (`/api/v1/image-upload/relay`) and resolve the relay-minted key, or the reason
+ * the rescue did not produce one.
  *
  * The DECISION to call this lives in `shouldRelayOnPartFailure` (~/utils/upload-retry);
  * this is the execution half, extracted from `useS3Upload` so it is unit-testable the
@@ -270,11 +276,16 @@ function abortError() {
  * test file — `src/hooks/__tests__/useS3Upload.test.ts` — and it is the one that can see
  * that class of defect, because it drives the hook rather than these functions.
  *
- * 🔴 `null` for EVERY failure, including throws. The caller falls through to the normal
- * terminal-error path, so a broken fallback degrades to "the upload failed" (the
+ * 🔴 NEVER THROWS, for any failure. The caller falls through to the normal terminal-error
+ * path on `ok: false`, so a broken fallback degrades to "the upload failed" (the
  * pre-existing outcome) rather than replacing the user's real diagnosis with a fallback
  * error. The 429 shed is retried once via `relayWithRetry`, honoured with the same
  * clamp and cancellability the single-PUT path gets.
+ *
+ * 🔴 The four failures are DISTINGUISHED rather than collapsed, and `reason` is telemetry
+ * only — nothing branches on it. They used to share one bare `null`, which made the
+ * server's own `outcome="success"` count unfalsifiable: `bad_body` is a relay the route
+ * already counted as a rescue while the person saw a failed upload.
  *
  * The relay mints its OWN key server-side (an overwrite guard it enforces by accepting
  * no caller key), so the returned id is NOT the presigned key the multipart session was
@@ -288,7 +299,7 @@ export async function relayImageFallback(
     sleep: (ms: number) => Promise<void>;
     defaultRetryAfterSeconds: number;
   }
-): Promise<string | null> {
+): Promise<RelayFallbackResult> {
   try {
     const res = await relayWithRetry(
       // `multipart`: this is the execution half of the MULTIPART path's rescue. The
@@ -298,10 +309,19 @@ export async function relayImageFallback(
       () => postImageUploadRelay(file, { signal: opts.signal, producer: 'multipart' }),
       opts
     );
-    if (!res.ok) return null;
-    const data: { id?: unknown } = await res.json();
-    return typeof data.id === 'string' && data.id ? data.id : null;
-  } catch {
-    return null;
+    if (!res.ok) return { ok: false, reason: 'non_2xx' };
+    let id: unknown;
+    try {
+      id = ((await res.json()) as { id?: unknown }).id;
+    } catch {
+      // A 2xx body we cannot read is the SAME mode as one carrying no id — the route stored
+      // the bytes and counted a success either way. Merging this into the outer catch would
+      // report it as a transport failure, i.e. as a request that never arrived.
+      return { ok: false, reason: 'bad_body' };
+    }
+    return typeof id === 'string' && id ? { ok: true, id } : { ok: false, reason: 'bad_body' };
+  } catch (err) {
+    const aborted = err instanceof DOMException && err.name === 'AbortError';
+    return { ok: false, reason: aborted ? 'aborted' : 'transport_error' };
   }
 }

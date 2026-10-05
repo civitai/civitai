@@ -42,7 +42,10 @@ const UPLOAD_IDENTITY = {
 };
 
 type PartResponse = { status: number; etag?: string; networkError?: boolean };
-type AbortBody = { failure?: { kind: string; partNumber?: number; status?: number } };
+type AbortBody = {
+  failure?: { kind: string; partNumber?: number; status?: number };
+  relayOutcome?: string;
+};
 
 let partHandler: (partNumber: number) => PartResponse;
 let backend: string;
@@ -62,6 +65,8 @@ let relayRetryAfterSeconds: number | null;
 let relayTimes: number[];
 /** Park the relay POST in flight so a test can cancel while it is running. */
 let relayHangsUntilAborted: boolean;
+/** Reject the relay POST the way a browser does when it cannot reach our origin at all. */
+let relayRejects: boolean;
 /** Set once the parked relay POST has actually been issued. */
 let relayStarted: boolean;
 /**
@@ -193,6 +198,7 @@ function makeFetch(partCount: number) {
       relayTimes.push(Date.now());
       relayRequestHeaders.push((init?.headers ?? {}) as Record<string, string>);
       relayCalls++;
+      if (relayRejects) throw new TypeError('Failed to fetch');
       const scripted = relayScriptedStatuses.shift();
       if (scripted !== undefined)
         return {
@@ -351,6 +357,7 @@ beforeEach(() => {
   relayRetryAfterSeconds = null;
   relayTimes = [];
   relayHangsUntilAborted = false;
+  relayRejects = false;
   relayStarted = false;
   relayRequestHeaders = [];
   abortCalls = [];
@@ -397,6 +404,10 @@ describe('useS3Upload relay fallback', () => {
     // one open session apiece, and the abort stream would lose the reason that explains
     // why the direct path was abandoned.
     expect(abortCalls.map((c) => c.failure)).toEqual([{ kind: 'network-error', partNumber: 1 }]);
+    // 🔴 The rescue the relay's own counter has always been able to see — recorded here so the
+    // counter can be read against it. Without a client-side `rescued`, the counter's total is
+    // the only number available and it cannot be compared with anything.
+    expect(abortCalls.map((c) => c.relayOutcome)).toEqual(['rescued']);
     h.unmount();
   });
 
@@ -440,6 +451,10 @@ describe('useS3Upload relay fallback', () => {
     // No relay happened, so the upload reports the presigned key and no url.
     expect(result).toMatchObject({ url: null, key: UPLOAD_IDENTITY.key });
     expect(h.statuses()).toEqual(['error']);
+    // 🔴 THE DISCRIMINATION THAT MATTERS: the gate declining and the relay running-and-failing
+    // are different populations, and reporting both as one failure value is the shape that made
+    // 659 server-counted successes impossible to reconcile against 722 eligible failures.
+    expect(abortCalls.map((c) => c.relayOutcome)).toEqual(['not_attempted']);
     h.unmount();
   });
 
@@ -498,6 +513,9 @@ describe('useS3Upload relay fallback', () => {
     // unnoticed — the relay-success case asserts its own, and every non-relay case asserts
     // through the ordinary failure path.
     expect(abortCalls.map((c) => c.failure)).toEqual([{ kind: 'network-error', partNumber: 1 }]);
+    // A cancel mid-relay is not a relay that failed, and it reaches the same `catch` as a dead
+    // network — so without this the two are one row.
+    expect(abortCalls.map((c) => c.relayOutcome)).toEqual(['aborted']);
     h.unmount();
   });
 
@@ -522,6 +540,50 @@ describe('useS3Upload relay fallback', () => {
     expect(h.statuses()).toEqual(['error']);
     // The abort still reports the ORIGINAL network failure, not the relay's refusal.
     expect(abortCalls.map((c) => c.failure)).toEqual([{ kind: 'network-error', partNumber: 1 }]);
+    h.unmount();
+  });
+
+  it.each([
+    [
+      'transport_error',
+      'the relay could not be reached',
+      () => {
+        relayRejects = true;
+      },
+    ],
+    [
+      'non_2xx',
+      'our own origin answered and refused',
+      () => {
+        relayResponse = { ok: false, id: RELAY_KEY };
+      },
+    ],
+    [
+      'bad_body',
+      'the relay answered 2xx carrying no id',
+      () => {
+        relayResponse = { ok: true };
+      },
+    ],
+  ])('reports %s on the abort POST when %s', async (expected, _why, arrange) => {
+    // 🔴 ASSERTED THROUGH THE HOOK, not against `relayImageFallback`. The reason is useless
+    // unless it reaches the request the server reads, and this feature has already shipped a
+    // defect where both halves were correct in isolation while the wiring was inert.
+    vi.stubGlobal('fetch', makeFetch(1));
+    partHandler = () => ({ status: 0, networkError: true });
+    arrange();
+    const h = await mountHook();
+
+    const result = await runUpload(h, makeFile(CHUNK), UploadType.Image);
+
+    // Positive control: a run where the relay never fired would satisfy the row below with
+    // `not_attempted` and read as a working discriminator.
+    expect(relayCalls).toBe(1);
+    expect(abortCalls.map((c) => c.relayOutcome)).toEqual([expected]);
+    // 🔴 The caller's behaviour is UNCHANGED by the new result shape: every failure still
+    // degrades to the pre-existing terminal error, reporting the presigned key and no url.
+    expect(result).toMatchObject({ url: null, key: UPLOAD_IDENTITY.key });
+    expect(h.statuses()).toEqual(['error']);
     h.unmount();
   });
 
