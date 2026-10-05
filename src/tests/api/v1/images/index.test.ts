@@ -701,7 +701,7 @@ describe('/api/v1/images feed-path offset cursor', () => {
       }),
     };
     const feed = new ImagesFeed(
-      () => ({ getIndex: async () => index } as never),
+      () => ({ index: () => index } as never),
       {} as never,
       {} as never,
       {} as never,
