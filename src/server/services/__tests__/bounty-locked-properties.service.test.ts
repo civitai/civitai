@@ -190,6 +190,16 @@ describe('upsertBounty — profanity filter vs stored locks', () => {
     });
   });
 
+  it('refuses an update whose expiration precedes its start date', async () => {
+    const day = 24 * 60 * 60 * 1000;
+    await expect(
+      upsert({
+        startsAt: new Date(Date.now() + 10 * day).toISOString(),
+        expiresAt: new Date(Date.now() + 2 * day).toISOString(),
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
   it('does not run once Bounty text scan is active for this bounty', async () => {
     vi.mocked(getTextScanMode).mockResolvedValue('active');
 
@@ -273,6 +283,37 @@ describe('upsertBounty — create path', () => {
     await create({ buzzType: 'green' });
 
     expect(createData().lockedProperties).toEqual(['nsfw']);
+  });
+
+  it('rejects a past start date as a bad request, not a server error', async () => {
+    await expect(
+      create({ startsAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString() })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'Start date must be in the future' });
+    expect(mockBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('refuses an expiration before the start date, which the field bounds alone allow', async () => {
+    const day = 24 * 60 * 60 * 1000;
+    await expect(
+      create({
+        startsAt: new Date(Date.now() + 10 * day).toISOString(),
+        expiresAt: new Date(Date.now() + 2 * day).toISOString(),
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'Expiration date must come after the start date' });
+    expect(mockBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('judges the start date against the current day, not the day the module loaded', async () => {
+    const loadedAt = Date.now();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(loadedAt + 5 * 24 * 60 * 60 * 1000);
+      await expect(
+        create({ startsAt: new Date(loadedAt + 2 * 24 * 60 * 60 * 1000).toISOString() })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('refuses to create an nsfw bounty paid in green buzz', async () => {

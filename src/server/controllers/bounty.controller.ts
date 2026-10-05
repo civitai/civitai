@@ -30,7 +30,10 @@ import { getFilesByEntity } from '~/server/services/file.service';
 import type { BountyEntryFileMeta } from '~/server/schema/bounty-entry.schema';
 import { Currency, EntityType } from '~/shared/utils/prisma/enums';
 import { getLatestEntityAppeal } from '~/server/services/report.service';
-import { isBountyFlagAppealable } from '~/server/services/text-scan/flag-snapshot';
+import {
+  isBountyFlagAppealable,
+  resolveFlagScanReasons,
+} from '~/server/services/text-scan/flag-snapshot';
 import { getReactionsSelectV2 } from '~/server/selectors/reaction.selector';
 import { handleLogError } from '~/server/utils/errorHandling';
 import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
@@ -187,6 +190,9 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
       ...publicBounty,
       poiFlagged,
       poiAppeal,
+      flagScanReasons: poiFlagged
+        ? resolveFlagScanReasons({ isOwner, poi: bounty.poi, minor: false, meta: bounty.meta })
+        : [],
       details: bounty.details
         ? filterSensitiveProfanityData(
             bounty.details as BountyDetailsSchema,

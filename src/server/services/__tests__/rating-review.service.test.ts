@@ -172,6 +172,14 @@ describe('createRatingReview', () => {
     });
   });
 
+  it('refuses a flag-restricted model even though the scan raised it, and inserts nothing', async () => {
+    loadSubject.mockResolvedValue(subject({ flagRestricted: true }));
+    await expect(file({ entityType: 'Model', suggestedLevel: 1 })).rejects.toThrow(
+      /while the flag stands/
+    );
+    expect(dbMock.dbWrite.ratingReview.create).not.toHaveBeenCalled();
+  });
+
   it('refuses a non-Article rating the scan never raised, unless it was disputed before', async () => {
     getScan.mockResolvedValue(scan({ raised: false, level: null, reason: null }));
     await expect(file()).rejects.toThrow(/raised by our text scan/);
@@ -430,6 +438,12 @@ describe('getRatingReviewForOwner', () => {
       (await getRatingReviewForOwner({ entityType: 'Post', entityId: 7, userId: OWNER }))
         .canResubmit
     ).toBe(false);
+  });
+
+  it('offers no dispute on a flag-restricted model, though the scan raised its rating', async () => {
+    loadSubject.mockResolvedValue(subject({ currentLevel: 1, flagRestricted: true }));
+    const res = await getRatingReviewForOwner({ entityType: 'Model', entityId: 7, userId: OWNER });
+    expect(res.canDispute).toBe(false);
   });
 
   it('asks for the stale-override signal for any overridable entity, and never for Model', async () => {

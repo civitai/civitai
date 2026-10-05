@@ -17,6 +17,9 @@ import { stripTime } from '~/utils/date-helpers';
 import { stringToDate } from '~/utils/zod-helpers';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
+// A function, not a value: a bound computed at module load freezes "today" at the pod's boot date.
+const utcToday = () => dayjs.utc(stripTime(new Date()));
+
 export type GetInfiniteBountySchema = z.infer<typeof getInfiniteBountySchema>;
 export const getInfiniteBountySchema = infiniteQuerySchema.merge(
   z.object({
@@ -64,14 +67,14 @@ export const createBountyInputSchema = z.object({
   expiresAt: stringToDate(
     z
       .date()
-      .min(
-        dayjs.utc(stripTime(new Date())).add(1, 'day').toDate(),
+      .refine(
+        (date) => date >= utcToday().add(1, 'day').toDate(),
         'Expiration date must come after the start date'
       )
   ),
   startsAt: z.coerce
     .date()
-    .min(dayjs.utc(stripTime(new Date())).toDate(), 'Start date must be in the future'),
+    .refine((date) => date >= utcToday().toDate(), 'Start date must be in the future'),
   mode: z.enum(BountyMode),
   type: z.enum(BountyType),
   details: bountyDetailsSchema.passthrough().partial().optional(),
@@ -111,7 +114,10 @@ export const updateBountyInputSchema = createBountyInputSchema
     expiresAt: stringToDate(
       z
         .date()
-        .min(dayjs().add(1, 'day').startOf('day').toDate(), 'Expiration date must be in the future')
+        .refine(
+          (date) => date >= dayjs().add(1, 'day').startOf('day').toDate(),
+          'Expiration date must be in the future'
+        )
     ),
     lockedProperties: z.string().array().optional(),
   });

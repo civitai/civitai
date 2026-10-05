@@ -17,6 +17,8 @@ export type RatingReviewSubject = {
   parentId: number | null;
   override: number | null;
   overrideBasis: number | null;
+  // A POI/minor flag forces the model SFW, so a rating dispute cannot move it while the flag stands.
+  flagRestricted?: boolean;
 };
 
 // Blocked is a ToS action, not a rating: an `nsfw` bounty stores R|X|XXX|Blocked, so its highest bit would read as Blocked.
@@ -51,7 +53,15 @@ const loaders: Record<RatingReviewEntityType, Loader> = {
   Model: async (id, db) => {
     const m = await db.model.findUnique({
       where: { id },
-      select: { userId: true, nsfw: true, updatedAt: true, name: true, deletedAt: true },
+      select: {
+        userId: true,
+        nsfw: true,
+        updatedAt: true,
+        name: true,
+        deletedAt: true,
+        poi: true,
+        minor: true,
+      },
     });
     if (!m || m.deletedAt) return null;
     return {
@@ -62,6 +72,7 @@ const loaders: Record<RatingReviewEntityType, Loader> = {
       parentId: null,
       override: null,
       overrideBasis: null,
+      flagRestricted: m.poi || m.minor,
     };
   },
   Post: async (id, db) => {

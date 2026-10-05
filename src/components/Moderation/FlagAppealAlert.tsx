@@ -13,7 +13,14 @@ import type { EntityType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-export function FlagAppealAlert({ entityType, entityId, message, appeal, onRequested }: Props) {
+export function FlagAppealAlert({
+  entityType,
+  entityId,
+  message,
+  scanReasons = [],
+  appeal,
+  onRequested,
+}: Props) {
   const { showRequestButton, upheldAt, copyVariant } = getMinorFlagAlertState(appeal);
 
   const [opened, { open, close }] = useDisclosure(false);
@@ -68,6 +75,12 @@ export function FlagAppealAlert({ entityType, entityId, message, appeal, onReque
             <Text size="sm">
               {message} {trailingCopy[copyVariant]}
             </Text>
+            {scanReasons.map(({ reason, names }) => (
+              <Text key={reason} size="xs" c="dimmed">
+                Our text scan said: {reason}
+                {names.length > 0 && ` (names: ${names.join(', ')})`}
+              </Text>
+            ))}
             {showRequestButton && (
               <Button color="yellow" variant="light" size="xs" w="fit-content" onClick={open}>
                 Request a Review
@@ -110,6 +123,7 @@ type Props = {
   entityType: EntityType;
   entityId: number;
   message: string;
+  scanReasons?: { reason: string; names: string[] }[];
   appeal: MinorFlagAppeal | null;
   onRequested: () => void;
 };

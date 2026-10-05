@@ -231,6 +231,7 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
             entityType={EntityType.Bounty}
             entityId={bounty.id}
             message={FLAG_ALERT_MESSAGES.bountyPoi}
+            scanReasons={bounty.flagScanReasons}
             appeal={bounty.poiAppeal}
             onRequested={() => queryUtils.bounty.getById.invalidate({ id: bounty.id })}
           />
