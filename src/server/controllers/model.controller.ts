@@ -28,7 +28,7 @@ import type { Context, ProtectedContext } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
 import {
-  assertWorkflowPublishable,
+  assertTrainingSourcePublishable,
   stampWorkflowPublished,
 } from '~/server/services/orchestrator/training/publish-from-workflow';
 import { getTrainingWorkflowOverlay } from '~/server/services/orchestrator/training/training-state';
@@ -843,14 +843,11 @@ export const publishModelHandler = async ({
     const modelMeta = model.meta as ModelMeta | null;
     const republishing =
       model.status !== ModelStatus.Draft && model.status !== ModelStatus.Scheduled;
-    // Re-check the training moderation status of the workflow this model was materialized from,
-    // before publishing or scheduling it.
-    if (modelMeta?.trainingStudioWorkflowId)
-      await assertWorkflowPublishable({
-        ownerId: model.userId,
-        callerId: ctx.user.id,
-        workflowId: modelMeta.trainingStudioWorkflowId,
-      });
+    await assertTrainingSourcePublishable({
+      meta: modelMeta,
+      ownerId: model.userId,
+      callerId: ctx.user.id,
+    });
 
     const { needsReview, unpublishedReason, unpublishedAt, unpublishedBy, customMessage, ...meta } =
       modelMeta || {};
@@ -2400,6 +2397,18 @@ export const privateModelFromTrainingHandler = async ({
       await throwIfBlockedTags({ tagsOnModels, isModerator: ctx.user.isModerator });
     }
 
+    // Publishes the model (privately), so the training-source check applies like any publish.
+    const stored = await dbRead.model.findUnique({
+      where: { id: input.id },
+      select: { userId: true, meta: true },
+    });
+    if (stored && (stored.userId === ctx.user.id || ctx.user.isModerator))
+      await assertTrainingSourcePublishable({
+        meta: stored.meta as ModelMeta | null,
+        ownerId: stored.userId,
+        callerId: ctx.user.id,
+      });
+
     const model = await privateModelFromTraining({
       ...input,
       user: ctx.user,
@@ -2449,7 +2458,7 @@ export const publishPrivateModelHandler = async ({
     const { id: userId } = ctx.user;
     const model = await getModel({
       id: input.modelId,
-      select: { id: true, userId: true, status: true, availability: true },
+      select: { id: true, userId: true, status: true, availability: true, meta: true },
     });
 
     if (!model) throw throwNotFoundError(`No model with id ${input.modelId}`);
@@ -2461,6 +2470,12 @@ export const publishPrivateModelHandler = async ({
     if (model.userId !== userId && !ctx.user.isModerator) {
       throw throwAuthorizationError();
     }
+
+    await assertTrainingSourcePublishable({
+      meta: model.meta as ModelMeta | null,
+      ownerId: model.userId,
+      callerId: userId,
+    });
 
     const { versionIds } = await publishPrivateModel(input);
     await dataForModelsCache.refresh(input.modelId);

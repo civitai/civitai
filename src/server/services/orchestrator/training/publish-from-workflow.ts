@@ -17,6 +17,7 @@ import { getWorkflow, updateWorkflow } from '~/server/services/orchestrator/work
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { dbWrite } from '~/server/db/client';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
+import type { ModelMeta } from '~/server/schema/model.schema';
 import { sampleSlotUrl } from '~/server/services/orchestrator/training/workflow-state';
 import type {
   TrainingDetailsBaseModelList,
@@ -78,19 +79,41 @@ const APPROVED_TRAINING_MODERATION_STATUS = 'approved' satisfies TrainingModerat
 
 const TRAINING_NOT_APPROVED_MESSAGE =
   "This training run's dataset has not been approved, so a model can't be created or published from it.";
+const TRAINING_UNVERIFIABLE_MESSAGE =
+  "This model's training run can no longer be checked for an approved dataset, so it can't be published.";
+
+/**
+ * The `cause` on every refusal from the training moderation gate, so a caller that must handle the
+ * refusal differently from other errors (the from-orchestrator page) can tell it apart without
+ * matching on message text.
+ */
+export class TrainingNotApprovedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TrainingNotApprovedError';
+  }
+}
+
+export function isTrainingNotApprovedRefusal(error: unknown): boolean {
+  return error instanceof TRPCError && error.cause instanceof TrainingNotApprovedError;
+}
+
+function refuse(message: string): never {
+  throw throwBadRequestError(message, new TrainingNotApprovedError(message));
+}
 
 /**
  * Throws unless the run's training step reports an `approved` training-data moderation status. Both
  * step types carry the same four values (`evaluating`, `underReview`, `approved`, `rejected`), so the
- * comparison is against the one approved value: every other status, and a step with no status at all,
- * is refused. Shared by `createDraftModelFromWorkflow` and `assertWorkflowPublishable`, so the two
- * cannot disagree about what counts as approved.
+ * comparison is against the one approved value: every other status, a step with no status, and a step
+ * with no output at all are refused. Shared by `createDraftModelFromWorkflow` and
+ * `assertTrainingSourcePublishable`, so the two cannot disagree about what counts as approved.
  */
 export function assertTrainingModerationApproved(workflow: Workflow): void {
   const { step } = getTrainingStep(workflow);
   const output = step.output as TrainingOutput | ImageResourceTrainingOutput | null | undefined;
   if (output?.moderationStatus !== APPROVED_TRAINING_MODERATION_STATUS)
-    throw throwBadRequestError(TRAINING_NOT_APPROVED_MESSAGE);
+    refuse(TRAINING_NOT_APPROVED_MESSAGE);
 }
 
 /**
@@ -323,7 +346,9 @@ export async function createDraftModelFromWorkflow({
     nsfw: false,
     poi: false,
     minor: false,
-    meta: { trainingStudioWorkflowId: workflow.id },
+    // Server-owned keys (see SERVER_OWNED_META_KEYS): client meta can't set or clear them. The
+    // approval stamp records that this run passed the moderation check at materialization.
+    serverMeta: { trainingStudioWorkflowId: workflow.id, trainingStudioModerationApproved: true },
   });
   if (!model) throw throwBadRequestError('Could not create the model');
 
@@ -391,24 +416,30 @@ export async function stampWorkflowDraftModel({
 }
 
 /**
- * The publish-time half of `assertTrainingModerationApproved`, for a model whose meta names its source
- * workflow. Reads the workflow with the model OWNER's token (a moderator can publish someone else's
- * model), like `stampWorkflowPublished`, and throws when the run's training data is not approved.
+ * The publish-time half of `assertTrainingModerationApproved`: every path that makes a model (or one
+ * of its versions) published or public calls this with the model's stored meta. A model whose meta
+ * names no source workflow is not training-studio-born and is not checked here. Otherwise the
+ * workflow is read with the model OWNER's token (a moderator can publish someone else's model), like
+ * `stampWorkflowPublished`, and must report an approved status.
  *
- * A workflow past the orchestrator's retention window reads as NOT_FOUND and cannot be checked here; it
- * is let through, since refusing would strand every older draft. Drafts are also checked when
- * `createDraftModelFromWorkflow` materializes them. Any other read failure is rethrown, so the publish
- * fails and can be retried rather than going ahead unchecked.
+ * Both keys it reads are server-owned (`SERVER_OWNED_META_KEYS`): only
+ * `createDraftModelFromWorkflow` writes them, after reading the workflow with the owner's own token.
+ * When the orchestrator no longer returns the workflow (NOT_FOUND), it is let through only if the
+ * draft carries the approval stamp written at materialization; without the stamp it is refused, since
+ * nothing left can show the run was approved. Any other read failure is rethrown, so the publish fails
+ * and can be retried rather than going ahead unchecked.
  */
-export async function assertWorkflowPublishable({
+export async function assertTrainingSourcePublishable({
+  meta,
   ownerId,
   callerId,
-  workflowId,
 }: {
+  meta: ModelMeta | null | undefined;
   ownerId: number;
   callerId: number;
-  workflowId: string;
 }): Promise<void> {
+  const workflowId = meta?.trainingStudioWorkflowId;
+  if (!workflowId) return;
   const token = await getOrchestratorToken(ownerId, undefined, {
     bypassCache: callerId !== ownerId,
   });
@@ -416,7 +447,10 @@ export async function assertWorkflowPublishable({
   try {
     workflow = await getWorkflow({ token, path: { workflowId } });
   } catch (error) {
-    if (error instanceof TRPCError && error.code === 'NOT_FOUND') return;
+    if (error instanceof TRPCError && error.code === 'NOT_FOUND') {
+      if (meta?.trainingStudioModerationApproved === true) return;
+      refuse(TRAINING_UNVERIFIABLE_MESSAGE);
+    }
     throw error;
   }
   assertTrainingModerationApproved(workflow);

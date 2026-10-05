@@ -169,7 +169,13 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { enforceLockedProperties } from '~/server/utils/locked-properties';
-import { stripMinorHashMeta, stripModerationOwnedMeta } from '~/server/utils/minor-flag-meta';
+import {
+  pickServerOwnedMeta,
+  type SERVER_OWNED_META_KEYS,
+  stripMinorHashMeta,
+  stripModerationOwnedMeta,
+  stripServerOwnedMeta,
+} from '~/server/utils/minor-flag-meta';
 import type { RuleDefinition } from '~/server/utils/mod-rules';
 import {
   buildGetAllModelImages,
@@ -2621,6 +2627,9 @@ export const upsertModel = async (
     isModerator?: boolean;
     gallerySettings?: Partial<ModelGallerySettingsSchema>;
     tracker?: Tracker;
+    /** Server-owned meta keys (SERVER_OWNED_META_KEYS). Never from a request — `input.meta` is
+     *  stripped of them. */
+    serverMeta?: Pick<ModelMeta, (typeof SERVER_OWNED_META_KEYS)[number]>;
   }
 ) => {
   await throwOnBlockedUserContent([input.name, input.description], {
@@ -2638,12 +2647,14 @@ export const upsertModel = async (
     status,
     gallerySettings,
     tracker,
+    serverMeta,
     ...data
   } = input;
   // `modelUpsertSchema.meta` is a looseObject and the client's copy wins the merge
   // below, so moderation-owned keys have to be dropped before anything reads them.
   // Runs ahead of the profanity branch, which adds its own keys to this same object.
-  let meta = stripModerationOwnedMeta(input.meta, isModerator);
+  let meta = stripServerOwnedMeta(stripModerationOwnedMeta(input.meta, isModerator));
+  if (serverMeta) meta = { ...(meta ?? {}), ...serverMeta };
 
   const beforeUpdate =
     id && !templateId
@@ -5048,6 +5059,7 @@ export const privateModelFromTraining = async ({
     select: {
       userId: true,
       lockedProperties: true,
+      meta: true,
     },
   });
 
@@ -5113,7 +5125,9 @@ export const privateModelFromTraining = async ({
       data: {
         ...data,
         meta: {
-          ...((meta as ModelMeta) ?? {}),
+          ...(stripServerOwnedMeta(meta as ModelMeta) ?? {}),
+          // This write replaces meta wholesale, so the stored server-owned keys are carried over.
+          ...pickServerOwnedMeta(model.meta as ModelMeta | null),
           // Makes it so these models cannot go into auctions or be promoted
           cannotPromote: true,
         },

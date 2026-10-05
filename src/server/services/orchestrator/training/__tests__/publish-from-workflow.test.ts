@@ -42,8 +42,9 @@ import type { Workflow } from '@civitai/client';
 import { TRPCError } from '@trpc/server';
 import type { SessionUser } from '~/types/session';
 import {
-  assertWorkflowPublishable,
+  assertTrainingSourcePublishable,
   createDraftModelFromWorkflow,
+  isTrainingNotApprovedRefusal,
   mapTrainingBaseModelToBaseModel,
   mapWorkflowToTrainingResultsV2,
   stampWorkflowDraftModel,
@@ -307,7 +308,10 @@ describe('createDraftModelFromWorkflow', () => {
       status: 'Draft',
       uploadType: 'Trained',
       userId: USER.id,
-      meta: { trainingStudioWorkflowId: 'wf-studio-1' },
+      serverMeta: {
+        trainingStudioWorkflowId: 'wf-studio-1',
+        trainingStudioModerationApproved: true,
+      },
     });
 
     const version = mockUpsertModelVersion.mock.calls[0][0];
@@ -424,8 +428,14 @@ describe('training moderation gate — createDraftModelFromWorkflow', () => {
   );
 });
 
-describe('training moderation gate — assertWorkflowPublishable', () => {
-  const args = { ownerId: 5, callerId: 5, workflowId: 'wf-studio-1' };
+describe('training moderation gate — assertTrainingSourcePublishable', () => {
+  const STAMPED = {
+    trainingStudioWorkflowId: 'wf-studio-1',
+    trainingStudioModerationApproved: true,
+  };
+  const UNSTAMPED = { trainingStudioWorkflowId: 'wf-studio-1' };
+  const args = { meta: STAMPED, ownerId: 5, callerId: 5 };
+  const UNVERIFIABLE = /can no longer be checked for an approved dataset/;
 
   beforeEach(() => {
     mockGetToken.mockResolvedValue('owner-token');
@@ -433,7 +443,7 @@ describe('training moderation gate — assertWorkflowPublishable', () => {
 
   it('allows an approved run, reading it with the owner token', async () => {
     mockGetWorkflow.mockResolvedValue(runWithModeration('approved'));
-    await expect(assertWorkflowPublishable(args)).resolves.toBeUndefined();
+    await expect(assertTrainingSourcePublishable(args)).resolves.toBeUndefined();
     expect(mockGetToken).toHaveBeenCalledWith(5, undefined, { bypassCache: false });
     expect(mockGetWorkflow).toHaveBeenCalledWith({
       token: 'owner-token',
@@ -443,26 +453,121 @@ describe('training moderation gate — assertWorkflowPublishable', () => {
 
   it('mints the owner token with the cache bypass when a moderator publishes', async () => {
     mockGetWorkflow.mockResolvedValue(runWithModeration('approved'));
-    await assertWorkflowPublishable({ ...args, callerId: 999 });
+    await assertTrainingSourcePublishable({ ...args, callerId: 999 });
     expect(mockGetToken).toHaveBeenCalledWith(5, undefined, { bypassCache: true });
   });
 
   it.each([...REFUSED_STATUSES, undefined])('refuses a run whose status is %s', async (status) => {
     mockGetWorkflow.mockResolvedValue(runWithModeration(status));
-    await expect(assertWorkflowPublishable(args)).rejects.toThrow(NOT_APPROVED);
+    await expect(assertTrainingSourcePublishable(args)).rejects.toThrow(NOT_APPROVED);
   });
 
-  it('lets a run the orchestrator no longer returns through (past retention)', async () => {
+  it('marks a refusal so callers can tell it from other errors', async () => {
+    mockGetWorkflow.mockResolvedValue(runWithModeration('rejected'));
+    const error = await assertTrainingSourcePublishable(args).catch((e: unknown) => e);
+    expect(isTrainingNotApprovedRefusal(error)).toBe(true);
+    expect(isTrainingNotApprovedRefusal(new Error('dataset has not been approved'))).toBe(false);
+  });
+
+  it.each([null, undefined, {}])(
+    'does not read anything for a model whose meta (%s) names no workflow',
+    async (meta) => {
+      await expect(assertTrainingSourcePublishable({ ...args, meta })).resolves.toBeUndefined();
+      expect(mockGetWorkflow).not.toHaveBeenCalled();
+      expect(mockGetToken).not.toHaveBeenCalled();
+    }
+  );
+
+  it('lets an unreadable (NOT_FOUND) run through when the draft carries the approval stamp', async () => {
     mockGetWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND', message: 'gone' }));
-    await expect(assertWorkflowPublishable(args)).resolves.toBeUndefined();
+    await expect(assertTrainingSourcePublishable(args)).resolves.toBeUndefined();
+  });
+
+  it.each([UNSTAMPED, { ...UNSTAMPED, trainingStudioModerationApproved: false }])(
+    'refuses an unreadable (NOT_FOUND) run when the draft has no approval stamp (%o)',
+    async (meta) => {
+      mockGetWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND', message: 'gone' }));
+      const error = await assertTrainingSourcePublishable({ ...args, meta }).catch(
+        (e: unknown) => e
+      );
+      expect(error).toBeInstanceOf(TRPCError);
+      expect((error as Error).message).toMatch(UNVERIFIABLE);
+      expect(isTrainingNotApprovedRefusal(error)).toBe(true);
+    }
+  );
+
+  it('the stamp does not override a readable run that is not approved', async () => {
+    mockGetWorkflow.mockResolvedValue(runWithModeration('rejected'));
+    await expect(assertTrainingSourcePublishable(args)).rejects.toThrow(NOT_APPROVED);
   });
 
   it('rethrows any other read failure instead of publishing unchecked', async () => {
     mockGetWorkflow.mockRejectedValue(
       new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: 'orchestrator down' })
     );
-    await expect(assertWorkflowPublishable(args)).rejects.toThrow('orchestrator down');
+    await expect(assertTrainingSourcePublishable(args)).rejects.toThrow('orchestrator down');
   });
+});
+
+/**
+ * A finished run whose checkpoint blobs have expired, in the shape the orchestrator returns it: the
+ * epochs are still listed with `available: false`, and the moderation status is still reported
+ * (it is derived from the step's jobs, not from the blobs).
+ */
+function expiredRun(moderationStatus: string | undefined): Workflow {
+  return studioWorkflow({
+    steps: [
+      {
+        $type: 'training',
+        input: { ecosystem: 'sdxl' },
+        output: {
+          ...(moderationStatus !== undefined && { moderationStatus }),
+          epochs: [
+            { epochNumber: 1, model: { id: 'b1', available: false } },
+            { epochNumber: 2, model: { id: 'b2', available: false } },
+          ],
+        },
+      },
+    ],
+  });
+}
+
+describe('training moderation gate — runs whose blobs have expired', () => {
+  it('re-entry on an existing draft of an approved expired run resolves with a null epoch', async () => {
+    mockFindFirst.mockResolvedValue({ id: 77, modelVersions: [{ id: 88 }] });
+    await expect(
+      createDraftModelFromWorkflow({
+        user: USER,
+        workflow: expiredRun('approved'),
+        selectedEpochNumber: 2,
+      })
+    ).resolves.toEqual({ modelId: 77, modelVersionId: 88, selectedEpoch: null });
+  });
+
+  it('a first entry on an approved expired run is refused for having no checkpoint, not by the gate', async () => {
+    await expect(
+      createDraftModelFromWorkflow({
+        user: USER,
+        workflow: expiredRun('approved'),
+        selectedEpochNumber: 1,
+      })
+    ).rejects.toThrow(/no downloadable checkpoint/);
+    expect(mockUpsertModel).not.toHaveBeenCalled();
+  });
+
+  it.each(['rejected', undefined])(
+    'an expired run reporting %s is refused by the gate, on re-entry too',
+    async (status) => {
+      mockFindFirst.mockResolvedValue({ id: 77, modelVersions: [{ id: 88 }] });
+      await expect(
+        createDraftModelFromWorkflow({
+          user: USER,
+          workflow: expiredRun(status),
+          selectedEpochNumber: 1,
+        })
+      ).rejects.toThrow(NOT_APPROVED);
+    }
+  );
 });
 
 describe('stampWorkflowDraftModel', () => {
