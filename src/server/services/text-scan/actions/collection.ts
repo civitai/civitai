@@ -17,6 +17,9 @@ const visible = (c: CollectionShape) =>
 
 // Becoming visible rescans unchanged text: a stored verdict reads as `unchanged`, and one the
 // profile never saw is scanned for the first time.
+export const collectionBecameVisible = (before: CollectionShape, after: CollectionShape) =>
+  !visible(before) && visible(after);
+
 export function shouldScanCollection(before: CollectionShape | null, after: CollectionShape) {
   if (!visible(after)) return false;
   if (!before || !visible(before)) return true;
@@ -38,7 +41,12 @@ export async function applyCollectionTextScan({
   const before = await read(entityId);
   if (!before) return;
   await updateCollectionsNsfwLevels([entityId]);
-  if (!outcome.nsfw.raised || before.moderatorNsfwLevel != null) return;
+  if (
+    !outcome.nsfw.raised ||
+    outcome.nsfw.detectedLevel < NsfwLevel.R ||
+    before.moderatorNsfwLevel != null
+  )
+    return;
   const after = await read(entityId);
   const rose =
     !!after &&

@@ -72,7 +72,11 @@ import { bustOrchestratorModelCache } from '~/server/services/orchestrator/model
 import { sanitizeProvenance } from '~/server/services/orchestrator/remix-provenance';
 import type { PostsInfiniteModel } from '~/server/services/post.service';
 import { getPostsInfinite } from '~/server/services/post.service';
-import { shouldScanCollection } from '~/server/services/text-scan/actions/collection';
+import { updateCollectionsNsfwLevels } from '~/server/services/nsfwLevels.service';
+import {
+  collectionBecameVisible,
+  shouldScanCollection,
+} from '~/server/services/text-scan/actions/collection';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import {
@@ -1510,6 +1514,18 @@ export const upsertCollection = async ({
     }
 
     await collectionsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+
+    // Recomputes skip hidden collections, so anything that changed while it was hidden (a verdict
+    // landing, a moderator rating, an item) only reaches nsfwLevel here; the scan may skip as unchanged.
+    if (collectionBecameVisible(currentCollection, updated))
+      await updateCollectionsNsfwLevels([updated.id]).catch((error) =>
+        logToAxiom({
+          type: 'error',
+          name: 'collection-nsfw-recompute-failed',
+          message: error instanceof Error ? error.message : String(error),
+          collectionId: updated.id,
+        }).catch(() => null)
+      );
 
     if (shouldScanCollection(currentCollection, updated))
       scanEntityInBackground({ entityType: 'Collection', entityId: updated.id });

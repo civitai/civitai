@@ -24,7 +24,11 @@ const args = (detectedLevel: number, raised: boolean) => ({
   subject: { fields: [], declared: { nsfwLevel: 1 } },
 });
 
-beforeEach(() => vi.clearAllMocks());
+// Reset, not clear: a test that returns before the second read leaves a queued value behind.
+beforeEach(() => {
+  vi.clearAllMocks();
+  dbMock.dbWrite.collection.findUnique.mockReset();
+});
 
 describe('applyCollectionTextScan', () => {
   it('recomputes and notifies when the bucket moved into nsfw', async () => {
@@ -59,6 +63,34 @@ describe('applyCollectionTextScan', () => {
     });
     await applyCollectionTextScan(args(NsfwLevel.R, true) as never);
     expect(updateCollectionsNsfwLevels).toHaveBeenCalledTimes(2);
+    expect(notifyTextScanRatingRaised).not.toHaveBeenCalled();
+  });
+
+  it('does nothing without an nsfw outcome', async () => {
+    await applyCollectionTextScan({
+      ...args(NsfwLevel.R, true),
+      outcome: { triggeredLabels: [], nsfwLevel: 1 },
+    } as never);
+    expect(dbMock.dbWrite.collection.findUnique).not.toHaveBeenCalled();
+    expect(updateCollectionsNsfwLevels).not.toHaveBeenCalled();
+    expect(notifyTextScanRatingRaised).not.toHaveBeenCalled();
+  });
+
+  it('recomputes without a notice when the text did not raise the rating', async () => {
+    dbMock.dbWrite.collection.findUnique
+      .mockResolvedValueOnce({ nsfwLevel: 1, moderatorNsfwLevel: null, userId: 9, name: 'x' })
+      .mockResolvedValueOnce({ nsfwLevel: 29, moderatorNsfwLevel: null, userId: 9, name: 'x' });
+    await applyCollectionTextScan(args(NsfwLevel.R, false) as never);
+    expect(updateCollectionsNsfwLevels).toHaveBeenCalledWith([7]);
+    expect(notifyTextScanRatingRaised).not.toHaveBeenCalled();
+  });
+
+  it('does not credit a PG13 raise with a bucket that rose from items', async () => {
+    dbMock.dbWrite.collection.findUnique
+      .mockResolvedValueOnce({ nsfwLevel: 1, moderatorNsfwLevel: null, userId: 9, name: 'x' })
+      .mockResolvedValueOnce({ nsfwLevel: 29, moderatorNsfwLevel: null, userId: 9, name: 'x' });
+    await applyCollectionTextScan(args(NsfwLevel.PG13, true) as never);
+    expect(updateCollectionsNsfwLevels).toHaveBeenCalledWith([7]);
     expect(notifyTextScanRatingRaised).not.toHaveBeenCalled();
   });
 });
