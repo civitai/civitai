@@ -125,6 +125,14 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       get republishOwnListing() {
         return mutationStub('republishOwnListing', mocks.republishPending);
       },
+      // 🔴 SAME MOUNT-TIME GAP AS THE MODERATION TABLE'S. This panel renders
+      // `ListingVisibilityModal`, which calls
+      // `trpc.appListings.setListingVisibility.useMutation(...)`. Unmocked, that throws
+      // during mount and takes EVERY test in this file with it — the controls ledger
+      // included, which is the panel's own evidence. Its `onSuccess` takes no argument
+      // and it invalidates only `getAuthoringContext` + `listMine`, both already in the
+      // `useUtils` mock above, so the shared stub is the right shape.
+      setListingVisibility: mutationStub('setListingVisibility'),
       listMyListingModerationEvents: {
         useQuery: () => ({ data: { items: [] }, isLoading: false, error: null }),
       },
