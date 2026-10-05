@@ -1,7 +1,10 @@
 import { Alert, Button, Code, Group, Loader, Stack, Text } from '@mantine/core';
 import { IconAlertTriangle, IconBrandGit, IconEye, IconEyeOff } from '@tabler/icons-react';
 import { useState } from 'react';
-import { COPY_BODY_PADDING_RIGHT, CopyAffordance } from '~/components/Apps/CopyAffordance';
+import {
+  COPY_BODY_PADDING_RIGHT,
+  CopyAffordance,
+} from '~/components/CopyAffordance/CopyAffordance';
 import { maskCloneUrlCredential } from '~/components/Apps/git-access';
 import { trpc } from '~/utils/trpc';
 

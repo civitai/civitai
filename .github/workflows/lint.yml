@@ -906,21 +906,23 @@ jobs:
           // commits restated one and each went stale in the commit that changed the tier,
           // including one that added a test and left the number it had just invalidated.
           // Derive it — `--reporter=json`, `testResults.length` and `numTotalTests`. What is
-          // durable: MIN_TESTS carries real headroom, MIN_FILES sits at exactly the collected
-          // count, so adding a file will not red but losing one will.
+          // durable: MIN_TESTS carries real headroom by design, MIN_FILES is MEANT to sit at
+          // exactly the collected count, so adding a file does not red but losing one does.
           //
-          // ⚠️ A FLOOR ONLY CATCHES A DROP TO BELOW ITSELF, AND NOBODY RAISES IT. The file
-          // floor sat at 6 against 7 collected on the base branch, so one file could have
-          // stopped being collected with no red; the test floor sat at 10 against 101, so
-          // ninety could have. An earlier draft of this comment claimed FILES "ratchets at
-          // exactly current" — that contract is not implemented and the comment above the
-          // block says the opposite. If you want a drop of one to be caught, the honest fix
-          // is an equality against a count derived from the glob, not a hand-maintained
-          // floor. Until then: raise MIN_FILES when you add a file — it has no headroom —
-          // and leave MIN_TESTS alone, which is what "a fraction of current" below means.
-          // (An earlier pairing of these comments told you to raise both, which contradicted
-          // that.)
-          const MIN_FILES = 8;
+          // 🔴 "MEANT TO" IS DOING REAL WORK IN THAT SENTENCE — THE FILE FLOOR HAS NOW DRIFTED
+          // TWICE AND IS THE ONE THING IN THIS BLOCK NOBODY MAINTAINS. It sat at 6 against 7
+          // on one base branch, and at 8 against 11 collected on the next, so by then THREE
+          // files could have stopped being collected with no red; the test floor sat at 10
+          // against 101, so ninety could have. An earlier draft claimed FILES "ratchets at
+          // exactly current" — that contract is NOT implemented, and a floor that has gone
+          // stale on every second change is evidence the instruction below is not enough. If
+          // you want a drop of one to be caught reliably, the honest fix is an equality
+          // against a count derived from the glob, not a hand-maintained floor. Until someone
+          // writes that: raise MIN_FILES when you add a file — it has no headroom, which is
+          // the whole point of it — and leave MIN_TESTS alone, which is what "a fraction of
+          // current" below means. (An earlier pairing of these comments told you to raise
+          // both, which contradicted that.)
+          const MIN_FILES = 11;
           // It was 10 — which had ZERO headroom when it was written (the tier was 10 tests
           // then, the same configuration this comment praises the FILE floor for), and became
           // unfailable as the tier grew past it. The GATE was not that weak — it is
