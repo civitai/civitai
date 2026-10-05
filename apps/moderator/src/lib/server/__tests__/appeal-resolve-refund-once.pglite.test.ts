@@ -151,4 +151,17 @@ describe('resolving one appeal twice at once', () => {
       ingestion: null,
     });
   });
+
+  it('leaves another review queue alone when the decided appeal is resolved again', async () => {
+    await db.query(`UPDATE "Appeal" SET "status" = 'Rejected'`);
+    await db.query(`UPDATE "Image" SET "needsReview" = 'minor'`);
+
+    await resolveImageAppeal({ imageId: IMAGE_ID, status: 'Approved', userId: 2 });
+
+    expect(await imageRow()).toEqual({
+      needsReview: 'minor',
+      blockedFor: 'moderated',
+      ingestion: null,
+    });
+  });
 });
