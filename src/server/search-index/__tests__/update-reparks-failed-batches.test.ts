@@ -234,10 +234,11 @@ describe('search index :: a batch that exhausts its retries is re-queued, not di
 
   it('names a bounded, sorted sample of the re-queued ids so a recurring set is recognisable', async () => {
     // 25 ids, all in one failing batch, seeded out of order: the line must name the 10 LOWEST,
-    // sorted, plus the range — and nothing beyond the 10th.
+    // sorted, plus the range — and nothing beyond the 10th. They straddle 99/100 so a string
+    // sort ("100" < "95") cannot pass for a numeric one.
     const ids = [
-      517, 503, 525, 509, 501, 522, 506, 514, 511, 520, 504, 524, 508, 502, 519, 513, 507, 523, 505,
-      516, 510, 521, 512, 518, 515,
+      111, 97, 119, 103, 95, 116, 100, 108, 105, 114, 98, 118, 102, 96, 113, 107, 101, 117, 99, 110,
+      104, 115, 106, 112, 109,
     ];
     seedUpdateQueue(ids);
     const index = buildIndex({
@@ -249,7 +250,7 @@ describe('search index :: a batch that exhausts its retries is re-queued, not di
     await index.processQueues({ processUpdates: true }, {} as never);
 
     expect(vi.mocked(console.error).mock.calls.map((c) => c[0])).toContain(
-      `createSearchIndexUpdateProcessor :: processQueues :: ${INDEX} :: re-queued 25 ids from batches that exhausted their retries (lowest: 501, 502, 503, 504, 505, 506, 507, 508, 509, 510; min 501, max 525)`
+      `createSearchIndexUpdateProcessor :: processQueues :: ${INDEX} :: re-queued 25 ids from batches that exhausted their retries (lowest: 95, 96, 97, 98, 99, 100, 101, 102, 103, 104; min 95, max 119)`
     );
   });
 
@@ -268,8 +269,8 @@ describe('search index :: a batch that exhausts its retries is re-queued, not di
       `search-index-queue-fallback:${UPDATE_KEY}`,
       JSON.stringify(FAILING_BATCH),
     ]);
-    expect(console.error).toHaveBeenCalledWith(
-      expect.stringContaining(`could not re-queue ${FAILING_BATCH.length} ids`)
+    expect(vi.mocked(console.error).mock.calls.map((c) => c[0])).toContain(
+      `createSearchIndexUpdateProcessor :: update :: ${INDEX} :: could not re-queue 3 ids from failed batches to Redis (lowest: 104, 105, 106; min 104, max 106); attempted the search-index-queue-fallback parking lot (a failure or cap there is logged under that name)`
     );
   });
 });
