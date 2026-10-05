@@ -53,7 +53,7 @@ async function moderatePanel(
     userId: number;
     ip?: string;
     userAgent?: string;
-  }) => Promise<void>,
+  }) => Promise<unknown>,
   event: RequestEvent
 ) {
   const form = await event.request.formData();

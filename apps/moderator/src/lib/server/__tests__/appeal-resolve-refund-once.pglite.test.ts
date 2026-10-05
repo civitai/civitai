@@ -5,8 +5,8 @@ import type * as Effects from '../image-moderation-effects';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
 /**
- * Two moderators resolving one appeal at once both used to read it Pending, and each refunded the
- * fee. Rows are what decide which resolution closed the appeal, so this runs against a real Postgres.
+ * Two moderators resolving one appeal at once must refund its fee once. Rows are what decide which
+ * resolution closed the appeal, so this runs against a real Postgres.
  */
 
 const { dbHandle, refundAppealFee } = vi.hoisted(() => ({
@@ -37,7 +37,9 @@ vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
 vi.mock('../cache', () => ({ bustCachedObject: vi.fn(async () => undefined) }));
 vi.mock('../clickhouse', () => ({ getClickhouse: () => ({}) }));
 
-const { acceptImage, resolveImageAppeal } = await import('../image-moderation.service');
+const { acceptImage, closedAppellants, resolveImageAppeal } = await import(
+  '../image-moderation.service'
+);
 
 // Stand-ins cut to the columns the two resolve paths touch.
 const SCHEMA = `
@@ -102,10 +104,14 @@ describe('resolving one appeal twice at once', () => {
   it('resolveImageAppeal refunds the fee once', async () => {
     const approve = () => resolveImageAppeal({ imageId: IMAGE_ID, status: 'Approved', userId: 2 });
 
-    await Promise.all([approve(), approve()]);
+    const closed = await Promise.all([approve(), approve()]);
 
     expect(refundAppealFee).toHaveBeenCalledTimes(1);
     expect(await appealStatuses()).toEqual(['Approved']);
+    // The bulk actions email from these results, so only the winner may report a closed appeal.
+    expect(closedAppellants([IMAGE_ID, IMAGE_ID], closed)).toEqual([
+      { userId: 7, imageId: IMAGE_ID },
+    ]);
   });
 
   it('acceptImage refunds the fee once', async () => {
@@ -117,12 +123,18 @@ describe('resolving one appeal twice at once', () => {
     expect(await appealStatuses()).toEqual(['Approved']);
   });
 
-  it('refunds nothing when another resolution already closed the appeal', async () => {
+  it('leaves the image and the fee alone when another resolution already decided the appeal', async () => {
     await db.query(`UPDATE "Appeal" SET "status" = 'Rejected'`);
 
-    await resolveImageAppeal({ imageId: IMAGE_ID, status: 'Approved', userId: 2 });
+    const closed = await resolveImageAppeal({ imageId: IMAGE_ID, status: 'Approved', userId: 2 });
 
+    expect(closed).toBeUndefined();
     expect(refundAppealFee).not.toHaveBeenCalled();
     expect(await appealStatuses()).toEqual(['Rejected']);
+    const { rows } = await db.query<{ blockedFor: string | null; ingestion: string | null }>(
+      `SELECT "blockedFor", "ingestion" FROM "Image" WHERE "id" = $1`,
+      [IMAGE_ID]
+    );
+    expect(rows).toEqual([{ blockedFor: 'moderated', ingestion: null }]);
   });
 });

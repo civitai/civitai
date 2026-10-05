@@ -46,7 +46,7 @@ export async function acceptImage({
   removeMinorFlag?: boolean;
   userId: number;
   deferAppealEmail?: boolean;
-}): Promise<void> {
+}): Promise<ClosedAppeal | undefined> {
   const img = await dbRead
     .selectFrom('Image')
     .select(['needsReview', 'pHash', 'postId'])
@@ -128,6 +128,7 @@ export async function acceptImage({
       resolvedAt: new Date(),
     });
     if (appeal) await runAppealCascade(appeal, imageId, true, undefined, !deferAppealEmail);
+    return appeal;
   }
 }
 
@@ -192,7 +193,7 @@ export type AppealDecision = 'Approved' | 'Rejected';
 
 /**
  * Closes the image's pending appeal and returns it, or nothing when another resolution closed it
- * first. Read-then-update let two concurrent resolutions both see it Pending and both refund the fee.
+ * first. Closing and reading must stay one statement, or concurrent resolutions both refund the fee.
  */
 function closePendingAppeal(
   imageId: number,
@@ -213,8 +214,10 @@ function closePendingAppeal(
     .executeTakeFirst();
 }
 
+export type ClosedAppeal = NonNullable<Awaited<ReturnType<typeof closePendingAppeal>>>;
+
 async function runAppealCascade(
-  appeal: { id: number; userId: number; buzzTransactionId: string | null },
+  appeal: ClosedAppeal,
   imageId: number,
   approved: boolean,
   resolvedMessage?: string,
@@ -248,19 +251,15 @@ async function runAppealCascade(
   }
 }
 
-// Call BEFORE the bulk resolution closes the rows — the status='Pending' filter needs them still open.
-export async function getPendingImageAppealAppellants(
-  imageIds: number[]
-): Promise<{ userId: number; imageId: number }[]> {
-  if (!imageIds.length) return [];
-  const rows = await dbRead
-    .selectFrom('Appeal')
-    .select(['userId', 'entityId'])
-    .where('entityType', '=', 'Image')
-    .where('entityId', 'in', imageIds)
-    .where('status', '=', 'Pending')
-    .execute();
-  return rows.map((r) => ({ userId: r.userId, imageId: r.entityId }));
+/** Pairs each image with the appeal its resolution closed, dropping images whose appeal it did not. */
+export function closedAppellants(
+  imageIds: number[],
+  closed: (ClosedAppeal | undefined)[]
+): { userId: number; imageId: number }[] {
+  return imageIds.flatMap((imageId, i) => {
+    const appeal = closed[i];
+    return appeal ? [{ userId: appeal.userId, imageId }] : [];
+  });
 }
 
 export async function sendBulkAppealEmails(
@@ -304,7 +303,7 @@ export async function resolveImageAppeal({
   resolvedMessage?: string;
   userId: number;
   deferAppealEmail?: boolean;
-}): Promise<void> {
+}): Promise<ClosedAppeal | undefined> {
   const approved = status === 'Approved';
 
   const appeal = await closePendingAppeal(imageId, {
@@ -313,6 +312,8 @@ export async function resolveImageAppeal({
     resolvedMessage: resolvedMessage ?? null,
     resolvedAt: new Date(),
   });
+  // Another resolution decided it; applying this one to the image would contradict the recorded verdict.
+  if (!appeal) return undefined;
 
   const img = await dbRead
     .selectFrom('Image')
@@ -339,7 +340,7 @@ export async function resolveImageAppeal({
 
   await applyVisibilitySideEffects(imageId, img?.postId ?? null);
 
-  if (appeal) await runAppealCascade(appeal, imageId, approved, resolvedMessage, !deferAppealEmail);
+  await runAppealCascade(appeal, imageId, approved, resolvedMessage, !deferAppealEmail);
 
   await recordModActivity({
     userId,
@@ -347,4 +348,5 @@ export async function resolveImageAppeal({
     entityId: imageId,
     activity: 'resolveAppeal',
   });
+  return appeal;
 }
