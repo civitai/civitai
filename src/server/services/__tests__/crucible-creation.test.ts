@@ -560,6 +560,7 @@ const sharedFeedWhere = async (run: () => Promise<unknown>, queries = 2) => {
     return [];
   }) as never);
   await run();
+  dbMock.dbRead.crucible.findMany.mockReset();
   expect(wheres).toHaveLength(queries);
   for (const where of wheres) expect(where).toEqual(wheres[0]);
   return wheres[0] as any;
@@ -795,10 +796,16 @@ describe('getCrucibles — running crucibles lead upcoming ones', () => {
   // Accepted, not designed: an upcoming cursor crucible that starts between pages is looked up as
   // running, so the next page serves the running ones again before the rest. Finite, like above.
   it('repeats the running crucibles when the cursor crucible has started since', async () => {
-    dbMock.dbRead.crucible.findUnique.mockResolvedValueOnce({
-      status: CrucibleStatus.Active,
-    } as never);
-    expect(await ids({ limit: 10, cursor: 1 })).toEqual({ ids: [4, 2, 1], nextCursor: undefined });
+    const started = rows.find((row) => row.id === 1)!;
+    started.status = CrucibleStatus.Active;
+    try {
+      expect(await ids({ limit: 10, cursor: 1 })).toEqual({
+        ids: [1, 4, 2],
+        nextCursor: undefined,
+      });
+    } finally {
+      started.status = CrucibleStatus.Pending;
+    }
   });
 
   it('pages across the boundary without repeating or skipping one', async () => {
