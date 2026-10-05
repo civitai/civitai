@@ -12,15 +12,11 @@ type ClavataTarget = {
   clavataKey: string;
   jobQueueEntityType: EntityType | null;
   trigger: { name: string; table: string } | null;
-  recentIds: (() => Promise<number[]>) | null;
+  recentIds: () => Promise<number[]>;
 };
 
 export type DrainResult = { deleted: number; complete: boolean };
-export type CutoverRefusal =
-  | 'not-active'
-  | 'nothing-to-probe'
-  | 'override-required'
-  | 'override-not-allowed';
+export type CutoverRefusal = 'not-active' | 'nothing-to-probe' | 'override-not-allowed';
 
 const PROBE = 20;
 export const DRAIN_BATCH = 5000;
@@ -133,7 +129,6 @@ export async function drainModerationQueue(entityType: EntityType): Promise<Drai
 }
 
 async function assertActiveEverywhere(entityType: CutoverEntityType, target: ClavataTarget) {
-  if (!target.recentIds) throw new ClavataCutoverRefused(entityType, 'override-required');
   const probeIds = await target.recentIds();
   if (!probeIds.length) throw new ClavataCutoverRefused(entityType, 'nothing-to-probe');
   const modes = await Promise.all(probeIds.map((id) => getTextScanMode(entityType, id)));

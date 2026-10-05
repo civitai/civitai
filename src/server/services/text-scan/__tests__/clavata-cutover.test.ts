@@ -59,9 +59,8 @@ describe('CLAVATA_TARGETS', () => {
     expect(Object.hasOwn(CLAVATA_TARGETS, 'Challenge')).toBe(false);
   });
 
-  it('Collection is a normal cutover entity: probed, no unmoderated override', () => {
+  it('Collection is a normal cutover entity: no unmoderated override', () => {
     expect(UNMODERATED_OVERRIDE.has('Collection')).toBe(false);
-    expect(CLAVATA_TARGETS.Collection.recentIds).not.toBeNull();
   });
 
   // The drops run by hand at each entity's cutover. As migrations, an "apply every pending

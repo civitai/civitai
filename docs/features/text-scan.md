@@ -19,12 +19,10 @@ single orchestrator `chatCompletion` step with a strict JSON schema; the verdict
 
 ## Entities
 
-`profiles/` is the complete list of scanned entities; this table is not yet exhaustive.
-
-| entity | fields scanned | labels | replaces |
-|---|---|---|---|
-| Crucible | name, description | `nsfw` | XGuard |
-| Collection | name, description of Public collections readable as Public or Unlisted | `nsfw` (a floor on the collection's rating) | Clavata |
+The scanned entities, and the fields and labels each scans, are the profiles in
+`src/server/services/text-scan/profiles/`. Crucible's scan (name, description → `nsfw`) replaces
+XGuard. Collection's (name, description of Public collections readable as Public or Unlisted →
+`nsfw`, a floor on the collection's rating) replaces Clavata.
 
 ## Actions
 
