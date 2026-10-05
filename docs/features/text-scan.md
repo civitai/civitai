@@ -17,6 +17,17 @@ single orchestrator `chatCompletion` step with a strict JSON schema; the verdict
 | Row retention | the `text-scan-retention` job |
 | Actions per label | `text-scan/actions/` and each entity's moderation adapter |
 
+## Entities
+
+`profiles/` is the complete list of scanned entities; this table is not yet exhaustive.
+
+| entity | fields scanned | labels | replaces |
+|---|---|---|---|
+| Crucible | name, description | `nsfw` | XGuard |
+| Collection | name, description of Public collections readable as Public or Unlisted | `nsfw` (a floor on the collection's rating) | Clavata |
+
+## Actions
+
 A label's action is one of: raise the content rating (the owner can dispute it), restrict the entity
 (the owner can appeal), or mute the account pending moderator review. Disputes, appeals and mute
 reviews go through the existing moderator queues; text scan adds no queue of its own.

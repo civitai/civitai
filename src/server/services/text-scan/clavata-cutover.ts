@@ -7,7 +7,6 @@ import type { TextScanEntityType } from '~/server/services/text-scan/types';
 import { EntityType } from '~/shared/utils/prisma/enums';
 
 export type CutoverEntityType = Exclude<TextScanEntityType, 'Challenge' | 'Crucible'>;
-type ProbedEntityType = Exclude<CutoverEntityType, 'Collection'>;
 
 type ClavataTarget = {
   clavataKey: string;
@@ -70,13 +69,17 @@ export const CLAVATA_TARGETS: Readonly<Record<CutoverEntityType, ClavataTarget>>
     trigger: null,
     recentIds: async () => ids(await dbRead.chatMessage.findMany(recent)),
   },
-  Collection: standard('Collection', null),
+  Collection: standard('Collection', async () =>
+    ids(
+      await dbRead.collection.findMany({
+        ...recent,
+        where: { availability: 'Public', read: { in: ['Public', 'Unlisted'] } },
+      })
+    )
+  ),
 };
 
-export const UNMODERATED_OVERRIDE: ReadonlySet<CutoverEntityType> = new Set([
-  'ChatMessage',
-  'Collection',
-]);
+export const UNMODERATED_OVERRIDE: ReadonlySet<CutoverEntityType> = new Set(['ChatMessage']);
 
 export function isCutoverEntityType(value: string): value is CutoverEntityType {
   return Object.hasOwn(CLAVATA_TARGETS, value);
@@ -133,9 +136,7 @@ async function assertActiveEverywhere(entityType: CutoverEntityType, target: Cla
   if (!target.recentIds) throw new ClavataCutoverRefused(entityType, 'override-required');
   const probeIds = await target.recentIds();
   if (!probeIds.length) throw new ClavataCutoverRefused(entityType, 'nothing-to-probe');
-  const modes = await Promise.all(
-    probeIds.map((id) => getTextScanMode(entityType as ProbedEntityType, id))
-  );
+  const modes = await Promise.all(probeIds.map((id) => getTextScanMode(entityType, id)));
   const notActive = probeIds.filter((_, i) => modes[i] !== 'active');
   if (notActive.length) throw new ClavataCutoverRefused(entityType, 'not-active', notActive);
   return probeIds.length;
