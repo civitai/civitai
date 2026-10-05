@@ -6,8 +6,13 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   getFliptVariant: vi.fn(),
 }));
 
-const { getTextScanMode, TEXT_SCAN_FLAG, textScanEmEntityType, parseTextScanEmEntityType } =
-  await import('~/server/services/text-scan/mode');
+const {
+  getTextScanMode,
+  TEXT_SCAN_FLAG_KEY,
+  textScanFlag,
+  textScanEmEntityType,
+  parseTextScanEmEntityType,
+} = await import('~/server/services/text-scan/mode');
 const { getFliptVariant } = await import('~/server/flipt/client');
 const { isTextScanEntityType } = await import('~/server/services/text-scan/profiles');
 
@@ -38,10 +43,12 @@ describe('getTextScanMode', () => {
   });
 
   it('has a distinct flag per entity type', () => {
-    const flags = Object.values(TEXT_SCAN_FLAG);
+    const entityTypes = Object.keys(TEXT_SCAN_FLAG_KEY) as (keyof typeof TEXT_SCAN_FLAG_KEY)[];
+    const flags = entityTypes.map(textScanFlag);
+    expect(flags.every((flag) => flag?.startsWith('text-scan-'))).toBe(true);
     expect(new Set(flags).size).toBe(flags.length);
     expect(flags).toHaveLength(12);
-    expect(Object.keys(TEXT_SCAN_FLAG)).not.toContain('Collection');
+    expect(entityTypes).not.toContain('Collection');
   });
 });
 
