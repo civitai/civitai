@@ -388,6 +388,7 @@ pnpm run release:major    # Major release (x.0.0)
 `src/server/` holds the most-edited (and largest) code in the repo. Read the *specific* file before changing it — several are huge, so grep within them rather than reading end-to-end.
 
 - **tRPC API** — `trpc.ts` (root router + procedure helpers), `createContext.ts`, `middleware.trpc.ts`, `routers/` (~100 per-domain routers), `controllers/`, `schema/` (zod input contracts), `selectors/` (Prisma `select` fragments).
+- **Public REST API** — `src/pages/api/v1/`, documented by hand in the `civitai/civitai-developer-docs` repo. A change to what an endpoint accepts or returns needs a docs PR too, even when the shape is built in a service; see [docs/features/public-api-docs.md](docs/features/public-api-docs.md).
 - **Images** — `services/image.service.ts` (**8K+ lines**; the hot feed path — `getInfiniteImages`, `getAllImages`, NSFW/own-content merge). API surface `src/pages/api/v1/images/index.ts`; index sync `search-index/images.search-index.ts`.
 - **Models** — `services/model.service.ts`, `search-index/models.search-index.ts`.
 - **Search (Meilisearch)** — `meilisearch/client.ts` (tags requests with `X-Search-Actor`), `meilisearch/cleanup.ts`, `search-index/base.search-index.ts` (shared sync engine).

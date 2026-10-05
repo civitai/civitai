@@ -50,7 +50,14 @@ Every one is cheap to catch mechanically and expensive to hit.
    next person to redo it. Check **both directions** — the false-open is the one people miss.
 5. **Look for two docs that now disagree.** When the change touched a subject covered in more than one
    place, read them together. Name both `file:line`s and say which is right.
-6. **Check the doc's own conventions.** Several files here state how they must be maintained — dated
+6. **Check the public API reference.** If the diff changes what a `/api/v1` endpoint accepts or
+   returns (params, response fields, auth, rate limits, error statuses, region gates), including through
+   a service that builds the response, the hand-written reference in the
+   [`civitai/civitai-developer-docs`](https://github.com/civitai/civitai-developer-docs) repo (`site/reference/`) is now
+   wrong. It is outside this repo, so name the page and the field it is missing, and say a docs PR is
+   needed. A new public endpoint with no page is a finding here, despite the restraint rule against
+   proposing new docs. Rules: `docs/features/public-api-docs.md`.
+7. **Check the doc's own conventions.** Several files here state how they must be maintained — dated
    feedback rounds carry "the newest file is the only one with open boxes"; the migration checklist
    names itself the tracker and the skill the process. A change that breaks the convention is a finding.
 
