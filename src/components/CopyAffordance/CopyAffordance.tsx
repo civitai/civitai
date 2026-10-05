@@ -196,16 +196,20 @@ export function CopyAffordance({
  * {@link AgentOnboardingCard}'s prose panel sets its own clearance in its stylesheet (its
  * control sits top-right, not right-middle), so it is a SECOND spelling of the same idea.
  *
- * ⚠️ EXCEPT ONE, AND IT IS NAMED HERE BECAUSE AN ENUMERATION THAT OMITS ITS COUNTEREXAMPLE
- * READS AS COVERAGE. `Collections/CollectionEditModal.tsx`'s invite-link block keeps its own
- * shell rather than routing through this component — it gates on `disabled={!joinUrl}`, which
- * this component does not model — and reserves NO right padding at all against a `right={10}`
- * control: a clearance of −1.75·R, i.e. −28px at a 16px root font size, on a full URL whose
- * tail therefore scroll-paints under the icon. DERIVED from that file's props and the rules
- * above, NOT measured — no fixture mounts it. PRE-EXISTING and outside this component's reach
- * either way; the deleted `src/components/Apps/` ledger scoped that directory out too, so it
- * would not have caught it. Fixing it needs its own padding AND its own geometry case, which
- * is a separate change from this one.
+ * ⚠️ AND ONE BODY AT A DIFFERENT INSET, WHICH IS WHY THE RELATION IS A FUNCTION. The
+ * invite-link block — now `~/components/Collections/CollectionInviteLink.tsx`, extracted from
+ * `Collections/CollectionEditModal.tsx` — keeps its own shell rather than routing through this
+ * component (it gates on `disabled={!joinUrl}`, which this component does not model) and sits
+ * at `right={10}`, so `COPY_BODY_PADDING_RIGHT` is the wrong number for it by 2px. It reserves
+ * {@link copyBodyPaddingRight}`(10)` instead, and is measured by the same geometry suite.
+ *
+ * ⚠️ IT RESERVED NOTHING AT ALL UNTIL THEN, AND THIS PARAGRAPH'S FIGURE WAS A DERIVATION THAT
+ * TURNED OUT TO BE RIGHT. It read "a clearance of −1.75·R, i.e. −28px at a 16px root font
+ * size … DERIVED from that file's props and the rules above, NOT measured — no fixture mounts
+ * it". A fixture mounts it now, and the measurement agrees exactly: **−28px at R=16** (the body
+ * reserved Mantine's default 10px against a 10px inset and a 28px control) and **−35px at
+ * R=20**, i.e. −1.75·R at both points. Recorded because a derivation that was confirmed is
+ * worth distinguishing from the three in this file's history that were overturned.
  *
  * ⚠️ THE CLEARANCE IS A CLAIM ABOUT A BODY WHOSE VALUE *FITS*, AND NOTHING MORE. Measured at
  * 390px: `<Code block>` computes `white-space: pre` / `text-wrap-mode: nowrap` /
