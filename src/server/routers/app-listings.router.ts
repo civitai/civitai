@@ -1853,8 +1853,16 @@ export const appListingsRouter = router({
    * confident wrong NO from. What still holds: it is a SEPARATE proc rather than a mod bypass
    * here, with a required audited reason and its event in the same transaction as the write.
    * It does oblige a human to hand-apply a DDL — the action-CHECK widen
-   * `20261004120000_app_listing_mod_action_set_visibility` — and shipping without that is
-   * exactly how the first live use changed a level and then 23514'd with no audit row.
+   * `20261004120000_app_listing_mod_action_set_visibility`.
+   *
+   * ⚠️ WHAT SHIPPING WITHOUT THAT DDL COSTS, CORRECTED: the mod proc REFUSES CLEANLY — it
+   * 500s and writes nothing. This sentence read "shipping without that is exactly how the
+   * first live use changed a level and then 23514'd with no audit row", which is a true
+   * account of the PRE-round-1 code (two separate round trips) and a wrong prediction about
+   * this one: the level write and its event now share one interactive transaction, so the
+   * 23514 rolls the level back with it. Left-as-history is not enough here, because the
+   * sentence was framed as a consequence of shipping — and the wrong version inverts the
+   * remediation, sending a maintainer to reconcile orphaned level changes that cannot exist.
    */
   setListingVisibility: appDeveloperProcedure
     .use(

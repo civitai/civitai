@@ -16,12 +16,32 @@
  * ⚠️ THIS PARAGRAPH SAID "THE OWNER PATH IS THE ONLY ONE HERE" UNTIL ROUND 2 OF THE AUDIT,
  * AND IT IS THE MOST-READ SITE IN THE FILE. The moderator path landed ~350 lines below while
  * this header still told a reader it had been deferred — and, worse, told them the
- * moderation-action CHECK widen was deliberately NOT needed, which is the one manual DDL
- * this file's shipping now depends on (`20261004120000_app_listing_mod_action_set_visibility`;
- * without it the first live use changes a level and then fails with 23514). A round of this
- * ladder corrected four other sites making the same claim and did not sweep upward within
- * its own file. Recorded rather than quietly rewritten: a retraction is a tree-wide sweep,
- * and the site a reader meets FIRST is the one that matters most.
+ * moderation-action CHECK widen was deliberately NOT needed, when the moderator path's
+ * shipping depends on it (`20261004120000_app_listing_mod_action_set_visibility`). A round of
+ * this ladder corrected four other sites making the same claim and did not sweep upward
+ * within its own file. Recorded rather than quietly rewritten: a retraction is a tree-wide
+ * sweep, and the site a reader meets FIRST is the one that matters most.
+ *
+ * 🔴 WHAT HAPPENS WITHOUT THAT WIDEN IS A CLEAN REFUSAL, NOT AN ORPHANED LEVEL CHANGE, AND
+ * THIS PARAGRAPH ASSERTED THE OPPOSITE UNTIL ROUND 4 ("the first live use changes a level and
+ * then fails with 23514"). That WAS the behaviour before round 1, when the level write and
+ * its event were two separate round trips — and it is the sentence the `$transaction`
+ * docblock inside {@link setListingVisibilityAsModerator} already contradicts in as many
+ * words ("Now a rejected event rolls the level back with it"). Both halves of
+ * {@link setListingVisibilityAsModerator} now run on ONE interactive transaction, so a 23514
+ * on the event insert aborts that transaction and the `UPDATE` goes with it: every moderator
+ * visibility change 500s and NOTHING is written — no level change, no audit row. It matters
+ * which one you believe, because the false version inverts the remediation: a maintainer who
+ * deployed without the DDL would plan a data reconciliation over `app_listings.visibility`
+ * for orphaned level changes that cannot exist. The OWNER path writes no event and is
+ * unaffected either way.
+ *
+ * ⚠️ AND IT IS NOT "THE ONE MANUAL DDL" EITHER, which this paragraph also used to claim. The
+ * `visibility` COLUMN is manual-apply too (`20261001170000_app_listing_visibility`). The
+ * distinction worth drawing is not how they are applied but whether their absence is
+ * HANDLED: a missing column is a designed refusal (`readListingVisibility` → P2022 →
+ * `assertVisibilityWritable` → VISIBILITY_UNAVAILABLE_MESSAGE), while a missing action CHECK
+ * is an unhandled 23514 surfacing as a 500.
  *
  * 🔴 EACH IS ITS OWN EXPORTED FUNCTION — never an `asModerator` flag
  * on this one. A boolean that selects between "resolve the caller's role" and "trust the
@@ -65,6 +85,14 @@ export type SetListingVisibilityResult = {
 
 /**
  * The refusal an INELIGIBLE listing status produces.
+ *
+ * ⚠️ AND THE SHADOW-REVISION REFUSAL, WHICH IS A SECOND PRODUCER AND NOT A STATUS PROBLEM
+ * AT ALL — this docblock described only the status cause until round 4 of the audit. A
+ * shadow is `status: 'draft'`, which IS level-eligible, so the row this message refuses may
+ * be in a perfectly eligible state; what disqualifies it is `revisionOfId != null` (see the
+ * refusal in {@link applyVisibility}). The message is deliberately SHARED rather than split:
+ * the no-detail posture below applies to both, and a distinct shadow message would be a
+ * second place to leak which id class a caller supplied.
  *
  * 🔴 IT DOES NOT NAME THE STATUS, AND THAT IS DELIBERATE on the moderator path as well as
  * the owner path. The owner already knows their listing is down; a moderator reads the
@@ -202,6 +230,16 @@ async function applyVisibility(
    * keying it on `access.seatListingId`. That left the moderator path — the audited one —
    * still taking the caller-supplied id, i.e. the same defect on the path where it matters
    * more. One refusal in the shared core cannot be half-applied like that.
+   *
+   * ⚠️ WHICH PATH CAN ACTUALLY ARRIVE HERE WITH A SHADOW: ONLY THE MODERATOR ONE, and only
+   * via a hand-crafted call. {@link setListingVisibilityAsModerator} passes the caller's id
+   * verbatim; {@link setListingVisibilityAsOwner} passes `access.seatListingId`, which
+   * `resolveListingAccess` computes as `revisionOfId ?? id` — so the owner path can only ever
+   * ask about a row whose `revisionOfId` is null and is STRUCTURALLY immune, not merely
+   * guarded. Nor can the moderation queue produce one: `listAllListingsForModeration` filters
+   * `revisionOfId: null`. The guard stays because it pins the PLACEMENT — moving it into the
+   * moderator function would be invisible to every behavioural test — and because
+   * `moderatorProcedure` is the only thing between a mod-authenticated caller and this id.
    *
    * ⚠️ "The sibling mod procs also take the raw id" is NOT a defence: `delistListing`'s CAS
    * is `status IN ('approved','removed')`, which a `draft` shadow can never match, so the
@@ -486,7 +524,17 @@ export async function setListingVisibilityAsModerator(args: {
     await tx.appListingModerationEvent.create({
       data: {
         id: newAppListingModerationEventId(),
-        appListingId: args.appListingId,
+        // 🔴 `applied.appListingId`, NOT `args.appListingId` — ONE SOURCE FOR THE WHOLE ROW.
+        // The two are equal by construction on this path (the moderator call passes
+        // `args.appListingId` straight into `applyVisibility`, which echoes it back), so this
+        // is not a live defect — it is the exact SHAPE of one that was: the previous revision
+        // keyed the owner write on `args.appListingId` while the role resolve had already
+        // redirected to the parent, and the write landed on the wrong row. An event whose id
+        // comes from the request while its `slug`, `before` and `visibility` come from the
+        // write cannot stay coherent if `applyVisibility` ever redirects for a caller, and a
+        // reader has to prove the equality before trusting the row. Taking every field from
+        // `applied` removes the question.
+        appListingId: applied.appListingId,
         // 🔴 THE SLUG COMES OUT OF THE WRITE'S OWN READ, not a second query, and it is never
         // `''`. This column is the denormalised "the event stays self-describing after the
         // listing is purged" copy — an empty string defeats the one case it exists for, and
@@ -499,7 +547,10 @@ export async function setListingVisibilityAsModerator(args: {
         // else, so recording `status` would describe a transition that did not happen. And
         // `null` is a REAL pre-state meaning "no choice expressed" — not the `private` level.
         before: { visibility: applied.before },
-        after: { visibility: args.visibility },
+        // `applied.visibility`, for the same single-source reason as `appListingId` above —
+        // `applyVisibility` echoes the requested level back, so this is the same value, and
+        // a row whose every field comes from the write needs no equality argument.
+        after: { visibility: applied.visibility },
       },
     });
     return applied;

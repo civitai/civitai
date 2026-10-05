@@ -69,7 +69,10 @@ import { stripCommentsAndStrings } from '../../../../../test/strip-comments';
  *
  * It sees only what a lexical scan can see: a write issued through a Prisma delegate
  * named `appListing`. A raw `$executeRaw` UPDATE against `app_listings`, or a write
- * behind a dynamically-named delegate, is invisible to it. No claim is made about those.
+ * behind a dynamically-named delegate, is invisible to it — the WRITER half makes no claim
+ * about those. ONE such writer is nonetheless covered, by a separate CALLER-set mechanism
+ * that does not route through `EXEMPT` at all: see `RAW_HELPER_BUSTS` for which, why it
+ * cannot be an `EXEMPT`/`CALLER_BUSTS` row, and what is still unclaimed.
  *
  * 🔴 AND TWO CACHED AXES DO NOT LIVE ON THIS TABLE AT ALL, so the scan can enumerate NO
  * writers for them — a stronger blind spot than the one above, because the writers are
@@ -104,6 +107,9 @@ import { stripCommentsAndStrings } from '../../../../../test/strip-comments';
  *   then move the row from `LEDGER` to `EXEMPT` in the same commit.
  * · You added a caller to an `EXEMPT` bar-2 helper → see `CALLER_BUSTS`. That caller
  *   need not write the table itself, which is exactly why prose could not hold it.
+ * · You added a caller to a RAW-SQL in-tx helper → see `RAW_HELPER_BUSTS`. Same shape, a
+ *   separate record because the helper itself is invisible to the writer scan, so it can
+ *   be on neither `EXEMPT` nor `CALLER_BUSTS` — that record says why in full.
  * · You RENAMED the buster → the scan finds zero and the positive control below fires
  *   first, naming the instrument rather than the code.
  * · A site reports `<unattributed>` → the parser could not name its enclosing
@@ -631,13 +637,69 @@ const CALLER_BUSTS: Record<string, string[]> = {
   ].sort(),
 };
 
+/**
+ * 🔴 THE CALLER SETS FOR IN-TX HELPERS THAT WRITE A CACHED AXIS IN **RAW SQL**.
+ *
+ * Same hazard as `CALLER_BUSTS`, DELIBERATELY A SEPARATE MECHANISM, and the separation is
+ * forced rather than stylistic — do NOT "tidy" the two into one. Both routes were TRIED and
+ * MEASURED on this branch, and each fails on a different guard, by that guard's own correct
+ * rule:
+ *
+ *   · A `CALLER_BUSTS` pin for `applyVisibility` fails the LAST assertion of `every EXEMPT
+ *     entry is a current, non-busting writer`, which requires every `CALLER_BUSTS` key to
+ *     have a matching `EXEMPT` row: "`CALLER_BUSTS` pins a helper that is not on `EXEMPT`."
+ *   · So add the `EXEMPT` row, and it fails that same test's FIRST assertion: `EXEMPT` keys
+ *     are checked against `WRITERS`, and `WRITERS` comes from `WRITE_RE`, which matches
+ *     `<client>.appListing.<delegate>(`. A helper writing through `$executeRaw` issues no
+ *     such call, so it is STRUCTURALLY absent from `WRITERS` and the row is rejected as dead
+ *     prose: "EXEMPT names a function that no longer writes `AppListing`. Delete the row."
+ *   · And with BOTH in place the `CALLER_BUSTS` busting assertion still fails, for the third
+ *     reason below: it tests `SITES.includes(caller)`, which is false for both legitimate
+ *     callers because the bust is one level indirect.
+ *
+ * That is this file's documented blind spot, stated in its header: "a raw `$executeRaw`
+ * UPDATE against `app_listings` … is invisible to it." This record is where a claim IS made
+ * about one, without pretending the writer scan can see it.
+ *
+ * WHAT IT PINS, and why the writer scan cannot: a THIRD caller of `applyVisibility` that
+ * runs it inside its own `dbWrite.$transaction` and never busts moves `al.visibility` — the
+ * cached statement's LEVEL GATE — and is invisible to every other guard here. Measured on
+ * this branch with the guard below in place: exactly that caller fails the guard below and
+ * NOTHING ELSE — the headline writer assertion stayed GREEN under it, which is the direct
+ * proof that a `$executeRaw` writer never enters `WRITERS`. `/apps` would then serve the
+ * stale audience for the whole `CacheTTL.sm` window. The four behavioural bust cases in
+ * `app-listing-visibility-write.service.test.ts` close a DELETED bust; they cannot see a
+ * forgetful NEW caller, which is the same argument the header makes for inverting the
+ * primary assertion to enumerate writers.
+ *
+ * 🔴 THE BUST IS ONE LEVEL INDIRECT, so the assertion below does NOT reuse `SITES`. Each
+ * public path calls the module-private `bustCatalogAfterVisibilityWrite`, and it is THAT
+ * helper which is the `LEDGER` bust site — neither public function calls
+ * `bustAppListingCatalogCache()` itself, so a `CALLER_BUSTS`-shaped `SITES.includes(c)`
+ * test would be FALSE for both legitimate callers. The property is compared against the
+ * caller set of {@link BUST_HELPER} instead.
+ */
+const RAW_HELPER_BUSTS: Record<string, string[]> = {
+  applyVisibility: [
+    'src/server/services/blocks/app-listing-visibility-write.service.ts::setListingVisibilityAsModerator',
+    'src/server/services/blocks/app-listing-visibility-write.service.ts::setListingVisibilityAsOwner',
+  ].sort(),
+};
+
+/**
+ * The module-private helper that owns the one bust call for the visibility write path. It
+ * is in `LEDGER` under its own name; what the raw-helper guard needs is its CALLER SET, so
+ * it is scanned as a helper too.
+ */
+const BUST_HELPER = 'bustCatalogAfterVisibilityWrite';
+
 describe('🔴 /apps catalog freshness ledger', () => {
   const {
     busts: SITES,
     writes: WRITERS,
     helperCallers: HELPER_CALLERS,
     imbalanced: IMBALANCED,
-  } = scan(FILES, Object.keys(CALLER_BUSTS));
+  } = scan(FILES, [...Object.keys(CALLER_BUSTS), ...Object.keys(RAW_HELPER_BUSTS), BUST_HELPER]);
 
   /**
    * 🔴 INSTRUMENT FIRST. Every assertion below is a set comparison, and a scan wired to
@@ -851,6 +913,60 @@ describe('🔴 /apps catalog freshness ledger', () => {
           'so this is bookkeeping: record the new one here in the same commit, exactly ' +
           'as `LEDGER` requires for a new bust site. Do not widen it without reading ' +
           'why the row is exempt.'
+      ).toEqual(recorded);
+    }
+  });
+
+  /**
+   * 🔴 THE THIRD HALF — a helper that writes a cached axis in RAW SQL. See
+   * {@link RAW_HELPER_BUSTS} for why this is a SEPARATE record and test rather than two more
+   * rows on `EXEMPT`/`CALLER_BUSTS`: a `$executeRaw` writer can never appear in `WRITERS`,
+   * so the `EXEMPT`⇒`WRITERS` test rejects its row, and the `CALLER_BUSTS`⇒`EXEMPT` test
+   * then rejects the pin. Both routes were tried and watched to fail, with those two
+   * assertion messages — not reasoned about.
+   *
+   * 🔴 AND THE BUSTING TEST IS NOT THE ONE `CALLER_BUSTS` USES. There, a caller is required
+   * to be a `SITES` entry — i.e. to call `bustAppListingCatalogCache()` itself. Here the
+   * bust is one level deeper (a module-private helper owns the single call), so both
+   * legitimate callers are absent from `SITES` and that test would be red on correct code.
+   * The property compared is "every caller of the raw helper is also a caller of the bust
+   * helper", which is the same guarantee at the right indirection.
+   */
+  it('🔴 every CALLER of a RAW-SQL in-tx helper busts, and the caller set is pinned', () => {
+    const busters = HELPER_CALLERS[BUST_HELPER] ?? [];
+    for (const [helper, recorded] of Object.entries(RAW_HELPER_BUSTS)) {
+      const callers = HELPER_CALLERS[helper] ?? [];
+      // 🔴 INSTRUMENT FIRST, and for BOTH populations. A rename of either helper makes its
+      // scan find zero; with `callers` empty the two assertions below pass vacuously, and
+      // with `busters` empty the busting assertion goes red naming the wrong cause (it would
+      // read as "nobody busts" rather than "the bust helper was renamed").
+      expect(
+        callers.length,
+        `no call sites found for \`${helper}\`. Either it was renamed (rename it here too) ` +
+          'or it is gone (delete its `RAW_HELPER_BUSTS` entry).'
+      ).toBeGreaterThan(0);
+      expect(
+        busters.length,
+        `no call sites found for \`${BUST_HELPER}\`, so the busting assertion below cannot ` +
+          'be evaluated. Either it was renamed (rename `BUST_HELPER` too) or the bust ' +
+          'indirection was removed — in which case these callers should bust directly and ' +
+          'belong in `CALLER_BUSTS` against `SITES` instead.'
+      ).toBeGreaterThan(0);
+      expect(
+        callers.filter((c) => !busters.includes(c)),
+        `these functions call \`${helper}\`, which writes \`al.visibility\` — the cached ` +
+          "statement's LEVEL GATE — in raw SQL inside the caller's transaction, and do NOT " +
+          `call \`${BUST_HELPER}\`. An un-busted level change leaves one audience cohort's ` +
+          '/apps page wrong for the whole `CacheTTL.sm` window. Bust AFTER the commit (a ' +
+          'bust inside the tx would fire on a rollback too) and record the caller below.'
+      ).toEqual([]);
+      expect(
+        callers,
+        `the caller set of \`${helper}\` changed. Every caller busts (asserted above), so ` +
+          'this is bookkeeping: record the new one here in the same commit, exactly as ' +
+          '`LEDGER` requires for a new bust site. The writer scan CANNOT see this function ' +
+          '— it issues no `appListing.<delegate>` write — so this record is the only guard ' +
+          'that holds the claim.'
       ).toEqual(recorded);
     }
   });

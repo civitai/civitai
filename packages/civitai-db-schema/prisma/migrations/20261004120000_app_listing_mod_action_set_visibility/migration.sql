@@ -21,14 +21,30 @@
 --     status transition because that is what it changed; this one changes none, so a
 --     `status` key would describe a transition that did not happen.
 --
--- 🔴 WITHOUT THIS WIDEN THE FAILURE MODE IS THE BAD ONE, AND THAT IS THE OPPOSITE OF THE
--- MIGRATION THIS FILE FOLLOWS. `purge-user-storage` writes its audit row BEFORE deleting
--- anything, so a missing widen means the rows are never purged. Here the level write
--- COMMITS FIRST (`applyVisibility`'s raw `UPDATE` plus a catalog-cache bust) and the event
--- is written after, so a missing widen means the listing's discoverability changed and NO
--- audit row exists. The retry is worse than the first attempt: the level now already equals
--- the requested one, so `applyVisibility` short-circuits `changed: false` and the proc
--- returns 200 — a success report over a still-unrecorded moderator act.
+-- 🔴 WITHOUT THIS WIDEN THE FAILURE MODE IS THE GOOD ONE — THE SAME ONE AS THE MIGRATION
+-- THIS FILE FOLLOWS, and this comment asserted the OPPOSITE until round 4 of the audit.
+-- `purge-user-storage` writes its audit row BEFORE deleting anything, so a missing widen
+-- means the rows are never purged. This action reaches the same place by a different route:
+-- `setListingVisibilityAsModerator` runs the level `UPDATE` and the event INSERT on ONE
+-- interactive transaction, so a 23514 on the event ABORTS that transaction and the `UPDATE`
+-- rolls back with it. A missing widen therefore means every moderator visibility change 500s
+-- and NOTHING is written — no level change, no audit row, and no retry asymmetry (the level
+-- is unchanged, so a retry is simply the first attempt again).
+--
+-- ⚠️ THE RETRACTED VERSION READ: "the level write COMMITS FIRST (`applyVisibility`'s raw
+-- `UPDATE` plus a catalog-cache bust) and the event is written after, so a missing widen
+-- means the listing's discoverability changed and NO audit row exists. The retry is worse
+-- than the first attempt: the level now already equals the requested one, so
+-- `applyVisibility` short-circuits `changed: false` and the proc returns 200." That was an
+-- accurate description of the code as it shipped — the level write and the event WERE two
+-- round trips, and that is the incident the write service's own docblocks record — and it
+-- outlived the round-1 fix that put both on one transaction (and moved the bust to AFTER the
+-- commit, so the bust cannot precede the event either). ⚠️ It is NOT the same event as the
+-- hand probe MEASURED below, which only establishes that the constraint is live and lacks
+-- this action. It is recorded rather than deleted because the
+-- wrong version inverts the remediation: a maintainer deploying without this DDL would plan
+-- a data reconciliation over `app_listings.visibility` for orphaned level changes that
+-- cannot exist. Correcting a comment here changes NO DDL; the statements below are untouched.
 --
 -- MEASURED on the prod nvme0 primary 2026-10-04, before this file existed: inserting a
 -- 'set-visibility' row was rejected with 23514 against
@@ -52,8 +68,11 @@
 --
 -- 🔴 ORDERING — timing-sharp, and sharper than its predecessors for the reason above:
 --   * Apply to the DEV CLONE **before** a PR preview exercises
---     `appListings.setListingVisibilityAsModerator`, or the preview changes a level and
---     500s on the constraint with no audit row (preview-DB-drift -> smoke-500 trap).
+--     `appListings.setListingVisibilityAsModerator`, or the mod proc 500s on the constraint
+--     for every call (preview-DB-drift -> smoke-500 trap). ⚠️ This read "the preview changes
+--     a level and 500s on the constraint with no audit row", the same retracted claim as
+--     above: the transaction rolls the level back, so the preview is broken but not
+--     inconsistent. The ordering requirement is unchanged either way.
 --   * Apply to PROD nvme0 **before** this ships (main -> release). The OWNER path is
 --     unaffected — it writes no event — so only the moderator proc is gated on this.
 --   * ⚠️ The dev clone is re-created weekly from prod barman backups

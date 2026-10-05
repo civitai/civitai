@@ -764,11 +764,21 @@ describe('the MODERATOR path', () => {
     expect(sql).not.toContain('apl_shadow');
   });
 
-  it('[INV] 🔴 a SHADOW revision is refused on BOTH paths', async () => {
-    // A shadow is `draft`, which IS level-eligible, so every other gate passes: without this
-    // refusal the CAS flips a row nothing reads and reports success — and on the moderator
-    // path files the audit row under the shadow, invisible in the owner's own history. The
-    // refusal lives in the shared core precisely so it cannot be half-applied to one path.
+  /**
+   * 🔴 THE MODERATOR PATH IS THE ONE THAT CAN ACTUALLY ARRIVE HOLDING A SHADOW ID, because
+   * it hands `args.appListingId` to `applyVisibility` verbatim — no resolver stands between
+   * the input and the row. A shadow is `draft`, which IS level-eligible, so every other gate
+   * passes: without this refusal the CAS flips a row nothing reads, the proc reports success,
+   * and the audit row is filed under the shadow's id with its synthetic `rev-<ulid>` slug —
+   * invisible in the OWNER's own history, which is the one surface the event exists for.
+   *
+   * ⚠️ REACHABLE BY A HAND-CRAFTED tRPC CALL, NOT BY THE MODERATION UI. The queue cannot
+   * offer a shadow: `listAllListingsForModeration` filters `revisionOfId: null`, and
+   * `appListingModerationTableView` says so at the purge branch. So this is defence-in-depth
+   * against a moderator-authenticated caller supplying their own id — which is exactly the
+   * audience that needs it, since `moderatorProcedure` is the only gate in front.
+   */
+  it('[INV] 🔴 a SHADOW revision is refused on the MODERATOR path (raw caller id)', async () => {
     row = {
       id: 'apl_shadow',
       slug: 'rev-01J',
@@ -777,18 +787,55 @@ describe('the MODERATOR path', () => {
       appBlock: { status: 'approved' },
     };
     await expect(
-      setListingVisibilityAsOwner({
-        appListingId: 'apl_shadow',
-        visibility: 'moderators',
-        userId: 9,
-      })
-    ).rejects.toThrow(VISIBILITY_STATUS_INELIGIBLE_MESSAGE);
-    await expect(
       setListingVisibilityAsModerator({
         appListingId: 'apl_shadow',
         visibility: 'moderators',
         reason: 'should be refused',
         moderatorUserId: 77,
+      })
+    ).rejects.toThrow(VISIBILITY_STATUS_INELIGIBLE_MESSAGE);
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(event()).not.toHaveBeenCalled();
+  });
+
+  /**
+   * ⚠️ SYNTHETIC — THIS STATE IS UNREACHABLE FROM ANY REAL SURFACE, AND SAYING SO IS THE
+   * POINT OF THE CASE RATHER THAN A CAVEAT ON IT.
+   *
+   * It used to be the owner arm of a case titled "refused on BOTH paths", with the row set to
+   * a shadow while `mockResolveListingAccess` was left at its default `seatListingId:
+   * 'apl_1'`. The fakes ignore their `where`, so the refusal fired and read as coverage — but
+   * production computes `seatListingId = listing.revisionOfId ?? listing.id`
+   * (`app-access.service.ts`), so the owner path can only ever ASK about a row whose
+   * `revisionOfId` is null. No tRPC input, hand-crafted or otherwise, reaches the owner path's
+   * `applyVisibility` with a shadow row: the real owner behaviour for a shadow id is a silent
+   * redirect to the parent and SUCCESS, pinned one case above ("keyed on the PARENT").
+   *
+   * What is kept, and why: the refusal lives in the shared core so it cannot be half-applied
+   * to one path, and an edit that moved it into `setListingVisibilityAsModerator` would leave
+   * no test red. This case pins that placement by driving the owner path with a resolver
+   * answer production cannot produce — so the fixture is at least internally COHERENT
+   * (`seatListingId` names the shadow the row describes), instead of passing only because the
+   * mock ignores its arguments.
+   */
+  it('[INV] the shadow refusal sits in the SHARED CORE, so the owner path hits it too', async () => {
+    row = {
+      id: 'apl_shadow',
+      slug: 'rev-01J',
+      status: 'draft',
+      revisionOfId: 'apl_parent',
+      appBlock: { status: 'approved' },
+    };
+    // The synthetic half: production's resolver can never return a shadow id here.
+    mockResolveListingAccess.mockImplementation(async () => ({
+      role: 'owner',
+      seatListingId: 'apl_shadow',
+    }));
+    await expect(
+      setListingVisibilityAsOwner({
+        appListingId: 'apl_shadow',
+        visibility: 'moderators',
+        userId: 9,
       })
     ).rejects.toThrow(VISIBILITY_STATUS_INELIGIBLE_MESSAGE);
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
