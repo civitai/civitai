@@ -813,10 +813,20 @@ describe('🔒 the collection invite-link body reserves the control`s width', ()
     // claim — an icon outside the box it belongs to — and centring is the mechanism.
     // ⚠️ ORDERED STATE-FIRST, MECHANISM-LAST, AND THAT ORDER IS THE POINT. An earlier draft put
     // the `transform !== 'none'` check first; it reds on the same mutant, but it is a claim
-    // about a CSS property SPELLING, and running first it shadowed the two assertions that say
-    // what is actually wrong on screen. A guard on a spelling can also be satisfied by any
-    // other transform. So containment reports first, centring second, and the spelling last as
-    // a diagnosis hint. All three were watched to fail on this mutant independently.
+    // about a CSS property SPELLING, and running first it shadowed the assertions that say what
+    // is actually wrong on screen. So containment reports first, centring second, and the
+    // spelling last.
+    //
+    // ⚠️ THE SPELLING CHECK IS A DIAGNOSIS HINT, NOT A GUARD, AND CANNOT BE THE FIRST REPORTER
+    // UNDER ANY MUTANT CONSTRUCTED SO FAR — a dropped transform reds containment-bottom, a
+    // wrong-but-present one reds centring, so this line is reached only when the others pass.
+    // It is kept for the message, which names the mechanism (`!important` is dropped by the
+    // CSSOM property setter) that the geometric failures do not.
+    //
+    // ⚠️ AND WHAT WAS ACTUALLY WATCHED: the `!important` mutant reds containment-bottom
+    // ("ends at 47.3, below the body's 38.59") in the SHIPPED order. The claim that all of them
+    // were watched to fail "independently" was removed rather than reworded — that is a
+    // different run from the shipped ordering, and only the first reporter is observable in it.
     expect(
       controlBox.bottom,
       `the control's box ends at ${controlBox.bottom}, below the body's ${bodyBox.bottom} — it ` +
@@ -916,13 +926,32 @@ describe('🔒 the collection invite-link body reserves the control`s width', ()
         `at a ${ROOT_FONT_SIZE} root font size the reserved padding ` +
           `(${getComputedStyle(body).paddingRight}) is not the rendered inset ` +
           `(${getComputedStyle(control.element()).right}) plus the rendered control width ` +
-          `(${box(control.element()).width}px). Too SMALL means the padding stopped scaling; ` +
-          'too LARGE means it over-scales, which the clearance above cannot see; and a flat 28 ' +
-          'for the control means the cascade moved to the px spelling of `--ai-size-md`.'
+          `(${box(control.element()).width}px). Too LARGE means the padding over-scales, which ` +
+          'the clearance above cannot see; a flat 28 for the control means the cascade moved to ' +
+          'the px spelling of `--ai-size-md`. (Too SMALL is reported by the clearance above, ' +
+          'which is strictly tighter in that direction — this message cannot print for it.)'
       ).toBeCloseTo(
         parseFloat(getComputedStyle(control.element()).right) + box(control.element()).width,
         1
       );
+
+      // 🔴 THE VERTICAL AXIS AT THIS ROOT FONT SIZE TOO — the R=16 positive control is not
+      // enough, and the survivor is the same px-spelling class this whole block exists for.
+      // `transform: 'translateY(-14px)'` is exactly −50% of the 28px control at R=16, so it is
+      // byte-equivalent to correct code there and passes all four vertical assertions in the
+      // positive control. At R=20 the control is 35px and needs −17.5px: the box lands 10.12→
+      // 45.12 inside a body of 0→48.24, so CONTAINMENT still passes with room and only the
+      // centre moves — 3.5px low. Centring is therefore the only assertion that can see it,
+      // and it has to run at an R where the two spellings disagree.
+      const vControl = box(control.element());
+      const vBody = box(body);
+      expect(
+        (vControl.top + vControl.bottom) / 2,
+        `at a ${ROOT_FONT_SIZE} root font size the control's vertical centre ` +
+          `(${(vControl.top + vControl.bottom) / 2}) is not the body's ` +
+          `(${(vBody.top + vBody.bottom) / 2}). A px \`translateY\` holds at a 16px root font ` +
+          'size and then stops tracking the control, which grows with R.'
+      ).toBeCloseTo((vBody.top + vBody.bottom) / 2, 1);
       // `AgentOnboardingCard`'s prose panel needs a TRACKING check rather than this derivation:
       // it reserves half a rem more than the minimum, so a derivation would red on the correct
       // stylesheet, and its `.panel` 1px border lands its gap on exactly 0.00px at R=20.
