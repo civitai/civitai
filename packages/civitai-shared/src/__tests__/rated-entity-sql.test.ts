@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { NsfwLevel } from '../browsing-levels';
 import {
   articleModerationFloorText,
   challengeDerivedNsfwLevel,
+  collectionTextFloorBucketText,
   isTextScanRaised,
   overrideBasisDropped,
   raiseNsfwLevelText,
@@ -35,8 +37,19 @@ describe('scanFloorText', () => {
   });
 
   it('refuses anything that is not a known entity or a plain identifier', () => {
-    expect(() => scanFloorText('Collection' as never, 'c.id')).toThrow();
+    expect(() => scanFloorText('Model' as never, 'm.id')).toThrow();
     expect(() => scanFloorText('Post', 'p.id; DROP TABLE x')).toThrow();
+  });
+});
+
+describe('collectionTextFloorBucketText', () => {
+  it('collection text floor: override first, then the scan floor, at R', () => {
+    const sql = collectionTextFloorBucketText('c', 28);
+    expect(sql).toContain(
+      `COALESCE(c."moderatorNsfwLevel", ${scanFloorText('Collection', 'c.id')})`
+    );
+    expect(sql).toContain(`>= ${NsfwLevel.R} THEN 28 ELSE 0 END`);
+    expect(() => collectionTextFloorBucketText('c; drop', 28)).toThrow();
   });
 });
 

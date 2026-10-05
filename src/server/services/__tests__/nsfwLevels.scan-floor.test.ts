@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   articleModerationFloorText,
+  collectionTextFloorBucketText,
   ratedEntityContentNsfwLevelText,
   ratedEntityDerivedNsfwLevelText,
 } from '@civitai/shared/rated-entity-sql';
@@ -22,6 +23,7 @@ const {
   updateArticleNsfwLevels,
   updateBountyEntryNsfwLevels,
   updateBountyNsfwLevels,
+  updateCollectionsNsfwLevels,
   updatePostNsfwLevels,
 } = await import('~/server/services/nsfwLevels.service');
 const { computeArticleDerivedNsfwLevel } = await import(
@@ -93,6 +95,41 @@ describe('Article floor', () => {
     dbMock.dbRead.$queryRaw.mockResolvedValue([{ derived: 4 }]);
     await computeArticleDerivedNsfwLevel(1);
     expect(sentText('dbRead')).toContain(floor);
+  });
+});
+
+describe('Collection text floor', () => {
+  const floor = squash(collectionTextFloorBucketText('c', 28));
+  const sent = async () => {
+    await updateCollectionsNsfwLevels([1]);
+    const text = sentText();
+    const forced = text.indexOf(`WHEN (c.metadata->>'forcedBrowsingLevel') IS NOT NULL`);
+    // The outer ELSE; the forced branch has its own inner `ELSE 0 END`s.
+    const unforced = text.indexOf('ELSE ( (CASE WHEN EXISTS (', forced);
+    const end = text.indexOf('END ) AS "nsfwLevel"', unforced);
+    expect(forced).toBeGreaterThan(-1);
+    expect(unforced).toBeGreaterThan(forced);
+    expect(end).toBeGreaterThan(unforced);
+    return {
+      forcedBranch: text.slice(forced, unforced),
+      unforcedBranch: text.slice(unforced, end),
+      text,
+    };
+  };
+
+  it('collection: text floor joins the item probes, never the forced branch', async () => {
+    const { forcedBranch, unforcedBranch, text } = await sent();
+    expect(forcedBranch).not.toContain('moderatorNsfwLevel');
+    expect(forcedBranch).not.toContain('EntityModeration');
+    expect(unforcedBranch).toContain(floor);
+    expect(text.split('moderatorNsfwLevel')).toHaveLength(2);
+  });
+
+  it('is its own OR operand, so a PG override clears only the floor, not an NSFW item', async () => {
+    const { unforcedBranch } = await sent();
+    expect(floor).not.toContain('CollectionItem');
+    expect(unforcedBranch).toContain(`END) | ${floor} )`);
+    expect(unforcedBranch.split('"CollectionItem" ci')).toHaveLength(3);
   });
 });
 

@@ -13,6 +13,7 @@ import {
 } from '~/server/search-index';
 import {
   articleModerationFloorSql,
+  collectionTextFloorBucketSql,
   ratedEntityDerivedNsfwLevelSql,
 } from '~/server/services/text-scan/scan-floor';
 import { Limiter, limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -471,6 +472,7 @@ export async function updateBountyEntryNsfwLevels(bountyEntryIds: number[]) {
 // Precedence:
 //   1. metadata.forcedBrowsingLevel set → map forced bits to bucket
 //   2. otherwise → two-probe scan of ACCEPTED items
+//   2b. text-scan floor / moderator override ≥ R adds the nsfw bucket
 // Collection.nsfw boolean is ignored — it's a legacy flag and not a reliable
 // signal of collection content.
 const COLLECTION_NSFW_BUCKET = 28; // R|X|XXX
@@ -510,6 +512,7 @@ export async function updateCollectionsNsfwLevels(collectionIds: number[]) {
                   WHERE ci."collectionId" = c.id AND ci.status = 'ACCEPTED'
                     AND (COALESCE(i."nsfwLevel", p."nsfwLevel", m."nsfwLevel", a."nsfwLevel", m3."nsfwLevel", 0) & ${nsfwBrowsingLevelsFlag}) != 0
                 ) THEN ${COLLECTION_NSFW_BUCKET} ELSE 0 END)
+                | ${collectionTextFloorBucketSql('c', COLLECTION_NSFW_BUCKET)}
               )
           END
         ) AS "nsfwLevel"
