@@ -813,9 +813,9 @@ type AppealFeeRef = {
   buzzTransactionId: string;
 };
 
-// A timed-out refund may still land, so only a request that never reached Buzz is retried.
 async function refundAppealFee(appeal: AppealFeeRef) {
   if (isAppealPrefix(appeal.buzzTransactionId)) {
+    // A timed-out refund may still land, so only a request that never reached Buzz is retried.
     await refundMultiAccountTransaction(
       {
         externalTransactionIdPrefix: appeal.buzzTransactionId,
@@ -971,9 +971,16 @@ export async function resolveEntityAppeal({
       try {
         await refundAppealFee({ ...appeal, buzzTransactionId: appeal.buzzTransactionId });
       } catch (e) {
-        // Log but don't block appeal resolution if refund fails
-        // (e.g., old transactions may no longer exist in buzz service)
-        console.error(`Failed to refund buzz for appeal ${appeal.id}: ${e}`);
+        // The appeal is already closed, so this is the only record that the fee is still owed.
+        logToAxiom({
+          type: 'error',
+          name: 'resolve-entity-appeal',
+          message: 'Failed to refund appeal fee',
+          appealId: appeal.id,
+          userId: appeal.userId,
+          buzzTransactionId: appeal.buzzTransactionId,
+          error: (e as Error).message,
+        });
       }
     }
 

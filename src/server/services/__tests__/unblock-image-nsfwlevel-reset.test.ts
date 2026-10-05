@@ -419,4 +419,29 @@ describe('resolveEntityAppeal — reset+unlock on appeal approval (ClickUp 868kf
       { shouldRetry: isSafeToRetry }
     );
   });
+
+  it('does not resend an appeal refund that timed out', async () => {
+    useAppealTable([
+      {
+        id: 555,
+        entityId: 128489949,
+        entityType: ENTITY_IMAGE,
+        userId: 1,
+        status: 'Pending',
+        buzzTransactionId: 'appeal-1-1790000000000-abcd1234',
+      },
+    ]);
+    vi.mocked(refundMultiAccountTransaction).mockRejectedValueOnce(
+      Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' })
+    );
+
+    await resolveEntityAppeal({
+      ids: [128489949],
+      entityType: ENTITY_IMAGE,
+      status: APPEAL_APPROVED,
+      userId: 2023372,
+    } as any);
+
+    expect(refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+  });
 });
