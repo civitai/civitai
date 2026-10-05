@@ -6,7 +6,7 @@ Crucible is separate from the Challenges platform and its judging engine.
 
 ## Lifecycle
 
-1. **Create.** The creator sets up the crucible and pays the setup cost and any seeded pool. It starts right away, or at a scheduled time up to 30 days out. A crucible runs on the Buzz of the site it is created on (green on civitai.com, yellow on civitai.red); a green crucible is limited to PG and PG-13. civitai.com lists only crucibles limited to PG and PG-13 whose text is not mature, whichever Buzz funds them; civitai.red lists every crucible.
+1. **Create.** The creator sets up the crucible and pays the setup cost and any seeded pool. It starts right away, or at a scheduled time up to 30 days out. A crucible runs on the Buzz of the site it is created on (green on civitai.com, yellow on civitai.red); a green crucible is limited to PG and PG-13. civitai.com shows only crucibles limited to PG and PG-13 whose text is not mature, whichever Buzz funds them; anyone else's crucible outside that can't be opened, entered or judged there. civitai.red has no such limit beyond the viewer's own browsing level.
 2. **Review.** The name, description and cover are checked automatically before anyone else can see the crucible. Until then only its creator and moderators can open it.
 3. **Enter.** While the crucible is active, entrants submit published media from their library, or generate or upload it from the submit dialog. Media added from the dialog stays an unpublished draft until it is entered, and entering schedules its post for the crucible's end; an entry that is refused, or not saved and refunded, leaves it a draft, and the dialog keeps offering it in later visits. Each entry pays the entry fee in the Buzz of the site the entrant is on, except the free entries the creator offers. The creator can't enter their own crucible.
 4. **Judge.** Signed-in users with a creator score of at least 500 (and moderators) are shown two entries side by side and pick one. Every vote updates both entries' ratings.
@@ -17,7 +17,7 @@ Crucible is separate from the Challenges platform and its judging engine.
 - The creator can cancel while the crucible is still upcoming; the setup cost and seeded pool are refunded.
 - A moderator can cancel it while it runs; every entry fee, the setup cost and the seeded pool are refunded and entrants are told.
 - Once it has ended with entries, it can no longer be cancelled: finalizing owns the pool from then on.
-- A crucible with no entries that is past its start and has not passed review is cancelled automatically, with the setup cost and seeded pool refunded: at once if its text or cover was refused, or once review is still unfinished a day after its start or its last edit. The creator is told.
+- A crucible with no entries that is past its start and has not passed review is cancelled automatically, with the setup cost and seeded pool refunded: at once if its text or cover was refused, or once review is still unfinished a day after its start or its last edit, whichever is later. The creator is told.
 
 ### Removing an entry
 
@@ -41,7 +41,7 @@ A moderator can remove an entry while the crucible runs. The entry fee is refund
 | Minimum view time *(video only)* | Judges must watch this long of both clips before voting | Free |
 | Maximum clip length *(video only)* | Longer clips are refused at submission | Free |
 
-Settings can change only before the crucible starts; after that only the name, description and images can.
+Settings can change only before the crucible starts; after that only the name, description and images can, until it ends.
 
 ## Prize pool
 
@@ -83,7 +83,7 @@ Showing a live leaderboard would bias judges, so scores and positions stay hidde
 - **Followers and entrants:** a reminder once, 8 hours before the end.
 - **Followers:** the results, unless they are the creator or an entrant, who already hear about the end.
 
-Anyone signed in can follow an upcoming or active crucible with the bell on its page. Every crucible notification except a cancellation and a moderator's removal can be turned off in notification settings.
+Anyone signed in can follow an upcoming or active crucible with the bell on its page. Every crucible notification except a cancellation, a moderator's removal and the notices about its review can be turned off in notification settings.
 
 A crucible's name appears in notifications and Buzz transaction descriptions only once its text has passed review as safe for everyone; a crucible with mature text is never named there.
 
