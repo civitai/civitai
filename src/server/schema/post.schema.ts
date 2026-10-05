@@ -24,7 +24,7 @@ import { commaDelimitedStringArray, numericStringArray } from '~/utils/zod-helpe
 // articleRateLimits). Daily ceilings tier UP by reputation, and members get
 // MEMBER_DAILY_POST_MULTIPLIER times each tier. That takes one member rule PER tier:
 // a single member rule would be one number, beaten by the higher reputation tiers.
-const dailyPostTiers = [
+export const dailyPostTiers = [
   { minScore: 0, limit: 20 },
   { minScore: 1000, limit: 60 },
   { minScore: 5000, limit: 150 },

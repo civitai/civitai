@@ -57,7 +57,11 @@ import {
 } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { CreatorProgramCapsInfo } from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2.modals';
-import { MIN_CAP, PEAK_EARNING_WINDOW } from '~/shared/constants/creator-program.constants';
+import {
+  MIN_CAP,
+  MIN_CREATOR_SCORE,
+  PEAK_EARNING_WINDOW,
+} from '~/shared/constants/creator-program.constants';
 import { getCreatorProgramAvailability } from '~/server/utils/creator-program.utils';
 import { Flags } from '~/shared/utils/flags';
 import { OnboardingSteps } from '~/server/common/enums';
@@ -608,7 +612,7 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
                   <CreatorProgramRequirement
                     isMet={hasEnoughCreatorScore}
                     title={`Have a Creator Score higher than ${abbreviateNumber(
-                      requirements?.score.min ?? 10000
+                      requirements?.score.min ?? MIN_CREATOR_SCORE
                     )}`}
                     content={
                       <p className="my-0">

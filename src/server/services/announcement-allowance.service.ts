@@ -29,6 +29,8 @@ const DEFAULTS = {
   },
 } as const;
 
+export const ANNOUNCEMENT_DEFAULT_MIN_SCORE = DEFAULTS.minScore;
+
 const capSchema = z.object({
   days: z.number().int().min(1).max(365),
   count: z.number().int().min(0).max(100),
@@ -74,6 +76,10 @@ async function getConfig() {
   }
 
   return { minScore: minScore.success ? minScore.data : DEFAULTS.minScore, caps };
+}
+
+export async function getAnnouncementMinScore(): Promise<number> {
+  return (await getConfig()).minScore;
 }
 
 function toAnnouncementTier(membership: string | null | undefined): AnnouncementTier {
