@@ -9,6 +9,9 @@ SET lock_timeout = '3s';
 
 BEGIN;
 
+-- Repeated inside the transaction: a session-level SET does not survive a transaction-mode pooler.
+SET LOCAL lock_timeout = '3s';
+
 CREATE TABLE IF NOT EXISTS "CreatorMilestone" (
   "key" TEXT NOT NULL,
   "track" TEXT NOT NULL,
@@ -37,11 +40,11 @@ CREATE TABLE IF NOT EXISTS "UserCreatorMilestone" (
   CONSTRAINT "UserCreatorMilestone_userId_fkey" FOREIGN KEY ("userId")
     REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT "UserCreatorMilestone_milestoneKey_fkey" FOREIGN KEY ("milestoneKey")
-    REFERENCES "CreatorMilestone"("key") ON DELETE RESTRICT ON UPDATE CASCADE
+    REFERENCES "CreatorMilestone"("key") ON DELETE RESTRICT ON UPDATE RESTRICT
 );
 
 -- The PK serves per-user reads. This serves per-milestone holder counts (rarity) and the FK check
--- when a definition's key changes.
+-- on a definition's key.
 CREATE INDEX IF NOT EXISTS "UserCreatorMilestone_milestoneKey_idx"
   ON "UserCreatorMilestone"("milestoneKey");
 

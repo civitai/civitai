@@ -4951,7 +4951,7 @@ model UserCreatorMilestone {
   userId       Int
   user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   milestoneKey String
-  milestone    CreatorMilestone @relation(fields: [milestoneKey], references: [key], onDelete: Restrict, onUpdate: Cascade)
+  milestone    CreatorMilestone @relation(fields: [milestoneKey], references: [key], onDelete: Restrict, onUpdate: Restrict)
   achievedAt   DateTime         @default(now())
   seenAt       DateTime?
 
