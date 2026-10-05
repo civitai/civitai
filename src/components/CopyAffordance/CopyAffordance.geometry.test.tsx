@@ -5,6 +5,7 @@ import {
   PHONE_VIEWPORT,
   box,
   cascadeEvidence,
+  nextLayout,
   renderAtViewport,
   type Viewport,
 } from '../../../test/geometry-setup';
@@ -92,9 +93,13 @@ import { COPY_CONTROL_SIZE, COPY_ICON_INSET } from './CopyAffordance';
 /**
  * A command long enough to OVERFLOW the body at any phone width.
  *
- * ⚠️ NOT "long enough to wrap", which is what this line said and what the file's own
- * measurement at `:67` refutes: `<Code block>` is `pre`/`nowrap`/`overflow-x: auto`, and for
- * THIS fixture `scrollWidth` is 572 against a `clientWidth` of 390. It scrolls.
+ * ⚠️ NOT "long enough to wrap", which is what this line said and what the header's ⚠️ "A CLAIM
+ * ABOUT A VALUE THAT *FITS*" caveat refutes: `<Code block>` is `pre`/`nowrap`/`overflow-x: auto`,
+ * and for THIS fixture `scrollWidth` is 572 against a `clientWidth` of 390. It scrolls.
+ *
+ * (Named rather than cited by line. Both cross-references here used to read `:67`, which is a
+ * blank comment line — the paragraph moved and the number did not. A line citation inside the
+ * file that contains it goes stale on the next edit; a quoted heading does not.)
  */
 const LONG_COMMAND = 'npm install -g @civitai/cli && civitai app create my-very-long-app-name';
 
@@ -189,8 +194,9 @@ describe('🔒 a `Code`-block body reserves the control`s width — `COPY_BODY_P
     // ⚠️ THEY CANNOT DISCRIMINATE A WIDTH-DEPENDENT CLEARANCE IN *THIS* GEOMETRY, AND THE
     // EARLIER RATIONALE HERE ("the body wraps and the control does not: a clearance that holds
     // at 390 and not at 360 is a real defect") CLAIMED THEY COULD. The body does not wrap —
-    // see `LONG_COMMAND` and `:67` — and the measured clearance contains no viewport term at
-    // all: it is `bodyPaddingRight − inset − controlWidth`, three constants. The numbers say so
+    // see `LONG_COMMAND`'s doc and the header's *FITS* caveat — and the measured clearance
+    // contains no viewport term at all: it is `bodyPaddingRight − inset − controlWidth`, three
+    // constants. The numbers say so
     // too, which is the part worth noticing before trusting a pair of measurements: −26px at
     // BOTH widths before the padding was added, 0.00px at both after. Two pairs of identical
     // numbers is what width-invariance looks like, not what a discriminating matrix looks like.
@@ -493,17 +499,28 @@ describe('🔒 the clearance survives a non-default root font size', () => {
    * to constants this repo owns, compared against numbers the browser resolved out of Mantine's
    * stylesheet, so none of them is the implementation checking itself.
    *
-   * 🔴 CALLED **AFTER** THE CLEARANCE ASSERTION, AND BOTH ORDERS WERE WATCHED TO FAIL. Under
-   * the pre-fix spelling (`COPY_BODY_PADDING_RIGHT` as a raw number) each assertion goes red on
-   * its own terms when it runs first: the clearance reports `-9` with the three measured values
-   * in its message, and the padding term reports `expected 36 to be close to 45`. Only one of
-   * the two can report per run, so the clearance — the actual claim — goes first.
+   * 🔴 CALLED **AFTER** THE CLEARANCE ASSERTION, AND BOTH ORDERS WERE WATCHED TO FAIL — BUT
+   * ONLY ONE OF THE TWO MESSAGES IS REACHABLE AS SHIPPED, AND THAT QUALIFIER WAS MISSING.
+   * Under the pre-fix spelling (`COPY_BODY_PADDING_RIGHT` as a raw number) each assertion goes
+   * red on its own terms *when it runs first*: the clearance reports `expected -9 to be greater
+   * than or equal to 0` with the three measured values in its message, and the padding term
+   * reports `expected 36 to be close to 45`. Only one of the two can report per run, so the
+   * clearance — the actual claim — goes first, which means the `36 … 45` message is
+   * reproducible ONLY by swapping these two lines. Re-measured both ways: shipped order, both
+   * R=20 tests fail on the clearance; swapped, both fail on the term. Do not quote the term
+   * message as an observation about the shipped guard.
    *
    * These are NOT a restatement of it, and that was measured rather than argued: under
    * `rem(2 * (COPY_ICON_INSET + COPY_CONTROL_SIZE))` the gap stays comfortably positive at
    * every R, both clearance assertions pass, and this helper is still reached and still goes
    * red (`expected 90 to be close to 45`). A padding that is too LARGE breaks the derivation
    * the constants exist to express and the clearance cannot see it.
+   *
+   * ⚠️ THAT COMPENSATING MUTANT ALSO REDS A THIRD TEST, AND AN EARLIER RECORD OF IT SAID
+   * OTHERWISE BY OMISSION. The R=16 `POSITIVE CONTROL` block's derivation line fails too
+   * (`expected 72 to be 36`), so the whole-file run is **3 failed / 8 passed**, not the two
+   * failures the term check accounts for. "Both clearance assertions pass" is a true sentence
+   * about the clearance assertions and a wrong answer about the run.
    */
   function assertAllThreeTermsScaleTogether(body: Element, control: Element) {
     expect(
@@ -580,5 +597,97 @@ describe('🔒 the clearance survives a non-default root font size', () => {
         `sits ${getComputedStyle(control.element()).right} from the right`
     ).toBeGreaterThanOrEqual(0);
     assertAllThreeTermsScaleTogether(code, control.element());
+  });
+
+  /**
+   * 🔴 THE SECOND SPELLING, ON THE SAME AXIS — AND THE ONE THE TWO CASES ABOVE CANNOT REACH.
+   *
+   * Everything above measures bodies whose clearance comes from `COPY_BODY_PADDING_RIGHT`.
+   * `AgentOnboardingCard`'s prose panel reserves its own in
+   * `~/components/Apps/AgentOnboardingCard.module.scss` (`.prompt { padding-right: 2.75rem }`),
+   * which `CopyAffordance`'s own doc calls "a SECOND spelling of the same idea" — and until
+   * this case it was measured at a 16px root font size ONLY, by the block above this one. That
+   * is exactly the blind spot `COPY_BODY_PADDING_RIGHT` had: a clearance correct at R=16 and
+   * de-synchronised above it, invisible to every viewport.
+   *
+   * 🔴 WHY THE CLEARANCE ASSERTION ALONE CANNOT CARRY THIS CASE — MEASURED, AND IT CONTRADICTS
+   * THE ARITHMETIC THAT MOTIVATED THIS CASE. Planting the de-rem-ified form
+   * (`padding-right: 44px`, byte-identical rendering at R=16) and reading the gap off this
+   * fixture at three root font sizes gives **9px at R=16, exactly 0.00px at R=20, −9px at
+   * R=24** — not the −1px at R=20 the three-term derivation predicts. The missing term is the
+   * `.panel` wrapper's own **1px border**, which is px and sits between the prompt's border box
+   * and the control's containing block: the real figure is `44 − 0.5·R − 1.75·R + 1`. So at
+   * R=20 the defect is FLUSH, `toBeGreaterThanOrEqual(0)` passes, and an overlap-only
+   * assertion at this block's R would have let the mutant through — the discriminating claim
+   * has to be the second one below: the reserved padding must still TRACK the root font size.
+   * A px value cannot, and says so at every R. (Shipped, for scope: 9px at R=16 → 11px at
+   * R=20, reserved 44px → 55px.)
+   *
+   * ⚠️ `assertAllThreeTermsScaleTogether` IS DELIBERATELY NOT REUSED. Its middle term expects
+   * `(COPY_ICON_INSET + COPY_CONTROL_SIZE) * SCALE` — 45px — and this panel reserves 2.75rem,
+   * i.e. 55px at R=20, half a rem of deliberate breathing room more than the minimum. Calling
+   * it here would red on the correct stylesheet.
+   *
+   * 🔴 ONE RENDER, R VARIED ON THE MOUNTED TREE. The reference measurement is taken at the
+   * harness's default R=16 and the override is then applied to the SAME elements, so the two
+   * numbers differ in the root font size and in nothing else — no second mount, no second
+   * fixture, and no stylesheet number restated as an expectation.
+   */
+  test(`at a ${ROOT_FONT_SIZE} root font size the prose panel still clears its control`, async () => {
+    // `animated={false}` for the same reason as the R=16 case: the static tree settles without
+    // a `LazyMotion` chunk, and the stylesheet does not branch on motion.
+    const { observed } = await renderAtViewport(
+      <AgentOnboardingCard tone="prominent" animated={false} />
+    );
+    expect(observed).toEqual({ width: 390, height: 844 });
+    // The reference point, asserted: R=16 is the harness default and the scope of every
+    // measurement the block above this one took.
+    assertCascadeIsReal();
+
+    const control = page.getByRole('button', { name: AGENT_COPY_LABEL });
+    await expect.element(control).toBeInTheDocument();
+    const prompt = promptBody();
+    const reservedAtDefaultR = parseFloat(getComputedStyle(prompt).paddingRight);
+    const gapAtDefaultR = clearance(prompt, control.element());
+
+    document.documentElement.style.fontSize = ROOT_FONT_SIZE;
+    await nextLayout();
+    // Doubles as the positive control for the override: without it this reports 16px and
+    // everything below would be a second measurement at the root font size already taken.
+    assertCascadeIsReal(ROOT_FONT_SIZE);
+
+    const gap = clearance(prompt, control.element());
+    expect(
+      gap,
+      `at a ${ROOT_FONT_SIZE} root font size the copy control overlaps the prompt text by ` +
+        `${-gap}px — the panel reserved ${getComputedStyle(prompt).paddingRight} on the right ` +
+        `while the control sits ${getComputedStyle(control.element()).right} from the edge at ` +
+        `${box(control.element()).width}px wide. A Tailwind \`p-3\` shorthand on this element ` +
+        'is the known cause of a clearance that is wrong at EVERY root font size.'
+    ).toBeGreaterThanOrEqual(0);
+
+    expect(
+      parseFloat(getComputedStyle(prompt).paddingRight),
+      `the prose panel's reserved padding did not track the root font size: ` +
+        `${reservedAtDefaultR}px at 16px and ${parseFloat(
+          getComputedStyle(prompt).paddingRight
+        )}px at ${ROOT_FONT_SIZE}, where a rem value would read ` +
+        `${reservedAtDefaultR * SCALE}px. ` +
+        '`.prompt { padding-right }` in `~/components/Apps/AgentOnboardingCard.module.scss` is ' +
+        'de-rem-ified — a px value there holds at a 16px root font size and then stops growing ' +
+        'while the control keeps growing (0.5rem inset + 1.75rem border box). The clearance ' +
+        `above cannot see it at ${ROOT_FONT_SIZE}: the \`.panel\` wrapper's 1px border lands ` +
+        'the gap on exactly 0.00px there — measured — and it only reads as an overlap by R=24 ' +
+        '(−9px).'
+    ).toBeCloseTo(reservedAtDefaultR * SCALE, 1);
+
+    // And the slack is rem too, so it GROWS with R rather than merely surviving. This is the
+    // panel's half-rem of breathing room above the minimum, measured rather than restated.
+    expect(
+      gap,
+      `the prose panel's clearance SHRANK across the root-font-size axis — ${gapAtDefaultR}px ` +
+        `at 16px, ${gap}px at ${ROOT_FONT_SIZE}. The panel reserves half a rem more than the ` +
+        'control needs, so a correctly rem-expressed clearance widens here.'
+    ).toBeGreaterThan(gapAtDefaultR);
   });
 });
