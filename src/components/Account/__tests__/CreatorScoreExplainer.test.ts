@@ -1,15 +1,30 @@
 // @vitest-environment happy-dom
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as React from 'react';
 import type { act as actType } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
-import {
-  CREATOR_SCORE_EXPLAINER_HREF,
-  CreatorScoreExplainer,
-  creatorScoreSources,
-} from '~/components/Account/CreatorScoreExplainer';
-import { UserScoreDisplay } from '~/components/Account/UserScoreDisplay';
+import type * as Trpc from '~/utils/trpc';
+import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
+
+const strikesQuery = { data: undefined, isLoading: false };
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof Trpc>()),
+  trpc: makeTrpcProxy({
+    'strike.getMyStrikeSummary': { useQuery: () => strikesQuery },
+    'strike.getMyStrikes': { useQuery: () => strikesQuery },
+  }),
+}));
+vi.mock('~/hooks/useCurrentUser', () => ({
+  useCurrentUser: () => ({ meta: { scores: { total: 20, models: 10, users: 10 } } }),
+}));
+
+const { CreatorScoreExplainer } = await import('~/components/Account/CreatorScoreExplainer');
+const { creatorScorePenalty, creatorScoreSources } = await import(
+  '~/components/Account/creator-score-copy'
+);
+const { UserScoreDisplay, scoreCategories } = await import('~/components/Account/UserScoreDisplay');
+const { StrikesCard } = await import('~/components/Account/StrikesCard');
 
 const act = (React as unknown as { act: typeof actType }).act;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -28,8 +43,8 @@ function render(element: React.ReactElement) {
 }
 
 // MantineProvider injects <style> tags whose CSS would otherwise read as page copy.
-function visibleText(el: HTMLElement) {
-  const clone = el.cloneNode(true) as HTMLElement;
+function visibleText(el: Element) {
+  const clone = el.cloneNode(true) as Element;
   clone.querySelectorAll('style').forEach((node) => node.remove());
   return clone.textContent ?? '';
 }
@@ -43,9 +58,7 @@ describe('CreatorScoreExplainer', () => {
   it('names every scored category and the activity behind it', () => {
     const text = visibleText(render(React.createElement(CreatorScoreExplainer)));
 
-    expect(text).toContain(
-      'Models: Downloads, generations, and positive reviews of published models'
-    );
+    expect(text).toContain('Models: Downloads, generations, and positive reviews of models');
     expect(text).toContain('Images: Reactions and comments on images');
     expect(text).toContain('Articles: Views, reactions, and comments on articles');
     expect(text).toContain('Followers: Follower count');
@@ -55,35 +68,31 @@ describe('CreatorScoreExplainer', () => {
     expect(text).toContain('never resets or expires');
   });
 
-  // Justin, 2026-10-05: categories and activities only. Weights are tunable and may change, so
-  // the public copy states no numbers. If you are adding a figure here, that decision is his.
+  // Product decision: categories and activities only. Weights are tunable and may change, so
+  // the public copy states no numbers. Tooltips are not in the DOM until hover, so they are
+  // checked as data.
   it('states no number anywhere, so it cannot publish a weight', () => {
-    const text = visibleText(render(React.createElement(CreatorScoreExplainer)));
+    const rendered = visibleText(render(React.createElement(CreatorScoreExplainer)));
+    const tooltips = scoreCategories.map(({ tooltip }) => tooltip);
 
-    expect(text.match(/\d+/g)).toBeNull();
+    for (const copy of [rendered, creatorScorePenalty, ...tooltips]) {
+      expect(copy.match(/\d+/g)).toBeNull();
+    }
   });
-
-  it('links to the journey page only when given a route for it', () => {
-    const without = render(React.createElement(CreatorScoreExplainer));
-    expect(without.querySelectorAll('a')).toHaveLength(0);
-    act(() => root?.unmount());
-    container?.remove();
-
-    const withLink = render(
-      React.createElement(CreatorScoreExplainer, { journeyHref: '/journey-route-under-test' })
-    );
-    const hrefs = [...withLink.querySelectorAll('a')].map((a) => a.getAttribute('href'));
-    expect(hrefs).toEqual(['/journey-route-under-test']);
-  });
-});
-
-// Score-gate refusals and the Creator Program pages already link to this exact URL.
-it('keeps the explainer at the account creator-score anchor', () => {
-  expect(CREATOR_SCORE_EXPLAINER_HREF).toBe('/user/account#creator-score');
 });
 
 describe('UserScoreDisplay category legend', () => {
-  it('labels each category with the explainer copy', () => {
+  it('takes each label and tooltip from the explainer copy', () => {
+    expect(scoreCategories.map(({ key, label, tooltip }) => ({ key, label, tooltip }))).toEqual(
+      (['models', 'images', 'articles', 'users'] as const).map((key) => ({
+        key,
+        label: creatorScoreSources[key].label,
+        tooltip: creatorScoreSources[key].earnedBy,
+      }))
+    );
+  });
+
+  it('renders the Followers label, not Users', () => {
     const text = visibleText(
       render(
         React.createElement(UserScoreDisplay, {
@@ -92,9 +101,20 @@ describe('UserScoreDisplay category legend', () => {
       )
     );
 
-    for (const key of ['models', 'images', 'articles', 'users'] as const) {
-      expect(text).toContain(creatorScoreSources[key].label);
-    }
+    expect(text).toContain('Followers');
     expect(text).not.toContain('Users');
+  });
+});
+
+describe('StrikesCard', () => {
+  it.each([
+    ['settings pane', { flat: true }],
+    ['legacy card', { flat: false }],
+  ])('puts the explainer inside the creator-score anchor (%s)', (_, props) => {
+    const el = render(React.createElement(StrikesCard, props));
+    const anchor = el.querySelector('#creator-score');
+
+    expect(anchor).not.toBeNull();
+    expect(visibleText(anchor as Element)).toContain('How Creator Score works');
   });
 });

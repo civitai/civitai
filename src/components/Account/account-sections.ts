@@ -9,6 +9,7 @@ import {
   IconShieldLock,
   IconUser,
 } from '@tabler/icons-react';
+import { CREATOR_SCORE_ANCHOR } from '~/components/Account/creator-score-copy';
 
 export const accountSectionGroups = [
   { id: 'account', label: 'Account' },
@@ -179,7 +180,7 @@ export function resolveAccountSection(path: string | undefined) {
 export const legacyAnchorSections: Record<string, string> = {
   accounts: 'security',
   'api-keys': 'security',
-  'creator-score': 'profile',
+  [CREATOR_SCORE_ANCHOR]: 'profile',
   'manage-subscription': 'billing',
   'notification-settings': 'notifications',
   'payment-methods': 'billing',

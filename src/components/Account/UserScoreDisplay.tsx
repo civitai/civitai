@@ -1,10 +1,7 @@
 import { ColorSwatch, Divider, Group, Paper, Progress, Stack, Text, Tooltip } from '@mantine/core';
 import { IconFlag, IconInfoCircle, IconShieldCheck } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
-import {
-  creatorScorePenalty,
-  creatorScoreSources,
-} from '~/components/Account/CreatorScoreExplainer';
+import { creatorScorePenalty, creatorScoreSources } from '~/components/Account/creator-score-copy';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
 type Scores = {
@@ -17,7 +14,7 @@ type Scores = {
   reportsAgainst?: number;
 };
 
-const scoreCategories = [
+export const scoreCategories = [
   { key: 'models' as const, color: 'blue' },
   { key: 'images' as const, color: 'teal' },
   { key: 'articles' as const, color: 'orange' },

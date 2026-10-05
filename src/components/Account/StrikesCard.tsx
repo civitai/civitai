@@ -6,7 +6,8 @@ import { formatDate } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { SettingRow, SettingsSection } from '~/components/Account/SettingsLayout';
-import { CREATOR_SCORE_ANCHOR, CreatorScoreExplainer } from './CreatorScoreExplainer';
+import { CREATOR_SCORE_ANCHOR } from './creator-score-copy';
+import { CreatorScoreExplainer } from './CreatorScoreExplainer';
 import { UserScoreDisplay } from './UserScoreDisplay';
 
 // The strike email links to `/user/account#strikes`, and the challenge/creator-program eligibility
