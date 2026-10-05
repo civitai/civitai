@@ -302,9 +302,10 @@ covered too.
 Many of these guards walk `src/`, build a repo-relative path, and compare it as a STRING against a
 ledger written with forward slashes. On Windows `path.relative()`/`globSync()` return backslashes, so
 every comparison misses and the guard fails on its own files — which reads as a real violation and,
-worse, means the guard catches nothing while it is red. Two instances were found and fixed on
-2026-10-02 (`no-unledgered-ad-sdk-callback`: 5 failures; `media-fetch-funnel-ledger`: 12 of its 13
-rows), both by appending one call at the walk:
+worse, means the guard catches nothing while it is red. THREE instances were found and fixed
+within days (`no-unledgered-ad-sdk-callback`: 5 failures; `media-fetch-funnel-ledger`: 12 of its
+13 rows; `app-block-storage.metrics`: two files found, two expected, no overlap — written three
+days after the first two were fixed), all by appending one call at the walk:
 
 ```ts
 out.push(path.relative(SRC, full).split(path.sep).join('/'));
