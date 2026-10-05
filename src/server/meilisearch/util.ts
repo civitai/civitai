@@ -92,6 +92,31 @@ const swapIndex = async ({
   return index;
 };
 
+/**
+ * Discards a swap index that will not be promoted.
+ *
+ * `swapIndex` deletes the swap index as its last step, so for a reset that completes in a swap this
+ * is unnecessary. It exists for the reset that ABANDONS its rebuild: without it the half-built
+ * `<indexName>_NEW` stays resident, and because `getOrCreateIndex` only creates on
+ * `index_not_found` — it never clears an index that already exists — the NEXT reset would push its
+ * documents on top of the abandoned ones. A later successful swap would then promote a corpus
+ * carrying documents for ids that are no longer eligible, which is a different and quieter
+ * corruption than the one the abandoning exists to prevent.
+ */
+const deleteSwapIndex = async ({
+  swapIndexName,
+  client = searchClient,
+}: {
+  swapIndexName: string;
+  client?: MeiliSearch | null;
+}) => {
+  if (!client) {
+    return;
+  }
+
+  await client.deleteIndex(swapIndexName);
+};
+
 const onSearchIndexDocumentsCleanup = async ({
   indexName,
   ids,
@@ -290,4 +315,10 @@ export const processUserContentRemovalQueue = async () => {
   return { processed: entries.length };
 };
 
-export { swapIndex, getOrCreateIndex, onSearchIndexDocumentsCleanup, waitForTasksWithRetries };
+export {
+  swapIndex,
+  deleteSwapIndex,
+  getOrCreateIndex,
+  onSearchIndexDocumentsCleanup,
+  waitForTasksWithRetries,
+};

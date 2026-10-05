@@ -3,6 +3,12 @@ import type { createLogger } from '~/utils/logging';
 
 export type Task = PullTask | TransformTask | PushTask | OnCompleteTask;
 
+/**
+ * An inclusive span of source ids. Declared once so the failed-task record, the queue's getter and
+ * the reset result cannot drift into describing different shapes.
+ */
+export type SearchIndexIdRange = { startId: number; endId: number };
+
 type BaseTask = {
   maxRetries?: number;
   retries?: number;
@@ -52,7 +58,7 @@ type BaseTask = {
    * documents a dropped batch cost. That is exactly why this is reported as a range to re-pull
    * and never summed into `failedIdCount`, which means documents.
    */
-  sourceRange?: { startId: number; endId: number };
+  sourceRange?: SearchIndexIdRange;
 };
 
 /**
@@ -116,10 +122,14 @@ export type FailedTaskRecord = {
   /**
    * The id range the dropped batch covered, when the task carried one. Present only for tasks
    * descended from a `mode: 'range'` pull — a targeted batch reports its loss through `idCount`
-   * instead. A fresh object rather than the task's own, so that recording it cannot make the
-   * failed task (and its `data` payload) reachable from the queue.
+   * instead.
+   *
+   * Copied rather than referenced, which buys MUTATION safety, not reachability: a property does
+   * not point back at the object that owns it, so holding `task.sourceRange` would not have kept
+   * the task or its `data` payload alive either. The copy means a later edit to the task cannot
+   * retroactively change what this record says was lost.
    */
-  sourceRange?: { startId: number; endId: number };
+  sourceRange?: SearchIndexIdRange;
 };
 
 const MAX_QUEUE_SIZE_DEFAULT = 50;
@@ -193,10 +203,8 @@ export class TaskQueue {
    * of the corpus a caller has to re-pull. Empty when no failed task carried a range, which is
    * every targeted run: those attribute through `failedIdCount` instead.
    */
-  get failedRanges(): Array<{ startId: number; endId: number }> {
-    return this.failedTasks
-      .map((record) => record.sourceRange)
-      .filter((range): range is { startId: number; endId: number } => !!range);
+  get failedRanges(): SearchIndexIdRange[] {
+    return this.failedTasks.flatMap((record) => (record.sourceRange ? [record.sourceRange] : []));
   }
 
   async waitForQueueCapacity(queue: Task[]): Promise<void> {
