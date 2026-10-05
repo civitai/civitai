@@ -6,7 +6,8 @@ import {
   type RatingReviewEntityType,
 } from '@civitai/shared/rating-review';
 import { isTextScanRaised } from '@civitai/shared/rated-entity-sql';
-import { dbRead, dbWrite } from '~/server/db/client';
+import type { dbWrite } from '~/server/db/client';
+import { dbRead } from '~/server/db/client';
 import { ChallengeSource, EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
 export type RatingReviewSubject = {
