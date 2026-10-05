@@ -10,3 +10,5 @@ import './comment-v2.profile';
 import './resource-review.profile';
 import './user.profile';
 import './user-profile.profile';
+import './crucible.profile';
+import './collection.profile';
